@@ -1,0 +1,4 @@
+yfinance>=0.2.36
+mplfinance>=0.12.10b0
+pandas>=2.0.0
+pyyaml>=6.0

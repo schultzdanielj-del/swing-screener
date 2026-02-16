@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+venv/
+env/
+.env
+
+# Cache
+.cache/
+
+# Output (generated charts and results)
+output/charts/*.png
+output/results/*.json
+
+# Input files (may contain proprietary scan data)
+input/*.txt
+input/*.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

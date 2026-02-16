@@ -1,0 +1,34 @@
+# Swing Screener Configuration
+
+chart:
+  # Number of trading days to display
+  lookback_days: 120
+  
+  # Moving averages to overlay
+  moving_averages:
+    - period: 10
+      color: "#2196F3"    # Blue
+      width: 1.0
+    - period: 20
+      color: "#FF9800"    # Orange  
+      width: 1.0
+    - period: 50
+      color: "#4CAF50"    # Green
+      width: 1.2
+  
+  # Volume settings
+  volume: true
+  
+  # Image output
+  width: 12
+  height: 7
+  dpi: 150
+  style: "charles"       # mplfinance style
+
+output:
+  charts_dir: "output/charts"
+  results_dir: "output/results"
+
+batch:
+  # Max charts per Claude vision batch
+  size: 20
