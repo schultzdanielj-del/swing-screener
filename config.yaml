@@ -6,15 +6,22 @@ chart:
   
   # Moving averages to overlay
   moving_averages:
-    - period: 10
-      color: "#2196F3"    # Blue
+    - period: 8
+      type: "ema"
+      color: "#ADD8E6"    # Light blue
       width: 1.0
-    - period: 20
-      color: "#FF9800"    # Orange  
+    - period: 21
+      type: "ema"
+      color: "#D2B48C"    # Tan
       width: 1.0
     - period: 50
-      color: "#4CAF50"    # Green
+      type: "sma"
+      color: "#FFD700"    # Yellow
       width: 1.2
+    - period: 200
+      type: "sma"
+      color: "#FF0000"    # Red
+      width: 1.5
   
   # Volume settings
   volume: true
@@ -23,7 +30,7 @@ chart:
   width: 12
   height: 7
   dpi: 150
-  style: "charles"       # mplfinance style
+  style: "nightclouds"    # Dark background
 
 output:
   charts_dir: "output/charts"
