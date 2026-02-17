@@ -33,3 +33,10 @@ The weak bounce on declining volume reveals that the pullback was not just profi
 - Price approaching a horizontal line / prior high from below
 - One or more wicks poking above the key level then closing below
 - MAs starting to flatten or curl down during the bounce
+
+## Notes on Examples
+
+The example charts vary intentionally:
+- **Pre-entry vs post-entry** — Some show the setup forming (before the breach & fail), others show the result after entry. Both are useful for pattern recognition.
+- **Annotated vs clean** — Some have key levels marked with horizontal lines and labels (e.g., "3db b&f ($20)"), others are unannotated. The vision model should learn to identify the pattern regardless of whether levels are drawn on the chart.
+- When matching new charts, focus on the **shape of the pattern** (pullback → weak bounce on declining volume → stall near resistance) rather than relying on annotations being present.
