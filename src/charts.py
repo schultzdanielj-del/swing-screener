@@ -16,6 +16,14 @@ def load_config(config_path: str = "config.yaml") -> dict:
         return yaml.safe_load(f)
 
 
+def _compute_ma(series: pd.Series, period: int, ma_type: str = "sma") -> pd.Series:
+    """Compute moving average — SMA or EMA."""
+    if ma_type.lower() == "ema":
+        return series.ewm(span=period, adjust=False).mean()
+    else:
+        return series.rolling(window=period).mean()
+
+
 def generate_chart(
     ticker: str,
     df: pd.DataFrame,
@@ -44,17 +52,19 @@ def generate_chart(
     ma_plots = []
     for ma in chart_cfg.get('moving_averages', []):
         period = ma['period']
+        ma_type = ma.get('type', 'sma')
         if len(df) >= period:
+            ma_series = _compute_ma(df['Close'], period, ma_type)
             ma_plots.append(
                 mpf.make_addplot(
-                    df['Close'].rolling(window=period).mean(),
+                    ma_series,
                     color=ma.get('color', '#888888'),
                     width=ma.get('width', 1.0)
                 )
             )
     
     # Chart style
-    style = chart_cfg.get('style', 'charles')
+    style = chart_cfg.get('style', 'nightclouds')
     
     # Output path
     filename = f"{ticker}.png"
@@ -64,7 +74,7 @@ def generate_chart(
         fig_kwargs = {
             'type': 'candle',
             'volume': chart_cfg.get('volume', True),
-            'title': f"{ticker} \u2014 D1",
+            'title': f"{ticker} — D1",
             'style': style,
             'figsize': (
                 chart_cfg.get('width', 12),
@@ -85,7 +95,7 @@ def generate_chart(
         return filepath
         
     except Exception as e:
-        print(f"  \u2717 Chart generation failed for {ticker}: {e}")
+        print(f"  ✗ Chart generation failed for {ticker}: {e}")
         return None
 
 
@@ -116,9 +126,9 @@ def generate_batch(
         path = generate_chart(ticker, df, output_dir, config)
         if path:
             results[ticker] = path
-            print("\u2713")
+            print("✓")
         else:
-            print("\u2717")
+            print("✗")
     
     print(f"\n  Generated {len(results)}/{total} charts")
     return results
