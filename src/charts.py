@@ -5,6 +5,7 @@ Produces clean D1 candlestick charts with MA overlays for visual screening.
 import os
 from typing import Optional, Dict
 
+import numpy as np
 import pandas as pd
 import mplfinance as mpf
 import yaml
@@ -22,6 +23,45 @@ def _compute_ma(series: pd.Series, period: int, ma_type: str = "sma") -> pd.Seri
         return series.ewm(span=period, adjust=False).mean()
     else:
         return series.rolling(window=period).mean()
+
+
+def _compute_highest_avwap(df: pd.DataFrame) -> pd.Series:
+    """
+    Find the anchor candle that produces the highest AVWAP at the current (last) bar.
+    Returns the full AVWAP series from that anchor forward, with NaN before the anchor.
+    """
+    typical_price = (df['High'] + df['Low'] + df['Close']) / 3.0
+    volume = df['Volume'].values
+    tp = typical_price.values
+    n = len(df)
+
+    best_anchor = 0
+    best_final_avwap = -np.inf
+
+    # Test each candle as a potential anchor
+    for anchor in range(n):
+        cum_tp_vol = 0.0
+        cum_vol = 0.0
+        for j in range(anchor, n):
+            cum_tp_vol += tp[j] * volume[j]
+            cum_vol += volume[j]
+        if cum_vol > 0:
+            final_avwap = cum_tp_vol / cum_vol
+            if final_avwap > best_final_avwap:
+                best_final_avwap = final_avwap
+                best_anchor = anchor
+
+    # Build the full AVWAP series from the best anchor
+    avwap = np.full(n, np.nan)
+    cum_tp_vol = 0.0
+    cum_vol = 0.0
+    for j in range(best_anchor, n):
+        cum_tp_vol += tp[j] * volume[j]
+        cum_vol += volume[j]
+        if cum_vol > 0:
+            avwap[j] = cum_tp_vol / cum_vol
+
+    return pd.Series(avwap, index=df.index)
 
 
 def _build_dark_style():
@@ -45,7 +85,7 @@ def generate_chart(
     config: Optional[dict] = None
 ) -> Optional[str]:
     """
-    Generate a single D1 candlestick chart with MA overlays.
+    Generate a single D1 candlestick chart with MA overlays and highest AVWAP.
     
     Args:
         ticker: Stock ticker symbol (used in title and filename)
@@ -76,6 +116,18 @@ def generate_chart(
                     width=ma.get('width', 1.0)
                 )
             )
+    
+    # Add highest AVWAP overlay
+    if len(df) >= 2:
+        avwap_series = _compute_highest_avwap(df)
+        ma_plots.append(
+            mpf.make_addplot(
+                avwap_series,
+                color='#FF69B4',    # Hot pink — stands out against MAs
+                width=1.5,
+                linestyle='--'
+            )
+        )
     
     # Use custom dark style with green/red candles
     style = _build_dark_style()
