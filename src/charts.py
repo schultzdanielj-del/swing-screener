@@ -124,8 +124,7 @@ def generate_chart(
             mpf.make_addplot(
                 avwap_series,
                 color='#FF69B4',    # Hot pink — stands out against MAs
-                width=1.5,
-                linestyle='--'
+                width=1.5
             )
         )
     
