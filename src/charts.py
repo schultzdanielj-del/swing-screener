@@ -24,6 +24,20 @@ def _compute_ma(series: pd.Series, period: int, ma_type: str = "sma") -> pd.Seri
         return series.rolling(window=period).mean()
 
 
+def _build_dark_style():
+    """Custom dark style with standard green/red candles and volume."""
+    return mpf.make_mpf_style(
+        base_mpf_style='nightclouds',
+        marketcolors=mpf.make_marketcolors(
+            up='#26A69A',       # Green candle body
+            down='#EF5350',     # Red candle body
+            edge={'up': '#26A69A', 'down': '#EF5350'},
+            wick={'up': '#26A69A', 'down': '#EF5350'},
+            volume={'up': '#26A69A', 'down': '#EF5350'},
+        ),
+    )
+
+
 def generate_chart(
     ticker: str,
     df: pd.DataFrame,
@@ -63,8 +77,8 @@ def generate_chart(
                 )
             )
     
-    # Chart style
-    style = chart_cfg.get('style', 'nightclouds')
+    # Use custom dark style with green/red candles
+    style = _build_dark_style()
     
     # Output path
     filename = f"{ticker}.png"
