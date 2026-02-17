@@ -2,20 +2,20 @@
   "setup": "3-4DB",
   "description": "3-4 Day Bounce — weak bounce after pullback, short entry",
   "last_updated": "2026-02-17",
-  "examples_count": 21,
+  "examples_count": 19,
+  "removed_examples": ["INOD (not a good setup)", "SEI (not a good setup)", "TTMI (not a good setup)"],
   "signal_basis": "prior_close",
-  "notes": "All conditions evaluated as of the close BEFORE entry day. Entry happens early on the next trading day.",
-  "conditions": [
+  "notes": "All conditions evaluated as of the close BEFORE entry day. Entry happens early on the next trading day. REAL barely misses condition 5 (MINL3 = MINL2 edge case) but is a valid setup.",
+  "scan_conditions": [
     {
       "id": 1,
       "name": "close_above_sma50",
       "description": "Close above 50-day SMA",
       "pcf": "C > AVGC50",
       "hit_rate": 1.0,
-      "hits": 21,
-      "total": 21,
-      "tier": "universal",
-      "active_in_scan": true
+      "hits": 19,
+      "total": 19,
+      "active": true
     },
     {
       "id": 2,
@@ -23,313 +23,105 @@
       "description": "50 SMA rising over 5 days",
       "pcf": "AVGC50 > AVGC50.5",
       "hit_rate": 1.0,
-      "hits": 21,
-      "total": 21,
-      "tier": "universal",
-      "active_in_scan": true,
-      "data": {
-        "min": 0.89,
-        "median": 6.37,
-        "max": 18.91,
-        "unit": "pct_5d_slope"
-      }
+      "hits": 19,
+      "total": 19,
+      "active": true
     },
     {
       "id": 3,
-      "name": "close_above_sma50_by_half_atr",
-      "description": "Close at least 0.5 ATR above 50 SMA",
-      "pcf": "C - AVGC50 > 0.5 * AVGT14",
+      "name": "close_extended_above_sma50",
+      "description": "Close at least 0.3 ATR above 50 SMA",
+      "pcf": "C - AVGC50 > 0.3 * AVGT14",
       "hit_rate": 1.0,
-      "hits": 21,
-      "total": 21,
-      "tier": "universal",
-      "active_in_scan": true,
-      "data": {
-        "min": 0.49,
-        "p25": 2.80,
-        "median": 3.22,
-        "p75": 3.77,
-        "max": 5.75,
-        "unit": "atr_above_sma50"
-      }
+      "hits": 19,
+      "total": 19,
+      "active": true,
+      "data": {"min_atr": 0.49, "median_atr": 2.97, "max_atr": 4.22}
     },
     {
       "id": 4,
-      "name": "two_up_closes_in_three",
+      "name": "two_of_three_up_closes",
       "description": "At least 2 of last 3 days closed higher than prior day",
       "pcf": "(IIF(C1 > C2, 1, 0) + IIF(C2 > C3, 1, 0) + IIF(C3 > C4, 1, 0)) >= 2",
       "hit_rate": 1.0,
-      "hits": 21,
-      "total": 21,
-      "tier": "universal",
-      "active_in_scan": true,
-      "data": {
-        "min": 2,
-        "median": 2,
-        "max": 3,
-        "unit": "up_closes_in_3"
-      }
+      "hits": 19,
+      "total": 19,
+      "active": true
     },
     {
       "id": 5,
       "name": "off_the_low",
-      "description": "Pullback low is at least 2 days ago (not today or yesterday)",
+      "description": "3-day low is below 2-day low (pullback low at least 3 bars ago)",
       "pcf": "MINL3 < MINL2",
-      "hit_rate": 1.0,
-      "hits": 21,
-      "total": 21,
-      "tier": "universal",
-      "active_in_scan": true,
-      "data": {
-        "min": 2,
-        "median": 2,
-        "max": 15,
-        "unit": "days_since_low"
-      }
+      "hit_rate": 0.95,
+      "hits": 18,
+      "total": 19,
+      "active": true,
+      "exceptions": ["REAL (MINL3 = MINL2, low was exactly 2 bars ago)"]
     },
     {
       "id": 6,
-      "name": "bounced_one_atr",
-      "description": "Close at least 1 ATR above recent 10-day low",
-      "pcf": "C - MINL10 > AVGT14",
+      "name": "bounced_from_low",
+      "description": "Close at least 0.8 ATR above 10-day low",
+      "pcf": "C - MINL10 > 0.8 * AVGT14",
       "hit_rate": 1.0,
-      "hits": 21,
-      "total": 21,
-      "tier": "universal",
-      "active_in_scan": true,
-      "data": {
-        "min": 1.0,
-        "p25": 1.96,
-        "median": 2.25,
-        "p75": 2.61,
-        "max": 3.63,
-        "unit": "atr_above_10d_low"
-      }
+      "hits": 19,
+      "total": 19,
+      "active": true,
+      "data": {"min_atr": 1.0, "median_atr": 2.22, "max_atr": 3.63}
     },
     {
       "id": 7,
-      "name": "ema8_above_ema21",
-      "description": "8 EMA above 21 EMA (trend confirmation)",
-      "pcf": "XAVGC8 > XAVGC21",
-      "hit_rate": 0.905,
+      "name": "below_prior_high",
+      "description": "Close at least 0.3 ATR below 15-day high",
+      "pcf": "MAXH15 - C > 0.3 * AVGT14",
+      "hit_rate": 1.0,
       "hits": 19,
-      "total": 21,
-      "tier": "near_universal",
-      "active_in_scan": false,
-      "exceptions": ["APP", "ONDS"],
-      "data": {
-        "note": "Both exceptions were still above 50 SMA with strong prior moves"
-      }
+      "total": 19,
+      "active": true,
+      "data": {"min_atr": 0.33, "median_atr": 1.56, "max_atr": 4.25}
     },
     {
       "id": 8,
-      "name": "signal_day_green",
-      "description": "Signal day candle is green (close > open)",
-      "pcf": "C1 > O1",
-      "hit_rate": 0.81,
-      "hits": 17,
-      "total": 21,
-      "tier": "strong",
-      "active_in_scan": false,
-      "exceptions": ["BITF", "IREN", "ONDS", "QQQ"]
+      "name": "had_close_below_8ema",
+      "description": "At some point in last 15 bars, close was below 8 EMA (confirms real pullback occurred)",
+      "pcf": "C1 < XAVGC8.1 OR C2 < XAVGC8.2 OR C3 < XAVGC8.3 OR C4 < XAVGC8.4 OR C5 < XAVGC8.5 OR C6 < XAVGC8.6 OR C7 < XAVGC8.7 OR C8 < XAVGC8.8 OR C9 < XAVGC8.9 OR C10 < XAVGC8.10 OR C11 < XAVGC8.11 OR C12 < XAVGC8.12 OR C13 < XAVGC8.13 OR C14 < XAVGC8.14 OR C15 < XAVGC8.15",
+      "hit_rate": 1.0,
+      "hits": 19,
+      "total": 19,
+      "active": true
     },
     {
       "id": 9,
-      "name": "signal_day_closes_upper_half",
-      "description": "Signal day closes in upper half of its range",
-      "pcf": "C1 > (H1 + L1) / 2",
-      "hit_rate": 0.81,
-      "hits": 17,
-      "total": 21,
-      "tier": "strong",
-      "active_in_scan": false,
-      "data": {
-        "min": 0.07,
-        "p25": 0.67,
-        "median": 0.85,
-        "max": 0.99,
-        "unit": "close_position_0_to_1"
-      }
-    },
+      "name": "not_at_new_highs",
+      "description": "Prior 15-day high (starting 2 bars ago) is above the last 2 bars' high — bounce hasn't exceeded prior pivot",
+      "pcf": "MAXH15.2 > MAXH2",
+      "hit_rate": 1.0,
+      "hits": 19,
+      "total": 19,
+      "active": true
+    }
+  ],
+  "non_scan_conditions": [
     {
       "id": 10,
-      "name": "volume_below_average",
-      "description": "Signal day volume at or below 1.25x 20-day average (weak bounce volume)",
-      "pcf": "V1 < 1.25 * AVGV20.1",
-      "hit_rate": 1.0,
-      "hits": 21,
-      "total": 21,
-      "tier": "universal",
-      "active_in_scan": false,
-      "notes": "Universal but may be too restrictive if tightened. Max was 1.21x. Kept out of scan for now — can add later to reduce noise.",
-      "data": {
-        "min": 0.51,
-        "median": 0.83,
-        "max": 1.21,
-        "unit": "vol_ratio_vs_20avg"
-      }
+      "name": "ema8_above_ema21",
+      "pcf": "XAVGC8 > XAVGC21",
+      "hit_rate": 0.84,
+      "hits": 16,
+      "total": 19,
+      "exceptions": ["APP", "ONDS", "REAL_tbd"],
+      "tier": "near_universal"
     },
     {
       "id": 11,
-      "name": "close_vs_ema8",
-      "description": "Close within range of 8 EMA",
-      "pcf": null,
-      "hit_rate": null,
-      "tier": "data_only",
-      "active_in_scan": false,
-      "data": {
-        "min_pct": -3.95,
-        "p25_pct": 3.60,
-        "median_pct": 6.51,
-        "p75_pct": 8.00,
-        "max_pct": 12.71,
-        "min_atr": -0.31,
-        "median_atr": 0.66,
-        "max_atr": 1.29
-      }
-    },
-    {
-      "id": 12,
-      "name": "close_vs_ema21",
-      "description": "Close relative to 21 EMA",
-      "pcf": null,
-      "hit_rate": null,
-      "tier": "data_only",
-      "active_in_scan": false,
-      "data": {
-        "min_pct": -8.36,
-        "p25_pct": 8.16,
-        "median_pct": 12.81,
-        "max_pct": 25.88,
-        "min_atr": -0.68,
-        "median_atr": 1.22,
-        "max_atr": 3.04
-      }
-    },
-    {
-      "id": 13,
-      "name": "close_vs_sma50",
-      "description": "Close relative to 50 SMA",
-      "pcf": null,
-      "hit_rate": null,
-      "tier": "data_only",
-      "active_in_scan": false,
-      "data": {
-        "min_pct": 4.11,
-        "p25_pct": 25.39,
-        "median_pct": 40.26,
-        "max_pct": 93.99,
-        "min_atr": 0.49,
-        "median_atr": 3.22,
-        "max_atr": 5.75
-      }
-    },
-    {
-      "id": 14,
-      "name": "pullback_from_30d_high",
-      "description": "Pullback from 30-day swing high",
-      "pcf": null,
-      "hit_rate": null,
-      "tier": "data_only",
-      "active_in_scan": false,
-      "data": {
-        "min_pct": 0.94,
-        "p25_pct": 9.36,
-        "median_pct": 13.75,
-        "max_pct": 36.24,
-        "min_atr": 0.34,
-        "median_atr": 1.56,
-        "max_atr": 4.25,
-        "min_days": 4,
-        "median_days": 7,
-        "max_days": 20
-      }
-    },
-    {
-      "id": 15,
-      "name": "bounce_from_low",
-      "description": "Size of bounce from pullback low",
-      "pcf": null,
-      "hit_rate": null,
-      "tier": "data_only",
-      "active_in_scan": false,
-      "data": {
-        "min_pct": 3.18,
-        "p25_pct": 18.0,
-        "median_pct": 24.56,
-        "max_pct": 46.29,
-        "min_atr": 1.0,
-        "median_atr": 2.25,
-        "max_atr": 3.63,
-        "min_days_since_low": 2,
-        "median_days_since_low": 2,
-        "max_days_since_low": 15
-      }
-    },
-    {
-      "id": 16,
-      "name": "atr_volatility",
-      "description": "ATR as percentage of price (stock volatility)",
-      "pcf": null,
-      "hit_rate": null,
-      "tier": "data_only",
-      "active_in_scan": false,
-      "data": {
-        "min": 1.18,
-        "p25": 6.06,
-        "median": 9.33,
-        "max": 13.37,
-        "unit": "atr_pct_of_price",
-        "note": "QQQ at 1.18 is an outlier — rest are 5%+"
-      }
-    },
-    {
-      "id": 17,
-      "name": "twenty_day_range",
-      "description": "20-day price range as % of low",
-      "pcf": null,
-      "hit_rate": null,
-      "tier": "data_only",
-      "active_in_scan": false,
-      "data": {
-        "min": 4.2,
-        "p25": 58.0,
-        "median": 77.5,
-        "max": 174.5,
-        "unit": "pct",
-        "note": "QQQ at 4.2 is an outlier — these are volatile movers"
-      }
-    },
-    {
-      "id": 18,
-      "name": "green_candles_last_5",
-      "description": "Green candles in last 5 days",
-      "pcf": null,
-      "hit_rate": null,
-      "tier": "data_only",
-      "active_in_scan": false,
-      "data": {
-        "min": 1,
-        "median": 3,
-        "max": 4
-      }
-    },
-    {
-      "id": 19,
-      "name": "pullback_structure",
-      "description": "Structure of the pullback (total days, down days, % down)",
-      "pcf": null,
-      "hit_rate": null,
-      "tier": "data_only",
-      "active_in_scan": false,
-      "data": {
-        "total_days_min": 4,
-        "total_days_median": 7,
-        "total_days_max": 20,
-        "pct_down_days_min": 25.0,
-        "pct_down_days_median": 50.0,
-        "pct_down_days_max": 71.4
-      }
+      "name": "volume_below_avg",
+      "pcf": "V < 1.25 * AVGV20",
+      "hit_rate": 1.0,
+      "hits": 18,
+      "total": 18,
+      "tier": "universal_not_in_scan",
+      "notes": "Universal across original 18 but kept out of scan to avoid over-filtering"
     }
   ]
 }
