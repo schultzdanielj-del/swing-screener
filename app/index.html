@@ -253,7 +253,7 @@
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const { useState, useCallback } = React;
+    const { useState, useCallback, useEffect, useRef } = React;
 
     // ============================================
     // DATA LAYER — setup types, examples, conditions
@@ -410,20 +410,465 @@
     }
 
     // ============================================
-    // ADD EXAMPLE PAGE — Feature 1 & 2 placeholder
+    // ADD EXAMPLE PAGE — Manual Entry + Interactive Chart
     // ============================================
-    function AddExamplePage() {
+    function AddExamplePage({ activeSetup }) {
+      const [ticker, setTicker] = useState('');
+      const [chartDate, setChartDate] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      const [candles, setCandles] = useState(null);
+      const [selectedDate, setSelectedDate] = useState(null);
+      const [loadedTicker, setLoadedTicker] = useState('');
+
+      async function handleFetch() {
+        if (!ticker.trim()) return;
+        setLoading(true);
+        setError(null);
+        setCandles(null);
+        setSelectedDate(null);
+        try {
+          const params = new URLSearchParams({ ticker: ticker.trim() });
+          if (chartDate) params.set('date', chartDate);
+          const res = await fetch('/api/ohlcv?' + params);
+          if (!res.ok) {
+            const msg = await res.json().catch(() => ({ detail: res.statusText }));
+            throw new Error(msg.detail || 'Failed to fetch');
+          }
+          const data = await res.json();
+          setCandles(data.candles);
+          setLoadedTicker(data.ticker);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      function handleKeyDown(e) {
+        if (e.key === 'Enter') handleFetch();
+      }
+
       return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          <FeaturePlaceholder
-            number={1}
-            title="Upload Screenshot"
-            description="Upload a TC2000 chart screenshot. The app extracts the ticker and date from the header, pulls OHLCV data via yfinance, generates an interactive candlestick chart, and you click the entry candle."
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Entry form */}
+          <div className="card">
+            <div className="card-title">＋ Add Example — {SETUP_TYPES[activeSetup]?.name || activeSetup}</div>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>Ticker</label>
+                <input
+                  type="text"
+                  value={ticker}
+                  onChange={e => setTicker(e.target.value.toUpperCase())}
+                  onKeyDown={handleKeyDown}
+                  placeholder="AAPL"
+                  style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 14, width: 120, outline: 'none' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>Chart Date <span style={{ fontWeight: 400 }}>(optional)</span></label>
+                <input
+                  type="date"
+                  value={chartDate}
+                  onChange={e => setChartDate(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 14, outline: 'none' }}
+                />
+              </div>
+              <button className="btn btn-primary" onClick={handleFetch} disabled={loading || !ticker.trim()}>
+                {loading ? '⏳ Loading...' : '📊 Load Chart'}
+              </button>
+            </div>
+            {error && <div style={{ marginTop: 12, color: 'var(--accent-red)', fontSize: 13 }}>⚠ {error}</div>}
+          </div>
+
+          {/* Instructions */}
+          {candles && !selectedDate && (
+            <div style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8, padding: '12px 16px', fontSize: 13, color: 'var(--accent-blue)' }}>
+              👆 Click a candle on the chart to select the <strong>entry date</strong>
+            </div>
+          )}
+
+          {/* Selected entry confirmation */}
+          {selectedDate && (
+            <div style={{ background: 'rgba(38,166,154,0.08)', border: '1px solid rgba(38,166,154,0.2)', borderRadius: 8, padding: '12px 16px', fontSize: 13, color: 'var(--accent-green)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>✓ Entry date: <strong style={{ fontFamily: 'var(--font-mono)' }}>{loadedTicker} — {selectedDate}</strong></span>
+              <button className="btn btn-primary btn-sm" onClick={() => {
+                alert('Save functionality coming in next iteration');
+              }}>
+                💾 Save Example
+              </button>
+            </div>
+          )}
+
+          {/* Interactive Chart */}
+          {candles && (
+            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <CandlestickChart
+                candles={candles}
+                ticker={loadedTicker}
+                selectedDate={selectedDate}
+                onSelectDate={setSelectedDate}
+              />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ============================================
+    // CANDLESTICK CHART — Canvas-based interactive
+    // ============================================
+    function CandlestickChart({ candles, ticker, selectedDate, onSelectDate }) {
+      const containerRef = useRef(null);
+      const canvasRef = useRef(null);
+      const volumeCanvasRef = useRef(null);
+      const [dims, setDims] = useState({ w: 900, h: 500 });
+      const [hoverIdx, setHoverIdx] = useState(null);
+      const [scrollOffset, setScrollOffset] = useState(0);
+      const VISIBLE_CANDLES = 120;
+
+      // Colors
+      const UP = '#26A69A';
+      const DOWN = '#EF5350';
+      const BG = '#0a0e17';
+      const GRID = 'rgba(42,53,80,0.4)';
+      const EMA8_COLOR = '#5dade2';
+      const EMA21_COLOR = '#d4a853';
+      const SMA50_COLOR = '#f5c542';
+      const SMA200_COLOR = '#e74c3c';
+      const SELECTED_COLOR = '#3b82f6';
+
+      // Responsive sizing
+      useEffect(() => {
+        function resize() {
+          if (containerRef.current) {
+            const w = containerRef.current.clientWidth;
+            setDims({ w, h: Math.max(420, Math.min(560, w * 0.55)) });
+          }
+        }
+        resize();
+        window.addEventListener('resize', resize);
+        return () => window.removeEventListener('resize', resize);
+      }, []);
+
+      // Clamp scroll
+      const maxOffset = Math.max(0, candles.length - VISIBLE_CANDLES);
+      const offset = Math.min(Math.max(0, scrollOffset), maxOffset);
+      const visible = candles.slice(offset, offset + VISIBLE_CANDLES);
+
+      // Layout constants
+      const MARGIN = { top: 32, right: 64, bottom: 0, left: 0 };
+      const VOL_HEIGHT = 80;
+      const CHART_H = dims.h - MARGIN.top - VOL_HEIGHT;
+      const CHART_W = dims.w - MARGIN.right;
+
+      const candleW = CHART_W / VISIBLE_CANDLES;
+      const bodyW = Math.max(1, candleW * 0.6);
+
+      // Price range
+      const priceVals = visible.flatMap(c => [c.high, c.low]).filter(v => v != null);
+      const minPrice = Math.min(...priceVals);
+      const maxPrice = Math.max(...priceVals);
+      const priceRange = maxPrice - minPrice || 1;
+      const pricePad = priceRange * 0.05;
+      const pMin = minPrice - pricePad;
+      const pMax = maxPrice + pricePad;
+
+      function priceY(p) {
+        return MARGIN.top + CHART_H * (1 - (p - pMin) / (pMax - pMin));
+      }
+      function candleX(i) {
+        return i * candleW + candleW / 2;
+      }
+
+      // Volume range
+      const volMax = Math.max(...visible.map(c => c.volume || 0)) || 1;
+
+      // Draw main chart
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas || !visible.length) return;
+        canvas.width = dims.w;
+        canvas.height = dims.h - VOL_HEIGHT;
+        const ctx = canvas.getContext('2d');
+
+        // Background
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Grid lines
+        ctx.strokeStyle = GRID;
+        ctx.lineWidth = 0.5;
+        const gridSteps = 6;
+        for (let i = 0; i <= gridSteps; i++) {
+          const y = MARGIN.top + (CHART_H / gridSteps) * i;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(CHART_W, y);
+          ctx.stroke();
+
+          // Price labels
+          const price = pMax - ((pMax - pMin) / gridSteps) * i;
+          ctx.fillStyle = '#64748b';
+          ctx.font = '10px JetBrains Mono';
+          ctx.textAlign = 'left';
+          ctx.fillText(price.toFixed(2), CHART_W + 6, y + 3);
+        }
+
+        // MA lines
+        function drawMA(key, color) {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          let started = false;
+          visible.forEach((c, i) => {
+            if (c[key] == null) return;
+            const x = candleX(i);
+            const y = priceY(c[key]);
+            if (!started) { ctx.moveTo(x, y); started = true; }
+            else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+        }
+        drawMA('ema8', EMA8_COLOR);
+        drawMA('ema21', EMA21_COLOR);
+        drawMA('sma50', SMA50_COLOR);
+        drawMA('sma200', SMA200_COLOR);
+
+        // Candles
+        visible.forEach((c, i) => {
+          const x = candleX(i);
+          const isUp = c.close >= c.open;
+          const color = isUp ? UP : DOWN;
+          const isSelected = c.date === selectedDate;
+          const isHovered = i === hoverIdx;
+
+          // Selected highlight
+          if (isSelected) {
+            ctx.fillStyle = 'rgba(59,130,246,0.12)';
+            ctx.fillRect(x - candleW / 2, MARGIN.top, candleW, CHART_H);
+            ctx.strokeStyle = SELECTED_COLOR;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.moveTo(x, MARGIN.top);
+            ctx.lineTo(x, MARGIN.top + CHART_H);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+
+          // Hover highlight
+          if (isHovered && !isSelected) {
+            ctx.fillStyle = 'rgba(255,255,255,0.03)';
+            ctx.fillRect(x - candleW / 2, MARGIN.top, candleW, CHART_H);
+          }
+
+          // Wick
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, priceY(c.high));
+          ctx.lineTo(x, priceY(c.low));
+          ctx.stroke();
+
+          // Body
+          const bodyTop = priceY(Math.max(c.open, c.close));
+          const bodyBot = priceY(Math.min(c.open, c.close));
+          const bodyH = Math.max(1, bodyBot - bodyTop);
+
+          if (isUp) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x - bodyW / 2, bodyTop, bodyW, bodyH);
+          } else {
+            ctx.fillStyle = color;
+            ctx.fillRect(x - bodyW / 2, bodyTop, bodyW, bodyH);
+          }
+
+          // Selected marker
+          if (isSelected) {
+            ctx.fillStyle = SELECTED_COLOR;
+            ctx.beginPath();
+            ctx.arc(x, priceY(c.low) + 12, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = SELECTED_COLOR;
+            ctx.font = 'bold 10px JetBrains Mono';
+            ctx.textAlign = 'center';
+            ctx.fillText('ENTRY', x, priceY(c.low) + 24);
+          }
+        });
+
+        // Ticker label
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        ctx.font = 'bold 48px Plus Jakarta Sans';
+        ctx.textAlign = 'right';
+        ctx.fillText(ticker, CHART_W - 12, MARGIN.top + 52);
+
+        // Hover crosshair + data
+        if (hoverIdx != null && visible[hoverIdx]) {
+          const c = visible[hoverIdx];
+          const x = candleX(hoverIdx);
+          ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+          ctx.lineWidth = 0.5;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(x, MARGIN.top);
+          ctx.lineTo(x, MARGIN.top + CHART_H);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // OHLCV bar at top
+          const isUp = c.close >= c.open;
+          const ohlcText = `${c.date}   O: ${c.open?.toFixed(2)}   H: ${c.high?.toFixed(2)}   L: ${c.low?.toFixed(2)}   C: ${c.close?.toFixed(2)}   Vol: ${(c.volume/1e6)?.toFixed(1)}M`;
+          ctx.fillStyle = isUp ? UP : DOWN;
+          ctx.font = '11px JetBrains Mono';
+          ctx.textAlign = 'left';
+          ctx.fillText(ohlcText, 8, 16);
+        }
+
+      }, [visible, dims, hoverIdx, selectedDate]);
+
+      // Draw volume chart
+      useEffect(() => {
+        const canvas = volumeCanvasRef.current;
+        if (!canvas || !visible.length) return;
+        canvas.width = dims.w;
+        canvas.height = VOL_HEIGHT;
+        const ctx = canvas.getContext('2d');
+
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Grid
+        ctx.strokeStyle = GRID;
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(CHART_W, 0);
+        ctx.stroke();
+
+        visible.forEach((c, i) => {
+          const x = candleX(i);
+          const isUp = c.close >= c.open;
+          const vol = c.volume || 0;
+          const barH = (vol / volMax) * (VOL_HEIGHT - 8);
+          const isSelected = c.date === selectedDate;
+
+          // Selected highlight in volume too
+          if (isSelected) {
+            ctx.fillStyle = 'rgba(59,130,246,0.12)';
+            ctx.fillRect(x - candleW / 2, 0, candleW, VOL_HEIGHT);
+          }
+
+          ctx.fillStyle = isUp ? 'rgba(38,166,154,0.35)' : 'rgba(239,83,80,0.35)';
+          ctx.fillRect(x - bodyW / 2, VOL_HEIGHT - barH, bodyW, barH);
+        });
+
+        // Vol avg line
+        ctx.strokeStyle = 'rgba(245,158,11,0.5)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        let started = false;
+        visible.forEach((c, i) => {
+          if (c.volAvg20 == null) return;
+          const x = candleX(i);
+          const y = VOL_HEIGHT - (c.volAvg20 / volMax) * (VOL_HEIGHT - 8);
+          if (!started) { ctx.moveTo(x, y); started = true; }
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        // Date labels
+        ctx.fillStyle = '#64748b';
+        ctx.font = '9px JetBrains Mono';
+        ctx.textAlign = 'center';
+        const step = Math.max(1, Math.floor(VISIBLE_CANDLES / 8));
+        visible.forEach((c, i) => {
+          if (i % step === 0) {
+            const x = candleX(i);
+            const parts = c.date.split('-');
+            ctx.fillText(parts[1] + '/' + parts[2], x, VOL_HEIGHT - 2);
+          }
+        });
+      }, [visible, dims, selectedDate]);
+
+      // Mouse handlers
+      function getIdx(e, canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const idx = Math.floor(mx / candleW);
+        return idx >= 0 && idx < visible.length ? idx : null;
+      }
+
+      function handleMouseMove(e) {
+        setHoverIdx(getIdx(e, canvasRef.current));
+      }
+      function handleMouseLeave() {
+        setHoverIdx(null);
+      }
+      function handleClick(e) {
+        const idx = getIdx(e, canvasRef.current);
+        if (idx != null && visible[idx]) {
+          onSelectDate(visible[idx].date);
+        }
+      }
+      function handleWheel(e) {
+        e.preventDefault();
+        setScrollOffset(prev => {
+          const delta = e.deltaY > 0 ? 5 : -5;
+          return Math.min(Math.max(0, prev + delta), maxOffset);
+        });
+      }
+
+      // Initialize scroll to show most recent data
+      useEffect(() => {
+        setScrollOffset(maxOffset);
+      }, [candles]);
+
+      // MA legend
+      const legendItems = [
+        { label: 'EMA 8', color: EMA8_COLOR },
+        { label: 'EMA 21', color: EMA21_COLOR },
+        { label: 'SMA 50', color: SMA50_COLOR },
+        { label: 'SMA 200', color: SMA200_COLOR },
+      ];
+
+      return (
+        <div ref={containerRef} style={{ width: '100%' }}>
+          {/* Legend */}
+          <div style={{ display: 'flex', gap: 16, padding: '8px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)' }}>
+            {legendItems.map(l => (
+              <span key={l.label} style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: l.color, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ width: 12, height: 2, background: l.color, display: 'inline-block' }}></span>
+                {l.label}
+              </span>
+            ))}
+            <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+              scroll to pan • click candle to select entry
+            </span>
+          </div>
+          {/* Price canvas */}
+          <canvas
+            ref={canvasRef}
+            width={dims.w}
+            height={dims.h - VOL_HEIGHT}
+            style={{ display: 'block', cursor: 'crosshair' }}
+            onMouseMove={handleMouseMove}
+            onMouseLeave={handleMouseLeave}
+            onClick={handleClick}
+            onWheel={handleWheel}
           />
-          <FeaturePlaceholder
-            number={2}
-            title="Manual Entry"
-            description="Enter ticker + entry date + setup type directly. OHLCV data is auto-pulled and the example is validated against the current ruleset immediately."
+          {/* Volume canvas */}
+          <canvas
+            ref={volumeCanvasRef}
+            width={dims.w}
+            height={VOL_HEIGHT}
+            style={{ display: 'block' }}
+            onMouseMove={handleMouseMove}
+            onClick={handleClick}
+            onWheel={handleWheel}
           />
         </div>
       );
@@ -552,7 +997,7 @@
             <div className="content">
               {page === 'dashboard' && <DashboardPage setPage={setPage} />}
               {page === 'examples' && <ExamplesPage activeSetup={activeSetup} />}
-              {page === 'add' && <AddExamplePage />}
+              {page === 'add' && <AddExamplePage activeSetup={activeSetup} />}
               {page === 'conditions' && <ConditionsPage activeSetup={activeSetup} />}
               {page === 'validate' && <ValidatePage />}
             </div>
