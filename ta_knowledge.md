@@ -56,6 +56,9 @@
 - Extension peaks often cluster at specific levels (bimodal) — e.g. AAPL either fakes out just above 50 SMA (1-2x ADR) or trends to 6-7.5x ADR. Gap in between = stock doesn't hang out at intermediate extensions.
 - Use historical extension peak/valley clustering to improve fade timing — short at the statistical ceiling, not arbitrary levels
 - **For longs/breakouts:** Check current position on 50 extension to estimate remaining upside. If stock is already at 5x ADR and historically peaks at 6-7x, only 1-2 ADR of upside left — trim there and trail tighter. Some stocks have great setups but statistically no room to run.
+- **Proximity to 50 SMA = upside potential.** The closer a setup is to the 50, the more room it has. Closer to 50 AND coming out of a recent correction = maximum upside potential.
+- Trendline breaks on the 50 extension structure itself can confirm the move is starting.
+- **Why big base breakouts are the biggest movers:** A huge base typically has a correction below the 50 embedded in it, which resets the ADR extension potential back to zero. Breaking out of that base = full statistical runway to the max extension ceiling. Same reason post-correction stocks run hardest — the extension counter is reset.
 
 - Bull channels break one side: either establish steeper channel on top (continuation) or break opposite side for measured move
 - If lower trendline breaks and retest fails → measured move = channel width projected downward
