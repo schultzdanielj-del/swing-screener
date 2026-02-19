@@ -72,8 +72,8 @@ def init_db():
             CREATE TABLE IF NOT EXISTS extension (
                 example_id INTEGER NOT NULL,
                 date TEXT NOT NULL,
-                close REAL, sma50 REAL, sma200 REAL,
-                ext_sma50_pct REAL, ext_sma200_pct REAL,
+                close REAL, sma50 REAL, sma200 REAL, atr14 REAL,
+                ext_sma50_xatr REAL, ext_sma200_xatr REAL,
                 FOREIGN KEY (example_id) REFERENCES examples(id) ON DELETE CASCADE,
                 UNIQUE(example_id, date)
             );
@@ -97,6 +97,32 @@ def init_db():
         """)
 
 init_db()
+
+# Migrate extension table: old schema had ext_sma50_pct/ext_sma200_pct, new uses xatr + atr14
+with get_db() as db:
+    cols = [r[1] for r in db.execute("PRAGMA table_info(extension)").fetchall()]
+    if "ext_sma50_pct" in cols:
+        print("Migrating extension table from pct to xATR schema...")
+        db.executescript("""
+            DROP TABLE IF EXISTS extension;
+            CREATE TABLE extension (
+                example_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                close REAL, sma50 REAL, sma200 REAL, atr14 REAL,
+                ext_sma50_xatr REAL, ext_sma200_xatr REAL,
+                FOREIGN KEY (example_id) REFERENCES examples(id) ON DELETE CASCADE,
+                UNIQUE(example_id, date)
+            );
+            CREATE INDEX IF NOT EXISTS idx_extension_example ON extension(example_id);
+        """)
+        # Re-fetch extension data for all existing examples
+        examples = db.execute("SELECT id, ticker FROM examples").fetchall()
+        for ex in examples:
+            print(f"  Re-fetching extension for {ex['ticker']}...")
+            ext_df = fetch_extension(ex["ticker"])
+            if ext_df is not None:
+                store_extension(db, ex["id"], ext_df)
+        print("Extension migration complete.")
 
 
 # ============================================
@@ -157,8 +183,10 @@ def fetch_extension(ticker):
     raw = raw.sort_values("Date").reset_index(drop=True)
     raw["SMA50"] = raw["Close"].rolling(50).mean()
     raw["SMA200"] = raw["Close"].rolling(200).mean()
-    raw["ext_sma50_pct"] = ((raw["Close"] - raw["SMA50"]) / raw["SMA50"] * 100).round(2)
-    raw["ext_sma200_pct"] = ((raw["Close"] - raw["SMA200"]) / raw["SMA200"] * 100).round(2)
+    tr = pd.concat([raw["High"] - raw["Low"], (raw["High"] - raw["Close"].shift(1)).abs(), (raw["Low"] - raw["Close"].shift(1)).abs()], axis=1).max(axis=1)
+    raw["ATR14"] = tr.rolling(14).mean()
+    raw["ext_sma50_xatr"] = ((raw["Close"] - raw["SMA50"]) / raw["ATR14"]).round(2)
+    raw["ext_sma200_xatr"] = ((raw["Close"] - raw["SMA200"]) / raw["ATR14"]).round(2)
     return raw
 
 def store_ohlcv(db, example_id, df):
@@ -168,8 +196,8 @@ def store_ohlcv(db, example_id, df):
 
 def store_extension(db, example_id, df):
     rows = [(example_id, r["Date"].strftime("%Y-%m-%d"), clean_val(r["Close"]), clean_val(r.get("SMA50")),
-             clean_val(r.get("SMA200")), clean_val(r.get("ext_sma50_pct")), clean_val(r.get("ext_sma200_pct"))) for _, r in df.iterrows()]
-    db.executemany("INSERT OR REPLACE INTO extension (example_id, date, close, sma50, sma200, ext_sma50_pct, ext_sma200_pct) VALUES (?,?,?,?,?,?,?)", rows)
+             clean_val(r.get("SMA200")), clean_val(r.get("ATR14")), clean_val(r.get("ext_sma50_xatr")), clean_val(r.get("ext_sma200_xatr"))) for _, r in df.iterrows()]
+    db.executemany("INSERT OR REPLACE INTO extension (example_id, date, close, sma50, sma200, atr14, ext_sma50_xatr, ext_sma200_xatr) VALUES (?,?,?,?,?,?,?,?)", rows)
 
 def get_ohlcv_df(db, example_id):
     rows = db.execute("SELECT date as Date, open as Open, high as High, low as Low, close as Close, volume as Volume FROM ohlcv WHERE example_id=? ORDER BY date", (example_id,)).fetchall()
@@ -179,7 +207,7 @@ def get_ohlcv_df(db, example_id):
     return df
 
 def get_extension_rows(db, example_id):
-    return [dict(r) for r in db.execute("SELECT date, close, sma50, sma200, ext_sma50_pct, ext_sma200_pct FROM extension WHERE example_id=? ORDER BY date", (example_id,)).fetchall()]
+    return [dict(r) for r in db.execute("SELECT date, close, sma50, sma200, atr14, ext_sma50_xatr, ext_sma200_xatr FROM extension WHERE example_id=? ORDER BY date", (example_id,)).fetchall()]
 
 
 # ============================================
@@ -547,7 +575,12 @@ async def migrate_legacy_data():
                     ext_csv = Path("data/extension") / setup_type / f"{ticker}.csv"
                 if ext_csv.exists():
                     ext = pd.read_csv(ext_csv); ext["Date"] = pd.to_datetime(ext["Date"])
-                    store_extension(db, eid, ext)
+                    # Legacy CSVs have pct columns — skip them, re-fetch fresh xATR data
+                    if "ext_sma50_xatr" not in ext.columns:
+                        print(f"  {ticker}: legacy ext CSV has pct columns, re-fetching for xATR...")
+                        ext = fetch_extension(ticker)
+                    if ext is not None:
+                        store_extension(db, eid, ext)
 
                 if ticker in analysis_map:
                     db.execute("INSERT OR REPLACE INTO signal_analysis (example_id, analysis_json) VALUES (?,?)",

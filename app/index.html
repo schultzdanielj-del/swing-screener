@@ -456,7 +456,7 @@
         ctx.scale(2, 2);
         const w = W / 2, h = H / 2;
 
-        const col = metric === '50sma' ? 'ext_sma50_pct' : 'ext_sma200_pct';
+        const col = metric === '50sma' ? 'ext_sma50_xatr' : 'ext_sma200_xatr';
         const lineColor = metric === '50sma' ? '#FFD700' : '#FF0000';
 
         let plotData = data.filter(d => d[col] !== null);
@@ -579,14 +579,14 @@
             // Value label
             ctx.fillStyle = '#3b82f6';
             ctx.font = 'bold 9px sans-serif';
-            ctx.fillText(entryVal.toFixed(1) + '%', w - pad.r - 40, ey - 4);
+            ctx.fillText(entryVal.toFixed(1) + 'x', w - pad.r - 40, ey - 4);
           }
         }
 
         // Label
         ctx.fillStyle = '#94a3b8';
         ctx.font = '10px sans-serif';
-        ctx.fillText(metric === '50sma' ? '% from 50 SMA' : '% from 200 SMA', pad.l + 4, pad.t + 12);
+        ctx.fillText(metric === '50sma' ? 'xATR from 50 SMA' : 'xATR from 200 SMA', pad.l + 4, pad.t + 12);
 
       }, [data, metric, entryDate, timeView]);
 
