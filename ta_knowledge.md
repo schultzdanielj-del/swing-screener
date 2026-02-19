@@ -93,10 +93,12 @@
 - (Further detail to be added)
 
 ### LSP / MOC Lines
-- MOC lines = highs and lows of the highest RVOL D1 candles (the "very white" candles on RVOL vision)
+- **MOC lines** = highs and lows of the highest RVOL D1 candles (the "very white" candles on RVOL vision)
 - These levels matter regardless of where they are on the chart — age doesn't diminish them
-- They mark where the biggest institutional orders were filled = permanent support/resistance until absorbed
-- (LSP to be defined)
+- They mark where the biggest institutional orders were filled
+- **MOC lines stack** — the more high-RVOL candle highs/lows clustering at the same price, the more significant the level. Analogue scale, not binary.
+- **LSP (Left Side Pivot)** = the most prominent pivot high/low visible on the left side of the chart. The obvious structural level. Usually coincides with an MOC line because pivots tend to form on high-volume candles.
+- Example: BTU $36 — major LSP from prior high, also an MOC level. Would be the key resistance for any January long thesis.
 
 - When market is chopping with no direction, asset managers are NOT present (no buy/sell campaigns running)
 - Algos are working instead, operating on two principles:
