@@ -641,6 +641,49 @@ async def upload_ticker_list(tickers: list[str]):
     return {"stored": count}
 
 
+@app.post("/api/universe/load-file")
+async def load_ticker_file():
+    """Load tickers from the bundled universe_tickers.txt file on the server."""
+    from scripts.fetch_universe import init_universe_tables
+    import glob
+
+    # Search everywhere for the file
+    candidates = glob.glob("/app/**/*universe*ticker*", recursive=True) + \
+                 glob.glob("/app/**/*Universe*", recursive=True) + \
+                 glob.glob("./**/*universe*ticker*", recursive=True)
+
+    # Also check known paths
+    for p in ["/app/universe_tickers.txt", "universe_tickers.txt",
+              "/app/data/universe_tickers.txt", "data/universe_tickers.txt"]:
+        if Path(p).exists() and p not in candidates:
+            candidates.append(p)
+
+    # Find the first one that exists and has content
+    found = None
+    for c in candidates:
+        p = Path(c)
+        if p.is_file() and p.stat().st_size > 100:
+            found = p
+            break
+
+    if not found:
+        return {"error": "No ticker file found", "searched": candidates}
+
+    lines = found.read_text().replace("\r", "").strip().split("\n")
+    tickers = [l.strip().upper() for l in lines if l.strip()]
+
+    with get_db() as db:
+        init_universe_tables(db)
+        count = 0
+        for t in tickers:
+            if t and len(t) <= 6:
+                db.execute("INSERT OR IGNORE INTO universe_tickers (ticker) VALUES (?)", (t,))
+                count += 1
+        db.commit()
+
+    return {"stored": count, "file": str(found), "candidates_found": candidates}
+
+
 @app.post("/api/universe/reset")
 async def reset_universe_fetch():
     """Reset fetch status so it can be re-run. Does NOT delete existing OHLCV data."""
