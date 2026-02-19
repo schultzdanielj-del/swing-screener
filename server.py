@@ -81,10 +81,24 @@ def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
 
-    # Trim to ~120 trading days ending near entry date
+    # Center on entry date: 30 days before, 30 days after
     entry_dt = pd.Timestamp(entry_date)
-    mask = df["Date"] <= entry_dt + timedelta(days=5)
-    chart_df = df[mask].tail(60).copy().reset_index(drop=True)
+    entry_rows = df[df["Date"] == entry_dt]
+    if entry_rows.empty:
+        # Find closest date
+        before = df[df["Date"] <= entry_dt]
+        if before.empty:
+            return None
+        entry_idx = before.index[-1]
+    else:
+        entry_idx = entry_rows.index[0]
+
+    start_idx = max(0, entry_idx - 30)
+    end_idx = min(len(df), entry_idx + 31)
+    chart_df = df.iloc[start_idx:end_idx].copy().reset_index(drop=True)
+
+    # Recalculate entry position in trimmed df
+    entry_pos = entry_idx - start_idx
 
     if chart_df.empty:
         return None
@@ -126,10 +140,7 @@ def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
             ax.plot(range(n), s.values, color=color, linewidth=lw, alpha=0.8)
 
     # Entry date marker
-    entry_rows = chart_df[chart_df["Date"] == entry_dt]
-    if not entry_rows.empty:
-        eidx = entry_rows.index[0]
-        ax.axvline(x=eidx, color="#3b82f6", linewidth=1.5, alpha=0.6, linestyle="--")
+    ax.axvline(x=entry_pos, color="#3b82f6", linewidth=1.5, alpha=0.6, linestyle="--")
 
     # Styling
     ax.set_title(f"{ticker}  •  {entry_date}", color="#e2e8f0", fontsize=11,
