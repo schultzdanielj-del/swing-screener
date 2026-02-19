@@ -184,6 +184,7 @@
 - **Freshness:** GEX profile changes with new information (stock/sector/macro news, new positioning). Only valid for ~24-48 hours. Don't reference a gamma chart from last week.
 - **What matters:** Only the high-concentration levels, not the noise in between. For any stock, you need to know: (1) where positive gamma flips to negative (the vol trigger — e.g. TSLA between 410-412.50 = ~411.25), (2) the fattest positive strike (compression zone — e.g. TSLA 425), (3) the fattest negative strike (pivot point — e.g. TSLA 400). Ignore everything else.
 - **Intraday movement:** Price tends to pivot and stair-step around 1/4 increments between the fat strikes. E.g. between fat strikes at 425 and 435, price zigzags through 425 → 427.5 → 430 → 432.5 → 435. These quarter-levels act like the AVWAP footholds — price needs to confirm each one sequentially to sustain the move through the range.
+- **Hierarchy:** Gamma levels are for reading intraday action only. The bigger levels — MOC lines, algo lines, breakout AVWAPs, baby/daddy MAs — always take priority. Gamma is a supporting layer, not the boss.
 
 ## Chart Themes & Wave Cycles
 
