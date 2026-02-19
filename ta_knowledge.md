@@ -11,13 +11,15 @@
 - Break of downtrending/capitulating 200 SMA extension structure
 - 50 SMA extension is upsloping
 - 200 SMA extension is in a bullish channel
+- 50 extension builds above ~3x ADR — confirms bullish run
 - **Strategy:** Hammer every breakout. Go go go.
 - **Reference:** SPY April–July 2025
 
 ### Stage 2b — "Buy Dips"
 - Begins after the first big ATR expansion since stage 2a start (~7/30/2025 on SPY)
-- 50 SMA extension starts downsloping
+- 50 SMA extension starts downsloping (declining side of the pyramid)
 - 200 SMA extension still in bull channel
+- Stage 2a + 2b together form a pyramid/mountain shape on the 50 extension histogram
 - **Strategy:** Buy dips, not breakouts. More selective.
 - **Entry signal:** VIX dips back below ~17-18 AND price is over the 21 EMA = good to go
 - **Transition out:** Stage 2 ends when 200 extension channel breaks structure AND 50 extension flattens out
