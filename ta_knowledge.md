@@ -62,6 +62,7 @@
 - **Proximity to 50 SMA = upside potential.** The closer a setup is to the 50, the more room it has. Closer to 50 AND coming out of a recent correction = maximum upside potential.
 - Trendline breaks on the 50 extension structure itself can confirm the move is starting.
 - **Why big base breakouts are the biggest movers:** A huge base typically has a correction below the 50 embedded in it, which resets the ADR extension potential back to zero. Breaking out of that base = full statistical runway to the max extension ceiling. Same reason post-correction stocks run hardest — the extension counter is reset.
+- **No reset = capped upside:** An extension trendline break WITHOUT a prior flush/correction below the 50 SMA means the extension counter wasn't reset. You may get a move, but don't expect the same height extension as a post-correction breakout. Temper targets accordingly.
 
 - Bull channels break one side: either establish steeper channel on top (continuation) or break opposite side for measured move
 - If lower trendline breaks and retest fails → measured move = channel width projected downward
