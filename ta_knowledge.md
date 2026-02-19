@@ -85,7 +85,15 @@
 - **Trend days (rare):** Can attack breakouts all day long. If bearish trend day, shorts are already gone — would have to chase.
 - Trend days are the exception, not the rule.
 
-## Algo / Chop Environments
+## Key D1 Levels — Algo Lines & LSP/MOC Lines
+
+### Algo Lines
+- Any D1 candle with volume solidly above the 50-period moving average of volume = significant candle
+- The highs and lows of these candles become key support/resistance levels
+- (Further detail to be added)
+
+### LSP / MOC Lines
+- (To be defined)
 
 - When market is chopping with no direction, asset managers are NOT present (no buy/sell campaigns running)
 - Algos are working instead, operating on two principles:
