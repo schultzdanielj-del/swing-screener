@@ -1,23 +1,77 @@
 [
-  {"ticker": "IREN", "chart_date": "2025-10-28", "image": "image.png"},
-  {"ticker": "CLSK", "chart_date": "2025-10-28", "image": "image (1).png"},
-  {"ticker": "PATH", "chart_date": "2025-10-28", "image": "image (2).png"},
-  {"ticker": "LEU", "chart_date": "2025-10-27", "image": "image (3).png"},
-  {"ticker": "FLNC", "chart_date": "2025-10-27", "image": "image (4).png"},
-  {"ticker": "BITF", "chart_date": "2025-10-27", "image": "image (5).png"},
-  {"ticker": "HIVE", "chart_date": "2025-10-27", "image": "image (6).png"},
-  {"ticker": "QS", "chart_date": "2025-10-27", "image": "image (7).png"},
-  {"ticker": "PL", "chart_date": "2025-10-27", "image": "image (8).png"},
-  {"ticker": "ONDS", "chart_date": "2025-10-27", "image": "image (9).png"},
-  {"ticker": "RR", "chart_date": "2025-10-27", "image": "image (10).png"},
-  {"ticker": "OKLO", "chart_date": "2025-10-27", "image": "image (11).png"},
-  {"ticker": "APP", "chart_date": "2025-10-27", "image": "image (12).png"},
-  {"ticker": "BE", "chart_date": "2025-10-27", "image": "image (13).png"},
-  {"ticker": "SEI", "chart_date": "2025-09-30", "image": "image (15).png"},
-  {"ticker": "TTMI", "chart_date": "2025-09-30", "image": "image (16).png"},
-  {"ticker": "INOD", "chart_date": "2025-09-30", "image": "image (17).png"},
-  {"ticker": "OPEN", "chart_date": "2025-09-25", "image": "image (18).png"},
-  {"ticker": "QQQ", "chart_date": "2025-08-08", "image": "image (19).png"},
-  {"ticker": "TSSI", "chart_date": "2025-07-29", "image": "image (20).png"},
-  {"ticker": "AEVA", "chart_date": "2025-07-24", "image": "image (21).png"}
+  {
+    "ticker": "IREN",
+    "chart_date": "2025-10-28",
+    "image": "image.png"
+  },
+  {
+    "ticker": "CLSK",
+    "chart_date": "2025-10-28",
+    "image": "image (1).png"
+  },
+  {
+    "ticker": "PATH",
+    "chart_date": "2025-10-28",
+    "image": "image (2).png"
+  },
+  {
+    "ticker": "LEU",
+    "chart_date": "2025-10-27",
+    "image": "image (3).png"
+  },
+  {
+    "ticker": "FLNC",
+    "chart_date": "2025-10-27",
+    "image": "image (4).png"
+  },
+  {
+    "ticker": "BITF",
+    "chart_date": "2025-10-27",
+    "image": "image (5).png"
+  },
+  {
+    "ticker": "HIVE",
+    "chart_date": "2025-10-27",
+    "image": "image (6).png"
+  },
+  {
+    "ticker": "QS",
+    "chart_date": "2025-10-27",
+    "image": "image (7).png"
+  },
+  {
+    "ticker": "PL",
+    "chart_date": "2025-10-27",
+    "image": "image (8).png"
+  },
+  {
+    "ticker": "ONDS",
+    "chart_date": "2025-10-27",
+    "image": "image (9).png"
+  },
+  {
+    "ticker": "RR",
+    "chart_date": "2025-10-27",
+    "image": "image (10).png"
+  },
+  {
+    "ticker": "OKLO",
+    "chart_date": "2025-10-27",
+    "image": "image (11).png"
+  },
+  {
+    "ticker": "BE",
+    "chart_date": "2025-10-27",
+    "image": "image (13).png"
+  },
+  {
+    "ticker": "OPEN",
+    "chart_date": "2025-09-25",
+    "image": "image (18).png"
+  },
+  {
+    "ticker": "AEVA",
+    "chart_date": "2025-07-24",
+    "image": "image (21).png"
+  }
 ]

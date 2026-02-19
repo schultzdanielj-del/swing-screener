@@ -5,11 +5,6 @@
     "entry_date": "2025-07-21"
   },
   {
-    "ticker": "APP",
-    "chart_date": "2025-10-27",
-    "entry_date": "2025-10-28"
-  },
-  {
     "ticker": "BE",
     "chart_date": "2025-10-27",
     "entry_date": "2025-10-27"
@@ -68,11 +63,6 @@
     "ticker": "PL",
     "chart_date": "2025-10-27",
     "entry_date": "2025-10-27"
-  },
-  {
-    "ticker": "QQQ",
-    "chart_date": "2025-08-08",
-    "entry_date": "2025-08-08"
   },
   {
     "ticker": "QS",

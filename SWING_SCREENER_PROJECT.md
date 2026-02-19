@@ -31,7 +31,6 @@
 
 **KNOWN ISSUE — Persistent deletes broken:**
 - UI deletes update entry_dates.json but DON'T delete CSV/chart files from repo
-- 4 orphans (INOD, PLTR, SEI, TTMI) cleaned manually on 2026-02-18
 - 4 MORE deletions didn't persist to entry_dates.json — entry_dates.json has 19, should be 15
 - NEXT CHAT: Hit Railway `/api/examples` to get actual 15 tickers, sync repo, fix delete code
 
@@ -67,9 +66,9 @@ This takes 1-2 hours nightly. The real goal is screening 1000+ tickers down to ~
 
 ### 1. 3-4DB — 3-4 Day Bounce (SHORT setup) — PCF COMPLETE
 - Stock pulls back after a move, bounces weakly for 3-4 days, then fails
-- 19 examples with pinned entry dates and signal day analysis
+- 16 examples with pinned entry dates and signal day analysis
 - 9 PCF conditions, 100% pass rate (zero false negatives)
-- Examples: CLSK, PATH, LEU, FLNC, REAL, OPEN, AEVA, IREN, BITF, HIVE, QS, PL, NQ, TSSI, ONDS, RR, OKLO, APP, BE
+- Examples: AEVA, BE, BITF, CLSK, FLNC, HIVE, IREN, LEU, OKLO, ONDS, OPEN, PATH, PL, QS, REAL, RR
 
 ### 2. DTSS — Double Top Short Sell (SHORT setup)
 - Failed breakout at resistance, short at the rejection
@@ -109,7 +108,7 @@ swing-screener/
 ├── config.yaml              # Chart config (MAs, dark theme, etc.)
 ├── data/
 │   └── ohlcv/
-│       └── 3-4db/           # 21 CSV files + entry_dates.json + signal_day_analysis.json
+│       └── 3-4db/           # 16 CSV files + entry_dates.json + signal_day_analysis.json
 ├── setup_library/
 │   ├── 3-4db/
 │   │   ├── description.md

@@ -1,9 +1,9 @@
 {
   "setup": "3-4DB",
-  "description": "3-4 Day Bounce — weak bounce after pullback, short entry",
+  "description": "3-4 Day Bounce \u2014 weak bounce after pullback, short entry",
   "last_updated": "2026-02-17",
-  "examples_count": 19,
-  "removed_examples": ["INOD (not a good setup)", "SEI (not a good setup)", "TTMI (not a good setup)"],
+  "examples_count": 16,
+  "removed_examples": [],
   "signal_basis": "prior_close",
   "notes": "All conditions evaluated as of the close BEFORE entry day. Entry happens early on the next trading day. REAL barely misses condition 5 (MINL3 = MINL2 edge case) but is a valid setup.",
   "scan_conditions": [
@@ -13,8 +13,8 @@
       "description": "Close above 50-day SMA",
       "pcf": "C > AVGC50",
       "hit_rate": 1.0,
-      "hits": 19,
-      "total": 19,
+      "hits": 16,
+      "total": 16,
       "active": true
     },
     {
@@ -23,8 +23,8 @@
       "description": "50 SMA rising over 5 days",
       "pcf": "AVGC50 > AVGC50.5",
       "hit_rate": 1.0,
-      "hits": 19,
-      "total": 19,
+      "hits": 16,
+      "total": 16,
       "active": true
     },
     {
@@ -33,10 +33,14 @@
       "description": "Close at least 0.3 ATR above 50 SMA",
       "pcf": "C - AVGC50 > 0.3 * AVGT14",
       "hit_rate": 1.0,
-      "hits": 19,
-      "total": 19,
+      "hits": 16,
+      "total": 16,
       "active": true,
-      "data": {"min_atr": 0.49, "median_atr": 2.97, "max_atr": 4.22}
+      "data": {
+        "min_atr": 0.49,
+        "median_atr": 2.97,
+        "max_atr": 4.22
+      }
     },
     {
       "id": 4,
@@ -44,8 +48,8 @@
       "description": "At least 2 of last 3 days closed higher than prior day",
       "pcf": "(IIF(C1 > C2, 1, 0) + IIF(C2 > C3, 1, 0) + IIF(C3 > C4, 1, 0)) >= 2",
       "hit_rate": 1.0,
-      "hits": 19,
-      "total": 19,
+      "hits": 16,
+      "total": 16,
       "active": true
     },
     {
@@ -54,10 +58,12 @@
       "description": "3-day low is below 2-day low (pullback low at least 3 bars ago)",
       "pcf": "MINL3 < MINL2",
       "hit_rate": 0.95,
-      "hits": 18,
-      "total": 19,
+      "hits": 15,
+      "total": 16,
       "active": true,
-      "exceptions": ["REAL (MINL3 = MINL2, low was exactly 2 bars ago)"]
+      "exceptions": [
+        "REAL (MINL3 = MINL2, low was exactly 2 bars ago)"
+      ]
     },
     {
       "id": 6,
@@ -65,10 +71,14 @@
       "description": "Close at least 0.8 ATR above 10-day low",
       "pcf": "C - MINL10 > 0.8 * AVGT14",
       "hit_rate": 1.0,
-      "hits": 19,
-      "total": 19,
+      "hits": 16,
+      "total": 16,
       "active": true,
-      "data": {"min_atr": 1.0, "median_atr": 2.22, "max_atr": 3.63}
+      "data": {
+        "min_atr": 1.0,
+        "median_atr": 2.22,
+        "max_atr": 3.63
+      }
     },
     {
       "id": 7,
@@ -76,10 +86,14 @@
       "description": "Close at least 0.3 ATR below 15-day high",
       "pcf": "MAXH15 - C > 0.3 * AVGT14",
       "hit_rate": 1.0,
-      "hits": 19,
-      "total": 19,
+      "hits": 16,
+      "total": 16,
       "active": true,
-      "data": {"min_atr": 0.33, "median_atr": 1.56, "max_atr": 4.25}
+      "data": {
+        "min_atr": 0.33,
+        "median_atr": 1.56,
+        "max_atr": 4.25
+      }
     },
     {
       "id": 8,
@@ -87,18 +101,18 @@
       "description": "At some point in last 15 bars, close was below 8 EMA (confirms real pullback occurred)",
       "pcf": "C1 < XAVGC8.1 OR C2 < XAVGC8.2 OR C3 < XAVGC8.3 OR C4 < XAVGC8.4 OR C5 < XAVGC8.5 OR C6 < XAVGC8.6 OR C7 < XAVGC8.7 OR C8 < XAVGC8.8 OR C9 < XAVGC8.9 OR C10 < XAVGC8.10 OR C11 < XAVGC8.11 OR C12 < XAVGC8.12 OR C13 < XAVGC8.13 OR C14 < XAVGC8.14 OR C15 < XAVGC8.15",
       "hit_rate": 1.0,
-      "hits": 19,
-      "total": 19,
+      "hits": 16,
+      "total": 16,
       "active": true
     },
     {
       "id": 9,
       "name": "not_at_new_highs",
-      "description": "Prior 15-day high (starting 2 bars ago) is above the last 2 bars' high — bounce hasn't exceeded prior pivot",
+      "description": "Prior 15-day high (starting 2 bars ago) is above the last 2 bars' high \u2014 bounce hasn't exceeded prior pivot",
       "pcf": "MAXH15.2 > MAXH2",
       "hit_rate": 1.0,
-      "hits": 19,
-      "total": 19,
+      "hits": 16,
+      "total": 16,
       "active": true
     }
   ],
@@ -108,9 +122,12 @@
       "name": "ema8_above_ema21",
       "pcf": "XAVGC8 > XAVGC21",
       "hit_rate": 0.84,
-      "hits": 16,
-      "total": 19,
-      "exceptions": ["APP", "ONDS", "REAL_tbd"],
+      "hits": 14,
+      "total": 16,
+      "exceptions": [
+        "ONDS",
+        "REAL"
+      ],
       "tier": "near_universal"
     },
     {
@@ -118,8 +135,8 @@
       "name": "volume_below_avg",
       "pcf": "V < 1.25 * AVGV20",
       "hit_rate": 1.0,
-      "hits": 18,
-      "total": 18,
+      "hits": 16,
+      "total": 16,
       "tier": "universal_not_in_scan",
       "notes": "Universal across original 18 but kept out of scan to avoid over-filtering"
     }
