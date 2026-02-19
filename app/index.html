@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Swing Screener</title>
+  <title>ScanPerfect</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -369,14 +369,35 @@
     function ExamplesPage({ activeSetup }) {
       const [examples, setExamples] = useState([]);
       const [loading, setLoading] = useState(true);
+      const [deleting, setDeleting] = useState(null);
 
-      useEffect(() => {
+      function loadExamples() {
         setLoading(true);
         fetch(`/api/examples/${activeSetup}`)
           .then(r => r.json())
           .then(data => { setExamples(data.examples || []); setLoading(false); })
           .catch(() => setLoading(false));
-      }, [activeSetup]);
+      }
+
+      useEffect(() => { loadExamples(); }, [activeSetup]);
+
+      async function handleDelete(ticker) {
+        if (!confirm(`Delete ${ticker} from ${activeSetup.toUpperCase()}?`)) return;
+        setDeleting(ticker);
+        try {
+          const res = await fetch(`/api/examples/${activeSetup}/${ticker}`, { method: 'DELETE' });
+          if (!res.ok) {
+            const msg = await res.json().catch(() => ({ detail: res.statusText }));
+            alert(msg.detail || 'Delete failed');
+          } else {
+            loadExamples();
+          }
+        } catch (e) {
+          alert(e.message);
+        } finally {
+          setDeleting(null);
+        }
+      }
 
       return (
         <div>
@@ -403,6 +424,7 @@
                     <th>Entry Date</th>
                     <th>Chart Date</th>
                     <th>Analysis</th>
+                    <th style={{width: 50}}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -415,6 +437,18 @@
                         ? <span className="badge badge-pass">✓</span>
                         : <span className="badge" style={{background:'rgba(239,83,80,0.15)', color:'var(--accent-red)'}}>—</span>
                       }</td>
+                      <td>
+                        <button
+                          onClick={() => handleDelete(ex.ticker)}
+                          disabled={deleting === ex.ticker}
+                          style={{ background:'none', border:'none', color:'var(--text-muted)', cursor:'pointer', fontSize: 13, padding: '4px 8px', borderRadius: 4, transition:'color 0.15s' }}
+                          onMouseOver={e => e.target.style.color = 'var(--accent-red)'}
+                          onMouseOut={e => e.target.style.color = 'var(--text-muted)'}
+                          title={`Delete ${ex.ticker}`}
+                        >
+                          {deleting === ex.ticker ? '...' : '✕'}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1007,7 +1041,7 @@
         <>
           <div className="sidebar">
             <div className="sidebar-logo">
-              swing<span>/</span>screener
+              scan<span>/</span>perfect
             </div>
             {Object.entries(sections).map(([section, pages]) => (
               <React.Fragment key={section}>

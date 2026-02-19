@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Swing Screener API")
+app = FastAPI(title="ScanPerfect API")
 
 
 class SaveExampleRequest(BaseModel):
@@ -202,6 +202,40 @@ async def get_conditions(setup_type: str):
     if not cond_file.exists():
         raise HTTPException(404, f"No conditions found for {setup_type}")
     return json.loads(cond_file.read_text())
+
+
+@app.delete("/api/examples/{setup_type}/{ticker}")
+async def delete_example(setup_type: str, ticker: str):
+    """Delete an example: remove CSV, entry date, and analysis."""
+    ticker = ticker.upper().strip()
+    data_dir = DATA_DIR / setup_type
+    if not data_dir.exists():
+        raise HTTPException(404, f"No data directory for {setup_type}")
+
+    # Delete CSV file(s) matching this ticker
+    deleted_files = []
+    for f in data_dir.glob(f"{ticker}_*.csv"):
+        f.unlink()
+        deleted_files.append(f.name)
+
+    if not deleted_files:
+        raise HTTPException(404, f"No CSV found for {ticker} in {setup_type}")
+
+    # Remove from entry_dates.json
+    entry_file = data_dir / "entry_dates.json"
+    if entry_file.exists():
+        entries = json.loads(entry_file.read_text())
+        entries = [e for e in entries if e["ticker"] != ticker]
+        entry_file.write_text(json.dumps(entries, indent=2))
+
+    # Remove from signal_day_analysis.json
+    analysis_file = data_dir / "signal_day_analysis.json"
+    if analysis_file.exists():
+        analyses = json.loads(analysis_file.read_text())
+        analyses = [a for a in analyses if a["ticker"] != ticker]
+        analysis_file.write_text(json.dumps(analyses, indent=2))
+
+    return {"status": "deleted", "ticker": ticker, "files": deleted_files}
 
 
 def calc_sma_series(series: pd.Series, period: int) -> pd.Series:
