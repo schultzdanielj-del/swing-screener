@@ -3,6 +3,7 @@
 import os
 import json
 import math
+import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -21,6 +22,30 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI(title="ScanPerfect API")
+
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO = "schultzdanielj-del/swing-screener"
+
+
+def git_push_data(message: str):
+    """Commit and push data changes to GitHub so they persist across deploys."""
+    if not GITHUB_TOKEN:
+        print("No GITHUB_TOKEN set, skipping git push")
+        return
+    try:
+        repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+        cmds = [
+            ["git", "config", "user.email", "scanperfect@auto.dev"],
+            ["git", "config", "user.name", "ScanPerfect"],
+            ["git", "add", "-A"],
+            ["git", "commit", "-m", message, "--allow-empty"],
+            ["git", "push", repo_url, "main"],
+        ]
+        for cmd in cmds:
+            subprocess.run(cmd, capture_output=True, timeout=30)
+        print(f"git push ok: {message}")
+    except Exception as e:
+        print(f"git push failed: {e}")
 
 
 class SaveExampleRequest(BaseModel):
@@ -473,6 +498,9 @@ async def delete_example(setup_type: str, ticker: str):
         if chart_img.exists():
             chart_img.unlink()
 
+    # Persist to git
+    git_push_data(f"Delete {ticker} from {setup_type}")
+
     return {"status": "deleted", "ticker": ticker, "files": deleted_files}
 
 
@@ -524,6 +552,9 @@ async def update_entry_date(setup_type: str, ticker: str, req: UpdateEntryReques
         generate_chart_image(raw, ticker, entry_date, setup_type, at_entry=True)
     except Exception as e:
         print(f"Chart regen failed for {ticker}: {e}")
+
+    # Persist to git
+    git_push_data(f"Update {ticker} entry date to {entry_date}")
 
     return {
         "status": "updated",
@@ -771,6 +802,9 @@ async def save_example(setup_type: str, req: SaveExampleRequest):
         generate_chart_image(raw, ticker, entry_date, setup_type, at_entry=True)
     except Exception as e:
         print(f"Chart image generation failed for {ticker}: {e}")
+
+    # Persist to git
+    git_push_data(f"Add {ticker} to {setup_type}")
 
     return {
         "status": "saved",
