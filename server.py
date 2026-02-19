@@ -72,7 +72,7 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
-                         setup_type: str) -> str:
+                         setup_type: str, at_entry: bool = False) -> str:
     """Generate a D1 candlestick chart PNG using pure matplotlib."""
     charts_dir = CHARTS_DIR / setup_type
     charts_dir.mkdir(parents=True, exist_ok=True)
@@ -93,25 +93,35 @@ def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
     else:
         entry_idx = entry_rows.index[0]
 
-    # How many candles available after entry?
-    avail_after = len(df) - entry_idx - 1
-    avail_before = entry_idx
-
-    # Target 60 candles total, entry in middle
-    want_after = min(30, avail_after)
-    want_before = min(30, avail_before)
-    # Fill remaining from the other side
-    total = want_before + 1 + want_after
-    if total < 60:
-        extra = 60 - total
-        if want_before < 30:
-            want_after = min(want_after + extra, avail_after)
-        else:
-            want_before = min(want_before + extra, avail_before)
-
-    start_idx = entry_idx - want_before
-    end_idx = entry_idx + want_after + 1
-    chart_df = df.iloc[start_idx:end_idx].copy().reset_index(drop=True)
+    if at_entry:
+        # Show 50 candles before entry, nothing after, with padding
+        want_before = min(50, entry_idx)
+        start_idx = entry_idx - want_before
+        chart_df = df.iloc[start_idx:entry_idx + 1].copy().reset_index(drop=True)
+        entry_pos = want_before
+        # Add 15% empty space to the right
+        n = len(chart_df)
+        empty_right = max(int(n * 0.18), 5)
+        total_width = n + empty_right
+    else:
+        avail_after = len(df) - entry_idx - 1
+        avail_before = entry_idx
+        want_after = min(30, avail_after)
+        want_before = min(30, avail_before)
+        total = want_before + 1 + want_after
+        if total < 60:
+            extra = 60 - total
+            if want_before < 30:
+                want_after = min(want_after + extra, avail_after)
+            else:
+                want_before = min(want_before + extra, avail_before)
+        start_idx = entry_idx - want_before
+        end_idx = entry_idx + want_after + 1
+        chart_df = df.iloc[start_idx:end_idx].copy().reset_index(drop=True)
+        entry_pos = want_before
+        n = len(chart_df)
+        empty_right = 0
+        total_width = n
     entry_pos = want_before  # position in chart_df
 
     if chart_df.empty:
@@ -166,14 +176,15 @@ def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
     ax_vol.tick_params(colors="#64748b", labelsize=7)
     ax.spines[:].set_color("#2a3550")
     ax_vol.spines[:].set_color("#2a3550")
-    ax.set_xlim(-1, n)
-    ax_vol.set_xlim(-1, n)
+    ax.set_xlim(-1, total_width)
+    ax_vol.set_xlim(-1, total_width)
     ax.set_xticks([])
     ax_vol.set_xticks([])
     ax_vol.yaxis.set_visible(False)
     ax.grid(True, alpha=0.1, color="#64748b")
 
-    filepath = str(charts_dir / f"{ticker}.png")
+    suffix = "_at_entry" if at_entry else ""
+    filepath = str(charts_dir / f"{ticker}{suffix}.png")
     fig.tight_layout(pad=0.5)
     fig.savefig(filepath, facecolor="#0a0e17", bbox_inches="tight")
     plt.close(fig)
@@ -351,10 +362,16 @@ async def get_local_ohlcv(setup_type: str, ticker: str):
 
 
 @app.get("/api/chart-image/{setup_type}/{ticker}")
-async def get_chart_image(setup_type: str, ticker: str):
+async def get_chart_image(
+    setup_type: str, ticker: str,
+    at_entry: int = Query(0, description="1 to show chart at entry time only"),
+):
     """Serve a pre-generated chart image PNG."""
     ticker = ticker.upper().strip()
-    img_path = CHARTS_DIR / setup_type / f"{ticker}.png"
+    if at_entry:
+        img_path = CHARTS_DIR / setup_type / f"{ticker}_at_entry.png"
+    else:
+        img_path = CHARTS_DIR / setup_type / f"{ticker}.png"
     if not img_path.exists():
         raise HTTPException(404, f"No chart image for {ticker}")
     return FileResponse(str(img_path), media_type="image/png")
@@ -449,10 +466,11 @@ async def delete_example(setup_type: str, ticker: str):
         analyses = [a for a in analyses if a["ticker"] != ticker]
         analysis_file.write_text(json.dumps(analyses, indent=2))
 
-    # Remove chart image
-    chart_img = CHARTS_DIR / setup_type / f"{ticker}.png"
-    if chart_img.exists():
-        chart_img.unlink()
+    # Remove chart images
+    for suffix in ["", "_at_entry"]:
+        chart_img = CHARTS_DIR / setup_type / f"{ticker}{suffix}.png"
+        if chart_img.exists():
+            chart_img.unlink()
 
     return {"status": "deleted", "ticker": ticker, "files": deleted_files}
 
@@ -688,10 +706,11 @@ async def save_example(setup_type: str, req: SaveExampleRequest):
         # Save entry date even if analysis fails
         analysis = {"error": str(e)}
 
-    # Generate chart image
+    # Generate chart images (both views)
     chart_path = None
     try:
-        chart_path = generate_chart_image(raw, ticker, entry_date, setup_type)
+        chart_path = generate_chart_image(raw, ticker, entry_date, setup_type, at_entry=False)
+        generate_chart_image(raw, ticker, entry_date, setup_type, at_entry=True)
     except Exception as e:
         print(f"Chart image generation failed for {ticker}: {e}")
 

@@ -365,8 +365,9 @@
     // ============================================
     // EXAMPLES PAGE
     // ============================================
-    function ExampleCard({ example, activeSetup, onDelete, deleting, chartView }) {
-      const imgUrl = `/api/chart-image/${activeSetup}/${example.ticker}`;
+    function ExampleCard({ example, activeSetup, onDelete, deleting, chartView, timeView }) {
+      const entryDate = example.entryDate || example.chartDate || '';
+      const imgUrl = `/api/chart-image/${activeSetup}/${example.ticker}` + (timeView === 'entry' ? '?at_entry=1' : '');
 
       return (
         <div style={{
@@ -382,7 +383,7 @@
           {chartView === 'd1' ? (
             <img src={imgUrl} alt={`${example.ticker} chart`} style={{ width: '100%', display: 'block' }} onError={e => { e.target.style.display = 'none'; }} />
           ) : (
-            <ExtensionMiniChart ticker={example.ticker} activeSetup={activeSetup} metric={chartView} entryDate={example.entryDate || example.chartDate} />
+            <ExtensionMiniChart ticker={example.ticker} activeSetup={activeSetup} metric={chartView} entryDate={entryDate} timeView={timeView} />
           )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -405,16 +406,18 @@
       );
     }
 
-    function ExtensionMiniChart({ ticker, activeSetup, metric, entryDate }) {
+    function ExtensionMiniChart({ ticker, activeSetup, metric, entryDate, timeView }) {
       const canvasRef = useRef(null);
       const [data, setData] = useState(null);
 
       useEffect(() => {
-        fetch(`/api/extension-data/${activeSetup}/${ticker}?entry_date=${entryDate || ''}`)
+        const params = new URLSearchParams();
+        if (entryDate) params.set('entry_date', entryDate);
+        fetch(`/api/extension-data/${activeSetup}/${ticker}?${params}`)
           .then(r => r.ok ? r.json() : null)
           .then(d => setData(d))
           .catch(() => {});
-      }, [ticker, activeSetup]);
+      }, [ticker, activeSetup, entryDate]);
 
       useEffect(() => {
         if (!data || !canvasRef.current) return;
@@ -427,8 +430,27 @@
 
         const col = metric === '50sma' ? 'ext_sma50_pct' : 'ext_sma200_pct';
         const lineColor = metric === '50sma' ? '#FFD700' : '#FF0000';
-        const vals = data.map(d => d[col]).filter(v => v !== null);
-        const dates = data.filter(d => d[col] !== null).map(d => d.date);
+
+        let plotData = data.filter(d => d[col] !== null);
+
+        // At Entry mode: trim to entry date, add empty space
+        let entryIdx = -1;
+        if (entryDate) {
+          entryIdx = plotData.findIndex(d => d.date === entryDate);
+          if (entryIdx < 0) {
+            // Find closest before
+            for (let i = plotData.length - 1; i >= 0; i--) {
+              if (plotData[i].date <= entryDate) { entryIdx = i; break; }
+            }
+          }
+        }
+
+        if (timeView === 'entry' && entryIdx >= 0) {
+          plotData = plotData.slice(0, entryIdx + 1);
+        }
+
+        const vals = plotData.map(d => d[col]);
+        const dates = plotData.map(d => d.date);
 
         if (vals.length < 2) return;
 
@@ -436,7 +458,10 @@
         const maxV = Math.max(...vals, 0);
         const range = maxV - minV || 1;
         const pad = { t: 20, b: 20, l: 8, r: 8 };
-        const cw = w - pad.l - pad.r;
+
+        // At entry: reserve ~15% empty space on right
+        const rightPad = timeView === 'entry' ? 0.15 : 0;
+        const cw = (w - pad.l - pad.r) * (1 - rightPad);
         const ch = h - pad.t - pad.b;
 
         ctx.fillStyle = '#0a0e17';
@@ -535,7 +560,7 @@
         ctx.font = '10px sans-serif';
         ctx.fillText(metric === '50sma' ? '% from 50 SMA' : '% from 200 SMA', pad.l + 4, pad.t + 12);
 
-      }, [data, metric, entryDate]);
+      }, [data, metric, entryDate, timeView]);
 
       if (!data) return <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>Loading...</div>;
 
@@ -551,6 +576,7 @@
       const [saving, setSaving] = useState(false);
       const [addError, setAddError] = useState(null);
       const [chartView, setChartView] = useState('d1');
+      const [timeView, setTimeView] = useState('after'); // 'entry' or 'after'
 
       function loadExamples() {
         setLoading(true);
@@ -625,6 +651,10 @@
                   </button>
                 ))}
               </div>
+              <div style={{ display: 'flex', gap: 2, background: 'var(--bg-primary)', borderRadius: 6, padding: 2 }}>
+                <button onClick={() => setTimeView('entry')} style={{ background: timeView === 'entry' ? 'var(--bg-card)' : 'transparent', border: 'none', borderRadius: 4, padding: '3px 10px', fontSize: 11, fontWeight: 600, color: timeView === 'entry' ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer' }}>At Entry</button>
+                <button onClick={() => setTimeView('after')} style={{ background: timeView === 'after' ? 'var(--bg-card)' : 'transparent', border: 'none', borderRadius: 4, padding: '3px 10px', fontSize: 11, fontWeight: 600, color: timeView === 'after' ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer' }}>After</button>
+              </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleSave()} placeholder="TICKER" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 12, width: 80, outline: 'none' }} />
@@ -646,12 +676,13 @@
             }}>
               {examples.map(ex => (
                 <ExampleCard
-                  key={ex.ticker + chartView}
+                  key={ex.ticker + chartView + timeView}
                   example={ex}
                   activeSetup={activeSetup}
                   onDelete={handleDelete}
                   deleting={deleting}
                   chartView={chartView}
+                  timeView={timeView}
                 />
               ))}
             </div>
