@@ -6,13 +6,21 @@ import math
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 
 app = FastAPI(title="Swing Screener API")
+
+
+class SaveExampleRequest(BaseModel):
+    ticker: str
+    chart_date: str  # YYYY-MM-DD
+    entry_date: str  # YYYY-MM-DD
 
 DATA_DIR = Path("data/ohlcv")
 SETUP_LIBRARY_DIR = Path("setup_library")
@@ -194,6 +202,246 @@ async def get_conditions(setup_type: str):
     if not cond_file.exists():
         raise HTTPException(404, f"No conditions found for {setup_type}")
     return json.loads(cond_file.read_text())
+
+
+def calc_sma_series(series: pd.Series, period: int) -> pd.Series:
+    """SMA for analysis (same as calc_sma but named distinctly)."""
+    return series.rolling(window=period, min_periods=period).mean()
+
+
+def run_signal_analysis(df: pd.DataFrame, ticker: str, entry_date: str) -> dict:
+    """
+    Compute signal day analysis metrics for a given entry date.
+    Signal date = trading day before entry date.
+    Analysis is done on the signal date's data.
+    """
+    df = df.copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date").reset_index(drop=True)
+
+    # Add indicators
+    df["EMA8"] = calc_ema(df["Close"], 8)
+    df["EMA21"] = calc_ema(df["Close"], 21)
+    df["SMA10"] = calc_sma_series(df["Close"], 10)
+    df["SMA50"] = calc_sma_series(df["Close"], 50)
+    df["SMA200"] = calc_sma_series(df["Close"], 200)
+    df["ATR14"] = calc_atr(df, 14)
+    df["VolAvg20"] = df["Volume"].rolling(20).mean()
+
+    entry_dt = pd.Timestamp(entry_date)
+
+    # Find entry index
+    entry_idx = df.index[df["Date"] == entry_dt]
+    if len(entry_idx) == 0:
+        # Try closest date before
+        before = df[df["Date"] <= entry_dt]
+        if before.empty:
+            raise ValueError(f"No data at or before entry date {entry_date}")
+        entry_idx = [before.index[-1]]
+
+    eidx = entry_idx[0]
+    if eidx == 0:
+        raise ValueError("Entry date is the first row, no signal date available")
+
+    sig_idx = eidx - 1  # signal day = day before entry
+    sig = df.iloc[sig_idx]
+
+    c = float(sig["Close"])
+    o = float(sig["Open"])
+    h = float(sig["High"])
+    l = float(sig["Low"])
+    atr = float(sig["ATR14"]) if pd.notna(sig["ATR14"]) else None
+    vol = float(sig["Volume"])
+    vol_avg = float(sig["VolAvg20"]) if pd.notna(sig["VolAvg20"]) else None
+
+    ema8 = float(sig["EMA8"]) if pd.notna(sig["EMA8"]) else None
+    ema21 = float(sig["EMA21"]) if pd.notna(sig["EMA21"]) else None
+    sma10 = float(sig["SMA10"]) if pd.notna(sig["SMA10"]) else None
+    sma50 = float(sig["SMA50"]) if pd.notna(sig["SMA50"]) else None
+    sma200 = float(sig["SMA200"]) if pd.notna(sig["SMA200"]) else None
+
+    # Swing high in last 30 trading days
+    lookback_30 = df.iloc[max(0, sig_idx - 30):sig_idx + 1]
+    swing_high = float(lookback_30["High"].max())
+    high_idx = lookback_30["High"].idxmax()
+    days_from_high = sig_idx - high_idx
+
+    # Pullback from swing high
+    pullback_pct = round((swing_high - c) / swing_high * 100, 2)
+    pullback_atr = round((swing_high - c) / atr, 2) if atr else None
+
+    # Find pullback low between swing high and signal
+    pullback_range = df.iloc[high_idx:sig_idx + 1]
+    pullback_low = float(pullback_range["Low"].min())
+    low_idx = pullback_range["Low"].idxmin()
+    days_since_low = sig_idx - low_idx
+
+    # Bounce from pullback low
+    bounce_pct = round((c - pullback_low) / pullback_low * 100, 2)
+    bounce_atr = round((c - pullback_low) / atr, 2) if atr else None
+
+    # Green/up candle counts
+    recent_5 = df.iloc[max(0, sig_idx - 4):sig_idx + 1]
+    recent_3 = df.iloc[max(0, sig_idx - 2):sig_idx + 1]
+    green_3 = int((recent_3["Close"] > recent_3["Open"]).sum())
+    green_5 = int((recent_5["Close"] > recent_5["Open"]).sum())
+    up_close_3 = int((recent_3["Close"] > recent_3["Close"].shift(1)).sum())
+    up_close_5 = int((recent_5["Close"] > recent_5["Close"].shift(1)).sum())
+
+    # Signal candle properties
+    sig_is_green = c > o
+    sig_body = abs(c - o)
+    sig_range = h - l
+    sig_close_position = round((c - l) / sig_range, 2) if sig_range > 0 else 0.5
+
+    # SMA50 slope (5 day)
+    sma50_slope = None
+    if sig_idx >= 5 and pd.notna(sig["SMA50"]):
+        sma50_5ago = df.iloc[sig_idx - 5]["SMA50"]
+        if pd.notna(sma50_5ago) and sma50_5ago > 0:
+            sma50_slope = round((float(sig["SMA50"]) - float(sma50_5ago)) / float(sma50_5ago) * 100, 3)
+
+    # Pullback structure
+    total_pullback_days = days_from_high
+    down_days = int((pullback_range["Close"] < pullback_range["Open"]).sum())
+    pct_down = round(down_days / max(total_pullback_days, 1) * 100, 1)
+
+    # 20-day range %
+    range_20 = df.iloc[max(0, sig_idx - 19):sig_idx + 1]
+    r20_high = float(range_20["High"].max())
+    r20_low = float(range_20["Low"].min())
+    range_20d_pct = round((r20_high - r20_low) / r20_low * 100, 1) if r20_low > 0 else None
+
+    # Up days in last 14
+    recent_14 = df.iloc[max(0, sig_idx - 13):sig_idx + 1]
+    up_days_14 = int((recent_14["Close"] > recent_14["Close"].shift(1)).sum())
+
+    return {
+        "ticker": ticker,
+        "entry_date": entry_date,
+        "signal_date": sig["Date"].strftime("%Y-%m-%d"),
+        "close": round(c, 2),
+        "atr14": round(atr, 4) if atr else None,
+        "atr_pct": round(atr / c * 100, 2) if atr else None,
+        "above_sma50": c > sma50 if sma50 else None,
+        "above_sma200": c > sma200 if sma200 else None,
+        "ema8_above_ema21": ema8 > ema21 if (ema8 and ema21) else None,
+        "c_vs_ema8_pct": round((c - ema8) / ema8 * 100, 2) if ema8 else None,
+        "c_vs_ema21_pct": round((c - ema21) / ema21 * 100, 2) if ema21 else None,
+        "c_vs_sma10_pct": round((c - sma10) / sma10 * 100, 2) if sma10 else None,
+        "c_vs_sma50_pct": round((c - sma50) / sma50 * 100, 2) if sma50 else None,
+        "c_vs_ema8_atr": round((c - ema8) / atr, 2) if (ema8 and atr) else None,
+        "c_vs_ema21_atr": round((c - ema21) / atr, 2) if (ema21 and atr) else None,
+        "c_vs_sma50_atr": round((c - sma50) / atr, 2) if (sma50 and atr) else None,
+        "sma50_slope_5d": sma50_slope,
+        "swing_high_30d": round(swing_high, 2),
+        "days_from_high": int(days_from_high),
+        "pullback_pct": pullback_pct,
+        "pullback_atr": pullback_atr,
+        "pullback_low": round(pullback_low, 2),
+        "days_since_low": int(days_since_low),
+        "bounce_from_low_pct": bounce_pct,
+        "bounce_from_low_atr": bounce_atr,
+        "green_candles_3d": green_3,
+        "green_candles_5d": green_5,
+        "up_close_3d": up_close_3,
+        "up_close_5d": up_close_5,
+        "sig_is_green": sig_is_green,
+        "sig_close_position": sig_close_position,
+        "sig_body_atr": round(sig_body / atr, 2) if atr else None,
+        "sig_range_atr": round(sig_range / atr, 2) if atr else None,
+        "sig_vol_vs_20avg": round(vol / vol_avg, 2) if vol_avg else None,
+        "total_pullback_days": int(total_pullback_days),
+        "down_days_in_pullback": down_days,
+        "pct_down_in_pullback": pct_down,
+        "range_20d_pct": range_20d_pct,
+        "up_days_14": up_days_14,
+    }
+
+
+@app.post("/api/examples/{setup_type}")
+async def save_example(setup_type: str, req: SaveExampleRequest):
+    """Save a new example: fetch OHLCV, store CSV, entry date, and run analysis."""
+    ticker = req.ticker.upper().strip()
+    chart_date = req.chart_date
+    entry_date = req.entry_date
+
+    # Validate dates
+    try:
+        chart_dt = datetime.strptime(chart_date, "%Y-%m-%d")
+        entry_dt = datetime.strptime(entry_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "Invalid date format. Use YYYY-MM-DD.")
+
+    data_dir = DATA_DIR / setup_type
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Fetch OHLCV (6 months before + 15 days after chart date)
+    start = chart_dt - timedelta(days=250)
+    end = chart_dt + timedelta(days=20)
+
+    try:
+        raw = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
+                          end=end.strftime("%Y-%m-%d"), progress=False)
+    except Exception as e:
+        raise HTTPException(500, f"yfinance error: {e}")
+
+    if raw.empty:
+        raise HTTPException(404, f"No data found for {ticker}")
+
+    if isinstance(raw.columns, pd.MultiIndex):
+        raw.columns = raw.columns.get_level_values(0)
+
+    raw = raw.reset_index()
+    raw["Date"] = pd.to_datetime(raw["Date"])
+    raw = raw.sort_values("Date").reset_index(drop=True)
+
+    # Save CSV
+    csv_name = f"{ticker}_{chart_date}.csv"
+    csv_path = data_dir / csv_name
+    raw.to_csv(csv_path, index=False)
+
+    # Update entry_dates.json
+    entry_file = data_dir / "entry_dates.json"
+    entries = []
+    if entry_file.exists():
+        entries = json.loads(entry_file.read_text())
+
+    # Remove existing entry for this ticker if present
+    entries = [e for e in entries if e["ticker"] != ticker]
+    entries.append({
+        "ticker": ticker,
+        "chart_date": chart_date,
+        "entry_date": entry_date,
+    })
+    entries.sort(key=lambda x: x["ticker"])
+    entry_file.write_text(json.dumps(entries, indent=2))
+
+    # Run signal analysis
+    analysis = None
+    analysis_file = data_dir / "signal_day_analysis.json"
+    analyses = []
+    if analysis_file.exists():
+        analyses = json.loads(analysis_file.read_text())
+
+    try:
+        analysis = run_signal_analysis(raw, ticker, entry_date)
+        # Remove existing analysis for this ticker
+        analyses = [a for a in analyses if a["ticker"] != ticker]
+        analyses.append(analysis)
+        analyses.sort(key=lambda x: x["ticker"])
+        analysis_file.write_text(json.dumps(analyses, indent=2))
+    except Exception as e:
+        # Save entry date even if analysis fails
+        analysis = {"error": str(e)}
+
+    return {
+        "status": "saved",
+        "ticker": ticker,
+        "csvFile": csv_name,
+        "entryDate": entry_date,
+        "analysis": analysis,
+    }
 
 
 # Serve frontend
