@@ -182,6 +182,7 @@
 - **Entry positioning rule:** For shorts, want all net gamma below entry to be negative (amplifies downside moves). For longs, want all net gamma above entry to be positive (amplifies upside moves). If the gamma profile works against your direction, the hedging flows fight your trade.
 - **Fat strikes behavior:** Strikes with the most concentrated gamma act as pivot points when negative (price reverses there — MM selling accelerates the turn), and compression/digestion zones when positive (price consolidates there — MM hedging dampens movement). This is a direct result of dynamic hedging mechanics.
 - **Freshness:** GEX profile changes with new information (stock/sector/macro news, new positioning). Only valid for ~24-48 hours. Don't reference a gamma chart from last week.
+- **What matters:** Only the high-concentration levels, not the noise in between. For any stock, you need to know: (1) where positive gamma flips to negative (the vol trigger — e.g. TSLA between 410-412.50 = ~411.25), (2) the fattest positive strike (compression zone — e.g. TSLA 425), (3) the fattest negative strike (pivot point — e.g. TSLA 400). Ignore everything else.
 
 ## Chart Themes & Wave Cycles
 
