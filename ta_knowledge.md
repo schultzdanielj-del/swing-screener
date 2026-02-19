@@ -84,7 +84,13 @@
 - **Trend days (rare):** Can attack breakouts all day long. If bearish trend day, shorts are already gone — would have to chase.
 - Trend days are the exception, not the rule.
 
-## Intraday AVWAP Confirmation
+## T2104 — Market Breadth "Truth Teller"
+
+- TC2000 indicator T2104 (% of stocks above 200 SMA)
+- When trending and smooth → safe to trade in that direction
+- When divergent from price → market likely to mean revert
+- **Limitations:** Less reliable inside congested daily structure or in news-sensitive markets
+- Best used as a directional confirmation/warning signal, not a standalone trigger
 
 - Price must hold sequential daily AVWAPs on the same side of the 8 EMA to confirm a breakout
 - Each AVWAP = volume-weighted fair value from that session
