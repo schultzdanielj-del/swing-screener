@@ -1,6 +1,6 @@
 # Swing Screener Project — State Document
 
-**Last updated:** 2026-02-18
+**Last updated:** 2026-02-19
 **GitHub repo:** https://github.com/schultzdanielj-del/swing-screener
 
 ---
@@ -26,19 +26,32 @@
 - Extension data: 5yr % from 50/200 SMA for all tickers, stored in `data/extension/`
 - View toggles: D1 / 50 SMA % / 200 SMA %, At Entry / After time views
 - Add inline (ticker + date), editable entry dates, delete functionality
-- Persistent deletes implemented (git push from Railway via GITHUB_TOKEN env var)
 - Deployed on Railway: **https://web-production-e3025.up.railway.app**
+- **SQLite on Railway persistent volume** — all data in DB, no more flat files
+- DB constraint fixed: UNIQUE(setup_type, ticker, entry_date) — supports multiple examples per ticker
+- All API endpoints use example ID (not ticker) for routing
+- Repair endpoint: POST /api/repair-data — re-fetches missing OHLCV/extension data
+- **14 validated 3-4DB examples** (REAL removed), 18 scan conditions
+- ARM 11/3/2025 added as clean 3-4DB example
+- MARA 10/27/2025 evaluated — fails 4/18 conditions, skipped
+- BB 11/6/2025 rejected — not a 3-4DB (prolonged consolidation)
 
-**KNOWN ISSUE — Persistent deletes broken:**
-- UI deletes update entry_dates.json but DON'T delete CSV/chart files from repo
-- 4 MORE deletions didn't persist to entry_dates.json — entry_dates.json has 19, should be 15
-- NEXT CHAT: Hit Railway `/api/examples` to get actual 15 tickers, sync repo, fix delete code
+**Universe data fetch — IN PROGRESS:**
+- Fetching 5yr daily OHLCV for 11,668 tickers (full NYSE + NASDAQ + ETFs)
+- Stored in `universe_ohlcv` table (separate from examples)
+- Bulletproof: resumable, auto-retry, batched commits, progress tracking
+- API endpoints: POST /api/universe/fetch, GET /api/universe/status, POST /api/universe/load-file
+- Batch size 40, 8s delay — estimated 1-2 hours total
+- Ticker list loaded via POST /api/universe/load-file (reads universe_tickers.txt from repo)
+- File at repo root (NOT data/) because Railway volume mount shadows data/
 
 **What's next:**
-- Fix persistent delete bug (delete CSVs + charts + extension data, not just entry_dates.json)
-- Sync repo to match the 15 tickers actually in the app
-- Validate 50% measured move hypothesis (best-profit 3-4DBs bounce ~50% of prior swing)
-- Feature 2: Upload screenshot flow (TC2000 chart → extract ticker/date → auto-load)
+- Verify universe fetch completed successfully
+- Build backtesting: run 18 scan conditions against full universe × 5 years
+- Build daily refresh script (append 1 day of data, ~6 min for full market)
+- TA brainstorming with full market data (find examples, test hypotheses)
+- Add DTSS and HTF setup examples
+- Validate 50% measured move hypothesis across more examples
 
 ---
 
@@ -66,9 +79,9 @@ This takes 1-2 hours nightly. The real goal is screening 1000+ tickers down to ~
 
 ### 1. 3-4DB — 3-4 Day Bounce (SHORT setup) — PCF COMPLETE
 - Stock pulls back after a move, bounces weakly for 3-4 days, then fails
-- 15 examples with pinned entry dates and signal day analysis
-- 9 PCF conditions, 100% pass rate (zero false negatives)
-- Examples: AEVA, BE, BITF, CLSK, HIVE, IREN, LEU, OKLO, ONDS, OPEN, PATH, PL, QS, REAL, RR
+- 14 examples with pinned entry dates and signal day analysis (REAL removed)
+- 18 PCF conditions, all 100% pass rate (except #5 at 93%)
+- Examples: AEVA, ARM, BE, BITF, CLSK, HIVE, IREN, LEU, OKLO, ONDS, OPEN, PATH, PL, QS, RR
 
 ### 2. DTSS — Double Top Short Sell (SHORT setup)
 - Failed breakout at resistance, short at the rejection
@@ -82,11 +95,16 @@ This takes 1-2 hours nightly. The real goal is screening 1000+ tickers down to ~
 
 ## ARCHITECTURE
 
-**Backend:** FastAPI (Python) — `server.py`
-- `/api/ohlcv?ticker=X&date=Y` — fetches OHLCV + indicators via yfinance
-- `/api/setups` — lists setup types
+**Backend:** FastAPI (Python) — `server.py` (~650 lines)
+- SQLite on Railway persistent volume (/app/data/scanperfect.db)
+- Tables: examples, ohlcv, extension, conditions, signal_analysis
+- Universe tables: universe_ohlcv (5yr market data), universe_tickers, universe_fetch_status
+- All API endpoints use example ID for routing (not ticker)
 - `/api/examples/{setup_type}` — lists saved examples
 - `/api/conditions/{setup_type}` — returns PCF conditions
+- `/api/universe/fetch` — kick off background universe data fetch
+- `/api/universe/status` — check fetch progress
+- `/api/universe/load-file` — load tickers from bundled file
 
 **Frontend:** Single-page React app — `app/index.html`
 - Dashboard, Examples, Add Example, Conditions, Validate pages
@@ -94,6 +112,8 @@ This takes 1-2 hours nightly. The real goal is screening 1000+ tickers down to ~
 - Dark theme matching TC2000 chart preferences
 
 **Hosting:** Railway — `web-production-e3025.up.railway.app`
+- Volume mounted at /app/data for SQLite DB
+- NOTE: Volume mount shadows repo's data/ directory
 
 ---
 
@@ -101,18 +121,19 @@ This takes 1-2 hours nightly. The real goal is screening 1000+ tickers down to ~
 
 ```
 swing-screener/
-├── server.py                # FastAPI backend
+├── server.py                # FastAPI backend (~650 lines)
 ├── Procfile                 # Railway deployment
 ├── requirements.txt         # fastapi, uvicorn, yfinance, pandas
 ├── SWING_SCREENER_PROJECT.md # This file — project state
 ├── config.yaml              # Chart config (MAs, dark theme, etc.)
-├── data/
+├── universe_tickers.txt     # 11,668 tickers (NYSE + NASDAQ + ETFs) — at root, NOT data/
+├── data/                    # NOTE: shadowed by Railway volume mount at /app/data
 │   └── ohlcv/
-│       └── 3-4db/           # 16 CSV files + entry_dates.json + signal_day_analysis.json
+│       └── 3-4db/           # Legacy flat files (data now in SQLite)
 ├── setup_library/
 │   ├── 3-4db/
 │   │   ├── description.md
-│   │   ├── conditions.json
+│   │   ├── conditions.json  # 18 scan conditions
 │   │   └── examples/
 │   ├── dtss/
 │   │   └── description.md
@@ -121,6 +142,8 @@ swing-screener/
 ├── app/
 │   └── index.html           # React frontend (single file)
 ├── scripts/
+│   ├── __init__.py
+│   ├── fetch_universe.py    # Bulletproof universe OHLCV fetcher
 │   └── run_nightly.py       # CLI entry point (old)
 └── src/                     # Old vision pipeline code (to be archived)
 ```
