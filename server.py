@@ -9,9 +9,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yfinance as yf
-import mplfinance as mpf
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.patches import Rectangle
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -71,7 +73,7 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
                          setup_type: str) -> str:
-    """Generate a D1 candlestick chart PNG and return the file path."""
+    """Generate a D1 candlestick chart PNG using pure matplotlib."""
     charts_dir = CHARTS_DIR / setup_type
     charts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -82,67 +84,72 @@ def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
     # Trim to ~120 trading days ending near entry date
     entry_dt = pd.Timestamp(entry_date)
     mask = df["Date"] <= entry_dt + timedelta(days=5)
-    chart_df = df[mask].tail(120).copy()
+    chart_df = df[mask].tail(120).copy().reset_index(drop=True)
 
     if chart_df.empty:
         return None
 
-    chart_df = chart_df.set_index("Date")
+    fig, (ax, ax_vol) = plt.subplots(2, 1, figsize=(10, 5), dpi=100,
+                                      gridspec_kw={"height_ratios": [3, 1]},
+                                      facecolor="#0a0e17")
+    ax.set_facecolor("#0a0e17")
+    ax_vol.set_facecolor("#0a0e17")
 
-    # Build MA overlays
-    addplots = []
-    for period, ma_type, color, width in [
-        (8, "ema", "#ADD8E6", 1.0),
-        (21, "ema", "#D2B48C", 1.0),
-        (50, "sma", "#FFD700", 1.2),
-        (200, "sma", "#FF0000", 1.5),
+    n = len(chart_df)
+    w = 0.6  # candle body width
+
+    for i, row in chart_df.iterrows():
+        o, h, l, c = row["Open"], row["High"], row["Low"], row["Close"]
+        color = "#26A69A" if c >= o else "#EF5350"
+
+        # Wick
+        ax.plot([i, i], [l, h], color=color, linewidth=0.8)
+        # Body
+        body_bottom = min(o, c)
+        body_height = max(abs(c - o), 0.001)
+        ax.add_patch(Rectangle((i - w/2, body_bottom), w, body_height,
+                                facecolor=color, edgecolor=color, linewidth=0.5))
+
+        # Volume
+        ax_vol.bar(i, row["Volume"], width=w, color=color, alpha=0.7)
+
+    # MAs
+    for period, ma_type, color, lw in [
+        (8, "ema", "#ADD8E6", 1.0), (21, "ema", "#D2B48C", 1.0),
+        (50, "sma", "#FFD700", 1.2), (200, "sma", "#FF0000", 1.5),
     ]:
-        if len(chart_df) >= period:
+        if n >= period:
             if ma_type == "ema":
                 s = chart_df["Close"].ewm(span=period, adjust=False).mean()
             else:
                 s = chart_df["Close"].rolling(window=period).mean()
-            addplots.append(mpf.make_addplot(s, color=color, width=width))
+            ax.plot(range(n), s.values, color=color, linewidth=lw, alpha=0.8)
 
-    # Mark entry date with a vertical line via vlines
-    vlines = None
-    if entry_dt in chart_df.index:
-        vlines = dict(vlines=[entry_dt], colors=["#3b82f6"], linewidths=1.5,
-                      alpha=0.6)
+    # Entry date marker
+    entry_rows = chart_df[chart_df["Date"] == entry_dt]
+    if not entry_rows.empty:
+        eidx = entry_rows.index[0]
+        ax.axvline(x=eidx, color="#3b82f6", linewidth=1.5, alpha=0.6, linestyle="--")
 
-    style = mpf.make_mpf_style(
-        base_mpf_style='nightclouds',
-        marketcolors=mpf.make_marketcolors(
-            up='#26A69A', down='#EF5350',
-            edge={'up': '#26A69A', 'down': '#EF5350'},
-            wick={'up': '#26A69A', 'down': '#EF5350'},
-            volume={'up': '#26A69A', 'down': '#EF5350'},
-        ),
-    )
+    # Styling
+    ax.set_title(f"{ticker}  •  {entry_date}", color="#e2e8f0", fontsize=11,
+                 fontweight="bold", pad=8)
+    ax.tick_params(colors="#64748b", labelsize=8)
+    ax_vol.tick_params(colors="#64748b", labelsize=7)
+    ax.spines[:].set_color("#2a3550")
+    ax_vol.spines[:].set_color("#2a3550")
+    ax.set_xlim(-1, n)
+    ax_vol.set_xlim(-1, n)
+    ax.set_xticks([])
+    ax_vol.set_xticks([])
+    ax_vol.yaxis.set_visible(False)
+    ax.grid(True, alpha=0.1, color="#64748b")
 
     filepath = str(charts_dir / f"{ticker}.png")
-    kwargs = {
-        "type": "candle",
-        "volume": True,
-        "title": f"{ticker} — Entry: {entry_date}",
-        "style": style,
-        "figsize": (10, 5),
-        "savefig": {"fname": filepath, "dpi": 100, "bbox_inches": "tight"},
-        "warn_too_much_data": 500,
-    }
-    if addplots:
-        kwargs["addplot"] = addplots
-    if vlines:
-        kwargs["vlines"] = vlines
-
-    try:
-        mpf.plot(chart_df, **kwargs)
-        import matplotlib.pyplot as plt
-        plt.close("all")
-        return filepath
-    except Exception as e:
-        print(f"Chart generation failed for {ticker}: {e}")
-        return None
+    fig.tight_layout(pad=0.5)
+    fig.savefig(filepath, facecolor="#0a0e17", bbox_inches="tight")
+    plt.close(fig)
+    return filepath
 
 
 def clean_val(v):
