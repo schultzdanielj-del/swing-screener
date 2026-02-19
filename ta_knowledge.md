@@ -73,6 +73,7 @@
 - **Late trend / extended (stage 2b/3, near statistical ceiling):** Take the whole position off on a good win. Less room to run = less reason to hold.
 - **Key principle:** Don't apply the same management to every trade. A long setup in stage 3 with 1-2 ADR of upside left gets a completely different plan than a post-correction breakout with full runway.
 - Trim levels and trailing stop tightness should scale with remaining statistical upside (extension position relative to historical ceiling)
+- **Example — Stage 3 long (UNR/undercut-and-rally):** RIVN historically peaks at ~1.0-1.25x ADR on 50 extension in stage 3. Take UNR entry at the low, exit entire position when extension hits that ceiling. Not hindsight — the extension history told you the max upside before you entered.
 
 ## Intraday AVWAP Confirmation
 
