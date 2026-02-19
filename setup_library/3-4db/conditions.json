@@ -2,10 +2,12 @@
   "setup": "3-4DB",
   "description": "3-4 Day Bounce \u2014 weak bounce after pullback, short entry",
   "last_updated": "2026-02-19",
-  "examples_count": 15,
-  "removed_examples": [],
+  "examples_count": 14,
+  "removed_examples": [
+    "REAL"
+  ],
   "signal_basis": "prior_close",
-  "notes": "All conditions evaluated as of the close BEFORE entry day. 17 scan conditions total, 37 results on full market scan with 5M dollar volume floor.",
+  "notes": "14 examples (REAL removed - different setup profile). 20 scan conditions. Full market scan with 5M dollar volume floor produces 2 A+ results (BE, THAR) on 2026-02-19.",
   "scan_conditions": [
     {
       "id": 1,
@@ -13,8 +15,8 @@
       "description": "Close above 50-day SMA",
       "pcf": "C > AVGC50",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true
     },
     {
@@ -23,8 +25,8 @@
       "description": "50 SMA rising over 5 days",
       "pcf": "AVGC50 > AVGC50.5",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true
     },
     {
@@ -33,8 +35,8 @@
       "description": "Close at least 0.3 ATR above 50 SMA",
       "pcf": "C - AVGC50 > 0.3 * ATR14",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true,
       "data": {
         "min_atr": 0.49,
@@ -48,8 +50,8 @@
       "description": "At least 2 of last 3 days closed higher than prior day",
       "pcf": "(IIF(C1 > C2, 1, 0) + IIF(C2 > C3, 1, 0) + IIF(C3 > C4, 1, 0)) >= 2",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true
     },
     {
@@ -58,8 +60,8 @@
       "description": "3-day low is below 2-day low (pullback low at least 3 bars ago)",
       "pcf": "MINL3 < MINL2",
       "hit_rate": 0.95,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true,
       "exceptions": [
         "REAL (MINL3 = MINL2, low was exactly 2 bars ago)"
@@ -71,8 +73,8 @@
       "description": "Close at least 0.8 ATR above 10-day low",
       "pcf": "C - MINL10 > 0.8 * ATR14",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true,
       "data": {
         "min_atr": 1.0,
@@ -83,17 +85,18 @@
     {
       "id": 7,
       "name": "below_prior_high",
-      "description": "Close at least 0.3 ATR below 15-day high",
-      "pcf": "MAXH15 - C > 0.3 * ATR14",
+      "description": "Price at least 1.0 ATR below 15-day high (clear rejection from level)",
+      "pcf": "MAXH15 - C > 1.0 * ATR14",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true,
       "data": {
         "min_atr": 0.33,
         "median_atr": 1.56,
         "max_atr": 4.25
-      }
+      },
+      "notes": "Tightened from 0.3 to 1.0 \u2014 ensures tradeable distance from pivot high"
     },
     {
       "id": 8,
@@ -101,8 +104,8 @@
       "description": "At some point in last 15 bars, close was below 8 EMA (confirms real pullback occurred)",
       "pcf": "C1 < XAVGC8.1 OR C2 < XAVGC8.2 OR C3 < XAVGC8.3 OR C4 < XAVGC8.4 OR C5 < XAVGC8.5 OR C6 < XAVGC8.6 OR C7 < XAVGC8.7 OR C8 < XAVGC8.8 OR C9 < XAVGC8.9 OR C10 < XAVGC8.10 OR C11 < XAVGC8.11 OR C12 < XAVGC8.12 OR C13 < XAVGC8.13 OR C14 < XAVGC8.14 OR C15 < XAVGC8.15",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true
     },
     {
@@ -111,8 +114,8 @@
       "description": "Prior 15-day high (starting 2 bars ago) is above the last 2 bars' high \u2014 bounce hasn't exceeded prior pivot",
       "pcf": "MAXH15.2 > MAXH2",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true
     },
     {
@@ -121,8 +124,8 @@
       "description": "Average dollar volume over 5M",
       "pcf": "AvgC20 * AVGV20 > 5000000",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true
     },
     {
@@ -131,19 +134,20 @@
       "description": "Close at least 3 ATR above 200 SMA",
       "pcf": "C - AVGC200 > 3 * ATR14",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true
     },
     {
       "id": 12,
       "name": "peak_ext50_30d",
-      "description": "30-day high at least 3 ATR above 50 SMA (confirms big move happened)",
-      "pcf": "MAXH30 - AVGC50 > 3 * ATR14",
+      "description": "30-day high at least 30% of price above 50 SMA (confirms parabolic move)",
+      "pcf": "MAXH30 - AVGC50 > 0.30 * C",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
-      "active": true
+      "hits": 14,
+      "total": 14,
+      "active": true,
+      "notes": "Replaced ATR-based (3*ATR14) with %price scaling. Kills compression/grind stocks. REAL removed at 13.9%."
     },
     {
       "id": 13,
@@ -151,8 +155,8 @@
       "description": "Bounce has not retraced more than 67% of the high-to-low range",
       "pcf": "(C - MINL10) / (MAXH30 - MINL10) < 0.7",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true,
       "notes": "Using 0.7 in scan for buffer; all 15 examples below 0.67"
     },
@@ -162,8 +166,8 @@
       "description": "Signal day volume below 20-day average (weak bounce)",
       "pcf": "V < AVGV20",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true
     },
     {
@@ -172,8 +176,8 @@
       "description": "High not more than 1.1 ATR above EMA8 (no strong thrust)",
       "pcf": "H - XAVGC8 < 1.1 * ATR14",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true
     },
     {
@@ -182,8 +186,8 @@
       "description": "Signal candle range under 1.1 ATR (weak candle)",
       "pcf": "H - L < 1.1 * ATR14",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true
     },
     {
@@ -192,9 +196,20 @@
       "description": "Close was below 12 EMA at some point in last 15 bars (real pullback)",
       "pcf": "C1 < XAVGC12.1 OR C2 < XAVGC12.2 OR C3 < XAVGC12.3 OR C4 < XAVGC12.4 OR C5 < XAVGC12.5 OR C6 < XAVGC12.6 OR C7 < XAVGC12.7 OR C8 < XAVGC12.8 OR C9 < XAVGC12.9 OR C10 < XAVGC12.10 OR C11 < XAVGC12.11 OR C12 < XAVGC12.12 OR C13 < XAVGC12.13 OR C14 < XAVGC12.14 OR C15 < XAVGC12.15",
       "hit_rate": 1.0,
-      "hits": 15,
-      "total": 15,
+      "hits": 14,
+      "total": 14,
       "active": true
+    },
+    {
+      "id": 18,
+      "name": "not_too_far_from_high",
+      "description": "Price within 4.0 ATR of 30-day high (tradeable stop level exists)",
+      "pcf": "MAXH30 - C < 4.0 * ATR14",
+      "hit_rate": 1.0,
+      "hits": 14,
+      "total": 14,
+      "active": true,
+      "notes": "Kills stocks where the spike is too far back to use as a reference level"
     }
   ],
   "non_scan_conditions": [
@@ -204,10 +219,9 @@
       "pcf": "XAVGC8 > XAVGC21",
       "hit_rate": 0.84,
       "hits": 13,
-      "total": 15,
+      "total": 14,
       "exceptions": [
-        "ONDS",
-        "REAL"
+        "ONDS"
       ],
       "tier": "near_universal"
     }
