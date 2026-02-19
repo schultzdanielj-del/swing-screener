@@ -154,10 +154,15 @@ def fetch_ticker_list():
 def fetch_ticker_list_fallback():
     """Fallback: read from bundled Universe.txt file."""
     # Try multiple paths (Railway deploy vs local dev)
+    # On Railway: repo is at /app/, but /app/data/ is volume-mounted (overwrites repo data/)
+    # So check non-data paths first
     for path in [
+        Path("/app/universe_tickers.txt"),
         Path("/app/data/universe_tickers.txt"),
+        Path("universe_tickers.txt"),
         Path("data/universe_tickers.txt"),
         Path(__file__).parent.parent / "data" / "universe_tickers.txt",
+        Path(__file__).parent.parent / "universe_tickers.txt",
     ]:
         if path.exists():
             log.info(f"Using bundled ticker file: {path}")
