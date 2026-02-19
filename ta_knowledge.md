@@ -123,6 +123,7 @@
 - A breakout with unconfirmed AVWAPs underneath has much higher odds of mean reverting / faking out than one where every AVWAP from the pivot low got a clean foothold on the way up
 - The more AVWAPs confirmed with footholds leading into the breakout, the higher the probability of follow-through
 - **AVWAP as setup quality filter:** A chart can look A+ on candlesticks (big move, pullback, tight consolidation) but if price is below the breakout AVWAP, the average buyer is still underwater = no capitulation fuel. Most traders don't see this layer. Example: BTU Oct 2025 — textbook setup that was poorly positioned against the breakout AVWAP.
+- **AVWAP + extension convergence:** The breakout AVWAP often aligns with the 50 extension peak — both mark where volume committed at maximum extension. When price is below the AVWAP AND the extension was at the statistical ceiling, the layers converge on the same conclusion: trapped buyers at an exhausted level.
 
 **Baby / Daddy short-term MAs:**
 - Every D1 chart respects a fast ("baby") and slow ("daddy") short-term MA
