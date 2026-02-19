@@ -19,6 +19,7 @@
 - 50 SMA extension starts downsloping
 - 200 SMA extension still in bull channel
 - **Strategy:** Buy dips, not breakouts. More selective.
+- **Entry signal:** VIX dips back below ~17-18 AND price is over the 21 EMA = good to go
 - **Transition out:** Stage 2 ends when 200 extension channel breaks structure AND 50 extension flattens out
 
 ### Stage 3 — Distribution
