@@ -628,14 +628,6 @@
 
       return (
         <div>
-          <div className="setup-tabs">
-            {Object.entries(SETUP_TYPES).map(([key, s]) => (
-              <div key={key} className={`setup-tab ${key === activeSetup ? 'active' : ''}`}>
-                {s.name}
-              </div>
-            ))}
-          </div>
-
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
