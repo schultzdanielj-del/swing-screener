@@ -113,8 +113,19 @@
 - This acceleration gives you enough cushion to set stop at break-even and ride the trend through normal chop
 - Also pulls price far from the second factor (below)
 
-**2.**
-- (To be defined)
+**2. Unconfirmed AVWAPs below the baby line = fakeout risk**
+- D1 candle AVWAPs that are on the SAME SIDE of the baby EMA (8 EMA) as price need intraday confirmation (foothold/support hold)
+- If the 8 EMA has already crossed above an AVWAP, that AVWAP is no longer relevant (confirmed by structure)
+- AVWAPs between the 8 EMA and the breakout point that did NOT get clean intraday support confirmation = unconfirmed liquidity
+- As long as the 8 EMA is under those unconfirmed AVWAPs, expect them to be tested
+- **This is what a fakeout actually is** — not a trick or trap, but buy programs going back to check liquidity at cheaper unconfirmed prices to fill giant orders at a better average
+- A breakout with unconfirmed AVWAPs underneath has much higher odds of mean reverting / faking out than one where every AVWAP from the pivot low got a clean foothold on the way up
+- The more AVWAPs confirmed with footholds leading into the breakout, the higher the probability of follow-through
+
+**Baby / Daddy short-term MAs:**
+- Every D1 chart respects a fast ("baby") and slow ("daddy") short-term MA
+- Common pairs: 8 EMA/21 EMA, 8/15, 10 SMA/20 SMA — exact numbers don't matter, the principle is the same
+- The baby line is the key reference for AVWAP relevance (same side = needs confirmation)
 
 - TC2000 indicator T2104 (% of stocks above 200 SMA)
 - When trending and smooth → safe to trade in that direction
