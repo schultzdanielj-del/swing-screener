@@ -81,11 +81,11 @@ def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
 
-    # Center on entry date: 30 days before, 30 days after
+    # Center on entry date: aim for 30 before, 30 after
+    # If not enough data after, show what we have but keep total ~60
     entry_dt = pd.Timestamp(entry_date)
     entry_rows = df[df["Date"] == entry_dt]
     if entry_rows.empty:
-        # Find closest date
         before = df[df["Date"] <= entry_dt]
         if before.empty:
             return None
@@ -93,12 +93,26 @@ def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
     else:
         entry_idx = entry_rows.index[0]
 
-    start_idx = max(0, entry_idx - 30)
-    end_idx = min(len(df), entry_idx + 31)
-    chart_df = df.iloc[start_idx:end_idx].copy().reset_index(drop=True)
+    # How many candles available after entry?
+    avail_after = len(df) - entry_idx - 1
+    avail_before = entry_idx
 
-    # Recalculate entry position in trimmed df
-    entry_pos = entry_idx - start_idx
+    # Target 60 candles total, entry in middle
+    want_after = min(30, avail_after)
+    want_before = min(30, avail_before)
+    # Fill remaining from the other side
+    total = want_before + 1 + want_after
+    if total < 60:
+        extra = 60 - total
+        if want_before < 30:
+            want_after = min(want_after + extra, avail_after)
+        else:
+            want_before = min(want_before + extra, avail_before)
+
+    start_idx = entry_idx - want_before
+    end_idx = entry_idx + want_after + 1
+    chart_df = df.iloc[start_idx:end_idx].copy().reset_index(drop=True)
+    entry_pos = want_before  # position in chart_df
 
     if chart_df.empty:
         return None
@@ -565,7 +579,7 @@ async def save_example(setup_type: str, req: SaveExampleRequest):
 
     # Fetch OHLCV (6 months before + 15 days after chart date)
     start = chart_dt - timedelta(days=250)
-    end = chart_dt + timedelta(days=20)
+    end = chart_dt + timedelta(days=60)
 
     try:
         raw = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
