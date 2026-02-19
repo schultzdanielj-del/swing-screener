@@ -365,7 +365,7 @@
     // ============================================
     // EXAMPLES PAGE
     // ============================================
-    function ExampleCard({ example, activeSetup, onDelete, deleting }) {
+    function ExampleCard({ example, activeSetup, onDelete, deleting, chartView }) {
       const imgUrl = `/api/chart-image/${activeSetup}/${example.ticker}`;
 
       return (
@@ -379,12 +379,11 @@
           onMouseOver={e => e.currentTarget.style.borderColor = 'var(--border-active)'}
           onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border)'}
         >
-          <img
-            src={imgUrl}
-            alt={`${example.ticker} chart`}
-            style={{ width: '100%', display: 'block' }}
-            onError={e => { e.target.style.display = 'none'; }}
-          />
+          {chartView === 'd1' ? (
+            <img src={imgUrl} alt={`${example.ticker} chart`} style={{ width: '100%', display: 'block' }} onError={e => { e.target.style.display = 'none'; }} />
+          ) : (
+            <ExtensionMiniChart ticker={example.ticker} activeSetup={activeSetup} metric={chartView} entryDate={example.entryDate || example.chartDate} />
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>{example.ticker}</span>
@@ -406,6 +405,125 @@
       );
     }
 
+    function ExtensionMiniChart({ ticker, activeSetup, metric, entryDate }) {
+      const canvasRef = useRef(null);
+      const [data, setData] = useState(null);
+
+      useEffect(() => {
+        fetch(`/api/extension-data/${activeSetup}/${ticker}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(d => setData(d))
+          .catch(() => {});
+      }, [ticker, activeSetup]);
+
+      useEffect(() => {
+        if (!data || !canvasRef.current) return;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width = canvas.offsetWidth * 2;
+        const H = canvas.height = canvas.offsetHeight * 2;
+        ctx.scale(2, 2);
+        const w = W / 2, h = H / 2;
+
+        const col = metric === '50sma' ? 'ext_sma50_pct' : 'ext_sma200_pct';
+        const lineColor = metric === '50sma' ? '#FFD700' : '#FF0000';
+        const vals = data.map(d => d[col]).filter(v => v !== null);
+        const dates = data.filter(d => d[col] !== null).map(d => d.date);
+
+        if (vals.length < 2) return;
+
+        const minV = Math.min(...vals, 0);
+        const maxV = Math.max(...vals, 0);
+        const range = maxV - minV || 1;
+        const pad = { t: 20, b: 20, l: 8, r: 8 };
+        const cw = w - pad.l - pad.r;
+        const ch = h - pad.t - pad.b;
+
+        ctx.fillStyle = '#0a0e17';
+        ctx.fillRect(0, 0, w, h);
+
+        // Zero line
+        const zeroY = pad.t + ch * (1 - (0 - minV) / range);
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = 0.5;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(pad.l, zeroY);
+        ctx.lineTo(w - pad.r, zeroY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Fill above/below zero
+        const n = vals.length;
+        const xStep = cw / (n - 1);
+
+        function xAt(i) { return pad.l + i * xStep; }
+        function yAt(v) { return pad.t + ch * (1 - (v - minV) / range); }
+
+        // Green fill (above zero)
+        ctx.fillStyle = 'rgba(38,166,154,0.12)';
+        ctx.beginPath();
+        ctx.moveTo(xAt(0), zeroY);
+        for (let i = 0; i < n; i++) {
+          const y = Math.min(yAt(vals[i]), zeroY);
+          ctx.lineTo(xAt(i), y);
+        }
+        ctx.lineTo(xAt(n - 1), zeroY);
+        ctx.closePath();
+        ctx.fill();
+
+        // Red fill (below zero)
+        ctx.fillStyle = 'rgba(239,83,80,0.12)';
+        ctx.beginPath();
+        ctx.moveTo(xAt(0), zeroY);
+        for (let i = 0; i < n; i++) {
+          const y = Math.max(yAt(vals[i]), zeroY);
+          ctx.lineTo(xAt(i), y);
+        }
+        ctx.lineTo(xAt(n - 1), zeroY);
+        ctx.closePath();
+        ctx.fill();
+
+        // Line
+        ctx.strokeStyle = lineColor;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+          const x = xAt(i);
+          const y = yAt(vals[i]);
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        // Entry date marker
+        if (entryDate) {
+          const idx = dates.indexOf(entryDate);
+          if (idx >= 0) {
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 1.5;
+            ctx.globalAlpha = 0.7;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(xAt(idx), pad.t);
+            ctx.lineTo(xAt(idx), h - pad.b);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 1;
+          }
+        }
+
+        // Label
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '10px sans-serif';
+        ctx.fillText(metric === '50sma' ? '% from 50 SMA' : '% from 200 SMA', pad.l + 4, pad.t + 12);
+
+      }, [data, metric, entryDate]);
+
+      if (!data) return <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>Loading...</div>;
+
+      return <canvas ref={canvasRef} style={{ width: '100%', height: 160, display: 'block' }} />;
+    }
+
     function ExamplesPage({ activeSetup }) {
       const [examples, setExamples] = useState([]);
       const [loading, setLoading] = useState(true);
@@ -414,6 +532,7 @@
       const [entryDate, setEntryDate] = useState('');
       const [saving, setSaving] = useState(false);
       const [addError, setAddError] = useState(null);
+      const [chartView, setChartView] = useState('d1');
 
       function loadExamples() {
         setLoading(true);
@@ -481,6 +600,13 @@
               <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
                 {examples.length}
               </span>
+              <div style={{ display: 'flex', gap: 2, background: 'var(--bg-primary)', borderRadius: 6, padding: 2 }}>
+                {['d1','50sma','200sma'].map(v => (
+                  <button key={v} onClick={() => setChartView(v)} style={{ background: chartView === v ? 'var(--bg-card)' : 'transparent', border: 'none', borderRadius: 4, padding: '3px 10px', fontSize: 11, fontWeight: 600, color: chartView === v ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer' }}>
+                    {v === 'd1' ? 'D1' : v === '50sma' ? '50 SMA %' : '200 SMA %'}
+                  </button>
+                ))}
+              </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleSave()} placeholder="TICKER" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 12, width: 80, outline: 'none' }} />
@@ -502,11 +628,12 @@
             }}>
               {examples.map(ex => (
                 <ExampleCard
-                  key={ex.ticker}
+                  key={ex.ticker + chartView}
                   example={ex}
                   activeSetup={activeSetup}
                   onDelete={handleDelete}
                   deleting={deleting}
+                  chartView={chartView}
                 />
               ))}
             </div>

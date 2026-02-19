@@ -367,6 +367,29 @@ async def get_extension_chart(setup_type: str, ticker: str):
     return FileResponse(str(img_path), media_type="image/png")
 
 
+@app.get("/api/extension-data/{setup_type}/{ticker}")
+async def get_extension_data(setup_type: str, ticker: str):
+    """Return extension CSV data as JSON for client-side rendering."""
+    ticker = ticker.upper().strip()
+    csv_path = Path("data/extension") / setup_type / f"{ticker}.csv"
+    if not csv_path.exists():
+        raise HTTPException(404, f"No extension data for {ticker}")
+
+    df = pd.read_csv(csv_path)
+    df["Date"] = pd.to_datetime(df["Date"])
+    # Only return rows with SMA200 computed
+    df = df.dropna(subset=["ext_sma200_pct"])
+
+    result = []
+    for _, row in df.iterrows():
+        result.append({
+            "date": row["Date"].strftime("%Y-%m-%d"),
+            "ext_sma50_pct": clean_val(row.get("ext_sma50_pct")),
+            "ext_sma200_pct": clean_val(row.get("ext_sma200_pct")),
+        })
+    return result
+
+
 @app.get("/api/conditions/{setup_type}")
 async def get_conditions(setup_type: str):
     """Return PCF conditions for a setup type."""
