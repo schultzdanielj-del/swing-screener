@@ -475,6 +475,63 @@ async def delete_example(setup_type: str, ticker: str):
     return {"status": "deleted", "ticker": ticker, "files": deleted_files}
 
 
+class UpdateEntryRequest(BaseModel):
+    entry_date: str  # YYYY-MM-DD
+
+
+@app.patch("/api/examples/{setup_type}/{ticker}")
+async def update_entry_date(setup_type: str, ticker: str, req: UpdateEntryRequest):
+    """Update entry date for an example: re-run analysis and regenerate charts."""
+    ticker = ticker.upper().strip()
+    entry_date = req.entry_date
+    data_dir = DATA_DIR / setup_type
+
+    # Verify CSV exists
+    matches = list(data_dir.glob(f"{ticker}_*.csv"))
+    if not matches:
+        raise HTTPException(404, f"No CSV for {ticker} in {setup_type}")
+
+    # Update entry_dates.json
+    entry_file = data_dir / "entry_dates.json"
+    entries = []
+    if entry_file.exists():
+        entries = json.loads(entry_file.read_text())
+    entries = [e for e in entries if e["ticker"] != ticker]
+    entries.append({"ticker": ticker, "entry_date": entry_date})
+    entries.sort(key=lambda x: x["ticker"])
+    entry_file.write_text(json.dumps(entries, indent=2))
+
+    # Re-run signal analysis
+    raw = pd.read_csv(matches[0])
+    analysis = None
+    analysis_file = data_dir / "signal_day_analysis.json"
+    analyses = []
+    if analysis_file.exists():
+        analyses = json.loads(analysis_file.read_text())
+    try:
+        analysis = run_signal_analysis(raw, ticker, entry_date)
+        analyses = [a for a in analyses if a["ticker"] != ticker]
+        analyses.append(analysis)
+        analyses.sort(key=lambda x: x["ticker"])
+        analysis_file.write_text(json.dumps(analyses, indent=2))
+    except Exception as e:
+        analysis = {"error": str(e)}
+
+    # Regenerate chart images
+    try:
+        generate_chart_image(raw, ticker, entry_date, setup_type, at_entry=False)
+        generate_chart_image(raw, ticker, entry_date, setup_type, at_entry=True)
+    except Exception as e:
+        print(f"Chart regen failed for {ticker}: {e}")
+
+    return {
+        "status": "updated",
+        "ticker": ticker,
+        "entryDate": entry_date,
+        "analysis": analysis,
+    }
+
+
 def calc_sma_series(series: pd.Series, period: int) -> pd.Series:
     """SMA for analysis (same as calc_sma but named distinctly)."""
     return series.rolling(window=period, min_periods=period).mean()

@@ -365,9 +365,29 @@
     // ============================================
     // EXAMPLES PAGE
     // ============================================
-    function ExampleCard({ example, activeSetup, onDelete, deleting, chartView, timeView }) {
+    function ExampleCard({ example, activeSetup, onDelete, deleting, chartView, timeView, onUpdated }) {
       const entryDate = example.entryDate || example.chartDate || '';
       const imgUrl = `/api/chart-image/${activeSetup}/${example.ticker}` + (timeView === 'entry' ? '?at_entry=1' : '');
+      const [editing, setEditing] = useState(false);
+      const [editDate, setEditDate] = useState(entryDate);
+      const [saving, setSaving] = useState(false);
+
+      async function handleDateSave() {
+        if (!editDate || editDate === entryDate) { setEditing(false); return; }
+        setSaving(true);
+        try {
+          const res = await fetch(`/api/examples/${activeSetup}/${example.ticker}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entry_date: editDate }),
+          });
+          if (res.ok) {
+            setEditing(false);
+            if (onUpdated) onUpdated();
+          }
+        } catch (e) { console.error(e); }
+        finally { setSaving(false); }
+      }
 
       return (
         <div style={{
@@ -388,7 +408,15 @@
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>{example.ticker}</span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>{example.entryDate || example.chartDate || ''}</span>
+              {editing ? (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleDateSave(); if (e.key === 'Escape') setEditing(false); }} style={{ background: 'var(--bg-primary)', border: '1px solid var(--accent-blue)', borderRadius: 4, padding: '2px 6px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none' }} autoFocus />
+                  <button onClick={handleDateSave} disabled={saving} style={{ background: 'none', border: 'none', color: 'var(--accent-green)', cursor: 'pointer', fontSize: 11, padding: 0 }}>{saving ? '...' : '✓'}</button>
+                  <button onClick={() => { setEditing(false); setEditDate(entryDate); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: 0 }}>✕</button>
+                </span>
+              ) : (
+                <span onClick={() => setEditing(true)} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer', borderBottom: '1px dashed var(--border)' }} title="Click to edit entry date">{entryDate}</span>
+              )}
               {example.hasAnalysis && <span className="badge badge-pass" style={{ fontSize: 9, padding: '2px 6px' }}>✓</span>}
             </div>
             <button
@@ -675,6 +703,7 @@
                   deleting={deleting}
                   chartView={chartView}
                   timeView={timeView}
+                  onUpdated={loadExamples}
                 />
               ))}
             </div>
