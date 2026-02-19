@@ -98,6 +98,7 @@
 - They're probing for what liquidity is out there
 - Once the sequence completes → bigger market move / trend day
 - **Critical distinction:** Price can move THROUGH all three VWAP levels, but it won't sustain unless it catches a foothold (bid/ask) at each level. Piercing without holding = expect mean reversion back to VWAP.
+- **Trend day confirmation:** Price confirms VWAP, then confirms the standard deviation in the same direction. That sequential confirmation = real trend day.
 
 ### Principle 2
 - (To be defined)
