@@ -84,7 +84,22 @@
 - **Trend days (rare):** Can attack breakouts all day long. If bearish trend day, shorts are already gone — would have to chase.
 - Trend days are the exception, not the rule.
 
-## T2104 — Market Breadth "Truth Teller"
+## Algo / Chop Environments
+
+- When market is chopping with no direction, asset managers are NOT present (no buy/sell campaigns running)
+- Algos are working instead, operating on two principles:
+
+### Principle 1 — VWAP Foothold Sequence
+- Algos probe for "footholds" — bids or asks to work off and run
+- On indexes, key levels are: VWAP, -1 standard deviation VWAP, +1 standard deviation VWAP
+- To break the range upward: sequential bid must hold at -1σ VWAP → VWAP → +1σ VWAP (the "combination")
+- To break downward: sequential ask at +1σ → VWAP → -1σ
+- Most chop is algos pushing price between these three points trying to get the combination sequence right
+- They're probing for what liquidity is out there
+- Once the sequence completes → bigger market move / trend day
+
+### Principle 2
+- (To be defined)
 
 - TC2000 indicator T2104 (% of stocks above 200 SMA)
 - When trending and smooth → safe to trade in that direction
