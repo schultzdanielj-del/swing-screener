@@ -103,6 +103,8 @@
 - **MOC lines stack** — the more high-RVOL candle highs/lows clustering at the same price, the more significant the level. Analogue scale, not binary.
 - **LSP (Left Side Pivot)** = the most prominent pivot high/low visible on the left side of the chart. The obvious structural level. Usually coincides with an MOC line because pivots tend to form on high-volume candles.
 - Example: BTU $36 — major LSP from prior high, also an MOC level. Would be the key resistance for any January long thesis.
+- **LSPs persist through multiple touches** — price trading through an LSP doesn't invalidate it. Institutional orders at these levels are large enough to take multiple passes to fully absorb. Still visible as reaction zones on intraday charts (5m) even after D1 has gone through it several times.
+- **LSP + algo line convergence on intraday** = high-probability reaction zone. Same convergence principle as AVWAP + algo line on D1.
 
 - When market is chopping with no direction, asset managers are NOT present (no buy/sell campaigns running)
 - Algos are working instead, operating on two principles:
