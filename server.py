@@ -59,21 +59,88 @@ def github_get_file_sha(filepath: str) -> str | None:
         raise
 
 
-def github_delete_file(filepath: str, message: str):
-    """Delete a file from the repo via GitHub API."""
-    sha = github_get_file_sha(filepath)
-    if not sha:
-        print(f"GITHUB DELETE SKIP: {filepath} not found in repo")
+def github_atomic_delete(setup_type: str, ticker: str, csv_names: list[str],
+                         entry_dates_content: str, analysis_content: str):
+    """Delete all files for a ticker in a single atomic git commit. No SHA races."""
+    if not GITHUB_TOKEN:
+        print(f"DELETE {ticker}: No GITHUB_TOKEN — local only")
         return False
+
     try:
-        github_api("DELETE", f"contents/{filepath}", {
-            "message": message,
-            "sha": sha,
+        # 1. Get the current commit SHA (HEAD of main)
+        ref = github_api("GET", "git/ref/heads/main")
+        head_sha = ref["object"]["sha"]
+
+        # 2. Get the tree SHA from that commit
+        commit = github_api("GET", f"git/commits/{head_sha}")
+        base_tree_sha = commit["tree"]["sha"]
+
+        # 3. Build new tree: updated JSON files + deleted files
+        tree_items = []
+
+        # Updated JSON files (these keep the file but with ticker removed)
+        for filepath, content in [
+            (f"data/ohlcv/{setup_type}/entry_dates.json", entry_dates_content),
+            (f"data/ohlcv/{setup_type}/signal_day_analysis.json", analysis_content),
+        ]:
+            blob = github_api("POST", "git/blobs", {
+                "content": content,
+                "encoding": "utf-8",
+            })
+            tree_items.append({
+                "path": filepath,
+                "mode": "100644",
+                "type": "blob",
+                "sha": blob["sha"],
+            })
+
+        # Files to delete
+        files_to_delete = set()
+        for csv_name in csv_names:
+            files_to_delete.add(f"data/ohlcv/{setup_type}/{csv_name}")
+        for suffix in ["", "_at_entry"]:
+            files_to_delete.add(f"data/charts/{setup_type}/{ticker}{suffix}.png")
+        files_to_delete.add(f"data/charts/extension/{setup_type}/{ticker}.png")
+        files_to_delete.add(f"data/extension/{setup_type}/{ticker}.csv")
+
+        # Get full tree, filter out deleted paths, add updated JSONs
+        full_tree = github_api("GET", f"git/trees/{base_tree_sha}?recursive=1")
+        json_paths = {item["path"] for item in tree_items}
+
+        new_tree_items = []
+        for item in full_tree["tree"]:
+            if item["type"] == "tree":
+                continue
+            if item["path"] in files_to_delete:
+                continue
+            if item["path"] in json_paths:
+                continue
+            new_tree_items.append({
+                "path": item["path"],
+                "mode": item["mode"],
+                "type": item["type"],
+                "sha": item["sha"],
+            })
+        new_tree_items.extend(tree_items)
+
+        # 4. Create new tree
+        new_tree = github_api("POST", "git/trees", {"tree": new_tree_items})
+
+        # 5. Create commit
+        new_commit = github_api("POST", "git/commits", {
+            "message": f"Delete {ticker} from {setup_type}",
+            "tree": new_tree["sha"],
+            "parents": [head_sha],
         })
-        print(f"GITHUB DELETE OK: {filepath}")
+
+        # 6. Update ref
+        github_api("PATCH", "git/ref/heads/main", {"sha": new_commit["sha"]})
+
+        print(f"DELETE {ticker}: Atomic commit OK — {new_commit['sha'][:8]}")
         return True
+
     except Exception as e:
-        print(f"GITHUB DELETE FAIL: {filepath} - {e}")
+        print(f"DELETE {ticker}: Atomic commit FAILED — {e}")
         return False
 
 
@@ -93,32 +160,6 @@ def github_update_file(filepath: str, content: str, message: str):
     except Exception as e:
         print(f"GITHUB UPDATE FAIL: {filepath} - {e}")
         return False
-
-
-def persist_delete(setup_type: str, ticker: str, entry_dates_content: str, analysis_content: str):
-    """Persist a delete operation to GitHub: remove files and update JSON files."""
-    if not GITHUB_TOKEN:
-        print("PERSIST SKIP: No GITHUB_TOKEN set")
-        return
-
-    msg = f"Delete {ticker} from {setup_type}"
-
-    # Update entry_dates.json and signal_day_analysis.json
-    github_update_file(f"data/ohlcv/{setup_type}/entry_dates.json", entry_dates_content, msg)
-    github_update_file(f"data/ohlcv/{setup_type}/signal_day_analysis.json", analysis_content, msg)
-
-    # Delete CSV (try common pattern)
-    data_dir = DATA_DIR / setup_type
-    for f in data_dir.glob(f"{ticker}_*.csv"):
-        github_delete_file(f"data/ohlcv/{setup_type}/{f.name}", msg)
-
-    # Delete chart images
-    for suffix in ["", "_at_entry"]:
-        github_delete_file(f"data/charts/{setup_type}/{ticker}{suffix}.png", msg)
-
-    # Delete extension data
-    github_delete_file(f"data/charts/extension/{setup_type}/{ticker}.png", msg)
-    github_delete_file(f"data/extension/{setup_type}/{ticker}.csv", msg)
 
 
 def persist_update(setup_type: str, ticker: str, files_to_update: dict[str, str], message: str):
@@ -579,18 +620,14 @@ async def delete_example(setup_type: str, ticker: str):
     if not data_dir.exists():
         raise HTTPException(404, f"No data directory for {setup_type}")
 
-    # Find CSV file(s) BEFORE deleting — need names for GitHub API
     csv_files = list(data_dir.glob(f"{ticker}_*.csv"))
     csv_names = [f.name for f in csv_files]
-
     if not csv_files:
         raise HTTPException(404, f"No CSV found for {ticker} in {setup_type}")
 
-    # --- Local deletes ---
-    deleted_local = []
+    # --- Delete locally ---
     for f in csv_files:
         f.unlink()
-        deleted_local.append(f.name)
 
     entry_file = data_dir / "entry_dates.json"
     if entry_file.exists():
@@ -608,103 +645,26 @@ async def delete_example(setup_type: str, ticker: str):
         p = CHARTS_DIR / setup_type / f"{ticker}{suffix}.png"
         if p.exists():
             p.unlink()
-            deleted_local.append(p.name)
 
     ext_chart = CHARTS_DIR / "extension" / setup_type / f"{ticker}.png"
     if ext_chart.exists():
         ext_chart.unlink()
-        deleted_local.append(f"ext/{ticker}.png")
 
     ext_csv = Path("data/extension") / setup_type / f"{ticker}.csv"
     if ext_csv.exists():
         ext_csv.unlink()
-        deleted_local.append(f"ext/{ticker}.csv")
 
-    # --- GitHub persistence (the part that matters for surviving redeploys) ---
-    gh_ok = []
-    gh_fail = []
-
-    if not GITHUB_TOKEN:
-        print(f"DELETE {ticker}: No GITHUB_TOKEN — local only, will NOT survive redeploy!")
-        return {"status": "deleted_local_only", "ticker": ticker, "warning": "No GITHUB_TOKEN set — delete will not survive redeploy"}
-
-    import time
-    msg = f"Delete {ticker} from {setup_type}"
-
-    # Helper with retry
-    def gh_update_with_retry(filepath, content, message, retries=3):
-        for attempt in range(retries):
-            try:
-                sha = github_get_file_sha(filepath)
-                payload = {
-                    "message": message,
-                    "content": base64.b64encode(content.encode()).decode(),
-                }
-                if sha:
-                    payload["sha"] = sha
-                github_api("PUT", f"contents/{filepath}", payload)
-                gh_ok.append(f"UPDATE {filepath}")
-                print(f"DELETE {ticker}: UPDATE OK {filepath}")
-                return True
-            except Exception as e:
-                print(f"DELETE {ticker}: UPDATE FAIL {filepath} attempt {attempt+1}/{retries}: {e}")
-                if attempt < retries - 1:
-                    time.sleep(1)
-        gh_fail.append(f"UPDATE {filepath}")
-        return False
-
-    def gh_delete_with_retry(filepath, message, retries=3):
-        for attempt in range(retries):
-            try:
-                sha = github_get_file_sha(filepath)
-                if not sha:
-                    gh_ok.append(f"SKIP {filepath} (not in repo)")
-                    return True
-                github_api("DELETE", f"contents/{filepath}", {
-                    "message": message,
-                    "sha": sha,
-                })
-                gh_ok.append(f"DELETE {filepath}")
-                print(f"DELETE {ticker}: DELETE OK {filepath}")
-                return True
-            except Exception as e:
-                print(f"DELETE {ticker}: DELETE FAIL {filepath} attempt {attempt+1}/{retries}: {e}")
-                if attempt < retries - 1:
-                    time.sleep(1)
-        gh_fail.append(f"DELETE {filepath}")
-        return False
-
-    # 1. Update JSON files first (most important — these control what the app shows)
-    gh_update_with_retry(
-        f"data/ohlcv/{setup_type}/entry_dates.json",
+    # --- Persist to GitHub in one atomic commit ---
+    gh_success = github_atomic_delete(
+        setup_type, ticker, csv_names,
         entry_file.read_text() if entry_file.exists() else "[]",
-        msg,
-    )
-    gh_update_with_retry(
-        f"data/ohlcv/{setup_type}/signal_day_analysis.json",
         analysis_file.read_text() if analysis_file.exists() else "[]",
-        msg,
     )
 
-    # 2. Delete all associated files from repo
-    for csv_name in csv_names:
-        gh_delete_with_retry(f"data/ohlcv/{setup_type}/{csv_name}", msg)
-    for suffix in ["", "_at_entry"]:
-        gh_delete_with_retry(f"data/charts/{setup_type}/{ticker}{suffix}.png", msg)
-    gh_delete_with_retry(f"data/charts/extension/{setup_type}/{ticker}.png", msg)
-    gh_delete_with_retry(f"data/extension/{setup_type}/{ticker}.csv", msg)
+    if not gh_success:
+        raise HTTPException(500, f"Deleted {ticker} locally but GitHub sync failed — may reappear after redeploy")
 
-    status = "deleted" if not gh_fail else "partial_delete"
-    if gh_fail:
-        print(f"DELETE {ticker}: INCOMPLETE — failed: {gh_fail}")
-
-    return {
-        "status": status,
-        "ticker": ticker,
-        "local_deleted": deleted_local,
-        "github_ok": gh_ok,
-        "github_failed": gh_fail,
-    }
+    return {"status": "deleted", "ticker": ticker}
 
 
 class UpdateEntryRequest(BaseModel):
