@@ -254,30 +254,20 @@ def clean_val(v):
 @app.get("/api/debug/git-status")
 async def debug_git_status():
     """Check git status and GITHUB_TOKEN availability on Railway."""
-    has_token = bool(GITHUB_TOKEN)
-    results = {"has_github_token": has_token}
-    try:
-        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, timeout=10)
-        results["git_status"] = status.stdout.strip() or "(clean)"
-        results["git_status_rc"] = status.returncode
-        results["git_status_err"] = status.stderr.strip() or None
-    except Exception as e:
-        results["git_status_error"] = str(e)
-    try:
-        remote = subprocess.run(["git", "remote", "-v"], capture_output=True, text=True, timeout=10)
-        # Mask the token in remote URL
-        remote_out = remote.stdout.replace(GITHUB_TOKEN, "***") if GITHUB_TOKEN else remote.stdout
-        results["git_remote"] = remote_out.strip()
-    except Exception as e:
-        results["git_remote_error"] = str(e)
-    try:
-        log = subprocess.run(["git", "log", "--oneline", "-5"], capture_output=True, text=True, timeout=10)
-        results["recent_commits"] = log.stdout.strip().split("\n") if log.stdout.strip() else []
-    except Exception as e:
-        results["git_log_error"] = str(e)
-    # Check working directory
-    results["cwd"] = os.getcwd()
-    results["data_dir_exists"] = DATA_DIR.exists()
+    results = {
+        "has_github_token": bool(GITHUB_TOKEN),
+        "cwd": os.getcwd(),
+        "data_dir_exists": DATA_DIR.exists(),
+    }
+    for label, cmd in [
+        ("git_status", ["git", "status", "--porcelain"]),
+        ("git_log", ["git", "log", "--oneline", "-3"]),
+    ]:
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            results[label] = r.stdout.strip() if r.returncode == 0 else f"ERR: {r.stderr.strip()}"
+        except Exception as e:
+            results[label] = f"EXCEPTION: {e}"
     return results
 
 
