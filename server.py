@@ -153,8 +153,11 @@ def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
                 s = chart_df["Close"].rolling(window=period).mean()
             ax.plot(range(n), s.values, color=color, linewidth=lw, alpha=0.8)
 
-    # Entry date marker
-    ax.axvline(x=entry_pos, color="#3b82f6", linewidth=1.5, alpha=0.6, linestyle="--")
+    # Entry date crosshair at open price
+    entry_open = float(chart_df.iloc[entry_pos]["Open"])
+    ax.axvline(x=entry_pos, color="#3b82f6", linewidth=1, alpha=0.6, linestyle="--")
+    ax.axhline(y=entry_open, color="#3b82f6", linewidth=1, alpha=0.6, linestyle="--")
+    ax_vol.axvline(x=entry_pos, color="#3b82f6", linewidth=1, alpha=0.6, linestyle="--")
 
     # Styling
     ax.set_title(f"{ticker}  •  {entry_date}", color="#e2e8f0", fontsize=11,

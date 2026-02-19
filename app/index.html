@@ -495,20 +495,38 @@
         }
         ctx.stroke();
 
-        // Entry date marker
+        // Entry date crosshair at open price
         if (entryDate) {
           const idx = dates.indexOf(entryDate);
           if (idx >= 0) {
+            const entryVal = vals[idx];
+            const ex = xAt(idx);
+            const ey = yAt(entryVal);
+
             ctx.strokeStyle = '#3b82f6';
-            ctx.lineWidth = 1.5;
+            ctx.lineWidth = 1;
             ctx.globalAlpha = 0.7;
             ctx.setLineDash([4, 3]);
+
+            // Vertical line
             ctx.beginPath();
-            ctx.moveTo(xAt(idx), pad.t);
-            ctx.lineTo(xAt(idx), h - pad.b);
+            ctx.moveTo(ex, pad.t);
+            ctx.lineTo(ex, h - pad.b);
             ctx.stroke();
+
+            // Horizontal line at value
+            ctx.beginPath();
+            ctx.moveTo(pad.l, ey);
+            ctx.lineTo(w - pad.r, ey);
+            ctx.stroke();
+
             ctx.setLineDash([]);
             ctx.globalAlpha = 1;
+
+            // Value label
+            ctx.fillStyle = '#3b82f6';
+            ctx.font = 'bold 9px sans-serif';
+            ctx.fillText(entryVal.toFixed(1) + '%', w - pad.r - 40, ey - 4);
           }
         }
 
