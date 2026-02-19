@@ -30,8 +30,11 @@
 - Precedes stage 4 (markdown)
 - **Reference:** SPY Nov 2025–Feb 2026
 
-### Stage 4 — Markdown
-- (To be defined as it develops)
+### Stage 4 — Markdown / Correction
+- 200 SMA extension (already declining from stage 3) capitulates below a common support area
+- On SPY, ~5% below the 200 SMA is the threshold where dip becomes correction
+- Dip = pullback that holds within ~5% of 200 SMA, correction = breaks through
+- (Common support levels on 200 extension to be defined with more examples)
 
 ---
 
