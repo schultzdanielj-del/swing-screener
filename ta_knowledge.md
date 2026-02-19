@@ -121,6 +121,7 @@
 - **This is what a fakeout actually is** — not a trick or trap, but buy programs going back to check liquidity at cheaper unconfirmed prices to fill giant orders at a better average
 - A breakout with unconfirmed AVWAPs underneath has much higher odds of mean reverting / faking out than one where every AVWAP from the pivot low got a clean foothold on the way up
 - The more AVWAPs confirmed with footholds leading into the breakout, the higher the probability of follow-through
+- **AVWAP as setup quality filter:** A chart can look A+ on candlesticks (big move, pullback, tight consolidation) but if price is below the breakout AVWAP, the average buyer is still underwater = no capitulation fuel. Most traders don't see this layer. Example: BTU Oct 2025 — textbook setup that was poorly positioned against the breakout AVWAP.
 
 **Baby / Daddy short-term MAs:**
 - Every D1 chart respects a fast ("baby") and slow ("daddy") short-term MA
