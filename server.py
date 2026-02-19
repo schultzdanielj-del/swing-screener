@@ -104,6 +104,7 @@ def migrate_unique_constraint():
         table_sql = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='examples'").fetchone()
         if table_sql and "UNIQUE(setup_type, ticker)" in table_sql[0] and "UNIQUE(setup_type, ticker, entry_date)" not in table_sql[0]:
             print("Migrating examples table: UNIQUE(setup_type, ticker) → UNIQUE(setup_type, ticker, entry_date)")
+            db.execute("PRAGMA foreign_keys = OFF")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS examples_new (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,6 +121,7 @@ def migrate_unique_constraint():
                 ALTER TABLE examples_new RENAME TO examples;
                 CREATE INDEX IF NOT EXISTS idx_examples_setup ON examples(setup_type);
             """)
+            db.execute("PRAGMA foreign_keys = ON")
             print("Migration complete.")
 
 migrate_unique_constraint()
@@ -543,6 +545,32 @@ async def update_entry_date(setup_type: str, example_id: int, req: UpdateEntryRe
             except Exception as e:
                 analysis = {"error": str(e)}
     return {"status": "updated", "ticker": ticker, "entryDate": req.entry_date, "analysis": analysis}
+
+
+@app.post("/api/repair-data")
+async def repair_missing_data():
+    """Re-fetch OHLCV and extension data for any examples missing it."""
+    repaired = []
+    with get_db() as db:
+        examples = db.execute("SELECT id, ticker, chart_date, entry_date FROM examples").fetchall()
+        for ex in examples:
+            has_ohlcv = db.execute("SELECT 1 FROM ohlcv WHERE example_id=? LIMIT 1", (ex["id"],)).fetchone()
+            if not has_ohlcv:
+                print(f"  Repairing OHLCV for {ex['ticker']} (id={ex['id']})...")
+                ohlcv_df = fetch_ohlcv(ex["ticker"], ex["chart_date"])
+                if ohlcv_df is not None:
+                    store_ohlcv(db, ex["id"], ohlcv_df)
+                ext_df = fetch_extension(ex["ticker"])
+                if ext_df is not None:
+                    store_extension(db, ex["id"], ext_df)
+                try:
+                    if ohlcv_df is not None:
+                        analysis = run_signal_analysis(ohlcv_df, ex["ticker"], ex["entry_date"])
+                        db.execute("INSERT OR REPLACE INTO signal_analysis (example_id, analysis_json) VALUES (?,?)", (ex["id"], json.dumps(analysis)))
+                except Exception as e:
+                    print(f"  Analysis error for {ex['ticker']}: {e}")
+                repaired.append(ex["ticker"])
+    return {"repaired": repaired, "count": len(repaired)}
 
 
 # ============================================
