@@ -100,7 +100,20 @@
 - **Critical distinction:** Price can move THROUGH all three VWAP levels, but it won't sustain unless it catches a foothold (bid/ask) at each level. Piercing without holding = expect mean reversion back to VWAP.
 - **Trend day confirmation:** Price confirms VWAP, then confirms the standard deviation in the same direction. That sequential confirmation = real trend day.
 
-### Principle 2
+### Principle 2 — D1 AVWAP Dance
+- The intraday VWAP/SD dance has a daily timeframe equivalent using anchored VWAPs (AVWAPs)
+- Not talking about catalyst/earnings/IPO AVWAPs (those are just big D1 levels) — this is about predicting short-term D1 price movement
+
+**Two key AVWAP uses for D1 swing entries:**
+
+**1. Highest/Lowest AVWAP from previous D1 pivot**
+- Usually not anchored to the actual pivot candle — often a candle before it
+- For a long breakout: price must break through the highest contextual AVWAP above
+- Breaking this level means the average seller from the pullback is now losing → they capitulate → accelerates price away from entry
+- This acceleration gives you enough cushion to set stop at break-even and ride the trend through normal chop
+- Also pulls price far from the second factor (below)
+
+**2.**
 - (To be defined)
 
 - TC2000 indicator T2104 (% of stocks above 200 SMA)
