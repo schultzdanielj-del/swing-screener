@@ -97,6 +97,7 @@
 - Most chop is algos pushing price between these three points trying to get the combination sequence right
 - They're probing for what liquidity is out there
 - Once the sequence completes → bigger market move / trend day
+- **Critical distinction:** Price can move THROUGH all three VWAP levels, but it won't sustain unless it catches a foothold (bid/ask) at each level. Piercing without holding = expect mean reversion back to VWAP.
 
 ### Principle 2
 - (To be defined)
