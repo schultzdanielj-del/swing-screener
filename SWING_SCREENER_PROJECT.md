@@ -66,9 +66,9 @@ This takes 1-2 hours nightly. The real goal is screening 1000+ tickers down to ~
 
 ### 1. 3-4DB — 3-4 Day Bounce (SHORT setup) — PCF COMPLETE
 - Stock pulls back after a move, bounces weakly for 3-4 days, then fails
-- 16 examples with pinned entry dates and signal day analysis
+- 15 examples with pinned entry dates and signal day analysis
 - 9 PCF conditions, 100% pass rate (zero false negatives)
-- Examples: AEVA, BE, BITF, CLSK, FLNC, HIVE, IREN, LEU, OKLO, ONDS, OPEN, PATH, PL, QS, REAL, RR
+- Examples: AEVA, BE, BITF, CLSK, HIVE, IREN, LEU, OKLO, ONDS, OPEN, PATH, PL, QS, REAL, RR
 
 ### 2. DTSS — Double Top Short Sell (SHORT setup)
 - Failed breakout at resistance, short at the rejection
