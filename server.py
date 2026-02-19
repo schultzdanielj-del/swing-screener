@@ -60,7 +60,7 @@ def init_db():
                 chart_date TEXT NOT NULL,
                 entry_date TEXT NOT NULL,
                 created_at TEXT DEFAULT (datetime('now')),
-                UNIQUE(setup_type, ticker)
+                UNIQUE(setup_type, ticker, entry_date)
             );
             CREATE TABLE IF NOT EXISTS ohlcv (
                 example_id INTEGER NOT NULL,
@@ -97,6 +97,32 @@ def init_db():
         """)
 
 init_db()
+
+# Migrate: change UNIQUE(setup_type, ticker) → UNIQUE(setup_type, ticker, entry_date)
+def migrate_unique_constraint():
+    with get_db() as db:
+        table_sql = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='examples'").fetchone()
+        if table_sql and "UNIQUE(setup_type, ticker)" in table_sql[0] and "UNIQUE(setup_type, ticker, entry_date)" not in table_sql[0]:
+            print("Migrating examples table: UNIQUE(setup_type, ticker) → UNIQUE(setup_type, ticker, entry_date)")
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS examples_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    setup_type TEXT NOT NULL,
+                    ticker TEXT NOT NULL,
+                    chart_date TEXT NOT NULL,
+                    entry_date TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    UNIQUE(setup_type, ticker, entry_date)
+                );
+                INSERT INTO examples_new (id, setup_type, ticker, chart_date, entry_date, created_at)
+                    SELECT id, setup_type, ticker, chart_date, entry_date, created_at FROM examples;
+                DROP TABLE examples;
+                ALTER TABLE examples_new RENAME TO examples;
+                CREATE INDEX IF NOT EXISTS idx_examples_setup ON examples(setup_type);
+            """)
+            print("Migration complete.")
+
+migrate_unique_constraint()
 
 # Migrate extension table: old schema had ext_sma50_pct/ext_sma200_pct, new uses xatr + atr14
 with get_db() as db:
@@ -403,25 +429,23 @@ async def get_examples(setup_type: str):
             examples.append({"id": r["id"], "ticker": r["ticker"], "chartDate": r["chart_date"], "entryDate": r["entry_date"], "hasAnalysis": has})
     return {"setupType": setup_type, "examples": examples}
 
-@app.get("/api/chart-image/{setup_type}/{ticker}")
-async def get_chart_image(setup_type: str, ticker: str, at_entry: int = Query(0)):
-    ticker = ticker.upper().strip()
+@app.get("/api/chart-image/{setup_type}/{example_id}")
+async def get_chart_image(setup_type: str, example_id: int, at_entry: int = Query(0)):
     with get_db() as db:
-        ex = db.execute("SELECT id, entry_date FROM examples WHERE setup_type=? AND ticker=?", (setup_type, ticker)).fetchone()
-        if not ex: raise HTTPException(404, f"No example for {ticker}")
-        df = get_ohlcv_df(db, ex["id"])
-        if df is None: raise HTTPException(404, f"No OHLCV data for {ticker}")
-    png = generate_chart_png(df, ticker, ex["entry_date"], at_entry=bool(at_entry))
+        ex = db.execute("SELECT id, ticker, entry_date FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
+        if not ex: raise HTTPException(404, f"No example with id {example_id}")
+        df = get_ohlcv_df(db, example_id)
+        if df is None: raise HTTPException(404, f"No OHLCV data for {ex['ticker']}")
+    png = generate_chart_png(df, ex["ticker"], ex["entry_date"], at_entry=bool(at_entry))
     if png is None: raise HTTPException(500, "Chart generation failed")
     return Response(content=png, media_type="image/png")
 
-@app.get("/api/extension-data/{setup_type}/{ticker}")
-async def api_extension_data(setup_type: str, ticker: str, entry_date: str = Query(None)):
-    ticker = ticker.upper().strip()
+@app.get("/api/extension-data/{setup_type}/{example_id}")
+async def api_extension_data(setup_type: str, example_id: int, entry_date: str = Query(None)):
     with get_db() as db:
-        ex = db.execute("SELECT id, entry_date FROM examples WHERE setup_type=? AND ticker=?", (setup_type, ticker)).fetchone()
+        ex = db.execute("SELECT id, entry_date FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
         if not ex: raise HTTPException(404)
-        data = get_extension_rows(db, ex["id"])
+        data = get_extension_rows(db, example_id)
         if not data: raise HTTPException(404)
     ed = entry_date or ex["entry_date"]
     if ed:
@@ -433,13 +457,12 @@ async def api_extension_data(setup_type: str, ticker: str, entry_date: str = Que
         data = data[max(0, entry_idx - before_count):]
     return data
 
-@app.get("/api/ohlcv/local/{setup_type}/{ticker}")
-async def get_local_ohlcv(setup_type: str, ticker: str):
-    ticker = ticker.upper().strip()
+@app.get("/api/ohlcv/local/{setup_type}/{example_id}")
+async def get_local_ohlcv(setup_type: str, example_id: int):
     with get_db() as db:
-        ex = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=?", (setup_type, ticker)).fetchone()
+        ex = db.execute("SELECT id, ticker FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
         if not ex: raise HTTPException(404)
-        df = get_ohlcv_df(db, ex["id"])
+        df = get_ohlcv_df(db, example_id)
         if df is None: raise HTTPException(404)
     df = add_indicators(df)
     candles = [{"date": row["Date"].strftime("%Y-%m-%d"), "open": clean_val(row["Open"]), "high": clean_val(row["High"]),
@@ -447,7 +470,7 @@ async def get_local_ohlcv(setup_type: str, ticker: str):
                 "ema8": clean_val(row.get("EMA8")), "ema21": clean_val(row.get("EMA21")), "sma50": clean_val(row.get("SMA50")),
                 "sma200": clean_val(row.get("SMA200")), "atr14": clean_val(row.get("ATR14")), "volAvg20": clean_val(row.get("VolAvg20"))}
                for _, row in df.tail(150).iterrows()]
-    return {"ticker": ticker, "candles": candles}
+    return {"ticker": ex["ticker"], "candles": candles}
 
 @app.get("/api/conditions/{setup_type}")
 async def get_conditions(setup_type: str):
@@ -473,10 +496,10 @@ async def save_example(setup_type: str, req: SaveExampleRequest):
     ext_df = fetch_extension(ticker)
 
     with get_db() as db:
-        existing = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=?", (setup_type, ticker)).fetchone()
+        existing = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?", (setup_type, ticker, req.entry_date)).fetchone()
         if existing:
             eid = existing["id"]
-            db.execute("UPDATE examples SET chart_date=?, entry_date=? WHERE id=?", (req.chart_date, req.entry_date, eid))
+            db.execute("UPDATE examples SET chart_date=? WHERE id=?", (req.chart_date, eid))
             db.execute("DELETE FROM ohlcv WHERE example_id=?", (eid,))
             db.execute("DELETE FROM extension WHERE example_id=?", (eid,))
             db.execute("DELETE FROM signal_analysis WHERE example_id=?", (eid,))
@@ -493,31 +516,30 @@ async def save_example(setup_type: str, req: SaveExampleRequest):
             analysis = {"error": str(e)}
     return {"status": "saved", "ticker": ticker, "entryDate": req.entry_date, "analysis": analysis}
 
-@app.delete("/api/examples/{setup_type}/{ticker}")
-async def delete_example(setup_type: str, ticker: str):
-    ticker = ticker.upper().strip()
+@app.delete("/api/examples/{setup_type}/{example_id}")
+async def delete_example(setup_type: str, example_id: int):
     with get_db() as db:
-        ex = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=?", (setup_type, ticker)).fetchone()
-        if not ex: raise HTTPException(404, f"No example for {ticker}")
-        db.execute("DELETE FROM examples WHERE id=?", (ex["id"],))
-    return {"status": "deleted", "ticker": ticker}
+        ex = db.execute("SELECT id FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
+        if not ex: raise HTTPException(404, f"No example with id {example_id}")
+        db.execute("DELETE FROM examples WHERE id=?", (example_id,))
+    return {"status": "deleted", "id": example_id}
 
 class UpdateEntryRequest(BaseModel):
     entry_date: str
 
-@app.patch("/api/examples/{setup_type}/{ticker}")
-async def update_entry_date(setup_type: str, ticker: str, req: UpdateEntryRequest):
-    ticker = ticker.upper().strip()
+@app.patch("/api/examples/{setup_type}/{example_id}")
+async def update_entry_date(setup_type: str, example_id: int, req: UpdateEntryRequest):
     with get_db() as db:
-        ex = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=?", (setup_type, ticker)).fetchone()
+        ex = db.execute("SELECT id, ticker FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
         if not ex: raise HTTPException(404)
-        db.execute("UPDATE examples SET entry_date=? WHERE id=?", (req.entry_date, ex["id"]))
-        df = get_ohlcv_df(db, ex["id"])
+        ticker = ex["ticker"]
+        db.execute("UPDATE examples SET entry_date=? WHERE id=?", (req.entry_date, example_id))
+        df = get_ohlcv_df(db, example_id)
         analysis = None
         if df is not None:
             try:
                 analysis = run_signal_analysis(df, ticker, req.entry_date)
-                db.execute("INSERT OR REPLACE INTO signal_analysis (example_id, analysis_json) VALUES (?,?)", (ex["id"], json.dumps(analysis)))
+                db.execute("INSERT OR REPLACE INTO signal_analysis (example_id, analysis_json) VALUES (?,?)", (example_id, json.dumps(analysis)))
             except Exception as e:
                 analysis = {"error": str(e)}
     return {"status": "updated", "ticker": ticker, "entryDate": req.entry_date, "analysis": analysis}

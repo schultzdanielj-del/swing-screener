@@ -367,7 +367,7 @@
     // ============================================
     function ExampleCard({ example, activeSetup, onDelete, deleting, chartView, timeView, onUpdated }) {
       const entryDate = example.entryDate || example.chartDate || '';
-      const imgUrl = `/api/chart-image/${activeSetup}/${example.ticker}` + (timeView === 'entry' ? '?at_entry=1' : '');
+      const imgUrl = `/api/chart-image/${activeSetup}/${example.id}` + (timeView === 'entry' ? '?at_entry=1' : '');
       const [editing, setEditing] = useState(false);
       const [editDate, setEditDate] = useState(entryDate);
       const [saving, setSaving] = useState(false);
@@ -376,7 +376,7 @@
         if (!editDate || editDate === entryDate) { setEditing(false); return; }
         setSaving(true);
         try {
-          const res = await fetch(`/api/examples/${activeSetup}/${example.ticker}`, {
+          const res = await fetch(`/api/examples/${activeSetup}/${example.id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ entry_date: editDate }),
@@ -403,7 +403,7 @@
           {chartView === 'd1' ? (
             <img src={imgUrl} alt={`${example.ticker} chart`} style={{ width: '100%', display: 'block' }} onError={e => { e.target.style.display = 'none'; }} />
           ) : (
-            <ExtensionMiniChart ticker={example.ticker} activeSetup={activeSetup} metric={chartView} entryDate={entryDate} timeView={timeView} />
+            <ExtensionMiniChart exampleId={example.id} activeSetup={activeSetup} metric={chartView} entryDate={entryDate} timeView={timeView} />
           )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -420,32 +420,32 @@
               {example.hasAnalysis && <span className="badge badge-pass" style={{ fontSize: 9, padding: '2px 6px' }}>✓</span>}
             </div>
             <button
-              onClick={() => onDelete(example.ticker)}
-              disabled={deleting === example.ticker}
+              onClick={() => onDelete(example.id)}
+              disabled={deleting === example.id}
               style={{ background:'none', border:'none', color:'var(--text-muted)', cursor:'pointer', fontSize: 12, padding: '2px 6px', borderRadius: 4 }}
               onMouseOver={e => e.target.style.color = 'var(--accent-red)'}
               onMouseOut={e => e.target.style.color = 'var(--text-muted)'}
               title={`Delete ${example.ticker}`}
             >
-              {deleting === example.ticker ? '...' : '✕'}
+              {deleting === example.id ? '...' : '✕'}
             </button>
           </div>
         </div>
       );
     }
 
-    function ExtensionMiniChart({ ticker, activeSetup, metric, entryDate, timeView }) {
+    function ExtensionMiniChart({ exampleId, activeSetup, metric, entryDate, timeView }) {
       const canvasRef = useRef(null);
       const [data, setData] = useState(null);
 
       useEffect(() => {
         const params = new URLSearchParams();
         if (entryDate) params.set('entry_date', entryDate);
-        fetch(`/api/extension-data/${activeSetup}/${ticker}?${params}`)
+        fetch(`/api/extension-data/${activeSetup}/${exampleId}?${params}`)
           .then(r => r.ok ? r.json() : null)
           .then(d => setData(d))
           .catch(() => {});
-      }, [ticker, activeSetup, entryDate]);
+      }, [exampleId, activeSetup, entryDate]);
 
       useEffect(() => {
         if (!data || !canvasRef.current) return;
@@ -636,11 +636,13 @@
         finally { setSaving(false); }
       }
 
-      async function handleDelete(ticker) {
-        if (!confirm(`Delete ${ticker} from ${activeSetup.toUpperCase()}?`)) return;
-        setDeleting(ticker);
+      async function handleDelete(exampleId) {
+        const ex = examples.find(e => e.id === exampleId);
+        const label = ex ? `${ex.ticker} (${ex.entryDate})` : `#${exampleId}`;
+        if (!confirm(`Delete ${label} from ${activeSetup.toUpperCase()}?`)) return;
+        setDeleting(exampleId);
         try {
-          const res = await fetch(`/api/examples/${activeSetup}/${ticker}`, { method: 'DELETE' });
+          const res = await fetch(`/api/examples/${activeSetup}/${exampleId}`, { method: 'DELETE' });
           if (!res.ok) {
             const msg = await res.json().catch(() => ({ detail: res.statusText }));
             alert(msg.detail || 'Delete failed');
