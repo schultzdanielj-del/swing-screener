@@ -53,6 +53,8 @@
   - Established large caps (F, KO): rarely past 6x, usually 3-5x
 - Older/more liquid stocks have lower extension ceilings — decades of mean-reversion conditioning
 - Implication: knowing a stock's typical max extension helps gauge where it is in its cycle and conviction level on setups
+- Extension peaks often cluster at specific levels (bimodal) — e.g. AAPL either fakes out just above 50 SMA (1-2x ADR) or trends to 6-7.5x ADR. Gap in between = stock doesn't hang out at intermediate extensions.
+- Use historical extension peak/valley clustering to improve fade timing — short at the statistical ceiling, not arbitrary levels
 
 - Bull channels break one side: either establish steeper channel on top (continuation) or break opposite side for measured move
 - If lower trendline breaks and retest fails → measured move = channel width projected downward
