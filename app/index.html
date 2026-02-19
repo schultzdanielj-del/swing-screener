@@ -270,7 +270,6 @@
     const PAGES = [
       { id: 'dashboard',  label: 'Dashboard',    icon: '◫', section: 'overview' },
       { id: 'examples',   label: 'Examples',     icon: '◉', section: 'manage' },
-      { id: 'add',        label: 'Add Example',  icon: '＋', section: 'manage' },
       { id: 'conditions', label: 'Conditions',   icon: '⚙', section: 'manage' },
       { id: 'validate',   label: 'Validate',     icon: '✓', section: 'tools' },
     ];
@@ -316,7 +315,7 @@
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card-title">⚡ Quick Actions</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button className="btn" onClick={() => setPage('add')}>＋ Add Example</button>
+              <button className="btn" onClick={() => setPage('examples')}>◉ Examples</button>
               <button className="btn" onClick={() => setPage('validate')}>✓ Run Validation</button>
               <button className="btn" onClick={() => setPage('conditions')}>⚙ Edit Conditions</button>
             </div>
@@ -407,6 +406,83 @@
       );
     }
 
+    function AddCard({ activeSetup, onSaved }) {
+      const [ticker, setTicker] = useState('');
+      const [entryDate, setEntryDate] = useState('');
+      const [saving, setSaving] = useState(false);
+      const [error, setError] = useState(null);
+      const [success, setSuccess] = useState(null);
+
+      async function handleSave() {
+        if (!ticker.trim() || !entryDate) return;
+        setSaving(true);
+        setError(null);
+        setSuccess(null);
+        try {
+          const res = await fetch(`/api/examples/${activeSetup}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ticker: ticker.trim().toUpperCase(),
+              chart_date: entryDate,
+              entry_date: entryDate,
+            }),
+          });
+          if (!res.ok) {
+            const msg = await res.json().catch(() => ({ detail: res.statusText }));
+            throw new Error(msg.detail || 'Save failed');
+          }
+          const data = await res.json();
+          setSuccess(data.ticker);
+          setTicker('');
+          setEntryDate('');
+          onSaved();
+          setTimeout(() => setSuccess(null), 3000);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setSaving(false);
+        }
+      }
+
+      return (
+        <div style={{
+          background: 'var(--bg-card)',
+          border: '2px dashed var(--border)',
+          borderRadius: 8,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
+          gap: 12,
+          minHeight: 200,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>＋ Add Example</div>
+          <input
+            type="text"
+            value={ticker}
+            onChange={e => setTicker(e.target.value.toUpperCase())}
+            onKeyDown={e => e.key === 'Enter' && handleSave()}
+            placeholder="TICKER"
+            style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 14, width: '100%', maxWidth: 160, textAlign: 'center', outline: 'none' }}
+          />
+          <input
+            type="date"
+            value={entryDate}
+            onChange={e => setEntryDate(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSave()}
+            style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 13, width: '100%', maxWidth: 160, textAlign: 'center', outline: 'none' }}
+          />
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving || !ticker.trim() || !entryDate} style={{ fontSize: 12, padding: '6px 16px' }}>
+            {saving ? '⏳ Saving...' : '💾 Save'}
+          </button>
+          {error && <div style={{ color: 'var(--accent-red)', fontSize: 11 }}>⚠ {error}</div>}
+          {success && <div style={{ color: 'var(--accent-green)', fontSize: 11 }}>✓ {success} saved</div>}
+        </div>
+      );
+    }
+
     function ExamplesPage({ activeSetup }) {
       const [examples, setExamples] = useState([]);
       const [loading, setLoading] = useState(true);
@@ -467,6 +543,7 @@
               gridTemplateColumns: 'repeat(3, 1fr)',
               gap: 16,
             }}>
+              <AddCard activeSetup={activeSetup} onSaved={loadExamples} />
               {examples.map(ex => (
                 <ExampleCard
                   key={ex.ticker}
@@ -478,149 +555,8 @@
               ))}
             </div>
           ) : (
-            <div className="card">
-              <div className="empty-state">
-                <div className="empty-state-icon">📊</div>
-                <div className="empty-state-title">No examples yet</div>
-                <div className="empty-state-desc">Add your first {SETUP_TYPES[activeSetup].name} example to start building conditions.</div>
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    // ============================================
-    // ADD EXAMPLE PAGE — Manual Entry + Interactive Chart
-    // ============================================
-    function AddExamplePage({ activeSetup }) {
-      const [ticker, setTicker] = useState('');
-      const [entryDate, setEntryDate] = useState('');
-      const [saving, setSaving] = useState(false);
-      const [error, setError] = useState(null);
-      const [saveResult, setSaveResult] = useState(null);
-      const [candles, setCandles] = useState(null);
-
-      async function handleSave() {
-        if (!ticker.trim() || !entryDate) return;
-        setSaving(true);
-        setError(null);
-        setSaveResult(null);
-        setCandles(null);
-        try {
-          const res = await fetch(`/api/examples/${activeSetup}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ticker: ticker.trim().toUpperCase(),
-              chart_date: entryDate,
-              entry_date: entryDate,
-            }),
-          });
-          if (!res.ok) {
-            const msg = await res.json().catch(() => ({ detail: res.statusText }));
-            throw new Error(msg.detail || 'Save failed');
-          }
-          const data = await res.json();
-          setSaveResult(data);
-
-          // Load chart for confirmation
-          const params = new URLSearchParams({ ticker: ticker.trim(), date: entryDate });
-          const chartRes = await fetch('/api/ohlcv?' + params);
-          if (chartRes.ok) {
-            const chartData = await chartRes.json();
-            setCandles(chartData.candles);
-          }
-        } catch (e) {
-          setError(e.message);
-        } finally {
-          setSaving(false);
-        }
-      }
-
-      function handleKeyDown(e) {
-        if (e.key === 'Enter') handleSave();
-      }
-
-      function handleReset() {
-        setTicker(''); setEntryDate(''); setSaveResult(null); setCandles(null); setError(null);
-      }
-
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Entry form */}
-          <div className="card">
-            <div className="card-title">＋ Add Example — {SETUP_TYPES[activeSetup]?.name || activeSetup}</div>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <div>
-                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>Ticker</label>
-                <input
-                  type="text"
-                  value={ticker}
-                  onChange={e => setTicker(e.target.value.toUpperCase())}
-                  onKeyDown={handleKeyDown}
-                  placeholder="AAPL"
-                  style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 14, width: 120, outline: 'none' }}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>Entry Date</label>
-                <input
-                  type="date"
-                  value={entryDate}
-                  onChange={e => setEntryDate(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 14, outline: 'none' }}
-                />
-              </div>
-              <button className="btn btn-primary" onClick={handleSave} disabled={saving || !ticker.trim() || !entryDate}>
-                {saving ? '⏳ Saving...' : '💾 Save'}
-              </button>
-            </div>
-            {error && <div style={{ marginTop: 12, color: 'var(--accent-red)', fontSize: 13 }}>⚠ {error}</div>}
-          </div>
-
-          {/* Save success */}
-          {saveResult && (
-            <div style={{ background: 'rgba(38,166,154,0.12)', border: '1px solid rgba(38,166,154,0.3)', borderRadius: 8, padding: '16px', fontSize: 13 }}>
-              <div style={{ color: 'var(--accent-green)', fontWeight: 600, marginBottom: 8 }}>
-                ✓ Saved {saveResult.ticker} — Entry: {saveResult.entryDate}
-              </div>
-              <div style={{ color: 'var(--text-secondary)', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
-                CSV: {saveResult.csvFile}
-              </div>
-              {saveResult.analysis && !saveResult.analysis.error && (
-                <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '6px 16px', fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-                  <span>Close: {saveResult.analysis.close}</span>
-                  <span>ATR14: {saveResult.analysis.atr14}</span>
-                  <span>Pullback: {saveResult.analysis.pullback_pct}%</span>
-                  <span>Bounce: {saveResult.analysis.bounce_from_low_pct}%</span>
-                  <span>Days from high: {saveResult.analysis.days_from_high}</span>
-                  <span>Days since low: {saveResult.analysis.days_since_low}</span>
-                  <span>Above SMA50: {saveResult.analysis.above_sma50 ? '✓' : '✗'}</span>
-                  <span>SMA50 slope: {saveResult.analysis.sma50_slope_5d}</span>
-                </div>
-              )}
-              {saveResult.analysis && saveResult.analysis.error && (
-                <div style={{ marginTop: 8, color: 'var(--accent-yellow)', fontSize: 12 }}>
-                  ⚠ Analysis: {saveResult.analysis.error}
-                </div>
-              )}
-              <button className="btn" style={{ marginTop: 12, fontSize: 12 }} onClick={handleReset}>
-                ＋ Add Another
-              </button>
-            </div>
-          )}
-
-          {/* Chart shown after save for confirmation */}
-          {candles && (
-            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <CandlestickChart
-                candles={candles}
-                ticker={saveResult?.ticker || ticker}
-                selectedDate={entryDate}
-                onSelectDate={() => {}}
-              />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+              <AddCard activeSetup={activeSetup} onSaved={loadExamples} />
             </div>
           )}
         </div>
@@ -1107,7 +1043,6 @@
             <div className="content">
               {page === 'dashboard' && <DashboardPage setPage={setPage} />}
               {page === 'examples' && <ExamplesPage activeSetup={activeSetup} />}
-              {page === 'add' && <AddExamplePage activeSetup={activeSetup} />}
               {page === 'conditions' && <ConditionsPage activeSetup={activeSetup} />}
               {page === 'validate' && <ValidatePage />}
             </div>
