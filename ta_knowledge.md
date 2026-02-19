@@ -78,6 +78,12 @@
 - Trim levels and trailing stop tightness should scale with remaining statistical upside (extension position relative to historical ceiling)
 - **Example — Stage 3 long (UNR/undercut-and-rally):** RIVN historically peaks at ~1.0-1.25x ADR on 50 extension in stage 3. Take UNR entry at the low, exit entire position when extension hits that ceiling. Not hindsight — the extension history told you the max upside before you entered.
 
+## Intraday Entry Timing
+
+- **Normal days:** Entry either in first 15-20 minutes OR around 11:00 AM. Rarely end of day. Never in between.
+- **Trend days (rare):** Can attack breakouts all day long. If bearish trend day, shorts are already gone — would have to chase.
+- Trend days are the exception, not the rule.
+
 ## Intraday AVWAP Confirmation
 
 - Price must hold sequential daily AVWAPs on the same side of the 8 EMA to confirm a breakout
