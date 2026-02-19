@@ -406,87 +406,14 @@
       );
     }
 
-    function AddCard({ activeSetup, onSaved }) {
-      const [ticker, setTicker] = useState('');
-      const [entryDate, setEntryDate] = useState('');
-      const [saving, setSaving] = useState(false);
-      const [error, setError] = useState(null);
-      const [success, setSuccess] = useState(null);
-
-      async function handleSave() {
-        if (!ticker.trim() || !entryDate) return;
-        setSaving(true);
-        setError(null);
-        setSuccess(null);
-        try {
-          const res = await fetch(`/api/examples/${activeSetup}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ticker: ticker.trim().toUpperCase(),
-              chart_date: entryDate,
-              entry_date: entryDate,
-            }),
-          });
-          if (!res.ok) {
-            const msg = await res.json().catch(() => ({ detail: res.statusText }));
-            throw new Error(msg.detail || 'Save failed');
-          }
-          const data = await res.json();
-          setSuccess(data.ticker);
-          setTicker('');
-          setEntryDate('');
-          onSaved();
-          setTimeout(() => setSuccess(null), 3000);
-        } catch (e) {
-          setError(e.message);
-        } finally {
-          setSaving(false);
-        }
-      }
-
-      return (
-        <div style={{
-          background: 'var(--bg-card)',
-          border: '2px dashed var(--border)',
-          borderRadius: 8,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 24,
-          gap: 12,
-          minHeight: 200,
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>＋ Add Example</div>
-          <input
-            type="text"
-            value={ticker}
-            onChange={e => setTicker(e.target.value.toUpperCase())}
-            onKeyDown={e => e.key === 'Enter' && handleSave()}
-            placeholder="TICKER"
-            style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 14, width: '100%', maxWidth: 160, textAlign: 'center', outline: 'none' }}
-          />
-          <input
-            type="date"
-            value={entryDate}
-            onChange={e => setEntryDate(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSave()}
-            style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 13, width: '100%', maxWidth: 160, textAlign: 'center', outline: 'none' }}
-          />
-          <button className="btn btn-primary" onClick={handleSave} disabled={saving || !ticker.trim() || !entryDate} style={{ fontSize: 12, padding: '6px 16px' }}>
-            {saving ? '⏳ Saving...' : '💾 Save'}
-          </button>
-          {error && <div style={{ color: 'var(--accent-red)', fontSize: 11 }}>⚠ {error}</div>}
-          {success && <div style={{ color: 'var(--accent-green)', fontSize: 11 }}>✓ {success} saved</div>}
-        </div>
-      );
-    }
-
     function ExamplesPage({ activeSetup }) {
       const [examples, setExamples] = useState([]);
       const [loading, setLoading] = useState(true);
       const [deleting, setDeleting] = useState(null);
+      const [ticker, setTicker] = useState('');
+      const [entryDate, setEntryDate] = useState('');
+      const [saving, setSaving] = useState(false);
+      const [addError, setAddError] = useState(null);
 
       function loadExamples() {
         setLoading(true);
@@ -497,6 +424,26 @@
       }
 
       useEffect(() => { loadExamples(); }, [activeSetup]);
+
+      async function handleSave() {
+        if (!ticker.trim() || !entryDate) return;
+        setSaving(true);
+        setAddError(null);
+        try {
+          const res = await fetch(`/api/examples/${activeSetup}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ticker: ticker.trim().toUpperCase(), chart_date: entryDate, entry_date: entryDate }),
+          });
+          if (!res.ok) {
+            const msg = await res.json().catch(() => ({ detail: res.statusText }));
+            throw new Error(msg.detail || 'Save failed');
+          }
+          setTicker(''); setEntryDate('');
+          loadExamples();
+        } catch (e) { setAddError(e.message); }
+        finally { setSaving(false); }
+      }
 
       async function handleDelete(ticker) {
         if (!confirm(`Delete ${ticker} from ${activeSetup.toUpperCase()}?`)) return;
@@ -526,13 +473,23 @@
             ))}
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
-              Examples — {SETUP_TYPES[activeSetup].name}
-            </span>
-            <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-              {examples.length} examples
-            </span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                Examples — {SETUP_TYPES[activeSetup].name}
+              </span>
+              <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                {examples.length}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleSave()} placeholder="TICKER" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 12, width: 80, outline: 'none' }} />
+              <input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSave()} style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none' }} />
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving || !ticker.trim() || !entryDate} style={{ fontSize: 11, padding: '5px 12px' }}>
+                {saving ? '⏳' : '＋ Add'}
+              </button>
+              {addError && <span style={{ color: 'var(--accent-red)', fontSize: 11 }}>⚠ {addError}</span>}
+            </div>
           </div>
 
           {loading ? (
@@ -543,7 +500,6 @@
               gridTemplateColumns: 'repeat(3, 1fr)',
               gap: 16,
             }}>
-              <AddCard activeSetup={activeSetup} onSaved={loadExamples} />
               {examples.map(ex => (
                 <ExampleCard
                   key={ex.ticker}
@@ -555,9 +511,7 @@
               ))}
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-              <AddCard activeSetup={activeSetup} onSaved={loadExamples} />
-            </div>
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No examples yet — add one above.</div>
           )}
         </div>
       );
