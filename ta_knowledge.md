@@ -66,6 +66,14 @@
 - Steeper channels more likely to snap than stair-step — better 3-4DB candidates
 - Channel slope of 2-3% per bar is typical for 3-4DB setups (from analysis of 14 examples)
 
+## Trade Management — Context-Dependent
+
+- Management strategy should match the market stage and extension position
+- **Early trend / post-correction (stage 2a, near 50 SMA):** Full runway available. Sit on it with stop at break-even for weeks. Trim partial at 21 EMA break, hold rest until 50 SMA break.
+- **Late trend / extended (stage 2b/3, near statistical ceiling):** Take the whole position off on a good win. Less room to run = less reason to hold.
+- **Key principle:** Don't apply the same management to every trade. A long setup in stage 3 with 1-2 ADR of upside left gets a completely different plan than a post-correction breakout with full runway.
+- Trim levels and trailing stop tightness should scale with remaining statistical upside (extension position relative to historical ceiling)
+
 ## Intraday AVWAP Confirmation
 
 - Price must hold sequential daily AVWAPs on the same side of the 8 EMA to confirm a breakout
