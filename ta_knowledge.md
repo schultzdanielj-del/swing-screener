@@ -32,9 +32,10 @@
 
 ### Stage 4 — Markdown / Correction
 - 200 SMA extension (already declining from stage 3) capitulates below a common support area
-- On SPY, ~5% below the 200 SMA is the threshold where dip becomes correction
+- On SPY, ~5% below the 200 SMA is roughly the threshold (eyeball estimate, needs validation)
+- Below ~5% with TA confirmation (e.g. bearish 10/20 SMA cross) = sustained markdown
+- These are fast and proportionally infrequent
 - Dip = pullback that holds within ~5% of 200 SMA, correction = breaks through
-- (Common support levels on 200 extension to be defined with more examples)
 
 ---
 
