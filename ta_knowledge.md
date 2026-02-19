@@ -166,6 +166,14 @@
 - 10-30% winrate improvement when used as execution filter
 - Used for intraday entry timing, not daily scan level
 
+## Net Gamma & Options Hedging
+
+- Dynamic hedging at key strike prices creates real price pressure
+- Strikes with the most positive and negative gamma concentration are significant levels
+- Market makers hedging these positions amplifies moves at these strikes (buying into strength above positive gamma, selling into weakness below negative gamma)
+- These levels act as additional support/resistance that isn't visible on a price/volume chart alone
+- (Further detail on how to incorporate into trade thesis to be added)
+
 ## Chart Themes & Wave Cycles
 
 - Market produces setups in 3-5 day waves
