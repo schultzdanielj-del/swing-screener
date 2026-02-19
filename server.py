@@ -371,8 +371,11 @@ async def get_extension_chart(setup_type: str, ticker: str):
 
 
 @app.get("/api/extension-data/{setup_type}/{ticker}")
-async def get_extension_data(setup_type: str, ticker: str):
-    """Return extension CSV data as JSON for client-side rendering."""
+async def get_extension_data(
+    setup_type: str, ticker: str,
+    entry_date: str = Query(None, description="Entry date to center view around"),
+):
+    """Return extension CSV data as JSON, trimmed so entry is ~2/3 through."""
     ticker = ticker.upper().strip()
     csv_path = Path("data/extension") / setup_type / f"{ticker}.csv"
     if not csv_path.exists():
@@ -380,8 +383,21 @@ async def get_extension_data(setup_type: str, ticker: str):
 
     df = pd.read_csv(csv_path)
     df["Date"] = pd.to_datetime(df["Date"])
-    # Only return rows with SMA200 computed
-    df = df.dropna(subset=["ext_sma200_pct"])
+    df = df.dropna(subset=["ext_sma200_pct"]).reset_index(drop=True)
+
+    # Trim so entry date sits at ~2/3 from left
+    if entry_date:
+        entry_dt = pd.Timestamp(entry_date)
+        entry_rows = df[df["Date"] <= entry_dt]
+        if not entry_rows.empty:
+            entry_idx = entry_rows.index[-1]
+            after_count = len(df) - entry_idx - 1
+            # Want entry at 2/3: before = 2 * after
+            before_count = min(after_count * 2, entry_idx)
+            # But ensure minimum context: at least 200 rows before
+            before_count = max(before_count, min(200, entry_idx))
+            start_idx = entry_idx - before_count
+            df = df.iloc[start_idx:].reset_index(drop=True)
 
     result = []
     for _, row in df.iterrows():

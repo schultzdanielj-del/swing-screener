@@ -410,7 +410,7 @@
       const [data, setData] = useState(null);
 
       useEffect(() => {
-        fetch(`/api/extension-data/${activeSetup}/${ticker}`)
+        fetch(`/api/extension-data/${activeSetup}/${ticker}?entry_date=${entryDate || ''}`)
           .then(r => r.ok ? r.json() : null)
           .then(d => setData(d))
           .catch(() => {});
