@@ -30,22 +30,48 @@ GITHUB_REPO = "schultzdanielj-del/swing-screener"
 def git_push_data(message: str):
     """Commit and push data changes to GitHub so they persist across deploys."""
     if not GITHUB_TOKEN:
-        print("No GITHUB_TOKEN set, skipping git push")
+        print("GIT PUSH SKIP: No GITHUB_TOKEN set")
         return
     try:
         repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
-        cmds = [
-            ["git", "config", "user.email", "scanperfect@auto.dev"],
-            ["git", "config", "user.name", "ScanPerfect"],
-            ["git", "add", "-A"],
-            ["git", "commit", "-m", message, "--allow-empty"],
-            ["git", "push", repo_url, "main"],
-        ]
-        for cmd in cmds:
-            subprocess.run(cmd, capture_output=True, timeout=30)
-        print(f"git push ok: {message}")
+
+        # Config
+        subprocess.run(["git", "config", "user.email", "scanperfect@auto.dev"],
+                       capture_output=True, timeout=10)
+        subprocess.run(["git", "config", "user.name", "ScanPerfect"],
+                       capture_output=True, timeout=10)
+
+        # Stage all changes
+        result = subprocess.run(["git", "add", "-A"], capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            print(f"GIT ADD FAILED: {result.stderr}")
+            return
+
+        # Check if there's anything to commit
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, timeout=10)
+        if not status.stdout.strip():
+            print(f"GIT PUSH SKIP: Nothing to commit for '{message}'")
+            return
+
+        # Commit
+        result = subprocess.run(["git", "commit", "-m", message],
+                               capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            print(f"GIT COMMIT FAILED: {result.stderr}")
+            return
+
+        # Push
+        result = subprocess.run(["git", "push", repo_url, "main"],
+                               capture_output=True, text=True, timeout=60)
+        if result.returncode != 0:
+            print(f"GIT PUSH FAILED: {result.stderr}")
+            return
+
+        print(f"GIT PUSH OK: {message}")
+    except subprocess.TimeoutExpired:
+        print(f"GIT PUSH TIMEOUT: {message}")
     except Exception as e:
-        print(f"git push failed: {e}")
+        print(f"GIT PUSH ERROR: {e}")
 
 
 class SaveExampleRequest(BaseModel):
@@ -223,6 +249,21 @@ def clean_val(v):
     if hasattr(v, "item"):
         return v.item()
     return v
+
+
+@app.get("/api/debug/git-status")
+async def debug_git_status():
+    """Check git status and GITHUB_TOKEN availability on Railway."""
+    has_token = bool(GITHUB_TOKEN)
+    status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, timeout=10)
+    remote = subprocess.run(["git", "remote", "-v"], capture_output=True, text=True, timeout=10)
+    log = subprocess.run(["git", "log", "--oneline", "-5"], capture_output=True, text=True, timeout=10)
+    return {
+        "has_github_token": has_token,
+        "git_status": status.stdout.strip() or "(clean)",
+        "git_remote": remote.stdout.strip(),
+        "recent_commits": log.stdout.strip().split("\n"),
+    }
 
 
 @app.get("/api/ohlcv")
@@ -463,7 +504,7 @@ async def get_conditions(setup_type: str):
 
 @app.delete("/api/examples/{setup_type}/{ticker}")
 async def delete_example(setup_type: str, ticker: str):
-    """Delete an example: remove CSV, entry date, and analysis."""
+    """Delete an example: remove CSV, charts, extension data, entry date, and analysis."""
     ticker = ticker.upper().strip()
     data_dir = DATA_DIR / setup_type
     if not data_dir.exists():
@@ -492,11 +533,25 @@ async def delete_example(setup_type: str, ticker: str):
         analyses = [a for a in analyses if a["ticker"] != ticker]
         analysis_file.write_text(json.dumps(analyses, indent=2))
 
-    # Remove chart images
+    # Remove D1 chart images
     for suffix in ["", "_at_entry"]:
         chart_img = CHARTS_DIR / setup_type / f"{ticker}{suffix}.png"
         if chart_img.exists():
             chart_img.unlink()
+            deleted_files.append(f"charts/{ticker}{suffix}.png")
+
+    # Remove extension chart image
+    ext_chart = CHARTS_DIR / "extension" / setup_type / f"{ticker}.png"
+    if ext_chart.exists():
+        ext_chart.unlink()
+        deleted_files.append(f"charts/extension/{ticker}.png")
+
+    # Remove extension CSV data
+    ext_dir = Path("data/extension") / setup_type
+    ext_csv = ext_dir / f"{ticker}.csv"
+    if ext_csv.exists():
+        ext_csv.unlink()
+        deleted_files.append(f"extension/{ticker}.csv")
 
     # Persist to git
     git_push_data(f"Delete {ticker} from {setup_type}")
