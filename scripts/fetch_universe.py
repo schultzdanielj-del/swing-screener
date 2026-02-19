@@ -36,10 +36,10 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-BATCH_SIZE = 80          # tickers per yfinance batch call (conservative)
-BATCH_DELAY = 2.0        # seconds between batches
+BATCH_SIZE = 40          # tickers per yfinance batch call (conservative)
+BATCH_DELAY = 8.0        # seconds between batches — spread over ~3 hours
 RETRY_MAX = 3            # retries per failed batch
-RETRY_BACKOFF = 5.0      # base seconds for exponential backoff
+RETRY_BACKOFF = 10.0     # base seconds for exponential backoff
 YEARS = 5                # how many years of history
 DB_DIR = Path(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/app/data"))
 DB_PATH = DB_DIR / "scanperfect.db"
@@ -152,12 +152,31 @@ def fetch_ticker_list():
 
 
 def fetch_ticker_list_fallback():
-    """Fallback: use yfinance's S&P 500 + manual broad list if NASDAQ FTP fails."""
-    log.warning("Using fallback ticker list method")
-    # This would need a hardcoded list or alternative source
-    # For now, raise so caller knows
-    raise RuntimeError("NASDAQ FTP failed and no fallback list available. "
-                       "Upload a ticker list via POST /api/universe/tickers")
+    """Fallback: read from bundled Universe.txt file."""
+    # Try multiple paths (Railway deploy vs local dev)
+    for path in [
+        Path("/app/data/universe_tickers.txt"),
+        Path("data/universe_tickers.txt"),
+        Path(__file__).parent.parent / "data" / "universe_tickers.txt",
+    ]:
+        if path.exists():
+            log.info(f"Using bundled ticker file: {path}")
+            lines = path.read_text().replace("\r", "").strip().split("\n")
+            tickers = []
+            for line in lines:
+                sym = line.strip().upper()
+                if not sym:
+                    continue
+                tickers.append({
+                    "ticker": sym,
+                    "name": "",
+                    "exchange": "",
+                    "etf": 0,
+                })
+            log.info(f"Loaded {len(tickers)} tickers from file")
+            return tickers
+
+    raise RuntimeError("No ticker list available. Upload via POST /api/universe/tickers")
 
 
 def load_or_fetch_tickers(db):
