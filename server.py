@@ -255,15 +255,30 @@ def clean_val(v):
 async def debug_git_status():
     """Check git status and GITHUB_TOKEN availability on Railway."""
     has_token = bool(GITHUB_TOKEN)
-    status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, timeout=10)
-    remote = subprocess.run(["git", "remote", "-v"], capture_output=True, text=True, timeout=10)
-    log = subprocess.run(["git", "log", "--oneline", "-5"], capture_output=True, text=True, timeout=10)
-    return {
-        "has_github_token": has_token,
-        "git_status": status.stdout.strip() or "(clean)",
-        "git_remote": remote.stdout.strip(),
-        "recent_commits": log.stdout.strip().split("\n"),
-    }
+    results = {"has_github_token": has_token}
+    try:
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, timeout=10)
+        results["git_status"] = status.stdout.strip() or "(clean)"
+        results["git_status_rc"] = status.returncode
+        results["git_status_err"] = status.stderr.strip() or None
+    except Exception as e:
+        results["git_status_error"] = str(e)
+    try:
+        remote = subprocess.run(["git", "remote", "-v"], capture_output=True, text=True, timeout=10)
+        # Mask the token in remote URL
+        remote_out = remote.stdout.replace(GITHUB_TOKEN, "***") if GITHUB_TOKEN else remote.stdout
+        results["git_remote"] = remote_out.strip()
+    except Exception as e:
+        results["git_remote_error"] = str(e)
+    try:
+        log = subprocess.run(["git", "log", "--oneline", "-5"], capture_output=True, text=True, timeout=10)
+        results["recent_commits"] = log.stdout.strip().split("\n") if log.stdout.strip() else []
+    except Exception as e:
+        results["git_log_error"] = str(e)
+    # Check working directory
+    results["cwd"] = os.getcwd()
+    results["data_dir_exists"] = DATA_DIR.exists()
+    return results
 
 
 @app.get("/api/ohlcv")
