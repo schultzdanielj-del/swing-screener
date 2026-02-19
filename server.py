@@ -84,12 +84,12 @@ def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
     # Trim to ~120 trading days ending near entry date
     entry_dt = pd.Timestamp(entry_date)
     mask = df["Date"] <= entry_dt + timedelta(days=5)
-    chart_df = df[mask].tail(120).copy().reset_index(drop=True)
+    chart_df = df[mask].tail(60).copy().reset_index(drop=True)
 
     if chart_df.empty:
         return None
 
-    fig, (ax, ax_vol) = plt.subplots(2, 1, figsize=(10, 5), dpi=100,
+    fig, (ax, ax_vol) = plt.subplots(2, 1, figsize=(8, 4), dpi=120,
                                       gridspec_kw={"height_ratios": [3, 1]},
                                       facecolor="#0a0e17")
     ax.set_facecolor("#0a0e17")
