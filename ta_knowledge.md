@@ -20,6 +20,7 @@
 - 50 SMA extension starts downsloping (declining side of the pyramid)
 - 200 SMA extension still in bull channel
 - Stage 2a + 2b together form a pyramid/mountain shape on the 50 extension histogram
+- **Critical:** Once 50 extension breaks from upslope to downslope, it almost never returns to 2a-style upslope directly. Must flush through the inverse underside extension structure first (correction/bigger move) before a new 2a can start. Exception: extreme liquidity events like QE 2021.
 - **Strategy:** Buy dips, not breakouts. More selective.
 - **Entry signal:** VIX dips back below ~17-18 AND price is over the 21 EMA = good to go
 - **Transition out:** Stage 2 ends when 200 extension channel breaks structure AND 50 extension flattens out
