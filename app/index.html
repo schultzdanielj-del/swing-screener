@@ -366,6 +366,54 @@
     // ============================================
     // EXAMPLES PAGE
     // ============================================
+    function ExampleCard({ example, activeSetup, onDelete, deleting }) {
+      const [candles, setCandles] = useState(null);
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        if (!example.ticker) { setLoading(false); return; }
+        fetch(`/api/ohlcv/local/${activeSetup}/${example.ticker}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(data => { if (data) setCandles(data.candles); })
+          .catch(() => {})
+          .finally(() => setLoading(false));
+      }, [example.ticker, activeSetup]);
+
+      return (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>{example.ticker}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>Entry: {example.entryDate || '—'}</span>
+              {example.hasAnalysis && <span className="badge badge-pass" style={{ fontSize: 10 }}>✓ analyzed</span>}
+            </div>
+            <button
+              onClick={() => onDelete(example.ticker)}
+              disabled={deleting === example.ticker}
+              style={{ background:'none', border:'none', color:'var(--text-muted)', cursor:'pointer', fontSize: 13, padding: '4px 8px', borderRadius: 4, transition:'color 0.15s' }}
+              onMouseOver={e => e.target.style.color = 'var(--accent-red)'}
+              onMouseOut={e => e.target.style.color = 'var(--text-muted)'}
+              title={`Delete ${example.ticker}`}
+            >
+              {deleting === example.ticker ? '...' : '✕'}
+            </button>
+          </div>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading chart...</div>
+          ) : candles ? (
+            <CandlestickChart
+              candles={candles}
+              ticker={example.ticker}
+              selectedDate={example.entryDate}
+              onSelectDate={() => {}}
+            />
+          ) : (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No chart data available</div>
+          )}
+        </div>
+      );
+    }
+
     function ExamplesPage({ activeSetup }) {
       const [examples, setExamples] = useState([]);
       const [loading, setLoading] = useState(true);
@@ -409,58 +457,38 @@
             ))}
           </div>
 
-          <div className="card">
-            <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>Examples — {SETUP_TYPES[activeSetup].name}</span>
-              <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontWeight: 400 }}>{examples.length} examples</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+              Examples — {SETUP_TYPES[activeSetup].name}
+            </span>
+            <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+              {examples.length} examples
+            </span>
+          </div>
+
+          {loading ? (
+            <div style={{ padding: 40, color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' }}>Loading...</div>
+          ) : examples.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {examples.map(ex => (
+                <ExampleCard
+                  key={ex.ticker}
+                  example={ex}
+                  activeSetup={activeSetup}
+                  onDelete={handleDelete}
+                  deleting={deleting}
+                />
+              ))}
             </div>
-            {loading ? (
-              <div style={{ padding: 20, color: 'var(--text-muted)', fontSize: 13 }}>Loading...</div>
-            ) : examples.length > 0 ? (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Ticker</th>
-                    <th>Entry Date</th>
-                    <th>Chart Date</th>
-                    <th>Analysis</th>
-                    <th style={{width: 50}}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {examples.map(ex => (
-                    <tr key={ex.ticker}>
-                      <td style={{color:'var(--text-primary)', fontFamily:'var(--font-mono)', fontWeight: 600}}>{ex.ticker}</td>
-                      <td style={{fontFamily:'var(--font-mono)'}}>{ex.entryDate || '—'}</td>
-                      <td style={{fontFamily:'var(--font-mono)'}}>{ex.chartDate || '—'}</td>
-                      <td>{ex.hasAnalysis
-                        ? <span className="badge badge-pass">✓</span>
-                        : <span className="badge" style={{background:'rgba(239,83,80,0.15)', color:'var(--accent-red)'}}>—</span>
-                      }</td>
-                      <td>
-                        <button
-                          onClick={() => handleDelete(ex.ticker)}
-                          disabled={deleting === ex.ticker}
-                          style={{ background:'none', border:'none', color:'var(--text-muted)', cursor:'pointer', fontSize: 13, padding: '4px 8px', borderRadius: 4, transition:'color 0.15s' }}
-                          onMouseOver={e => e.target.style.color = 'var(--accent-red)'}
-                          onMouseOut={e => e.target.style.color = 'var(--text-muted)'}
-                          title={`Delete ${ex.ticker}`}
-                        >
-                          {deleting === ex.ticker ? '...' : '✕'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
+          ) : (
+            <div className="card">
               <div className="empty-state">
                 <div className="empty-state-icon">📊</div>
                 <div className="empty-state-title">No examples yet</div>
                 <div className="empty-state-desc">Add your first {SETUP_TYPES[activeSetup].name} example to start building conditions.</div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       );
     }

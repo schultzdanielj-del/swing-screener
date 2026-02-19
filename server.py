@@ -195,6 +195,45 @@ async def get_examples(setup_type: str):
     return {"setupType": setup_type, "examples": examples}
 
 
+@app.get("/api/ohlcv/local/{setup_type}/{ticker}")
+async def get_local_ohlcv(setup_type: str, ticker: str):
+    """Load OHLCV from saved CSV with indicators — no yfinance call."""
+    ticker = ticker.upper().strip()
+    data_dir = DATA_DIR / setup_type
+
+    # Find CSV for this ticker
+    matches = list(data_dir.glob(f"{ticker}_*.csv"))
+    if not matches:
+        raise HTTPException(404, f"No CSV for {ticker} in {setup_type}")
+
+    raw = pd.read_csv(matches[0])
+    raw["Date"] = pd.to_datetime(raw["Date"])
+    raw = raw.sort_values("Date").reset_index(drop=True)
+    raw = add_indicators(raw)
+
+    # Return last 150 rows
+    df = raw.tail(150)
+
+    candles = []
+    for _, row in df.iterrows():
+        candles.append({
+            "date": row["Date"].strftime("%Y-%m-%d"),
+            "open": clean_val(row["Open"]),
+            "high": clean_val(row["High"]),
+            "low": clean_val(row["Low"]),
+            "close": clean_val(row["Close"]),
+            "volume": clean_val(row["Volume"]),
+            "ema8": clean_val(row.get("EMA8")),
+            "ema21": clean_val(row.get("EMA21")),
+            "sma50": clean_val(row.get("SMA50")),
+            "sma200": clean_val(row.get("SMA200")),
+            "atr14": clean_val(row.get("ATR14")),
+            "volAvg20": clean_val(row.get("VolAvg20")),
+        })
+
+    return {"ticker": ticker, "candles": candles}
+
+
 @app.get("/api/conditions/{setup_type}")
 async def get_conditions(setup_type: str):
     """Return PCF conditions for a setup type."""
