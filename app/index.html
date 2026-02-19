@@ -300,11 +300,11 @@
             </div>
             <div className="stat-card">
               <div className="stat-label">3-4DB Examples</div>
-              <div className="stat-value" style={{ color: 'var(--accent-green)' }}>19</div>
+              <div className="stat-value" style={{ color: 'var(--accent-green)' }}>14</div>
             </div>
             <div className="stat-card">
               <div className="stat-label">Active Conditions</div>
-              <div className="stat-value" style={{ color: 'var(--accent-blue)' }}>9</div>
+              <div className="stat-value" style={{ color: 'var(--accent-blue)' }}>18</div>
             </div>
             <div className="stat-card">
               <div className="stat-label">Pass Rate</div>
@@ -1075,6 +1075,7 @@
     // CONDITIONS PAGE — Feature 4 placeholder
     // ============================================
     function ConditionsPage({ activeSetup }) {
+      const pcfStyle = {fontFamily:'var(--font-mono)',fontSize:11,whiteSpace:'nowrap',maxWidth:340,overflow:'hidden',textOverflow:'ellipsis'};
       return (
         <div>
           <div className="setup-tabs">
@@ -1087,21 +1088,30 @@
 
           {activeSetup === '3-4db' ? (
             <div className="card">
-              <div className="card-title">⚙ Scan Conditions — 3-4DB</div>
+              <div className="card-title">⚙ Scan Conditions — 3-4DB <span style={{fontWeight:400,color:'var(--text-muted)',fontSize:12,marginLeft:8}}>18 conditions · 14 examples · 2 scan results (2026-02-19)</span></div>
               <table className="table">
                 <thead>
                   <tr><th>#</th><th>Name</th><th>PCF</th><th>Hit Rate</th><th>Status</th></tr>
                 </thead>
                 <tbody>
-                  <tr><td>1</td><td>Close above 50 SMA</td><td style={{fontFamily:'var(--font-mono)',fontSize:11}}>C &gt; AVGC50</td><td>19/19</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>2</td><td>50 SMA rising</td><td style={{fontFamily:'var(--font-mono)',fontSize:11}}>AVGC50 &gt; AVGC50.5</td><td>19/19</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>3</td><td>Extended above 50 SMA</td><td style={{fontFamily:'var(--font-mono)',fontSize:11}}>C - AVGC50 &gt; 0.3 * AVGT14</td><td>19/19</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>4</td><td>2 of 3 up closes</td><td style={{fontFamily:'var(--font-mono)',fontSize:11}}>IIF sum &gt;= 2</td><td>19/19</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>5</td><td>Off the low</td><td style={{fontFamily:'var(--font-mono)',fontSize:11}}>MINL3 &lt; MINL2</td><td>18/19</td><td><span className="badge badge-warn">95%</span></td></tr>
-                  <tr><td>6</td><td>Bounced from low</td><td style={{fontFamily:'var(--font-mono)',fontSize:11}}>C - MINL10 &gt; 0.8 * AVGT14</td><td>19/19</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>7</td><td>Below prior high</td><td style={{fontFamily:'var(--font-mono)',fontSize:11}}>MAXH15 - C &gt; 0.3 * AVGT14</td><td>19/19</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>8</td><td>Had close below 8 EMA</td><td style={{fontFamily:'var(--font-mono)',fontSize:11}}>C1 &lt; XAVGC8.1 OR ...</td><td>19/19</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>9</td><td>Not at new highs</td><td style={{fontFamily:'var(--font-mono)',fontSize:11}}>MAXH15.2 &gt; MAXH2</td><td>19/19</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>1</td><td>Close above 50 SMA</td><td style={pcfStyle}>C &gt; AVGC50</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>2</td><td>50 SMA rising</td><td style={pcfStyle}>AVGC50 &gt; AVGC50.5</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>3</td><td>Extended above 50 SMA</td><td style={pcfStyle}>C - AVGC50 &gt; 0.3 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>4</td><td>2 of 3 up closes</td><td style={pcfStyle}>(IIF(C1&gt;C2,1,0)+IIF(C2&gt;C3,1,0)+IIF(C3&gt;C4,1,0))&gt;=2</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>5</td><td>Off the low</td><td style={pcfStyle}>MINL3 &lt; MINL2</td><td>13/14</td><td><span className="badge badge-warn">93%</span></td></tr>
+                  <tr><td>6</td><td>Bounced from low</td><td style={pcfStyle}>C - MINL10 &gt; 0.8 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>7</td><td>Rejection from pivot high</td><td style={pcfStyle}>MAXH15 - C &gt; 1.0 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>8</td><td>Had close below 8 EMA</td><td style={pcfStyle}>C1&lt;XAVGC8.1 OR C2&lt;XAVGC8.2 OR ... C15&lt;XAVGC8.15</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>9</td><td>Not at new highs</td><td style={pcfStyle}>MAXH15.2 &gt; MAXH2</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>10</td><td>Dollar volume floor</td><td style={pcfStyle}>AvgC20 * AVGV20 &gt; 5000000</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>11</td><td>Extended above 200 SMA</td><td style={pcfStyle}>C - AVGC200 &gt; 3 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>12</td><td>Peak extension (%price)</td><td style={pcfStyle}>MAXH30 - AVGC50 &gt; 0.30 * C</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>13</td><td>Retracement cap</td><td style={pcfStyle}>(C - MINL10) / (MAXH30 - MINL10) &lt; 0.7</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>14</td><td>Volume below average</td><td style={pcfStyle}>V &lt; AVGV20</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>15</td><td>High near EMA8</td><td style={pcfStyle}>H - XAVGC8 &lt; 1.1 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>16</td><td>Small range candle</td><td style={pcfStyle}>H - L &lt; 1.1 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>17</td><td>Had close below 12 EMA</td><td style={pcfStyle}>C1&lt;XAVGC12.1 OR C2&lt;XAVGC12.2 OR ... C15&lt;XAVGC12.15</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
+                  <tr><td>18</td><td>Not too far from high</td><td style={pcfStyle}>MAXH30 - C &lt; 4.0 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
                 </tbody>
               </table>
             </div>
@@ -1166,8 +1176,8 @@
                   >
                     <span className="nav-icon">{p.icon}</span>
                     {p.label}
-                    {p.id === 'examples' && <span className="nav-badge">19</span>}
-                    {p.id === 'conditions' && <span className="nav-badge">9</span>}
+                    {p.id === 'examples' && <span className="nav-badge">14</span>}
+                    {p.id === 'conditions' && <span className="nav-badge">18</span>}
                   </div>
                 ))}
               </React.Fragment>

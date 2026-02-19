@@ -7,7 +7,7 @@
     "REAL"
   ],
   "signal_basis": "prior_close",
-  "notes": "14 examples (REAL removed - different setup profile). 20 scan conditions. Full market scan with 5M dollar volume floor produces 2 A+ results (BE, THAR) on 2026-02-19.",
+  "notes": "14 examples (REAL removed - different setup profile). 18 scan conditions. Full market scan with 5M dollar volume floor produces 2 A+ results (BE, THAR) on 2026-02-19.",
   "scan_conditions": [
     {
       "id": 1,
