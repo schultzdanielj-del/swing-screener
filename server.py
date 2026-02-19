@@ -579,14 +579,18 @@ async def delete_example(setup_type: str, ticker: str):
     if not data_dir.exists():
         raise HTTPException(404, f"No data directory for {setup_type}")
 
-    # Delete CSV file(s) matching this ticker
+    # Find CSV file(s) BEFORE deleting - need names for GitHub API
+    csv_files = list(data_dir.glob(f"{ticker}_*.csv"))
+    csv_names = [f.name for f in csv_files]
+
+    if not csv_files:
+        raise HTTPException(404, f"No CSV found for {ticker} in {setup_type}")
+
+    # Delete CSV locally
     deleted_files = []
-    for f in data_dir.glob(f"{ticker}_*.csv"):
+    for f in csv_files:
         f.unlink()
         deleted_files.append(f.name)
-
-    if not deleted_files:
-        raise HTTPException(404, f"No CSV found for {ticker} in {setup_type}")
 
     # Remove from entry_dates.json
     entry_file = data_dir / "entry_dates.json"
@@ -623,11 +627,26 @@ async def delete_example(setup_type: str, ticker: str):
         deleted_files.append(f"extension/{ticker}.csv")
 
     # Persist to GitHub via API (this is what actually makes it survive redeploys)
-    persist_delete(
-        setup_type, ticker,
-        entry_file.read_text() if entry_file.exists() else "[]",
-        analysis_file.read_text() if analysis_file.exists() else "[]",
-    )
+    if GITHUB_TOKEN:
+        msg = f"Delete {ticker} from {setup_type}"
+        # Update JSON files
+        github_update_file(
+            f"data/ohlcv/{setup_type}/entry_dates.json",
+            entry_file.read_text() if entry_file.exists() else "[]",
+            msg,
+        )
+        github_update_file(
+            f"data/ohlcv/{setup_type}/signal_day_analysis.json",
+            analysis_file.read_text() if analysis_file.exists() else "[]",
+            msg,
+        )
+        # Delete files from repo
+        for csv_name in csv_names:
+            github_delete_file(f"data/ohlcv/{setup_type}/{csv_name}", msg)
+        for suffix in ["", "_at_entry"]:
+            github_delete_file(f"data/charts/{setup_type}/{ticker}{suffix}.png", msg)
+        github_delete_file(f"data/charts/extension/{setup_type}/{ticker}.png", msg)
+        github_delete_file(f"data/extension/{setup_type}/{ticker}.csv", msg)
 
     return {"status": "deleted", "ticker": ticker, "files": deleted_files}
 
