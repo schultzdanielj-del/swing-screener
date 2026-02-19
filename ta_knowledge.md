@@ -47,6 +47,7 @@
 
 - Extension from 50 SMA (in multiples of ADR) is the universal normalized cycle indicator
 - Works across all timeframes and instruments — same rhythm, different magnitudes
+- **Passive inflows distort raw price charts.** Extension structures reveal a stock's true cyclical behavior by stripping out the noise from index/ETF flows and measuring price relative to its own moving averages. Each stock shows its "true colours" on extension.
 - **Max extension varies by stock maturity:**
   - Recent IPOs: 7-10-12+ ADR multiples above 50 SMA
   - Metals/commodities (crazy events): can go extreme
