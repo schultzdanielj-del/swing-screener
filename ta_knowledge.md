@@ -93,7 +93,10 @@
 - (Further detail to be added)
 
 ### LSP / MOC Lines
-- (To be defined)
+- MOC lines = highs and lows of the highest RVOL D1 candles (the "very white" candles on RVOL vision)
+- These levels matter regardless of where they are on the chart — age doesn't diminish them
+- They mark where the biggest institutional orders were filled = permanent support/resistance until absorbed
+- (LSP to be defined)
 
 - When market is chopping with no direction, asset managers are NOT present (no buy/sell campaigns running)
 - Algos are working instead, operating on two principles:
