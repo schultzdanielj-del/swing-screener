@@ -93,6 +93,8 @@
 - **Penny precision:** When you understand which candles have real volume, you can draw trendlines to the penny. Most traders draw sloppy general trendlines overlapping random wicks — "like doing a portrait with crayons." Volume tells you which points actually matter for the connection.
 - **Breakout rule:** For breakout trades, the most shallow possible algo line that's still downsloping should be broken. This is the minimum resistance structure that needs to be cleared for the move to be valid.
 - **Best setups:** The shallowest downsloping algo line and the breakout AVWAP converge at the same price on the same day. Multiple resistance layers clearing simultaneously = maximum breakout conviction.
+- **Touch points:** More touches on an algo line = stronger. Must always originate from a high-volume D1 candle. Additional touches from subsequent high-volume candles add significance.
+- **Breaks against direction:** Breaking an algo line in the opposite direction to its slope is a big deal — upsloping line broken to the downside or downsloping line broken to the upside = significant structural change.
 
 ### LSP / MOC Lines
 - **MOC lines** = highs and lows of the highest RVOL D1 candles (the "very white" candles on RVOL vision)
