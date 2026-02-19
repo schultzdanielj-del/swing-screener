@@ -43,7 +43,16 @@
 
 ---
 
-## Channel Structure Rules
+## Extension Structure — Individual Stock Profiles
+
+- Extension from 50 SMA (in multiples of ADR) is the universal normalized cycle indicator
+- Works across all timeframes and instruments — same rhythm, different magnitudes
+- **Max extension varies by stock maturity:**
+  - Recent IPOs: 7-10-12+ ADR multiples above 50 SMA
+  - Metals/commodities (crazy events): can go extreme
+  - Established large caps (F, KO): rarely past 6x, usually 3-5x
+- Older/more liquid stocks have lower extension ceilings — decades of mean-reversion conditioning
+- Implication: knowing a stock's typical max extension helps gauge where it is in its cycle and conviction level on setups
 
 - Bull channels break one side: either establish steeper channel on top (continuation) or break opposite side for measured move
 - If lower trendline breaks and retest fails → measured move = channel width projected downward
