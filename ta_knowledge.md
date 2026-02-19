@@ -179,6 +179,7 @@
 - Market makers hedging these positions amplifies moves: buying into strength above positive gamma strikes, selling into weakness below negative gamma strikes
 - These levels act as additional support/resistance not visible on price/volume charts alone
 - Example: TSLA with call wall at $420, put wall at $400, vol trigger at $410 — these create a defined range that price gravitates toward
+- **Entry positioning rule:** For shorts, want all net gamma below entry to be negative (amplifies downside moves). For longs, want all net gamma above entry to be positive (amplifies upside moves). If the gamma profile works against your direction, the hedging flows fight your trade.
 
 ## Chart Themes & Wave Cycles
 
