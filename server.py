@@ -291,12 +291,11 @@ async def get_examples(setup_type: str):
     if not data_dir.exists():
         return {"examples": []}
 
-    # Load entry dates if available
+    # Load entry dates — this is the source of truth
     entry_file = data_dir / "entry_dates.json"
-    entries = {}
-    if entry_file.exists():
-        for e in json.loads(entry_file.read_text()):
-            entries[e["ticker"]] = e
+    if not entry_file.exists():
+        return {"examples": []}
+    entry_list = json.loads(entry_file.read_text())
 
     # Load signal analysis if available
     analysis_file = data_dir / "signal_day_analysis.json"
@@ -305,18 +304,20 @@ async def get_examples(setup_type: str):
         for a in json.loads(analysis_file.read_text()):
             analyses[a["ticker"]] = a
 
-    # List CSV files
+    # Only show tickers with entry dates
     examples = []
-    for f in sorted(data_dir.glob("*.csv")):
-        ticker = f.stem.split("_")[0]
-        chart_date = f.stem.split("_")[1] if "_" in f.stem else None
-        entry = entries.get(ticker, {})
+    for e in sorted(entry_list, key=lambda x: x["ticker"]):
+        ticker = e["ticker"]
+        # Find matching CSV
+        matches = list(data_dir.glob(f"{ticker}_*.csv"))
+        csv_name = matches[0].name if matches else None
+        chart_date = csv_name.split("_")[1].replace(".csv", "") if csv_name and "_" in csv_name else None
         examples.append({
             "ticker": ticker,
             "chartDate": chart_date,
-            "entryDate": entry.get("entry_date"),
+            "entryDate": e.get("entry_date"),
             "hasAnalysis": ticker in analyses,
-            "csvFile": f.name,
+            "csvFile": csv_name,
         })
 
     return {"setupType": setup_type, "examples": examples}
