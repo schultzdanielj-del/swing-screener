@@ -1,13 +1,13 @@
-"""ScanPerfect — FastAPI backend."""
+"""ScanPerfect — FastAPI backend with SQLite storage."""
 
 import os
+import io
 import json
 import math
-import base64
-import urllib.request
-import urllib.error
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
+from contextlib import contextmanager
 
 import numpy as np
 import pandas as pd
@@ -15,200 +15,113 @@ import yfinance as yf
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI(title="ScanPerfect API")
 
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-GITHUB_REPO = "schultzdanielj-del/swing-screener"
-GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}"
+DB_DIR = Path(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "data"))
+DB_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DB_DIR / "scanperfect.db"
 
 
-def github_api(method: str, path: str, data: dict = None) -> dict:
-    """Make a GitHub API request."""
-    url = f"{GITHUB_API}/{path}"
-    body = json.dumps(data).encode() if data else None
-    req = urllib.request.Request(url, data=body, method=method)
-    req.add_header("Authorization", f"token {GITHUB_TOKEN}")
-    req.add_header("Accept", "application/vnd.github.v3+json")
-    if body:
-        req.add_header("Content-Type", "application/json")
+# ============================================
+# DATABASE
+# ============================================
+
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode() if e.fp else ""
-        print(f"GITHUB API {method} {path}: {e.code} {error_body[:200]}")
-        raise
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
-def github_get_file_sha(filepath: str) -> str | None:
-    """Get the SHA of a file in the repo (needed for updates/deletes)."""
-    try:
-        data = github_api("GET", f"contents/{filepath}")
-        return data.get("sha")
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        raise
+def init_db():
+    with get_db() as db:
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS examples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setup_type TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                chart_date TEXT NOT NULL,
+                entry_date TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(setup_type, ticker)
+            );
+            CREATE TABLE IF NOT EXISTS ohlcv (
+                example_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                open REAL, high REAL, low REAL, close REAL, volume REAL,
+                FOREIGN KEY (example_id) REFERENCES examples(id) ON DELETE CASCADE,
+                UNIQUE(example_id, date)
+            );
+            CREATE TABLE IF NOT EXISTS extension (
+                example_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                close REAL, sma50 REAL, sma200 REAL,
+                ext_sma50_pct REAL, ext_sma200_pct REAL,
+                FOREIGN KEY (example_id) REFERENCES examples(id) ON DELETE CASCADE,
+                UNIQUE(example_id, date)
+            );
+            CREATE TABLE IF NOT EXISTS conditions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setup_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                pcf TEXT,
+                active INTEGER DEFAULT 1,
+                sort_order INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS signal_analysis (
+                example_id INTEGER NOT NULL UNIQUE,
+                analysis_json TEXT NOT NULL,
+                FOREIGN KEY (example_id) REFERENCES examples(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_ohlcv_example ON ohlcv(example_id);
+            CREATE INDEX IF NOT EXISTS idx_extension_example ON extension(example_id);
+            CREATE INDEX IF NOT EXISTS idx_examples_setup ON examples(setup_type);
+        """)
+
+init_db()
 
 
-def github_atomic_delete(setup_type: str, ticker: str, csv_names: list[str],
-                         entry_dates_content: str, analysis_content: str):
-    """Delete all files for a ticker in a single atomic git commit. No SHA races."""
-    if not GITHUB_TOKEN:
-        print(f"DELETE {ticker}: No GITHUB_TOKEN — local only")
-        return False
+# ============================================
+# HELPERS
+# ============================================
 
-    try:
-        # 1. Get the current commit SHA (HEAD of main)
-        ref = github_api("GET", "git/ref/heads/main")
-        head_sha = ref["object"]["sha"]
+def clean_val(v):
+    if v is None: return None
+    if isinstance(v, float) and (math.isnan(v) or math.isinf(v)): return None
+    if hasattr(v, 'item'): v = v.item()
+    return v
 
-        # 2. Get the tree SHA from that commit
-        commit = github_api("GET", f"git/commits/{head_sha}")
-        base_tree_sha = commit["tree"]["sha"]
-
-        # 3. Build new tree: updated JSON files + deleted files
-        tree_items = []
-
-        # Updated JSON files (these keep the file but with ticker removed)
-        for filepath, content in [
-            (f"data/ohlcv/{setup_type}/entry_dates.json", entry_dates_content),
-            (f"data/ohlcv/{setup_type}/signal_day_analysis.json", analysis_content),
-        ]:
-            blob = github_api("POST", "git/blobs", {
-                "content": content,
-                "encoding": "utf-8",
-            })
-            tree_items.append({
-                "path": filepath,
-                "mode": "100644",
-                "type": "blob",
-                "sha": blob["sha"],
-            })
-
-        # Files to delete
-        files_to_delete = set()
-        for csv_name in csv_names:
-            files_to_delete.add(f"data/ohlcv/{setup_type}/{csv_name}")
-        for suffix in ["", "_at_entry"]:
-            files_to_delete.add(f"data/charts/{setup_type}/{ticker}{suffix}.png")
-        files_to_delete.add(f"data/charts/extension/{setup_type}/{ticker}.png")
-        files_to_delete.add(f"data/extension/{setup_type}/{ticker}.csv")
-
-        # Get full tree, filter out deleted paths, add updated JSONs
-        full_tree = github_api("GET", f"git/trees/{base_tree_sha}?recursive=1")
-        json_paths = {item["path"] for item in tree_items}
-
-        new_tree_items = []
-        for item in full_tree["tree"]:
-            if item["type"] == "tree":
-                continue
-            if item["path"] in files_to_delete:
-                continue
-            if item["path"] in json_paths:
-                continue
-            new_tree_items.append({
-                "path": item["path"],
-                "mode": item["mode"],
-                "type": item["type"],
-                "sha": item["sha"],
-            })
-        new_tree_items.extend(tree_items)
-
-        # 4. Create new tree
-        new_tree = github_api("POST", "git/trees", {"tree": new_tree_items})
-
-        # 5. Create commit
-        new_commit = github_api("POST", "git/commits", {
-            "message": f"Delete {ticker} from {setup_type}",
-            "tree": new_tree["sha"],
-            "parents": [head_sha],
-        })
-
-        # 6. Update ref
-        github_api("PATCH", "git/ref/heads/main", {"sha": new_commit["sha"]})
-
-        print(f"DELETE {ticker}: Atomic commit OK — {new_commit['sha'][:8]}")
-        return True
-
-    except Exception as e:
-        print(f"DELETE {ticker}: Atomic commit FAILED — {e}")
-        return False
-
-
-def github_update_file(filepath: str, content: str, message: str):
-    """Create or update a file in the repo via GitHub API."""
-    sha = github_get_file_sha(filepath)
-    payload = {
-        "message": message,
-        "content": base64.b64encode(content.encode()).decode(),
-    }
-    if sha:
-        payload["sha"] = sha
-    try:
-        github_api("PUT", f"contents/{filepath}", payload)
-        print(f"GITHUB UPDATE OK: {filepath}")
-        return True
-    except Exception as e:
-        print(f"GITHUB UPDATE FAIL: {filepath} - {e}")
-        return False
-
-
-def persist_update(setup_type: str, ticker: str, files_to_update: dict[str, str], message: str):
-    """Persist file updates to GitHub. files_to_update = {filepath: content}."""
-    if not GITHUB_TOKEN:
-        print("PERSIST SKIP: No GITHUB_TOKEN set")
-        return
-    for filepath, content in files_to_update.items():
-        github_update_file(filepath, content, message)
-
-
-class SaveExampleRequest(BaseModel):
-    ticker: str
-    chart_date: str  # YYYY-MM-DD
-    entry_date: str  # YYYY-MM-DD
-
-DATA_DIR = Path("data/ohlcv")
-CHARTS_DIR = Path("data/charts")
-SETUP_LIBRARY_DIR = Path("setup_library")
-
-
-def calc_ema(series: pd.Series, period: int) -> pd.Series:
-    """Calculate EMA manually for consistency."""
+def calc_ema(series, period):
     k = 2 / (period + 1)
     ema = [series.iloc[0]]
     for i in range(1, len(series)):
         ema.append(series.iloc[i] * k + ema[-1] * (1 - k))
     return pd.Series(ema, index=series.index)
 
-
-def calc_sma(series: pd.Series, period: int) -> pd.Series:
+def calc_sma(series, period):
     return series.rolling(window=period, min_periods=period).mean()
 
-
-def calc_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    high = df["High"]
-    low = df["Low"]
-    close = df["Close"]
+def calc_atr(df, period=14):
+    high, low, close = df["High"], df["Low"], df["Close"]
     prev_close = close.shift(1)
-    tr = pd.concat([
-        high - low,
-        (high - prev_close).abs(),
-        (low - prev_close).abs()
-    ], axis=1).max(axis=1)
-    return tr.rolling(window=period, min_periods=period).mean()
+    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+    return tr.rolling(window=period).mean()
 
-
-def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Add MAs, ATR, volume avg to dataframe."""
+def add_indicators(df):
     df = df.copy()
     df["EMA8"] = calc_ema(df["Close"], 8)
     df["EMA21"] = calc_ema(df["Close"], 21)
@@ -218,39 +131,79 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["VolAvg20"] = df["Volume"].rolling(20).mean()
     return df
 
+def fetch_ohlcv(ticker, chart_date_str):
+    chart_dt = datetime.strptime(chart_date_str, "%Y-%m-%d")
+    start = chart_dt - timedelta(days=250)
+    end = chart_dt + timedelta(days=60)
+    raw = yf.download(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), progress=False)
+    if raw.empty: return None
+    if isinstance(raw.columns, pd.MultiIndex): raw.columns = raw.columns.get_level_values(0)
+    raw = raw.reset_index()
+    raw["Date"] = pd.to_datetime(raw["Date"])
+    return raw.sort_values("Date").reset_index(drop=True)
 
-def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
-                         setup_type: str, at_entry: bool = False) -> str:
-    """Generate a D1 candlestick chart PNG using pure matplotlib."""
-    charts_dir = CHARTS_DIR / setup_type
-    charts_dir.mkdir(parents=True, exist_ok=True)
+def fetch_extension(ticker):
+    end = datetime.now()
+    start = end - timedelta(days=365 * 5 + 60)
+    raw = yf.download(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), progress=False)
+    if raw.empty: return None
+    if isinstance(raw.columns, pd.MultiIndex): raw.columns = raw.columns.get_level_values(0)
+    raw = raw.reset_index()
+    raw["Date"] = pd.to_datetime(raw["Date"])
+    raw = raw.sort_values("Date").reset_index(drop=True)
+    raw["SMA50"] = raw["Close"].rolling(50).mean()
+    raw["SMA200"] = raw["Close"].rolling(200).mean()
+    raw["ext_sma50_pct"] = ((raw["Close"] - raw["SMA50"]) / raw["SMA50"] * 100).round(2)
+    raw["ext_sma200_pct"] = ((raw["Close"] - raw["SMA200"]) / raw["SMA200"] * 100).round(2)
+    return raw
 
+def store_ohlcv(db, example_id, df):
+    rows = [(example_id, r["Date"].strftime("%Y-%m-%d"), clean_val(r["Open"]), clean_val(r["High"]),
+             clean_val(r["Low"]), clean_val(r["Close"]), clean_val(r["Volume"])) for _, r in df.iterrows()]
+    db.executemany("INSERT OR REPLACE INTO ohlcv (example_id, date, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?)", rows)
+
+def store_extension(db, example_id, df):
+    rows = [(example_id, r["Date"].strftime("%Y-%m-%d"), clean_val(r["Close"]), clean_val(r.get("SMA50")),
+             clean_val(r.get("SMA200")), clean_val(r.get("ext_sma50_pct")), clean_val(r.get("ext_sma200_pct"))) for _, r in df.iterrows()]
+    db.executemany("INSERT OR REPLACE INTO extension (example_id, date, close, sma50, sma200, ext_sma50_pct, ext_sma200_pct) VALUES (?,?,?,?,?,?,?)", rows)
+
+def get_ohlcv_df(db, example_id):
+    rows = db.execute("SELECT date as Date, open as Open, high as High, low as Low, close as Close, volume as Volume FROM ohlcv WHERE example_id=? ORDER BY date", (example_id,)).fetchall()
+    if not rows: return None
+    df = pd.DataFrame([dict(r) for r in rows])
+    df["Date"] = pd.to_datetime(df["Date"])
+    return df
+
+def get_extension_rows(db, example_id):
+    return [dict(r) for r in db.execute("SELECT date, close, sma50, sma200, ext_sma50_pct, ext_sma200_pct FROM extension WHERE example_id=? ORDER BY date", (example_id,)).fetchall()]
+
+
+# ============================================
+# CHART GENERATION (returns PNG bytes, no files)
+# ============================================
+
+def generate_chart_png(df, ticker, entry_date, at_entry=False):
     df = df.copy()
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
+    df = add_indicators(df)
 
-    # Center on entry date: aim for 30 before, 30 after
-    # If not enough data after, show what we have but keep total ~60
     entry_dt = pd.Timestamp(entry_date)
     entry_rows = df[df["Date"] == entry_dt]
     if entry_rows.empty:
         before = df[df["Date"] <= entry_dt]
-        if before.empty:
-            return None
+        if before.empty: return None
         entry_idx = before.index[-1]
     else:
         entry_idx = entry_rows.index[0]
 
     if at_entry:
-        # Show 50 candles before entry, nothing after, with padding
         want_before = min(50, entry_idx)
         start_idx = entry_idx - want_before
         chart_df = df.iloc[start_idx:entry_idx + 1].copy().reset_index(drop=True)
         entry_pos = want_before
-        # Add 15% empty space to the right
         n = len(chart_df)
-        empty_right = max(int(n * 0.18), 5)
-        total_width = n + empty_right
+        total_width = n + max(int(n * 0.18), 5)
     else:
         avail_after = len(df) - entry_idx - 1
         avail_before = entry_idx
@@ -259,601 +212,115 @@ def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
         total = want_before + 1 + want_after
         if total < 60:
             extra = 60 - total
-            if want_before < 30:
-                want_after = min(want_after + extra, avail_after)
-            else:
-                want_before = min(want_before + extra, avail_before)
-        start_idx = entry_idx - want_before
-        end_idx = entry_idx + want_after + 1
-        chart_df = df.iloc[start_idx:end_idx].copy().reset_index(drop=True)
+            if want_before < 30: want_after = min(want_after + extra, avail_after)
+            else: want_before = min(want_before + extra, avail_before)
+        chart_df = df.iloc[entry_idx - want_before:entry_idx + want_after + 1].copy().reset_index(drop=True)
         entry_pos = want_before
-        n = len(chart_df)
-        empty_right = 0
-        total_width = n
-    entry_pos = want_before  # position in chart_df
+        total_width = len(chart_df)
 
-    if chart_df.empty:
-        return None
+    if chart_df.empty: return None
 
-    fig, (ax, ax_vol) = plt.subplots(2, 1, figsize=(8, 4), dpi=120,
-                                      gridspec_kw={"height_ratios": [3, 1]},
-                                      facecolor="#0a0e17")
+    fig, (ax, ax_vol) = plt.subplots(2, 1, figsize=(8, 4), dpi=120, gridspec_kw={"height_ratios": [3, 1]}, facecolor="#0a0e17")
     ax.set_facecolor("#0a0e17")
     ax_vol.set_facecolor("#0a0e17")
-
     n = len(chart_df)
-    w = 0.6  # candle body width
+    w = 0.6
 
     for i, row in chart_df.iterrows():
         o, h, l, c = row["Open"], row["High"], row["Low"], row["Close"]
         color = "#26A69A" if c >= o else "#EF5350"
-
-        # Wick
         ax.plot([i, i], [l, h], color=color, linewidth=0.8)
-        # Body
-        body_bottom = min(o, c)
-        body_height = max(abs(c - o), 0.001)
-        ax.add_patch(Rectangle((i - w/2, body_bottom), w, body_height,
-                                facecolor=color, edgecolor=color, linewidth=0.5))
-
-        # Volume
+        ax.add_patch(Rectangle((i - w/2, min(o, c)), w, max(abs(c - o), 0.001), facecolor=color, edgecolor=color, linewidth=0.5))
         ax_vol.bar(i, row["Volume"], width=w, color=color, alpha=0.7)
 
-    # MAs
-    for period, ma_type, color, lw in [
-        (8, "ema", "#ADD8E6", 1.0), (21, "ema", "#D2B48C", 1.0),
-        (50, "sma", "#FFD700", 1.2), (200, "sma", "#FF0000", 1.5),
-    ]:
+    for period, ma_type, color, lw in [(8, "ema", "#ADD8E6", 1.0), (21, "ema", "#D2B48C", 1.0), (50, "sma", "#FFD700", 1.2), (200, "sma", "#FF0000", 1.5)]:
         if n >= period:
-            if ma_type == "ema":
-                s = chart_df["Close"].ewm(span=period, adjust=False).mean()
-            else:
-                s = chart_df["Close"].rolling(window=period).mean()
+            s = chart_df["Close"].ewm(span=period, adjust=False).mean() if ma_type == "ema" else chart_df["Close"].rolling(window=period).mean()
             ax.plot(range(n), s.values, color=color, linewidth=lw, alpha=0.8)
 
-    # Entry date crosshair at open price
     entry_open = float(chart_df.iloc[entry_pos]["Open"])
     ax.axvline(x=entry_pos, color="#3b82f6", linewidth=1, alpha=0.6, linestyle="--")
     ax.axhline(y=entry_open, color="#3b82f6", linewidth=1, alpha=0.6, linestyle="--")
     ax_vol.axvline(x=entry_pos, color="#3b82f6", linewidth=1, alpha=0.6, linestyle="--")
-
-    # Styling
-    ax.set_title(f"{ticker}  •  {entry_date}", color="#e2e8f0", fontsize=11,
-                 fontweight="bold", pad=8)
-    ax.tick_params(colors="#64748b", labelsize=8)
-    ax_vol.tick_params(colors="#64748b", labelsize=7)
-    ax.spines[:].set_color("#2a3550")
-    ax_vol.spines[:].set_color("#2a3550")
-    ax.set_xlim(-1, total_width)
-    ax_vol.set_xlim(-1, total_width)
-    ax.set_xticks([])
-    ax_vol.set_xticks([])
-    ax_vol.yaxis.set_visible(False)
+    ax.set_title(f"{ticker}  •  {entry_date}", color="#e2e8f0", fontsize=11, fontweight="bold", pad=8)
+    ax.tick_params(colors="#64748b", labelsize=8); ax_vol.tick_params(colors="#64748b", labelsize=7)
+    ax.spines[:].set_color("#2a3550"); ax_vol.spines[:].set_color("#2a3550")
+    ax.set_xlim(-1, total_width); ax_vol.set_xlim(-1, total_width)
+    ax.set_xticks([]); ax_vol.set_xticks([]); ax_vol.yaxis.set_visible(False)
     ax.grid(True, alpha=0.1, color="#64748b")
 
-    suffix = "_at_entry" if at_entry else ""
-    filepath = str(charts_dir / f"{ticker}{suffix}.png")
     fig.tight_layout(pad=0.5)
-    fig.savefig(filepath, facecolor="#0a0e17", bbox_inches="tight")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor="#0a0e17", bbox_inches="tight")
     plt.close(fig)
-    return filepath
+    buf.seek(0)
+    return buf.getvalue()
 
 
-def clean_val(v):
-    """Convert numpy/pandas types to JSON-safe Python types."""
-    if v is None or (isinstance(v, float) and math.isnan(v)):
-        return None
-    if hasattr(v, "item"):
-        return v.item()
-    return v
+# ============================================
+# SIGNAL ANALYSIS
+# ============================================
 
-
-@app.get("/api/debug/git-status")
-async def debug_git_status():
-    """Check GitHub API connectivity and token."""
-    results = {
-        "has_github_token": bool(GITHUB_TOKEN),
-        "persistence_method": "github_api",
-        "cwd": os.getcwd(),
-        "data_dir_exists": DATA_DIR.exists(),
-    }
-    if GITHUB_TOKEN:
-        try:
-            data = github_api("GET", "contents/data/ohlcv/3-4db/entry_dates.json")
-            results["repo_entry_dates_sha"] = data.get("sha", "unknown")
-            content = base64.b64decode(data["content"]).decode()
-            entries = json.loads(content)
-            results["repo_entry_count"] = len(entries)
-            results["repo_tickers"] = [e["ticker"] for e in entries]
-        except Exception as e:
-            results["repo_check_error"] = str(e)
-        # Local state
-        entry_file = DATA_DIR / "3-4db" / "entry_dates.json"
-        if entry_file.exists():
-            local_entries = json.loads(entry_file.read_text())
-            results["local_entry_count"] = len(local_entries)
-            results["local_tickers"] = [e["ticker"] for e in local_entries]
-    return results
-
-
-@app.get("/api/ohlcv")
-async def get_ohlcv(
-    ticker: str = Query(..., description="Stock ticker symbol"),
-    date: str = Query(None, description="Chart date (YYYY-MM-DD), defaults to today"),
-    lookback: int = Query(150, description="Trading days of history to fetch"),
-):
-    """Fetch OHLCV data with indicators for a ticker."""
-    ticker = ticker.upper().strip()
-
-    if date:
-        try:
-            chart_date = datetime.strptime(date, "%Y-%m-%d")
-        except ValueError:
-            raise HTTPException(400, "Invalid date format. Use YYYY-MM-DD.")
-    else:
-        chart_date = datetime.now()
-
-    # Fetch extra days to warm up indicators (need ~200 for SMA200)
-    start = chart_date - timedelta(days=lookback + 250)
-    end = chart_date + timedelta(days=20)
-
-    try:
-        raw = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
-                          end=end.strftime("%Y-%m-%d"), progress=False)
-    except Exception as e:
-        raise HTTPException(500, f"yfinance error: {e}")
-
-    if raw.empty:
-        raise HTTPException(404, f"No data found for {ticker}")
-
-    # Handle MultiIndex columns from yfinance
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = raw.columns.get_level_values(0)
-
-    raw = raw.reset_index()
-    raw["Date"] = pd.to_datetime(raw["Date"])
-    raw = raw.sort_values("Date").reset_index(drop=True)
-
-    # Add indicators on full history
-    raw = add_indicators(raw)
-
-    # Trim to lookback window for response
-    chart_dt = pd.Timestamp(chart_date)
-    mask = raw["Date"] <= chart_dt + timedelta(days=20)
-    df = raw[mask].tail(lookback + 20).copy()
-
-    # Build response
-    candles = []
-    for _, row in df.iterrows():
-        candles.append({
-            "date": row["Date"].strftime("%Y-%m-%d"),
-            "open": clean_val(row["Open"]),
-            "high": clean_val(row["High"]),
-            "low": clean_val(row["Low"]),
-            "close": clean_val(row["Close"]),
-            "volume": clean_val(row["Volume"]),
-            "ema8": clean_val(row.get("EMA8")),
-            "ema21": clean_val(row.get("EMA21")),
-            "sma50": clean_val(row.get("SMA50")),
-            "sma200": clean_val(row.get("SMA200")),
-            "atr14": clean_val(row.get("ATR14")),
-            "volAvg20": clean_val(row.get("VolAvg20")),
-        })
-
-    return {"ticker": ticker, "chartDate": date, "candles": candles}
-
-
-@app.get("/api/setups")
-async def get_setups():
-    """Return available setup types and their metadata."""
-    setups = {}
-    if SETUP_LIBRARY_DIR.exists():
-        for d in SETUP_LIBRARY_DIR.iterdir():
-            if d.is_dir():
-                desc_file = d / "description.md"
-                cond_file = d / "conditions.json"
-                setups[d.name] = {
-                    "name": d.name.upper(),
-                    "hasDescription": desc_file.exists(),
-                    "hasConditions": cond_file.exists(),
-                }
-    return setups
-
-
-@app.get("/api/examples/{setup_type}")
-async def get_examples(setup_type: str):
-    """Return saved examples for a setup type."""
-    data_dir = DATA_DIR / setup_type
-    if not data_dir.exists():
-        return {"examples": []}
-
-    # Load entry dates — this is the source of truth
-    entry_file = data_dir / "entry_dates.json"
-    if not entry_file.exists():
-        return {"examples": []}
-    entry_list = json.loads(entry_file.read_text())
-
-    # Load signal analysis if available
-    analysis_file = data_dir / "signal_day_analysis.json"
-    analyses = {}
-    if analysis_file.exists():
-        for a in json.loads(analysis_file.read_text()):
-            analyses[a["ticker"]] = a
-
-    # Only show tickers with entry dates
-    examples = []
-    for e in sorted(entry_list, key=lambda x: x["ticker"]):
-        ticker = e["ticker"]
-        # Find matching CSV
-        matches = list(data_dir.glob(f"{ticker}_*.csv"))
-        csv_name = matches[0].name if matches else None
-        chart_date = csv_name.split("_")[1].replace(".csv", "") if csv_name and "_" in csv_name else None
-        examples.append({
-            "ticker": ticker,
-            "chartDate": chart_date,
-            "entryDate": e.get("entry_date"),
-            "hasAnalysis": ticker in analyses,
-            "csvFile": csv_name,
-        })
-
-    return {"setupType": setup_type, "examples": examples}
-
-
-@app.get("/api/ohlcv/local/{setup_type}/{ticker}")
-async def get_local_ohlcv(setup_type: str, ticker: str):
-    """Load OHLCV from saved CSV with indicators — no yfinance call."""
-    ticker = ticker.upper().strip()
-    data_dir = DATA_DIR / setup_type
-
-    # Find CSV for this ticker
-    matches = list(data_dir.glob(f"{ticker}_*.csv"))
-    if not matches:
-        raise HTTPException(404, f"No CSV for {ticker} in {setup_type}")
-
-    raw = pd.read_csv(matches[0])
-    raw["Date"] = pd.to_datetime(raw["Date"])
-    raw = raw.sort_values("Date").reset_index(drop=True)
-    raw = add_indicators(raw)
-
-    # Return last 150 rows
-    df = raw.tail(150)
-
-    candles = []
-    for _, row in df.iterrows():
-        candles.append({
-            "date": row["Date"].strftime("%Y-%m-%d"),
-            "open": clean_val(row["Open"]),
-            "high": clean_val(row["High"]),
-            "low": clean_val(row["Low"]),
-            "close": clean_val(row["Close"]),
-            "volume": clean_val(row["Volume"]),
-            "ema8": clean_val(row.get("EMA8")),
-            "ema21": clean_val(row.get("EMA21")),
-            "sma50": clean_val(row.get("SMA50")),
-            "sma200": clean_val(row.get("SMA200")),
-            "atr14": clean_val(row.get("ATR14")),
-            "volAvg20": clean_val(row.get("VolAvg20")),
-        })
-
-    return {"ticker": ticker, "candles": candles}
-
-
-@app.get("/api/chart-image/{setup_type}/{ticker}")
-async def get_chart_image(
-    setup_type: str, ticker: str,
-    at_entry: int = Query(0, description="1 to show chart at entry time only"),
-):
-    """Serve a pre-generated chart image PNG."""
-    ticker = ticker.upper().strip()
-    if at_entry:
-        img_path = CHARTS_DIR / setup_type / f"{ticker}_at_entry.png"
-    else:
-        img_path = CHARTS_DIR / setup_type / f"{ticker}.png"
-    if not img_path.exists():
-        raise HTTPException(404, f"No chart image for {ticker}")
-    return FileResponse(str(img_path), media_type="image/png")
-
-
-@app.get("/api/extension-chart/{setup_type}/{ticker}")
-async def get_extension_chart(setup_type: str, ticker: str):
-    """Serve a pre-generated extension analysis chart PNG."""
-    ticker = ticker.upper().strip()
-    img_path = Path("data/charts/extension") / setup_type / f"{ticker}.png"
-    if not img_path.exists():
-        raise HTTPException(404, f"No extension chart for {ticker}")
-    return FileResponse(str(img_path), media_type="image/png")
-
-
-@app.get("/api/extension-data/{setup_type}/{ticker}")
-async def get_extension_data(
-    setup_type: str, ticker: str,
-    entry_date: str = Query(None, description="Entry date to center view around"),
-):
-    """Return extension CSV data as JSON, trimmed so entry is ~2/3 through."""
-    ticker = ticker.upper().strip()
-    csv_path = Path("data/extension") / setup_type / f"{ticker}.csv"
-    if not csv_path.exists():
-        raise HTTPException(404, f"No extension data for {ticker}")
-
-    df = pd.read_csv(csv_path)
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df.dropna(subset=["ext_sma200_pct"]).reset_index(drop=True)
-
-    # Trim so entry date sits at ~2/3 from left
-    if entry_date:
-        entry_dt = pd.Timestamp(entry_date)
-        entry_rows = df[df["Date"] <= entry_dt]
-        if not entry_rows.empty:
-            entry_idx = entry_rows.index[-1]
-            after_count = len(df) - entry_idx - 1
-            # Want entry at 2/3: before = 2 * after
-            before_count = min(after_count * 2, entry_idx)
-            # But ensure minimum context: at least 200 rows before
-            before_count = max(before_count, min(200, entry_idx))
-            start_idx = entry_idx - before_count
-            df = df.iloc[start_idx:].reset_index(drop=True)
-
-    result = []
-    for _, row in df.iterrows():
-        result.append({
-            "date": row["Date"].strftime("%Y-%m-%d"),
-            "ext_sma50_pct": clean_val(row.get("ext_sma50_pct")),
-            "ext_sma200_pct": clean_val(row.get("ext_sma200_pct")),
-        })
-    return result
-
-
-@app.get("/api/conditions/{setup_type}")
-async def get_conditions(setup_type: str):
-    """Return PCF conditions for a setup type."""
-    cond_file = SETUP_LIBRARY_DIR / setup_type / "conditions.json"
-    if not cond_file.exists():
-        raise HTTPException(404, f"No conditions found for {setup_type}")
-    return json.loads(cond_file.read_text())
-
-
-@app.delete("/api/examples/{setup_type}/{ticker}")
-async def delete_example(setup_type: str, ticker: str):
-    """Delete an example completely — local files, JSON entries, and GitHub repo."""
-    ticker = ticker.upper().strip()
-    data_dir = DATA_DIR / setup_type
-    if not data_dir.exists():
-        raise HTTPException(404, f"No data directory for {setup_type}")
-
-    csv_files = list(data_dir.glob(f"{ticker}_*.csv"))
-    csv_names = [f.name for f in csv_files]
-    if not csv_files:
-        raise HTTPException(404, f"No CSV found for {ticker} in {setup_type}")
-
-    # --- Delete locally ---
-    for f in csv_files:
-        f.unlink()
-
-    entry_file = data_dir / "entry_dates.json"
-    if entry_file.exists():
-        entries = json.loads(entry_file.read_text())
-        entries = [e for e in entries if e["ticker"] != ticker]
-        entry_file.write_text(json.dumps(entries, indent=2))
-
-    analysis_file = data_dir / "signal_day_analysis.json"
-    if analysis_file.exists():
-        analyses = json.loads(analysis_file.read_text())
-        analyses = [a for a in analyses if a["ticker"] != ticker]
-        analysis_file.write_text(json.dumps(analyses, indent=2))
-
-    for suffix in ["", "_at_entry"]:
-        p = CHARTS_DIR / setup_type / f"{ticker}{suffix}.png"
-        if p.exists():
-            p.unlink()
-
-    ext_chart = CHARTS_DIR / "extension" / setup_type / f"{ticker}.png"
-    if ext_chart.exists():
-        ext_chart.unlink()
-
-    ext_csv = Path("data/extension") / setup_type / f"{ticker}.csv"
-    if ext_csv.exists():
-        ext_csv.unlink()
-
-    # --- Persist to GitHub in one atomic commit ---
-    gh_success = github_atomic_delete(
-        setup_type, ticker, csv_names,
-        entry_file.read_text() if entry_file.exists() else "[]",
-        analysis_file.read_text() if analysis_file.exists() else "[]",
-    )
-
-    if not gh_success:
-        raise HTTPException(500, f"Deleted {ticker} locally but GitHub sync failed — may reappear after redeploy")
-
-    return {"status": "deleted", "ticker": ticker}
-
-
-class UpdateEntryRequest(BaseModel):
-    entry_date: str  # YYYY-MM-DD
-
-
-@app.patch("/api/examples/{setup_type}/{ticker}")
-async def update_entry_date(setup_type: str, ticker: str, req: UpdateEntryRequest):
-    """Update entry date for an example: re-run analysis and regenerate charts."""
-    ticker = ticker.upper().strip()
-    entry_date = req.entry_date
-    data_dir = DATA_DIR / setup_type
-
-    # Verify CSV exists
-    matches = list(data_dir.glob(f"{ticker}_*.csv"))
-    if not matches:
-        raise HTTPException(404, f"No CSV for {ticker} in {setup_type}")
-
-    # Update entry_dates.json
-    entry_file = data_dir / "entry_dates.json"
-    entries = []
-    if entry_file.exists():
-        entries = json.loads(entry_file.read_text())
-    entries = [e for e in entries if e["ticker"] != ticker]
-    entries.append({"ticker": ticker, "entry_date": entry_date})
-    entries.sort(key=lambda x: x["ticker"])
-    entry_file.write_text(json.dumps(entries, indent=2))
-
-    # Re-run signal analysis
-    raw = pd.read_csv(matches[0])
-    analysis = None
-    analysis_file = data_dir / "signal_day_analysis.json"
-    analyses = []
-    if analysis_file.exists():
-        analyses = json.loads(analysis_file.read_text())
-    try:
-        analysis = run_signal_analysis(raw, ticker, entry_date)
-        analyses = [a for a in analyses if a["ticker"] != ticker]
-        analyses.append(analysis)
-        analyses.sort(key=lambda x: x["ticker"])
-        analysis_file.write_text(json.dumps(analyses, indent=2))
-    except Exception as e:
-        analysis = {"error": str(e)}
-
-    # Regenerate chart images
-    try:
-        generate_chart_image(raw, ticker, entry_date, setup_type, at_entry=False)
-        generate_chart_image(raw, ticker, entry_date, setup_type, at_entry=True)
-    except Exception as e:
-        print(f"Chart regen failed for {ticker}: {e}")
-
-    # Persist to GitHub via API
-    msg = f"Update {ticker} entry date to {entry_date}"
-    files_to_update = {
-        f"data/ohlcv/{setup_type}/entry_dates.json": entry_file.read_text(),
-    }
-    if analysis_file.exists():
-        files_to_update[f"data/ohlcv/{setup_type}/signal_day_analysis.json"] = analysis_file.read_text()
-    persist_update(setup_type, ticker, files_to_update, msg)
-
-    return {
-        "status": "updated",
-        "ticker": ticker,
-        "entryDate": entry_date,
-        "analysis": analysis,
-    }
-
-
-def calc_sma_series(series: pd.Series, period: int) -> pd.Series:
-    """SMA for analysis (same as calc_sma but named distinctly)."""
-    return series.rolling(window=period, min_periods=period).mean()
-
-
-def run_signal_analysis(df: pd.DataFrame, ticker: str, entry_date: str) -> dict:
-    """
-    Compute signal day analysis metrics for a given entry date.
-    Signal date = trading day before entry date.
-    Analysis is done on the signal date's data.
-    """
+def run_signal_analysis(df, ticker, entry_date):
     df = df.copy()
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
-
-    # Add indicators
-    df["EMA8"] = calc_ema(df["Close"], 8)
-    df["EMA21"] = calc_ema(df["Close"], 21)
-    df["SMA10"] = calc_sma_series(df["Close"], 10)
-    df["SMA50"] = calc_sma_series(df["Close"], 50)
-    df["SMA200"] = calc_sma_series(df["Close"], 200)
-    df["ATR14"] = calc_atr(df, 14)
-    df["VolAvg20"] = df["Volume"].rolling(20).mean()
+    df = add_indicators(df)
+    df["SMA10"] = calc_sma(df["Close"], 10)
 
     entry_dt = pd.Timestamp(entry_date)
-
-    # Find entry index
     entry_idx = df.index[df["Date"] == entry_dt]
     if len(entry_idx) == 0:
-        # Try closest date before
         before = df[df["Date"] <= entry_dt]
-        if before.empty:
-            raise ValueError(f"No data at or before entry date {entry_date}")
+        if before.empty: raise ValueError(f"No data at or before {entry_date}")
         entry_idx = [before.index[-1]]
-
     eidx = entry_idx[0]
-    if eidx == 0:
-        raise ValueError("Entry date is the first row, no signal date available")
+    if eidx == 0: raise ValueError("Entry date is first row")
 
-    sig_idx = eidx - 1  # signal day = day before entry
+    sig_idx = eidx - 1
     sig = df.iloc[sig_idx]
-
-    c = float(sig["Close"])
-    o = float(sig["Open"])
-    h = float(sig["High"])
-    l = float(sig["Low"])
+    c, o, h, l = float(sig["Close"]), float(sig["Open"]), float(sig["High"]), float(sig["Low"])
     atr = float(sig["ATR14"]) if pd.notna(sig["ATR14"]) else None
     vol = float(sig["Volume"])
     vol_avg = float(sig["VolAvg20"]) if pd.notna(sig["VolAvg20"]) else None
-
     ema8 = float(sig["EMA8"]) if pd.notna(sig["EMA8"]) else None
     ema21 = float(sig["EMA21"]) if pd.notna(sig["EMA21"]) else None
     sma10 = float(sig["SMA10"]) if pd.notna(sig["SMA10"]) else None
     sma50 = float(sig["SMA50"]) if pd.notna(sig["SMA50"]) else None
     sma200 = float(sig["SMA200"]) if pd.notna(sig["SMA200"]) else None
 
-    # Swing high in last 30 trading days
-    lookback_30 = df.iloc[max(0, sig_idx - 30):sig_idx + 1]
-    swing_high = float(lookback_30["High"].max())
-    high_idx = lookback_30["High"].idxmax()
+    lb30 = df.iloc[max(0, sig_idx - 30):sig_idx + 1]
+    swing_high = float(lb30["High"].max())
+    high_idx = lb30["High"].idxmax()
     days_from_high = sig_idx - high_idx
-
-    # Pullback from swing high
     pullback_pct = round((swing_high - c) / swing_high * 100, 2)
     pullback_atr = round((swing_high - c) / atr, 2) if atr else None
 
-    # Find pullback low between swing high and signal
-    pullback_range = df.iloc[high_idx:sig_idx + 1]
-    pullback_low = float(pullback_range["Low"].min())
-    low_idx = pullback_range["Low"].idxmin()
+    pb_range = df.iloc[high_idx:sig_idx + 1]
+    pullback_low = float(pb_range["Low"].min())
+    low_idx = pb_range["Low"].idxmin()
     days_since_low = sig_idx - low_idx
-
-    # Bounce from pullback low
     bounce_pct = round((c - pullback_low) / pullback_low * 100, 2)
     bounce_atr = round((c - pullback_low) / atr, 2) if atr else None
 
-    # Green/up candle counts
-    recent_5 = df.iloc[max(0, sig_idx - 4):sig_idx + 1]
-    recent_3 = df.iloc[max(0, sig_idx - 2):sig_idx + 1]
-    green_3 = int((recent_3["Close"] > recent_3["Open"]).sum())
-    green_5 = int((recent_5["Close"] > recent_5["Open"]).sum())
-    up_close_3 = int((recent_3["Close"] > recent_3["Close"].shift(1)).sum())
-    up_close_5 = int((recent_5["Close"] > recent_5["Close"].shift(1)).sum())
+    r5 = df.iloc[max(0, sig_idx - 4):sig_idx + 1]
+    r3 = df.iloc[max(0, sig_idx - 2):sig_idx + 1]
+    sig_body, sig_range = abs(c - o), h - l
 
-    # Signal candle properties
-    sig_is_green = c > o
-    sig_body = abs(c - o)
-    sig_range = h - l
-    sig_close_position = round((c - l) / sig_range, 2) if sig_range > 0 else 0.5
-
-    # SMA50 slope (5 day)
     sma50_slope = None
     if sig_idx >= 5 and pd.notna(sig["SMA50"]):
-        sma50_5ago = df.iloc[sig_idx - 5]["SMA50"]
-        if pd.notna(sma50_5ago) and sma50_5ago > 0:
-            sma50_slope = round((float(sig["SMA50"]) - float(sma50_5ago)) / float(sma50_5ago) * 100, 3)
+        s5 = df.iloc[sig_idx - 5]["SMA50"]
+        if pd.notna(s5) and s5 > 0: sma50_slope = round((float(sig["SMA50"]) - float(s5)) / float(s5) * 100, 3)
 
-    # Pullback structure
-    total_pullback_days = days_from_high
-    down_days = int((pullback_range["Close"] < pullback_range["Open"]).sum())
-    pct_down = round(down_days / max(total_pullback_days, 1) * 100, 1)
-
-    # 20-day range %
-    range_20 = df.iloc[max(0, sig_idx - 19):sig_idx + 1]
-    r20_high = float(range_20["High"].max())
-    r20_low = float(range_20["Low"].min())
-    range_20d_pct = round((r20_high - r20_low) / r20_low * 100, 1) if r20_low > 0 else None
-
-    # Up days in last 14
-    recent_14 = df.iloc[max(0, sig_idx - 13):sig_idx + 1]
-    up_days_14 = int((recent_14["Close"] > recent_14["Close"].shift(1)).sum())
+    down_days = int((pb_range["Close"] < pb_range["Open"]).sum())
+    r20 = df.iloc[max(0, sig_idx - 19):sig_idx + 1]
+    r20h, r20l = float(r20["High"].max()), float(r20["Low"].min())
 
     return {
-        "ticker": ticker,
-        "entry_date": entry_date,
-        "signal_date": sig["Date"].strftime("%Y-%m-%d"),
-        "close": round(c, 2),
-        "atr14": round(atr, 4) if atr else None,
+        "ticker": ticker, "entry_date": entry_date, "signal_date": sig["Date"].strftime("%Y-%m-%d"),
+        "close": round(c, 2), "atr14": round(atr, 4) if atr else None,
         "atr_pct": round(atr / c * 100, 2) if atr else None,
-        "above_sma50": c > sma50 if sma50 else None,
-        "above_sma200": c > sma200 if sma200 else None,
+        "above_sma50": c > sma50 if sma50 else None, "above_sma200": c > sma200 if sma200 else None,
         "ema8_above_ema21": ema8 > ema21 if (ema8 and ema21) else None,
         "c_vs_ema8_pct": round((c - ema8) / ema8 * 100, 2) if ema8 else None,
         "c_vs_ema21_pct": round((c - ema21) / ema21 * 100, 2) if ema21 else None,
@@ -862,152 +329,225 @@ def run_signal_analysis(df: pd.DataFrame, ticker: str, entry_date: str) -> dict:
         "c_vs_ema8_atr": round((c - ema8) / atr, 2) if (ema8 and atr) else None,
         "c_vs_ema21_atr": round((c - ema21) / atr, 2) if (ema21 and atr) else None,
         "c_vs_sma50_atr": round((c - sma50) / atr, 2) if (sma50 and atr) else None,
-        "sma50_slope_5d": sma50_slope,
-        "swing_high_30d": round(swing_high, 2),
-        "days_from_high": int(days_from_high),
-        "pullback_pct": pullback_pct,
-        "pullback_atr": pullback_atr,
-        "pullback_low": round(pullback_low, 2),
-        "days_since_low": int(days_since_low),
-        "bounce_from_low_pct": bounce_pct,
-        "bounce_from_low_atr": bounce_atr,
-        "green_candles_3d": green_3,
-        "green_candles_5d": green_5,
-        "up_close_3d": up_close_3,
-        "up_close_5d": up_close_5,
-        "sig_is_green": sig_is_green,
-        "sig_close_position": sig_close_position,
+        "sma50_slope_5d": sma50_slope, "swing_high_30d": round(swing_high, 2),
+        "days_from_high": int(days_from_high), "pullback_pct": pullback_pct, "pullback_atr": pullback_atr,
+        "pullback_low": round(pullback_low, 2), "days_since_low": int(days_since_low),
+        "bounce_from_low_pct": bounce_pct, "bounce_from_low_atr": bounce_atr,
+        "green_candles_3d": int((r3["Close"] > r3["Open"]).sum()),
+        "green_candles_5d": int((r5["Close"] > r5["Open"]).sum()),
+        "up_close_3d": int((r3["Close"] > r3["Close"].shift(1)).sum()),
+        "up_close_5d": int((r5["Close"] > r5["Close"].shift(1)).sum()),
+        "sig_is_green": c > o,
+        "sig_close_position": round((c - l) / sig_range, 2) if sig_range > 0 else 0.5,
         "sig_body_atr": round(sig_body / atr, 2) if atr else None,
         "sig_range_atr": round(sig_range / atr, 2) if atr else None,
         "sig_vol_vs_20avg": round(vol / vol_avg, 2) if vol_avg else None,
-        "total_pullback_days": int(total_pullback_days),
-        "down_days_in_pullback": down_days,
-        "pct_down_in_pullback": pct_down,
-        "range_20d_pct": range_20d_pct,
-        "up_days_14": up_days_14,
+        "total_pullback_days": int(days_from_high), "down_days_in_pullback": down_days,
+        "pct_down_in_pullback": round(down_days / max(days_from_high, 1) * 100, 1),
+        "range_20d_pct": round((r20h - r20l) / r20l * 100, 1) if r20l > 0 else None,
+        "up_days_14": int((df.iloc[max(0, sig_idx - 13):sig_idx + 1]["Close"] > df.iloc[max(0, sig_idx - 13):sig_idx + 1]["Close"].shift(1)).sum()),
     }
 
+
+# ============================================
+# API ROUTES
+# ============================================
+
+@app.get("/api/setups")
+async def get_setups():
+    types = {"3-4db": {"name": "3-4DB", "desc": "3-4 Day Bounce (Short)"}, "dtss": {"name": "DTSS", "desc": "Double Top Short Sell"}, "htf": {"name": "HTF", "desc": "High Tight Flag (Long)"}}
+    with get_db() as db:
+        for st in types:
+            types[st]["examples"] = db.execute("SELECT COUNT(*) FROM examples WHERE setup_type=?", (st,)).fetchone()[0]
+    return types
+
+@app.get("/api/examples/{setup_type}")
+async def get_examples(setup_type: str):
+    with get_db() as db:
+        rows = db.execute("SELECT id, ticker, chart_date, entry_date FROM examples WHERE setup_type=? ORDER BY ticker", (setup_type,)).fetchall()
+        examples = []
+        for r in rows:
+            has = db.execute("SELECT 1 FROM signal_analysis WHERE example_id=?", (r["id"],)).fetchone() is not None
+            examples.append({"id": r["id"], "ticker": r["ticker"], "chartDate": r["chart_date"], "entryDate": r["entry_date"], "hasAnalysis": has})
+    return {"setupType": setup_type, "examples": examples}
+
+@app.get("/api/chart-image/{setup_type}/{ticker}")
+async def get_chart_image(setup_type: str, ticker: str, at_entry: int = Query(0)):
+    ticker = ticker.upper().strip()
+    with get_db() as db:
+        ex = db.execute("SELECT id, entry_date FROM examples WHERE setup_type=? AND ticker=?", (setup_type, ticker)).fetchone()
+        if not ex: raise HTTPException(404, f"No example for {ticker}")
+        df = get_ohlcv_df(db, ex["id"])
+        if df is None: raise HTTPException(404, f"No OHLCV data for {ticker}")
+    png = generate_chart_png(df, ticker, ex["entry_date"], at_entry=bool(at_entry))
+    if png is None: raise HTTPException(500, "Chart generation failed")
+    return Response(content=png, media_type="image/png")
+
+@app.get("/api/extension-data/{setup_type}/{ticker}")
+async def api_extension_data(setup_type: str, ticker: str, entry_date: str = Query(None)):
+    ticker = ticker.upper().strip()
+    with get_db() as db:
+        ex = db.execute("SELECT id, entry_date FROM examples WHERE setup_type=? AND ticker=?", (setup_type, ticker)).fetchone()
+        if not ex: raise HTTPException(404)
+        data = get_extension_rows(db, ex["id"])
+        if not data: raise HTTPException(404)
+    ed = entry_date or ex["entry_date"]
+    if ed:
+        entry_idx = len(data) - 1
+        for i, d in enumerate(data):
+            if d["date"] >= ed: entry_idx = i; break
+        after_count = len(data) - entry_idx - 1
+        before_count = max(min(after_count * 2, entry_idx), min(200, entry_idx))
+        data = data[max(0, entry_idx - before_count):]
+    return data
+
+@app.get("/api/ohlcv/local/{setup_type}/{ticker}")
+async def get_local_ohlcv(setup_type: str, ticker: str):
+    ticker = ticker.upper().strip()
+    with get_db() as db:
+        ex = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=?", (setup_type, ticker)).fetchone()
+        if not ex: raise HTTPException(404)
+        df = get_ohlcv_df(db, ex["id"])
+        if df is None: raise HTTPException(404)
+    df = add_indicators(df)
+    candles = [{"date": row["Date"].strftime("%Y-%m-%d"), "open": clean_val(row["Open"]), "high": clean_val(row["High"]),
+                "low": clean_val(row["Low"]), "close": clean_val(row["Close"]), "volume": clean_val(row["Volume"]),
+                "ema8": clean_val(row.get("EMA8")), "ema21": clean_val(row.get("EMA21")), "sma50": clean_val(row.get("SMA50")),
+                "sma200": clean_val(row.get("SMA200")), "atr14": clean_val(row.get("ATR14")), "volAvg20": clean_val(row.get("VolAvg20"))}
+               for _, row in df.tail(150).iterrows()]
+    return {"ticker": ticker, "candles": candles}
+
+@app.get("/api/conditions/{setup_type}")
+async def get_conditions(setup_type: str):
+    with get_db() as db:
+        return [dict(r) for r in db.execute("SELECT id, name, description, pcf, active FROM conditions WHERE setup_type=? ORDER BY sort_order", (setup_type,)).fetchall()]
+
+class SaveExampleRequest(BaseModel):
+    ticker: str
+    chart_date: str
+    entry_date: str
 
 @app.post("/api/examples/{setup_type}")
 async def save_example(setup_type: str, req: SaveExampleRequest):
-    """Save a new example: fetch OHLCV, store CSV, entry date, and run analysis."""
     ticker = req.ticker.upper().strip()
-    chart_date = req.chart_date
-    entry_date = req.entry_date
-
-    # Validate dates
     try:
-        chart_dt = datetime.strptime(chart_date, "%Y-%m-%d")
-        entry_dt = datetime.strptime(entry_date, "%Y-%m-%d")
+        datetime.strptime(req.chart_date, "%Y-%m-%d")
+        datetime.strptime(req.entry_date, "%Y-%m-%d")
     except ValueError:
-        raise HTTPException(400, "Invalid date format. Use YYYY-MM-DD.")
+        raise HTTPException(400, "Invalid date format")
 
-    data_dir = DATA_DIR / setup_type
-    data_dir.mkdir(parents=True, exist_ok=True)
+    ohlcv_df = fetch_ohlcv(ticker, req.chart_date)
+    if ohlcv_df is None: raise HTTPException(404, f"No data for {ticker}")
+    ext_df = fetch_extension(ticker)
 
-    # Fetch OHLCV (6 months before + 15 days after chart date)
-    start = chart_dt - timedelta(days=250)
-    end = chart_dt + timedelta(days=60)
+    with get_db() as db:
+        existing = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=?", (setup_type, ticker)).fetchone()
+        if existing:
+            eid = existing["id"]
+            db.execute("UPDATE examples SET chart_date=?, entry_date=? WHERE id=?", (req.chart_date, req.entry_date, eid))
+            db.execute("DELETE FROM ohlcv WHERE example_id=?", (eid,))
+            db.execute("DELETE FROM extension WHERE example_id=?", (eid,))
+            db.execute("DELETE FROM signal_analysis WHERE example_id=?", (eid,))
+        else:
+            eid = db.execute("INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
+                             (setup_type, ticker, req.chart_date, req.entry_date)).lastrowid
+        store_ohlcv(db, eid, ohlcv_df)
+        if ext_df is not None: store_extension(db, eid, ext_df)
+        analysis = None
+        try:
+            analysis = run_signal_analysis(ohlcv_df, ticker, req.entry_date)
+            db.execute("INSERT OR REPLACE INTO signal_analysis (example_id, analysis_json) VALUES (?,?)", (eid, json.dumps(analysis)))
+        except Exception as e:
+            analysis = {"error": str(e)}
+    return {"status": "saved", "ticker": ticker, "entryDate": req.entry_date, "analysis": analysis}
 
-    try:
-        raw = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
-                          end=end.strftime("%Y-%m-%d"), progress=False)
-    except Exception as e:
-        raise HTTPException(500, f"yfinance error: {e}")
+@app.delete("/api/examples/{setup_type}/{ticker}")
+async def delete_example(setup_type: str, ticker: str):
+    ticker = ticker.upper().strip()
+    with get_db() as db:
+        ex = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=?", (setup_type, ticker)).fetchone()
+        if not ex: raise HTTPException(404, f"No example for {ticker}")
+        db.execute("DELETE FROM examples WHERE id=?", (ex["id"],))
+    return {"status": "deleted", "ticker": ticker}
 
-    if raw.empty:
-        raise HTTPException(404, f"No data found for {ticker}")
+class UpdateEntryRequest(BaseModel):
+    entry_date: str
 
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = raw.columns.get_level_values(0)
+@app.patch("/api/examples/{setup_type}/{ticker}")
+async def update_entry_date(setup_type: str, ticker: str, req: UpdateEntryRequest):
+    ticker = ticker.upper().strip()
+    with get_db() as db:
+        ex = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=?", (setup_type, ticker)).fetchone()
+        if not ex: raise HTTPException(404)
+        db.execute("UPDATE examples SET entry_date=? WHERE id=?", (req.entry_date, ex["id"]))
+        df = get_ohlcv_df(db, ex["id"])
+        analysis = None
+        if df is not None:
+            try:
+                analysis = run_signal_analysis(df, ticker, req.entry_date)
+                db.execute("INSERT OR REPLACE INTO signal_analysis (example_id, analysis_json) VALUES (?,?)", (ex["id"], json.dumps(analysis)))
+            except Exception as e:
+                analysis = {"error": str(e)}
+    return {"status": "updated", "ticker": ticker, "entryDate": req.entry_date, "analysis": analysis}
 
-    raw = raw.reset_index()
-    raw["Date"] = pd.to_datetime(raw["Date"])
-    raw = raw.sort_values("Date").reset_index(drop=True)
 
-    # Save CSV
-    csv_name = f"{ticker}_{chart_date}.csv"
-    csv_path = data_dir / csv_name
-    raw.to_csv(csv_path, index=False)
+# ============================================
+# MIGRATION — import existing flat file data on first run
+# ============================================
 
-    # Update entry_dates.json
-    entry_file = data_dir / "entry_dates.json"
-    entries = []
-    if entry_file.exists():
+@app.on_event("startup")
+async def migrate_legacy_data():
+    with get_db() as db:
+        count = db.execute("SELECT COUNT(*) FROM examples").fetchone()[0]
+        if count > 0:
+            print(f"DB has {count} examples, skipping migration")
+            return
+
+    print("=== Migrating legacy data to SQLite ===")
+    legacy_dir = Path("data/ohlcv")
+    if not legacy_dir.exists():
+        print("No legacy data found"); return
+
+    for setup_dir in legacy_dir.iterdir():
+        if not setup_dir.is_dir(): continue
+        setup_type = setup_dir.name
+        entry_file = setup_dir / "entry_dates.json"
+        if not entry_file.exists(): continue
         entries = json.loads(entry_file.read_text())
 
-    # Remove existing entry for this ticker if present
-    entries = [e for e in entries if e["ticker"] != ticker]
-    entries.append({
-        "ticker": ticker,
-        "chart_date": chart_date,
-        "entry_date": entry_date,
-    })
-    entries.sort(key=lambda x: x["ticker"])
-    entry_file.write_text(json.dumps(entries, indent=2))
+        analysis_map = {}
+        af = setup_dir / "signal_day_analysis.json"
+        if af.exists():
+            for a in json.loads(af.read_text()): analysis_map[a["ticker"]] = a
 
-    # Run signal analysis
-    analysis = None
-    analysis_file = data_dir / "signal_day_analysis.json"
-    analyses = []
-    if analysis_file.exists():
-        analyses = json.loads(analysis_file.read_text())
+        with get_db() as db:
+            for entry in entries:
+                ticker = entry["ticker"]
+                chart_date = entry.get("chart_date", entry.get("entry_date"))
+                entry_date = entry["entry_date"]
+                cur = db.execute("INSERT OR IGNORE INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
+                                 (setup_type, ticker, chart_date, entry_date))
+                if cur.lastrowid == 0: continue
+                eid = cur.lastrowid
 
-    try:
-        analysis = run_signal_analysis(raw, ticker, entry_date)
-        # Remove existing analysis for this ticker
-        analyses = [a for a in analyses if a["ticker"] != ticker]
-        analyses.append(analysis)
-        analyses.sort(key=lambda x: x["ticker"])
-        analysis_file.write_text(json.dumps(analyses, indent=2))
-    except Exception as e:
-        # Save entry date even if analysis fails
-        analysis = {"error": str(e)}
+                csvs = list(setup_dir.glob(f"{ticker}_*.csv"))
+                if csvs:
+                    raw = pd.read_csv(csvs[0]); raw["Date"] = pd.to_datetime(raw["Date"])
+                    raw = raw.sort_values("Date").reset_index(drop=True)
+                    store_ohlcv(db, eid, raw)
 
-    # Generate chart images (both views)
-    chart_path = None
-    try:
-        chart_path = generate_chart_image(raw, ticker, entry_date, setup_type, at_entry=False)
-        generate_chart_image(raw, ticker, entry_date, setup_type, at_entry=True)
-    except Exception as e:
-        print(f"Chart image generation failed for {ticker}: {e}")
+                ext_csv = Path("data/extension") / setup_type / f"{ticker}.csv"
+                if ext_csv.exists():
+                    ext = pd.read_csv(ext_csv); ext["Date"] = pd.to_datetime(ext["Date"])
+                    store_extension(db, eid, ext)
 
-    # Persist to GitHub via API
-    msg = f"Add {ticker} to {setup_type}"
-    # Update JSON files
-    files_to_update = {
-        f"data/ohlcv/{setup_type}/entry_dates.json": entry_file.read_text(),
-    }
-    if analysis_file.exists():
-        files_to_update[f"data/ohlcv/{setup_type}/signal_day_analysis.json"] = analysis_file.read_text()
-    # Upload CSV
-    csv_path = data_dir / csv_name
-    if csv_path.exists():
-        files_to_update[f"data/ohlcv/{setup_type}/{csv_name}"] = csv_path.read_text()
-    persist_update(setup_type, ticker, files_to_update, msg)
-    # Upload chart images (binary - need special handling)
-    if GITHUB_TOKEN:
-        for suffix in ["", "_at_entry"]:
-            img_path = CHARTS_DIR / setup_type / f"{ticker}{suffix}.png"
-            if img_path.exists():
-                img_b64 = base64.b64encode(img_path.read_bytes()).decode()
-                sha = github_get_file_sha(f"data/charts/{setup_type}/{ticker}{suffix}.png")
-                payload = {"message": msg, "content": img_b64}
-                if sha:
-                    payload["sha"] = sha
-                try:
-                    github_api("PUT", f"contents/data/charts/{setup_type}/{ticker}{suffix}.png", payload)
-                except Exception as e:
-                    print(f"GITHUB UPLOAD CHART FAIL: {ticker}{suffix}.png - {e}")
+                if ticker in analysis_map:
+                    db.execute("INSERT OR REPLACE INTO signal_analysis (example_id, analysis_json) VALUES (?,?)",
+                               (eid, json.dumps(analysis_map[ticker])))
 
-    return {
-        "status": "saved",
-        "ticker": ticker,
-        "csvFile": csv_name,
-        "entryDate": entry_date,
-        "analysis": analysis,
-        "hasChart": chart_path is not None,
-    }
+                print(f"  Migrated: {ticker}")
+        print(f"  Setup '{setup_type}': {len(entries)} examples")
+    print("=== Migration complete ===")
 
 
 # Serve frontend
