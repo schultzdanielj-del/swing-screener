@@ -88,9 +88,9 @@
 ## Key D1 Levels — Algo Lines & LSP/MOC Lines
 
 ### Algo Lines
-- Any D1 candle with volume solidly above the 50-period moving average of volume = significant candle
-- The highs and lows of these candles become key support/resistance levels
-- (Further detail to be added)
+- **Levels:** Highs and lows of D1 candles with volume solidly above the 50-period moving average of volume = significant support/resistance
+- **Trendlines:** Drawn connecting highs or lows of high-volume D1 candles specifically. These are meaningful vs arbitrary trendlines drawn from any wick.
+- **Penny precision:** When you understand which candles have real volume, you can draw trendlines to the penny. Most traders draw sloppy general trendlines overlapping random wicks — "like doing a portrait with crayons." Volume tells you which points actually matter for the connection.
 
 ### LSP / MOC Lines
 - **MOC lines** = highs and lows of the highest RVOL D1 candles (the "very white" candles on RVOL vision)
