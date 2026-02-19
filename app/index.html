@@ -645,6 +645,12 @@
             const msg = await res.json().catch(() => ({ detail: res.statusText }));
             alert(msg.detail || 'Delete failed');
           } else {
+            const data = await res.json();
+            if (data.status === 'partial_delete') {
+              alert(`Warning: ${ticker} deleted locally but some GitHub files failed to delete. They may reappear after redeploy.\n\nFailed: ${data.github_failed.join(', ')}`);
+            } else if (data.status === 'deleted_local_only') {
+              alert(`Warning: ${ticker} deleted locally but GITHUB_TOKEN is not set — will reappear after redeploy!`);
+            }
             loadExamples();
           }
         } catch (e) {

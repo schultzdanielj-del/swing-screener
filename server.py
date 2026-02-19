@@ -573,82 +573,138 @@ async def get_conditions(setup_type: str):
 
 @app.delete("/api/examples/{setup_type}/{ticker}")
 async def delete_example(setup_type: str, ticker: str):
-    """Delete an example: remove CSV, charts, extension data, entry date, and analysis."""
+    """Delete an example completely — local files, JSON entries, and GitHub repo."""
     ticker = ticker.upper().strip()
     data_dir = DATA_DIR / setup_type
     if not data_dir.exists():
         raise HTTPException(404, f"No data directory for {setup_type}")
 
-    # Find CSV file(s) BEFORE deleting - need names for GitHub API
+    # Find CSV file(s) BEFORE deleting — need names for GitHub API
     csv_files = list(data_dir.glob(f"{ticker}_*.csv"))
     csv_names = [f.name for f in csv_files]
 
     if not csv_files:
         raise HTTPException(404, f"No CSV found for {ticker} in {setup_type}")
 
-    # Delete CSV locally
-    deleted_files = []
+    # --- Local deletes ---
+    deleted_local = []
     for f in csv_files:
         f.unlink()
-        deleted_files.append(f.name)
+        deleted_local.append(f.name)
 
-    # Remove from entry_dates.json
     entry_file = data_dir / "entry_dates.json"
     if entry_file.exists():
         entries = json.loads(entry_file.read_text())
         entries = [e for e in entries if e["ticker"] != ticker]
         entry_file.write_text(json.dumps(entries, indent=2))
 
-    # Remove from signal_day_analysis.json
     analysis_file = data_dir / "signal_day_analysis.json"
     if analysis_file.exists():
         analyses = json.loads(analysis_file.read_text())
         analyses = [a for a in analyses if a["ticker"] != ticker]
         analysis_file.write_text(json.dumps(analyses, indent=2))
 
-    # Remove D1 chart images (local)
     for suffix in ["", "_at_entry"]:
-        chart_img = CHARTS_DIR / setup_type / f"{ticker}{suffix}.png"
-        if chart_img.exists():
-            chart_img.unlink()
-            deleted_files.append(f"charts/{ticker}{suffix}.png")
+        p = CHARTS_DIR / setup_type / f"{ticker}{suffix}.png"
+        if p.exists():
+            p.unlink()
+            deleted_local.append(p.name)
 
-    # Remove extension chart image (local)
     ext_chart = CHARTS_DIR / "extension" / setup_type / f"{ticker}.png"
     if ext_chart.exists():
         ext_chart.unlink()
-        deleted_files.append(f"charts/extension/{ticker}.png")
+        deleted_local.append(f"ext/{ticker}.png")
 
-    # Remove extension CSV data (local)
-    ext_dir = Path("data/extension") / setup_type
-    ext_csv = ext_dir / f"{ticker}.csv"
+    ext_csv = Path("data/extension") / setup_type / f"{ticker}.csv"
     if ext_csv.exists():
         ext_csv.unlink()
-        deleted_files.append(f"extension/{ticker}.csv")
+        deleted_local.append(f"ext/{ticker}.csv")
 
-    # Persist to GitHub via API (this is what actually makes it survive redeploys)
-    if GITHUB_TOKEN:
-        msg = f"Delete {ticker} from {setup_type}"
-        # Update JSON files
-        github_update_file(
-            f"data/ohlcv/{setup_type}/entry_dates.json",
-            entry_file.read_text() if entry_file.exists() else "[]",
-            msg,
-        )
-        github_update_file(
-            f"data/ohlcv/{setup_type}/signal_day_analysis.json",
-            analysis_file.read_text() if analysis_file.exists() else "[]",
-            msg,
-        )
-        # Delete files from repo
-        for csv_name in csv_names:
-            github_delete_file(f"data/ohlcv/{setup_type}/{csv_name}", msg)
-        for suffix in ["", "_at_entry"]:
-            github_delete_file(f"data/charts/{setup_type}/{ticker}{suffix}.png", msg)
-        github_delete_file(f"data/charts/extension/{setup_type}/{ticker}.png", msg)
-        github_delete_file(f"data/extension/{setup_type}/{ticker}.csv", msg)
+    # --- GitHub persistence (the part that matters for surviving redeploys) ---
+    gh_ok = []
+    gh_fail = []
 
-    return {"status": "deleted", "ticker": ticker, "files": deleted_files}
+    if not GITHUB_TOKEN:
+        print(f"DELETE {ticker}: No GITHUB_TOKEN — local only, will NOT survive redeploy!")
+        return {"status": "deleted_local_only", "ticker": ticker, "warning": "No GITHUB_TOKEN set — delete will not survive redeploy"}
+
+    import time
+    msg = f"Delete {ticker} from {setup_type}"
+
+    # Helper with retry
+    def gh_update_with_retry(filepath, content, message, retries=3):
+        for attempt in range(retries):
+            try:
+                sha = github_get_file_sha(filepath)
+                payload = {
+                    "message": message,
+                    "content": base64.b64encode(content.encode()).decode(),
+                }
+                if sha:
+                    payload["sha"] = sha
+                github_api("PUT", f"contents/{filepath}", payload)
+                gh_ok.append(f"UPDATE {filepath}")
+                print(f"DELETE {ticker}: UPDATE OK {filepath}")
+                return True
+            except Exception as e:
+                print(f"DELETE {ticker}: UPDATE FAIL {filepath} attempt {attempt+1}/{retries}: {e}")
+                if attempt < retries - 1:
+                    time.sleep(1)
+        gh_fail.append(f"UPDATE {filepath}")
+        return False
+
+    def gh_delete_with_retry(filepath, message, retries=3):
+        for attempt in range(retries):
+            try:
+                sha = github_get_file_sha(filepath)
+                if not sha:
+                    gh_ok.append(f"SKIP {filepath} (not in repo)")
+                    return True
+                github_api("DELETE", f"contents/{filepath}", {
+                    "message": message,
+                    "sha": sha,
+                })
+                gh_ok.append(f"DELETE {filepath}")
+                print(f"DELETE {ticker}: DELETE OK {filepath}")
+                return True
+            except Exception as e:
+                print(f"DELETE {ticker}: DELETE FAIL {filepath} attempt {attempt+1}/{retries}: {e}")
+                if attempt < retries - 1:
+                    time.sleep(1)
+        gh_fail.append(f"DELETE {filepath}")
+        return False
+
+    # 1. Update JSON files first (most important — these control what the app shows)
+    gh_update_with_retry(
+        f"data/ohlcv/{setup_type}/entry_dates.json",
+        entry_file.read_text() if entry_file.exists() else "[]",
+        msg,
+    )
+    gh_update_with_retry(
+        f"data/ohlcv/{setup_type}/signal_day_analysis.json",
+        analysis_file.read_text() if analysis_file.exists() else "[]",
+        msg,
+    )
+
+    # 2. Delete all associated files from repo
+    for csv_name in csv_names:
+        gh_delete_with_retry(f"data/ohlcv/{setup_type}/{csv_name}", msg)
+    for suffix in ["", "_at_entry"]:
+        gh_delete_with_retry(f"data/charts/{setup_type}/{ticker}{suffix}.png", msg)
+    gh_delete_with_retry(f"data/charts/extension/{setup_type}/{ticker}.png", msg)
+    gh_delete_with_retry(f"data/extension/{setup_type}/{ticker}.csv", msg)
+
+    status = "deleted" if not gh_fail else "partial_delete"
+    if gh_fail:
+        print(f"DELETE {ticker}: INCOMPLETE — failed: {gh_fail}")
+
+    return {
+        "status": status,
+        "ticker": ticker,
+        "local_deleted": deleted_local,
+        "github_ok": gh_ok,
+        "github_failed": gh_fail,
+    }
 
 
 class UpdateEntryRequest(BaseModel):
