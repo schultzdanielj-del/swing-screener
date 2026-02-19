@@ -1,4 +1,4 @@
-"""Swing Screener — FastAPI backend."""
+"""ScanPerfect — FastAPI backend."""
 
 import os
 import json
@@ -9,6 +9,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yfinance as yf
+import mplfinance as mpf
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -23,6 +27,7 @@ class SaveExampleRequest(BaseModel):
     entry_date: str  # YYYY-MM-DD
 
 DATA_DIR = Path("data/ohlcv")
+CHARTS_DIR = Path("data/charts")
 SETUP_LIBRARY_DIR = Path("setup_library")
 
 
@@ -62,6 +67,82 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["ATR14"] = calc_atr(df, 14)
     df["VolAvg20"] = df["Volume"].rolling(20).mean()
     return df
+
+
+def generate_chart_image(df: pd.DataFrame, ticker: str, entry_date: str,
+                         setup_type: str) -> str:
+    """Generate a D1 candlestick chart PNG and return the file path."""
+    charts_dir = CHARTS_DIR / setup_type
+    charts_dir.mkdir(parents=True, exist_ok=True)
+
+    df = df.copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date").reset_index(drop=True)
+
+    # Trim to ~120 trading days ending near entry date
+    entry_dt = pd.Timestamp(entry_date)
+    mask = df["Date"] <= entry_dt + timedelta(days=5)
+    chart_df = df[mask].tail(120).copy()
+
+    if chart_df.empty:
+        return None
+
+    chart_df = chart_df.set_index("Date")
+
+    # Build MA overlays
+    addplots = []
+    for period, ma_type, color, width in [
+        (8, "ema", "#ADD8E6", 1.0),
+        (21, "ema", "#D2B48C", 1.0),
+        (50, "sma", "#FFD700", 1.2),
+        (200, "sma", "#FF0000", 1.5),
+    ]:
+        if len(chart_df) >= period:
+            if ma_type == "ema":
+                s = chart_df["Close"].ewm(span=period, adjust=False).mean()
+            else:
+                s = chart_df["Close"].rolling(window=period).mean()
+            addplots.append(mpf.make_addplot(s, color=color, width=width))
+
+    # Mark entry date with a vertical line via vlines
+    vlines = None
+    if entry_dt in chart_df.index:
+        vlines = dict(vlines=[entry_dt], colors=["#3b82f6"], linewidths=1.5,
+                      alpha=0.6)
+
+    style = mpf.make_mpf_style(
+        base_mpf_style='nightclouds',
+        marketcolors=mpf.make_marketcolors(
+            up='#26A69A', down='#EF5350',
+            edge={'up': '#26A69A', 'down': '#EF5350'},
+            wick={'up': '#26A69A', 'down': '#EF5350'},
+            volume={'up': '#26A69A', 'down': '#EF5350'},
+        ),
+    )
+
+    filepath = str(charts_dir / f"{ticker}.png")
+    kwargs = {
+        "type": "candle",
+        "volume": True,
+        "title": f"{ticker} — Entry: {entry_date}",
+        "style": style,
+        "figsize": (10, 5),
+        "savefig": {"fname": filepath, "dpi": 100, "bbox_inches": "tight"},
+        "warn_too_much_data": 500,
+    }
+    if addplots:
+        kwargs["addplot"] = addplots
+    if vlines:
+        kwargs["vlines"] = vlines
+
+    try:
+        mpf.plot(chart_df, **kwargs)
+        import matplotlib.pyplot as plt
+        plt.close("all")
+        return filepath
+    except Exception as e:
+        print(f"Chart generation failed for {ticker}: {e}")
+        return None
 
 
 def clean_val(v):
@@ -234,6 +315,16 @@ async def get_local_ohlcv(setup_type: str, ticker: str):
     return {"ticker": ticker, "candles": candles}
 
 
+@app.get("/api/chart-image/{setup_type}/{ticker}")
+async def get_chart_image(setup_type: str, ticker: str):
+    """Serve a pre-generated chart image PNG."""
+    ticker = ticker.upper().strip()
+    img_path = CHARTS_DIR / setup_type / f"{ticker}.png"
+    if not img_path.exists():
+        raise HTTPException(404, f"No chart image for {ticker}")
+    return FileResponse(str(img_path), media_type="image/png")
+
+
 @app.get("/api/conditions/{setup_type}")
 async def get_conditions(setup_type: str):
     """Return PCF conditions for a setup type."""
@@ -273,6 +364,11 @@ async def delete_example(setup_type: str, ticker: str):
         analyses = json.loads(analysis_file.read_text())
         analyses = [a for a in analyses if a["ticker"] != ticker]
         analysis_file.write_text(json.dumps(analyses, indent=2))
+
+    # Remove chart image
+    chart_img = CHARTS_DIR / setup_type / f"{ticker}.png"
+    if chart_img.exists():
+        chart_img.unlink()
 
     return {"status": "deleted", "ticker": ticker, "files": deleted_files}
 
@@ -508,12 +604,20 @@ async def save_example(setup_type: str, req: SaveExampleRequest):
         # Save entry date even if analysis fails
         analysis = {"error": str(e)}
 
+    # Generate chart image
+    chart_path = None
+    try:
+        chart_path = generate_chart_image(raw, ticker, entry_date, setup_type)
+    except Exception as e:
+        print(f"Chart image generation failed for {ticker}: {e}")
+
     return {
         "status": "saved",
         "ticker": ticker,
         "csvFile": csv_name,
         "entryDate": entry_date,
         "analysis": analysis,
+        "hasChart": chart_path is not None,
     }
 
 

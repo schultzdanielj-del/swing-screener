@@ -367,30 +367,35 @@
     // EXAMPLES PAGE
     // ============================================
     function ExampleCard({ example, activeSetup, onDelete, deleting }) {
-      const [candles, setCandles] = useState(null);
-      const [loading, setLoading] = useState(true);
-
-      useEffect(() => {
-        if (!example.ticker) { setLoading(false); return; }
-        fetch(`/api/ohlcv/local/${activeSetup}/${example.ticker}`)
-          .then(r => r.ok ? r.json() : null)
-          .then(data => { if (data) setCandles(data.candles); })
-          .catch(() => {})
-          .finally(() => setLoading(false));
-      }, [example.ticker, activeSetup]);
+      const imgUrl = `/api/chart-image/${activeSetup}/${example.ticker}`;
 
       return (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 15, color: 'var(--text-primary)' }}>{example.ticker}</span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>Entry: {example.entryDate || '—'}</span>
-              {example.hasAnalysis && <span className="badge badge-pass" style={{ fontSize: 10 }}>✓ analyzed</span>}
+        <div style={{
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          overflow: 'hidden',
+          transition: 'border-color 0.15s',
+        }}
+          onMouseOver={e => e.currentTarget.style.borderColor = 'var(--border-active)'}
+          onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border)'}
+        >
+          <img
+            src={imgUrl}
+            alt={`${example.ticker} chart`}
+            style={{ width: '100%', display: 'block' }}
+            onError={e => { e.target.style.display = 'none'; }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>{example.ticker}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>{example.entryDate || example.chartDate || ''}</span>
+              {example.hasAnalysis && <span className="badge badge-pass" style={{ fontSize: 9, padding: '2px 6px' }}>✓</span>}
             </div>
             <button
               onClick={() => onDelete(example.ticker)}
               disabled={deleting === example.ticker}
-              style={{ background:'none', border:'none', color:'var(--text-muted)', cursor:'pointer', fontSize: 13, padding: '4px 8px', borderRadius: 4, transition:'color 0.15s' }}
+              style={{ background:'none', border:'none', color:'var(--text-muted)', cursor:'pointer', fontSize: 12, padding: '2px 6px', borderRadius: 4 }}
               onMouseOver={e => e.target.style.color = 'var(--accent-red)'}
               onMouseOut={e => e.target.style.color = 'var(--text-muted)'}
               title={`Delete ${example.ticker}`}
@@ -398,18 +403,6 @@
               {deleting === example.ticker ? '...' : '✕'}
             </button>
           </div>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading chart...</div>
-          ) : candles ? (
-            <CandlestickChart
-              candles={candles}
-              ticker={example.ticker}
-              selectedDate={example.entryDate}
-              onSelectDate={() => {}}
-            />
-          ) : (
-            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No chart data available</div>
-          )}
         </div>
       );
     }
@@ -457,7 +450,7 @@
             ))}
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
               Examples — {SETUP_TYPES[activeSetup].name}
             </span>
@@ -469,7 +462,11 @@
           {loading ? (
             <div style={{ padding: 40, color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' }}>Loading...</div>
           ) : examples.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))',
+              gap: 16,
+            }}>
               {examples.map(ex => (
                 <ExampleCard
                   key={ex.ticker}
