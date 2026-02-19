@@ -91,6 +91,7 @@
 - **Levels:** Highs and lows of D1 candles with volume solidly above the 50-period moving average of volume = significant support/resistance
 - **Trendlines:** Drawn connecting highs or lows of high-volume D1 candles specifically. These are meaningful vs arbitrary trendlines drawn from any wick.
 - **Penny precision:** When you understand which candles have real volume, you can draw trendlines to the penny. Most traders draw sloppy general trendlines overlapping random wicks — "like doing a portrait with crayons." Volume tells you which points actually matter for the connection.
+- **Breakout rule:** For breakout trades, the most shallow possible algo line that's still downsloping should be broken. This is the minimum resistance structure that needs to be cleared for the move to be valid.
 
 ### LSP / MOC Lines
 - **MOC lines** = highs and lows of the highest RVOL D1 candles (the "very white" candles on RVOL vision)
