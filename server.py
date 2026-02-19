@@ -17,7 +17,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
@@ -571,6 +571,102 @@ async def repair_missing_data():
                     print(f"  Analysis error for {ex['ticker']}: {e}")
                 repaired.append(ex["ticker"])
     return {"repaired": repaired, "count": len(repaired)}
+
+
+# ============================================
+# UNIVERSE DATA — full market OHLCV
+# ============================================
+
+@app.post("/api/universe/fetch")
+async def start_universe_fetch(background_tasks: BackgroundTasks):
+    """Kick off full market OHLCV fetch in background. Fire and forget."""
+    from scripts.fetch_universe import run_full_fetch, init_universe_tables, get_db as u_get_db
+
+    # Check if already running
+    try:
+        udb = u_get_db()
+        init_universe_tables(udb)
+        status = udb.execute("SELECT state FROM universe_fetch_status WHERE id=1").fetchone()
+        if status and status["state"] == "running":
+            udb.close()
+            return {"status": "already_running", "message": "Fetch is already in progress. Check /api/universe/status"}
+        udb.close()
+    except Exception:
+        pass
+
+    background_tasks.add_task(run_full_fetch)
+    return {"status": "started", "message": "Universe fetch kicked off in background. Check /api/universe/status for progress."}
+
+
+@app.get("/api/universe/status")
+async def universe_fetch_status():
+    """Check progress of universe data fetch."""
+    with get_db() as db:
+        try:
+            row = db.execute("SELECT * FROM universe_fetch_status WHERE id=1").fetchone()
+            if not row:
+                return {"state": "not_started"}
+            result = dict(row)
+            result["errors"] = json.loads(result.get("errors", "[]"))
+            # Add DB stats
+            try:
+                total_rows = db.execute("SELECT COUNT(*) FROM universe_ohlcv").fetchone()[0]
+                total_tickers_done = db.execute("SELECT COUNT(DISTINCT ticker) FROM universe_ohlcv").fetchone()[0]
+                result["db_rows"] = total_rows
+                result["db_tickers"] = total_tickers_done
+                # Estimate size
+                page_count = db.execute("PRAGMA page_count").fetchone()[0]
+                page_size = db.execute("PRAGMA page_size").fetchone()[0]
+                result["db_size_mb"] = round((page_count * page_size) / (1024 * 1024), 1)
+            except Exception:
+                pass
+            return result
+        except Exception:
+            return {"state": "not_initialized"}
+
+
+@app.post("/api/universe/tickers")
+async def upload_ticker_list(tickers: list[str]):
+    """Upload a custom ticker list (fallback if NASDAQ FTP fails)."""
+    from scripts.fetch_universe import init_universe_tables
+    with get_db() as db:
+        init_universe_tables(db)
+        count = 0
+        for t in tickers:
+            t = t.strip().upper()
+            if t and len(t) <= 5:
+                db.execute("INSERT OR IGNORE INTO universe_tickers (ticker) VALUES (?)", (t,))
+                count += 1
+        db.commit()
+    return {"stored": count}
+
+
+@app.post("/api/universe/reset")
+async def reset_universe_fetch():
+    """Reset fetch status so it can be re-run. Does NOT delete existing OHLCV data."""
+    with get_db() as db:
+        try:
+            db.execute("UPDATE universe_tickers SET status='pending', rows_stored=0, fetched_at=NULL")
+            db.execute("UPDATE universe_fetch_status SET state='idle', completed_tickers=0, failed_tickers=0, skipped_tickers=0, current_batch=NULL, errors='[]'")
+            db.commit()
+        except Exception:
+            pass
+    return {"status": "reset"}
+
+
+@app.delete("/api/universe/data")
+async def delete_universe_data():
+    """Nuclear option — delete all universe OHLCV data."""
+    with get_db() as db:
+        try:
+            db.execute("DELETE FROM universe_ohlcv")
+            db.execute("DELETE FROM universe_tickers")
+            db.execute("UPDATE universe_fetch_status SET state='idle', completed_tickers=0, failed_tickers=0, skipped_tickers=0, current_batch=NULL, errors='[]', total_tickers=0")
+            db.commit()
+            db.execute("VACUUM")
+        except Exception:
+            pass
+    return {"status": "deleted"}
 
 
 # ============================================
