@@ -169,10 +169,16 @@
 ## Net Gamma & Options Hedging
 
 - Dynamic hedging at key strike prices creates real price pressure
-- Strikes with the most positive and negative gamma concentration are significant levels
-- Market makers hedging these positions amplifies moves at these strikes (buying into strength above positive gamma, selling into weakness below negative gamma)
-- These levels act as additional support/resistance that isn't visible on a price/volume chart alone
-- (Further detail on how to incorporate into trade thesis to be added)
+- Only relevant on high-liquidity options names (TSLA, SPY, big caps) — less meaningful on illiquid options
+- **Timeframe:** 90 DTE is the sweet spot — big money typically uses ~90 day monthlies, not weeklies
+- Key levels from GEX (Gamma Exposure) charts:
+  - **Call wall** — strike with highest positive gamma from calls (resistance/magnet above)
+  - **Put wall** — strike with highest positive gamma from puts (support/magnet below)
+  - **Vol trigger** — level where gamma flips from positive to negative; above = suppressed volatility, below = amplified volatility
+  - **Spot price** relative to these levels tells you the hedging pressure direction
+- Market makers hedging these positions amplifies moves: buying into strength above positive gamma strikes, selling into weakness below negative gamma strikes
+- These levels act as additional support/resistance not visible on price/volume charts alone
+- Example: TSLA with call wall at $420, put wall at $400, vol trigger at $410 — these create a defined range that price gravitates toward
 
 ## Chart Themes & Wave Cycles
 
