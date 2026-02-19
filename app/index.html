@@ -414,55 +414,26 @@
     // ============================================
     function AddExamplePage({ activeSetup }) {
       const [ticker, setTicker] = useState('');
-      const [chartDate, setChartDate] = useState('');
-      const [loading, setLoading] = useState(false);
+      const [entryDate, setEntryDate] = useState('');
       const [saving, setSaving] = useState(false);
       const [error, setError] = useState(null);
       const [saveResult, setSaveResult] = useState(null);
       const [candles, setCandles] = useState(null);
-      const [selectedDate, setSelectedDate] = useState(null);
-      const [loadedTicker, setLoadedTicker] = useState('');
-      const [loadedChartDate, setLoadedChartDate] = useState('');
-
-      async function handleFetch() {
-        if (!ticker.trim()) return;
-        setLoading(true);
-        setError(null);
-        setCandles(null);
-        setSelectedDate(null);
-        setSaveResult(null);
-        try {
-          const params = new URLSearchParams({ ticker: ticker.trim() });
-          if (chartDate) params.set('date', chartDate);
-          const res = await fetch('/api/ohlcv?' + params);
-          if (!res.ok) {
-            const msg = await res.json().catch(() => ({ detail: res.statusText }));
-            throw new Error(msg.detail || 'Failed to fetch');
-          }
-          const data = await res.json();
-          setCandles(data.candles);
-          setLoadedTicker(data.ticker);
-          setLoadedChartDate(chartDate || new Date().toISOString().slice(0, 10));
-        } catch (e) {
-          setError(e.message);
-        } finally {
-          setLoading(false);
-        }
-      }
 
       async function handleSave() {
-        if (!selectedDate || !loadedTicker) return;
+        if (!ticker.trim() || !entryDate) return;
         setSaving(true);
         setError(null);
         setSaveResult(null);
+        setCandles(null);
         try {
           const res = await fetch(`/api/examples/${activeSetup}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              ticker: loadedTicker,
-              chart_date: loadedChartDate,
-              entry_date: selectedDate,
+              ticker: ticker.trim().toUpperCase(),
+              chart_date: entryDate,
+              entry_date: entryDate,
             }),
           });
           if (!res.ok) {
@@ -471,6 +442,14 @@
           }
           const data = await res.json();
           setSaveResult(data);
+
+          // Load chart for confirmation
+          const params = new URLSearchParams({ ticker: ticker.trim(), date: entryDate });
+          const chartRes = await fetch('/api/ohlcv?' + params);
+          if (chartRes.ok) {
+            const chartData = await chartRes.json();
+            setCandles(chartData.candles);
+          }
         } catch (e) {
           setError(e.message);
         } finally {
@@ -479,7 +458,11 @@
       }
 
       function handleKeyDown(e) {
-        if (e.key === 'Enter') handleFetch();
+        if (e.key === 'Enter') handleSave();
+      }
+
+      function handleReset() {
+        setTicker(''); setEntryDate(''); setSaveResult(null); setCandles(null); setError(null);
       }
 
       return (
@@ -500,38 +483,21 @@
                 />
               </div>
               <div>
-                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>Chart Date <span style={{ fontWeight: 400 }}>(optional)</span></label>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>Entry Date</label>
                 <input
                   type="date"
-                  value={chartDate}
-                  onChange={e => setChartDate(e.target.value)}
+                  value={entryDate}
+                  onChange={e => setEntryDate(e.target.value)}
                   onKeyDown={handleKeyDown}
                   style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 14, outline: 'none' }}
                 />
               </div>
-              <button className="btn btn-primary" onClick={handleFetch} disabled={loading || !ticker.trim()}>
-                {loading ? '⏳ Loading...' : '📊 Load Chart'}
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving || !ticker.trim() || !entryDate}>
+                {saving ? '⏳ Saving...' : '💾 Save'}
               </button>
             </div>
             {error && <div style={{ marginTop: 12, color: 'var(--accent-red)', fontSize: 13 }}>⚠ {error}</div>}
           </div>
-
-          {/* Instructions */}
-          {candles && !selectedDate && (
-            <div style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8, padding: '12px 16px', fontSize: 13, color: 'var(--accent-blue)' }}>
-              👆 Click a candle on the chart to select the <strong>entry date</strong>
-            </div>
-          )}
-
-          {/* Selected entry confirmation */}
-          {selectedDate && !saveResult && (
-            <div style={{ background: 'rgba(38,166,154,0.08)', border: '1px solid rgba(38,166,154,0.2)', borderRadius: 8, padding: '12px 16px', fontSize: 13, color: 'var(--accent-green)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span>✓ Entry date: <strong style={{ fontFamily: 'var(--font-mono)' }}>{loadedTicker} — {selectedDate}</strong></span>
-              <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
-                {saving ? '⏳ Saving...' : '💾 Save Example'}
-              </button>
-            </div>
-          )}
 
           {/* Save success */}
           {saveResult && (
@@ -559,23 +525,20 @@
                   ⚠ Analysis: {saveResult.analysis.error}
                 </div>
               )}
-              <button className="btn" style={{ marginTop: 12, fontSize: 12 }} onClick={() => {
-                setCandles(null); setSelectedDate(null); setSaveResult(null);
-                setTicker(''); setChartDate('');
-              }}>
+              <button className="btn" style={{ marginTop: 12, fontSize: 12 }} onClick={handleReset}>
                 ＋ Add Another
               </button>
             </div>
           )}
 
-          {/* Interactive Chart */}
+          {/* Chart shown after save for confirmation */}
           {candles && (
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
               <CandlestickChart
                 candles={candles}
-                ticker={loadedTicker}
-                selectedDate={selectedDate}
-                onSelectDate={setSelectedDate}
+                ticker={saveResult?.ticker || ticker}
+                selectedDate={entryDate}
+                onSelectDate={() => {}}
               />
             </div>
           )}
