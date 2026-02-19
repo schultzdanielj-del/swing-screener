@@ -54,6 +54,7 @@
 - Older/more liquid stocks have lower extension ceilings — decades of mean-reversion conditioning
 - Implication: knowing a stock's typical max extension helps gauge where it is in its cycle and conviction level on setups
 - Extension peaks often cluster at specific levels (bimodal) — e.g. AAPL either fakes out just above 50 SMA (1-2x ADR) or trends to 6-7.5x ADR. Gap in between = stock doesn't hang out at intermediate extensions.
+- **200 SMA extension also provides ceilings** — e.g. AAPL has a hard cap at ~25% above the 200 SMA across 4 years. Fade swing short at that level for near top-tick entries. Each stock has its own 200 extension profile.
 - Use historical extension peak/valley clustering to improve fade timing — short at the statistical ceiling, not arbitrary levels
 - **For longs/breakouts:** Check current position on 50 extension to estimate remaining upside. If stock is already at 5x ADR and historically peaks at 6-7x, only 1-2 ADR of upside left — trim there and trail tighter. Some stocks have great setups but statistically no room to run.
 - **Proximity to 50 SMA = upside potential.** The closer a setup is to the 50, the more room it has. Closer to 50 AND coming out of a recent correction = maximum upside potential.
