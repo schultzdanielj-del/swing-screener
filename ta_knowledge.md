@@ -108,6 +108,7 @@
 
 **1. Highest/Lowest AVWAP from previous D1 pivot**
 - Usually not anchored to the actual pivot candle — often a candle before it
+- **Critical:** The breakout AVWAP does NOT go on the highest candle of the chart. It goes on the breakout candle — where volume actually committed, not the exhaustion/blowoff top. That's the true average cost basis of the move.
 - For a long breakout: price must break through the highest contextual AVWAP above
 - Breaking this level means the average seller from the pullback is now losing → they capitulate → accelerates price away from entry
 - This acceleration gives you enough cushion to set stop at break-even and ride the trend through normal chop
