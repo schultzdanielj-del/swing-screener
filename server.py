@@ -24,9 +24,13 @@ from pydantic import BaseModel
 
 app = FastAPI(title="ScanPerfect API")
 
-DB_DIR = Path(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "data"))
+DB_DIR = Path(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/app/data"))
 DB_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DB_DIR / "scanperfect.db"
+
+# Legacy flat files live in repo's data/ dir (may be shadowed by volume mount)
+# On first deploy, copy them to volume so migration can read them
+LEGACY_DATA_DIR = Path("/app/data_legacy") if Path("/app/data_legacy").exists() else Path("data")
 
 
 # ============================================
@@ -504,7 +508,9 @@ async def migrate_legacy_data():
             return
 
     print("=== Migrating legacy data to SQLite ===")
-    legacy_dir = Path("data/ohlcv")
+    legacy_dir = LEGACY_DATA_DIR / "ohlcv"
+    if not legacy_dir.exists():
+        legacy_dir = Path("data/ohlcv")
     if not legacy_dir.exists():
         print("No legacy data found"); return
 
@@ -536,7 +542,9 @@ async def migrate_legacy_data():
                     raw = raw.sort_values("Date").reset_index(drop=True)
                     store_ohlcv(db, eid, raw)
 
-                ext_csv = Path("data/extension") / setup_type / f"{ticker}.csv"
+                ext_csv = LEGACY_DATA_DIR / "extension" / setup_type / f"{ticker}.csv"
+                if not ext_csv.exists():
+                    ext_csv = Path("data/extension") / setup_type / f"{ticker}.csv"
                 if ext_csv.exists():
                     ext = pd.read_csv(ext_csv); ext["Date"] = pd.to_datetime(ext["Date"])
                     store_extension(db, eid, ext)
