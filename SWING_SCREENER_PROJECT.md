@@ -1,6 +1,6 @@
 # Swing Screener Project — State Document
 
-**Last updated:** 2026-02-17
+**Last updated:** 2026-02-18
 **GitHub repo:** https://github.com/schultzdanielj-del/swing-screener
 
 ---
@@ -21,15 +21,24 @@
 ## CURRENT STATUS
 
 **What's done:**
-- 3-4DB PCF scan — 9 conditions, all 19 examples passing, validated against real data
-- FastAPI backend (`server.py`) — `/api/ohlcv`, `/api/setups`, `/api/examples`, `/api/conditions`
-- Interactive candlestick chart — canvas-based, dark theme, EMA 8/21, SMA 50/200, volume, click-to-select entry candle
-- Manual entry form — ticker + chart date input, loads chart from yfinance via API
+- App renamed **ScanPerfect** — gallery grid with pre-rendered charts, 3-column layout
+- Charts centered on entry date (30 before / 30 after), crosshair at open price
+- Extension data: 5yr % from 50/200 SMA for all tickers, stored in `data/extension/`
+- View toggles: D1 / 50 SMA % / 200 SMA %, At Entry / After time views
+- Add inline (ticker + date), editable entry dates, delete functionality
+- Persistent deletes implemented (git push from Railway via GITHUB_TOKEN env var)
 - Deployed on Railway: **https://web-production-e3025.up.railway.app**
 
+**KNOWN ISSUE — Persistent deletes broken:**
+- UI deletes update entry_dates.json but DON'T delete CSV/chart files from repo
+- 4 orphans (INOD, PLTR, SEI, TTMI) cleaned manually on 2026-02-18
+- 4 MORE deletions didn't persist to entry_dates.json — entry_dates.json has 19, should be 15
+- NEXT CHAT: Hit Railway `/api/examples` to get actual 15 tickers, sync repo, fix delete code
+
 **What's next:**
-- Test the deployed app and iterate on chart UI
-- Wire up the Save Example button (persist selected entry date + setup type)
+- Fix persistent delete bug (delete CSVs + charts + extension data, not just entry_dates.json)
+- Sync repo to match the 15 tickers actually in the app
+- Validate 50% measured move hypothesis (best-profit 3-4DBs bounce ~50% of prior swing)
 - Feature 2: Upload screenshot flow (TC2000 chart → extract ticker/date → auto-load)
 
 ---
