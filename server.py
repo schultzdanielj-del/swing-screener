@@ -3,7 +3,9 @@
 import os
 import json
 import math
-import subprocess
+import base64
+import urllib.request
+import urllib.error
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -25,53 +27,107 @@ app = FastAPI(title="ScanPerfect API")
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO = "schultzdanielj-del/swing-screener"
+GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}"
 
 
-def git_push_data(message: str):
-    """Commit and push data changes to GitHub so they persist across deploys."""
-    if not GITHUB_TOKEN:
-        print("GIT PUSH SKIP: No GITHUB_TOKEN set")
-        return
+def github_api(method: str, path: str, data: dict = None) -> dict:
+    """Make a GitHub API request."""
+    url = f"{GITHUB_API}/{path}"
+    body = json.dumps(data).encode() if data else None
+    req = urllib.request.Request(url, data=body, method=method)
+    req.add_header("Authorization", f"token {GITHUB_TOKEN}")
+    req.add_header("Accept", "application/vnd.github.v3+json")
+    if body:
+        req.add_header("Content-Type", "application/json")
     try:
-        repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.fp else ""
+        print(f"GITHUB API {method} {path}: {e.code} {error_body[:200]}")
+        raise
 
-        # Config
-        subprocess.run(["git", "config", "user.email", "scanperfect@auto.dev"],
-                       capture_output=True, timeout=10)
-        subprocess.run(["git", "config", "user.name", "ScanPerfect"],
-                       capture_output=True, timeout=10)
 
-        # Stage all changes
-        result = subprocess.run(["git", "add", "-A"], capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            print(f"GIT ADD FAILED: {result.stderr}")
-            return
+def github_get_file_sha(filepath: str) -> str | None:
+    """Get the SHA of a file in the repo (needed for updates/deletes)."""
+    try:
+        data = github_api("GET", f"contents/{filepath}")
+        return data.get("sha")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
 
-        # Check if there's anything to commit
-        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, timeout=10)
-        if not status.stdout.strip():
-            print(f"GIT PUSH SKIP: Nothing to commit for '{message}'")
-            return
 
-        # Commit
-        result = subprocess.run(["git", "commit", "-m", message],
-                               capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            print(f"GIT COMMIT FAILED: {result.stderr}")
-            return
-
-        # Push
-        result = subprocess.run(["git", "push", repo_url, "main"],
-                               capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            print(f"GIT PUSH FAILED: {result.stderr}")
-            return
-
-        print(f"GIT PUSH OK: {message}")
-    except subprocess.TimeoutExpired:
-        print(f"GIT PUSH TIMEOUT: {message}")
+def github_delete_file(filepath: str, message: str):
+    """Delete a file from the repo via GitHub API."""
+    sha = github_get_file_sha(filepath)
+    if not sha:
+        print(f"GITHUB DELETE SKIP: {filepath} not found in repo")
+        return False
+    try:
+        github_api("DELETE", f"contents/{filepath}", {
+            "message": message,
+            "sha": sha,
+        })
+        print(f"GITHUB DELETE OK: {filepath}")
+        return True
     except Exception as e:
-        print(f"GIT PUSH ERROR: {e}")
+        print(f"GITHUB DELETE FAIL: {filepath} - {e}")
+        return False
+
+
+def github_update_file(filepath: str, content: str, message: str):
+    """Create or update a file in the repo via GitHub API."""
+    sha = github_get_file_sha(filepath)
+    payload = {
+        "message": message,
+        "content": base64.b64encode(content.encode()).decode(),
+    }
+    if sha:
+        payload["sha"] = sha
+    try:
+        github_api("PUT", f"contents/{filepath}", payload)
+        print(f"GITHUB UPDATE OK: {filepath}")
+        return True
+    except Exception as e:
+        print(f"GITHUB UPDATE FAIL: {filepath} - {e}")
+        return False
+
+
+def persist_delete(setup_type: str, ticker: str, entry_dates_content: str, analysis_content: str):
+    """Persist a delete operation to GitHub: remove files and update JSON files."""
+    if not GITHUB_TOKEN:
+        print("PERSIST SKIP: No GITHUB_TOKEN set")
+        return
+
+    msg = f"Delete {ticker} from {setup_type}"
+
+    # Update entry_dates.json and signal_day_analysis.json
+    github_update_file(f"data/ohlcv/{setup_type}/entry_dates.json", entry_dates_content, msg)
+    github_update_file(f"data/ohlcv/{setup_type}/signal_day_analysis.json", analysis_content, msg)
+
+    # Delete CSV (try common pattern)
+    data_dir = DATA_DIR / setup_type
+    for f in data_dir.glob(f"{ticker}_*.csv"):
+        github_delete_file(f"data/ohlcv/{setup_type}/{f.name}", msg)
+
+    # Delete chart images
+    for suffix in ["", "_at_entry"]:
+        github_delete_file(f"data/charts/{setup_type}/{ticker}{suffix}.png", msg)
+
+    # Delete extension data
+    github_delete_file(f"data/charts/extension/{setup_type}/{ticker}.png", msg)
+    github_delete_file(f"data/extension/{setup_type}/{ticker}.csv", msg)
+
+
+def persist_update(setup_type: str, ticker: str, files_to_update: dict[str, str], message: str):
+    """Persist file updates to GitHub. files_to_update = {filepath: content}."""
+    if not GITHUB_TOKEN:
+        print("PERSIST SKIP: No GITHUB_TOKEN set")
+        return
+    for filepath, content in files_to_update.items():
+        github_update_file(filepath, content, message)
 
 
 class SaveExampleRequest(BaseModel):
@@ -253,21 +309,29 @@ def clean_val(v):
 
 @app.get("/api/debug/git-status")
 async def debug_git_status():
-    """Check git status and GITHUB_TOKEN availability on Railway."""
+    """Check GitHub API connectivity and token."""
     results = {
         "has_github_token": bool(GITHUB_TOKEN),
+        "persistence_method": "github_api",
         "cwd": os.getcwd(),
         "data_dir_exists": DATA_DIR.exists(),
     }
-    for label, cmd in [
-        ("git_status", ["git", "status", "--porcelain"]),
-        ("git_log", ["git", "log", "--oneline", "-3"]),
-    ]:
+    if GITHUB_TOKEN:
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            results[label] = r.stdout.strip() if r.returncode == 0 else f"ERR: {r.stderr.strip()}"
+            data = github_api("GET", "contents/data/ohlcv/3-4db/entry_dates.json")
+            results["repo_entry_dates_sha"] = data.get("sha", "unknown")
+            content = base64.b64decode(data["content"]).decode()
+            entries = json.loads(content)
+            results["repo_entry_count"] = len(entries)
+            results["repo_tickers"] = [e["ticker"] for e in entries]
         except Exception as e:
-            results[label] = f"EXCEPTION: {e}"
+            results["repo_check_error"] = str(e)
+        # Local state
+        entry_file = DATA_DIR / "3-4db" / "entry_dates.json"
+        if entry_file.exists():
+            local_entries = json.loads(entry_file.read_text())
+            results["local_entry_count"] = len(local_entries)
+            results["local_tickers"] = [e["ticker"] for e in local_entries]
     return results
 
 
@@ -538,28 +602,32 @@ async def delete_example(setup_type: str, ticker: str):
         analyses = [a for a in analyses if a["ticker"] != ticker]
         analysis_file.write_text(json.dumps(analyses, indent=2))
 
-    # Remove D1 chart images
+    # Remove D1 chart images (local)
     for suffix in ["", "_at_entry"]:
         chart_img = CHARTS_DIR / setup_type / f"{ticker}{suffix}.png"
         if chart_img.exists():
             chart_img.unlink()
             deleted_files.append(f"charts/{ticker}{suffix}.png")
 
-    # Remove extension chart image
+    # Remove extension chart image (local)
     ext_chart = CHARTS_DIR / "extension" / setup_type / f"{ticker}.png"
     if ext_chart.exists():
         ext_chart.unlink()
         deleted_files.append(f"charts/extension/{ticker}.png")
 
-    # Remove extension CSV data
+    # Remove extension CSV data (local)
     ext_dir = Path("data/extension") / setup_type
     ext_csv = ext_dir / f"{ticker}.csv"
     if ext_csv.exists():
         ext_csv.unlink()
         deleted_files.append(f"extension/{ticker}.csv")
 
-    # Persist to git
-    git_push_data(f"Delete {ticker} from {setup_type}")
+    # Persist to GitHub via API (this is what actually makes it survive redeploys)
+    persist_delete(
+        setup_type, ticker,
+        entry_file.read_text() if entry_file.exists() else "[]",
+        analysis_file.read_text() if analysis_file.exists() else "[]",
+    )
 
     return {"status": "deleted", "ticker": ticker, "files": deleted_files}
 
@@ -613,8 +681,14 @@ async def update_entry_date(setup_type: str, ticker: str, req: UpdateEntryReques
     except Exception as e:
         print(f"Chart regen failed for {ticker}: {e}")
 
-    # Persist to git
-    git_push_data(f"Update {ticker} entry date to {entry_date}")
+    # Persist to GitHub via API
+    msg = f"Update {ticker} entry date to {entry_date}"
+    files_to_update = {
+        f"data/ohlcv/{setup_type}/entry_dates.json": entry_file.read_text(),
+    }
+    if analysis_file.exists():
+        files_to_update[f"data/ohlcv/{setup_type}/signal_day_analysis.json"] = analysis_file.read_text()
+    persist_update(setup_type, ticker, files_to_update, msg)
 
     return {
         "status": "updated",
@@ -863,8 +937,33 @@ async def save_example(setup_type: str, req: SaveExampleRequest):
     except Exception as e:
         print(f"Chart image generation failed for {ticker}: {e}")
 
-    # Persist to git
-    git_push_data(f"Add {ticker} to {setup_type}")
+    # Persist to GitHub via API
+    msg = f"Add {ticker} to {setup_type}"
+    # Update JSON files
+    files_to_update = {
+        f"data/ohlcv/{setup_type}/entry_dates.json": entry_file.read_text(),
+    }
+    if analysis_file.exists():
+        files_to_update[f"data/ohlcv/{setup_type}/signal_day_analysis.json"] = analysis_file.read_text()
+    # Upload CSV
+    csv_path = data_dir / csv_name
+    if csv_path.exists():
+        files_to_update[f"data/ohlcv/{setup_type}/{csv_name}"] = csv_path.read_text()
+    persist_update(setup_type, ticker, files_to_update, msg)
+    # Upload chart images (binary - need special handling)
+    if GITHUB_TOKEN:
+        for suffix in ["", "_at_entry"]:
+            img_path = CHARTS_DIR / setup_type / f"{ticker}{suffix}.png"
+            if img_path.exists():
+                img_b64 = base64.b64encode(img_path.read_bytes()).decode()
+                sha = github_get_file_sha(f"data/charts/{setup_type}/{ticker}{suffix}.png")
+                payload = {"message": msg, "content": img_b64}
+                if sha:
+                    payload["sha"] = sha
+                try:
+                    github_api("PUT", f"contents/data/charts/{setup_type}/{ticker}{suffix}.png", payload)
+                except Exception as e:
+                    print(f"GITHUB UPLOAD CHART FAIL: {ticker}{suffix}.png - {e}")
 
     return {
         "status": "saved",
