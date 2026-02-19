@@ -48,7 +48,7 @@
 - Extension from 50 SMA (in multiples of ADR) is the universal normalized cycle indicator
 - Works across all timeframes and instruments — same rhythm, different magnitudes
 - **Passive inflows distort raw price charts.** Extension structures reveal a stock's true cyclical behavior by stripping out the noise from index/ETF flows and measuring price relative to its own moving averages. Each stock shows its "true colours" on extension.
-- **Core principle:** The extension structure defines the risk:reward — the potential move in the stock. Setups (3-4DB, HTF, UNR, etc.) are just optimal entry structures that give you the tightest possible stop to maximize profit factor. Setup = risk definition. Extension = reward potential.
+- **Core principle:** Extension structures show the potential move. Stocks (aside from parabolics) are surrogates that express the broader market — the extension tells you how much juice is in the move. Setups provide optimal trade structure with tight stops. Management maximizes profit from that structure. Extension → potential. Setup → structure. Management → extraction.
 - **Max extension varies by stock maturity:**
   - Recent IPOs: 7-10-12+ ADR multiples above 50 SMA
   - Metals/commodities (crazy events): can go extreme
