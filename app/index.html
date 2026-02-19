@@ -365,8 +365,10 @@
     // ============================================
     // EXAMPLES PAGE
     // ============================================
-    function ExampleCard({ example, activeSetup, onDelete, deleting }) {
-      const imgUrl = `/api/chart-image/${activeSetup}/${example.ticker}`;
+    function ExampleCard({ example, activeSetup, onDelete, deleting, chartView }) {
+      const imgUrl = chartView === 'extension'
+        ? `/api/extension-chart/${activeSetup}/${example.ticker}`
+        : `/api/chart-image/${activeSetup}/${example.ticker}`;
 
       return (
         <div style={{
@@ -414,6 +416,7 @@
       const [entryDate, setEntryDate] = useState('');
       const [saving, setSaving] = useState(false);
       const [addError, setAddError] = useState(null);
+      const [chartView, setChartView] = useState('d1'); // 'd1' or 'extension'
 
       function loadExamples() {
         setLoading(true);
@@ -481,6 +484,10 @@
               <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
                 {examples.length}
               </span>
+              <div style={{ display: 'flex', gap: 2, background: 'var(--bg-primary)', borderRadius: 6, padding: 2 }}>
+                <button onClick={() => setChartView('d1')} style={{ background: chartView === 'd1' ? 'var(--bg-card)' : 'transparent', border: 'none', borderRadius: 4, padding: '3px 10px', fontSize: 11, fontWeight: 600, color: chartView === 'd1' ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer' }}>D1</button>
+                <button onClick={() => setChartView('extension')} style={{ background: chartView === 'extension' ? 'var(--bg-card)' : 'transparent', border: 'none', borderRadius: 4, padding: '3px 10px', fontSize: 11, fontWeight: 600, color: chartView === 'extension' ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer' }}>Extension</button>
+              </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleSave()} placeholder="TICKER" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 12, width: 80, outline: 'none' }} />
@@ -502,11 +509,12 @@
             }}>
               {examples.map(ex => (
                 <ExampleCard
-                  key={ex.ticker}
+                  key={ex.ticker + chartView}
                   example={ex}
                   activeSetup={activeSetup}
                   onDelete={handleDelete}
                   deleting={deleting}
+                  chartView={chartView}
                 />
               ))}
             </div>

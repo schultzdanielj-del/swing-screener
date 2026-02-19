@@ -357,6 +357,16 @@ async def get_chart_image(setup_type: str, ticker: str):
     return FileResponse(str(img_path), media_type="image/png")
 
 
+@app.get("/api/extension-chart/{setup_type}/{ticker}")
+async def get_extension_chart(setup_type: str, ticker: str):
+    """Serve a pre-generated extension analysis chart PNG."""
+    ticker = ticker.upper().strip()
+    img_path = Path("data/charts/extension") / setup_type / f"{ticker}.png"
+    if not img_path.exists():
+        raise HTTPException(404, f"No extension chart for {ticker}")
+    return FileResponse(str(img_path), media_type="image/png")
+
+
 @app.get("/api/conditions/{setup_type}")
 async def get_conditions(setup_type: str):
     """Return PCF conditions for a setup type."""
