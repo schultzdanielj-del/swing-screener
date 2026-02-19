@@ -130,6 +130,7 @@
 - Common pairs: 8 EMA/21 EMA, 8/15, 10 SMA/20 SMA — exact numbers don't matter, the principle is the same
 - The baby line is the key reference for AVWAP relevance (same side = needs confirmation)
 - **Sequential confirmation requirement:** For a breakout to stick, you need the baby and daddy to sequentially confirm above the breakout AVWAP — or at minimum the TA story should tell you they WILL confirm without price flushing below the breakout level first. If the MAs can't get above the breakout line without a flush, the setup isn't ready.
+- **What this looks like on D1:** Higher lows, "surfing" a moving average, contracting range after a big move and pullback. That's just the baby and daddy MAs working their way up toward the breakout AVWAP. The tight flag/consolidation is the time it takes for the MAs to catch up without price flushing below the breakout level.
 
 - TC2000 indicator T2104 (% of stocks above 200 SMA)
 - When trending and smooth → safe to trade in that direction
