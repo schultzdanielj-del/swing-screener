@@ -792,5 +792,23 @@ async def migrate_legacy_data():
     print("=== Migration complete ===")
 
 
+# ---------------------------------------------------------------------------
+# 3-4DB Scanner endpoint
+# ---------------------------------------------------------------------------
+@app.get("/api/scan/3-4db")
+async def scan_3_4db(days: int = 77):
+    """Run the 3-4DB scan against universe OHLCV data for the last N days."""
+    from scripts.scan_3_4db import run_scan
+    try:
+        sdf = run_scan(lookback_days=days, db_path=str(DB_PATH))
+        if sdf.empty:
+            return {"signals": [], "count": 0, "days": days}
+        signals = sdf.to_dict(orient="records")
+        return {"signals": signals, "count": len(signals), "days": days}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "trace": traceback.format_exc()}
+
+
 # Serve frontend
 app.mount("/", StaticFiles(directory="app", html=True), name="frontend")
