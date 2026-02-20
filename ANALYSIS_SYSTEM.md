@@ -1,8 +1,10 @@
 # Setup Analysis System
 
-**Purpose:** Automated methodology for optimizing any swing trading setup type (3-4DB, DTSS, HTF, etc.) once PCF scan conditions and validated examples exist.
+**Purpose:** Automated methodology for maximizing expected value (EV) per trade for any swing trading setup type (3-4DB, DTSS, HTF, etc.) once PCF scan conditions and validated examples exist.
 
-**Last updated:** 2026-02-19
+**The goal is EV in ATR units.** Every decision — scan conditions, filters, scoring, trade management — is measured by its impact on EV per trade. A setup with +0.47 ATR EV means that on a $50 stock with $2 ATR, the average trade nets $0.94. Over 100 trades that's $94 per share traded, regardless of win rate.
+
+**Last updated:** 2026-02-20
 
 ---
 
@@ -99,24 +101,60 @@ Output: list of signals with ticker, date, close, ATR, retracement, extension me
 
 ---
 
-## Step 3: Score Forward Performance
+## Step 3: Optimize Trade Management (Exit Rules)
 
-For each signal, fetch forward price data and compute:
+Trade management is tested BEFORE scoring filters, because the exit rules define what a "winner" and "loser" actually are. Different management changes EV dramatically — the same scan can range from -0.14 to +0.47 ATR per trade depending on stops and exits.
 
-| Metric | Definition | Use |
-|--------|-----------|-----|
-| `drop3` | Max % drop in 3 days (short profit) | Quick wins |
-| `drop5` | Max % drop in 5 days | Primary win metric |
-| `drop10` | Max % drop in 10 days | Extended holds |
-| `drop_atr5` | Drop in ATR units over 5 days | Normalized win metric |
-| `bounce5` | Max % rise in 5 days (adverse move) | Risk metric |
-| `win` | drop_atr5 ≥ 1.0 | Binary win/loss |
+### 3a. Management Grid Search
 
-**Critical note on profit factor:** These metrics assume perfect exits (catching the exact low). Real profit factor requires defined exit rules — see "Exit Rules" section below.
+For each setup type, test all combinations of:
+
+**Stop loss types:**
+| Type | Description |
+|------|-------------|
+| `entry_high` | Close above entry candle high, checked from day 1 |
+| `entry_high_Nd` | Close above entry candle high, only checked after N-day grace period |
+| `atr_stop_X` | Close above entry close + X × ATR |
+
+**Exit types:**
+| Type | Description |
+|------|-------------|
+| `ema8` | First close above 8 EMA |
+| `ema12` | First close above 12 EMA |
+| `ema21` | First close above 21 EMA |
+| `atr_target_X` | Low touches entry close - X × ATR (for shorts) |
+| `trail_Nd_high` | Close above N-day highest high |
+
+**Time stops:** None, 5d, 10d, 15d
+
+### 3b. P&L Calculation
+
+For shorts:
+- **Stop hit:** P&L = -(stop price - entry close) / ATR (negative)
+- **Exit signal:** P&L = (entry high - exit close) / ATR (positive if exit < entry high)
+- **Time stop:** P&L = (entry high - close on time stop day) / ATR
+
+All P&L measured from entry candle high (the stop level) to exit close, in ATR units. This means P&L includes the risk from entry close to entry high — no free rides.
+
+### 3c. Select Best Management
+
+Rank all combinations by **EV per trade (avg P&L in ATR)**. Secondary sort by profit factor, then by fewer average hold days (capital efficiency).
+
+**The winning management becomes the fixed exit ruleset for that setup type.** All subsequent filter analysis uses this management to compute outcomes.
+
+### 3d. Key Finding: EMA Exits >> Fixed Targets
+
+From 3-4DB analysis:
+- EMA exits adapt to the stock's actual momentum shift
+- Fixed ATR targets (1.5+) are negative EV — too few trades reach them
+- Trail stops hold too long and give back gains
+- Grace periods on stops improve EV by letting the trade "settle" before enforcing the stop
 
 ---
 
-## Step 4: Compute Signal Characteristics
+## Step 4: Score Forward Performance & Compute Signal Characteristics
+
+Using the selected management from Step 3, score every signal with actual P&L (not theoretical max drop). Then compute signal attributes for filter analysis:
 
 For each signal, compute attributes that might predict winners vs losers:
 
@@ -151,6 +189,8 @@ For each signal, compute attributes that might predict winners vs losers:
 ---
 
 ## Step 5: Analyze for Edge
+
+Using actual P&L from Step 3's management rules (not theoretical max drop), find which signal characteristics predict higher EV.
 
 ### 5a. Top 30% vs Bottom 70% (by profit)
 
@@ -240,32 +280,32 @@ Recommended thresholds:
 
 ---
 
-## Step 8: Measure Profit Factor (Properly)
+## Step 8: Measure EV Impact of Each Change
 
-### Current limitation
+Every modification to the system (new hard filter, scoring change, management tweak) must be measured by its impact on EV per trade.
 
-The backtester uses theoretical max profit/loss within a time window. This inflates profit factor because it assumes perfect entry at close and perfect exit at the low.
+### 8a. Before/After Comparison
 
-### Realistic exit rules (TO DO — implement per setup type)
+For any proposed change, compute:
 
-For shorts:
+| Metric | Before | After | Delta |
+|--------|--------|-------|-------|
+| EV per trade (ATR) | | | |
+| Total P&L (ATR) | | | |
+| Signal count | | | |
+| Win rate | | | |
+| Profit factor | | | |
+| Avg hold (days) | | | |
 
-| Exit Type | Condition | Purpose |
-|-----------|-----------|---------|
-| **Stop loss** | Close above entry + X ATR | Capital preservation |
-| **Profit target** | Low touches entry - Y ATR | Lock in gains |
-| **Trail stop** | Close above N-day high after in profit | Let winners run |
-| **Time stop** | No target/stop hit in Z days | Prevent dead money |
+**Accept if:** EV increases OR stays flat while reducing signal count (better capital efficiency).
+**Reject if:** EV decreases, even if win rate improves (high win rate with tiny wins is worse than moderate win rate with real gains).
 
-Parameters X, Y, Z, N should be optimized per setup type using the same backtest data.
+### 8b. Capital Efficiency
 
-### Profit factor formula
-
-```
-PF = sum(realized gains on winning trades) / sum(realized losses on losing trades)
-```
-
-Where gains/losses use actual exit prices from the rules above, not theoretical max drop/bounce.
+Two setups with the same EV but different hold times are not equal:
+- **EV per day** = EV per trade / avg hold days
+- Higher EV/day means faster capital recycling
+- Prefer shorter holds when EV is comparable
 
 ---
 
@@ -281,15 +321,44 @@ Track live performance of the scan + scoring system:
 
 ## TO DO
 
-- [ ] Define realistic exit rules per setup type and re-compute profit factor
-- [ ] Provide market stage data (stage 3 periods) for last 5 years → enables backtesting across multiple regimes instead of one 77-day window
-- [ ] Automate the full pipeline: scan → dedup → score → output ranked short list
+- [x] Define realistic exit rules per setup type and compute EV (done for 3-4DB)
+- [ ] Re-score hard filters and soft scoring combos using real management rules (not theoretical max drop)
+- [ ] Provide market stage data (stage 3 periods) for last 5 years → enables backtesting across multiple regimes
+- [ ] Automate the full pipeline: scan → dedup → score → management → output ranked short list with EV
 - [ ] Build nightly workflow endpoint that runs everything and returns the actionable list
 - [ ] Expand to DTSS and HTF setup types once examples and conditions exist
+- [ ] Run management grid search for each new setup type to find optimal stops/exits
 
 ---
 
 ## 3-4DB Specific Results
+
+### Optimal Trade Management
+
+Tested 128 combinations (4 stops × 8 exits × 4 time stops). Best EV:
+
+| Rank | Stop | Exit | Time | EV/trade | PF | Win% | Avg Hold |
+|------|------|------|------|----------|-----|------|----------|
+| 1 | Entry high (3d grace) | Close > 12 EMA | 10d | **+0.47 ATR** | 4.28 | 77% | 3.0d |
+| 2 | Entry high (3d grace) | Close > 8 EMA | 10d | +0.45 ATR | 4.06 | 73% | 3.0d |
+| 3 | Entry + 1 ATR | Close > 12 EMA | 10d | +0.45 ATR | 3.96 | 77% | 3.0d |
+| 4 | Entry high (3d grace) | Close > 21 EMA | 10d | +0.44 ATR | 4.11 | 77% | 2.4d |
+
+**Selected: Stop at entry high (3d grace) + Close > 12 EMA + 10d time stop**
+
+Management rules:
+1. **Entry:** Short at close on signal day
+2. **Stop:** Entry candle high — but only enforced after day 3 (3-day grace). If close > entry high on days 1-3, hold through.
+3. **Exit:** First close above the 12 EMA
+4. **Time stop:** Exit at close on day 10 if neither stop nor exit triggered
+5. **Winner:** Exit close < entry candle low (+0.79 ATR avg)
+6. **Loser:** Stop triggered after day 3 (-0.61 ATR avg)
+
+Key insights:
+- **EMA exits >> fixed targets.** 1.5+ ATR targets are breakeven or negative. These are 3-4 day moves — take what momentum gives you.
+- **3-day grace adds +0.06-0.08 EV** vs immediate stop. Lets the trade settle.
+- **12 EMA slightly edges 8 EMA** — more patience without giving back much.
+- **10-day time stop adds +0.02-0.05 EV** vs no time stop. Prevents dead money.
 
 ### Hard PCF conditions (18 → 20)
 
@@ -313,16 +382,17 @@ Score 0-4:
   +1 if up days ≤ 2 in last 3 bars          — 94% of winners, avoids 27% kill zone
 ```
 
-### Performance summary (77-day backtest, deduped, no biotech)
+### Performance summary (77-day backtest, deduped, no biotech, 12 EMA exit)
 
-| Configuration | Signals | Win Rate | Profit Factor* |
-|--------------|---------|----------|---------------|
-| Current scan | 58 | 48% | 1.84 |
-| + New hard filters | 46 | 52% | 2.27 |
-| + Hard + Score ≥ 2 | 39 | 59% | 3.01 |
-| + Hard + Score ≥ 3 | 29 | 62% | 4.53 |
+| Configuration | Signals | Win Rate | EV/Trade | Total P&L | PF |
+|--------------|---------|----------|----------|-----------|-----|
+| Current scan | 56 | 77% | **+0.47 ATR** | +26.1 ATR | 4.28 |
+| + New hard filters | 44 | TBD | TBD | TBD | TBD |
+| + Hard + Score ≥ 2 | 38 | TBD | TBD | TBD | TBD |
+| + Hard + Score ≥ 3 | 28 | TBD | TBD | TBD | TBD |
 
-*Profit factor uses theoretical max drop/bounce, not realistic exits. Actual PF will be lower.
+*All numbers use the selected management: entry high stop (3d grace), 12 EMA exit, 10d time stop.*
+*Filter combos need re-scoring with this management — previous PF numbers used theoretical max drop.*
 
 ### Cluster effect
 
