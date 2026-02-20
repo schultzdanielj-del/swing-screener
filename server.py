@@ -531,12 +531,38 @@ class UpdateEntryRequest(BaseModel):
 
 @app.patch("/api/examples/{setup_type}/{example_id}")
 async def update_entry_date(setup_type: str, example_id: int, req: UpdateEntryRequest):
+    try:
+        datetime.strptime(req.entry_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "Invalid date format")
+
     with get_db() as db:
-        ex = db.execute("SELECT id, ticker FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
+        ex = db.execute("SELECT id, ticker, chart_date, entry_date FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
         if not ex: raise HTTPException(404)
         ticker = ex["ticker"]
-        db.execute("UPDATE examples SET entry_date=? WHERE id=?", (req.entry_date, example_id))
-        df = get_ohlcv_df(db, example_id)
+
+        # Check if new entry_date falls outside the existing OHLCV range
+        ohlcv_range = db.execute("SELECT MIN(date) as min_d, MAX(date) as max_d FROM ohlcv WHERE example_id=?", (example_id,)).fetchone()
+        need_refetch = True
+        if ohlcv_range and ohlcv_range["min_d"] and ohlcv_range["max_d"]:
+            need_refetch = req.entry_date < ohlcv_range["min_d"] or req.entry_date > ohlcv_range["max_d"]
+
+        if need_refetch:
+            ohlcv_df = fetch_ohlcv(ticker, req.entry_date)
+            if ohlcv_df is None:
+                raise HTTPException(404, f"No OHLCV data for {ticker} around {req.entry_date}")
+            db.execute("DELETE FROM ohlcv WHERE example_id=?", (example_id,))
+            db.execute("DELETE FROM extension WHERE example_id=?", (example_id,))
+            store_ohlcv(db, example_id, ohlcv_df)
+            ext_df = fetch_extension(ticker)
+            if ext_df is not None:
+                store_extension(db, example_id, ext_df)
+            db.execute("UPDATE examples SET entry_date=?, chart_date=? WHERE id=?", (req.entry_date, req.entry_date, example_id))
+            df = ohlcv_df
+        else:
+            db.execute("UPDATE examples SET entry_date=? WHERE id=?", (req.entry_date, example_id))
+            df = get_ohlcv_df(db, example_id)
+
         analysis = None
         if df is not None:
             try:
@@ -544,7 +570,7 @@ async def update_entry_date(setup_type: str, example_id: int, req: UpdateEntryRe
                 db.execute("INSERT OR REPLACE INTO signal_analysis (example_id, analysis_json) VALUES (?,?)", (example_id, json.dumps(analysis)))
             except Exception as e:
                 analysis = {"error": str(e)}
-    return {"status": "updated", "ticker": ticker, "entryDate": req.entry_date, "analysis": analysis}
+    return {"status": "updated", "ticker": ticker, "entryDate": req.entry_date, "refetched": need_refetch, "analysis": analysis}
 
 
 @app.post("/api/repair-data")
