@@ -832,6 +832,116 @@ async def tradable_count():
         return {"count": 0, "error": str(e)}
 
 # ---------------------------------------------------------------------------
+# Tradable Universe
+# ---------------------------------------------------------------------------
+def rebuild_tradable_universe(db=None):
+    """Rebuild the tradable_universe table from universe_ohlcv data.
+    Filters: last close >= $1, 20-day avg dollar volume >= $5M.
+    """
+    close_db = False
+    if db is None:
+        db = get_db()
+        close_db = True
+
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS tradable_universe (
+            ticker TEXT PRIMARY KEY,
+            last_close REAL,
+            avg_dollar_volume REAL,
+            last_date TEXT,
+            updated_at TEXT
+        );
+    """)
+
+    # Clear and rebuild
+    db.execute("DELETE FROM tradable_universe")
+
+    # For each ticker with recent data, compute stats from the last 20 trading days
+    now_iso = __import__('datetime').datetime.utcnow().isoformat()
+    db.execute("""
+        INSERT INTO tradable_universe (ticker, last_close, avg_dollar_volume, last_date, updated_at)
+        SELECT
+            t.ticker,
+            t.last_close,
+            t.avg_dv,
+            t.last_date,
+            ?
+        FROM (
+            SELECT
+                ticker,
+                -- last close = close on the most recent date
+                (SELECT close FROM universe_ohlcv u2
+                 WHERE u2.ticker = u1.ticker ORDER BY u2.date DESC LIMIT 1) as last_close,
+                -- avg dollar volume over last 20 trading days
+                AVG(close * volume) as avg_dv,
+                MAX(date) as last_date
+            FROM (
+                SELECT ticker, date, close, volume,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) as rn
+                FROM universe_ohlcv
+                WHERE close IS NOT NULL AND volume IS NOT NULL AND volume > 0
+            ) u1
+            WHERE rn <= 20
+            GROUP BY ticker
+            HAVING COUNT(*) >= 10  -- need at least 10 days of data
+        ) t
+        WHERE t.last_close >= 1.0
+          AND t.avg_dv >= 5000000
+    """, (now_iso,))
+
+    count = db.execute("SELECT COUNT(*) FROM tradable_universe").fetchone()[0]
+    db.commit()
+
+    if close_db:
+        db.close()
+
+    return count
+
+
+@app.post("/api/tradable/rebuild")
+async def rebuild_tradable():
+    """Rebuild the tradable universe from current OHLCV data."""
+    try:
+        db = get_db()
+        count = rebuild_tradable_universe(db)
+        db.close()
+        return {"status": "ok", "tradable_count": count}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "trace": traceback.format_exc()}
+
+
+@app.get("/api/tradable")
+async def get_tradable(sort: str = "ticker", limit: int = 0):
+    """Get current tradable universe list."""
+    try:
+        db = get_db()
+        # Ensure table exists
+        db.execute("""CREATE TABLE IF NOT EXISTS tradable_universe (
+            ticker TEXT PRIMARY KEY, last_close REAL,
+            avg_dollar_volume REAL, last_date TEXT, updated_at TEXT)""")
+
+        order = "ticker"
+        if sort == "volume":
+            order = "avg_dollar_volume DESC"
+        elif sort == "price":
+            order = "last_close DESC"
+
+        q = f"SELECT * FROM tradable_universe ORDER BY {order}"
+        if limit > 0:
+            q += f" LIMIT {limit}"
+
+        rows = db.execute(q).fetchall()
+        count = db.execute("SELECT COUNT(*) FROM tradable_universe").fetchone()[0]
+        db.close()
+
+        tickers = [dict(r) for r in rows]
+        return {"count": count, "tickers": tickers}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # 3-4DB Scanner endpoint
 # ---------------------------------------------------------------------------
 @app.get("/api/scan/3-4db")
