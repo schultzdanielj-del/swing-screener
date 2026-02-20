@@ -168,3 +168,39 @@ swing-screener/
 - GitHub — code hosting
 - Railway — app hosting (swing-screener + other projects: ttm-metrics-api, ttm-dashboard, discord-bot)
 - Discord — trading community
+
+---
+
+## BACKTEST RESULTS (as of 2026-02-20)
+
+Full 5-year backtest of 18 PCF conditions across 4,167 tradable tickers complete.
+
+**Raw results:** 1,217 signals from 444 unique tickers (2022-02-17 to 2026-02-19)
+**Clean results:** 802 signals from 292 unique tickers (filtered biotech, leveraged/inverse ETFs)
+
+### Filters applied:
+- Removed 110 biotech tickers (by industry classification via yfinance)
+- Removed 40 ETFs + all leveraged/inverse products
+- Sector/industry data stored in `ticker_sectors` table
+
+### Signals by year (clean):
+| Year | Signals | Unique Tickers |
+|------|---------|----------------|
+| 2022 | 57 | 30 |
+| 2023 | 92 | 50 |
+| 2024 | 206 | 91 |
+| 2025 | 359 | 161 |
+| 2026 YTD | 88 | 50 |
+
+### Database tables:
+- `scan_backtest` — raw signals (all 18 conditions pass)
+- `scan_backtest_clean` — filtered signals (no biotech/leveraged)
+- `ticker_sectors` — sector, industry, is_etf flag for signal tickers
+- `backtest_status` — progress tracking for background runs
+
+### API endpoints:
+- `GET /api/backtest/summary` — yearly breakdown + filter stats
+- `GET /api/backtest/results?clean=true&limit=500` — browse signals
+- `GET /api/backtest/results?ticker=APP` — filter by ticker
+- `GET /api/backtest/results?date_from=2025-10-01&date_to=2025-11-01` — filter by date range
+- `POST /api/backtest/run` — re-run full backtest (background task, ~30-60 min)
