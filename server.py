@@ -189,7 +189,31 @@ def add_indicators(df):
     df["VolAvg20"] = df["Volume"].rolling(20).mean()
     return df
 
+def normalize_ticker_for_yfinance(ticker):
+    """Convert common ticker formats to yfinance-compatible symbols.
+    e.g. BRK.B or BRKB -> BRK-B, MOG.A -> MOG-A, BF.B -> BF-B"""
+    # Known multi-class tickers where letter suffix is a share class
+    SHARE_CLASS_TICKERS = {
+        "BRKA": "BRK-A", "BRKB": "BRK-B",
+        "BRK.A": "BRK-A", "BRK.B": "BRK-B",
+        "BF.A": "BF-A", "BF.B": "BF-B",
+        "BFA": "BF-A", "BFB": "BF-B",
+        "MOG.A": "MOG-A", "MOG.B": "MOG-B",
+        "MOGA": "MOG-A", "MOGB": "MOG-B",
+        "GEF.B": "GEF-B", "GEFB": "GEF-B",
+        "LGF.A": "LGF-A", "LGF.B": "LGF-B",
+        "LGFA": "LGF-A", "LGFB": "LGF-B",
+    }
+    up = ticker.upper().strip()
+    if up in SHARE_CLASS_TICKERS:
+        return SHARE_CLASS_TICKERS[up]
+    # Generic: convert dots to hyphens for yfinance
+    if "." in up:
+        return up.replace(".", "-")
+    return up
+
 def fetch_ohlcv(ticker, chart_date_str):
+    ticker = normalize_ticker_for_yfinance(ticker)
     chart_dt = datetime.strptime(chart_date_str, "%Y-%m-%d")
     start = chart_dt - timedelta(days=250)
     end = chart_dt + timedelta(days=60)
@@ -201,7 +225,7 @@ def fetch_ohlcv(ticker, chart_date_str):
     return raw.sort_values("Date").reset_index(drop=True)
 
 def fetch_extension(ticker):
-    end = datetime.now()
+    ticker = normalize_ticker_for_yfinance(ticker)    end = datetime.now()
     start = end - timedelta(days=365 * 5 + 60)
     raw = yf.download(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), progress=False)
     if raw.empty: return None
