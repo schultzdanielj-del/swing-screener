@@ -838,8 +838,9 @@ def rebuild_tradable_universe(db):
     """Rebuild the tradable_universe table from universe_ohlcv data.
     Filters: last close >= $1, 20-day avg dollar volume >= $5M.
     """
+    db.execute("DROP TABLE IF EXISTS tradable_universe")
     db.execute("""
-        CREATE TABLE IF NOT EXISTS tradable_universe (
+        CREATE TABLE tradable_universe (
             ticker TEXT PRIMARY KEY,
             last_close REAL,
             avg_dollar_volume REAL,
@@ -847,9 +848,6 @@ def rebuild_tradable_universe(db):
             updated_at TEXT
         )
     """)
-
-    # Clear and rebuild
-    db.execute("DELETE FROM tradable_universe")
 
     # For each ticker with recent data, compute stats from the last 20 trading days
     now_iso = __import__('datetime').datetime.utcnow().isoformat()
