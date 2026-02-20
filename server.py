@@ -225,7 +225,8 @@ def fetch_ohlcv(ticker, chart_date_str):
     return raw.sort_values("Date").reset_index(drop=True)
 
 def fetch_extension(ticker):
-    ticker = normalize_ticker_for_yfinance(ticker)    end = datetime.now()
+    ticker = normalize_ticker_for_yfinance(ticker)
+    end = datetime.now()
     start = end - timedelta(days=365 * 5 + 60)
     raw = yf.download(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), progress=False)
     if raw.empty: return None
