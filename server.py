@@ -1114,5 +1114,164 @@ async def backtest_summary():
         return {"error": str(e)}
 
 
+# ============================================
+# BACKTEST ENDPOINTS
+# ============================================
+
+@app.post("/api/backtest/run")
+async def start_backtest(background_tasks: BackgroundTasks):
+    """Kick off a full 5-year backtest of 18 conditions across all tradable tickers."""
+    from scripts.run_backtest import run_full_backtest, backtest_state, init_backtest_tables
+
+    if backtest_state.get("running") or backtest_state.get("state") == "running":
+        return {"status": "already_running", "message": "Backtest is already in progress"}
+
+    backtest_state["running"] = True
+    backtest_state["state"] = "starting"
+    background_tasks.add_task(run_full_backtest)
+    return {"status": "started", "message": "Backtest launched in background. Check /api/backtest/status"}
+
+
+@app.get("/api/backtest/status")
+async def backtest_status():
+    """Get current backtest progress."""
+    try:
+        with get_db() as db:
+            table_exists = db.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='backtest_status'"
+            ).fetchone()[0]
+            if not table_exists:
+                return {"state": "never_run"}
+            row = db.execute("SELECT * FROM backtest_status WHERE id = 1").fetchone()
+            if not row:
+                return {"state": "never_run"}
+            d = dict(row)
+            # Add live counts
+            sr_exists = db.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='scan_results'"
+            ).fetchone()[0]
+            if sr_exists:
+                d["raw_signals"] = db.execute("SELECT COUNT(*) FROM scan_results").fetchone()[0]
+                d["raw_tickers"] = db.execute("SELECT COUNT(DISTINCT ticker) FROM scan_results").fetchone()[0]
+            sc_exists = db.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='scan_results_clean'"
+            ).fetchone()[0]
+            if sc_exists:
+                d["clean_signals"] = db.execute("SELECT COUNT(*) FROM scan_results_clean").fetchone()[0]
+                d["clean_tickers"] = db.execute("SELECT COUNT(DISTINCT ticker) FROM scan_results_clean").fetchone()[0]
+            return d
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/backtest/results")
+async def backtest_results(
+    clean: bool = True,
+    ticker: str = None,
+    date_from: str = None,
+    date_to: str = None,
+    limit: int = 500,
+    offset: int = 0,
+):
+    """Query backtest results. Use clean=true for filtered, clean=false for raw."""
+    table = "scan_results_clean" if clean else "scan_results"
+    try:
+        with get_db() as db:
+            exists = db.execute(
+                f"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"
+            ).fetchone()[0]
+            if not exists:
+                return {"count": 0, "results": [], "message": f"Table {table} doesn't exist yet. Run backtest first."}
+
+            where_parts = []
+            params = []
+            if ticker:
+                where_parts.append("ticker = ?")
+                params.append(ticker.upper())
+            if date_from:
+                where_parts.append("signal_date >= ?")
+                params.append(date_from)
+            if date_to:
+                where_parts.append("signal_date <= ?")
+                params.append(date_to)
+
+            where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+            total = db.execute(f"SELECT COUNT(*) FROM {table} {where}", params).fetchone()[0]
+            rows = db.execute(
+                f"SELECT * FROM {table} {where} ORDER BY signal_date DESC, ticker LIMIT ? OFFSET ?",
+                params + [limit, offset]
+            ).fetchall()
+
+            return {
+                "count": total,
+                "limit": limit,
+                "offset": offset,
+                "results": [dict(r) for r in rows],
+            }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/backtest/summary")
+async def backtest_summary():
+    """Get summary stats of backtest results."""
+    try:
+        with get_db() as db:
+            out = {}
+            for table in ["scan_results", "scan_results_clean"]:
+                exists = db.execute(
+                    f"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"
+                ).fetchone()[0]
+                if not exists:
+                    out[table] = {"exists": False}
+                    continue
+
+                total = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                tickers = db.execute(f"SELECT COUNT(DISTINCT ticker) FROM {table}").fetchone()[0]
+                dates = db.execute(f"SELECT MIN(signal_date), MAX(signal_date) FROM {table}").fetchone()
+
+                # Signals per year
+                yearly = db.execute(f"""
+                    SELECT SUBSTR(signal_date, 1, 4) as year, COUNT(*) as cnt,
+                           COUNT(DISTINCT ticker) as tickers
+                    FROM {table} GROUP BY year ORDER BY year
+                """).fetchall()
+
+                out[table] = {
+                    "exists": True,
+                    "total_signals": total,
+                    "unique_tickers": tickers,
+                    "date_range": [dates[0], dates[1]] if dates[0] else None,
+                    "by_year": [dict(r) for r in yearly],
+                }
+
+            # Filtered counts
+            ti_exists = db.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ticker_info'"
+            ).fetchone()[0]
+            if ti_exists:
+                out["filters"] = {
+                    "total_classified": db.execute("SELECT COUNT(*) FROM ticker_info").fetchone()[0],
+                    "biotech": db.execute(
+                        "SELECT COUNT(*) FROM ticker_info WHERE LOWER(industry) LIKE '%biotech%' "
+                        "OR LOWER(industry) LIKE '%pharma%' OR LOWER(industry) LIKE '%drug%'"
+                    ).fetchone()[0],
+                    "leveraged": db.execute(
+                        "SELECT COUNT(*) FROM ticker_info WHERE is_leveraged = 1"
+                    ).fetchone()[0],
+                    "inverse": db.execute(
+                        "SELECT COUNT(*) FROM ticker_info WHERE is_inverse = 1"
+                    ).fetchone()[0],
+                    "etf": db.execute(
+                        "SELECT COUNT(*) FROM ticker_info WHERE is_etf = 1"
+                    ).fetchone()[0],
+                }
+
+            return out
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # Serve frontend
 app.mount("/", StaticFiles(directory="app", html=True), name="frontend")
