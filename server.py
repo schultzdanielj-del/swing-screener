@@ -242,11 +242,19 @@ def get_extension_rows(db, example_id):
 # CHART GENERATION (returns PNG bytes, no files)
 # ============================================
 
-def generate_chart_png(df, ticker, entry_date, at_entry=False):
+def generate_chart_png(df, ticker, entry_date, at_entry=False, setup_type=None):
     df = df.copy()
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
     df = add_indicators(df)
+
+    # Setup-specific lookback config
+    LOOKBACK = {"dtss": {"at_entry_before": 100, "default_before": 100, "default_after": 30, "min_total": 130}}
+    cfg = LOOKBACK.get(setup_type, {})
+    at_entry_before = cfg.get("at_entry_before", 50)
+    default_before = cfg.get("default_before", 30)
+    default_after = cfg.get("default_after", 30)
+    min_total = cfg.get("min_total", 60)
 
     entry_dt = pd.Timestamp(entry_date)
     entry_rows = df[df["Date"] == entry_dt]
@@ -258,7 +266,7 @@ def generate_chart_png(df, ticker, entry_date, at_entry=False):
         entry_idx = entry_rows.index[0]
 
     if at_entry:
-        want_before = min(50, entry_idx)
+        want_before = min(at_entry_before, entry_idx)
         start_idx = entry_idx - want_before
         chart_df = df.iloc[start_idx:entry_idx + 1].copy().reset_index(drop=True)
         entry_pos = want_before
@@ -267,12 +275,12 @@ def generate_chart_png(df, ticker, entry_date, at_entry=False):
     else:
         avail_after = len(df) - entry_idx - 1
         avail_before = entry_idx
-        want_after = min(30, avail_after)
-        want_before = min(30, avail_before)
+        want_after = min(default_after, avail_after)
+        want_before = min(default_before, avail_before)
         total = want_before + 1 + want_after
-        if total < 60:
-            extra = 60 - total
-            if want_before < 30: want_after = min(want_after + extra, avail_after)
+        if total < min_total:
+            extra = min_total - total
+            if want_before < default_before: want_after = min(want_after + extra, avail_after)
             else: want_before = min(want_before + extra, avail_before)
         chart_df = df.iloc[entry_idx - want_before:entry_idx + want_after + 1].copy().reset_index(drop=True)
         entry_pos = want_before
@@ -438,7 +446,7 @@ async def get_chart_image(setup_type: str, example_id: int, at_entry: int = Quer
         if not ex: raise HTTPException(404, f"No example with id {example_id}")
         df = get_ohlcv_df(db, example_id)
         if df is None: raise HTTPException(404, f"No OHLCV data for {ex['ticker']}")
-    png = generate_chart_png(df, ex["ticker"], ex["entry_date"], at_entry=bool(at_entry))
+    png = generate_chart_png(df, ex["ticker"], ex["entry_date"], at_entry=bool(at_entry), setup_type=setup_type)
     if png is None: raise HTTPException(500, "Chart generation failed")
     return Response(content=png, media_type="image/png")
 
