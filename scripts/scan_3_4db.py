@@ -184,12 +184,21 @@ def run_scan(lookback_days=77, db_path=None):
     
     cutoff_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
     
-    # Get all tickers that have data
-    tickers = [r[0] for r in conn.execute(
-        "SELECT DISTINCT ticker FROM universe_ohlcv ORDER BY ticker"
-    ).fetchall()]
+    # Get tickers from tradable universe (if available), otherwise all
+    tradable_check = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tradable_universe'"
+    ).fetchone()[0]
     
-    print(f"Scanning {len(tickers)} tickers, signals after {cutoff_date}")
+    if tradable_check:
+        tickers = [r[0] for r in conn.execute(
+            "SELECT ticker FROM tradable_universe ORDER BY ticker"
+        ).fetchall()]
+        print(f"Scanning {len(tickers)} tradable tickers, signals after {cutoff_date}")
+    else:
+        tickers = [r[0] for r in conn.execute(
+            "SELECT DISTINCT ticker FROM universe_ohlcv ORDER BY ticker"
+        ).fetchall()]
+        print(f"Scanning {len(tickers)} universe tickers (no tradable filter), signals after {cutoff_date}")
     print("=" * 70)
     
     signals = []
