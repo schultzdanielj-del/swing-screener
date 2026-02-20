@@ -806,19 +806,18 @@ async def build_tradable(background_tasks: BackgroundTasks):
 async def get_tradable():
     """Get the current tradable universe with stats."""
     try:
-        db = get_db()
-        rows = db.execute(
-            "SELECT ticker, last_close, aptr_pct, avg_dollar_vol, updated_at FROM tradable_universe ORDER BY avg_dollar_vol DESC"
-        ).fetchall()
-        db.close()
-        if not rows:
-            return {"tickers": [], "count": 0, "message": "Tradable universe not built yet. POST /api/tradable/build"}
-        tickers = [dict(r) for r in rows]
-        return {
-            "tickers": tickers,
-            "count": len(tickers),
-            "updated_at": tickers[0]["updated_at"] if tickers else None
-        }
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT ticker, last_close, aptr_pct, avg_dollar_vol, updated_at FROM tradable_universe ORDER BY avg_dollar_vol DESC"
+            ).fetchall()
+            if not rows:
+                return {"tickers": [], "count": 0, "message": "Tradable universe not built yet. POST /api/tradable/build"}
+            tickers = [dict(r) for r in rows]
+            return {
+                "tickers": tickers,
+                "count": len(tickers),
+                "updated_at": tickers[0]["updated_at"] if tickers else None
+            }
     except Exception as e:
         return {"error": str(e)}
 
@@ -826,10 +825,9 @@ async def get_tradable():
 async def tradable_count():
     """Quick count of tradable tickers."""
     try:
-        db = get_db()
-        count = db.execute("SELECT COUNT(*) FROM tradable_universe").fetchone()[0]
-        db.close()
-        return {"count": count}
+        with get_db() as db:
+            count = db.execute("SELECT COUNT(*) FROM tradable_universe").fetchone()[0]
+            return {"count": count}
     except Exception as e:
         return {"count": 0, "error": str(e)}
 
