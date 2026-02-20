@@ -889,19 +889,81 @@ async def get_tradable(sort: str = "ticker", limit: int = 0):
 # ---------------------------------------------------------------------------
 # 3-4DB Scanner endpoint
 # ---------------------------------------------------------------------------
-@app.get("/api/scan/3-4db")
-async def scan_3_4db(days: int = 77):
-    """Run the 3-4DB scan against universe OHLCV data for the last N days."""
+@app.post("/api/scan/3-4db")
+async def scan_3_4db(background_tasks: BackgroundTasks, days: int = 77):
+    """Kick off 3-4DB scan in background."""
     from scripts.scan_3_4db import run_scan
+
+    def _run():
+        try:
+            db = sqlite3.connect(str(DB_PATH), timeout=30)
+            db.execute("""CREATE TABLE IF NOT EXISTS scan_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_type TEXT, ticker TEXT, date TEXT, close REAL,
+                atr14 REAL, volume INTEGER, avgv20 INTEGER,
+                pct_above_sma50 REAL, pct_above_sma200 REAL, retracement REAL,
+                scanned_at TEXT
+            )""")
+            db.execute("DELETE FROM scan_results WHERE scan_type='3-4db'")
+            db.commit()
+
+            sdf = run_scan(lookback_days=days, db_path=str(DB_PATH))
+
+            if not sdf.empty:
+                now = datetime.utcnow().isoformat()
+                rows = []
+                for _, s in sdf.iterrows():
+                    rows.append((
+                        "3-4db", s["ticker"], s["date"], s["close"],
+                        s["atr14"], int(s["volume"]), int(s["avgv20"]),
+                        s["pct_above_sma50"], s["pct_above_sma200"],
+                        s["retracement"], now
+                    ))
+                db.executemany(
+                    "INSERT INTO scan_results (scan_type, ticker, date, close, atr14, volume, avgv20, pct_above_sma50, pct_above_sma200, retracement, scanned_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    rows
+                )
+                db.commit()
+            db.close()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+
+    background_tasks.add_task(_run)
+    return {"status": "started", "message": f"Scanning tradable universe for 3-4DB setups (last {days} days). Check GET /api/scan/3-4db/results"}
+
+
+@app.get("/api/scan/3-4db/results")
+async def scan_3_4db_results():
+    """Get stored 3-4DB scan results."""
     try:
-        sdf = run_scan(lookback_days=days, db_path=str(DB_PATH))
-        if sdf.empty:
-            return {"signals": [], "count": 0, "days": days}
-        signals = sdf.to_dict(orient="records")
-        return {"signals": signals, "count": len(signals), "days": days}
+        with get_db() as db:
+            # Check if table exists
+            exists = db.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='scan_results'").fetchone()[0]
+            if not exists:
+                return {"signals": [], "count": 0, "message": "No scan has been run yet. POST /api/scan/3-4db"}
+
+            rows = db.execute(
+                "SELECT ticker, date, close, atr14, volume, avgv20, pct_above_sma50, pct_above_sma200, retracement, scanned_at "
+                "FROM scan_results WHERE scan_type='3-4db' ORDER BY date DESC, ticker"
+            ).fetchall()
+
+            signals = [dict(r) for r in rows]
+            scanned_at = signals[0]["scanned_at"] if signals else None
+
+            # Group count by date
+            date_counts = {}
+            for s in signals:
+                date_counts[s["date"]] = date_counts.get(s["date"], 0) + 1
+
+            return {
+                "count": len(signals),
+                "signals": signals,
+                "dates": date_counts,
+                "scanned_at": scanned_at
+            }
     except Exception as e:
-        import traceback
-        return {"error": str(e), "trace": traceback.format_exc()}
+        return {"error": str(e)}
 
 
 # Serve frontend
