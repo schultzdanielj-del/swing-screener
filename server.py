@@ -834,23 +834,18 @@ async def tradable_count():
 # ---------------------------------------------------------------------------
 # Tradable Universe
 # ---------------------------------------------------------------------------
-def rebuild_tradable_universe(db=None):
+def rebuild_tradable_universe(db):
     """Rebuild the tradable_universe table from universe_ohlcv data.
     Filters: last close >= $1, 20-day avg dollar volume >= $5M.
     """
-    close_db = False
-    if db is None:
-        db = get_db()
-        close_db = True
-
-    db.executescript("""
+    db.execute("""
         CREATE TABLE IF NOT EXISTS tradable_universe (
             ticker TEXT PRIMARY KEY,
             last_close REAL,
             avg_dollar_volume REAL,
             last_date TEXT,
             updated_at TEXT
-        );
+        )
     """)
 
     # Clear and rebuild
@@ -892,9 +887,6 @@ def rebuild_tradable_universe(db=None):
     count = db.execute("SELECT COUNT(*) FROM tradable_universe").fetchone()[0]
     db.commit()
 
-    if close_db:
-        db.close()
-
     return count
 
 
@@ -902,9 +894,8 @@ def rebuild_tradable_universe(db=None):
 async def rebuild_tradable():
     """Rebuild the tradable universe from current OHLCV data."""
     try:
-        db = get_db()
-        count = rebuild_tradable_universe(db)
-        db.close()
+        with get_db() as db:
+            count = rebuild_tradable_universe(db)
         return {"status": "ok", "tradable_count": count}
     except Exception as e:
         import traceback
@@ -915,25 +906,24 @@ async def rebuild_tradable():
 async def get_tradable(sort: str = "ticker", limit: int = 0):
     """Get current tradable universe list."""
     try:
-        db = get_db()
-        # Ensure table exists
-        db.execute("""CREATE TABLE IF NOT EXISTS tradable_universe (
-            ticker TEXT PRIMARY KEY, last_close REAL,
-            avg_dollar_volume REAL, last_date TEXT, updated_at TEXT)""")
+        with get_db() as db:
+            # Ensure table exists
+            db.execute("""CREATE TABLE IF NOT EXISTS tradable_universe (
+                ticker TEXT PRIMARY KEY, last_close REAL,
+                avg_dollar_volume REAL, last_date TEXT, updated_at TEXT)""")
 
-        order = "ticker"
-        if sort == "volume":
-            order = "avg_dollar_volume DESC"
-        elif sort == "price":
-            order = "last_close DESC"
+            order = "ticker"
+            if sort == "volume":
+                order = "avg_dollar_volume DESC"
+            elif sort == "price":
+                order = "last_close DESC"
 
-        q = f"SELECT * FROM tradable_universe ORDER BY {order}"
-        if limit > 0:
-            q += f" LIMIT {limit}"
+            q = f"SELECT * FROM tradable_universe ORDER BY {order}"
+            if limit > 0:
+                q += f" LIMIT {limit}"
 
-        rows = db.execute(q).fetchall()
-        count = db.execute("SELECT COUNT(*) FROM tradable_universe").fetchone()[0]
-        db.close()
+            rows = db.execute(q).fetchall()
+            count = db.execute("SELECT COUNT(*) FROM tradable_universe").fetchone()[0]
 
         tickers = [dict(r) for r in rows]
         return {"count": count, "tickers": tickers}
