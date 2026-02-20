@@ -905,11 +905,6 @@ async def get_tradable(sort: str = "ticker", limit: int = 0):
     """Get current tradable universe list."""
     try:
         with get_db() as db:
-            # Ensure table exists
-            db.execute("""CREATE TABLE IF NOT EXISTS tradable_universe (
-                ticker TEXT PRIMARY KEY, last_close REAL,
-                avg_dollar_volume REAL, last_date TEXT, updated_at TEXT)""")
-
             order = "ticker"
             if sort == "volume":
                 order = "avg_dollar_volume DESC"
