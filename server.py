@@ -795,44 +795,6 @@ async def migrate_legacy_data():
 # ---------------------------------------------------------------------------
 # Tradable Universe
 # ---------------------------------------------------------------------------
-@app.post("/api/tradable/build")
-async def build_tradable(background_tasks: BackgroundTasks):
-    """Rebuild the tradable universe from current OHLCV data."""
-    from scripts.build_tradable import build_tradable_universe
-    background_tasks.add_task(build_tradable_universe, str(DB_PATH))
-    return {"status": "started", "message": "Building tradable universe. Check /api/tradable for results."}
-
-@app.get("/api/tradable")
-async def get_tradable():
-    """Get the current tradable universe with stats."""
-    try:
-        with get_db() as db:
-            rows = db.execute(
-                "SELECT ticker, last_close, aptr_pct, avg_dollar_vol, updated_at FROM tradable_universe ORDER BY avg_dollar_vol DESC"
-            ).fetchall()
-            if not rows:
-                return {"tickers": [], "count": 0, "message": "Tradable universe not built yet. POST /api/tradable/build"}
-            tickers = [dict(r) for r in rows]
-            return {
-                "tickers": tickers,
-                "count": len(tickers),
-                "updated_at": tickers[0]["updated_at"] if tickers else None
-            }
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.get("/api/tradable/count")
-async def tradable_count():
-    """Quick count of tradable tickers."""
-    try:
-        with get_db() as db:
-            count = db.execute("SELECT COUNT(*) FROM tradable_universe").fetchone()[0]
-            return {"count": count}
-    except Exception as e:
-        return {"count": 0, "error": str(e)}
-
-# ---------------------------------------------------------------------------
-# Tradable Universe
 # ---------------------------------------------------------------------------
 def rebuild_tradable_universe(db):
     """Rebuild the tradable_universe table from universe_ohlcv data.
