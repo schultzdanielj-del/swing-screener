@@ -303,9 +303,44 @@ def store_ohlcv_batch(db, ticker, df):
 # ---------------------------------------------------------------------------
 # Main fetch orchestrator
 # ---------------------------------------------------------------------------
+def fetch_batch_with_timeout(tickers, start_date, end_date, timeout_seconds=120):
+    """Wrapper that enforces a hard timeout on fetch_batch using threading."""
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(fetch_batch, tickers, start_date, end_date)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError:
+            log.error(f"Batch timed out after {timeout_seconds}s for {tickers[0]}...{tickers[-1]}")
+            return {}
+        except Exception as e:
+            log.error(f"Batch thread error: {e}")
+            return {}
+
+
 def run_full_fetch():
     """Main entry point — fetches everything, resumable, bulletproof."""
     db = get_db()
+    try:
+        _run_full_fetch_inner(db)
+    except Exception as e:
+        log.error(f"FATAL: run_full_fetch crashed: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            update_status(db, state="crashed",
+                          current_batch=f"CRASHED: {str(e)[:200]}")
+        except Exception:
+            pass
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
+def _run_full_fetch_inner(db):
+    """Inner fetch logic, wrapped by run_full_fetch for crash safety."""
     init_universe_tables(db)
 
     # Load ticker list
@@ -324,7 +359,6 @@ def run_full_fetch():
         update_status(db, state="complete",
                       total_tickers=total_in_db,
                       completed_tickers=total_in_db)
-        db.close()
         return
 
     log.info(f"Starting fetch: {len(pending)} pending, {already_done} already done, {total_in_db} total")
@@ -363,28 +397,39 @@ def run_full_fetch():
                       completed_tickers=completed,
                       failed_tickers=failed)
 
-        # Fetch
-        results = fetch_batch(batch, start_date, end_date)
+        # Fetch with timeout protection
+        try:
+            results = fetch_batch_with_timeout(batch, start_date, end_date, timeout_seconds=120)
+        except Exception as e:
+            log.error(f"Batch {batch_num} fetch crashed: {e}")
+            # Mark all tickers in this batch as failed and continue
+            for ticker in batch:
+                db.execute("UPDATE universe_tickers SET status='failed' WHERE ticker=?", (ticker,))
+                failed += 1
+            errors.append(f"Batch {batch_num} crash: {str(e)[:100]}")
+            db.commit()
+            time.sleep(BATCH_DELAY)
+            continue
 
-        # Store results
+        # Store results — each ticker wrapped individually
         for ticker in batch:
-            if ticker in results and len(results[ticker]) > 0:
-                try:
+            try:
+                if ticker in results and len(results[ticker]) > 0:
                     n = store_ohlcv_batch(db, ticker, results[ticker])
                     db.execute(
                         "UPDATE universe_tickers SET status='done', rows_stored=?, fetched_at=? WHERE ticker=?",
                         (n, datetime.utcnow().isoformat(), ticker)
                     )
                     completed += 1
-                except Exception as e:
-                    log.error(f"  Store failed for {ticker}: {e}")
-                    db.execute("UPDATE universe_tickers SET status='failed' WHERE ticker=?", (ticker,))
-                    failed += 1
-                    errors.append(f"{ticker}: {str(e)[:100]}")
-            else:
-                # No data returned — might be delisted, OTC, etc.
-                db.execute("UPDATE universe_tickers SET status='skipped' WHERE ticker=?", (ticker,))
-                skipped += 1
+                else:
+                    # No data returned — might be delisted, OTC, etc.
+                    db.execute("UPDATE universe_tickers SET status='skipped' WHERE ticker=?", (ticker,))
+                    skipped += 1
+            except Exception as e:
+                log.error(f"  Store failed for {ticker}: {e}")
+                db.execute("UPDATE universe_tickers SET status='failed' WHERE ticker=?", (ticker,))
+                failed += 1
+                errors.append(f"{ticker}: {str(e)[:100]}")
 
         # Commit after each batch — never lose more than one batch of work
         db.commit()
@@ -410,7 +455,6 @@ def run_full_fetch():
                   errors=json.dumps(errors[-50:]))
 
     log.info(f"COMPLETE: {completed} done, {failed} failed, {skipped} skipped out of {total_in_db}")
-    db.close()
 
 
 # ---------------------------------------------------------------------------

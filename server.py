@@ -586,10 +586,22 @@ async def start_universe_fetch(background_tasks: BackgroundTasks):
     try:
         udb = u_get_db()
         init_universe_tables(udb)
-        status = udb.execute("SELECT state FROM universe_fetch_status WHERE id=1").fetchone()
-        if status and status["state"] == "running":
-            udb.close()
-            return {"status": "already_running", "message": "Fetch is already in progress. Check /api/universe/status"}
+        row = udb.execute("SELECT state, updated_at FROM universe_fetch_status WHERE id=1").fetchone()
+        if row and row["state"] == "running":
+            # Check if stale (no update in 15 minutes = dead process)
+            try:
+                from datetime import datetime, timedelta
+                last_update = datetime.fromisoformat(row["updated_at"])
+                if datetime.utcnow() - last_update < timedelta(minutes=15):
+                    udb.close()
+                    return {"status": "already_running", "message": "Fetch is already in progress. Check /api/universe/status"}
+                else:
+                    # Stale — mark as crashed and allow re-trigger
+                    udb.execute("UPDATE universe_fetch_status SET state='crashed', current_batch='stale process detected' WHERE id=1")
+                    udb.commit()
+            except Exception:
+                udb.close()
+                return {"status": "already_running", "message": "Fetch is already in progress. Check /api/universe/status"}
         udb.close()
     except Exception:
         pass
