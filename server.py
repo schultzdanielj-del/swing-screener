@@ -1278,11 +1278,6 @@ async def run_query(request: Request):
     except Exception as e:
         return {"error": str(e)}
 
-
-# Serve frontend (MUST be last - catches all routes)
-app.mount("/", StaticFiles(directory="app", html=True), name="frontend")
-
-
 # ---------------------------------------------------------------------------
 # FAST DTSS CONDITION TESTER
 # ---------------------------------------------------------------------------
@@ -1456,3 +1451,7 @@ async def test_dtss_conditions(request: Request):
         },
         "tickers": ticker_list
     }
+
+
+# Serve frontend (MUST be last - catches all routes)
+app.mount("/", StaticFiles(directory="app", html=True), name="frontend")
