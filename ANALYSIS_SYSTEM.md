@@ -34,6 +34,10 @@ This gives a general starting point to understand what the setup looks like nume
 
 ## Step 3: Find PCF Conditions That Match ALL Examples
 
+**Goal:** Use PCF conditions to find charts that look close to the exact shape of all validated setups — nothing else. The scan should surface charts that visually match the setup pattern and filter out everything that doesn't.
+
+**Don't care about stops at this stage.** Stop placement, risk sizing, and trade management come later in Steps 6-7. This step is purely about identifying the right chart shape.
+
 Write PCF conditions that:
 1. **Pass every single validated example** — zero false negatives
 2. **Produce a small enough result set** when scanned against only the most recent day of the tradable universe (not historical — just today's data). This simulates what the nightly scan would return.
