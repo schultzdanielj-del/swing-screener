@@ -1253,10 +1253,6 @@ async def backtest_summary():
         return {"error": str(e)}
 
 
-# Serve frontend
-app.mount("/", StaticFiles(directory="app", html=True), name="frontend")
-
-
 # ---------------------------------------------------------------------------
 # FAST SQL QUERY ENDPOINT
 # ---------------------------------------------------------------------------
@@ -1281,3 +1277,7 @@ async def run_query(request: Request):
             return {"count": len(results), "results": results[:100]}
     except Exception as e:
         return {"error": str(e)}
+
+
+# Serve frontend (MUST be last - catches all routes)
+app.mount("/", StaticFiles(directory="app", html=True), name="frontend")
