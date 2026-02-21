@@ -1030,6 +1030,88 @@ async def scan_3_4db_results():
 
 # ---------------------------------------------------------------------------
 # ============================================
+# DTSS SCAN ENDPOINTS
+# ============================================
+
+@app.post("/api/scan/dtss")
+async def scan_dtss(background_tasks: BackgroundTasks, days: int = 77):
+    """Kick off DTSS scan in background."""
+    from scripts.scan_dtss import run_scan
+
+    def _run():
+        try:
+            db = sqlite3.connect(str(DB_PATH), timeout=30)
+            db.execute("""CREATE TABLE IF NOT EXISTS scan_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_type TEXT, ticker TEXT, date TEXT, close REAL,
+                atr14 REAL, volume INTEGER, avgv20 INTEGER,
+                pct_above_sma50 REAL, pct_above_sma200 REAL, retracement REAL,
+                scanned_at TEXT
+            )""")
+            db.execute("DELETE FROM scan_results WHERE scan_type='dtss'")
+            db.commit()
+
+            sdf = run_scan(lookback_days=days, db_path=str(DB_PATH))
+
+            if not sdf.empty:
+                now = datetime.utcnow().isoformat()
+                rows = []
+                for _, s in sdf.iterrows():
+                    rows.append((
+                        "dtss", s["ticker"], s["date"], s["close"],
+                        s["atr14"], int(s["volume"]), int(s["avgv20"]),
+                        s.get("range20_atr", 0), s.get("h_from_low65", 0),
+                        s.get("near_high", 0), now
+                    ))
+                db.executemany(
+                    "INSERT INTO scan_results (scan_type, ticker, date, close, atr14, volume, avgv20, pct_above_sma50, pct_above_sma200, retracement, scanned_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    rows
+                )
+                db.commit()
+            db.close()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+
+    background_tasks.add_task(_run)
+    return {"status": "started", "message": f"Scanning universe for DTSS setups (last {days} days). Check GET /api/scan/dtss/results"}
+
+
+@app.get("/api/scan/dtss/results")
+async def scan_dtss_results():
+    """Get stored DTSS scan results."""
+    try:
+        with get_db() as db:
+            exists = db.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='scan_results'").fetchone()[0]
+            if not exists:
+                return {"signals": [], "count": 0, "message": "No scan has been run yet. POST /api/scan/dtss"}
+
+            rows = db.execute(
+                "SELECT ticker, date, close, atr14, volume, avgv20, "
+                "pct_above_sma50 as range20_atr, pct_above_sma200 as h_from_low65, "
+                "retracement as near_high, scanned_at "
+                "FROM scan_results WHERE scan_type='dtss' ORDER BY date DESC, ticker"
+            ).fetchall()
+
+            signals = [dict(r) for r in rows]
+            scanned_at = signals[0]["scanned_at"] if signals else None
+
+            date_counts = {}
+            for s in signals:
+                date_counts[s["date"]] = date_counts.get(s["date"], 0) + 1
+
+            return {
+                "count": len(signals),
+                "signals": signals,
+                "dates": date_counts,
+                "scanned_at": scanned_at
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# ============================================
 # BACKTEST ENDPOINTS
 # ============================================
 
