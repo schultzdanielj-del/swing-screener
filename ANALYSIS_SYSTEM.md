@@ -36,7 +36,7 @@ This gives a general starting point to understand what the setup looks like nume
 
 Write PCF conditions that:
 1. **Pass every single validated example** — zero false negatives
-2. **Produce a small enough result set** when scanned against the most current day of tradable tickers
+2. **Produce a small enough result set** when scanned against only the most recent day of the tradable universe (not historical — just today's data). This simulates what the nightly scan would return.
 
 Rules:
 - All conditions are **normalized for ATR or ADR** — no fixed dollar or percentage thresholds. This ensures the scan catches correctly shaped charts regardless of price level.
