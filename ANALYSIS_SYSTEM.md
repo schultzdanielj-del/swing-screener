@@ -25,7 +25,7 @@ Before starting any setup analysis, load `ta_knowledge.md` for full TA context �
 
 The user presents:
 - **Setup description** — what the pattern is, what it looks like, why it works
-- **Validated examples** — tickers with confirmed entry dates
+- **Validated examples** — tickers with confirmed entry dates. **Remember: entry date = the day the trade is entered at the open. The scan candle is the trading day BEFORE the entry date.**
 - **Any additional TA context** — LSP levels, channel structure, key relationships specific to this setup type
 
 This gives a general starting point to understand what the setup looks like numerically. Ask questions if anything is unclear about the pattern mechanics or what distinguishes a good example from a bad one.
@@ -38,15 +38,26 @@ This gives a general starting point to understand what the setup looks like nume
 
 **Don't care about stops at this stage.** Stop placement, risk sizing, and trade management come later in Steps 6-7. This step is purely about identifying the right chart shape.
 
+### ⚠️ CRITICAL: Scan Timing — The #1 Rule of Condition Building
+
+**The scan runs AFTER market close the night BEFORE the entry.** The entry happens the next morning at the open. This means:
+
+- **The scan candle = 1 trading day BEFORE the entry date.** If the entry date is Tuesday, the scan ran Monday night using Monday's completed bar.
+- **ZERO entry candle data can be used in scan conditions.** The entry candle hasn't happened yet when the scan runs. Its Open, High, Low, Close, Volume — none of it exists at scan time.
+- **When analyzing examples:** if the example has `entry_date = 2024-05-22`, all conditions must be tested against the bar for `2024-05-21` (or the prior trading day). The scan is looking for charts that look like the setup **1-2 days before the entry**, not on the entry day itself.
+- **Candle shape conditions** (close position, upper wick, H-C rejection, range) describe the SCAN candle, not the entry candle. These are characteristics of the day the scan fires, which is the day before entry.
+
+**Every time you write analysis code, verify you are using index `entry_idx - 1` (or the equivalent prior trading day) for all condition checks. Using `entry_idx` is WRONG and will produce conditions that can't work in real-time scanning.**
+
 Write PCF conditions that:
-1. **Pass every single validated example** — zero false negatives
+1. **Pass every single validated example** — zero false negatives — **when tested on the scan bar (1 day before entry)**
 2. **Produce a small enough result set** when scanned against only the most recent day of the tradable universe (not historical — just today's data). This simulates what the nightly scan would return.
 
 Rules:
 - All conditions are **normalized for ATR or ADR** — no fixed dollar or percentage thresholds. This ensures the scan catches correctly shaped charts regardless of price level.
 - **Eliminate duplicate ETFs** — use the underlying stock. Don't trade inverse ETFs.
 - **Ask about biotech exclusions** — sometimes we exclude them (binary overnight risk), sometimes not. Depends on the setup type.
-- Test each condition against ALL examples with real OHLCV data before proposing it.
+- Test each condition against ALL examples with real OHLCV data before proposing it. **Always on the scan bar, never on the entry bar.**
 - **NEVER present a PCF condition backed by a hit rate (e.g. "26/26" or "92%") unless you have actually tested it against the data and verified the number.** No guessing, no estimating, no rounding. If you haven't run the test, don't claim a hit rate.
 - **When presenting conditions, always run a single consolidated test script against the full merged dataset at that moment.** Never answer from memory or partial results from earlier in the conversation.
 
