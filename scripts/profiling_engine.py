@@ -345,17 +345,64 @@ class ProfilingEngine:
         return data.get("results", [])
 
     def _fetch_ohlcv(self, ticker: str, end_date: str, lookback: int = MAX_LOOKBACK) -> pd.DataFrame:
-        """Fetch OHLCV data for a ticker ending on end_date with enough lookback."""
-        resp = requests.get(
-            f"{self.api_base}/api/ohlcv/bulk/{ticker}",
-            params={"end_date": end_date, "lookback": lookback},
-            timeout=30
-        )
-        data = resp.json()
-        rows = data.get("results", [])
-        if not rows:
+        """Fetch OHLCV data for a ticker ending on end_date with enough lookback.
+        Tries bulk endpoint first, falls back to chunked queries."""
+        # Try bulk endpoint first
+        try:
+            resp = requests.get(
+                f"{self.api_base}/api/ohlcv/bulk/{ticker}",
+                params={"end_date": end_date, "lookback": lookback},
+                timeout=30
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                rows = data.get("results", [])
+                if rows:
+                    df = pd.DataFrame(rows)
+                    df['date'] = pd.to_datetime(df['date'])
+                    df = df.sort_values('date').reset_index(drop=True)
+                    for col in ['open', 'high', 'low', 'close', 'volume']:
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+                    return df
+        except Exception:
+            pass
+
+        # Fallback: use /api/query with chunked approach
+        # The query endpoint returns max 100 rows, so we need multiple queries
+        all_rows = []
+        current_end = end_date
+        remaining = lookback
+        max_attempts = 5  # Prevent infinite loops
+
+        for _ in range(max_attempts):
+            if remaining <= 0:
+                break
+            batch_size = min(remaining, 100)
+            rows = self._query(
+                f"SELECT date, open, high, low, close, volume "
+                f"FROM universe_ohlcv "
+                f"WHERE ticker='{ticker}' AND date<='{current_end}' "
+                f"ORDER BY date DESC LIMIT {batch_size}"
+            )
+            if not rows:
+                break
+            all_rows.extend(rows)
+            remaining -= len(rows)
+            if len(rows) < batch_size:
+                break  # No more data
+            # Next chunk starts before the oldest date in this batch
+            current_end = rows[-1]['date']
+            # Shift back 1 day to avoid overlap
+            from datetime import datetime, timedelta
+            dt = datetime.strptime(current_end, '%Y-%m-%d') - timedelta(days=1)
+            current_end = dt.strftime('%Y-%m-%d')
+
+        if not all_rows:
             return pd.DataFrame()
-        df = pd.DataFrame(rows)
+
+        df = pd.DataFrame(all_rows)
+        # Deduplicate (overlapping dates from chunks)
+        df = df.drop_duplicates(subset=['date'])
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values('date').reset_index(drop=True)
         for col in ['open', 'high', 'low', 'close', 'volume']:
