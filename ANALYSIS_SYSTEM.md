@@ -48,6 +48,7 @@ Rules:
 - **Ask about biotech exclusions** — sometimes we exclude them (binary overnight risk), sometimes not. Depends on the setup type.
 - Test each condition against ALL examples with real OHLCV data before proposing it.
 - **NEVER present a PCF condition backed by a hit rate (e.g. "26/26" or "92%") unless you have actually tested it against the data and verified the number.** No guessing, no estimating, no rounding. If you haven't run the test, don't claim a hit rate.
+- **When presenting conditions, always run a single consolidated test script against the full merged dataset at that moment.** Never answer from memory or partial results from earlier in the conversation.
 
 ---
 
