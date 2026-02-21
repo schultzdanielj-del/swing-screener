@@ -1279,6 +1279,60 @@ async def run_query(request: Request):
         return {"error": str(e)}
 
 # ---------------------------------------------------------------------------
+# PROFILING ENGINE SUPPORT
+# ---------------------------------------------------------------------------
+
+@app.post("/api/query/bulk")
+async def run_query_bulk(request: Request):
+    """Run a read-only SQL query with higher row limit (for profiling engine)."""
+    body = await request.json()
+    sql = body.get("sql", "")
+    limit = min(body.get("limit", 1000), 5000)  # Max 5000 rows
+    if not sql:
+        return {"error": "No SQL provided"}
+    sql_lower = sql.strip().lower()
+    if not sql_lower.startswith("select"):
+        return {"error": "Only SELECT queries allowed"}
+    try:
+        with get_db() as db:
+            rows = db.execute(sql).fetchall()
+            results = [dict(r) for r in rows]
+            return {"count": len(results), "results": results[:limit]}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/ohlcv/bulk/{ticker}")
+async def get_ohlcv_bulk(ticker: str, end_date: str = Query(None),
+                         lookback: int = Query(250)):
+    """Fetch OHLCV data for a ticker with configurable lookback.
+    Returns up to `lookback` bars ending on `end_date`."""
+    lookback = min(lookback, 1500)
+    try:
+        with get_db() as db:
+            if end_date:
+                rows = db.execute(
+                    "SELECT date, open, high, low, close, volume "
+                    "FROM universe_ohlcv "
+                    "WHERE ticker=? AND date<=? "
+                    "ORDER BY date DESC LIMIT ?",
+                    (ticker, end_date, lookback)
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT date, open, high, low, close, volume "
+                    "FROM universe_ohlcv "
+                    "WHERE ticker=? "
+                    "ORDER BY date DESC LIMIT ?",
+                    (ticker, lookback)
+                ).fetchall()
+            results = [dict(r) for r in rows]
+            return {"count": len(results), "results": results}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # FAST DTSS CONDITION TESTER
 # ---------------------------------------------------------------------------
 
