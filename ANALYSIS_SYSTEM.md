@@ -47,6 +47,7 @@ Rules:
 - **Eliminate duplicate ETFs** — use the underlying stock. Don't trade inverse ETFs.
 - **Ask about biotech exclusions** — sometimes we exclude them (binary overnight risk), sometimes not. Depends on the setup type.
 - Test each condition against ALL examples with real OHLCV data before proposing it.
+- **NEVER present a PCF condition backed by a hit rate (e.g. "26/26" or "92%") unless you have actually tested it against the data and verified the number.** No guessing, no estimating, no rounding. If you haven't run the test, don't claim a hit rate.
 
 ---
 
