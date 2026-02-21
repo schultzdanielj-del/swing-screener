@@ -77,7 +77,13 @@ This gives a general starting point to understand what the setup looks like nume
 - SinceTrue patterns: `SinceTrue(C > MAXHx.1, y)` (bars since new high)
 - Consecutive patterns: `TrueInRow(C < C1, x)` (consecutive down days)
 
-**Layer 3 — Offset comparisons (rate of change of indicators):**
+**Layer 3 — Market context (SPY/QQQ from universe_ohlcv):**
+- All Layer 1 and Layer 2 measurements computed for SPY and QQQ on the same scan bar
+- Stock-vs-market relative measurements: stock RSI minus SPY RSI, stock extension vs SPY extension, stock pullback depth vs market pullback depth
+- Market regime indicators: SPY distance from 50/200 SMA, SPY MA slope, QQQ above/below key MAs
+- Correlation: is the stock pulling back WITH the market or AGAINST it
+
+**Layer 4 — Offset comparisons (rate of change of indicators):**
 - Indicator now vs N bars ago for key indicators
 - Acceleration: second derivative of MAs and key indicators
 
