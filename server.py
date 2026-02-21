@@ -561,6 +561,7 @@ async def delete_example(setup_type: str, example_id: int):
 
 class UpdateEntryRequest(BaseModel):
     entry_date: str
+    ticker: str = None
 
 @app.patch("/api/examples/{setup_type}/{example_id}")
 async def update_entry_date(setup_type: str, example_id: int, req: UpdateEntryRequest):
@@ -572,7 +573,9 @@ async def update_entry_date(setup_type: str, example_id: int, req: UpdateEntryRe
     with get_db() as db:
         ex = db.execute("SELECT id, ticker, chart_date, entry_date FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
         if not ex: raise HTTPException(404)
-        ticker = ex["ticker"]
+        ticker = req.ticker if req.ticker else ex["ticker"]
+        if req.ticker and req.ticker != ex["ticker"]:
+            db.execute("UPDATE examples SET ticker=? WHERE id=?", (req.ticker, example_id))
 
         # Check if new entry_date falls outside the existing OHLCV range
         ohlcv_range = db.execute("SELECT MIN(date) as min_d, MAX(date) as max_d FROM ohlcv WHERE example_id=?", (example_id,)).fetchone()
