@@ -128,7 +128,7 @@ This is where the playbook entry gets finalized:
 
 - **ATR** = `ATR14` (NOT AVGT14, AVG14, or AVGT)
 - **EMA** = `XAVGC` (NOT EAVG or XAVG). e.g. EMA21 = `XAVGC21`
-- Always present PCF code in a code block so user can copy with one click
+- **Always present each PCF condition as its own individual code block** so the user can single-click copy each one. Never inline PCF in prose or combine multiple conditions in one block. Each condition = its own code block.
 
 ## Reference: ScanPerfect App
 
