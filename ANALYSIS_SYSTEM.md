@@ -117,3 +117,29 @@ This is where the playbook entry gets finalized:
 | 7 | Optimize EV through management grid search in best conditions |
 
 **The output is a complete playbook entry:** best setups × best markets × best management = highest EV possible.
+
+---
+
+## Reference: TC2000 PCF Syntax
+
+- **ATR** = `ATR14` (NOT AVGT14, AVG14, or AVGT)
+- **EMA** = `XAVGC` (NOT EAVG or XAVG). e.g. EMA21 = `XAVGC21`
+- Always present PCF code in a code block so user can copy with one click
+
+## Reference: ScanPerfect App
+
+- **URL:** web-production-e3025.up.railway.app
+- **Key API endpoints:**
+  - `GET /api/setups` — list setup types
+  - `GET /api/examples/{type}` — list examples for a setup
+  - `GET /api/conditions/{type}` — get conditions for a setup
+  - `GET /api/ohlcv/local/{type}/{id}` — OHLCV data for an example
+  - `GET /api/extension-data/{type}/{id}` — extension analysis
+  - `GET /api/tradable` — tradable universe
+  - `GET /api/universe/status` — universe data status
+  - `GET /api/backtest/summary` — backtest results summary
+  - `POST /api/backtest/run` — run backtest
+  - `GET /api/chart-image/{type}/{id}` — chart image
+  - `GET /docs` — full Swagger API docs
+- **Infrastructure:** SQLite on Railway persistent volume (/app/data)
+- **DB tables:** examples, ohlcv, extension, conditions, signal_analysis, universe_ohlcv, tradable_universe, scan_backtest, scan_backtest_clean, ticker_sectors, backtest_status

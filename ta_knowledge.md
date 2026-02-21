@@ -206,3 +206,6 @@
 | Highest High N bars | MAXHN |
 | Lowest Low N bars | MINLN |
 | Offset by N bars | .N suffix (e.g. MAXH20.20) |
+
+## 3-4DB Pattern Insights
+- Best-profit 3-4DB setups bounce approximately 50% of the measured move (pivot low to pivot high). Validate across remaining examples.
