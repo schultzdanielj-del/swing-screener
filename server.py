@@ -1255,3 +1255,29 @@ async def backtest_summary():
 
 # Serve frontend
 app.mount("/", StaticFiles(directory="app", html=True), name="frontend")
+
+
+# ---------------------------------------------------------------------------
+# FAST SQL QUERY ENDPOINT
+# ---------------------------------------------------------------------------
+
+@app.post("/api/query")
+async def run_query(request: Request):
+    """Run a read-only SQL query against the database. Returns rows and count."""
+    body = await request.json()
+    sql = body.get("sql", "")
+    if not sql:
+        return {"error": "No SQL provided"}
+    
+    # Safety: read-only
+    sql_lower = sql.strip().lower()
+    if not sql_lower.startswith("select"):
+        return {"error": "Only SELECT queries allowed"}
+    
+    try:
+        with get_db() as db:
+            rows = db.execute(sql).fetchall()
+            results = [dict(r) for r in rows]
+            return {"count": len(results), "results": results[:100]}
+    except Exception as e:
+        return {"error": str(e)}
