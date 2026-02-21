@@ -1281,3 +1281,178 @@ async def run_query(request: Request):
 
 # Serve frontend (MUST be last - catches all routes)
 app.mount("/", StaticFiles(directory="app", html=True), name="frontend")
+
+
+# ---------------------------------------------------------------------------
+# FAST DTSS CONDITION TESTER
+# ---------------------------------------------------------------------------
+
+@app.post("/api/scan/dtss/test")
+async def test_dtss_conditions(request: Request):
+    """
+    Fast condition tester. Pass JSON with threshold overrides.
+    Scans last N bars of ALL universe tickers, returns count + ticker list.
+    Defaults match the 12 validated conditions.
+    """
+    import numpy as np
+    
+    body = await request.json()
+    days = body.get("days", 5)  # only check last N trading days
+    
+    # Thresholds (all in ATR multiples unless noted)
+    slope_min = body.get("slope_min", -0.2)
+    range20_min = body.get("range20_min", 3.0)
+    near_high_max = body.get("near_high_max", 3.0)
+    candle_min = body.get("candle_min", 0.6)
+    hc_min = body.get("hc_min", 0.05)
+    hcho_min = body.get("hcho_min", 0.5)
+    pullback = body.get("pullback", True)  # MINC15 < EMA8
+    vol_floor = body.get("vol_floor", 0.5)
+    vol_cap = body.get("vol_cap", 3.0)
+    up5_min = body.get("up5_min", 1)
+    h_minl65_min = body.get("h_minl65_min", 3.0)
+    c_minl65_min = body.get("c_minl65_min", 2.5)
+    
+    # Conditions to skip (pass list of names to disable)
+    skip = set(body.get("skip", []))
+    
+    db = sqlite3.connect(str(DB_PATH), timeout=60)
+    
+    # Get most recent date
+    max_date = db.execute("SELECT MAX(date) FROM universe_ohlcv").fetchone()[0]
+    
+    # Get all tickers
+    tickers = [r[0] for r in db.execute("SELECT DISTINCT ticker FROM universe_ohlcv").fetchall()]
+    
+    signals = []
+    
+    for ticker in tickers:
+        rows = db.execute(
+            "SELECT date, open, high, low, close, volume FROM universe_ohlcv WHERE ticker=? ORDER BY date",
+            (ticker,)
+        ).fetchall()
+        
+        n = len(rows)
+        if n < 100:
+            continue
+        
+        # Convert to arrays for speed
+        dates = [r[0] for r in rows]
+        O = np.array([r[1] for r in rows], dtype=float)
+        H = np.array([r[2] for r in rows], dtype=float)
+        L = np.array([r[3] for r in rows], dtype=float)
+        C = np.array([r[4] for r in rows], dtype=float)
+        V = np.array([r[5] for r in rows], dtype=float)
+        
+        # ATR14
+        tr = np.maximum(H[1:] - L[1:], np.maximum(np.abs(H[1:] - C[:-1]), np.abs(L[1:] - C[:-1])))
+        tr = np.concatenate([[H[0]-L[0]], tr])
+        atr = np.full(n, np.nan)
+        atr[13] = np.mean(tr[:14])
+        for j in range(14, n):
+            atr[j] = (atr[j-1] * 13 + tr[j]) / 14
+        
+        # SMA50
+        sma50 = np.full(n, np.nan)
+        cs = np.cumsum(C)
+        sma50[49:] = (cs[49:] - np.concatenate([[0], cs[:n-50]])) / 50
+        
+        # EMA8
+        ema8 = np.full(n, np.nan)
+        ema8[7] = np.mean(C[:8])
+        mult = 2.0 / 9.0
+        for j in range(8, n):
+            ema8[j] = C[j] * mult + ema8[j-1] * (1 - mult)
+        
+        # AvgV20
+        avgv = np.full(n, np.nan)
+        vs = np.cumsum(V)
+        avgv[19:] = (vs[19:] - np.concatenate([[0], vs[:n-20]])) / 20
+        
+        # Only check last `days` bars
+        start_idx = max(65, n - days)
+        
+        for i in range(start_idx, n):
+            if np.isnan(atr[i]) or atr[i] <= 0: continue
+            if np.isnan(sma50[i]) or np.isnan(ema8[i]) or np.isnan(avgv[i]): continue
+            if i < 65: continue
+            
+            a = atr[i]
+            
+            # 1. SMA50 slope
+            if "slope" not in skip:
+                if i < 60 or np.isnan(sma50[i-10]): continue
+                if not (sma50[i] > sma50[i-10] - slope_min * a): continue
+            
+            # 2. Range20
+            if "range20" not in skip:
+                maxh20 = np.max(H[max(0,i-19):i+1])
+                minl20 = np.min(L[max(0,i-19):i+1])
+                if not ((maxh20 - minl20) > range20_min * a): continue
+            else:
+                maxh20 = np.max(H[max(0,i-19):i+1])
+            
+            # 3. Near high
+            if "near_high" not in skip:
+                if 'maxh20' not in dir(): maxh20 = np.max(H[max(0,i-19):i+1])
+                if not ((maxh20 - H[i]) < near_high_max * a): continue
+            
+            # 4. Candle size
+            if "candle" not in skip:
+                if not ((H[i] - L[i]) >= candle_min * a): continue
+            
+            # 5. H-C
+            if "hc" not in skip:
+                if not ((H[i] - C[i]) >= hc_min * a): continue
+            
+            # 6. HC+HO
+            if "hcho" not in skip:
+                if not ((H[i]-C[i]) + (H[i]-O[i]) >= hcho_min * a): continue
+            
+            # 7. Pullback
+            if "pullback" not in skip and pullback:
+                minc15 = np.min(C[max(0,i-14):i+1])
+                if not (minc15 < ema8[i]): continue
+            
+            # 8. Vol floor
+            if "vol_floor" not in skip:
+                if not (V[i] > vol_floor * avgv[i]): continue
+            
+            # 9. Vol cap
+            if "vol_cap" not in skip:
+                if not (V[i] < vol_cap * avgv[i]): continue
+            
+            # 10. Up bars
+            if "up5" not in skip:
+                up = sum(1 for j in range(1,6) if i-j>=0 and C[i-j+1]>C[i-j])
+                if not (up >= up5_min): continue
+            
+            # 11. H - MINL65
+            if "h_minl65" not in skip:
+                minl65 = np.min(L[max(0,i-64):i+1])
+                if not ((H[i] - minl65) > h_minl65_min * a): continue
+            
+            # 12. C - MINL65
+            if "c_minl65" not in skip:
+                if 'minl65' not in dir(): minl65 = np.min(L[max(0,i-64):i+1])
+                if not ((C[i] - minl65) > c_minl65_min * a): continue
+            
+            signals.append({"ticker": ticker, "date": dates[i], "close": round(float(C[i]),2)})
+            break  # one signal per ticker is enough for counting
+    
+    db.close()
+    
+    ticker_list = [s["ticker"] for s in signals]
+    return {
+        "count": len(signals),
+        "days_scanned": days,
+        "thresholds": {
+            "slope_min": slope_min, "range20_min": range20_min,
+            "near_high_max": near_high_max, "candle_min": candle_min,
+            "hc_min": hc_min, "hcho_min": hcho_min,
+            "pullback": pullback, "vol_floor": vol_floor, "vol_cap": vol_cap,
+            "up5_min": up5_min, "h_minl65_min": h_minl65_min, "c_minl65_min": c_minl65_min,
+            "skip": list(skip)
+        },
+        "tickers": ticker_list
+    }
