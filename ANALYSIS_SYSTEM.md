@@ -261,7 +261,7 @@ The system described above requires these components to be built. Work them in o
 
 | # | Component | Status | Description |
 |---|-----------|--------|-------------|
-| 1 | **Profiling Engine** | NOT STARTED | Python implementation of every PCF indicator with full period sweeps. Computes Layer 1-4 measurements for any set of tickers on given dates. Output: wide DataFrame, thousands of columns. |
+| 1 | **Profiling Engine** | ✅ DONE | `scripts/profiling_engine.py` — computes 506 numeric measurements per ticker-date across 4 layers. Layer 1: raw indicators (MA/EMA/FWMA/HMA sweeps, ATR, RSI, MACD, Stoch, CCI, ADX, BB, Aroon, BOP, OBV). Layer 2: derived (extension, pullback, MA slopes/spreads, vol ratios, candle shape, CountTrue/SinceTrue/TrueInRow, ROC, CMF, Kaufman, VWAP dist, Elder, PPO/PVO, Williams %R, hist vol). Layer 3: SPY/QQQ context + relative measures. Layer 4: indicator rate of change. Uses `/api/ohlcv/bulk` with chunked fallback. ~1.6s per ticker. |
 | 2 | **Discovery Engine** | NOT STARTED | Takes profiling matrix, scores each feature for consistency (tight clustering across examples) and selectivity (rare in universe). Ranks features, extracts thresholds. Output: ranked feature report. |
 | 3 | **Outcome Precomputation** | NOT STARTED | For every signal, compute MFE/MAE/P&L at each bar for 30 days post-entry. New DB table. Runs for examples first, then all historical signals after validation. |
 | 4 | **Management Optimizer** | NOT STARTED | Exhaustive sweep of all stop/target/trail/time/partial combinations against precomputed outcome data. Ranks by EV, identifies robust parameter plateaus. |
