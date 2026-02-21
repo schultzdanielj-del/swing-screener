@@ -4,7 +4,17 @@
 
 ---
 
-## The Goal
+## The Grand Goal
+
+Find the biggest winning moves in the market — long and short — and work **backwards** from those to discover every reliable way to get into them. Then manage mechanically.
+
+Individual setups (3-4DB, DTSS, HTF, and ones not yet discovered) are not standalone strategies. They are **different entry paths into the same winning trades.** The setups are doors — the moves are the room.
+
+This means Claude needs two capabilities:
+1. **Deep knowledge of all known setups** — their conditions, when they work, how to manage them
+2. **Deep knowledge of TA principles** — to recognize new entry paths that don't match any existing setup template
+
+The bottom-up work (building individual setups through Phases 1-7 below) feeds the top-down work (identifying the biggest moves and reverse engineering every entry). Everything converges.
 
 **Best setups × Best markets × Best management = Highest EV possible**
 
