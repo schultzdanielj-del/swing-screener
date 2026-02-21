@@ -29,6 +29,14 @@ The user presents:
 - **Validated examples** — tickers with confirmed entry dates. **Remember: entry date = the day the trade is entered at the open. The scan candle is the trading day BEFORE the entry date.**
 - **Any additional TA context** — LSP levels, channel structure, key relationships specific to this setup type
 
+**Outcome data:** For every example (and later, every historical signal), precompute forward outcome data from entry using OHLCV data already in the system:
+- Max Favorable Excursion (MFE) in ATR units at each bar from entry day 1 through day 30
+- Max Adverse Excursion (MAE) in ATR units at each bar from entry day 1 through day 30
+- Close-to-close P&L in ATR units at each bar
+- Bar-by-bar high, low, close relative to entry price
+
+This precomputed outcome matrix enables exhaustive management optimization in Step 8 — every stop/target/time combination is just a query against these numbers, not a simulation.
+
 This gives a general starting point to understand what the setup looks like numerically. Ask questions if anything is unclear about the pattern mechanics or what distinguishes a good example from a bad one.
 
 ### ⚠️ CRITICAL: Scan Timing — The #1 Rule
@@ -198,21 +206,35 @@ Present this to the user. This is the "here's what your examples have in common 
 
 ---
 
-## Step 8: EV Optimization — Trade Management
+## Step 8: EV Optimization — Brute Force Trade Management
 
-**Goal:** Find the trade management approach that maximizes expected value per trade.
+**Goal:** Find the absolute best trade management strategy by exhaustively testing every possible combination against precomputed outcome data.
 
 Using the historical signals from Step 7, filtered to the highest-success market conditions:
 
-1. **Test trade management variations** — different stop types, exit types, time stops
-2. **Find the combination** of conditions + market filter + management that produces the best win rate AND profit per trade
-3. **Measure EV per trade in ATR units** — the universal measure across all setups
+**The management variable space:**
+- **Stop distance:** Every 0.25 ATR increment from 0.25 to 5.0 ATR (20 values), plus MA-based stops (prior day low, entry candle low, each MA from 8 EMA through 50 SMA)
+- **Target distance:** Every 0.25 ATR increment from 0.5 to 10.0 ATR (38 values), plus structure-based targets (prior swing low, MA levels)
+- **Time stop:** Exit if nothing happened after N days, from 1 to 30 (30 values)
+- **Trailing stop type:** Fixed ATR trail at every increment, trail at each MA, step-up trail (move stop to breakeven after 1R, etc.), no trail (~15 variations)
+- **Partial exits:** Take half at various R levels and trail rest, full position to target, scale out in thirds (~10 variations)
+
+**Process:**
+
+1. **Test every combination** against the precomputed MFE/MAE outcome matrix for every signal. Each combination is just array math — no simulation needed. Hundreds of thousands of combinations, runs in seconds.
+
+2. **Rank by EV per trade in ATR units.** The universal measure across all setups. Also measure win rate, average winner size, average loser size, max drawdown, profit factor.
+
+3. **Identify the top cluster** — not just the single best, but the region of management parameters that consistently produces high EV. A strategy that's optimal at exactly 1.73 ATR stop but falls apart at 1.74 is fragile. Look for broad plateaus of good performance.
+
+4. **Validate robustness:** The best management strategy should work across different time periods and market conditions, not just on the best-case signals.
 
 **Output:** The complete playbook entry:
-- **Setup conditions** (what to scan for)
-- **Market conditions** (when to trade it)
-- **Management rules** (how to manage the trade)
-- **Expected EV** (what to expect per trade)
+- **Setup conditions** (what to scan for — from Step 5)
+- **Market conditions** (when to trade it — from Step 7)
+- **Management rules** (exact stop, target, trail, time stop, partial rules — from this step)
+- **Expected EV per trade** in ATR units
+- **Win rate, profit factor, max drawdown** for the chosen management approach
 
 ---
 
