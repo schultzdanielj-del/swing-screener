@@ -255,7 +255,19 @@ Using the historical signals from Step 7, filtered to the highest-success market
 
 ---
 
-## Reference: ScanPerfect App
+## Build TODO
+
+The system described above requires these components to be built. Work them in order — each one depends on the previous.
+
+| # | Component | Status | Description |
+|---|-----------|--------|-------------|
+| 1 | **Profiling Engine** | NOT STARTED | Python implementation of every PCF indicator with full period sweeps. Computes Layer 1-4 measurements for any set of tickers on given dates. Output: wide DataFrame, thousands of columns. |
+| 2 | **Discovery Engine** | NOT STARTED | Takes profiling matrix, scores each feature for consistency (tight clustering across examples) and selectivity (rare in universe). Ranks features, extracts thresholds. Output: ranked feature report. |
+| 3 | **Outcome Precomputation** | NOT STARTED | For every signal, compute MFE/MAE/P&L at each bar for 30 days post-entry. New DB table. Runs for examples first, then all historical signals after validation. |
+| 4 | **Management Optimizer** | NOT STARTED | Exhaustive sweep of all stop/target/trail/time/partial combinations against precomputed outcome data. Ranks by EV, identifies robust parameter plateaus. |
+| 5 | **API & DB Integration** | NOT STARTED | Wire engines into Railway app. Store profiling results, discovery results, outcome data in DB. Endpoints to re-run each step. |
+
+**Next step: Build the Profiling Engine (#1).**
 
 - **URL:** web-production-e3025.up.railway.app
 - **Key API endpoints:**
