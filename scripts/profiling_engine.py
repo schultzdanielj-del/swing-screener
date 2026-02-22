@@ -1128,7 +1128,8 @@ class ProfilingEngine:
 
     def profile_universe_sample(self, date: str, n: int = 500,
                                 include_market: bool = True,
-                                progress_callback=None) -> pd.DataFrame:
+                                progress_callback=None,
+                                detect_lsp: bool = False) -> pd.DataFrame:
         """Profile a random sample of the tradable universe on a date.
 
         Args:
@@ -1136,6 +1137,7 @@ class ProfilingEngine:
             n: Number of tickers to sample
             include_market: Whether to compute Layer 3 market context
             progress_callback: Optional fn(current, total, ticker)
+            detect_lsp: If True, run LSP detector on each ticker and compute L5 features
 
         Returns:
             DataFrame with one row per ticker, thousands of columns
@@ -1150,13 +1152,35 @@ class ProfilingEngine:
             for mkt in ['SPY', 'QQQ']:
                 market_dfs[mkt] = self._fetch_ohlcv(mkt, date)
 
+        # Optionally set up LSP detector for universe stocks
+        lsp_detector = None
+        if detect_lsp:
+            try:
+                from scripts.lsp_detector import LSPDetector
+                lsp_detector = LSPDetector(api_base=self.api_base)
+            except ImportError:
+                pass
+
         rows = []
         total = len(tickers)
         for i, ticker in enumerate(tickers):
             if progress_callback:
                 progress_callback(i + 1, total, ticker)
 
-            row = self.profile_ticker_date(ticker, date, market_dfs)
+            # Detect LSP algorithmically for universe stocks
+            meta = None
+            if lsp_detector:
+                try:
+                    detected = lsp_detector.detect_lsp(ticker, date, max_lookback_bars=200, top_n=1)
+                    if detected:
+                        meta = {
+                            'lsp_price': detected[0].price,
+                            'lsp_date': detected[0].date,
+                        }
+                except Exception:
+                    pass  # Skip LSP detection failures silently
+
+            row = self.profile_ticker_date(ticker, date, market_dfs, metadata=meta)
             if row is not None:
                 row['is_example'] = False
                 rows.append(row)

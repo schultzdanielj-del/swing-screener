@@ -33,6 +33,17 @@ from typing import Optional
 # Feature concept groupings — maps column name patterns to TA concepts.
 # Order matters: first match wins.
 CONCEPT_RULES = [
+    # Setup-specific metadata (Layer 5)
+    ("lsp_dist_", "lsp_distance"),
+    ("lsp_valley_", "lsp_valley"),
+    ("lsp_approach_", "lsp_approach"),
+    ("lsp_maxh", "lsp_recent_highs"),
+    ("lsp_sma", "lsp_ma_distance"),
+    ("lsp_close_above_", "lsp_extension"),
+    ("lsp_bars_", "lsp_timing"),
+    ("lsp_pct_", "lsp_distance"),
+    ("lsp_", "lsp_other"),
+
     # Market context (Layer 3)
     ("mkt_rel_", "market_relative"),
     ("spy_", "market_context"),
@@ -375,6 +386,7 @@ class DiscoveryEngine:
             n=universe_n,
             include_market=True,
             progress_callback=progress_callback,
+            detect_lsp=(setup_type == "dtss"),  # Enable LSP detection for DTSS
         )
 
         if universe_df.empty:
