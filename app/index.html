@@ -1151,28 +1151,28 @@
         return () => clearInterval(iv);
       }, [activeSetup, polling]);
 
-      async function startGrind() {
-        try {
-          await fetch(`/api/grinder/jobs/reset?setup_type=${activeSetup}`, {method:'POST'});
-        } catch(e) {}
-        try {
-          const r = await fetch('/api/grinder/jobs', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ setup_type: activeSetup, grind_level: grindLevel, action: 'grind' })
+      function startGrind() {
+        fetch(`/api/grinder/jobs/reset?setup_type=${activeSetup}`, {method:'POST'})
+          .catch(()=>{})
+          .finally(() => {
+            fetch('/api/grinder/jobs', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ setup_type: activeSetup, grind_level: grindLevel, action: 'grind' })
+            }).then(r=>r.json()).then(d => {
+              setPolling(true);
+              setJobStatus({ ...d, status: 'pending', grind_level: grindLevel, progress: {phase:'',progress_pct:0,detail:'Queued...'} });
+            }).catch(e => console.error('startGrind error:', e));
           });
-          const d = await r.json();
-          setPolling(true);
-          setJobStatus({ ...d, status: 'pending', grind_level: grindLevel, progress: {phase:'',progress_pct:0,detail:'Queued...'} });
-        } catch(e) { console.error('startGrind error:', e); }
       }
 
-      async function stopGrind() {
-        try {
-          await fetch(`/api/grinder/jobs/reset?setup_type=${activeSetup}`, {method:'POST'});
-        } catch(e) {}
-        setJobStatus(null);
-        setPolling(false);
+      function stopGrind() {
+        fetch(`/api/grinder/jobs/reset?setup_type=${activeSetup}`, {method:'POST'})
+          .catch(()=>{})
+          .finally(() => {
+            setJobStatus(null);
+            setPolling(false);
+          });
       }
 
       const level = LEVELS[grindLevel - 1];
