@@ -417,6 +417,41 @@ class ProfilingEngine:
         )
         return rows
 
+    def _load_metadata(self, setup_type: str) -> dict:
+        """Load setup-specific metadata for examples.
+
+        For DTSS: loads LSP data from data/dtss_lsp_data.json
+        For other setups: returns empty dict (no metadata yet)
+
+        Returns:
+            Dict keyed by 'TICKER_ENTRYDATE' or 'TICKER' -> metadata dict
+        """
+        import json
+        import os
+
+        metadata_map = {}
+
+        if setup_type == 'dtss':
+            lsp_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                    'data', 'dtss_lsp_data.json')
+            if os.path.exists(lsp_path):
+                with open(lsp_path) as f:
+                    lsp_data = json.load(f)
+                for item in lsp_data:
+                    ticker = item['ticker']
+                    entry_date = item.get('entry_date', '')
+                    meta = {
+                        'lsp_price': item.get('price'),
+                        'lsp_date': item.get('date'),
+                    }
+                    # Key by ticker_entrydate for exact matching
+                    if entry_date:
+                        metadata_map[f"{ticker}_{entry_date}"] = meta
+                    # Also key by ticker alone as fallback
+                    metadata_map[ticker] = meta
+
+        return metadata_map
+
     def _get_tradable_sample(self, date: str, n: int = 500) -> list[str]:
         """Get a random sample of tradable tickers."""
         rows = self._query(
@@ -825,13 +860,15 @@ class ProfilingEngine:
     # ----------------------------------------------------------
 
     def profile_ticker_date(self, ticker: str, target_date: str,
-                            market_dfs: Optional[dict] = None) -> Optional[dict]:
+                            market_dfs: Optional[dict] = None,
+                            metadata: Optional[dict] = None) -> Optional[dict]:
         """Compute the full profile for one ticker on one date.
 
         Args:
             ticker: Stock ticker
             target_date: The scan bar date (1 day BEFORE entry)
             market_dfs: Pre-fetched {ticker: DataFrame} for SPY/QQQ
+            metadata: Setup-specific metadata (e.g. {'lsp_price': 50.89, 'lsp_date': '2025-01-30'})
 
         Returns:
             dict of measurement_name -> value, or None if data insufficient
@@ -897,7 +934,117 @@ class ProfilingEngine:
             l3 = self._compute_layer3(result, market_rows)
             result.update(l3)
 
+        # Layer 5: Setup-specific metadata features (LSP, etc.)
+        if metadata:
+            l5 = self._compute_layer5(df, target_idx, l1, metadata)
+            result.update(l5)
+
         return result
+
+    # Layer 5: Setup-specific metadata features
+    # ----------------------------------------------------------
+
+    def _compute_layer5(self, df: pd.DataFrame, target_idx: int,
+                        l1: dict, metadata: dict) -> dict:
+        """Compute features derived from setup-specific metadata.
+
+        Currently handles:
+        - LSP (Left Side Pivot): distance, overshoot, valley depth, etc.
+
+        Args:
+            df: Full OHLCV DataFrame
+            target_idx: Index of the scan bar
+            metadata: Dict with optional keys like 'lsp_price', 'lsp_date'
+
+        Returns:
+            Dict of feature_name -> value
+        """
+        out = {}
+        scan_close = df.at[target_idx, 'close']
+        scan_high = df.at[target_idx, 'high']
+        scan_low = df.at[target_idx, 'low']
+
+        # Get ATR at scan bar
+        atr14 = l1.get('ATR14')
+        atr_val = float(atr14.iloc[target_idx]) if atr14 is not None and target_idx < len(atr14) and pd.notna(atr14.iloc[target_idx]) else None
+
+        if atr_val is None or atr_val <= 0:
+            return out
+
+        # --- LSP features ---
+        lsp_price = metadata.get('lsp_price')
+        lsp_date_str = metadata.get('lsp_date')
+
+        if lsp_price is not None and lsp_price > 0:
+            lsp_price = float(lsp_price)
+
+            # Distance from scan close to LSP (in ATR units)
+            # Positive = LSP is above current price (approaching from below)
+            # Negative = LSP is below current price (already exceeded)
+            out['lsp_dist_close_atr'] = (lsp_price - scan_close) / atr_val
+
+            # Distance from scan high to LSP
+            out['lsp_dist_high_atr'] = (lsp_price - scan_high) / atr_val
+
+            # LSP as percentage of current price
+            out['lsp_pct_of_close'] = (lsp_price / scan_close - 1.0) * 100
+
+            # Valley depth: deepest pullback between LSP and scan bar
+            if lsp_date_str:
+                lsp_dt = pd.Timestamp(lsp_date_str)
+                lsp_mask = df['date'] <= lsp_dt
+                if lsp_mask.any():
+                    lsp_idx = df.loc[lsp_mask].index[-1]
+                    if lsp_idx < target_idx:
+                        between = df.iloc[lsp_idx:target_idx + 1]
+                        valley_low = between['low'].min()
+                        # Valley depth from LSP (how far did it fall)
+                        out['lsp_valley_depth_atr'] = (lsp_price - valley_low) / atr_val
+                        # Valley depth as % of LSP price
+                        out['lsp_valley_depth_pct'] = (lsp_price - valley_low) / lsp_price * 100
+                        # Valley relative position: where is current price in the LSP-to-valley range
+                        lsp_valley_range = lsp_price - valley_low
+                        if lsp_valley_range > 0:
+                            out['lsp_valley_retracement'] = (scan_close - valley_low) / lsp_valley_range
+                        # Bars since LSP
+                        out['lsp_bars_back'] = target_idx - lsp_idx
+                        # Bars since valley low
+                        valley_idx = between['low'].idxmin()
+                        out['lsp_bars_since_valley'] = target_idx - valley_idx
+
+            # Approach velocity: how fast is price moving toward LSP
+            # (close change over last 3 bars, normalized by ATR)
+            if target_idx >= 3:
+                close_3_ago = df.at[target_idx - 3, 'close']
+                out['lsp_approach_velocity_3bar'] = (scan_close - close_3_ago) / atr_val
+
+            if target_idx >= 5:
+                close_5_ago = df.at[target_idx - 5, 'close']
+                out['lsp_approach_velocity_5bar'] = (scan_close - close_5_ago) / atr_val
+
+            # Extension from 20-day SMA relative to LSP distance
+            sma20 = l1.get('AVGC20')
+            if sma20 is not None and target_idx < len(sma20) and pd.notna(sma20.iloc[target_idx]):
+                sma20_val = float(sma20.iloc[target_idx])
+                out['lsp_sma20_dist_atr'] = (sma20_val - lsp_price) / atr_val  # How far SMA is from LSP
+                out['lsp_close_above_sma20_atr'] = (scan_close - sma20_val) / atr_val  # How extended vs SMA
+
+            # Extension from 50-day SMA relative to LSP distance
+            sma50 = l1.get('AVGC50')
+            if sma50 is not None and target_idx < len(sma50) and pd.notna(sma50.iloc[target_idx]):
+                sma50_val = float(sma50.iloc[target_idx])
+                out['lsp_sma50_dist_atr'] = (sma50_val - lsp_price) / atr_val
+                out['lsp_close_above_sma50_atr'] = (scan_close - sma50_val) / atr_val
+
+            # Recent highs relative to LSP (are we making lower highs approaching?)
+            for lookback in [3, 5, 10]:
+                maxh_key = f'MAXH{lookback}'
+                maxh = l1.get(maxh_key)
+                if maxh is not None and target_idx < len(maxh) and pd.notna(maxh.iloc[target_idx]):
+                    recent_high = float(maxh.iloc[target_idx])
+                    out[f'lsp_maxh{lookback}_dist_atr'] = (lsp_price - recent_high) / atr_val
+
+        return out
 
     # ----------------------------------------------------------
     # Profile all examples for a setup type
@@ -918,6 +1065,9 @@ class ProfilingEngine:
         examples = self._get_examples(setup_type)
         if not examples:
             raise ValueError(f"No examples found for setup type '{setup_type}'")
+
+        # Load setup-specific metadata (LSP data for DTSS, etc.)
+        metadata_map = self._load_metadata(setup_type)
 
         # Pre-fetch market data for the date range
         market_dfs = None
@@ -945,7 +1095,11 @@ class ProfilingEngine:
             if progress_callback:
                 progress_callback(i + 1, total, f"{ticker} ({scan_date})")
 
-            row = self.profile_ticker_date(ticker, scan_date, market_dfs)
+            # Get metadata for this specific example (keyed by ticker+entry_date)
+            meta_key = f"{ticker}_{entry_date}"
+            meta = metadata_map.get(meta_key, metadata_map.get(ticker))
+
+            row = self.profile_ticker_date(ticker, scan_date, market_dfs, metadata=meta)
             if row is not None:
                 row['entry_date'] = entry_date
                 row['scan_date'] = scan_date
