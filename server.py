@@ -1507,5 +1507,297 @@ async def test_dtss_conditions(request: Request):
     }
 
 
+# ===========================================================================
+# ANALYSIS ENGINE ENDPOINTS
+# ===========================================================================
+
+# Initialize analysis tables on import
+try:
+    from scripts.analysis_api import (
+        init_analysis_tables, run_profiling, run_discovery,
+        run_outcomes, run_optimization, run_full_pipeline,
+        _get_status
+    )
+    init_analysis_tables()
+except Exception as _init_err:
+    print(f"Analysis tables init note: {_init_err}")
+
+
+@app.post("/api/analysis/profile/{setup_type}")
+async def start_profiling(setup_type: str, background_tasks: BackgroundTasks,
+                          universe_n: int = Query(500)):
+    """Run profiling engine on all examples + universe sample. Runs in background."""
+    background_tasks.add_task(run_profiling, setup_type, universe_n)
+    return {
+        "status": "started",
+        "setup_type": setup_type,
+        "universe_n": universe_n,
+        "message": f"Profiling {setup_type}. Check GET /api/analysis/status/{setup_type}/profiling"
+    }
+
+
+@app.post("/api/analysis/discover/{setup_type}")
+async def start_discovery(setup_type: str, background_tasks: BackgroundTasks):
+    """Run discovery engine on stored profiling data. Requires profiling first."""
+    background_tasks.add_task(run_discovery, setup_type)
+    return {
+        "status": "started",
+        "setup_type": setup_type,
+        "message": f"Discovery for {setup_type}. Check GET /api/analysis/status/{setup_type}/discovery"
+    }
+
+
+@app.post("/api/analysis/outcomes/{setup_type}")
+async def start_outcomes(setup_type: str, background_tasks: BackgroundTasks,
+                         source: str = Query("examples"),
+                         limit: int = Query(None)):
+    """Compute forward outcomes. source=examples or source=backtest."""
+    background_tasks.add_task(run_outcomes, setup_type, source, limit)
+    return {
+        "status": "started",
+        "setup_type": setup_type,
+        "source": source,
+        "message": f"Computing {source} outcomes for {setup_type}. Check GET /api/analysis/status/{setup_type}/outcomes"
+    }
+
+
+@app.post("/api/analysis/optimize/{setup_type}")
+async def start_optimization(setup_type: str, background_tasks: BackgroundTasks,
+                              mode: str = Query("quick"),
+                              source: str = Query("examples")):
+    """Run management optimizer. mode=quick (~8K combos) or mode=full (~3.6M combos)."""
+    background_tasks.add_task(run_optimization, setup_type, mode, source)
+    return {
+        "status": "started",
+        "setup_type": setup_type,
+        "mode": mode,
+        "message": f"Optimizing {setup_type} ({mode} mode). Check GET /api/analysis/status/{setup_type}/optimization"
+    }
+
+
+@app.post("/api/analysis/pipeline/{setup_type}")
+async def start_pipeline(setup_type: str, background_tasks: BackgroundTasks,
+                          universe_n: int = Query(500)):
+    """Run full analysis pipeline (profile → discover → outcomes → optimize)."""
+    background_tasks.add_task(run_full_pipeline, setup_type, universe_n)
+    return {
+        "status": "started",
+        "setup_type": setup_type,
+        "message": f"Full pipeline for {setup_type}. Check GET /api/analysis/status/{setup_type}/pipeline"
+    }
+
+
+# --- STATUS ENDPOINTS ---
+
+@app.get("/api/analysis/status/{setup_type}/{engine}")
+async def analysis_status(setup_type: str, engine: str):
+    """Get status of a running or completed analysis job."""
+    try:
+        return _get_status(engine, setup_type)
+    except Exception as e:
+        return {"state": "idle", "error": str(e)}
+
+
+@app.get("/api/analysis/status/{setup_type}")
+async def analysis_status_all(setup_type: str):
+    """Get status of all engines for a setup type."""
+    engines = ["profiling", "discovery", "outcomes", "optimization", "pipeline"]
+    result = {}
+    for eng in engines:
+        try:
+            result[eng] = _get_status(eng, setup_type)
+        except Exception:
+            result[eng] = {"state": "idle"}
+    return result
+
+
+# --- RESULTS ENDPOINTS ---
+
+@app.get("/api/analysis/profiling/{setup_type}")
+async def profiling_results(setup_type: str, examples_only: bool = Query(False)):
+    """Get stored profiling results."""
+    try:
+        with get_db() as db_conn:
+            where = f"WHERE setup_type='{setup_type}'"
+            if examples_only:
+                where += " AND is_example=1"
+            rows = db_conn.execute(
+                f"SELECT ticker, entry_date, scan_date, is_example, computed_at "
+                f"FROM analysis_profiling {where} ORDER BY is_example DESC, ticker"
+            ).fetchall()
+            return {
+                "count": len(rows),
+                "results": [dict(r) for r in rows]
+            }
+    except Exception as e:
+        return {"count": 0, "results": [], "error": str(e)}
+
+
+@app.get("/api/analysis/profiling/{setup_type}/{ticker}")
+async def profiling_detail(setup_type: str, ticker: str):
+    """Get full profiling measurements for a specific ticker."""
+    try:
+        with get_db() as db_conn:
+            row = db_conn.execute(
+                "SELECT * FROM analysis_profiling "
+                "WHERE setup_type=? AND ticker=? AND is_example=1 LIMIT 1",
+                (setup_type, ticker)
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, f"No profiling data for {ticker}")
+            d = dict(row)
+            d['measurements'] = json.loads(d['measurements_json'])
+            del d['measurements_json']
+            return d
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/analysis/discovery/{setup_type}")
+async def discovery_results(setup_type: str, n: int = Query(50)):
+    """Get top discovery features ranked by combined score."""
+    try:
+        with get_db() as db_conn:
+            # Get meta
+            meta = db_conn.execute(
+                "SELECT * FROM analysis_discovery_meta WHERE setup_type=? "
+                "ORDER BY computed_at DESC LIMIT 1",
+                (setup_type,)
+            ).fetchone()
+
+            features = db_conn.execute(
+                "SELECT * FROM analysis_discovery "
+                "WHERE setup_type=? ORDER BY feature_rank LIMIT ?",
+                (setup_type, n)
+            ).fetchall()
+
+            return {
+                "meta": dict(meta) if meta else {},
+                "count": len(features),
+                "features": [dict(f) for f in features]
+            }
+    except Exception as e:
+        return {"meta": {}, "count": 0, "features": [], "error": str(e)}
+
+
+@app.get("/api/analysis/discovery/{setup_type}/concepts")
+async def discovery_by_concept(setup_type: str):
+    """Get discovery features grouped by TA concept."""
+    try:
+        with get_db() as db_conn:
+            features = db_conn.execute(
+                "SELECT * FROM analysis_discovery "
+                "WHERE setup_type=? ORDER BY concept_group, feature_rank",
+                (setup_type,)
+            ).fetchall()
+
+            grouped = {}
+            for f in features:
+                d = dict(f)
+                concept = d.get('concept_group', 'other')
+                grouped.setdefault(concept, []).append(d)
+
+            return {
+                "n_concepts": len(grouped),
+                "concepts": grouped
+            }
+    except Exception as e:
+        return {"n_concepts": 0, "concepts": {}, "error": str(e)}
+
+
+@app.get("/api/analysis/outcomes/{setup_type}")
+async def outcome_results(setup_type: str, source: str = Query("examples")):
+    """Get outcome summary per signal."""
+    try:
+        with get_db() as db_conn:
+            rows = db_conn.execute(
+                "SELECT ticker, entry_date, direction, entry_price, scan_bar_atr, "
+                "bars_available, MAX(mfe) as peak_mfe, MIN(mae) as peak_mae "
+                "FROM signal_outcomes "
+                "WHERE setup_type=? AND source=? "
+                "GROUP BY ticker, entry_date "
+                "ORDER BY ticker, entry_date",
+                (setup_type, source)
+            ).fetchall()
+
+            results = [dict(r) for r in rows]
+
+            # Summary stats
+            if results:
+                mfes = [r['peak_mfe'] for r in results if r['peak_mfe'] is not None]
+                maes = [r['peak_mae'] for r in results if r['peak_mae'] is not None]
+                return {
+                    "count": len(results),
+                    "summary": {
+                        "median_mfe": round(float(np.median(mfes)), 2) if mfes else 0,
+                        "median_mae": round(float(np.median(maes)), 2) if maes else 0,
+                        "mean_mfe": round(float(np.mean(mfes)), 2) if mfes else 0,
+                        "mean_mae": round(float(np.mean(maes)), 2) if maes else 0,
+                    },
+                    "signals": results
+                }
+            return {"count": 0, "signals": []}
+    except Exception as e:
+        return {"count": 0, "signals": [], "error": str(e)}
+
+
+@app.get("/api/analysis/outcomes/{setup_type}/{ticker}")
+async def outcome_detail(setup_type: str, ticker: str,
+                          entry_date: str = Query(None)):
+    """Get bar-by-bar outcome data for a specific signal."""
+    try:
+        with get_db() as db_conn:
+            where = "WHERE setup_type=? AND ticker=?"
+            params = [setup_type, ticker]
+            if entry_date:
+                where += " AND entry_date=?"
+                params.append(entry_date)
+
+            rows = db_conn.execute(
+                f"SELECT * FROM signal_outcomes {where} ORDER BY entry_date, bar_num",
+                params
+            ).fetchall()
+
+            return {
+                "count": len(rows),
+                "bars": [dict(r) for r in rows]
+            }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/analysis/optimization/{setup_type}")
+async def optimization_results(setup_type: str, n: int = Query(20)):
+    """Get top optimization strategies."""
+    try:
+        with get_db() as db_conn:
+            strategies = db_conn.execute(
+                "SELECT * FROM analysis_optimization "
+                "WHERE setup_type=? ORDER BY rank LIMIT ?",
+                (setup_type, n)
+            ).fetchall()
+
+            plateaus = db_conn.execute(
+                "SELECT * FROM analysis_plateaus "
+                "WHERE setup_type=? ORDER BY plateau_rank",
+                (setup_type,)
+            ).fetchall()
+
+            return {
+                "strategies": {
+                    "count": len(strategies),
+                    "results": [dict(s) for s in strategies]
+                },
+                "plateaus": {
+                    "count": len(plateaus),
+                    "results": [dict(p) for p in plateaus]
+                }
+            }
+    except Exception as e:
+        return {"strategies": {"count": 0}, "plateaus": {"count": 0}, "error": str(e)}
+
+
 # Serve frontend (MUST be last - catches all routes)
 app.mount("/", StaticFiles(directory="app", html=True), name="frontend")
