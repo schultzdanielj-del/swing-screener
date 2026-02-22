@@ -1,6 +1,6 @@
 # Local Runner — THE GRINDER
 
-Brute force expression discovery engine. Runs on your desktop for maximum compute power.
+Desktop agent that runs the spiderweb condition search on your machine.
 
 ## Setup (one time)
 
@@ -11,65 +11,46 @@ pip install -r local_runner/requirements.txt
 
 ## Usage
 
-### 1. Build OHLCV cache (first run or daily refresh)
+### Start the agent
 ```bash
-python local_runner/cache_builder.py         # builds if stale (>24h)
-python local_runner/cache_builder.py --force  # force rebuild
-```
-Pulls all 4,167 tradable tickers from Railway DB. Takes ~5-10 min.
-Saves to `local_runner/cache/universe_ohlcv.pkl`
-
-### 2. Generate brute force expressions
-```bash
-python local_runner/brute_expressions.py
-```
-Generates ~1,300+ expressions covering every parameter combination.
-Saves to `local_runner/cache/brute_expressions.json`
-
-### 3. Run THE GRINDER
-
-**Test mode** (quick — 25 expressions, 50 tickers):
-```bash
-python local_runner/grinder.py --test
+python local_runner/agent.py
 ```
 
-**Full run** (all expressions, all tickers):
+Leave it running. It polls Railway every 5 seconds for grind jobs.
+When you click "Start Grind" in the frontend, the agent picks it up.
+
+First run will:
+1. Build OHLCV cache (~3 min, cached for 24h)
+2. Generate expressions (~1,300)
+3. Compute value matrix (~20-45 min, cached until expressions change)
+4. Run spiderweb search (time depends on grind level)
+
+Subsequent runs skip steps 1-3 and go straight to the search.
+
+### Manual run (without agent)
 ```bash
-python local_runner/grinder.py --setup dtss
+python local_runner/grinder.py --setup dtss --level 3
 ```
 
-**Partial run** (all expressions, limited tickers):
-```bash
-python local_runner/grinder.py --setup dtss --max-universe 500
-```
+## Grind Levels
 
-### Output
+| Level | Name | Beam Width | Depth | Est. Time |
+|-------|------|-----------|-------|-----------|
+| 1 | Quick scan | 10 | 5 | ~30s |
+| 2 | Light grind | 25 | 8 | ~2 min |
+| 3 | Medium grind | 50 | 10 | ~10 min |
+| 4 | Heavy grind | 100 | 12 | ~30 min |
+| 5 | Overnight | 250 | 15 | ~2-8 hours |
 
-Results saved to:
-- `local_runner/cache/grinder_results_dtss.json` — scores + rankings
-- `local_runner/cache/grinder_matrix_dtss.pkl` — full value matrices
+## How it works
 
-Top results auto-uploaded to Railway API for dashboard display.
+1. **Expressions**: 1,338 technical measurements (MA slopes, extensions, RSI, volume, patterns)
+2. **Matrix**: Compute every expression for every ticker + every example
+3. **Thresholds**: For each expression, find the value range where ALL examples pass
+4. **Spiderweb**: Search for combinations of conditions that progressively filter the universe
+   - Beam search explores multiple branching paths simultaneously
+   - Each branch adds one more condition (AND logic)
+   - Dead branches pruned when no improvement possible
+   - Higher grind level = more branches explored = better combos found
 
-## What it does
-
-For every expression (1,300+) × every ticker (4,167):
-1. Computes the expression value at the target date
-2. Scores how well it separates setup examples from the general universe
-3. Ranks by combined score: separation × consistency × selectivity
-
-**Score components:**
-- **Separation**: How far apart are example values from universe values? (Cohen's d)
-- **Consistency**: How tightly do examples cluster? (low variance = good)
-- **Selectivity**: What % of universe falls in the example range? (low = good)
-
-The top-scoring expressions are the ones that mathematically describe
-what makes this setup unique. Those become scan conditions.
-
-## Estimated times (desktop)
-
-| Run type | Expressions | Tickers | Time |
-|----------|------------|---------|------|
-| Test | 25 | 50 | ~30s |
-| Partial | 1,338 | 500 | ~5 min |
-| Full | 1,338 | 4,167 | ~45 min |
+The slider controls compute budget. Further right = deeper search = tighter filter.

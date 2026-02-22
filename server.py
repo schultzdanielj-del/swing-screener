@@ -1865,5 +1865,181 @@ async def delete_lsp_entry(setup_type: str, idx: int):
     return {"removed": removed, "remaining": len(data)}
 
 
+# ═══════════════════════════════════════════════════════════
+# GRINDER — Desktop agent job queue
+# ═══════════════════════════════════════════════════════════
+
+GRINDER_JOBS_FILE = os.path.join("data", "grinder_jobs.json")
+GRINDER_RESULTS_FILE = os.path.join("data", "grinder_results.json")
+GRINDER_AGENT_FILE = os.path.join("data", "grinder_agent.json")
+
+import json as _grinder_json
+
+def _load_grinder_json(path, default=None):
+    if default is None:
+        default = {}
+    try:
+        if os.path.exists(path):
+            with open(path) as f:
+                return _grinder_json.load(f)
+    except:
+        pass
+    return default
+
+def _save_grinder_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        _grinder_json.dump(data, f, indent=2, default=str)
+
+
+class GrinderJobRequest(BaseModel):
+    setup_type: str = "dtss"
+    grind_level: int = 3
+    action: str = "grind"
+
+
+@app.post("/api/grinder/jobs")
+async def create_grinder_job(req: GrinderJobRequest):
+    """Create a new grind job for the desktop agent."""
+    jobs = _load_grinder_json(GRINDER_JOBS_FILE, [])
+    for j in jobs:
+        if j.get("setup_type") == req.setup_type and j.get("status") == "pending":
+            j["status"] = "cancelled"
+    job_id = f"{req.setup_type}_{req.action}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    job = {
+        "job_id": job_id,
+        "setup_type": req.setup_type,
+        "grind_level": req.grind_level,
+        "action": req.action,
+        "status": "pending",
+        "created_at": datetime.now().isoformat(),
+        "message": "",
+        "progress": {"phase": "", "progress_pct": 0, "detail": ""},
+    }
+    jobs.append(job)
+    _save_grinder_json(GRINDER_JOBS_FILE, jobs)
+    return {"job_id": job_id, "status": "pending"}
+
+
+@app.get("/api/grinder/jobs/pending")
+async def get_pending_jobs():
+    """Get pending jobs for the desktop agent."""
+    jobs = _load_grinder_json(GRINDER_JOBS_FILE, [])
+    pending = [j for j in jobs if j.get("status") == "pending"]
+    for j in jobs:
+        if j.get("status") == "pending":
+            j["status"] = "claimed"
+    _save_grinder_json(GRINDER_JOBS_FILE, jobs)
+    return {"jobs": pending}
+
+
+@app.post("/api/grinder/status")
+async def update_job_status(request: Request):
+    """Update job status from desktop agent."""
+    body = await request.json()
+    job_id = body.get("job_id")
+    status = body.get("status")
+    message = body.get("message", "")
+    data = body.get("data")
+    jobs = _load_grinder_json(GRINDER_JOBS_FILE, [])
+    for j in jobs:
+        if j.get("job_id") == job_id:
+            j["status"] = status
+            j["message"] = message
+            j["updated_at"] = datetime.now().isoformat()
+            break
+    _save_grinder_json(GRINDER_JOBS_FILE, jobs)
+    if status == "complete" and data:
+        results = _load_grinder_json(GRINDER_RESULTS_FILE, {})
+        setup_type = data.get("setup_type", "unknown")
+        results[setup_type] = data
+        _save_grinder_json(GRINDER_RESULTS_FILE, results)
+    return {"ok": True}
+
+
+@app.post("/api/grinder/progress")
+async def update_job_progress(request: Request):
+    """Update job progress from desktop agent."""
+    body = await request.json()
+    job_id = body.get("job_id")
+    jobs = _load_grinder_json(GRINDER_JOBS_FILE, [])
+    for j in jobs:
+        if j.get("job_id") == job_id:
+            j["progress"] = {
+                "phase": body.get("phase", ""),
+                "progress_pct": body.get("progress_pct", 0),
+                "detail": body.get("detail", ""),
+            }
+            j["updated_at"] = datetime.now().isoformat()
+            break
+    _save_grinder_json(GRINDER_JOBS_FILE, jobs)
+    return {"ok": True}
+
+
+@app.get("/api/grinder/jobs/status")
+async def get_job_status(setup_type: str = Query("dtss")):
+    """Get current/latest job status for frontend polling."""
+    jobs = _load_grinder_json(GRINDER_JOBS_FILE, [])
+    matching = [j for j in jobs if j.get("setup_type") == setup_type]
+    if not matching:
+        return {"status": "none", "job": None}
+    latest = matching[-1]
+    return {"status": latest.get("status"), "job": latest}
+
+
+@app.get("/api/grinder/results/{setup_type}")
+async def get_grinder_results(setup_type: str):
+    """Get grinder results for frontend display."""
+    results = _load_grinder_json(GRINDER_RESULTS_FILE, {})
+    if setup_type not in results:
+        return {"status": "none", "results": None}
+    return {"status": "ok", "results": results[setup_type]}
+
+
+@app.post("/api/grinder/agent/register")
+async def register_agent(request: Request):
+    body = await request.json()
+    _save_grinder_json(GRINDER_AGENT_FILE, body)
+    return {"ok": True}
+
+
+@app.post("/api/grinder/agent/heartbeat")
+async def agent_heartbeat(request: Request):
+    body = await request.json()
+    agent = _load_grinder_json(GRINDER_AGENT_FILE, {})
+    agent["last_heartbeat"] = body.get("timestamp", datetime.now().isoformat())
+    agent["status"] = "online"
+    _save_grinder_json(GRINDER_AGENT_FILE, agent)
+    return {"ok": True}
+
+
+@app.get("/api/grinder/agent/status")
+async def get_agent_status():
+    """Check if desktop agent is online."""
+    agent = _load_grinder_json(GRINDER_AGENT_FILE, {})
+    if not agent:
+        return {"status": "unknown", "agent": None}
+    last_hb = agent.get("last_heartbeat", "")
+    if last_hb:
+        try:
+            hb_time = datetime.fromisoformat(last_hb)
+            if (datetime.now() - hb_time).total_seconds() > 60:
+                agent["status"] = "offline"
+        except:
+            pass
+    return {"status": agent.get("status", "unknown"), "agent": agent}
+
+
+@app.post("/api/analysis/grinder-results")
+async def save_grinder_results(request: Request):
+    """Save grinder results."""
+    body = await request.json()
+    setup_type = body.get("setup_type", "unknown")
+    results = _load_grinder_json(GRINDER_RESULTS_FILE, {})
+    results[setup_type] = body.get("results", body)
+    _save_grinder_json(GRINDER_RESULTS_FILE, results)
+    return {"ok": True, "setup_type": setup_type}
+
+
 # Serve frontend (MUST be last - catches all routes)
 app.mount("/", StaticFiles(directory="app", html=True), name="frontend")

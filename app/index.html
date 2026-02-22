@@ -1116,44 +1116,207 @@
     // CONDITIONS PAGE — Feature 4 placeholder
     // ============================================
     function ConditionsPage({ activeSetup, embedded }) {
-      const pcfStyle = {fontFamily:'var(--font-mono)',fontSize:11,whiteSpace:'nowrap',maxWidth:340,overflow:'hidden',textOverflow:'ellipsis'};
+      const LEVELS = [
+        { id: 1, name: 'Quick scan', time: '~30s', desc: 'Fast check, rough filter' },
+        { id: 2, name: 'Light grind', time: '~2 min', desc: 'Good for iteration' },
+        { id: 3, name: 'Medium grind', time: '~10 min', desc: 'Solid search depth' },
+        { id: 4, name: 'Heavy grind', time: '~30 min', desc: 'Deep combo exploration' },
+        { id: 5, name: 'Overnight', time: '~2-8 hours', desc: 'Maximum depth, best results' },
+      ];
+
+      const [grindLevel, setGrindLevel] = useState(3);
+      const [agentStatus, setAgentStatus] = useState('unknown');
+      const [jobStatus, setJobStatus] = useState(null);
+      const [results, setResults] = useState(null);
+      const [polling, setPolling] = useState(false);
+
+      // Poll agent and job status
+      useEffect(() => {
+        function poll() {
+          fetch('/api/grinder/agent/status').then(r=>r.json()).then(d => setAgentStatus(d.status)).catch(()=>{});
+          fetch(`/api/grinder/jobs/status?setup_type=${activeSetup}`).then(r=>r.json()).then(d => {
+            setJobStatus(d.job);
+            if (d.job && (d.job.status === 'running' || d.job.status === 'claimed')) {
+              setPolling(true);
+            } else {
+              setPolling(false);
+            }
+          }).catch(()=>{});
+          fetch(`/api/grinder/results/${activeSetup}`).then(r=>r.json()).then(d => {
+            if (d.status === 'ok') setResults(d.results);
+          }).catch(()=>{});
+        }
+        poll();
+        const iv = setInterval(poll, polling ? 3000 : 10000);
+        return () => clearInterval(iv);
+      }, [activeSetup, polling]);
+
+      function startGrind() {
+        fetch('/api/grinder/jobs', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ setup_type: activeSetup, grind_level: grindLevel, action: 'grind' })
+        }).then(r=>r.json()).then(d => {
+          setPolling(true);
+          setJobStatus({ ...d, status: 'pending', grind_level: grindLevel, progress: {phase:'',progress_pct:0,detail:'Queued...'} });
+        });
+      }
+
+      const level = LEVELS[grindLevel - 1];
+      const isRunning = jobStatus && (jobStatus.status === 'running' || jobStatus.status === 'claimed' || jobStatus.status === 'pending');
+      const progress = jobStatus?.progress || {};
+      const agentOnline = agentStatus === 'online';
+
       return (
         <div>
-          {activeSetup === '3-4db' ? (
-            <div className="card">
-              <div className="card-title">⚙ Scan Conditions — 3-4DB <span style={{fontWeight:400,color:'var(--text-muted)',fontSize:12,marginLeft:8}}>18 conditions · 14 examples · 2 scan results (2026-02-19)</span></div>
-              <table className="table">
-                <thead>
-                  <tr><th>#</th><th>Name</th><th>PCF</th><th>Hit Rate</th><th>Status</th></tr>
-                </thead>
-                <tbody>
-                  <tr><td>1</td><td>Close above 50 SMA</td><td style={pcfStyle}>C &gt; AVGC50</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>2</td><td>50 SMA rising</td><td style={pcfStyle}>AVGC50 &gt; AVGC50.5</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>3</td><td>Extended above 50 SMA</td><td style={pcfStyle}>C - AVGC50 &gt; 0.3 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>4</td><td>2 of 3 up closes</td><td style={pcfStyle}>(IIF(C1&gt;C2,1,0)+IIF(C2&gt;C3,1,0)+IIF(C3&gt;C4,1,0))&gt;=2</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>5</td><td>Off the low</td><td style={pcfStyle}>MINL3 &lt; MINL2</td><td>13/14</td><td><span className="badge badge-warn">93%</span></td></tr>
-                  <tr><td>6</td><td>Bounced from low</td><td style={pcfStyle}>C - MINL10 &gt; 0.8 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>7</td><td>Rejection from pivot high</td><td style={pcfStyle}>MAXH15 - C &gt; 1.0 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>8</td><td>Had close below 8 EMA</td><td style={pcfStyle}>C1&lt;XAVGC8.1 OR C2&lt;XAVGC8.2 OR ... C15&lt;XAVGC8.15</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>9</td><td>Not at new highs</td><td style={pcfStyle}>MAXH15.2 &gt; MAXH2</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>10</td><td>Dollar volume floor</td><td style={pcfStyle}>AvgC20 * AVGV20 &gt; 5000000</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>11</td><td>Extended above 200 SMA</td><td style={pcfStyle}>C - AVGC200 &gt; 3 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>12</td><td>Peak extension (%price)</td><td style={pcfStyle}>MAXH30 - AVGC50 &gt; 0.30 * C</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>13</td><td>Retracement cap</td><td style={pcfStyle}>(C - MINL10) / (MAXH30 - MINL10) &lt; 0.7</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>14</td><td>Volume below average</td><td style={pcfStyle}>V &lt; AVGV20</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>15</td><td>High near EMA8</td><td style={pcfStyle}>H - XAVGC8 &lt; 1.1 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>16</td><td>Small range candle</td><td style={pcfStyle}>H - L &lt; 1.1 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>17</td><td>Had close below 12 EMA</td><td style={pcfStyle}>C1&lt;XAVGC12.1 OR C2&lt;XAVGC12.2 OR ... C15&lt;XAVGC12.15</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                  <tr><td>18</td><td>Not too far from high</td><td style={pcfStyle}>MAXH30 - C &lt; 4.0 * ATR14</td><td>14/14</td><td><span className="badge badge-pass">100%</span></td></tr>
-                </tbody>
-              </table>
+          {/* Agent Status */}
+          <div className="card" style={{padding:'12px 16px',marginBottom:12,display:'flex',alignItems:'center',gap:12}}>
+            <div style={{width:10,height:10,borderRadius:'50%',background: agentOnline ? '#22c55e' : '#ef4444',flexShrink:0}} />
+            <div style={{fontSize:13}}>
+              <span style={{fontWeight:600}}>Desktop Agent:</span>{' '}
+              <span style={{color: agentOnline ? '#22c55e' : 'var(--text-muted)'}}>{agentOnline ? 'Online' : 'Offline'}</span>
+              {!agentOnline && <span style={{color:'var(--text-muted)',marginLeft:8,fontSize:11}}>Run: python local_runner/agent.py</span>}
             </div>
-          ) : (
-            <div className="card">
+          </div>
+
+          {/* Grinder Control */}
+          <div className="card">
+            <div className="card-title">🕸 The Grinder — Spiderweb Condition Search</div>
+
+            <div style={{padding:'16px 0'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <div style={{fontSize:13,fontWeight:600}}>Grind Level: {grindLevel}</div>
+                <div style={{fontSize:12,color:'var(--text-muted)'}}>{level.name} · {level.time}</div>
+              </div>
+
+              <input type="range" min="1" max="5" value={grindLevel} disabled={isRunning}
+                onChange={e => setGrindLevel(parseInt(e.target.value))}
+                style={{width:'100%',accentColor:'var(--accent)',cursor: isRunning ? 'not-allowed' : 'pointer'}} />
+
+              <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-muted)',marginTop:4}}>
+                <span>Quick</span><span>Light</span><span>Medium</span><span>Heavy</span><span>Overnight</span>
+              </div>
+
+              <div style={{fontSize:12,color:'var(--text-muted)',marginTop:8}}>{level.desc}</div>
+
+              <div style={{marginTop:16,display:'flex',gap:8,alignItems:'center'}}>
+                <button className="btn" onClick={startGrind} disabled={isRunning || !agentOnline}
+                  style={{opacity: (isRunning || !agentOnline) ? 0.5 : 1}}>
+                  {isRunning ? '⏳ Grinding...' : '🚀 Start Grind'}
+                </button>
+                {isRunning && <span style={{fontSize:12,color:'var(--text-muted)'}}>Level {jobStatus?.grind_level || grindLevel}</span>}
+              </div>
+            </div>
+
+            {/* Progress bar */}
+            {isRunning && (
+              <div style={{marginTop:8}}>
+                <div style={{height:6,background:'var(--bg-tertiary)',borderRadius:3,overflow:'hidden'}}>
+                  <div style={{height:'100%',width: `${progress.progress_pct || 0}%`,background:'var(--accent)',borderRadius:3,transition:'width 0.5s ease'}} />
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',marginTop:4,fontSize:11,color:'var(--text-muted)'}}>
+                  <span>{progress.phase || 'Starting...'}</span>
+                  <span>{progress.detail || ''}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Completed status */}
+            {jobStatus?.status === 'complete' && !isRunning && (
+              <div style={{marginTop:8,padding:'8px 12px',background:'rgba(34,197,94,0.1)',borderRadius:6,fontSize:12,color:'#22c55e'}}>
+                ✓ Last grind complete: {jobStatus.message}
+              </div>
+            )}
+            {jobStatus?.status === 'error' && !isRunning && (
+              <div style={{marginTop:8,padding:'8px 12px',background:'rgba(239,68,68,0.1)',borderRadius:6,fontSize:12,color:'#ef4444'}}>
+                ✗ Error: {jobStatus.message}
+              </div>
+            )}
+          </div>
+
+          {/* Results */}
+          {results && results.levels && (
+            <div className="card" style={{marginTop:12}}>
+              <div className="card-title">
+                📊 Results
+                <span style={{fontWeight:400,color:'var(--text-muted)',fontSize:12,marginLeft:8}}>
+                  Level {results.grind_level} · {results.stats?.depth_reached} deep · {results.stats?.nodes_explored?.toLocaleString()} combos tested
+                </span>
+              </div>
+
+              {/* Big number */}
+              <div style={{textAlign:'center',padding:'20px 0'}}>
+                <div style={{fontSize:48,fontWeight:700,color:'var(--accent)'}}>
+                  {(results.best_rate * 100).toFixed(1)}%
+                </div>
+                <div style={{fontSize:14,color:'var(--text-muted)'}}>
+                  {results.best_passing?.toLocaleString()} / {results.stats?.n_universe?.toLocaleString()} tickers pass
+                </div>
+                <div style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>
+                  All {results.stats?.n_examples} examples pass ✓
+                </div>
+              </div>
+
+              {/* Progression chart */}
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:12,fontWeight:600,marginBottom:8}}>Filter Progression</div>
+                <div style={{display:'flex',alignItems:'flex-end',gap:2,height:80}}>
+                  {results.levels.map((lv, i) => {
+                    const h = Math.max(4, lv.best_rate * 100 / (results.levels[0]?.best_rate || 1) * 80);
+                    return (
+                      <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center'}}>
+                        <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2}}>
+                          {(lv.best_rate*100).toFixed(1)}%
+                        </div>
+                        <div style={{width:'100%',height:h,background: i===results.levels.length-1 ? 'var(--accent)' : 'var(--bg-tertiary)',borderRadius:2}} />
+                        <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>{lv.level}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{fontSize:10,color:'var(--text-muted)',textAlign:'center',marginTop:4}}>Conditions stacked →</div>
+              </div>
+
+              {/* Best conditions */}
+              <div>
+                <div style={{fontSize:12,fontWeight:600,marginBottom:8}}>Best Condition Combo ({results.best_thresholds?.length})</div>
+                <table className="table" style={{fontSize:11}}>
+                  <thead>
+                    <tr><th>#</th><th>Category</th><th>Expression</th><th>Range</th></tr>
+                  </thead>
+                  <tbody>
+                    {(results.best_thresholds || []).map((t, i) => (
+                      <tr key={i}>
+                        <td>{i+1}</td>
+                        <td><span className="badge" style={{fontSize:10}}>{t.category}</span></td>
+                        <td style={{fontFamily:'var(--font-mono)',fontSize:10}}>{t.expr}</td>
+                        <td style={{fontFamily:'var(--font-mono)',fontSize:10,whiteSpace:'nowrap'}}>
+                          [{typeof t.low === 'number' ? t.low.toFixed(3) : t.low} — {typeof t.high === 'number' ? t.high.toFixed(3) : t.high}]
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:12}}>
+                Computed {results.timestamp ? new Date(results.timestamp).toLocaleString() : ''} · 
+                {results.stats?.total_time_s ? ` ${(results.stats.total_time_s/60).toFixed(1)} min` : ''}
+              </div>
+            </div>
+          )}
+
+          {/* No results yet */}
+          {!results && !isRunning && (
+            <div className="card" style={{marginTop:12}}>
               <div className="empty-state">
-                <div className="empty-state-icon">⚙</div>
-                <div className="empty-state-title">No conditions defined</div>
-                <div className="empty-state-desc">Add examples first, then build conditions for {SETUP_TYPES[activeSetup].name}.</div>
+                <div className="empty-state-icon">🕸</div>
+                <div className="empty-state-title">No grinder results yet</div>
+                <div className="empty-state-desc">
+                  {agentOnline 
+                    ? 'Set your grind level and hit Start to discover optimal scan conditions.'
+                    : 'Start the desktop agent first: python local_runner/agent.py'}
+                </div>
               </div>
             </div>
           )}
