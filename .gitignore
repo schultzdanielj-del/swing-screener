@@ -32,3 +32,4 @@ input/*.csv
 .DS_Store
 Thumbs.db
 data/ohlcv_cache_universe.json
+local_runner/cache/
