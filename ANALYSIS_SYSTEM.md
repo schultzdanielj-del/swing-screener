@@ -257,17 +257,15 @@ Using the historical signals from Step 7, filtered to the highest-success market
 
 ## Build TODO
 
-The system described above requires these components to be built. Work them in order — each one depends on the previous.
+All 5 core engine components are complete. Pick from these next priorities:
 
-| # | Component | Status | Description |
-|---|-----------|--------|-------------|
-| 1 | **Profiling Engine** | ✅ DONE | `scripts/profiling_engine.py` — computes 506 numeric measurements per ticker-date across 4 layers. Layer 1: raw indicators (MA/EMA/FWMA/HMA sweeps, ATR, RSI, MACD, Stoch, CCI, ADX, BB, Aroon, BOP, OBV). Layer 2: derived (extension, pullback, MA slopes/spreads, vol ratios, candle shape, CountTrue/SinceTrue/TrueInRow, ROC, CMF, Kaufman, VWAP dist, Elder, PPO/PVO, Williams %R, hist vol). Layer 3: SPY/QQQ context + relative measures. Layer 4: indicator rate of change. Uses `/api/ohlcv/bulk` with chunked fallback. ~1.6s per ticker. |
-| 2 | **Discovery Engine** | ✅ DONE | `scripts/discovery_engine.py` — scores every numeric feature for consistency (example spread / universe IQR) × selectivity (% of universe in example range). Product-of-ranks scoring. Extracts thresholds (direction + value) that pass 100% of examples. Features auto-classified into TA concept groups (extension, pullback, MA distance, volume, momentum, etc.). Output: `DiscoveryReport` with ranked features, grouped view, JSON export, and human-readable summary. Can run standalone or use pre-computed DataFrames. |
-| 3 | **Outcome Precomputation** | ✅ DONE | `scripts/outcome_engine.py` — computes forward outcome matrix for any signal. Per bar: MFE, MAE, close P&L, H/L/C vs entry, running best/worst — all in ATR units, sign-adjusted for direction. Configurable forward window (default 60 bars). Batch modes for examples and backtest signals. `outcomes_to_matrix()` converts to numpy arrays for fast management optimization. DB storage via `signal_outcomes` table. CLI: `python -m scripts.outcome_engine {setup} {examples|backtest|single}`. |
-| 4 | **Management Optimizer** | ✅ DONE | `scripts/management_optimizer.py` — exhaustive sweep of stop/target/trail/time/partial combinations against outcome matrices. Full space: 3.6M combos (20 stops × 39 targets × 31 time × 15 trails × 10 partials). Quick mode: ~8.6K combos. Pure numpy array math, no sim loops. Plateau detection finds robust parameter regions. Sensitivity analysis shows which params matter. Playbook export with recommended ranges. Tested on 3-4db: best EV 3.1R, robust plateau 2.6-3.1R. |
-| 5 | **API & DB Integration** | ✅ DONE | `scripts/analysis_api.py` + `scripts/local_db.py` — 14 new endpoints wired into server.py. Background task runners for all 4 engines with status polling. 7 new DB tables (analysis_status, analysis_profiling, analysis_discovery, analysis_discovery_meta, signal_outcomes, analysis_optimization, analysis_plateaus). Full pipeline endpoint runs all 4 steps in sequence. Results stored persistently for retrieval. |
-
-**All build components complete.**
+| # | Task | Description |
+|---|------|-------------|
+| 1 | **Run DTSS through pipeline** | First real end-to-end test. 26 examples → profile → discover → outcomes → optimize via the new API endpoints. |
+| 2 | **3-4DB backtest → optimizer** | Run 800+ backtest signals through outcome precomputation + management optimizer. Get real EV numbers, not just example-only. |
+| 3 | **Market regime analysis (Step 7)** | Build the "when to trade it" filter. 3-4DB showed 6-7x signal spikes during stage transitions — quantify which market conditions produce winners vs losers. |
+| 4 | **Daily scan automation** | Nightly job: run scan conditions against today's data, surface tomorrow's candidates. The whole point of the project. |
+| 5 | **HTF setup examples** | Third setup type has zero examples. Need to collect and load them before any analysis can run. |
 
 - **URL:** web-production-e3025.up.railway.app
 - **Key API endpoints:**
