@@ -24,6 +24,12 @@ import traceback
 import requests
 from datetime import datetime
 
+# Ensure both repo root and local_runner are importable
+LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(LOCAL_DIR)
+sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, LOCAL_DIR)
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
@@ -82,10 +88,10 @@ def check_for_jobs():
 def run_cache_build(job_id):
     """Build/refresh OHLCV cache."""
     post_progress(job_id, "cache", 0, "Building OHLCV cache...")
-    from local_runner.cache_builder import build_cache, cache_is_fresh
+    from cache_builder import build_cache, cache_is_fresh
 
     if cache_is_fresh():
-        from local_runner.cache_builder import load_cache
+        from cache_builder import load_cache
         data = load_cache()
         post_progress(job_id, "cache", 100, f"Cache fresh: {len(data)} tickers")
         return True
@@ -98,7 +104,7 @@ def run_cache_build(job_id):
 def run_expression_gen(job_id):
     """Generate brute force expressions."""
     post_progress(job_id, "expressions", 0, "Generating expressions...")
-    from local_runner.brute_expressions import generate_all
+    from brute_expressions import generate_all
 
     os.makedirs(CACHE_DIR, exist_ok=True)
     exprs = generate_all()
@@ -122,7 +128,7 @@ def run_grind(job_id, setup_type, grind_level):
     import pandas as pd
     import pickle
     from scripts.expression_engine import ExpressionEngine
-    from local_runner.spiderweb import SpiderwebSearch
+    from spiderweb import SpiderwebSearch
 
     GRIND_LEVELS = {
         1: {"name": "Quick scan",    "beam_width": 10,  "depth": 5},
@@ -404,6 +410,8 @@ def main():
             break
         except Exception as e:
             print(f"  Agent error: {e}")
+            import traceback
+            traceback.print_exc()
             time.sleep(POLL_INTERVAL)
 
 
