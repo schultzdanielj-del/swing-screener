@@ -31,3 +31,4 @@ input/*.csv
 # OS
 .DS_Store
 Thumbs.db
+data/ohlcv_cache_universe.json

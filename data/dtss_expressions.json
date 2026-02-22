@@ -1,0 +1,4330 @@
+{
+  "setup_type": "dtss",
+  "total": 385,
+  "by_category": {
+    "near_resistance": 56,
+    "extension_above_mas": 21,
+    "ma_structure": 58,
+    "momentum_stalling": 25,
+    "range_and_channel": 21,
+    "extension_dynamics": 6,
+    "boolean_patterns": 198
+  },
+  "expressions": [
+    {
+      "name": "near_res_c_maxh5_atr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH5, normalized by atr14",
+      "pcf_hint": "(MAXH5 - C) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 5,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh5_adr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH5, normalized by adr14",
+      "pcf_hint": "(MAXH5 - C) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 5,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh5_pct",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH5, normalized by pct",
+      "pcf_hint": "(MAXH5 - C) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 5,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_h_maxh5_atr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH5, normalized by atr14",
+      "pcf_hint": "(MAXH5 - H) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 5,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh5_adr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH5, normalized by adr14",
+      "pcf_hint": "(MAXH5 - H) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 5,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh5_pct",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH5, normalized by pct",
+      "pcf_hint": "(MAXH5 - H) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 5,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_c_maxh10_atr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH10, normalized by atr14",
+      "pcf_hint": "(MAXH10 - C) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 10,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh10_adr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH10, normalized by adr14",
+      "pcf_hint": "(MAXH10 - C) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 10,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh10_pct",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH10, normalized by pct",
+      "pcf_hint": "(MAXH10 - C) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 10,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_h_maxh10_atr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH10, normalized by atr14",
+      "pcf_hint": "(MAXH10 - H) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 10,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh10_adr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH10, normalized by adr14",
+      "pcf_hint": "(MAXH10 - H) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 10,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh10_pct",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH10, normalized by pct",
+      "pcf_hint": "(MAXH10 - H) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 10,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_c_maxh15_atr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH15, normalized by atr14",
+      "pcf_hint": "(MAXH15 - C) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 15,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh15_adr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH15, normalized by adr14",
+      "pcf_hint": "(MAXH15 - C) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 15,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh15_pct",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH15, normalized by pct",
+      "pcf_hint": "(MAXH15 - C) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 15,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_h_maxh15_atr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH15, normalized by atr14",
+      "pcf_hint": "(MAXH15 - H) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 15,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh15_adr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH15, normalized by adr14",
+      "pcf_hint": "(MAXH15 - H) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 15,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh15_pct",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH15, normalized by pct",
+      "pcf_hint": "(MAXH15 - H) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 15,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_c_maxh20_atr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH20, normalized by atr14",
+      "pcf_hint": "(MAXH20 - C) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 20,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh20_adr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH20, normalized by adr14",
+      "pcf_hint": "(MAXH20 - C) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 20,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh20_pct",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH20, normalized by pct",
+      "pcf_hint": "(MAXH20 - C) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 20,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_h_maxh20_atr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH20, normalized by atr14",
+      "pcf_hint": "(MAXH20 - H) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 20,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh20_adr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH20, normalized by adr14",
+      "pcf_hint": "(MAXH20 - H) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 20,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh20_pct",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH20, normalized by pct",
+      "pcf_hint": "(MAXH20 - H) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 20,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_c_maxh30_atr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH30, normalized by atr14",
+      "pcf_hint": "(MAXH30 - C) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 30,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh30_adr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH30, normalized by adr14",
+      "pcf_hint": "(MAXH30 - C) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 30,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh30_pct",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH30, normalized by pct",
+      "pcf_hint": "(MAXH30 - C) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 30,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_h_maxh30_atr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH30, normalized by atr14",
+      "pcf_hint": "(MAXH30 - H) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 30,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh30_adr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH30, normalized by adr14",
+      "pcf_hint": "(MAXH30 - H) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 30,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh30_pct",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH30, normalized by pct",
+      "pcf_hint": "(MAXH30 - H) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 30,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_c_maxh50_atr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH50, normalized by atr14",
+      "pcf_hint": "(MAXH50 - C) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 50,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh50_adr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH50, normalized by adr14",
+      "pcf_hint": "(MAXH50 - C) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 50,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh50_pct",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH50, normalized by pct",
+      "pcf_hint": "(MAXH50 - C) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 50,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_h_maxh50_atr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH50, normalized by atr14",
+      "pcf_hint": "(MAXH50 - H) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 50,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh50_adr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH50, normalized by adr14",
+      "pcf_hint": "(MAXH50 - H) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 50,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh50_pct",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH50, normalized by pct",
+      "pcf_hint": "(MAXH50 - H) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 50,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_c_maxh65_atr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH65, normalized by atr14",
+      "pcf_hint": "(MAXH65 - C) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 65,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh65_adr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH65, normalized by adr14",
+      "pcf_hint": "(MAXH65 - C) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 65,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh65_pct",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH65, normalized by pct",
+      "pcf_hint": "(MAXH65 - C) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 65,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_h_maxh65_atr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH65, normalized by atr14",
+      "pcf_hint": "(MAXH65 - H) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 65,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh65_adr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH65, normalized by adr14",
+      "pcf_hint": "(MAXH65 - H) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 65,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh65_pct",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH65, normalized by pct",
+      "pcf_hint": "(MAXH65 - H) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 65,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_c_maxh120_atr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH120, normalized by atr14",
+      "pcf_hint": "(MAXH120 - C) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 120,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh120_adr14",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH120, normalized by adr14",
+      "pcf_hint": "(MAXH120 - C) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 120,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_c_maxh120_pct",
+      "category": "near_resistance",
+      "description": "Distance from C to MAXH120, normalized by pct",
+      "pcf_hint": "(MAXH120 - C) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 120,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_h_maxh120_atr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH120, normalized by atr14",
+      "pcf_hint": "(MAXH120 - H) / ATR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 120,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh120_adr14",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH120, normalized by adr14",
+      "pcf_hint": "(MAXH120 - H) / ADR14",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 120,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "near_res_h_maxh120_pct",
+      "category": "near_resistance",
+      "description": "Distance from H to MAXH120, normalized by pct",
+      "pcf_hint": "(MAXH120 - H) / PCT",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "H",
+        "maxh_period": 120,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "near_res_ratio_maxh5",
+      "category": "near_resistance",
+      "description": "C / MAXH5 ratio (1.0 = at high)",
+      "pcf_hint": "C / MAXH5",
+      "compute": {
+        "op": "ratio_c_maxh",
+        "maxh_period": 5
+      }
+    },
+    {
+      "name": "near_res_ratio_maxh10",
+      "category": "near_resistance",
+      "description": "C / MAXH10 ratio (1.0 = at high)",
+      "pcf_hint": "C / MAXH10",
+      "compute": {
+        "op": "ratio_c_maxh",
+        "maxh_period": 10
+      }
+    },
+    {
+      "name": "near_res_ratio_maxh15",
+      "category": "near_resistance",
+      "description": "C / MAXH15 ratio (1.0 = at high)",
+      "pcf_hint": "C / MAXH15",
+      "compute": {
+        "op": "ratio_c_maxh",
+        "maxh_period": 15
+      }
+    },
+    {
+      "name": "near_res_ratio_maxh20",
+      "category": "near_resistance",
+      "description": "C / MAXH20 ratio (1.0 = at high)",
+      "pcf_hint": "C / MAXH20",
+      "compute": {
+        "op": "ratio_c_maxh",
+        "maxh_period": 20
+      }
+    },
+    {
+      "name": "near_res_ratio_maxh30",
+      "category": "near_resistance",
+      "description": "C / MAXH30 ratio (1.0 = at high)",
+      "pcf_hint": "C / MAXH30",
+      "compute": {
+        "op": "ratio_c_maxh",
+        "maxh_period": 30
+      }
+    },
+    {
+      "name": "near_res_ratio_maxh50",
+      "category": "near_resistance",
+      "description": "C / MAXH50 ratio (1.0 = at high)",
+      "pcf_hint": "C / MAXH50",
+      "compute": {
+        "op": "ratio_c_maxh",
+        "maxh_period": 50
+      }
+    },
+    {
+      "name": "near_res_ratio_maxh65",
+      "category": "near_resistance",
+      "description": "C / MAXH65 ratio (1.0 = at high)",
+      "pcf_hint": "C / MAXH65",
+      "compute": {
+        "op": "ratio_c_maxh",
+        "maxh_period": 65
+      }
+    },
+    {
+      "name": "near_res_ratio_maxh120",
+      "category": "near_resistance",
+      "description": "C / MAXH120 ratio (1.0 = at high)",
+      "pcf_hint": "C / MAXH120",
+      "compute": {
+        "op": "ratio_c_maxh",
+        "maxh_period": 120
+      }
+    },
+    {
+      "name": "ext_avgc50_atr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above AVGC50, in atr14 multiples",
+      "pcf_hint": "(C - AVGC50) / ATR14",
+      "compute": {
+        "op": "extension",
+        "ma": "avgc50",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "ext_avgc50_adr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above AVGC50, in adr14 multiples",
+      "pcf_hint": "(C - AVGC50) / ADR14",
+      "compute": {
+        "op": "extension",
+        "ma": "avgc50",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "ext_avgc50_pct",
+      "category": "extension_above_mas",
+      "description": "Extension: C above AVGC50, in pct multiples",
+      "pcf_hint": "(C - AVGC50) / PCT",
+      "compute": {
+        "op": "extension",
+        "ma": "avgc50",
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "ext_avgc200_atr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above AVGC200, in atr14 multiples",
+      "pcf_hint": "(C - AVGC200) / ATR14",
+      "compute": {
+        "op": "extension",
+        "ma": "avgc200",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "ext_avgc200_adr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above AVGC200, in adr14 multiples",
+      "pcf_hint": "(C - AVGC200) / ADR14",
+      "compute": {
+        "op": "extension",
+        "ma": "avgc200",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "ext_avgc200_pct",
+      "category": "extension_above_mas",
+      "description": "Extension: C above AVGC200, in pct multiples",
+      "pcf_hint": "(C - AVGC200) / PCT",
+      "compute": {
+        "op": "extension",
+        "ma": "avgc200",
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "ext_xavgc8_atr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC8, in atr14 multiples",
+      "pcf_hint": "(C - XAVGC8) / ATR14",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc8",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "ext_xavgc8_adr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC8, in adr14 multiples",
+      "pcf_hint": "(C - XAVGC8) / ADR14",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc8",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "ext_xavgc8_pct",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC8, in pct multiples",
+      "pcf_hint": "(C - XAVGC8) / PCT",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc8",
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "ext_xavgc21_atr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC21, in atr14 multiples",
+      "pcf_hint": "(C - XAVGC21) / ATR14",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc21",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "ext_xavgc21_adr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC21, in adr14 multiples",
+      "pcf_hint": "(C - XAVGC21) / ADR14",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc21",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "ext_xavgc21_pct",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC21, in pct multiples",
+      "pcf_hint": "(C - XAVGC21) / PCT",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc21",
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "ext_xavgc50_atr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC50, in atr14 multiples",
+      "pcf_hint": "(C - XAVGC50) / ATR14",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc50",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "ext_xavgc50_adr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC50, in adr14 multiples",
+      "pcf_hint": "(C - XAVGC50) / ADR14",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc50",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "ext_xavgc50_pct",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC50, in pct multiples",
+      "pcf_hint": "(C - XAVGC50) / PCT",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc50",
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "ext_xavgc100_atr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC100, in atr14 multiples",
+      "pcf_hint": "(C - XAVGC100) / ATR14",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc100",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "ext_xavgc100_adr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC100, in adr14 multiples",
+      "pcf_hint": "(C - XAVGC100) / ADR14",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc100",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "ext_xavgc100_pct",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC100, in pct multiples",
+      "pcf_hint": "(C - XAVGC100) / PCT",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc100",
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "ext_xavgc200_atr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC200, in atr14 multiples",
+      "pcf_hint": "(C - XAVGC200) / ATR14",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc200",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "ext_xavgc200_adr14",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC200, in adr14 multiples",
+      "pcf_hint": "(C - XAVGC200) / ADR14",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc200",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "ext_xavgc200_pct",
+      "category": "extension_above_mas",
+      "description": "Extension: C above XAVGC200, in pct multiples",
+      "pcf_hint": "(C - XAVGC200) / PCT",
+      "compute": {
+        "op": "extension",
+        "ma": "xavgc200",
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "slope_xavgc8_off1_atr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC8 over 1 bars, in atr14",
+      "pcf_hint": "(XAVGC8 - XAVGC8.1) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc8",
+        "offset": 1,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_xavgc8_off1_adr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC8 over 1 bars, in adr14",
+      "pcf_hint": "(XAVGC8 - XAVGC8.1) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc8",
+        "offset": 1,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_xavgc8_off5_atr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC8 over 5 bars, in atr14",
+      "pcf_hint": "(XAVGC8 - XAVGC8.5) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc8",
+        "offset": 5,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_xavgc8_off5_adr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC8 over 5 bars, in adr14",
+      "pcf_hint": "(XAVGC8 - XAVGC8.5) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc8",
+        "offset": 5,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_xavgc8_off10_atr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC8 over 10 bars, in atr14",
+      "pcf_hint": "(XAVGC8 - XAVGC8.10) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc8",
+        "offset": 10,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_xavgc8_off10_adr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC8 over 10 bars, in adr14",
+      "pcf_hint": "(XAVGC8 - XAVGC8.10) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc8",
+        "offset": 10,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_xavgc21_off1_atr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC21 over 1 bars, in atr14",
+      "pcf_hint": "(XAVGC21 - XAVGC21.1) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc21",
+        "offset": 1,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_xavgc21_off1_adr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC21 over 1 bars, in adr14",
+      "pcf_hint": "(XAVGC21 - XAVGC21.1) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc21",
+        "offset": 1,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_xavgc21_off5_atr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC21 over 5 bars, in atr14",
+      "pcf_hint": "(XAVGC21 - XAVGC21.5) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc21",
+        "offset": 5,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_xavgc21_off5_adr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC21 over 5 bars, in adr14",
+      "pcf_hint": "(XAVGC21 - XAVGC21.5) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc21",
+        "offset": 5,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_xavgc21_off10_atr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC21 over 10 bars, in atr14",
+      "pcf_hint": "(XAVGC21 - XAVGC21.10) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc21",
+        "offset": 10,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_xavgc21_off10_adr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC21 over 10 bars, in adr14",
+      "pcf_hint": "(XAVGC21 - XAVGC21.10) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc21",
+        "offset": 10,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_xavgc50_off1_atr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC50 over 1 bars, in atr14",
+      "pcf_hint": "(XAVGC50 - XAVGC50.1) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc50",
+        "offset": 1,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_xavgc50_off1_adr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC50 over 1 bars, in adr14",
+      "pcf_hint": "(XAVGC50 - XAVGC50.1) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc50",
+        "offset": 1,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_xavgc50_off5_atr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC50 over 5 bars, in atr14",
+      "pcf_hint": "(XAVGC50 - XAVGC50.5) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc50",
+        "offset": 5,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_xavgc50_off5_adr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC50 over 5 bars, in adr14",
+      "pcf_hint": "(XAVGC50 - XAVGC50.5) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc50",
+        "offset": 5,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_xavgc50_off10_atr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC50 over 10 bars, in atr14",
+      "pcf_hint": "(XAVGC50 - XAVGC50.10) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc50",
+        "offset": 10,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_xavgc50_off10_adr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC50 over 10 bars, in adr14",
+      "pcf_hint": "(XAVGC50 - XAVGC50.10) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc50",
+        "offset": 10,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_xavgc100_off1_atr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC100 over 1 bars, in atr14",
+      "pcf_hint": "(XAVGC100 - XAVGC100.1) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc100",
+        "offset": 1,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_xavgc100_off1_adr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC100 over 1 bars, in adr14",
+      "pcf_hint": "(XAVGC100 - XAVGC100.1) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc100",
+        "offset": 1,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_xavgc100_off5_atr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC100 over 5 bars, in atr14",
+      "pcf_hint": "(XAVGC100 - XAVGC100.5) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc100",
+        "offset": 5,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_xavgc100_off5_adr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC100 over 5 bars, in adr14",
+      "pcf_hint": "(XAVGC100 - XAVGC100.5) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc100",
+        "offset": 5,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_xavgc100_off10_atr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC100 over 10 bars, in atr14",
+      "pcf_hint": "(XAVGC100 - XAVGC100.10) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc100",
+        "offset": 10,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_xavgc100_off10_adr14",
+      "category": "ma_structure",
+      "description": "Slope of XAVGC100 over 10 bars, in adr14",
+      "pcf_hint": "(XAVGC100 - XAVGC100.10) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc100",
+        "offset": 10,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_avgc50_off1_atr14",
+      "category": "ma_structure",
+      "description": "Slope of AVGC50 over 1 bars, in atr14",
+      "pcf_hint": "(AVGC50 - AVGC50.1) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc50",
+        "offset": 1,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_avgc50_off1_adr14",
+      "category": "ma_structure",
+      "description": "Slope of AVGC50 over 1 bars, in adr14",
+      "pcf_hint": "(AVGC50 - AVGC50.1) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc50",
+        "offset": 1,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_avgc50_off5_atr14",
+      "category": "ma_structure",
+      "description": "Slope of AVGC50 over 5 bars, in atr14",
+      "pcf_hint": "(AVGC50 - AVGC50.5) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc50",
+        "offset": 5,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_avgc50_off5_adr14",
+      "category": "ma_structure",
+      "description": "Slope of AVGC50 over 5 bars, in adr14",
+      "pcf_hint": "(AVGC50 - AVGC50.5) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc50",
+        "offset": 5,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_avgc50_off10_atr14",
+      "category": "ma_structure",
+      "description": "Slope of AVGC50 over 10 bars, in atr14",
+      "pcf_hint": "(AVGC50 - AVGC50.10) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc50",
+        "offset": 10,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_avgc50_off10_adr14",
+      "category": "ma_structure",
+      "description": "Slope of AVGC50 over 10 bars, in adr14",
+      "pcf_hint": "(AVGC50 - AVGC50.10) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc50",
+        "offset": 10,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_avgc200_off1_atr14",
+      "category": "ma_structure",
+      "description": "Slope of AVGC200 over 1 bars, in atr14",
+      "pcf_hint": "(AVGC200 - AVGC200.1) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc200",
+        "offset": 1,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_avgc200_off1_adr14",
+      "category": "ma_structure",
+      "description": "Slope of AVGC200 over 1 bars, in adr14",
+      "pcf_hint": "(AVGC200 - AVGC200.1) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc200",
+        "offset": 1,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_avgc200_off5_atr14",
+      "category": "ma_structure",
+      "description": "Slope of AVGC200 over 5 bars, in atr14",
+      "pcf_hint": "(AVGC200 - AVGC200.5) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc200",
+        "offset": 5,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_avgc200_off5_adr14",
+      "category": "ma_structure",
+      "description": "Slope of AVGC200 over 5 bars, in adr14",
+      "pcf_hint": "(AVGC200 - AVGC200.5) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc200",
+        "offset": 5,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "slope_avgc200_off10_atr14",
+      "category": "ma_structure",
+      "description": "Slope of AVGC200 over 10 bars, in atr14",
+      "pcf_hint": "(AVGC200 - AVGC200.10) / ATR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc200",
+        "offset": 10,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "slope_avgc200_off10_adr14",
+      "category": "ma_structure",
+      "description": "Slope of AVGC200 over 10 bars, in adr14",
+      "pcf_hint": "(AVGC200 - AVGC200.10) / ADR14",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc200",
+        "offset": 10,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "spread_xavgc8_xavgc21_atr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC8 minus XAVGC21, in atr14",
+      "pcf_hint": "(XAVGC8 - XAVGC21) / ATR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc8",
+        "ma_slow": "xavgc21",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "spread_xavgc8_xavgc21_adr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC8 minus XAVGC21, in adr14",
+      "pcf_hint": "(XAVGC8 - XAVGC21) / ADR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc8",
+        "ma_slow": "xavgc21",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "spread_xavgc8_xavgc50_atr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC8 minus XAVGC50, in atr14",
+      "pcf_hint": "(XAVGC8 - XAVGC50) / ATR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc8",
+        "ma_slow": "xavgc50",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "spread_xavgc8_xavgc50_adr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC8 minus XAVGC50, in adr14",
+      "pcf_hint": "(XAVGC8 - XAVGC50) / ADR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc8",
+        "ma_slow": "xavgc50",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "spread_xavgc21_xavgc50_atr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC21 minus XAVGC50, in atr14",
+      "pcf_hint": "(XAVGC21 - XAVGC50) / ATR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc21",
+        "ma_slow": "xavgc50",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "spread_xavgc21_xavgc50_adr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC21 minus XAVGC50, in adr14",
+      "pcf_hint": "(XAVGC21 - XAVGC50) / ADR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc21",
+        "ma_slow": "xavgc50",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "spread_xavgc50_xavgc100_atr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC50 minus XAVGC100, in atr14",
+      "pcf_hint": "(XAVGC50 - XAVGC100) / ATR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc50",
+        "ma_slow": "xavgc100",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "spread_xavgc50_xavgc100_adr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC50 minus XAVGC100, in adr14",
+      "pcf_hint": "(XAVGC50 - XAVGC100) / ADR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc50",
+        "ma_slow": "xavgc100",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "spread_xavgc50_xavgc200_atr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC50 minus XAVGC200, in atr14",
+      "pcf_hint": "(XAVGC50 - XAVGC200) / ATR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc50",
+        "ma_slow": "xavgc200",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "spread_xavgc50_xavgc200_adr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC50 minus XAVGC200, in adr14",
+      "pcf_hint": "(XAVGC50 - XAVGC200) / ADR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc50",
+        "ma_slow": "xavgc200",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "spread_xavgc100_xavgc200_atr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC100 minus XAVGC200, in atr14",
+      "pcf_hint": "(XAVGC100 - XAVGC200) / ATR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc100",
+        "ma_slow": "xavgc200",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "spread_xavgc100_xavgc200_adr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC100 minus XAVGC200, in adr14",
+      "pcf_hint": "(XAVGC100 - XAVGC200) / ADR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc100",
+        "ma_slow": "xavgc200",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "spread_avgc50_avgc200_atr14",
+      "category": "ma_structure",
+      "description": "Spread: AVGC50 minus AVGC200, in atr14",
+      "pcf_hint": "(AVGC50 - AVGC200) / ATR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "avgc50",
+        "ma_slow": "avgc200",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "spread_avgc50_avgc200_adr14",
+      "category": "ma_structure",
+      "description": "Spread: AVGC50 minus AVGC200, in adr14",
+      "pcf_hint": "(AVGC50 - AVGC200) / ADR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "avgc50",
+        "ma_slow": "avgc200",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "spread_xavgc8_avgc50_atr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC8 minus AVGC50, in atr14",
+      "pcf_hint": "(XAVGC8 - AVGC50) / ATR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc8",
+        "ma_slow": "avgc50",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "spread_xavgc8_avgc50_adr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC8 minus AVGC50, in adr14",
+      "pcf_hint": "(XAVGC8 - AVGC50) / ADR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc8",
+        "ma_slow": "avgc50",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "spread_xavgc21_avgc200_atr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC21 minus AVGC200, in atr14",
+      "pcf_hint": "(XAVGC21 - AVGC200) / ATR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc21",
+        "ma_slow": "avgc200",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "spread_xavgc21_avgc200_adr14",
+      "category": "ma_structure",
+      "description": "Spread: XAVGC21 minus AVGC200, in adr14",
+      "pcf_hint": "(XAVGC21 - AVGC200) / ADR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "xavgc21",
+        "ma_slow": "avgc200",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "spread_avgc20_avgc50_atr14",
+      "category": "ma_structure",
+      "description": "Spread: AVGC20 minus AVGC50, in atr14",
+      "pcf_hint": "(AVGC20 - AVGC50) / ATR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "avgc20",
+        "ma_slow": "avgc50",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "spread_avgc20_avgc50_adr14",
+      "category": "ma_structure",
+      "description": "Spread: AVGC20 minus AVGC50, in adr14",
+      "pcf_hint": "(AVGC20 - AVGC50) / ADR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "avgc20",
+        "ma_slow": "avgc50",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "spread_avgc50_avgc100_atr14",
+      "category": "ma_structure",
+      "description": "Spread: AVGC50 minus AVGC100, in atr14",
+      "pcf_hint": "(AVGC50 - AVGC100) / ATR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "avgc50",
+        "ma_slow": "avgc100",
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "spread_avgc50_avgc100_adr14",
+      "category": "ma_structure",
+      "description": "Spread: AVGC50 minus AVGC100, in adr14",
+      "pcf_hint": "(AVGC50 - AVGC100) / ADR14",
+      "compute": {
+        "op": "ma_spread",
+        "ma_fast": "avgc50",
+        "ma_slow": "avgc100",
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "roc_3",
+      "category": "momentum_stalling",
+      "description": "Rate of change over 3 bars (%)",
+      "pcf_hint": "100 * (C / C3 - 1)",
+      "compute": {
+        "op": "roc",
+        "period": 3
+      }
+    },
+    {
+      "name": "roc_5",
+      "category": "momentum_stalling",
+      "description": "Rate of change over 5 bars (%)",
+      "pcf_hint": "100 * (C / C5 - 1)",
+      "compute": {
+        "op": "roc",
+        "period": 5
+      }
+    },
+    {
+      "name": "roc_10",
+      "category": "momentum_stalling",
+      "description": "Rate of change over 10 bars (%)",
+      "pcf_hint": "100 * (C / C10 - 1)",
+      "compute": {
+        "op": "roc",
+        "period": 10
+      }
+    },
+    {
+      "name": "roc_20",
+      "category": "momentum_stalling",
+      "description": "Rate of change over 20 bars (%)",
+      "pcf_hint": "100 * (C / C20 - 1)",
+      "compute": {
+        "op": "roc",
+        "period": 20
+      }
+    },
+    {
+      "name": "roc_50",
+      "category": "momentum_stalling",
+      "description": "Rate of change over 50 bars (%)",
+      "pcf_hint": "100 * (C / C50 - 1)",
+      "compute": {
+        "op": "roc",
+        "period": 50
+      }
+    },
+    {
+      "name": "roc_delta_3",
+      "category": "momentum_stalling",
+      "description": "ROC3 change vs 5 bars ago (stalling = negative)",
+      "pcf_hint": "(C/C3 - 1) - (C5/C8 - 1)",
+      "compute": {
+        "op": "roc_delta",
+        "period": 3,
+        "compare_offset": 5
+      }
+    },
+    {
+      "name": "roc_delta_5",
+      "category": "momentum_stalling",
+      "description": "ROC5 change vs 5 bars ago (stalling = negative)",
+      "pcf_hint": "(C/C5 - 1) - (C5/C10 - 1)",
+      "compute": {
+        "op": "roc_delta",
+        "period": 5,
+        "compare_offset": 5
+      }
+    },
+    {
+      "name": "roc_delta_10",
+      "category": "momentum_stalling",
+      "description": "ROC10 change vs 5 bars ago (stalling = negative)",
+      "pcf_hint": "(C/C10 - 1) - (C5/C15 - 1)",
+      "compute": {
+        "op": "roc_delta",
+        "period": 10,
+        "compare_offset": 5
+      }
+    },
+    {
+      "name": "roc_delta_20",
+      "category": "momentum_stalling",
+      "description": "ROC20 change vs 5 bars ago (stalling = negative)",
+      "pcf_hint": "(C/C20 - 1) - (C5/C25 - 1)",
+      "compute": {
+        "op": "roc_delta",
+        "period": 20,
+        "compare_offset": 5
+      }
+    },
+    {
+      "name": "roc_delta_50",
+      "category": "momentum_stalling",
+      "description": "ROC50 change vs 5 bars ago (stalling = negative)",
+      "pcf_hint": "(C/C50 - 1) - (C5/C55 - 1)",
+      "compute": {
+        "op": "roc_delta",
+        "period": 50,
+        "compare_offset": 5
+      }
+    },
+    {
+      "name": "rsi_7",
+      "category": "momentum_stalling",
+      "description": "RSI 7-period",
+      "pcf_hint": "RSI7.1",
+      "compute": {
+        "op": "rsi",
+        "period": 7
+      }
+    },
+    {
+      "name": "rsi_14",
+      "category": "momentum_stalling",
+      "description": "RSI 14-period",
+      "pcf_hint": "RSI14.1",
+      "compute": {
+        "op": "rsi",
+        "period": 14
+      }
+    },
+    {
+      "name": "rsi_21",
+      "category": "momentum_stalling",
+      "description": "RSI 21-period",
+      "pcf_hint": "RSI21.1",
+      "compute": {
+        "op": "rsi",
+        "period": 21
+      }
+    },
+    {
+      "name": "rsi_slope_7",
+      "category": "momentum_stalling",
+      "description": "RSI7 change over 5 bars",
+      "pcf_hint": "RSI7.1 - RSI7.1.5",
+      "compute": {
+        "op": "rsi_slope",
+        "period": 7,
+        "offset": 5
+      }
+    },
+    {
+      "name": "rsi_slope_14",
+      "category": "momentum_stalling",
+      "description": "RSI14 change over 5 bars",
+      "pcf_hint": "RSI14.1 - RSI14.1.5",
+      "compute": {
+        "op": "rsi_slope",
+        "period": 14,
+        "offset": 5
+      }
+    },
+    {
+      "name": "rsi_slope_21",
+      "category": "momentum_stalling",
+      "description": "RSI21 change over 5 bars",
+      "pcf_hint": "RSI21.1 - RSI21.1.5",
+      "compute": {
+        "op": "rsi_slope",
+        "period": 21,
+        "offset": 5
+      }
+    },
+    {
+      "name": "vol_ratio_10",
+      "category": "momentum_stalling",
+      "description": "Volume / AVGV10 ratio",
+      "pcf_hint": "V / AVGV10",
+      "compute": {
+        "op": "volume_ratio",
+        "avg_period": 10
+      }
+    },
+    {
+      "name": "vol_ratio_20",
+      "category": "momentum_stalling",
+      "description": "Volume / AVGV20 ratio",
+      "pcf_hint": "V / AVGV20",
+      "compute": {
+        "op": "volume_ratio",
+        "avg_period": 20
+      }
+    },
+    {
+      "name": "vol_ratio_50",
+      "category": "momentum_stalling",
+      "description": "Volume / AVGV50 ratio",
+      "pcf_hint": "V / AVGV50",
+      "compute": {
+        "op": "volume_ratio",
+        "avg_period": 50
+      }
+    },
+    {
+      "name": "adx_14",
+      "category": "momentum_stalling",
+      "description": "ADX 14-period (trend strength)",
+      "pcf_hint": "ADX14.14",
+      "compute": {
+        "op": "adx",
+        "period": 14
+      }
+    },
+    {
+      "name": "adx_14_slope",
+      "category": "momentum_stalling",
+      "description": "ADX 14 slope over 5 bars (rolling = declining)",
+      "pcf_hint": "ADX14.14 - ADX14.14.5",
+      "compute": {
+        "op": "adx_slope",
+        "period": 14,
+        "offset": 5
+      }
+    },
+    {
+      "name": "di_spread",
+      "category": "momentum_stalling",
+      "description": "DI+ minus DI- (positive = bulls dominate)",
+      "pcf_hint": "DIPLUS14 - DIMINUS14",
+      "compute": {
+        "op": "di_spread",
+        "period": 14
+      }
+    },
+    {
+      "name": "stoch_14",
+      "category": "momentum_stalling",
+      "description": "Stochastic %K 14-period",
+      "pcf_hint": "STOC14.1",
+      "compute": {
+        "op": "stochastic",
+        "period": 14
+      }
+    },
+    {
+      "name": "cci_20",
+      "category": "momentum_stalling",
+      "description": "CCI 20-period",
+      "pcf_hint": "CCI20",
+      "compute": {
+        "op": "cci",
+        "period": 20
+      }
+    },
+    {
+      "name": "bop_14",
+      "category": "momentum_stalling",
+      "description": "Balance of Power 14-period SMA",
+      "pcf_hint": "BOP14",
+      "compute": {
+        "op": "bop",
+        "period": 14
+      }
+    },
+    {
+      "name": "range_pos_20",
+      "category": "range_and_channel",
+      "description": "Position in 20-bar range (0=low, 1=high)",
+      "pcf_hint": "(C - MINL20) / (MAXH20 - MINL20)",
+      "compute": {
+        "op": "range_position",
+        "period": 20
+      }
+    },
+    {
+      "name": "range_pos_65",
+      "category": "range_and_channel",
+      "description": "Position in 65-bar range (0=low, 1=high)",
+      "pcf_hint": "(C - MINL65) / (MAXH65 - MINL65)",
+      "compute": {
+        "op": "range_position",
+        "period": 65
+      }
+    },
+    {
+      "name": "range_pos_120",
+      "category": "range_and_channel",
+      "description": "Position in 120-bar range (0=low, 1=high)",
+      "pcf_hint": "(C - MINL120) / (MAXH120 - MINL120)",
+      "compute": {
+        "op": "range_position",
+        "period": 120
+      }
+    },
+    {
+      "name": "pullback_20_atr14",
+      "category": "range_and_channel",
+      "description": "Pullback from 20-bar high, in atr14",
+      "pcf_hint": "(MAXH20 - C) / ATR14",
+      "compute": {
+        "op": "pullback",
+        "period": 20,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "pullback_20_adr14",
+      "category": "range_and_channel",
+      "description": "Pullback from 20-bar high, in adr14",
+      "pcf_hint": "(MAXH20 - C) / ADR14",
+      "compute": {
+        "op": "pullback",
+        "period": 20,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "pullback_20_pct",
+      "category": "range_and_channel",
+      "description": "Pullback from 20-bar high, in pct",
+      "pcf_hint": "(MAXH20 - C) / PCT",
+      "compute": {
+        "op": "pullback",
+        "period": 20,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "pullback_30_atr14",
+      "category": "range_and_channel",
+      "description": "Pullback from 30-bar high, in atr14",
+      "pcf_hint": "(MAXH30 - C) / ATR14",
+      "compute": {
+        "op": "pullback",
+        "period": 30,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "pullback_30_adr14",
+      "category": "range_and_channel",
+      "description": "Pullback from 30-bar high, in adr14",
+      "pcf_hint": "(MAXH30 - C) / ADR14",
+      "compute": {
+        "op": "pullback",
+        "period": 30,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "pullback_30_pct",
+      "category": "range_and_channel",
+      "description": "Pullback from 30-bar high, in pct",
+      "pcf_hint": "(MAXH30 - C) / PCT",
+      "compute": {
+        "op": "pullback",
+        "period": 30,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "pullback_65_atr14",
+      "category": "range_and_channel",
+      "description": "Pullback from 65-bar high, in atr14",
+      "pcf_hint": "(MAXH65 - C) / ATR14",
+      "compute": {
+        "op": "pullback",
+        "period": 65,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "pullback_65_adr14",
+      "category": "range_and_channel",
+      "description": "Pullback from 65-bar high, in adr14",
+      "pcf_hint": "(MAXH65 - C) / ADR14",
+      "compute": {
+        "op": "pullback",
+        "period": 65,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "pullback_65_pct",
+      "category": "range_and_channel",
+      "description": "Pullback from 65-bar high, in pct",
+      "pcf_hint": "(MAXH65 - C) / PCT",
+      "compute": {
+        "op": "pullback",
+        "period": 65,
+        "normalizer": "pct"
+      }
+    },
+    {
+      "name": "range_width_20_atr14",
+      "category": "range_and_channel",
+      "description": "Range width 20-bar in ATR14 (squeeze = small)",
+      "pcf_hint": "(MAXH20 - MINL20) / ATR14",
+      "compute": {
+        "op": "range_width",
+        "period": 20,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "range_width_65_atr14",
+      "category": "range_and_channel",
+      "description": "Range width 65-bar in ATR14 (squeeze = small)",
+      "pcf_hint": "(MAXH65 - MINL65) / ATR14",
+      "compute": {
+        "op": "range_width",
+        "period": 65,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "range_width_120_atr14",
+      "category": "range_and_channel",
+      "description": "Range width 120-bar in ATR14 (squeeze = small)",
+      "pcf_hint": "(MAXH120 - MINL120) / ATR14",
+      "compute": {
+        "op": "range_width",
+        "period": 120,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "channel_slope_highs_10",
+      "category": "range_and_channel",
+      "description": "Slope of 10-bar highs (flat top = double top)",
+      "pcf_hint": "(MAXH10 - MAXH10.10) / ATR14",
+      "compute": {
+        "op": "channel_slope",
+        "ref": "maxh",
+        "period": 10,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "channel_slope_highs_20",
+      "category": "range_and_channel",
+      "description": "Slope of 20-bar highs (flat top = double top)",
+      "pcf_hint": "(MAXH20 - MAXH20.20) / ATR14",
+      "compute": {
+        "op": "channel_slope",
+        "ref": "maxh",
+        "period": 20,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "channel_slope_highs_30",
+      "category": "range_and_channel",
+      "description": "Slope of 30-bar highs (flat top = double top)",
+      "pcf_hint": "(MAXH30 - MAXH30.30) / ATR14",
+      "compute": {
+        "op": "channel_slope",
+        "ref": "maxh",
+        "period": 30,
+        "normalizer": "atr14"
+      }
+    },
+    {
+      "name": "candle_range_atr",
+      "category": "range_and_channel",
+      "description": "Today's range / ATR14 (small = indecision)",
+      "pcf_hint": "(H - L) / ATR14",
+      "compute": {
+        "op": "candle_range_ratio"
+      }
+    },
+    {
+      "name": "body_range_ratio",
+      "category": "range_and_channel",
+      "description": "Body / range ratio (small body = doji at top)",
+      "pcf_hint": "ABS(C - O) / (H - L)",
+      "compute": {
+        "op": "body_range_ratio"
+      }
+    },
+    {
+      "name": "upper_wick_ratio",
+      "category": "range_and_channel",
+      "description": "Upper wick / range (big = rejection)",
+      "pcf_hint": "(H - GREATEST(C, O)) / (H - L)",
+      "compute": {
+        "op": "upper_wick_ratio"
+      }
+    },
+    {
+      "name": "ext_slope_avgc50_off5",
+      "category": "extension_dynamics",
+      "description": "Extension slope: (C-AVGC50) change over 5 bars, in ADR14",
+      "pcf_hint": "((C - AVGC50) - (C5 - AVGC50.5)) / ADR14",
+      "compute": {
+        "op": "extension_slope",
+        "ma": "avgc50",
+        "offset": 5,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "ext_slope_avgc50_off10",
+      "category": "extension_dynamics",
+      "description": "Extension slope: (C-AVGC50) change over 10 bars, in ADR14",
+      "pcf_hint": "((C - AVGC50) - (C10 - AVGC50.10)) / ADR14",
+      "compute": {
+        "op": "extension_slope",
+        "ma": "avgc50",
+        "offset": 10,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "ext_slope_xavgc50_off5",
+      "category": "extension_dynamics",
+      "description": "Extension slope: (C-XAVGC50) change over 5 bars, in ADR14",
+      "pcf_hint": "((C - XAVGC50) - (C5 - XAVGC50.5)) / ADR14",
+      "compute": {
+        "op": "extension_slope",
+        "ma": "xavgc50",
+        "offset": 5,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "ext_slope_xavgc50_off10",
+      "category": "extension_dynamics",
+      "description": "Extension slope: (C-XAVGC50) change over 10 bars, in ADR14",
+      "pcf_hint": "((C - XAVGC50) - (C10 - XAVGC50.10)) / ADR14",
+      "compute": {
+        "op": "extension_slope",
+        "ma": "xavgc50",
+        "offset": 10,
+        "normalizer": "adr14"
+      }
+    },
+    {
+      "name": "ext_peak_ratio_avgc50",
+      "category": "extension_dynamics",
+      "description": "Current ext from AVGC50 / max ext in 20 bars (< 1 = declining from peak)",
+      "pcf_hint": "(C - AVGC50) / MAX(C - AVGC50, 20)",
+      "compute": {
+        "op": "extension_peak_ratio",
+        "ma": "avgc50",
+        "lookback": 20
+      }
+    },
+    {
+      "name": "ext_peak_ratio_xavgc50",
+      "category": "extension_dynamics",
+      "description": "Current ext from XAVGC50 / max ext in 20 bars (< 1 = declining from peak)",
+      "pcf_hint": "(C - XAVGC50) / MAX(C - XAVGC50, 20)",
+      "compute": {
+        "op": "extension_peak_ratio",
+        "ma": "xavgc50",
+        "lookback": 20
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc8_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc8, 5)",
+      "pcf_hint": "CountTrue(c_gt_xavgc8, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc8",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc8_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc8, 10)",
+      "pcf_hint": "CountTrue(c_gt_xavgc8, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc8",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc8_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc8, 15)",
+      "pcf_hint": "CountTrue(c_gt_xavgc8, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc8",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc8_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc8, 20)",
+      "pcf_hint": "CountTrue(c_gt_xavgc8, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc8",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_gt_xavgc8_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_gt_xavgc8, 20)",
+      "pcf_hint": "SinceTrue(c_gt_xavgc8, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_xavgc8",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_gt_xavgc8_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_gt_xavgc8, 20)",
+      "pcf_hint": "TrueInRow(c_gt_xavgc8, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_gt_xavgc8",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc21_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc21, 5)",
+      "pcf_hint": "CountTrue(c_gt_xavgc21, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc21",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc21_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc21, 10)",
+      "pcf_hint": "CountTrue(c_gt_xavgc21, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc21",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc21_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc21, 15)",
+      "pcf_hint": "CountTrue(c_gt_xavgc21, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc21",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc21_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc21, 20)",
+      "pcf_hint": "CountTrue(c_gt_xavgc21, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc21",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_gt_xavgc21_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_gt_xavgc21, 20)",
+      "pcf_hint": "SinceTrue(c_gt_xavgc21, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_xavgc21",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_gt_xavgc21_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_gt_xavgc21, 20)",
+      "pcf_hint": "TrueInRow(c_gt_xavgc21, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_gt_xavgc21",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_gt_avgc50_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_avgc50, 5)",
+      "pcf_hint": "CountTrue(c_gt_avgc50, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_avgc50",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_gt_avgc50_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_avgc50, 10)",
+      "pcf_hint": "CountTrue(c_gt_avgc50, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_avgc50",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_gt_avgc50_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_avgc50, 15)",
+      "pcf_hint": "CountTrue(c_gt_avgc50, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_avgc50",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_gt_avgc50_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_avgc50, 20)",
+      "pcf_hint": "CountTrue(c_gt_avgc50, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_avgc50",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_gt_avgc50_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_gt_avgc50, 20)",
+      "pcf_hint": "SinceTrue(c_gt_avgc50, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_avgc50",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_gt_avgc50_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_gt_avgc50, 20)",
+      "pcf_hint": "TrueInRow(c_gt_avgc50, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_gt_avgc50",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_gt_avgc200_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_avgc200, 5)",
+      "pcf_hint": "CountTrue(c_gt_avgc200, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_avgc200",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_gt_avgc200_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_avgc200, 10)",
+      "pcf_hint": "CountTrue(c_gt_avgc200, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_avgc200",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_gt_avgc200_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_avgc200, 15)",
+      "pcf_hint": "CountTrue(c_gt_avgc200, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_avgc200",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_gt_avgc200_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_avgc200, 20)",
+      "pcf_hint": "CountTrue(c_gt_avgc200, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_avgc200",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_gt_avgc200_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_gt_avgc200, 20)",
+      "pcf_hint": "SinceTrue(c_gt_avgc200, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_avgc200",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_gt_avgc200_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_gt_avgc200, 20)",
+      "pcf_hint": "TrueInRow(c_gt_avgc200, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_gt_avgc200",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_gt_c1_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_c1, 5)",
+      "pcf_hint": "CountTrue(c_gt_c1, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_c1",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_gt_c1_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_c1, 10)",
+      "pcf_hint": "CountTrue(c_gt_c1, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_c1",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_gt_c1_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_c1, 15)",
+      "pcf_hint": "CountTrue(c_gt_c1, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_c1",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_gt_c1_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_c1, 20)",
+      "pcf_hint": "CountTrue(c_gt_c1, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_c1",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_gt_c1_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_gt_c1, 20)",
+      "pcf_hint": "SinceTrue(c_gt_c1, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_c1",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_gt_c1_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_gt_c1, 20)",
+      "pcf_hint": "TrueInRow(c_gt_c1, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_gt_c1",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_lt_c1_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_lt_c1, 5)",
+      "pcf_hint": "CountTrue(c_lt_c1, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lt_c1",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_lt_c1_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_lt_c1, 10)",
+      "pcf_hint": "CountTrue(c_lt_c1, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lt_c1",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_lt_c1_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_lt_c1, 15)",
+      "pcf_hint": "CountTrue(c_lt_c1, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lt_c1",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_lt_c1_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_lt_c1, 20)",
+      "pcf_hint": "CountTrue(c_lt_c1, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lt_c1",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_lt_c1_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_lt_c1, 20)",
+      "pcf_hint": "SinceTrue(c_lt_c1, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_lt_c1",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_lt_c1_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_lt_c1, 20)",
+      "pcf_hint": "TrueInRow(c_lt_c1, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_lt_c1",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_h_gt_h1_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(h_gt_h1, 5)",
+      "pcf_hint": "CountTrue(h_gt_h1, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_h1",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_h_gt_h1_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(h_gt_h1, 10)",
+      "pcf_hint": "CountTrue(h_gt_h1, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_h1",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_h_gt_h1_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(h_gt_h1, 15)",
+      "pcf_hint": "CountTrue(h_gt_h1, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_h1",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_h_gt_h1_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(h_gt_h1, 20)",
+      "pcf_hint": "CountTrue(h_gt_h1, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_h1",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_h_gt_h1_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(h_gt_h1, 20)",
+      "pcf_hint": "SinceTrue(h_gt_h1, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_gt_h1",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_h_gt_h1_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(h_gt_h1, 20)",
+      "pcf_hint": "TrueInRow(h_gt_h1, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "h_gt_h1",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_l_lt_l1_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(l_lt_l1, 5)",
+      "pcf_hint": "CountTrue(l_lt_l1, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "l_lt_l1",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_l_lt_l1_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(l_lt_l1, 10)",
+      "pcf_hint": "CountTrue(l_lt_l1, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "l_lt_l1",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_l_lt_l1_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(l_lt_l1, 15)",
+      "pcf_hint": "CountTrue(l_lt_l1, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "l_lt_l1",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_l_lt_l1_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(l_lt_l1, 20)",
+      "pcf_hint": "CountTrue(l_lt_l1, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "l_lt_l1",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_l_lt_l1_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(l_lt_l1, 20)",
+      "pcf_hint": "SinceTrue(l_lt_l1, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "l_lt_l1",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_l_lt_l1_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(l_lt_l1, 20)",
+      "pcf_hint": "TrueInRow(l_lt_l1, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "l_lt_l1",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_v_gt_avgv20_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(v_gt_avgv20, 5)",
+      "pcf_hint": "CountTrue(v_gt_avgv20, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "v_gt_avgv20",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_v_gt_avgv20_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(v_gt_avgv20, 10)",
+      "pcf_hint": "CountTrue(v_gt_avgv20, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "v_gt_avgv20",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_v_gt_avgv20_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(v_gt_avgv20, 15)",
+      "pcf_hint": "CountTrue(v_gt_avgv20, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "v_gt_avgv20",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_v_gt_avgv20_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(v_gt_avgv20, 20)",
+      "pcf_hint": "CountTrue(v_gt_avgv20, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "v_gt_avgv20",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_v_gt_avgv20_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(v_gt_avgv20, 20)",
+      "pcf_hint": "SinceTrue(v_gt_avgv20, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "v_gt_avgv20",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_v_gt_avgv20_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(v_gt_avgv20, 20)",
+      "pcf_hint": "TrueInRow(v_gt_avgv20, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "v_gt_avgv20",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_gt_o_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_o, 5)",
+      "pcf_hint": "CountTrue(c_gt_o, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_o",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_gt_o_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_o, 10)",
+      "pcf_hint": "CountTrue(c_gt_o, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_o",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_gt_o_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_o, 15)",
+      "pcf_hint": "CountTrue(c_gt_o, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_o",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_gt_o_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_o, 20)",
+      "pcf_hint": "CountTrue(c_gt_o, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_o",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_gt_o_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_gt_o, 20)",
+      "pcf_hint": "SinceTrue(c_gt_o, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_o",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_gt_o_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_gt_o, 20)",
+      "pcf_hint": "TrueInRow(c_gt_o, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_gt_o",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_xavgc8_gt_xavgc21_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(xavgc8_gt_xavgc21, 5)",
+      "pcf_hint": "CountTrue(xavgc8_gt_xavgc21, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc8_gt_xavgc21",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_xavgc8_gt_xavgc21_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(xavgc8_gt_xavgc21, 10)",
+      "pcf_hint": "CountTrue(xavgc8_gt_xavgc21, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc8_gt_xavgc21",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_xavgc8_gt_xavgc21_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(xavgc8_gt_xavgc21, 15)",
+      "pcf_hint": "CountTrue(xavgc8_gt_xavgc21, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc8_gt_xavgc21",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_xavgc8_gt_xavgc21_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(xavgc8_gt_xavgc21, 20)",
+      "pcf_hint": "CountTrue(xavgc8_gt_xavgc21, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc8_gt_xavgc21",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_xavgc8_gt_xavgc21_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(xavgc8_gt_xavgc21, 20)",
+      "pcf_hint": "SinceTrue(xavgc8_gt_xavgc21, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "xavgc8_gt_xavgc21",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_xavgc8_gt_xavgc21_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(xavgc8_gt_xavgc21, 20)",
+      "pcf_hint": "TrueInRow(xavgc8_gt_xavgc21, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "xavgc8_gt_xavgc21",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_xavgc50_gt_xavgc200_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(xavgc50_gt_xavgc200, 5)",
+      "pcf_hint": "CountTrue(xavgc50_gt_xavgc200, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc50_gt_xavgc200",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_xavgc50_gt_xavgc200_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(xavgc50_gt_xavgc200, 10)",
+      "pcf_hint": "CountTrue(xavgc50_gt_xavgc200, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc50_gt_xavgc200",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_xavgc50_gt_xavgc200_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(xavgc50_gt_xavgc200, 15)",
+      "pcf_hint": "CountTrue(xavgc50_gt_xavgc200, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc50_gt_xavgc200",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_xavgc50_gt_xavgc200_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(xavgc50_gt_xavgc200, 20)",
+      "pcf_hint": "CountTrue(xavgc50_gt_xavgc200, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc50_gt_xavgc200",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_xavgc50_gt_xavgc200_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(xavgc50_gt_xavgc200, 20)",
+      "pcf_hint": "SinceTrue(xavgc50_gt_xavgc200, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "xavgc50_gt_xavgc200",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_xavgc50_gt_xavgc200_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(xavgc50_gt_xavgc200, 20)",
+      "pcf_hint": "TrueInRow(xavgc50_gt_xavgc200, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "xavgc50_gt_xavgc200",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_avgc50_gt_avgc200_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(avgc50_gt_avgc200, 5)",
+      "pcf_hint": "CountTrue(avgc50_gt_avgc200, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc50_gt_avgc200",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_avgc50_gt_avgc200_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(avgc50_gt_avgc200, 10)",
+      "pcf_hint": "CountTrue(avgc50_gt_avgc200, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc50_gt_avgc200",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_avgc50_gt_avgc200_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(avgc50_gt_avgc200, 15)",
+      "pcf_hint": "CountTrue(avgc50_gt_avgc200, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc50_gt_avgc200",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_avgc50_gt_avgc200_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(avgc50_gt_avgc200, 20)",
+      "pcf_hint": "CountTrue(avgc50_gt_avgc200, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc50_gt_avgc200",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_avgc50_gt_avgc200_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(avgc50_gt_avgc200, 20)",
+      "pcf_hint": "SinceTrue(avgc50_gt_avgc200, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "avgc50_gt_avgc200",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_avgc50_gt_avgc200_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(avgc50_gt_avgc200, 20)",
+      "pcf_hint": "TrueInRow(avgc50_gt_avgc200, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "avgc50_gt_avgc200",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc50_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc50, 5)",
+      "pcf_hint": "CountTrue(c_gt_xavgc50, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc50",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc50_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc50, 10)",
+      "pcf_hint": "CountTrue(c_gt_xavgc50, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc50",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc50_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc50, 15)",
+      "pcf_hint": "CountTrue(c_gt_xavgc50, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc50",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc50_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc50, 20)",
+      "pcf_hint": "CountTrue(c_gt_xavgc50, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc50",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_gt_xavgc50_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_gt_xavgc50, 20)",
+      "pcf_hint": "SinceTrue(c_gt_xavgc50, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_xavgc50",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_gt_xavgc50_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_gt_xavgc50, 20)",
+      "pcf_hint": "TrueInRow(c_gt_xavgc50, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_gt_xavgc50",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc100_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc100, 5)",
+      "pcf_hint": "CountTrue(c_gt_xavgc100, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc100",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc100_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc100, 10)",
+      "pcf_hint": "CountTrue(c_gt_xavgc100, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc100",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc100_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc100, 15)",
+      "pcf_hint": "CountTrue(c_gt_xavgc100, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc100",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_gt_xavgc100_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_xavgc100, 20)",
+      "pcf_hint": "CountTrue(c_gt_xavgc100, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_xavgc100",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_gt_xavgc100_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_gt_xavgc100, 20)",
+      "pcf_hint": "SinceTrue(c_gt_xavgc100, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_xavgc100",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_gt_xavgc100_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_gt_xavgc100, 20)",
+      "pcf_hint": "TrueInRow(c_gt_xavgc100, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_gt_xavgc100",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_avgc50_rising_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(avgc50_rising, 5)",
+      "pcf_hint": "CountTrue(avgc50_rising, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc50_rising",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_avgc50_rising_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(avgc50_rising, 10)",
+      "pcf_hint": "CountTrue(avgc50_rising, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc50_rising",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_avgc50_rising_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(avgc50_rising, 15)",
+      "pcf_hint": "CountTrue(avgc50_rising, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc50_rising",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_avgc50_rising_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(avgc50_rising, 20)",
+      "pcf_hint": "CountTrue(avgc50_rising, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc50_rising",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_avgc50_rising_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(avgc50_rising, 20)",
+      "pcf_hint": "SinceTrue(avgc50_rising, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "avgc50_rising",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_avgc50_rising_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(avgc50_rising, 20)",
+      "pcf_hint": "TrueInRow(avgc50_rising, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "avgc50_rising",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_avgc200_rising_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(avgc200_rising, 5)",
+      "pcf_hint": "CountTrue(avgc200_rising, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc200_rising",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_avgc200_rising_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(avgc200_rising, 10)",
+      "pcf_hint": "CountTrue(avgc200_rising, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc200_rising",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_avgc200_rising_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(avgc200_rising, 15)",
+      "pcf_hint": "CountTrue(avgc200_rising, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc200_rising",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_avgc200_rising_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(avgc200_rising, 20)",
+      "pcf_hint": "CountTrue(avgc200_rising, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc200_rising",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_avgc200_rising_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(avgc200_rising, 20)",
+      "pcf_hint": "SinceTrue(avgc200_rising, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "avgc200_rising",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_avgc200_rising_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(avgc200_rising, 20)",
+      "pcf_hint": "TrueInRow(avgc200_rising, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "avgc200_rising",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_xavgc50_rising_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(xavgc50_rising, 5)",
+      "pcf_hint": "CountTrue(xavgc50_rising, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc50_rising",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_xavgc50_rising_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(xavgc50_rising, 10)",
+      "pcf_hint": "CountTrue(xavgc50_rising, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc50_rising",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_xavgc50_rising_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(xavgc50_rising, 15)",
+      "pcf_hint": "CountTrue(xavgc50_rising, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc50_rising",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_xavgc50_rising_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(xavgc50_rising, 20)",
+      "pcf_hint": "CountTrue(xavgc50_rising, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc50_rising",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_xavgc50_rising_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(xavgc50_rising, 20)",
+      "pcf_hint": "SinceTrue(xavgc50_rising, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "xavgc50_rising",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_xavgc50_rising_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(xavgc50_rising, 20)",
+      "pcf_hint": "TrueInRow(xavgc50_rising, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "xavgc50_rising",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_h_gt_maxh5_1_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(h_gt_maxh5_1, 5)",
+      "pcf_hint": "CountTrue(h_gt_maxh5_1, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_maxh5_1",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_h_gt_maxh5_1_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(h_gt_maxh5_1, 10)",
+      "pcf_hint": "CountTrue(h_gt_maxh5_1, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_maxh5_1",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_h_gt_maxh5_1_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(h_gt_maxh5_1, 15)",
+      "pcf_hint": "CountTrue(h_gt_maxh5_1, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_maxh5_1",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_h_gt_maxh5_1_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(h_gt_maxh5_1, 20)",
+      "pcf_hint": "CountTrue(h_gt_maxh5_1, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_maxh5_1",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_h_gt_maxh5_1_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(h_gt_maxh5_1, 20)",
+      "pcf_hint": "SinceTrue(h_gt_maxh5_1, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_gt_maxh5_1",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_h_gt_maxh5_1_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(h_gt_maxh5_1, 20)",
+      "pcf_hint": "TrueInRow(h_gt_maxh5_1, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "h_gt_maxh5_1",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_l_lt_minl5_1_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(l_lt_minl5_1, 5)",
+      "pcf_hint": "CountTrue(l_lt_minl5_1, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "l_lt_minl5_1",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_l_lt_minl5_1_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(l_lt_minl5_1, 10)",
+      "pcf_hint": "CountTrue(l_lt_minl5_1, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "l_lt_minl5_1",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_l_lt_minl5_1_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(l_lt_minl5_1, 15)",
+      "pcf_hint": "CountTrue(l_lt_minl5_1, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "l_lt_minl5_1",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_l_lt_minl5_1_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(l_lt_minl5_1, 20)",
+      "pcf_hint": "CountTrue(l_lt_minl5_1, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "l_lt_minl5_1",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_l_lt_minl5_1_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(l_lt_minl5_1, 20)",
+      "pcf_hint": "SinceTrue(l_lt_minl5_1, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "l_lt_minl5_1",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_l_lt_minl5_1_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(l_lt_minl5_1, 20)",
+      "pcf_hint": "TrueInRow(l_lt_minl5_1, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "l_lt_minl5_1",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_gt_maxc10_1_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_maxc10_1, 5)",
+      "pcf_hint": "CountTrue(c_gt_maxc10_1, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_maxc10_1",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_gt_maxc10_1_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_maxc10_1, 10)",
+      "pcf_hint": "CountTrue(c_gt_maxc10_1, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_maxc10_1",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_gt_maxc10_1_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_maxc10_1, 15)",
+      "pcf_hint": "CountTrue(c_gt_maxc10_1, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_maxc10_1",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_gt_maxc10_1_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_maxc10_1, 20)",
+      "pcf_hint": "CountTrue(c_gt_maxc10_1, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_maxc10_1",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_gt_maxc10_1_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_gt_maxc10_1, 20)",
+      "pcf_hint": "SinceTrue(c_gt_maxc10_1, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_maxc10_1",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_gt_maxc10_1_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_gt_maxc10_1, 20)",
+      "pcf_hint": "TrueInRow(c_gt_maxc10_1, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_gt_maxc10_1",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_v_gt_2x_avgv20_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(v_gt_2x_avgv20, 5)",
+      "pcf_hint": "CountTrue(v_gt_2x_avgv20, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "v_gt_2x_avgv20",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_v_gt_2x_avgv20_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(v_gt_2x_avgv20, 10)",
+      "pcf_hint": "CountTrue(v_gt_2x_avgv20, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "v_gt_2x_avgv20",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_v_gt_2x_avgv20_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(v_gt_2x_avgv20, 15)",
+      "pcf_hint": "CountTrue(v_gt_2x_avgv20, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "v_gt_2x_avgv20",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_v_gt_2x_avgv20_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(v_gt_2x_avgv20, 20)",
+      "pcf_hint": "CountTrue(v_gt_2x_avgv20, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "v_gt_2x_avgv20",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_v_gt_2x_avgv20_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(v_gt_2x_avgv20, 20)",
+      "pcf_hint": "SinceTrue(v_gt_2x_avgv20, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "v_gt_2x_avgv20",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_v_gt_2x_avgv20_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(v_gt_2x_avgv20, 20)",
+      "pcf_hint": "TrueInRow(v_gt_2x_avgv20, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "v_gt_2x_avgv20",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_range_gt_atr_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(range_gt_atr, 5)",
+      "pcf_hint": "CountTrue(range_gt_atr, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "range_gt_atr",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_range_gt_atr_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(range_gt_atr, 10)",
+      "pcf_hint": "CountTrue(range_gt_atr, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "range_gt_atr",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_range_gt_atr_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(range_gt_atr, 15)",
+      "pcf_hint": "CountTrue(range_gt_atr, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "range_gt_atr",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_range_gt_atr_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(range_gt_atr, 20)",
+      "pcf_hint": "CountTrue(range_gt_atr, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "range_gt_atr",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_range_gt_atr_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(range_gt_atr, 20)",
+      "pcf_hint": "SinceTrue(range_gt_atr, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "range_gt_atr",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_range_gt_atr_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(range_gt_atr, 20)",
+      "pcf_hint": "TrueInRow(range_gt_atr, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "range_gt_atr",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_body_gt_half_range_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(body_gt_half_range, 5)",
+      "pcf_hint": "CountTrue(body_gt_half_range, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "body_gt_half_range",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_body_gt_half_range_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(body_gt_half_range, 10)",
+      "pcf_hint": "CountTrue(body_gt_half_range, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "body_gt_half_range",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_body_gt_half_range_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(body_gt_half_range, 15)",
+      "pcf_hint": "CountTrue(body_gt_half_range, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "body_gt_half_range",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_body_gt_half_range_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(body_gt_half_range, 20)",
+      "pcf_hint": "CountTrue(body_gt_half_range, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "body_gt_half_range",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_body_gt_half_range_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(body_gt_half_range, 20)",
+      "pcf_hint": "SinceTrue(body_gt_half_range, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "body_gt_half_range",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_body_gt_half_range_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(body_gt_half_range, 20)",
+      "pcf_hint": "TrueInRow(body_gt_half_range, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "body_gt_half_range",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_upper_half_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_upper_half, 5)",
+      "pcf_hint": "CountTrue(c_upper_half, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_upper_half",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_upper_half_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_upper_half, 10)",
+      "pcf_hint": "CountTrue(c_upper_half, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_upper_half",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_upper_half_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_upper_half, 15)",
+      "pcf_hint": "CountTrue(c_upper_half, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_upper_half",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_upper_half_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_upper_half, 20)",
+      "pcf_hint": "CountTrue(c_upper_half, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_upper_half",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_upper_half_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_upper_half, 20)",
+      "pcf_hint": "SinceTrue(c_upper_half, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_upper_half",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_upper_half_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_upper_half, 20)",
+      "pcf_hint": "TrueInRow(c_upper_half, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_upper_half",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_lower_half_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_lower_half, 5)",
+      "pcf_hint": "CountTrue(c_lower_half, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lower_half",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_lower_half_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_lower_half, 10)",
+      "pcf_hint": "CountTrue(c_lower_half, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lower_half",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_lower_half_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_lower_half, 15)",
+      "pcf_hint": "CountTrue(c_lower_half, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lower_half",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_lower_half_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_lower_half, 20)",
+      "pcf_hint": "CountTrue(c_lower_half, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lower_half",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_lower_half_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_lower_half, 20)",
+      "pcf_hint": "SinceTrue(c_lower_half, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_lower_half",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_lower_half_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_lower_half, 20)",
+      "pcf_hint": "TrueInRow(c_lower_half, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_lower_half",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_diplus_gt_diminus_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(diplus_gt_diminus, 5)",
+      "pcf_hint": "CountTrue(diplus_gt_diminus, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "diplus_gt_diminus",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_diplus_gt_diminus_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(diplus_gt_diminus, 10)",
+      "pcf_hint": "CountTrue(diplus_gt_diminus, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "diplus_gt_diminus",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_diplus_gt_diminus_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(diplus_gt_diminus, 15)",
+      "pcf_hint": "CountTrue(diplus_gt_diminus, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "diplus_gt_diminus",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_diplus_gt_diminus_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(diplus_gt_diminus, 20)",
+      "pcf_hint": "CountTrue(diplus_gt_diminus, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "diplus_gt_diminus",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_diplus_gt_diminus_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(diplus_gt_diminus, 20)",
+      "pcf_hint": "SinceTrue(diplus_gt_diminus, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "diplus_gt_diminus",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_diplus_gt_diminus_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(diplus_gt_diminus, 20)",
+      "pcf_hint": "TrueInRow(diplus_gt_diminus, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "diplus_gt_diminus",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_rsi14_gt_50_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(rsi14_gt_50, 5)",
+      "pcf_hint": "CountTrue(rsi14_gt_50, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "rsi14_gt_50",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_rsi14_gt_50_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(rsi14_gt_50, 10)",
+      "pcf_hint": "CountTrue(rsi14_gt_50, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "rsi14_gt_50",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_rsi14_gt_50_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(rsi14_gt_50, 15)",
+      "pcf_hint": "CountTrue(rsi14_gt_50, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "rsi14_gt_50",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_rsi14_gt_50_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(rsi14_gt_50, 20)",
+      "pcf_hint": "CountTrue(rsi14_gt_50, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "rsi14_gt_50",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_rsi14_gt_50_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(rsi14_gt_50, 20)",
+      "pcf_hint": "SinceTrue(rsi14_gt_50, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "rsi14_gt_50",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_rsi14_gt_50_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(rsi14_gt_50, 20)",
+      "pcf_hint": "TrueInRow(rsi14_gt_50, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "rsi14_gt_50",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_rsi14_gt_70_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(rsi14_gt_70, 5)",
+      "pcf_hint": "CountTrue(rsi14_gt_70, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "rsi14_gt_70",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_rsi14_gt_70_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(rsi14_gt_70, 10)",
+      "pcf_hint": "CountTrue(rsi14_gt_70, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "rsi14_gt_70",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_rsi14_gt_70_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(rsi14_gt_70, 15)",
+      "pcf_hint": "CountTrue(rsi14_gt_70, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "rsi14_gt_70",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_rsi14_gt_70_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(rsi14_gt_70, 20)",
+      "pcf_hint": "CountTrue(rsi14_gt_70, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "rsi14_gt_70",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_rsi14_gt_70_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(rsi14_gt_70, 20)",
+      "pcf_hint": "SinceTrue(rsi14_gt_70, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "rsi14_gt_70",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_rsi14_gt_70_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(rsi14_gt_70, 20)",
+      "pcf_hint": "TrueInRow(rsi14_gt_70, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "rsi14_gt_70",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_rsi14_lt_30_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(rsi14_lt_30, 5)",
+      "pcf_hint": "CountTrue(rsi14_lt_30, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "rsi14_lt_30",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_rsi14_lt_30_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(rsi14_lt_30, 10)",
+      "pcf_hint": "CountTrue(rsi14_lt_30, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "rsi14_lt_30",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_rsi14_lt_30_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(rsi14_lt_30, 15)",
+      "pcf_hint": "CountTrue(rsi14_lt_30, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "rsi14_lt_30",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_rsi14_lt_30_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(rsi14_lt_30, 20)",
+      "pcf_hint": "CountTrue(rsi14_lt_30, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "rsi14_lt_30",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_rsi14_lt_30_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(rsi14_lt_30, 20)",
+      "pcf_hint": "SinceTrue(rsi14_lt_30, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "rsi14_lt_30",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_rsi14_lt_30_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(rsi14_lt_30, 20)",
+      "pcf_hint": "TrueInRow(rsi14_lt_30, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "rsi14_lt_30",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_adx14_gt_25_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(adx14_gt_25, 5)",
+      "pcf_hint": "CountTrue(adx14_gt_25, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "adx14_gt_25",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_adx14_gt_25_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(adx14_gt_25, 10)",
+      "pcf_hint": "CountTrue(adx14_gt_25, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "adx14_gt_25",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_adx14_gt_25_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(adx14_gt_25, 15)",
+      "pcf_hint": "CountTrue(adx14_gt_25, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "adx14_gt_25",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_adx14_gt_25_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(adx14_gt_25, 20)",
+      "pcf_hint": "CountTrue(adx14_gt_25, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "adx14_gt_25",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_adx14_gt_25_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(adx14_gt_25, 20)",
+      "pcf_hint": "SinceTrue(adx14_gt_25, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "adx14_gt_25",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_adx14_gt_25_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(adx14_gt_25, 20)",
+      "pcf_hint": "TrueInRow(adx14_gt_25, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "adx14_gt_25",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_gt_bbtop_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_bbtop, 5)",
+      "pcf_hint": "CountTrue(c_gt_bbtop, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_bbtop",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_gt_bbtop_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_bbtop, 10)",
+      "pcf_hint": "CountTrue(c_gt_bbtop, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_bbtop",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_gt_bbtop_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_bbtop, 15)",
+      "pcf_hint": "CountTrue(c_gt_bbtop, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_bbtop",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_gt_bbtop_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_gt_bbtop, 20)",
+      "pcf_hint": "CountTrue(c_gt_bbtop, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_bbtop",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_gt_bbtop_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_gt_bbtop, 20)",
+      "pcf_hint": "SinceTrue(c_gt_bbtop, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_bbtop",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_gt_bbtop_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_gt_bbtop, 20)",
+      "pcf_hint": "TrueInRow(c_gt_bbtop, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_gt_bbtop",
+        "period": 20
+      }
+    },
+    {
+      "name": "ct_c_lt_bbbot_5",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_lt_bbbot, 5)",
+      "pcf_hint": "CountTrue(c_lt_bbbot, 5)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lt_bbbot",
+        "period": 5
+      }
+    },
+    {
+      "name": "ct_c_lt_bbbot_10",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_lt_bbbot, 10)",
+      "pcf_hint": "CountTrue(c_lt_bbbot, 10)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lt_bbbot",
+        "period": 10
+      }
+    },
+    {
+      "name": "ct_c_lt_bbbot_15",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_lt_bbbot, 15)",
+      "pcf_hint": "CountTrue(c_lt_bbbot, 15)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lt_bbbot",
+        "period": 15
+      }
+    },
+    {
+      "name": "ct_c_lt_bbbot_20",
+      "category": "boolean_patterns",
+      "description": "CountTrue(c_lt_bbbot, 20)",
+      "pcf_hint": "CountTrue(c_lt_bbbot, 20)",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lt_bbbot",
+        "period": 20
+      }
+    },
+    {
+      "name": "st_c_lt_bbbot_20",
+      "category": "boolean_patterns",
+      "description": "SinceTrue(c_lt_bbbot, 20)",
+      "pcf_hint": "SinceTrue(c_lt_bbbot, 20)",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_lt_bbbot",
+        "period": 20
+      }
+    },
+    {
+      "name": "tir_c_lt_bbbot_20",
+      "category": "boolean_patterns",
+      "description": "TrueInRow(c_lt_bbbot, 20)",
+      "pcf_hint": "TrueInRow(c_lt_bbbot, 20)",
+      "compute": {
+        "op": "true_in_row",
+        "condition": "c_lt_bbbot",
+        "period": 20
+      }
+    }
+  ]
+}

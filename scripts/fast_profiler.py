@@ -132,6 +132,39 @@ def compute_condition_features(df: pd.DataFrame, target_idx: int) -> dict:
     # 12. dist_ema50_atr: (C - XAVGC50) / ATR14
     result["dist_ema50_atr"] = (cv - float(xavgc50.iloc[idx])) / a
 
+    # ==================== TA KNOWLEDGE FEATURES ====================
+
+    adr14 = sma(h - l_col, 14)
+    _adr14 = float(adr14.iloc[idx])
+
+    # 13. ext_50sma_adr: (C - AVGC50) / ADR14
+    result["ext_50sma_adr"] = (cv - float(avgc50.iloc[idx])) / _adr14 if _adr14 > 0 else None
+
+    # 14. ext_200sma_pct: (C - AVGC200) / AVGC200 * 100
+    _avgc200 = float(avgc200.iloc[idx])
+    result["ext_200sma_pct"] = (cv - _avgc200) / _avgc200 * 100 if _avgc200 > 0 else None
+
+    # 15. ext_50_slope: slope of the 50 extension over 10 bars
+    avgc50_10 = avgc50.shift(10)
+    if idx >= 10 and not pd.isna(avgc50_10.iloc[idx]) and _adr14 > 0:
+        ext_now = (cv - float(avgc50.iloc[idx])) / _adr14
+        c_10 = float(c.iloc[idx - 10])
+        ext_10 = (c_10 - float(avgc50_10.iloc[idx])) / float(adr14.iloc[idx - 10]) if float(adr14.iloc[idx - 10]) > 0 else ext_now
+        result["ext_50_slope"] = ext_now - ext_10
+    else:
+        result["ext_50_slope"] = None
+
+    # 16. channel_slope_pct: linear regression slope of closes over 20 bars, as % per bar
+    if idx >= 20:
+        window = c.iloc[idx - 19 : idx + 1].values
+        x = np.arange(20, dtype=float)
+        x_mean = x.mean()
+        c_mean = window.mean()
+        slope = np.sum((x - x_mean) * (window - c_mean)) / np.sum((x - x_mean) ** 2)
+        result["channel_slope_pct"] = slope / c_mean * 100 if c_mean > 0 else None
+    else:
+        result["channel_slope_pct"] = None
+
     return result
 
 
@@ -282,7 +315,7 @@ class FastProfiler:
     # Example profiling — fast path (minimal features)
     # ----------------------------------------------------------
 
-    def profile_examples_fast(self) -> pd.DataFrame:
+    def profile_examples(self) -> pd.DataFrame:
         """Profile examples computing ONLY condition features. ~0.13s for 21 examples."""
         cache = self._load_cache()
         if not cache["examples"]:
@@ -313,7 +346,7 @@ class FastProfiler:
     # Universe profiling — fast path (minimal features)
     # ----------------------------------------------------------
 
-    def profile_universe_fast(self, date: str, n: int = 500,
+    def profile_universe(self, date: str, n: int = 500,
                               progress: bool = True) -> pd.DataFrame:
         """Profile universe computing ONLY condition features.
 
@@ -391,224 +424,6 @@ class FastProfiler:
 
     # ----------------------------------------------------------
     # Example profiling (full — all features)
-    # ----------------------------------------------------------
-
-    def profile_examples(self, features: list[str] = None) -> pd.DataFrame:
-        """Profile all examples using cached OHLCV data.
-
-        Args:
-            features: Optional list of feature names to compute.
-                      If None, computes all features (full profiling).
-
-        Returns:
-            DataFrame with one row per example.
-        """
-        cache = self._load_cache()
-        if not cache["examples"]:
-            raise ValueError(f"No cached examples for {self.setup_type}. Run rebuild_cache() first.")
-
-        # Load metadata (LSP data etc.)
-        metadata_map = self.engine._load_metadata(self.setup_type)
-
-        # Get market DataFrames from cache
-        market_dfs = self._get_market_dfs_from_cache()
-
-        rows = []
-        for ex in cache["examples"]:
-            ticker = ex["ticker"]
-            scan_date = ex["scan_date"]
-            entry_date = ex["entry_date"]
-            cache_key = f"{ticker}_{scan_date}"
-
-            df = self._get_ohlcv_df(cache_key)
-            if df is None or df.empty or len(df) < 150:
-                continue
-
-            target_dt = pd.Timestamp(scan_date)
-            mask = df["date"] <= target_dt
-            if not mask.any():
-                continue
-            target_idx = df.loc[mask].index[-1]
-
-            # Compute indicators
-            l1 = self.engine._compute_layer1(df)
-            l2 = self.engine._compute_layer2(df, l1)
-            l4 = self.engine._compute_layer4(l1, l2)
-
-            # Extract values at scan bar
-            result = {
-                "ticker": ticker,
-                "entry_date": entry_date,
-                "scan_date": scan_date,
-                "C": df.at[target_idx, "close"],
-                "O": df.at[target_idx, "open"],
-                "H": df.at[target_idx, "high"],
-                "L": df.at[target_idx, "low"],
-                "V": df.at[target_idx, "volume"],
-            }
-
-            all_series = {**l1, **l2, **l4}
-
-            if features:
-                # Only extract requested features
-                for name in features:
-                    series = all_series.get(name)
-                    if series is not None and target_idx < len(series):
-                        val = series.iloc[target_idx]
-                        result[name] = float(val) if not pd.isna(val) else None
-                    else:
-                        result[name] = None
-            else:
-                # Extract all
-                for name, series in all_series.items():
-                    val = series.iloc[target_idx] if target_idx < len(series) else np.nan
-                    result[name] = float(val) if not pd.isna(val) else None
-
-            # Layer 3: market context
-            if market_dfs:
-                mkt_rows = {}
-                for mkt_ticker, mkt_df in market_dfs.items():
-                    if mkt_df is None or mkt_df.empty:
-                        continue
-                    mkt_l1 = self.engine._compute_layer1(mkt_df)
-                    mkt_l2 = self.engine._compute_layer2(mkt_df, mkt_l1)
-                    mkt_mask = mkt_df["date"] <= target_dt
-                    if not mkt_mask.any():
-                        continue
-                    mkt_idx = mkt_df.loc[mkt_mask].index[-1]
-                    mkt_row = {}
-                    for name, series in {**mkt_l1, **mkt_l2}.items():
-                        val = series.iloc[mkt_idx] if mkt_idx < len(series) else np.nan
-                        mkt_row[name] = float(val) if not pd.isna(val) else None
-                    mkt_rows[mkt_ticker] = mkt_row
-                l3 = self.engine._compute_layer3(result, mkt_rows)
-                result.update(l3)
-
-            # Layer 5: setup-specific metadata
-            meta_key = f"{ticker}_{entry_date}"
-            meta = metadata_map.get(meta_key, metadata_map.get(ticker))
-            if meta:
-                l5 = self.engine._compute_layer5(df, target_idx, l1, meta)
-                result.update(l5)
-
-            result["is_example"] = True
-            rows.append(result)
-
-        return pd.DataFrame(rows)
-
-    def _get_market_dfs_from_cache(self) -> dict:
-        """Get SPY/QQQ DataFrames from cache."""
-        cache = self._load_cache()
-        market_dfs = {}
-        for key in cache["ohlcv"]:
-            if key.startswith("SPY_"):
-                market_dfs["SPY"] = self._get_ohlcv_df(key)
-            elif key.startswith("QQQ_"):
-                market_dfs["QQQ"] = self._get_ohlcv_df(key)
-        return market_dfs
-
-    # ----------------------------------------------------------
-    # Universe profiling (concurrent fetch, no cache)
-    # ----------------------------------------------------------
-
-    def profile_universe(self, date: str, n: int = 500,
-                         features: list[str] = None,
-                         progress: bool = True) -> pd.DataFrame:
-        """Profile a random universe sample with concurrent fetching.
-
-        Args:
-            date: Date to profile
-            n: Number of tickers
-            features: Optional subset of features to compute
-            progress: Print progress updates
-
-        Returns:
-            DataFrame with one row per ticker.
-        """
-        t0 = time.time()
-
-        tickers = self._get_random_tickers(n)
-        if progress:
-            print(f"Got {len(tickers)} tickers")
-
-        # Concurrent OHLCV fetch
-        def fetch_one(ticker):
-            try:
-                r = requests.get(
-                    f"{self.api_base}/api/ohlcv/bulk/{ticker}",
-                    params={"end_date": date, "lookback": 250},
-                    timeout=30,
-                )
-                if r.status_code == 200:
-                    rows = r.json().get("results", [])
-                    if rows:
-                        df = pd.DataFrame(rows)
-                        df["date"] = pd.to_datetime(df["date"])
-                        df = df.sort_values("date").reset_index(drop=True)
-                        for col in ["open", "high", "low", "close", "volume"]:
-                            df[col] = pd.to_numeric(df[col], errors="coerce")
-                        return (ticker, df)
-            except Exception:
-                pass
-            return (ticker, None)
-
-        # Fetch in batches
-        ohlcv = {}
-        batch_size = 20
-        for i in range(0, len(tickers), batch_size):
-            batch = tickers[i : i + batch_size]
-            with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as pool:
-                results = list(pool.map(fetch_one, batch))
-            for ticker, df in results:
-                if df is not None and len(df) >= 150:
-                    ohlcv[ticker] = df
-            if progress and (i + batch_size) % 100 == 0:
-                print(f"  Fetched {min(i + batch_size, len(tickers))}/{len(tickers)}")
-
-        t_fetch = time.time()
-        if progress:
-            print(f"Fetched {len(ohlcv)} tickers in {t_fetch - t0:.1f}s")
-
-        # Compute profiles
-        target_dt = pd.Timestamp(date)
-        rows = []
-        for ticker, df in ohlcv.items():
-            mask = df["date"] <= target_dt
-            if not mask.any():
-                continue
-            target_idx = df.loc[mask].index[-1]
-
-            l1 = self.engine._compute_layer1(df)
-            l2 = self.engine._compute_layer2(df, l1)
-
-            result = {"ticker": ticker, "date": date}
-
-            all_series = {**l1, **l2}
-            if features:
-                for name in features:
-                    series = all_series.get(name)
-                    if series is not None and target_idx < len(series):
-                        val = series.iloc[target_idx]
-                        result[name] = float(val) if not pd.isna(val) else None
-                    else:
-                        result[name] = None
-            else:
-                for name, series in all_series.items():
-                    val = series.iloc[target_idx] if target_idx < len(series) else np.nan
-                    result[name] = float(val) if not pd.isna(val) else None
-
-            result["is_example"] = False
-            rows.append(result)
-
-        t_compute = time.time()
-        if progress:
-            print(f"Computed {len(rows)} profiles in {t_compute - t_fetch:.1f}s")
-            print(f"Total: {t_compute - t0:.1f}s")
-
-        return pd.DataFrame(rows)
-
-    # ----------------------------------------------------------
-    # Condition validation
     # ----------------------------------------------------------
 
     def validate_conditions(self, conditions: list[tuple],

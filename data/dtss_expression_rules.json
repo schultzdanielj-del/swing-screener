@@ -1,0 +1,69 @@
+{
+  "setup_type": "dtss",
+  "description": "Double Top Short Sell — price near prior high resistance, extended above MAs, momentum stalling",
+  "created": "2026-02-22",
+  "rules": {
+    "near_resistance": {
+      "description": "Price close to prior highs (MAXH proxy for LSP). The double top is forming.",
+      "maxh_periods": [5, 10, 15, 20, 30, 50, 65, 120],
+      "price_refs": ["C", "H"],
+      "normalizers": ["atr14", "adr14", "pct"]
+    },
+    "extension_above_mas": {
+      "description": "Stock rallied to get here — extended above key MAs. Measured in ADR multiples (TA core concept).",
+      "mas": ["avgc50", "avgc200", "xavgc8", "xavgc21", "xavgc50", "xavgc100", "xavgc200"],
+      "normalizers": ["atr14", "adr14", "pct"]
+    },
+    "ma_structure": {
+      "description": "Uptrend that brought price to resistance — MA stacking, slopes, spreads.",
+      "slope_mas": ["xavgc8", "xavgc21", "xavgc50", "xavgc100", "avgc50", "avgc200"],
+      "slope_offsets": [1, 5, 10],
+      "slope_normalizers": ["atr14", "adr14"],
+      "spread_pairs": [
+        ["xavgc8", "xavgc21"], ["xavgc8", "xavgc50"], ["xavgc21", "xavgc50"],
+        ["xavgc50", "xavgc100"], ["xavgc50", "xavgc200"], ["xavgc100", "xavgc200"],
+        ["avgc50", "avgc200"], ["xavgc8", "avgc50"], ["xavgc21", "avgc200"],
+        ["avgc20", "avgc50"], ["avgc50", "avgc100"]
+      ],
+      "spread_normalizers": ["atr14", "adr14"]
+    },
+    "momentum_stalling": {
+      "description": "Rally losing steam — ROC declining, RSI extreme, volume drying up, ADX rolling.",
+      "roc_periods": [3, 5, 10, 20, 50],
+      "rsi_periods": [7, 14, 21],
+      "volume_avg_periods": [10, 20, 50]
+    },
+    "range_and_channel": {
+      "description": "Where price sits in its range, channel characteristics.",
+      "range_periods": [20, 65, 120],
+      "pullback_periods": [20, 30, 65],
+      "pullback_normalizers": ["atr14", "adr14", "pct"],
+      "channel_slope_periods": [10, 20, 30]
+    },
+    "extension_dynamics": {
+      "description": "Is extension building or declining — TA stage detection concept.",
+      "ext_mas": ["avgc50", "xavgc50"],
+      "ext_offsets": [5, 10]
+    },
+    "boolean_patterns": {
+      "description": "CountTrue/SinceTrue/TrueInRow — bars above/below levels, consecutive patterns.",
+      "count_periods": [5, 10, 15, 20],
+      "since_periods": [20],
+      "tir_periods": [20],
+      "conditions": [
+        "c_gt_xavgc8", "c_gt_xavgc21", "c_gt_avgc50", "c_gt_avgc200",
+        "c_gt_c1", "c_lt_c1", "h_gt_h1", "l_lt_l1",
+        "v_gt_avgv20", "c_gt_o",
+        "xavgc8_gt_xavgc21", "xavgc50_gt_xavgc200", "avgc50_gt_avgc200",
+        "c_gt_xavgc50", "c_gt_xavgc100",
+        "avgc50_rising", "avgc200_rising", "xavgc50_rising",
+        "h_gt_maxh5_1", "l_lt_minl5_1",
+        "c_gt_maxc10_1", "v_gt_2x_avgv20",
+        "range_gt_atr", "body_gt_half_range",
+        "c_upper_half", "c_lower_half",
+        "diplus_gt_diminus", "rsi14_gt_50", "rsi14_gt_70", "rsi14_lt_30",
+        "adx14_gt_25", "c_gt_bbtop", "c_lt_bbbot"
+      ]
+    }
+  }
+}
