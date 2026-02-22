@@ -1274,7 +1274,8 @@
                 <div style={{fontSize:12,fontWeight:600,marginBottom:8}}>Filter Progression</div>
                 <div style={{display:'flex',alignItems:'flex-end',gap:2,height:80}}>
                   {results.levels.map((lv, i) => {
-                    const h = Math.max(4, lv.best_rate * 100 / (results.levels[0]?.best_rate || 1) * 80);
+                    const maxRate = results.levels[0]?.best_rate || 1;
+                    const h = Math.max(4, Math.min(76, (lv.best_rate / maxRate) * 76));
                     return (
                       <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center'}}>
                         <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2}}>
