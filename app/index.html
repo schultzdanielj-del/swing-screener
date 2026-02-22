@@ -60,14 +60,6 @@
       letter-spacing: -0.5px;
     }
     .sidebar-logo span { color: var(--text-muted); font-weight: 400; }
-    .nav-section {
-      padding: 16px 12px 8px;
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      color: var(--text-muted);
-    }
     .nav-item {
       display: flex;
       align-items: center;
@@ -87,16 +79,62 @@
       border-left-color: var(--accent-blue);
     }
     .nav-icon { font-size: 16px; width: 20px; text-align: center; }
-    .nav-badge {
-      margin-left: auto;
-      background: var(--bg-card);
-      color: var(--text-muted);
-      font-size: 11px;
-      font-family: var(--font-mono);
-      padding: 2px 6px;
-      border-radius: 4px;
+
+    /* Setup section in sidebar */
+    .nav-setup-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 20px 6px;
+      cursor: pointer;
+      user-select: none;
     }
-    .nav-item.active .nav-badge { background: rgba(59,130,246,0.15); color: var(--accent-blue); }
+    .nav-setup-header:hover .nav-setup-label { color: var(--text-primary); }
+    .nav-setup-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .nav-setup-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--text-muted);
+      transition: color 0.15s;
+    }
+    .nav-setup-arrow {
+      margin-left: auto;
+      font-size: 10px;
+      color: var(--text-muted);
+      transition: transform 0.2s;
+    }
+    .nav-setup-arrow.open { transform: rotate(90deg); }
+    .nav-sub-items {
+      overflow: hidden;
+      transition: max-height 0.2s ease;
+    }
+    .nav-sub-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 20px 7px 36px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      transition: all 0.15s;
+      border-left: 3px solid transparent;
+    }
+    .nav-sub-item:hover { color: var(--text-secondary); background: var(--bg-card); }
+    .nav-sub-item.active {
+      color: var(--accent-blue);
+      background: rgba(59,130,246,0.06);
+      border-left-color: var(--accent-blue);
+    }
+    .nav-sub-icon { font-size: 13px; width: 16px; text-align: center; opacity: 0.7; }
+    .nav-divider { height: 1px; background: var(--border); margin: 8px 16px; }
 
     /* Main content */
     .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -267,11 +305,12 @@
     // ============================================
     // NAV PAGES
     // ============================================
-    const PAGES = [
-      { id: 'dashboard',  label: 'Dashboard',    icon: '◫', section: 'overview' },
-      { id: 'examples',   label: 'Examples',     icon: '◉', section: 'manage' },
-      { id: 'conditions', label: 'Conditions',   icon: '⚙', section: 'manage' },
-      { id: 'validate',   label: 'Validate',     icon: '✓', section: 'tools' },
+    const SETUP_TABS = [
+      { id: 'examples',    label: 'Examples',    icon: '◉' },
+      { id: 'description', label: 'Description', icon: '📋' },
+      { id: 'conditions',  label: 'Conditions',  icon: '⚙' },
+      { id: 'historical',  label: 'Historical',  icon: '📊' },
+      { id: 'management',  label: 'Management',  icon: '💰' },
     ];
 
     // ============================================
@@ -1076,18 +1115,10 @@
     // ============================================
     // CONDITIONS PAGE — Feature 4 placeholder
     // ============================================
-    function ConditionsPage({ activeSetup }) {
+    function ConditionsPage({ activeSetup, embedded }) {
       const pcfStyle = {fontFamily:'var(--font-mono)',fontSize:11,whiteSpace:'nowrap',maxWidth:340,overflow:'hidden',textOverflow:'ellipsis'};
       return (
         <div>
-          <div className="setup-tabs">
-            {Object.entries(SETUP_TYPES).map(([key, s]) => (
-              <div key={key} className={`setup-tab ${key === activeSetup ? 'active' : ''}`}>
-                {s.name}
-              </div>
-            ))}
-          </div>
-
           {activeSetup === '3-4db' ? (
             <div className="card">
               <div className="card-title">⚙ Scan Conditions — 3-4DB <span style={{fontWeight:400,color:'var(--text-muted)',fontSize:12,marginLeft:8}}>18 conditions · 14 examples · 2 scan results (2026-02-19)</span></div>
@@ -1146,20 +1177,164 @@
     }
 
     // ============================================
+    // DESCRIPTION PAGE — Setup TA knowledge & rules
+    // ============================================
+    function DescriptionPage({ activeSetup }) {
+      const setup = SETUP_TYPES[activeSetup];
+      return (
+        <div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-title">📋 {setup.name} — Setup Description</div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.7 }}>
+              {activeSetup === 'dtss' && 'Double Top Short Sell — Price approaches prior high (LSP) resistance after a strong uptrend. The first test holds, second test fails. Short at the rejection when momentum stalls, extension is extreme, and the stock can\'t break through.'}
+              {activeSetup === '3-4db' && '3-4 Day Bounce — Stock pulls back after a move, bounces weakly for 3-4 days on declining volume, then fails. The bounce is a dead cat — momentum is gone and sellers take control.'}
+              {activeSetup === 'htf' && 'High Tight Flag — Tight consolidation after a powerful run (50%+ in 8 weeks or less). Breakout long when the flag resolves with volume confirmation.'}
+            </div>
+          </div>
+          <FeaturePlaceholder
+            number="—"
+            title="TA Knowledge & Market Context"
+            description="Setup-specific technical analysis rules, market stage requirements, extension structures, and entry/exit criteria will be displayed here."
+          />
+        </div>
+      );
+    }
+
+    // ============================================
+    // CONDITIONS ANALYSIS PAGE — Profiler + Collaborative
+    // ============================================
+    function ConditionsAnalysisPage({ activeSetup }) {
+      const [profilerStatus, setProfilerStatus] = useState(null);
+
+      // Poll profiler status
+      useEffect(() => {
+        let interval;
+        function poll() {
+          fetch(`/api/analysis/status/${activeSetup}/profiler`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) setProfilerStatus(d); })
+            .catch(() => {});
+        }
+        poll();
+        interval = setInterval(poll, 3000);
+        return () => clearInterval(interval);
+      }, [activeSetup]);
+
+      const isRunning = profilerStatus?.status === 'running';
+      const progress = profilerStatus?.progress || 0;
+      const statusText = profilerStatus?.message || 'idle';
+
+      function kickOff() {
+        fetch(`/api/analysis/profile/${activeSetup}`, { method: 'POST' })
+          .then(() => setProfilerStatus({ status: 'running', progress: 0, message: 'Starting...' }))
+          .catch(e => console.error(e));
+      }
+
+      return (
+        <div>
+          {/* PROFILER SECTION */}
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-title">🔬 Profiler — Expression Discovery</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <button className="btn btn-primary" onClick={kickOff} disabled={isRunning}>
+                {isRunning ? '⏳ Running...' : '▶ Run Profiler'}
+              </button>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                {statusText}
+              </span>
+            </div>
+            {/* Progress bar */}
+            {isRunning && (
+              <div style={{ background: 'var(--bg-secondary)', borderRadius: 4, height: 8, marginBottom: 16, overflow: 'hidden' }}>
+                <div style={{
+                  width: `${Math.max(progress, 2)}%`,
+                  height: '100%',
+                  background: 'var(--accent-blue)',
+                  borderRadius: 4,
+                  transition: 'width 0.5s ease',
+                }} />
+              </div>
+            )}
+            {/* Top discriminators would go here */}
+            <div style={{ color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic' }}>
+              Top discriminating expressions will appear here after profiler completes.
+            </div>
+          </div>
+
+          {/* COLLABORATIVE CONDITIONS SECTION */}
+          <div className="card">
+            <div className="card-title">🎯 Collaborative Conditions — Scan Rules</div>
+            <ConditionsPage activeSetup={activeSetup} embedded={true} />
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // HISTORICAL ANALYSIS PAGE — Backtest + Market Clustering
+    // ============================================
+    function HistoricalPage({ activeSetup }) {
+      return (
+        <div>
+          <FeaturePlaceholder
+            number="5"
+            title="5-Year Backtest"
+            description="Run validated scan conditions across 5 years of data. Stats include win rate, average gain/loss, profit factor, and comparison across market stages."
+          />
+          <div style={{ height: 16 }} />
+          <FeaturePlaceholder
+            number="6"
+            title="Market Clustering"
+            description="Visual overlay showing when signals cluster against SPY. Identifies which market stage transitions produce the highest signal density and best win rates."
+          />
+        </div>
+      );
+    }
+
+    // ============================================
+    // MANAGEMENT ANALYSIS PAGE — EV Optimization
+    // ============================================
+    function ManagementPage({ activeSetup }) {
+      return (
+        <div>
+          <FeaturePlaceholder
+            number="7"
+            title="EV Optimization — Trade Management"
+            description="Brute-force test 3.6M parameter combinations for stops, targets, and trailing strategies. Find optimal management per market regime. The formula: best setups × best markets × best management = highest EV."
+          />
+        </div>
+      );
+    }
+
+    // ============================================
     // APP SHELL
     // ============================================
     function App() {
       const [page, setPage] = useState('dashboard');
-      const [activeSetup, setActiveSetup] = useState('3-4db');
+      const [activeSetup, setActiveSetup] = useState('dtss');
+      const [activeTab, setActiveTab] = useState('examples');
+      const [expandedSetups, setExpandedSetups] = useState({ 'dtss': true });
 
-      const currentPage = PAGES.find(p => p.id === page);
-      let sections = {};
-      PAGES.forEach(p => {
-        if (!sections[p.section]) sections[p.section] = [];
-        sections[p.section].push(p);
-      });
+      function toggleSetup(key) {
+        setExpandedSetups(prev => ({ ...prev, [key]: !prev[key] }));
+      }
 
-      const sectionLabels = { overview: 'Overview', manage: 'Manage', tools: 'Tools' };
+      function selectSetupTab(setupKey, tabId) {
+        setActiveSetup(setupKey);
+        setActiveTab(tabId);
+        setPage('setup');
+        if (!expandedSetups[setupKey]) {
+          setExpandedSetups(prev => ({ ...prev, [setupKey]: true }));
+        }
+      }
+
+      // Figure out topbar title
+      let topbarTitle = 'Dashboard';
+      if (page === 'setup') {
+        const setup = SETUP_TYPES[activeSetup];
+        const tab = SETUP_TABS.find(t => t.id === activeTab);
+        topbarTitle = `${setup.name} — ${tab?.label || ''}`;
+      }
 
       return (
         <>
@@ -1167,47 +1342,53 @@
             <div className="sidebar-logo">
               scan<span>/</span>perfect
             </div>
-            {Object.entries(sections).map(([section, pages]) => (
-              <React.Fragment key={section}>
-                <div className="nav-section">{sectionLabels[section]}</div>
-                {pages.map(p => (
-                  <div
-                    key={p.id}
-                    className={`nav-item ${page === p.id ? 'active' : ''}`}
-                    onClick={() => setPage(p.id)}
-                  >
-                    <span className="nav-icon">{p.icon}</span>
-                    {p.label}
-                    {p.id === 'examples' && <span className="nav-badge">14</span>}
-                    {p.id === 'conditions' && <span className="nav-badge">18</span>}
-                  </div>
-                ))}
+
+            {/* Dashboard */}
+            <div
+              className={`nav-item ${page === 'dashboard' ? 'active' : ''}`}
+              onClick={() => setPage('dashboard')}
+              style={{ marginTop: 12 }}
+            >
+              <span className="nav-icon">◫</span>
+              Dashboard
+            </div>
+
+            <div className="nav-divider" />
+
+            {/* Setup sections */}
+            {Object.entries(SETUP_TYPES).map(([key, s]) => (
+              <React.Fragment key={key}>
+                <div className="nav-setup-header" onClick={() => toggleSetup(key)}>
+                  <div className="nav-setup-dot" style={{ background: s.color }} />
+                  <span className="nav-setup-label">{s.name}</span>
+                  <span className={`nav-setup-arrow ${expandedSetups[key] ? 'open' : ''}`}>▸</span>
+                </div>
+                <div className="nav-sub-items" style={{ maxHeight: expandedSetups[key] ? 200 : 0 }}>
+                  {SETUP_TABS.map(tab => (
+                    <div
+                      key={tab.id}
+                      className={`nav-sub-item ${page === 'setup' && activeSetup === key && activeTab === tab.id ? 'active' : ''}`}
+                      onClick={() => selectSetupTab(key, tab.id)}
+                    >
+                      <span className="nav-sub-icon">{tab.icon}</span>
+                      {tab.label}
+                    </div>
+                  ))}
+                </div>
               </React.Fragment>
             ))}
           </div>
           <div className="main">
             <div className="topbar">
-              <div className="topbar-title">{currentPage?.label}</div>
-              <div className="topbar-actions">
-                <div className="setup-tabs" style={{ marginBottom: 0 }}>
-                  {Object.entries(SETUP_TYPES).map(([key, s]) => (
-                    <div
-                      key={key}
-                      className={`setup-tab ${key === activeSetup ? 'active' : ''}`}
-                      onClick={() => setActiveSetup(key)}
-                      style={{ padding: '5px 12px', fontSize: 12 }}
-                    >
-                      {s.name}
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <div className="topbar-title">{topbarTitle}</div>
             </div>
             <div className="content">
-              {page === 'dashboard' && <DashboardPage setPage={setPage} />}
-              {page === 'examples' && <ExamplesPage activeSetup={activeSetup} />}
-              {page === 'conditions' && <ConditionsPage activeSetup={activeSetup} />}
-              {page === 'validate' && <ValidatePage />}
+              {page === 'dashboard' && <DashboardPage setPage={(p) => { if (p === 'examples') { setPage('setup'); setActiveTab('examples'); } else setPage(p); }} />}
+              {page === 'setup' && activeTab === 'examples' && <ExamplesPage activeSetup={activeSetup} />}
+              {page === 'setup' && activeTab === 'description' && <DescriptionPage activeSetup={activeSetup} />}
+              {page === 'setup' && activeTab === 'conditions' && <ConditionsAnalysisPage activeSetup={activeSetup} />}
+              {page === 'setup' && activeTab === 'historical' && <HistoricalPage activeSetup={activeSetup} />}
+              {page === 'setup' && activeTab === 'management' && <ManagementPage activeSetup={activeSetup} />}
             </div>
           </div>
         </>
