@@ -257,15 +257,29 @@ Using the historical signals from Step 7, filtered to the highest-success market
 
 ## Build TODO
 
-All 5 core engine components are complete. Pick from these next priorities:
+### DTSS Pipeline Status (as of 2026-02-22)
+
+| Step | Status | Notes |
+|------|--------|-------|
+| 1 Load | ✅ Done | Data + TA knowledge loaded |
+| 2 Receive | ✅ Done | 23 examples (21 profile successfully), LSP data for all |
+| 3 Profile | ✅ Done | 528 features per example via ProfilingEngine. FastProfiler caches OHLCV locally (0.14s examples, 38s/500 universe) |
+| 4 Discover | ✅ Done | 482 features scored. Discovery report: data/dtss_discovery_report.json |
+| 5 Compose | **⚠️ IN PROGRESS** | 12 PCF conditions composed, 21/21 examples pass. BUT 39% universe pass rate (~1,600 signals) — far too loose. Thresholds need tightening or more discriminating conditions needed. |
+| 6 Validate | Not started | Blocked on Step 5 selectivity |
+| 7 Market Context | Not started | |
+| 8 EV Optimize | Not started | |
+
+**Next action:** Tighten Step 5 conditions. Current conditions are just "stock in uptrend near highs" — not DTSS-specific. Need to either tighten thresholds (accepting 1-2 example losses) or add new discriminating features to get combined selectivity under 5%.
+
+### Other Priorities
 
 | # | Task | Description |
 |---|------|-------------|
-| 1 | **Run DTSS through pipeline** | First real end-to-end test. 26 examples → profile → discover → outcomes → optimize via the new API endpoints. |
-| 2 | **3-4DB backtest → optimizer** | Run 800+ backtest signals through outcome precomputation + management optimizer. Get real EV numbers, not just example-only. |
-| 3 | **Market regime analysis (Step 7)** | Build the "when to trade it" filter. 3-4DB showed 6-7x signal spikes during stage transitions — quantify which market conditions produce winners vs losers. |
-| 4 | **Daily scan automation** | Nightly job: run scan conditions against today's data, surface tomorrow's candidates. The whole point of the project. |
-| 5 | **HTF setup examples** | Third setup type has zero examples. Need to collect and load them before any analysis can run. |
+| 1 | **3-4DB backtest → optimizer** | Run 800+ backtest signals through outcome precomputation + management optimizer. Get real EV numbers, not just example-only. |
+| 2 | **Market regime analysis (Step 7)** | Build the "when to trade it" filter. 3-4DB showed 6-7x signal spikes during stage transitions — quantify which market conditions produce winners vs losers. |
+| 3 | **Daily scan automation** | Nightly job: run scan conditions against today's data, surface tomorrow's candidates. The whole point of the project. |
+| 4 | **HTF setup examples** | Third setup type has zero examples. Need to collect and load them before any analysis can run. |
 
 - **URL:** web-production-e3025.up.railway.app
 - **Key API endpoints:**
