@@ -51,93 +51,98 @@ This gives a general starting point to understand what the setup looks like nume
 
 ---
 
-## Step 3: Profiler — PCF Expression Discovery
+## Step 3: THE GRINDER — Automated Expression Discovery
 
-**Goal:** Find which PCF expressions best discriminate examples from the tradable universe. Get from 100% down to single-digit selectivity with ranked, ready-to-use PCF conditions.
+**Goal:** Find which expression combinations best discriminate examples from the tradable universe. Get from 100% down to the mathematical ceiling — the tightest pass rate achievable through pure brute-force computation.
 
-**This is a 10-step process. Steps 9-10 loop with user approval.**
+**This step is now automated via THE GRINDER, a desktop-based spiderweb search system.**
 
-### 3.1 Read the setup description and examples
-Understand what the pattern looks like the day before entry. What's the TA thesis? What should be true on the scan candle?
+### How It Works
 
-### 3.2 Read TA knowledge
-Load `ta_knowledge.md`. Map the setup to TA concepts — extension structures, market stages, channel behavior, MA relationships, volume patterns. These concepts drive what expressions to generate.
+The grinder precomputes two matrices:
+1. **Universe matrix** — every tradable ticker × every expression, evaluated at the most recent bar. Shared across all setups. Auto-rebuilds nightly at 4:30pm ET. (~30 min first time, cached daily after that.)
+2. **Example matrix** — every setup example × every expression, evaluated at the scan candle (day before entry). Per-setup, fast (~5s per example).
 
-### 3.3 Collect setup-specific data
-Load any metadata unique to this setup type. For DTSS: LSP data (`data/dtss_lsp_data.json`). For other setups: whatever anchoring data exists. This data informs rule design and validates that generated expressions capture the right thing.
+The spiderweb search then explores branching combinations of conditions:
+- Each node = a set of conditions applied together (AND logic)
+- Thresholds derived from example ranges (all examples must pass)
+- Score = % of universe that passes (lower = tighter = better)
+- Beam search prunes weak paths, explores promising ones deeper
 
-### 3.4 Define generation rules grounded in TA concepts
-**Rules are NOT random feature combinations.** Each rule captures a specific TA concept relevant to the setup. Example rules for DTSS:
-- **Near resistance** — price close to prior highs (MAXH at various periods proxies for LSP)
-- **Extended above MAs** — distance from 50 SMA, 200 SMA, EMAs in ADR multiples
-- **MA structure** — stacking, slopes, spreads confirming the uptrend
-- **Momentum stalling** — ROC declining, RSI extreme, volume drying up, ADX rolling
-- **Range position** — where price sits in its channel
+### Running the Grinder
 
-Rules are specific to each setup type. The user reviews the rules, not the individual expressions.
+1. **Load examples** — must exist in Railway DB with entry dates
+2. **Set grind level** via frontend slider:
+   - Level 1: Quick scan (beam=10, depth=5, ~30s)
+   - Level 2: Light grind (beam=25, depth=8, ~2 min)
+   - Level 3: Medium grind (beam=50, depth=10, ~10 min)
+   - Level 4: Heavy grind (beam=100, depth=12, ~30 min)
+   - Level 5: Overnight (beam=250, depth=15, ~2-8 hours)
+3. **Click Start Grind** — desktop agent picks up job, runs search, posts results
+4. **Review ceiling** — the level progression chart shows when adding conditions stops improving. That ceiling is the mathematical limit of brute-force expression stacking.
 
-### 3.5 Map rules to PCF primitives
-Each rule generates expressions automatically: base indicators × periods × normalizers (ATR, ADR, %). Every expression must be valid TC2000 PCF syntax. No Python-only calculations.
+### What the Grinder Produces
 
-### 3.6 Budget the compute
-**Hard constraint: 5 minutes for full tradable universe (4,167 tickers).**
-- Benchmark base indicator computation per ticker
-- Benchmark expression generation per ticker
-- If under budget, add more rules/periods/normalizers
-- If over budget, trim the least valuable (by TA relevance, not randomly)
-- **Every number presented must come from actual benchmarks, not estimates.**
+- **Best condition combo** — ranked list of expressions with thresholds
+- **Pass rate progression** — how selectivity improves at each depth level
+- **Ceiling identification** — the point where adding conditions stops helping
 
-### 3.7 Save the expression config per setup type
-Expression rules are saved as a config file specific to this setup (e.g., `data/dtss_expression_rules.json`). Different setups generate different expressions. The profiler reads this config and generates accordingly.
+### What the Grinder CAN'T Do
 
-### 3.8 Run the profiler
-Compute all expressions for:
-- Every example on its scan candle (day before entry)
-- Every tradable universe ticker on its most recent bar
+The grinder finds the ceiling of mechanical, single-threshold conditions. It cannot capture:
+- Market regime / stage transitions
+- AVWAP relationships (institutional flow)
+- Algo lines from high-volume candles
+- Multi-day pattern shape (it sees one bar at a time)
+- Net gamma effects
+- Qualitative "this chart looks right" patterns
 
-Rank expressions by discrimination power: example pass rate vs universe pass rate. Output top discriminators in PCF syntax.
+These are handled in Step 4 (Collaborative Analysis) where human discretion pushes past the grinder's ceiling toward zero daily pass rate.
 
-### 3.9 Present results. STOP. Wait for user go-ahead.
-Show the ranked discriminators with:
-- PCF expression
-- What it captures in TA terms
-- Example pass rate
-- Universe pass rate (selectivity)
-- Direction and threshold
+### Architecture
 
-**Do not proceed without explicit user approval.**
-
-### 3.10 Layer and iterate
-Take top discriminators, combine into multi-condition logic. Test combined selectivity. Present results. **STOP. Wait for user go-ahead.** Repeat this step as many times as the user chooses. Each individual attempt requires explicit approval.
+- `local_runner/matrix_builder.py` — Precomputes universe + example matrices
+- `local_runner/spiderweb.py` — Beam search tree exploration
+- `local_runner/grinder.py` — CLI interface
+- `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild
+- `local_runner/cache_builder.py` — OHLCV cache from Railway DB
+- `local_runner/brute_expressions.py` — 1,338 expression generator
+- `server.py` — Grinder API endpoints (jobs/status/progress/results/agent)
 
 ### Expression generation constraints
 - Every expression must be valid TC2000 PCF
 - ATR = `ATR14` (not AVGT14, AVG14, or AVGT)
 - EMA = `XAVGC` (not EAVG or XAVG). e.g. EMA21 = `XAVGC21`
 - All thresholds normalized to ATR, ADR, or % — no fixed dollar amounts
-- **NEVER present a number (expression count, selectivity, pass rate) unless actually computed from data.**
-
-### Tools
-- **FastProfiler** (`scripts/fast_profiler.py`) — cached OHLCV, concurrent fetch, fast computation
-- **Tradable universe only** — `tradable_universe` table (4,167 tickers). Never Universe.txt. Never samples.
-- **LSP data** — `data/{setup}_lsp_data.json` for setup-specific metadata
-- **PCF reference** — `pcf.md` for syntax validation
+- Tradable universe only — `tradable_universe` table (4,167 tickers). Never Universe.txt. Never samples.
 
 ---
 
-## Step 4: Collaborative Analysis — Refine to Scan-Ready Conditions
+## Step 4: Collaborative Analysis — Push Past the Ceiling
 
-**Goal:** Take the profiler's ranked discriminators and, through iterative human-AI collaboration, build the tightest possible multi-condition scan.
+**Goal:** Take the grinder's mathematical ceiling and, through human-AI collaboration, add qualitative/discretionary conditions that push selectivity toward zero.
+
+**The grinder finds the floor of what pure math can do. This step adds what the human eye sees that numbers can't capture.**
 
 **Process:**
 
-1. **Review profiler output together** — user evaluates which discriminators make TA sense vs which are noise or overfitting
-2. **Compose conditions** — combine selected discriminators into multi-condition PCF logic
-3. **Test combined selectivity** — run all conditions together against examples and universe
-4. **User decides next move** — tighten thresholds, add conditions, remove conditions, try different combinations
-5. **Repeat** — each iteration requires explicit user approval. Continue until user is satisfied with selectivity vs false negative tradeoff.
+1. **Review grinder results** — understand the best condition combo, what each expression captures, and where the ceiling sits (e.g., "grinder gets to 2.1%, adding more conditions doesn't help")
+2. **Identify what's missing** — look at the tickers still passing. What do the false positives have in common? What distinguishes them from real setups? Common gaps:
+   - Market regime (stage transitions, breadth, sector rotation)
+   - AVWAP relationships (institutional flow, supply/demand zones)
+   - Algo lines from high-volume candles
+   - Multi-day price structure / pattern shape
+   - Volume character (distribution vs accumulation)
+   - Net gamma effects
+3. **Add discretionary conditions** — translate the human observation into testable conditions. Some become PCF expressions, others become manual checklist items for the final vet.
+4. **Test combined selectivity** — run grinder conditions + new conditions against examples and universe
+5. **Iterate** — each round requires explicit user approval
 
-**Output:** A set of PCF conditions, each copy-paste ready for TC2000, with tested selectivity numbers.
+**The goal is zero:** the scan should return nothing most days. When it fires, that's the signal. This is achieved through the combination of grinder conditions (mechanical) + collaborative conditions (discretionary).
+
+**Output:** A complete condition set split into:
+- **Scannable conditions** — PCF code for TC2000 automated scanning
+- **Manual checklist** — qualitative checks for final human review of scan output
 
 ### PCF Output Rules
 - Each condition is its own code block for single-click copy
@@ -228,8 +233,8 @@ Using the historical signals from Step 7, filtered to the highest-success market
 |------|------|-----|
 | 1 | **Load** | Data & TA knowledge — everything is already in the system |
 | 2 | **Receive** | User presents examples, entry dates, and setup context |
-| 3 | **Profile** | Generate PCF expressions from TA-grounded rules, rank by discrimination power (10 sub-steps, loops with user approval) |
-| 4 | **Collaborate** | Human-AI iteration to compose, test, and tighten PCF scan conditions |
+| 3 | **Grind** | THE GRINDER — 1,338 expressions, spiderweb beam search, desktop compute. Finds the mathematical ceiling of brute-force condition stacking. |
+| 4 | **Collaborate** | Human-AI iteration to push past the grinder ceiling with qualitative/discretionary conditions. Goal: zero daily pass rate. |
 | 5 | **Backtest** | Run conditions across full history, review signals, validate and tighten |
 | 6 | **Market Context** | Find which market conditions produce winners vs losers |
 | 7 | **EV Optimize** | Test management variations, finalize the playbook entry |
@@ -254,5 +259,14 @@ Using the historical signals from Step 7, filtered to the highest-success market
   - `POST /api/backtest/run` — run backtest
   - `GET /api/chart-image/{type}/{id}` — chart image
   - `GET /docs` — full Swagger API docs
+  - **Grinder endpoints:**
+  - `POST /api/grinder/start` — submit a grind job (setup_type, grind_level)
+  - `GET /api/grinder/jobs/pending` — pending jobs for agent pickup
+  - `POST /api/grinder/status` — agent posts job status updates
+  - `POST /api/grinder/progress` — agent posts progress updates
+  - `GET /api/grinder/progress/{job_id}` — frontend polls progress
+  - `GET /api/grinder/results/{setup_type}` — get latest results
+  - `GET /api/grinder/agent/status` — check if desktop agent is online
+  - `POST /api/grinder/agent/heartbeat` — agent heartbeat
 - **Infrastructure:** SQLite on Railway persistent volume (/app/data)
 - **DB tables:** examples, ohlcv, extension, conditions, signal_analysis, universe_ohlcv, tradable_universe, scan_backtest, scan_backtest_clean, ticker_sectors, backtest_status
