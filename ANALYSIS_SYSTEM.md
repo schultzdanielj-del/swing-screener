@@ -51,120 +51,104 @@ This gives a general starting point to understand what the setup looks like nume
 
 ---
 
-## Step 3: Profile — Build the Numerical Fingerprint
+## Step 3: Profiler — PCF Expression Discovery
 
-**Goal:** Compute thousands of measurements for every example on its scan bar. Build a complete numerical profile of what the setup looks like at the moment it's ripe.
+**Goal:** Find which PCF expressions best discriminate examples from the tradable universe. Get from 100% down to single-digit selectivity with ranked, ready-to-use PCF conditions.
 
-**What gets computed:** Every indicator the PCF language can express, at every reasonable period, in every meaningful combination. This includes:
+**This is a 10-step process. Steps 9-10 loop with user approval.**
 
-**Layer 1 — Raw indicators at swept periods:**
-- Price primitives: `C`, `O`, `H`, `L`, `V` and offsets (`C1` through `C10`, etc.)
-- Moving averages: SMA, EMA, FWMA, HMA of C/H/L/O — periods 5 through 200, every integer
-- Rolling MAX/MIN: `MAXH`, `MAXC`, `MINL`, `MINC` — periods 2 through 200
-- ATR: periods 2 through 50
-- RSI / WRSI: periods 5 through 50
-- MACD: common fast/slow combos
-- Stochastics: period sweeps
-- CCI, ADX, Bollinger Bands, Aroon: period sweeps
-- Volume indicators: OBV, BOP with smoothing sweeps
-- SUM(V, x) for various periods
+### 3.1 Read the setup description and examples
+Understand what the pattern looks like the day before entry. What's the TA thesis? What should be true on the scan candle?
 
-**Layer 2 — Derived measurements that encode history into scan-bar values:**
-- Distance from MA: `(C - AVGCx) / ATRy`, `(C - XAVGCx) / ATRy`
-- Extension: `(MAXHx - AVGCy) / C`, `(MAXHx - AVGCy) / ATRz`
-- Pullback depth: `(MAXHx - C) / ATRy`
-- Pullback as % of move: `(MAXHx - C) / (MAXHx - MINLy)`
-- MA relationships: `AVGCx - AVGCy`, `XAVGCx / XAVGCy`
-- MA slope: `AVGCx - AVGCx.y` (SMA now vs y bars ago)
-- Range ratios: `MAXHx / MINLy`, `(MAXHx - MINLy) / ATRz`
-- Candle shape: `(H - C) / (H - L)`, `(C - L) / (H - L)`, `(H - L) / ATRx`
-- Volume ratios: `AVG(V,x) / AVG(V,y)`, `V / AVG(V,x)`
-- Price position in range: `(C - MINLx) / (MAXHx - MINLx)`
-- Bollinger %b: `(C - BBBOTx) / (BBTOPx - BBBOTx)`
-- CountTrue patterns: `CountTrue(C > C1, x)`, `CountTrue(C > XAVGCy, x)`
-- SinceTrue patterns: `SinceTrue(C > MAXHx.1, y)` (bars since new high)
-- Consecutive patterns: `TrueInRow(C < C1, x)` (consecutive down days)
+### 3.2 Read TA knowledge
+Load `ta_knowledge.md`. Map the setup to TA concepts — extension structures, market stages, channel behavior, MA relationships, volume patterns. These concepts drive what expressions to generate.
 
-**Layer 3 — Market context (SPY/QQQ from universe_ohlcv):**
-- All Layer 1 and Layer 2 measurements computed for SPY and QQQ on the same scan bar
-- Stock-vs-market relative measurements: stock RSI minus SPY RSI, stock extension vs SPY extension, stock pullback depth vs market pullback depth
-- Market regime indicators: SPY distance from 50/200 SMA, SPY MA slope, QQQ above/below key MAs
-- Correlation: is the stock pulling back WITH the market or AGAINST it
+### 3.3 Collect setup-specific data
+Load any metadata unique to this setup type. For DTSS: LSP data (`data/dtss_lsp_data.json`). For other setups: whatever anchoring data exists. This data informs rule design and validates that generated expressions capture the right thing.
 
-**Layer 4 — Offset comparisons (rate of change of indicators):**
-- Indicator now vs N bars ago for key indicators
-- Acceleration: second derivative of MAs and key indicators
+### 3.4 Define generation rules grounded in TA concepts
+**Rules are NOT random feature combinations.** Each rule captures a specific TA concept relevant to the setup. Example rules for DTSS:
+- **Near resistance** — price close to prior highs (MAXH at various periods proxies for LSP)
+- **Extended above MAs** — distance from 50 SMA, 200 SMA, EMAs in ADR multiples
+- **MA structure** — stacking, slopes, spreads confirming the uptrend
+- **Momentum stalling** — ROC declining, RSI extreme, volume drying up, ADX rolling
+- **Range position** — where price sits in its channel
 
-All measurements are computed for every example on the scan bar. The same measurements are computed for a sample of the tradable universe on the most recent bar (or a representative date).
+Rules are specific to each setup type. The user reviews the rules, not the individual expressions.
 
-**Output:** A wide matrix — one row per ticker-date, one column per measurement. Examples and universe samples side by side.
+### 3.5 Map rules to PCF primitives
+Each rule generates expressions automatically: base indicators × periods × normalizers (ATR, ADR, %). Every expression must be valid TC2000 PCF syntax. No Python-only calculations.
 
-**NEVER present a measurement count or claim the profiling is complete unless you have actually run the computation. No guessing at numbers.**
+### 3.6 Budget the compute
+**Hard constraint: 5 minutes for full tradable universe (4,167 tickers).**
+- Benchmark base indicator computation per ticker
+- Benchmark expression generation per ticker
+- If under budget, add more rules/periods/normalizers
+- If over budget, trim the least valuable (by TA relevance, not randomly)
+- **Every number presented must come from actual benchmarks, not estimates.**
 
----
+### 3.7 Save the expression config per setup type
+Expression rules are saved as a config file specific to this setup (e.g., `data/dtss_expression_rules.json`). Different setups generate different expressions. The profiler reads this config and generates accordingly.
 
-## Step 4: Discover — Find What's Consistent AND Selective
+### 3.8 Run the profiler
+Compute all expressions for:
+- Every example on its scan candle (day before entry)
+- Every tradable universe ticker on its most recent bar
 
-**Goal:** Find which measurements make the examples look the same as each other AND different from everything else.
+Rank expressions by discrimination power: example pass rate vs universe pass rate. Output top discriminators in PCF syntax.
 
-**Process:**
-
-1. **Consistency check:** For each measurement, look at the range of values across all examples. Compute the spread (max - min) relative to the full universe distribution. Tight clustering across examples = consistent feature.
-
-2. **Selectivity check:** For each consistent feature, find what percentage of the tradable universe falls within the example range. Low percentage = highly selective. A feature where all examples cluster between 2.1 and 3.4 but only 2% of the universe falls in that range is gold.
-
-3. **Combined score:** Rank every measurement by consistency × selectivity. The best features are tight across examples AND rare in the universe.
-
-4. **Threshold extraction:** For each top feature, derive the tightest threshold that passes 100% of examples. This comes directly from the example min/max for that measurement, with a small buffer.
-
-**Output:** A ranked list of the top 50-100 most discerning features, each with:
-- What it measures (human-readable description)
-- The range across examples
-- What % of the universe it filters out
-- The derived threshold and direction (> or <)
-
-Present this to the user. This is the "here's what your examples have in common that's unique" report.
-
----
-
-## Step 5: Compose — TA-Validated Condition Building
-
-**Goal:** Using TA knowledge, interpret the top features from Step 4 and compose them into a coherent, meaningful set of PCF scan conditions.
-
-**Process:**
-
-1. **Group by concept:** Cluster the top features by what they're actually describing in TA terms. Many measurements will be capturing the same underlying characteristic from different angles. Groups might include:
-   - Prior extension (how far price ran before pulling back)
-   - Pullback depth and character
-   - Bounce weakness (failed recovery)
-   - Trend context (MA structure, slope)
-   - Volume behavior
-   - Candle/bar characteristics
-
-2. **Select best representative per group:** Within each group, pick the single most selective measurement. Multiple conditions capturing the same concept add complexity without adding filtering power.
-
-3. **Validate with TA knowledge:** For each selected condition, confirm it makes sense in the context of `ta_knowledge.md` and the setup description. If a condition is highly selective but makes no TA sense, flag it as potential overfitting — discuss with user.
-
-4. **Test the combination:** Run all selected conditions together against the examples (must pass 100%) and the universe. Check the result count.
-
-5. **Iterate:** If results are too many, add more conditions from the ranked list. If zero examples fail, tighten thresholds. If examples start failing, back off.
-
-**Output:** A set of 8-15 PCF conditions, each with:
-- The PCF code (copy-paste ready)
+### 3.9 Present results. STOP. Wait for user go-ahead.
+Show the ranked discriminators with:
+- PCF expression
 - What it captures in TA terms
-- Its individual selectivity (what % of universe it eliminates)
-- The combined result count when all conditions are applied
+- Example pass rate
+- Universe pass rate (selectivity)
+- Direction and threshold
+
+**Do not proceed without explicit user approval.**
+
+### 3.10 Layer and iterate
+Take top discriminators, combine into multi-condition logic. Test combined selectivity. Present results. **STOP. Wait for user go-ahead.** Repeat this step as many times as the user chooses. Each individual attempt requires explicit approval.
+
+### Expression generation constraints
+- Every expression must be valid TC2000 PCF
+- ATR = `ATR14` (not AVGT14, AVG14, or AVGT)
+- EMA = `XAVGC` (not EAVG or XAVG). e.g. EMA21 = `XAVGC21`
+- All thresholds normalized to ATR, ADR, or % — no fixed dollar amounts
+- **NEVER present a number (expression count, selectivity, pass rate) unless actually computed from data.**
+
+### Tools
+- **FastProfiler** (`scripts/fast_profiler.py`) — cached OHLCV, concurrent fetch, fast computation
+- **Tradable universe only** — `tradable_universe` table (4,167 tickers). Never Universe.txt. Never samples.
+- **LSP data** — `data/{setup}_lsp_data.json` for setup-specific metadata
+- **PCF reference** — `pcf.md` for syntax validation
+
+---
+
+## Step 4: Collaborative Analysis — Refine to Scan-Ready Conditions
+
+**Goal:** Take the profiler's ranked discriminators and, through iterative human-AI collaboration, build the tightest possible multi-condition scan.
+
+**Process:**
+
+1. **Review profiler output together** — user evaluates which discriminators make TA sense vs which are noise or overfitting
+2. **Compose conditions** — combine selected discriminators into multi-condition PCF logic
+3. **Test combined selectivity** — run all conditions together against examples and universe
+4. **User decides next move** — tighten thresholds, add conditions, remove conditions, try different combinations
+5. **Repeat** — each iteration requires explicit user approval. Continue until user is satisfied with selectivity vs false negative tradeoff.
+
+**Output:** A set of PCF conditions, each copy-paste ready for TC2000, with tested selectivity numbers.
 
 ### PCF Output Rules
 - Each condition is its own code block for single-click copy
 - ATR = `ATR14` (not AVGT14, AVG14, or AVGT)
 - EMA = `XAVGC` (not EAVG or XAVG). e.g. EMA21 = `XAVGC21`
-- All thresholds normalized to ATR or price — no fixed dollar amounts
-- **NEVER present a condition backed by a hit rate (e.g. "26/26" or "92%") unless you have actually tested it against the data and verified the number.**
+- All thresholds normalized to ATR, ADR, or % — no fixed dollar amounts
+- **NEVER present a condition backed by a hit rate unless actually tested and verified.**
 
 ---
 
-## Step 6: Validate — Historical Stress Test
+## Step 5: Backtest — Historical Validation
 
 **Goal:** Confirm the conditions identify the right pattern across history, not just on the known examples.
 
@@ -191,7 +175,7 @@ Present this to the user. This is the "here's what your examples have in common 
 
 ---
 
-## Step 7: Market Context — When to Trade It
+## Step 6: Market Context — When to Trade It
 
 **Goal:** Identify which market conditions produce winning signals vs losing signals.
 
@@ -206,7 +190,7 @@ Present this to the user. This is the "here's what your examples have in common 
 
 ---
 
-## Step 8: EV Optimization — Brute Force Trade Management
+## Step 7: EV Optimization — Brute Force Trade Management
 
 **Goal:** Find the absolute best trade management strategy by exhaustively testing every possible combination against precomputed outcome data.
 
@@ -230,8 +214,8 @@ Using the historical signals from Step 7, filtered to the highest-success market
 4. **Validate robustness:** The best management strategy should work across different time periods and market conditions, not just on the best-case signals.
 
 **Output:** The complete playbook entry:
-- **Setup conditions** (what to scan for — from Step 5)
-- **Market conditions** (when to trade it — from Step 7)
+- **Setup conditions** (what to scan for — from Step 4)
+- **Market conditions** (when to trade it — from Step 6)
 - **Management rules** (exact stop, target, trail, time stop, partial rules — from this step)
 - **Expected EV per trade** in ATR units
 - **Win rate, profit factor, max drawdown** for the chosen management approach
@@ -244,12 +228,11 @@ Using the historical signals from Step 7, filtered to the highest-success market
 |------|------|-----|
 | 1 | **Load** | Data & TA knowledge — everything is already in the system |
 | 2 | **Receive** | User presents examples, entry dates, and setup context |
-| 3 | **Profile** | Compute thousands of measurements for every example — build the numerical fingerprint |
-| 4 | **Discover** | Find which measurements are consistent across examples AND rare in the universe |
-| 5 | **Compose** | Use TA knowledge to interpret top features, group by concept, build PCF conditions |
-| 6 | **Validate** | Run conditions across history, review non-example signals, tighten if needed |
-| 7 | **Market Context** | Find which market conditions produce winners vs losers |
-| 8 | **EV Optimize** | Test management variations, finalize the playbook entry |
+| 3 | **Profile** | Generate PCF expressions from TA-grounded rules, rank by discrimination power (10 sub-steps, loops with user approval) |
+| 4 | **Collaborate** | Human-AI iteration to compose, test, and tighten PCF scan conditions |
+| 5 | **Backtest** | Run conditions across full history, review signals, validate and tighten |
+| 6 | **Market Context** | Find which market conditions produce winners vs losers |
+| 7 | **EV Optimize** | Test management variations, finalize the playbook entry |
 
 **The output is a complete playbook entry:** best setups × best markets × best management = highest EV possible.
 
@@ -262,13 +245,12 @@ Using the historical signals from Step 7, filtered to the highest-success market
 | Step | Status | Notes |
 |------|--------|-------|
 | 1 Load | ✅ Done | Data + TA knowledge loaded |
-| 2 Receive | ✅ Done | 23 examples (21 profile successfully), LSP data for all |
-| 3 Profile | ✅ Done | 528 features per example via ProfilingEngine. FastProfiler caches OHLCV locally (0.14s examples, 38s/500 universe) |
-| 4 Discover | ✅ Done | 482 features scored. Discovery report: data/dtss_discovery_report.json |
-| 5 Compose | **⚠️ IN PROGRESS** | 12 PCF conditions composed, 21/21 examples pass. BUT 39% universe pass rate (~1,600 signals) — far too loose. Thresholds need tightening or more discriminating conditions needed. |
-| 6 Validate | Not started | Blocked on Step 5 selectivity |
-| 7 Market Context | Not started | |
-| 8 EV Optimize | Not started | |
+| 2 Receive | ✅ Done | 26 examples with LSP data (`data/dtss_lsp_data.json`) |
+| 3 Profile | **⚠️ IN PROGRESS** | Old profiler (528 Python features) abandoned. New PCF-native profiler being built: ~660 PCF expressions, 4,167 tradable tickers, 5 min budget. Rules defined, implementation next. |
+| 4 Collaborate | Not started | Blocked on Step 3 |
+| 5 Backtest | Not started | |
+| 6 Market Context | Not started | |
+| 7 EV Optimize | Not started | |
 
 **Next action:** Tighten Step 5 conditions. Current conditions are just "stock in uptrend near highs" — not DTSS-specific. Need to either tighten thresholds (accepting 1-2 example losses) or add new discriminating features to get combined selectivity under 5%.
 
