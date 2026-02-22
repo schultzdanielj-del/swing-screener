@@ -1799,5 +1799,71 @@ async def optimization_results(setup_type: str, n: int = Query(20)):
         return {"strategies": {"count": 0}, "plateaus": {"count": 0}, "error": str(e)}
 
 
+# ============================================
+# SETUP-SPECIFIC DATA (LSP, etc.)
+# ============================================
+
+@app.get("/api/setup-data/{setup_type}")
+async def get_setup_data(setup_type: str):
+    """Get setup-specific data (e.g. LSP prices for DTSS)."""
+    import json as _json
+    data_file = os.path.join("data", f"{setup_type}_lsp_data.json")
+    if os.path.exists(data_file):
+        with open(data_file) as f:
+            return {"data": _json.load(f), "type": "lsp"}
+    return {"data": [], "type": "none"}
+
+
+class LSPEntry(BaseModel):
+    ticker: str
+    date: str
+    price: float
+    entry_date: str = ""
+    example_id: int = 0
+
+
+@app.put("/api/setup-data/{setup_type}/lsp")
+async def save_lsp_data(setup_type: str, entries: list[LSPEntry]):
+    """Save LSP data for a setup type."""
+    import json as _json
+    data_file = os.path.join("data", f"{setup_type}_lsp_data.json")
+    data = [e.dict() for e in entries]
+    with open(data_file, "w") as f:
+        _json.dump(data, f, indent=2)
+    return {"saved": len(data)}
+
+
+@app.post("/api/setup-data/{setup_type}/lsp")
+async def add_lsp_entry(setup_type: str, entry: LSPEntry):
+    """Add a single LSP entry."""
+    import json as _json
+    data_file = os.path.join("data", f"{setup_type}_lsp_data.json")
+    data = []
+    if os.path.exists(data_file):
+        with open(data_file) as f:
+            data = _json.load(f)
+    data.append(entry.dict())
+    with open(data_file, "w") as f:
+        _json.dump(data, f, indent=2)
+    return {"saved": len(data)}
+
+
+@app.delete("/api/setup-data/{setup_type}/lsp/{idx}")
+async def delete_lsp_entry(setup_type: str, idx: int):
+    """Delete an LSP entry by index."""
+    import json as _json
+    data_file = os.path.join("data", f"{setup_type}_lsp_data.json")
+    if not os.path.exists(data_file):
+        return {"error": "no data file"}
+    with open(data_file) as f:
+        data = _json.load(f)
+    if idx < 0 or idx >= len(data):
+        return {"error": "index out of range"}
+    removed = data.pop(idx)
+    with open(data_file, "w") as f:
+        _json.dump(data, f, indent=2)
+    return {"removed": removed, "remaining": len(data)}
+
+
 # Serve frontend (MUST be last - catches all routes)
 app.mount("/", StaticFiles(directory="app", html=True), name="frontend")
