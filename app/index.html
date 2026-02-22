@@ -1200,8 +1200,8 @@
               <div style={{fontSize:12,color:'var(--text-muted)',marginTop:8}}>{level.desc}</div>
 
               <div style={{marginTop:16,display:'flex',gap:8,alignItems:'center'}}>
-                <button className="btn" onClick={startGrind} disabled={isRunning || !agentOnline}
-                  style={{opacity: (isRunning || !agentOnline) ? 0.5 : 1}}>
+                <button className="btn" onClick={startGrind} disabled={isRunning}
+                  style={{opacity: isRunning ? 0.5 : 1}}>
                   {isRunning ? '⏳ Grinding...' : '🚀 Start Grind'}
                 </button>
                 {isRunning && <span style={{fontSize:12,color:'var(--text-muted)'}}>Level {jobStatus?.grind_level || grindLevel}</span>}

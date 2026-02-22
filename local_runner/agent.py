@@ -41,7 +41,7 @@ def post_status(job_id, status, message="", data=None):
             "job_id": job_id,
             "status": status,
             "message": message,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.utcnow().isoformat(),
         }
         if data:
             payload["data"] = data
@@ -59,7 +59,7 @@ def post_progress(job_id, phase, progress_pct, detail=""):
             "phase": phase,
             "progress_pct": progress_pct,
             "detail": detail,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.utcnow().isoformat(),
         }, timeout=10)
         return r.status_code == 200
     except:
@@ -249,7 +249,7 @@ def run_grind(job_id, setup_type, grind_level):
             "n_exprs": len(expressions),
             "n_examples": len(examples),
             "n_universe": len(uni_tickers),
-            "computed_at": datetime.now().isoformat(),
+            "computed_at": datetime.utcnow().isoformat(),
         }
         with open(matrix_file, "wb") as f:
             pickle.dump(matrix, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -322,7 +322,7 @@ def handle_job(job):
             out = {
                 "setup_type": setup_type,
                 "grind_level": grind_level,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.utcnow().isoformat(),
                 **results,
             }
 
@@ -362,7 +362,7 @@ def main():
     try:
         requests.post(f"{API_BASE}/api/grinder/agent/register", json={
             "agent_id": "desktop",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.utcnow().isoformat(),
             "status": "online",
         }, timeout=10)
     except:
@@ -383,7 +383,7 @@ def main():
                 try:
                     requests.post(f"{API_BASE}/api/grinder/agent/heartbeat", json={
                         "agent_id": "desktop",
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": datetime.utcnow().isoformat(),
                     }, timeout=5)
                 except:
                     pass
@@ -396,7 +396,7 @@ def main():
             try:
                 requests.post(f"{API_BASE}/api/grinder/agent/register", json={
                     "agent_id": "desktop",
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": datetime.utcnow().isoformat(),
                     "status": "offline",
                 }, timeout=5)
             except:

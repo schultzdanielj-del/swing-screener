@@ -2023,7 +2023,7 @@ async def get_agent_status():
     if last_hb:
         try:
             hb_time = datetime.fromisoformat(last_hb)
-            if (datetime.now() - hb_time).total_seconds() > 60:
+            if (datetime.utcnow() - hb_time).total_seconds() > 120:
                 agent["status"] = "offline"
         except:
             pass
