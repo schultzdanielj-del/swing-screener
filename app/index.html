@@ -49,9 +49,6 @@
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
-      overflow-y: auto;
-      position: relative;
-      z-index: 1;
     }
     .sidebar-logo {
       font-family: var(--font-mono);
@@ -140,7 +137,7 @@
     .nav-divider { height: 1px; background: var(--border); margin: 8px 16px; }
 
     /* Main content */
-    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; z-index: 2; }
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
     .topbar {
       height: 56px;
       border-bottom: 1px solid var(--border);
@@ -1211,14 +1208,14 @@
               <div style={{fontSize:12,color:'var(--text-muted)',marginTop:8}}>{level.desc}</div>
 
               <div style={{marginTop:16,display:'flex',gap:8,alignItems:'center'}}>
-                <div className="btn" onClick={() => { if (!isRunning) startGrind(); }}
-                  style={{opacity: isRunning ? 0.5 : 1, cursor: isRunning ? 'not-allowed' : 'pointer', userSelect:'none'}}>
+                <button className="btn" onClick={startGrind} disabled={isRunning}
+                  style={{opacity: isRunning ? 0.5 : 1}}>
                   {isRunning ? '⏳ Grinding...' : '🚀 Start Grind'}
-                </div>
-                {isRunning && <div className="btn" onClick={() => stopGrind()}
-                  style={{marginLeft:8,background:'rgba(239,68,68,0.2)',borderColor:'rgba(239,68,68,0.3)',color:'#ef4444',cursor:'pointer',userSelect:'none'}}>
+                </button>
+                {isRunning && <button className="btn" onClick={stopGrind}
+                  style={{marginLeft:8,background:'rgba(239,68,68,0.2)',borderColor:'rgba(239,68,68,0.3)',color:'#ef4444'}}>
                   ⏹ Stop
-                </div>}
+                </button>}
                 {isRunning && <span style={{fontSize:12,color:'var(--text-muted)'}}>Level {jobStatus?.grind_level || grindLevel}</span>}
               </div>
             </div>
