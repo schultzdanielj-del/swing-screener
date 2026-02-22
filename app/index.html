@@ -49,6 +49,9 @@
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
+      overflow-y: auto;
+      position: relative;
+      z-index: 1;
     }
     .sidebar-logo {
       font-family: var(--font-mono);
@@ -137,7 +140,7 @@
     .nav-divider { height: 1px; background: var(--border); margin: 8px 16px; }
 
     /* Main content */
-    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; z-index: 2; }
     .topbar {
       height: 56px;
       border-bottom: 1px solid var(--border);
