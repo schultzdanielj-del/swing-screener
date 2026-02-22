@@ -1151,25 +1151,28 @@
         return () => clearInterval(iv);
       }, [activeSetup, polling]);
 
-      function startGrind() {
-        // Reset any stuck jobs first
-        fetch(`/api/grinder/jobs/reset?setup_type=${activeSetup}`, {method:'POST'}).then(() => {
-          fetch('/api/grinder/jobs', {
+      async function startGrind() {
+        try {
+          await fetch(`/api/grinder/jobs/reset?setup_type=${activeSetup}`, {method:'POST'});
+        } catch(e) {}
+        try {
+          const r = await fetch('/api/grinder/jobs', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ setup_type: activeSetup, grind_level: grindLevel, action: 'grind' })
-          }).then(r=>r.json()).then(d => {
-            setPolling(true);
-            setJobStatus({ ...d, status: 'pending', grind_level: grindLevel, progress: {phase:'',progress_pct:0,detail:'Queued...'} });
           });
-        });
+          const d = await r.json();
+          setPolling(true);
+          setJobStatus({ ...d, status: 'pending', grind_level: grindLevel, progress: {phase:'',progress_pct:0,detail:'Queued...'} });
+        } catch(e) { console.error('startGrind error:', e); }
       }
 
-      function stopGrind() {
-        fetch(`/api/grinder/jobs/reset?setup_type=${activeSetup}`, {method:'POST'}).then(() => {
-          setJobStatus(null);
-          setPolling(false);
-        });
+      async function stopGrind() {
+        try {
+          await fetch(`/api/grinder/jobs/reset?setup_type=${activeSetup}`, {method:'POST'});
+        } catch(e) {}
+        setJobStatus(null);
+        setPolling(false);
       }
 
       const level = LEVELS[grindLevel - 1];
