@@ -1,416 +1,267 @@
 """
-Desktop Agent — Polls Railway for grind jobs, runs them, posts results.
+Desktop Agent v2 — Polls Railway for grind jobs + nightly matrix auto-rebuild.
 
 Usage:
     python local_runner/agent.py
 
-Runs forever. Checks Railway every 5 seconds for pending jobs.
-When a job is found:
-  1. Builds/refreshes OHLCV cache if needed
-  2. Generates expressions if needed
-  3. Computes value matrix if needed (fixed cost, cached)
-  4. Runs spiderweb search at requested grind level
-  5. Posts results + progress back to Railway
+Leave running 24/7. It will:
+  - Poll Railway every 5s for grind jobs
+  - Auto-rebuild OHLCV cache daily after 4:30pm ET
+  - Auto-rebuild universe matrix daily (once, ~30 min)
+  - Pick up grind jobs and run spiderweb search (fast if matrix cached)
 
-The frontend triggers jobs by POST /api/grinder/jobs
-This agent picks them up and runs them.
+After first run, daily grinds are fast. The matrix rebuilds in background.
 """
 
 import os
 import sys
 import json
 import time
-import traceback
-import requests
-from datetime import datetime
+import warnings
 
-# Ensure both repo root and local_runner are importable
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+import requests
+from datetime import datetime, timezone, timedelta
+
 LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(LOCAL_DIR)
+CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, REPO_ROOT)
-
-LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
-CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 API_BASE = "https://web-production-e3025.up.railway.app"
+POLL_INTERVAL = 5
 
-POLL_INTERVAL = 5  # seconds
+GRIND_LEVELS = {
+    1: {"name": "Quick scan",    "beam_width": 10,  "depth": 5},
+    2: {"name": "Light grind",   "beam_width": 25,  "depth": 8},
+    3: {"name": "Medium grind",  "beam_width": 50,  "depth": 10},
+    4: {"name": "Heavy grind",   "beam_width": 100, "depth": 12},
+    5: {"name": "Overnight",     "beam_width": 250, "depth": 15},
+}
+
+
+def now_utc():
+    return datetime.now(timezone.utc)
 
 
 def post_status(job_id, status, message="", data=None):
-    """Update job status on Railway."""
     try:
-        payload = {
-            "job_id": job_id,
-            "status": status,
-            "message": message,
-            "timestamp": datetime.utcnow().isoformat(),
-        }
+        payload = {"job_id": job_id, "status": status, "message": message,
+                   "timestamp": now_utc().isoformat()}
         if data:
             payload["data"] = data
-        r = requests.post(f"{API_BASE}/api/grinder/status", json=payload, timeout=15)
-        return r.status_code == 200
+        requests.post(f"{API_BASE}/api/grinder/status", json=payload, timeout=15)
     except:
-        return False
+        pass
 
 
-def post_progress(job_id, phase, progress_pct, detail=""):
-    """Update job progress on Railway (for frontend progress bar)."""
+def post_progress(job_id, phase, pct, detail=""):
     try:
-        r = requests.post(f"{API_BASE}/api/grinder/progress", json={
-            "job_id": job_id,
-            "phase": phase,
-            "progress_pct": progress_pct,
-            "detail": detail,
-            "timestamp": datetime.utcnow().isoformat(),
+        requests.post(f"{API_BASE}/api/grinder/progress", json={
+            "job_id": job_id, "phase": phase, "progress_pct": pct,
+            "detail": detail, "timestamp": now_utc().isoformat(),
         }, timeout=10)
-        return r.status_code == 200
     except:
-        return False
+        pass
 
 
 def check_for_jobs():
-    """Poll Railway for pending grind jobs."""
     try:
         r = requests.get(f"{API_BASE}/api/grinder/jobs/pending", timeout=10)
         if r.status_code == 200:
-            data = r.json()
-            jobs = data.get("jobs", [])
-            return jobs
-        return []
+            return r.json().get("jobs", [])
     except:
-        return []
+        pass
+    return []
 
 
-def run_cache_build(job_id):
-    """Build/refresh OHLCV cache."""
-    post_progress(job_id, "cache", 0, "Building OHLCV cache...")
-    from cache_builder import build_cache, cache_is_fresh
-
-    if cache_is_fresh():
-        from cache_builder import load_cache
-        data = load_cache()
-        post_progress(job_id, "cache", 100, f"Cache fresh: {len(data)} tickers")
-        return True
-
-    data = build_cache(force=True)
-    post_progress(job_id, "cache", 100, f"Cache built: {len(data)} tickers")
-    return True
+def heartbeat():
+    try:
+        requests.post(f"{API_BASE}/api/grinder/agent/heartbeat", json={
+            "agent_id": "desktop", "timestamp": now_utc().isoformat(),
+        }, timeout=5)
+    except:
+        pass
 
 
-def run_expression_gen(job_id):
-    """Generate brute force expressions."""
-    post_progress(job_id, "expressions", 0, "Generating expressions...")
-    from brute_expressions import generate_all
+def nightly_rebuild_needed():
+    """Check if it's after 4:30pm ET and matrix hasn't been rebuilt today."""
+    from matrix_builder import _universe_matrix_fresh
+    et = timezone(timedelta(hours=-5))
+    now_et = datetime.now(et)
 
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    exprs = generate_all()
+    # Only rebuild after market close (4:30pm ET) on weekdays
+    if now_et.weekday() >= 5:  # Weekend
+        return False
+    if now_et.hour < 16 or (now_et.hour == 16 and now_et.minute < 30):
+        return False
 
-    out_path = os.path.join(CACHE_DIR, "brute_expressions.json")
-    cats = {}
-    for e in exprs:
-        cat = e["category"]
-        cats[cat] = cats.get(cat, 0) + 1
-
-    with open(out_path, "w") as f:
-        json.dump({"total": len(exprs), "by_category": cats, "expressions": exprs}, f)
-
-    post_progress(job_id, "expressions", 100, f"Generated {len(exprs)} expressions")
-    return True
+    return not _universe_matrix_fresh()
 
 
-def run_grind(job_id, setup_type, grind_level):
-    """Run the full grind job."""
-    import numpy as np
-    import pandas as pd
-    import pickle
-    from scripts.expression_engine import ExpressionEngine
-    from spiderweb import SpiderwebSearch
+def run_nightly_rebuild():
+    """Rebuild OHLCV cache and universe matrix."""
+    print(f"\n  🌙 Nightly rebuild starting...")
 
-    GRIND_LEVELS = {
-        1: {"name": "Quick scan",    "beam_width": 10,  "depth": 5},
-        2: {"name": "Light grind",   "beam_width": 25,  "depth": 8},
-        3: {"name": "Medium grind",  "beam_width": 50,  "depth": 10},
-        4: {"name": "Heavy grind",   "beam_width": 100, "depth": 12},
-        5: {"name": "Overnight",     "beam_width": 250, "depth": 15},
-    }
+    # Rebuild OHLCV cache
+    print(f"  Refreshing OHLCV cache...")
+    from cache_builder import build_cache
+    build_cache(force=True)
 
-    level = GRIND_LEVELS.get(grind_level, GRIND_LEVELS[3])
+    # Rebuild universe matrix
+    print(f"  Rebuilding universe matrix (this takes ~30 min)...")
+    from matrix_builder import get_universe_matrix
 
-    # Load expressions
-    expr_path = os.path.join(CACHE_DIR, "brute_expressions.json")
-    with open(expr_path) as f:
-        expressions = json.load(f)["expressions"]
+    def progress(phase, pct, detail):
+        print(f"    [{pct:3d}%] {detail}")
 
-    # Check for precomputed matrix
-    matrix_file = os.path.join(CACHE_DIR, f"value_matrix_{setup_type}.pkl")
-    if os.path.exists(matrix_file):
-        post_progress(job_id, "matrix", 50, "Loading precomputed matrix...")
-        with open(matrix_file, "rb") as f:
-            matrix = pickle.load(f)
-        if matrix.get("n_exprs") == len(expressions):
-            post_progress(job_id, "matrix", 100,
-                          f"Matrix loaded: {matrix['n_examples']} examples, "
-                          f"{matrix['n_universe']} universe")
-        else:
-            matrix = None
-            post_progress(job_id, "matrix", 0, "Matrix stale, recomputing...")
-    else:
-        matrix = None
-
-    if matrix is None:
-        # Compute matrix from scratch
-        post_progress(job_id, "matrix", 5, "Loading examples from API...")
-
-        # Load examples
-        r = requests.get(f"{API_BASE}/api/examples/{setup_type}", timeout=15)
-        raw_examples = r.json().get("examples", []) if r.status_code == 200 else []
-
-        examples = []
-        for ex in raw_examples:
-            try:
-                r2 = requests.get(
-                    f"{API_BASE}/api/ohlcv/local/{setup_type}/{ex.get('id')}",
-                    timeout=15
-                )
-                if r2.status_code != 200:
-                    continue
-                candles = r2.json().get("candles", [])
-                if not candles:
-                    continue
-                df = pd.DataFrame(candles)
-                for col in ["open", "high", "low", "close", "volume"]:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-                df["date"] = pd.to_datetime(df["date"])
-                df = df.sort_values("date").reset_index(drop=True)
-
-                entry_date = ex.get("entryDate") or ex.get("chartDate")
-                target_idx = len(df) - 1
-                if entry_date:
-                    matches = df[df["date"].dt.strftime("%Y-%m-%d") == entry_date]
-                    if len(matches) > 0:
-                        target_idx = matches.index[0]
-
-                examples.append({
-                    "ticker": ex["ticker"], "df": df,
-                    "target_idx": target_idx, "id": ex["id"],
-                    "entry_date": entry_date,
-                })
-            except:
-                continue
-
-        post_progress(job_id, "matrix", 10, f"Loaded {len(examples)} examples")
-
-        # Example matrix
-        example_matrix = np.full((len(examples), len(expressions)), np.nan)
-        example_tickers = []
-        for i, ex in enumerate(examples):
-            engine = ExpressionEngine(ex["df"])
-            engine.set_target(ex["target_idx"])
-            for j, expr in enumerate(expressions):
-                val = engine.compute(expr)
-                if val is not None and not np.isnan(val):
-                    example_matrix[i, j] = val
-            example_tickers.append(f"{ex['ticker']}_{ex['id']}")
-            pct = 10 + int(20 * (i + 1) / len(examples))
-            post_progress(job_id, "matrix", pct,
-                          f"Examples: {i+1}/{len(examples)} ({ex['ticker']})")
-
-        # Universe matrix
-        post_progress(job_id, "matrix", 30, "Loading OHLCV cache...")
-        cache_file = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
-        with open(cache_file, "rb") as f:
-            universe_cache = pickle.load(f)
-
-        uni_tickers = list(universe_cache.keys())
-        universe_matrix = np.full((len(uni_tickers), len(expressions)), np.nan)
-
-        for i, ticker in enumerate(uni_tickers):
-            df = universe_cache[ticker]
-            if df is None or len(df) < 50:
-                continue
-            engine = ExpressionEngine(df)
-            engine.set_target(len(df) - 1)
-            for j, expr in enumerate(expressions):
-                val = engine.compute(expr)
-                if val is not None and not np.isnan(val):
-                    universe_matrix[i, j] = val
-
-            if (i + 1) % 200 == 0 or (i + 1) == len(uni_tickers):
-                pct = 30 + int(65 * (i + 1) / len(uni_tickers))
-                post_progress(job_id, "matrix", pct,
-                              f"Universe: {i+1}/{len(uni_tickers)} tickers")
-
-        # Save matrix
-        matrix = {
-            "example_matrix": example_matrix,
-            "universe_matrix": universe_matrix,
-            "example_tickers": example_tickers,
-            "universe_tickers": uni_tickers,
-            "expr_names": [e["name"] for e in expressions],
-            "expr_categories": [e.get("category", "unknown") for e in expressions],
-            "n_exprs": len(expressions),
-            "n_examples": len(examples),
-            "n_universe": len(uni_tickers),
-            "computed_at": datetime.utcnow().isoformat(),
-        }
-        with open(matrix_file, "wb") as f:
-            pickle.dump(matrix, f, protocol=pickle.HIGHEST_PROTOCOL)
-        post_progress(job_id, "matrix", 100, "Matrix saved")
-
-    # Phase 2: Spiderweb search
-    post_progress(job_id, "search", 0,
-                  f"Starting spiderweb search (Level {grind_level}: {level['name']})")
-
-    def search_progress(search_level, best_rate, nodes, elapsed):
-        pct = min(95, int(search_level / level["depth"] * 95))
-        post_progress(job_id, "search", pct,
-                      f"Level {search_level}: {best_rate:.2%} pass | "
-                      f"{nodes:,} nodes | {elapsed:.0f}s")
-
-    search = SpiderwebSearch(
-        example_values=matrix["example_matrix"],
-        universe_values=matrix["universe_matrix"],
-        expr_names=matrix["expr_names"],
-        expr_categories=matrix["expr_categories"],
-    )
-
-    results = search.run(
-        depth=level["depth"],
-        beam_width=level["beam_width"],
-        progress_callback=search_progress,
-    )
-
-    post_progress(job_id, "search", 100,
-                  f"Done: {results.get('best_rate', 0):.2%} pass rate")
-
-    return results
+    get_universe_matrix(progress_fn=progress, force=True)
+    print(f"  🌙 Nightly rebuild complete!\n")
 
 
 def handle_job(job):
-    """Execute a single grind job."""
     job_id = job["job_id"]
     setup_type = job.get("setup_type", "dtss")
     grind_level = job.get("grind_level", 3)
-    action = job.get("action", "grind")
+    level = GRIND_LEVELS.get(grind_level, GRIND_LEVELS[3])
 
     print(f"\n{'='*60}")
     print(f"  JOB: {job_id}")
-    print(f"  Setup: {setup_type} | Level: {grind_level} | Action: {action}")
-    print(f"  Time: {datetime.now().strftime('%H:%M:%S')}")
+    print(f"  Setup: {setup_type} | Level {grind_level}: {level['name']}")
     print(f"{'='*60}")
 
-    post_status(job_id, "running", f"Agent picked up job: {action}")
+    post_status(job_id, "running", "Agent picked up job")
 
     try:
-        if action == "cache":
-            run_cache_build(job_id)
-            post_status(job_id, "complete", "Cache built successfully")
+        from matrix_builder import get_universe_matrix, get_example_matrix
+        from spiderweb import SpiderwebSearch
 
-        elif action == "grind":
-            # Ensure cache exists
-            cache_file = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
-            if not os.path.exists(cache_file):
-                run_cache_build(job_id)
+        # Progress helper
+        def progress(phase, pct, detail):
+            print(f"    [{phase}:{pct:3d}%] {detail}")
+            post_progress(job_id, phase, pct, detail)
 
-            # Ensure expressions exist
-            expr_path = os.path.join(CACHE_DIR, "brute_expressions.json")
-            if not os.path.exists(expr_path):
-                run_expression_gen(job_id)
+        # Get universe matrix (cached daily, fast if fresh)
+        progress("matrix", 0, "Loading universe matrix...")
+        uni = get_universe_matrix(progress_fn=progress)
 
-            # Run grind
-            results = run_grind(job_id, setup_type, grind_level)
+        # Get example matrix (fast, per-setup)
+        progress("examples", 0, f"Loading {setup_type} examples...")
+        ex = get_example_matrix(setup_type, progress_fn=progress)
 
-            # Save and upload
-            out = {
-                "setup_type": setup_type,
-                "grind_level": grind_level,
-                "timestamp": datetime.utcnow().isoformat(),
-                **results,
-            }
+        # Run spiderweb search
+        progress("search", 0, f"Starting search (depth={level['depth']}, beam={level['beam_width']})")
 
-            out_path = os.path.join(CACHE_DIR, f"grinder_results_{setup_type}.json")
-            with open(out_path, "w") as f:
-                json.dump(out, f, indent=2, default=str)
+        def search_progress(search_level, best_rate, nodes, elapsed):
+            pct = min(95, int(search_level / level["depth"] * 95))
+            post_progress(job_id, "search", pct,
+                          f"Level {search_level}: {best_rate:.2%} | {nodes:,} nodes | {elapsed:.0f}s")
 
-            post_status(job_id, "complete",
-                        f"Done: {results.get('best_rate', 0):.2%} pass rate",
-                        data=out)
+        search = SpiderwebSearch(
+            example_values=ex["example_matrix"],
+            universe_values=uni["universe_matrix"],
+            expr_names=uni["expr_names"],
+            expr_categories=uni["expr_categories"],
+        )
 
-            print(f"\n  ✓ Job complete: {results.get('best_rate', 0):.2%} pass rate")
+        results = search.run(
+            depth=level["depth"],
+            beam_width=level["beam_width"],
+            progress_callback=search_progress,
+        )
 
-        else:
-            post_status(job_id, "error", f"Unknown action: {action}")
+        post_progress(job_id, "search", 100,
+                      f"Done: {results.get('best_rate', 0):.2%}")
+
+        # Save and upload
+        out = {
+            "setup_type": setup_type,
+            "grind_level": grind_level,
+            "grind_name": level["name"],
+            "timestamp": now_utc().isoformat(),
+            **results,
+        }
+
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(os.path.join(CACHE_DIR, f"grinder_results_{setup_type}.json"), "w") as f:
+            json.dump(out, f, indent=2, default=str)
+
+        post_status(job_id, "complete",
+                    f"Done: {results.get('best_rate', 0):.2%} pass ({results.get('best_passing', 0)} tickers)",
+                    data=out)
+
+        print(f"\n  ✓ Complete: {results.get('best_rate', 0):.2%} pass rate")
 
     except Exception as e:
+        import traceback
         error_msg = f"{type(e).__name__}: {str(e)}"
-        print(f"\n  ✗ Job failed: {error_msg}")
+        print(f"\n  ✗ Failed: {error_msg}")
         traceback.print_exc()
         post_status(job_id, "error", error_msg)
 
 
 def main():
     print("\n" + "=" * 60)
-    print("  ╔══════════════════════════════════════╗")
-    print("  ║     GRINDER DESKTOP AGENT v1         ║")
-    print("  ║   Polling for jobs from Railway...   ║")
-    print("  ╚══════════════════════════════════════╝")
+    print("  GRINDER DESKTOP AGENT v2")
     print("=" * 60)
-    print(f"\n  API:  {API_BASE}")
+    print(f"  API:  {API_BASE}")
     print(f"  Poll: every {POLL_INTERVAL}s")
-    print(f"  Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"  Time: {now_utc().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+    # Check if universe matrix exists
+    from matrix_builder import _universe_matrix_fresh
+    if _universe_matrix_fresh():
+        print(f"  Matrix: ✓ Fresh (today)")
+    else:
+        print(f"  Matrix: ✗ Needs rebuild (will build on first grind or at 4:30pm ET)")
+
     print(f"\n  Waiting for jobs...\n")
 
-    # Register agent
+    # Register
     try:
         requests.post(f"{API_BASE}/api/grinder/agent/register", json={
-            "agent_id": "desktop",
-            "timestamp": datetime.utcnow().isoformat(),
-            "status": "online",
+            "agent_id": "desktop", "timestamp": now_utc().isoformat(), "status": "online",
         }, timeout=10)
     except:
         pass
 
     last_heartbeat = time.time()
+    last_nightly_check = 0
 
     while True:
         try:
             # Poll for jobs
             jobs = check_for_jobs()
-            if jobs:
-                for job in jobs:
-                    handle_job(job)
+            for job in jobs:
+                handle_job(job)
 
             # Heartbeat every 30s
             if time.time() - last_heartbeat > 30:
-                try:
-                    requests.post(f"{API_BASE}/api/grinder/agent/heartbeat", json={
-                        "agent_id": "desktop",
-                        "timestamp": datetime.utcnow().isoformat(),
-                    }, timeout=5)
-                except:
-                    pass
+                heartbeat()
                 last_heartbeat = time.time()
+
+            # Check nightly rebuild every 5 min
+            if time.time() - last_nightly_check > 300:
+                if nightly_rebuild_needed():
+                    run_nightly_rebuild()
+                last_nightly_check = time.time()
 
             time.sleep(POLL_INTERVAL)
 
         except KeyboardInterrupt:
-            print("\n\n  Agent stopped by user.")
+            print("\n\n  Agent stopped.")
             try:
                 requests.post(f"{API_BASE}/api/grinder/agent/register", json={
-                    "agent_id": "desktop",
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "status": "offline",
+                    "agent_id": "desktop", "timestamp": now_utc().isoformat(), "status": "offline",
                 }, timeout=5)
             except:
                 pass
             break
         except Exception as e:
-            print(f"  Agent error: {e}")
             import traceback
+            print(f"  Agent error: {e}")
             traceback.print_exc()
             time.sleep(POLL_INTERVAL)
 

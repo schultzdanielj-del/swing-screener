@@ -2022,7 +2022,7 @@ async def get_agent_status():
     last_hb = agent.get("last_heartbeat", "")
     if last_hb:
         try:
-            hb_time = datetime.fromisoformat(last_hb)
+            hb_time = datetime.fromisoformat(last_hb.replace('+00:00', '').replace('Z', ''))
             if (datetime.utcnow() - hb_time).total_seconds() > 120:
                 agent["status"] = "offline"
         except:
