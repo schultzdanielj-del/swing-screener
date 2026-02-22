@@ -1152,33 +1152,28 @@
       }, [activeSetup, polling]);
 
       function startGrind() {
-        fetch(`/api/grinder/jobs/reset?setup_type=${activeSetup}`, {method:'POST'})
-          .catch(()=>{})
-          .finally(() => {
-            fetch('/api/grinder/jobs', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({ setup_type: activeSetup, grind_level: grindLevel, action: 'grind' })
-            }).then(r=>r.json()).then(d => {
-              setPolling(true);
-              setJobStatus({ ...d, status: 'pending', grind_level: grindLevel, progress: {phase:'',progress_pct:0,detail:'Queued...'} });
-            }).catch(e => console.error('startGrind error:', e));
-          });
+        fetch('/api/grinder/jobs', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ setup_type: activeSetup, grind_level: grindLevel, action: 'grind' })
+        }).then(r=>r.json()).then(d => {
+          setPolling(true);
+          setJobStatus({ ...d, status: 'pending', grind_level: grindLevel, progress: {phase:'',progress_pct:0,detail:'Queued...'} });
+        });
       }
 
       function stopGrind() {
-        fetch(`/api/grinder/jobs/reset?setup_type=${activeSetup}`, {method:'POST'})
-          .catch(()=>{})
-          .finally(() => {
-            setJobStatus(null);
-            setPolling(false);
-          });
+        fetch('/api/grinder/jobs/reset?setup_type=' + activeSetup, {method:'POST'}).then(() => {
+          setJobStatus(null);
+          setPolling(false);
+        });
       }
 
       const level = LEVELS[grindLevel - 1];
       const isRunning = jobStatus && (jobStatus.status === 'running' || jobStatus.status === 'claimed' || jobStatus.status === 'pending');
       const progress = jobStatus?.progress || {};
       const agentOnline = agentStatus === 'online';
+      console.log('GRINDER STATE:', {isRunning, jobStatus: jobStatus?.status, grindLevel, agentOnline});
 
       return (
         <div>
