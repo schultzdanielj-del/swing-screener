@@ -164,6 +164,7 @@ def handle_job(job):
             universe_values=uni["universe_matrix"],
             expr_names=uni["expr_names"],
             expr_categories=uni["expr_categories"],
+            universe_tickers=uni["universe_tickers"],
         )
 
         results = search.run(

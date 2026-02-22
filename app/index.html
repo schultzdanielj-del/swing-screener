@@ -1303,6 +1303,34 @@
                 Computed {results.timestamp ? new Date(results.timestamp).toLocaleString() : ''} · 
                 {results.stats?.total_time_s ? ` ${(results.stats.total_time_s/60).toFixed(1)} min` : ''}
               </div>
+
+              {/* Passing Tickers */}
+              {results.passing_tickers && results.passing_tickers.length > 0 && (
+                <div style={{marginTop:20}}>
+                  <div style={{fontSize:12,fontWeight:600,marginBottom:8}}>
+                    Passing Tickers ({results.passing_tickers.length})
+                  </div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                    {results.passing_tickers.map((t, i) => (
+                      <a key={i} 
+                         href={`https://app.tc2000.com/chart/${t}`}
+                         target="_blank" rel="noopener noreferrer"
+                         style={{
+                           padding:'4px 10px',fontSize:12,fontFamily:'monospace',fontWeight:600,
+                           background:'rgba(139,92,246,0.15)',border:'1px solid rgba(139,92,246,0.3)',
+                           borderRadius:4,color:'#a78bfa',textDecoration:'none',cursor:'pointer',
+                           transition:'all 0.15s'
+                         }}
+                         onMouseOver={e => {e.target.style.background='rgba(139,92,246,0.3)';e.target.style.borderColor='rgba(139,92,246,0.5)'}}
+                         onMouseOut={e => {e.target.style.background='rgba(139,92,246,0.15)';e.target.style.borderColor='rgba(139,92,246,0.3)'}}
+                      >{t}</a>
+                    ))}
+                  </div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:6}}>
+                    Click to open in TC2000
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

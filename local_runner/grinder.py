@@ -68,6 +68,7 @@ def main():
         universe_values=uni["universe_matrix"],
         expr_names=uni["expr_names"],
         expr_categories=uni["expr_categories"],
+        universe_tickers=uni["universe_tickers"],
     )
 
     results = search.run(depth=level["depth"], beam_width=level["beam_width"])

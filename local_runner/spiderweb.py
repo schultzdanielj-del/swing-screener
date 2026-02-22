@@ -30,11 +30,13 @@ class SearchNode:
 class SpiderwebSearch:
 
     def __init__(self, example_values: np.ndarray, universe_values: np.ndarray,
-                 expr_names: List[str], expr_categories: List[str] = None):
+                 expr_names: List[str], expr_categories: List[str] = None,
+                 universe_tickers: List[str] = None):
         self.n_examples, self.n_exprs = example_values.shape
         self.n_universe = universe_values.shape[0]
         self.expr_names = expr_names
         self.expr_categories = expr_categories or ["unknown"] * self.n_exprs
+        self.universe_tickers = universe_tickers or [f"T{i}" for i in range(self.n_universe)]
 
         self.expr_thresholds = []
         self.universe_passes = []
@@ -159,11 +161,16 @@ class SpiderwebSearch:
 
         elapsed = time.time() - t0
 
+        # Get passing tickers
+        passing_indices = np.where(best.universe_mask)[0]
+        passing_tickers = [self.universe_tickers[i] for i in passing_indices]
+
         return {
             "best_path": [self.expr_names[i] for i in best.conditions],
             "best_categories": [self.expr_categories[i] for i in best.conditions],
             "best_rate": float(best.pass_rate),
             "best_passing": int(np.sum(best.universe_mask)),
+            "passing_tickers": passing_tickers,
             "best_thresholds": [
                 {"expr": self.expr_names[i], "category": self.expr_categories[i],
                  "low": float(self.expr_thresholds[i][0]),
