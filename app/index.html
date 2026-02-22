@@ -1152,13 +1152,23 @@
       }, [activeSetup, polling]);
 
       function startGrind() {
-        fetch('/api/grinder/jobs', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ setup_type: activeSetup, grind_level: grindLevel, action: 'grind' })
-        }).then(r=>r.json()).then(d => {
-          setPolling(true);
-          setJobStatus({ ...d, status: 'pending', grind_level: grindLevel, progress: {phase:'',progress_pct:0,detail:'Queued...'} });
+        // Reset any stuck jobs first
+        fetch(`/api/grinder/jobs/reset?setup_type=${activeSetup}`, {method:'POST'}).then(() => {
+          fetch('/api/grinder/jobs', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ setup_type: activeSetup, grind_level: grindLevel, action: 'grind' })
+          }).then(r=>r.json()).then(d => {
+            setPolling(true);
+            setJobStatus({ ...d, status: 'pending', grind_level: grindLevel, progress: {phase:'',progress_pct:0,detail:'Queued...'} });
+          });
+        });
+      }
+
+      function stopGrind() {
+        fetch(`/api/grinder/jobs/reset?setup_type=${activeSetup}`, {method:'POST'}).then(() => {
+          setJobStatus(null);
+          setPolling(false);
         });
       }
 
@@ -1204,6 +1214,10 @@
                   style={{opacity: isRunning ? 0.5 : 1}}>
                   {isRunning ? '⏳ Grinding...' : '🚀 Start Grind'}
                 </button>
+                {isRunning && <button className="btn" onClick={stopGrind}
+                  style={{marginLeft:8,background:'rgba(239,68,68,0.2)',borderColor:'rgba(239,68,68,0.3)',color:'#ef4444'}}>
+                  ⏹ Stop
+                </button>}
                 {isRunning && <span style={{fontSize:12,color:'var(--text-muted)'}}>Level {jobStatus?.grind_level || grindLevel}</span>}
               </div>
             </div>

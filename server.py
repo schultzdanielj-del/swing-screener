@@ -1987,6 +1987,17 @@ async def get_job_status(setup_type: str = Query("dtss")):
     return {"status": latest.get("status"), "job": latest}
 
 
+@app.post("/api/grinder/jobs/reset")
+async def reset_grinder_jobs(setup_type: str = Query("dtss")):
+    """Reset all stuck jobs for a setup type."""
+    jobs = _load_grinder_json(GRINDER_JOBS_FILE, [])
+    for j in jobs:
+        if j.get("setup_type") == setup_type and j.get("status") in ("pending", "claimed", "running"):
+            j["status"] = "cancelled"
+    _save_grinder_json(GRINDER_JOBS_FILE, jobs)
+    return {"status": "reset", "setup_type": setup_type}
+
+
 @app.get("/api/grinder/results/{setup_type}")
 async def get_grinder_results(setup_type: str):
     """Get grinder results for frontend display."""
