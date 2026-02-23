@@ -57,7 +57,7 @@ def fetch_one_ticker(ticker):
             return ticker, None
 
         rows = r.json().get("results", [])
-        if not rows or len(rows) < 50:
+        if not rows:
             return ticker, None
 
         df = pd.DataFrame(rows)
@@ -182,7 +182,7 @@ def fetch_one_ticker_5yr(ticker):
             return ticker, None
 
         rows = r.json().get("results", [])
-        if not rows or len(rows) < 100:
+        if not rows:
             return ticker, None
 
         df = pd.DataFrame(rows)
