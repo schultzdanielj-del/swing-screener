@@ -71,18 +71,36 @@ The spiderweb search then explores branching combinations of conditions:
 
 **The ceiling problem:** Phase 1 finds conditions that filter tightly on TODAY (e.g., 0.07% = 3 tickers) but when backtested across 5 years: 340 signals/day. The conditions describe "bull market uptrend" not the specific setup. The spiderweb stops at the single-day ceiling but there are still expressions that could eliminate massive historical noise without losing any examples.
 
-### Phase 2: Historical Scorer (5-year noise elimination)
+### Phase 2: Pyramidal Grinder (nested time horizon noise elimination)
 
-After Phase 1 ceiling, the historical scorer greedily adds expressions that eliminate the most historical signals:
-1. Loads Phase 1 winning conditions + 5yr OHLCV cache (4,167 tickers × avg 1,108 bars, 214 MB)
-2. Computes base signal mask: Phase 1 conditions × all tickers × all bars → boolean signal array
-3. Pre-computes example ranges for candidate expressions (80% of examples must have valid values)
-4. **One-time precompute:** ALL candidate boolean masks per signal-bearing ticker (~2-5 min)
-5. **Greedy rounds:** Score all candidates via numpy AND (sub-second/round), add best eliminator
-6. Stops when avg signals/day < target (default 10)
-7. **Constraint:** 100% of setup examples must ALWAYS pass all conditions (zero false negatives)
+**⬜ REPLACING** the old Phase 2 flat historical scorer (which took 20+ min and targeted average signals/day, missing peak spikes of 260/day).
+
+The pyramid progressively widens the historical window, each tier grinding until `peak_signals/day < threshold` before advancing to the next:
+
+1. **D1 (today):** Spiderweb grind on today's snapshot → finds ceiling. ~11s. Lock conditions.
+2. **1 week:** Build matrix from last 5 trading days. Grind until peak/day < threshold. ~10-30s. Lock.
+3. **1 month:** Matrix from ~21 trading days. Same. ~30s. Lock.
+4. **6 months:** Matrix from ~126 trading days. Same. ~30s. Lock.
+5. **1 year:** Matrix from ~252 trading days. Same. ~30s. Lock.
+6. **5 years:** Matrix from ~1,260 trading days. Same. ~30s. Lock.
+
+**Why this is fast:** Each tier eliminates the cheap noise so the next tier only scores survivors. The expensive 5-year compute only runs against tickers/days that passed all previous tiers. Total: ~2 min instead of 28 min.
+
+**Why peak-based:** Average 7.4/day sounds fine but hides days with 260 signals. Peak-based guarantee means no single day overwhelms manual review. Target: peak < 15 across all 5 years.
+
+**Key implementation:** Same spiderweb code, just different matrix construction per tier. Matrix rows = ticker-day combos for the window. Scoring metric = max(daily_counts) instead of total pass rate.
+
+**Constraint:** 100% of setup examples must ALWAYS pass all conditions at every tier (zero false negatives).
 
 **Why this works:** An expression useless today (doesn't drop 3→2 tickers) might eliminate 300/day of historical noise. RSI 40-65 range might not help when all 3 current tickers are in range, but it kills thousands of historical signals with RSI 80+ or RSI 20-.
+
+### Legacy Phase 2: Flat Historical Scorer (deprecated)
+
+The original Phase 2 is still functional at `local_runner/historical_scorer.py` but will be replaced by the pyramid:
+- Greedy forward selection with precomputed numpy masks across full 5yr in one shot
+- Achieved avg 7.4/day but peak 260/day (Jul-Aug 2021 cluster)
+- 20.6 min runtime on i5-12600K (15 workers, ProcessPool)
+- Targeted average signals/day, not peak — fundamental design flaw
 
 ### Running the Grinder
 
@@ -134,6 +152,7 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 - `local_runner/brute_expressions.py` — Expression generator: 2,541 generic expressions (same for all setups)
 - `scripts/expression_engine.py` — Computes expressions against OHLCV
 - `scripts/backtest_conditions.py` — Series computation for historical scoring. All ops mirrored from expression_engine including `bars_since_ma_cross` and `gap_count` (added 2026-02-23).
+- `scripts/signal_distribution.py` — Parallel signal analyzer: runs all conditions across 5yr cache, outputs daily signal counts + per-signal CSV. Used to verify peak/avg before advancing.
 - `scripts/lsp_detector.py` — Detects Local Structural Peak (highest structural high before scan bar)
 - `scripts/classify_universe.py` — ETF classifier (quarterly, desktop-only, ~150 exclusions)
 - `server.py` — Grinder API endpoints (jobs/status/progress/results/agent)

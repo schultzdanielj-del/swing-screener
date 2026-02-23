@@ -73,9 +73,10 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 1 Load | ✅ Done | Data + TA knowledge loaded |
 | 2 Receive | ✅ Done | 26 examples with LSP data |
 | 3 Grind (Phase 1) | ✅ Done | 9 conditions, 0.00% single-day pass rate, 11s at L3 |
-| 4 Grind (Phase 2) | **🔄 IN PROGRESS** | Running. 192K base signals (~177/day). Greedy rounds reducing to <10/day target. |
-| 5 Collaborate | Not started | Take grinder ceiling, add discretionary/qualitative conditions |
-| 6 Backtest | Not started | Run full conditions across history, review signal charts |
+| 4 Grind (Phase 2) | ✅ Done | 12 conditions (9 P1 + 3 P2), avg 7.4 signals/day, 20.6 min |
+| 4.7 Signal analysis | ✅ Done | Peak: 260/day (2021-08-11), clustered Jul-Aug 2021. Avg hides massive spikes. |
+| 5 **Pyramid grinder** | **⬜ NEXT** | Replace Phase 1+2 with nested pyramid. Target: peak signals/day < 15 across 5yr. |
+| 6 Backtest | Not started | Visual verification of signal charts |
 | 7 Market Context | Not started | |
 | 8 EV Optimize | Not started | |
 
@@ -131,18 +132,23 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ---
 
-## IMMEDIATE NEXT STEP: Review Phase 2 Results
+## IMMEDIATE NEXT STEP: Build Pyramidal Grinder
 
-**What:** Phase 2 historical scorer is running. When complete, review results:
-1. Check final signals/day — is it under 10?
-2. Review which expressions were selected — do they make TA sense?
-3. If good: move to Step 5 (backtest runner) to visually verify signal charts
-4. If signals/day still too high: consider expression library expansion (Step 5a)
+**Problem:** Current Phase 2 achieves avg 7.4/day but peak is 260/day (Jul-Aug 2021 cluster). Takes 20+ min and targets average, not peak.
 
-**Commands:**
-- Phase 1: `python local_runner/grinder.py --setup dtss --level 3` (done, 9 conditions)
-- Phase 2: `python local_runner/historical_scorer.py --setup dtss --target 10` (running)
-- Results saved to: `local_runner/cache/historical_results_dtss.json`
+**Solution:** Pyramidal grinder — nested time horizons, each tier grinds until `peak_signals/day < threshold` before advancing:
+1. **D1 (today):** Grind to ceiling (spiderweb on today's snapshot). ~11s. Lock conditions.
+2. **1 week:** Grind until peak/day < threshold. ~10-30s. Lock.
+3. **1 month:** Same. ~30s. Lock.
+4. **6 months → 1 year → 5 years:** Same. ~30s each. Lock.
+
+Each tier is cheap because the previous one already eliminated the easy noise. Total: ~2 min instead of 28 min. Peak-based guarantee means no single day overwhelms manual review.
+
+**Key:** Same spiderweb code, just different matrix construction per tier. Scoring metric = max(daily_counts) instead of sum.
+
+**Analysis tools:**
+- Signal distribution: `python scripts/signal_distribution.py` (parallel, all cores)
+- Outputs: `cache/signals_daily_dtss.csv`, `cache/signals_dtss.csv`
 
 ---
 
@@ -209,14 +215,16 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | Daily matrix build | 2.8 min | 4,017 tickers × 2,541 expressions, 8 workers |
 | Spiderweb grind (L3) | ~11s | beam=50, depth=10, 550K nodes |
 | Spiderweb grind (L5) | 1-8 hours | beam=250, depth=15 |
-| Phase 2 base signals | ~400s | 4,167 tickers × 9 conditions → 192K signals (ThreadPool, GIL-bound) |
-| Phase 2 candidate precompute | ~396s | 2,106 candidates × 3,373 tickers (ThreadPool, GIL-bound) |
-| Phase 2 greedy rounds | TBD | Sub-second each (pure numpy AND) |
+| Phase 2 base signals | ~66s | 4,167 tickers × 9 conditions → 192K signals (ProcessPool, 15 workers) |
+| Phase 2 candidate precompute | ~1,100s | 2,106 candidates × 3,373 tickers (ProcessPool, 15 workers) |
+| Phase 2 greedy rounds | ~12s | 3 rounds, sub-second each (pure numpy AND) |
+| Phase 2 total | 20.6 min | Down from 28.2 min after ProcessPool switch |
+| Signal distribution | ~15s | 4,167 tickers × 12 conditions, parallel (ProcessPool) |
 | Daily cache build | 4.4 min | 4,167 tickers × 300 bars |
 | 5yr cache build | 4.6 min | 4,167 tickers × 1,260 bars |
 | ETF classifier | ~10 min | Quarterly, yfinance API |
 
-**Note:** Phase 2 switched to ProcessPoolExecutor — benchmarks above are pre-switch. Expecting ~60-90s for both steps with true multiprocessing.
+**Note:** Phase 2 uses ProcessPoolExecutor with cache-via-initializer pattern (serialized once per worker at startup, not per task). Batched ticker submission eliminates per-task DataFrame pickling overhead. 99% CPU utilization on i5-12600K.
 
 ---
 
