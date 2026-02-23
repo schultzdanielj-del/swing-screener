@@ -114,29 +114,50 @@ class SpiderwebSearch:
             progress_callback(1, current_level[0].pass_rate, nodes_explored, time.time() - t0)
 
         # Explore deeper
+        # Pre-stack all valid expression masks into a 2D array for vectorized AND
+        valid_masks = self.universe_passes[self.valid_exprs]  # shape: (n_valid, n_universe)
+        valid_expr_arr = np.array(self.valid_exprs)
+        n_valid = len(self.valid_exprs)
+        valid_set = set(self.valid_exprs)
+        # Map expr_idx -> position in valid_masks
+        expr_to_pos = {idx: pos for pos, idx in enumerate(self.valid_exprs)}
+
         for lv in range(2, depth + 1):
             next_level = []
             seen = set()
 
             for node in current_level:
-                for expr_idx in self.valid_exprs:
-                    if expr_idx in node.conditions:
-                        continue
+                node_conds_set = set(node.conditions)
 
+                # Find which valid expressions are NOT already in this node
+                candidate_positions = [expr_to_pos[idx] for idx in self.valid_exprs
+                                       if idx not in node_conds_set]
+                if not candidate_positions:
+                    continue
+
+                candidate_positions = np.array(candidate_positions)
+                candidate_indices = valid_expr_arr[candidate_positions]
+
+                # Vectorized AND: broadcast node mask against all candidate masks
+                # node.universe_mask shape: (n_universe,)
+                # candidate masks shape: (n_candidates, n_universe)
+                combined = valid_masks[candidate_positions] & node.universe_mask[np.newaxis, :]
+                pass_rates = combined.sum(axis=1) / self.n_universe
+                nodes_explored += len(candidate_positions)
+
+                # Filter: only keep combos that actually reduce pass rate
+                improved = pass_rates < node.pass_rate
+                for pos_idx in np.where(improved)[0]:
+                    expr_idx = int(candidate_indices[pos_idx])
                     combo = tuple(sorted(node.conditions + (expr_idx,)))
                     if combo in seen:
                         continue
                     seen.add(combo)
 
-                    new_mask = node.universe_mask & self.universe_passes[expr_idx]
-                    new_rate = np.sum(new_mask) / self.n_universe
-                    nodes_explored += 1
-
-                    if new_rate < node.pass_rate:
-                        next_level.append(SearchNode(
-                            conditions=combo, universe_mask=new_mask,
-                            pass_rate=new_rate, depth=lv,
-                        ))
+                    next_level.append(SearchNode(
+                        conditions=combo, universe_mask=combined[pos_idx].copy(),
+                        pass_rate=float(pass_rates[pos_idx]), depth=lv,
+                    ))
 
             if not next_level:
                 print(f"\n  ▓ Ceiling at level {lv}")
