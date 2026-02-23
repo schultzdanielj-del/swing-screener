@@ -38,7 +38,8 @@ import argparse
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from multiprocessing import cpu_count
 
 LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(LOCAL_DIR)
@@ -327,20 +328,18 @@ def score_candidates(universe_cache, base_signals, example_dfs,
     candidate_idx = {name: i for i, name in enumerate(candidate_names)}
     n_cands = len(valid_candidates)
     
-    for tidx, ticker in enumerate(signal_tickers):
-        df = universe_cache.get(ticker)
+    # Parallel worker function
+    def _precompute_ticker(args):
+        ticker, df = args
         if df is None:
-            continue
-        
+            return ticker, None
         n_bars = len(df)
         try:
             engine = ExpressionEngine(df)
         except:
-            continue
+            return ticker, None
         
-        # Compute all candidate masks for this ticker
         masks = np.zeros((n_cands, n_bars), dtype=bool)
-        
         for cidx, expr in enumerate(valid_candidates):
             try:
                 series = compute_series(engine, expr["compute"])
@@ -351,16 +350,28 @@ def score_candidates(universe_cache, base_signals, example_dfs,
                 in_range[np.isnan(series)] = False
                 masks[cidx] = in_range
             except:
-                pass  # leave as all-False
-        
-        ticker_candidate_masks[ticker] = masks
-        
-        if (tidx + 1) % 200 == 0 or tidx + 1 == len(signal_tickers):
-            elapsed = time.time() - t_pre
-            rate = (tidx + 1) / elapsed
-            eta = (len(signal_tickers) - tidx - 1) / rate
-            print(f"    {tidx+1}/{len(signal_tickers)} tickers precomputed "
-                  f"[{elapsed:.0f}s, ~{eta:.0f}s left]")
+                pass
+        return ticker, masks
+    
+    # Use ThreadPoolExecutor (GIL released during numpy ops)
+    n_workers = min(cpu_count(), 8)
+    work_items = [(t, universe_cache[t]) for t in signal_tickers]
+    completed = 0
+    
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = {pool.submit(_precompute_ticker, item): item[0] 
+                   for item in work_items}
+        for future in as_completed(futures):
+            ticker, masks = future.result()
+            if masks is not None:
+                ticker_candidate_masks[ticker] = masks
+            completed += 1
+            if completed % 200 == 0 or completed == len(signal_tickers):
+                elapsed = time.time() - t_pre
+                rate = completed / elapsed
+                eta = (len(signal_tickers) - completed) / rate
+                print(f"    {completed}/{len(signal_tickers)} tickers precomputed "
+                      f"[{elapsed:.0f}s, ~{eta:.0f}s left] ({n_workers} workers)")
     
     print(f"  Precomputation done in {time.time()-t_pre:.0f}s")
     
