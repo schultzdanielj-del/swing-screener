@@ -131,62 +131,20 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 - `local_runner/grinder.py` — CLI interface
 - `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild
 - `local_runner/cache_builder.py` — OHLCV caches: daily (300 bars, 57 MB) + 5yr (1,260 bars, 214 MB)
-- `local_runner/brute_expressions.py` — Expression generator: 2,541 generic + per-setup bespoke blocks
-- `scripts/expression_engine.py` — Computes expressions against OHLCV; supports LSP context injection
+- `local_runner/brute_expressions.py` — Expression generator: 2,541 generic expressions (same for all setups)
+- `scripts/expression_engine.py` — Computes expressions against OHLCV
 - `scripts/backtest_conditions.py` — Series computation for historical scoring (all ops mirrored from expression_engine)
 - `scripts/lsp_detector.py` — Detects Local Structural Peak (highest structural high before scan bar)
 - `scripts/classify_universe.py` — ETF classifier (quarterly, desktop-only, ~150 exclusions)
 - `server.py` — Grinder API endpoints (jobs/status/progress/results/agent)
 
-### Expression sets — generic vs bespoke
+### Expression library — 100% generic
 
-The grinder supports **setup-specific expression sets**. Each setup can extend the generic library with bespoke expressions that only make sense for that pattern. The expression loader is setup-aware:
+The grinder uses one universal expression set for all setups. No setup-specific expressions — the Phase 2 historical scorer finds setup-specific discrimination by grinding the generic library against 5yr history.
 
 - **Generic set** (`brute_expressions.json`) — 2,541 expressions across 29 categories: near_resistance (196), near_support (119), extension (78), extension_dynamics (65), extension_ceiling (32), extension_adr (6), MA slope (176), MA spread (40), spread_slope (48), slope_ratio (12), MA cross (60), MA stack (5), momentum (115), range (49), range_dynamics (11), retracement (24), swing_structure (42), gap (21), consecutive (4), candle_pattern (26), volume_character (36), volume_continuous (20), bollinger (20), macd (21), aroon (12), efficiency (7), vwap (36), percentile_rank (25), boolean (1,235). Used by all setups and the universe matrix.
-- **DTSS set** (`dtss_expressions.json`) — generic + 19 bespoke `dtss_lsp` expressions (2,560 total). Requires LSP context injected per example. See DTSS bespoke block below.
 
-To add a new setup's bespoke block: add `generate_{setup}_expressions()` and `generate_{setup}()` to `brute_expressions.py`, then add a `setup_type` branch to `_load_expressions()` in `matrix_builder.py`.
-
-### DTSS bespoke expression block — `dtss_lsp` category
-
-DTSS is built around the **Local Structural Peak (LSP)** — the structural high the stock is approaching for the second time (the "left peak" of the double top). All bespoke expressions require LSP context injected via `engine.set_lsp_context(lsp)` before the matrix builder calls `engine.compute()`.
-
-**What LSP context provides:**
-- `price` — the price of the structural high
-- `bars_lookback` — how many bars back from the scan bar the LSP occurred
-- `prominence_score` — how dominant the high is relative to surrounding price action
-- `pullback_depth_atr` — how deep the selloff was after the LSP (in ATR units)
-
-**The 19 bespoke expressions:**
-
-| Expression | Op | What it captures |
-|---|---|---|
-| `lsp_dist_c_atr14` / `adr14` / `pct` | `lsp_distance` (C) | Distance from scan close to LSP price — positive = approaching from below, negative = poked through (breakout failure variant) |
-| `lsp_dist_h_atr14` / `adr14` / `pct` | `lsp_distance` (H) | Same but using scan bar high |
-| `lsp_bounce_recovery` | `lsp_bounce_recovery` | `(close - post_lsp_low) / (lsp_price - post_lsp_low)` — 0.0 at trough, 1.0 back at LSP. Captures "second rally into same zone." |
-| `lsp_right_peak_ratio` | `lsp_right_peak_ratio` | `scan_high / lsp_price` — 1.0 = exactly at LSP, >1.0 = breakout failure, <1.0 = lower high |
-| `lsp_vol_ratio_{3,5,10,15,20}d` | `lsp_volume_ratio` | Recent avg volume / volume at LSP bar. Low ratio = volume drying up on approach = bearish confirmation |
-| `avwap_lsp_atr14` / `adr14` / `pct` | `avwap_lsp_distance` | AVWAP anchored at LSP bar vs scan close. Negative = price below AVWAP = trapped buyers from the prior rally = short fuel |
-| `lsp_bars_back` | `lsp_bars_back` | Raw bar count since LSP |
-| `lsp_prominence` | `lsp_prominence` | Structural dominance of the LSP |
-| `lsp_pullback_depth_atr` | `lsp_pullback_depth` | Depth of selloff after LSP in ATR — deeper = more convincing structural high |
-
-**How the matrix builder injects LSP for DTSS:**
-
-For each DTSS example, `get_example_matrix()` runs the LSP detector at the scan bar date, constructs an `lsp_context` dict, and passes it to `_compute_ticker_values(lsp_context=...)`, which calls `engine.set_lsp_context(lsp_context)` before evaluating expressions. The universe matrix does NOT use LSP injection — LSP is a post-filter at scan time, not a precomputed universe attribute.
-
-**Validated ranges from 23 DTSS examples (scan bar):**
-
-| Expression | Valid | Median | Range |
-|---|---|---|---|
-| `lsp_dist_c_atr14` | 21/23 | 0.87 | -1.47 to 7.0 |
-| `lsp_bounce_recovery` | 16/23 | 0.856 | 0.17 to 1.37 |
-| `lsp_right_peak_ratio` | 21/23 | 0.962 | 0.48 to 1.20 |
-| `lsp_vol_ratio_5d` | 16/23 | 0.624 | 0.15 to 1.63 |
-| `avwap_lsp_atr14` | 16/23 | +1.97 | -1.89 to 4.48 |
-| `lsp_pullback_depth_atr` | 21/23 | 6.01 | 2.55 to 9.38 |
-
-**LSP detector validation:** 22/23 examples returned correct LSP at rank 1. The one apparent failure (BTBT) is a ground truth labeling issue — detector behavior is correct.
+**Note:** `expression_engine.py` still has LSP compute ops (`lsp_distance`, `lsp_bounce_recovery`, etc.) and `set_lsp_context()`. These are dormant — nothing calls them. They can be repurposed later if universal pivot detection is added to the expression library.
 
 ### Expression generation constraints
 - Every expression must be valid TC2000 PCF
