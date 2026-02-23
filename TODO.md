@@ -56,14 +56,18 @@ The core analysis engine is now a desktop-based spiderweb search system:
 - Keep existing 300-bar cache for matrix build (doesn't need 5yr)
 **Files:** `local_runner/cache_builder.py`
 
-### Step 2: Clean Tradable Universe ⬜
-**What:** Remove inverse/leveraged/synthetic ETFs from tradable_universe table.
-**Why:** AIPO, HOOZ etc. pollute grinder results with untradable synthetic patterns.
+### Step 2: Clean Tradable Universe ⬜ (script ready, needs desktop run)
+**What:** Remove inverse/leveraged/single-stock/derivative ETFs from tradable_universe.
+**Why:** TQQQ, NVDL, AAPU etc. fire duplicate signals on the same move as the underlying, inflating signal counts and masking true selectivity.
 **How:**
-- Identify all inverse/leveraged ETFs (ProShares, Direxion, GraniteShares, etc.)
-- Remove from DB
-- Add exclusion filter to universe rebuild so they never come back
-**Files:** `server.py` (universe rebuild endpoint), new cleanup script
+- `scripts/classify_universe.py` — classifies all 4,167 tickers via yfinance (quoteType + category + fund family)
+- Stores results in `ticker_classification` table (full details) + `universe_exclusions` table (permanent exclude list)
+- Categories: equity, etf_plain (keep), etf_leveraged/etf_inverse/etf_single_stock/etf_derivative_income/etf_volatility (exclude)
+- `server.py` rebuild_tradable_universe() now checks `universe_exclusions` — excluded tickers never come back
+- **Run quarterly** to catch new tickers/ETF launches
+- **Must run on desktop** — yfinance rate limits prevent running from sandbox
+**Usage:** `python scripts/classify_universe.py` (first run), `python scripts/classify_universe.py --force` (quarterly re-classify)
+**Files:** `scripts/classify_universe.py` (new), `server.py` (modified rebuild)
 
 ### Step 3: Expression Library Expansion ⬜
 **What:** 2,271 → ~3,800 expressions via cheap numeric ops.

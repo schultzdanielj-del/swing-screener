@@ -861,7 +861,15 @@ async def migrate_legacy_data():
 def rebuild_tradable_universe(db):
     """Rebuild the tradable_universe table from universe_ohlcv data.
     Filters: last close >= $1, 20-day avg dollar volume >= $5M.
+    Excludes any ticker in universe_exclusions table.
     """
+    # Ensure exclusions table exists (no-op if already there)
+    db.execute("""CREATE TABLE IF NOT EXISTS universe_exclusions (
+        ticker TEXT PRIMARY KEY,
+        reason TEXT,
+        added_at TEXT
+    )""")
+
     db.execute("DROP TABLE IF EXISTS tradable_universe")
     db.execute("""
         CREATE TABLE tradable_universe (
@@ -904,6 +912,10 @@ def rebuild_tradable_universe(db):
         ) t
         WHERE t.last_close >= 1.0
           AND t.avg_dv >= 5000000
+          AND t.ticker NOT IN (
+              SELECT ticker FROM universe_exclusions
+              WHERE 1=1  -- table may not exist on fresh DB, handled by try below
+          )
     """, (now_iso,))
 
     count = db.execute("SELECT COUNT(*) FROM tradable_universe").fetchone()[0]
