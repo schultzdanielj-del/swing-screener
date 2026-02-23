@@ -154,22 +154,14 @@ def compute_base_signals(universe_cache, conditions, min_bars=100):
           f"{len(universe_cache)} tickers)...")
     t0 = time.time()
     
-    signals = {}
-    total_signals = 0
-    total_bars = 0
-    skipped = 0
-    
-    for idx, (ticker, df) in enumerate(universe_cache.items()):
+    def _process_ticker(args):
+        ticker, df = args
         if df is None or len(df) < min_bars:
-            skipped += 1
-            continue
-        
+            return ticker, None, 0, True
         try:
             engine = ExpressionEngine(df)
             n_bars = len(df)
             pass_mask = np.ones(n_bars, dtype=bool)
-            
-            # First 50 bars unreliable (MA warmup)
             pass_mask[:50] = False
             
             for cond in conditions:
@@ -180,21 +172,39 @@ def compute_base_signals(universe_cache, conditions, min_bars=100):
                 pass_mask &= in_range
             
             sig_count = int(np.sum(pass_mask))
-            if sig_count > 0:
-                signals[ticker] = pass_mask
-                total_signals += sig_count
-            total_bars += n_bars - 50
-            
-        except Exception as e:
-            skipped += 1
+            return ticker, pass_mask if sig_count > 0 else None, n_bars - 50, False
+        except:
+            return ticker, None, 0, True
     
-        if (idx + 1) % 500 == 0:
-            elapsed = time.time() - t0
-            rate = (idx + 1) / elapsed
-            eta = (len(universe_cache) - idx - 1) / rate
-            print(f"    {idx+1}/{len(universe_cache)} tickers "
-                  f"[{elapsed:.0f}s, ~{eta:.0f}s left, "
-                  f"{total_signals:,} signals so far]")
+    signals = {}
+    total_signals = 0
+    total_bars = 0
+    skipped = 0
+    completed = 0
+    
+    n_workers = min(cpu_count(), 8)
+    work_items = list(universe_cache.items())
+    
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = {pool.submit(_process_ticker, item): item[0] 
+                   for item in work_items}
+        for future in as_completed(futures):
+            ticker, mask, bars, was_skipped = future.result()
+            if was_skipped:
+                skipped += 1
+            else:
+                total_bars += bars
+                if mask is not None:
+                    signals[ticker] = mask
+                    total_signals += int(np.sum(mask))
+            completed += 1
+            if completed % 500 == 0:
+                elapsed = time.time() - t0
+                rate = completed / elapsed
+                eta = (len(universe_cache) - completed) / rate
+                print(f"    {completed}/{len(universe_cache)} tickers "
+                      f"[{elapsed:.0f}s, ~{eta:.0f}s left, "
+                      f"{total_signals:,} signals so far] ({n_workers} workers)")
     
     elapsed = time.time() - t0
     n_days = total_bars / max(len(universe_cache) - skipped, 1)
