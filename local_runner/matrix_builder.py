@@ -78,6 +78,40 @@ def _load_ohlcv_cache():
         return pickle.load(f)
 
 
+_worker_expressions = None
+
+def _init_worker(expressions):
+    """Initialize worker process with shared expression list."""
+    global _worker_expressions
+    _worker_expressions = expressions
+
+
+def _compute_ticker_worker(args):
+    """Worker function for parallel universe matrix build.
+    Must be top-level for pickling across processes."""
+    df_dict, target_idx, ticker = args
+    global _worker_expressions
+    expressions = _worker_expressions
+    try:
+        df = pd.DataFrame(df_dict)
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        from scripts.expression_engine import ExpressionEngine
+        engine = ExpressionEngine(df)
+        engine.set_target(target_idx)
+        values = np.full(len(expressions), np.nan)
+        for j, expr in enumerate(expressions):
+            try:
+                val = engine.compute(expr)
+                if val is not None and not np.isnan(val):
+                    values[j] = val
+            except:
+                pass
+        return values
+    except:
+        return np.full(len(expressions), np.nan)
+
+
 def _compute_ticker_values(df, target_idx, expressions, lsp_context=None):
     """Compute all expression values for one ticker at one bar."""
     from scripts.expression_engine import ExpressionEngine
@@ -188,21 +222,71 @@ def get_universe_matrix(progress_fn=None, force=False):
         progress_fn("matrix", 10, f"Computing {len(uni_tickers)} tickers × {len(expressions)} expressions...")
 
     t0 = time.time()
+
+    # Parallel build — 8 workers for i5-12600K (10 cores, leave 2 for OS)
+    # Set MATRIX_WORKERS=1 to disable parallelism for debugging
+    n_workers = int(os.environ.get("MATRIX_WORKERS", 8))
+
+    # Prepare work items — convert DataFrames to dicts for pickling
+    work_items = []
+    valid_indices = []
     for i, ticker in enumerate(uni_tickers):
         df = universe_cache[ticker]
         if df is None or len(df) < 50:
             continue
-        universe_matrix[i] = _compute_ticker_values(df, len(df) - 1, expressions)
+        work_items.append((df.to_dict(orient="list"), len(df) - 1, ticker))
+        valid_indices.append(i)
 
-        if (i + 1) % 100 == 0 or (i + 1) == len(uni_tickers):
-            elapsed = time.time() - t0
-            rate = (i + 1) / elapsed if elapsed > 0 else 0
-            eta = (len(uni_tickers) - i - 1) / rate if rate > 0 else 0
-            pct = 10 + int(85 * (i + 1) / len(uni_tickers))
-            msg = f"Universe: {i+1}/{len(uni_tickers)} ({(i+1)/len(uni_tickers)*100:.0f}%) [{elapsed:.0f}s, ~{eta:.0f}s left]"
-            print(f"    {msg}")
-            if progress_fn:
-                progress_fn("matrix", pct, msg)
+    print(f"    {'Parallel' if n_workers > 1 else 'Sequential'} build: {len(work_items)} tickers × {len(expressions)} expressions"
+          + (f", {n_workers} workers" if n_workers > 1 else ""))
+
+    completed = 0
+
+    if n_workers <= 1:
+        # Sequential fallback
+        global _worker_expressions
+        _worker_expressions = expressions
+        for item, matrix_idx in zip(work_items, valid_indices):
+            universe_matrix[matrix_idx] = _compute_ticker_worker(item)
+            completed += 1
+            if completed % 100 == 0 or completed == len(work_items):
+                elapsed = time.time() - t0
+                rate = completed / elapsed if elapsed > 0 else 0
+                eta = (len(work_items) - completed) / rate if rate > 0 else 0
+                pct = 10 + int(85 * completed / len(work_items))
+                msg = f"Universe: {completed}/{len(work_items)} ({completed/len(work_items)*100:.0f}%) [{elapsed:.0f}s, ~{eta:.0f}s left]"
+                print(f"    {msg}")
+                if progress_fn:
+                    progress_fn("matrix", pct, msg)
+    else:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        import multiprocessing
+
+        # Use spawn to avoid fork issues with pandas
+        ctx = multiprocessing.get_context("spawn")
+
+        with ProcessPoolExecutor(max_workers=n_workers, mp_context=ctx,
+                                 initializer=_init_worker, initargs=(expressions,)) as executor:
+            futures = {executor.submit(_compute_ticker_worker, item): idx
+                       for item, idx in zip(work_items, valid_indices)}
+
+            for future in as_completed(futures):
+                matrix_idx = futures[future]
+                try:
+                    universe_matrix[matrix_idx] = future.result()
+                except Exception as e:
+                    pass  # leave as NaN
+
+                completed += 1
+                if completed % 200 == 0 or completed == len(work_items):
+                    elapsed = time.time() - t0
+                    rate = completed / elapsed if elapsed > 0 else 0
+                    eta = (len(work_items) - completed) / rate if rate > 0 else 0
+                    pct = 10 + int(85 * completed / len(work_items))
+                    msg = f"Universe: {completed}/{len(work_items)} ({completed/len(work_items)*100:.0f}%) [{elapsed:.0f}s, ~{eta:.0f}s left]"
+                    print(f"    {msg}")
+                    if progress_fn:
+                        progress_fn("matrix", pct, msg)
 
     data = {
         "universe_matrix": universe_matrix,
