@@ -50,6 +50,14 @@ The core analysis engine is now a desktop-based spiderweb search system:
 
 ---
 
+## Parallelize Matrix Build
+
+The universe matrix build (`get_universe_matrix`) is single-threaded. Each ticker is fully independent — trivial to parallelize with `ProcessPoolExecutor`. On a 12600K (10 cores) this should cut build time from ~30 min down to 3-5 min.
+
+**What to do:** Wrap the ticker loop in `local_runner/matrix_builder.py` line 173 with `ProcessPoolExecutor(max_workers=N)`. Progress reporting needs minor adjustment to work across processes.
+
+---
+
 ## Expression Library Expansion
 
 Expand `brute_expressions.py` beyond the current 1,338 to cover more of the TA knowledge base. Target: use the 4:05pm–7pm rebuild window more fully (~45-60 min total still acceptable).
