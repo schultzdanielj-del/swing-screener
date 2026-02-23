@@ -155,8 +155,8 @@ class SpiderwebSearch:
                 progress_callback(lv, current_level[0].pass_rate,
                                   nodes_explored, time.time() - t0)
 
-            if np.sum(current_level[0].universe_mask) < 20:
-                print(f"\n  ▓ Floor at level {lv}: {np.sum(current_level[0].universe_mask)} tickers")
+            if np.sum(current_level[0].universe_mask) == 0:
+                print(f"\n  ▓ Zero universe tickers at level {lv} — stopping")
                 break
 
         elapsed = time.time() - t0
