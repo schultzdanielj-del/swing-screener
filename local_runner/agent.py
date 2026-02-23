@@ -149,7 +149,7 @@ def handle_job(job):
     post_status(job_id, "running", "Agent picked up job")
 
     try:
-        from matrix_builder import get_universe_matrix, get_example_matrix, get_bespoke_candidate_matrix
+        from matrix_builder import get_universe_matrix, get_example_matrix
         from spiderweb import SpiderwebSearch
 
         # Progress helper
@@ -173,44 +173,11 @@ def handle_job(job):
             post_progress(job_id, "search", pct,
                           f"Level {search_level}: {best_rate:.2%} | {nodes:,} nodes | {elapsed:.0f}s")
 
-        # Align matrices to shared expressions (example matrix may have bespoke
-        # setup-specific columns that the universe matrix doesn't have)
-        ex_names = ex.get("expr_names") or uni["expr_names"]  # fallback
-        uni_names = uni["expr_names"]
+        # Matrices are always aligned (same generic expression set)
         ex_mat = ex["example_matrix"]
         uni_mat = uni["universe_matrix"]
-
-        if ex_mat.shape[1] != uni_mat.shape[1]:
-            # Build index of shared expression names
-            uni_name_idx = {n: i for i, n in enumerate(uni_names)}
-            # Load full DTSS expression list to get example column names
-            import json, os
-            ex_expr_path = os.path.join(os.path.dirname(__file__), "cache",
-                                        f"{setup_type}_expressions.json")
-            if os.path.exists(ex_expr_path):
-                with open(ex_expr_path) as f:
-                    all_ex_names = [e["name"] for e in json.load(f)["expressions"]]
-            else:
-                all_ex_names = uni_names  # fallback
-
-            shared_uni_cols = []
-            shared_ex_cols = []
-            shared_names = []
-            shared_cats = []
-            for ex_col, name in enumerate(all_ex_names):
-                if name in uni_name_idx:
-                    shared_uni_cols.append(uni_name_idx[name])
-                    shared_ex_cols.append(ex_col)
-                    shared_names.append(name)
-                    shared_cats.append(uni["expr_categories"][uni_name_idx[name]])
-
-            ex_mat = ex_mat[:, shared_ex_cols]
-            uni_mat = uni_mat[:, shared_uni_cols]
-            print(f"    [agent] Aligned matrices: {len(shared_names)} shared expressions "
-                  f"(example had {ex['example_matrix'].shape[1]}, universe has {len(uni_names)})")
-        else:
-            shared_names = uni_names
-            shared_cats = uni["expr_categories"]
+        shared_names = uni["expr_names"]
+        shared_cats = uni["expr_categories"]
 
         search = SpiderwebSearch(
             example_values=ex_mat,
@@ -228,81 +195,6 @@ def handle_job(job):
 
         post_progress(job_id, "search", 100,
                       f"Done: {results.get('best_rate', 0):.2%}")
-
-        # ── Phase 2: Bespoke re-filter on candidates ─────────────────────────
-        # For setups with bespoke expressions (e.g. DTSS LSP/AVWAP), run LSP
-        # detection on the small candidate pool and apply bespoke conditions.
-        # This is fast because we only process tickers that passed Phase 1.
-        bespoke_results = None
-        has_bespoke = os.path.exists(
-            os.path.join(CACHE_DIR, f"{setup_type}_expressions.json")
-        )
-        phase1_tickers = results.get("passing_tickers", [])
-
-        if has_bespoke and phase1_tickers:
-            progress("bespoke", 0,
-                     f"Phase 2: LSP filter on {len(phase1_tickers)} candidates...")
-            print(f"\n  Phase 2: bespoke re-filter on {len(phase1_tickers)} candidates")
-
-            def bespoke_progress(phase, pct, detail):
-                print(f"    [{phase}:{pct:3d}%] {detail}")
-                post_progress(job_id, "bespoke", pct, detail)
-
-            bespoke = get_bespoke_candidate_matrix(
-                setup_type, phase1_tickers,
-                scan_date=None,  # uses most recent bar
-                progress_fn=bespoke_progress,
-            )
-
-            # Get bespoke example values (columns from example matrix that are bespoke)
-            import json as _json
-            ex_expr_path = os.path.join(CACHE_DIR, f"{setup_type}_expressions.json")
-            with open(ex_expr_path) as f:
-                all_ex_exprs = _json.load(f)["expressions"]
-            all_ex_names = [e["name"] for e in all_ex_exprs]
-
-            bespoke_ex_cols = [
-                all_ex_names.index(n)
-                for n in bespoke["bespoke_names"]
-                if n in all_ex_names
-            ]
-            ex_bespoke_vals = ex["example_matrix"][:, bespoke_ex_cols]
-
-            # Run spiderweb on bespoke expressions, candidate pool as "universe"
-            def bespoke_search_progress(search_level, best_rate, nodes, elapsed):
-                post_progress(job_id, "bespoke", min(95, search_level * 15),
-                              f"Bespoke level {search_level}: {best_rate:.2%} | {nodes} nodes")
-
-            bespoke_search = SpiderwebSearch(
-                example_values=ex_bespoke_vals,
-                universe_values=bespoke["candidate_matrix"],
-                expr_names=bespoke["bespoke_names"],
-                expr_categories=bespoke["bespoke_categories"],
-                universe_tickers=phase1_tickers,
-            )
-            bespoke_results = bespoke_search.run(
-                depth=min(5, level["depth"]),
-                beam_width=min(25, level["beam_width"]),
-                progress_callback=bespoke_search_progress,
-            )
-
-            # Final passing tickers = intersection of Phase 1 and Phase 2
-            final_tickers = bespoke_results.get("passing_tickers", phase1_tickers)
-            final_rate = len(final_tickers) / len(uni["universe_tickers"])
-
-            progress("bespoke", 100,
-                     f"Phase 2 done: {len(final_tickers)} tickers ({final_rate:.2%})")
-            print(f"\n  Phase 2 result: {len(final_tickers)} tickers "
-                  f"({final_rate:.2%}) after bespoke filter")
-
-            # Merge bespoke conditions into results
-            results["bespoke_conditions"] = bespoke_results.get("best_thresholds", [])
-            results["bespoke_path"] = bespoke_results.get("best_path", [])
-            results["passing_tickers"] = final_tickers
-            results["best_passing"] = len(final_tickers)
-            results["best_rate"] = final_rate
-            results["phase1_passing"] = len(phase1_tickers)
-            results["phase1_rate"] = len(phase1_tickers) / len(uni["universe_tickers"])
 
         # Save and upload
         out = {
