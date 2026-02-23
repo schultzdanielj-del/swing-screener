@@ -351,3 +351,83 @@ def get_example_matrix(setup_type, progress_fn=None):
         progress_fn("examples", 100, f"Example matrix built: {len(raw_examples)} examples")
 
     return data
+
+
+def get_bespoke_candidate_matrix(setup_type, candidate_tickers, scan_date=None,
+                                 progress_fn=None):
+    """
+    Phase 2 bespoke matrix: compute setup-specific expressions (including LSP/AVWAP)
+    for a small candidate pool that passed Phase 1 generic filtering.
+
+    For DTSS: runs LSP detector per ticker, injects context, computes all 19 bespoke
+    expressions. Returns only the bespoke columns (generic ones already scored in Phase 1).
+
+    Returns dict with:
+        candidate_matrix: np.ndarray (n_candidates x n_bespoke_exprs)
+        candidate_tickers: list of tickers
+        bespoke_names: list of bespoke expression names
+        bespoke_categories: list of categories
+    """
+    sys.path.insert(0, LOCAL_DIR)
+    from brute_expressions import generate_dtss_lsp_expressions
+
+    bespoke_exprs = generate_dtss_lsp_expressions()
+    bespoke_names = [e["name"] for e in bespoke_exprs]
+    bespoke_cats = [e.get("category", "dtss_lsp") for e in bespoke_exprs]
+
+    ohlcv_cache = _load_ohlcv_cache()
+
+    lsp_detector = None
+    if setup_type == "dtss":
+        sys.path.insert(0, REPO_ROOT)
+        from scripts.lsp_detector import LSPDetector
+        lsp_detector = LSPDetector(api_base=API_BASE)
+
+    candidate_matrix = np.full((len(candidate_tickers), len(bespoke_exprs)), np.nan)
+
+    for i, ticker in enumerate(candidate_tickers):
+        df = ohlcv_cache.get(ticker)
+        if df is None or len(df) < 50:
+            continue
+
+        target_idx = len(df) - 1
+        eval_date = scan_date
+        if eval_date is None:
+            d = df.iloc[-1]["date"]
+            eval_date = d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)[:10]
+
+        lsp_context = None
+        if lsp_detector:
+            try:
+                lsps = lsp_detector.detect_lsp(ticker, eval_date, max_lookback_bars=300, top_n=1)
+                if lsps:
+                    lsp = lsps[0]
+                    lsp_context = {
+                        "date": lsp.date,
+                        "price": lsp.price,
+                        "bars_lookback": lsp.bars_lookback,
+                        "prominence_score": lsp.prominence_score,
+                        "pullback_depth_atr": lsp.pullback_depth_atr,
+                        "volume_ratio": lsp.volume_ratio,
+                    }
+            except Exception as e:
+                print(f"    [bespoke] LSP error {ticker}: {e}")
+
+        candidate_matrix[i] = _compute_ticker_values(
+            df, target_idx, bespoke_exprs, lsp_context
+        )
+        n_valid = int(np.sum(~np.isnan(candidate_matrix[i])))
+        lsp_str = f"LSP @ ${lsp_context['price']:.2f}" if lsp_context else "no LSP"
+        print(f"    [bespoke] {ticker:10s} {lsp_str}  ({n_valid}/{len(bespoke_exprs)} valid)")
+
+        if progress_fn:
+            pct = int(100 * (i + 1) / len(candidate_tickers))
+            progress_fn("bespoke", pct, f"Bespoke: {i+1}/{len(candidate_tickers)} ({ticker})")
+
+    return {
+        "candidate_matrix": candidate_matrix,
+        "candidate_tickers": candidate_tickers,
+        "bespoke_names": bespoke_names,
+        "bespoke_categories": bespoke_cats,
+        "n_bespoke": len(bespoke_exprs),
+    }
