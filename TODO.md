@@ -58,21 +58,41 @@ The universe matrix build (`get_universe_matrix`) is single-threaded. Each ticke
 
 ---
 
-## Expression Library Expansion
+## Expression Library Expansion: 2,271 → ~3,800
 
-Expand `brute_expressions.py` beyond the current 1,338 to cover more of the TA knowledge base. Target: use the 4:05pm–7pm rebuild window more fully (~45-60 min total still acceptable).
+Target: ~3,800 expressions via cheap numerics (hold booleans at 1,235). Benchmarked: matrix build goes from 5.9 min → 6.8 min with 8 workers. Negligible cost increase because booleans are 81% of compute and stay constant.
 
-**What to add:**
-- AVWAP expressions — distance to anchored VWAP from key pivots (requires volume-weighted calc from OHLCV)
-- Relative strength vs SPY — price ROC ratio, beta-adjusted extension
-- Sector relative strength — requires sector mapping + sector OHLCV
-- Extension ceiling proximity — how close is current extension to historical max (needs longer lookback)
-- Wave cycle position — where in the 3-5 day bounce cycle (flush → building → peak → fail)
-- Volume character — accumulation vs distribution over N days, not just ratio
-- Candle sequence patterns — e.g. inside bars, NR7, consecutive up/down closes over various windows
-- Gap analysis — gap up/down size, fill status, vs ATR
+**Timing benchmarks (from real per-ticker measurement):**
+| Config | ms/ticker | 8-worker build |
+|--------|-----------|----------------|
+| 1,338 original (sequential) | 399 | 28 min (1 worker) |
+| 2,271 current | 677 | 5.9 min |
+| 3,800 cheap numerics | 781 | 6.8 min |
+| 3,800 via booleans | 1,151 | 10.0 min |
 
-**Constraint:** Rebuild must finish before 7pm ET. Monitor actual rebuild time as expressions grow.
+**Per-category cost (ms/expression):** boolean 0.44, bollinger 0.78, swing_structure 0.44, momentum 0.33, aroon 0.33, efficiency 0.34, vwap 0.21, gap 0.22 — vs cheap ops: ma_slope 0.01, extension 0.04, ma_spread 0.01, retracement 0.07.
+
+**What to add (~960 new cheap expressions):**
+- Extension: add HMA, EMA8/EMA21/EMA100 (78 → 130)
+- MA slope: HMA slopes, more offsets (176 → 260)
+- MA spread: more pairs + slope of spread (40 → 80)
+- Extension dynamics: acceleration (slope of slope), more MAs (65 → 100)
+- Extension ADR multiples: all MAs (6 → 16)
+- Extension ceiling: add EMA8, EMA21 (32 → 48)
+- Near resistance: add distance_to_minl (196 → 240)
+- Retracement: separate high/low retracement (10 → 20)
+- VWAP: more periods + VWAP slope (12 → 24)
+- Percentile rank: close/vol/range × lookbacks (0 → 48, new op)
+- Slope ratios: fast/slow MA slope ratios (0 → 30, new op)
+- Momentum: WRSI, more stoch/CCI periods, continuous RVOL (107 → 170)
+- Volume character: cumulative RVOL, more OBV (36 → 55)
+- Remaining misc expansions across candle_pattern, range, gap, etc.
+
+**New compute ops needed in expression_engine.py:** `percentile_rank`, `rvol_continuous`, `cumulative_rvol`, `slope_ratio`, `wrsi`, `extension_accel`, `distance_to_minl`
+
+**Spiderweb impact:** More valid expressions survive 95% filter (~400 vs ~250). Search goes deeper before ceiling. Old L5 starved at depth 4 in 8s; new L5 should reach depth 6-8 in 1-3 min with tighter final pass rate.
+
+**Constraint:** Rebuild must finish before 7pm ET. At 6.8 min this is well within budget.
 
 ---
 
