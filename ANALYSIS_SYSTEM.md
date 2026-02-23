@@ -53,14 +53,14 @@ This gives a general starting point to understand what the setup looks like nume
 
 ## Step 3: THE GRINDER — Automated Expression Discovery
 
-**Goal:** Find which expression combinations best discriminate examples from the tradable universe. Get from 100% down to the mathematical ceiling — the tightest pass rate achievable through pure brute-force computation.
+**Goal:** Find which expression combinations best discriminate examples from the tradable universe. Get from 100% down to the mathematical ceiling — the tightest pass rate achievable through pure brute-force computation. Then eliminate historical noise until signals/day is manageable.
 
-**This step is now automated via THE GRINDER, a desktop-based spiderweb search system.**
+**This step is now automated via THE GRINDER, a two-phase desktop search system.**
 
-### How It Works
+### Phase 1: Spiderweb Search (single-day ceiling)
 
 The grinder precomputes two matrices:
-1. **Universe matrix** — every tradable ticker × every expression, evaluated at the most recent bar. Shared across all setups. Auto-rebuilds nightly at 4:30pm ET. Parallelized across 8 CPU cores (~5 min on i5-12600K, cached daily after that.)
+1. **Universe matrix** — every tradable ticker (~4,017 after ETF exclusions) × every expression (2,541), evaluated at the most recent bar. Shared across all setups. Auto-rebuilds nightly at 4:30pm ET. Parallelized across 8 CPU cores (~2.8 min on i5-12600K).
 2. **Example matrix** — every setup example × every expression, evaluated at the scan candle (day before entry). Per-setup, fast (~5s per example).
 
 The spiderweb search then explores branching combinations of conditions:
@@ -69,23 +69,47 @@ The spiderweb search then explores branching combinations of conditions:
 - Score = % of universe that passes (lower = tighter = better)
 - Beam search prunes weak paths, explores promising ones deeper
 
+**The ceiling problem:** Phase 1 finds conditions that filter tightly on TODAY (e.g., 0.07% = 3 tickers) but when backtested across 5 years: 340 signals/day. The conditions describe "bull market uptrend" not the specific setup. The spiderweb stops at the single-day ceiling but there are still expressions that could eliminate massive historical noise without losing any examples.
+
+### Phase 2: Historical Scorer (5-year noise elimination)
+
+After Phase 1 ceiling, the historical scorer greedily adds expressions that eliminate the most historical signals:
+1. Loads Phase 1 winning conditions + 5yr OHLCV cache (4,167 tickers × avg 1,108 bars, 214 MB)
+2. Computes base signal mask: Phase 1 conditions × all tickers × all bars → boolean signal array
+3. Pre-computes example ranges for candidate expressions (80% of examples must have valid values)
+4. **One-time precompute:** ALL candidate boolean masks per signal-bearing ticker (~2-5 min)
+5. **Greedy rounds:** Score all candidates via numpy AND (sub-second/round), add best eliminator
+6. Stops when avg signals/day < target (default 10)
+7. **Constraint:** 100% of setup examples must ALWAYS pass all conditions (zero false negatives)
+
+**Why this works:** An expression useless today (doesn't drop 3→2 tickers) might eliminate 300/day of historical noise. RSI 40-65 range might not help when all 3 current tickers are in range, but it kills thousands of historical signals with RSI 80+ or RSI 20-.
+
 ### Running the Grinder
 
-1. **Load examples** — must exist in Railway DB with entry dates
-2. **Set grind level** via frontend slider:
-   - Level 1: Quick scan (beam=10, depth=5, ~30s)
-   - Level 2: Light grind (beam=25, depth=8, ~2 min)
-   - Level 3: Medium grind (beam=50, depth=10, ~10 min)
-   - Level 4: Heavy grind (beam=100, depth=12, ~30 min)
-   - Level 5: Overnight (beam=250, depth=15, ~2-8 hours)
-3. **Click Start Grind** — desktop agent picks up job, runs search, posts results
-4. **Review ceiling** — the level progression chart shows when adding conditions stops improving. That ceiling is the mathematical limit of brute-force expression stacking.
+**Phase 1:**
+1. Load examples into Railway DB with entry dates
+2. Set grind level via frontend slider (L1: 30s → L5: 8 hours)
+3. Click Start Grind — desktop agent picks up job, runs spiderweb search
+4. Review ceiling — the progression chart shows where adding conditions stops improving
+
+**Phase 2:**
+```bash
+python local_runner/historical_scorer.py --setup dtss --target 10 --max-rounds 20
+```
+Requires Phase 1 results (`grinder_results_{setup}.json`) + 5yr cache (`universe_ohlcv_5yr.pkl`).
 
 ### What the Grinder Produces
 
-- **Best condition combo** — ranked list of expressions with thresholds
-- **Pass rate progression** — how selectivity improves at each depth level
-- **Ceiling identification** — the point where adding conditions stops helping
+**Phase 1 output** (`grinder_results_{setup}.json`):
+- Best condition combo — ranked list of expressions with thresholds
+- Pass rate progression at each depth level
+- Ceiling identification
+
+**Phase 2 output** (`historical_results_{setup}.json`):
+- `phase1_conditions`: from spiderweb grind
+- `phase2_additions`: expressions added by historical scorer
+- `all_conditions`: combined final condition set
+- Signals/day reduction at each round
 
 ### What the Grinder CAN'T Do
 
@@ -102,21 +126,24 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 ### Architecture
 
 - `local_runner/matrix_builder.py` — Precomputes universe + example matrices. Universe build parallelized via `ProcessPoolExecutor` (8 workers, `MATRIX_WORKERS` env var configurable).
-- `local_runner/spiderweb.py` — Beam search tree exploration. Inner loop vectorized with numpy broadcasting (batch AND + sum per beam node instead of per-expression Python loop).
+- `local_runner/spiderweb.py` — Phase 1: beam search tree exploration. Inner loop vectorized with numpy broadcasting + float32 matmul.
+- `local_runner/historical_scorer.py` — Phase 2: greedy historical signal elimination with precomputed numpy masks.
 - `local_runner/grinder.py` — CLI interface
 - `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild
-- `local_runner/cache_builder.py` — OHLCV cache from Railway DB
-- `local_runner/brute_expressions.py` — Expression generator (generic + per-setup bespoke blocks)
+- `local_runner/cache_builder.py` — OHLCV caches: daily (300 bars, 57 MB) + 5yr (1,260 bars, 214 MB)
+- `local_runner/brute_expressions.py` — Expression generator: 2,541 generic + per-setup bespoke blocks
 - `scripts/expression_engine.py` — Computes expressions against OHLCV; supports LSP context injection
+- `scripts/backtest_conditions.py` — Series computation for historical scoring (all ops mirrored from expression_engine)
 - `scripts/lsp_detector.py` — Detects Local Structural Peak (highest structural high before scan bar)
+- `scripts/classify_universe.py` — ETF classifier (quarterly, desktop-only, ~150 exclusions)
 - `server.py` — Grinder API endpoints (jobs/status/progress/results/agent)
 
 ### Expression sets — generic vs bespoke
 
 The grinder supports **setup-specific expression sets**. Each setup can extend the generic library with bespoke expressions that only make sense for that pattern. The expression loader is setup-aware:
 
-- **Generic set** (`brute_expressions.json`) — 2,271 expressions across: near_resistance, extension, extension_ceiling, extension_adr, extension_dynamics, MA slope, MA spread, MA cross, MA stack, momentum, range, range_dynamics, retracement, swing_structure, gap, consecutive, candle_pattern, volume_character, bollinger, macd, aroon, efficiency, vwap, boolean. Used by all setups and the universe matrix.
-- **DTSS set** (`dtss_expressions.json`) — generic + 19 bespoke `dtss_lsp` expressions (2,290 total). Requires LSP context injected per example. See DTSS bespoke block below.
+- **Generic set** (`brute_expressions.json`) — 2,541 expressions across 29 categories: near_resistance (196), near_support (119), extension (78), extension_dynamics (65), extension_ceiling (32), extension_adr (6), MA slope (176), MA spread (40), spread_slope (48), slope_ratio (12), MA cross (60), MA stack (5), momentum (115), range (49), range_dynamics (11), retracement (24), swing_structure (42), gap (21), consecutive (4), candle_pattern (26), volume_character (36), volume_continuous (20), bollinger (20), macd (21), aroon (12), efficiency (7), vwap (36), percentile_rank (25), boolean (1,235). Used by all setups and the universe matrix.
+- **DTSS set** (`dtss_expressions.json`) — generic + 19 bespoke `dtss_lsp` expressions (2,560 total). Requires LSP context injected per example. See DTSS bespoke block below.
 
 To add a new setup's bespoke block: add `generate_{setup}_expressions()` and `generate_{setup}()` to `brute_expressions.py`, then add a `setup_type` branch to `_load_expressions()` in `matrix_builder.py`.
 
@@ -285,7 +312,7 @@ Using the historical signals from Step 7, filtered to the highest-success market
 |------|------|-----|
 | 1 | **Load** | Data & TA knowledge — everything is already in the system |
 | 2 | **Receive** | User presents examples, entry dates, and setup context |
-| 3 | **Grind** | THE GRINDER — 2,271 generic + setup-specific bespoke expressions (DTSS: 2,290 total), spiderweb beam search, desktop compute. Finds the mathematical ceiling of brute-force condition stacking. |
+| 3 | **Grind** | THE GRINDER — Phase 1: spiderweb beam search (2,541 generic + setup-specific bespoke expressions) finds single-day ceiling. Phase 2: historical scorer eliminates 5yr noise via greedy selection. |
 | 4 | **Collaborate** | Human-AI iteration to push past the grinder ceiling with qualitative/discretionary conditions. Goal: zero daily pass rate. |
 | 5 | **Backtest** | Run conditions across full history, review signals, validate and tighten |
 | 6 | **Market Context** | Find which market conditions produce winners vs losers |
@@ -321,4 +348,4 @@ Using the historical signals from Step 7, filtered to the highest-success market
   - `GET /api/grinder/agent/status` — check if desktop agent is online
   - `POST /api/grinder/agent/heartbeat` — agent heartbeat
 - **Infrastructure:** SQLite on Railway persistent volume (/app/data)
-- **DB tables:** examples, ohlcv, extension, conditions, signal_analysis, universe_ohlcv, tradable_universe, scan_backtest, scan_backtest_clean, ticker_sectors, backtest_status
+- **DB tables:** examples, ohlcv, extension, conditions, signal_analysis, universe_ohlcv, tradable_universe, scan_backtest, scan_backtest_clean, ticker_sectors, backtest_status, ticker_classification, universe_exclusions
