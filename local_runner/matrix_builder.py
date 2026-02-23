@@ -34,11 +34,17 @@ sys.path.insert(0, LOCAL_DIR)
 API_BASE = "https://web-production-e3025.up.railway.app"
 
 
-def _load_expressions(setup_type=None):
-    """Load expressions. For DTSS, loads generic + LSP bespoke block."""
+def _load_expressions(setup_type=None, force=False):
+    """Load expressions. For DTSS, loads generic + LSP bespoke block.
+    Regenerates JSON cache if force=True or if source .py is newer than cached .json.
+    """
     if setup_type == "dtss":
         path = os.path.join(CACHE_DIR, "dtss_expressions.json")
-        if not os.path.exists(path):
+        src = os.path.join(LOCAL_DIR, "brute_expressions.py")
+        need_regen = force or not os.path.exists(path)
+        if not need_regen and os.path.exists(src):
+            need_regen = os.path.getmtime(src) > os.path.getmtime(path)
+        if need_regen:
             from brute_expressions import generate_dtss
             os.makedirs(CACHE_DIR, exist_ok=True)
             exprs = generate_dtss()
@@ -53,7 +59,11 @@ def _load_expressions(setup_type=None):
             return json.load(f)["expressions"]
 
     path = os.path.join(CACHE_DIR, "brute_expressions.json")
-    if not os.path.exists(path):
+    src = os.path.join(LOCAL_DIR, "brute_expressions.py")
+    need_regen = force or not os.path.exists(path)
+    if not need_regen and os.path.exists(src):
+        need_regen = os.path.getmtime(src) > os.path.getmtime(path)
+    if need_regen:
         from brute_expressions import generate_all
         os.makedirs(CACHE_DIR, exist_ok=True)
         exprs = generate_all()
@@ -185,7 +195,7 @@ def get_universe_matrix(progress_fn=None, force=False):
         with open(path, "rb") as f:
             data = pickle.load(f)
         # Verify expression count matches
-        expressions = _load_expressions()
+        expressions = _load_expressions(force=False)
         cached_n = data.get("n_exprs")
         current_n = len(expressions)
         if cached_n == current_n:
