@@ -144,6 +144,83 @@ def load_example_data(setup_type):
 
 
 # ══════════════════════════════════════════════════════════════
+# PARALLEL WORKER FUNCTIONS (must be top-level for pickling)
+# ══════════════════════════════════════════════════════════════
+
+# Module-level shared state for workers (set by initializer)
+_worker_conditions = None
+_worker_valid_candidates = None
+_worker_candidate_ranges = None
+_worker_n_cands = None
+_worker_min_bars = None
+
+
+def _init_base_worker(conditions, min_bars):
+    """Initializer for base signal workers."""
+    global _worker_conditions, _worker_min_bars
+    _worker_conditions = conditions
+    _worker_min_bars = min_bars
+
+
+def _base_signal_worker(args):
+    """Process one ticker for base signal computation."""
+    ticker, df = args
+    if df is None or len(df) < _worker_min_bars:
+        return ticker, None, 0, True
+    try:
+        engine = ExpressionEngine(df)
+        n_bars = len(df)
+        pass_mask = np.ones(n_bars, dtype=bool)
+        pass_mask[:50] = False
+        
+        for cond in _worker_conditions:
+            series = compute_series(engine, cond["compute"])
+            low, high = cond["low"], cond["high"]
+            in_range = (series >= low) & (series <= high)
+            in_range[np.isnan(series)] = False
+            pass_mask &= in_range
+        
+        sig_count = int(np.sum(pass_mask))
+        return ticker, pass_mask if sig_count > 0 else None, n_bars - 50, False
+    except:
+        return ticker, None, 0, True
+
+
+def _init_precompute_worker(valid_candidates, candidate_ranges, n_cands):
+    """Initializer for candidate precompute workers."""
+    global _worker_valid_candidates, _worker_candidate_ranges, _worker_n_cands
+    _worker_valid_candidates = valid_candidates
+    _worker_candidate_ranges = candidate_ranges
+    _worker_n_cands = n_cands
+
+
+def _precompute_ticker_worker(args):
+    """Process one ticker for candidate precomputation."""
+    ticker, df = args
+    if df is None:
+        return ticker, None
+    n_bars = len(df)
+    try:
+        engine = ExpressionEngine(df)
+    except:
+        return ticker, None
+    
+    masks = np.zeros((_worker_n_cands, n_bars), dtype=bool)
+    for cidx, expr in enumerate(_worker_valid_candidates):
+        try:
+            series = compute_series(engine, expr["compute"])
+            if series is None or len(series) != n_bars:
+                continue
+            low, high = _worker_candidate_ranges[expr["name"]]
+            in_range = (series >= low) & (series <= high)
+            in_range[np.isnan(series)] = False
+            masks[cidx] = in_range
+        except:
+            pass
+    return ticker, masks
+
+
+# ══════════════════════════════════════════════════════════════
 # CORE: COMPUTE SIGNAL MASKS
 # ══════════════════════════════════════════════════════════════
 
@@ -151,35 +228,11 @@ def compute_base_signals(universe_cache, conditions, min_bars=100):
     """
     Run Phase 1 conditions across ALL tickers × ALL bars.
     Returns dict of {ticker: boolean_array} where True = signal.
-    
-    Each ticker gets ONE ExpressionEngine build, then all conditions
-    are evaluated as series with vectorized threshold checks.
+    Uses ProcessPoolExecutor for true parallelism.
     """
     print(f"\n  Computing base signal mask ({len(conditions)} conditions × "
           f"{len(universe_cache)} tickers)...")
     t0 = time.time()
-    
-    def _process_ticker(args):
-        ticker, df = args
-        if df is None or len(df) < min_bars:
-            return ticker, None, 0, True
-        try:
-            engine = ExpressionEngine(df)
-            n_bars = len(df)
-            pass_mask = np.ones(n_bars, dtype=bool)
-            pass_mask[:50] = False
-            
-            for cond in conditions:
-                series = compute_series(engine, cond["compute"])
-                low, high = cond["low"], cond["high"]
-                in_range = (series >= low) & (series <= high)
-                in_range[np.isnan(series)] = False
-                pass_mask &= in_range
-            
-            sig_count = int(np.sum(pass_mask))
-            return ticker, pass_mask if sig_count > 0 else None, n_bars - 50, False
-        except:
-            return ticker, None, 0, True
     
     signals = {}
     total_signals = 0
@@ -190,8 +243,12 @@ def compute_base_signals(universe_cache, conditions, min_bars=100):
     n_workers = min(cpu_count(), 8)
     work_items = list(universe_cache.items())
     
-    with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures = {pool.submit(_process_ticker, item): item[0] 
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_init_base_worker,
+        initargs=(conditions, min_bars)
+    ) as pool:
+        futures = {pool.submit(_base_signal_worker, item): item[0] 
                    for item in work_items}
         for future in as_completed(futures):
             ticker, mask, bars, was_skipped = future.result()
@@ -343,38 +400,17 @@ def score_candidates(universe_cache, base_signals, example_dfs,
     candidate_idx = {name: i for i, name in enumerate(candidate_names)}
     n_cands = len(valid_candidates)
     
-    # Parallel worker function
-    def _precompute_ticker(args):
-        ticker, df = args
-        if df is None:
-            return ticker, None
-        n_bars = len(df)
-        try:
-            engine = ExpressionEngine(df)
-        except:
-            return ticker, None
-        
-        masks = np.zeros((n_cands, n_bars), dtype=bool)
-        for cidx, expr in enumerate(valid_candidates):
-            try:
-                series = compute_series(engine, expr["compute"])
-                if series is None or len(series) != n_bars:
-                    continue
-                low, high = candidate_ranges[expr["name"]]
-                in_range = (series >= low) & (series <= high)
-                in_range[np.isnan(series)] = False
-                masks[cidx] = in_range
-            except:
-                pass
-        return ticker, masks
-    
-    # Use ThreadPoolExecutor (GIL released during numpy ops)
+    # Use ProcessPoolExecutor for true parallelism
     n_workers = min(cpu_count(), 8)
     work_items = [(t, universe_cache[t]) for t in signal_tickers]
     completed = 0
     
-    with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures = {pool.submit(_precompute_ticker, item): item[0] 
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_init_precompute_worker,
+        initargs=(valid_candidates, candidate_ranges, n_cands)
+    ) as pool:
+        futures = {pool.submit(_precompute_ticker_worker, item): item[0] 
                    for item in work_items}
         for future in as_completed(futures):
             ticker, masks = future.result()
