@@ -20,7 +20,11 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.expression_engine import ExpressionEngine
-from scripts.profiling_engine import count_true, since_true, true_in_row
+from scripts.profiling_engine import (
+    count_true, since_true, true_in_row, ema, obv,
+    aroon_up, aroon_down, chaikin_money_flow, kaufman_efficiency,
+    bollinger_top, bollinger_bot, macd,
+)
 
 
 # ══════════════════════════════════════════════════════════
@@ -334,6 +338,363 @@ def compute_series(engine, comp):
         result = np.full(len(is_gap), np.nan)
         for i in range(p - 1, len(is_gap)):
             result[i] = np.sum(is_gap[i - p + 1:i + 1])
+        return result
+
+    # ══════════════════════════════════════════════════════════
+    # NEW OPS — Step 5a: Ported from expression_engine.compute()
+    # ══════════════════════════════════════════════════════════
+
+    elif op == "aroon_up_val":
+        return engine._aroon_up(comp["period"]).values
+
+    elif op == "aroon_down_val":
+        return engine._aroon_down(comp["period"]).values
+
+    elif op == "aroon_oscillator":
+        p = comp["period"]
+        return (engine._aroon_up(p) - engine._aroon_down(p)).values
+
+    elif op == "atr_ratio":
+        atr_s = engine._atr(comp["period"])
+        offset = comp["offset"]
+        prev = atr_s.shift(offset)
+        return (atr_s / prev.replace(0, np.nan)).values
+
+    elif op == "bollinger_pctb":
+        p = comp["period"]
+        top = engine._bbtop(p)
+        bot = engine._bbbot(p)
+        bw = top - bot
+        return ((engine.c - bot) / bw.replace(0, np.nan)).values
+
+    elif op == "bollinger_bandwidth":
+        p = comp["period"]
+        top = engine._bbtop(p)
+        bot = engine._bbbot(p)
+        mid = engine._ma(f"avgc{p}")
+        return ((top - bot) / mid.replace(0, np.nan)).values
+
+    elif op == "bollinger_bandwidth_rank":
+        p = comp["period"]
+        lb = comp["lookback"]
+        top = engine._bbtop(p)
+        bot = engine._bbbot(p)
+        mid = engine._ma(f"avgc{p}")
+        bw = (top - bot) / mid.replace(0, np.nan)
+        bw_min = bw.rolling(lb, min_periods=1).min()
+        bw_max = bw.rolling(lb, min_periods=1).max()
+        bw_range = bw_max - bw_min
+        return ((bw - bw_min) / bw_range.replace(0, np.nan)).values
+
+    elif op == "macd_histogram":
+        fast = comp.get("fast", 12)
+        slow = comp.get("slow", 26)
+        signal_p = comp.get("signal", 9)
+        macd_line = engine._macd(fast, slow)
+        signal_line = ema(macd_line, signal_p)
+        return (macd_line - signal_line).values
+
+    elif op == "macd_histogram_slope":
+        fast = comp.get("fast", 12)
+        slow = comp.get("slow", 26)
+        signal_p = comp.get("signal", 9)
+        offset = comp["offset"]
+        macd_line = engine._macd(fast, slow)
+        signal_line = ema(macd_line, signal_p)
+        hist = macd_line - signal_line
+        return (hist - hist.shift(offset)).values
+
+    elif op == "macd_line_norm":
+        fast = comp.get("fast", 12)
+        slow = comp.get("slow", 26)
+        norm = _get_normalizer(engine, comp["normalizer"])
+        return (engine._macd(fast, slow) / norm).values
+
+    elif op == "cmf":
+        return engine._cmf(comp["period"]).values
+
+    elif op == "cmf_slope":
+        c = engine._cmf(comp["period"])
+        offset = comp["offset"]
+        return (c - c.shift(offset)).values
+
+    elif op == "kaufman_efficiency_ratio":
+        return engine._kaufman_eff(comp["period"]).values
+
+    elif op == "ma_stack_score":
+        # Vectorized: count ordered pairs across all bars
+        mas = [engine._ma(name) for name in comp["mas"]]
+        n_mas = len(mas)
+        score = pd.Series(0.0, index=engine.c.index)
+        for a in range(n_mas):
+            for b in range(a + 1, n_mas):
+                score += (mas[a] > mas[b]).astype(float)
+        return score.values
+
+    elif op == "ma_undercut_depth":
+        ma = engine._ma(comp["ma"])
+        p = comp["period"]
+        norm = _get_normalizer(engine, comp["normalizer"])
+        diff = engine.l - ma
+        min_diff = diff.rolling(p, min_periods=1).min()
+        return (min_diff / norm).values
+
+    elif op == "obv_slope":
+        o = engine._obv()
+        offset = comp["offset"]
+        vol_period = comp.get("vol_period", 20)
+        avg_vol = engine._ma(f"avgv{vol_period}")
+        return ((o - o.shift(offset)) / (avg_vol * offset).replace(0, np.nan)).values
+
+    elif op == "vwap_distance":
+        p = comp["period"]
+        norm = _get_normalizer(engine, comp["normalizer"])
+        tp = (engine.h + engine.l + engine.c) / 3
+        cum_tpv = (tp * engine.v).rolling(p, min_periods=1).sum()
+        cum_vol = engine.v.rolling(p, min_periods=1).sum()
+        vwap_s = cum_tpv / cum_vol.replace(0, np.nan)
+        return ((engine.c - vwap_s) / norm).values
+
+    elif op == "gap_size":
+        norm = _get_normalizer(engine, comp["normalizer"])
+        gap = pd.Series(np.nan, index=engine.c.index)
+        gap.iloc[1:] = engine.o.values[1:] - engine.c.values[:-1]
+        return (gap / norm).values
+
+    elif op == "retracement_level":
+        p = comp["period"]
+        maxh = engine._maxh(p)
+        minl = engine._minl(p)
+        rng = maxh - minl
+        return ((engine.c - minl) / rng.replace(0, np.nan)).values
+
+    elif op == "range_contraction_ratio":
+        p = comp["period"]
+        curr_width = engine._maxh(p) - engine._minl(p)
+        prev_width = (engine._maxh(p) - engine._minl(p)).shift(p)
+        return (curr_width / prev_width.replace(0, np.nan)).values
+
+    elif op == "nr_ratio":
+        p = comp["period"]
+        today_range = engine.h - engine.l
+        max_range = (engine.h - engine.l).rolling(p, min_periods=1).max()
+        return (today_range / max_range.replace(0, np.nan)).values
+
+    elif op == "lower_wick_ratio":
+        rng = engine.h - engine.l
+        lower = pd.concat([engine.c, engine.o], axis=1).min(axis=1) - engine.l
+        return (lower / rng.replace(0, np.nan)).values
+
+    elif op == "close_vs_open_ratio":
+        p = comp["period"]
+        bullish = (engine.c > engine.o).astype(float)
+        return (bullish.rolling(p, min_periods=1).sum() / p).values
+
+    elif op == "avg_candle_body_ratio":
+        p = comp["period"]
+        rng = engine.h - engine.l
+        body = (engine.c - engine.o).abs()
+        ratio = body / rng.replace(0, np.nan)
+        return ratio.rolling(p, min_periods=1).mean().values
+
+    elif op == "inside_bar_count":
+        p = comp["period"]
+        is_inside = ((engine.h < engine.h.shift(1)) & (engine.l > engine.l.shift(1))).astype(float)
+        return is_inside.rolling(p, min_periods=1).sum().values
+
+    elif op == "outside_bar_count":
+        p = comp["period"]
+        is_outside = ((engine.h > engine.h.shift(1)) & (engine.l < engine.l.shift(1))).astype(float)
+        return is_outside.rolling(p, min_periods=1).sum().values
+
+    elif op == "high_volume_bar_pct":
+        p = comp["period"]
+        mult = comp.get("multiplier", 1.5)
+        avg_period = comp.get("avg_period", 50)
+        avg_v = engine._ma(f"avgv{avg_period}")
+        is_high = (engine.v > mult * avg_v).astype(float)
+        return (is_high.rolling(p, min_periods=1).sum() / p).values
+
+    elif op == "up_volume_ratio":
+        p = comp["period"]
+        up_mask = (engine.c > engine.o).astype(float)
+        up_vol = (engine.v * up_mask).rolling(p, min_periods=1).sum()
+        total_vol = engine.v.rolling(p, min_periods=1).sum()
+        return (up_vol / total_vol.replace(0, np.nan)).values
+
+    elif op == "consecutive_up_days":
+        c_vals = engine.c.values
+        n = len(c_vals)
+        result = np.zeros(n)
+        for i in range(1, n):
+            if c_vals[i] > c_vals[i - 1]:
+                result[i] = result[i - 1] + 1
+        return result
+
+    elif op == "consecutive_down_days":
+        c_vals = engine.c.values
+        n = len(c_vals)
+        result = np.zeros(n)
+        for i in range(1, n):
+            if c_vals[i] < c_vals[i - 1]:
+                result[i] = result[i - 1] + 1
+        return result
+
+    elif op == "consecutive_up_roc":
+        c_vals = engine.c.values
+        n = len(c_vals)
+        result = np.zeros(n)
+        for i in range(1, n):
+            if c_vals[i] > c_vals[i - 1]:
+                result[i] = result[i - 1] + (c_vals[i] / c_vals[i - 1] - 1) * 100
+        return result
+
+    elif op == "consecutive_down_roc":
+        c_vals = engine.c.values
+        n = len(c_vals)
+        result = np.zeros(n)
+        for i in range(1, n):
+            if c_vals[i] < c_vals[i - 1]:
+                result[i] = result[i - 1] + (c_vals[i] / c_vals[i - 1] - 1) * 100
+        return result
+
+    elif op == "unfilled_gap_up_count":
+        p = comp["period"]
+        h_vals = engine.h.values
+        l_vals = engine.l.values
+        o_vals = engine.o.values
+        n = len(h_vals)
+        result = np.full(n, np.nan)
+        for i in range(p, n):
+            count = 0
+            for j in range(i - p + 1, i + 1):
+                if j < 1:
+                    continue
+                if o_vals[j] > h_vals[j - 1]:
+                    # Check if any bar from j to i filled it
+                    filled = False
+                    for k in range(j, i + 1):
+                        if l_vals[k] <= h_vals[j - 1]:
+                            filled = True
+                            break
+                    if not filled:
+                        count += 1
+            result[i] = count
+        return result
+
+    elif op == "swing_high_count":
+        p = comp["period"]
+        h_vals = engine.h.values
+        n = len(h_vals)
+        result = np.full(n, np.nan)
+        for i in range(p + 1, n):
+            count = 0
+            for j in range(i - p + 2, i):
+                if h_vals[j] > h_vals[j - 1] and h_vals[j] > h_vals[j + 1]:
+                    count += 1
+            result[i] = count
+        return result
+
+    elif op == "swing_low_count":
+        p = comp["period"]
+        l_vals = engine.l.values
+        n = len(l_vals)
+        result = np.full(n, np.nan)
+        for i in range(p + 1, n):
+            count = 0
+            for j in range(i - p + 2, i):
+                if l_vals[j] < l_vals[j - 1] and l_vals[j] < l_vals[j + 1]:
+                    count += 1
+            result[i] = count
+        return result
+
+    elif op == "higher_high_count":
+        p = comp["period"]
+        h_vals = engine.h.values
+        n = len(h_vals)
+        result = np.full(n, np.nan)
+        for i in range(p + 1, n):
+            # Find swing highs in window
+            highs = []
+            for j in range(i - p + 2, i):
+                if h_vals[j] > h_vals[j - 1] and h_vals[j] > h_vals[j + 1]:
+                    highs.append(h_vals[j])
+            if len(highs) < 2:
+                result[i] = 0.0
+                continue
+            count = 0
+            for k in range(len(highs) - 1, 0, -1):
+                if highs[k] > highs[k - 1]:
+                    count += 1
+                else:
+                    break
+            result[i] = count
+        return result
+
+    elif op == "higher_low_count":
+        p = comp["period"]
+        l_vals = engine.l.values
+        n = len(l_vals)
+        result = np.full(n, np.nan)
+        for i in range(p + 1, n):
+            lows = []
+            for j in range(i - p + 2, i):
+                if l_vals[j] < l_vals[j - 1] and l_vals[j] < l_vals[j + 1]:
+                    lows.append(l_vals[j])
+            if len(lows) < 2:
+                result[i] = 0.0
+                continue
+            count = 0
+            for k in range(len(lows) - 1, 0, -1):
+                if lows[k] > lows[k - 1]:
+                    count += 1
+                else:
+                    break
+            result[i] = count
+        return result
+
+    elif op == "lower_high_count":
+        p = comp["period"]
+        h_vals = engine.h.values
+        n = len(h_vals)
+        result = np.full(n, np.nan)
+        for i in range(p + 1, n):
+            highs = []
+            for j in range(i - p + 2, i):
+                if h_vals[j] > h_vals[j - 1] and h_vals[j] > h_vals[j + 1]:
+                    highs.append(h_vals[j])
+            if len(highs) < 2:
+                result[i] = 0.0
+                continue
+            count = 0
+            for k in range(len(highs) - 1, 0, -1):
+                if highs[k] < highs[k - 1]:
+                    count += 1
+                else:
+                    break
+            result[i] = count
+        return result
+
+    elif op == "lower_low_count":
+        p = comp["period"]
+        l_vals = engine.l.values
+        n = len(l_vals)
+        result = np.full(n, np.nan)
+        for i in range(p + 1, n):
+            lows = []
+            for j in range(i - p + 2, i):
+                if l_vals[j] < l_vals[j - 1] and l_vals[j] < l_vals[j + 1]:
+                    lows.append(l_vals[j])
+            if len(lows) < 2:
+                result[i] = 0.0
+                continue
+            count = 0
+            for k in range(len(lows) - 1, 0, -1):
+                if lows[k] < lows[k - 1]:
+                    count += 1
+                else:
+                    break
+            result[i] = count
         return result
 
     else:
