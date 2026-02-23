@@ -100,7 +100,12 @@ def load_example_data(setup_type):
     """Load example OHLCV data from Railway API."""
     import requests
     resp = requests.get(f"{API_BASE}/api/examples/{setup_type}", timeout=30)
-    examples = resp.json()["examples"]
+    data = resp.json()
+    if "examples" not in data:
+        print(f"    ⚠ API response keys: {list(data.keys())}")
+        print(f"    ⚠ Response: {str(data)[:300]}")
+        raise KeyError(f"API response missing 'examples' key. Status: {resp.status_code}")
+    examples = data["examples"]
     
     example_dfs = []
     for ex in examples:
