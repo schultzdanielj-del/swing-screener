@@ -270,7 +270,7 @@ Using the historical signals from Step 7, filtered to the highest-success market
 |------|------|-----|
 | 1 | **Load** | Data & TA knowledge — everything is already in the system |
 | 2 | **Receive** | User presents examples, entry dates, and setup context |
-| 3 | **Grind** | THE GRINDER — Phase 1: spiderweb beam search (2,541 generic + setup-specific bespoke expressions) finds single-day ceiling. Phase 2: historical scorer eliminates 5yr noise via greedy selection. |
+| 3 | **Grind** | THE GRINDER — Phase 1: spiderweb beam search (2,541 generic expressions) finds single-day ceiling. Phase 2: historical scorer eliminates 5yr noise via greedy selection. |
 | 4 | **Collaborate** | Human-AI iteration to push past the grinder ceiling with qualitative/discretionary conditions. Goal: zero daily pass rate. |
 | 5 | **Backtest** | Run conditions across full history, review signals, validate and tighten |
 | 6 | **Market Context** | Find which market conditions produce winners vs losers |
