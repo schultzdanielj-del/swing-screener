@@ -23,7 +23,7 @@ import json
 import numpy as np
 import pandas as pd
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(LOCAL_DIR)
@@ -78,8 +78,19 @@ def _compute_ticker_values(df, target_idx, expressions):
     return values
 
 
+def _get_et_date():
+    """Get current date in US/Eastern time (handles EST/EDT automatically)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/New_York")).date()
+    except ImportError:
+        utc_now = datetime.now(timezone.utc)
+        offset = timedelta(hours=-4 if 3 <= utc_now.month <= 10 else -5)
+        return (utc_now + offset).date()
+
+
 def _universe_matrix_fresh():
-    """Check if universe matrix exists and was built today."""
+    """Check if universe matrix exists and was built today (ET date)."""
     path = os.path.join(CACHE_DIR, "universe_matrix.pkl")
     if not os.path.exists(path):
         return False
@@ -89,9 +100,16 @@ def _universe_matrix_fresh():
         built = data.get("computed_at", "")
         if not built:
             return False
-        built_date = datetime.fromisoformat(built).date()
-        today = datetime.now(timezone.utc).date()
-        return built_date == today
+        built_dt = datetime.fromisoformat(built)
+        if built_dt.tzinfo is None:
+            built_dt = built_dt.replace(tzinfo=timezone.utc)
+        try:
+            from zoneinfo import ZoneInfo
+            built_date = built_dt.astimezone(ZoneInfo("America/New_York")).date()
+        except ImportError:
+            offset = timedelta(hours=-4 if 3 <= built_dt.month <= 10 else -5)
+            built_date = (built_dt + offset).date()
+        return built_date == _get_et_date()
     except:
         return False
 

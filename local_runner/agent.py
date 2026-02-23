@@ -86,16 +86,30 @@ def heartbeat():
         pass
 
 
-def nightly_rebuild_needed():
-    """Check if it's after 4:30pm ET and matrix hasn't been rebuilt today."""
-    from matrix_builder import _universe_matrix_fresh
-    et = timezone(timedelta(hours=-5))
-    now_et = datetime.now(et)
+def get_et_now():
+    """Get current time in US/Eastern, handling EST vs EDT automatically."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/New_York"))
+    except ImportError:
+        # Fallback: approximate — EST in winter, EDT in summer
+        # DST starts 2nd Sunday March, ends 1st Sunday November
+        utc_now = datetime.now(timezone.utc)
+        month = utc_now.month
+        # EDT (UTC-4): March–November roughly; EST (UTC-5): November–March
+        offset = -4 if 3 <= month <= 10 else -5
+        return datetime.now(timezone(timedelta(hours=offset)))
 
-    # Only rebuild after market close (4:30pm ET) on weekdays
+
+def nightly_rebuild_needed():
+    """Check if it's after 4:05pm ET and matrix hasn't been rebuilt today."""
+    from matrix_builder import _universe_matrix_fresh
+    now_et = get_et_now()
+
+    # Only rebuild after market close (4:05pm ET) on weekdays
     if now_et.weekday() >= 5:  # Weekend
         return False
-    if now_et.hour < 16 or (now_et.hour == 16 and now_et.minute < 30):
+    if now_et.hour < 16 or (now_et.hour == 16 and now_et.minute < 5):
         return False
 
     return not _universe_matrix_fresh()
