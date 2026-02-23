@@ -73,7 +73,11 @@ The spiderweb search then explores branching combinations of conditions:
 
 ### Phase 2: Pyramidal Grinder (nested time horizon noise elimination)
 
-**✅ BUILT** — `local_runner/pyramid_grinder.py`
+**✅ BUILT & TESTED** — `local_runner/pyramid_grinder.py`
+
+**First test results (DTSS):** 10 conditions, peak 69/day (down from 260), avg 7.2/day. Hit expression ceiling — ran out of useful candidates at the 5yr tier. The 2021 Jul-Aug cluster is the hardest noise to eliminate. 5yr matrix build took ~10 min.
+
+**Critical gap discovered:** 48 of the expression engine's ops are missing from `backtest_conditions.compute_series()`. This means historical tiers (T2-T6) can only use ~60% of the expression library. The D1 tier has full access but that's the tier that needs it least. Porting these 48 ops is the immediate next step — it unlocks the full library for the tiers where the real noise lives.
 
 The pyramid progressively widens the historical window, each tier grinding until `peak_signals/day < threshold` before advancing to the next:
 
@@ -152,7 +156,7 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 - `local_runner/cache_builder.py` — OHLCV caches: daily (300 bars, 57 MB) + 5yr (1,260 bars, 214 MB)
 - `local_runner/brute_expressions.py` — Expression generator: 2,541 generic expressions (same for all setups)
 - `scripts/expression_engine.py` — Computes expressions against OHLCV
-- `scripts/backtest_conditions.py` — Series computation for historical scoring. All ops mirrored from expression_engine including `bars_since_ma_cross` and `gap_count` (added 2026-02-23).
+- `scripts/backtest_conditions.py` — Series computation for historical scoring. **⚠️ Missing 48 ops** that exist in expression_engine.py — bollinger, MACD, aroon, CMF, swing structure, efficiency, candle patterns, consecutive moves, ma_slope, ma_stack, ma_undercut, obv, range_contraction, retracement_level, vwap_distance, and more. These ops work for D1 (point values) but are invisible to historical tiers (series computation). Porting these is the immediate next step.
 - `scripts/signal_distribution.py` — Parallel signal analyzer: runs all conditions across 5yr cache, outputs daily signal counts + per-signal CSV. Used to verify peak/avg before advancing.
 - `scripts/lsp_detector.py` — Detects Local Structural Peak (highest structural high before scan bar)
 - `scripts/classify_universe.py` — ETF classifier (quarterly, desktop-only, ~150 exclusions)
