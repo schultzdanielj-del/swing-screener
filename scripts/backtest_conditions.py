@@ -697,6 +697,40 @@ def compute_series(engine, comp):
             result[i] = count
         return result
 
+    elif op == "low_vs_ma":
+        ma_s = engine._ma(comp["ma"])
+        norm_s = _get_normalizer(engine, comp["normalizer"])
+        return ((engine.l - ma_s) / norm_s).values
+
+    elif op == "high_vs_ma":
+        ma_s = engine._ma(comp["ma"])
+        norm_s = _get_normalizer(engine, comp["normalizer"])
+        return ((engine.h - ma_s) / norm_s).values
+
+    elif op == "close_position_in_bar":
+        p = comp["period"]
+        rng = engine.h - engine.l
+        pos = (engine.c - engine.l) / rng.replace(0, np.nan)
+        return pos.rolling(p).mean().values
+
+    elif op == "roc_acceleration":
+        outer = comp["outer_period"]
+        inner = comp["inner_period"]
+        roc_s = engine.c.pct_change(outer) * 100
+        return roc_s.diff(inner).values
+
+    elif op == "roc_percentile_rank":
+        roc_p = comp["roc_period"]
+        lb = comp["lookback"]
+        roc_s = engine.c.pct_change(roc_p) * 100
+        return roc_s.rolling(lb).rank(pct=True).values
+
+    elif op == "volume_price_divergence":
+        p = comp["period"]
+        price_roc = engine.c.pct_change(p)
+        vol_roc = engine.v.rolling(p).mean().pct_change(p)
+        return (price_roc - vol_roc).values
+
     else:
         raise ValueError(f"Unsupported op for backtest series: {op}")
 

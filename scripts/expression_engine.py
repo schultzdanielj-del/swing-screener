@@ -230,6 +230,93 @@ class ExpressionEngine:
             # --- Chaikin Money Flow ---
             elif n == "cmf20_positive":    s = self._cmf(20) > 0
             elif n == "cmf20_negative":    s = self._cmf(20) < 0
+            # --- NEW: Price vs MA (expanded) ---
+            elif n == "c_gt_xavgc13":     s = c > self._ma("xavgc13")
+            elif n == "c_gt_xavgc200":    s = c > self._ma("xavgc200")
+            elif n == "c_gt_avgc100":     s = c > self._ma("avgc100")
+            elif n == "c_lt_xavgc13":     s = c < self._ma("xavgc13")
+            elif n == "c_lt_xavgc50":     s = c < self._ma("xavgc50")
+            elif n == "c_lt_avgc100":     s = c < self._ma("avgc100")
+            # --- NEW: Wick vs MA (support/resistance tests) ---
+            elif n == "l_gt_xavgc8":      s = l > self._ma("xavgc8")
+            elif n == "l_gt_xavgc21":     s = l > self._ma("xavgc21")
+            elif n == "l_gt_avgc50":      s = l > self._ma("avgc50")
+            elif n == "l_gt_avgc200":     s = l > self._ma("avgc200")
+            elif n == "h_lt_xavgc8":      s = h < self._ma("xavgc8")
+            elif n == "h_lt_xavgc21":     s = h < self._ma("xavgc21")
+            elif n == "h_lt_avgc50":      s = h < self._ma("avgc50")
+            elif n == "h_lt_avgc200":     s = h < self._ma("avgc200")
+            # --- NEW: Volume (expanded) ---
+            elif n == "v_gt_avgv10":      s = v > self._ma("avgv10")
+            elif n == "v_gt_1_5x_avgv20": s = v > 1.5 * self._ma("avgv20")
+            elif n == "v_gt_3x_avgv20":   s = v > 3 * self._ma("avgv20")
+            # --- NEW: MA vs MA (expanded) ---
+            elif n == "xavgc13_gt_xavgc21": s = self._ma("xavgc13") > self._ma("xavgc21")
+            elif n == "xavgc8_gt_xavgc50":  s = self._ma("xavgc8") > self._ma("xavgc50")
+            elif n == "xavgc21_gt_xavgc50": s = self._ma("xavgc21") > self._ma("xavgc50")
+            elif n == "xavgc21_gt_xavgc100": s = self._ma("xavgc21") > self._ma("xavgc100")
+            elif n == "avgc50_gt_avgc100":  s = self._ma("avgc50") > self._ma("avgc100")
+            elif n == "avgc100_gt_avgc200": s = self._ma("avgc100") > self._ma("avgc200")
+            # --- NEW: MA direction (expanded) ---
+            elif n == "xavgc13_rising":   s = self._ma("xavgc13") > self._ma("xavgc13").shift(1)
+            elif n == "xavgc13_falling":  s = self._ma("xavgc13") < self._ma("xavgc13").shift(1)
+            elif n == "xavgc100_rising":  s = self._ma("xavgc100") > self._ma("xavgc100").shift(1)
+            elif n == "xavgc100_falling": s = self._ma("xavgc100") < self._ma("xavgc100").shift(1)
+            elif n == "xavgc50_falling":  s = self._ma("xavgc50") < self._ma("xavgc50").shift(1)
+            elif n == "avgc100_rising":   s = self._ma("avgc100") > self._ma("avgc100").shift(1)
+            elif n == "avgc100_falling":  s = self._ma("avgc100") < self._ma("avgc100").shift(1)
+            elif n == "avgc200_falling":  s = self._ma("avgc200") < self._ma("avgc200").shift(1)
+            # --- NEW: Breakout/breakdown (expanded) ---
+            elif n == "h_gt_maxh50_1":    s = h > self._maxh(50).shift(1)
+            elif n == "h_gt_maxh65_1":    s = h > self._maxh(65).shift(1)
+            elif n == "l_lt_minl50_1":    s = l < self._minl(50).shift(1)
+            elif n == "l_lt_minl65_1":    s = l < self._minl(65).shift(1)
+            elif n == "c_gt_maxc20_1":    s = c > rolling_max(c, 20).shift(1)
+            elif n == "c_gt_maxc50_1":    s = c > rolling_max(c, 50).shift(1)
+            # --- NEW: Range/candle (expanded) ---
+            elif n == "range_gt_1_5_atr": s = (h - l) > 1.5 * self._atr(14)
+            elif n == "range_lt_half_atr": s = (h - l) < 0.5 * self._atr(14)
+            elif n == "close_near_high":  s = (h - c) < 0.25 * (h - l)
+            elif n == "close_near_low":   s = (c - l) < 0.25 * (h - l)
+            elif n == "narrow_range":     s = (h - l) < 0.5 * self._atr(14)
+            elif n == "wide_range":       s = (h - l) > 1.5 * self._atr(14)
+            # --- NEW: Gap (expanded) ---
+            elif n == "gap_up_half_atr":  s = (o - c.shift(1)) > 0.5 * self._atr(14)
+            elif n == "gap_down_half_atr": s = (c.shift(1) - o) > 0.5 * self._atr(14)
+            # --- NEW: Momentum (expanded) ---
+            elif n == "rsi14_gt_80":      s = self._rsi(14) > 80
+            elif n == "rsi14_lt_20":      s = self._rsi(14) < 20
+            elif n == "stoch14_gt_50":    s = self._stoch(14) > 50
+            elif n == "stoch14_gt_80":    s = self._stoch(14) > 80
+            elif n == "stoch14_lt_20":    s = self._stoch(14) < 20
+            elif n == "stoch14_lt_50":    s = self._stoch(14) < 50
+            elif n == "cci14_gt_100":     s = self._cci(14) > 100
+            elif n == "cci14_lt_neg100":  s = self._cci(14) < -100
+            # --- NEW: Bollinger squeeze ---
+            elif n == "bb_squeeze":
+                bw = self.c.rolling(20).std() / self._ma("avgc20")
+                bw_rank = bw.rolling(120).rank(pct=True)
+                s = bw_rank < 0.2
+            # --- NEW: MACD ---
+            elif n == "macd_positive":
+                macd_line = ema(c, 12) - ema(c, 26)
+                s = macd_line > 0
+            elif n == "macd_negative":
+                macd_line = ema(c, 12) - ema(c, 26)
+                s = macd_line < 0
+            # --- NEW: OBV ---
+            elif n == "obv_rising":
+                o_series = obv(c, v)
+                s = o_series > o_series.shift(5)
+            elif n == "obv_falling":
+                o_series = obv(c, v)
+                s = o_series < o_series.shift(5)
+            # --- NEW: BOP ---
+            elif n == "bop14_positive":   s = self._bop(14) > 0
+            elif n == "bop14_negative":   s = self._bop(14) < 0
+            # --- NEW: Aroon ---
+            elif n == "aroon_up14_gt_70": s = self._aroon_up(14) > 70
+            elif n == "aroon_down14_gt_70": s = self._aroon_down(14) > 70
             else:
                 raise ValueError(f"Unknown boolean condition: {cond_name}")
             return s.astype(bool)
@@ -1056,6 +1143,40 @@ class ExpressionEngine:
                 if i < offset:
                     return np.nan
                 return float((vwap.iloc[i] - vwap.iloc[i - offset]) / norm) if norm != 0 else np.nan
+
+            elif op == "low_vs_ma":
+                ma_val = self._ma(comp["ma"]).iloc[i]
+                norm = self._normalizer(comp["normalizer"])
+                return (self.l.iloc[i] - ma_val) / norm if norm else np.nan
+
+            elif op == "high_vs_ma":
+                ma_val = self._ma(comp["ma"]).iloc[i]
+                norm = self._normalizer(comp["normalizer"])
+                return (self.h.iloc[i] - ma_val) / norm if norm else np.nan
+
+            elif op == "close_position_in_bar":
+                p = comp["period"]
+                rng = self.h - self.l
+                pos = (self.c - self.l) / rng.replace(0, np.nan)
+                return float(pos.rolling(p).mean().iloc[i])
+
+            elif op == "roc_acceleration":
+                outer = comp["outer_period"]
+                inner = comp["inner_period"]
+                roc_s = self.c.pct_change(outer) * 100
+                return float(roc_s.diff(inner).iloc[i]) if i >= outer + inner else np.nan
+
+            elif op == "roc_percentile_rank":
+                roc_p = comp["roc_period"]
+                lb = comp["lookback"]
+                roc_s = self.c.pct_change(roc_p) * 100
+                return float(roc_s.rolling(lb).rank(pct=True).iloc[i]) if i >= roc_p + lb else np.nan
+
+            elif op == "volume_price_divergence":
+                p = comp["period"]
+                price_roc = self.c.pct_change(p)
+                vol_roc = self.v.rolling(p).mean().pct_change(p)
+                return float((price_roc - vol_roc).iloc[i]) if i >= 2 * p else np.nan
 
             else:
                 raise ValueError(f"Unknown op: {op}")

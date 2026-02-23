@@ -21,11 +21,10 @@ def generate_all():
 
     # ═══════════════════════════════════════════════════════
     # NEAR RESISTANCE — Price distance to prior highs
-    # Every MAXH period from 5-120 in steps of 5, plus key ones
     # ═══════════════════════════════════════════════════════
     maxh_periods = sorted(set(
         list(range(5, 125, 5)) +  # every 5 from 5-120
-        [3, 7, 10, 15, 63, 65, 126]  # key extras
+        [2, 3, 7, 10, 15, 63, 65, 126]  # key extras
     ))
     for p in maxh_periods:
         for price in ["C", "H"]:
@@ -36,7 +35,6 @@ def generate_all():
                     "compute": {"op": "distance_to_maxh", "price_ref": price,
                                 "maxh_period": p, "normalizer": norm}
                 })
-        # Ratio
         exprs.append({
             "name": f"nr_ratio_maxh{p}",
             "category": "near_resistance",
@@ -44,8 +42,28 @@ def generate_all():
         })
 
     # ═══════════════════════════════════════════════════════
+    # NEAR SUPPORT — Price distance to prior lows
+    # ═══════════════════════════════════════════════════════
+    minl_periods = sorted(set(
+        list(range(5, 65, 5)) + [2, 3, 7, 65, 90, 120, 126]
+    ))
+    for p in minl_periods:
+        for price in ["C", "L"]:
+            for norm in ["atr14", "adr14", "pct"]:
+                exprs.append({
+                    "name": f"ns_{price.lower()}_minl{p}_{norm}",
+                    "category": "near_support",
+                    "compute": {"op": "distance_to_minl", "price_ref": price,
+                                "minl_period": p, "normalizer": norm}
+                })
+        exprs.append({
+            "name": f"ns_ratio_minl{p}",
+            "category": "near_support",
+            "compute": {"op": "ratio_c_minl", "minl_period": p}
+        })
+
+    # ═══════════════════════════════════════════════════════
     # EXTENSION ABOVE MAs — The core TA concept
-    # Every meaningful MA type and period
     # ═══════════════════════════════════════════════════════
     sma_periods = [5, 8, 10, 13, 20, 21, 30, 50, 65, 100, 150, 200]
     ema_periods = [5, 8, 9, 10, 12, 13, 20, 21, 30, 50, 65, 100, 150, 200]
@@ -60,11 +78,27 @@ def generate_all():
                 "compute": {"op": "extension", "ma": ma, "normalizer": norm}
             })
 
+    # Low vs MA — how deep wicks go below MAs (support test)
+    wick_mas = ["xavgc8", "xavgc21", "xavgc50", "avgc50", "avgc200"]
+    for ma in wick_mas:
+        for norm in ["atr14", "adr14"]:
+            exprs.append({
+                "name": f"low_vs_{ma}_{norm}",
+                "category": "extension",
+                "compute": {"op": "low_vs_ma", "ma": ma, "normalizer": norm}
+            })
+            exprs.append({
+                "name": f"high_vs_{ma}_{norm}",
+                "category": "extension",
+                "compute": {"op": "high_vs_ma", "ma": ma, "normalizer": norm}
+            })
+
     # ═══════════════════════════════════════════════════════
     # MA SLOPES — Trend direction and acceleration
     # ═══════════════════════════════════════════════════════
-    slope_mas = ["xavgc8", "xavgc13", "xavgc21", "xavgc50", "xavgc100", "xavgc200",
-                 "avgc10", "avgc20", "avgc50", "avgc100", "avgc200"]
+    slope_mas = ["xavgc8", "xavgc9", "xavgc12", "xavgc13", "xavgc21", "xavgc50",
+                 "xavgc100", "xavgc150", "xavgc200",
+                 "avgc10", "avgc20", "avgc30", "avgc50", "avgc100", "avgc200"]
     slope_offsets = [1, 2, 3, 5, 7, 10, 15, 20]
 
     for ma in slope_mas:
@@ -82,13 +116,15 @@ def generate_all():
     # ═══════════════════════════════════════════════════════
     spread_pairs = [
         ("xavgc8", "xavgc21"), ("xavgc8", "xavgc50"), ("xavgc8", "xavgc100"),
-        ("xavgc8", "xavgc200"), ("xavgc13", "xavgc50"), ("xavgc21", "xavgc50"),
+        ("xavgc8", "xavgc200"), ("xavgc9", "xavgc21"), ("xavgc13", "xavgc21"),
+        ("xavgc13", "xavgc50"), ("xavgc21", "xavgc50"),
         ("xavgc21", "xavgc100"), ("xavgc50", "xavgc100"), ("xavgc50", "xavgc200"),
         ("xavgc100", "xavgc200"),
         ("avgc10", "avgc20"), ("avgc10", "avgc50"), ("avgc20", "avgc50"),
         ("avgc20", "avgc100"), ("avgc50", "avgc100"), ("avgc50", "avgc200"),
         ("avgc100", "avgc200"),
-        ("xavgc8", "avgc50"), ("xavgc21", "avgc50"), ("xavgc50", "avgc200"),
+        ("xavgc8", "avgc50"), ("xavgc13", "avgc50"), ("xavgc21", "avgc50"),
+        ("xavgc50", "avgc200"),
     ]
     for fast, slow in spread_pairs:
         for norm in ["atr14", "adr14"]:
@@ -103,15 +139,15 @@ def generate_all():
     # MOMENTUM — ROC, RSI, Stochastic, CCI, ADX, BOP, Volume
     # ═══════════════════════════════════════════════════════
 
-    # Rate of Change — every period 1-50
-    for p in list(range(1, 21)) + [25, 30, 40, 50, 65]:
+    # Rate of Change
+    for p in list(range(1, 21)) + [25, 30, 40, 50, 63, 65, 90, 126]:
         exprs.append({
             "name": f"roc_{p}",
             "category": "momentum",
             "compute": {"op": "roc", "period": p}
         })
 
-    # ROC delta (is momentum accelerating or decelerating?)
+    # ROC delta
     for p in [3, 5, 10, 15, 20, 30, 50]:
         for co in [3, 5, 10]:
             exprs.append({
@@ -120,15 +156,24 @@ def generate_all():
                 "compute": {"op": "roc_delta", "period": p, "compare_offset": co}
             })
 
-    # RSI — multiple periods
+    # ROC acceleration (2nd derivative)
+    for p in [5, 10, 20]:
+        for inner_p in [3, 5, 10]:
+            exprs.append({
+                "name": f"roc_accel_{p}_{inner_p}",
+                "category": "momentum",
+                "compute": {"op": "roc_acceleration", "outer_period": p,
+                            "inner_period": inner_p}
+            })
+
+    # RSI
     for p in [5, 7, 9, 14, 21, 28]:
         exprs.append({
             "name": f"rsi_{p}",
             "category": "momentum",
             "compute": {"op": "rsi", "period": p}
         })
-        # RSI slope
-        for offset in [3, 5, 10]:
+        for offset in [1, 3, 5, 10]:
             exprs.append({
                 "name": f"rsi_slope_{p}_off{offset}",
                 "category": "momentum",
@@ -136,7 +181,7 @@ def generate_all():
             })
 
     # Volume ratios
-    for p in [5, 10, 15, 20, 30, 50]:
+    for p in [3, 5, 10, 15, 20, 30, 50]:
         exprs.append({
             "name": f"vol_ratio_{p}",
             "category": "momentum",
@@ -150,7 +195,7 @@ def generate_all():
             "category": "momentum",
             "compute": {"op": "adx", "period": p}
         })
-        for offset in [3, 5, 10]:
+        for offset in [1, 3, 5, 10]:
             exprs.append({
                 "name": f"adx_slope_{p}_off{offset}",
                 "category": "momentum",
@@ -166,7 +211,7 @@ def generate_all():
         })
 
     # Stochastic
-    for p in [5, 9, 14, 21]:
+    for p in [3, 5, 7, 9, 10, 14, 21, 28, 50]:
         exprs.append({
             "name": f"stoch_{p}",
             "category": "momentum",
@@ -174,7 +219,7 @@ def generate_all():
         })
 
     # CCI
-    for p in [10, 14, 20, 30]:
+    for p in [5, 7, 10, 14, 20, 30, 50]:
         exprs.append({
             "name": f"cci_{p}",
             "category": "momentum",
@@ -190,19 +235,17 @@ def generate_all():
         })
 
     # ═══════════════════════════════════════════════════════
-    # RANGE & CHANNEL — Where price sits, squeeze detection
+    # RANGE & CHANNEL
     # ═══════════════════════════════════════════════════════
 
-    # Range position
-    for p in [5, 10, 15, 20, 30, 50, 65, 90, 120]:
+    for p in [3, 5, 7, 10, 15, 20, 30, 50, 65, 90, 120]:
         exprs.append({
             "name": f"range_pos_{p}",
             "category": "range",
             "compute": {"op": "range_position", "period": p}
         })
 
-    # Pullback from high
-    for p in [5, 10, 15, 20, 30, 50, 65, 120]:
+    for p in [3, 5, 7, 10, 15, 20, 30, 50, 65, 120]:
         for norm in ["atr14", "adr14", "pct"]:
             exprs.append({
                 "name": f"pullback_{p}_{norm}",
@@ -210,7 +253,6 @@ def generate_all():
                 "compute": {"op": "pullback", "period": p, "normalizer": norm}
             })
 
-    # Range width (volatility squeeze)
     for p in [5, 10, 15, 20, 30, 50, 65, 120]:
         exprs.append({
             "name": f"range_width_{p}",
@@ -218,8 +260,7 @@ def generate_all():
             "compute": {"op": "range_width", "period": p, "normalizer": "atr14"}
         })
 
-    # Channel slope of highs
-    for p in [5, 10, 15, 20, 30]:
+    for p in [5, 7, 10, 15, 20, 30, 50]:
         exprs.append({
             "name": f"channel_slope_{p}",
             "category": "range",
@@ -227,7 +268,6 @@ def generate_all():
                         "normalizer": "atr14"}
         })
 
-    # Candle anatomy
     exprs.append({"name": "candle_range_atr", "category": "range",
                   "compute": {"op": "candle_range_ratio"}})
     exprs.append({"name": "body_range_ratio", "category": "range",
@@ -236,9 +276,9 @@ def generate_all():
                   "compute": {"op": "upper_wick_ratio"}})
 
     # ═══════════════════════════════════════════════════════
-    # EXTENSION DYNAMICS — Is extension building or declining?
+    # EXTENSION DYNAMICS
     # ═══════════════════════════════════════════════════════
-    ext_dyn_mas = ["avgc50", "avgc200", "xavgc21", "xavgc50", "xavgc100"]
+    ext_dyn_mas = ["avgc50", "avgc200", "xavgc8", "xavgc13", "xavgc21", "xavgc50", "xavgc100"]
     ext_offsets = [1, 2, 3, 5, 7, 10, 15, 20]
 
     for ma in ext_dyn_mas:
@@ -249,7 +289,6 @@ def generate_all():
                 "compute": {"op": "extension_slope", "ma": ma, "offset": offset,
                             "normalizer": "adr14"}
             })
-        # Peak ratio — has extension peaked?
         for lb in [10, 15, 20, 30, 50]:
             exprs.append({
                 "name": f"ext_peak_{ma}_lb{lb}",
@@ -258,12 +297,10 @@ def generate_all():
             })
 
     # ═══════════════════════════════════════════════════════
-    # EXTENSION CEILING — Statistical ceiling proximity
-    # How close is current extension to its historical max?
-    # From ta_knowledge: "knowing a stock's typical max extension helps gauge where it is in its cycle"
+    # EXTENSION CEILING
     # ═══════════════════════════════════════════════════════
-    ceiling_mas = ["avgc50", "avgc200", "xavgc50", "xavgc100"]
-    ceiling_lookbacks = [60, 120, 252, 504]  # 3mo, 6mo, 1yr, 2yr
+    ceiling_mas = ["avgc50", "avgc200", "xavgc21", "xavgc50", "xavgc100"]
+    ceiling_lookbacks = [60, 120, 252, 504]
 
     for ma in ceiling_mas:
         for lb in ceiling_lookbacks:
@@ -276,8 +313,7 @@ def generate_all():
                 })
 
     # ═══════════════════════════════════════════════════════
-    # EXTENSION ADR MULTIPLES — Core ta_knowledge metric
-    # "Extension from 50 SMA in multiples of ADR is the universal normalized cycle indicator"
+    # EXTENSION ADR MULTIPLES
     # ═══════════════════════════════════════════════════════
     adr_mult_mas = ["avgc50", "avgc200", "xavgc21", "xavgc50", "xavgc100", "xavgc200"]
     for ma in adr_mult_mas:
@@ -288,10 +324,9 @@ def generate_all():
         })
 
     # ═══════════════════════════════════════════════════════
-    # MA CROSS DYNAMICS — Cross frequency and recency
-    # "50 SMA cross frequency" = choppy/stage 3 detection
+    # MA CROSS DYNAMICS
     # ═══════════════════════════════════════════════════════
-    cross_mas = ["avgc50", "avgc200", "xavgc8", "xavgc21", "xavgc50"]
+    cross_mas = ["avgc50", "avgc100", "avgc200", "xavgc8", "xavgc21", "xavgc50"]
     cross_periods = [20, 30, 50, 65, 120]
 
     for ma in cross_mas:
@@ -316,10 +351,9 @@ def generate_all():
                 })
 
     # ═══════════════════════════════════════════════════════
-    # SWING STRUCTURE — Higher highs, lower lows, etc.
-    # From ta_knowledge: "Higher lows, surfing a moving average"
+    # SWING STRUCTURE
     # ═══════════════════════════════════════════════════════
-    swing_periods = [15, 20, 30, 50, 65, 90, 120]
+    swing_periods = [10, 15, 20, 30, 50, 65, 90, 120]
 
     for p in swing_periods:
         for op_name in ["swing_high_count", "swing_low_count",
@@ -332,10 +366,9 @@ def generate_all():
             })
 
     # ═══════════════════════════════════════════════════════
-    # RETRACEMENT — Fib-style level of current price in N-bar range
-    # From ta_knowledge: "Best-profit 3-4DB bounce ~50% of measured move"
+    # RETRACEMENT
     # ═══════════════════════════════════════════════════════
-    retrace_periods = [5, 10, 15, 20, 30, 40, 50, 65, 90, 120]
+    retrace_periods = [3, 5, 7, 10, 15, 20, 30, 40, 50, 65, 90, 120]
 
     for p in retrace_periods:
         exprs.append({
@@ -344,8 +377,20 @@ def generate_all():
             "compute": {"op": "retracement_level", "period": p}
         })
 
+    for p in [10, 15, 20, 30, 50, 65, 120]:
+        exprs.append({
+            "name": f"retrace_high_{p}",
+            "category": "retracement",
+            "compute": {"op": "retrace_high", "period": p}
+        })
+        exprs.append({
+            "name": f"retrace_low_{p}",
+            "category": "retracement",
+            "compute": {"op": "retrace_low", "period": p}
+        })
+
     # ═══════════════════════════════════════════════════════
-    # GAP ANALYSIS — Size, frequency, unfilled gaps
+    # GAP ANALYSIS
     # ═══════════════════════════════════════════════════════
     for norm in ["atr14", "adr14"]:
         exprs.append({
@@ -370,7 +415,7 @@ def generate_all():
         })
 
     # ═══════════════════════════════════════════════════════
-    # CONSECUTIVE MOVE — Up/down streaks with magnitude
+    # CONSECUTIVE MOVE
     # ═══════════════════════════════════════════════════════
     for op_name in ["consecutive_up_roc", "consecutive_down_roc",
                     "consecutive_up_days", "consecutive_down_days"]:
@@ -381,10 +426,9 @@ def generate_all():
         })
 
     # ═══════════════════════════════════════════════════════
-    # CANDLE PATTERNS — Inside bars, outside bars, NR, compression
-    # From ta_knowledge: "tight candle = AVWAP foothold confirmation"
+    # CANDLE PATTERNS
     # ═══════════════════════════════════════════════════════
-    for p in [5, 7, 10, 15, 20, 30]:
+    for p in [3, 5, 7, 10, 15, 20, 30]:
         exprs.append({
             "name": f"inside_bars_{p}",
             "category": "candle_pattern",
@@ -396,7 +440,7 @@ def generate_all():
             "compute": {"op": "outside_bar_count", "period": p}
         })
 
-    for p in [3, 5, 7, 10, 14, 20]:
+    for p in [2, 3, 5, 7, 10, 14, 20]:
         exprs.append({
             "name": f"nr_ratio_{p}",
             "category": "candle_pattern",
@@ -406,32 +450,39 @@ def generate_all():
     exprs.append({"name": "lower_wick_ratio", "category": "candle_pattern",
                   "compute": {"op": "lower_wick_ratio"}})
 
-    for p in [5, 10, 15, 20]:
+    for p in [3, 5, 10, 15, 20]:
         exprs.append({
             "name": f"avg_body_ratio_{p}",
             "category": "candle_pattern",
             "compute": {"op": "avg_candle_body_ratio", "period": p}
         })
 
-    for p in [10, 20, 30]:
+    for p in [5, 10, 20, 30]:
         exprs.append({
             "name": f"close_vs_open_{p}",
             "category": "candle_pattern",
             "compute": {"op": "close_vs_open_ratio", "period": p}
         })
 
+    # Close position in bar — (C-L)/(H-L) averaged over N bars
+    for p in [1, 3, 5, 7, 10, 15, 20, 30]:
+        exprs.append({
+            "name": f"close_position_{p}",
+            "category": "candle_pattern",
+            "compute": {"op": "close_position_in_bar", "period": p}
+        })
+
     # ═══════════════════════════════════════════════════════
-    # VOLUME CHARACTER — OBV, accumulation/distribution, CMF
-    # From ta_knowledge: "volume drying up on second approach (bearish confirmation)"
+    # VOLUME CHARACTER
     # ═══════════════════════════════════════════════════════
-    for offset in [3, 5, 10, 15, 20, 30]:
+    for offset in [1, 3, 5, 10, 15, 20, 30]:
         exprs.append({
             "name": f"obv_slope_{offset}",
             "category": "volume_character",
             "compute": {"op": "obv_slope", "offset": offset, "vol_period": 20}
         })
 
-    for p in [5, 10, 15, 20, 30]:
+    for p in [3, 5, 10, 15, 20, 30]:
         exprs.append({
             "name": f"up_vol_ratio_{p}",
             "category": "volume_character",
@@ -444,14 +495,14 @@ def generate_all():
             "category": "volume_character",
             "compute": {"op": "cmf", "period": p}
         })
-        for offset in [3, 5, 10]:
+        for offset in [1, 3, 5, 10]:
             exprs.append({
                 "name": f"cmf_slope_{p}_off{offset}",
                 "category": "volume_character",
                 "compute": {"op": "cmf_slope", "period": p, "offset": offset}
             })
 
-    for p in [10, 20, 30]:
+    for p in [5, 10, 20, 30]:
         for mult in [1.5, 2.0, 3.0]:
             exprs.append({
                 "name": f"hivol_pct_{p}_x{mult}",
@@ -460,10 +511,18 @@ def generate_all():
                             "multiplier": mult, "avg_period": 50}
             })
 
+    # Volume-price divergence
+    for p in [10, 20, 30, 50]:
+        exprs.append({
+            "name": f"vol_price_div_{p}",
+            "category": "volume_character",
+            "compute": {"op": "volume_price_divergence", "period": p}
+        })
+
     # ═══════════════════════════════════════════════════════
-    # BOLLINGER — %B, bandwidth, squeeze detection
+    # BOLLINGER
     # ═══════════════════════════════════════════════════════
-    for p in [10, 15, 20, 30]:
+    for p in [5, 10, 15, 20, 30]:
         exprs.append({
             "name": f"bb_pctb_{p}",
             "category": "bollinger",
@@ -482,9 +541,9 @@ def generate_all():
             })
 
     # ═══════════════════════════════════════════════════════
-    # MACD — Histogram, signal cross, line value
+    # MACD
     # ═══════════════════════════════════════════════════════
-    macd_configs = [(12, 26, 9), (8, 17, 9), (5, 13, 8)]
+    macd_configs = [(12, 26, 9), (8, 17, 9), (5, 13, 8), (6, 19, 9)]
 
     for fast, slow, sig in macd_configs:
         exprs.append({
@@ -508,9 +567,9 @@ def generate_all():
             })
 
     # ═══════════════════════════════════════════════════════
-    # AROON — Trend identification
+    # AROON
     # ═══════════════════════════════════════════════════════
-    for p in [14, 20, 25, 50]:
+    for p in [7, 10, 14, 20, 25, 50]:
         exprs.append({
             "name": f"aroon_osc_{p}",
             "category": "aroon",
@@ -528,10 +587,9 @@ def generate_all():
         })
 
     # ═══════════════════════════════════════════════════════
-    # EFFICIENCY — Kaufman Efficiency Ratio (trending vs choppy)
-    # From ta_knowledge: "50 SMA is flat = no trend direction" (stage 3)
+    # EFFICIENCY — Kaufman Efficiency Ratio
     # ═══════════════════════════════════════════════════════
-    for p in [5, 10, 15, 20, 30, 50, 65]:
+    for p in [5, 7, 10, 15, 20, 30, 50, 65, 100]:
         exprs.append({
             "name": f"efficiency_{p}",
             "category": "efficiency",
@@ -539,8 +597,7 @@ def generate_all():
         })
 
     # ═══════════════════════════════════════════════════════
-    # MA STACK ORDER — Bullish/bearish stacking score
-    # Full bull: 8ema > 21ema > 50sma > 200sma = 6
+    # MA STACK ORDER
     # ═══════════════════════════════════════════════════════
     stack_combos = [
         ("stack_4ma", ["xavgc8", "xavgc21", "avgc50", "avgc200"]),
@@ -548,6 +605,8 @@ def generate_all():
         ("stack_3ma_long", ["xavgc21", "avgc50", "avgc200"]),
         ("stack_2ma_fast", ["xavgc8", "xavgc21"]),
         ("stack_ema_sma", ["xavgc50", "avgc200"]),
+        ("stack_5ma", ["xavgc8", "xavgc13", "xavgc21", "avgc50", "avgc200"]),
+        ("stack_3ma_ema", ["xavgc8", "xavgc21", "xavgc50"]),
     ]
     for name, mas in stack_combos:
         exprs.append({
@@ -557,10 +616,9 @@ def generate_all():
         })
 
     # ═══════════════════════════════════════════════════════
-    # RANGE CONTRACTION / EXPANSION — Squeeze dynamics
-    # From ta_knowledge: "Steeper channels more likely to snap"
+    # RANGE DYNAMICS
     # ═══════════════════════════════════════════════════════
-    for p in [5, 10, 15, 20, 30]:
+    for p in [3, 5, 10, 15, 20, 30]:
         exprs.append({
             "name": f"range_contract_{p}",
             "category": "range_dynamics",
@@ -568,7 +626,7 @@ def generate_all():
         })
 
     for p in [14]:
-        for offset in [5, 10, 15, 20, 30, 50]:
+        for offset in [3, 5, 10, 15, 20, 30, 50]:
             exprs.append({
                 "name": f"atr_ratio_{p}_off{offset}",
                 "category": "range_dynamics",
@@ -576,8 +634,7 @@ def generate_all():
             })
 
     # ═══════════════════════════════════════════════════════
-    # ROLLING VWAP — Distance to volume-weighted price
-    # From ta_knowledge: AVWAP concepts
+    # ROLLING VWAP
     # ═══════════════════════════════════════════════════════
     for p in [5, 10, 20, 30, 50, 65]:
         for norm in ["atr14", "adr14"]:
@@ -587,31 +644,18 @@ def generate_all():
                 "compute": {"op": "vwap_distance", "period": p, "normalizer": norm}
             })
 
-    # ═══════════════════════════════════════════════════════
-    # NEAR SUPPORT — Price distance to prior lows (complement to near_resistance)
-    # Critical for DTSS: price pulling back toward support levels
-    # ═══════════════════════════════════════════════════════
-    minl_periods = sorted(set(
-        list(range(5, 65, 5)) + [3, 7, 65, 90, 120]
-    ))
-    for p in minl_periods:
-        for price in ["C", "L"]:
-            for norm in ["atr14", "adr14", "pct"]:
+    for p in [10, 20, 30, 50]:
+        for offset in [3, 5, 10]:
+            for norm in ["atr14", "adr14"]:
                 exprs.append({
-                    "name": f"ns_{price.lower()}_minl{p}_{norm}",
-                    "category": "near_support",
-                    "compute": {"op": "distance_to_minl", "price_ref": price,
-                                "minl_period": p, "normalizer": norm}
+                    "name": f"vwap_slope_{p}_off{offset}_{norm}",
+                    "category": "vwap",
+                    "compute": {"op": "vwap_slope", "period": p, "offset": offset,
+                                "normalizer": norm}
                 })
-        exprs.append({
-            "name": f"ns_ratio_minl{p}",
-            "category": "near_support",
-            "compute": {"op": "ratio_c_minl", "minl_period": p}
-        })
 
     # ═══════════════════════════════════════════════════════
-    # PERCENTILE RANK — Normalize any metric to 0-100 vs history
-    # "Is this value high/low relative to recent history?"
+    # PERCENTILE RANK
     # ═══════════════════════════════════════════════════════
     for source in ["close", "volume", "range", "atr14", "rsi14"]:
         for period in [20, 50, 65, 120, 252]:
@@ -621,12 +665,21 @@ def generate_all():
                 "compute": {"op": "percentile_rank", "source": source, "period": period}
             })
 
+    # ROC percentile rank — relative strength vs own history
+    for roc_p in [5, 10, 20, 50]:
+        for lb in [50, 120, 252]:
+            exprs.append({
+                "name": f"roc_rank_{roc_p}_lb{lb}",
+                "category": "percentile_rank",
+                "compute": {"op": "roc_percentile_rank", "roc_period": roc_p, "lookback": lb}
+            })
+
     # ═══════════════════════════════════════════════════════
-    # SPREAD SLOPE — Is MA spread widening or narrowing?
-    # Widening = trend strengthening, Narrowing = convergence/reversal
+    # SPREAD SLOPE
     # ═══════════════════════════════════════════════════════
     spread_slope_pairs = [
         ("xavgc8", "xavgc21"), ("xavgc8", "xavgc50"),
+        ("xavgc13", "xavgc21"), ("xavgc13", "xavgc50"),
         ("xavgc21", "xavgc50"), ("xavgc21", "avgc50"),
         ("xavgc50", "xavgc200"), ("avgc50", "avgc200"),
     ]
@@ -641,11 +694,11 @@ def generate_all():
                 })
 
     # ═══════════════════════════════════════════════════════
-    # SLOPE RATIOS — Fast MA slope / Slow MA slope
-    # >1 = fast accelerating vs slow, <0 = diverging directions
+    # SLOPE RATIOS
     # ═══════════════════════════════════════════════════════
     slope_ratio_pairs = [
         ("xavgc8", "xavgc21"), ("xavgc8", "xavgc50"),
+        ("xavgc13", "xavgc21"), ("xavgc13", "xavgc50"),
         ("xavgc21", "xavgc50"), ("xavgc50", "avgc200"),
     ]
     for fast, slow in slope_ratio_pairs:
@@ -658,11 +711,10 @@ def generate_all():
             })
 
     # ═══════════════════════════════════════════════════════
-    # CONTINUOUS RVOL — Rolling average relative volume
-    # Smooth measure of whether volume is building or fading
+    # CONTINUOUS RVOL
     # ═══════════════════════════════════════════════════════
-    for period in [3, 5, 10, 15, 20]:
-        for avg_period in [20, 50]:
+    for period in [1, 3, 5, 10, 15, 20]:
+        for avg_period in [10, 20, 50]:
             exprs.append({
                 "name": f"rvol_cont_{period}d_avg{avg_period}",
                 "category": "volume_continuous",
@@ -677,83 +729,78 @@ def generate_all():
             })
 
     # ═══════════════════════════════════════════════════════
-    # SEPARATE HIGH/LOW RETRACEMENT — Where are H and L in the range?
-    # Complements range_position (close-based) with high/low precision
-    # ═══════════════════════════════════════════════════════
-    for p in [10, 15, 20, 30, 50, 65, 120]:
-        exprs.append({
-            "name": f"retrace_high_{p}",
-            "category": "retracement",
-            "compute": {"op": "retrace_high", "period": p}
-        })
-        exprs.append({
-            "name": f"retrace_low_{p}",
-            "category": "retracement",
-            "compute": {"op": "retrace_low", "period": p}
-        })
-
-    # ═══════════════════════════════════════════════════════
-    # VWAP SLOPE — Direction of rolling VWAP
-    # ═══════════════════════════════════════════════════════
-    for p in [10, 20, 30, 50]:
-        for offset in [3, 5, 10]:
-            for norm in ["atr14", "adr14"]:
-                exprs.append({
-                    "name": f"vwap_slope_{p}_off{offset}_{norm}",
-                    "category": "vwap",
-                    "compute": {"op": "vwap_slope", "period": p, "offset": offset,
-                                "normalizer": norm}
-                })
-
-    # ═══════════════════════════════════════════════════════
-    # ADDITIONAL MOMENTUM — More stoch/CCI periods + extra RSI
-    # ═══════════════════════════════════════════════════════
-    for p in [3, 7, 10, 28, 50]:
-        if f"stoch_{p}" not in [e["name"] for e in exprs]:
-            exprs.append({
-                "name": f"stoch_{p}",
-                "category": "momentum",
-                "compute": {"op": "stochastic", "period": p}
-            })
-    for p in [5, 7, 50]:
-        if f"cci_{p}" not in [e["name"] for e in exprs]:
-            exprs.append({
-                "name": f"cci_{p}",
-                "category": "momentum",
-                "compute": {"op": "cci", "period": p}
-            })
-
-    # ═══════════════════════════════════════════════════════
-    # EXPANDED BOOLEANS — New conditions for count_true/since_true
+    # BOOLEANS — Expanded set (each generates 19 expressions)
     # ═══════════════════════════════════════════════════════
     bool_conditions = [
-        "c_gt_xavgc8", "c_gt_xavgc21", "c_gt_xavgc50", "c_gt_xavgc100",
-        "c_gt_avgc50", "c_gt_avgc200",
-        "c_lt_xavgc8", "c_lt_xavgc21", "c_lt_avgc50", "c_lt_avgc200",
+        # --- Price vs MA (16) ---
+        "c_gt_xavgc8", "c_gt_xavgc13", "c_gt_xavgc21", "c_gt_xavgc50",
+        "c_gt_xavgc100", "c_gt_xavgc200",
+        "c_gt_avgc50", "c_gt_avgc100", "c_gt_avgc200",
+        "c_lt_xavgc8", "c_lt_xavgc13", "c_lt_xavgc21", "c_lt_xavgc50",
+        "c_lt_avgc50", "c_lt_avgc100", "c_lt_avgc200",
+        # --- Wick vs MA (8) ---
+        "l_gt_xavgc8", "l_gt_xavgc21", "l_gt_avgc50", "l_gt_avgc200",
+        "h_lt_xavgc8", "h_lt_xavgc21", "h_lt_avgc50", "h_lt_avgc200",
+        # --- Price vs prior bar (5) ---
         "c_gt_c1", "c_lt_c1",
         "h_gt_h1", "l_lt_l1",
-        "v_gt_avgv20", "v_gt_2x_avgv20", "v_gt_avgv50",
-        "v_lt_avgv20", "v_lt_half_avgv20",
         "c_gt_o",
-        "xavgc8_gt_xavgc21", "xavgc50_gt_xavgc200", "avgc50_gt_avgc200",
+        # --- Volume (8) ---
+        "v_gt_avgv10", "v_gt_avgv20", "v_gt_1_5x_avgv20",
+        "v_gt_2x_avgv20", "v_gt_3x_avgv20", "v_gt_avgv50",
+        "v_lt_avgv20", "v_lt_half_avgv20",
+        # --- MA vs MA (11) ---
+        "xavgc8_gt_xavgc21", "xavgc13_gt_xavgc21",
+        "xavgc8_gt_xavgc50", "xavgc21_gt_xavgc50",
+        "xavgc50_gt_xavgc200", "xavgc21_gt_xavgc100",
+        "avgc50_gt_avgc100", "avgc50_gt_avgc200", "avgc100_gt_avgc200",
         "xavgc21_gt_avgc50", "xavgc8_gt_avgc50",
-        "avgc50_rising", "avgc50_falling",
-        "avgc200_rising", "xavgc50_rising",
-        "xavgc21_rising", "xavgc21_falling",
+        # --- MA direction (16) ---
         "xavgc8_rising", "xavgc8_falling",
+        "xavgc13_rising", "xavgc13_falling",
+        "xavgc21_rising", "xavgc21_falling",
+        "xavgc50_rising", "xavgc50_falling",
+        "xavgc100_rising", "xavgc100_falling",
+        "avgc50_rising", "avgc50_falling",
+        "avgc100_rising", "avgc100_falling",
+        "avgc200_rising", "avgc200_falling",
+        # --- Breakout/breakdown (13) ---
         "h_gt_maxh5_1", "h_gt_maxh10_1", "h_gt_maxh20_1",
+        "h_gt_maxh50_1", "h_gt_maxh65_1",
         "l_lt_minl5_1", "l_lt_minl10_1", "l_lt_minl20_1",
-        "c_gt_maxc10_1",
-        "range_gt_atr", "body_gt_half_range",
+        "l_lt_minl50_1", "l_lt_minl65_1",
+        "c_gt_maxc10_1", "c_gt_maxc20_1", "c_gt_maxc50_1",
+        # --- Range/candle (10) ---
+        "range_gt_atr", "range_gt_1_5_atr", "range_lt_half_atr",
+        "body_gt_half_range",
         "c_upper_half", "c_lower_half",
+        "close_near_high", "close_near_low",
+        "narrow_range", "wide_range",
         "inside_bar", "outside_bar",
-        "gap_up", "gap_down", "big_gap_up", "big_gap_down",
+        # --- Gap (6) ---
+        "gap_up", "gap_down",
+        "big_gap_up", "big_gap_down",
+        "gap_up_half_atr", "gap_down_half_atr",
+        # --- Momentum/oscillators (18) ---
         "diplus_gt_diminus",
-        "rsi14_gt_50", "rsi14_gt_60", "rsi14_gt_70",
-        "rsi14_lt_30", "rsi14_lt_40", "rsi14_lt_50",
+        "rsi14_gt_50", "rsi14_gt_60", "rsi14_gt_70", "rsi14_gt_80",
+        "rsi14_lt_20", "rsi14_lt_30", "rsi14_lt_40", "rsi14_lt_50",
+        "stoch14_gt_50", "stoch14_gt_80",
+        "stoch14_lt_20", "stoch14_lt_50",
+        "cci14_gt_100", "cci14_lt_neg100",
         "adx14_gt_20", "adx14_gt_25", "adx14_gt_30", "adx14_lt_20",
-        "c_gt_bbtop", "c_lt_bbbot",
+        # --- Bollinger (3) ---
+        "c_gt_bbtop", "c_lt_bbbot", "bb_squeeze",
+        # --- CMF (2) ---
         "cmf20_positive", "cmf20_negative",
+        # --- MACD (2) ---
+        "macd_positive", "macd_negative",
+        # --- OBV (2) ---
+        "obv_rising", "obv_falling",
+        # --- BOP (2) ---
+        "bop14_positive", "bop14_negative",
+        # --- Aroon (2) ---
+        "aroon_up14_gt_70", "aroon_down14_gt_70",
     ]
 
     ct_periods = [3, 5, 7, 10, 15, 20, 30, 50]
@@ -783,8 +830,7 @@ def generate_all():
     return exprs
 
 
-
-
+def main():
     os.makedirs(CACHE_DIR, exist_ok=True)
     exprs = generate_all()
 
@@ -809,9 +855,6 @@ def generate_all():
     # Estimate
     bool_count = cats.get("boolean", 0)
     arith_count = len(exprs) - bool_count
-    # Base indicators: ~24ms/ticker on fast desktop
-    # Arithmetic: ~0.02ms per expression per ticker
-    # Booleans: ~1ms per expression per ticker (series computation)
     tickers = 4167
     base_s = tickers * 24 / 1000
     arith_s = tickers * arith_count * 0.02 / 1000
