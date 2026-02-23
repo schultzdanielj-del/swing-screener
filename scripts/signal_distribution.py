@@ -26,6 +26,46 @@ from scripts.profiling_engine import count_true, since_true, true_in_row
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "local_runner", "cache")
 
+# Worker globals for multiprocessing
+_worker_cache = None
+_worker_conditions = None
+
+def _init_scan_worker(cache, conditions):
+    global _worker_cache, _worker_conditions
+    _worker_cache = cache
+    _worker_conditions = conditions
+
+def _scan_batch(tickers):
+    signals = []
+    skipped = 0
+    for ticker in tickers:
+        df = _worker_cache.get(ticker)
+        if df is None or len(df) < 100:
+            skipped += 1
+            continue
+        try:
+            engine = ExpressionEngine(df)
+            n_bars = len(df)
+            pass_mask = np.ones(n_bars, dtype=bool)
+            pass_mask[:50] = False
+
+            for cond in _worker_conditions:
+                series = compute_series(engine, cond["compute"])
+                low, high = cond["low"], cond["high"]
+                in_range = (series >= low) & (series <= high)
+                in_range[np.isnan(series)] = False
+                pass_mask &= in_range
+
+            signal_indices = np.where(pass_mask)[0]
+            if len(signal_indices) > 0:
+                dates = df["date"].values
+                for idx in signal_indices:
+                    d = str(dates[idx])[:10]
+                    signals.append((d, ticker))
+        except:
+            skipped += 1
+    return signals, skipped
+
 
 def main():
     import argparse
@@ -58,48 +98,42 @@ def main():
     print(f"\nScanning {len(universe_cache)} tickers × {len(conditions)} conditions...")
     t0 = time.time()
 
-    daily_counts = defaultdict(int)
-    daily_tickers = defaultdict(list)
-    total_signals = 0
-    skipped = 0
-    done = 0
+    # Parallel scan using cache-via-initializer pattern
+    from concurrent.futures import ProcessPoolExecutor
+    import multiprocessing as mp
 
-    for ticker, df in universe_cache.items():
-        done += 1
-        if df is None or len(df) < 100:
-            skipped += 1
-            continue
+    n_workers = mp.cpu_count() - 1
+    tickers = list(universe_cache.keys())
+    batch_size = max(1, len(tickers) // (n_workers * 4))
+    batches = [tickers[i:i+batch_size] for i in range(0, len(tickers), batch_size)]
 
-        try:
-            engine = ExpressionEngine(df)
-            n_bars = len(df)
-            pass_mask = np.ones(n_bars, dtype=bool)
-            pass_mask[:50] = False
+    print(f"  {n_workers} workers, {len(batches)} batches of ~{batch_size} tickers")
 
-            for cond in conditions:
-                series = compute_series(engine, cond["compute"])
-                low, high = cond["low"], cond["high"]
-                in_range = (series >= low) & (series <= high)
-                in_range[np.isnan(series)] = False
-                pass_mask &= in_range
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_init_scan_worker,
+        initargs=(universe_cache, conditions)
+    ) as pool:
+        futures = [pool.submit(_scan_batch, batch) for batch in batches]
 
-            signal_indices = np.where(pass_mask)[0]
-            if len(signal_indices) > 0:
-                dates = df["date"].values
-                for idx in signal_indices:
-                    d = str(dates[idx])[:10]
-                    daily_counts[d] += 1
-                    daily_tickers[d].append(ticker)
-                total_signals += len(signal_indices)
-        except:
-            skipped += 1
+        daily_counts = defaultdict(int)
+        daily_tickers = defaultdict(list)
+        total_signals = 0
+        skipped = 0
+        done_batches = 0
 
-        if done % 500 == 0:
-            elapsed = time.time() - t0
-            rate = done / elapsed
-            eta = (len(universe_cache) - done) / rate
-            print(f"  {done}/{len(universe_cache)} [{elapsed:.0f}s, ~{eta:.0f}s left] "
-                  f"{total_signals:,} signals so far")
+        for future in futures:
+            batch_signals, batch_skipped = future.result()
+            skipped += batch_skipped
+            for d, ticker in batch_signals:
+                daily_counts[d] += 1
+                daily_tickers[d].append(ticker)
+                total_signals += 1
+            done_batches += 1
+            if done_batches % 10 == 0:
+                elapsed = time.time() - t0
+                pct = done_batches / len(batches) * 100
+                print(f"  {pct:.0f}% [{elapsed:.0f}s] {total_signals:,} signals so far")
 
     elapsed = time.time() - t0
     print(f"\nDone in {elapsed:.0f}s ({elapsed/60:.1f} min)")
