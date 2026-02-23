@@ -1,6 +1,6 @@
 # TODO
 
-## Current State (as of 2026-02-22)
+## Current State (as of 2026-02-23)
 
 ### The Grinder — Desktop Expression Discovery Engine ✅ LIVE
 
@@ -50,38 +50,41 @@ The core analysis engine is now a desktop-based spiderweb search system:
 
 ---
 
-## Performance Optimizations
+## Performance Optimizations — ✅ ALL IMPLEMENTED (2026-02-23)
 
-### 1. `_bool_series` lazy eval — Matrix build 37% faster
-**File:** `scripts/expression_engine.py` line 147-222
-**Problem:** `_bool_series()` builds a Python dict of ALL ~50 boolean series every time ANY single boolean is requested. Dict literals evaluate all values eagerly. Each unique condition triggers recomputing all 50 comparisons (MAs are cached, but the series creation is not). 50 unique conditions × 50 series built = 2,500 builds when only 50 needed. ~245ms wasted per ticker.
-**Fix:** Replace the mapping dict with individual if/elif dispatch so only the requested boolean is computed.
-**Impact:** ~5.9 min → ~3.7 min matrix build (saves ~2 min per rebuild).
+**⚠️ NEEDS TESTING ON DESKTOP AGENT before further changes. All 4 optimizations are pushed but untested on real data/hardware.**
 
-### 2. Matmul spiderweb — Grind 27x faster per level
-**File:** `local_runner/spiderweb.py` line 125-177
-**Problem:** The inner loop iterates Python-level over each beam node, doing `valid_masks[candidates] & node.mask` one node at a time. At beam=250, valid=400: that's 250 sequential numpy AND operations.
-**Fix:** Replace with a single float32 matmul: `node_masks.astype(float32) @ valid_masks.astype(float32).T` → gives ALL beam×candidate pass rates in one BLAS call. Then use numpy argsort for global top-K, only compute actual masks for candidates that survive pruning.
-**Impact:** 670ms/level → 25ms/level at current scale. At 1,000 valid expressions with beam 250, full 15-level grind: ~25s → <1s. Enables much larger beam widths and expression counts without time cost.
-**Benchmarked:** Verified correctness + 27.8x speedup in sandbox simulation.
+### 1. `_bool_series` lazy eval — ✅ DONE
+**File:** `scripts/expression_engine.py`
+**Change:** Replaced dict-literal (eagerly evaluates ALL ~55 booleans) with if/elif dispatch (only computes the one requested).
+**Expected:** ~37% matrix build speedup (5.9 min → ~3.7 min).
+**Verified:** All 65 boolean conditions pass in sandbox.
 
-### 3. Numpy array serialization for workers — Minor matrix build speedup
-**File:** `local_runner/matrix_builder.py` line 237
-**Problem:** `df.to_dict(orient="list")` for pickling to worker processes. 0.70ms per call + 0.32ms to reconstruct DataFrame in worker.
-**Fix:** Send numpy arrays instead. 0.04ms reconstruct (8x faster) and 79% smaller pickle payload.
-**Impact:** Minor (~5% of build time) but easy win.
+### 2. Matmul spiderweb — ✅ DONE
+**File:** `local_runner/spiderweb.py`
+**Change:** Replaced Python-level beam×candidate loop with float32 matmul for all joint pass rates + numpy vectorized filtering + sorted early exit.
+**Measured:** 78x faster in sandbox (100K → 7.8M nodes/sec). Real-scale test (1000 exprs, 4000 universe, beam 250) completes in 0.16s.
+**Verified:** Same results as old implementation on simulated data.
 
-### 4. Example matrix parallelization
-**File:** `local_runner/matrix_builder.py` line 361
-**Problem:** Example matrix build loops sequentially over examples, making one Railway API call per example.
-**Fix:** Use ThreadPoolExecutor to fetch OHLCV + compute expressions concurrently across examples.
-**Impact:** Proportional to example count. With 26 DTSS examples, saves several seconds. More impactful as example sets grow.
+### 3. Numpy array serialization — ✅ DONE
+**File:** `local_runner/matrix_builder.py`
+**Change:** Send raw numpy arrays to workers instead of `df.to_dict(orient="list")`. Eliminates `pd.to_numeric` coercion in worker.
+**Measured:** 8x faster reconstruct (0.76ms → 0.09ms), 9% smaller pickle.
+**Verified:** Worker produces identical output.
+
+### 4. Example matrix parallelization — ✅ DONE
+**File:** `local_runner/matrix_builder.py`
+**Change:** ThreadPoolExecutor (10 threads) for concurrent OHLCV fetch + LSP detection + compute across all examples.
+**Expected:** ~4-5x faster example build (~13s → ~2-3s for 26 DTSS examples).
+**Verified:** Imports clean, logic preserved. Needs real API test.
 
 ---
 
 ## Expression Library Expansion: 2,271 → ~3,800
 
 Target: ~3,800 expressions via cheap numerics (hold booleans at 1,235). Benchmarked: matrix build goes from 5.9 min → 6.8 min with 8 workers. Negligible cost increase because booleans are 81% of compute and stay constant.
+
+**Note:** The `_bool_series` lazy eval optimization (#1 above) should reduce all these times by ~37%. Actual numbers need re-benchmarking on desktop after testing.
 
 **Timing benchmarks (from real per-ticker measurement):**
 | Config | ms/ticker | 8-worker build |
