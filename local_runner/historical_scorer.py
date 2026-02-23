@@ -614,7 +614,7 @@ def main():
     for i, c in enumerate(all_conditions, 1):
         phase = "P1" if i <= len(phase1_conditions) else "P2"
         cat = c.get("category", "unknown")
-        print(f"    {i:2d}. [{phase}] [{cat:>18}] {c['name']:35s} "
+        print(f"    {i:2d}. [{phase}] [{cat:>18}] {c.get('name', c.get('expr', '?')):35s} "
               f"[{c['low']:.4f} — {c['high']:.4f}]")
     
     # Save results
