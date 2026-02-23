@@ -18,6 +18,8 @@
 - Stops when avg signals/day < target (default 10)
 - Constraint: 100% of setup examples ALWAYS pass all conditions
 
+**compute_series parity: ✅ COMPLETE** — All 82 generic ops from expression_engine.py are now available in backtest_conditions.compute_series(). Historical tiers (T2-T6) have full access to the 2,541 expression library.
+
 **Universal design:** Upload examples for any setup type → grinder handles the rest. Universe matrix is shared, only example matrix + grind is per-setup.
 
 ---
@@ -77,7 +79,8 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 4 Grind (Phase 2) | ✅ Done | 12 conditions (9 P1 + 3 P2), avg 7.4 signals/day, 20.6 min |
 | 4.7 Signal analysis | ✅ Done | Peak: 260/day (2021-08-11), clustered Jul-Aug 2021. Avg hides massive spikes. |
 | 5 **Pyramid grinder** | **✅ Tested** | 10 conditions, peak 69/day (down from 260), avg 7.2/day. Hit ceiling — ran out of expressions. 5yr matrix build ~10 min. |
-| 5a **Expression expansion** | **⬜ NEXT** | Port 48 missing ops to compute_series + add new expressions. Unlocks full library for historical tiers. |
+| 5a **compute_series parity** | **✅ Done** | 39 ops ported. 82 total ops, full parity with expression_engine (excluding 8 LSP ops). All 2,541 expressions now available to all pyramid tiers. |
+| 5b **Expression expansion** | **⬜ NEXT** | Expand library from 2,541 → ~3,500+. More param combos + new concepts from ta_knowledge.md. |
 | 6 Backtest | Not started | Visual verification of signal charts |
 | 7 Market Context | Not started | |
 | 8 EV Optimize | Not started | |
@@ -134,26 +137,21 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ---
 
-## IMMEDIATE NEXT STEP: Expression Library Expansion + compute_series Parity
+## IMMEDIATE NEXT STEP: Expression Library Expansion
+
+### ✅ COMPLETED: compute_series Parity (Job 1)
+
+39 generic ops ported from `expression_engine.compute()` to `backtest_conditions.compute_series()`. All historical pyramid tiers now have access to the full 2,541 expression library. 8 LSP ops intentionally excluded (require injected context). Validated 38/39 exact match with point-value implementations.
 
 ### Problem
-The pyramid grinder hit a ceiling at peak 69/day (down from 260) with only 10 conditions. It ran out of useful expressions. Two causes:
 
-1. **48 ops missing from `backtest_conditions.compute_series()`** — these ops exist in `expression_engine.py` (used by D1 tier) but NOT in the series computation (used by historical tiers T2-T6). This means hundreds of expressions in the library are invisible to every tier except D1. Missing ops include: bollinger (bandwidth, %B, bandwidth_rank), MACD (histogram, slope, line), aroon (up, down, oscillator), CMF + CMF slope, swing structure (higher_high_count, lower_low_count, etc.), efficiency ratio, candle patterns (inside/outside bars, NR ratio, avg body ratio, close_vs_open), consecutive moves, gap_size, high_volume_bar_pct, ma_slope, ma_stack_score, ma_undercut_depth, obv_slope, range_contraction_ratio, retracement_level, unfilled_gap_up_count, up_volume_ratio, vwap_distance, lower_wick_ratio.
+The pyramid grinder hit a ceiling at peak 69/day (down from 260) with only 10 conditions. It ran out of useful expressions. Now that compute_series has full parity, the remaining bottleneck is the expression library itself — more parameter combinations and new concepts are needed.
 
-2. **Expression library needs expansion** — more parameter combinations, new concepts from ta_knowledge.md that aren't covered yet.
+### Plan: Job 2 — Expand expression library
 
-### Plan (two jobs, one chat)
-
-**Job 1: Port 48 missing ops to `backtest_conditions.compute_series()`**
-- Each op needs a vectorized pandas Series implementation
-- Must match the point-value behavior of `expression_engine.compute()` 
-- This alone unlocks the existing 2,541 expressions for all historical tiers
-
-**Job 2: Add new expressions to `brute_expressions.py`**
-- Target: 2,541 → ~3,500+ expressions
+**Target: 2,541 → ~3,500+ expressions**
 - More parameter combinations for existing categories
-- New concepts from ta_knowledge.md
+- New concepts from ta_knowledge.md that aren't covered yet
 
 ### Why this matters
 Even 1-2 new conditions locking at early tiers (D1, 1wk, 1mo) would dramatically reduce the number of surviving rows hitting the expensive 5yr tier. The expressions both improve grind quality AND reduce grind time.
@@ -161,6 +159,7 @@ Even 1-2 new conditions locking at early tiers (D1, 1wk, 1mo) would dramatically
 ### After expression expansion
 Re-run the pyramid: `python local_runner/pyramid_grinder.py --setup dtss --peak-target 15`
 Then verify with signal distribution: `python scripts/signal_distribution.py --setup dtss`
+With full compute_series parity + expanded library, expect significantly more conditions locking and lower peak/day.
 
 ### Future optimization: Full-history series cache
 Once the expression library stabilizes, pre-cache all expression series for all tickers (47 GB on disk, stream per-ticker). Would reduce the 10-min 5yr matrix build to ~1 min. Build once, append 1 bar/ticker nightly. Not blocking — do this after expressions prove the pyramid works at target.
@@ -169,15 +168,14 @@ Once the expression library stabilizes, pre-cache all expression series for all 
 
 ## BUILD PLAN — Remaining Steps
 
-### Step 5a: Expression Library Expansion + compute_series Parity ⬜ NEXT
-**What:** Two jobs:
-1. Port 48 missing ops from `expression_engine.py` to `backtest_conditions.compute_series()` — unlocks existing expressions for historical tiers
-2. Expand expression library from 2,541 → ~3,500+
+### Step 5a: compute_series Parity ✅ COMPLETE
+**What:** Ported 39 missing ops from `expression_engine.py` to `backtest_conditions.compute_series()`.
+**Result:** 82 total ops in compute_series (full parity with expression_engine, excluding 8 LSP ops). All 2,541 expressions now accessible to all pyramid tiers (T2-T6), not just D1. Validated 38/39 exact match.
 
-**Why:** Pyramid grinder hit ceiling at peak 69/day with only 10 conditions. D1 tier had access to full library but historical tiers (where the real noise lives) could only use ~60% of expressions. More expressions + full library access = more conditions locking earlier = faster grind + lower peak.
+### Step 5b: Expression Library Expansion ⬜ NEXT
+**What:** Expand expression library from 2,541 → ~3,500+
 
-**48 missing ops in compute_series:**
-aroon (up/down/oscillator), atr_ratio, avg_candle_body_ratio, bollinger (bandwidth/bandwidth_rank/pctb), close_vs_open_ratio, cmf, cmf_slope, consecutive (up/down days/roc), gap_size, high_volume_bar_pct, higher_high_count, higher_low_count, inside_bar_count, kaufman_efficiency_ratio, lower_high_count, lower_low_count, lower_wick_ratio, ma_slope, ma_stack_score, ma_undercut_depth, macd (histogram/slope/line_norm), nr_ratio, obv_slope, outside_bar_count, range_contraction_ratio, retracement_level, swing_high_count, swing_low_count, unfilled_gap_up_count, up_volume_ratio, vwap_distance, plus LSP ops (avwap_lsp_distance, lsp_*)
+**Why:** Pyramid grinder hit ceiling at peak 69/day with only 10 conditions. Now that compute_series has full parity, the remaining bottleneck is expression library size. More expressions = more conditions locking earlier = faster grind + lower peak.
 
 **Constraint:** Matrix rebuild must finish before 7pm ET. Current 2,541 builds in 2.8 min — budget allows ~3,500-4,000.
 
