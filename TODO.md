@@ -50,6 +50,24 @@ The core analysis engine is now a desktop-based spiderweb search system:
 
 ---
 
+## Expression Library Expansion
+
+Expand `brute_expressions.py` beyond the current 1,338 to cover more of the TA knowledge base. Target: use the 4:05pm–7pm rebuild window more fully (~45-60 min total still acceptable).
+
+**What to add:**
+- AVWAP expressions — distance to anchored VWAP from key pivots (requires volume-weighted calc from OHLCV)
+- Relative strength vs SPY — price ROC ratio, beta-adjusted extension
+- Sector relative strength — requires sector mapping + sector OHLCV
+- Extension ceiling proximity — how close is current extension to historical max (needs longer lookback)
+- Wave cycle position — where in the 3-5 day bounce cycle (flush → building → peak → fail)
+- Volume character — accumulation vs distribution over N days, not just ratio
+- Candle sequence patterns — e.g. inside bars, NR7, consecutive up/down closes over various windows
+- Gap analysis — gap up/down size, fill status, vs ATR
+
+**Constraint:** Rebuild must finish before 7pm ET. Monitor actual rebuild time as expressions grow.
+
+---
+
 ## Other Priorities
 
 | # | Task | Description |
