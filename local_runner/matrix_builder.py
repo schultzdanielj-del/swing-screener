@@ -364,17 +364,19 @@ def get_example_matrix(setup_type, progress_fn=None):
     example_tickers = []
     example_ids = []
 
-    for i, ex in enumerate(raw_examples):
+    def _process_example(i_ex_tuple):
+        """Fetch OHLCV + detect LSP + compute expressions for one example."""
+        i, ex = i_ex_tuple
         ticker = ex.get("ticker", "?")
         entry_date = ex.get("entryDate") or ex.get("chartDate")
         ex_id = str(ex.get("id", ""))
         try:
             r2 = requests.get(f"{API_BASE}/api/ohlcv/local/{setup_type}/{ex.get('id')}", timeout=15)
             if r2.status_code != 200:
-                continue
+                return (i, ticker, ex_id, entry_date, None, "HTTP " + str(r2.status_code))
             candles = r2.json().get("candles", [])
             if not candles:
-                continue
+                return (i, ticker, ex_id, entry_date, None, "no candles")
             df = pd.DataFrame(candles)
             for col in ["open", "high", "low", "close", "volume"]:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -386,43 +388,64 @@ def get_example_matrix(setup_type, progress_fn=None):
             if entry_date:
                 matches = df[df["date"].dt.strftime("%Y-%m-%d") == entry_date]
                 if len(matches) > 0:
-                    target_idx = matches.index[0] - 1  # scan runs BEFORE entry candle closes
+                    target_idx = matches.index[0] - 1
                     scan_date = df.at[target_idx, "date"].strftime("%Y-%m-%d")
 
-            # For DTSS: detect LSP and inject context
+            # LSP detection (DTSS only)
             lsp_context = None
+            lsp_msg = ""
             if lsp_detector and scan_date:
                 try:
                     lsps = lsp_detector.detect_lsp(ticker, scan_date, max_lookback_bars=300, top_n=1)
                     if lsps:
                         lsp = lsps[0]
                         lsp_context = {
-                            "date": lsp.date,
-                            "price": lsp.price,
+                            "date": lsp.date, "price": lsp.price,
                             "bars_lookback": lsp.bars_lookback,
                             "prominence_score": lsp.prominence_score,
                             "pullback_depth_atr": lsp.pullback_depth_atr,
                             "volume_ratio": lsp.volume_ratio,
                         }
-                        print(f"    ✓ {ticker:8s} ({entry_date}) — LSP: {lsp.date} @ ${lsp.price:.2f} ({lsp.bars_lookback}bars back)")
+                        lsp_msg = f"LSP: {lsp.date} @ ${lsp.price:.2f} ({lsp.bars_lookback}bars back)"
                     else:
-                        print(f"    ✗ {ticker:8s} ({entry_date}) — no LSP detected")
+                        lsp_msg = "no LSP detected"
                 except Exception as e:
-                    print(f"    ✗ {ticker:8s} ({entry_date}) — LSP error: {e}")
+                    lsp_msg = f"LSP error: {e}"
 
-            example_matrix[i] = _compute_ticker_values(df, target_idx, expressions, lsp_context)
-            n_valid = np.sum(~np.isnan(example_matrix[i]))
-            if not lsp_detector:
-                print(f"    ✓ {ticker:8s} ({entry_date}) — {n_valid}/{len(expressions)}")
+            values = _compute_ticker_values(df, target_idx, expressions, lsp_context)
+            n_valid = int(np.sum(~np.isnan(values)))
+            msg = lsp_msg if lsp_detector else f"{n_valid}/{len(expressions)}"
+            return (i, ticker, ex_id, entry_date, values, msg)
         except Exception as e:
-            print(f"    ✗ {ticker}: {e}")
+            return (i, ticker, ex_id, entry_date, None, str(e))
 
-        example_tickers.append(f"{ticker}_{ex_id}")
-        example_ids.append(ex_id)
+    # Run all examples concurrently (I/O-bound: API fetch + LSP detection)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    n_threads = min(10, len(raw_examples))
+    completed = 0
 
-        if progress_fn:
-            pct = 10 + int(90 * (i + 1) / len(raw_examples))
-            progress_fn("examples", pct, f"Examples: {i+1}/{len(raw_examples)} ({ticker})")
+    with ThreadPoolExecutor(max_workers=n_threads) as executor:
+        futures = {executor.submit(_process_example, (i, ex)): i
+                   for i, ex in enumerate(raw_examples)}
+
+        for future in as_completed(futures):
+            i, ticker, ex_id, entry_date, values, msg = future.result()
+            if values is not None:
+                example_matrix[i] = values
+                symbol = "✓"
+            else:
+                symbol = "✗"
+            print(f"    {symbol} {ticker:8s} ({entry_date}) — {msg}")
+
+            completed += 1
+            if progress_fn:
+                pct = 10 + int(90 * completed / len(raw_examples))
+                progress_fn("examples", pct, f"Examples: {completed}/{len(raw_examples)} ({ticker})")
+
+    # Build ticker/id lists in original order
+    for i, ex in enumerate(raw_examples):
+        example_tickers.append(f"{ex.get('ticker', '?')}_{ex.get('id', '')}")
+        example_ids.append(str(ex.get("id", "")))
 
     data = {
         "example_matrix": example_matrix,
