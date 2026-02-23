@@ -326,7 +326,15 @@ def validate_against_labeled(api_base: str = "https://web-production-e3025.up.ra
 
         try:
             # Detect LSPs from scan perspective (day before entry)
-            detected = detector.detect_lsp(ticker, entry_date, max_lookback_bars=200, top_n=5)
+            # Fetch prior trading day via API
+            r = requests.get(
+                f"{api_base}/api/query",
+                json={"sql": f"SELECT date FROM universe_ohlcv WHERE ticker='{ticker}' AND date<'{entry_date}' ORDER BY date DESC LIMIT 1"},
+                timeout=15
+            )
+            prior_rows = r.json().get("results", []) if r.status_code == 200 else []
+            scan_date = prior_rows[0]['date'] if prior_rows else entry_date
+            detected = detector.detect_lsp(ticker, scan_date, max_lookback_bars=200, top_n=5)
 
             if not detected:
                 print(f"  ❌ No pivots detected")
