@@ -145,80 +145,94 @@ class ExpressionEngine:
 
     # ── Boolean condition evaluation ─────────────────────────
     def _bool_series(self, cond_name: str) -> pd.Series:
-        """Evaluate a named boolean condition across the full series."""
+        """Evaluate a named boolean condition across the full series.
+
+        Uses if/elif dispatch so only the requested boolean is computed.
+        The old dict-literal approach eagerly evaluated ALL ~55 booleans
+        every time ANY single one was requested (~245ms wasted per ticker).
+        """
         def _compute():
             c, o, h, l, v = self.c, self.o, self.h, self.l, self.v
-            mapping = {
-                "c_gt_xavgc8":       c > self._ma("xavgc8"),
-                "c_gt_xavgc21":      c > self._ma("xavgc21"),
-                "c_gt_xavgc50":      c > self._ma("xavgc50"),
-                "c_gt_xavgc100":     c > self._ma("xavgc100"),
-                "c_gt_avgc50":       c > self._ma("avgc50"),
-                "c_gt_avgc200":      c > self._ma("avgc200"),
-                "c_gt_c1":           c > c.shift(1),
-                "c_lt_c1":           c < c.shift(1),
-                "h_gt_h1":           h > h.shift(1),
-                "l_lt_l1":           l < l.shift(1),
-                "v_gt_avgv20":       v > self._ma("avgv20"),
-                "v_gt_2x_avgv20":    v > 2 * self._ma("avgv20"),
-                "c_gt_o":            c > o,
-                "xavgc8_gt_xavgc21": self._ma("xavgc8") > self._ma("xavgc21"),
-                "xavgc50_gt_xavgc200": self._ma("xavgc50") > self._ma("xavgc200"),
-                "avgc50_gt_avgc200": self._ma("avgc50") > self._ma("avgc200"),
-                "avgc50_rising":     self._ma("avgc50") > self._ma("avgc50").shift(1),
-                "avgc200_rising":    self._ma("avgc200") > self._ma("avgc200").shift(1),
-                "xavgc50_rising":    self._ma("xavgc50") > self._ma("xavgc50").shift(1),
-                "h_gt_maxh5_1":      h > self._maxh(5).shift(1),
-                "l_lt_minl5_1":      l < self._minl(5).shift(1),
-                "c_gt_maxc10_1":     c > rolling_max(c, 10).shift(1),
-                "range_gt_atr":      (h - l) > self._atr(14),
-                "body_gt_half_range": abs(c - o) > 0.5 * (h - l),
-                "c_upper_half":      c > (h + l) / 2,
-                "c_lower_half":      c < (h + l) / 2,
-                "diplus_gt_diminus": self._diplus(14) > self._diminus(14),
-                "rsi14_gt_50":       self._rsi(14) > 50,
-                "rsi14_gt_70":       self._rsi(14) > 70,
-                "rsi14_lt_30":       self._rsi(14) < 30,
-                "adx14_gt_25":       self._adx(14) > 25,
-                "c_gt_bbtop":        c > (self._ma("avgc20") + 2 * self.c.rolling(20).std()),
-                "c_lt_bbbot":        c < (self._ma("avgc20") - 2 * self.c.rolling(20).std()),
-                # === NEW BOOLEANS ===
-                "c_lt_xavgc8":       c < self._ma("xavgc8"),
-                "c_lt_xavgc21":      c < self._ma("xavgc21"),
-                "c_lt_avgc50":       c < self._ma("avgc50"),
-                "c_lt_avgc200":      c < self._ma("avgc200"),
-                "xavgc21_gt_avgc50": self._ma("xavgc21") > self._ma("avgc50"),
-                "xavgc8_gt_avgc50":  self._ma("xavgc8") > self._ma("avgc50"),
-                "avgc50_falling":    self._ma("avgc50") < self._ma("avgc50").shift(1),
-                "xavgc21_rising":    self._ma("xavgc21") > self._ma("xavgc21").shift(1),
-                "xavgc21_falling":   self._ma("xavgc21") < self._ma("xavgc21").shift(1),
-                "xavgc8_rising":     self._ma("xavgc8") > self._ma("xavgc8").shift(1),
-                "xavgc8_falling":    self._ma("xavgc8") < self._ma("xavgc8").shift(1),
-                "v_gt_avgv50":       v > self._ma("avgv50"),
-                "v_lt_avgv20":       v < self._ma("avgv20"),
-                "v_lt_half_avgv20":  v < 0.5 * self._ma("avgv20"),
-                "h_gt_maxh10_1":     h > self._maxh(10).shift(1),
-                "h_gt_maxh20_1":     h > self._maxh(20).shift(1),
-                "l_lt_minl10_1":     l < self._minl(10).shift(1),
-                "l_lt_minl20_1":     l < self._minl(20).shift(1),
-                "inside_bar":        (h < h.shift(1)) & (l > l.shift(1)),
-                "outside_bar":       (h > h.shift(1)) & (l < l.shift(1)),
-                "gap_up":            o > c.shift(1),
-                "gap_down":          o < c.shift(1),
-                "big_gap_up":        (o - c.shift(1)) > self._atr(14),
-                "big_gap_down":      (c.shift(1) - o) > self._atr(14),
-                "rsi14_gt_60":       self._rsi(14) > 60,
-                "rsi14_lt_40":       self._rsi(14) < 40,
-                "rsi14_lt_50":       self._rsi(14) < 50,
-                "adx14_gt_20":       self._adx(14) > 20,
-                "adx14_gt_30":       self._adx(14) > 30,
-                "adx14_lt_20":       self._adx(14) < 20,
-                "cmf20_positive":    self._cmf(20) > 0,
-                "cmf20_negative":    self._cmf(20) < 0,
-            }
-            if cond_name not in mapping:
+            n = cond_name
+            # --- Price vs MA ---
+            if   n == "c_gt_xavgc8":       s = c > self._ma("xavgc8")
+            elif n == "c_gt_xavgc21":      s = c > self._ma("xavgc21")
+            elif n == "c_gt_xavgc50":      s = c > self._ma("xavgc50")
+            elif n == "c_gt_xavgc100":     s = c > self._ma("xavgc100")
+            elif n == "c_gt_avgc50":       s = c > self._ma("avgc50")
+            elif n == "c_gt_avgc200":      s = c > self._ma("avgc200")
+            elif n == "c_lt_xavgc8":       s = c < self._ma("xavgc8")
+            elif n == "c_lt_xavgc21":      s = c < self._ma("xavgc21")
+            elif n == "c_lt_avgc50":       s = c < self._ma("avgc50")
+            elif n == "c_lt_avgc200":      s = c < self._ma("avgc200")
+            # --- Price vs prior bar ---
+            elif n == "c_gt_c1":           s = c > c.shift(1)
+            elif n == "c_lt_c1":           s = c < c.shift(1)
+            elif n == "h_gt_h1":           s = h > h.shift(1)
+            elif n == "l_lt_l1":           s = l < l.shift(1)
+            elif n == "c_gt_o":            s = c > o
+            # --- Volume ---
+            elif n == "v_gt_avgv20":       s = v > self._ma("avgv20")
+            elif n == "v_gt_2x_avgv20":    s = v > 2 * self._ma("avgv20")
+            elif n == "v_gt_avgv50":       s = v > self._ma("avgv50")
+            elif n == "v_lt_avgv20":       s = v < self._ma("avgv20")
+            elif n == "v_lt_half_avgv20":  s = v < 0.5 * self._ma("avgv20")
+            # --- MA vs MA ---
+            elif n == "xavgc8_gt_xavgc21": s = self._ma("xavgc8") > self._ma("xavgc21")
+            elif n == "xavgc50_gt_xavgc200": s = self._ma("xavgc50") > self._ma("xavgc200")
+            elif n == "avgc50_gt_avgc200": s = self._ma("avgc50") > self._ma("avgc200")
+            elif n == "xavgc21_gt_avgc50": s = self._ma("xavgc21") > self._ma("avgc50")
+            elif n == "xavgc8_gt_avgc50":  s = self._ma("xavgc8") > self._ma("avgc50")
+            # --- MA direction ---
+            elif n == "avgc50_rising":     s = self._ma("avgc50") > self._ma("avgc50").shift(1)
+            elif n == "avgc50_falling":    s = self._ma("avgc50") < self._ma("avgc50").shift(1)
+            elif n == "avgc200_rising":    s = self._ma("avgc200") > self._ma("avgc200").shift(1)
+            elif n == "xavgc50_rising":    s = self._ma("xavgc50") > self._ma("xavgc50").shift(1)
+            elif n == "xavgc21_rising":    s = self._ma("xavgc21") > self._ma("xavgc21").shift(1)
+            elif n == "xavgc21_falling":   s = self._ma("xavgc21") < self._ma("xavgc21").shift(1)
+            elif n == "xavgc8_rising":     s = self._ma("xavgc8") > self._ma("xavgc8").shift(1)
+            elif n == "xavgc8_falling":    s = self._ma("xavgc8") < self._ma("xavgc8").shift(1)
+            # --- Breakout/breakdown ---
+            elif n == "h_gt_maxh5_1":      s = h > self._maxh(5).shift(1)
+            elif n == "h_gt_maxh10_1":     s = h > self._maxh(10).shift(1)
+            elif n == "h_gt_maxh20_1":     s = h > self._maxh(20).shift(1)
+            elif n == "l_lt_minl5_1":      s = l < self._minl(5).shift(1)
+            elif n == "l_lt_minl10_1":     s = l < self._minl(10).shift(1)
+            elif n == "l_lt_minl20_1":     s = l < self._minl(20).shift(1)
+            elif n == "c_gt_maxc10_1":     s = c > rolling_max(c, 10).shift(1)
+            # --- Range/candle ---
+            elif n == "range_gt_atr":      s = (h - l) > self._atr(14)
+            elif n == "body_gt_half_range": s = abs(c - o) > 0.5 * (h - l)
+            elif n == "c_upper_half":      s = c > (h + l) / 2
+            elif n == "c_lower_half":      s = c < (h + l) / 2
+            elif n == "inside_bar":        s = (h < h.shift(1)) & (l > l.shift(1))
+            elif n == "outside_bar":       s = (h > h.shift(1)) & (l < l.shift(1))
+            # --- Gap ---
+            elif n == "gap_up":            s = o > c.shift(1)
+            elif n == "gap_down":          s = o < c.shift(1)
+            elif n == "big_gap_up":        s = (o - c.shift(1)) > self._atr(14)
+            elif n == "big_gap_down":      s = (c.shift(1) - o) > self._atr(14)
+            # --- Directional/momentum ---
+            elif n == "diplus_gt_diminus": s = self._diplus(14) > self._diminus(14)
+            elif n == "rsi14_gt_50":       s = self._rsi(14) > 50
+            elif n == "rsi14_gt_60":       s = self._rsi(14) > 60
+            elif n == "rsi14_gt_70":       s = self._rsi(14) > 70
+            elif n == "rsi14_lt_30":       s = self._rsi(14) < 30
+            elif n == "rsi14_lt_40":       s = self._rsi(14) < 40
+            elif n == "rsi14_lt_50":       s = self._rsi(14) < 50
+            elif n == "adx14_gt_20":       s = self._adx(14) > 20
+            elif n == "adx14_gt_25":       s = self._adx(14) > 25
+            elif n == "adx14_gt_30":       s = self._adx(14) > 30
+            elif n == "adx14_lt_20":       s = self._adx(14) < 20
+            # --- Bollinger ---
+            elif n == "c_gt_bbtop":        s = c > (self._ma("avgc20") + 2 * self.c.rolling(20).std())
+            elif n == "c_lt_bbbot":        s = c < (self._ma("avgc20") - 2 * self.c.rolling(20).std())
+            # --- Chaikin Money Flow ---
+            elif n == "cmf20_positive":    s = self._cmf(20) > 0
+            elif n == "cmf20_negative":    s = self._cmf(20) < 0
+            else:
                 raise ValueError(f"Unknown boolean condition: {cond_name}")
-            return mapping[cond_name].astype(bool)
+            return s.astype(bool)
         return self._get(f"bool_{cond_name}", _compute)
 
     # ── Main compute dispatch ────────────────────────────────
