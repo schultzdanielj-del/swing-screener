@@ -122,42 +122,65 @@ class SpiderwebSearch:
         # Map expr_idx -> position in valid_masks
         expr_to_pos = {idx: pos for pos, idx in enumerate(self.valid_exprs)}
 
+        # Pre-cast valid masks to float32 for matmul pass-rate estimation
+        valid_masks_f = valid_masks.astype(np.float32)
+        valid_exprs_arr = np.array(self.valid_exprs)
+
         for lv in range(2, depth + 1):
             next_level = []
             seen = set()
 
-            for node in current_level:
-                node_conds_set = set(node.conditions)
+            # --- Matmul batch: estimate pass rates for ALL beam×candidate pairs ---
+            beam_masks_f = np.array([n.universe_mask for n in current_level], dtype=np.float32)
+            # (beam, n_universe) @ (n_universe, n_valid) → (beam, n_valid)
+            joint_counts = beam_masks_f @ valid_masks_f.T
+            joint_rates = joint_counts / self.n_universe
+            nodes_explored += joint_rates.size
 
-                # Find which valid expressions are NOT already in this node
-                candidate_positions = [expr_to_pos[idx] for idx in self.valid_exprs
-                                       if idx not in node_conds_set]
-                if not candidate_positions:
+            # Build node pass rate vector for broadcasting
+            node_rates = np.array([n.pass_rate for n in current_level], dtype=np.float32)
+            # improved[i,j] = True if candidate j reduces pass rate for node i
+            improved = joint_rates < node_rates[:, np.newaxis]
+
+            # Mask out expressions already in each node's condition set
+            for node_idx, node in enumerate(current_level):
+                for cond_idx in node.conditions:
+                    if cond_idx in expr_to_pos:
+                        improved[node_idx, expr_to_pos[cond_idx]] = False
+
+            # Find all (node_idx, cand_pos) pairs that improve
+            hit_nodes, hit_cands = np.where(improved)
+
+            # Sort by estimated pass rate so best combos are processed first
+            hit_rates = joint_rates[hit_nodes, hit_cands]
+            sort_order = np.argsort(hit_rates)
+            hit_nodes = hit_nodes[sort_order]
+            hit_cands = hit_cands[sort_order]
+
+            for h in range(len(hit_nodes)):
+                node_idx = int(hit_nodes[h])
+                cand_pos = int(hit_cands[h])
+                node = current_level[node_idx]
+                expr_orig_idx = int(valid_exprs_arr[cand_pos])
+
+                combo = tuple(sorted(node.conditions + (expr_orig_idx,)))
+                if combo in seen:
                     continue
+                seen.add(combo)
 
-                candidate_positions = np.array(candidate_positions)
-                candidate_indices = valid_expr_arr[candidate_positions]
+                # Materialize exact bool mask only for survivors
+                mask = valid_masks[cand_pos] & node.universe_mask
+                exact_pr = np.sum(mask) / self.n_universe
 
-                # Vectorized AND: broadcast node mask against all candidate masks
-                # node.universe_mask shape: (n_universe,)
-                # candidate masks shape: (n_candidates, n_universe)
-                combined = valid_masks[candidate_positions] & node.universe_mask[np.newaxis, :]
-                pass_rates = combined.sum(axis=1) / self.n_universe
-                nodes_explored += len(candidate_positions)
+                next_level.append(SearchNode(
+                    conditions=combo, universe_mask=mask,
+                    pass_rate=exact_pr, depth=lv,
+                ))
 
-                # Filter: only keep combos that actually reduce pass rate
-                improved = pass_rates < node.pass_rate
-                for pos_idx in np.where(improved)[0]:
-                    expr_idx = int(candidate_indices[pos_idx])
-                    combo = tuple(sorted(node.conditions + (expr_idx,)))
-                    if combo in seen:
-                        continue
-                    seen.add(combo)
-
-                    next_level.append(SearchNode(
-                        conditions=combo, universe_mask=combined[pos_idx].copy(),
-                        pass_rate=float(pass_rates[pos_idx]), depth=lv,
-                    ))
+                # Early exit: once we have enough candidates, skip the rest
+                # (they're sorted by rate so the best are first)
+                if len(next_level) >= beam_width * 4:
+                    break
 
             if not next_level:
                 print(f"\n  ▓ Ceiling at level {lv}")
