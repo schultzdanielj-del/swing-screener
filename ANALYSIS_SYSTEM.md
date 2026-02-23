@@ -60,7 +60,7 @@ This gives a general starting point to understand what the setup looks like nume
 ### Phase 1: Spiderweb Search (single-day ceiling)
 
 The grinder precomputes two matrices:
-1. **Universe matrix** — every tradable ticker (~4,017 after ETF exclusions) × every expression (2,541), evaluated at the most recent bar. Shared across all setups. Auto-rebuilds nightly at 4:30pm ET. Parallelized across 8 CPU cores (~2.8 min on i5-12600K).
+1. **Universe matrix** — every tradable ticker (~4,017 after ETF exclusions) × every expression (4,017), evaluated at the most recent bar. Shared across all setups. Auto-rebuilds nightly at 4:30pm ET. Parallelized across 8 CPU cores (~2.8 min on i5-12600K).
 2. **Example matrix** — every setup example × every expression, evaluated at the scan candle (day before entry). Per-setup, fast (~5s per example).
 
 The spiderweb search then explores branching combinations of conditions:
@@ -77,7 +77,7 @@ The spiderweb search then explores branching combinations of conditions:
 
 **First test results (DTSS):** 10 conditions, peak 69/day (down from 260), avg 7.2/day. Hit expression ceiling — ran out of useful candidates at the 5yr tier. The 2021 Jul-Aug cluster is the hardest noise to eliminate. 5yr matrix build took ~10 min.
 
-**Expression parity achieved:** All 82 generic ops in `expression_engine.py` are now available in `backtest_conditions.compute_series()`, giving historical tiers (T2-T6) access to the full 2,541 expression library. The remaining gap is expression library size — more parameter combinations and new concepts are needed to push past the 10-condition ceiling.
+**Expression parity achieved:** All 82 generic ops in `expression_engine.py` are now available in `backtest_conditions.compute_series()`, giving historical tiers (T2-T6) access to the full 4,017 expression library (expanded from 2,541 in Step 5b).
 
 The pyramid progressively widens the historical window, each tier grinding until `peak_signals/day < threshold` before advancing to the next:
 
@@ -154,7 +154,7 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 - `local_runner/grinder.py` — CLI interface
 - `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild
 - `local_runner/cache_builder.py` — OHLCV caches: daily (300 bars, 57 MB) + 5yr (1,260 bars, 214 MB)
-- `local_runner/brute_expressions.py` — Expression generator: 2,541 generic expressions (same for all setups)
+- `local_runner/brute_expressions.py` — Expression generator: 4,017 generic expressions (same for all setups)
 - `scripts/expression_engine.py` — Computes expressions against OHLCV
 - `scripts/backtest_conditions.py` — Series computation for historical scoring. **82 ops** — full parity with expression_engine.py (excluding 8 LSP ops that require injected context). All generic expressions are available to all pyramid tiers.
 - `scripts/signal_distribution.py` — Parallel signal analyzer: runs all conditions across 5yr cache, outputs daily signal counts + per-signal CSV. Used to verify peak/avg before advancing.
@@ -166,7 +166,7 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 
 The grinder uses one universal expression set for all setups. No setup-specific expressions — the Phase 2 historical scorer finds setup-specific discrimination by grinding the generic library against 5yr history.
 
-- **Generic set** (`brute_expressions.json`) — 2,541 expressions across 29 categories: near_resistance (196), near_support (119), extension (78), extension_dynamics (65), extension_ceiling (32), extension_adr (6), MA slope (176), MA spread (40), spread_slope (48), slope_ratio (12), MA cross (60), MA stack (5), momentum (115), range (49), range_dynamics (11), retracement (24), swing_structure (42), gap (21), consecutive (4), candle_pattern (26), volume_character (36), volume_continuous (20), bollinger (20), macd (21), aroon (12), efficiency (7), vwap (36), percentile_rank (25), boolean (1,235). Used by all setups and the universe matrix.
+- **Generic set** (`brute_expressions.json`) — 4,017 expressions across 29 categories: near_resistance (203), near_support (133), extension (98), extension_dynamics (91), extension_ceiling (40), extension_adr (6), MA slope (240), MA spread (46), spread_slope (64), slope_ratio (18), MA cross (72), MA stack (7), momentum (138), range (59), range_dynamics (13), retracement (26), swing_structure (48), gap (21), consecutive (4), candle_pattern (39), volume_character (49), volume_continuous (36), bollinger (25), macd (28), aroon (18), efficiency (9), vwap (36), percentile_rank (37), boolean (2,413 from 127 conditions). Used by all setups and the universe matrix.
 
 **Note:** `expression_engine.py` still has LSP compute ops (`lsp_distance`, `lsp_bounce_recovery`, etc.) and `set_lsp_context()`. These are dormant — nothing calls them. They can be repurposed later if universal pivot detection is added to the expression library.
 
@@ -294,7 +294,7 @@ Using the historical signals from Step 7, filtered to the highest-success market
 |------|------|-----|
 | 1 | **Load** | Data & TA knowledge — everything is already in the system |
 | 2 | **Receive** | User presents examples, entry dates, and setup context |
-| 3 | **Grind** | THE GRINDER — Phase 1: spiderweb beam search (2,541 generic expressions) finds single-day ceiling. Phase 2: historical scorer eliminates 5yr noise via greedy selection. |
+| 3 | **Grind** | THE GRINDER — Phase 1: spiderweb beam search (4,017 generic expressions) finds single-day ceiling. Phase 2: historical scorer eliminates 5yr noise via greedy selection. |
 | 4 | **Collaborate** | Human-AI iteration to push past the grinder ceiling with qualitative/discretionary conditions. Goal: zero daily pass rate. |
 | 5 | **Backtest** | Run conditions across full history, review signals, validate and tighten |
 | 6 | **Market Context** | Find which market conditions produce winners vs losers |

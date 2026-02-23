@@ -58,7 +58,7 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 - **Local daily cache:** `universe_ohlcv.pkl` — 4,167 tickers × avg 292 bars (57 MB)
 - **Tradable universe:** ~4,017 tickers after ETF exclusions (150 leveraged/inverse/derivative excluded)
 
-### Expression library: 2,541 expressions across 29 categories
+### Expression library: 4,017 expressions across 29 categories
 - near_resistance (196), near_support (119), extension (78), extension_dynamics (65)
 - extension_ceiling (32), extension_adr (6), ma_slope (176), ma_spread (40)
 - spread_slope (48), slope_ratio (12), ma_cross (60), ma_stack (5)
@@ -80,7 +80,7 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 4.7 Signal analysis | ✅ Done | Peak: 260/day (2021-08-11), clustered Jul-Aug 2021. Avg hides massive spikes. |
 | 5 **Pyramid grinder** | **✅ Tested** | 10 conditions, peak 69/day (down from 260), avg 7.2/day. Hit ceiling — ran out of expressions. 5yr matrix build ~10 min. |
 | 5a **compute_series parity** | **✅ Done** | 39 ops ported. 82 total ops, full parity with expression_engine (excluding 8 LSP ops). All 2,541 expressions now available to all pyramid tiers. |
-| 5b **Expression expansion** | **⬜ NEXT** | Expand library from 2,541 → ~3,500+. More param combos + new concepts from ta_knowledge.md. |
+| 5b **Expression expansion** | **✅ DONE** | Expanded library from 2,541 → 4,017. 127 booleans (was 65), 88 ops (was 82), 6 new ops added. |
 | 6 Backtest | Not started | Visual verification of signal charts |
 | 7 Market Context | Not started | |
 | 8 EV Optimize | Not started | |
