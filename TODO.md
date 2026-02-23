@@ -80,6 +80,18 @@ The core analysis engine is now a desktop-based spiderweb search system:
 
 ---
 
+## Data Cleanup: Remove Inverse/Leveraged ETFs from Tradable Universe
+
+Inverse and leveraged ETFs (AIPO, HOOZ, etc.) are polluting grinder results — they have synthetic price patterns that match setup criteria but are not tradable swing candidates. These need to be permanently excluded.
+
+**Task:**
+- Identify all inverse, leveraged, and synthetic ETFs in the tradable_universe table (~hundreds of tickers)
+- Remove them from the database
+- Add a filter to the universe rebuild process so they never get re-added
+- Common patterns: tickers from ProShares, Direxion, GraniteShares, leveraged/inverse fund names, ETF suffixes
+
+---
+
 ## Expression Library Expansion: 2,271 → ~3,800
 
 Target: ~3,800 expressions via cheap numerics (hold booleans at 1,235). Benchmarked: matrix build goes from 5.9 min → 6.8 min with 8 workers. Negligible cost increase because booleans are 81% of compute and stay constant.
