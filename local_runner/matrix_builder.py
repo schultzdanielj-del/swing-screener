@@ -267,7 +267,7 @@ def get_example_matrix(setup_type, progress_fn=None):
             if entry_date:
                 matches = df[df["date"].dt.strftime("%Y-%m-%d") == entry_date]
                 if len(matches) > 0:
-                    target_idx = matches.index[0]
+                    target_idx = matches.index[0] - 1  # scan runs BEFORE entry candle closes
 
             example_matrix[i] = _compute_ticker_values(df, target_idx, expressions)
             n_valid = np.sum(~np.isnan(example_matrix[i]))
