@@ -59,13 +59,27 @@ API_BASE = "https://web-production-e3025.up.railway.app"
 # ══════════════════════════════════════════════════════════════
 
 def load_phase1_results(setup_type):
-    """Load Phase 1 grinder results."""
+    """Load Phase 1 grinder results and enrich with compute specs."""
     path = os.path.join(CACHE_DIR, f"grinder_results_{setup_type}.json")
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"No Phase 1 results found at {path}. Run the grinder first.")
     with open(path) as f:
-        return json.load(f)
+        results = json.load(f)
+    
+    # Enrich best_thresholds with compute specs from expression library
+    from local_runner.brute_expressions import generate_all
+    expr_lookup = {e["name"]: e["compute"] for e in generate_all()}
+    for cond in results.get("best_thresholds", []):
+        if "compute" not in cond:
+            name = cond["expr"]
+            if name not in expr_lookup:
+                raise KeyError(
+                    f"Expression '{name}' from Phase 1 results not found "
+                    f"in expression library. Was the library changed?")
+            cond["compute"] = expr_lookup[name]
+    
+    return results
 
 
 def load_5yr_cache():
@@ -226,7 +240,7 @@ def validate_examples(example_dfs, conditions):
             series = compute_series(engine, cond["compute"])
             val = series[scan_idx]
             if np.isnan(val) or val < cond["low"] or val > cond["high"]:
-                print(f"    ✗ {ex['ticker']} FAILS {cond['name']}: "
+                print(f"    ✗ {ex['ticker']} FAILS {cond.get('name', cond.get('expr'))}: "
                       f"{val:.4f} not in [{cond['low']:.4f}, {cond['high']:.4f}]")
                 all_pass = False
     
@@ -277,7 +291,7 @@ def score_candidates(universe_cache, base_signals, example_dfs,
     all_exprs = generate_all()
     
     # Get Phase 1 expression names to exclude (already applied)
-    phase1_names = set(c["name"] for c in phase1_conditions)
+    phase1_names = set(c.get("name", c.get("expr")) for c in phase1_conditions)
     candidates = [e for e in all_exprs if e["name"] not in phase1_names]
     print(f"\n  Phase 2 candidates: {len(candidates)} expressions "
           f"(excluded {len(phase1_names)} Phase 1 conditions)")
