@@ -34,8 +34,24 @@ sys.path.insert(0, LOCAL_DIR)
 API_BASE = "https://web-production-e3025.up.railway.app"
 
 
-def _load_expressions():
-    """Load brute expressions, generating if needed."""
+def _load_expressions(setup_type=None):
+    """Load expressions. For DTSS, loads generic + LSP bespoke block."""
+    if setup_type == "dtss":
+        path = os.path.join(CACHE_DIR, "dtss_expressions.json")
+        if not os.path.exists(path):
+            from brute_expressions import generate_dtss
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            exprs = generate_dtss()
+            cats = {}
+            for e in exprs:
+                cat = e["category"]
+                cats[cat] = cats.get(cat, 0) + 1
+            with open(path, "w") as f:
+                json.dump({"total": len(exprs), "by_category": cats, "expressions": exprs}, f)
+            return exprs
+        with open(path) as f:
+            return json.load(f)["expressions"]
+
     path = os.path.join(CACHE_DIR, "brute_expressions.json")
     if not os.path.exists(path):
         from brute_expressions import generate_all
@@ -62,11 +78,13 @@ def _load_ohlcv_cache():
         return pickle.load(f)
 
 
-def _compute_ticker_values(df, target_idx, expressions):
+def _compute_ticker_values(df, target_idx, expressions, lsp_context=None):
     """Compute all expression values for one ticker at one bar."""
     from scripts.expression_engine import ExpressionEngine
     engine = ExpressionEngine(df)
     engine.set_target(target_idx)
+    if lsp_context:
+        engine.set_lsp_context(lsp_context)
     values = np.full(len(expressions), np.nan)
     for j, expr in enumerate(expressions):
         try:
@@ -213,6 +231,8 @@ def get_example_matrix(setup_type, progress_fn=None):
     """
     Get or build the example expression matrix for a setup.
     Fast — only examples, not universe.
+    For DTSS: uses extended expression set including LSP/AVWAP ops,
+    and runs LSP detector per example to inject context.
     Returns dict with example_matrix, example_tickers.
     """
     path = os.path.join(CACHE_DIR, f"example_matrix_{setup_type}.pkl")
@@ -231,16 +251,24 @@ def get_example_matrix(setup_type, progress_fn=None):
         with open(path, "rb") as f:
             cached = pickle.load(f)
         cached_ids = sorted(cached.get("example_ids", []))
-        expressions = _load_expressions()
+        expressions = _load_expressions(setup_type)
         if cached_ids == current_ids and cached.get("n_exprs") == len(expressions):
             if progress_fn:
                 progress_fn("examples", 100, f"Example matrix cached: {len(current_ids)} examples")
             return cached
 
     # Build
-    expressions = _load_expressions()
+    expressions = _load_expressions(setup_type)
     if progress_fn:
-        progress_fn("examples", 10, f"Computing {len(raw_examples)} examples...")
+        progress_fn("examples", 10, f"Computing {len(raw_examples)} examples ({len(expressions)} expressions)...")
+
+    # For DTSS: set up LSP detector
+    lsp_detector = None
+    if setup_type == "dtss":
+        sys.path.insert(0, REPO_ROOT)
+        from scripts.lsp_detector import LSPDetector
+        lsp_detector = LSPDetector(api_base=API_BASE)
+        print(f"    [DTSS] LSP detector active — will inject LSP context per example")
 
     example_matrix = np.full((len(raw_examples), len(expressions)), np.nan)
     example_tickers = []
@@ -264,14 +292,38 @@ def get_example_matrix(setup_type, progress_fn=None):
             df = df.sort_values("date").reset_index(drop=True)
 
             target_idx = len(df) - 1
+            scan_date = None
             if entry_date:
                 matches = df[df["date"].dt.strftime("%Y-%m-%d") == entry_date]
                 if len(matches) > 0:
                     target_idx = matches.index[0] - 1  # scan runs BEFORE entry candle closes
+                    scan_date = df.at[target_idx, "date"].strftime("%Y-%m-%d")
 
-            example_matrix[i] = _compute_ticker_values(df, target_idx, expressions)
+            # For DTSS: detect LSP and inject context
+            lsp_context = None
+            if lsp_detector and scan_date:
+                try:
+                    lsps = lsp_detector.detect_lsp(ticker, scan_date, max_lookback_bars=300, top_n=1)
+                    if lsps:
+                        lsp = lsps[0]
+                        lsp_context = {
+                            "date": lsp.date,
+                            "price": lsp.price,
+                            "bars_lookback": lsp.bars_lookback,
+                            "prominence_score": lsp.prominence_score,
+                            "pullback_depth_atr": lsp.pullback_depth_atr,
+                            "volume_ratio": lsp.volume_ratio,
+                        }
+                        print(f"    ✓ {ticker:8s} ({entry_date}) — LSP: {lsp.date} @ ${lsp.price:.2f} ({lsp.bars_lookback}bars back)")
+                    else:
+                        print(f"    ✗ {ticker:8s} ({entry_date}) — no LSP detected")
+                except Exception as e:
+                    print(f"    ✗ {ticker:8s} ({entry_date}) — LSP error: {e}")
+
+            example_matrix[i] = _compute_ticker_values(df, target_idx, expressions, lsp_context)
             n_valid = np.sum(~np.isnan(example_matrix[i]))
-            print(f"    ✓ {ticker:8s} ({entry_date}) — {n_valid}/{len(expressions)}")
+            if not lsp_detector:
+                print(f"    ✓ {ticker:8s} ({entry_date}) — {n_valid}/{len(expressions)}")
         except Exception as e:
             print(f"    ✗ {ticker}: {e}")
 

@@ -181,21 +181,26 @@ class LSPDetector:
         #    Diminishing returns after ~3 ATR pullback
         pullback_score = min(pullback_depth_atr / 3.0, 1.5)
 
-        # 3. Recency: favor recent pivots but allow older ones
-        if bars_lookback < 3:
-            recency_score = 0.1  # Way too recent
-        elif bars_lookback < 7:
-            recency_score = 0.5
-        elif bars_lookback <= 100:
-            recency_score = 1.0  # Sweet spot
-        elif bars_lookback <= 150:
-            recency_score = 0.7
+        # 3. Recency: for DTSS the relevant LSP is the immediate structural context
+        #    being retested — heavily discount ancient highs vs recent ones
+        if bars_lookback < 2:
+            recency_score = 0.1   # Same/adjacent bar — invalid
+        elif bars_lookback <= 5:
+            recency_score = 1.0   # Very recent pivot being immediately retested
+        elif bars_lookback <= 30:
+            recency_score = 1.4   # Sweet spot — recent structural high
+        elif bars_lookback <= 80:
+            recency_score = 1.0   # Normal
+        elif bars_lookback <= 120:
+            recency_score = 0.5   # Getting old
+        elif bars_lookback <= 200:
+            recency_score = 0.25  # Old — heavily discounted
         else:
-            recency_score = 0.4  # Old but not impossible
+            recency_score = 0.1   # Ancient — nearly excluded
 
-        # 4. Volume: light bonus, tightly capped — volume confirms but should
-        #    never overcome a significantly higher price level
-        volume_score = 1.0 + min((volume_ratio - 1.0) * 0.15, 0.5) if volume_ratio > 1.0 else max(volume_ratio, 0.5)
+        # 4. Volume: minimal bonus, very tightly capped — volume confirms but must
+        #    never overcome a significantly higher price level (ASST 36x vol was dominating)
+        volume_score = 1.0 + min((volume_ratio - 1.0) * 0.05, 0.2) if volume_ratio > 1.0 else max(volume_ratio * 0.9, 0.7)
 
         # Combined: price level dominates (squared), pullback confirms, recency adjusts
         # Volume is additive/multiplicative but tightly bounded
@@ -278,9 +283,8 @@ class LSPDetector:
                     for i, kept in enumerate(deduplicated):
                         price_diff_atr = abs(candidate.price - kept.price) / scan_atr_val
                         if price_diff_atr < 2.0:
-                            # Same zone — keep higher price, transfer best score
+                            # Same zone — keep higher price, use its own score only
                             if candidate.price > kept.price:
-                                candidate.prominence_score = max(candidate.prominence_score, kept.prominence_score * 1.05)
                                 deduplicated[i] = candidate
                             is_duplicate = True
                             break

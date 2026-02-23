@@ -33,9 +33,17 @@ class ExpressionEngine:
         self.v = df["volume"]
         self._cache = {}
         self._target = len(df) - 1
+        self._lsp = None  # Set via set_lsp_context for DTSS expressions
 
     def set_target(self, idx: int):
         self._target = idx
+
+    def set_lsp_context(self, lsp: dict):
+        """
+        Inject LSP context for DTSS-specific expressions.
+        lsp dict keys: date, price, bars_lookback, volume_ratio
+        """
+        self._lsp = lsp
 
     # ── Indicator cache ──────────────────────────────────────
     def _get(self, key, compute_fn):
@@ -161,12 +169,13 @@ class ExpressionEngine:
         try:
             if op == "distance_to_maxh":
                 price = self.c.iloc[i] if comp["price_ref"] == "C" else self.h.iloc[i]
-                maxh = self._maxh(comp["maxh_period"]).iloc[i]
+                # shift(1) — prior period's high, excludes today so new highs != at resistance
+                maxh = self._maxh(comp["maxh_period"]).shift(1).iloc[i]
                 norm = self._normalizer(comp["normalizer"])
                 return (maxh - price) / norm if norm else np.nan
 
             elif op == "ratio_c_maxh":
-                maxh = self._maxh(comp["maxh_period"]).iloc[i]
+                maxh = self._maxh(comp["maxh_period"]).shift(1).iloc[i]
                 return self.c.iloc[i] / maxh if maxh else np.nan
 
             elif op == "extension":
@@ -292,6 +301,96 @@ class ExpressionEngine:
                 ext_series = self.c.iloc[start:i+1] - ma.iloc[start:i+1]
                 max_ext = ext_series.max()
                 return ext_now / max_ext if max_ext > 0 else np.nan
+
+            elif op == "lsp_distance":
+                # Distance from price_ref to LSP price, normalized
+                # Positive = LSP above price (approaching from below)
+                # Negative = price above LSP (breakout failure variant)
+                if self._lsp is None:
+                    return np.nan
+                lsp_price = self._lsp["price"]
+                price = self.c.iloc[i] if comp.get("price_ref", "C") == "C" else self.h.iloc[i]
+                norm = self._normalizer(comp["normalizer"])
+                return (lsp_price - price) / norm if norm else np.nan
+
+            elif op == "lsp_bounce_recovery":
+                # How far has bounce retraced from post-LSP low back toward LSP
+                # 0.0 = price at post-LSP low, 1.0 = price back at LSP
+                if self._lsp is None:
+                    return np.nan
+                lsp_price = self._lsp["price"]
+                lsp_bars_back = self._lsp["bars_lookback"]
+                lsp_idx = i - lsp_bars_back
+                if lsp_idx < 0:
+                    return np.nan
+                # Post-LSP low: minimum low from LSP bar to scan bar
+                post_lsp_low = self.l.iloc[lsp_idx:i + 1].min()
+                rng = lsp_price - post_lsp_low
+                if rng <= 0:
+                    return np.nan
+                return (self.c.iloc[i] - post_lsp_low) / rng
+
+            elif op == "lsp_right_peak_ratio":
+                # Current high / LSP price — how close is right peak to left peak
+                if self._lsp is None:
+                    return np.nan
+                lsp_price = self._lsp["price"]
+                return self.h.iloc[i] / lsp_price if lsp_price > 0 else np.nan
+
+            elif op == "lsp_volume_ratio":
+                # Recent avg volume / volume at LSP bar
+                # Low ratio = volume drying up on second approach (bearish)
+                if self._lsp is None:
+                    return np.nan
+                lsp_bars_back = self._lsp["bars_lookback"]
+                lsp_idx = i - lsp_bars_back
+                if lsp_idx < 0 or lsp_idx >= len(self.v):
+                    return np.nan
+                lsp_vol = self.v.iloc[lsp_idx]
+                if lsp_vol <= 0:
+                    return np.nan
+                avg_period = comp.get("avg_period", 5)
+                recent_start = max(0, i - avg_period + 1)
+                recent_avg = self.v.iloc[recent_start:i + 1].mean()
+                return recent_avg / lsp_vol
+
+            elif op == "avwap_lsp_distance":
+                # AVWAP anchored at LSP bar — distance from scan close to AVWAP
+                # Negative = price below AVWAP (trapped buyers — short fuel)
+                # Positive = price above AVWAP
+                if self._lsp is None:
+                    return np.nan
+                lsp_bars_back = self._lsp["bars_lookback"]
+                lsp_idx = i - lsp_bars_back
+                if lsp_idx < 0:
+                    return np.nan
+                # AVWAP = cumsum(typical_price * volume) / cumsum(volume) from LSP bar
+                segment = self.df.iloc[lsp_idx:i + 1]
+                tp = (segment["high"] + segment["low"] + segment["close"]) / 3
+                vol = segment["volume"]
+                cum_vol = vol.cumsum()
+                if cum_vol.iloc[-1] <= 0:
+                    return np.nan
+                avwap = (tp * vol).cumsum() / cum_vol
+                avwap_val = avwap.iloc[-1]
+                norm = self._normalizer(comp["normalizer"])
+                return (self.c.iloc[i] - avwap_val) / norm if norm else np.nan
+
+            elif op == "lsp_bars_back":
+                if self._lsp is None:
+                    return np.nan
+                return float(self._lsp["bars_lookback"])
+
+            elif op == "lsp_prominence":
+                if self._lsp is None:
+                    return np.nan
+                return float(self._lsp.get("prominence_score", np.nan))
+
+            elif op == "lsp_pullback_depth":
+                # How deep was the pullback after LSP in ATR units
+                if self._lsp is None:
+                    return np.nan
+                return float(self._lsp.get("pullback_depth_atr", np.nan))
 
             elif op == "count_true":
                 b = self._bool_series(comp["condition"])
