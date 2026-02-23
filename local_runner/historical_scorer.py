@@ -610,14 +610,7 @@ def main():
     print(f"  Total conditions:   {len(all_conditions)}")
     print(f"  Total time:         {total_time:.0f}s ({total_time/60:.1f} min)")
     
-    print(f"\n  All conditions:")
-    for i, c in enumerate(all_conditions, 1):
-        phase = "P1" if i <= len(phase1_conditions) else "P2"
-        cat = c.get("category", "unknown")
-        print(f"    {i:2d}. [{phase}] [{cat:>18}] {c.get('name', c.get('expr', '?')):35s} "
-              f"[{c['low']:.4f} — {c['high']:.4f}]")
-    
-    # Save results
+    # Save results FIRST (before any print that might crash)
     result = {
         "setup_type": args.setup,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -635,6 +628,13 @@ def main():
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
+    
+    print(f"\n  All conditions:")
+    for i, c in enumerate(all_conditions, 1):
+        phase = "P1" if i <= len(phase1_conditions) else "P2"
+        cat = c.get("category", "unknown")
+        print(f"    {i:2d}. [{phase}] [{cat:>18}] {c.get('name', c.get('expr', '?')):35s} "
+              f"[{c['low']:.4f} — {c['high']:.4f}]")
 
 
 if __name__ == "__main__":
