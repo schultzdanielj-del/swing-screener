@@ -197,6 +197,7 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 5 | **EV optimization** | Management optimizer against MFE/MAE matrices for position sizing. |
 | 6 | **Market regime filter** | "When to trade it" on/off switch per setup. 3-4DB showed 6-7x signal spikes during stage transitions. |
 | 7 | **Universal pivot expressions** | Detect all D1 pivots with prominence, generate expressions for spiderweb. Currently parked — LSP detector needs refactoring. |
+| 8 | **Frontend Phase 2 control** | Run Phase 2 historical scorer from the frontend (like Phase 1 grind). Detailed progress: base signals, precompute %, greedy rounds, signals/day reduction, ETA. |
 
 ---
 
