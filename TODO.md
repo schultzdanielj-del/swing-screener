@@ -138,6 +138,26 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ## BUILD PLAN — Remaining Steps
 
+### Step 5a: Expression Library Expansion ⬜
+**What:** Expand from 2,541 → ~3,800+ expressions. The grinder's L5 setting finished in 8 seconds because it ran out of useful expressions at depth 4. It needs massively more search space.
+**Missing from ta_knowledge.md:**
+- Extension at statistical ceiling (how close to historical max extension)
+- MOC/RVOL-anchored levels
+- AVWAP from pivots
+- Extension compression (narrowing extension)
+- 50 SMA cross frequency (chop detection)
+- Swing retracement levels
+**New compute ops needed in expression_engine.py + backtest_conditions.py:**
+- `percentile_rank` — normalize any metric to 0-100 vs history
+- `rvol_continuous` / `cumulative_rvol` — rolling relative volume
+- `slope_ratio` — fast MA slope / slow MA slope
+- `spread_slope` — is MA spread widening or narrowing
+- `distance_to_minl` / `ratio_c_minl` — support proximity
+- `retrace_high` / `retrace_low` — separate H/L retracement
+- `vwap_slope` — rolling VWAP direction
+**Per-category expansion:** near_support (119→196), percentile_rank (0→48), slope_ratio (0→30), momentum (107→170), volume_character (36→55), plus misc across remaining categories.
+**Constraint:** Matrix rebuild must finish before 7pm ET. Benchmarked at 6.8 min — well within budget.
+
 ### Step 5: Backtest Runner Integration ⬜
 **What:** Make `scripts/backtest_conditions.py` pull conditions from grinder results automatically. Output signal charts.
 **Why:** Need to visually verify signals. Currently hardcoded from one grind run.
