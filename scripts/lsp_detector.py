@@ -270,28 +270,20 @@ class LSPDetector:
         # Sort by prominence, return top N
         scored.sort(key=lambda x: x.prominence_score, reverse=True)
         
-        # Cluster deduplication: when two pivots are in the same price zone
-        # (within 2 ATR of each other), keep the one with the higher price.
-        # For double-top setups, the structural ceiling matters most.
+        # Cluster deduplication: when two pivots are within 1 ATR of each other,
+        # keep the highest-scored one (already sorted desc, so first encountered wins).
         if scored and len(scored) > 1:
-            # Use scan-bar ATR for zone comparison
             scan_atr_val = atr.iloc[scan_idx] if scan_idx < len(atr) and pd.notna(atr.iloc[scan_idx]) else None
             if scan_atr_val and scan_atr_val > 0:
                 deduplicated = [scored[0]]
                 for candidate in scored[1:]:
                     is_duplicate = False
-                    for i, kept in enumerate(deduplicated):
-                        price_diff_atr = abs(candidate.price - kept.price) / scan_atr_val
-                        if price_diff_atr < 2.0:
-                            # Same zone — keep higher price, use its own score only
-                            if candidate.price > kept.price:
-                                deduplicated[i] = candidate
+                    for kept in deduplicated:
+                        if abs(candidate.price - kept.price) / scan_atr_val < 1.0:
                             is_duplicate = True
                             break
                     if not is_duplicate:
                         deduplicated.append(candidate)
-                # Re-sort after dedup
-                deduplicated.sort(key=lambda x: x.prominence_score, reverse=True)
                 scored = deduplicated
 
         return scored[:top_n]
