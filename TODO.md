@@ -50,11 +50,32 @@ The core analysis engine is now a desktop-based spiderweb search system:
 
 ---
 
-## Parallelize Matrix Build
+## Performance Optimizations
 
-The universe matrix build (`get_universe_matrix`) is single-threaded. Each ticker is fully independent — trivial to parallelize with `ProcessPoolExecutor`. On a 12600K (10 cores) this should cut build time from ~30 min down to 3-5 min.
+### 1. `_bool_series` lazy eval — Matrix build 37% faster
+**File:** `scripts/expression_engine.py` line 147-222
+**Problem:** `_bool_series()` builds a Python dict of ALL ~50 boolean series every time ANY single boolean is requested. Dict literals evaluate all values eagerly. Each unique condition triggers recomputing all 50 comparisons (MAs are cached, but the series creation is not). 50 unique conditions × 50 series built = 2,500 builds when only 50 needed. ~245ms wasted per ticker.
+**Fix:** Replace the mapping dict with individual if/elif dispatch so only the requested boolean is computed.
+**Impact:** ~5.9 min → ~3.7 min matrix build (saves ~2 min per rebuild).
 
-**What to do:** Wrap the ticker loop in `local_runner/matrix_builder.py` line 173 with `ProcessPoolExecutor(max_workers=N)`. Progress reporting needs minor adjustment to work across processes.
+### 2. Matmul spiderweb — Grind 27x faster per level
+**File:** `local_runner/spiderweb.py` line 125-177
+**Problem:** The inner loop iterates Python-level over each beam node, doing `valid_masks[candidates] & node.mask` one node at a time. At beam=250, valid=400: that's 250 sequential numpy AND operations.
+**Fix:** Replace with a single float32 matmul: `node_masks.astype(float32) @ valid_masks.astype(float32).T` → gives ALL beam×candidate pass rates in one BLAS call. Then use numpy argsort for global top-K, only compute actual masks for candidates that survive pruning.
+**Impact:** 670ms/level → 25ms/level at current scale. At 1,000 valid expressions with beam 250, full 15-level grind: ~25s → <1s. Enables much larger beam widths and expression counts without time cost.
+**Benchmarked:** Verified correctness + 27.8x speedup in sandbox simulation.
+
+### 3. Numpy array serialization for workers — Minor matrix build speedup
+**File:** `local_runner/matrix_builder.py` line 237
+**Problem:** `df.to_dict(orient="list")` for pickling to worker processes. 0.70ms per call + 0.32ms to reconstruct DataFrame in worker.
+**Fix:** Send numpy arrays instead. 0.04ms reconstruct (8x faster) and 79% smaller pickle payload.
+**Impact:** Minor (~5% of build time) but easy win.
+
+### 4. Example matrix parallelization
+**File:** `local_runner/matrix_builder.py` line 361
+**Problem:** Example matrix build loops sequentially over examples, making one Railway API call per example.
+**Fix:** Use ThreadPoolExecutor to fetch OHLCV + compute expressions concurrently across examples.
+**Impact:** Proportional to example count. With 26 DTSS examples, saves several seconds. More impactful as example sets grow.
 
 ---
 
