@@ -76,17 +76,19 @@ The core analysis engine is now a desktop-based spiderweb search system:
 **Files:** `local_runner/brute_expressions.py`, `scripts/expression_engine.py`
 **Constraint:** Matrix rebuild must stay under 7 min. Benchmarked at 6.8 min pre-optimization, should be ~4 min with bool lazy eval.
 
-### Step 4: Phase 2 — Historical Backtest Scoring ⬜
-**What:** After single-day ceiling, score remaining expressions by historical signal elimination.
+### Step 4: Phase 2 — Historical Backtest Scoring ⬜ (code ready, needs 5yr cache)
+**What:** After single-day ceiling, greedily add expressions that eliminate the most historical signals.
 **Why:** This is the core fix. A condition useless today (doesn't drop 3→2 tickers) might eliminate 300/day of historical noise.
-**How:**
-1. Precompute: run current winning conditions across all tickers × 5yr using series approach. Store as boolean signal mask. (~20-30s based on benchmarks)
-2. Precompute: for every remaining candidate expression that passes all examples, compute its series + threshold mask across all tickers × 5yr. (One pass through tickers, ~2-3 min for ~200 candidates)
-3. Score: for each candidate, numpy AND with existing signal mask → count remaining signals. Microseconds per candidate.
-4. Add the candidate that eliminates the most historical signals.
-5. Repeat steps 3-4 until avg signals/day < target threshold (e.g. <10/day).
-6. Output: final condition set + full historical signal list.
-**Files:** New `local_runner/historical_scorer.py`, modify `local_runner/spiderweb.py`
+**How:** `local_runner/historical_scorer.py`
+1. Loads Phase 1 results + 5yr OHLCV cache + example data
+2. Computes base signal mask: Phase 1 conditions × all tickers × all bars
+3. Pre-computes example ranges for ~2,000 candidate expressions
+4. Pre-computes ALL candidate boolean masks per signal-bearing ticker (one-time, ~2-5 min)
+5. Greedy rounds: score all candidates via numpy AND (sub-second/round), add best eliminator
+6. Stops when avg signals/day < target (default 10)
+**Performance:** Precompute = O(tickers × candidates × bars) done once. Rounds = pure vectorized numpy.
+**Usage:** `python local_runner/historical_scorer.py --setup dtss --target 10`
+**Requires:** Phase 1 grinder results + 5yr OHLCV cache (Step 1)
 **Key constraint:** 100% of setup examples must ALWAYS pass all conditions. Zero false negatives.
 
 ### Step 5: Backtest Runner Integration ⬜
