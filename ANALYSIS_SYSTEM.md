@@ -73,7 +73,7 @@ The spiderweb search then explores branching combinations of conditions:
 
 ### Phase 2: Pyramidal Grinder (nested time horizon noise elimination)
 
-**⬜ REPLACING** the old Phase 2 flat historical scorer (which took 20+ min and targeted average signals/day, missing peak spikes of 260/day).
+**✅ BUILT** — `local_runner/pyramid_grinder.py`
 
 The pyramid progressively widens the historical window, each tier grinding until `peak_signals/day < threshold` before advancing to the next:
 
@@ -110,11 +110,11 @@ The original Phase 2 is still functional at `local_runner/historical_scorer.py` 
 3. Click Start Grind — desktop agent picks up job, runs spiderweb search
 4. Review ceiling — the progression chart shows where adding conditions stops improving
 
-**Phase 2:**
+**Phase 2 (Pyramid):**
 ```bash
-python local_runner/historical_scorer.py --setup dtss --target 10 --max-rounds 20
+python local_runner/pyramid_grinder.py --setup dtss --peak-target 15 --beam 50 --depth 10
 ```
-Requires Phase 1 results (`grinder_results_{setup}.json`) + 5yr cache (`universe_ohlcv_5yr.pkl`).
+Requires 5yr OHLCV cache + Railway API for examples. Runs all 6 tiers sequentially, outputs `pyramid_results_{setup}.json` + `historical_results_{setup}.json` (compatible with `signal_distribution.py`).
 
 ### What the Grinder Produces
 
@@ -145,7 +145,8 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 
 - `local_runner/matrix_builder.py` — Precomputes universe + example matrices. Universe build parallelized via `ProcessPoolExecutor` (8 workers, `MATRIX_WORKERS` env var configurable).
 - `local_runner/spiderweb.py` — Phase 1: beam search tree exploration. Inner loop vectorized with numpy broadcasting + float32 matmul.
-- `local_runner/historical_scorer.py` — Phase 2: greedy historical signal elimination with precomputed numpy masks. Both compute loops use `ProcessPoolExecutor` for true CPU parallelism.
+- `local_runner/pyramid_grinder.py` — Pyramidal grinder: 6 nested tiers (D1 → 1wk → 1mo → 6mo → 1yr → 5yr). D1 uses SpiderwebSearch, historical tiers use PeakSpiderweb (peak-based scoring). Parallel matrix build per tier via ProcessPoolExecutor. Replaces historical_scorer.py.
+- `local_runner/historical_scorer.py` — Legacy Phase 2: greedy historical signal elimination (replaced by pyramid_grinder.py, kept for reference).
 - `local_runner/grinder.py` — CLI interface
 - `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild
 - `local_runner/cache_builder.py` — OHLCV caches: daily (300 bars, 57 MB) + 5yr (1,260 bars, 214 MB)

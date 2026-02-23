@@ -28,8 +28,9 @@
 local_runner/
 ├── agent.py              # Polling agent with nightly auto-rebuild
 ├── grinder.py            # CLI interface
-├── spiderweb.py          # Phase 1: beam search tree exploration
-├── historical_scorer.py  # Phase 2: greedy historical signal elimination
+├── pyramid_grinder.py    # Pyramidal grinder: 6 nested tiers (D1→5yr), peak-based
+├── spiderweb.py          # Phase 1: beam search tree exploration (used by D1 tier)
+├── historical_scorer.py  # Phase 2: greedy historical signal elimination (legacy, replaced by pyramid)
 ├── matrix_builder.py     # Precomputes universe + example matrices
 ├── cache_builder.py      # OHLCV caches (300-bar daily + 1,260-bar 5yr)
 ├── brute_expressions.py  # 2,541 expression generator (generic + per-setup bespoke)
@@ -75,7 +76,7 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 3 Grind (Phase 1) | ✅ Done | 9 conditions, 0.00% single-day pass rate, 11s at L3 |
 | 4 Grind (Phase 2) | ✅ Done | 12 conditions (9 P1 + 3 P2), avg 7.4 signals/day, 20.6 min |
 | 4.7 Signal analysis | ✅ Done | Peak: 260/day (2021-08-11), clustered Jul-Aug 2021. Avg hides massive spikes. |
-| 5 **Pyramid grinder** | **⬜ NEXT** | Replace Phase 1+2 with nested pyramid. Target: peak signals/day < 15 across 5yr. |
+| 5 **Pyramid grinder** | **✅ Built** | `local_runner/pyramid_grinder.py` — 6 nested tiers (D1→5yr), peak-based scoring. Needs desktop testing. |
 | 6 Backtest | Not started | Visual verification of signal charts |
 | 7 Market Context | Not started | |
 | 8 EV Optimize | Not started | |
@@ -132,23 +133,20 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ---
 
-## IMMEDIATE NEXT STEP: Build Pyramidal Grinder
+## IMMEDIATE NEXT STEP: Test Pyramidal Grinder on Desktop
 
-**Problem:** Current Phase 2 achieves avg 7.4/day but peak is 260/day (Jul-Aug 2021 cluster). Takes 20+ min and targets average, not peak.
+**Built:** `local_runner/pyramid_grinder.py` — the full 6-tier pyramid replacing Phase 1+2.
 
-**Solution:** Pyramidal grinder — nested time horizons, each tier grinds until `peak_signals/day < threshold` before advancing:
-1. **D1 (today):** Grind to ceiling (spiderweb on today's snapshot). ~11s. Lock conditions.
-2. **1 week:** Grind until peak/day < threshold. ~10-30s. Lock.
-3. **1 month:** Same. ~30s. Lock.
-4. **6 months → 1 year → 5 years:** Same. ~30s each. Lock.
+**To test:**
+```bash
+python local_runner/pyramid_grinder.py --setup dtss --peak-target 15 --beam 50 --depth 10
+```
 
-Each tier is cheap because the previous one already eliminated the easy noise. Total: ~2 min instead of 28 min. Peak-based guarantee means no single day overwhelms manual review.
+Requires: 5yr cache (`universe_ohlcv_5yr.pkl`) + Railway API for examples. Run on desktop (needs CPU for parallel matrix builds).
 
-**Key:** Same spiderweb code, just different matrix construction per tier. Scoring metric = max(daily_counts) instead of sum.
+**After testing:** Run `scripts/signal_distribution.py --setup dtss` to verify peak/avg across full 5yr history. Output is compatible (writes `historical_results_dtss.json`).
 
-**Analysis tools:**
-- Signal distribution: `python scripts/signal_distribution.py` (parallel, all cores)
-- Outputs: `cache/signals_daily_dtss.csv`, `cache/signals_dtss.csv`
+**Then:** Expression Library Expansion (Step 5a) to give the pyramid more search space.
 
 ---
 
