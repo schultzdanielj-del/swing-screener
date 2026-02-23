@@ -121,20 +121,40 @@ def get_universe_matrix(progress_fn=None, force=False):
     """
     path = os.path.join(CACHE_DIR, "universe_matrix.pkl")
 
+    def log(msg):
+        print(f"  [matrix] {msg}")
+        if progress_fn:
+            progress_fn("matrix", 5, msg)
+
     # Check cache
     if not force and _universe_matrix_fresh():
-        if progress_fn:
-            progress_fn("matrix", 5, "Loading cached universe matrix...")
+        log("Matrix is fresh — loading from cache...")
         with open(path, "rb") as f:
             data = pickle.load(f)
         # Verify expression count matches
         expressions = _load_expressions()
-        if data.get("n_exprs") == len(expressions):
+        cached_n = data.get("n_exprs")
+        current_n = len(expressions)
+        if cached_n == current_n:
+            log(f"Cache OK: {data['n_universe']} tickers × {current_n} expressions (built {data.get('computed_at', 'unknown')})")
             if progress_fn:
                 progress_fn("matrix", 10, f"Universe matrix cached: {data['n_universe']} tickers")
             return data
-        if progress_fn:
-            progress_fn("matrix", 5, "Expression count changed, rebuilding...")
+        log(f"Expression count changed ({cached_n} → {current_n}) — rebuilding...")
+    elif force:
+        log("Force rebuild requested.")
+    else:
+        # Not fresh — log why
+        if not os.path.exists(path):
+            log("No matrix cache found — building from scratch...")
+        else:
+            try:
+                with open(path, "rb") as f:
+                    data = pickle.load(f)
+                built = data.get("computed_at", "unknown")
+                log(f"Matrix stale (built {built}, ET date mismatch) — rebuilding...")
+            except:
+                log("Matrix cache unreadable — rebuilding...")
 
     # Build from scratch
     expressions = _load_expressions()
