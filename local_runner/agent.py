@@ -173,11 +173,50 @@ def handle_job(job):
             post_progress(job_id, "search", pct,
                           f"Level {search_level}: {best_rate:.2%} | {nodes:,} nodes | {elapsed:.0f}s")
 
+        # Align matrices to shared expressions (example matrix may have bespoke
+        # setup-specific columns that the universe matrix doesn't have)
+        ex_names = ex.get("expr_names") or uni["expr_names"]  # fallback
+        uni_names = uni["expr_names"]
+        ex_mat = ex["example_matrix"]
+        uni_mat = uni["universe_matrix"]
+
+        if ex_mat.shape[1] != uni_mat.shape[1]:
+            # Build index of shared expression names
+            uni_name_idx = {n: i for i, n in enumerate(uni_names)}
+            # Load full DTSS expression list to get example column names
+            import json, os
+            ex_expr_path = os.path.join(os.path.dirname(__file__), "cache",
+                                        f"{setup_type}_expressions.json")
+            if os.path.exists(ex_expr_path):
+                with open(ex_expr_path) as f:
+                    all_ex_names = [e["name"] for e in json.load(f)["expressions"]]
+            else:
+                all_ex_names = uni_names  # fallback
+
+            shared_uni_cols = []
+            shared_ex_cols = []
+            shared_names = []
+            shared_cats = []
+            for ex_col, name in enumerate(all_ex_names):
+                if name in uni_name_idx:
+                    shared_uni_cols.append(uni_name_idx[name])
+                    shared_ex_cols.append(ex_col)
+                    shared_names.append(name)
+                    shared_cats.append(uni["expr_categories"][uni_name_idx[name]])
+
+            ex_mat = ex_mat[:, shared_ex_cols]
+            uni_mat = uni_mat[:, shared_uni_cols]
+            print(f"    [agent] Aligned matrices: {len(shared_names)} shared expressions "
+                  f"(example had {ex['example_matrix'].shape[1]}, universe has {len(uni_names)})")
+        else:
+            shared_names = uni_names
+            shared_cats = uni["expr_categories"]
+
         search = SpiderwebSearch(
-            example_values=ex["example_matrix"],
-            universe_values=uni["universe_matrix"],
-            expr_names=uni["expr_names"],
-            expr_categories=uni["expr_categories"],
+            example_values=ex_mat,
+            universe_values=uni_mat,
+            expr_names=shared_names,
+            expr_categories=shared_cats,
             universe_tickers=uni["universe_tickers"],
         )
 
