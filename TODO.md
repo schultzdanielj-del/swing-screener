@@ -72,8 +72,8 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 |------|--------|-------|
 | 1 Load | ✅ Done | Data + TA knowledge loaded |
 | 2 Receive | ✅ Done | 26 examples with LSP data |
-| 3 Grind (Phase 1) | ✅ Done | Spiderweb finds 0.07% ceiling (3 tickers today, but 340/day historically) |
-| 4 Grind (Phase 2) | **→ READY TO RUN** | Historical scorer code complete, 5yr cache built. Needs execution. |
+| 3 Grind (Phase 1) | **⚠️ BLOCKED** | Matrix builds OK (2,541 exprs) but crashes on bespoke LSP mismatch. Must strip bespoke first. |
+| 4 Grind (Phase 2) | ⬜ Waiting | Historical scorer code complete, 5yr cache built. Needs fresh Phase 1 results. |
 | 5 Collaborate | Not started | Take grinder ceiling, add discretionary/qualitative conditions |
 | 6 Backtest | Not started | Run full conditions across history, review signal charts |
 | 7 Market Context | Not started | |
@@ -111,6 +111,26 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 - Greedy forward selection with precomputed numpy masks
 - Requires: Phase 1 grinder results + 5yr OHLCV cache
 - Output: `local_runner/cache/historical_results_{setup}.json`
+
+---
+
+## IMMEDIATE NEXT STEP: Strip Bespoke System
+
+**What:** Remove ALL bespoke/LSP-specific code from the grinder pipeline. The system should be 100% generic — same expressions for all setups.
+
+**Why:** Bespoke LSP expressions (19 DTSS-specific) make the example matrix wider than the universe matrix, crashing the spiderweb. More importantly, the Phase 2 historical scorer makes bespoke unnecessary — it grinds the full generic library against 5yr history to find setup-specific discrimination. No hand-crafted expressions needed.
+
+**Files to modify:**
+- `local_runner/matrix_builder.py` — Remove DTSS branch in `_load_expressions()`, remove `lsp_context` injection in `get_example_matrix()`, remove `get_bespoke_candidate_matrix()` function entirely
+- `local_runner/brute_expressions.py` — Remove `generate_dtss_lsp_expressions()` and `generate_dtss()` functions (keep `generate_all()`)
+- `local_runner/grinder.py` — Remove bespoke post-filter logic from results output
+- `scripts/expression_engine.py` — Can keep LSP ops in engine (no harm), just nothing calls them
+- Delete `local_runner/cache/dtss_expressions.json` if present
+
+**After stripping:**
+1. `python local_runner/grinder.py --setup dtss --level 3` should work cleanly
+2. Example matrix and universe matrix both have exactly 2,541 columns
+3. Phase 1 produces results → Phase 2 grinds historical noise → done
 
 ---
 
