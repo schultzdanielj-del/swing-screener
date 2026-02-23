@@ -510,52 +510,33 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
                 beam_width=50, depth=10):
     """Run D1 tier using the classic spiderweb on today's snapshot.
 
+    Uses cached universe matrix from matrix_builder (same expressions, same last bar).
     Returns list of condition dicts with {name, category, compute, low, high}.
     """
     from spiderweb import SpiderwebSearch
+    from matrix_builder import get_universe_matrix
 
-    # Build universe matrix: each ticker at last bar
-    tickers = list(universe_cache.keys())
-    n_expr = len(expressions)
-    expr_names = [e["name"] for e in expressions]
-    expr_categories = [e.get("category", "unknown") for e in expressions]
-
-    print(f"\n  ═══ D1: Building last-bar matrix ({len(tickers)} tickers × {n_expr} expressions) ═══")
+    print(f"\n  ═══ D1: Loading universe matrix (cached if fresh) ═══")
     t0 = time.time()
 
-    uni_matrix = np.full((len(tickers), n_expr), np.nan)
-    ticker_to_idx = {t: i for i, t in enumerate(tickers)}
-    valid_tickers = [t for t in tickers
-                     if universe_cache.get(t) is not None and len(universe_cache[t]) >= 50]
+    uni_data = get_universe_matrix()
+    uni_matrix = uni_data["universe_matrix"]
+    tickers = uni_data["universe_tickers"]
+    expr_names = uni_data["expr_names"]
+    expr_categories = uni_data["expr_categories"]
 
-    # Use existing matrix_builder parallel infrastructure
-    from matrix_builder import _init_worker, _compute_ticker_batch
-    n_workers = max(cpu_count() - 1, 1)
-    batch_size = max(len(valid_tickers) // (n_workers * 4), 50)
-    batches = [valid_tickers[i:i+batch_size]
-               for i in range(0, len(valid_tickers), batch_size)]
+    # Verify expressions match
+    expected_names = [e["name"] for e in expressions]
+    if expr_names != expected_names:
+        print(f"  ⚠ Expression mismatch — cached {len(expr_names)} vs current {len(expected_names)}")
+        print(f"  Forcing matrix rebuild...")
+        uni_data = get_universe_matrix(force=True)
+        uni_matrix = uni_data["universe_matrix"]
+        tickers = uni_data["universe_tickers"]
+        expr_names = uni_data["expr_names"]
+        expr_categories = uni_data["expr_categories"]
 
-    print(f"  {n_workers} workers, {len(batches)} batches of ~{batch_size}")
-
-    with ProcessPoolExecutor(
-        max_workers=n_workers,
-        initializer=_init_worker,
-        initargs=(expressions, universe_cache)
-    ) as pool:
-        futures = {pool.submit(_compute_ticker_batch, batch): batch for batch in batches}
-        completed = 0
-        for future in as_completed(futures):
-            batch_results = future.result()
-            for ticker, vals in batch_results:
-                if vals is not None:
-                    uni_matrix[ticker_to_idx[ticker]] = vals
-            completed += 1
-            if completed % max(len(batches) // 3, 1) == 0 or completed == len(batches):
-                elapsed = time.time() - t0
-                done_t = min(completed * batch_size, len(valid_tickers))
-                print(f"    {done_t}/{len(valid_tickers)} tickers [{elapsed:.0f}s]")
-
-    print(f"  D1 matrix built in {time.time()-t0:.0f}s")
+    print(f"  D1 matrix: {len(tickers)} tickers × {len(expr_names)} expressions ({time.time()-t0:.1f}s)")
 
     # Run spiderweb
     search = SpiderwebSearch(
