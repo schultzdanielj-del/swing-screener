@@ -69,27 +69,27 @@ def _load_ohlcv_cache():
 
 
 _worker_expressions = None
+_worker_cache = None
 
-def _init_worker(expressions):
-    """Initialize worker process with shared expression list."""
-    global _worker_expressions
+def _init_worker(expressions, cache_dict):
+    """Initialize worker process with shared expression list and OHLCV cache.
+    Cache is serialized ONCE per worker at startup, not per task."""
+    global _worker_expressions, _worker_cache
     _worker_expressions = expressions
+    _worker_cache = cache_dict
 
 
-def _compute_ticker_worker(args):
-    """Worker function for parallel universe matrix build.
-    Must be top-level for pickling across processes."""
-    o_arr, h_arr, l_arr, c_arr, v_arr, target_idx, ticker = args
-    global _worker_expressions
+def _compute_ticker_worker_single(ticker):
+    """Worker function for single ticker (used inside batch)."""
+    global _worker_expressions, _worker_cache
     expressions = _worker_expressions
+    df = _worker_cache.get(ticker)
+    if df is None or len(df) < 50:
+        return None
     try:
-        df = pd.DataFrame({
-            "open": o_arr, "high": h_arr, "low": l_arr,
-            "close": c_arr, "volume": v_arr
-        })
         from scripts.expression_engine import ExpressionEngine
         engine = ExpressionEngine(df)
-        engine.set_target(target_idx)
+        engine.set_target(len(df) - 1)
         values = np.full(len(expressions), np.nan)
         for j, expr in enumerate(expressions):
             try:
@@ -101,6 +101,15 @@ def _compute_ticker_worker(args):
         return values
     except:
         return np.full(len(expressions), np.nan)
+
+
+def _compute_ticker_batch(ticker_list):
+    """Process a batch of tickers. Returns list of (ticker, values) tuples."""
+    results = []
+    for ticker in ticker_list:
+        vals = _compute_ticker_worker_single(ticker)
+        results.append((ticker, vals))
+    return results
 
 
 def _compute_ticker_values(df, target_idx, expressions):
@@ -212,72 +221,72 @@ def get_universe_matrix(progress_fn=None, force=False):
 
     t0 = time.time()
 
-    # Parallel build — 8 workers for i5-12600K (10 cores, leave 2 for OS)
+    # Parallel build — use all cores minus 1 for OS headroom
     # Set MATRIX_WORKERS=1 to disable parallelism for debugging
-    n_workers = int(os.environ.get("MATRIX_WORKERS", 8))
+    from multiprocessing import cpu_count as _cpu_count
+    n_workers = int(os.environ.get("MATRIX_WORKERS", max(_cpu_count() - 1, 1)))
 
-    # Prepare work items — send numpy arrays for fast pickling/reconstruct
-    work_items = []
-    valid_indices = []
-    for i, ticker in enumerate(uni_tickers):
-        df = universe_cache[ticker]
-        if df is None or len(df) < 50:
-            continue
-        # Pack as numpy arrays — 79% smaller pickle, 8x faster reconstruct
-        work_items.append((
-            df["open"].values, df["high"].values, df["low"].values,
-            df["close"].values, df["volume"].values,
-            len(df) - 1, ticker
-        ))
-        valid_indices.append(i)
+    # Build ticker index for mapping results back
+    ticker_to_idx = {t: i for i, t in enumerate(uni_tickers)}
+    valid_tickers = [t for t in uni_tickers 
+                     if universe_cache.get(t) is not None and len(universe_cache[t]) >= 50]
 
-    print(f"    {'Parallel' if n_workers > 1 else 'Sequential'} build: {len(work_items)} tickers × {len(expressions)} expressions"
+    print(f"    {'Parallel' if n_workers > 1 else 'Sequential'} build: {len(valid_tickers)} tickers × {len(expressions)} expressions"
           + (f", {n_workers} workers" if n_workers > 1 else ""))
 
     completed = 0
 
     if n_workers <= 1:
         # Sequential fallback
-        global _worker_expressions
+        global _worker_expressions, _worker_cache
         _worker_expressions = expressions
-        for item, matrix_idx in zip(work_items, valid_indices):
-            universe_matrix[matrix_idx] = _compute_ticker_worker(item)
+        _worker_cache = universe_cache
+        for ticker in valid_tickers:
+            vals = _compute_ticker_worker_single(ticker)
+            if vals is not None:
+                universe_matrix[ticker_to_idx[ticker]] = vals
             completed += 1
-            if completed % 100 == 0 or completed == len(work_items):
+            if completed % 100 == 0 or completed == len(valid_tickers):
                 elapsed = time.time() - t0
                 rate = completed / elapsed if elapsed > 0 else 0
-                eta = (len(work_items) - completed) / rate if rate > 0 else 0
-                pct = 10 + int(85 * completed / len(work_items))
-                msg = f"Universe: {completed}/{len(work_items)} ({completed/len(work_items)*100:.0f}%) [{elapsed:.0f}s, ~{eta:.0f}s left]"
+                eta = (len(valid_tickers) - completed) / rate if rate > 0 else 0
+                pct = 10 + int(85 * completed / len(valid_tickers))
+                msg = f"Universe: {completed}/{len(valid_tickers)} ({completed/len(valid_tickers)*100:.0f}%) [{elapsed:.0f}s, ~{eta:.0f}s left]"
                 print(f"    {msg}")
                 if progress_fn:
                     progress_fn("matrix", pct, msg)
     else:
         from concurrent.futures import ProcessPoolExecutor, as_completed
-        import multiprocessing
 
-        # Use spawn to avoid fork issues with pandas
-        ctx = multiprocessing.get_context("spawn")
+        # Batch tickers — cache serialized once per worker via initializer
+        batch_size = max(len(valid_tickers) // (n_workers * 4), 50)
+        batches = [valid_tickers[i:i+batch_size] for i in range(0, len(valid_tickers), batch_size)]
 
-        with ProcessPoolExecutor(max_workers=n_workers, mp_context=ctx,
-                                 initializer=_init_worker, initargs=(expressions,)) as executor:
-            futures = {executor.submit(_compute_ticker_worker, item): idx
-                       for item, idx in zip(work_items, valid_indices)}
+        print(f"    {len(batches)} batches of ~{batch_size} tickers")
+
+        with ProcessPoolExecutor(max_workers=n_workers,
+                                 initializer=_init_worker, 
+                                 initargs=(expressions, universe_cache)) as executor:
+            futures = {executor.submit(_compute_ticker_batch, batch): batch 
+                       for batch in batches}
 
             for future in as_completed(futures):
-                matrix_idx = futures[future]
                 try:
-                    universe_matrix[matrix_idx] = future.result()
+                    batch_results = future.result()
+                    for ticker, vals in batch_results:
+                        if vals is not None:
+                            universe_matrix[ticker_to_idx[ticker]] = vals
                 except Exception as e:
                     pass  # leave as NaN
 
                 completed += 1
-                if completed % 200 == 0 or completed == len(work_items):
+                done_tickers = completed * batch_size
+                if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
                     elapsed = time.time() - t0
-                    rate = completed / elapsed if elapsed > 0 else 0
-                    eta = (len(work_items) - completed) / rate if rate > 0 else 0
-                    pct = 10 + int(85 * completed / len(work_items))
-                    msg = f"Universe: {completed}/{len(work_items)} ({completed/len(work_items)*100:.0f}%) [{elapsed:.0f}s, ~{eta:.0f}s left]"
+                    rate = done_tickers / elapsed if elapsed > 0 else 0
+                    eta = (len(valid_tickers) - done_tickers) / rate if rate > 0 else 0
+                    pct = 10 + int(85 * min(done_tickers, len(valid_tickers)) / len(valid_tickers))
+                    msg = f"Universe: ~{min(done_tickers, len(valid_tickers))}/{len(valid_tickers)} ({min(done_tickers, len(valid_tickers))/len(valid_tickers)*100:.0f}%) [{elapsed:.0f}s, ~{max(eta,0):.0f}s left]"
                     print(f"    {msg}")
                     if progress_fn:
                         progress_fn("matrix", pct, msg)

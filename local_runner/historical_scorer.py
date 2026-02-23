@@ -147,7 +147,9 @@ def load_example_data(setup_type):
 # PARALLEL WORKER FUNCTIONS (must be top-level for pickling)
 # ══════════════════════════════════════════════════════════════
 
-# Module-level shared state for workers (set by initializer)
+# Module-level shared state for workers (set by initializer — serialized ONCE
+# per worker process at startup, NOT per task)
+_worker_cache = None
 _worker_conditions = None
 _worker_valid_candidates = None
 _worker_candidate_ranges = None
@@ -155,69 +157,82 @@ _worker_n_cands = None
 _worker_min_bars = None
 
 
-def _init_base_worker(conditions, min_bars):
-    """Initializer for base signal workers."""
-    global _worker_conditions, _worker_min_bars
+def _init_base_worker(cache_dict, conditions, min_bars):
+    """Initializer for base signal workers. Cache serialized once per worker."""
+    global _worker_cache, _worker_conditions, _worker_min_bars
+    _worker_cache = cache_dict
     _worker_conditions = conditions
     _worker_min_bars = min_bars
 
 
-def _base_signal_worker(args):
-    """Process one ticker for base signal computation."""
-    ticker, df = args
-    if df is None or len(df) < _worker_min_bars:
-        return ticker, None, 0, True
-    try:
-        engine = ExpressionEngine(df)
-        n_bars = len(df)
-        pass_mask = np.ones(n_bars, dtype=bool)
-        pass_mask[:50] = False
-        
-        for cond in _worker_conditions:
-            series = compute_series(engine, cond["compute"])
-            low, high = cond["low"], cond["high"]
-            in_range = (series >= low) & (series <= high)
-            in_range[np.isnan(series)] = False
-            pass_mask &= in_range
-        
-        sig_count = int(np.sum(pass_mask))
-        return ticker, pass_mask if sig_count > 0 else None, n_bars - 50, False
-    except:
-        return ticker, None, 0, True
+def _base_signal_batch(ticker_names):
+    """Process a BATCH of tickers for base signal computation.
+    Workers look up DataFrames from their local cache copy — no per-task pickling."""
+    results = []
+    for ticker in ticker_names:
+        df = _worker_cache.get(ticker)
+        if df is None or len(df) < _worker_min_bars:
+            results.append((ticker, None, 0, True))
+            continue
+        try:
+            engine = ExpressionEngine(df)
+            n_bars = len(df)
+            pass_mask = np.ones(n_bars, dtype=bool)
+            pass_mask[:50] = False
+            
+            for cond in _worker_conditions:
+                series = compute_series(engine, cond["compute"])
+                low, high = cond["low"], cond["high"]
+                in_range = (series >= low) & (series <= high)
+                in_range[np.isnan(series)] = False
+                pass_mask &= in_range
+            
+            sig_count = int(np.sum(pass_mask))
+            results.append((ticker, pass_mask if sig_count > 0 else None, n_bars - 50, False))
+        except:
+            results.append((ticker, None, 0, True))
+    return results
 
 
-def _init_precompute_worker(valid_candidates, candidate_ranges, n_cands):
-    """Initializer for candidate precompute workers."""
-    global _worker_valid_candidates, _worker_candidate_ranges, _worker_n_cands
+def _init_precompute_worker(cache_dict, valid_candidates, candidate_ranges, n_cands):
+    """Initializer for candidate precompute workers. Cache serialized once per worker."""
+    global _worker_cache, _worker_valid_candidates, _worker_candidate_ranges, _worker_n_cands
+    _worker_cache = cache_dict
     _worker_valid_candidates = valid_candidates
     _worker_candidate_ranges = candidate_ranges
     _worker_n_cands = n_cands
 
 
-def _precompute_ticker_worker(args):
-    """Process one ticker for candidate precomputation."""
-    ticker, df = args
-    if df is None:
-        return ticker, None
-    n_bars = len(df)
-    try:
-        engine = ExpressionEngine(df)
-    except:
-        return ticker, None
-    
-    masks = np.zeros((_worker_n_cands, n_bars), dtype=bool)
-    for cidx, expr in enumerate(_worker_valid_candidates):
+def _precompute_ticker_batch(ticker_names):
+    """Process a BATCH of tickers for candidate precomputation.
+    Workers look up DataFrames from their local cache copy."""
+    results = []
+    for ticker in ticker_names:
+        df = _worker_cache.get(ticker)
+        if df is None:
+            results.append((ticker, None))
+            continue
+        n_bars = len(df)
         try:
-            series = compute_series(engine, expr["compute"])
-            if series is None or len(series) != n_bars:
-                continue
-            low, high = _worker_candidate_ranges[expr["name"]]
-            in_range = (series >= low) & (series <= high)
-            in_range[np.isnan(series)] = False
-            masks[cidx] = in_range
+            engine = ExpressionEngine(df)
         except:
-            pass
-    return ticker, masks
+            results.append((ticker, None))
+            continue
+        
+        masks = np.zeros((_worker_n_cands, n_bars), dtype=bool)
+        for cidx, expr in enumerate(_worker_valid_candidates):
+            try:
+                series = compute_series(engine, expr["compute"])
+                if series is None or len(series) != n_bars:
+                    continue
+                low, high = _worker_candidate_ranges[expr["name"]]
+                in_range = (series >= low) & (series <= high)
+                in_range[np.isnan(series)] = False
+                masks[cidx] = in_range
+            except:
+                pass
+        results.append((ticker, masks))
+    return results
 
 
 # ══════════════════════════════════════════════════════════════
@@ -228,7 +243,7 @@ def compute_base_signals(universe_cache, conditions, min_bars=100):
     """
     Run Phase 1 conditions across ALL tickers × ALL bars.
     Returns dict of {ticker: boolean_array} where True = signal.
-    Uses ProcessPoolExecutor for true parallelism.
+    Uses ProcessPoolExecutor with cache-via-initializer for minimal serialization.
     """
     print(f"\n  Computing base signal mask ({len(conditions)} conditions × "
           f"{len(universe_cache)} tickers)...")
@@ -238,33 +253,41 @@ def compute_base_signals(universe_cache, conditions, min_bars=100):
     total_signals = 0
     total_bars = 0
     skipped = 0
-    completed = 0
     
-    n_workers = min(cpu_count(), 8)
-    work_items = list(universe_cache.items())
+    n_workers = max(cpu_count() - 1, 1)
+    all_tickers = list(universe_cache.keys())
+    
+    # Split tickers into batches — one batch per worker per round
+    # ~500 tickers per batch keeps workers busy without too much result overhead
+    batch_size = max(len(all_tickers) // (n_workers * 4), 50)
+    batches = [all_tickers[i:i+batch_size] for i in range(0, len(all_tickers), batch_size)]
+    
+    print(f"    {n_workers} workers, {len(batches)} batches of ~{batch_size} tickers")
     
     with ProcessPoolExecutor(
         max_workers=n_workers,
         initializer=_init_base_worker,
-        initargs=(conditions, min_bars)
+        initargs=(universe_cache, conditions, min_bars)
     ) as pool:
-        futures = {pool.submit(_base_signal_worker, item): item[0] 
-                   for item in work_items}
+        futures = {pool.submit(_base_signal_batch, batch): batch for batch in batches}
+        completed_batches = 0
         for future in as_completed(futures):
-            ticker, mask, bars, was_skipped = future.result()
-            if was_skipped:
-                skipped += 1
-            else:
-                total_bars += bars
-                if mask is not None:
-                    signals[ticker] = mask
-                    total_signals += int(np.sum(mask))
-            completed += 1
-            if completed % 500 == 0:
+            batch_results = future.result()
+            for ticker, mask, bars, was_skipped in batch_results:
+                if was_skipped:
+                    skipped += 1
+                else:
+                    total_bars += bars
+                    if mask is not None:
+                        signals[ticker] = mask
+                        total_signals += int(np.sum(mask))
+            completed_batches += 1
+            completed_tickers = completed_batches * batch_size
+            if completed_batches % max(len(batches) // 5, 1) == 0 or completed_batches == len(batches):
                 elapsed = time.time() - t0
-                rate = completed / elapsed
-                eta = (len(universe_cache) - completed) / rate
-                print(f"    {completed}/{len(universe_cache)} tickers "
+                rate = completed_tickers / elapsed if elapsed > 0 else 0
+                eta = (len(all_tickers) - completed_tickers) / rate if rate > 0 else 0
+                print(f"    ~{min(completed_tickers, len(all_tickers))}/{len(all_tickers)} tickers "
                       f"[{elapsed:.0f}s, ~{eta:.0f}s left, "
                       f"{total_signals:,} signals so far] ({n_workers} workers)")
     
@@ -400,28 +423,34 @@ def score_candidates(universe_cache, base_signals, example_dfs,
     candidate_idx = {name: i for i, name in enumerate(candidate_names)}
     n_cands = len(valid_candidates)
     
-    # Use ProcessPoolExecutor for true parallelism
-    n_workers = min(cpu_count(), 8)
-    work_items = [(t, universe_cache[t]) for t in signal_tickers]
-    completed = 0
+    # Use ProcessPoolExecutor with cache-via-initializer
+    n_workers = max(cpu_count() - 1, 1)
+    
+    # Batch tickers for submission — cache serialized once per worker at init
+    batch_size = max(len(signal_tickers) // (n_workers * 4), 20)
+    batches = [signal_tickers[i:i+batch_size] for i in range(0, len(signal_tickers), batch_size)]
+    completed_batches = 0
+    
+    print(f"    {n_workers} workers, {len(batches)} batches of ~{batch_size} tickers")
     
     with ProcessPoolExecutor(
         max_workers=n_workers,
         initializer=_init_precompute_worker,
-        initargs=(valid_candidates, candidate_ranges, n_cands)
+        initargs=(universe_cache, valid_candidates, candidate_ranges, n_cands)
     ) as pool:
-        futures = {pool.submit(_precompute_ticker_worker, item): item[0] 
-                   for item in work_items}
+        futures = {pool.submit(_precompute_ticker_batch, batch): batch for batch in batches}
         for future in as_completed(futures):
-            ticker, masks = future.result()
-            if masks is not None:
-                ticker_candidate_masks[ticker] = masks
-            completed += 1
-            if completed % 200 == 0 or completed == len(signal_tickers):
+            batch_results = future.result()
+            for ticker, masks in batch_results:
+                if masks is not None:
+                    ticker_candidate_masks[ticker] = masks
+            completed_batches += 1
+            completed_tickers = completed_batches * batch_size
+            if completed_batches % max(len(batches) // 5, 1) == 0 or completed_batches == len(batches):
                 elapsed = time.time() - t_pre
-                rate = completed / elapsed
-                eta = (len(signal_tickers) - completed) / rate
-                print(f"    {completed}/{len(signal_tickers)} tickers precomputed "
+                rate = completed_tickers / elapsed if elapsed > 0 else 0
+                eta = (len(signal_tickers) - completed_tickers) / rate if rate > 0 else 0
+                print(f"    ~{min(completed_tickers, len(signal_tickers))}/{len(signal_tickers)} tickers precomputed "
                       f"[{elapsed:.0f}s, ~{eta:.0f}s left] ({n_workers} workers)")
     
     print(f"  Precomputation done in {time.time()-t_pre:.0f}s")
