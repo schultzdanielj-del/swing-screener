@@ -156,6 +156,21 @@ def main():
             ticker_str += f" +{len(tickers)-8} more"
         print(f"    {i+1:3d}. {d}  {daily_counts[d]:>3} signals  [{ticker_str}]")
 
+    # Save all signals to CSV
+    signals_path = os.path.join(CACHE_DIR, f"signals_{args.setup}.csv")
+    rows = []
+    for d in sorted(daily_tickers.keys()):
+        for ticker in daily_tickers[d]:
+            rows.append({"date": d, "ticker": ticker})
+    pd.DataFrame(rows).to_csv(signals_path, index=False)
+    print(f"\n  Saved {len(rows):,} signals to {signals_path}")
+
+    # Save daily counts to CSV for graphing
+    daily_path = os.path.join(CACHE_DIR, f"signals_daily_{args.setup}.csv")
+    daily_rows = [{"date": d, "count": daily_counts[d]} for d in sorted(daily_counts.keys())]
+    pd.DataFrame(daily_rows).to_csv(daily_path, index=False)
+    print(f"  Saved daily counts to {daily_path}")
+
 
 if __name__ == "__main__":
     main()
