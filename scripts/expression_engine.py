@@ -953,6 +953,110 @@ class ExpressionEngine:
                 result = true_in_row(b, comp["period"])
                 return result.iloc[i]
 
+            # ── NEW OPS (Step 3 expansion) ──
+
+            elif op == "distance_to_minl":
+                price_ref = comp["price_ref"]
+                price = self.c if price_ref == "C" else self.l
+                minl = self._minl(comp["minl_period"]).shift(1)
+                norm = self._normalizer(comp["normalizer"])
+                return float((price.iloc[i] - minl.iloc[i]) / norm) if norm != 0 else np.nan
+
+            elif op == "ratio_c_minl":
+                minl = self._minl(comp["minl_period"]).shift(1)
+                v = minl.iloc[i]
+                return float(self.c.iloc[i] / v) if v != 0 else np.nan
+
+            elif op == "percentile_rank":
+                source = comp["source"]
+                period = comp["period"]
+                if source == "close":
+                    s = self.c
+                elif source == "volume":
+                    s = self.v
+                elif source == "range":
+                    s = self.h - self.l
+                elif source == "atr14":
+                    s = self._atr(14)
+                elif source == "rsi14":
+                    s = self._rsi(14)
+                else:
+                    s = self.c
+                # Percentile rank: % of values in lookback that are <= current
+                val = s.iloc[i]
+                window = s.iloc[max(0, i - period + 1):i + 1]
+                if len(window) < 2:
+                    return np.nan
+                return float((window <= val).sum() / len(window) * 100)
+
+            elif op == "spread_slope":
+                fast = self._ma(comp["ma_fast"])
+                slow = self._ma(comp["ma_slow"])
+                norm = self._normalizer(comp["normalizer"])
+                spread = (fast - slow) / norm if norm != 0 else fast - slow
+                offset = comp["offset"]
+                if i < offset:
+                    return np.nan
+                return float(spread.iloc[i] - spread.iloc[i - offset])
+
+            elif op == "rvol_continuous":
+                period = comp["period"]
+                avg_period = comp["avg_period"]
+                # Average of (volume / avg_volume) over last N bars
+                avg_vol = self.v.rolling(avg_period, min_periods=avg_period // 2).mean()
+                rvol = self.v / avg_vol.replace(0, np.nan)
+                return float(rvol.rolling(period, min_periods=1).mean().iloc[i])
+
+            elif op == "cumulative_rvol":
+                period = comp["period"]
+                avg_period = comp["avg_period"]
+                avg_vol = self.v.rolling(avg_period, min_periods=avg_period // 2).mean()
+                rvol = self.v / avg_vol.replace(0, np.nan)
+                return float(rvol.rolling(period, min_periods=1).sum().iloc[i])
+
+            elif op == "slope_ratio":
+                fast_ma = self._ma(comp["fast_ma"])
+                slow_ma = self._ma(comp["slow_ma"])
+                offset = comp["offset"]
+                if i < offset:
+                    return np.nan
+                fast_slope = fast_ma.iloc[i] - fast_ma.iloc[i - offset]
+                slow_slope = slow_ma.iloc[i] - slow_ma.iloc[i - offset]
+                if slow_slope == 0:
+                    return np.nan
+                return float(fast_slope / slow_slope)
+
+            elif op == "retrace_high":
+                p = comp["period"]
+                maxh = self._maxh(p)
+                minl = self._minl(p)
+                rng = maxh - minl
+                v = rng.iloc[i]
+                if v == 0:
+                    return np.nan
+                return float((self.h.iloc[i] - minl.iloc[i]) / v)
+
+            elif op == "retrace_low":
+                p = comp["period"]
+                maxh = self._maxh(p)
+                minl = self._minl(p)
+                rng = maxh - minl
+                v = rng.iloc[i]
+                if v == 0:
+                    return np.nan
+                return float((self.l.iloc[i] - minl.iloc[i]) / v)
+
+            elif op == "vwap_slope":
+                p = comp["period"]
+                offset = comp["offset"]
+                norm = self._normalizer(comp["normalizer"])
+                tp = (self.h + self.l + self.c) / 3
+                vwap = (tp * self.v).rolling(p, min_periods=1).sum() / \
+                       self.v.rolling(p, min_periods=1).sum().replace(0, np.nan)
+                if i < offset:
+                    return np.nan
+                return float((vwap.iloc[i] - vwap.iloc[i - offset]) / norm) if norm != 0 else np.nan
+
             else:
                 raise ValueError(f"Unknown op: {op}")
 

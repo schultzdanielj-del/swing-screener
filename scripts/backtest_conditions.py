@@ -216,7 +216,95 @@ def compute_series(engine, comp):
         above = (fast > slow).astype(int)
         cross = above.diff().abs()
         return cross.rolling(comp["period"], min_periods=1).sum().values
-    
+
+    # ── NEW OPS (Step 3 expansion) ──
+
+    elif op == "distance_to_minl":
+        price_ref = comp["price_ref"]
+        price = engine.c if price_ref == "C" else engine.l
+        minl = engine._minl(comp["minl_period"]).shift(1)
+        norm = _get_normalizer(engine, comp["normalizer"])
+        return ((price - minl) / norm).values
+
+    elif op == "ratio_c_minl":
+        minl = engine._minl(comp["minl_period"]).shift(1)
+        return (engine.c / minl.replace(0, np.nan)).values
+
+    elif op == "percentile_rank":
+        source = comp["source"]
+        period = comp["period"]
+        if source == "close":
+            s = engine.c
+        elif source == "volume":
+            s = engine.v
+        elif source == "range":
+            s = engine.h - engine.l
+        elif source == "atr14":
+            s = engine._atr(14)
+        elif source == "rsi14":
+            s = engine._rsi(14)
+        else:
+            s = engine.c
+        # Vectorized percentile rank via rolling
+        def pct_rank(window):
+            if len(window) < 2:
+                return np.nan
+            return (window <= window.iloc[-1]).sum() / len(window) * 100
+        return s.rolling(period, min_periods=2).apply(pct_rank, raw=False).values
+
+    elif op == "spread_slope":
+        fast = engine._ma(comp["ma_fast"])
+        slow = engine._ma(comp["ma_slow"])
+        norm = _get_normalizer(engine, comp["normalizer"])
+        spread = (fast - slow) / norm
+        offset = comp["offset"]
+        return (spread - spread.shift(offset)).values
+
+    elif op == "rvol_continuous":
+        period = comp["period"]
+        avg_period = comp["avg_period"]
+        avg_vol = engine.v.rolling(avg_period, min_periods=avg_period // 2).mean()
+        rvol = engine.v / avg_vol.replace(0, np.nan)
+        return rvol.rolling(period, min_periods=1).mean().values
+
+    elif op == "cumulative_rvol":
+        period = comp["period"]
+        avg_period = comp["avg_period"]
+        avg_vol = engine.v.rolling(avg_period, min_periods=avg_period // 2).mean()
+        rvol = engine.v / avg_vol.replace(0, np.nan)
+        return rvol.rolling(period, min_periods=1).sum().values
+
+    elif op == "slope_ratio":
+        fast_ma = engine._ma(comp["fast_ma"])
+        slow_ma = engine._ma(comp["slow_ma"])
+        offset = comp["offset"]
+        fast_slope = fast_ma - fast_ma.shift(offset)
+        slow_slope = slow_ma - slow_ma.shift(offset)
+        return (fast_slope / slow_slope.replace(0, np.nan)).values
+
+    elif op == "retrace_high":
+        p = comp["period"]
+        maxh = engine._maxh(p)
+        minl = engine._minl(p)
+        rng = maxh - minl
+        return ((engine.h - minl) / rng.replace(0, np.nan)).values
+
+    elif op == "retrace_low":
+        p = comp["period"]
+        maxh = engine._maxh(p)
+        minl = engine._minl(p)
+        rng = maxh - minl
+        return ((engine.l - minl) / rng.replace(0, np.nan)).values
+
+    elif op == "vwap_slope":
+        p = comp["period"]
+        offset = comp["offset"]
+        norm = _get_normalizer(engine, comp["normalizer"])
+        tp = (engine.h + engine.l + engine.c) / 3
+        vwap = (tp * engine.v).rolling(p, min_periods=1).sum() / \
+               engine.v.rolling(p, min_periods=1).sum().replace(0, np.nan)
+        return ((vwap - vwap.shift(offset)) / norm).values
+
     else:
         raise ValueError(f"Unsupported op for backtest series: {op}")
 

@@ -588,6 +588,142 @@ def generate_all():
             })
 
     # ═══════════════════════════════════════════════════════
+    # NEAR SUPPORT — Price distance to prior lows (complement to near_resistance)
+    # Critical for DTSS: price pulling back toward support levels
+    # ═══════════════════════════════════════════════════════
+    minl_periods = sorted(set(
+        list(range(5, 65, 5)) + [3, 7, 65, 90, 120]
+    ))
+    for p in minl_periods:
+        for price in ["C", "L"]:
+            for norm in ["atr14", "adr14", "pct"]:
+                exprs.append({
+                    "name": f"ns_{price.lower()}_minl{p}_{norm}",
+                    "category": "near_support",
+                    "compute": {"op": "distance_to_minl", "price_ref": price,
+                                "minl_period": p, "normalizer": norm}
+                })
+        exprs.append({
+            "name": f"ns_ratio_minl{p}",
+            "category": "near_support",
+            "compute": {"op": "ratio_c_minl", "minl_period": p}
+        })
+
+    # ═══════════════════════════════════════════════════════
+    # PERCENTILE RANK — Normalize any metric to 0-100 vs history
+    # "Is this value high/low relative to recent history?"
+    # ═══════════════════════════════════════════════════════
+    for source in ["close", "volume", "range", "atr14", "rsi14"]:
+        for period in [20, 50, 65, 120, 252]:
+            exprs.append({
+                "name": f"pctrank_{source}_{period}",
+                "category": "percentile_rank",
+                "compute": {"op": "percentile_rank", "source": source, "period": period}
+            })
+
+    # ═══════════════════════════════════════════════════════
+    # SPREAD SLOPE — Is MA spread widening or narrowing?
+    # Widening = trend strengthening, Narrowing = convergence/reversal
+    # ═══════════════════════════════════════════════════════
+    spread_slope_pairs = [
+        ("xavgc8", "xavgc21"), ("xavgc8", "xavgc50"),
+        ("xavgc21", "xavgc50"), ("xavgc21", "avgc50"),
+        ("xavgc50", "xavgc200"), ("avgc50", "avgc200"),
+    ]
+    for fast, slow in spread_slope_pairs:
+        for offset in [3, 5, 10, 20]:
+            for norm in ["atr14", "adr14"]:
+                exprs.append({
+                    "name": f"spread_slope_{fast}_{slow}_off{offset}_{norm}",
+                    "category": "spread_slope",
+                    "compute": {"op": "spread_slope", "ma_fast": fast, "ma_slow": slow,
+                                "offset": offset, "normalizer": norm}
+                })
+
+    # ═══════════════════════════════════════════════════════
+    # SLOPE RATIOS — Fast MA slope / Slow MA slope
+    # >1 = fast accelerating vs slow, <0 = diverging directions
+    # ═══════════════════════════════════════════════════════
+    slope_ratio_pairs = [
+        ("xavgc8", "xavgc21"), ("xavgc8", "xavgc50"),
+        ("xavgc21", "xavgc50"), ("xavgc50", "avgc200"),
+    ]
+    for fast, slow in slope_ratio_pairs:
+        for offset in [3, 5, 10]:
+            exprs.append({
+                "name": f"slope_ratio_{fast}_{slow}_off{offset}",
+                "category": "slope_ratio",
+                "compute": {"op": "slope_ratio", "fast_ma": fast, "slow_ma": slow,
+                            "offset": offset}
+            })
+
+    # ═══════════════════════════════════════════════════════
+    # CONTINUOUS RVOL — Rolling average relative volume
+    # Smooth measure of whether volume is building or fading
+    # ═══════════════════════════════════════════════════════
+    for period in [3, 5, 10, 15, 20]:
+        for avg_period in [20, 50]:
+            exprs.append({
+                "name": f"rvol_cont_{period}d_avg{avg_period}",
+                "category": "volume_continuous",
+                "compute": {"op": "rvol_continuous", "period": period,
+                            "avg_period": avg_period}
+            })
+            exprs.append({
+                "name": f"rvol_cum_{period}d_avg{avg_period}",
+                "category": "volume_continuous",
+                "compute": {"op": "cumulative_rvol", "period": period,
+                            "avg_period": avg_period}
+            })
+
+    # ═══════════════════════════════════════════════════════
+    # SEPARATE HIGH/LOW RETRACEMENT — Where are H and L in the range?
+    # Complements range_position (close-based) with high/low precision
+    # ═══════════════════════════════════════════════════════
+    for p in [10, 15, 20, 30, 50, 65, 120]:
+        exprs.append({
+            "name": f"retrace_high_{p}",
+            "category": "retracement",
+            "compute": {"op": "retrace_high", "period": p}
+        })
+        exprs.append({
+            "name": f"retrace_low_{p}",
+            "category": "retracement",
+            "compute": {"op": "retrace_low", "period": p}
+        })
+
+    # ═══════════════════════════════════════════════════════
+    # VWAP SLOPE — Direction of rolling VWAP
+    # ═══════════════════════════════════════════════════════
+    for p in [10, 20, 30, 50]:
+        for offset in [3, 5, 10]:
+            for norm in ["atr14", "adr14"]:
+                exprs.append({
+                    "name": f"vwap_slope_{p}_off{offset}_{norm}",
+                    "category": "vwap",
+                    "compute": {"op": "vwap_slope", "period": p, "offset": offset,
+                                "normalizer": norm}
+                })
+
+    # ═══════════════════════════════════════════════════════
+    # ADDITIONAL MOMENTUM — More stoch/CCI periods + extra RSI
+    # ═══════════════════════════════════════════════════════
+    for p in [3, 7, 10, 28, 50]:
+        if f"stoch_{p}" not in [e["name"] for e in exprs]:
+            exprs.append({
+                "name": f"stoch_{p}",
+                "category": "momentum",
+                "compute": {"op": "stochastic", "period": p}
+            })
+    for p in [5, 7, 50]:
+        if f"cci_{p}" not in [e["name"] for e in exprs]:
+            exprs.append({
+                "name": f"cci_{p}",
+                "category": "momentum",
+                "compute": {"op": "cci", "period": p}
+            })
+
+    # ═══════════════════════════════════════════════════════
     # EXPANDED BOOLEANS — New conditions for count_true/since_true
     # ═══════════════════════════════════════════════════════
     bool_conditions = [
