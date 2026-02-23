@@ -258,25 +258,366 @@ def generate_all():
             })
 
     # ═══════════════════════════════════════════════════════
-    # BOOLEAN PATTERNS — CountTrue / SinceTrue / TrueInRow
-    # Every condition × every period
+    # EXTENSION CEILING — Statistical ceiling proximity
+    # How close is current extension to its historical max?
+    # From ta_knowledge: "knowing a stock's typical max extension helps gauge where it is in its cycle"
+    # ═══════════════════════════════════════════════════════
+    ceiling_mas = ["avgc50", "avgc200", "xavgc50", "xavgc100"]
+    ceiling_lookbacks = [60, 120, 252, 504]  # 3mo, 6mo, 1yr, 2yr
+
+    for ma in ceiling_mas:
+        for lb in ceiling_lookbacks:
+            for norm in ["adr14", "atr14"]:
+                exprs.append({
+                    "name": f"ext_ceil_{ma}_lb{lb}_{norm}",
+                    "category": "extension_ceiling",
+                    "compute": {"op": "extension_ceiling_ratio", "ma": ma,
+                                "lookback": lb, "normalizer": norm}
+                })
+
+    # ═══════════════════════════════════════════════════════
+    # EXTENSION ADR MULTIPLES — Core ta_knowledge metric
+    # "Extension from 50 SMA in multiples of ADR is the universal normalized cycle indicator"
+    # ═══════════════════════════════════════════════════════
+    adr_mult_mas = ["avgc50", "avgc200", "xavgc21", "xavgc50", "xavgc100", "xavgc200"]
+    for ma in adr_mult_mas:
+        exprs.append({
+            "name": f"ext_adr_{ma}",
+            "category": "extension_adr",
+            "compute": {"op": "ext_adr_multiples", "ma": ma}
+        })
+
+    # ═══════════════════════════════════════════════════════
+    # MA CROSS DYNAMICS — Cross frequency and recency
+    # "50 SMA cross frequency" = choppy/stage 3 detection
+    # ═══════════════════════════════════════════════════════
+    cross_mas = ["avgc50", "avgc200", "xavgc8", "xavgc21", "xavgc50"]
+    cross_periods = [20, 30, 50, 65, 120]
+
+    for ma in cross_mas:
+        for p in cross_periods:
+            exprs.append({
+                "name": f"cross_count_{ma}_{p}",
+                "category": "ma_cross",
+                "compute": {"op": "ma_cross_count", "ma": ma, "period": p}
+            })
+        exprs.append({
+            "name": f"bars_since_cross_{ma}",
+            "category": "ma_cross",
+            "compute": {"op": "bars_since_ma_cross", "ma": ma, "max_lookback": 120}
+        })
+        for p in [20, 50, 120]:
+            for norm in ["atr14", "adr14"]:
+                exprs.append({
+                    "name": f"undercut_{ma}_{p}_{norm}",
+                    "category": "ma_cross",
+                    "compute": {"op": "ma_undercut_depth", "ma": ma, "period": p,
+                                "normalizer": norm}
+                })
+
+    # ═══════════════════════════════════════════════════════
+    # SWING STRUCTURE — Higher highs, lower lows, etc.
+    # From ta_knowledge: "Higher lows, surfing a moving average"
+    # ═══════════════════════════════════════════════════════
+    swing_periods = [15, 20, 30, 50, 65, 90, 120]
+
+    for p in swing_periods:
+        for op_name in ["swing_high_count", "swing_low_count",
+                        "higher_high_count", "higher_low_count",
+                        "lower_high_count", "lower_low_count"]:
+            exprs.append({
+                "name": f"{op_name}_{p}",
+                "category": "swing_structure",
+                "compute": {"op": op_name, "period": p}
+            })
+
+    # ═══════════════════════════════════════════════════════
+    # RETRACEMENT — Fib-style level of current price in N-bar range
+    # From ta_knowledge: "Best-profit 3-4DB bounce ~50% of measured move"
+    # ═══════════════════════════════════════════════════════
+    retrace_periods = [5, 10, 15, 20, 30, 40, 50, 65, 90, 120]
+
+    for p in retrace_periods:
+        exprs.append({
+            "name": f"retrace_{p}",
+            "category": "retracement",
+            "compute": {"op": "retracement_level", "period": p}
+        })
+
+    # ═══════════════════════════════════════════════════════
+    # GAP ANALYSIS — Size, frequency, unfilled gaps
+    # ═══════════════════════════════════════════════════════
+    for norm in ["atr14", "adr14"]:
+        exprs.append({
+            "name": f"gap_today_{norm}",
+            "category": "gap",
+            "compute": {"op": "gap_size", "normalizer": norm}
+        })
+
+    for p in [5, 10, 20, 30, 50]:
+        for thresh in [0.3, 0.5, 1.0]:
+            exprs.append({
+                "name": f"gap_count_{p}_t{thresh}",
+                "category": "gap",
+                "compute": {"op": "gap_count", "period": p, "threshold": thresh}
+            })
+
+    for p in [10, 20, 30, 50]:
+        exprs.append({
+            "name": f"unfilled_gapup_{p}",
+            "category": "gap",
+            "compute": {"op": "unfilled_gap_up_count", "period": p}
+        })
+
+    # ═══════════════════════════════════════════════════════
+    # CONSECUTIVE MOVE — Up/down streaks with magnitude
+    # ═══════════════════════════════════════════════════════
+    for op_name in ["consecutive_up_roc", "consecutive_down_roc",
+                    "consecutive_up_days", "consecutive_down_days"]:
+        exprs.append({
+            "name": op_name,
+            "category": "consecutive",
+            "compute": {"op": op_name}
+        })
+
+    # ═══════════════════════════════════════════════════════
+    # CANDLE PATTERNS — Inside bars, outside bars, NR, compression
+    # From ta_knowledge: "tight candle = AVWAP foothold confirmation"
+    # ═══════════════════════════════════════════════════════
+    for p in [5, 7, 10, 15, 20, 30]:
+        exprs.append({
+            "name": f"inside_bars_{p}",
+            "category": "candle_pattern",
+            "compute": {"op": "inside_bar_count", "period": p}
+        })
+        exprs.append({
+            "name": f"outside_bars_{p}",
+            "category": "candle_pattern",
+            "compute": {"op": "outside_bar_count", "period": p}
+        })
+
+    for p in [3, 5, 7, 10, 14, 20]:
+        exprs.append({
+            "name": f"nr_ratio_{p}",
+            "category": "candle_pattern",
+            "compute": {"op": "nr_ratio", "period": p}
+        })
+
+    exprs.append({"name": "lower_wick_ratio", "category": "candle_pattern",
+                  "compute": {"op": "lower_wick_ratio"}})
+
+    for p in [5, 10, 15, 20]:
+        exprs.append({
+            "name": f"avg_body_ratio_{p}",
+            "category": "candle_pattern",
+            "compute": {"op": "avg_candle_body_ratio", "period": p}
+        })
+
+    for p in [10, 20, 30]:
+        exprs.append({
+            "name": f"close_vs_open_{p}",
+            "category": "candle_pattern",
+            "compute": {"op": "close_vs_open_ratio", "period": p}
+        })
+
+    # ═══════════════════════════════════════════════════════
+    # VOLUME CHARACTER — OBV, accumulation/distribution, CMF
+    # From ta_knowledge: "volume drying up on second approach (bearish confirmation)"
+    # ═══════════════════════════════════════════════════════
+    for offset in [3, 5, 10, 15, 20, 30]:
+        exprs.append({
+            "name": f"obv_slope_{offset}",
+            "category": "volume_character",
+            "compute": {"op": "obv_slope", "offset": offset, "vol_period": 20}
+        })
+
+    for p in [5, 10, 15, 20, 30]:
+        exprs.append({
+            "name": f"up_vol_ratio_{p}",
+            "category": "volume_character",
+            "compute": {"op": "up_volume_ratio", "period": p}
+        })
+
+    for p in [10, 14, 20, 30]:
+        exprs.append({
+            "name": f"cmf_{p}",
+            "category": "volume_character",
+            "compute": {"op": "cmf", "period": p}
+        })
+        for offset in [3, 5, 10]:
+            exprs.append({
+                "name": f"cmf_slope_{p}_off{offset}",
+                "category": "volume_character",
+                "compute": {"op": "cmf_slope", "period": p, "offset": offset}
+            })
+
+    for p in [10, 20, 30]:
+        for mult in [1.5, 2.0, 3.0]:
+            exprs.append({
+                "name": f"hivol_pct_{p}_x{mult}",
+                "category": "volume_character",
+                "compute": {"op": "high_volume_bar_pct", "period": p,
+                            "multiplier": mult, "avg_period": 50}
+            })
+
+    # ═══════════════════════════════════════════════════════
+    # BOLLINGER — %B, bandwidth, squeeze detection
+    # ═══════════════════════════════════════════════════════
+    for p in [10, 15, 20, 30]:
+        exprs.append({
+            "name": f"bb_pctb_{p}",
+            "category": "bollinger",
+            "compute": {"op": "bollinger_pctb", "period": p}
+        })
+        exprs.append({
+            "name": f"bb_bandwidth_{p}",
+            "category": "bollinger",
+            "compute": {"op": "bollinger_bandwidth", "period": p}
+        })
+        for lb in [60, 120, 252]:
+            exprs.append({
+                "name": f"bb_bw_rank_{p}_lb{lb}",
+                "category": "bollinger",
+                "compute": {"op": "bollinger_bandwidth_rank", "period": p, "lookback": lb}
+            })
+
+    # ═══════════════════════════════════════════════════════
+    # MACD — Histogram, signal cross, line value
+    # ═══════════════════════════════════════════════════════
+    macd_configs = [(12, 26, 9), (8, 17, 9), (5, 13, 8)]
+
+    for fast, slow, sig in macd_configs:
+        exprs.append({
+            "name": f"macd_hist_{fast}_{slow}_{sig}",
+            "category": "macd",
+            "compute": {"op": "macd_histogram", "fast": fast, "slow": slow, "signal": sig}
+        })
+        for offset in [1, 3, 5, 10]:
+            exprs.append({
+                "name": f"macd_hist_slope_{fast}_{slow}_{sig}_off{offset}",
+                "category": "macd",
+                "compute": {"op": "macd_histogram_slope", "fast": fast, "slow": slow,
+                            "signal": sig, "offset": offset}
+            })
+        for norm in ["atr14", "adr14"]:
+            exprs.append({
+                "name": f"macd_line_{fast}_{slow}_{norm}",
+                "category": "macd",
+                "compute": {"op": "macd_line_norm", "fast": fast, "slow": slow,
+                            "normalizer": norm}
+            })
+
+    # ═══════════════════════════════════════════════════════
+    # AROON — Trend identification
+    # ═══════════════════════════════════════════════════════
+    for p in [14, 20, 25, 50]:
+        exprs.append({
+            "name": f"aroon_osc_{p}",
+            "category": "aroon",
+            "compute": {"op": "aroon_oscillator", "period": p}
+        })
+        exprs.append({
+            "name": f"aroon_up_{p}",
+            "category": "aroon",
+            "compute": {"op": "aroon_up_val", "period": p}
+        })
+        exprs.append({
+            "name": f"aroon_down_{p}",
+            "category": "aroon",
+            "compute": {"op": "aroon_down_val", "period": p}
+        })
+
+    # ═══════════════════════════════════════════════════════
+    # EFFICIENCY — Kaufman Efficiency Ratio (trending vs choppy)
+    # From ta_knowledge: "50 SMA is flat = no trend direction" (stage 3)
+    # ═══════════════════════════════════════════════════════
+    for p in [5, 10, 15, 20, 30, 50, 65]:
+        exprs.append({
+            "name": f"efficiency_{p}",
+            "category": "efficiency",
+            "compute": {"op": "kaufman_efficiency_ratio", "period": p}
+        })
+
+    # ═══════════════════════════════════════════════════════
+    # MA STACK ORDER — Bullish/bearish stacking score
+    # Full bull: 8ema > 21ema > 50sma > 200sma = 6
+    # ═══════════════════════════════════════════════════════
+    stack_combos = [
+        ("stack_4ma", ["xavgc8", "xavgc21", "avgc50", "avgc200"]),
+        ("stack_3ma_short", ["xavgc8", "xavgc21", "avgc50"]),
+        ("stack_3ma_long", ["xavgc21", "avgc50", "avgc200"]),
+        ("stack_2ma_fast", ["xavgc8", "xavgc21"]),
+        ("stack_ema_sma", ["xavgc50", "avgc200"]),
+    ]
+    for name, mas in stack_combos:
+        exprs.append({
+            "name": name,
+            "category": "ma_stack",
+            "compute": {"op": "ma_stack_score", "mas": mas}
+        })
+
+    # ═══════════════════════════════════════════════════════
+    # RANGE CONTRACTION / EXPANSION — Squeeze dynamics
+    # From ta_knowledge: "Steeper channels more likely to snap"
+    # ═══════════════════════════════════════════════════════
+    for p in [5, 10, 15, 20, 30]:
+        exprs.append({
+            "name": f"range_contract_{p}",
+            "category": "range_dynamics",
+            "compute": {"op": "range_contraction_ratio", "period": p}
+        })
+
+    for p in [14]:
+        for offset in [5, 10, 15, 20, 30, 50]:
+            exprs.append({
+                "name": f"atr_ratio_{p}_off{offset}",
+                "category": "range_dynamics",
+                "compute": {"op": "atr_ratio", "period": p, "offset": offset}
+            })
+
+    # ═══════════════════════════════════════════════════════
+    # ROLLING VWAP — Distance to volume-weighted price
+    # From ta_knowledge: AVWAP concepts
+    # ═══════════════════════════════════════════════════════
+    for p in [5, 10, 20, 30, 50, 65]:
+        for norm in ["atr14", "adr14"]:
+            exprs.append({
+                "name": f"vwap_dist_{p}_{norm}",
+                "category": "vwap",
+                "compute": {"op": "vwap_distance", "period": p, "normalizer": norm}
+            })
+
+    # ═══════════════════════════════════════════════════════
+    # EXPANDED BOOLEANS — New conditions for count_true/since_true
     # ═══════════════════════════════════════════════════════
     bool_conditions = [
         "c_gt_xavgc8", "c_gt_xavgc21", "c_gt_xavgc50", "c_gt_xavgc100",
         "c_gt_avgc50", "c_gt_avgc200",
+        "c_lt_xavgc8", "c_lt_xavgc21", "c_lt_avgc50", "c_lt_avgc200",
         "c_gt_c1", "c_lt_c1",
         "h_gt_h1", "l_lt_l1",
-        "v_gt_avgv20", "v_gt_2x_avgv20",
+        "v_gt_avgv20", "v_gt_2x_avgv20", "v_gt_avgv50",
+        "v_lt_avgv20", "v_lt_half_avgv20",
         "c_gt_o",
         "xavgc8_gt_xavgc21", "xavgc50_gt_xavgc200", "avgc50_gt_avgc200",
-        "avgc50_rising", "avgc200_rising", "xavgc50_rising",
-        "h_gt_maxh5_1", "l_lt_minl5_1", "c_gt_maxc10_1",
+        "xavgc21_gt_avgc50", "xavgc8_gt_avgc50",
+        "avgc50_rising", "avgc50_falling",
+        "avgc200_rising", "xavgc50_rising",
+        "xavgc21_rising", "xavgc21_falling",
+        "xavgc8_rising", "xavgc8_falling",
+        "h_gt_maxh5_1", "h_gt_maxh10_1", "h_gt_maxh20_1",
+        "l_lt_minl5_1", "l_lt_minl10_1", "l_lt_minl20_1",
+        "c_gt_maxc10_1",
         "range_gt_atr", "body_gt_half_range",
         "c_upper_half", "c_lower_half",
+        "inside_bar", "outside_bar",
+        "gap_up", "gap_down", "big_gap_up", "big_gap_down",
         "diplus_gt_diminus",
-        "rsi14_gt_50", "rsi14_gt_70", "rsi14_lt_30",
-        "adx14_gt_25",
+        "rsi14_gt_50", "rsi14_gt_60", "rsi14_gt_70",
+        "rsi14_lt_30", "rsi14_lt_40", "rsi14_lt_50",
+        "adx14_gt_20", "adx14_gt_25", "adx14_gt_30", "adx14_lt_20",
         "c_gt_bbtop", "c_lt_bbbot",
+        "cmf20_positive", "cmf20_negative",
     ]
 
     ct_periods = [3, 5, 7, 10, 15, 20, 30, 50]

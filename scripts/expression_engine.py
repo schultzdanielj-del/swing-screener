@@ -18,6 +18,8 @@ from scripts.profiling_engine import (
     sma, ema, hma, rolling_max, rolling_min, rolling_sum,
     atr, rsi, wrsi, stochastic_k, cci, adx, di_plus, di_minus,
     bop, obv, count_true, since_true, true_in_row,
+    macd, bollinger_top, bollinger_bot, stddev,
+    aroon_up, aroon_down, chaikin_money_flow, kaufman_efficiency,
 )
 
 
@@ -101,6 +103,33 @@ class ExpressionEngine:
     def _bop(self, period: int) -> pd.Series:
         return self._get(f"bop{period}", lambda: bop(self.df, period))
 
+    def _obv(self) -> pd.Series:
+        return self._get("obv", lambda: obv(self.df))
+
+    def _macd(self, fast: int, slow: int) -> pd.Series:
+        return self._get(f"macd_{fast}_{slow}", lambda: macd(self.c, fast, slow))
+
+    def _bbtop(self, period: int, nstd: float = 2.0) -> pd.Series:
+        return self._get(f"bbtop_{period}_{nstd}", lambda: bollinger_top(self.c, period, nstd))
+
+    def _bbbot(self, period: int, nstd: float = 2.0) -> pd.Series:
+        return self._get(f"bbbot_{period}_{nstd}", lambda: bollinger_bot(self.c, period, nstd))
+
+    def _stddev(self, period: int) -> pd.Series:
+        return self._get(f"stddev_{period}", lambda: stddev(self.c, period))
+
+    def _aroon_up(self, period: int) -> pd.Series:
+        return self._get(f"aroon_up_{period}", lambda: aroon_up(self.df, period))
+
+    def _aroon_down(self, period: int) -> pd.Series:
+        return self._get(f"aroon_down_{period}", lambda: aroon_down(self.df, period))
+
+    def _cmf(self, period: int) -> pd.Series:
+        return self._get(f"cmf_{period}", lambda: chaikin_money_flow(self.df, period))
+
+    def _kaufman_eff(self, period: int) -> pd.Series:
+        return self._get(f"kauf_eff_{period}", lambda: kaufman_efficiency(self.c, period))
+
     def _normalizer(self, name: str) -> float:
         """Get normalizer value at target index."""
         i = self._target
@@ -153,6 +182,39 @@ class ExpressionEngine:
                 "adx14_gt_25":       self._adx(14) > 25,
                 "c_gt_bbtop":        c > (self._ma("avgc20") + 2 * self.c.rolling(20).std()),
                 "c_lt_bbbot":        c < (self._ma("avgc20") - 2 * self.c.rolling(20).std()),
+                # === NEW BOOLEANS ===
+                "c_lt_xavgc8":       c < self._ma("xavgc8"),
+                "c_lt_xavgc21":      c < self._ma("xavgc21"),
+                "c_lt_avgc50":       c < self._ma("avgc50"),
+                "c_lt_avgc200":      c < self._ma("avgc200"),
+                "xavgc21_gt_avgc50": self._ma("xavgc21") > self._ma("avgc50"),
+                "xavgc8_gt_avgc50":  self._ma("xavgc8") > self._ma("avgc50"),
+                "avgc50_falling":    self._ma("avgc50") < self._ma("avgc50").shift(1),
+                "xavgc21_rising":    self._ma("xavgc21") > self._ma("xavgc21").shift(1),
+                "xavgc21_falling":   self._ma("xavgc21") < self._ma("xavgc21").shift(1),
+                "xavgc8_rising":     self._ma("xavgc8") > self._ma("xavgc8").shift(1),
+                "xavgc8_falling":    self._ma("xavgc8") < self._ma("xavgc8").shift(1),
+                "v_gt_avgv50":       v > self._ma("avgv50"),
+                "v_lt_avgv20":       v < self._ma("avgv20"),
+                "v_lt_half_avgv20":  v < 0.5 * self._ma("avgv20"),
+                "h_gt_maxh10_1":     h > self._maxh(10).shift(1),
+                "h_gt_maxh20_1":     h > self._maxh(20).shift(1),
+                "l_lt_minl10_1":     l < self._minl(10).shift(1),
+                "l_lt_minl20_1":     l < self._minl(20).shift(1),
+                "inside_bar":        (h < h.shift(1)) & (l > l.shift(1)),
+                "outside_bar":       (h > h.shift(1)) & (l < l.shift(1)),
+                "gap_up":            o > c.shift(1),
+                "gap_down":          o < c.shift(1),
+                "big_gap_up":        (o - c.shift(1)) > self._atr(14),
+                "big_gap_down":      (c.shift(1) - o) > self._atr(14),
+                "rsi14_gt_60":       self._rsi(14) > 60,
+                "rsi14_lt_40":       self._rsi(14) < 40,
+                "rsi14_lt_50":       self._rsi(14) < 50,
+                "adx14_gt_20":       self._adx(14) > 20,
+                "adx14_gt_30":       self._adx(14) > 30,
+                "adx14_lt_20":       self._adx(14) < 20,
+                "cmf20_positive":    self._cmf(20) > 0,
+                "cmf20_negative":    self._cmf(20) < 0,
             }
             if cond_name not in mapping:
                 raise ValueError(f"Unknown boolean condition: {cond_name}")
@@ -301,6 +363,476 @@ class ExpressionEngine:
                 ext_series = self.c.iloc[start:i+1] - ma.iloc[start:i+1]
                 max_ext = ext_series.max()
                 return ext_now / max_ext if max_ext > 0 else np.nan
+
+            elif op == "extension_ceiling_ratio":
+                # Current extension / max extension in lookback = how close to statistical ceiling
+                # 1.0 = at ceiling, 0.5 = halfway, >1.0 = new high extension
+                ma = self._ma(comp["ma"])
+                lb = comp["lookback"]
+                ext_now = (self.c.iloc[i] - ma.iloc[i])
+                norm = self._normalizer(comp["normalizer"])
+                if not norm:
+                    return np.nan
+                ext_now_norm = ext_now / norm
+                start = max(0, i - lb + 1)
+                ext_series = (self.c.iloc[start:i+1] - ma.iloc[start:i+1]) / norm
+                max_ext = ext_series.max()
+                return ext_now_norm / max_ext if max_ext > 0 else np.nan
+
+            elif op == "ext_adr_multiples":
+                # Extension from MA in multiples of ADR — the core ta_knowledge metric
+                ma_val = self._ma(comp["ma"]).iloc[i]
+                adr_val = self._adr(14).iloc[i]
+                return (self.c.iloc[i] - ma_val) / adr_val if adr_val and adr_val > 0 else np.nan
+
+            elif op == "ma_cross_count":
+                # How many times price crossed this MA in last N bars (high = choppy/stage3)
+                ma = self._ma(comp["ma"])
+                p = comp["period"]
+                if i < p:
+                    return np.nan
+                above = self.c.iloc[i-p+1:i+1] > ma.iloc[i-p+1:i+1]
+                crosses = (above != above.shift(1)).sum()
+                return float(crosses)
+
+            elif op == "bars_since_ma_cross":
+                # Bars since price last crossed this MA
+                ma = self._ma(comp["ma"])
+                max_lb = comp.get("max_lookback", 120)
+                above_now = self.c.iloc[i] > ma.iloc[i]
+                for back in range(1, min(max_lb, i + 1)):
+                    was_above = self.c.iloc[i - back] > ma.iloc[i - back]
+                    if was_above != above_now:
+                        return float(back)
+                return float(max_lb)
+
+            elif op == "ma_undercut_depth":
+                # Max depth below MA in last N bars, in ATR
+                # Measures severity of recent correction relative to this MA
+                ma = self._ma(comp["ma"])
+                p = comp["period"]
+                if i < p:
+                    return np.nan
+                norm = self._normalizer(comp["normalizer"])
+                if not norm:
+                    return np.nan
+                diffs = self.l.iloc[i-p+1:i+1] - ma.iloc[i-p+1:i+1]
+                min_diff = diffs.min()
+                return min_diff / norm  # negative = below MA
+
+            elif op == "swing_high_count":
+                # Count of swing highs (H > H[-1] and H > H[+1]) in last N bars
+                p = comp["period"]
+                if i < p + 1:
+                    return np.nan
+                count = 0
+                for j in range(i - p + 2, i):  # exclude endpoints
+                    if self.h.iloc[j] > self.h.iloc[j-1] and self.h.iloc[j] > self.h.iloc[j+1]:
+                        count += 1
+                return float(count)
+
+            elif op == "swing_low_count":
+                p = comp["period"]
+                if i < p + 1:
+                    return np.nan
+                count = 0
+                for j in range(i - p + 2, i):
+                    if self.l.iloc[j] < self.l.iloc[j-1] and self.l.iloc[j] < self.l.iloc[j+1]:
+                        count += 1
+                return float(count)
+
+            elif op == "higher_high_count":
+                # Count of consecutive higher swing highs looking back
+                p = comp["period"]
+                if i < p + 1:
+                    return np.nan
+                # Find swing highs
+                highs = []
+                for j in range(i - p + 2, i):
+                    if self.h.iloc[j] > self.h.iloc[j-1] and self.h.iloc[j] > self.h.iloc[j+1]:
+                        highs.append(self.h.iloc[j])
+                if len(highs) < 2:
+                    return 0.0
+                count = 0
+                for k in range(len(highs) - 1, 0, -1):
+                    if highs[k] > highs[k-1]:
+                        count += 1
+                    else:
+                        break
+                return float(count)
+
+            elif op == "higher_low_count":
+                p = comp["period"]
+                if i < p + 1:
+                    return np.nan
+                lows = []
+                for j in range(i - p + 2, i):
+                    if self.l.iloc[j] < self.l.iloc[j-1] and self.l.iloc[j] < self.l.iloc[j+1]:
+                        lows.append(self.l.iloc[j])
+                if len(lows) < 2:
+                    return 0.0
+                count = 0
+                for k in range(len(lows) - 1, 0, -1):
+                    if lows[k] > lows[k-1]:
+                        count += 1
+                    else:
+                        break
+                return float(count)
+
+            elif op == "lower_high_count":
+                p = comp["period"]
+                if i < p + 1:
+                    return np.nan
+                highs = []
+                for j in range(i - p + 2, i):
+                    if self.h.iloc[j] > self.h.iloc[j-1] and self.h.iloc[j] > self.h.iloc[j+1]:
+                        highs.append(self.h.iloc[j])
+                if len(highs) < 2:
+                    return 0.0
+                count = 0
+                for k in range(len(highs) - 1, 0, -1):
+                    if highs[k] < highs[k-1]:
+                        count += 1
+                    else:
+                        break
+                return float(count)
+
+            elif op == "lower_low_count":
+                p = comp["period"]
+                if i < p + 1:
+                    return np.nan
+                lows = []
+                for j in range(i - p + 2, i):
+                    if self.l.iloc[j] < self.l.iloc[j-1] and self.l.iloc[j] < self.l.iloc[j+1]:
+                        lows.append(self.l.iloc[j])
+                if len(lows) < 2:
+                    return 0.0
+                count = 0
+                for k in range(len(lows) - 1, 0, -1):
+                    if lows[k] < lows[k-1]:
+                        count += 1
+                    else:
+                        break
+                return float(count)
+
+            elif op == "retracement_level":
+                # Where is current price as % retracement of the last N-bar move
+                # 0 = at the low, 1 = at the high
+                p = comp["period"]
+                if i < p:
+                    return np.nan
+                maxh = self.h.iloc[i-p+1:i+1].max()
+                minl = self.l.iloc[i-p+1:i+1].min()
+                rng = maxh - minl
+                return (self.c.iloc[i] - minl) / rng if rng > 0 else np.nan
+
+            elif op == "gap_size":
+                # Today's gap as ATR multiple (positive = gap up, negative = gap down)
+                if i < 1:
+                    return np.nan
+                gap = self.o.iloc[i] - self.c.iloc[i-1]
+                norm = self._normalizer(comp["normalizer"])
+                return gap / norm if norm else np.nan
+
+            elif op == "gap_count":
+                # Count of gaps > threshold ATR in last N bars
+                p = comp["period"]
+                threshold = comp.get("threshold", 0.5)
+                if i < p:
+                    return np.nan
+                atr_s = self._atr(14)
+                count = 0
+                for j in range(i - p + 1, i + 1):
+                    if j < 1:
+                        continue
+                    gap = abs(self.o.iloc[j] - self.c.iloc[j-1])
+                    if atr_s.iloc[j] > 0 and gap / atr_s.iloc[j] > threshold:
+                        count += 1
+                return float(count)
+
+            elif op == "unfilled_gap_up_count":
+                # Count of unfilled gap-ups in last N bars
+                # Gap-up = open > prior high. Unfilled = low never came back to prior high
+                p = comp["period"]
+                if i < p:
+                    return np.nan
+                count = 0
+                for j in range(i - p + 1, i + 1):
+                    if j < 1:
+                        continue
+                    if self.o.iloc[j] > self.h.iloc[j-1]:
+                        # Check if any subsequent bar filled it
+                        filled = False
+                        for k in range(j, i + 1):
+                            if self.l.iloc[k] <= self.h.iloc[j-1]:
+                                filled = True
+                                break
+                        if not filled:
+                            count += 1
+                return float(count)
+
+            elif op == "consecutive_up_roc":
+                # Cumulative ROC over consecutive up-close days ending at target
+                cum = 0.0
+                j = i
+                while j > 0 and self.c.iloc[j] > self.c.iloc[j-1]:
+                    cum += (self.c.iloc[j] / self.c.iloc[j-1] - 1) * 100
+                    j -= 1
+                return cum
+
+            elif op == "consecutive_down_roc":
+                cum = 0.0
+                j = i
+                while j > 0 and self.c.iloc[j] < self.c.iloc[j-1]:
+                    cum += (self.c.iloc[j] / self.c.iloc[j-1] - 1) * 100
+                    j -= 1
+                return cum  # will be negative
+
+            elif op == "consecutive_up_days":
+                count = 0
+                j = i
+                while j > 0 and self.c.iloc[j] > self.c.iloc[j-1]:
+                    count += 1
+                    j -= 1
+                return float(count)
+
+            elif op == "consecutive_down_days":
+                count = 0
+                j = i
+                while j > 0 and self.c.iloc[j] < self.c.iloc[j-1]:
+                    count += 1
+                    j -= 1
+                return float(count)
+
+            elif op == "inside_bar_count":
+                # Inside bar = H < H[-1] and L > L[-1]
+                p = comp["period"]
+                if i < p:
+                    return np.nan
+                count = 0
+                for j in range(i - p + 1, i + 1):
+                    if j < 1:
+                        continue
+                    if self.h.iloc[j] < self.h.iloc[j-1] and self.l.iloc[j] > self.l.iloc[j-1]:
+                        count += 1
+                return float(count)
+
+            elif op == "outside_bar_count":
+                # Outside bar = H > H[-1] and L < L[-1]
+                p = comp["period"]
+                if i < p:
+                    return np.nan
+                count = 0
+                for j in range(i - p + 1, i + 1):
+                    if j < 1:
+                        continue
+                    if self.h.iloc[j] > self.h.iloc[j-1] and self.l.iloc[j] < self.l.iloc[j-1]:
+                        count += 1
+                return float(count)
+
+            elif op == "nr_ratio":
+                # NR7-style: today's range / max range of last N bars
+                # Low value = range compression / squeeze
+                p = comp["period"]
+                if i < p:
+                    return np.nan
+                today_range = self.h.iloc[i] - self.l.iloc[i]
+                max_range = max(self.h.iloc[j] - self.l.iloc[j] for j in range(i - p + 1, i + 1))
+                return today_range / max_range if max_range > 0 else np.nan
+
+            elif op == "obv_slope":
+                # OBV slope over N bars, normalized by avg volume
+                o = self._obv()
+                offset = comp["offset"]
+                if i < offset:
+                    return np.nan
+                avg_vol = self._ma(f"avgv{comp.get('vol_period', 20)}").iloc[i]
+                if not avg_vol or avg_vol <= 0:
+                    return np.nan
+                return (o.iloc[i] - o.iloc[i - offset]) / (avg_vol * offset)
+
+            elif op == "up_volume_ratio":
+                # Sum of volume on up days / total volume over N bars
+                p = comp["period"]
+                if i < p:
+                    return np.nan
+                up_vol = 0.0
+                total_vol = 0.0
+                for j in range(i - p + 1, i + 1):
+                    vol_j = self.v.iloc[j]
+                    total_vol += vol_j
+                    if self.c.iloc[j] > self.o.iloc[j]:
+                        up_vol += vol_j
+                return up_vol / total_vol if total_vol > 0 else np.nan
+
+            elif op == "cmf":
+                return self._cmf(comp["period"]).iloc[i]
+
+            elif op == "cmf_slope":
+                c = self._cmf(comp["period"])
+                offset = comp["offset"]
+                return c.iloc[i] - c.iloc[i - offset] if i >= offset else np.nan
+
+            elif op == "bollinger_pctb":
+                # %B = (price - lower band) / (upper - lower)
+                # >1 = above upper band, <0 = below lower band
+                p = comp["period"]
+                top = self._bbtop(p).iloc[i]
+                bot = self._bbbot(p).iloc[i]
+                bw = top - bot
+                return (self.c.iloc[i] - bot) / bw if bw > 0 else np.nan
+
+            elif op == "bollinger_bandwidth":
+                # Bandwidth = (upper - lower) / middle — squeeze indicator
+                p = comp["period"]
+                top = self._bbtop(p).iloc[i]
+                bot = self._bbbot(p).iloc[i]
+                mid = self._ma(f"avgc{p}").iloc[i]
+                return (top - bot) / mid if mid > 0 else np.nan
+
+            elif op == "bollinger_bandwidth_rank":
+                # Where is current bandwidth relative to its own range over lookback
+                p = comp["period"]
+                lb = comp["lookback"]
+                if i < lb:
+                    return np.nan
+                top_s = self._bbtop(p)
+                bot_s = self._bbbot(p)
+                mid_s = self._ma(f"avgc{p}")
+                bw_now = (top_s.iloc[i] - bot_s.iloc[i]) / mid_s.iloc[i] if mid_s.iloc[i] > 0 else np.nan
+                if np.isnan(bw_now):
+                    return np.nan
+                bws = []
+                for j in range(i - lb + 1, i + 1):
+                    m = mid_s.iloc[j]
+                    if m > 0:
+                        bws.append((top_s.iloc[j] - bot_s.iloc[j]) / m)
+                if not bws:
+                    return np.nan
+                return (bw_now - min(bws)) / (max(bws) - min(bws)) if max(bws) > min(bws) else 0.5
+
+            elif op == "macd_histogram":
+                fast = comp.get("fast", 12)
+                slow = comp.get("slow", 26)
+                signal_p = comp.get("signal", 9)
+                macd_line = self._macd(fast, slow)
+                signal_line = ema(macd_line, signal_p)
+                return macd_line.iloc[i] - signal_line.iloc[i]
+
+            elif op == "macd_histogram_slope":
+                fast = comp.get("fast", 12)
+                slow = comp.get("slow", 26)
+                signal_p = comp.get("signal", 9)
+                offset = comp["offset"]
+                macd_line = self._macd(fast, slow)
+                signal_line = ema(macd_line, signal_p)
+                hist = macd_line - signal_line
+                return hist.iloc[i] - hist.iloc[i - offset] if i >= offset else np.nan
+
+            elif op == "macd_line_norm":
+                fast = comp.get("fast", 12)
+                slow = comp.get("slow", 26)
+                norm = self._normalizer(comp["normalizer"])
+                return self._macd(fast, slow).iloc[i] / norm if norm else np.nan
+
+            elif op == "aroon_oscillator":
+                p = comp["period"]
+                return self._aroon_up(p).iloc[i] - self._aroon_down(p).iloc[i]
+
+            elif op == "aroon_up_val":
+                return self._aroon_up(comp["period"]).iloc[i]
+
+            elif op == "aroon_down_val":
+                return self._aroon_down(comp["period"]).iloc[i]
+
+            elif op == "kaufman_efficiency_ratio":
+                return self._kaufman_eff(comp["period"]).iloc[i]
+
+            elif op == "ma_stack_score":
+                # How bullishly stacked are the MAs? Count of ordered pairs
+                # Full bull stack (8>21>50>200) = 6, full bear = 0
+                vals = []
+                for ma_name in comp["mas"]:
+                    vals.append(self._ma(ma_name).iloc[i])
+                score = 0
+                for a in range(len(vals)):
+                    for b in range(a + 1, len(vals)):
+                        if vals[a] > vals[b]:
+                            score += 1
+                return float(score)
+
+            elif op == "range_contraction_ratio":
+                # Current N-bar range width / prior N-bar range width
+                # <1 = contracting (squeeze), >1 = expanding
+                p = comp["period"]
+                if i < 2 * p:
+                    return np.nan
+                curr_width = self.h.iloc[i-p+1:i+1].max() - self.l.iloc[i-p+1:i+1].min()
+                prev_width = self.h.iloc[i-2*p+1:i-p+1].max() - self.l.iloc[i-2*p+1:i-p+1].min()
+                return curr_width / prev_width if prev_width > 0 else np.nan
+
+            elif op == "atr_ratio":
+                # Current ATR / ATR N bars ago — volatility expansion/contraction
+                p1 = comp["period"]
+                offset = comp["offset"]
+                atr_s = self._atr(p1)
+                if i < offset:
+                    return np.nan
+                prev = atr_s.iloc[i - offset]
+                return atr_s.iloc[i] / prev if prev > 0 else np.nan
+
+            elif op == "vwap_distance":
+                # Distance to rolling VWAP over N bars
+                p = comp["period"]
+                if i < p:
+                    return np.nan
+                tp = (self.h.iloc[i-p+1:i+1] + self.l.iloc[i-p+1:i+1] + self.c.iloc[i-p+1:i+1]) / 3
+                vol = self.v.iloc[i-p+1:i+1]
+                cum_vol = vol.sum()
+                if cum_vol <= 0:
+                    return np.nan
+                vwap_val = (tp * vol).sum() / cum_vol
+                norm = self._normalizer(comp["normalizer"])
+                return (self.c.iloc[i] - vwap_val) / norm if norm else np.nan
+
+            elif op == "close_vs_open_ratio":
+                # Over N bars, what fraction close above open (bullish bars)
+                p = comp["period"]
+                if i < p:
+                    return np.nan
+                bullish = sum(1 for j in range(i-p+1, i+1) if self.c.iloc[j] > self.o.iloc[j])
+                return bullish / p
+
+            elif op == "lower_wick_ratio":
+                rng = self.h.iloc[i] - self.l.iloc[i]
+                lower = min(self.c.iloc[i], self.o.iloc[i]) - self.l.iloc[i]
+                return lower / rng if rng > 0 else np.nan
+
+            elif op == "avg_candle_body_ratio":
+                # Average body/range ratio over N bars — trend clarity
+                p = comp["period"]
+                if i < p:
+                    return np.nan
+                total = 0.0
+                valid = 0
+                for j in range(i - p + 1, i + 1):
+                    rng = self.h.iloc[j] - self.l.iloc[j]
+                    if rng > 0:
+                        total += abs(self.c.iloc[j] - self.o.iloc[j]) / rng
+                        valid += 1
+                return total / valid if valid > 0 else np.nan
+
+            elif op == "high_volume_bar_pct":
+                # Pct of bars in last N with volume > X times average
+                p = comp["period"]
+                mult = comp.get("multiplier", 1.5)
+                if i < p:
+                    return np.nan
+                avg_v = self._ma(f"avgv{comp.get('avg_period', 50)}").iloc[i]
+                if not avg_v or avg_v <= 0:
+                    return np.nan
+                count = sum(1 for j in range(i-p+1, i+1) if self.v.iloc[j] > mult * avg_v)
+                return count / p
 
             elif op == "lsp_distance":
                 # Distance from price_ref to LSP price, normalized

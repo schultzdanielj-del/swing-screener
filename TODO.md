@@ -6,7 +6,7 @@
 
 The core analysis engine is now a desktop-based spiderweb search system:
 - **Desktop agent** (`local_runner/agent.py`) runs 24/7, polls Railway for jobs
-- **Universe matrix** (~4,167 tickers × 1,338 expressions) auto-rebuilds nightly at 4:30pm ET
+- **Universe matrix** (~4,167 tickers × 2,271 expressions) auto-rebuilds nightly at 4:30pm ET
 - **Spiderweb search** explores branching condition combinations via beam search
 - **Frontend slider** controls grind depth (5 levels: 30s → 8 hours)
 - **Results display** shows pass rate progression + best condition combo
@@ -17,7 +17,7 @@ The core analysis engine is now a desktop-based spiderweb search system:
 - `local_runner/grinder.py` — CLI interface
 - `local_runner/agent.py` — Polling agent with nightly auto-rebuild
 - `local_runner/cache_builder.py` — OHLCV cache from Railway DB
-- `local_runner/brute_expressions.py` — 1,338 expression generator
+- `local_runner/brute_expressions.py` — 2,271 expression generator (expanded from 1,338)
 - `server.py` — 13 grinder API endpoints (jobs/status/progress/results/agent)
 
 ---
@@ -73,6 +73,26 @@ Expand `brute_expressions.py` beyond the current 1,338 to cover more of the TA k
 - Gap analysis — gap up/down size, fill status, vs ATR
 
 **Constraint:** Rebuild must finish before 7pm ET. Monitor actual rebuild time as expressions grow.
+
+---
+
+## Future Investigation: Universal Pivot/LSP Expressions
+
+Currently LSP expressions are in a bespoke Phase 2 block per setup type. The limitation: they don't participate in the spiderweb's combinatorial search (Phase 1 only).
+
+**Insight:** LSPs are just prominent D1 pivot highs. Different setups use pivots differently — DTSS uses the most recent structural high, PDub UNR uses a support level further back with multiple pivot touches. But they're all points on the same pivot spectrum.
+
+**Proposed approach:** Detect ALL D1 pivots (highs and lows) with prominence scores across the universe. Generate expressions against multiple pivot ranks, proximity clusters, and prominence thresholds. Let the spiderweb figure out which pivot measurements matter per setup.
+
+**Expressions would include:** `nearest_pivot_high_dist_atr`, `pivot_high_count_within_Natr`, `prominent_pivot_dist`, `highest_pivot_60bars_dist`, etc. across multiple ranks and prominence cutoffs.
+
+**Blockers:**
+- LSP detector currently requires Railway API calls per ticker — needs refactoring to work off in-memory DataFrames
+- Detection robustness across 4,167 random tickers (not just setup examples) is unknown
+- Expression count multiplies fast (5 ranks × 19 expressions × 3 normalizers × prominence thresholds)
+- Need to validate what "significant D1 pivot" means universally vs just for DTSS
+
+**Decision:** Parked for now. Focus on generic expression expansion first (immediate grinder improvement), revisit after that's working.
 
 ---
 
