@@ -60,7 +60,7 @@ This gives a general starting point to understand what the setup looks like nume
 ### How It Works
 
 The grinder precomputes two matrices:
-1. **Universe matrix** — every tradable ticker × every expression, evaluated at the most recent bar. Shared across all setups. Auto-rebuilds nightly at 4:30pm ET. (~30 min first time, cached daily after that.)
+1. **Universe matrix** — every tradable ticker × every expression, evaluated at the most recent bar. Shared across all setups. Auto-rebuilds nightly at 4:30pm ET. Parallelized across 8 CPU cores (~5 min on i5-12600K, cached daily after that.)
 2. **Example matrix** — every setup example × every expression, evaluated at the scan candle (day before entry). Per-setup, fast (~5s per example).
 
 The spiderweb search then explores branching combinations of conditions:
@@ -101,8 +101,8 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 
 ### Architecture
 
-- `local_runner/matrix_builder.py` — Precomputes universe + example matrices
-- `local_runner/spiderweb.py` — Beam search tree exploration
+- `local_runner/matrix_builder.py` — Precomputes universe + example matrices. Universe build parallelized via `ProcessPoolExecutor` (8 workers, `MATRIX_WORKERS` env var configurable).
+- `local_runner/spiderweb.py` — Beam search tree exploration. Inner loop vectorized with numpy broadcasting (batch AND + sum per beam node instead of per-expression Python loop).
 - `local_runner/grinder.py` — CLI interface
 - `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild
 - `local_runner/cache_builder.py` — OHLCV cache from Railway DB
@@ -115,8 +115,8 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 
 The grinder supports **setup-specific expression sets**. Each setup can extend the generic library with bespoke expressions that only make sense for that pattern. The expression loader is setup-aware:
 
-- **Generic set** (`brute_expressions.json`) — 1,338 expressions across near_resistance, extension, MA slope, MA spread, momentum, range, extension_dynamics, boolean. Used by all setups and the universe matrix.
-- **DTSS set** (`dtss_expressions.json`) — generic + 19 bespoke `dtss_lsp` expressions (1,357 total). Requires LSP context injected per example. See DTSS bespoke block below.
+- **Generic set** (`brute_expressions.json`) — 2,271 expressions across: near_resistance, extension, extension_ceiling, extension_adr, extension_dynamics, MA slope, MA spread, MA cross, MA stack, momentum, range, range_dynamics, retracement, swing_structure, gap, consecutive, candle_pattern, volume_character, bollinger, macd, aroon, efficiency, vwap, boolean. Used by all setups and the universe matrix.
+- **DTSS set** (`dtss_expressions.json`) — generic + 19 bespoke `dtss_lsp` expressions (2,290 total). Requires LSP context injected per example. See DTSS bespoke block below.
 
 To add a new setup's bespoke block: add `generate_{setup}_expressions()` and `generate_{setup}()` to `brute_expressions.py`, then add a `setup_type` branch to `_load_expressions()` in `matrix_builder.py`.
 
@@ -285,7 +285,7 @@ Using the historical signals from Step 7, filtered to the highest-success market
 |------|------|-----|
 | 1 | **Load** | Data & TA knowledge — everything is already in the system |
 | 2 | **Receive** | User presents examples, entry dates, and setup context |
-| 3 | **Grind** | THE GRINDER — 1,338 generic + setup-specific bespoke expressions (DTSS: 1,357 total), spiderweb beam search, desktop compute. Finds the mathematical ceiling of brute-force condition stacking. |
+| 3 | **Grind** | THE GRINDER — 2,271 generic + setup-specific bespoke expressions (DTSS: 2,290 total), spiderweb beam search, desktop compute. Finds the mathematical ceiling of brute-force condition stacking. |
 | 4 | **Collaborate** | Human-AI iteration to push past the grinder ceiling with qualitative/discretionary conditions. Goal: zero daily pass rate. |
 | 5 | **Backtest** | Run conditions across full history, review signals, validate and tighten |
 | 6 | **Market Context** | Find which market conditions produce winners vs losers |
