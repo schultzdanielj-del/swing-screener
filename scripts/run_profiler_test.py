@@ -153,7 +153,7 @@ def main():
         if entry_date:
             date_match = df[df["date"].dt.strftime("%Y-%m-%d") == entry_date]
             if len(date_match) > 0:
-                target_idx = date_match.index[0]
+                target_idx = date_match.index[0] - 1  # scan runs BEFORE entry candle closes
             else:
                 target_idx = len(df) - 1
         else:
