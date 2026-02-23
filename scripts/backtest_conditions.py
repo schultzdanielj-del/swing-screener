@@ -305,6 +305,37 @@ def compute_series(engine, comp):
                engine.v.rolling(p, min_periods=1).sum().replace(0, np.nan)
         return ((vwap - vwap.shift(offset)) / norm).values
 
+    elif op == "bars_since_ma_cross":
+        ma = engine._ma(comp["ma"])
+        max_lb = comp.get("max_lookback", 120)
+        above = (engine.c > ma).values
+        n = len(above)
+        result = np.full(n, float(max_lb))
+        for i in range(1, n):
+            above_now = above[i]
+            for back in range(1, min(max_lb, i + 1)):
+                if above[i - back] != above_now:
+                    result[i] = float(back)
+                    break
+        return result
+
+    elif op == "gap_count":
+        p = comp["period"]
+        threshold = comp.get("threshold", 0.5)
+        atr_s = engine._atr(14).values
+        gaps = np.abs(engine.o.values[1:] - engine.c.values[:-1])
+        # Pad first element
+        gaps = np.concatenate([[0.0], gaps])
+        # Gap in ATR units
+        with np.errstate(divide='ignore', invalid='ignore'):
+            gap_atr = np.where(atr_s > 0, gaps / atr_s, 0.0)
+        is_gap = (gap_atr > threshold).astype(float)
+        # Rolling count over period
+        result = np.full(len(is_gap), np.nan)
+        for i in range(p - 1, len(is_gap)):
+            result[i] = np.sum(is_gap[i - p + 1:i + 1])
+        return result
+
     else:
         raise ValueError(f"Unsupported op for backtest series: {op}")
 
