@@ -28,31 +28,98 @@ The core analysis engine is now a desktop-based spiderweb search system:
 |------|--------|-------|
 | 1 Load | ✅ Done | Data + TA knowledge loaded |
 | 2 Receive | ✅ Done | 26 examples with LSP data |
-| 3 Profile | ✅ Done | **THE GRINDER** — 1,338 expressions, spiderweb combo search, desktop compute |
-| 4 Collaborate | **→ NEXT** | Take grinder ceiling, add discretionary/qualitative conditions together |
-| 5 Backtest | Not started | |
+| 3 Profile | ✅ Done | **THE GRINDER** — 2,271 expressions, spiderweb combo search, desktop compute |
+| 4 Backtest Grind | **→ NEXT** | Phase 1 grind works (0.07% today, 1.2s). Phase 2 historical scoring needed — today's 3 tickers = 340/day historically. Need to grind against 5yr history, not just today. |
+| 5 Collaborate | Not started | Take grinder ceiling, add discretionary/qualitative conditions together |
 | 6 Market Context | Not started | |
 | 7 EV Optimize | Not started | |
 
 ---
 
-## Immediate Next Steps
+## BUILD PLAN — Grinder v2: Historical Backtest Scoring
 
-| # | Task | Description |
-|---|------|-------------|
-| 1 | **Run DTSS grind to completion** | First universe matrix build (~30 min one-time). Then run grinder at various levels to find the mathematical ceiling. |
-| 2 | **Collaborative refinement (Step 4)** | Review grinder results together. Add market regime, AVWAP, algo line, and qualitative conditions that the math can't find. Goal: 0% daily pass rate (scan only fires when setup is present). |
-| 3 | **3-4DB through grinder** | Already has 21 examples. Run through same pipeline — universe matrix is shared so no 30-min wait. |
-| 4 | **Backtest validated conditions** | Run final conditions across 5 years of history, review signal quality |
-| 5 | **Market regime analysis (Step 6)** | Build the "when to trade it" filter. 3-4DB showed 6-7x signal spikes during stage transitions. |
-| 6 | **Daily scan automation** | Nightly job: run scan conditions against today's data, surface tomorrow's candidates. |
-| 7 | **HTF setup examples** | Third setup type has zero examples. Need to collect and load. |
+**Problem discovered 2026-02-23:** The grinder finds conditions that filter tightly on TODAY (0.07%, 3 tickers) but when backtested across 200 days: 68,065 signals, 340/day avg. The conditions describe "bull market uptrend" not "DTSS setup." The spiderweb stops at the single-day ceiling but there are still expressions that could eliminate massive historical noise without losing any examples.
+
+**Solution:** After single-day ceiling, enter Phase 2 that scores candidate expressions by historical signal reduction. Keep stacking conditions until historical signals/day is manageable. Constraint: 100% of setup examples ALWAYS pass.
+
+**This must work for any setup type — upload examples, describe the setup, grinder handles the rest.**
 
 ---
 
-## Performance Optimizations — ✅ ALL IMPLEMENTED (2026-02-23)
+### Step 1: 5-Year OHLCV Cache ⬜
+**What:** Extend local cache from 300 bars (~1yr) to 1,250 bars (~5yr) per ticker.
+**Why:** Phase 2 scoring needs 5 years of history. Can't hit Railway API during the grind.
+**How:**
+- One-time build: fetch 1,250 bars per ticker from Railway DB (~10-15 min with 20 threads)
+- Store as `local_runner/cache/universe_ohlcv_5yr.pkl` (est ~200MB)
+- Daily append: add today's bar for each ticker (~2-3 min)
+- Keep existing 300-bar cache for matrix build (doesn't need 5yr)
+**Files:** `local_runner/cache_builder.py`
 
-**⚠️ NEEDS TESTING ON DESKTOP AGENT before further changes. All 4 optimizations are pushed but untested on real data/hardware.**
+### Step 2: Clean Tradable Universe ⬜
+**What:** Remove inverse/leveraged/synthetic ETFs from tradable_universe table.
+**Why:** AIPO, HOOZ etc. pollute grinder results with untradable synthetic patterns.
+**How:**
+- Identify all inverse/leveraged ETFs (ProShares, Direxion, GraniteShares, etc.)
+- Remove from DB
+- Add exclusion filter to universe rebuild so they never come back
+**Files:** `server.py` (universe rebuild endpoint), new cleanup script
+
+### Step 3: Expression Library Expansion ⬜
+**What:** 2,271 → ~3,800 expressions via cheap numeric ops.
+**Why:** Only 18 valid expressions survived filtering in the DTSS grind. More expressions = more tools for the spiderweb to find setup-specific conditions (not just broad market regime).
+**How:** See detailed expansion plan in "Expression Library Expansion" section below.
+**Files:** `local_runner/brute_expressions.py`, `scripts/expression_engine.py`
+**Constraint:** Matrix rebuild must stay under 7 min. Benchmarked at 6.8 min pre-optimization, should be ~4 min with bool lazy eval.
+
+### Step 4: Phase 2 — Historical Backtest Scoring ⬜
+**What:** After single-day ceiling, score remaining expressions by historical signal elimination.
+**Why:** This is the core fix. A condition useless today (doesn't drop 3→2 tickers) might eliminate 300/day of historical noise.
+**How:**
+1. Precompute: run current winning conditions across all tickers × 5yr using series approach. Store as boolean signal mask. (~20-30s based on benchmarks)
+2. Precompute: for every remaining candidate expression that passes all examples, compute its series + threshold mask across all tickers × 5yr. (One pass through tickers, ~2-3 min for ~200 candidates)
+3. Score: for each candidate, numpy AND with existing signal mask → count remaining signals. Microseconds per candidate.
+4. Add the candidate that eliminates the most historical signals.
+5. Repeat steps 3-4 until avg signals/day < target threshold (e.g. <10/day).
+6. Output: final condition set + full historical signal list.
+**Files:** New `local_runner/historical_scorer.py`, modify `local_runner/spiderweb.py`
+**Key constraint:** 100% of setup examples must ALWAYS pass all conditions. Zero false negatives.
+
+### Step 5: Backtest Runner Integration ⬜
+**What:** Make `scripts/backtest_conditions.py` pull conditions from grinder results automatically instead of hardcoded. Output signal charts.
+**Why:** Need to visually verify signals. Currently hardcoded from one grind run.
+**How:**
+- Read conditions from grinder result JSON (API endpoint or local file)
+- Generate candlestick charts for each signal (entry candle marked)
+- Summary stats: signals/day distribution, worst day, ticker frequency
+**Files:** `scripts/backtest_conditions.py`
+
+### Step 6: End-to-End Pipeline Test ⬜
+**What:** Run full pipeline on DTSS: grind → historical score → backtest → review signals.
+**Why:** Validate the whole system produces tight, setup-specific conditions.
+**Expected outcome:** Conditions that fire <10/day avg across 5 years, with clear DTSS setups in the results.
+
+### Step 7: Second Setup — 3-4DB ⬜
+**What:** Run 3-4DB examples (21 already loaded) through the same pipeline.
+**Why:** Validates the system is setup-agnostic. Universe matrix is shared, only example matrix + grind is new.
+
+---
+
+## Future (not blocking current work)
+
+| # | Task | Description |
+|---|------|-------------|
+| 1 | **Nightly automation** | Chain: append cache → rebuild matrix → grind per setup → output candidates. All before 7pm ET. |
+| 2 | **Dynamic re-grind** | System re-grinds nightly and adjusts conditions as market evolves. |
+| 3 | **HTF setup** | Third setup type, zero examples. Collect and load. |
+| 4 | **EV optimization** | Management optimizer against MFE/MAE matrices for position sizing. |
+| 5 | **Market regime filter** | "When to trade it" on/off switch per setup. 3-4DB showed 6-7x signal spikes during stage transitions. |
+
+---
+
+## Performance Optimizations — ✅ ALL IMPLEMENTED & TESTED (2026-02-23)
+
+**Desktop test results:** Matrix build: 2.8 min (down from 30+ min). Spiderweb grind: 1.2s for full DTSS. All working.
 
 ### 1. `_bool_series` lazy eval — ✅ DONE
 **File:** `scripts/expression_engine.py`
@@ -150,11 +217,4 @@ Currently LSP expressions are in a bespoke Phase 2 block per setup type. The lim
 
 **Decision:** Parked for now. Focus on generic expression expansion first (immediate grinder improvement), revisit after that's working.
 
----
 
-## Other Priorities
-
-| # | Task | Description |
-|---|------|-------------|
-| 1 | **3-4DB backtest → optimizer** | Run 800+ backtest signals through outcome precomputation + management optimizer. Get real EV numbers. |
-| 2 | **EV optimization pipeline** | Build Step 7 — brute force management testing against MFE/MAE matrices. |
