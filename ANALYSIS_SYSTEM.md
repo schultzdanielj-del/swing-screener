@@ -127,13 +127,13 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 
 - `local_runner/matrix_builder.py` — Precomputes universe + example matrices. Universe build parallelized via `ProcessPoolExecutor` (8 workers, `MATRIX_WORKERS` env var configurable).
 - `local_runner/spiderweb.py` — Phase 1: beam search tree exploration. Inner loop vectorized with numpy broadcasting + float32 matmul.
-- `local_runner/historical_scorer.py` — Phase 2: greedy historical signal elimination with precomputed numpy masks.
+- `local_runner/historical_scorer.py` — Phase 2: greedy historical signal elimination with precomputed numpy masks. Both compute loops use `ProcessPoolExecutor` for true CPU parallelism.
 - `local_runner/grinder.py` — CLI interface
 - `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild
 - `local_runner/cache_builder.py` — OHLCV caches: daily (300 bars, 57 MB) + 5yr (1,260 bars, 214 MB)
 - `local_runner/brute_expressions.py` — Expression generator: 2,541 generic expressions (same for all setups)
 - `scripts/expression_engine.py` — Computes expressions against OHLCV
-- `scripts/backtest_conditions.py` — Series computation for historical scoring (all ops mirrored from expression_engine)
+- `scripts/backtest_conditions.py` — Series computation for historical scoring. All ops mirrored from expression_engine including `bars_since_ma_cross` and `gap_count` (added 2026-02-23).
 - `scripts/lsp_detector.py` — Detects Local Structural Peak (highest structural high before scan bar)
 - `scripts/classify_universe.py` — ETF classifier (quarterly, desktop-only, ~150 exclusions)
 - `server.py` — Grinder API endpoints (jobs/status/progress/results/agent)

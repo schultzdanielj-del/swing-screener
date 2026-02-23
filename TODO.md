@@ -72,8 +72,8 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 |------|--------|-------|
 | 1 Load | ✅ Done | Data + TA knowledge loaded |
 | 2 Receive | ✅ Done | 26 examples with LSP data |
-| 3 Grind (Phase 1) | **⬜ READY** | Bespoke stripped — matrices now both 2,541 columns. Ready to run. |
-| 4 Grind (Phase 2) | ⬜ Waiting | Historical scorer code complete, 5yr cache built. Needs fresh Phase 1 results. |
+| 3 Grind (Phase 1) | ✅ Done | 9 conditions, 0.00% single-day pass rate, 11s at L3 |
+| 4 Grind (Phase 2) | **🔄 IN PROGRESS** | Running. 192K base signals (~177/day). Greedy rounds reducing to <10/day target. |
 | 5 Collaborate | Not started | Take grinder ceiling, add discretionary/qualitative conditions |
 | 6 Backtest | Not started | Run full conditions across history, review signal charts |
 | 7 Market Context | Not started | |
@@ -117,22 +117,32 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 - `expression_engine.py` LSP ops kept (harmless, nothing calls them)
 - Example matrix now returns `expr_names` and `expr_categories` for consistency
 
-### Step 4: Phase 2 — Historical Scorer ✅ CODE COMPLETE (needs execution)
+### Step 4: Phase 2 — Historical Scorer ✅ COMPLETE
 - `python local_runner/historical_scorer.py --setup dtss --target 10`
 - Greedy forward selection with precomputed numpy masks
 - Requires: Phase 1 grinder results + 5yr OHLCV cache
 - Output: `local_runner/cache/historical_results_{setup}.json`
 
+### Step 4.6: Phase 1→2 Integration Fixes ✅ COMPLETE
+- **Compute spec enrichment:** Phase 1 saves `{expr, category, low, high}` but Phase 2 needs `{compute}`. `load_phase1_results()` now rebuilds compute specs from expression library.
+- **Missing backtest ops:** Added `bars_since_ma_cross` and `gap_count` to `backtest_conditions.py` (existed in expression_engine but not in series computation).
+- **Key name mismatch:** Phase 1 uses `"expr"`, Phase 2 expected `"name"`. Fixed with `.get()` fallbacks.
+- **Parallelization:** Both `compute_base_signals` and candidate precompute switched from `ThreadPoolExecutor` to `ProcessPoolExecutor` for true CPU parallelism (GIL was limiting threads to 10% CPU usage).
+
 ---
 
-## IMMEDIATE NEXT STEP: Run Clean Grind
+## IMMEDIATE NEXT STEP: Review Phase 2 Results
 
-**What:** Run DTSS through the now-generic grinder pipeline end-to-end.
-1. Rebuild example matrix (will now have exactly 2,541 columns, matching universe)
-2. Run Phase 1 spiderweb: `python local_runner/grinder.py --setup dtss --level 3`
-3. Run Phase 2 historical scorer: `python local_runner/historical_scorer.py --setup dtss --target 10`
+**What:** Phase 2 historical scorer is running. When complete, review results:
+1. Check final signals/day — is it under 10?
+2. Review which expressions were selected — do they make TA sense?
+3. If good: move to Step 5 (backtest runner) to visually verify signal charts
+4. If signals/day still too high: consider expression library expansion (Step 5a)
 
-**Previous blocker (RESOLVED):** Bespoke LSP expressions made example matrix wider than universe matrix, crashing spiderweb. Fixed by stripping all bespoke code — system is now 100% generic.
+**Commands:**
+- Phase 1: `python local_runner/grinder.py --setup dtss --level 3` (done, 9 conditions)
+- Phase 2: `python local_runner/historical_scorer.py --setup dtss --target 10` (running)
+- Results saved to: `local_runner/cache/historical_results_dtss.json`
 
 ---
 
@@ -195,12 +205,16 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | Component | Time | Notes |
 |-----------|------|-------|
 | Daily matrix build | 2.8 min | 4,017 tickers × 2,541 expressions, 8 workers |
-| Spiderweb grind (L1) | ~30s | beam=10, depth=5 |
+| Spiderweb grind (L3) | ~11s | beam=50, depth=10, 550K nodes |
 | Spiderweb grind (L5) | 1-8 hours | beam=250, depth=15 |
+| Phase 2 base signals | ~400s | 4,167 tickers × 9 conditions → 192K signals (ThreadPool, GIL-bound) |
+| Phase 2 candidate precompute | ~396s | 2,106 candidates × 3,373 tickers (ThreadPool, GIL-bound) |
+| Phase 2 greedy rounds | TBD | Sub-second each (pure numpy AND) |
 | Daily cache build | 4.4 min | 4,167 tickers × 300 bars |
 | 5yr cache build | 4.6 min | 4,167 tickers × 1,260 bars |
-| Historical scorer | TBD | Precompute ~2-5 min, rounds sub-second each |
 | ETF classifier | ~10 min | Quarterly, yfinance API |
+
+**Note:** Phase 2 switched to ProcessPoolExecutor — benchmarks above are pre-switch. Expecting ~60-90s for both steps with true multiprocessing.
 
 ---
 
@@ -211,3 +225,4 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 3. **Numpy array serialization** — raw numpy to workers, skip `pd.to_numeric`. 8x faster reconstruct.
 4. **Example matrix parallelization** — ThreadPoolExecutor (10 threads) for concurrent example builds.
 5. **No bar minimum in cache** — every tradable ticker included regardless of history length.
+6. **ProcessPoolExecutor for Phase 2** — true CPU parallelism for base signal + candidate precompute (ThreadPool was GIL-bound at 10% CPU).
