@@ -155,12 +155,16 @@ def compute_example_ranges(example_dfs, expressions):
                 pass
 
     # Derive ranges with 5% margin (same as spiderweb)
+    # CRITICAL: require ALL examples (with scan_idx) to have non-NaN values.
+    # If any example returns NaN for an expression, that expression cannot be
+    # used as a condition — it would fail validation for that example.
     ranges = {}
-    min_valid = max(3, int(n_ex * 0.7))
+    n_with_scan = sum(1 for ex in example_dfs if ex["scan_idx"] is not None)
     for j, expr in enumerate(expressions):
         vals = example_matrix[:, j]
         valid = vals[~np.isnan(vals)]
-        if len(valid) < min_valid:
+        if len(valid) < n_with_scan:
+            # At least one example has NaN — skip this expression
             continue
         ex_min, ex_max = np.min(valid), np.max(valid)
         margin = (ex_max - ex_min) * 0.05
