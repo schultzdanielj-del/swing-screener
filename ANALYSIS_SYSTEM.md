@@ -35,7 +35,7 @@ The user presents:
 - Close-to-close P&L in ATR units at each bar
 - Bar-by-bar high, low, close relative to entry price
 
-This precomputed outcome matrix enables exhaustive management optimization in Step 8 — every stop/target/time combination is just a query against these numbers, not a simulation.
+This precomputed outcome matrix enables exhaustive management optimization in Step 7 — every stop/target/time combination is just a query against these numbers, not a simulation.
 
 This gives a general starting point to understand what the setup looks like numerically. Ask questions if anything is unclear about the pattern mechanics or what distinguishes a good example from a bad one.
 
@@ -55,7 +55,7 @@ This gives a general starting point to understand what the setup looks like nume
 
 **Goal:** Find which expression combinations best discriminate examples from the tradable universe. Get from 100% down to the mathematical ceiling — the tightest pass rate achievable through pure brute-force computation. Then eliminate historical noise until signals/day is manageable.
 
-**This step is now automated via THE GRINDER, a two-phase desktop search system.**
+**This step is fully automated via THE GRINDER, a two-phase desktop search system.**
 
 ### Phase 1: Spiderweb Search (single-day ceiling)
 
@@ -73,42 +73,49 @@ The spiderweb search then explores branching combinations of conditions:
 
 ### Phase 2: Pyramidal Grinder (nested time horizon noise elimination)
 
-**✅ BUILT & TESTED** — `local_runner/pyramid_grinder.py`
+**✅ COMPLETE — OPTIMAL PARAMETERS FOUND**
 
-**Test results (DTSS):**
-- **Run 1** (2,541 exprs, beam 50): 10 conditions, peak 69/day, avg 7.2/day, ~10 min. Hit expression ceiling.
-- **Run 2** (4,017 exprs, beam 50): 20 conditions, peak 91/day, avg 9.7/day, ~40 min. More conditions locked but worse results — larger search space needs wider beam, and 127 boolean conditions cause 4x runtime increase. The 2021 Jul-Aug cluster remains hardest noise to eliminate.
+`local_runner/pyramid_grinder.py`
 
-**Expression parity achieved:** All 88 ops in `expression_engine.py` are now available in `backtest_conditions.compute_series()`, giving historical tiers (T2-T6) access to the full 4,017 expression library (127 boolean conditions, expanded from 2,541/65 in Step 5b).
+**Optimal parameters (found 2026-02-24):**
+```bash
+python local_runner/pyramid_grinder.py --setup dtss --peak-target 5 --beam 200 --depth 30
+```
+- **beam=200** — explores 200 paths per level (4x wider than initial runs)
+- **depth=30** — up to 30 conditions per tier
+- **peak-target=5** — target ≤5 signals on any single day across history
+- **Runtime:** ~3 min with expression cache
+- **Result:** 30 conditions, peak 6/day, 184 total signals across 5yr, avg 2.2/day
 
-**⚠️ Performance bottleneck:** With 4,017 expressions (2,413 boolean), the pyramid grinder takes ~40 min per run — too slow for iterative tuning. **Next step: pre-cache all expression series to disk** so grind becomes pure search (~2-3 min).
+**How it works:** The pyramid progressively widens the historical window, each tier grinding until `peak_signals/day < threshold` before advancing:
 
-The pyramid progressively widens the historical window, each tier grinding until `peak_signals/day < threshold` before advancing to the next:
+1. **D1 (today):** Spiderweb grind on today's snapshot → finds ceiling. Lock conditions.
+2. **1 week:** Build matrix from last 5 trading days. Grind until peak/day < threshold. Lock.
+3. **1 month:** Matrix from ~21 trading days. Same. Lock.
+4. **6 months:** Matrix from ~126 trading days. Same. Lock.
+5. **1 year:** Matrix from ~252 trading days. Same. Lock.
+6. **5 years:** Matrix from all trading days. Same. Lock.
 
-1. **D1 (today):** Spiderweb grind on today's snapshot → finds ceiling. ~11s. Lock conditions.
-2. **1 week:** Build matrix from last 5 trading days. Grind until peak/day < threshold. ~10-30s. Lock.
-3. **1 month:** Matrix from ~21 trading days. Same. ~30s. Lock.
-4. **6 months:** Matrix from ~126 trading days. Same. ~30s. Lock.
-5. **1 year:** Matrix from ~252 trading days. Same. ~30s. Lock.
-6. **5 years:** Matrix from ~1,260 trading days. Same. ~30s. Lock.
+**Why this is fast:** Expression series cache pre-computes all 4,017 expressions for all 4,119 tickers × 5yr on disk (~21 GB). Tier matrix builds load pre-computed arrays instead of calling compute_series() thousands of times. 14x speedup at equivalent beam width.
 
-**Why this is fast:** Each tier eliminates the cheap noise so the next tier only scores survivors. The expensive 5-year compute only runs against tickers/days that passed all previous tiers. Total: ~2 min instead of 28 min.
+**Why peak-based:** Average 7.4/day sounds fine but hides days with 260 signals. Peak-based guarantee means no single day overwhelms manual review. Target: peak ≤ 5 across all 5 years.
 
-**Why peak-based:** Average 7.4/day sounds fine but hides days with 260 signals. Peak-based guarantee means no single day overwhelms manual review. Target: peak < 15 across all 5 years.
-
-**Key implementation:** Same spiderweb code, just different matrix construction per tier. Matrix rows = ticker-day combos for the window. Scoring metric = max(daily_counts) instead of total pass rate.
+**NaN validation fix (2026-02-24):** Expression ranges now require ALL examples with scan_idx to have non-NaN values (was 70% threshold). Previous threshold allowed expressions where some examples had NaN values, which silently failed validation later. Fix guarantees zero false negatives by construction.
 
 **Constraint:** 100% of setup examples must ALWAYS pass all conditions at every tier (zero false negatives).
 
-**Why this works:** An expression useless today (doesn't drop 3→2 tickers) might eliminate 300/day of historical noise. RSI 40-65 range might not help when all 3 current tickers are in range, but it kills thousands of historical signals with RSI 80+ or RSI 20-.
+**DTSS grind progression (peak-target 5):**
+- D1: 4 conditions → 0 tickers passing today
+- 1wk: 0 added (already below target)
+- 1mo: 0 added (already below target)
+- 6mo: 2 added (extension + ADX) → peak 5/day
+- 1yr: 1 added (near_support) → peak 5/day
+- 5yr: 23 added → peak 6/day (ceiling at level 24)
+- Total: 30 conditions, 184 signals, 3.0 min
 
 ### Legacy Phase 2: Flat Historical Scorer (deprecated)
 
-The original Phase 2 is still functional at `local_runner/historical_scorer.py` but will be replaced by the pyramid:
-- Greedy forward selection with precomputed numpy masks across full 5yr in one shot
-- Achieved avg 7.4/day but peak 260/day (Jul-Aug 2021 cluster)
-- 20.6 min runtime on i5-12600K (15 workers, ProcessPool)
-- Targeted average signals/day, not peak — fundamental design flaw
+The original Phase 2 at `local_runner/historical_scorer.py` targeted average signals/day instead of peak — fundamental design flaw that allowed 260 signals/day spikes. Replaced by pyramid grinder.
 
 ### Running the Grinder
 
@@ -120,22 +127,20 @@ The original Phase 2 is still functional at `local_runner/historical_scorer.py` 
 
 **Phase 2 (Pyramid):**
 ```bash
-python local_runner/pyramid_grinder.py --setup dtss --peak-target 15 --beam 50 --depth 10
+python local_runner/pyramid_grinder.py --setup dtss --peak-target 5 --beam 200 --depth 30
 ```
-Requires 5yr OHLCV cache + Railway API for examples. Runs all 6 tiers sequentially, outputs `pyramid_results_{setup}.json` + `historical_results_{setup}.json` (compatible with `signal_distribution.py`).
+Requires 5yr OHLCV cache + expression series cache + Railway API for examples. Runs all 6 tiers sequentially, outputs `pyramid_results_{setup}.json` + `historical_results_{setup}.json` (compatible with `signal_distribution.py`).
 
 ### What the Grinder Produces
 
-**Phase 1 output** (`grinder_results_{setup}.json`):
-- Best condition combo — ranked list of expressions with thresholds
-- Pass rate progression at each depth level
-- Ceiling identification
+**Pyramid output** (`pyramid_results_{setup}.json`):
+- All locked conditions with tiers, expression names, categories, and ranges
+- Per-tier condition counts and peak/avg stats
+- Total signal count and peak/day across full history
 
-**Phase 2 output** (`historical_results_{setup}.json`):
-- `phase1_conditions`: from spiderweb grind
-- `phase2_additions`: expressions added by historical scorer
-- `all_conditions`: combined final condition set
-- Signals/day reduction at each round
+**Compat output** (`historical_results_{setup}.json`):
+- Same conditions in format compatible with `signal_distribution.py`
+- Enables signal chart generation and visual verification
 
 ### What the Grinder CAN'T Do
 
@@ -153,13 +158,13 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 
 - `local_runner/matrix_builder.py` — Precomputes universe + example matrices. Universe build parallelized via `ProcessPoolExecutor` (8 workers, `MATRIX_WORKERS` env var configurable).
 - `local_runner/spiderweb.py` — Phase 1: beam search tree exploration. Inner loop vectorized with numpy broadcasting + float32 matmul.
-- `local_runner/pyramid_grinder.py` — Pyramidal grinder: 6 nested tiers (D1 → 1wk → 1mo → 6mo → 1yr → 5yr). D1 uses SpiderwebSearch, historical tiers use PeakSpiderweb (peak-based scoring). Parallel matrix build per tier via ProcessPoolExecutor. Replaces historical_scorer.py.
-- `local_runner/historical_scorer.py` — Legacy Phase 2: greedy historical signal elimination (replaced by pyramid_grinder.py, kept for reference).
+- `local_runner/pyramid_grinder.py` — Pyramidal grinder: 6 nested tiers (D1 → 1wk → 1mo → 6mo → 1yr → 5yr). D1 uses SpiderwebSearch, historical tiers use PeakSpiderweb (peak-based scoring). Parallel matrix build per tier via ProcessPoolExecutor. Auto-detects expression series cache for 14x speedup.
+- `local_runner/historical_scorer.py` — Legacy Phase 2: greedy historical signal elimination (deprecated, kept for reference).
 - `local_runner/grinder.py` — CLI interface
 - `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild (triggers at 4:30pm ET)
 - `local_runner/nightly.py` — **✅ BUILT:** Single command nightly update pipeline. Chains: Railway append-daily → daily cache → 5yr cache → expression cache append → matrix rebuild. Stops early if DB is already current. Run manually or auto-triggered by agent.
 - `local_runner/cache_builder.py` — OHLCV caches: daily (300 bars, 57 MB) + 5yr (1,260 bars, 214 MB)
-- `local_runner/expr_cache_builder.py` — **✅ BUILT (Step 5c):** Pre-cached expression series for all tickers × 5yr. Stores compressed .npz per ticker in `cache/expr_series/`. Manifest tracks expression fingerprint for auto-invalidation. `--build` for first-time (~40 min, ~52 GB), `--append` for nightly (~5-8 min), `--status` to check. Pyramid grinder auto-detects and uses cache, falls back to compute_series() if missing.
+- `local_runner/expr_cache_builder.py` — **✅ BUILT:** Pre-cached expression series for all tickers × 5yr. 4,119 tickers × 4,017 expressions, ~21 GB compressed .npz per ticker. `--build` (first-time, ~37.5 min), `--append` (nightly, ~5-8 min), `--status`. Manifest tracks expression fingerprint for auto-invalidation.
 - `local_runner/brute_expressions.py` — Expression generator: 4,017 generic expressions (same for all setups)
 - `scripts/expression_engine.py` — Computes expressions against OHLCV
 - `scripts/backtest_conditions.py` — Series computation for historical scoring. **88 ops** — full parity with expression_engine.py (excluding 8 LSP ops that require injected context). All generic expressions are available to all pyramid tiers.
@@ -171,7 +176,7 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 
 ### Expression library — 100% generic
 
-The grinder uses one universal expression set for all setups. No setup-specific expressions — the Phase 2 historical scorer finds setup-specific discrimination by grinding the generic library against 5yr history.
+The grinder uses one universal expression set for all setups. No setup-specific expressions — the pyramid grinder finds setup-specific discrimination by grinding the generic library against 5yr history.
 
 - **Generic set** (`brute_expressions.json`) — 4,017 expressions across 29 categories: near_resistance (203), near_support (133), extension (98), extension_dynamics (91), extension_ceiling (40), extension_adr (6), MA slope (240), MA spread (46), spread_slope (64), slope_ratio (18), MA cross (72), MA stack (7), momentum (138), range (59), range_dynamics (13), retracement (26), swing_structure (48), gap (21), consecutive (4), candle_pattern (39), volume_character (49), volume_continuous (36), bollinger (25), macd (28), aroon (18), efficiency (9), vwap (36), percentile_rank (37), boolean (2,413 from 127 conditions). Used by all setups and the universe matrix.
 
@@ -267,7 +272,7 @@ The grinder uses one universal expression set for all setups. No setup-specific 
 
 **Goal:** Find the absolute best trade management strategy by exhaustively testing every possible combination against precomputed outcome data.
 
-Using the historical signals from Step 7, filtered to the highest-success market conditions:
+Using the historical signals from Step 5, filtered to the highest-success market conditions:
 
 **The management variable space:**
 - **Stop distance:** Every 0.25 ATR increment from 0.25 to 5.0 ATR (20 values), plus MA-based stops (prior day low, entry candle low, each MA from 8 EMA through 50 SMA)
@@ -301,7 +306,7 @@ Using the historical signals from Step 7, filtered to the highest-success market
 |------|------|-----|
 | 1 | **Load** | Data & TA knowledge — everything is already in the system |
 | 2 | **Receive** | User presents examples, entry dates, and setup context |
-| 3 | **Grind** | THE GRINDER — Phase 1: spiderweb beam search (4,017 generic expressions) finds single-day ceiling. Phase 2: historical scorer eliminates 5yr noise via greedy selection. |
+| 3 | **Grind** | THE GRINDER — Phase 1: spiderweb beam search (4,017 generic expressions) finds single-day ceiling. Phase 2: pyramidal grinder eliminates 5yr noise via 6-tier nested search (beam=200, depth=30, peak-target=5). |
 | 4 | **Collaborate** | Human-AI iteration to push past the grinder ceiling with qualitative/discretionary conditions. Goal: zero daily pass rate. |
 | 5 | **Backtest** | Run conditions across full history, review signals, validate and tighten |
 | 6 | **Market Context** | Find which market conditions produce winners vs losers |
@@ -328,7 +333,7 @@ Using the historical signals from Step 7, filtered to the highest-success market
   - `GET /api/chart-image/{type}/{id}` — chart image
   - `GET /docs` — full Swagger API docs
   - **Nightly endpoints:**
-  - `POST /api/universe/append-daily` — incremental OHLCV update (checks DB max date vs yfinance, fetches only missing days, rebuilds tradable_universe)
+  - `POST /api/universe/append-daily` — incremental OHLCV update (checks DB max date vs yfinance latest trading day, fetches only missing days, rebuilds tradable_universe)
   - **Grinder endpoints:**
   - `POST /api/grinder/start` — submit a grind job (setup_type, grind_level)
   - `GET /api/grinder/jobs/pending` — pending jobs for agent pickup
