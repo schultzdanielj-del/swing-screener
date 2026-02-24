@@ -1569,22 +1569,360 @@
     }
 
     // ============================================
-    // HISTORICAL ANALYSIS PAGE — Backtest + Market Clustering
+    // HISTORICAL ANALYSIS PAGE — Signal Prevalence + SPY Overlay
     // ============================================
     function HistoricalPage({ activeSetup }) {
+      const [signalData, setSignalData] = useState(null);
+      const [spyData, setSpyData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        let cancelled = false;
+        async function load() {
+          setLoading(true);
+          setError(null);
+          try {
+            const [sigRes, spyRes] = await Promise.all([
+              fetch('/api/backtest/results?limit=5000&clean=true'),
+              fetch('/api/ohlcv/bulk/SPY?lookback=1260')
+            ]);
+            if (cancelled) return;
+            const sigJson = await sigRes.json();
+            const spyJson = await spyRes.json();
+            const byDate = {};
+            (sigJson.results || []).forEach(r => {
+              byDate[r.date] = (byDate[r.date] || 0) + 1;
+            });
+            setSignalData({ byDate, total: sigJson.count, tickers: sigJson.unique_tickers });
+            setSpyData((spyJson.results || []).reverse());
+          } catch (e) {
+            if (!cancelled) setError(e.message);
+          } finally {
+            if (!cancelled) setLoading(false);
+          }
+        }
+        load();
+        return () => { cancelled = true; };
+      }, [activeSetup]);
+
+      if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Loading historical data...</div>;
+      if (error) return <div style={{ padding: 40, color: 'var(--accent-red)' }}>Error: {error}</div>;
+      if (!signalData || !spyData || spyData.length === 0) return <div style={{ padding: 40, color: 'var(--text-muted)' }}>No backtest data available. Run backtest first.</div>;
+
       return (
         <div>
-          <FeaturePlaceholder
-            number="5"
-            title="5-Year Backtest"
-            description="Run validated scan conditions across 5 years of data. Stats include win rate, average gain/loss, profit factor, and comparison across market stages."
-          />
-          <div style={{ height: 16 }} />
-          <FeaturePlaceholder
-            number="6"
-            title="Market Clustering"
-            description="Visual overlay showing when signals cluster against SPY. Identifies which market stage transitions produce the highest signal density and best win rates."
-          />
+          <SignalBarChart signalData={signalData} spyData={spyData} />
+          <div style={{ height: 20 }} />
+          <SpyCandleBubbleChart signalData={signalData} spyData={spyData} />
+        </div>
+      );
+    }
+
+    function SignalBarChart({ signalData, spyData }) {
+      const canvasRef = useRef(null);
+      const containerRef = useRef(null);
+
+      useEffect(() => {
+        if (!canvasRef.current || !containerRef.current) return;
+        const canvas = canvasRef.current;
+        const container = containerRef.current;
+        const dpr = window.devicePixelRatio || 1;
+        const w = container.offsetWidth;
+        const h = 200;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+
+        const { byDate } = signalData;
+        const dates = spyData.map(d => d.date);
+        const counts = dates.map(d => byDate[d] || 0);
+        const maxCount = Math.max(...counts, 1);
+
+        const padL = 40, padR = 10, padT = 24, padB = 30;
+        const chartW = w - padL - padR;
+        const chartH = h - padT - padB;
+        const barW = Math.max(1, chartW / dates.length);
+
+        ctx.fillStyle = '#1a2035';
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '11px "JetBrains Mono"';
+        ctx.fillText('SIGNAL PREVALENCE \u2014 ' + signalData.total + ' signals, ' + signalData.tickers + ' tickers', padL, 15);
+
+        ctx.strokeStyle = '#2a3550';
+        ctx.lineWidth = 0.5;
+        const yTicks = [0, Math.round(maxCount * 0.25), Math.round(maxCount * 0.5), Math.round(maxCount * 0.75), maxCount];
+        const seen = new Set();
+        yTicks.forEach(v => {
+          if (seen.has(v)) return;
+          seen.add(v);
+          const y = padT + chartH - (v / maxCount) * chartH;
+          ctx.beginPath();
+          ctx.moveTo(padL, y);
+          ctx.lineTo(w - padR, y);
+          ctx.stroke();
+          ctx.fillStyle = '#64748b';
+          ctx.font = '9px "JetBrains Mono"';
+          ctx.textAlign = 'right';
+          ctx.fillText(v.toString(), padL - 4, y + 3);
+        });
+
+        dates.forEach((date, i) => {
+          const count = counts[i];
+          if (count === 0) return;
+          const x = padL + i * barW;
+          const barH = (count / maxCount) * chartH;
+          const y = padT + chartH - barH;
+          const t = Math.min(1, count / Math.max(maxCount * 0.5, 1));
+          const r = Math.round(59 + t * 180);
+          const g = Math.round(130 + t * (83 - 130));
+          const b = Math.round(246 + t * (80 - 246));
+          ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
+          ctx.fillRect(x, y, Math.max(barW - 0.5, 1), barH);
+        });
+
+        ctx.fillStyle = '#64748b';
+        ctx.font = '9px "JetBrains Mono"';
+        ctx.textAlign = 'center';
+        let lastYear = '';
+        dates.forEach((date, i) => {
+          const yr = date.substring(0, 4);
+          if (yr !== lastYear) {
+            lastYear = yr;
+            ctx.fillText(yr, padL + i * barW, h - 8);
+          }
+        });
+      }, [signalData, spyData]);
+
+      return (
+        <div ref={containerRef} style={{
+          background: '#1a2035',
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          overflow: 'hidden',
+        }}>
+          <canvas ref={canvasRef} />
+        </div>
+      );
+    }
+
+    function SpyCandleBubbleChart({ signalData, spyData }) {
+      const canvasRef = useRef(null);
+      const scrollRef = useRef(null);
+      const [tooltip, setTooltip] = useState(null);
+
+      const candleW = 5;
+      const gap = 1.5;
+      const cellW = candleW + gap;
+      const padL = 55, padR = 20, padT = 28, padB = 55;
+      const chartH = 400;
+      const totalW = padL + spyData.length * cellW + padR;
+      const canvasH = padT + chartH + padB;
+
+      useEffect(() => {
+        if (!canvasRef.current) return;
+        const canvas = canvasRef.current;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = totalW * dpr;
+        canvas.height = canvasH * dpr;
+        canvas.style.width = totalW + 'px';
+        canvas.style.height = canvasH + 'px';
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+
+        const { byDate } = signalData;
+        const prices = spyData.map(d => [d.low, d.high]).flat();
+        const minP = Math.min(...prices);
+        const maxP = Math.max(...prices);
+        const priceRange = maxP - minP || 1;
+        const maxCount = Math.max(...Object.values(byDate), 1);
+
+        function yFromPrice(p) {
+          return padT + chartH - ((p - minP) / priceRange) * chartH;
+        }
+
+        ctx.fillStyle = '#0f1520';
+        ctx.fillRect(0, 0, totalW, canvasH);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '11px "JetBrains Mono"';
+        ctx.fillText('SPY DAILY \u2014 SIGNAL CLUSTER OVERLAY (scroll \u2192)', padL, 16);
+
+        // Y axis gridlines
+        ctx.strokeStyle = '#1e2a3d';
+        ctx.lineWidth = 0.5;
+        const pStep = Math.pow(10, Math.floor(Math.log10(priceRange / 5)));
+        const niceStep = priceRange / 5 > pStep * 5 ? pStep * 10 : priceRange / 5 > pStep * 2 ? pStep * 5 : pStep * 2;
+        const firstTick = Math.ceil(minP / niceStep) * niceStep;
+        for (let p = firstTick; p <= maxP; p += niceStep) {
+          const y = yFromPrice(p);
+          ctx.beginPath();
+          ctx.moveTo(padL, y);
+          ctx.lineTo(totalW - padR, y);
+          ctx.stroke();
+          ctx.fillStyle = '#64748b';
+          ctx.font = '9px "JetBrains Mono"';
+          ctx.textAlign = 'right';
+          ctx.fillText('$' + Math.round(p), padL - 4, y + 3);
+        }
+
+        // Candlesticks
+        spyData.forEach((bar, i) => {
+          const x = padL + i * cellW + cellW / 2;
+          const isGreen = bar.close >= bar.open;
+          const bodyTop = yFromPrice(Math.max(bar.open, bar.close));
+          const bodyBot = yFromPrice(Math.min(bar.open, bar.close));
+          const wickTop = yFromPrice(bar.high);
+          const wickBot = yFromPrice(bar.low);
+
+          ctx.strokeStyle = isGreen ? '#26A69A' : '#EF5350';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, wickTop);
+          ctx.lineTo(x, wickBot);
+          ctx.stroke();
+
+          ctx.fillStyle = isGreen ? '#26A69A' : '#EF5350';
+          ctx.fillRect(x - candleW / 2, bodyTop, candleW, Math.max(bodyBot - bodyTop, 1));
+        });
+
+        // Signal bubbles — draw below the candles
+        spyData.forEach((bar, i) => {
+          const count = byDate[bar.date] || 0;
+          if (count === 0) return;
+          const x = padL + i * cellW + cellW / 2;
+          const bubbleY = padT + chartH + 25;
+          const radius = 4 + Math.sqrt(count / maxCount) * 18;
+          const t = count / maxCount;
+          const r = Math.round(59 + t * 200);
+          const g = Math.round(130 - t * 60);
+          const b = Math.round(246 - t * 180);
+          ctx.beginPath();
+          ctx.arc(x, bubbleY, radius, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',0.55)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(' + r + ',' + g + ',' + b + ',0.9)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          if (radius > 8) {
+            ctx.fillStyle = '#fff';
+            ctx.font = Math.min(11, Math.round(radius * 0.8)) + 'px "JetBrains Mono"';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(count.toString(), x, bubbleY);
+          }
+        });
+
+        // Draw vertical lines from bubbles up to candle area for large signals
+        spyData.forEach((bar, i) => {
+          const count = byDate[bar.date] || 0;
+          if (count < 5) return;
+          const x = padL + i * cellW + cellW / 2;
+          const wickBot = yFromPrice(bar.low);
+          const t = count / maxCount;
+          ctx.strokeStyle = 'rgba(' + Math.round(59 + t * 200) + ',' + Math.round(130 - t * 60) + ',' + Math.round(246 - t * 180) + ',0.25)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([2, 3]);
+          ctx.beginPath();
+          ctx.moveTo(x, wickBot + 2);
+          ctx.lineTo(x, padT + chartH + 10);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        });
+
+        // X axis labels
+        ctx.fillStyle = '#64748b';
+        ctx.font = '9px "JetBrains Mono"';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        let lastLabel = '';
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        spyData.forEach((bar, i) => {
+          const m = bar.date.substring(0, 7);
+          if (m !== lastLabel) {
+            lastLabel = m;
+            const x = padL + i * cellW + cellW / 2;
+            const mm = parseInt(bar.date.substring(5, 7));
+            const yr = bar.date.substring(2, 4);
+            if (mm === 1 || mm === 4 || mm === 7 || mm === 10) {
+              ctx.fillText(months[mm - 1] + " '" + yr, x, padT + chartH + 42);
+            }
+          }
+        });
+
+        // Scroll to end
+        if (scrollRef.current) {
+          scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+        }
+      }, [signalData, spyData]);
+
+      function handleMouseMove(e) {
+        if (!canvasRef.current || !scrollRef.current) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const idx = Math.floor((mx - padL) / cellW);
+        if (idx < 0 || idx >= spyData.length) { setTooltip(null); return; }
+        const bar = spyData[idx];
+        const count = signalData.byDate[bar.date] || 0;
+        setTooltip({
+          x: e.clientX,
+          y: e.clientY,
+          date: bar.date,
+          open: bar.open.toFixed(2),
+          high: bar.high.toFixed(2),
+          low: bar.low.toFixed(2),
+          close: bar.close.toFixed(2),
+          signals: count,
+        });
+      }
+
+      return (
+        <div style={{ position: 'relative' }}>
+          <div
+            ref={scrollRef}
+            onMouseMove={handleMouseMove}
+            onMouseLeave={() => setTooltip(null)}
+            style={{
+              background: '#0f1520',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              cursor: 'crosshair',
+            }}
+          >
+            <canvas ref={canvasRef} />
+          </div>
+          {tooltip && (
+            <div style={{
+              position: 'fixed',
+              left: tooltip.x + 14,
+              top: tooltip.y - 10,
+              background: '#1a2035',
+              border: '1px solid #3b82f6',
+              borderRadius: 6,
+              padding: '6px 10px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              color: '#e2e8f0',
+              pointerEvents: 'none',
+              zIndex: 1000,
+              whiteSpace: 'nowrap',
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 2 }}>{tooltip.date}</div>
+              <div>O: {tooltip.open}  H: {tooltip.high}  L: {tooltip.low}  C: {tooltip.close}</div>
+              {tooltip.signals > 0 && (
+                <div style={{ color: '#EF5350', fontWeight: 700, marginTop: 2 }}>
+                  {tooltip.signals} signal{tooltip.signals !== 1 ? 's' : ''}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       );
     }
