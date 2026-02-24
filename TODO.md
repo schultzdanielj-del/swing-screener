@@ -1,24 +1,25 @@
 # TODO
 
-## Current State (as of 2026-02-23)
+## Current State (as of 2026-02-24)
 
 ### The Grinder — Two-Phase Desktop Expression Discovery Engine
 
 **Phase 1: Spiderweb Search (single-day ceiling)**
 - Desktop agent (`local_runner/agent.py`) polls Railway for jobs
-- Universe matrix (~4,017 tickers × 2,541 expressions) auto-rebuilds nightly at 4:30pm ET
+- Universe matrix (~4,017 tickers × 4,017 expressions) auto-rebuilds nightly at 4:30pm ET
 - Spiderweb beam search explores branching condition combinations
 - Finds mathematical ceiling on current day's snapshot (e.g., 0.07% = 3 tickers)
 - Frontend slider controls grind depth (5 levels: 30s → 8 hours)
 
-**Phase 2: Historical Scorer (5-year noise elimination)**
-- After Phase 1 ceiling, greedily adds expressions that eliminate the most historical signals
+**Phase 2: Pyramidal Grinder (6-tier nested historical noise elimination)**
+- After Phase 1 ceiling, pyramid progressively widens time horizon: D1 → 1wk → 1mo → 6mo → 1yr → 5yr
+- Each tier grinds until peak_signals/day < threshold before advancing
 - 5-year OHLCV cache (4,167 tickers × avg 1,108 bars, 214 MB) provides the history
-- Precomputes all candidate boolean masks once, then scoring is pure numpy AND (sub-second/round)
-- Stops when avg signals/day < target (default 10)
 - Constraint: 100% of setup examples ALWAYS pass all conditions
 
-**compute_series parity: ✅ COMPLETE** — All 82 generic ops from expression_engine.py are now available in backtest_conditions.compute_series(). Historical tiers (T2-T6) have full access to the 2,541 expression library.
+**compute_series parity: ✅ COMPLETE** — All 88 ops available in backtest_conditions.compute_series(). Historical tiers (T2-T6) have full access to the 4,017 expression library.
+
+**Expression library: ✅ EXPANDED** — 2,541 → 4,017 expressions. 127 boolean conditions (was 65), 88 ops (was 82). 29 categories.
 
 **Universal design:** Upload examples for any setup type → grinder handles the rest. Universe matrix is shared, only example matrix + grind is per-setup.
 
@@ -59,13 +60,14 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 - **Tradable universe:** ~4,017 tickers after ETF exclusions (150 leveraged/inverse/derivative excluded)
 
 ### Expression library: 4,017 expressions across 29 categories
-- near_resistance (196), near_support (119), extension (78), extension_dynamics (65)
-- extension_ceiling (32), extension_adr (6), ma_slope (176), ma_spread (40)
-- spread_slope (48), slope_ratio (12), ma_cross (60), ma_stack (5)
-- momentum (115), range (49), range_dynamics (11), retracement (24)
-- swing_structure (42), gap (21), consecutive (4), candle_pattern (26)
-- volume_character (36), volume_continuous (20), bollinger (20), macd (21)
-- aroon (12), efficiency (7), vwap (36), percentile_rank (25), boolean (1,235)
+- near_resistance (203), near_support (133), extension (98), extension_dynamics (91)
+- extension_ceiling (40), extension_adr (6), ma_slope (240), ma_spread (46)
+- spread_slope (64), slope_ratio (18), ma_cross (72), ma_stack (7)
+- momentum (138), range (59), range_dynamics (13), retracement (26)
+- swing_structure (48), gap (21), consecutive (4), candle_pattern (39)
+- volume_character (49), volume_continuous (36), bollinger (25), macd (28)
+- aroon (18), efficiency (9), vwap (36), percentile_rank (37)
+- boolean (2,413 from 127 conditions × 19 aggregations each)
 
 ---
 
@@ -78,9 +80,10 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 3 Grind (Phase 1) | ✅ Done | 9 conditions, 0.00% single-day pass rate, 11s at L3 |
 | 4 Grind (Phase 2) | ✅ Done | 12 conditions (9 P1 + 3 P2), avg 7.4 signals/day, 20.6 min |
 | 4.7 Signal analysis | ✅ Done | Peak: 260/day (2021-08-11), clustered Jul-Aug 2021. Avg hides massive spikes. |
-| 5 **Pyramid grinder** | **✅ Tested** | 10 conditions, peak 69/day (down from 260), avg 7.2/day. Hit ceiling — ran out of expressions. 5yr matrix build ~10 min. |
-| 5a **compute_series parity** | **✅ Done** | 39 ops ported. 82 total ops, full parity with expression_engine (excluding 8 LSP ops). All 2,541 expressions now available to all pyramid tiers. |
-| 5b **Expression expansion** | **✅ DONE** | Expanded library from 2,541 → 4,017. 127 booleans (was 65), 88 ops (was 82), 6 new ops added. |
+| 5 **Pyramid grinder** | **✅ Tested** | Run 1 (2,541 exprs): 10 conditions, peak 69/day, avg 7.2/day, ~10 min. Run 2 (4,017 exprs): 20 conditions, peak 91/day, avg 9.7/day, ~40 min. More conditions locked but worse results + 4x slower due to 127 booleans. |
+| 5a **compute_series parity** | **✅ Done** | 82 → 88 total ops. Full parity with expression_engine (excluding 8 LSP ops). |
+| 5b **Expression expansion** | **✅ Done** | 2,541 → 4,017 expressions. 65 → 127 booleans, 6 new ops. |
+| 5c **Expression series cache** | **⬜ NEXT** | Pre-cache all 4,017 expression series for all tickers × 5yr on disk. Build once overnight, append 1 bar/ticker nightly. Eliminates 40-min recompute — grind becomes pure search (~2-3 min). |
 | 6 Backtest | Not started | Visual verification of signal charts |
 | 7 Market Context | Not started | |
 | 8 EV Optimize | Not started | |
@@ -137,32 +140,28 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ---
 
-## IMMEDIATE NEXT STEP: Expression Library Expansion
-
-### ✅ COMPLETED: compute_series Parity (Job 1)
-
-39 generic ops ported from `expression_engine.compute()` to `backtest_conditions.compute_series()`. All historical pyramid tiers now have access to the full 2,541 expression library. 8 LSP ops intentionally excluded (require injected context). Validated 38/39 exact match with point-value implementations.
+## IMMEDIATE NEXT STEP: Expression Series Cache (Step 5c)
 
 ### Problem
 
-The pyramid grinder hit a ceiling at peak 69/day (down from 260) with only 10 conditions. It ran out of useful expressions. Now that compute_series has full parity, the remaining bottleneck is the expression library itself — more parameter combinations and new concepts are needed.
+The pyramid grinder recomputes all indicator series from scratch every run. With 4,017 expressions × 4,167 tickers × 5yr of bars, this takes ~40 minutes — making iteration impossible. Can't tell if parameter changes help without waiting 40 min per attempt.
 
-### Plan: Job 2 — Expand expression library
+### Solution: Pre-cache all expression series to disk
 
-**Target: 2,541 → ~3,500+ expressions**
-- More parameter combinations for existing categories
-- New concepts from ta_knowledge.md that aren't covered yet
+1. **One-time build (overnight):** Compute all 4,017 expression series for all 4,167 tickers × 5yr history. Save to disk as numpy arrays per ticker.
+2. **Nightly append:** After market close, compute just the new bar for each ticker and append to cached arrays.
+3. **Grinder reads from cache:** Matrix build at each tier becomes slicing pre-computed arrays instead of running indicator math.
 
-### Why this matters
-Even 1-2 new conditions locking at early tiers (D1, 1wk, 1mo) would dramatically reduce the number of surviving rows hitting the expensive 5yr tier. The expressions both improve grind quality AND reduce grind time.
+### Expected impact
+- **Grind time:** 40 min → 2-3 min (pure search, no indicator computation)
+- **Iteration speed:** Can try beam 50, 100, 200, different peak targets, expression subsets — and see results in minutes
+- **Disk estimate:** ~47 GB (4,017 expressions × 4,167 tickers × ~1,100 bars × 4 bytes float32)
 
-### After expression expansion
-Re-run the pyramid: `python local_runner/pyramid_grinder.py --setup dtss --peak-target 15`
-Then verify with signal distribution: `python scripts/signal_distribution.py --setup dtss`
-With full compute_series parity + expanded library, expect significantly more conditions locking and lower peak/day.
+### After cache is built
+Re-run pyramid with wider beam (`--beam 100` or `--beam 200`) to explore more of the 4,017-expression search space. The old 2,541 library found good results with beam 50, but 4,017 expressions needs wider exploration.
 
-### Future optimization: Full-history series cache
-Once the expression library stabilizes, pre-cache all expression series for all tickers (47 GB on disk, stream per-ticker). Would reduce the 10-min 5yr matrix build to ~1 min. Build once, append 1 bar/ticker nightly. Not blocking — do this after expressions prove the pyramid works at target.
+### Second grind result analysis
+Run 2 (4,017 exprs) found 20 conditions but peak 91/day, avg 9.7/day — worse than Run 1's 10 conditions, peak 69/day, avg 7.2/day. The D1 tier locked different starting conditions with the larger library, cascading into worse historical-tier choices. Wider beam search with cached series should fix this.
 
 ---
 
@@ -172,12 +171,19 @@ Once the expression library stabilizes, pre-cache all expression series for all 
 **What:** Ported 39 missing ops from `expression_engine.py` to `backtest_conditions.compute_series()`.
 **Result:** 82 total ops in compute_series (full parity with expression_engine, excluding 8 LSP ops). All 2,541 expressions now accessible to all pyramid tiers (T2-T6), not just D1. Validated 38/39 exact match.
 
-### Step 5b: Expression Library Expansion ⬜ NEXT
-**What:** Expand expression library from 2,541 → ~3,500+
+### Step 5b: Expression Library Expansion ✅ COMPLETE
+**What:** Expanded expression library from 2,541 → 4,017
+**Result:** 127 boolean conditions (was 65), 88 ops (was 82), 6 new ops added to both expression_engine.py and backtest_conditions.py. New categories: close_position_in_bar, volume_price_divergence, low/high_vs_ma, roc_acceleration, roc_percentile_rank. Expanded parameter combos across extension, MA slope, Bollinger, MACD, range, retracement.
+**Grind result:** 20 conditions locked (was 10), but peak 91/day and avg 9.7/day — worse than pre-expansion. Larger search space + same beam width = suboptimal path selection. Also 40 min runtime (was ~10 min) due to 127 boolean series computation.
 
-**Why:** Pyramid grinder hit ceiling at peak 69/day with only 10 conditions. Now that compute_series has full parity, the remaining bottleneck is expression library size. More expressions = more conditions locking earlier = faster grind + lower peak.
-
-**Constraint:** Matrix rebuild must finish before 7pm ET. Current 2,541 builds in 2.8 min — budget allows ~3,500-4,000.
+### Step 5c: Expression Series Cache ⬜ NEXT
+**What:** Pre-cache all 4,017 expression series for all 4,167 tickers × 5yr on disk.
+**Why:** 40-min grind runtime makes iteration impossible. Cache eliminates indicator recomputation — grind becomes pure search (~2-3 min). Enables rapid experimentation with beam width, peak targets, expression subsets.
+**How:**
+- One-time overnight build: compute all series, save as numpy arrays per ticker
+- Nightly append: compute 1 new bar per ticker after market close
+- Grinder loads cached arrays instead of running compute_series()
+- Estimated disk: ~47 GB
 
 ### Step 5: Backtest Runner Integration ⬜
 **What:** Make `scripts/backtest_conditions.py` pull conditions from grinder results automatically. Output signal charts.
@@ -201,15 +207,14 @@ Once the expression library stabilizes, pre-cache all expression series for all 
 
 | # | Task | Description |
 |---|------|-------------|
-| 1 | **Full-history series cache** | Pre-cache all expression series for all tickers on disk (~47 GB). Stream per-ticker to avoid RAM limits. Build once, append 1 bar/ticker nightly. Reduces 10-min 5yr matrix build to ~1 min. Do after expression library stabilizes. |
-| 2 | **Nightly automation** | Chain: append cache → rebuild matrix → grind per setup → output candidates. All before 7pm ET. |
-| 3 | **Dynamic re-grind** | System re-grinds nightly and adjusts conditions as market evolves. |
-| 4 | **HTF setup** | Third setup type. Collect and load examples. |
-| 5 | **IPO break setup** | CRWV-style IPO breakout of highest AVWAP. Short history stocks. |
-| 6 | **EV optimization** | Management optimizer against MFE/MAE matrices for position sizing. |
-| 7 | **Market regime filter** | "When to trade it" on/off switch per setup. 3-4DB showed 6-7x signal spikes during stage transitions. |
-| 8 | **Universal pivot expressions** | Detect all D1 pivots with prominence, generate expressions for spiderweb. Currently parked — LSP detector needs refactoring. |
-| 9 | **Frontend Phase 2 control** | Run pyramid grinder from the frontend (like Phase 1 grind). Detailed progress per tier. |
+| 1 | **Nightly automation** | Chain: append cache → rebuild matrix → grind per setup → output candidates. All before 7pm ET. |
+| 2 | **Dynamic re-grind** | System re-grinds nightly and adjusts conditions as market evolves. |
+| 3 | **HTF setup** | Third setup type. Collect and load examples. |
+| 4 | **IPO break setup** | CRWV-style IPO breakout of highest AVWAP. Short history stocks. |
+| 5 | **EV optimization** | Management optimizer against MFE/MAE matrices for position sizing. |
+| 6 | **Market regime filter** | "When to trade it" on/off switch per setup. 3-4DB showed 6-7x signal spikes during stage transitions. |
+| 7 | **Universal pivot expressions** | Detect all D1 pivots with prominence, generate expressions for spiderweb. Currently parked — LSP detector needs refactoring. |
+| 8 | **Frontend Phase 2 control** | Run pyramid grinder from the frontend (like Phase 1 grind). Detailed progress per tier. |
 
 ---
 
@@ -217,11 +222,12 @@ Once the expression library stabilizes, pre-cache all expression series for all 
 
 | Component | Time | Notes |
 |-----------|------|-------|
-| Daily matrix build | 2.8 min | 4,017 tickers × 2,541 expressions, 8 workers |
+| Daily matrix build | ~5 min (est) | 4,017 tickers × 4,017 expressions, 8 workers |
 | Spiderweb grind (L3) | ~11s | beam=50, depth=10, 550K nodes |
 | Spiderweb grind (L5) | 1-8 hours | beam=250, depth=15 |
-| **Pyramid grinder (full)** | **~12 min** | **D1 (cached: <1s) + tiers 2-5 (~2 min) + 5yr matrix build (~10 min). 10 conditions, peak 69/day.** |
-| Pyramid 5yr matrix build | ~10 min | Bottleneck. compute_series() for all candidates × surviving tickers. Will improve with more conditions locking earlier. |
+| **Pyramid grinder (2,541 exprs)** | **~12 min** | **10 conditions, peak 69/day, avg 7.2/day** |
+| **Pyramid grinder (4,017 exprs)** | **~40 min** | **20 conditions, peak 91/day, avg 9.7/day. Boolean explosion (127 conditions) is the bottleneck.** |
+| Pyramid 5yr matrix build | ~30+ min | Bottleneck. 2,413 boolean expressions dominate compute time. |
 | Phase 2 legacy total | 20.6 min | Down from 28.2 min after ProcessPool switch (deprecated by pyramid) |
 | Signal distribution | ~15s | 4,167 tickers × 12 conditions, parallel (ProcessPool) |
 | Daily cache build | 4.4 min | 4,167 tickers × 300 bars |

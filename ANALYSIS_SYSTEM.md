@@ -75,9 +75,13 @@ The spiderweb search then explores branching combinations of conditions:
 
 **✅ BUILT & TESTED** — `local_runner/pyramid_grinder.py`
 
-**First test results (DTSS):** 10 conditions, peak 69/day (down from 260), avg 7.2/day. Hit expression ceiling — ran out of useful candidates at the 5yr tier. The 2021 Jul-Aug cluster is the hardest noise to eliminate. 5yr matrix build took ~10 min.
+**Test results (DTSS):**
+- **Run 1** (2,541 exprs, beam 50): 10 conditions, peak 69/day, avg 7.2/day, ~10 min. Hit expression ceiling.
+- **Run 2** (4,017 exprs, beam 50): 20 conditions, peak 91/day, avg 9.7/day, ~40 min. More conditions locked but worse results — larger search space needs wider beam, and 127 boolean conditions cause 4x runtime increase. The 2021 Jul-Aug cluster remains hardest noise to eliminate.
 
-**Expression parity achieved:** All 82 generic ops in `expression_engine.py` are now available in `backtest_conditions.compute_series()`, giving historical tiers (T2-T6) access to the full 4,017 expression library (expanded from 2,541 in Step 5b).
+**Expression parity achieved:** All 88 ops in `expression_engine.py` are now available in `backtest_conditions.compute_series()`, giving historical tiers (T2-T6) access to the full 4,017 expression library (127 boolean conditions, expanded from 2,541/65 in Step 5b).
+
+**⚠️ Performance bottleneck:** With 4,017 expressions (2,413 boolean), the pyramid grinder takes ~40 min per run — too slow for iterative tuning. **Next step: pre-cache all expression series to disk** so grind becomes pure search (~2-3 min).
 
 The pyramid progressively widens the historical window, each tier grinding until `peak_signals/day < threshold` before advancing to the next:
 
@@ -154,6 +158,7 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 - `local_runner/grinder.py` — CLI interface
 - `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild
 - `local_runner/cache_builder.py` — OHLCV caches: daily (300 bars, 57 MB) + 5yr (1,260 bars, 214 MB)
+- `local_runner/series_cache.py` — **PLANNED (Step 5c):** Pre-cached expression series for all tickers × 5yr. Eliminates indicator recomputation during grind. Build once overnight (~47 GB), append 1 bar/ticker nightly. Reduces grind from ~40 min to ~2-3 min.
 - `local_runner/brute_expressions.py` — Expression generator: 4,017 generic expressions (same for all setups)
 - `scripts/expression_engine.py` — Computes expressions against OHLCV
 - `scripts/backtest_conditions.py` — Series computation for historical scoring. **82 ops** — full parity with expression_engine.py (excluding 8 LSP ops that require injected context). All generic expressions are available to all pyramid tiers.
