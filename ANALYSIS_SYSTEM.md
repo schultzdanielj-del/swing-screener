@@ -10,7 +10,7 @@
 
 ## Step 1: Load Data & Knowledge
 
-All OHLCV data already exists in the system. The `universe_ohlcv` table has 5 years of daily data for ~11,000 tickers, updated nightly with the most recent day. The `tradable_universe` subset (~4,100 tickers meeting minimum price and liquidity requirements) is what we scan against. Nothing needs to be fetched from Yahoo Finance — it's all local.
+All OHLCV data already exists in the system. The `universe_ohlcv` table has 5 years of daily data for ~11,000 tickers, updated nightly via `POST /api/universe/append-daily` (incremental — fetches only missing days). The `tradable_universe` subset (~4,100 tickers meeting minimum price and liquidity requirements) is what we scan against. The full nightly pipeline (`python local_runner/nightly.py`) chains: Railway append → daily cache → 5yr cache → expression cache append → matrix rebuild. Runs after 4:30pm ET, ~15-20 min total. Agent auto-triggers if running.
 
 Before starting any setup analysis, load `ta_knowledge.md` for full TA context — extension structures, channel behavior, AVWAP mechanics, market stages, wave cycles. This informs what to look for and how to think about the data. Load `pcf.md` for the complete PCF language reference — every function, operator, and syntax pattern available in TC2000.
 
@@ -156,7 +156,8 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 - `local_runner/pyramid_grinder.py` — Pyramidal grinder: 6 nested tiers (D1 → 1wk → 1mo → 6mo → 1yr → 5yr). D1 uses SpiderwebSearch, historical tiers use PeakSpiderweb (peak-based scoring). Parallel matrix build per tier via ProcessPoolExecutor. Replaces historical_scorer.py.
 - `local_runner/historical_scorer.py` — Legacy Phase 2: greedy historical signal elimination (replaced by pyramid_grinder.py, kept for reference).
 - `local_runner/grinder.py` — CLI interface
-- `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild
+- `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild (triggers at 4:30pm ET)
+- `local_runner/nightly.py` — **✅ BUILT:** Single command nightly update pipeline. Chains: Railway append-daily → daily cache → 5yr cache → expression cache append → matrix rebuild. Stops early if DB is already current. Run manually or auto-triggered by agent.
 - `local_runner/cache_builder.py` — OHLCV caches: daily (300 bars, 57 MB) + 5yr (1,260 bars, 214 MB)
 - `local_runner/expr_cache_builder.py` — **✅ BUILT (Step 5c):** Pre-cached expression series for all tickers × 5yr. Stores compressed .npz per ticker in `cache/expr_series/`. Manifest tracks expression fingerprint for auto-invalidation. `--build` for first-time (~40 min, ~52 GB), `--append` for nightly (~5-8 min), `--status` to check. Pyramid grinder auto-detects and uses cache, falls back to compute_series() if missing.
 - `local_runner/brute_expressions.py` — Expression generator: 4,017 generic expressions (same for all setups)
@@ -165,7 +166,8 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 - `scripts/signal_distribution.py` — Parallel signal analyzer: runs all conditions across 5yr cache, outputs daily signal counts + per-signal CSV. Used to verify peak/avg before advancing.
 - `scripts/lsp_detector.py` — Detects Local Structural Peak (highest structural high before scan bar)
 - `scripts/classify_universe.py` — ETF classifier (quarterly, desktop-only, ~150 exclusions)
-- `server.py` — Grinder API endpoints (jobs/status/progress/results/agent)
+- `scripts/fetch_universe.py` — Universe OHLCV fetcher: full build + incremental `append_daily()` for nightly updates. Batch 40, 3s delay, INSERT OR REPLACE for dedup.
+- `server.py` — Grinder API endpoints (jobs/status/progress/results/agent), nightly append-daily endpoint
 
 ### Expression library — 100% generic
 
@@ -325,6 +327,8 @@ Using the historical signals from Step 7, filtered to the highest-success market
   - `POST /api/backtest/run` — run backtest
   - `GET /api/chart-image/{type}/{id}` — chart image
   - `GET /docs` — full Swagger API docs
+  - **Nightly endpoints:**
+  - `POST /api/universe/append-daily` — incremental OHLCV update (checks DB max date vs yfinance, fetches only missing days, rebuilds tradable_universe)
   - **Grinder endpoints:**
   - `POST /api/grinder/start` — submit a grind job (setup_type, grind_level)
   - `GET /api/grinder/jobs/pending` — pending jobs for agent pickup

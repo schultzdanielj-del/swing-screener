@@ -17,6 +17,8 @@
 - 5-year OHLCV cache (4,167 tickers × avg 1,108 bars, 214 MB) provides the history
 - Constraint: 100% of setup examples ALWAYS pass all conditions
 
+**Nightly Pipeline: ✅ COMPLETE** — `python local_runner/nightly.py` chains 5 steps: Railway incremental append → daily cache → 5yr cache → expression cache append → matrix rebuild. Auto-triggered by agent at 4:30pm ET on trading days. ~15-20 min if new data, <1 min if already current.
+
 **compute_series parity: ✅ COMPLETE** — All 88 ops available in backtest_conditions.compute_series(). Historical tiers (T2-T6) have full access to the 4,017 expression library.
 
 **Expression library: ✅ EXPANDED** — 2,541 → 4,017 expressions. 127 boolean conditions (was 65), 88 ops (was 82). 29 categories.
@@ -29,28 +31,32 @@
 
 ```
 local_runner/
-├── agent.py              # Polling agent with nightly auto-rebuild
+├── agent.py              # Polling agent with nightly auto-rebuild (4:30pm ET trigger)
+├── nightly.py            # Single-command nightly pipeline (5 steps, gate logic)
 ├── grinder.py            # CLI interface
 ├── pyramid_grinder.py    # Pyramidal grinder: 6 nested tiers (D1→5yr), peak-based
 ├── spiderweb.py          # Phase 1: beam search tree exploration (used by D1 tier)
 ├── historical_scorer.py  # Phase 2: greedy historical signal elimination (legacy, replaced by pyramid)
 ├── matrix_builder.py     # Precomputes universe + example matrices
 ├── cache_builder.py      # OHLCV caches (300-bar daily + 1,260-bar 5yr)
-├── brute_expressions.py  # 2,541 expression generator (generic + per-setup bespoke)
+├── expr_cache_builder.py # Pre-cached expression series for all tickers × 5yr
+├── brute_expressions.py  # 4,017 expression generator (generic, universal)
 └── cache/
     ├── universe_ohlcv.pkl      # Daily cache (~57 MB, 300 bars/ticker)
     ├── universe_ohlcv_5yr.pkl  # 5yr cache (~214 MB, avg 1,108 bars/ticker)
+    ├── expr_series/             # Pre-cached expression series (~52 GB compressed)
     ├── grinder_results_{setup}.json     # Phase 1 output
     └── historical_results_{setup}.json  # Phase 2 output
 
 scripts/
 ├── expression_engine.py     # Computes expressions against OHLCV (point + series)
 ├── backtest_conditions.py   # Series computation for historical scoring
+├── fetch_universe.py        # Universe OHLCV fetcher: full build + incremental append_daily()
 ├── lsp_detector.py          # Local Structural Peak detection (DTSS-specific)
 ├── classify_universe.py     # ETF classifier (quarterly, desktop-only)
 └── fast_profiler.py         # FastProfiler for rapid example profiling
 
-server.py                    # Railway API: 14+ endpoints, universe rebuild, grinder jobs
+server.py                    # Railway API: 14+ endpoints, universe rebuild, grinder jobs, nightly append
 ```
 
 ### Key data stores
@@ -138,21 +144,27 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 - **Key name mismatch:** Phase 1 uses `"expr"`, Phase 2 expected `"name"`. Fixed with `.get()` fallbacks.
 - **Parallelization:** Both `compute_base_signals` and candidate precompute switched from `ThreadPoolExecutor` to `ProcessPoolExecutor` for true CPU parallelism (GIL was limiting threads to 10% CPU usage).
 
----
-
-## IMMEDIATE NEXT STEP: Strip Bespoke → DONE. Nightly script → DONE.
-
-### Nightly Update Script ✅ COMPLETE
-**What:** `python local_runner/nightly.py` — single command to refresh all data before grinding.
-**Chain:**
-1. `POST /api/universe/append-daily` — checks DB max date vs yfinance latest. If behind, fetches missing days for all tradable tickers, upserts, rebuilds tradable_universe. If current → stops here.
-2. Daily OHLCV cache refresh (300 bars, pulls from Railway)
-3. 5yr OHLCV cache refresh (1,260 bars, pulls from Railway)
+### Nightly Automation ✅ COMPLETE
+**Railway endpoint:** `POST /api/universe/append-daily` — checks DB max date vs yfinance latest trading day (uses SPY as reference). If behind, fetches missing days for all tradable tickers (batch 40, 3s delay, INSERT OR REPLACE). Rebuilds tradable_universe after successful append. Returns stats.
+**Desktop orchestrator:** `python local_runner/nightly.py` — 5-step chain with gate logic:
+1. Railway append-daily (30-min timeout) — if already current, stops here
+2. Daily OHLCV cache refresh (300 bars)
+3. 5yr OHLCV cache refresh (1,260 bars)
 4. Expression series cache append (new bars only)
 5. D1 universe matrix rebuild
+**Agent integration:** `local_runner/agent.py` triggers at 4:30pm ET on weekdays (30-min buffer after close for data availability).
+**Total time:** ~15-20 min if new data, <1 min if already current.
 
-**Timing:** Run after 4:30pm ET on trading days. Agent auto-triggers if running.
-**Total time:** ~15-20 min. After completion, grind iterations are ~2-3 min each.
+---
+
+## IMMEDIATE NEXT STEP: Run Pyramid Grinder with Expression Cache
+
+All infrastructure is built. Nightly pipeline is complete. Expression cache is built. Next grind run should be ~2-3 min instead of 40 min.
+
+1. Run `python local_runner/nightly.py` to ensure all data is current
+2. Run pyramid grinder with wider beam (100+) now that runtime is fast
+3. Iterate: tune peak targets, try expression subsets, experiment with tier thresholds
+4. Move to Step 5 (backtest visual verification) once peak/day is manageable
 
 ---
 
@@ -219,6 +231,8 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | Daily cache build | 4.4 min | 4,167 tickers × 300 bars |
 | 5yr cache build | 4.6 min | 4,167 tickers × 1,260 bars |
 | ETF classifier | ~10 min | Quarterly, yfinance API |
+| **Nightly pipeline (full)** | **~15-20 min** | **append + daily cache + 5yr cache + expr cache + matrix** |
+| **Nightly pipeline (current)** | **<1 min** | **Gate check only — Railway returns up_to_date** |
 
 **Note:** Phase 2 uses ProcessPoolExecutor with cache-via-initializer pattern (serialized once per worker at startup, not per task). Batched ticker submission eliminates per-task DataFrame pickling overhead. 99% CPU utilization on i5-12600K.
 
