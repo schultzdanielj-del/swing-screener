@@ -526,6 +526,44 @@ def main():
     if not args.no_charts:
         print(f"  Charts dir:  {os.path.join(CACHE_DIR, f'backtest_charts_{args.setup}')}")
 
+    # Auto-upload signals to Railway for frontend Historical tab
+    upload_signals_to_railway(signals_df, args.setup)
+
+
+def upload_signals_to_railway(signals_df, setup_type):
+    """Upload backtest signals to Railway so the frontend Historical tab updates."""
+    import requests
+
+    RAILWAY_URL = os.environ.get(
+        "RAILWAY_API_URL",
+        "https://web-production-e3025.up.railway.app"
+    )
+    endpoint = f"{RAILWAY_URL}/api/backtest/signals/upload"
+
+    signals = [
+        {"date": str(row["date"])[:10], "ticker": row["ticker"]}
+        for _, row in signals_df.iterrows()
+    ]
+
+    payload = {
+        "setup_type": setup_type,
+        "signals": signals,
+    }
+
+    print(f"\n  Uploading {len(signals):,} signals to Railway...")
+    try:
+        resp = requests.post(endpoint, json=payload, timeout=60)
+        if resp.status_code == 200:
+            data = resp.json()
+            print(f"  ✓ Uploaded: {data.get('total', '?')} signals, "
+                  f"{data.get('unique_tickers', '?')} tickers, "
+                  f"max {data.get('max_signals_per_day', '?')}/day")
+        else:
+            print(f"  ✗ Upload failed ({resp.status_code}): {resp.text[:200]}")
+    except Exception as e:
+        print(f"  ✗ Upload failed: {e}")
+        print(f"  (Signals saved locally — upload manually or retry)")
+
 
 if __name__ == "__main__":
     main()

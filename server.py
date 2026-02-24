@@ -1151,6 +1151,122 @@ async def scan_dtss_results():
 # BACKTEST ENDPOINTS
 # ============================================
 
+@app.post("/api/backtest/signals/upload")
+async def upload_backtest_signals(request: Request):
+    """Upload backtest signals from desktop runner.
+    
+    Expects JSON:
+    {
+        "setup_type": "dtss",
+        "signals": [{"date": "2024-01-15", "ticker": "AAPL"}, ...],
+        "conditions_hash": "abc123",  // optional
+        "grinder_version": "v2"       // optional
+    }
+    
+    Replaces all existing signals for that setup_type.
+    """
+    try:
+        body = await request.json()
+        setup_type = body.get("setup_type", "").lower()
+        signals = body.get("signals", [])
+        conditions_hash = body.get("conditions_hash", "")
+        grinder_version = body.get("grinder_version", "")
+        
+        if not setup_type:
+            raise HTTPException(400, "setup_type required")
+        if not signals:
+            raise HTTPException(400, "signals array required")
+        
+        with get_db() as db:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS backtest_signals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    setup_type TEXT NOT NULL,
+                    ticker TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    uploaded_at TEXT NOT NULL,
+                    conditions_hash TEXT,
+                    UNIQUE(setup_type, ticker, date)
+                )
+            """)
+            db.execute("CREATE INDEX IF NOT EXISTS idx_bt_sig_setup ON backtest_signals(setup_type)")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_bt_sig_date ON backtest_signals(date)")
+            
+            # Clear old signals for this setup
+            db.execute("DELETE FROM backtest_signals WHERE setup_type=?", (setup_type,))
+            
+            now = datetime.now().isoformat()
+            inserted = 0
+            for sig in signals:
+                try:
+                    db.execute(
+                        "INSERT OR IGNORE INTO backtest_signals (setup_type, ticker, date, uploaded_at, conditions_hash) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (setup_type, sig["ticker"], sig["date"], now, conditions_hash)
+                    )
+                    inserted += 1
+                except Exception:
+                    pass
+            
+            db.commit()
+            
+            # Aggregate stats
+            total = db.execute("SELECT COUNT(*) FROM backtest_signals WHERE setup_type=?", (setup_type,)).fetchone()[0]
+            tickers = db.execute("SELECT COUNT(DISTINCT ticker) FROM backtest_signals WHERE setup_type=?", (setup_type,)).fetchone()[0]
+            dates = db.execute("SELECT COUNT(DISTINCT date) FROM backtest_signals WHERE setup_type=?", (setup_type,)).fetchone()[0]
+            max_per_day = db.execute(
+                "SELECT COUNT(*) as c FROM backtest_signals WHERE setup_type=? GROUP BY date ORDER BY c DESC LIMIT 1",
+                (setup_type,)
+            ).fetchone()
+            
+        return {
+            "status": "ok",
+            "setup_type": setup_type,
+            "inserted": inserted,
+            "total": total,
+            "unique_tickers": tickers,
+            "unique_dates": dates,
+            "max_signals_per_day": max_per_day[0] if max_per_day else 0,
+            "uploaded_at": now,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/backtest/signals/{setup_type}")
+async def get_backtest_signals(setup_type: str, limit: int = 5000, offset: int = 0):
+    """Get backtest signals for a setup type. Used by Historical tab."""
+    try:
+        with get_db() as db:
+            exists = db.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='backtest_signals'"
+            ).fetchone()[0]
+            if not exists:
+                return {"count": 0, "unique_tickers": 0, "results": [], "message": "No signals uploaded yet."}
+            
+            total = db.execute(
+                "SELECT COUNT(*) FROM backtest_signals WHERE setup_type=?", (setup_type,)
+            ).fetchone()[0]
+            tickers = db.execute(
+                "SELECT COUNT(DISTINCT ticker) FROM backtest_signals WHERE setup_type=?", (setup_type,)
+            ).fetchone()[0]
+            rows = db.execute(
+                "SELECT ticker, date FROM backtest_signals WHERE setup_type=? ORDER BY date, ticker LIMIT ? OFFSET ?",
+                (setup_type, limit, offset)
+            ).fetchall()
+            
+            return {
+                "count": total,
+                "unique_tickers": tickers,
+                "showing": len(rows),
+                "results": [dict(r) for r in rows],
+            }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @app.post("/api/backtest/run")
 async def run_backtest_endpoint(background_tasks: BackgroundTasks):
     """Kick off full 5-year 3-4DB backtest in background."""

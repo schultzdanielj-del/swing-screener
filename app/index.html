@@ -1583,8 +1583,10 @@
           setLoading(true);
           setError(null);
           try {
+            const setupMap = { 'DTSS': 'dtss', '3-4DB': '3-4db', 'HTF': 'htf' };
+            const setupKey = setupMap[activeSetup] || activeSetup.toLowerCase();
             const [sigRes, spyRes] = await Promise.all([
-              fetch('/api/backtest/results?limit=5000&clean=true'),
+              fetch('/api/backtest/signals/' + setupKey + '?limit=10000'),
               fetch('/api/ohlcv/bulk/SPY?lookback=1260')
             ]);
             if (cancelled) return;
