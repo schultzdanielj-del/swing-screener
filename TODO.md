@@ -171,14 +171,23 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ---
 
-## IMMEDIATE NEXT STEP: Market Context (Step 7)
+## IMMEDIATE NEXT STEP
 
-Steps 1-6 are complete. The grinder finds conditions, the backtest runner scans 5yr history, auto-uploads to Railway, and the Historical tab visualizes signal prevalence overlaid on SPY.
+**1. Run quick grind to verify fixes (2-3 min):**
+```bash
+python local_runner/pyramid_grinder.py --setup dtss --peak-target 5 --beam 200 --depth 30
+```
 
-**What's next:**
-1. Run grinder + backtest for DTSS with production params (desktop)
-2. Review Historical tab — signal clustering should align with market stage transitions
-3. Begin Step 7: correlate signal outcomes with market regime (stage transitions, breadth, VIX)
+**2. Overnight max grind — let it cook while sleeping:**
+```bash
+python local_runner/pyramid_grinder.py --setup dtss --peak-target 2 --beam 10000 --depth 100
+```
+Target: <1 signal/day average. Estimated runtime: 8-10 hours.
+This explores the full search space — 10K beam paths × all candidates per level, no expansion cap.
+Should find the tightest possible condition set the expression library can produce.
+
+**3. Review results → backtest → Historical tab**
+4. Begin Step 7: correlate signal outcomes with market regime (stage transitions, breadth, VIX)
 
 ---
 
