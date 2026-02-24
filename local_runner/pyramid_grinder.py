@@ -155,21 +155,16 @@ def compute_example_ranges(example_dfs, expressions):
                 pass
 
     # Derive ranges with 5% margin (same as spiderweb)
-    # Use 70% threshold for range computation (wider candidate pool),
-    # but separately track which expressions have NaN for any example.
-    # Those will be excluded from being LOCKED as conditions (would fail validation)
-    # but still contribute to the candidate pool for filtering universe rows.
+    # 70% threshold: allows expressions where some examples have NaN.
+    # These may cause validation warnings but produce tighter grind results.
     ranges = {}
-    nan_exprs = set()  # expressions with NaN for at least one example with scan_idx
+    nan_exprs = set()
     min_valid = max(3, int(n_ex * 0.7))
-    n_with_scan = sum(1 for ex in example_dfs if ex["scan_idx"] is not None)
     for j, expr in enumerate(expressions):
         vals = example_matrix[:, j]
         valid = vals[~np.isnan(vals)]
         if len(valid) < min_valid:
             continue
-        if len(valid) < n_with_scan:
-            nan_exprs.add(expr["name"])
         ex_min, ex_max = np.min(valid), np.max(valid)
         margin = (ex_max - ex_min) * 0.05
         ranges[expr["name"]] = (ex_min - margin, ex_max + margin)
