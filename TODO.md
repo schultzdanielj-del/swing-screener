@@ -63,6 +63,7 @@ local_runner/
 scripts/
 ├── expression_engine.py     # Computes expressions against OHLCV (point + series)
 ├── backtest_conditions.py   # Series computation for historical scoring
+├── backtest_runner.py       # Step 6: parallel signal scan + chart generation for visual review
 ├── signal_distribution.py   # Parallel signal analyzer: daily counts + per-signal CSV
 ├── fetch_universe.py        # Universe OHLCV fetcher: full build + incremental append_daily()
 ├── lsp_detector.py          # Local Structural Peak detection (DTSS-specific)
@@ -105,7 +106,7 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 5c Expression series cache | ✅ Done | 4,119 tickers × 4,017 exprs, ~21 GB, 37.5 min build, 5-8 min nightly append. |
 | 5d **NaN validation fix** | **✅ Done** | 100% example coverage required for expression ranges (was 70%). Zero false negatives guaranteed. |
 | 5e **Optimal grind params** | **✅ Done** | beam=200, depth=30, peak-target=5. Result: 30 conditions, peak 6/day, 184 signals/5yr, 3 min runtime. |
-| **6 Backtest Runner** | **⬜ NEXT** | Visual verification of signal charts — are 184 signals real DTSS setups or noise? |
+| **6 Backtest Runner** | **🔧 IN PROGRESS** | `scripts/backtest_runner.py` built. Scans 5yr cache, generates charts per signal. Run locally to verify. |
 | 7 Market Context | Not started | |
 | 8 EV Optimize | Not started | |
 
@@ -189,14 +190,29 @@ The grinder is done. 184 signals across 5 years, peak 6/day. Now we need to see 
 
 ## BUILD PLAN — Remaining Steps
 
-### Step 6: Backtest Runner ⬜ NEXT
+### Step 6: Backtest Runner 🔧 IN PROGRESS
 **What:** Generate charts for all historical signals, visual verification.
+**Script:** `scripts/backtest_runner.py`
 **How:**
-- Read conditions from `pyramid_results_dtss.json`
-- Run against 5yr OHLCV cache (reuse expression series cache)
-- Generate mplfinance charts: dark theme, entry candle marked, 8/21 EMA + 50/200 SMA
-- Output: signal list CSV + chart images organized by date
-- Summary stats: signals/day distribution, worst days, ticker frequency
+- Read conditions from `pyramid_results_dtss.json` (or `historical_results_dtss.json`)
+- Parallel scan against 5yr OHLCV cache (ProcessPoolExecutor, same pattern as signal_distribution.py)
+- Generate mplfinance charts: dark theme, entry candle marked with magenta triangle, 8/21 EMA + 50/200 SMA
+- Charts organized by date folder: `cache/backtest_charts_{setup}/{date}/{TICKER}_{date}.png`
+- Output: signals CSV + summary stats + chart images
+
+**Usage:**
+```bash
+# Full run: scan + charts
+python scripts/backtest_runner.py --setup dtss
+
+# Scan only, no charts
+python scripts/backtest_runner.py --setup dtss --no-charts
+
+# Regenerate charts from existing CSV
+python scripts/backtest_runner.py --setup dtss --charts-only
+```
+
+**Status:** Script written, needs local run to generate actual signals + charts for review.
 
 ### Step 7: Market Context ⬜
 **What:** Identify which market conditions produce winners vs losers.
