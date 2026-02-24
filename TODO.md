@@ -214,6 +214,8 @@ python scripts/backtest_runner.py --setup dtss --charts-only
 
 **Status:** Script written, needs local run to generate actual signals + charts for review.
 
+**Note (2026-02-24):** Consider building a frontend component to streamline the visual review workflow — browsing charts by date, tagging signals as valid/noise, tracking progress. Running CLI + manually browsing folders is error-prone when focus is split.
+
 ### Step 7: Market Context ⬜
 **What:** Identify which market conditions produce winners vs losers.
 **How:** Correlate signal outcomes with market regime (stage transitions, breadth, VIX).
