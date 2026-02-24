@@ -155,12 +155,16 @@ def compute_example_ranges(example_dfs, expressions):
                 pass
 
     # Derive ranges with 5% margin (same as spiderweb)
+    # CRITICAL: require ALL examples (with scan_idx) to have non-NaN values.
+    # If any example returns NaN for an expression, that expression cannot be
+    # used as a condition — it would fail validation for that example.
     ranges = {}
-    min_valid = max(3, int(n_ex * 0.7))
+    n_with_scan = sum(1 for ex in example_dfs if ex["scan_idx"] is not None)
     for j, expr in enumerate(expressions):
         vals = example_matrix[:, j]
         valid = vals[~np.isnan(vals)]
-        if len(valid) < min_valid:
+        if len(valid) < n_with_scan:
+            # At least one example has NaN — skip this expression
             continue
         ex_min, ex_max = np.min(valid), np.max(valid)
         margin = (ex_max - ex_min) * 0.05
@@ -441,7 +445,7 @@ class PeakSpiderweb:
             scored.append((ci, peak, mask))
             nodes_explored += 1
 
-        scored.sort(key=lambda x: x[1])
+        scored.sort(key=lambda x: (x[1], -np.sum(x[2]), x[0]))
 
         # Build initial beam from best individuals
         from dataclasses import dataclass
@@ -458,7 +462,7 @@ class PeakSpiderweb:
         for ci, peak, mask in scored[:n_seeds]:
             current_level.append(Node(conditions=(ci,), row_mask=mask, peak=peak))
 
-        current_level.sort(key=lambda n: n.peak)
+        current_level.sort(key=lambda n: (n.peak, -np.sum(n.row_mask), n.conditions))
         current_level = current_level[:beam_width]
 
         best = current_level[0]
@@ -500,7 +504,7 @@ class PeakSpiderweb:
                 print(f"\n    ▓ Ceiling at level {lv}")
                 break
 
-            next_level.sort(key=lambda n: n.peak)
+            next_level.sort(key=lambda n: (n.peak, -np.sum(n.row_mask), n.conditions))
             current_level = next_level[:beam_width]
 
             if current_level[0].peak < best.peak:
@@ -708,6 +712,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     print(f"  {n_workers} workers, {len(batches)} batches of ~{batch_size} tickers")
 
     all_row_dates = []
+    all_row_tickers = []
     all_row_values = []
 
     with ProcessPoolExecutor(
@@ -724,6 +729,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
             for ticker, row_dates, cand_values in batch_results:
                 if row_dates and cand_values is not None and len(row_dates) > 0:
                     all_row_dates.extend(row_dates)
+                    all_row_tickers.extend([ticker] * len(row_dates))
                     all_row_values.append(cand_values)
             completed += 1
             if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
@@ -741,6 +747,12 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     candidate_values = np.vstack(all_row_values)
     candidate_names = [expressions[i]["name"] for i in candidate_indices]
     candidate_categories = [expressions[i].get("category", "unknown") for i in candidate_indices]
+
+    # Sort rows deterministically by (date, ticker) — process pool returns in arbitrary order
+    sort_idx = sorted(range(len(all_row_dates)),
+                      key=lambda i: (all_row_dates[i], all_row_tickers[i]))
+    candidate_values = candidate_values[sort_idx]
+    all_row_dates = [all_row_dates[i] for i in sort_idx]
 
     print(f"  {tier_name} matrix: {candidate_values.shape[0]:,} rows × "
           f"{candidate_values.shape[1]:,} candidates ({build_time:.0f}s)")
