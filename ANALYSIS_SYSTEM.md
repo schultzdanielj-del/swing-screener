@@ -158,10 +158,10 @@ These are handled in Step 4 (Collaborative Analysis) where human discretion push
 - `local_runner/grinder.py` — CLI interface
 - `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild
 - `local_runner/cache_builder.py` — OHLCV caches: daily (300 bars, 57 MB) + 5yr (1,260 bars, 214 MB)
-- `local_runner/series_cache.py` — **PLANNED (Step 5c):** Pre-cached expression series for all tickers × 5yr. Eliminates indicator recomputation during grind. Build once overnight (~47 GB), append 1 bar/ticker nightly. Reduces grind from ~40 min to ~2-3 min.
+- `local_runner/expr_cache_builder.py` — **✅ BUILT (Step 5c):** Pre-cached expression series for all tickers × 5yr. Stores compressed .npz per ticker in `cache/expr_series/`. Manifest tracks expression fingerprint for auto-invalidation. `--build` for first-time (~40 min, ~52 GB), `--append` for nightly (~5-8 min), `--status` to check. Pyramid grinder auto-detects and uses cache, falls back to compute_series() if missing.
 - `local_runner/brute_expressions.py` — Expression generator: 4,017 generic expressions (same for all setups)
 - `scripts/expression_engine.py` — Computes expressions against OHLCV
-- `scripts/backtest_conditions.py` — Series computation for historical scoring. **82 ops** — full parity with expression_engine.py (excluding 8 LSP ops that require injected context). All generic expressions are available to all pyramid tiers.
+- `scripts/backtest_conditions.py` — Series computation for historical scoring. **88 ops** — full parity with expression_engine.py (excluding 8 LSP ops that require injected context). All generic expressions are available to all pyramid tiers.
 - `scripts/signal_distribution.py` — Parallel signal analyzer: runs all conditions across 5yr cache, outputs daily signal counts + per-signal CSV. Used to verify peak/avg before advancing.
 - `scripts/lsp_detector.py` — Detects Local Structural Peak (highest structural high before scan bar)
 - `scripts/classify_universe.py` — ETF classifier (quarterly, desktop-only, ~150 exclusions)

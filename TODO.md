@@ -140,38 +140,35 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ---
 
-## IMMEDIATE NEXT STEP: Test Expression Series Cache on Desktop
+## IMMEDIATE NEXT STEP: Build Nightly Refresh Script
 
-**Built:** `local_runner/expr_cache_builder.py` — the expression series cache.
+**Context:** Expression series cache (Step 5c) is built and first-time build is running on desktop. The grinder can now iterate in ~2-3 min per run. But before grinding, all data must be fresh.
 
-**First-time build (~40 min):**
+**Build:** `local_runner/nightly.py` — single script that chains all refresh steps so the desktop is ready for fast grind iterations all day.
+
+**What it does (~15-20 min total):**
+
+| Step | Command (currently manual) | Time | Disk |
+|------|---------------------------|------|------|
+| 1. 5yr OHLCV refresh | `cache_builder.py --5yr` | ~4.6 min | 214 MB |
+| 2. Daily OHLCV refresh | `cache_builder.py` | ~4.4 min | 57 MB |
+| 3. Tradable universe check | `classify_universe.py` (skip if <90 days) | ~10 min | negligible |
+| 4. Expression series cache append | `expr_cache_builder.py --append` | ~5-8 min | ~52 GB (already built) |
+| 5. Universe matrix rebuild (D1) | `matrix_builder.py` rebuild | ~5 min | ~few hundred MB |
+
+**Usage:**
 ```bash
-python local_runner/expr_cache_builder.py --build
+# Run after market close, before grinding
+python local_runner/nightly.py
 ```
 
-**Nightly append (~5-8 min):**
+**After nightly completes:**
 ```bash
-python local_runner/expr_cache_builder.py --append
+# Fast grind iterations all day
+python local_runner/pyramid_grinder.py --setup dtss --beam 100
+python local_runner/pyramid_grinder.py --setup dtss --beam 200 --peak-target 10
+# etc — each run ~2-3 min
 ```
-
-**Check status:**
-```bash
-python local_runner/expr_cache_builder.py --status
-```
-
-**Then run pyramid grinder (should be ~2-3 min now):**
-```bash
-python local_runner/pyramid_grinder.py --setup dtss --peak-target 15 --beam 100
-```
-
-The grinder auto-detects the cache and uses it. If cache is missing or stale, it falls back to computing from scratch (slow path) and prints a warning.
-
-**After testing:** Try wider beam searches (--beam 100, --beam 200) and different peak targets. Each run should complete in 2-3 min instead of 40 min.
-
-**Nightly flow:**
-1. `python local_runner/cache_builder.py --5yr` (refresh OHLCV if needed)
-2. `python local_runner/expr_cache_builder.py --append` (add today's bar, ~5-8 min)
-3. `python local_runner/pyramid_grinder.py --setup dtss` (fast grind, ~2-3 min)
 
 ---
 
