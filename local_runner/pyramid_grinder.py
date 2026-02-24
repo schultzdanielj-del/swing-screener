@@ -155,22 +155,26 @@ def compute_example_ranges(example_dfs, expressions):
                 pass
 
     # Derive ranges with 5% margin (same as spiderweb)
-    # CRITICAL: require ALL examples (with scan_idx) to have non-NaN values.
-    # If any example returns NaN for an expression, that expression cannot be
-    # used as a condition — it would fail validation for that example.
+    # Use 70% threshold for range computation (wider candidate pool),
+    # but separately track which expressions have NaN for any example.
+    # Those will be excluded from being LOCKED as conditions (would fail validation)
+    # but still contribute to the candidate pool for filtering universe rows.
     ranges = {}
+    nan_exprs = set()  # expressions with NaN for at least one example with scan_idx
+    min_valid = max(3, int(n_ex * 0.7))
     n_with_scan = sum(1 for ex in example_dfs if ex["scan_idx"] is not None)
     for j, expr in enumerate(expressions):
         vals = example_matrix[:, j]
         valid = vals[~np.isnan(vals)]
-        if len(valid) < n_with_scan:
-            # At least one example has NaN — skip this expression
+        if len(valid) < min_valid:
             continue
+        if len(valid) < n_with_scan:
+            nan_exprs.add(expr["name"])
         ex_min, ex_max = np.min(valid), np.max(valid)
         margin = (ex_max - ex_min) * 0.05
         ranges[expr["name"]] = (ex_min - margin, ex_max + margin)
 
-    return ranges, example_matrix
+    return ranges, example_matrix, nan_exprs
 
 
 # ══════════════════════════════════════════════════════════════
@@ -347,7 +351,7 @@ class PeakSpiderweb:
     """
 
     def __init__(self, candidate_values, row_dates, example_ranges,
-                 candidate_names, candidate_categories):
+                 candidate_names, candidate_categories, nan_exprs=None):
         """
         Args:
             candidate_values: np.array (n_rows, n_candidates) — expression values
@@ -355,10 +359,13 @@ class PeakSpiderweb:
             example_ranges: dict {expr_name: (low, high)}
             candidate_names: list of expression names (len = n_candidates)
             candidate_categories: list of category strings
+            nan_exprs: set of expression names that have NaN for some examples
+                       (can be used for filtering but cannot be locked as conditions)
         """
         self.n_rows, self.n_cands = candidate_values.shape
         self.candidate_names = candidate_names
         self.candidate_categories = candidate_categories
+        self.nan_exprs = nan_exprs or set()
 
         # Build date-to-row mapping for peak scoring
         self.unique_dates = sorted(set(row_dates))
@@ -381,12 +388,16 @@ class PeakSpiderweb:
             passes = ((vals >= low) & (vals <= high)) | np.isnan(vals)
             self.cand_passes[ci, :] = passes
 
-            # "Useful" = filters out at least 5% of rows
+            # "Useful" = filters out at least 5% of rows AND safe for locking
             if np.sum(passes) < self.n_rows * 0.95:
-                self.valid_cands.append(ci)
+                if name not in self.nan_exprs:
+                    self.valid_cands.append(ci)
 
+        n_blocked = sum(1 for ci in range(self.n_cands)
+                        if self.candidate_names[ci] in self.nan_exprs)
         print(f"    PeakSpiderweb: {self.n_rows:,} rows, {self.n_dates:,} dates, "
-              f"{len(self.valid_cands)} useful candidates out of {self.n_cands}")
+              f"{len(self.valid_cands)} useful candidates out of {self.n_cands}"
+              f"{f' ({n_blocked} blocked for NaN)' if n_blocked else ''}")
 
     def _peak_score(self, row_mask):
         """Given a boolean mask over rows, compute max signals on any single date."""
@@ -496,9 +507,8 @@ class PeakSpiderweb:
 
                     next_level.append(Node(conditions=combo, row_mask=mask, peak=peak))
 
-                # Limit expansion per level
-                if len(next_level) >= beam_width * 8:
-                    break
+                # No expansion cap — explore all beam × candidate combinations
+                # for deterministic results
 
             if not next_level:
                 print(f"\n    ▓ Ceiling at level {lv}")
@@ -660,7 +670,7 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
 def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
                         example_ranges, locked_conditions,
                         beam_width=50, depth=10, peak_target=15,
-                        expr_cache=None):
+                        expr_cache=None, nan_exprs=None):
     """Run a historical tier: build matrix of surviving ticker-day rows, then spiderweb.
 
     Args:
@@ -764,6 +774,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
         example_ranges=example_ranges,
         candidate_names=candidate_names,
         candidate_categories=candidate_categories,
+        nan_exprs=nan_exprs or set(),
     )
 
     result = search.run(depth=depth, beam_width=beam_width, peak_target=peak_target)
@@ -861,8 +872,10 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     # ── Compute example ranges ──
     print(f"\n  Computing example ranges...")
     t0 = time.time()
-    example_ranges, example_matrix = compute_example_ranges(example_dfs, expressions)
+    example_ranges, example_matrix, nan_exprs = compute_example_ranges(example_dfs, expressions)
     print(f"  {len(example_ranges)} expressions have valid ranges ({time.time()-t0:.0f}s)")
+    if nan_exprs:
+        print(f"  {len(nan_exprs)} expressions have NaN for some examples (available as candidates, blocked from locking)")
 
     # ── Tier results accumulator ──
     all_conditions = []
@@ -920,6 +933,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             depth=depth,
             peak_target=peak_target,
             expr_cache=expr_cache,
+            nan_exprs=nan_exprs,
         )
 
         all_conditions.extend(new_conds)
