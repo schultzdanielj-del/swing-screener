@@ -483,32 +483,87 @@ class PeakSpiderweb:
         if best.peak <= peak_target:
             return self._build_result(best, levels, nodes_explored, t0, base_peak)
 
-        # Deepen
+        # Deepen — matmul pre-screening to avoid materializing all beam × candidate combos
         for lv in range(2, depth + 1):
+            n_beam = len(current_level)
+            n_valid = len(self.valid_cands)
+
+            # Stack beam masks for matmul
+            beam_masks = np.array([n.row_mask for n in current_level], dtype=np.float32)
+            valid_passes = self.cand_passes[self.valid_cands].astype(np.float32)
+
+            # Estimate joint signal counts: (n_beam, n_valid)
+            joint_counts = beam_masks @ valid_passes.T
+
+            # Build date-level peak estimates using matmul
+            # date_matrix: (n_dates, n_rows) one-hot
+            date_matrix = np.zeros((self.n_dates, self.n_rows), dtype=np.float32)
+            date_matrix[self.row_date_indices, np.arange(self.n_rows)] = 1.0
+
+            # For each beam node, get per-date signal counts with each candidate
+            # We need max over dates of (beam_mask & cand_pass per date)
+            # Approximate: rank by total joint_counts (lower = tighter)
+            # then only materialize top candidates per beam node
+
+            # For each beam node, find candidates that actually reduce signal count
+            beam_totals = np.sum(beam_masks, axis=1, keepdims=True)  # (n_beam, 1)
+            improved = joint_counts < beam_totals  # candidate reduces total signals
+
+            # Mask out already-used conditions
+            for bi, node in enumerate(current_level):
+                for ci_orig in node.conditions:
+                    for vj, ci in enumerate(self.valid_cands):
+                        if ci == ci_orig:
+                            improved[bi, vj] = False
+
+            # Rank all (beam, cand) pairs by estimated joint count (ascending = tightest)
+            # Only consider improved pairs
+            improved_flat = improved.ravel()
+            joint_flat = joint_counts.ravel()
+            joint_flat[~improved_flat] = 999999  # push non-improved to end
+
+            # Take top K candidates to materialize (memory-bounded)
+            max_materialize = min(beam_width * 10, 100000)  # memory-bounded
+            top_k = min(max_materialize, int(np.sum(improved_flat)))
+            if top_k == 0:
+                print(f"\n    ▓ Ceiling at level {lv} — no improving candidates")
+                break
+
+            top_indices = np.argpartition(joint_flat, top_k)[:top_k]
+            top_beam = top_indices // n_valid
+            top_cand = top_indices % n_valid
+
+            # Sort for determinism
+            sort_order = np.lexsort((top_cand, joint_flat[top_indices], top_beam))
+            top_beam = top_beam[sort_order]
+            top_cand = top_cand[sort_order]
+
+            # Materialize exact peak scores for top candidates
             next_level = []
             seen = set()
+            beam_masks_bool = beam_masks.astype(bool)
 
-            for node in current_level:
-                used = set(node.conditions)
-                if not np.any(node.row_mask):
+            for idx in range(len(top_beam)):
+                bi = int(top_beam[idx])
+                vj = int(top_cand[idx])
+                ci = self.valid_cands[vj]
+                node = current_level[bi]
+
+                combo = tuple(sorted(node.conditions + (ci,)))
+                if combo in seen:
                     continue
+                seen.add(combo)
 
-                for ci in self.valid_cands:
-                    if ci in used:
-                        continue
-                    combo = tuple(sorted(node.conditions + (ci,)))
-                    if combo in seen:
-                        continue
-                    seen.add(combo)
+                mask = beam_masks_bool[bi] & self.cand_passes[ci]
+                if not np.any(mask):
+                    peak = 0
+                else:
+                    active_dates = self.row_date_indices[mask]
+                    counts = np.bincount(active_dates, minlength=self.n_dates)
+                    peak = int(np.max(counts))
 
-                    mask = node.row_mask & self.cand_passes[ci]
-                    peak = self._peak_score(mask)
-                    nodes_explored += 1
-
-                    next_level.append(Node(conditions=combo, row_mask=mask, peak=peak))
-
-                # No expansion cap — explore all beam × candidate combinations
-                # for deterministic results
+                nodes_explored += 1
+                next_level.append(Node(conditions=combo, row_mask=mask, peak=peak))
 
             if not next_level:
                 print(f"\n    ▓ Ceiling at level {lv}")
