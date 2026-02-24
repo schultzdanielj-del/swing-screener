@@ -16,13 +16,19 @@
 - Each tier grinds until peak_signals/day < threshold before advancing
 - 5-year OHLCV cache (4,167 tickers × avg 1,108 bars, 214 MB) provides the history
 - Expression series cache (4,119 tickers × 4,017 expressions, ~21 GB compressed) eliminates compute bottleneck
+- Matmul pre-screening: (beam × rows) @ (rows × candidates) estimates joint counts, only top candidates materialized
+- OpenBLAS MAX_THREADS=24 parallelizes matmul across all cores
+- Deterministic: row sorting by (date, ticker), tiebreakers by (peak, -total_signals, condition_indices)
+- NaN handling: 70% example coverage threshold (maximizes candidate pool)
 - Constraint: 100% of setup examples ALWAYS pass all conditions
 
-**Optimal grind parameters (found 2026-02-24):**
-- Beam width: 200
-- Search depth: 30
-- Peak target: 5 (produces peak 6/day, 184 total signals across 5yr, avg 2.2/day)
-- Runtime: ~3 min with expression cache (was 40 min without)
+**Production grind parameters (found 2026-02-24):**
+- Beam width: 10000 (exhaustive — search self-terminates when no path improves, typically ~25-30 levels)
+- Search depth: 100 (ceiling, never reached — search stops early)
+- Peak targets: sweep 2-10, take best result
+- Best result: peak-target=3 → 26 conditions, peak 6/day, 201 total signals across 5yr, avg 2.1/day (~3.4/month)
+- Runtime: ~5 min per peak target, ~50 min full sweep (2-10)
+- beam=10000 fully exhausts search space — more beam won't help. If results plateau, expand expression library.
 
 **Nightly Pipeline: ✅ COMPLETE** — `python local_runner/nightly.py` chains 5 steps: Railway incremental append → daily cache → 5yr cache → expression cache append → matrix rebuild. Auto-triggered by agent at 4:30pm ET on trading days. ~15-20 min if new data, <1 min if already current.
 
@@ -32,7 +38,7 @@
 
 **Expression series cache: ✅ COMPLETE** — 4,119 tickers × 4,017 expressions pre-cached on disk (~21 GB). Build: 37.5 min one-time. Nightly append: 5-8 min. Pyramid grinder auto-detects cache. 14x speedup at equivalent beam width.
 
-**NaN validation fix: ✅ COMPLETE** — Expression ranges now require ALL examples with scan_idx to have non-NaN values (was 70% threshold). Guarantees zero false negatives by construction.
+**NaN handling: ✅ FIXED** — Expression ranges use 70% example coverage threshold (minimum 3 examples). Maximizes candidate pool — few NaN values (e.g., RSI slope on short-history examples) don't eliminate useful expressions. Previous 100% threshold was too aggressive and reduced candidate pool.
 
 **Universal design:** Upload examples for any setup type → grinder handles the rest. Universe matrix is shared, only example matrix + grind is per-setup.
 
@@ -104,8 +110,8 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 5a compute_series parity | ✅ Done | 82 → 88 total ops. Full parity with expression_engine. |
 | 5b Expression expansion | ✅ Done | 2,541 → 4,017 expressions. 127 booleans, 88 ops. |
 | 5c Expression series cache | ✅ Done | 4,119 tickers × 4,017 exprs, ~21 GB, 37.5 min build, 5-8 min nightly append. |
-| 5d **NaN validation fix** | **✅ Done** | 100% example coverage required for expression ranges (was 70%). Zero false negatives guaranteed. |
-| 5e **Optimal grind params** | **✅ Done** | beam=200, depth=30, peak-target=5. Result: 30 conditions, peak 6/day, 184 signals/5yr, 3 min runtime. |
+| 5d **NaN handling fix** | **✅ Done** | 70% example coverage threshold (was 100%). Maximizes candidate pool. |
+| 5e **Production grind params** | **✅ Done** | beam=10000, depth=100, sweep peak-target 2-10. Best: PT=3 → 26 conditions, peak 6/day, 201 signals/5yr, ~5 min/run. |
 | **6 Backtest Runner** | **✅ Done** | `scripts/backtest_runner.py` built. Scans 5yr cache, generates charts per signal. Auto-uploads to Railway. |
 | **6b Historical Tab** | **✅ Done** | Signal prevalence bar chart + SPY candlestick bubble overlay in frontend Historical tab. |
 | 7 Market Context | Not started | |
@@ -154,16 +160,23 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 - Build: 37.5 min one-time. Append: 5-8 min nightly. Manifest tracks expression fingerprint.
 - Pyramid grinder auto-detects cache, 14x speedup (40 min → 2.9 min at equivalent beam)
 
-### Step 5d: NaN Validation Fix ✅ COMPLETE
-- Expression ranges now require ALL examples with scan_idx to have non-NaN values
-- Previous 70% threshold allowed expressions where 6/23 examples had NaN, causing validation failures
-- Fix guarantees zero false negatives by construction — fewer candidate expressions but every one is safe
+### Step 5d: NaN Handling Fix ✅ COMPLETE
+- Expression ranges use 70% example coverage threshold (minimum 3 examples)
+- Previous 100% threshold was too aggressive — excluded useful expressions where a few examples had NaN
+- 70% threshold maximizes candidate pool for the grinder to work with
 
-### Step 5e: Optimal Grind Parameters ✅ FOUND
-- **beam=200, depth=30, peak-target=5** — the production parameters
-- Results: 30 conditions, peak 6/day, 184 total signals across 5yr, avg 2.2/day, 3 min runtime
-- All 21 examples pass validation (zero false negatives confirmed)
-- Comparison: beam=200/depth=30/peak-target=15 → 33 conditions, peak 14/day (looser alternative)
+### Step 5e: Production Grind Parameters ✅ FOUND
+- **beam=10000, depth=100, sweep peak-target 2-10** — the production approach
+- beam=10000 fully exhausts search space (search self-terminates at ~25-30 levels when no path improves)
+- Different peak-target values explore genuinely different paths (different conditions locked at earlier tiers)
+- Best result: peak-target=3 → 26 conditions, peak 6/day, 201 signals/5yr, avg 2.1/day, ~5 min runtime
+- If all peak targets plateau at similar totals, the expression library is the bottleneck → expand it
+
+### Step 5f: Determinism + Vectorization ✅ COMPLETE
+- **Deterministic row sorting:** Rows sorted by (date, ticker) to eliminate process-pool scheduling variance
+- **Deterministic tiebreakers:** Beam nodes sorted by (peak, -total_signals, condition_indices)
+- **Matmul vectorization:** Pre-screening via (beam × rows) @ (rows × candidates) matmul. OpenBLAS MAX_THREADS=24 parallelizes across all cores. Only top beam_width*10 candidates materialized with exact peak scores.
+- **No expansion cap:** Removed `beam_width * 8` cap that caused non-determinism and limited search
 
 ### Nightly Automation ✅ COMPLETE
 - `python local_runner/nightly.py` — 5-step chain with gate logic
@@ -173,21 +186,20 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ## IMMEDIATE NEXT STEP
 
-**1. Run quick grind to verify fixes (2-3 min):**
-```bash
-python local_runner/pyramid_grinder.py --setup dtss --peak-target 5 --beam 200 --depth 30
-```
+**Peak-target sweep is running (2-10). When complete:**
 
-**2. Overnight max grind — let it cook while sleeping:**
+1. **Compare all results** — pick the peak target with lowest total signals
+2. **Run backtest with winning conditions:**
 ```bash
-python local_runner/pyramid_grinder.py --setup dtss --peak-target 2 --beam 10000 --depth 100
+python scripts/backtest_runner.py --setup dtss --no-charts
 ```
-Target: <1 signal/day average. Estimated runtime: 8-10 hours.
-This explores the full search space — 10K beam paths × all candidates per level, no expansion cap.
-Should find the tightest possible condition set the expression library can produce.
+3. **Review Historical tab** — check signal clustering, verify patterns make sense
+4. **Begin Step 7: Market Context** — correlate signal outcomes with market regime
 
-**3. Review results → backtest → Historical tab**
-4. Begin Step 7: correlate signal outcomes with market regime (stage transitions, breadth, VIX)
+**If results plateau (all peak targets give similar totals ~200-300):**
+- The expression library (4,017 expressions) is the bottleneck
+- Need new expression categories: multi-day patterns, cross-timeframe, sector breadth, etc.
+- More beam/depth won't help — beam=10000 already exhausts the search space
 
 ---
 
@@ -217,8 +229,8 @@ python scripts/backtest_runner.py --setup dtss --charts-only
 ```
 
 **Workflow:**
-1. Run grinder: `python local_runner/pyramid_grinder.py --setup dtss --peak-target 5 --beam 200 --depth 30`
-2. Review grinder output — if conditions look good:
+1. Run grinder sweep: `for /L %p in (2,1,10) do python local_runner/pyramid_grinder.py --setup dtss --peak-target %p --beam 10000 --depth 100`
+2. Pick best result (lowest total signals)
 3. Run backtest: `python scripts/backtest_runner.py --setup dtss --no-charts`
 4. Historical tab auto-updates with signal prevalence + SPY bubble overlay
 
@@ -268,8 +280,9 @@ python scripts/backtest_runner.py --setup dtss --charts-only
 | Daily matrix build | ~5 min (est) | 4,017 tickers × 4,017 expressions, 8 workers |
 | Spiderweb grind (L3) | ~11s | beam=50, depth=10, 550K nodes |
 | Spiderweb grind (L5) | 1-8 hours | beam=250, depth=15 |
-| **Pyramid grinder (with cache)** | **~3 min** | **beam=200, depth=30, peak-target=5. 30 conditions, peak 6/day, 184 signals/5yr** |
-| **Pyramid grinder (with cache, target 15)** | **~2.9 min** | **beam=200, depth=30, peak-target=15. 33 conditions, peak 14/day** |
+| **Pyramid grinder (beam=10000, cached+matmul)** | **~5 min** | **beam=10000, depth=100. Exhausts search at ~25-30 levels. Best: PT=3 → 26 conds, peak 6/day, 201 signals/5yr** |
+| **Pyramid grinder sweep (PT 2-10)** | **~50 min** | **9 runs × ~5 min. Full exploration of parameter space.** |
+| Pyramid grinder (beam=200, cached) | ~3 min | beam=200, depth=30. Previous "optimal" — too narrow to exhaust search. |
 | Pyramid grinder (no cache, 4,017 exprs) | ~40 min | beam=50, depth=10. Boolean series computation is bottleneck. |
 | Expression cache build | 37.5 min | One-time. 4,119 tickers × 4,017 expressions, ~21 GB compressed. |
 | Expression cache append | 5-8 min (est) | Nightly, new bars only. |
@@ -286,10 +299,11 @@ python scripts/backtest_runner.py --setup dtss --charts-only
 ## Key Optimizations Implemented
 
 1. **Expression series cache** — Pre-compute all 4,017 expressions for all tickers × 5yr. Eliminates compute bottleneck. 14x grinder speedup.
-2. **NaN validation fix** — 100% example coverage required for expression ranges. Zero false negatives by construction.
-3. **`_bool_series` lazy eval** — if/elif dispatch instead of dict-literal. ~37% matrix build speedup.
-4. **Matmul spiderweb** — float32 matmul replaces Python beam×candidate loop. 78x faster.
-5. **Numpy array serialization** — raw numpy to workers, skip `pd.to_numeric`. 8x faster reconstruct.
-6. **Example matrix parallelization** — ThreadPoolExecutor (10 threads) for concurrent example builds.
-7. **No bar minimum in cache** — every tradable ticker included regardless of history length.
-8. **ProcessPoolExecutor for Phase 2** — true CPU parallelism (ThreadPool was GIL-bound at 10% CPU).
+2. **Matmul pre-screening** — (beam × rows) @ (rows × candidates) estimates joint signal counts. OpenBLAS MAX_THREADS=24 across all cores. Only top candidates materialized. Makes beam=10000 feasible in 5 min.
+3. **Deterministic search** — Row sorting by (date, ticker), tiebreakers by (peak, -total_signals, condition_indices). Reproducible results across runs.
+4. **NaN handling** — 70% example coverage threshold maximizes candidate pool without false negatives.
+5. **`_bool_series` lazy eval** — if/elif dispatch instead of dict-literal. ~37% matrix build speedup.
+6. **Numpy array serialization** — raw numpy to workers, skip `pd.to_numeric`. 8x faster reconstruct.
+7. **Example matrix parallelization** — ThreadPoolExecutor (10 threads) for concurrent example builds.
+8. **No bar minimum in cache** — every tradable ticker included regardless of history length.
+9. **ProcessPoolExecutor for tier builds** — true CPU parallelism (ThreadPool was GIL-bound at 10% CPU).

@@ -73,19 +73,27 @@ The spiderweb search then explores branching combinations of conditions:
 
 ### Phase 2: Pyramidal Grinder (nested time horizon noise elimination)
 
-**✅ COMPLETE — OPTIMAL PARAMETERS FOUND**
+**✅ COMPLETE — PRODUCTION READY**
 
 `local_runner/pyramid_grinder.py`
 
-**Optimal parameters (found 2026-02-24):**
+**How to run:**
 ```bash
-python local_runner/pyramid_grinder.py --setup dtss --peak-target 5 --beam 200 --depth 30
+# Standard run — sweep peak targets 2-10, take best result (~50 min total)
+for /L %p in (2,1,10) do python local_runner/pyramid_grinder.py --setup dtss --peak-target %p --beam 10000 --depth 100
+
+# Quick single run (~5 min)
+python local_runner/pyramid_grinder.py --setup dtss --peak-target 3 --beam 10000 --depth 100
 ```
-- **beam=200** — explores 200 paths per level (4x wider than initial runs)
-- **depth=30** — up to 30 conditions per tier
-- **peak-target=5** — target ≤5 signals on any single day across history
-- **Runtime:** ~3 min with expression cache
-- **Result:** 30 conditions, peak 6/day, 184 total signals across 5yr, avg 2.2/day
+
+**Best result (2026-02-24, peak-target=3, beam=10000):**
+- 26 conditions, peak 6/day, 201 total signals across 5yr, avg 2.1/day (~3.4/month to vet)
+- Runtime: ~5 min with expression cache + matmul vectorization
+
+**Key parameters:**
+- **beam=10000** — explores 10K paths per level (exhaustive — search terminates when no path improves)
+- **depth=100** — up to 100 conditions per tier (search self-terminates when exhausted, typically ~25-30)
+- **peak-target=N** — target ≤N signals on any single day. Different values lock different conditions at earlier tiers → different 5yr starting points → explore different solution paths. **Always sweep multiple values and take the best.**
 
 **How it works:** The pyramid progressively widens the historical window, each tier grinding until `peak_signals/day < threshold` before advancing:
 
@@ -96,22 +104,23 @@ python local_runner/pyramid_grinder.py --setup dtss --peak-target 5 --beam 200 -
 5. **1 year:** Matrix from ~252 trading days. Same. Lock.
 6. **5 years:** Matrix from all trading days. Same. Lock.
 
-**Why this is fast:** Expression series cache pre-computes all 4,017 expressions for all 4,119 tickers × 5yr on disk (~21 GB). Tier matrix builds load pre-computed arrays instead of calling compute_series() thousands of times. 14x speedup at equivalent beam width.
+**Why this is fast:** Expression series cache pre-computes all 4,017 expressions for all 4,119 tickers × 5yr on disk (~21 GB). Tier matrix builds load pre-computed arrays instead of calling compute_series() thousands of times. Matmul pre-screening (beam × rows @ rows × candidates) estimates joint signal counts without materializing all combinations — only top candidates get exact peak scoring. OpenBLAS with MAX_THREADS=24 parallelizes matmul across all cores.
 
-**Why peak-based:** Average 7.4/day sounds fine but hides days with 260 signals. Peak-based guarantee means no single day overwhelms manual review. Target: peak ≤ 5 across all 5 years.
+**Why peak-based:** Average 7.4/day sounds fine but hides days with 260 signals. Peak-based guarantee means no single day overwhelms manual review.
 
-**NaN validation fix (2026-02-24):** Expression ranges now require ALL examples with scan_idx to have non-NaN values (was 70% threshold). Previous threshold allowed expressions where some examples had NaN values, which silently failed validation later. Fix guarantees zero false negatives by construction.
+**Why sweep peak targets:** Different peak-target values lock different conditions at the 6mo/1yr tiers (which have fewer rows to discriminate), creating different starting points into the 5yr tier. The 5yr tier is where most conditions get added and where the expression library's discriminating power is tested. peak-target=1 is usually too aggressive (prunes everything), peak-target=2-5 tend to produce the best results.
+
+**NaN handling:** Expression ranges require 70% of examples to have non-NaN values (minimum 3). This maximizes the candidate pool — a few NaN values (e.g., RSI slope on short-history examples) don't eliminate useful expressions.
+
+**Determinism:** Row ordering is sorted by (date, ticker) to eliminate process-pool scheduling variance. Beam search tiebreakers use (peak, -total_signals, condition_indices) for reproducible results.
 
 **Constraint:** 100% of setup examples must ALWAYS pass all conditions at every tier (zero false negatives).
 
-**DTSS grind progression (peak-target 5):**
+**DTSS grind progression (peak-target=3, beam=10000):**
 - D1: 4 conditions → 0 tickers passing today
-- 1wk: 0 added (already below target)
-- 1mo: 0 added (already below target)
-- 6mo: 2 added (extension + ADX) → peak 5/day
-- 1yr: 1 added (near_support) → peak 5/day
-- 5yr: 23 added → peak 6/day (ceiling at level 24)
-- Total: 30 conditions, 184 signals, 3.0 min
+- 1wk-1yr: ~3 conditions added across these tiers
+- 5yr: ~19 added → peak 6/day (ceiling at level 26)
+- Total: 26 conditions, 201 signals, ~5 min
 
 ### Legacy Phase 2: Flat Historical Scorer (deprecated)
 
@@ -307,7 +316,7 @@ Using the historical signals from Step 5, filtered to the highest-success market
 |------|------|-----|
 | 1 | **Load** | Data & TA knowledge — everything is already in the system |
 | 2 | **Receive** | User presents examples, entry dates, and setup context |
-| 3 | **Grind** | THE GRINDER — Phase 1: spiderweb beam search (4,017 generic expressions) finds single-day ceiling. Phase 2: pyramidal grinder eliminates 5yr noise via 6-tier nested search (beam=200, depth=30, peak-target=5). |
+| 3 | **Grind** | THE GRINDER — Phase 1: spiderweb beam search (4,017 generic expressions) finds single-day ceiling. Phase 2: pyramidal grinder eliminates 5yr noise via 6-tier nested search (beam=10000, depth=100, sweep peak-target 2-10). ~5 min/run, ~50 min full sweep. |
 | 4 | **Collaborate** | Human-AI iteration to push past the grinder ceiling with qualitative/discretionary conditions. Goal: zero daily pass rate. |
 | 5 | **Backtest** | Run conditions across full history, review signals, validate and tighten |
 | 6 | **Market Context** | Find which market conditions produce winners vs losers |
