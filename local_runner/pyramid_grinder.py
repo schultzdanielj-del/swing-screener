@@ -51,6 +51,7 @@ sys.path.insert(0, LOCAL_DIR)
 from scripts.expression_engine import ExpressionEngine
 from scripts.backtest_conditions import compute_series
 from brute_expressions import generate_all
+from expr_cache_builder import ExprSeriesCache
 
 API_BASE = "https://web-production-e3025.up.railway.app"
 
@@ -178,23 +179,32 @@ _w_exprs = None
 _w_ranges = None
 _w_candidate_indices = None
 _w_n_bars_window = None
+_w_use_expr_cache = False
+_w_expr_name_to_idx = None
 
 
 def _init_tier_worker(cache, locked_conditions, expressions, ranges,
-                      candidate_indices, n_bars_window):
+                      candidate_indices, n_bars_window,
+                      use_expr_cache=False, expr_name_to_idx=None):
     """Initializer: serialize cache + config once per worker."""
-    global _w_cache, _w_locked, _w_exprs, _w_ranges, _w_candidate_indices, _w_n_bars_window
+    global _w_cache, _w_locked, _w_exprs, _w_ranges, _w_candidate_indices
+    global _w_n_bars_window, _w_use_expr_cache, _w_expr_name_to_idx
     _w_cache = cache
     _w_locked = locked_conditions
     _w_exprs = expressions
     _w_ranges = ranges
     _w_candidate_indices = candidate_indices
     _w_n_bars_window = n_bars_window
+    _w_use_expr_cache = use_expr_cache
+    _w_expr_name_to_idx = expr_name_to_idx or {}
 
 
 def _build_tier_batch(tickers):
     """For each ticker, compute candidate expression values at each bar in the window,
     but ONLY for bars that pass all locked conditions.
+
+    If _w_use_expr_cache is True, loads pre-computed series from disk instead of
+    calling compute_series(). Falls back to compute_series() for uncached tickers.
 
     Returns list of (ticker, row_dates, candidate_values) where:
       - row_dates: list of date strings for surviving bars
@@ -208,56 +218,117 @@ def _build_tier_batch(tickers):
             continue
 
         try:
-            engine = ExpressionEngine(df)
             n_bars = len(df)
 
             # Determine window
             if _w_n_bars_window == 0:
-                # Full history
                 start_idx = 50  # skip warmup
             else:
                 start_idx = max(50, n_bars - _w_n_bars_window)
 
-            # Step 1: Apply locked conditions to find surviving bars
-            pass_mask = np.ones(n_bars, dtype=bool)
-            pass_mask[:start_idx] = False
+            # Try loading from expression cache
+            cached_data = None
+            if _w_use_expr_cache:
+                cached_data = _load_ticker_expr_cache(ticker, n_bars)
 
-            for cond in _w_locked:
-                series = compute_series(engine, cond["compute"])
-                if series is None or len(series) != n_bars:
-                    pass_mask[:] = False
-                    break
-                in_range = (series >= cond["low"]) & (series <= cond["high"])
-                in_range[np.isnan(series)] = False
-                pass_mask &= in_range
+            if cached_data is not None:
+                # ── CACHED PATH: slice pre-computed arrays ──
+                cached_dates, cached_matrix = cached_data
+                # cached_matrix shape: (n_bars, n_all_expressions)
 
-            surviving_indices = np.where(pass_mask)[0]
-            if len(surviving_indices) == 0:
-                results.append((ticker, [], None))
-                continue
+                # Step 1: Apply locked conditions using cached series
+                pass_mask = np.ones(n_bars, dtype=bool)
+                pass_mask[:start_idx] = False
 
-            # Step 2: Compute candidate expressions as full series, then extract surviving bars
-            n_cands = len(_w_candidate_indices)
-            cand_values = np.full((len(surviving_indices), n_cands), np.nan)
+                for cond in _w_locked:
+                    col_idx = _w_expr_name_to_idx.get(cond["name"])
+                    if col_idx is None:
+                        # Expression not in cache — can't apply, fail safe
+                        pass_mask[:] = False
+                        break
+                    series = cached_matrix[:, col_idx]
+                    in_range = (series >= cond["low"]) & (series <= cond["high"])
+                    in_range[np.isnan(series)] = False
+                    pass_mask &= in_range
 
-            for ci, expr_idx in enumerate(_w_candidate_indices):
-                expr = _w_exprs[expr_idx]
-                try:
-                    series = compute_series(engine, expr["compute"])
-                    if series is not None and len(series) == n_bars:
-                        cand_values[:, ci] = series[surviving_indices]
-                except:
-                    pass
+                surviving_indices = np.where(pass_mask)[0]
+                if len(surviving_indices) == 0:
+                    results.append((ticker, [], None))
+                    continue
 
-            # Get dates for surviving bars
-            dates = df["date"].values
-            row_dates = [str(dates[idx])[:10] for idx in surviving_indices]
+                # Step 2: Extract candidate columns at surviving bars
+                n_cands = len(_w_candidate_indices)
+                # Map candidate_indices (position in expression list) to cache column indices
+                cand_col_indices = []
+                for ci in _w_candidate_indices:
+                    expr_name = _w_exprs[ci]["name"]
+                    col_idx = _w_expr_name_to_idx.get(expr_name)
+                    cand_col_indices.append(col_idx)
 
-            results.append((ticker, row_dates, cand_values))
+                cand_values = np.full((len(surviving_indices), n_cands), np.nan, dtype=np.float32)
+                for ci_out, col_idx in enumerate(cand_col_indices):
+                    if col_idx is not None:
+                        cand_values[:, ci_out] = cached_matrix[surviving_indices, col_idx]
+
+                row_dates = [str(cached_dates[idx]) for idx in surviving_indices]
+                results.append((ticker, row_dates, cand_values))
+
+            else:
+                # ── FALLBACK: compute from scratch ──
+                engine = ExpressionEngine(df)
+
+                pass_mask = np.ones(n_bars, dtype=bool)
+                pass_mask[:start_idx] = False
+
+                for cond in _w_locked:
+                    series = compute_series(engine, cond["compute"])
+                    if series is None or len(series) != n_bars:
+                        pass_mask[:] = False
+                        break
+                    in_range = (series >= cond["low"]) & (series <= cond["high"])
+                    in_range[np.isnan(series)] = False
+                    pass_mask &= in_range
+
+                surviving_indices = np.where(pass_mask)[0]
+                if len(surviving_indices) == 0:
+                    results.append((ticker, [], None))
+                    continue
+
+                n_cands = len(_w_candidate_indices)
+                cand_values = np.full((len(surviving_indices), n_cands), np.nan)
+
+                for ci, expr_idx in enumerate(_w_candidate_indices):
+                    expr = _w_exprs[expr_idx]
+                    try:
+                        series = compute_series(engine, expr["compute"])
+                        if series is not None and len(series) == n_bars:
+                            cand_values[:, ci] = series[surviving_indices]
+                    except:
+                        pass
+
+                dates = df["date"].values
+                row_dates = [str(dates[idx])[:10] for idx in surviving_indices]
+                results.append((ticker, row_dates, cand_values))
+
         except:
             results.append((ticker, [], None))
 
     return results
+
+
+def _load_ticker_expr_cache(ticker, expected_n_bars):
+    """Load cached expression series for a ticker.
+
+    Returns (dates, data) or None if not available/mismatched.
+    """
+    from expr_cache_builder import load_ticker_cache
+    dates, data = load_ticker_cache(ticker)
+    if dates is None:
+        return None
+    # Verify bar count matches current OHLCV
+    if len(dates) != expected_n_bars:
+        return None
+    return dates, data
 
 
 # ══════════════════════════════════════════════════════════════
@@ -584,7 +655,8 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
 
 def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
                         example_ranges, locked_conditions,
-                        beam_width=50, depth=10, peak_target=15):
+                        beam_width=50, depth=10, peak_target=15,
+                        expr_cache=None):
     """Run a historical tier: build matrix of surviving ticker-day rows, then spiderweb.
 
     Args:
@@ -596,6 +668,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
         locked_conditions: list of condition dicts from prior tiers
         beam_width, depth: spiderweb params
         peak_target: stop when peak/day ≤ this
+        expr_cache: ExprSeriesCache instance (or None to compute from scratch)
 
     Returns:
         new_conditions: list of condition dicts added by this tier
@@ -625,6 +698,13 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     batches = [all_tickers[i:i+batch_size]
                for i in range(0, len(all_tickers), batch_size)]
 
+    # Determine if expression cache is available
+    use_expr_cache = expr_cache is not None and expr_cache.is_valid()
+    expr_name_to_idx = {}
+    if use_expr_cache:
+        expr_name_to_idx = dict(expr_cache._expr_name_to_idx)
+        print(f"  Using expression series cache ({expr_cache.n_expressions} expressions)")
+
     print(f"  {n_workers} workers, {len(batches)} batches of ~{batch_size} tickers")
 
     all_row_dates = []
@@ -634,7 +714,8 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
         max_workers=n_workers,
         initializer=_init_tier_worker,
         initargs=(universe_cache, locked_conditions, expressions,
-                  example_ranges, candidate_indices, n_bars_window)
+                  example_ranges, candidate_indices, n_bars_window,
+                  use_expr_cache, expr_name_to_idx)
     ) as pool:
         futures = {pool.submit(_build_tier_batch, batch): batch for batch in batches}
         completed = 0
@@ -775,6 +856,17 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     all_conditions = []
     tier_results = {}
 
+    # ── Detect expression series cache ──
+    expr_cache = ExprSeriesCache()
+    if expr_cache.is_valid(expressions):
+        n_cached = len(expr_cache.get_available_tickers())
+        print(f"\n  ✓ Expression series cache detected: {n_cached} tickers, "
+              f"{expr_cache.n_expressions} expressions")
+    else:
+        expr_cache = None
+        print(f"\n  ⚠ No expression series cache — computing from scratch (slow)")
+        print(f"    Run: python local_runner/expr_cache_builder.py --build")
+
     # ══ D1 TIER ══
     d1_conditions, d1_result, d1_info = run_d1_tier(
         universe_cache, expressions, example_ranges, example_matrix,
@@ -815,6 +907,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             beam_width=beam_width,
             depth=depth,
             peak_target=peak_target,
+            expr_cache=expr_cache,
         )
 
         all_conditions.extend(new_conds)

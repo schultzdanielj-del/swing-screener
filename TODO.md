@@ -83,7 +83,7 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 5 **Pyramid grinder** | **✅ Tested** | Run 1 (2,541 exprs): 10 conditions, peak 69/day, avg 7.2/day, ~10 min. Run 2 (4,017 exprs): 20 conditions, peak 91/day, avg 9.7/day, ~40 min. More conditions locked but worse results + 4x slower due to 127 booleans. |
 | 5a **compute_series parity** | **✅ Done** | 82 → 88 total ops. Full parity with expression_engine (excluding 8 LSP ops). |
 | 5b **Expression expansion** | **✅ Done** | 2,541 → 4,017 expressions. 65 → 127 booleans, 6 new ops. |
-| 5c **Expression series cache** | **⬜ NEXT** | Pre-cache all 4,017 expression series for all tickers × 5yr on disk. Build once overnight, append 1 bar/ticker nightly. Eliminates 40-min recompute — grind becomes pure search (~2-3 min). |
+| 5c **Expression series cache** | **✅ Built** | `local_runner/expr_cache_builder.py` — pre-caches all 4,017 expression series for all tickers × 5yr. Build once (~40 min), nightly append (~5-8 min). Pyramid grinder auto-detects and uses cache. Estimated ~52 GB on disk (float32, compressed). |
 | 6 Backtest | Not started | Visual verification of signal charts |
 | 7 Market Context | Not started | |
 | 8 EV Optimize | Not started | |
@@ -140,28 +140,38 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ---
 
-## IMMEDIATE NEXT STEP: Expression Series Cache (Step 5c)
+## IMMEDIATE NEXT STEP: Test Expression Series Cache on Desktop
 
-### Problem
+**Built:** `local_runner/expr_cache_builder.py` — the expression series cache.
 
-The pyramid grinder recomputes all indicator series from scratch every run. With 4,017 expressions × 4,167 tickers × 5yr of bars, this takes ~40 minutes — making iteration impossible. Can't tell if parameter changes help without waiting 40 min per attempt.
+**First-time build (~40 min):**
+```bash
+python local_runner/expr_cache_builder.py --build
+```
 
-### Solution: Pre-cache all expression series to disk
+**Nightly append (~5-8 min):**
+```bash
+python local_runner/expr_cache_builder.py --append
+```
 
-1. **One-time build (overnight):** Compute all 4,017 expression series for all 4,167 tickers × 5yr history. Save to disk as numpy arrays per ticker.
-2. **Nightly append:** After market close, compute just the new bar for each ticker and append to cached arrays.
-3. **Grinder reads from cache:** Matrix build at each tier becomes slicing pre-computed arrays instead of running indicator math.
+**Check status:**
+```bash
+python local_runner/expr_cache_builder.py --status
+```
 
-### Expected impact
-- **Grind time:** 40 min → 2-3 min (pure search, no indicator computation)
-- **Iteration speed:** Can try beam 50, 100, 200, different peak targets, expression subsets — and see results in minutes
-- **Disk estimate:** ~47 GB (4,017 expressions × 4,167 tickers × ~1,100 bars × 4 bytes float32)
+**Then run pyramid grinder (should be ~2-3 min now):**
+```bash
+python local_runner/pyramid_grinder.py --setup dtss --peak-target 15 --beam 100
+```
 
-### After cache is built
-Re-run pyramid with wider beam (`--beam 100` or `--beam 200`) to explore more of the 4,017-expression search space. The old 2,541 library found good results with beam 50, but 4,017 expressions needs wider exploration.
+The grinder auto-detects the cache and uses it. If cache is missing or stale, it falls back to computing from scratch (slow path) and prints a warning.
 
-### Second grind result analysis
-Run 2 (4,017 exprs) found 20 conditions but peak 91/day, avg 9.7/day — worse than Run 1's 10 conditions, peak 69/day, avg 7.2/day. The D1 tier locked different starting conditions with the larger library, cascading into worse historical-tier choices. Wider beam search with cached series should fix this.
+**After testing:** Try wider beam searches (--beam 100, --beam 200) and different peak targets. Each run should complete in 2-3 min instead of 40 min.
+
+**Nightly flow:**
+1. `python local_runner/cache_builder.py --5yr` (refresh OHLCV if needed)
+2. `python local_runner/expr_cache_builder.py --append` (add today's bar, ~5-8 min)
+3. `python local_runner/pyramid_grinder.py --setup dtss` (fast grind, ~2-3 min)
 
 ---
 
@@ -176,14 +186,10 @@ Run 2 (4,017 exprs) found 20 conditions but peak 91/day, avg 9.7/day — worse t
 **Result:** 127 boolean conditions (was 65), 88 ops (was 82), 6 new ops added to both expression_engine.py and backtest_conditions.py. New categories: close_position_in_bar, volume_price_divergence, low/high_vs_ma, roc_acceleration, roc_percentile_rank. Expanded parameter combos across extension, MA slope, Bollinger, MACD, range, retracement.
 **Grind result:** 20 conditions locked (was 10), but peak 91/day and avg 9.7/day — worse than pre-expansion. Larger search space + same beam width = suboptimal path selection. Also 40 min runtime (was ~10 min) due to 127 boolean series computation.
 
-### Step 5c: Expression Series Cache ⬜ NEXT
+### Step 5c: Expression Series Cache ✅ BUILT
 **What:** Pre-cache all 4,017 expression series for all 4,167 tickers × 5yr on disk.
-**Why:** 40-min grind runtime makes iteration impossible. Cache eliminates indicator recomputation — grind becomes pure search (~2-3 min). Enables rapid experimentation with beam width, peak targets, expression subsets.
-**How:**
-- One-time overnight build: compute all series, save as numpy arrays per ticker
-- Nightly append: compute 1 new bar per ticker after market close
-- Grinder loads cached arrays instead of running compute_series()
-- Estimated disk: ~47 GB
+**Result:** `local_runner/expr_cache_builder.py` — standalone builder with --build (full, ~40 min first time), --append (nightly, ~5-8 min), --status. Stores compressed .npz per ticker in `local_runner/cache/expr_series/`. Manifest tracks expression fingerprint for auto-invalidation when library changes. `pyramid_grinder.py` modified to auto-detect and use cache — falls back to compute_series() for uncached tickers. Estimated ~52 GB disk usage (float32, np.savez_compressed).
+**Impact:** Grind iterations: 40 min → ~2-3 min. Enables rapid experimentation with beam width, peak targets, expression subsets.
 
 ### Step 5: Backtest Runner Integration ⬜
 **What:** Make `scripts/backtest_conditions.py` pull conditions from grinder results automatically. Output signal charts.
