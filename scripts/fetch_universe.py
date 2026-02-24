@@ -458,7 +458,150 @@ def _run_full_fetch_inner(db):
 
 
 # ---------------------------------------------------------------------------
+# Nightly Append — fetch only missing days
+# ---------------------------------------------------------------------------
+
+def append_daily():
+    """
+    Append missing daily bars to universe_ohlcv.
+
+    Logic:
+    1. Get max(date) from universe_ohlcv — that's our DB's last trading day
+    2. Fetch SPY's latest available bar from yfinance to see what's available
+    3. If DB is already current → return {"status": "up_to_date"}
+    4. If behind → fetch from (db_last_date) to now for all tradable tickers
+       yfinance start is inclusive so we start from db_last_date to catch any
+       corrections, but INSERT OR REPLACE handles duplicates.
+
+    Returns dict with status and stats.
+    """
+    db = get_db()
+    try:
+        return _append_daily_inner(db)
+    except Exception as e:
+        log.error(f"append_daily crashed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "error": str(e)}
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
+def _append_daily_inner(db):
+    init_universe_tables(db)
+
+    # 1. Get DB's latest date
+    row = db.execute("SELECT MAX(date) as max_date FROM universe_ohlcv").fetchone()
+    db_last_date = row["max_date"] if row and row["max_date"] else None
+
+    if not db_last_date:
+        return {"status": "error", "error": "No data in universe_ohlcv. Run full fetch first."}
+
+    log.info(f"DB last date: {db_last_date}")
+
+    # 2. Check what yfinance has available (use SPY as reference)
+    try:
+        spy = yf.download("SPY", period="5d", progress=False)
+        if spy is None or spy.empty:
+            return {"status": "error", "error": "Could not fetch SPY reference data from yfinance"}
+        # Handle MultiIndex columns from newer yfinance
+        if isinstance(spy.columns, pd.MultiIndex):
+            spy.columns = spy.columns.droplevel(0)
+        latest_available = spy.index[-1]
+        if hasattr(latest_available, "strftime"):
+            latest_available_str = latest_available.strftime("%Y-%m-%d")
+        else:
+            latest_available_str = str(latest_available)[:10]
+    except Exception as e:
+        return {"status": "error", "error": f"yfinance SPY check failed: {e}"}
+
+    log.info(f"Latest available on yfinance: {latest_available_str}")
+
+    # 3. Compare
+    if db_last_date >= latest_available_str:
+        log.info("DB is already up to date.")
+        return {"status": "up_to_date", "db_last_date": db_last_date, "yf_latest": latest_available_str}
+
+    # 4. Fetch missing days for all tradable tickers
+    # Get ticker list from tradable_universe (if exists), else all from universe_tickers
+    tickers = [r[0] for r in db.execute(
+        "SELECT ticker FROM tradable_universe ORDER BY ticker"
+    ).fetchall()]
+    if not tickers:
+        tickers = [r[0] for r in db.execute(
+            "SELECT ticker FROM universe_tickers WHERE status='done' ORDER BY ticker"
+        ).fetchall()]
+    if not tickers:
+        return {"status": "error", "error": "No tickers found in DB"}
+
+    log.info(f"Fetching {len(tickers)} tickers from {db_last_date} to now...")
+
+    # Use db_last_date as start (inclusive in yfinance) — INSERT OR REPLACE handles dupes
+    start_date = db_last_date
+    end_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")  # end is exclusive in yfinance
+
+    completed = 0
+    failed = 0
+    new_rows = 0
+    errors = []
+
+    for i in range(0, len(tickers), BATCH_SIZE):
+        batch = tickers[i:i + BATCH_SIZE]
+        batch_num = (i // BATCH_SIZE) + 1
+        total_batches = (len(tickers) + BATCH_SIZE - 1) // BATCH_SIZE
+
+        log.info(f"Append batch {batch_num}/{total_batches}: {batch[0]}...{batch[-1]}")
+
+        try:
+            results = fetch_batch_with_timeout(batch, start_date, end_date, timeout_seconds=120)
+        except Exception as e:
+            log.error(f"Append batch {batch_num} failed: {e}")
+            failed += len(batch)
+            errors.append(f"Batch {batch_num}: {str(e)[:100]}")
+            time.sleep(3)
+            continue
+
+        for ticker in batch:
+            try:
+                if ticker in results and len(results[ticker]) > 0:
+                    n = store_ohlcv_batch(db, ticker, results[ticker])
+                    new_rows += n
+                    completed += 1
+                else:
+                    completed += 1  # no new data for this ticker (maybe halted)
+            except Exception as e:
+                failed += 1
+                errors.append(f"{ticker}: {str(e)[:80]}")
+
+        db.commit()
+
+        # Shorter delay for append — fewer bars per ticker
+        if i + BATCH_SIZE < len(tickers):
+            time.sleep(3)
+
+    log.info(f"Append complete: {completed} tickers, {new_rows} rows inserted, {failed} failed")
+
+    return {
+        "status": "complete",
+        "db_last_date_was": db_last_date,
+        "yf_latest": latest_available_str,
+        "tickers_processed": completed,
+        "new_rows": new_rows,
+        "failed": failed,
+        "errors": errors[:20],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Direct execution
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    run_full_fetch()
+    import sys
+    if "--append" in sys.argv:
+        result = append_daily()
+        print(json.dumps(result, indent=2))
+    else:
+        run_full_fetch()

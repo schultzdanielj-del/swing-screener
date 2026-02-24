@@ -140,35 +140,19 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ---
 
-## IMMEDIATE NEXT STEP: Build Nightly Refresh Script
+## IMMEDIATE NEXT STEP: Strip Bespoke → DONE. Nightly script → DONE.
 
-**Context:** Expression series cache (Step 5c) is built and first-time build is running on desktop. The grinder can now iterate in ~2-3 min per run. But before grinding, all data must be fresh.
+### Nightly Update Script ✅ COMPLETE
+**What:** `python local_runner/nightly.py` — single command to refresh all data before grinding.
+**Chain:**
+1. `POST /api/universe/append-daily` — checks DB max date vs yfinance latest. If behind, fetches missing days for all tradable tickers, upserts, rebuilds tradable_universe. If current → stops here.
+2. Daily OHLCV cache refresh (300 bars, pulls from Railway)
+3. 5yr OHLCV cache refresh (1,260 bars, pulls from Railway)
+4. Expression series cache append (new bars only)
+5. D1 universe matrix rebuild
 
-**Build:** `local_runner/nightly.py` — single script that chains all refresh steps so the desktop is ready for fast grind iterations all day.
-
-**What it does (~15-20 min total):**
-
-| Step | Command (currently manual) | Time | Disk |
-|------|---------------------------|------|------|
-| 1. 5yr OHLCV refresh | `cache_builder.py --5yr` | ~4.6 min | 214 MB |
-| 2. Daily OHLCV refresh | `cache_builder.py` | ~4.4 min | 57 MB |
-| 3. Tradable universe check | `classify_universe.py` (skip if <90 days) | ~10 min | negligible |
-| 4. Expression series cache append | `expr_cache_builder.py --append` | ~5-8 min | ~52 GB (already built) |
-| 5. Universe matrix rebuild (D1) | `matrix_builder.py` rebuild | ~5 min | ~few hundred MB |
-
-**Usage:**
-```bash
-# Run after market close, before grinding
-python local_runner/nightly.py
-```
-
-**After nightly completes:**
-```bash
-# Fast grind iterations all day
-python local_runner/pyramid_grinder.py --setup dtss --beam 100
-python local_runner/pyramid_grinder.py --setup dtss --beam 200 --peak-target 10
-# etc — each run ~2-3 min
-```
+**Timing:** Run after 4:30pm ET on trading days. Agent auto-triggers if running.
+**Total time:** ~15-20 min. After completion, grind iterations are ~2-3 min each.
 
 ---
 
@@ -210,14 +194,13 @@ python local_runner/pyramid_grinder.py --setup dtss --beam 200 --peak-target 10
 
 | # | Task | Description |
 |---|------|-------------|
-| 1 | **Nightly automation** | Chain: append cache → rebuild matrix → grind per setup → output candidates. All before 7pm ET. |
-| 2 | **Dynamic re-grind** | System re-grinds nightly and adjusts conditions as market evolves. |
-| 3 | **HTF setup** | Third setup type. Collect and load examples. |
-| 4 | **IPO break setup** | CRWV-style IPO breakout of highest AVWAP. Short history stocks. |
-| 5 | **EV optimization** | Management optimizer against MFE/MAE matrices for position sizing. |
-| 6 | **Market regime filter** | "When to trade it" on/off switch per setup. 3-4DB showed 6-7x signal spikes during stage transitions. |
-| 7 | **Universal pivot expressions** | Detect all D1 pivots with prominence, generate expressions for spiderweb. Currently parked — LSP detector needs refactoring. |
-| 8 | **Frontend Phase 2 control** | Run pyramid grinder from the frontend (like Phase 1 grind). Detailed progress per tier. |
+| 1 | **Dynamic re-grind** | System re-grinds nightly and adjusts conditions as market evolves. |
+| 2 | **HTF setup** | Third setup type. Collect and load examples. |
+| 3 | **IPO break setup** | CRWV-style IPO breakout of highest AVWAP. Short history stocks. |
+| 4 | **EV optimization** | Management optimizer against MFE/MAE matrices for position sizing. |
+| 5 | **Market regime filter** | "When to trade it" on/off switch per setup. 3-4DB showed 6-7x signal spikes during stage transitions. |
+| 6 | **Universal pivot expressions** | Detect all D1 pivots with prominence, generate expressions for spiderweb. Currently parked — LSP detector needs refactoring. |
+| 7 | **Frontend Phase 2 control** | Run pyramid grinder from the frontend (like Phase 1 grind). Detailed progress per tier. |
 
 ---
 

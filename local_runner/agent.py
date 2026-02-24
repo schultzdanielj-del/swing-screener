@@ -102,37 +102,25 @@ def get_et_now():
 
 
 def nightly_rebuild_needed():
-    """Check if it's after 4:05pm ET and matrix hasn't been rebuilt today."""
+    """Check if it's after 4:30pm ET and matrix hasn't been rebuilt today."""
     from matrix_builder import _universe_matrix_fresh
     now_et = get_et_now()
 
-    # Only rebuild after market close (4:05pm ET) on weekdays
+    # Only rebuild after market close (4:30pm ET) on weekdays
     if now_et.weekday() >= 5:  # Weekend
         return False
-    if now_et.hour < 16 or (now_et.hour == 16 and now_et.minute < 5):
+    if now_et.hour < 16 or (now_et.hour == 16 and now_et.minute < 30):
         return False
 
     return not _universe_matrix_fresh()
 
 
 def run_nightly_rebuild():
-    """Rebuild OHLCV cache and universe matrix."""
-    print(f"\n  🌙 Nightly rebuild starting...")
-
-    # Rebuild OHLCV cache
-    print(f"  Refreshing OHLCV cache...")
-    from cache_builder import build_cache
-    build_cache(force=True)
-
-    # Rebuild universe matrix
-    print(f"  Rebuilding universe matrix (this takes ~30 min)...")
-    from matrix_builder import get_universe_matrix
-
-    def progress(phase, pct, detail):
-        print(f"    [{pct:3d}%] {detail}")
-
-    get_universe_matrix(progress_fn=progress, force=True)
-    print(f"  🌙 Nightly rebuild complete!\n")
+    """Run the full nightly update pipeline."""
+    print(f"\n  🌙 Agent triggering nightly update...")
+    from nightly import main as nightly_main
+    nightly_main()
+    print(f"  🌙 Nightly update complete!\n")
 
 
 def handle_job(job):

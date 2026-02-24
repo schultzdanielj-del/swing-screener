@@ -924,6 +924,30 @@ def rebuild_tradable_universe(db):
     return count
 
 
+@app.post("/api/universe/append-daily")
+async def append_daily_data():
+    """
+    Nightly append — fetch only missing trading days for all tradable tickers.
+    Synchronous (blocks until done) since it's much faster than full fetch.
+    Returns immediately if DB is already up to date.
+    """
+    try:
+        from scripts.fetch_universe import append_daily
+        result = append_daily()
+
+        # If new data was added, rebuild tradable universe too
+        if result.get("status") == "complete" and result.get("new_rows", 0) > 0:
+            with get_db() as db:
+                tradable_count = rebuild_tradable_universe(db)
+            result["tradable_rebuilt"] = True
+            result["tradable_count"] = tradable_count
+
+        return result
+    except Exception as e:
+        import traceback
+        return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
+
+
 @app.post("/api/tradable/rebuild")
 async def rebuild_tradable():
     """Rebuild the tradable universe from current OHLCV data."""
