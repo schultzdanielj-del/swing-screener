@@ -106,7 +106,8 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 5c Expression series cache | ✅ Done | 4,119 tickers × 4,017 exprs, ~21 GB, 37.5 min build, 5-8 min nightly append. |
 | 5d **NaN validation fix** | **✅ Done** | 100% example coverage required for expression ranges (was 70%). Zero false negatives guaranteed. |
 | 5e **Optimal grind params** | **✅ Done** | beam=200, depth=30, peak-target=5. Result: 30 conditions, peak 6/day, 184 signals/5yr, 3 min runtime. |
-| **6 Backtest Runner** | **🔧 IN PROGRESS** | `scripts/backtest_runner.py` built. Scans 5yr cache, generates charts per signal. Run locally to verify. |
+| **6 Backtest Runner** | **✅ Done** | `scripts/backtest_runner.py` built. Scans 5yr cache, generates charts per signal. Auto-uploads to Railway. |
+| **6b Historical Tab** | **✅ Done** | Signal prevalence bar chart + SPY candlestick bubble overlay in frontend Historical tab. |
 | 7 Market Context | Not started | |
 | 8 EV Optimize | Not started | |
 
@@ -170,51 +171,59 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ---
 
-## IMMEDIATE NEXT STEP: Backtest Runner (Step 6)
+## IMMEDIATE NEXT STEP: Market Context (Step 7)
 
-The grinder is done. 184 signals across 5 years, peak 6/day. Now we need to see what they look like.
+Steps 1-6 are complete. The grinder finds conditions, the backtest runner scans 5yr history, auto-uploads to Railway, and the Historical tab visualizes signal prevalence overlaid on SPY.
 
-**What to build:**
-1. Load conditions from `pyramid_results_dtss.json`
-2. Run all 30 conditions across 5yr OHLCV cache for all tradable tickers
-3. Generate candlestick charts for each signal (dark theme, entry candle marked, MAs overlaid)
-4. Present signals for visual review — are they real DTSS setups?
-5. Feedback loop: identify noise signals → tighten conditions or add qualitative filters
-
-**Why this matters:**
-- The grinder eliminates noise mathematically but can't tell if remaining signals *look* like the setup
-- 184 signals is small enough to review every one
-- This is where the conditions get refined from "mathematically tight" to "visually correct"
+**What's next:**
+1. Run grinder + backtest for DTSS with production params (desktop)
+2. Review Historical tab — signal clustering should align with market stage transitions
+3. Begin Step 7: correlate signal outcomes with market regime (stage transitions, breadth, VIX)
 
 ---
 
 ## BUILD PLAN — Remaining Steps
 
-### Step 6: Backtest Runner 🔧 IN PROGRESS
-**What:** Generate charts for all historical signals, visual verification.
+### Step 6: Backtest Runner ✅ COMPLETE
+**What:** Generate charts for all historical signals, visual verification, auto-upload to Railway.
 **Script:** `scripts/backtest_runner.py`
 **How:**
 - Read conditions from `pyramid_results_dtss.json` (or `historical_results_dtss.json`)
 - Parallel scan against 5yr OHLCV cache (ProcessPoolExecutor, same pattern as signal_distribution.py)
 - Generate mplfinance charts: dark theme, entry candle marked with magenta triangle, 8/21 EMA + 50/200 SMA
 - Charts organized by date folder: `cache/backtest_charts_{setup}/{date}/{TICKER}_{date}.png`
-- Output: signals CSV + summary stats + chart images
+- **Auto-uploads signals to Railway** via `POST /api/backtest/signals/upload`
+- Output: signals CSV + summary stats + chart images + Railway upload
 
 **Usage:**
 ```bash
-# Full run: scan + charts
+# Full run: scan + charts + upload to Railway
 python scripts/backtest_runner.py --setup dtss
 
-# Scan only, no charts
+# Scan + upload only, no charts
 python scripts/backtest_runner.py --setup dtss --no-charts
 
 # Regenerate charts from existing CSV
 python scripts/backtest_runner.py --setup dtss --charts-only
 ```
 
-**Status:** Script written, needs local run to generate actual signals + charts for review.
+**Workflow:**
+1. Run grinder: `python local_runner/pyramid_grinder.py --setup dtss --peak-target 5 --beam 200 --depth 30`
+2. Review grinder output — if conditions look good:
+3. Run backtest: `python scripts/backtest_runner.py --setup dtss --no-charts`
+4. Historical tab auto-updates with signal prevalence + SPY bubble overlay
 
-**Note (2026-02-24):** Consider building a frontend component to streamline the visual review workflow — browsing charts by date, tagging signals as valid/noise, tracking progress. Running CLI + manually browsing folders is error-prone when focus is split.
+### Step 6b: Historical Tab Visualization ✅ COMPLETE
+**What:** Frontend visualization of backtest signal prevalence overlaid on SPY.
+**Location:** Historical sub-tab for each setup type in `app/index.html`
+**Components:**
+- **Signal Prevalence Bar Chart** — signals/day across full SPY date range, color-coded by intensity (blue→red)
+- **SPY Candlestick + Bubble Overlay** — full D1 SPY chart (horizontally scrollable), signal clusters rendered as bubbles below candles sized by count (sqrt scaling for area proportionality). Dashed vertical lines connect 5+ signal clusters to price action. Hover tooltip shows OHLC + signal count.
+**Data flow:** Fetches `/api/backtest/signals/{setup_type}` + `/api/ohlcv/bulk/SPY?lookback=1260`
+**New API endpoints:**
+- `POST /api/backtest/signals/upload` — desktop runner uploads signals (replaces existing for setup_type)
+- `GET /api/backtest/signals/{setup_type}` — frontend reads per-setup signals
+**DB table:** `backtest_signals` (setup_type, ticker, date, uploaded_at, conditions_hash)
 
 ### Step 7: Market Context ⬜
 **What:** Identify which market conditions produce winners vs losers.
@@ -234,10 +243,10 @@ python scripts/backtest_runner.py --setup dtss --charts-only
 
 | # | Task | Description |
 |---|------|-------------|
-| 1 | **Dynamic re-grind** | System re-grinds nightly and adjusts conditions as market evolves. |
-| 2 | **HTF setup** | Third setup type. Collect and load examples. |
-| 3 | **IPO break setup** | CRWV-style IPO breakout of highest AVWAP. Short history stocks. |
-| 4 | **Frontend Phase 2 control** | Run pyramid grinder from the frontend (like Phase 1 grind). Detailed progress per tier. |
+| 1 | **Frontend grinder control** | Full grinder workflow from the frontend: set peak-target/beam/depth params, start grind, see results, choose to backtest — all from the UI. Desktop agent just listens for commands. No more CLI. |
+| 2 | **Dynamic re-grind** | System re-grinds nightly and adjusts conditions as market evolves. |
+| 3 | **HTF setup** | Third setup type. Collect and load examples. |
+| 4 | **IPO break setup** | CRWV-style IPO breakout of highest AVWAP. Short history stocks. |
 | 5 | **Universal pivot expressions** | Detect all D1 pivots with prominence, generate expressions for spiderweb. |
 | 6 | **Intermediate pyramid tiers** | Add 2yr/3yr tiers between 1yr and 5yr for earlier noise elimination. |
 
