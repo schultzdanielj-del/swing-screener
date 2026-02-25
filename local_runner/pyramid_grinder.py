@@ -816,6 +816,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
                       key=lambda i: (all_row_dates[i], all_row_tickers[i]))
     candidate_values = candidate_values[sort_idx]
     all_row_dates = [all_row_dates[i] for i in sort_idx]
+    all_row_tickers = [all_row_tickers[i] for i in sort_idx]
 
     print(f"  {tier_name} matrix: {candidate_values.shape[0]:,} rows × "
           f"{candidate_values.shape[1]:,} candidates ({build_time:.0f}s)")
@@ -831,6 +832,23 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     )
 
     result = search.run(depth=depth, beam_width=beam_width, peak_target=peak_target)
+
+    # Extract final signal tickers and dates from the best path's row_mask
+    final_signals = []
+    if result.get("final_total", 0) > 0:
+        # Reconstruct final row_mask by applying all found conditions
+        mask = np.ones(len(all_row_dates), dtype=bool)
+        for cond in result.get("conditions", []):
+            ci = cond["cand_index"]
+            mask &= search.cand_passes[ci]
+        # Build signal list: (date, ticker) pairs
+        for idx in np.where(mask)[0]:
+            final_signals.append({
+                "date": all_row_dates[idx],
+                "ticker": all_row_tickers[idx],
+            })
+    result["final_signals"] = final_signals
+    result["final_tickers"] = sorted(set(s["ticker"] for s in final_signals))
 
     # Convert conditions from search result
     new_conditions = []
@@ -1001,6 +1019,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "final_total": tier_result.get("final_total"),
             "baseline_peak": tier_result.get("baseline_peak"),
             "stats": tier_result.get("stats"),
+            "final_signals": tier_result.get("final_signals", []),
+            "final_tickers": tier_result.get("final_tickers", []),
         }
 
         if new_conds:
@@ -1052,7 +1072,30 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         print(f"    {i:2d}. [{tier:>4}] [{cat:>18}] {c['name']:35s} "
               f"[{c['low']:.4f} — {c['high']:.4f}]")
 
-    # ── Save ──
+    # ── Get final signal summary from last tier with data ──
+    final_total = 0
+    final_peak = 0
+    final_avg = 0.0
+    final_tickers = []
+    final_signals = []
+    for tier_name_rev in reversed(["D1", "1wk", "1mo", "6mo", "1yr", "5yr"]):
+        tr = tier_results.get(tier_name_rev, {})
+        if tr.get("final_total") is not None and tr["final_total"] > 0:
+            final_total = tr["final_total"]
+            final_peak = tr.get("final_peak", 0)
+            final_avg = tr.get("final_avg", 0.0)
+            final_tickers = tr.get("final_tickers", [])
+            final_signals = tr.get("final_signals", [])
+            break
+
+    # Print ticker list
+    if final_tickers:
+        print(f"\n  Final tickers ({len(final_tickers)} unique): {', '.join(final_tickers)}")
+
+    # ── Save with descriptive filename ──
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    desc_name = f"pyramid_{setup_type}_sig{final_total}_pk{final_peak}_{ts}"
+
     result = {
         "setup_type": setup_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1074,13 +1117,27 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "peak_target": peak_target,
             "strict_nan": strict_nan,
         },
+        "summary": {
+            "final_total": final_total,
+            "final_peak": final_peak,
+            "final_avg": final_avg,
+            "final_tickers": final_tickers,
+            "n_unique_tickers": len(final_tickers),
+        },
     }
 
     os.makedirs(CACHE_DIR, exist_ok=True)
-    out_path = os.path.join(CACHE_DIR, f"pyramid_results_{setup_type}.json")
+
+    # Descriptive filename
+    out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
+
+    # Also save as latest (for other tools to find)
+    latest_path = os.path.join(CACHE_DIR, f"pyramid_results_{setup_type}.json")
+    with open(latest_path, "w") as f:
+        json.dump(result, f, indent=2)
 
     # Also save in historical_results format for compatibility with signal_distribution.py
     compat_result = {
