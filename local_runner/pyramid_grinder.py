@@ -1114,16 +1114,74 @@ def main():
                         help="Beam width for D1 tier (default: same as --beam)")
     parser.add_argument("--d1-depth", type=int, default=None,
                         help="Depth for D1 tier (default: same as --depth)")
+    parser.add_argument("--runs", type=int, default=1,
+                        help="Number of times to repeat the grinder (default: 1)")
     args = parser.parse_args()
 
-    run_pyramid(
-        setup_type=args.setup,
-        peak_target=args.peak_target,
-        beam_width=args.beam,
-        depth=args.depth,
-        d1_depth=args.d1_depth,
-        d1_beam=args.d1_beam,
-    )
+    n_runs = max(1, args.runs)
+    results = []
+
+    for run_i in range(n_runs):
+        if n_runs > 1:
+            print(f"\n{'#'*70}")
+            print(f"  RUN {run_i + 1} of {n_runs}")
+            print(f"{'#'*70}")
+
+        result = run_pyramid(
+            setup_type=args.setup,
+            peak_target=args.peak_target,
+            beam_width=args.beam,
+            depth=args.depth,
+            d1_depth=args.d1_depth,
+            d1_beam=args.d1_beam,
+        )
+        results.append(result)
+
+    # ── Multi-run summary table ──
+    if n_runs > 1:
+        print(f"\n\n{'='*80}")
+        print(f"  MULTI-RUN SUMMARY  ({n_runs} runs)")
+        print(f"  Setup: {args.setup.upper()}  peak={args.peak_target}  beam={args.beam}  depth={args.depth}")
+        print(f"{'='*80}")
+        print(f"  {'Run':>4}  {'Conditions':>11}  {'5yr Total':>10}  {'5yr Peak/d':>11}  {'5yr Avg/d':>10}  {'Time':>8}")
+        print(f"  {'-'*4}  {'-'*11}  {'-'*10}  {'-'*11}  {'-'*10}  {'-'*8}")
+
+        for i, r in enumerate(results, 1):
+            n_conds = r.get("n_conditions", 0)
+            t = r.get("total_time_s", 0)
+
+            # Get 5yr tier stats (last tier with data)
+            tr = r.get("tier_results", {})
+            five = tr.get("5yr", {})
+            total = five.get("final_total", "—")
+            peak = five.get("final_peak", "—")
+            avg = five.get("final_avg", "—")
+
+            # If 5yr has no data, walk backwards through tiers
+            if total == "—" or total is None:
+                for tier_name in reversed(["D1", "1wk", "1mo", "6mo", "1yr", "5yr"]):
+                    ti = tr.get(tier_name, {})
+                    if ti.get("final_total") is not None:
+                        total = ti["final_total"]
+                        peak = ti.get("final_peak", "—")
+                        avg = ti.get("final_avg", "—")
+                        break
+
+            total_s = f"{total:,}" if isinstance(total, (int, float)) else str(total)
+            peak_s = str(peak) if peak != "—" else "—"
+            avg_s = f"{avg:.1f}" if isinstance(avg, (int, float)) else str(avg)
+            time_s = f"{t:.0f}s"
+
+            print(f"  {i:>4}  {n_conds:>11}  {total_s:>10}  {peak_s:>11}  {avg_s:>10}  {time_s:>8}")
+
+        # Best run
+        valid = [(i, r) for i, r in enumerate(results, 1)
+                 if r.get("tier_results", {}).get("5yr", {}).get("final_total") is not None]
+        if valid:
+            best_i, best_r = min(valid, key=lambda x: x[1]["tier_results"]["5yr"]["final_total"])
+            best_total = best_r["tier_results"]["5yr"]["final_total"]
+            print(f"\n  ★ Best: Run {best_i} with {best_total:,} total signals")
+        print()
 
 
 if __name__ == "__main__":
