@@ -111,6 +111,52 @@ def fetch_ticker_ohlcv(ticker: str, lookback: int = MAX_LOOKBACK) -> pd.DataFram
 # Exit Condition Evaluation (subprocess-safe)
 # ============================================================
 
+def _apply_bool_aggregation(bool_series, agg_type, window):
+    """Apply rolling boolean aggregation to a 0/1 series.
+
+    Matches the logic in exit_grinder.py compute_boolean_aggregations().
+    """
+    import numpy as np
+    n = len(bool_series)
+    bseries = np.asarray(bool_series, dtype=np.float64)
+
+    if agg_type == "count_true":
+        cumsum = np.cumsum(bseries)
+        result = np.full(n, np.nan)
+        result[window-1:] = cumsum[window-1:] - np.concatenate([[0], cumsum[:n-window]])
+        return result
+
+    elif agg_type == "pct_true":
+        cumsum = np.cumsum(bseries)
+        result = np.full(n, np.nan)
+        result[window-1:] = (cumsum[window-1:] - np.concatenate([[0], cumsum[:n-window]])) / window
+        return result
+
+    elif agg_type == "since_true":
+        result = np.full(n, np.nan)
+        last_true = -999
+        for j in range(n):
+            if bseries[j] > 0.5:
+                last_true = j
+            if last_true >= 0:
+                result[j] = j - last_true
+        return result
+
+    elif agg_type == "true_in_row":
+        result = np.full(n, np.nan)
+        streak = 0
+        for j in range(n):
+            if bseries[j] > 0.5:
+                streak += 1
+            else:
+                streak = 0
+            result[j] = streak
+        return result
+
+    else:
+        raise ValueError(f"Unknown aggregation type: {agg_type}")
+
+
 def _eval_signal(args):
     """Evaluate exit condition on one signal's post-signal bars.
 
@@ -169,7 +215,14 @@ def _eval_signal(args):
                                 max_forward=actual_forward)
 
         compute_spec = exit_cond["compute_spec"]
-        series = engine.compute(compute_spec)
+
+        # Handle compound boolean aggregation specs
+        if compute_spec.get("op") == "__bool_aggregation__":
+            base_series = engine.compute(compute_spec["base_spec"])
+            series = _apply_bool_aggregation(
+                base_series, compute_spec["agg_type"], compute_spec["window"])
+        else:
+            series = engine.compute(compute_spec)
 
         # Check if exit condition triggers
         threshold = exit_cond["threshold"]
@@ -566,16 +619,38 @@ def main():
 def _build_compute_spec(expression_name: str, category: str) -> dict:
     """Reconstruct compute spec from expression name.
 
-    The exit_grind results store expression names, but the ExitExprEngine
-    needs a compute spec dict. This reverses the naming convention from
-    exit_expressions.py.
+    The exit_grind results store expression names; we need to reconstruct the compute spec
+    for ExitExprEngine. Boolean aggregation expressions (e.g. close_above_avgc50_count_true_15b)
+    are compound: base boolean + rolling aggregation.
     """
+    # ── Check for boolean aggregation pattern first ──
+    # Pattern: {base_name}_{agg_type}_{window}b
+    # agg_types: count_true, pct_true, since_true, true_in_row
+    import re
+    agg_match = re.match(r'^(.+)_(count_true|pct_true|since_true|true_in_row)_(\d+)b$',
+                         expression_name)
+    if agg_match:
+        base_name = agg_match.group(1)
+        agg_type = agg_match.group(2)
+        window = int(agg_match.group(3))
+        # Resolve the base boolean's compute spec
+        base_spec = _build_base_bool_spec(base_name)
+        if base_spec is None:
+            print(f"  WARNING: Cannot resolve base boolean: {base_name}")
+            return None
+        return {
+            "op": "__bool_aggregation__",
+            "base_spec": base_spec,
+            "agg_type": agg_type,
+            "window": window,
+        }
+
     # ── MA reclaim expressions ──
     if expression_name.startswith("bars_since_reclaim_"):
         ma = expression_name.replace("bars_since_reclaim_", "")
         return {"op": "bars_since_reclaim", "ma": ma}
 
-    if expression_name.startswith("close_above_"):
+    if expression_name.startswith("close_above_") and "_count_true" not in expression_name:
         ma = expression_name.replace("close_above_", "")
         return {"op": "close_above_ma", "ma": ma}
 
@@ -613,8 +688,6 @@ def _build_compute_spec(expression_name: str, category: str) -> dict:
     # Pattern: ext_{ma}_{norm}  e.g. ext_avgc50_adr14
     if expression_name.startswith("ext_") and not expression_name.startswith("ext_ceil"):
         parts = expression_name.split("_")
-        # ext_avgc50_adr14 → ma=avgc50, normalizer=adr14
-        # ext_xavgc21_adr14 → ma=xavgc21, normalizer=adr14
         if len(parts) >= 3:
             ma = parts[1]
             norm = parts[2]
@@ -632,7 +705,6 @@ def _build_compute_spec(expression_name: str, category: str) -> dict:
     # ── Extension ceiling ratio ──
     if expression_name.startswith("ext_ceil_"):
         rest = expression_name.replace("ext_ceil_", "")
-        # ext_ceil_avgc50_adr14_lb252
         parts = rest.split("_")
         if len(parts) >= 3 and parts[-1].startswith("lb"):
             lookback = int(parts[-1][2:])
@@ -645,7 +717,6 @@ def _build_compute_spec(expression_name: str, category: str) -> dict:
     if expression_name.startswith("rsi_"):
         parts = expression_name.split("_")
         if "slope" in parts:
-            # rsi_14_slope_3
             period = int(parts[1])
             offset = int(parts[3])
             return {"op": "rsi_slope", "period": period, "offset": offset}
@@ -671,14 +742,12 @@ def _build_compute_spec(expression_name: str, category: str) -> dict:
 
     if expression_name.startswith("macd_hist_slope_"):
         parts = expression_name.split("_")
-        # macd_hist_slope_12_26_9_3b
         return {"op": "macd_histogram_slope",
                 "fast": int(parts[3]), "slow": int(parts[4]),
                 "signal": int(parts[5]), "offset": int(parts[6].rstrip("b"))}
 
     if expression_name.startswith("macd_hist_"):
         parts = expression_name.split("_")
-        # macd_hist_12_26_9
         return {"op": "macd_histogram",
                 "fast": int(parts[2]), "slow": int(parts[3]),
                 "signal": int(parts[4])}
@@ -712,6 +781,66 @@ def _build_compute_spec(expression_name: str, category: str) -> dict:
         return {"op": "retrace_from_mfe_pct"}
 
     print(f"  WARNING: Unknown expression name pattern: {expression_name}")
+    return None
+
+
+def _build_base_bool_spec(base_name: str) -> dict:
+    """Build compute spec for a base boolean expression.
+
+    These are the native boolean ops from exit_expressions.py that get
+    aggregated into count_true/pct_true/since_true/true_in_row.
+    """
+    # close_above_{ma}
+    if base_name.startswith("close_above_"):
+        ma = base_name.replace("close_above_", "")
+        return {"op": "close_above_ma", "ma": ma}
+
+    # close_below_{ma}
+    if base_name.startswith("close_below_"):
+        ma = base_name.replace("close_below_", "")
+        return {"op": "close_below_ma", "ma": ma}
+
+    # is_green
+    if base_name == "is_green":
+        return {"op": "is_green"}
+
+    # is_red
+    if base_name == "is_red":
+        return {"op": "is_red"}
+
+    # below_signal_bar_low / below_signal_low
+    if base_name in ("below_signal_bar_low", "below_signal_low"):
+        return {"op": "below_signal_bar_low"}
+
+    # above_signal_bar_high / above_signal_high
+    if base_name in ("above_signal_bar_high", "above_signal_high"):
+        return {"op": "above_signal_bar_high"}
+
+    # gap_down
+    if base_name == "gap_down":
+        return {"op": "gap_down"}
+
+    # gap_up
+    if base_name == "gap_up":
+        return {"op": "gap_up"}
+
+    # lower_low
+    if base_name == "lower_low":
+        return {"op": "lower_low"}
+
+    # lower_high
+    if base_name == "lower_high":
+        return {"op": "lower_high"}
+
+    # higher_low
+    if base_name == "higher_low":
+        return {"op": "higher_low"}
+
+    # higher_high
+    if base_name == "higher_high":
+        return {"op": "higher_high"}
+
+    print(f"  WARNING: Unknown base boolean: {base_name}")
     return None
 
 
