@@ -510,8 +510,8 @@ def main():
                         help="Thresholds to test per expression")
     parser.add_argument("--min-bar", type=int, default=1,
                         help="Earliest exit bar (1 = day after entry)")
-    parser.add_argument("--min-trigger-pct", type=float, default=0.7,
-                        help="Min fraction of examples that must trigger (0.7 = 70%%)")
+    parser.add_argument("--min-trigger-pct", type=float, default=1.0,
+                        help="Min fraction of examples that must trigger (1.0 = 100%%)")
     parser.add_argument("--top-n", type=int, default=50,
                         help="Top N results to show")
     parser.add_argument("--direction", default="short",
