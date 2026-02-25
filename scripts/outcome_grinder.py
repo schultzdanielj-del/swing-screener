@@ -76,7 +76,16 @@ def load_exit_conditions(setup_type: str) -> dict:
         raise FileNotFoundError(f"Exit grinder results not found: {path}")
     with open(path) as f:
         d = json.load(f)
-    print(f"Loaded {d['n_conditions_found']} exit conditions from {path}")
+
+    # Handle different exit grinder output formats
+    n_conds = d.get("n_conditions_found") or len(d.get("top_conditions", d.get("results", [])))
+
+    # Normalize: older format used "results" key, newer uses "top_conditions"
+    if "top_conditions" not in d and "results" in d:
+        d["top_conditions"] = d["results"]
+
+    print(f"Loaded {n_conds} exit conditions from {path}")
+    print(f"  Keys: {list(d.keys())}")
     return d
 
 
@@ -289,10 +298,27 @@ def main():
         example_set.add((ex["ticker"], ex["entryDate"]))
 
     # ── 2. Select exit condition(s) ──
-    exit_conds = exit_data["top_conditions"]
+    exit_conds = exit_data.get("top_conditions", exit_data.get("results", []))
     if not exit_conds:
         print("ERROR: No exit conditions found in Step 6 results.")
         return
+
+    # Normalize field names across different exit grinder output formats
+    for ec in exit_conds:
+        # Old format used "expr_name", new uses "expression"
+        if "expr_name" in ec and "expression" not in ec:
+            ec["expression"] = ec["expr_name"]
+        # Old format used "above"/"below", new uses ">="/"<="
+        if ec.get("direction") == "above":
+            ec["direction"] = ">="
+        elif ec.get("direction") == "below":
+            ec["direction"] = "<="
+        # Old format: "floor_capture_eff", new: "floor_efficiency"
+        if "floor_capture_eff" in ec and "floor_efficiency" not in ec:
+            ec["floor_efficiency"] = ec["floor_capture_eff"]
+        # Ensure category exists
+        if "category" not in ec:
+            ec["category"] = "unknown"
 
     if args.all_exits:
         selected_exits = exit_conds
@@ -308,7 +334,7 @@ def main():
         print(f"  Expression: {ec['expression']}")
         print(f"  Direction: {ec['direction']}")
         print(f"  Threshold: {ec['threshold']}")
-        print(f"  Floor capture eff: {ec['floor_efficiency']:.3f}")
+        print(f"  Floor capture eff: {ec.get('floor_efficiency', 'N/A')}")
 
     # ── 3. Build compute spec for exit condition ──
     # Map expression name back to compute spec
