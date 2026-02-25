@@ -1,6 +1,6 @@
 # TODO
 
-## Current State (as of 2026-02-24)
+## Current State (as of 2026-02-25)
 
 ### The Grinder — Two-Phase Desktop Expression Discovery Engine
 
@@ -67,14 +67,18 @@ local_runner/
     └── historical_results_{setup}.json  # Compat format for signal_distribution.py
 
 scripts/
-├── expression_engine.py     # Computes expressions against OHLCV (point + series)
+├── expression_engine.py     # Expression computation (point + series)
 ├── backtest_conditions.py   # Series computation for historical scoring
-├── backtest_runner.py       # Step 6: parallel signal scan + chart generation for visual review
+├── backtest_runner.py       # Step 5: parallel signal scan + chart generation for visual review
 ├── signal_distribution.py   # Parallel signal analyzer: daily counts + per-signal CSV
 ├── fetch_universe.py        # Universe OHLCV fetcher: full build + incremental append_daily()
 ├── lsp_detector.py          # Local Structural Peak detection (DTSS-specific)
 ├── classify_universe.py     # ETF classifier (quarterly, desktop-only)
-└── fast_profiler.py         # FastProfiler for rapid example profiling
+├── fast_profiler.py         # FastProfiler for rapid example profiling
+├── exit_grinder.py          # Step 6: TA exit management on examples (NEW)
+├── outcome_grinder.py       # Step 7: outcome signal identification (NEW)
+├── presignal_grinder.py     # Step 8: pre-signal refinement (NEW)
+└── environment_scorer.py    # Step 9: environment clustering for EV (NEW)
 
 server.py                    # Railway API: 14+ endpoints, universe rebuild, grinder jobs, nightly append
 ```
@@ -104,20 +108,14 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 |------|--------|-------|
 | 1 Load | ✅ Done | Data + TA knowledge loaded |
 | 2 Receive | ✅ Done | 23 examples with LSP data |
-| 3 Grind (Phase 1) | ✅ Done | 9 conditions, 0.00% single-day pass rate, 11s at L3 |
-| 4 Grind (Phase 2 legacy) | ✅ Done | 12 conditions (9 P1 + 3 P2), avg 7.4 signals/day, 20.6 min |
-| 4.7 Signal analysis | ✅ Done | Peak: 260/day (2021-08-11), clustered Jul-Aug 2021. Avg hides massive spikes. |
-| 5a compute_series parity | ✅ Done | 82 → 88 total ops. Full parity with expression_engine. |
-| 5b Expression expansion | ✅ Done | 2,541 → 4,017 expressions. 127 booleans, 88 ops. |
-| 5c Expression series cache | ✅ Done | 4,119 tickers × 4,017 exprs, ~21 GB, 37.5 min build, 5-8 min nightly append. |
-| 5d **NaN handling fix** | **✅ Done** | 70% example coverage threshold (was 100%). Maximizes candidate pool. |
-| 5e **Production grind params** | **✅ Done** | beam=10000, depth=100, sweep peak-target 2-10. Best: PT=3 → 26 conditions, peak 6/day, 201 signals/5yr, ~5 min/run. |
-| **6 Backtest Runner** | **✅ Done** | `scripts/backtest_runner.py` built. Scans 5yr cache, generates charts per signal. Auto-uploads to Railway. |
-| **6b Historical Tab** | **✅ Done** | Signal prevalence bar chart + SPY candlestick bubble overlay in frontend Historical tab. |
-| 6 Behavioral Grinder | Not started | Post-signal expressions, confirm runners |
-| 7 Environment Grinder | Not started | Market context scoring |
-| 8 Exit Grinder | Not started | Optimal technical exits |
-| 9 Priority Queue | Not started | Nightly ranked output |
+| 3 Signal Grind (Phase 1) | ✅ Done | 9 conditions, 0.00% single-day pass rate, 11s at L3 |
+| 3 Signal Grind (Phase 2) | ✅ Done | beam=10000, PT=3 → 26 conditions, peak 6/day, 201 signals/5yr, avg 2.1/day |
+| 4 Backtest verification | ✅ Done | Signal prevalence + SPY overlay in frontend Historical tab |
+| 5 Backtest Runner | ✅ Done | `scripts/backtest_runner.py` — scan + charts + Railway upload |
+| **6 Exit Management Grind** | **⬜ Not started** | **NEXT: Brute force TA exit conditions on 23 examples' post-entry bars** |
+| **7 Outcome Grind** | **⬜ Not started** | Apply exit conditions to Step 3 signals → OUTCOME SIGNALS |
+| **8 Pre-Signal Refinement** | **⬜ Not started** | Grind outcome vs non-outcome on pre-signal expressions → TOTAL SIGNALS |
+| **9 Environment Clustering** | **⬜ Not started** | OUTCOME ÷ TOTAL by market regime → EV |
 
 ---
 
@@ -188,95 +186,57 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ## IMMEDIATE NEXT STEP
 
-**Peak-target sweep is running (2-10). When complete:**
+**Step 6: Exit Management Grind**
 
-1. **Compare all results** — pick the peak target with lowest total signals
-2. **Run backtest with winning conditions:**
-```bash
-python scripts/backtest_runner.py --setup dtss --no-charts
-```
-3. **Review Historical tab** — check signal clustering, verify patterns make sense
-4. **Begin Step 6: Behavioral Grinder** — build post-signal expression library, confirm runners from raw grinder signals
+Build `scripts/exit_grinder.py` to brute force optimal TA exit conditions on the 23 DTSS examples:
 
-**If results plateau (all peak targets give similar totals ~200-300):**
-- The expression library (4,017 expressions) is the bottleneck
-- Need new expression categories: multi-day patterns, cross-timeframe, sector breadth, etc.
-- More beam/depth won't help — beam=10000 already exhausts the search space
+1. Pull post-entry OHLCV bars for each example from 5yr cache (open-ended, enough bars to encompass all behavior)
+2. Define TA exit parameter space: MA reclaims, extension exhaustion, structural targets, trailing conditions
+3. Simulate every exit condition against each example's forward path
+4. Rank by captured distance in ADR across all examples
+5. Output: the optimal exit conditions that mark "this move is done"
+
+These exit conditions become the base filter for Step 7.
 
 ---
 
 ## BUILD PLAN — Remaining Steps
 
-### Step 6: Backtest Runner ✅ COMPLETE
-**What:** Generate charts for all historical signals, visual verification, auto-upload to Railway.
-**Script:** `scripts/backtest_runner.py`
-**How:**
-- Read conditions from `pyramid_results_dtss.json` (or `historical_results_dtss.json`)
-- Parallel scan against 5yr OHLCV cache (ProcessPoolExecutor, same pattern as signal_distribution.py)
-- Generate mplfinance charts: dark theme, entry candle marked with magenta triangle, 8/21 EMA + 50/200 SMA
-- Charts organized by date folder: `cache/backtest_charts_{setup}/{date}/{TICKER}_{date}.png`
-- **Auto-uploads signals to Railway** via `POST /api/backtest/signals/upload`
-- Output: signals CSV + summary stats + chart images + Railway upload
+### Step 6: Exit Management Grind ⬜
+**What:** Brute force optimal TA-driven exit conditions on validated examples.
+**Input:** 23 DTSS examples with entry dates + 5yr OHLCV cache
+**How:** For each example's post-entry bars, simulate every TA exit condition (MA reclaims, extension exhaustion, structural targets, trails). No fixed bar counts or R-multiples — the TA tells us when the move is done. Rank by captured distance in ADR.
+**Output:** Exit conditions — the TA rules marking "move is done." These become the base filter for Step 7.
+**Script:** `scripts/exit_grinder.py` (NEW)
 
-**Usage:**
-```bash
-# Full run: scan + charts + upload to Railway
-python scripts/backtest_runner.py --setup dtss
+### Step 7: Outcome Grind ⬜
+**What:** Split Step 3 signals into OUTCOME signals (move played out like examples) and non-outcome signals.
+**Input:** Step 3 signals (~201) + Step 6 exit conditions + validated examples
+**How:** Phase 1: Apply exit conditions to all signal post-signal bars. Where they trigger = candidate outcomes. Phase 2: Grind post-signal expression library (delay-insensitive) — examples as positives, all signals as universe. Exit conditions are the starting filter, grinder finds additional shared behavior.
+**Output:** OUTCOME SIGNALS — confirmed runners whose post-signal behavior matches the examples.
+**Script:** `scripts/outcome_grinder.py` (NEW)
 
-# Scan + upload only, no charts
-python scripts/backtest_runner.py --setup dtss --no-charts
+### Step 8: Pre-Signal Refinement Grind ⬜
+**What:** Find pre-signal conditions that distinguish outcome signals from non-outcome signals — things Step 3 missed because it compared examples vs the full universe instead of within the signal set.
+**Input:** OUTCOME SIGNALS + all Step 3 signals + existing 4,017 expression library
+**How:** Standard pyramid grinder. Outcome signals as examples, all signals as universe, pre-signal expressions. Any new conditions found get added to Step 3's condition set.
+**Output:** TOTAL SIGNALS (Step 3 conditions + Step 8 conditions). Tighter than original signals. Outcome signals unchanged (they pass by definition). Win rate improves because losers are eliminated without losing winners.
+**Script:** `scripts/presignal_grinder.py` (NEW)
 
-# Regenerate charts from existing CSV
-python scripts/backtest_runner.py --setup dtss --charts-only
-```
-
-**Workflow:**
-1. Run grinder sweep: `for /L %p in (2,1,10) do python local_runner/pyramid_grinder.py --setup dtss --peak-target %p --beam 10000 --depth 100`
-2. Pick best result (lowest total signals)
-3. Run backtest: `python scripts/backtest_runner.py --setup dtss --no-charts`
-4. Historical tab auto-updates with signal prevalence + SPY bubble overlay
-
-### Step 6b: Historical Tab Visualization ✅ COMPLETE
-**What:** Frontend visualization of backtest signal prevalence overlaid on SPY.
-**Location:** Historical sub-tab for each setup type in `app/index.html`
-**Components:**
-- **Signal Prevalence Bar Chart** — signals/day across full SPY date range, color-coded by intensity (blue→red)
-- **SPY Candlestick + Bubble Overlay** — full D1 SPY chart (horizontally scrollable), signal clusters rendered as bubbles below candles sized by count (sqrt scaling for area proportionality). Dashed vertical lines connect 5+ signal clusters to price action. Hover tooltip shows OHLC + signal count.
-**Data flow:** Fetches `/api/backtest/signals/{setup_type}` + `/api/ohlcv/bulk/SPY?lookback=1260`
-**New API endpoints:**
-- `POST /api/backtest/signals/upload` — desktop runner uploads signals (replaces existing for setup_type)
-- `GET /api/backtest/signals/{setup_type}` — frontend reads per-setup signals
-**DB table:** `backtest_signals` (setup_type, ticker, date, uploaded_at, conditions_hash)
-
-### Step 6: Behavioral Grinder ⬜
-**What:** Filter raw grinder signals to confirmed runners using post-signal behavioral matching.
-**How:** Build post-signal expression library (delay-insensitive: "anytime within N bars", cumulative metrics, structural destinations). Run pyramid grinder with examples as positives and raw signals as universe. Survivors = signals that produced moves like the examples.
-**Input:** 23 validated examples + raw grinder signals (368 or tighter run)
-**Output:** confirmed_runners.csv
-**Script:** `scripts/post_signal_grinder.py` (NEW)
-**Key design:** Expressions are delay-insensitive — don't care if move started bar 1 or bar 6 after signal. Uses "anytime within N bars" and cumulative metrics instead of fixed-offset measurements.
-
-### Step 7: Environment Grinder ⬜
-**What:** Score market context factors that predict bigger vs smaller moves on confirmed runners.
-**How:** Distance profile each confirmed runner (total move in ADR, MAs reached, extension levels). Factor analysis: split by market context quantiles, compare distance outcomes. Output scoring model.
-**Input:** Confirmed runners from Step 6 + market context at each signal (SPY regime, breadth, clustering)
-**Output:** scoring_model.json — factor weights for expected distance adjustment
+### Step 9: Environment Clustering ⬜
+**What:** OUTCOME SIGNALS ÷ TOTAL SIGNALS by market environment = win rate per regime = EV.
+**Input:** OUTCOME SIGNALS + TOTAL SIGNALS + market context at each signal (SPY regime, breadth, clustering, VIX, etc.)
+**How:** Compute market context at each signal. Bucket by environment. Win rate per bucket. Find high-EV environments where big runners cluster.
+**Output:** Environment scoring model — which market conditions produce the highest probability of quality moves. Combined with Step 6 exit management, this gives full EV.
 **Script:** `scripts/environment_scorer.py` (NEW)
 
-### Step 8: Exit Grinder ⬜
-**What:** Brute force optimal technical exit strategy that captures the most runway.
-**How:** Simulate every technical exit combination (MA reclaims, extension exhaustion, structural targets, time stops, partials) against confirmed runners' forward paths. Rank by captured distance in ADR. Find robust plateaus. Test if optimal exit varies by environment.
-**Input:** Confirmed runners + forward price paths + environment scoring
-**Output:** Optimal exit rules per setup, potentially environment-dependent
-**Script:** `scripts/exit_grinder.py` (NEW)
-**Note:** Does NOT optimize entry or stops — those are discretionary.
+### Future: Loss Reduction (Step 10, optional) ⬜
+**What:** Analyze non-outcome signals for early post-signal tells that predict failure.
+**Input:** Non-outcome signals from Step 7
+**How:** Profile first 1-5 bars after each non-outcome signal. Look for common patterns (gap ups, immediate reclaim, volume failure). Add near-entry management rules.
+**Output:** Early management rules that reduce average loss without affecting winners. Improves loss side of EV.
 
-### Step 9: Nightly Priority Queue ⬜
-**What:** Combine all intelligence into ranked nightly output.
-**How:** For each signal tonight: score environment → estimate runway → attach exit strategy → rank by expected distance.
-**Script:** `scripts/priority_scorer.py` (NEW)
-
-### Step 10: Second Setup — 3-4DB ⬜
+### Second Setup — 3-4DB ⬜
 **What:** Run 3-4DB examples (21 already loaded) through the same pipeline.
 **Why:** Validates the system is setup-agnostic.
 
@@ -286,12 +246,13 @@ python scripts/backtest_runner.py --setup dtss --charts-only
 
 | # | Task | Description |
 |---|------|-------------|
-| 1 | **Frontend grinder control** | Full grinder workflow from the frontend: set peak-target/beam/depth params, start grind, see results, choose to backtest — all from the UI. Desktop agent just listens for commands. No more CLI. |
-| 2 | **Dynamic re-grind** | System re-grinds nightly and adjusts conditions as market evolves. |
-| 3 | **HTF setup** | Third setup type. Collect and load examples. |
-| 4 | **IPO break setup** | CRWV-style IPO breakout of highest AVWAP. Short history stocks. |
-| 5 | **Universal pivot expressions** | Detect all D1 pivots with prominence, generate expressions for spiderweb. |
-| 6 | **Intermediate pyramid tiers** | Add 2yr/3yr tiers between 1yr and 5yr for earlier noise elimination. |
+| 1 | **PRESENTATION_SYSTEM** | Separate system: nightly data updates, signal detection, rank-ordered EV presentation. Consumes outputs of this analysis system. |
+| 2 | **Frontend grinder control** | Full grinder workflow from the frontend: set peak-target/beam/depth params, start grind, see results, choose to backtest — all from the UI. Desktop agent just listens for commands. No more CLI. |
+| 3 | **Dynamic re-grind** | System re-grinds nightly and adjusts conditions as market evolves. |
+| 4 | **HTF setup** | Third setup type. Collect and load examples. |
+| 5 | **IPO break setup** | CRWV-style IPO breakout of highest AVWAP. Short history stocks. |
+| 6 | **Universal pivot expressions** | Detect all D1 pivots with prominence, generate expressions for spiderweb. |
+| 7 | **Intermediate pyramid tiers** | Add 2yr/3yr tiers between 1yr and 5yr for earlier noise elimination. |
 
 ---
 
