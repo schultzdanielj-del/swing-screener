@@ -103,7 +103,7 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | Step | Status | Notes |
 |------|--------|-------|
 | 1 Load | ✅ Done | Data + TA knowledge loaded |
-| 2 Receive | ✅ Done | 26 examples with LSP data |
+| 2 Receive | ✅ Done | 23 examples with LSP data |
 | 3 Grind (Phase 1) | ✅ Done | 9 conditions, 0.00% single-day pass rate, 11s at L3 |
 | 4 Grind (Phase 2 legacy) | ✅ Done | 12 conditions (9 P1 + 3 P2), avg 7.4 signals/day, 20.6 min |
 | 4.7 Signal analysis | ✅ Done | Peak: 260/day (2021-08-11), clustered Jul-Aug 2021. Avg hides massive spikes. |
