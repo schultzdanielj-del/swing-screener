@@ -75,7 +75,7 @@ scripts/
 ├── lsp_detector.py          # Local Structural Peak detection (DTSS-specific)
 ├── classify_universe.py     # ETF classifier (quarterly, desktop-only)
 ├── fast_profiler.py         # FastProfiler for rapid example profiling
-├── exit_grinder.py          # Step 6: TA exit management on examples (NEW)
+├── exit_grinder.py          # Step 6: TA exit management on examples ✅
 ├── outcome_grinder.py       # Step 7: outcome signal identification (NEW)
 ├── presignal_grinder.py     # Step 8: pre-signal refinement (NEW)
 └── environment_scorer.py    # Step 9: environment clustering for EV (NEW)
@@ -112,7 +112,7 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 3 Signal Grind (Phase 2) | ✅ Done | beam=10000, PT=3 → 26 conditions, peak 6/day, 201 signals/5yr, avg 2.1/day |
 | 4 Backtest verification | ✅ Done | Signal prevalence + SPY overlay in frontend Historical tab |
 | 5 Backtest Runner | ✅ Done | `scripts/backtest_runner.py` — scan + charts + Railway upload |
-| **6 Exit Management Grind** | **⬜ Not started** | **NEXT: Brute force TA exit conditions on 23 examples' post-entry bars** |
+| **6 Exit Management Grind** | **✅ Done** | `scripts/exit_grinder.py` — 220 base exprs × thresholds × directions, scored by floor capture eff, % move shown |
 | **7 Outcome Grind** | **⬜ Not started** | Apply exit conditions to Step 3 signals → OUTCOME SIGNALS |
 | **8 Pre-Signal Refinement** | **⬜ Not started** | Grind outcome vs non-outcome on pre-signal expressions → TOTAL SIGNALS |
 | **9 Environment Clustering** | **⬜ Not started** | OUTCOME ÷ TOTAL by market regime → EV |
@@ -186,9 +186,9 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ## IMMEDIATE NEXT STEP
 
-**Step 6: Exit Management Grind**
+**Step 7: Outcome Grind**
 
-Build `scripts/exit_grinder.py` — brute force ~4,000 post-signal expressions against the DTSS examples' forward paths:
+Apply Step 6 exit conditions to all Step 3 signals' post-signal bars. Signals where exit triggers = OUTCOME SIGNALS. Then grind for additional post-signal behavior that separates outcome from non-outcome.
 
 1. Pull post-entry OHLCV bars for each example from 5yr cache (open-ended forward)
 2. Build post-signal expression library (~4,032 expressions across 12 categories: move_captured, extension_from_ma, extension_dynamics, ma_reclaim, momentum_reversal, candle_character, volume_character, structural, range_compression, retracement, time, relative_strength)
@@ -203,15 +203,10 @@ Build `scripts/exit_grinder.py` — brute force ~4,000 post-signal expressions a
 
 ## BUILD PLAN — Remaining Steps
 
-### Step 6: Exit Management Grind ⬜
-**What:** Brute force ~4,000 post-signal expressions against examples' forward paths. Find exit conditions that reliably capture the most move.
-**Input:** Validated examples with entry dates + 5yr OHLCV cache
-**Expression library:** ~4,032 post-signal expressions (12 categories: move_captured, extension_from_ma, extension_dynamics, ma_reclaim, momentum_reversal, candle_character, volume_character, structural, range_compression, retracement, time, relative_strength). 256 per-bar expressions × 7 forward windows + boolean aggregations.
-**Benchmark:** Entry bar high → exit bar close in ADR.
-**Scoring:** Floor capture efficiency (worst example's captured ADR / MFE ADR) as primary. Median as secondary. Hard constraint: every example must capture > 0 ADR. Plateau detection for robustness.
-**Re-run:** Designed to re-run as examples grow. More examples → floor metric gains resolution → more aggressive exits become statistically justified.
-**Output:** Exit conditions — the TA expression states marking "this move is done." Exit scoring report with per-example breakdown.
-**Script:** `scripts/exit_grinder.py` (NEW)
+### Step 6: Exit Management Grind ✅
+**Script:** `scripts/exit_grinder.py` + `scripts/exit_compute.py` + `scripts/exit_expressions.py`
+**How to run:** `python scripts/exit_grinder.py --setup dtss --max-forward 120`
+**What it does:** Loads examples from Railway, fetches OHLCV, computes 220 base expressions at every forward bar, tests ~3,800 conditions (expr × threshold × direction), filters for 100% trigger rate, ranks by floor capture efficiency. Results show % move (entry high → exit close) + ADR captured per example.
 
 ### Step 7: Outcome Grind ⬜
 **What:** Split Step 3 signals into OUTCOME signals (move played out like examples) and non-outcome signals.
