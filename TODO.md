@@ -114,8 +114,10 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 5e **Production grind params** | **✅ Done** | beam=10000, depth=100, sweep peak-target 2-10. Best: PT=3 → 26 conditions, peak 6/day, 201 signals/5yr, ~5 min/run. |
 | **6 Backtest Runner** | **✅ Done** | `scripts/backtest_runner.py` built. Scans 5yr cache, generates charts per signal. Auto-uploads to Railway. |
 | **6b Historical Tab** | **✅ Done** | Signal prevalence bar chart + SPY candlestick bubble overlay in frontend Historical tab. |
-| 7 Market Context | Not started | |
-| 8 EV Optimize | Not started | |
+| 6 Behavioral Grinder | Not started | Post-signal expressions, confirm runners |
+| 7 Environment Grinder | Not started | Market context scoring |
+| 8 Exit Grinder | Not started | Optimal technical exits |
+| 9 Priority Queue | Not started | Nightly ranked output |
 
 ---
 
@@ -194,7 +196,7 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 python scripts/backtest_runner.py --setup dtss --no-charts
 ```
 3. **Review Historical tab** — check signal clustering, verify patterns make sense
-4. **Begin Step 7: Market Context** — correlate signal outcomes with market regime
+4. **Begin Step 6: Behavioral Grinder** — build post-signal expression library, confirm runners from raw grinder signals
 
 **If results plateau (all peak targets give similar totals ~200-300):**
 - The expression library (4,017 expressions) is the bottleneck
@@ -246,15 +248,35 @@ python scripts/backtest_runner.py --setup dtss --charts-only
 - `GET /api/backtest/signals/{setup_type}` — frontend reads per-setup signals
 **DB table:** `backtest_signals` (setup_type, ticker, date, uploaded_at, conditions_hash)
 
-### Step 7: Market Context ⬜
-**What:** Identify which market conditions produce winners vs losers.
-**How:** Correlate signal outcomes with market regime (stage transitions, breadth, VIX).
+### Step 6: Behavioral Grinder ⬜
+**What:** Filter raw grinder signals to confirmed runners using post-signal behavioral matching.
+**How:** Build post-signal expression library (delay-insensitive: "anytime within N bars", cumulative metrics, structural destinations). Run pyramid grinder with examples as positives and raw signals as universe. Survivors = signals that produced moves like the examples.
+**Input:** 23 validated examples + raw grinder signals (368 or tighter run)
+**Output:** confirmed_runners.csv
+**Script:** `scripts/post_signal_grinder.py` (NEW)
+**Key design:** Expressions are delay-insensitive — don't care if move started bar 1 or bar 6 after signal. Uses "anytime within N bars" and cumulative metrics instead of fixed-offset measurements.
 
-### Step 8: EV Optimization ⬜
-**What:** Exhaustive management parameter search against MFE/MAE outcome matrix.
-**How:** Every stop/target/trail/time combination, ranked by EV per trade in ATR units.
+### Step 7: Environment Grinder ⬜
+**What:** Score market context factors that predict bigger vs smaller moves on confirmed runners.
+**How:** Distance profile each confirmed runner (total move in ADR, MAs reached, extension levels). Factor analysis: split by market context quantiles, compare distance outcomes. Output scoring model.
+**Input:** Confirmed runners from Step 6 + market context at each signal (SPY regime, breadth, clustering)
+**Output:** scoring_model.json — factor weights for expected distance adjustment
+**Script:** `scripts/environment_scorer.py` (NEW)
 
-### Step 9: Second Setup — 3-4DB ⬜
+### Step 8: Exit Grinder ⬜
+**What:** Brute force optimal technical exit strategy that captures the most runway.
+**How:** Simulate every technical exit combination (MA reclaims, extension exhaustion, structural targets, time stops, partials) against confirmed runners' forward paths. Rank by captured distance in ADR. Find robust plateaus. Test if optimal exit varies by environment.
+**Input:** Confirmed runners + forward price paths + environment scoring
+**Output:** Optimal exit rules per setup, potentially environment-dependent
+**Script:** `scripts/exit_grinder.py` (NEW)
+**Note:** Does NOT optimize entry or stops — those are discretionary.
+
+### Step 9: Nightly Priority Queue ⬜
+**What:** Combine all intelligence into ranked nightly output.
+**How:** For each signal tonight: score environment → estimate runway → attach exit strategy → rank by expected distance.
+**Script:** `scripts/priority_scorer.py` (NEW)
+
+### Step 10: Second Setup — 3-4DB ⬜
 **What:** Run 3-4DB examples (21 already loaded) through the same pipeline.
 **Why:** Validates the system is setup-agnostic.
 

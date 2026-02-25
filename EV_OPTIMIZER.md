@@ -350,14 +350,15 @@ data/ev_optimizer/
 
 ## Relationship to ANALYSIS_SYSTEM.md
 
-This replaces **Steps 7 (Market Context) and 8 (EV Optimization)** with a different framing:
+This document provides detailed design for **Steps 6-9** of ANALYSIS_SYSTEM.md:
 
-| ANALYSIS_SYSTEM.md | This System | Why |
-|--------------------|-------------|-----|
-| Step 7: Market Context filter | Step 3: Environment Scoring | Not a filter — a scoring model that adjusts distance estimates |
-| Step 8: Management Optimization | Step 2: Distance Profiling | Not optimizing management — estimating runway. Management is discretionary. |
-| (not in original) | Step 1: Post-Entry Grinder | Solves entry candle problem, cleans historical data |
+| Step | ANALYSIS_SYSTEM.md | This Document |
+|------|-------------------|---------------|
+| 6 | Behavioral Grinder | Step 1: Post-Signal Grinder — confirm runners |
+| 7 | Environment Grinder | Step 3: Environment Scoring — market context → distance estimates |
+| 8 | Exit Grinder | Exit optimization — when is the move statistically done |
+| 9 | Priority Queue | Step 4: Nightly ranking — expected runway + exit strategy |
 
 The `management_optimizer.py` remains available for mechanical setups (3-4DB style) where entry/exit rules can be optimized. For discretionary setups (DTSS, parabolic shorts), the system provides intelligence, not instructions.
 
-ANALYSIS_SYSTEM.md should be updated to reflect this once validated.
+ANALYSIS_SYSTEM.md has been updated to reflect this pipeline.

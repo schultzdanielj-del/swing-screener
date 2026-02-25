@@ -263,50 +263,145 @@ The grinder uses one universal expression set for all setups. No setup-specific 
 
 ---
 
-## Step 6: Market Context — When to Trade It
+## Step 6: Behavioral Grinder — Confirm Runners
 
-**Goal:** Identify which market conditions produce winning signals vs losing signals.
+**Goal:** Take the raw grinder signals (e.g., 368) and filter to only the ones that actually produced moves like the validated examples. Uses the same grinder logic but with post-signal expressions and a different universe.
 
-**Process:**
+**The system does NOT try to identify exact entry candles or entry prices.** Entry is discretionary — the trader handles that. The system identifies which signals produced big moves worth trading.
 
-1. **Analyze when signals appear** — which market stages, which regimes, which sectors
-2. **Correlate with outcomes** — of the historical signals, which periods had the highest success rates
-3. **Build the market filter** — conditions or rules that identify "this is a good time to trade this setup"
-4. **Test the filter** — does applying it improve win rate without eliminating too many good trades
+### How It Works
 
-**Output:** The "when to trade it" overlay — market conditions that must be present for this setup to have edge.
+- **Universe:** The raw grinder signal set (e.g., 368 ticker-date pairs) — NOT the 4,000 ticker tradable universe
+- **Examples:** The validated examples with known entry dates (all confirmed runners with great MFE)
+- **Expressions:** A NEW post-signal expression library (see below) — NOT the standard 4,017
+- **Method:** Same pyramid grinder logic. Find conditions all examples share, filter the signals to only those matching.
+
+### Post-Signal Expression Library
+
+Expressions measured relative to the signal bar, looking FORWARD. Designed to be **delay-insensitive** — they don't care whether the move started on bar 1 or bar 6 after the signal.
+
+**"Anytime within N bars" expressions** (robust to delayed entry):
+- Min close within bars 1-30 relative to signal bar close, in ADR multiples
+- Max extension below 20 EMA reached within 30/60 bars, in ADR multiples
+- Did price close below 50 SMA at any point within 30 bars? (yes/no)
+- Did price close below 200 SMA at any point within 60 bars?
+- Max drawdown from signal bar high within N bars, in ADR
+
+**Cumulative/rolling metrics** (naturally delay-insensitive):
+- % of bars with close below signal bar close within 30 bars
+- % of red (down) candles within 20 bars
+- Number of consecutive closes below 8 EMA within 30 bars
+- Down-bar volume sum vs up-bar volume sum within 20 bars
+- Count of lower-lows in bars 1-30
+
+**Structural destination metrics:**
+- Bars to first close below 8 EMA / 21 EMA / 50 SMA / 200 SMA
+- Did it make lower-high AND lower-low within 10 bars?
+- Extension velocity: ADR per bar of move in the first 20 bars
+
+**Distance metrics (the key ones for confirming runners):**
+- Total move from signal bar high to lowest low within 30/60 bars, in ADR
+- Total move in % terms
+- Move captured below each MA (close at 50 SMA minus close at signal bar, etc.)
+
+### Why Delay-Insensitive Design
+
+A signal might fire Monday night but the move doesn't start until Thursday. The grinder might even flag the same ticker on multiple consecutive nights. "Anytime within N bars" and cumulative expressions don't care — they capture the outcome regardless of exactly when it started. If the move happened, the expressions see it. If it didn't, they don't.
+
+### Output
+
+A filtered signal set — only signals whose post-signal behavior matches the examples. These are **confirmed runners**: signals where the setup triggered AND produced a move with great MFE, just like the examples.
+
+The survivors are NOT just "confirmed entries." They're confirmed entries that RAN.
+
+### Script: `scripts/post_signal_grinder.py` (NEW)
+
+Adapts the pyramid grinder logic:
+- Builds example matrix: 23 examples × post-signal expressions, evaluated at the post-signal window
+- Builds universe matrix: 368 signals × same expressions, evaluated at same windows
+- Runs beam search to find discriminating conditions
+- Outputs confirmed_runners.csv
 
 ---
 
-## Step 7: EV Optimization — Brute Force Trade Management
+## Step 7: Environment Grinder — When Do They Run Biggest?
 
-**Goal:** Find the absolute best trade management strategy by exhaustively testing every possible combination against precomputed outcome data.
+**Goal:** Cluster confirmed runners against market context to find which environments produce the biggest moves.
 
-Using the historical signals from Step 5, filtered to the highest-success market conditions:
-
-**The management variable space:**
-- **Stop distance:** Every 0.25 ATR increment from 0.25 to 5.0 ATR (20 values), plus MA-based stops (prior day low, entry candle low, each MA from 8 EMA through 50 SMA)
-- **Target distance:** Every 0.25 ATR increment from 0.5 to 10.0 ATR (38 values), plus structure-based targets (prior swing low, MA levels)
-- **Time stop:** Exit if nothing happened after N days, from 1 to 30 (30 values)
-- **Trailing stop type:** Fixed ATR trail at every increment, trail at each MA, step-up trail (move stop to breakeven after 1R, etc.), no trail (~15 variations)
-- **Partial exits:** Take half at various R levels and trail rest, full position to target, scale out in thirds (~10 variations)
+**Input:** Confirmed runners from Step 6 + market context at each signal (SPY regime, breadth, signal clustering, etc.)
 
 **Process:**
 
-1. **Test every combination** against the precomputed MFE/MAE outcome matrix for every signal. Each combination is just array math — no simulation needed. Hundreds of thousands of combinations, runs in seconds.
+1. **Distance profiling** — For each confirmed runner, measure total move in ADR, structural destinations reached (50 SMA, 200 SMA), extension levels hit, time to max extension
+2. **Factor analysis** — For each market context factor at signal time, split confirmed runners into quantile groups, compare distance outcomes. Which factors predict bigger moves?
+3. **Scoring model** — Each factor gets a weight. Nightly signals get scored: expected_distance = base + Σ(weight × factor_value)
 
-2. **Rank by EV per trade in ATR units.** The universal measure across all setups. Also measure win rate, average winner size, average loser size, max drawdown, profit factor.
+**Output:** Scoring model — given tonight's market context, how much runway should we expect?
 
-3. **Identify the top cluster** — not just the single best, but the region of management parameters that consistently produces high EV. A strategy that's optimal at exactly 1.73 ATR stop but falls apart at 1.74 is fragile. Look for broad plateaus of good performance.
+### Script: `scripts/environment_scorer.py` (NEW)
 
-4. **Validate robustness:** The best management strategy should work across different time periods and market conditions, not just on the best-case signals.
+---
 
-**Output:** The complete playbook entry:
-- **Setup conditions** (what to scan for — from Step 4)
-- **Market conditions** (when to trade it — from Step 6)
-- **Management rules** (exact stop, target, trail, time stop, partial rules — from this step)
-- **Expected EV per trade** in ATR units
-- **Win rate, profit factor, max drawdown** for the chosen management approach
+## Step 8: Exit Grinder — When Is the Move Done?
+
+**Goal:** Brute force the optimal technical exit strategy that captures the most of the available move.
+
+**Input:** Confirmed runners from Step 6 + their full forward price paths
+
+**The system does NOT optimize entry or stops.** Entry is discretionary. Stop is the trader's risk management (HOD, LSP level, etc.). The exit grinder only answers: **"When is this move statistically exhausted?"**
+
+### Exit Parameter Space (all technical, no R-multiples)
+
+| Parameter | Values |
+|-----------|--------|
+| **MA reclaim exit** | Close above 8 EMA, 12 EMA, 21 EMA, 50 SMA |
+| **Extension exhaustion** | Extension below 20 EMA reaches -X ADR then starts contracting |
+| **Structural target** | First touch of 50 SMA, 200 SMA, prior swing low |
+| **Time stop** | If hasn't reached destination in N bars (10, 15, 20, 30) |
+| **Trail** | Highest close above entry MA, then close below 8 EMA = done |
+| **Partial combos** | Take 50% at 50 SMA, trail rest to 200 SMA or MA reclaim |
+
+### Process
+
+1. For each confirmed runner's forward path, simulate every exit combination
+2. Measure: what % of the total available move did each exit strategy capture?
+3. Rank by captured distance in ADR (not R-multiples — these are technical exits)
+4. Find robust plateaus — exit strategies that consistently capture 60-80%+ of the move
+5. Test if optimal exit varies by environment (from Step 7) — e.g., trail to 200 SMA in bear markets, take profit at 50 SMA in neutral markets
+
+### Output
+
+Recommended exit strategy per setup, potentially varying by market environment. Nightly output includes: "This signal has ~8 ADR of runway. Historical optimal exit: trail below 8 EMA after price reaches 50 SMA. Expect to capture ~6 ADR."
+
+### Script: `scripts/exit_grinder.py` (NEW)
+
+---
+
+## Step 9: Nightly Priority Queue
+
+**Goal:** Combine all intelligence into a single ranked output each night.
+
+For each signal the grinder produces tonight:
+1. **Score environment** — apply Step 7 scoring model with current market context
+2. **Estimate runway** — expected distance in ADR
+3. **Attach exit strategy** — from Step 8, which exit rules to use given current environment
+4. **Rank by expected runway** — biggest expected moves get priority
+
+**Output format:**
+```
+Tonight's Signals — DTSS (2026-02-25)
+Market: SPY -2.1 ADR below 50 SMA, 4 signals clustered
+
+Rank | Ticker | Expected Move | Exit Strategy           | Confidence
+1    | NVDA   | ~9 ADR        | Trail 8EMA after 50 SMA | High
+2    | TSLA   | ~7 ADR        | Trail 8EMA after 50 SMA | High  
+3    | META   | ~5 ADR        | Take profit at 50 SMA   | Medium
+4    | XYZ    | ~4 ADR        | Take profit at 21 EMA   | Low
+```
+
+**Capital allocation:** Biggest expected moves get biggest positions. Worth re-entering after stop-outs if runway is large (e.g., 6 paper cuts at 0.5 ADR then catch a 20 ADR runner = +17 ADR net).
+
+### Script: `scripts/priority_scorer.py` (NEW)
 
 ---
 
@@ -319,10 +414,14 @@ Using the historical signals from Step 5, filtered to the highest-success market
 | 3 | **Grind** | THE GRINDER — Phase 1: spiderweb beam search (4,017 generic expressions) finds single-day ceiling. Phase 2: pyramidal grinder eliminates 5yr noise via 6-tier nested search (beam=10000, depth=100, sweep peak-target 2-10). ~5 min/run, ~50 min full sweep. |
 | 4 | **Collaborate** | Human-AI iteration to push past the grinder ceiling with qualitative/discretionary conditions. Goal: zero daily pass rate. |
 | 5 | **Backtest** | Run conditions across full history, review signals, validate and tighten |
-| 6 | **Market Context** | Find which market conditions produce winners vs losers |
-| 7 | **EV Optimize** | Test management variations, finalize the playbook entry |
+| 6 | **Behavioral Grinder** | Post-signal expressions on examples vs raw signals. Confirms which signals actually ran. Delay-insensitive design. |
+| 7 | **Environment Grinder** | Cluster confirmed runners against market context. Score factors that predict bigger moves. |
+| 8 | **Exit Grinder** | Brute force optimal technical exits. When is the move statistically done? |
+| 9 | **Priority Queue** | Nightly ranked output: expected runway + exit strategy + confidence per signal |
 
-**The output is a complete playbook entry:** best setups × best markets × best management = highest EV possible.
+**The output is a complete nightly playbook:** what to watch × did it run × how far will it go × when to get out × how confident to be.
+
+**What the system does NOT do:** Entry. That's discretionary TA — the trader's skill and edge.
 
 ---
 
