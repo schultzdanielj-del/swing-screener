@@ -1134,10 +1134,23 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
 
-    # Also save as latest (for other tools to find)
+    # Also save as latest — but only if better than existing
     latest_path = os.path.join(CACHE_DIR, f"pyramid_results_{setup_type}.json")
-    with open(latest_path, "w") as f:
-        json.dump(result, f, indent=2)
+    save_as_latest = True
+    if os.path.exists(latest_path):
+        try:
+            with open(latest_path) as f:
+                prev = json.load(f)
+            prev_total = prev.get("summary", {}).get("final_total", 999999)
+            if final_total >= prev_total and final_total > 0:
+                save_as_latest = False
+                print(f"  (Keeping previous best: {prev_total} signals < this run's {final_total})")
+        except:
+            pass
+    if save_as_latest:
+        with open(latest_path, "w") as f:
+            json.dump(result, f, indent=2)
+        print(f"  Saved as latest: {latest_path}")
 
     # Also save in historical_results format for compatibility with signal_distribution.py
     compat_result = {
