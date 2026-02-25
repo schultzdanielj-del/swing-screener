@@ -127,7 +127,7 @@ def load_example_data(setup_type):
 # EXPRESSION LIBRARY + EXAMPLE RANGES
 # ══════════════════════════════════════════════════════════════
 
-def compute_example_ranges(example_dfs, expressions):
+def compute_example_ranges(example_dfs, expressions, strict_nan=False):
     """Compute [min, max] range for every expression across all example scan bars.
 
     Returns:
@@ -155,15 +155,18 @@ def compute_example_ranges(example_dfs, expressions):
                 pass
 
     # Derive ranges with 5% margin (same as spiderweb)
-    # 70% threshold: allows expressions where some examples have NaN.
-    # These may cause validation warnings but produce tighter grind results.
+    # strict_nan=True: require ALL examples to have valid values (produced 179-signal result)
+    # strict_nan=False: 70% threshold, more candidates but looser results
     ranges = {}
     nan_exprs = set()
-    min_valid = max(3, int(n_ex * 0.7))
+    n_with_scan = sum(1 for ex in example_dfs if ex["scan_idx"] is not None)
+    min_valid = n_with_scan if strict_nan else max(3, int(n_ex * 0.7))
     for j, expr in enumerate(expressions):
         vals = example_matrix[:, j]
         valid = vals[~np.isnan(vals)]
         if len(valid) < min_valid:
+            if len(valid) >= max(3, int(n_ex * 0.7)):
+                nan_exprs.add(expr["name"])
             continue
         ex_min, ex_max = np.min(valid), np.max(valid)
         margin = (ex_max - ex_min) * 0.05
@@ -882,7 +885,7 @@ def validate_examples(example_dfs, conditions):
 # ══════════════════════════════════════════════════════════════
 
 def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
-                d1_depth=None, d1_beam=None):
+                d1_depth=None, d1_beam=None, strict_nan=False):
     """Run the full pyramid grinder.
 
     Args:
@@ -903,6 +906,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     print(f"  Peak target: ≤{peak_target} signals/day")
     print(f"  D1: beam={d1_beam}, depth={d1_depth}")
     print(f"  Historical tiers: beam={beam_width}, depth={depth}")
+    if strict_nan:
+        print(f"  NaN filter: STRICT (require ALL examples valid)")
 
     t_total = time.time()
 
@@ -922,7 +927,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     # ── Compute example ranges ──
     print(f"\n  Computing example ranges...")
     t0 = time.time()
-    example_ranges, example_matrix, nan_exprs = compute_example_ranges(example_dfs, expressions)
+    example_ranges, example_matrix, nan_exprs = compute_example_ranges(example_dfs, expressions, strict_nan=strict_nan)
     print(f"  {len(example_ranges)} expressions have valid ranges ({time.time()-t0:.0f}s)")
     if nan_exprs:
         print(f"  {len(nan_exprs)} expressions have NaN for some examples (available as candidates, blocked from locking)")
@@ -1067,6 +1072,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "d1_beam": d1_beam,
             "d1_depth": d1_depth,
             "peak_target": peak_target,
+            "strict_nan": strict_nan,
         },
     }
 
@@ -1116,6 +1122,8 @@ def main():
                         help="Depth for D1 tier (default: same as --depth)")
     parser.add_argument("--runs", type=int, default=1,
                         help="Number of times to repeat the grinder (default: 1)")
+    parser.add_argument("--strict-nan", action="store_true",
+                        help="Require ALL examples to have valid values (stricter, fewer candidates)")
     args = parser.parse_args()
 
     n_runs = max(1, args.runs)
@@ -1134,6 +1142,7 @@ def main():
             depth=args.depth,
             d1_depth=args.d1_depth,
             d1_beam=args.d1_beam,
+            strict_nan=args.strict_nan,
         )
         results.append(result)
 
