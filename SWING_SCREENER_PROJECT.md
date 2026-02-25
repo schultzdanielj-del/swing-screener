@@ -1,6 +1,6 @@
 # Swing Screener Project — State Document
 
-**Last updated:** 2026-02-19
+**Last updated:** 2026-02-25
 **GitHub repo:** https://github.com/schultzdanielj-del/swing-screener
 
 ---
@@ -8,199 +8,107 @@
 ## RULES — READ THESE FIRST
 
 1. **NEVER proceed with work until user gives EXPLICIT go-ahead.** A question about doing something is NOT permission. Wait for "go", "yes", "do it", etc. This is the #1 rule.
-2. **If you need credentials, access, tokens, or anything to make work smooth — STOP and ask immediately.** Don't try workarounds. Don't fight tooling. Just ask.
-3. **Push all work to GitHub before ending a chat.** The sandbox resets between sessions. Anything not pushed is lost.
-4. **Update this state doc and push it at the end of every chat.** This is the source of truth for the next chat.
-5. **Keep chats focused on one task.** Don't try to do 5 things in one chat. Finish one task, push results, wrap up.
-6. **Don't repeat context the user already knows.** Be concise. Don't recap the whole project history every time.
-7. **NEVER dump large data (CSV, JSON) into context.** Read files to check structure only (head/tail). Process data via scripts, not inline.
-8. **GitHub token for bash git push:** Stored in Claude project file (not in repo). Use for cloning and pushing via bash terminal, NOT the MCP push_files tool which has payload limits that cause failures on larger pushes.
+2. **If you need credentials, access, tokens, or anything — STOP and ask immediately.** No workarounds.
+3. **Push all work to GitHub before ending a chat.** Sandbox resets between sessions.
+4. **Keep chats focused on one task.** Finish one task, push results, wrap up.
+5. **Don't repeat context the user already knows.** Be concise.
+6. **NEVER dump large data (CSV, JSON) into context.** Process via scripts, not inline.
+7. **GitHub token for bash git push:** Stored in Claude project file. Use bash `git push`, NOT MCP push_files (payload limits).
+8. **Before ANY TA work — READ `ta_knowledge.md` FIRST.** Non-negotiable.
+9. **All OHLCV data from Railway SQLite DB.** Never yfinance. Query the API or use local caches.
+10. **Break work into small tasks.** Update `TODO.md` and `ANALYSIS_SYSTEM.md` when finishing tasks.
 
 ---
 
-## CURRENT STATUS
+## WHAT THIS PROJECT IS
 
-**What's done:**
-- App renamed **ScanPerfect** — gallery grid with pre-rendered charts, 3-column layout
-- Charts centered on entry date (30 before / 30 after), crosshair at open price
-- Extension data: 5yr % from 50/200 SMA for all tickers, stored in `data/extension/`
-- View toggles: D1 / 50 SMA % / 200 SMA %, At Entry / After time views
-- Add inline (ticker + date), editable entry dates, delete functionality
-- Deployed on Railway: **https://web-production-e3025.up.railway.app**
-- **SQLite on Railway persistent volume** — all data in DB, no more flat files
-- DB constraint fixed: UNIQUE(setup_type, ticker, entry_date) — supports multiple examples per ticker
-- All API endpoints use example ID (not ticker) for routing
-- Repair endpoint: POST /api/repair-data — re-fetches missing OHLCV/extension data
-- **14 validated 3-4DB examples** (REAL removed), 18 scan conditions
-- ARM 11/3/2025 added as clean 3-4DB example
-- MARA 10/27/2025 evaluated — fails 4/18 conditions, skipped
-- BB 11/6/2025 rejected — not a 3-4DB (prolonged consolidation)
+Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds the handful that match validated setup patterns with mathematically optimal conditions. Qullamaggie-style, 3-day to multi-week holds.
 
-**Universe data fetch — IN PROGRESS:**
-- Fetching 5yr daily OHLCV for 11,668 tickers (full NYSE + NASDAQ + ETFs)
-- Stored in `universe_ohlcv` table (separate from examples)
-- Bulletproof: resumable, auto-retry, batched commits, progress tracking
-- API endpoints: POST /api/universe/fetch, GET /api/universe/status, POST /api/universe/load-file
-- Batch size 40, 8s delay — estimated 1-2 hours total
-- Ticker list loaded via POST /api/universe/load-file (reads universe_tickers.txt from repo)
-- File at repo root (NOT data/) because Railway volume mount shadows data/
+**The system:** Upload example trades for any setup type → the "pyramid grinder" automatically discovers which mathematical conditions best separate those examples from the full market → produces a tight scan that fires ~2-7 signals/day historically across 5 years.
 
-**What's next:**
-- Verify universe fetch completed successfully
-- Build backtesting: run 18 scan conditions against full universe × 5 years
-- Build daily refresh script (append 1 day of data, ~6 min for full market)
-- TA brainstorming with full market data (find examples, test hypotheses)
-- Add DTSS and HTF setup examples
-- Validate 50% measured move hypothesis across more examples
+**Cost:** $0 additional — runs on existing Claude Max + TC2000 + Railway + GitHub.
 
 ---
 
-## PROJECT PIVOT — CURRENT DIRECTION
+## CURRENT STATE (2026-02-25)
 
-**Original approach:** Vision-based chart screening using Claude API to match charts against a setup library. **Abandoned** because it requires API spend ($29-291/month on top of Max subscription).
+### What's built and working:
+- **Pyramid grinder** — 6-tier nested search (D1 → 1wk → 1mo → 6mo → 1yr → 5yr), peak-based scoring, beam=10000 exhaustive search
+- **Expression library** — 4,017 expressions across 29 categories, 127 boolean conditions, 88 compute ops
+- **Expression series cache** — 4,119 tickers × 4,017 expressions pre-cached (~21 GB), 14x grinder speedup
+- **Nightly pipeline** — auto-triggers 4:30pm ET: Railway append → daily cache → 5yr cache → expr cache → matrix rebuild
+- **Backtest runner** — scans 5yr history, generates charts per signal, auto-uploads to Railway
+- **ScanPerfect web app** — Railway-deployed frontend with gallery, historical signal visualization, SPY bubble overlay
+- **Railway SQLite DB** — 11M+ OHLCV rows, ~4,167 tradable tickers, 5yr daily data
 
-**Current approach:** Build precise TC2000 PCF code scans that replicate what the user's eye does — so the scan output itself is tight enough to manually vet a small handful of charts. No additional cost. Plus a web app to manage examples, validate conditions, and iterate on setups.
+### DTSS (Double Top Short Sell) — first completed setup:
+- 26 validated examples with entry dates
+- Production grind result: **26 conditions, peak 6/day, 201 total signals across 5yr, avg 2.1/day**
+- Backtest runner complete, Historical tab with signal prevalence + SPY overlay
 
----
-
-## THE PROBLEM
-
-User scans ~200 tickers nightly from TC2000, manually reviews every chart, categorizes as:
-- **Actionable** — ready for next-day entry
-- **NMS** — Need More Sideways (developing, not ready yet)
-
-This takes 1-2 hours nightly. The real goal is screening 1000+ tickers down to ~10 candidates automatically.
-
-**Trading style:** Qullamaggie-style swing trading, 3-day to multi-week holds, 50-70% win rate potential.
-
----
-
-## SETUP TYPES (3 defined so far)
-
-### 1. 3-4DB — 3-4 Day Bounce (SHORT setup) — PCF COMPLETE
-- Stock pulls back after a move, bounces weakly for 3-4 days, then fails
-- 14 examples with pinned entry dates and signal day analysis (REAL removed)
-- 18 PCF conditions, all 100% pass rate (except #5 at 93%)
-- Examples: AEVA, ARM, BE, BITF, CLSK, HIVE, IREN, LEU, OKLO, ONDS, OPEN, PATH, PL, QS, RR
-
-### 2. DTSS — Double Top Short Sell (SHORT setup)
-- Failed breakout at resistance, short at the rejection
-- Description scaffolded in repo, no examples yet
-
-### 3. HTF — High Tight Flag (LONG setup)
-- Tight consolidation after a strong run, breakout long
-- Description scaffolded in repo, no examples yet
+### What's next (per TODO.md):
+- **Step 7: Market Context** — correlate signal outcomes with market regime
+- **Step 8: EV Optimization** — exhaustive management parameter search (stop/target/trail combinations)
+- **Step 9: 3-4DB setup** — run 21 existing examples through the same pipeline
+- Future: HTF setup, frontend grinder control, dynamic nightly re-grind
 
 ---
 
 ## ARCHITECTURE
 
-**Backend:** FastAPI (Python) — `server.py` (~650 lines)
-- SQLite on Railway persistent volume (/app/data/scanperfect.db)
-- Tables: examples, ohlcv, extension, conditions, signal_analysis
-- Universe tables: universe_ohlcv (5yr market data), universe_tickers, universe_fetch_status
-- All API endpoints use example ID for routing (not ticker)
-- `/api/examples/{setup_type}` — lists saved examples
-- `/api/conditions/{setup_type}` — returns PCF conditions
-- `/api/universe/fetch` — kick off background universe data fetch
-- `/api/universe/status` — check fetch progress
-- `/api/universe/load-file` — load tickers from bundled file
-
-**Frontend:** Single-page React app — `app/index.html`
-- Dashboard, Examples, Add Example, Conditions, Validate pages
-- Interactive candlestick chart (HTML5 Canvas)
-- Dark theme matching TC2000 chart preferences
-
-**Hosting:** Railway — `web-production-e3025.up.railway.app`
-- Volume mounted at /app/data for SQLite DB
-- NOTE: Volume mount shadows repo's data/ directory
-
----
-
-## REPO STRUCTURE
-
 ```
-swing-screener/
-├── server.py                # FastAPI backend (~650 lines)
-├── Procfile                 # Railway deployment
-├── requirements.txt         # fastapi, uvicorn, yfinance, pandas
-├── SWING_SCREENER_PROJECT.md # This file — project state
-├── config.yaml              # Chart config (MAs, dark theme, etc.)
-├── universe_tickers.txt     # 11,668 tickers (NYSE + NASDAQ + ETFs) — at root, NOT data/
-├── data/                    # NOTE: shadowed by Railway volume mount at /app/data
-│   └── ohlcv/
-│       └── 3-4db/           # Legacy flat files (data now in SQLite)
-├── setup_library/
-│   ├── 3-4db/
-│   │   ├── description.md
-│   │   ├── conditions.json  # 18 scan conditions
-│   │   └── examples/
-│   ├── dtss/
-│   │   └── description.md
-│   └── htf/
-│       └── description.md
-├── app/
-│   └── index.html           # React frontend (single file)
-├── scripts/
-│   ├── __init__.py
-│   ├── fetch_universe.py    # Bulletproof universe OHLCV fetcher
-│   └── run_nightly.py       # CLI entry point (old)
-└── src/                     # Old vision pipeline code (to be archived)
+local_runner/          # Desktop grinder system (runs on Dan's machine)
+├── agent.py           # Polling agent, nightly auto-rebuild trigger
+├── nightly.py         # 5-step nightly pipeline
+├── pyramid_grinder.py # The grinder: 6-tier peak-based beam search
+├── spiderweb.py       # Phase 1 beam search (used by D1 tier)
+├── matrix_builder.py  # Universe + example matrix precomputation
+├── brute_expressions.py  # 4,017 expression generator
+├── cache_builder.py   # OHLCV caches (daily + 5yr)
+├── expr_cache_builder.py # Expression series cache (~21 GB)
+└── cache/             # Local caches (matrices, OHLCV, expr series)
+
+scripts/               # Analysis & backtesting scripts
+├── expression_engine.py    # Expression computation (point + series)
+├── backtest_conditions.py  # Series computation (88 ops, full parity)
+├── backtest_runner.py      # Signal scan + chart generation
+├── signal_distribution.py  # Signal analyzer
+├── fetch_universe.py       # Universe OHLCV fetcher (full + incremental)
+└── [profiling, discovery, management engines]
+
+server.py              # Railway FastAPI backend (~90K, 14+ endpoints)
+app/index.html         # ScanPerfect frontend (React SPA)
 ```
 
----
-
-## CHART PREFERENCES
-
-- Dark background (custom nightclouds style)
-- Green (#26A69A) up candles, Red (#EF5350) down candles
-- 8 EMA (light blue), 21 EMA (tan), 50 SMA (yellow), 200 SMA (red)
-- Volume bars displayed
-- AVWAP: hot pink, anchored to highest value at current day
-- 120 day lookback
+### Key docs (in repo):
+- **`TODO.md`** — task list, pipeline status, build plan, benchmarks. **Check this first.**
+- **`ANALYSIS_SYSTEM.md`** — the repeatable 8-step process for building any setup
+- **`ta_knowledge.md`** — TA concepts: extensions, AVWAP, channels, market stages
+- **`pcf.md`** — TC2000 PCF language reference
 
 ---
 
-## EXISTING SUBSCRIPTIONS / TOOLS
+## SETUP TYPES
 
-- Claude Max ($200/month, $140 CAD) — used for this + other projects
+| Setup | Status | Examples | Grind Result |
+|-------|--------|----------|-------------|
+| **DTSS** (Double Top Short Sell) | ✅ Through Step 6 | 26 validated | 26 conditions, peak 6/day, 201 signals/5yr |
+| **3-4DB** (3-4 Day Bounce, short) | Examples loaded | 21 examples | Not yet ground through pyramid |
+| **HTF** (High Tight Flag, long) | Scaffolded | None yet | — |
+
+---
+
+## SUBSCRIPTIONS / TOOLS
+
+- Claude Max — this + other projects
 - TC2000 — scanning platform
 - GitHub — code hosting
-- Railway — app hosting (swing-screener + other projects: ttm-metrics-api, ttm-dashboard, discord-bot)
+- Railway — app hosting (swing-screener, ttm-metrics-api, ttm-dashboard, discord-bot)
 - Discord — trading community
 
 ---
 
-## BACKTEST RESULTS (as of 2026-02-20)
+## KEY LINKS
 
-Full 5-year backtest of 18 PCF conditions across 4,167 tradable tickers complete.
-
-**Raw results:** 1,217 signals from 444 unique tickers (2022-02-17 to 2026-02-19)
-**Clean results:** 802 signals from 292 unique tickers (filtered biotech, leveraged/inverse ETFs)
-
-### Filters applied:
-- Removed 110 biotech tickers (by industry classification via yfinance)
-- Removed 40 ETFs + all leveraged/inverse products
-- Sector/industry data stored in `ticker_sectors` table
-
-### Signals by year (clean):
-| Year | Signals | Unique Tickers |
-|------|---------|----------------|
-| 2022 | 57 | 30 |
-| 2023 | 92 | 50 |
-| 2024 | 206 | 91 |
-| 2025 | 359 | 161 |
-| 2026 YTD | 88 | 50 |
-
-### Database tables:
-- `scan_backtest` — raw signals (all 18 conditions pass)
-- `scan_backtest_clean` — filtered signals (no biotech/leveraged)
-- `ticker_sectors` — sector, industry, is_etf flag for signal tickers
-- `backtest_status` — progress tracking for background runs
-
-### API endpoints:
-- `GET /api/backtest/summary` — yearly breakdown + filter stats
-- `GET /api/backtest/results?clean=true&limit=500` — browse signals
-- `GET /api/backtest/results?ticker=APP` — filter by ticker
-- `GET /api/backtest/results?date_from=2025-10-01&date_to=2025-11-01` — filter by date range
-- `POST /api/backtest/run` — re-run full backtest (background task, ~30-60 min)
+- **Railway app:** https://web-production-e3025.up.railway.app
+- **Repo:** https://github.com/schultzdanielj-del/swing-screener
