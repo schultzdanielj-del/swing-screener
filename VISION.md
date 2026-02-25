@@ -1,6 +1,6 @@
 # Swing Screener — Ultimate Vision & Roadmap
 
-**Last updated:** 2026-02-19
+**Last updated:** 2026-02-25
 
 ---
 
@@ -63,38 +63,34 @@ The concept of named "setups" eventually dissolves. The system screens for proba
 - Wave cycle position: are we at flush (0 results expected) or bounce peak (max results)?
 
 ### Layer 1: Candidate Screening (CURRENT FOCUS)
-- TC2000 PCF scans to narrow universe from 1000+ to ~20 candidates
-- Mathematical conditions derived from validated example setups
-- Zero false negatives first, then minimize noise
-- ATR-relative thresholds, not fixed percentages
-- Channel structure detection (rising lows, EMA21 break, retest)
-- **Current state:** 3-4DB scan with 18 conditions + 2 channel conditions, ~17 results on full market scan
+- Pyramid grinder: automated 6-tier expression discovery from validated examples
+- 4,017 expressions across 29 categories, exhaustive beam search (beam=10000)
+- Produces ~2-7 signals/day historically across 5yr from ~4,000 tradable tickers
+- **Current state:** DTSS complete (26 conditions, peak 6/day, 201 signals/5yr). 3-4DB and HTF queued.
 
-### Layer 0: Setup Library (TRAINING WHEELS)
-- Collect example trades for each pattern type
-- Extract universal mathematical attributes from OHLCV data
-- Build and validate PCF conditions against all examples
-- Current setups: 3-4DB (14 examples, validated), DTSS (scaffolded), HTF (scaffolded)
-- Purpose: teach the system what "edge" looks like in data
-- Eventually the pattern labels dissolve — the math carries forward without the names
+### Layer 0: Setup Library (FOUNDATION)
+- Upload example trades → grinder discovers optimal conditions automatically
+- Universal system — same pipeline for any setup type
+- Current: DTSS (26 examples, complete), 3-4DB (21 examples, loaded), HTF (scaffolded)
+- Pattern labels are entry vehicles — extension structures define actual probability
 
 ---
 
-## IMMEDIATE NEXT STEPS
+## CURRENT PRIORITIES
 
-1. **Finish 3-4DB scan optimization** — test channel conditions in live market, iterate
-2. **Build DTSS and HTF example libraries** — same workflow: collect, extract, validate
-3. **Extension analysis tooling** — Python scripts to compute 50/200 extension profiles per stock
-4. **Level identification prototype** — auto-detect high-RVOL candles and draw algo/MOC levels
-5. **Market stage detector** — automated SPY extension structure classification
+1. **Market context (Layer 2)** — correlate DTSS signal outcomes with market regime/stage
+2. **EV optimization** — exhaustive management parameter search (stop/target/trail)
+3. **3-4DB + HTF setups** — run through same grinder pipeline
+4. **Extension analysis (Layer 3)** — per-stock extension ceiling profiling
+5. **Level identification (Layer 4)** — auto-detect AVWAP, algo lines, MOC/LSP levels
 
 ---
 
 ## CONSTRAINTS
 
 - $0 additional cost — all within existing subscriptions (Claude Max, TC2000, GitHub, Railway, Discord)
-- TC2000 PCF for initial screening (limited expressiveness — can't do regression, complex structure detection)
-- Python/Railway for everything PCF can't handle (extension analysis, level identification, delivery)
+- Pyramid grinder runs on Dan's desktop (i5-12600K), ~5 min per grind sweep
+- Railway hosts the API + frontend + SQLite DB (11M+ OHLCV rows)
 - Dan's discretion remains the final filter — system proposes, Dan disposes
 
 ---
