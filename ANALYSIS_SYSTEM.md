@@ -8,6 +8,18 @@
 
 ---
 
+## Design Principle: Re-Runnable Pipeline
+
+**Every step (3-9) is designed to be re-run as the example library grows.** New examples come from Step 4 backtest review — signals that turn out to be legitimate setups get added to the example library, and the pipeline re-runs from Step 3 forward.
+
+**Why this matters:** With 23 examples, you can trust floor and median metrics but not the tails. At 50 examples, you start trusting more aggressive extraction. At 100+, you can squeeze hard because the distribution is well-characterized. The system's output quality scales directly with example count.
+
+**Re-run flow:** Add examples → re-run Step 3 (signal grind tightens with more data points) → re-run Step 6 (exit conditions refine — more examples = more confidence in aggressive exits) → re-run Steps 7-9 (outcome/environment models sharpen). Each step's scripts accept the current example set and produce fresh results. No manual state to manage.
+
+**Rule: never hard-code example counts or tune to a specific example set.** All thresholds are relative (percentiles, ratios, floor/median) so they adapt automatically as examples grow.
+
+---
+
 ## Step 1: Load Data & Knowledge
 
 All OHLCV data already exists in the system. The `universe_ohlcv` table has 5 years of daily data for ~11,000 tickers, updated nightly via `POST /api/universe/append-daily` (incremental — fetches only missing days). The `tradable_universe` subset (~4,100 tickers meeting minimum price and liquidity requirements) is what we scan against. The full nightly pipeline (`python local_runner/nightly.py`) chains: Railway append → daily cache → 5yr cache → expression cache append → matrix rebuild. Runs after 4:30pm ET, ~15-20 min total. Agent auto-triggers if running.
@@ -243,32 +255,74 @@ python scripts/backtest_runner.py --setup dtss --charts-only
 
 ### How It Works
 
-- **Input:** The validated examples (e.g., 23 DTSS) with entry dates
+- **Input:** The validated examples (current DTSS: 23) with entry dates
 - **Data:** Post-entry OHLCV bars for each example, pulled from the 5yr cache. Open-ended — span enough bars to encompass all behavior (let the data tell us, not a predefined number).
-- **Method:** Brute force every TA exit condition against the forward price paths of the examples. Find which exit conditions consistently capture the most runway.
+- **Method:** Brute force a comprehensive post-signal expression library (~4,000 expressions) against the forward price paths. The grinder finds which expression states correlate with the bars that captured the most move. The "exit candle" isn't an input — it's the output.
+- **Benchmark:** Entry bar high to exit bar close = captured move, in ADR. Simple, consistent, dependable.
 
-### Exit Condition Parameter Space (all technical, open-ended)
+### Post-Signal Exit Expression Library (~4,000 expressions)
 
-| Parameter | Values |
-|-----------|--------|
-| **MA reclaim exit** | Close above 8 EMA, 12 EMA, 21 EMA, 50 SMA |
-| **Extension exhaustion** | Extension below 20 EMA reaches -X ADR then starts contracting |
-| **Structural target** | First touch of 50 SMA, 200 SMA, prior swing low |
-| **Trail** | Highest close above entry MA, then close below 8 EMA = done |
-| **Partial combos** | Take 50% at 50 SMA, trail rest to 200 SMA or MA reclaim |
+Every expression is evaluated at each forward bar relative to the signal bar. The grinder tests every bar as a candidate exit.
 
-**No time stops. No fixed R-multiples. No bar count limits.** The exit triggers when the TA condition triggers. If it takes 5 bars, it takes 5. If it takes 50, it takes 50.
+| Category | Count | What it measures |
+|----------|-------|-----------------|
+| **move_captured** | 10 | Distance from entry high to current close/low in ADR/ATR, MFE, capture efficiency |
+| **extension_from_ma** | 20 | Extension from 8/12/21 EMA, 50/200 SMA in ADR/ATR + historical ceiling ratios per ticker |
+| **extension_dynamics** | 50 | Extension slope (1/3/5 bar), retrace from post-signal peak, acceleration — all 5 MAs × 2 norms |
+| **ma_reclaim** | 45 | Close above MAs, bars since reclaim, failed reclaims, distance from MA, sequential reclaim pairs |
+| **momentum_reversal** | 39 | RSI (7/14/21) + slopes, ROC (1/3/5/10), MACD histogram + slope, stochastic, ADX + DI spread |
+| **candle_character** | 20 | Bar range/body/wick ratios, gaps, rolling green/red % over 3/5/10 bars, streak counts |
+| **volume_character** | 20 | RVOL vs 20/50 avg, up/down volume ratios, OBV slope, volume vs signal bar, volume rank |
+| **structural** | 14 | MA touches/closes-through (50/200 SMA), swing counts, lower-low sequences, higher-low formation |
+| **range_compression** | 18 | ATR ratio vs entry, Bollinger bandwidth + %B + rank, inside bar counts, range contraction |
+| **retracement** | 9 | Retrace from MFE in ADR/%/ATR, position in post-signal range, bars since MFE, MFE still expanding |
+| **time** | 5 | Bars since signal, move per bar in ADR/ATR, velocity increasing/decreasing |
+| **relative_strength** | 6 | Stock vs SPY performance + slope over 5/10/20 bars |
+
+**256 unique per-bar expressions** → expanded by:
+- **7 forward windows** (5, 10, 15, 20, 30, 40, 60 bars) → 1,792 continuous expressions
+- **~80 boolean conditions** × 4 aggregations (count_true, since_true, true_in_row, pct_true) × 7 windows → ~2,240 boolean expressions
+
+**Total: ~4,032 post-signal expressions** (comparable to the 4,017 pre-signal library).
+
+**Extension ceiling ratios** are critical: `ext_ceiling_ratio_{ma}_{norm}` measures current extension as % of that ticker's historical max extension from the same MA. Per ta_knowledge.md, each stock has hard caps — when a move approaches the historical floor/ceiling, the exit system tightens. The grinder discovers exactly where that tightening zone is across all examples.
+
+### Scoring System — Reliability Over Max Extraction
+
+**Design for a managed account:** consistent, reliable exits that turn over capital. Not max-profit prayer trades.
+
+**Measurement unit:** Capture efficiency = captured move (ADR) / MFE (ADR) per example. Normalizes across different-sized moves so a 3 ADR capture on a 4 ADR move (75%) scores the same as 9 ADR on 12 ADR (75%).
+
+**Scoring hierarchy for ranking exit conditions:**
+
+1. **Primary: Floor capture efficiency** — the WORST example's capture efficiency across all examples. If the floor is high, the exit works on every trade. This is the "sleep at night" metric.
+2. **Secondary: Median capture efficiency** — typical outcome. Tiebreaker between conditions with similar floors.
+3. **Hard constraint: every example must capture > 0 ADR.** If any example loses money under an exit condition, that condition is eliminated. Zero tolerance.
+
+**Why not average/max?** With ~23 examples you can't trust the tails. A 15 ADR monster outlier skews the average but its real prevalence is unknown. Floor and median are honest with small samples — they tell you what reliably happens. As the example library grows (50, 100+), the tails become trustworthy and more aggressive extraction becomes statistically justified.
+
+**Plateau detection:** Find regions where many nearby exit conditions all produce similar high-floor scores. Plateaus = robust zones where small parameter changes don't break the system. Same principle as the signal grinder's peak-based plateau detection.
 
 ### Process
 
-1. For each example's forward path, simulate every TA exit condition
-2. Measure: how much of the available move did each exit capture (in ADR)?
-3. Rank by captured distance — which exit conditions consistently capture the most runway across all examples?
-4. Find robust plateaus — exit strategies that work across the full example set, not just a few outliers
+1. Pull post-entry OHLCV for each example from 5yr cache (open-ended forward window)
+2. Compute MFE per example (lowest low for shorts — the theoretical max captured move)
+3. At each forward bar, compute all ~4,032 post-signal expressions
+4. For each expression + threshold combination, identify which bar would be the exit bar (first bar where condition triggers)
+5. Measure captured move (entry high → exit bar close) and capture efficiency (captured / MFE)
+6. Score: rank by floor capture efficiency, break ties with median
+7. Plateau detection: find robust parameter regions
+8. Output: the exit conditions that mark "this move is done"
 
 ### Output
 
-**Exit conditions** — the TA rules that mark "this move is done." These become the base filter for Step 7: a Step 3 signal only counts as an outcome signal if these exit conditions eventually triggered on its post-signal bars (meaning the move played out the same way as the examples).
+**Exit conditions** — the TA expression states that reliably mark "the move is done" with the highest floor capture efficiency across all examples. These become the base filter for Step 7: a Step 3 signal only counts as an outcome signal if these exit conditions eventually triggered on its post-signal bars.
+
+**Exit scoring report** — per-example breakdown showing captured move, MFE, efficiency, and which bar triggered the exit. Visual verification that the exits make TA sense.
+
+### Scales With Examples
+
+This step is designed to be re-run as examples grow. At 23 examples, floor/median scoring finds reliable-but-conservative exits. At 50+, the floor metric has more resolution and can accept tighter conditions. At 100+, tail behavior is well-characterized and the system can discover more aggressive extraction strategies that still maintain high floor scores. The scoring math adapts automatically — no manual tuning needed.
 
 ### Script: `scripts/exit_grinder.py` (NEW)
 
@@ -410,7 +464,7 @@ This is optional and may not be needed if Steps 6-9 already produce strong EV.
 | 3 | **Signal Grind** | THE GRINDER — pyramid grinder finds pre-signal conditions. Output: **SIGNALS** (~201/5yr for DTSS) |
 | 4 | **Backtest** | Visual verification of signals across history |
 | 5 | **Backtest Runner** | Charts + Railway upload + Historical tab |
-| 6 | **Exit Management Grind** | Brute force optimal TA exits on examples. Output: **EXIT CONDITIONS** |
+| 6 | **Exit Management Grind** | ~4,000 post-signal expressions grind against examples' forward paths. Scored by floor capture efficiency (worst example). Output: **EXIT CONDITIONS** |
 | 7 | **Outcome Grind** | Apply exit conditions + post-signal behavior matching to signals. Output: **OUTCOME SIGNALS** |
 | 8 | **Pre-Signal Refinement** | Grind outcome vs non-outcome on pre-signal expressions. New conditions added to Step 3. Output: **TOTAL SIGNALS** (tighter, same outcome signals) |
 | 9 | **Environment Clustering** | OUTCOME SIGNALS ÷ TOTAL SIGNALS by market regime. Output: **EV per environment** |
@@ -418,6 +472,8 @@ This is optional and may not be needed if Steps 6-9 already produce strong EV.
 **The output:** For any setup, the system produces: signal conditions (when to watch) × exit conditions (how the move resolves) × environment scoring (when it works best) = **EV**.
 
 **What the system does NOT do:** Entry. That's discretionary TA — the trader's skill and edge.
+
+**Re-run on example growth:** Steps 3-9 re-run as examples are added from Step 4 backtest review. More examples → tighter signal grind, more confident exit conditions (floor metric gains resolution), sharper outcome/environment models. The system's output quality scales directly with example count. All scoring uses relative metrics (floor, median, percentiles) that adapt automatically.
 
 **Presentation:** A separate PRESENTATION_SYSTEM handles nightly data updates, signal detection, and rank-ordered EV presentation. That system consumes the outputs of this analysis system.
 

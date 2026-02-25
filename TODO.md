@@ -188,25 +188,29 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 **Step 6: Exit Management Grind**
 
-Build `scripts/exit_grinder.py` to brute force optimal TA exit conditions on the 23 DTSS examples:
+Build `scripts/exit_grinder.py` — brute force ~4,000 post-signal expressions against the DTSS examples' forward paths:
 
-1. Pull post-entry OHLCV bars for each example from 5yr cache (open-ended, enough bars to encompass all behavior)
-2. Define TA exit parameter space: MA reclaims, extension exhaustion, structural targets, trailing conditions
-3. Simulate every exit condition against each example's forward path
-4. Rank by captured distance in ADR across all examples
-5. Output: the optimal exit conditions that mark "this move is done"
-
-These exit conditions become the base filter for Step 7.
+1. Pull post-entry OHLCV bars for each example from 5yr cache (open-ended forward)
+2. Build post-signal expression library (~4,032 expressions across 12 categories: move_captured, extension_from_ma, extension_dynamics, ma_reclaim, momentum_reversal, candle_character, volume_character, structural, range_compression, retracement, time, relative_strength)
+3. Compute MFE per example (theoretical max — lowest low for shorts)
+4. At each forward bar, compute all expressions → build exit candidate matrix
+5. For each expression+threshold: find exit bar (first trigger), measure captured move (entry high → exit close in ADR)
+6. Score by floor capture efficiency (worst example's captured/MFE), break ties with median
+7. Plateau detection for robust parameter regions
+8. Output: exit conditions + per-example scoring report
 
 ---
 
 ## BUILD PLAN — Remaining Steps
 
 ### Step 6: Exit Management Grind ⬜
-**What:** Brute force optimal TA-driven exit conditions on validated examples.
-**Input:** 23 DTSS examples with entry dates + 5yr OHLCV cache
-**How:** For each example's post-entry bars, simulate every TA exit condition (MA reclaims, extension exhaustion, structural targets, trails). No fixed bar counts or R-multiples — the TA tells us when the move is done. Rank by captured distance in ADR.
-**Output:** Exit conditions — the TA rules marking "move is done." These become the base filter for Step 7.
+**What:** Brute force ~4,000 post-signal expressions against examples' forward paths. Find exit conditions that reliably capture the most move.
+**Input:** Validated examples with entry dates + 5yr OHLCV cache
+**Expression library:** ~4,032 post-signal expressions (12 categories: move_captured, extension_from_ma, extension_dynamics, ma_reclaim, momentum_reversal, candle_character, volume_character, structural, range_compression, retracement, time, relative_strength). 256 per-bar expressions × 7 forward windows + boolean aggregations.
+**Benchmark:** Entry bar high → exit bar close in ADR.
+**Scoring:** Floor capture efficiency (worst example's captured ADR / MFE ADR) as primary. Median as secondary. Hard constraint: every example must capture > 0 ADR. Plateau detection for robustness.
+**Re-run:** Designed to re-run as examples grow. More examples → floor metric gains resolution → more aggressive exits become statistically justified.
+**Output:** Exit conditions — the TA expression states marking "this move is done." Exit scoring report with per-example breakdown.
 **Script:** `scripts/exit_grinder.py` (NEW)
 
 ### Step 7: Outcome Grind ⬜
