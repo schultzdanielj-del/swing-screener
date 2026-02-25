@@ -127,7 +127,7 @@ def load_example_data(setup_type):
 # EXPRESSION LIBRARY + EXAMPLE RANGES
 # ══════════════════════════════════════════════════════════════
 
-def compute_example_ranges(example_dfs, expressions):
+def compute_example_ranges(example_dfs, expressions, strict_nan=False):
     """Compute [min, max] range for every expression across all example scan bars.
 
     Returns:
@@ -155,22 +155,24 @@ def compute_example_ranges(example_dfs, expressions):
                 pass
 
     # Derive ranges with 5% margin (same as spiderweb)
-    # CRITICAL: require ALL examples (with scan_idx) to have non-NaN values.
-    # If any example returns NaN for an expression, that expression cannot be
-    # used as a condition — it would fail validation for that example.
+    # strict_nan=True: require ALL examples to have valid values (produced 179-signal result)
+    # strict_nan=False: 70% threshold, more candidates but looser results
     ranges = {}
+    nan_exprs = set()
     n_with_scan = sum(1 for ex in example_dfs if ex["scan_idx"] is not None)
+    min_valid = n_with_scan if strict_nan else max(3, int(n_ex * 0.7))
     for j, expr in enumerate(expressions):
         vals = example_matrix[:, j]
         valid = vals[~np.isnan(vals)]
-        if len(valid) < n_with_scan:
-            # At least one example has NaN — skip this expression
+        if len(valid) < min_valid:
+            if len(valid) >= max(3, int(n_ex * 0.7)):
+                nan_exprs.add(expr["name"])
             continue
         ex_min, ex_max = np.min(valid), np.max(valid)
         margin = (ex_max - ex_min) * 0.05
         ranges[expr["name"]] = (ex_min - margin, ex_max + margin)
 
-    return ranges, example_matrix
+    return ranges, example_matrix, nan_exprs
 
 
 # ══════════════════════════════════════════════════════════════
@@ -347,7 +349,7 @@ class PeakSpiderweb:
     """
 
     def __init__(self, candidate_values, row_dates, example_ranges,
-                 candidate_names, candidate_categories):
+                 candidate_names, candidate_categories, nan_exprs=None):
         """
         Args:
             candidate_values: np.array (n_rows, n_candidates) — expression values
@@ -355,10 +357,13 @@ class PeakSpiderweb:
             example_ranges: dict {expr_name: (low, high)}
             candidate_names: list of expression names (len = n_candidates)
             candidate_categories: list of category strings
+            nan_exprs: set of expression names that have NaN for some examples
+                       (can be used for filtering but cannot be locked as conditions)
         """
         self.n_rows, self.n_cands = candidate_values.shape
         self.candidate_names = candidate_names
         self.candidate_categories = candidate_categories
+        self.nan_exprs = nan_exprs or set()
 
         # Build date-to-row mapping for peak scoring
         self.unique_dates = sorted(set(row_dates))
@@ -381,12 +386,16 @@ class PeakSpiderweb:
             passes = ((vals >= low) & (vals <= high)) | np.isnan(vals)
             self.cand_passes[ci, :] = passes
 
-            # "Useful" = filters out at least 5% of rows
+            # "Useful" = filters out at least 5% of rows AND safe for locking
             if np.sum(passes) < self.n_rows * 0.95:
-                self.valid_cands.append(ci)
+                if name not in self.nan_exprs:
+                    self.valid_cands.append(ci)
 
+        n_blocked = sum(1 for ci in range(self.n_cands)
+                        if self.candidate_names[ci] in self.nan_exprs)
         print(f"    PeakSpiderweb: {self.n_rows:,} rows, {self.n_dates:,} dates, "
-              f"{len(self.valid_cands)} useful candidates out of {self.n_cands}")
+              f"{len(self.valid_cands)} useful candidates out of {self.n_cands}"
+              f"{f' ({n_blocked} blocked for NaN)' if n_blocked else ''}")
 
     def _peak_score(self, row_mask):
         """Given a boolean mask over rows, compute max signals on any single date."""
@@ -445,7 +454,7 @@ class PeakSpiderweb:
             scored.append((ci, peak, mask))
             nodes_explored += 1
 
-        scored.sort(key=lambda x: x[1])
+        scored.sort(key=lambda x: (x[1], -np.sum(x[2]), x[0]))
 
         # Build initial beam from best individuals
         from dataclasses import dataclass
@@ -462,7 +471,7 @@ class PeakSpiderweb:
         for ci, peak, mask in scored[:n_seeds]:
             current_level.append(Node(conditions=(ci,), row_mask=mask, peak=peak))
 
-        current_level.sort(key=lambda n: n.peak)
+        current_level.sort(key=lambda n: (n.peak, -np.sum(n.row_mask), n.conditions))
         current_level = current_level[:beam_width]
 
         best = current_level[0]
@@ -472,39 +481,93 @@ class PeakSpiderweb:
         if best.peak <= peak_target:
             return self._build_result(best, levels, nodes_explored, t0, base_peak)
 
-        # Deepen
+        # Deepen — matmul pre-screening to avoid materializing all beam × candidate combos
         for lv in range(2, depth + 1):
+            n_beam = len(current_level)
+            n_valid = len(self.valid_cands)
+
+            # Stack beam masks for matmul
+            beam_masks = np.array([n.row_mask for n in current_level], dtype=np.float32)
+            valid_passes = self.cand_passes[self.valid_cands].astype(np.float32)
+
+            # Estimate joint signal counts: (n_beam, n_valid)
+            joint_counts = beam_masks @ valid_passes.T
+
+            # Build date-level peak estimates using matmul
+            # date_matrix: (n_dates, n_rows) one-hot
+            date_matrix = np.zeros((self.n_dates, self.n_rows), dtype=np.float32)
+            date_matrix[self.row_date_indices, np.arange(self.n_rows)] = 1.0
+
+            # For each beam node, get per-date signal counts with each candidate
+            # We need max over dates of (beam_mask & cand_pass per date)
+            # Approximate: rank by total joint_counts (lower = tighter)
+            # then only materialize top candidates per beam node
+
+            # For each beam node, find candidates that actually reduce signal count
+            beam_totals = np.sum(beam_masks, axis=1, keepdims=True)  # (n_beam, 1)
+            improved = joint_counts < beam_totals  # candidate reduces total signals
+
+            # Mask out already-used conditions
+            for bi, node in enumerate(current_level):
+                for ci_orig in node.conditions:
+                    for vj, ci in enumerate(self.valid_cands):
+                        if ci == ci_orig:
+                            improved[bi, vj] = False
+
+            # Rank all (beam, cand) pairs by estimated joint count (ascending = tightest)
+            # Only consider improved pairs
+            improved_flat = improved.ravel()
+            joint_flat = joint_counts.ravel()
+            joint_flat[~improved_flat] = 999999  # push non-improved to end
+
+            # Take top K candidates to materialize (memory-bounded)
+            max_materialize = min(beam_width * 10, 100000)  # memory-bounded
+            top_k = min(max_materialize, int(np.sum(improved_flat)))
+            if top_k == 0:
+                print(f"\n    ▓ Ceiling at level {lv} — no improving candidates")
+                break
+
+            top_indices = np.argpartition(joint_flat, top_k)[:top_k]
+            top_beam = top_indices // n_valid
+            top_cand = top_indices % n_valid
+
+            # Sort for determinism
+            sort_order = np.lexsort((top_cand, joint_flat[top_indices], top_beam))
+            top_beam = top_beam[sort_order]
+            top_cand = top_cand[sort_order]
+
+            # Materialize exact peak scores for top candidates
             next_level = []
             seen = set()
+            beam_masks_bool = beam_masks.astype(bool)
 
-            for node in current_level:
-                used = set(node.conditions)
-                if not np.any(node.row_mask):
+            for idx in range(len(top_beam)):
+                bi = int(top_beam[idx])
+                vj = int(top_cand[idx])
+                ci = self.valid_cands[vj]
+                node = current_level[bi]
+
+                combo = tuple(sorted(node.conditions + (ci,)))
+                if combo in seen:
                     continue
+                seen.add(combo)
 
-                for ci in self.valid_cands:
-                    if ci in used:
-                        continue
-                    combo = tuple(sorted(node.conditions + (ci,)))
-                    if combo in seen:
-                        continue
-                    seen.add(combo)
+                mask = beam_masks_bool[bi] & self.cand_passes[ci]
+                if not np.any(mask):
+                    peak = 0
+                else:
+                    active_dates = self.row_date_indices[mask]
+                    counts = np.bincount(active_dates, minlength=self.n_dates)
+                    peak = int(np.max(counts))
 
-                    mask = node.row_mask & self.cand_passes[ci]
-                    peak = self._peak_score(mask)
-                    nodes_explored += 1
-
-                    next_level.append(Node(conditions=combo, row_mask=mask, peak=peak))
-
-                # Limit expansion per level
-                if len(next_level) >= beam_width * 8:
-                    break
+                nodes_explored += 1
+                next_level.append(Node(conditions=combo, row_mask=mask, peak=peak))
 
             if not next_level:
                 print(f"\n    ▓ Ceiling at level {lv}")
                 break
 
-            next_level.sort(key=lambda n: n.peak)
+            next_level.sort(key=lambda n: (n.peak, -np.sum(n.row_mask), n.conditions))
             current_level = next_level[:beam_width]
 
             if current_level[0].peak < best.peak:
@@ -660,7 +723,7 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
 def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
                         example_ranges, locked_conditions,
                         beam_width=50, depth=10, peak_target=15,
-                        expr_cache=None):
+                        expr_cache=None, nan_exprs=None):
     """Run a historical tier: build matrix of surviving ticker-day rows, then spiderweb.
 
     Args:
@@ -712,6 +775,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     print(f"  {n_workers} workers, {len(batches)} batches of ~{batch_size} tickers")
 
     all_row_dates = []
+    all_row_tickers = []
     all_row_values = []
 
     with ProcessPoolExecutor(
@@ -728,6 +792,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
             for ticker, row_dates, cand_values in batch_results:
                 if row_dates and cand_values is not None and len(row_dates) > 0:
                     all_row_dates.extend(row_dates)
+                    all_row_tickers.extend([ticker] * len(row_dates))
                     all_row_values.append(cand_values)
             completed += 1
             if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
@@ -746,6 +811,13 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     candidate_names = [expressions[i]["name"] for i in candidate_indices]
     candidate_categories = [expressions[i].get("category", "unknown") for i in candidate_indices]
 
+    # Sort rows deterministically by (date, ticker) — process pool returns in arbitrary order
+    sort_idx = sorted(range(len(all_row_dates)),
+                      key=lambda i: (all_row_dates[i], all_row_tickers[i]))
+    candidate_values = candidate_values[sort_idx]
+    all_row_dates = [all_row_dates[i] for i in sort_idx]
+    all_row_tickers = [all_row_tickers[i] for i in sort_idx]
+
     print(f"  {tier_name} matrix: {candidate_values.shape[0]:,} rows × "
           f"{candidate_values.shape[1]:,} candidates ({build_time:.0f}s)")
 
@@ -756,9 +828,27 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
         example_ranges=example_ranges,
         candidate_names=candidate_names,
         candidate_categories=candidate_categories,
+        nan_exprs=nan_exprs or set(),
     )
 
     result = search.run(depth=depth, beam_width=beam_width, peak_target=peak_target)
+
+    # Extract final signal tickers and dates from the best path's row_mask
+    final_signals = []
+    if result.get("final_total", 0) > 0:
+        # Reconstruct final row_mask by applying all found conditions
+        mask = np.ones(len(all_row_dates), dtype=bool)
+        for cond in result.get("conditions", []):
+            ci = cond["cand_index"]
+            mask &= search.cand_passes[ci]
+        # Build signal list: (date, ticker) pairs
+        for idx in np.where(mask)[0]:
+            final_signals.append({
+                "date": all_row_dates[idx],
+                "ticker": all_row_tickers[idx],
+            })
+    result["final_signals"] = final_signals
+    result["final_tickers"] = sorted(set(s["ticker"] for s in final_signals))
 
     # Convert conditions from search result
     new_conditions = []
@@ -813,7 +903,7 @@ def validate_examples(example_dfs, conditions):
 # ══════════════════════════════════════════════════════════════
 
 def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
-                d1_depth=None, d1_beam=None):
+                d1_depth=None, d1_beam=None, strict_nan=False):
     """Run the full pyramid grinder.
 
     Args:
@@ -834,6 +924,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     print(f"  Peak target: ≤{peak_target} signals/day")
     print(f"  D1: beam={d1_beam}, depth={d1_depth}")
     print(f"  Historical tiers: beam={beam_width}, depth={depth}")
+    if strict_nan:
+        print(f"  NaN filter: STRICT (require ALL examples valid)")
 
     t_total = time.time()
 
@@ -853,8 +945,10 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     # ── Compute example ranges ──
     print(f"\n  Computing example ranges...")
     t0 = time.time()
-    example_ranges, example_matrix = compute_example_ranges(example_dfs, expressions)
+    example_ranges, example_matrix, nan_exprs = compute_example_ranges(example_dfs, expressions, strict_nan=strict_nan)
     print(f"  {len(example_ranges)} expressions have valid ranges ({time.time()-t0:.0f}s)")
+    if nan_exprs:
+        print(f"  {len(nan_exprs)} expressions have NaN for some examples (available as candidates, blocked from locking)")
 
     # ── Tier results accumulator ──
     all_conditions = []
@@ -912,6 +1006,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             depth=depth,
             peak_target=peak_target,
             expr_cache=expr_cache,
+            nan_exprs=nan_exprs,
         )
 
         all_conditions.extend(new_conds)
@@ -924,6 +1019,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "final_total": tier_result.get("final_total"),
             "baseline_peak": tier_result.get("baseline_peak"),
             "stats": tier_result.get("stats"),
+            "final_signals": tier_result.get("final_signals", []),
+            "final_tickers": tier_result.get("final_tickers", []),
         }
 
         if new_conds:
@@ -975,19 +1072,27 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         print(f"    {i:2d}. [{tier:>4}] [{cat:>18}] {c['name']:35s} "
               f"[{c['low']:.4f} — {c['high']:.4f}]")
 
-    # ── Save with descriptive filename ──
-    # Get final signal count from last tier
+    # ── Get final signal summary from last tier with data ──
     final_total = 0
     final_peak = 0
     final_avg = 0.0
+    final_tickers = []
+    final_signals = []
     for tier_name_rev in reversed(["D1", "1wk", "1mo", "6mo", "1yr", "5yr"]):
         tr = tier_results.get(tier_name_rev, {})
         if tr.get("final_total") is not None and tr["final_total"] > 0:
             final_total = tr["final_total"]
             final_peak = tr.get("final_peak", 0)
             final_avg = tr.get("final_avg", 0.0)
+            final_tickers = tr.get("final_tickers", [])
+            final_signals = tr.get("final_signals", [])
             break
 
+    # Print ticker list
+    if final_tickers:
+        print(f"\n  Final tickers ({len(final_tickers)} unique): {', '.join(final_tickers)}")
+
+    # ── Save with descriptive filename ──
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     desc_name = f"pyramid_{setup_type}_sig{final_total}_pk{final_peak}_{ts}"
 
@@ -1010,24 +1115,26 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "d1_beam": d1_beam,
             "d1_depth": d1_depth,
             "peak_target": peak_target,
-            "source": "pyramid_grinder",
+            "strict_nan": strict_nan,
         },
         "summary": {
             "final_total": final_total,
             "final_peak": final_peak,
             "final_avg": final_avg,
+            "final_tickers": final_tickers,
+            "n_unique_tickers": len(final_tickers),
         },
     }
 
     os.makedirs(CACHE_DIR, exist_ok=True)
 
-    # Timestamped file (never overwritten)
+    # Descriptive filename
     out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
 
-    # Only overwrite latest if better
+    # Also save as latest — but only if better than existing
     latest_path = os.path.join(CACHE_DIR, f"pyramid_results_{setup_type}.json")
     save_as_latest = True
     if os.path.exists(latest_path):
@@ -1045,7 +1152,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             json.dump(result, f, indent=2)
         print(f"  Saved as latest: {latest_path}")
 
-    # Compat format
+    # Also save in historical_results format for compatibility with signal_distribution.py
     compat_result = {
         "setup_type": setup_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1059,9 +1166,9 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         "source": "pyramid_grinder",
     }
     compat_path = os.path.join(CACHE_DIR, f"historical_results_{setup_type}.json")
-    if save_as_latest:
-        with open(compat_path, "w") as f:
-            json.dump(compat_result, f, indent=2)
+    with open(compat_path, "w") as f:
+        json.dump(compat_result, f, indent=2)
+    print(f"  Saved (compat): {compat_path}")
 
     return result
 
@@ -1085,6 +1192,8 @@ def main():
                         help="Depth for D1 tier (default: same as --depth)")
     parser.add_argument("--runs", type=int, default=1,
                         help="Number of times to repeat the grinder (default: 1)")
+    parser.add_argument("--strict-nan", action="store_true",
+                        help="Require ALL examples to have valid values (stricter, fewer candidates)")
     args = parser.parse_args()
 
     n_runs = max(1, args.runs)
@@ -1103,6 +1212,7 @@ def main():
             depth=args.depth,
             d1_depth=args.d1_depth,
             d1_beam=args.d1_beam,
+            strict_nan=args.strict_nan,
         )
         results.append(result)
 
@@ -1118,17 +1228,19 @@ def main():
         for i, r in enumerate(results, 1):
             n_conds = r.get("n_conditions", 0)
             t = r.get("total_time_s", 0)
-            s = r.get("summary", {})
-            total = s.get("final_total", "—")
-            peak = s.get("final_peak", "—")
-            avg = s.get("final_avg", "—")
 
-            # Fallback to tier_results if summary not populated
-            if total == "—" or total is None or total == 0:
-                tr = r.get("tier_results", {})
+            # Get 5yr tier stats (last tier with data)
+            tr = r.get("tier_results", {})
+            five = tr.get("5yr", {})
+            total = five.get("final_total", "—")
+            peak = five.get("final_peak", "—")
+            avg = five.get("final_avg", "—")
+
+            # If 5yr has no data, walk backwards through tiers
+            if total == "—" or total is None:
                 for tier_name in reversed(["D1", "1wk", "1mo", "6mo", "1yr", "5yr"]):
                     ti = tr.get(tier_name, {})
-                    if ti.get("final_total") is not None and ti["final_total"] > 0:
+                    if ti.get("final_total") is not None:
                         total = ti["final_total"]
                         peak = ti.get("final_peak", "—")
                         avg = ti.get("final_avg", "—")
@@ -1142,15 +1254,11 @@ def main():
             print(f"  {i:>4}  {n_conds:>11}  {total_s:>10}  {peak_s:>11}  {avg_s:>10}  {time_s:>8}")
 
         # Best run
-        best_total = None
-        best_i = None
-        for i, r in enumerate(results, 1):
-            s = r.get("summary", {})
-            t = s.get("final_total")
-            if t is not None and t > 0 and (best_total is None or t < best_total):
-                best_total = t
-                best_i = i
-        if best_i:
+        valid = [(i, r) for i, r in enumerate(results, 1)
+                 if r.get("tier_results", {}).get("5yr", {}).get("final_total") is not None]
+        if valid:
+            best_i, best_r = min(valid, key=lambda x: x[1]["tier_results"]["5yr"]["final_total"])
+            best_total = best_r["tier_results"]["5yr"]["final_total"]
             print(f"\n  ★ Best: Run {best_i} with {best_total:,} total signals")
         print()
 
