@@ -154,12 +154,49 @@ class ExitExprEngine:
         Returns:
             numpy array of length n_forward (one value per forward bar)
         """
-        op = comp["op"]
+        # ──── OP NAME ALIASING ─────────────────────────────
+        # Maps expression library op names → compute engine op names
+        _OP_ALIASES = {
+            "extension_ceiling_ratio": "ext_ceiling_ratio",
+            "extension_slope": "ext_slope",
+            "ext_acceleration": "ext_accel",
+            "pct_green_bars": "pct_green_rolling",
+            "avg_body_ratio": "avg_body_ratio_rolling",
+            "avg_range_adr": "avg_bar_range_rolling",
+            "avg_rvol": "avg_rvol_rolling",
+            "up_vol_ratio": "up_vol_ratio_rolling",
+            "obv_slope_exit": "obv_slope",
+            "atr_ratio": "atr_ratio_vs_entry",
+            "candle_range_ratio": "bar_range",
+            "volume_ratio": "rvol",
+            "below_signal_low": "below_signal_bar_low",
+        }
+        comp = dict(comp)  # copy to avoid mutating original
+        op = _OP_ALIASES.get(comp["op"], comp["op"])
+        comp["op"] = op
+        
+        # ──── PARAM ALIASING ──────────────────────────────
+        # Fix parameter mismatches between expression lib and compute engine
+        if op == "avg_rvol_rolling" and "avg_period" not in comp:
+            comp["avg_period"] = 20
+        if op == "avg_bar_range_rolling" and "normalizer" not in comp:
+            comp["normalizer"] = "adr14"
+        if op in ("pct_green_rolling", "avg_body_ratio_rolling", "avg_bar_range_rolling",
+                   "up_vol_ratio_rolling", "obv_slope") and "window" not in comp:
+            comp["window"] = comp.get("period", 10)
+        if op == "rvol" and "avg_period" not in comp:
+            comp["avg_period"] = comp.get("avg_period", 20)
+        if op == "atr_ratio_vs_entry" and "window" not in comp:
+            comp["window"] = comp.get("offset", 5)
+        # General: map 'period' → 'window' for ops that expect 'window'
+        if op in ("avg_rvol_rolling", "inside_bar_count", "mfe_expanding",
+                   "rs_vs_spy", "rs_vs_spy_slope") and "window" not in comp:
+            comp["window"] = comp.get("period", 10)
         
         # ──── MOVE CAPTURED ────────────────────────────────
         if op == "move_captured":
             pr = comp["price_ref"]
-            norm = self._get_norm(comp["normalizer"])
+            norm_name = comp.get("normalizer", "adr14")
             if pr == "close":
                 prices = self.c[self.fwd_start:self.fwd_end]
             else:
@@ -169,11 +206,19 @@ class ExitExprEngine:
                 raw = self.entry_high - prices
             else:
                 raw = prices - self.entry_low
+            if norm_name == "pct":
+                ref_price = self.entry_high if self.direction == 'short' else self.entry_low
+                return raw / ref_price * 100
+            norm = self._get_norm(norm_name)
             return raw / norm
         
         elif op == "mfe":
-            pr = comp["price_ref"]
-            norm = self._get_norm(comp["normalizer"])
+            pr = comp.get("price_ref", "close")
+            norm_name = comp.get("normalizer", "adr14")
+            if norm_name == "pct":
+                mfe = self._mfe_close if pr == "close" else self._mfe_low
+                return mfe / self.entry_high * 100 if self.direction == 'short' else mfe / self.df["low"].iloc[self.entry_idx] * 100
+            norm = self._get_norm(norm_name)
             mfe = self._mfe_close if pr == "close" else self._mfe_low
             return mfe / norm
         
@@ -308,7 +353,8 @@ class ExitExprEngine:
             prices = self.c[self.fwd_start:self.fwd_end]
             above_fast = prices > fast_vals
             above_slow = prices > slow_vals
-            if comp["mode"] == "both":
+            mode = comp.get("mode", "both")
+            if mode == "both":
                 return (above_fast & above_slow).astype(float)
             else:  # fast_only
                 return (above_fast & ~above_slow).astype(float)
@@ -679,7 +725,7 @@ class ExitExprEngine:
             return result
         
         elif op == "inside_bar_count":
-            w = comp["window"]
+            w = comp.get("window", comp.get("period", 5))
             fwd_h = self.h[self.fwd_start:self.fwd_end]
             fwd_l = self.l[self.fwd_start:self.fwd_end]
             inside = np.zeros(self.n_forward)
@@ -741,13 +787,17 @@ class ExitExprEngine:
             return 1.0 - (captured / mfe_safe)  # 0 = at MFE, 1 = back to entry
         
         elif op == "retrace_from_mfe":
-            norm = self._get_norm(comp["normalizer"])
+            norm_name = comp.get("normalizer", "adr14")
             mfe = self._mfe_close
             if self.direction == 'short':
                 captured = self.entry_high - self.c[self.fwd_start:self.fwd_end]
             else:
                 captured = self.c[self.fwd_start:self.fwd_end] - self.entry_low
             giveback = mfe - captured
+            if norm_name == "pct":
+                ref_price = self.entry_high if self.direction == 'short' else self.entry_low
+                return giveback / ref_price * 100
+            norm = self._get_norm(norm_name)
             return giveback / norm
         
         elif op == "position_in_post_range":
@@ -773,7 +823,7 @@ class ExitExprEngine:
             return result
         
         elif op == "mfe_expanding":
-            w = comp["window"]
+            w = comp.get("window", comp.get("period", 5))
             mfe = self._mfe_close
             result = np.zeros(self.n_forward)
             for i in range(w, self.n_forward):
@@ -786,13 +836,17 @@ class ExitExprEngine:
             return np.arange(self.n_forward, dtype=float)
         
         elif op == "move_per_bar":
-            norm = self._get_norm(comp["normalizer"])
+            norm_name = comp.get("normalizer", "adr14")
             if self.direction == 'short':
                 captured = self.entry_high - self.c[self.fwd_start:self.fwd_end]
             else:
                 captured = self.c[self.fwd_start:self.fwd_end] - self.entry_low
             bars = np.arange(self.n_forward, dtype=float)
             bars[0] = np.nan  # avoid div by zero at bar 0
+            if norm_name == "pct":
+                ref_price = self.entry_high if self.direction == 'short' else self.entry_low
+                return (captured / ref_price * 100) / bars
+            norm = self._get_norm(norm_name)
             return (captured / norm) / bars
         
         elif op == "velocity_change":
@@ -811,7 +865,7 @@ class ExitExprEngine:
         
         # ──── RELATIVE STRENGTH ───────────────────────────
         elif op == "rs_vs_spy":
-            w = comp["window"]
+            w = comp.get("window", comp.get("period", 10))
             if self.spy_df is None:
                 return np.full(self.n_forward, np.nan)
             # Align SPY by date
@@ -829,7 +883,7 @@ class ExitExprEngine:
             return result
         
         elif op == "rs_vs_spy_slope":
-            w = comp["window"]
+            w = comp.get("window", comp.get("period", 10))
             rs = self.compute({"op": "rs_vs_spy", "window": w})
             result = np.full(self.n_forward, np.nan)
             result[1:] = rs[1:] - rs[:-1]
