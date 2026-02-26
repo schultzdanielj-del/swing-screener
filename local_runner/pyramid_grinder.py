@@ -82,8 +82,13 @@ def load_5yr_cache():
         return pickle.load(f)
 
 
-def load_example_data(setup_type):
-    """Load example OHLCV data from Railway API."""
+def load_example_data(setup_type, universe_cache):
+    """Load example data using the 5yr universe cache for OHLCV.
+
+    Examples metadata (ticker, entryDate) comes from Railway API.
+    OHLCV data comes from the same 5yr cache used by the backtest scanner,
+    ensuring identical indicator values and history depth.
+    """
     import requests
     resp = requests.get(f"{API_BASE}/api/examples/{setup_type}", timeout=30)
     data = resp.json()
@@ -92,20 +97,23 @@ def load_example_data(setup_type):
     examples = data["examples"]
 
     example_dfs = []
+    skipped = []
     for ex in examples:
-        eid = ex["id"]
-        r = requests.get(f"{API_BASE}/api/ohlcv/local/{setup_type}/{eid}", timeout=30)
-        candles = r.json().get("candles", [])
-        if not candles:
+        ticker = ex["ticker"]
+        entry_date = ex.get("entryDate") or ex.get("entry_date")
+
+        # Use 5yr cache — same data source as backtest scanner
+        df = universe_cache.get(ticker)
+        if df is None:
+            skipped.append(f"{ticker} (not in 5yr cache)")
             continue
 
-        df = pd.DataFrame(candles)
-        for col in ["open", "high", "low", "close", "volume"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        df["date"] = pd.to_datetime(df["date"])
+        # Ensure proper types
+        df = df.copy()
+        if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+            df["date"] = pd.to_datetime(df["date"])
         df = df.sort_values("date").reset_index(drop=True)
 
-        entry_date = ex.get("entryDate") or ex.get("entry_date")
         scan_idx = None
         if entry_date:
             entry_dt = pd.to_datetime(entry_date)
@@ -113,12 +121,19 @@ def load_example_data(setup_type):
             if len(match) > 0:
                 scan_idx = match.index[-1]
 
+        if scan_idx is None:
+            skipped.append(f"{ticker} (no scan bar before {entry_date})")
+            continue
+
         example_dfs.append({
-            "ticker": ex["ticker"],
+            "ticker": ticker,
             "entry_date": entry_date,
             "scan_idx": scan_idx,
             "df": df,
         })
+
+    if skipped:
+        print(f"  ⚠ Skipped {len(skipped)} examples: {', '.join(skipped)}")
 
     return example_dfs
 
@@ -843,7 +858,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     print(f"  {len(universe_cache)} tickers loaded")
 
     print(f"\n  Loading examples...")
-    example_dfs = load_example_data(setup_type)
+    example_dfs = load_example_data(setup_type, universe_cache)
     print(f"  {len(example_dfs)} examples loaded")
 
     print(f"\n  Loading expressions...")
