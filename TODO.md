@@ -1,6 +1,6 @@
 # TODO
 
-## Current State (as of 2026-02-25)
+## Current State (as of 2026-02-26)
 
 ### The Grinder — Two-Phase Desktop Expression Discovery Engine
 
@@ -76,7 +76,7 @@ scripts/
 ├── classify_universe.py     # ETF classifier (quarterly, desktop-only)
 ├── fast_profiler.py         # FastProfiler for rapid example profiling
 ├── exit_grinder.py          # Step 6: TA exit management on examples ✅
-├── outcome_grinder.py       # Step 7: outcome signal identification (NEW)
+├── outcome_grinder.py       # Step 7: outcome signal identification (IN PROGRESS)
 ├── presignal_grinder.py     # Step 8: pre-signal refinement (NEW)
 └── environment_scorer.py    # Step 9: environment clustering for EV (NEW)
 
@@ -109,11 +109,11 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 1 Load | ✅ Done | Data + TA knowledge loaded |
 | 2 Receive | ✅ Done | 23 examples with LSP data |
 | 3 Signal Grind (Phase 1) | ✅ Done | 9 conditions, 0.00% single-day pass rate, 11s at L3 |
-| 3 Signal Grind (Phase 2) | ✅ Done | beam=10000, PT=3 → 26 conditions, peak 6/day, 201 signals/5yr, avg 2.1/day |
+| 3 Signal Grind (Phase 2) | ✅ Done | beam=10000, best kept result: 368 signals across 5yr |
 | 4 Backtest verification | ✅ Done | Signal prevalence + SPY overlay in frontend Historical tab |
 | 5 Backtest Runner | ✅ Done | `scripts/backtest_runner.py` — scan + charts + Railway upload |
 | **6 Exit Management Grind** | **✅ Done** | `scripts/exit_grinder.py` — 220 base exprs × thresholds × directions, scored by floor capture eff, % move shown |
-| **7 Outcome Grind** | **⬜ Not started** | Apply exit conditions to Step 3 signals → OUTCOME SIGNALS |
+| **7 Outcome Grind** | **🔨 In progress** | Phase 0: find example signal bars. Phase 1: exit filter + 1 ADR min move. Phase 2: segment expression grind. |
 | **8 Pre-Signal Refinement** | **⬜ Not started** | Grind outcome vs non-outcome on pre-signal expressions → TOTAL SIGNALS |
 | **9 Environment Clustering** | **⬜ Not started** | OUTCOME ÷ TOTAL by market regime → EV |
 
@@ -186,18 +186,29 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ## IMMEDIATE NEXT STEP
 
-**Step 7: Outcome Grind**
+**Step 7: Outcome Grind — 3 phases, built as separate blocks then chained**
 
-Apply Step 6 exit conditions to all Step 3 signals' post-signal bars. Signals where exit triggers = OUTCOME SIGNALS. Then grind for additional post-signal behavior that separates outcome from non-outcome.
+### Phase 0: Find Example Signal Bars ⬜
+Run Step 3 signal conditions against each example ticker's history. Find the first bar that passes all conditions leading up to the entry. This gives the signal bar date for each example — the anchor point for all outcome analysis.
 
-1. Pull post-entry OHLCV bars for each example from 5yr cache (open-ended forward)
-2. Build post-signal expression library (~4,032 expressions across 12 categories: move_captured, extension_from_ma, extension_dynamics, ma_reclaim, momentum_reversal, candle_character, volume_character, structural, range_compression, retracement, time, relative_strength)
-3. Compute MFE per example (theoretical max — lowest low for shorts)
-4. At each forward bar, compute all expressions → build exit candidate matrix
-5. For each expression+threshold: find exit bar (first trigger), measure captured move (entry high → exit close in ADR)
-6. Score by floor capture efficiency (worst example's captured/MFE), break ties with median
-7. Plateau detection for robust parameter regions
-8. Output: exit conditions + per-example scoring report
+**Needs:** Step 3 signal conditions (pyramid_results_dtss.json from local machine)
+
+### Phase 1: Base Filter — Exit Triggered + 1 ADR Minimum ⬜
+Apply Step 6 exit conditions to all 368 signals' post-signal bars. Two requirements:
+1. Exit condition triggers on forward bars
+2. Exit bar close ≥ 1 ADR below signal bar close (shorts) / above (longs)
+
+Both must pass. Trims obvious garbage before the expensive grind.
+
+**Needs:** Step 3 signals (368) + Step 6 exit results (exit_grind_dtss.json from local machine)
+
+### Phase 2: Outcome Segment Expression Grinder ⬜
+Brute force expression matrix on signal-to-exit segments.
+- **Positives:** Examples measured from signal bar (Phase 0) forward
+- **Universe:** All 368 signals measured from signal bar forward
+- **Expression library:** NEW generic segment expressions (move quality, conviction, tradeability). Not the same as Step 3 or Step 6 libraries. Informed by ta_knowledge.md. Works across all setup types.
+
+**Needs:** Phase 0 + Phase 1 results + new outcome expression library (to be designed)
 
 ---
 
@@ -208,12 +219,12 @@ Apply Step 6 exit conditions to all Step 3 signals' post-signal bars. Signals wh
 **How to run:** `python scripts/exit_grinder.py --setup dtss --max-forward 120`
 **What it does:** Loads examples from Railway, fetches OHLCV, computes 220 base expressions at every forward bar, tests ~3,800 conditions (expr × threshold × direction), filters for 100% trigger rate, ranks by floor capture efficiency. Results show % move (entry high → exit close) + ADR captured per example.
 
-### Step 7: Outcome Grind ⬜
-**What:** Split Step 3 signals into OUTCOME signals (move played out like examples) and non-outcome signals.
-**Input:** Step 3 signals (~201) + Step 6 exit conditions + validated examples
-**How:** Phase 1: Apply exit conditions to all signal post-signal bars. Where they trigger = candidate outcomes. Phase 2: Grind post-signal expression library (delay-insensitive) — examples as positives, all signals as universe. Exit conditions are the starting filter, grinder finds additional shared behavior.
-**Output:** OUTCOME SIGNALS — confirmed runners whose post-signal behavior matches the examples.
-**Script:** `scripts/outcome_grinder.py` (NEW)
+### Step 7: Outcome Grind 🔨
+**What:** Sort the 368 signals into clean tradeable moves vs junk. "Was this a real move worth being in?"
+**Input:** Step 3 signals (368) + Step 6 exit conditions + validated examples
+**How:** Phase 0: Find example signal bars (run Step 3 conditions on example tickers). Phase 1: Exit filter + 1 ADR minimum move from signal bar close. Phase 2: Brute force segment expression grinder — examples as positives, all signals as universe, NEW segment expression library analyzing signal-to-exit move quality.
+**Output:** OUTCOME SIGNALS — confirmed clean, tradeable moves matching example behavior.
+**Script:** `scripts/outcome_grinder.py` (partial start exists, needs Phase 0 + Phase 1 update + Phase 2 build)
 
 ### Step 8: Pre-Signal Refinement Grind ⬜
 **What:** Find pre-signal conditions that distinguish outcome signals from non-outcome signals — things Step 3 missed because it compared examples vs the full universe instead of within the signal set.
