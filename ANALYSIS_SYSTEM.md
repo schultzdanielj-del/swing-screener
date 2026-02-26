@@ -337,24 +337,28 @@ This step is designed to be re-run as examples grow. At 23 examples, floor/media
 - Step 6 exit conditions + exit grind results
 - Validated examples with entry dates
 
-### Phase 0: Find Example Signal Bars
+### Phase 0: Example Signal Bars — ✅ HANDLED BY PYRAMID
 
-The examples have **entry dates** (discretionary — the trader chose when to enter), but the outcome grinder needs the **signal bar** — the first bar that passed all Step 3 conditions for each example ticker. These are not necessarily the same date.
+The pyramid grinder already outputs `example_signals` with signal bar dates for all examples. Phase 0 is no longer a separate step — the signal bar for each example is the bar where all conditions first fire leading up to the entry date. These are included in the pyramid's 576 total signals, tagged with `is_example: true`.
 
-**Process:** Run Step 3 signal conditions against each example ticker's OHLCV history. Find the first bar that passes all conditions leading up to (and including) the scan candle before entry. This becomes the anchor point so examples and non-example signals are measured from the same starting point.
+**Key insight from build:** Signal conditions can fire on multiple consecutive bars for the same ticker. The 576 signals are not 576 unique trade opportunities — they're 576 "watchlist appearances" where some tickers appear multiple consecutive days. This is fine for outcome analysis (each signal bar gets its own forward window) and doesn't need deduplication.
 
-**Why this matters:** Entry bars are varied and discretionary. The signal bar is mechanical and consistent. All outcome analysis must compare apples to apples — signal bar forward, not entry bar forward.
-
-**Output:** Per-example signal bar dates.
-
-### Phase 1: Base Filter — Exit Triggered + Minimum Move
+### Phase 1: Base Filter — Exit Triggered + Minimum Move — ✅ BUILT
 
 Apply Step 6 exit conditions to all signals' post-signal bars. Two requirements to pass:
 
 1. **Exit condition triggers** on the forward bars
-2. **Minimum move threshold:** Exit bar close must be ≥ 1 ADR below signal bar close (shorts) or ≥ 1 ADR above signal bar close (longs). Uses ADR14 at the signal bar for normalization.
+2. **Minimum move threshold:** Exit bar close must be ≥ 1 ADR below signal bar close (shorts) or ≥ 1 ADR above signal bar close (longs). Uses ADR14 at the entry bar for normalization.
 
 Both must be true. This is a simple, fast filter that trims the obvious garbage — signals where the exit technically triggered but the move was negligible, or the stock just chopped around the signal level without going anywhere meaningful.
+
+**Implementation:** `scripts/outcome_grinder.py` — fully local, no API calls. Reads pyramid signal grind + exit grind from `local_runner/grinds/{setup}/` via GrindStorage. Uses local 5yr OHLCV cache. Batch-processes signals grouped by ticker (one ADX computation per ticker). All date handling via positional iloc indexing — never calendar day arithmetic. ProcessPoolExecutor with all CPU cores.
+
+**Initial DTSS results (2026-02-26, needs investigation):**
+- 576 total signals → 187 outcomes (32.7%), 373 sub-ADR, 12 no trigger, 4 errors
+- 3 examples failed: WING (0.96 ADR, barely missed), ZIM (-1.78 ADR, wrong direction), FTAI (no trigger in 120 bars)
+- Outcome stats: median +12% move, median 3.5 ADR, median 0.845 capture efficiency
+- ⚠️ Results need investigation — 3 missing examples suggests exit condition or measurement issues
 
 Signals passing both = **candidate outcome signals** for Phase 2.
 Signals failing either = eliminated before the expensive grind.
@@ -394,6 +398,12 @@ These are confirmed clean, tradeable moves.
 Phase 0, Phase 1, and Phase 2 are built as separate blocks/scripts first, then chained together in the final outcome grinder pipeline. Each block is independently testable and re-runnable.
 
 ### Script: `scripts/outcome_grinder.py`
+
+**Usage:** `python scripts/outcome_grinder.py --setup dtss` (auto-finds signal/exit from grinds storage)
+
+**Override:** `python scripts/outcome_grinder.py --setup dtss --pyramid path/to/signal.json --exit-grind path/to/exit.json`
+
+**Output:** Saves to `local_runner/grinds/{setup}/outcome/` via GrindStorage.
 
 ---
 
@@ -490,6 +500,42 @@ This is optional and may not be needed if Steps 6-9 already produce strong EV.
 **Re-run on example growth:** Steps 3-9 re-run as examples are added from Step 4 backtest review. More examples → tighter signal grind, more confident exit conditions (floor metric gains resolution), sharper outcome/environment models. The system's output quality scales directly with example count. All scoring uses relative metrics (floor, median, percentiles) that adapt automatically.
 
 **Presentation:** A separate PRESENTATION_SYSTEM handles nightly data updates, signal detection, and rank-ordered EV presentation. That system consumes the outputs of this analysis system.
+
+---
+
+## Grind Storage System
+
+All grinder outputs are managed by `local_runner/grind_storage.py`. Standardized structure, Windows-compatible (copies, not symlinks).
+
+### Structure
+```
+local_runner/grinds/{setup}/{step}/{step}_{timestamp}.json
+local_runner/grinds/{setup}/{step}/latest.json  (copy of newest)
+```
+
+Steps: `signal`, `exit`, `outcome`, `market`
+
+### Usage
+```python
+from local_runner.grind_storage import GrindStorage
+gs = GrindStorage("dtss")
+
+gs.save("signal", data)          # auto-timestamps, updates latest.json
+data = gs.load("signal")         # loads latest.json
+data = gs.load("signal", "20260226_104240")  # specific run
+runs = gs.list_runs("signal")    # newest first
+print(gs.summary())              # all steps status
+```
+
+### Grinder integration
+Each grinder saves via `gs.save()` and loads upstream dependencies via `gs.load()`. CLI flags (e.g. `--pyramid`, `--exit-grind`) override the default latest.json lookup.
+
+### Support files (NOT in grinds/)
+These stay in `local_runner/cache/`:
+- `brute_expressions.json` — expression library
+- `classification.json` — ETF classifier
+- `expr_series/` — expression series cache (~21 GB)
+- `universe_ohlcv_5yr.pkl` / `universe_ohlcv.pkl` — OHLCV caches
 
 ---
 

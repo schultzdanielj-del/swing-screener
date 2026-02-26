@@ -51,6 +51,7 @@ local_runner/
 ├── agent.py              # Polling agent with nightly auto-rebuild (4:30pm ET trigger)
 ├── nightly.py            # Single-command nightly pipeline (5 steps, gate logic)
 ├── grinder.py            # CLI interface
+├── grind_storage.py      # Standardized grind file management (save/load/list)
 ├── pyramid_grinder.py    # Pyramidal grinder: 6 nested tiers (D1→5yr), peak-based
 ├── spiderweb.py          # Phase 1: beam search tree exploration (used by D1 tier)
 ├── historical_scorer.py  # Phase 2: greedy historical signal elimination (legacy, replaced by pyramid)
@@ -58,6 +59,12 @@ local_runner/
 ├── cache_builder.py      # OHLCV caches (300-bar daily + 1,260-bar 5yr)
 ├── expr_cache_builder.py # Pre-cached expression series for all tickers × 5yr (~21 GB)
 ├── brute_expressions.py  # 4,017 expression generator (generic, universal)
+├── grinds/               # Standardized grind output storage
+│   └── {setup}/          # e.g. dtss/
+│       ├── signal/       # Pyramid grinder outputs + latest.json
+│       ├── exit/         # Exit grinder outputs + latest.json
+│       ├── outcome/      # Outcome grinder outputs + latest.json
+│       └── market/       # Market grinder outputs + latest.json
 └── cache/
     ├── universe_ohlcv.pkl      # Daily cache (~57 MB, 300 bars/ticker)
     ├── universe_ohlcv_5yr.pkl  # 5yr cache (~214 MB, avg 1,108 bars/ticker)
@@ -76,9 +83,10 @@ scripts/
 ├── classify_universe.py     # ETF classifier (quarterly, desktop-only)
 ├── fast_profiler.py         # FastProfiler for rapid example profiling
 ├── exit_grinder.py          # Step 6: TA exit management on examples ✅
-├── outcome_grinder.py       # Step 7: outcome signal identification (IN PROGRESS)
+├── outcome_grinder.py       # Step 7: Phase 1 exit filter + ADR gate, local-only, GrindStorage ✅
 ├── presignal_grinder.py     # Step 8: pre-signal refinement (NEW)
-└── environment_scorer.py    # Step 9: environment clustering for EV (NEW)
+├── environment_scorer.py    # Step 9: environment clustering for EV (NEW)
+└── migrate_grinds.py       # One-time migration to grinds/ storage structure ✅
 
 server.py                    # Railway API: 14+ endpoints, universe rebuild, grinder jobs, nightly append
 ```
@@ -109,11 +117,11 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 1 Load | ✅ Done | Data + TA knowledge loaded |
 | 2 Receive | ✅ Done | 23 examples with LSP data |
 | 3 Signal Grind (Phase 1) | ✅ Done | 9 conditions, 0.00% single-day pass rate, 11s at L3 |
-| 3 Signal Grind (Phase 2) | ✅ Done | beam=10000, best kept result: 368 signals across 5yr |
+| 3 Signal Grind (Phase 2) | ✅ Done | beam=10000, post-data-fix best: 576 signals across 5yr (41 conditions, peak 4/day, avg 1.4/day) |
 | 4 Backtest verification | ✅ Done | Signal prevalence + SPY overlay in frontend Historical tab |
 | 5 Backtest Runner | ✅ Done | `scripts/backtest_runner.py` — scan + charts + Railway upload |
 | **6 Exit Management Grind** | **✅ Done** | `scripts/exit_grinder.py` — 361 base exprs + bool aggregations (~74K total), local 5yr cache, ranked by median/avg % move. Best: ADX declining condition, median +40.5% move, 67% MFE capture, 34.5 avg bars. |
-| **7 Outcome Grind** | **🔨 In progress** | Phase 0: find example signal bars. Phase 1: exit filter + 1 ADR min move. Phase 2: segment expression grind. |
+| **7 Outcome Grind** | **🔨 Phase 1 done, needs investigation** | Phase 1 built: exit trigger + 1 ADR filter. 576 signals → 187 outcomes (32.7%). 3 examples failed (WING barely missed, ZIM wrong direction, FTAI no trigger). Results need investigation before Phase 2. |
 | **8 Pre-Signal Refinement** | **⬜ Not started** | Grind outcome vs non-outcome on pre-signal expressions → TOTAL SIGNALS |
 | **9 Environment Clustering** | **⬜ Not started** | OUTCOME ÷ TOTAL by market regime → EV |
 
@@ -186,29 +194,32 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 
 ## IMMEDIATE NEXT STEP
 
-**Step 7: Outcome Grind — 3 phases, built as separate blocks then chained**
+**Step 7: Outcome Grind — Investigate Phase 1 results, then Phase 2**
 
-### Phase 0: Find Example Signal Bars ⬜
-Run Step 3 signal conditions against each example ticker's history. Find the first bar that passes all conditions leading up to the entry. This gives the signal bar date for each example — the anchor point for all outcome analysis.
+### Phase 1 Results (2026-02-26) — NEEDS INVESTIGATION ⚠️
 
-**Needs:** Step 3 signal conditions (pyramid_results_dtss.json from local machine)
+576 signals → 187 outcomes (32.7%), 373 sub-ADR (64.8%), 12 no trigger, 4 errors.
 
-### Phase 1: Base Filter — Exit Triggered + 1 ADR Minimum ⬜
-Apply Step 6 exit conditions to all 368 signals' post-signal bars. Two requirements:
-1. Exit condition triggers on forward bars
-2. Exit bar close ≥ 1 ADR below signal bar close (shorts) / above (longs)
+**3 examples failed:**
+- WING 2024-09-23: 0.96 ADR at exit (barely missed 1.0 threshold)
+- ZIM 2024-07-01: -1.78 ADR at exit (went wrong direction at trigger point)
+- FTAI 2025-01-08: exit condition never triggered in 120 bars
 
-Both must pass. Trims obvious garbage before the expensive grind.
+**Investigate:**
+1. Are these 3 examples legitimate failures (exit condition doesn't fit them) or measurement bugs?
+2. The exit grind was run on 20 examples — were WING/ZIM/FTAI in that set?
+3. Does the ADX declining computation in outcome_grinder match exit_compute.py exactly?
+4. Is the entry_high reference price correct for move measurement? (Short: entry_high - exit_close)
 
-**Needs:** Step 3 signals (368) + Step 6 exit results (exit_grind_dtss.json from local machine)
+**After investigation:** If results are valid, proceed to Phase 2 (segment expression grind). If bugs found, fix and re-run.
 
 ### Phase 2: Outcome Segment Expression Grinder ⬜
 Brute force expression matrix on signal-to-exit segments.
-- **Positives:** Examples measured from signal bar (Phase 0) forward
-- **Universe:** All 368 signals measured from signal bar forward
+- **Positives:** Examples measured from signal bar forward
+- **Universe:** All 576 signals (or outcomes from Phase 1) measured from signal bar forward
 - **Expression library:** NEW generic segment expressions (move quality, conviction, tradeability). Not the same as Step 3 or Step 6 libraries. Informed by ta_knowledge.md. Works across all setup types.
 
-**Needs:** Phase 0 + Phase 1 results + new outcome expression library (to be designed)
+**Needs:** Phase 1 investigation complete + new outcome expression library (to be designed)
 
 ---
 
@@ -220,8 +231,8 @@ Brute force expression matrix on signal-to-exit segments.
 **What it does:** Loads examples from Railway, fetches OHLCV, computes 220 base expressions at every forward bar, tests ~3,800 conditions (expr × threshold × direction), filters for 100% trigger rate, ranks by floor capture efficiency. Results show % move (entry high → exit close) + ADR captured per example.
 
 ### Step 7: Outcome Grind 🔨
-**What:** Sort the 368 signals into clean tradeable moves vs junk. "Was this a real move worth being in?"
-**Input:** Step 3 signals (368) + Step 6 exit conditions + validated examples
+**What:** Sort the 576 signals into clean tradeable moves vs junk. "Was this a real move worth being in?"
+**Input:** Step 3 signals (576) + Step 6 exit conditions + validated examples
 **How:** Phase 0: Find example signal bars (run Step 3 conditions on example tickers). Phase 1: Exit filter + 1 ADR minimum move from signal bar close. Phase 2: Brute force segment expression grinder — examples as positives, all signals as universe, NEW segment expression library analyzing signal-to-exit move quality.
 **Output:** OUTCOME SIGNALS — confirmed clean, tradeable moves matching example behavior.
 **Script:** `scripts/outcome_grinder.py` (partial start exists, needs Phase 0 + Phase 1 update + Phase 2 build)
