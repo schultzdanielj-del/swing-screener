@@ -11,6 +11,10 @@ high = df['high'].values
 low = df['low'].values
 close = df['close'].values
 
+# Debug: show structure
+print(f"Index dtype: {df.index.dtype}, columns: {list(df.columns[:8])}")
+print(f"First 3 rows:\n{df.head(3)}\n")
+
 adx7 = _compute_adx(high, low, close, 7)
 
 # ADX declining: today < 3 bars ago (same as outcome_grinder)
@@ -25,8 +29,9 @@ window = 10
 count_true_10[window-1:] = cumsum[window-1:] - np.concatenate([[0], cumsum[:n-window]])
 
 # Map to dates
-vals = pd.Series(count_true_10, index=df.index)
-mask = df.index >= '2025-01-08'
+date_col = df['date'] if 'date' in df.columns else df.index
+vals = pd.Series(count_true_10, index=date_col)
+mask = date_col >= '2025-01-08'
 bars_after = mask.sum()
 exit_after = vals[mask].head(125)
 below_3 = exit_after[exit_after < 3.0]
