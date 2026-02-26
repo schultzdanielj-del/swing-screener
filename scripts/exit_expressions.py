@@ -270,9 +270,9 @@ def generate_exit_expressions():
         exprs.append({"name": f"up_vol_ratio_{window}b", "category": "volume_character",
                        "compute": {"op": "up_vol_ratio_rolling", "period": window}})
         exprs.append({"name": f"down_vol_ratio_{window}b", "category": "volume_character",
-                       "compute": {"op": "down_vol_ratio_rolling", "period": window}})
+                       "compute": {"op": "down_vol_ratio_rolling", "window": window}})
         exprs.append({"name": f"vol_trend_{window}b", "category": "volume_character",
-                       "compute": {"op": "vol_trend_rolling", "period": window}})
+                       "compute": {"op": "vol_trend_rolling", "window": window}})
         exprs.append({"name": f"obv_slope_{window}b", "category": "volume_character",
                        "compute": {"op": "obv_slope", "period": window}})
 
@@ -324,7 +324,7 @@ def generate_exit_expressions():
         exprs.append({"name": f"atr_ratio_vs_entry_{window}b", "category": "range_compression",
                        "compute": {"op": "atr_ratio_vs_entry", "period": 14, "offset": window}})
         exprs.append({"name": f"range_contracting_{window}b", "category": "range_compression",
-                       "compute": {"op": "range_contracting", "period": window}})
+                       "compute": {"op": "range_contracting", "window": window}})
         exprs.append({"name": f"inside_bar_count_{window}b", "category": "range_compression",
                        "compute": {"op": "inside_bar_count", "period": window}})
 
@@ -362,9 +362,10 @@ def generate_exit_expressions():
         exprs.append({"name": f"move_per_bar_{norm}", "category": "time",
                        "compute": {"op": "move_per_bar", "normalizer": norm}})
     # Velocity change (acceleration/deceleration of the move)
-    for window in [3, 5, 10]:
-        exprs.append({"name": f"velocity_change_{window}b", "category": "time",
-                       "compute": {"op": "velocity_change", "period": window}})
+    exprs.append({"name": "velocity_accelerating", "category": "time",
+                   "compute": {"op": "velocity_change", "direction": "increasing"}})
+    exprs.append({"name": "velocity_decelerating", "category": "time",
+                   "compute": {"op": "velocity_change", "direction": "decreasing"}})
 
     # ═══════════════════════════════════════════════════════════
     # 12. RELATIVE STRENGTH — stock vs SPY
