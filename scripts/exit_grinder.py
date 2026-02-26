@@ -854,6 +854,11 @@ def main():
         print(f"  Triggers on {best.examples_triggered}/{len(examples)} examples")
         print(f"  Floor % move: {best.floor_pct_move:+.2f}%")
         print(f"  Median % move: {best.median_pct_move:+.2f}%")
+        print(f"  Avg % move: {best.avg_pct_move:+.2f}%")
+        print(f"  Median capture eff: {best.median_capture_eff:.2f} ({best.median_capture_eff*100:.0f}% of MFE)")
+        valid_effs = [e for e in best.capture_effs if not np.isnan(e)]
+        avg_eff = float(np.mean(valid_effs)) if valid_effs else 0
+        print(f"  Avg capture eff: {avg_eff:.2f} ({avg_eff*100:.0f}% of MFE)")
         print(f"  Floor capture eff: {best.floor_capture_eff:.2f}")
         print(f"  Avg bars to exit: {best.avg_bars_to_exit:.1f}")
         print(f"{'='*80}")
