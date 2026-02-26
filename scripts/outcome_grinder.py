@@ -2,8 +2,9 @@
 Outcome Grinder — Step 7 of ANALYSIS_SYSTEM.md
 
 Phase 1: Apply Step 6 exit condition to all pyramid signals.
+         Measures signal bar close → exit bar close.
          Two requirements for OUTCOME classification:
-         1. Exit condition triggers within max_forward bars
+         1. Exit condition triggers within max_forward bars of signal
          2. Move at exit is >= min_adr ADRs in the setup direction
 
 Input:
@@ -332,8 +333,6 @@ def _eval_signal_batch(args):
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     dates_array = df["date"].values
-    # Convert to string format for matching against pyramid JSON dates
-    # Cache has pandas Timestamps, pyramid has "YYYY-MM-DD" strings
     if len(dates_array) > 0 and hasattr(dates_array[0], 'strftime'):
         dates_str = np.array([str(d)[:10] for d in dates_array])
     elif len(dates_array) > 0 and isinstance(dates_array[0], str):
@@ -350,13 +349,13 @@ def _eval_signal_batch(args):
     exit_series = _compute_exit_series(engine, exit_cond["expr_name"])
     n = len(close)
 
-    # Pre-compute ADR14 using ExpressionEngine (same as exit grinder)
+    # ADR14 using ExpressionEngine (same as exit grinder)
     adr14 = engine._adr(14).values
     daily_range = high - low
 
     # Process each signal date
     for sig_date, is_example in zip(sig_dates, is_example_flags):
-        # Find signal bar by date — positional index
+        # Find signal bar by date
         date_mask = dates_str == sig_date
         idx_matches = np.where(date_mask)[0]
         if len(idx_matches) == 0:
@@ -367,16 +366,20 @@ def _eval_signal_batch(args):
             continue
 
         sig_idx = int(idx_matches[0])
-        entry_idx = sig_idx + 1  # entry = next trading day (iloc, not date math)
 
-        if entry_idx >= n:
-            results.append({
-                "ticker": ticker, "date": sig_date,
-                "is_example": is_example, "status": "no_entry_bar",
-            })
-            continue
+        # All measurements from signal bar close
+        sig_close = close[sig_idx]
+        adr_at_signal = adr14[sig_idx]
+        if np.isnan(adr_at_signal) or adr_at_signal <= 0:
+            adr_at_signal = np.nanmean(daily_range[max(0, sig_idx-14):sig_idx])
+            if np.isnan(adr_at_signal) or adr_at_signal <= 0:
+                results.append({
+                    "ticker": ticker, "date": sig_date,
+                    "is_example": is_example, "status": "no_adr",
+                })
+                continue
 
-        bars_available = n - entry_idx - 1
+        bars_available = n - sig_idx - 1
         if bars_available < 5:
             results.append({
                 "ticker": ticker, "date": sig_date,
@@ -387,22 +390,7 @@ def _eval_signal_batch(args):
 
         actual_forward = min(max_forward, bars_available)
 
-        # Entry reference price
-        entry_high = high[entry_idx]
-        entry_close = close[entry_idx]
-        entry_low = low[entry_idx]
-        adr_at_entry = adr14[entry_idx] if not np.isnan(adr14[entry_idx]) else adr14[sig_idx]
-        if np.isnan(adr_at_entry) or adr_at_entry <= 0:
-            adr_at_entry = np.nanmean(daily_range[max(0, entry_idx-14):entry_idx])
-            if np.isnan(adr_at_entry) or adr_at_entry <= 0:
-                results.append({
-                    "ticker": ticker, "date": sig_date,
-                    "is_example": is_example, "status": "no_adr",
-                })
-                continue
-
-        # === CHECK 1: Exit condition triggers? ===
-        # adx_7_declining_count_true_10b {direction} {threshold}
+        # === EXIT CONDITION: scan forward from signal bar + 1 ===
         exit_dir = exit_cond["direction"]
         threshold = exit_cond["threshold"]
 
@@ -410,9 +398,8 @@ def _eval_signal_batch(args):
         trigger_bar_offset = -1
         trigger_abs_idx = -1
 
-        # Scan forward bars (starting from entry bar + 1)
         for offset in range(1, actual_forward + 1):
-            abs_idx = entry_idx + offset
+            abs_idx = sig_idx + offset
             val = exit_series[abs_idx]
             if np.isnan(val):
                 continue
@@ -438,15 +425,14 @@ def _eval_signal_batch(args):
                 break
 
         if not triggered:
-            # Compute move at end of window for reporting
-            end_idx = entry_idx + actual_forward
+            end_idx = sig_idx + actual_forward
             end_close = close[end_idx]
             if setup_direction == "short":
-                pct_move = (entry_high - end_close) / entry_high * 100
-                adr_move = (entry_high - end_close) / adr_at_entry
+                pct_move = (sig_close - end_close) / sig_close * 100
+                adr_move = (sig_close - end_close) / adr_at_signal
             else:
-                pct_move = (end_close - entry_low) / entry_low * 100
-                adr_move = (end_close - entry_low) / adr_at_entry
+                pct_move = (end_close - sig_close) / sig_close * 100
+                adr_move = (end_close - sig_close) / adr_at_signal
 
             results.append({
                 "ticker": ticker, "date": sig_date,
@@ -457,28 +443,28 @@ def _eval_signal_batch(args):
             })
             continue
 
-        # Exit triggered — compute move at exit bar
+        # Exit triggered — measure signal bar close to exit bar close
         exit_close = close[trigger_abs_idx]
         if setup_direction == "short":
-            pct_move = (entry_high - exit_close) / entry_high * 100
-            adr_move = (entry_high - exit_close) / adr_at_entry
+            pct_move = (sig_close - exit_close) / sig_close * 100
+            adr_move = (sig_close - exit_close) / adr_at_signal
         else:
-            pct_move = (exit_close - entry_low) / entry_low * 100
-            adr_move = (exit_close - entry_low) / adr_at_entry
+            pct_move = (exit_close - sig_close) / sig_close * 100
+            adr_move = (exit_close - sig_close) / adr_at_signal
 
-        # === CHECK 2: Move >= min_adr? ===
+        # Outcome = exit triggered + move >= min_adr in correct direction
         is_outcome = adr_move >= min_adr
 
-        # Compute MFE for reporting
-        fwd_slice = slice(entry_idx, trigger_abs_idx + 1)
+        # MFE: signal bar to exit trigger bar
+        fwd_slice = slice(sig_idx, trigger_abs_idx + 1)
         if setup_direction == "short":
             mfe_price = float(np.min(low[fwd_slice]))
-            mfe_pct = (entry_high - mfe_price) / entry_high * 100
-            mfe_adr = (entry_high - mfe_price) / adr_at_entry
+            mfe_pct = (sig_close - mfe_price) / sig_close * 100
+            mfe_adr = (sig_close - mfe_price) / adr_at_signal
         else:
             mfe_price = float(np.max(high[fwd_slice]))
-            mfe_pct = (mfe_price - entry_low) / entry_low * 100
-            mfe_adr = (mfe_price - entry_low) / adr_at_entry
+            mfe_pct = (mfe_price - sig_close) / sig_close * 100
+            mfe_adr = (mfe_price - sig_close) / adr_at_signal
 
         capture_eff = pct_move / mfe_pct if mfe_pct > 0 else 0.0
 
@@ -495,7 +481,7 @@ def _eval_signal_batch(args):
             "mfe_pct": round(float(mfe_pct), 2),
             "mfe_adr": round(float(mfe_adr), 2),
             "capture_eff": round(float(capture_eff), 4),
-            "entry_high": round(float(entry_high), 2),
+            "sig_close": round(float(sig_close), 2),
             "exit_close": round(float(exit_close), 2),
         })
 
