@@ -216,14 +216,16 @@ def _build_one_example_matrix(args):
 
     result = {}
     failed = 0
+    failed_names = []
     for expr in expressions:
         try:
             series = engine.compute(expr["compute"])
             result[expr["name"]] = series
-        except Exception:
+        except Exception as e:
             failed += 1
+            failed_names.append((expr["name"], str(e)))
 
-    return ex_dict["ticker"], result, failed, len(expressions)
+    return ex_dict["ticker"], result, failed, len(expressions), failed_names
 
 
 def build_all_matrices_parallel(examples: list, expressions: list,
@@ -250,6 +252,7 @@ def build_all_matrices_parallel(examples: list, expressions: list,
     matrices = [None] * len(examples)
     ticker_to_idx = {ex.ticker + ex.entry_date: i for i, ex in enumerate(examples)}
 
+    all_failed_names = {}
     with ProcessPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(_build_one_example_matrix, task): task[0]["ticker"]
                    for task in tasks}
@@ -257,7 +260,7 @@ def build_all_matrices_parallel(examples: list, expressions: list,
         for future in as_completed(futures):
             ticker_name = futures[future]
             try:
-                ticker, matrix, failed, total = future.result()
+                ticker, matrix, failed, total, failed_names = future.result()
                 # Find matching example
                 for i, ex in enumerate(examples):
                     if ex.ticker == ticker and matrices[i] is None:
@@ -268,12 +271,21 @@ def build_all_matrices_parallel(examples: list, expressions: list,
                 print(f"  [{done}/{len(examples)}] {ticker:8s} — "
                       f"{computed}/{total} computed" +
                       (f" ({failed} failed)" if failed else ""))
+                # Track failed names (first example's failures are representative)
+                if failed_names and not all_failed_names:
+                    all_failed_names = {name: err for name, err in failed_names}
             except Exception as e:
                 done += 1
                 print(f"  [{done}/{len(examples)}] {ticker_name:8s} — ERROR: {e}")
 
     elapsed = time.time() - t0
     print(f"Matrix build: {elapsed:.1f}s ({workers} workers)")
+
+    if all_failed_names:
+        print(f"\n  ⚠ {len(all_failed_names)} expressions failed:")
+        for name, err in sorted(all_failed_names.items()):
+            print(f"    ✗ {name}: {err}")
+
     return matrices
 
 
