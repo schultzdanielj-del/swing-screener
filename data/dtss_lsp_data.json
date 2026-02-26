@@ -1,0 +1,163 @@
+[
+  {
+    "ticker": "AAOI",
+    "entry_date": "2024-02-16",
+    "example_id": 43,
+    "date": "2024-01-10",
+    "price": 22.85
+  },
+  {
+    "ticker": "ASST",
+    "entry_date": "2025-09-10",
+    "example_id": 20,
+    "date": "2025-05-22",
+    "price": 268.4
+  },
+  {
+    "ticker": "BETR",
+    "entry_date": "2025-10-24",
+    "example_id": 24,
+    "date": "2025-09-22",
+    "price": 94.06
+  },
+  {
+    "ticker": "BRK-B",
+    "entry_date": "2024-11-27",
+    "example_id": 37,
+    "date": "2024-09-04",
+    "price": 484.82
+  },
+  {
+    "ticker": "BTBT",
+    "entry_date": "2025-10-20",
+    "example_id": 25,
+    "date": "2025-07-18",
+    "price": 4.49
+  },
+  {
+    "ticker": "CELH",
+    "entry_date": "2024-05-22",
+    "example_id": 39,
+    "date": "2024-03-14",
+    "price": 99.62
+  },
+  {
+    "ticker": "CVNA",
+    "entry_date": "2023-09-15",
+    "example_id": 45,
+    "date": "2023-07-20",
+    "price": 57.19
+  },
+  {
+    "ticker": "CVNA",
+    "entry_date": "2026-01-23",
+    "example_id": 26,
+    "date": "2025-12-12",
+    "price": 485.33
+  },
+  {
+    "ticker": "FTAI",
+    "entry_date": "2025-01-10",
+    "example_id": 35,
+    "date": "2024-11-22",
+    "price": 175.45
+  },
+  {
+    "ticker": "GAP",
+    "entry_date": "2024-06-03",
+    "example_id": 40,
+    "date": "2024-03-21",
+    "price": 27.0
+  },
+  {
+    "ticker": "GH",
+    "entry_date": "2025-05-01",
+    "example_id": 32,
+    "date": "2025-01-30",
+    "price": 50.89
+  },
+  {
+    "ticker": "GRPN",
+    "entry_date": "2025-08-07",
+    "example_id": 29,
+    "date": "2025-06-20",
+    "price": 41.26
+  },
+  {
+    "ticker": "IONQ",
+    "entry_date": "2025-10-14",
+    "example_id": 27,
+    "date": "2025-10-07",
+    "price": 82.97
+  },
+  {
+    "ticker": "LTH",
+    "entry_date": "2025-05-08",
+    "example_id": 30,
+    "date": "2025-02-20",
+    "price": 33.64
+  },
+  {
+    "ticker": "MSFT",
+    "entry_date": "2025-10-28",
+    "example_id": 28,
+    "date": "2025-07-31",
+    "price": 553.5
+  },
+  {
+    "ticker": "NOW",
+    "entry_date": "2023-09-11",
+    "example_id": 46,
+    "date": "2023-07-19",
+    "price": 122.87
+  },
+  {
+    "ticker": "ROOT",
+    "entry_date": "2024-05-01",
+    "example_id": 41,
+    "date": "2024-04-09",
+    "price": 85.99
+  },
+  {
+    "ticker": "SERV",
+    "entry_date": "2025-01-06",
+    "example_id": 36,
+    "date": "2024-07-30",
+    "price": 24.09
+  },
+  {
+    "ticker": "SMMT",
+    "entry_date": "2025-04-25",
+    "example_id": 31,
+    "date": "2024-09-16",
+    "price": 33.89
+  },
+  {
+    "ticker": "SOUN",
+    "entry_date": "2023-06-29",
+    "example_id": 44,
+    "date": "2023-02-09",
+    "price": 4.95
+  },
+  {
+    "ticker": "VUZI",
+    "entry_date": "2025-01-06",
+    "example_id": 34,
+    "date": "2024-12-27",
+    "price": 5.49
+  },
+  {
+    "ticker": "WING",
+    "entry_date": "2024-09-24",
+    "example_id": 33,
+    "date": "2024-06-28",
+    "price": 428.52
+  },
+  {
+    "ticker": "ZIM",
+    "entry_date": "2024-07-02",
+    "example_id": 38,
+    "date": "2024-06-05",
+    "price": 14.89
+  }
+]
