@@ -30,7 +30,7 @@ count_true_10[window-1:] = cumsum[window-1:] - np.concatenate([[0], cumsum[:n-wi
 
 # Map to dates
 dates = df['date'].values
-mask = dates >= '2025-01-08'
+mask = dates >= np.datetime64('2025-01-08')
 bars_after = mask.sum()
 exit_after = pd.Series(count_true_10[mask][:125], index=dates[mask][:125])
 below_3 = exit_after[exit_after < 3.0]
