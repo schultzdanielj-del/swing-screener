@@ -112,7 +112,7 @@ server.py                    # Railway API: 14+ endpoints, universe rebuild, gri
 | 3 Signal Grind (Phase 2) | ✅ Done | beam=10000, best kept result: 368 signals across 5yr |
 | 4 Backtest verification | ✅ Done | Signal prevalence + SPY overlay in frontend Historical tab |
 | 5 Backtest Runner | ✅ Done | `scripts/backtest_runner.py` — scan + charts + Railway upload |
-| **6 Exit Management Grind** | **✅ Done** | `scripts/exit_grinder.py` — 220 base exprs × thresholds × directions, scored by floor capture eff, % move shown |
+| **6 Exit Management Grind** | **✅ Done** | `scripts/exit_grinder.py` — 361 base exprs + bool aggregations (~74K total), local 5yr cache, ranked by median/avg % move. Best: ADX declining condition, median +40.5% move, 67% MFE capture, 34.5 avg bars. |
 | **7 Outcome Grind** | **🔨 In progress** | Phase 0: find example signal bars. Phase 1: exit filter + 1 ADR min move. Phase 2: segment expression grind. |
 | **8 Pre-Signal Refinement** | **⬜ Not started** | Grind outcome vs non-outcome on pre-signal expressions → TOTAL SIGNALS |
 | **9 Environment Clustering** | **⬜ Not started** | OUTCOME ÷ TOTAL by market regime → EV |
@@ -262,7 +262,7 @@ Brute force expression matrix on signal-to-exit segments.
 | 4 | **HTF setup** | Third setup type. Collect and load examples. |
 | 5 | **IPO break setup** | CRWV-style IPO breakout of highest AVWAP. Short history stocks. |
 | 6 | **Universal pivot expressions** | Detect all D1 pivots with prominence, generate expressions for spiderweb. |
-| 7 | **Intermediate pyramid tiers** | Add 2yr/3yr tiers between 1yr and 5yr for earlier noise elimination. |
+| 8 | **Multi-stage exit grinder** | Two-pass exit grinder: Pass 1 finds trim condition (fires when trade captures ~40-50% of eventual MFE), Pass 2 finds final exit condition (current grinder). Output = trim + final exit pair. Pushes MFE capture from ~67% toward 80%+. Same grinder architecture, just different target bars per pass. |
 
 ---
 
