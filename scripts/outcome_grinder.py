@@ -601,7 +601,7 @@ def main():
 
         tasks.append((
             ticker, sig_dates, is_example_flags,
-            {"direction": exit_cond["direction"], "threshold": exit_cond["threshold"]},
+            {"expr_name": exit_cond["expr_name"], "direction": exit_cond["direction"], "threshold": exit_cond["threshold"]},
             args.direction, args.max_forward, args.min_adr, ohlcv_data,
         ))
 
@@ -724,6 +724,12 @@ def main():
 
     # ── 6. MANDATORY VALIDATION: all examples must be outcomes ──
     failed = []
+    if len(example_outcomes) < len(example_set):
+        # Some examples didn't make it to outcome status
+        outcome_keys = set((r["ticker"], r["date"]) for r in example_outcomes)
+        for key in example_set:
+            if key not in outcome_keys:
+                failed.append(f"{key[0]} {key[1]} — not classified as outcome")
     if example_sub_adr:
         for r in example_sub_adr:
             failed.append(f"{r['ticker']} {r['date']} — sub-ADR ({r['adr_move']:.2f})")
