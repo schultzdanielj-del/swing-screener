@@ -29,11 +29,10 @@ window = 10
 count_true_10[window-1:] = cumsum[window-1:] - np.concatenate([[0], cumsum[:n-window]])
 
 # Map to dates
-date_col = df['date'] if 'date' in df.columns else df.index
-vals = pd.Series(count_true_10, index=date_col)
-mask = date_col >= '2025-01-08'
+dates = df['date'].values
+mask = dates >= '2025-01-08'
 bars_after = mask.sum()
-exit_after = vals[mask].head(125)
+exit_after = pd.Series(count_true_10[mask][:125], index=dates[mask][:125])
 below_3 = exit_after[exit_after < 3.0]
 
 print(f"FTAI — bars after 2025-01-08: {bars_after}")
@@ -46,4 +45,5 @@ else:
     print(f"Min value in window: {exit_after.min():.2f}")
 
 print(f"\nOHLCV after signal (first 20 bars):")
-print(df[mask].head(20)[['open','high','low','close']].to_string())
+ohlcv = df[mask].head(20)[['date','open','high','low','close']]
+print(ohlcv.to_string(index=False))
