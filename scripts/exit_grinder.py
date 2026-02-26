@@ -43,7 +43,7 @@ from scripts.exit_expressions import (
 # Config
 # ============================================================
 RAILWAY_URL = "https://web-production-e3025.up.railway.app"
-MAX_FORWARD_DEFAULT = 252  # bars after entry to analyze (~1 year)
+MAX_FORWARD_DEFAULT = 120  # bars after entry to analyze (~1 quarter)
 DEFAULT_WORKERS = os.cpu_count() or 8
 
 # Local cache paths (same as pyramid_grinder)
