@@ -25,6 +25,7 @@ import time
 import json
 import numpy as np
 import pandas as pd
+import pickle
 import requests
 from dataclasses import dataclass, field
 from typing import Optional
@@ -42,9 +43,12 @@ from scripts.exit_expressions import (
 # Config
 # ============================================================
 RAILWAY_URL = "https://web-production-e3025.up.railway.app"
-MAX_LOOKBACK = 1500  # bars before entry for MA warmup
 MAX_FORWARD_DEFAULT = 120  # bars after entry to analyze
 DEFAULT_WORKERS = os.cpu_count() or 8
+
+# Local cache paths (same as pyramid_grinder)
+LOCAL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "local_runner")
+CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 
 
 # ============================================================
@@ -90,8 +94,22 @@ class ExitCandidate:
 # Data Loading
 # ============================================================
 
+def load_5yr_cache():
+    """Load 5-year OHLCV cache from local disk."""
+    path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+    if not os.path.exists(path):
+        path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
+    if not os.path.exists(path):
+        raise FileNotFoundError("No OHLCV cache found. Run cache_builder.py first.")
+    print(f"Loading 5yr OHLCV cache from {path}...")
+    with open(path, "rb") as f:
+        cache = pickle.load(f)
+    print(f"  {len(cache)} tickers loaded")
+    return cache
+
+
 def load_examples(setup_type: str) -> list:
-    """Load examples from Railway API."""
+    """Load examples from Railway API (metadata only — ticker + entry date)."""
     r = requests.get(f"{RAILWAY_URL}/api/examples/{setup_type}")
     r.raise_for_status()
     data = r.json()
@@ -100,34 +118,30 @@ def load_examples(setup_type: str) -> list:
     return examples
 
 
-def fetch_ticker_ohlcv(ticker: str, lookback: int = MAX_LOOKBACK) -> pd.DataFrame:
-    """Fetch OHLCV from Railway universe_ohlcv."""
-    r = requests.get(f"{RAILWAY_URL}/api/ohlcv/bulk/{ticker}",
-                     params={"lookback": lookback})
-    r.raise_for_status()
-    data = r.json()
-    if "error" in data:
-        raise ValueError(f"API error for {ticker}: {data['error']}")
-    rows = data["results"]
-    if not rows:
-        raise ValueError(f"No OHLCV data for {ticker}")
-    df = pd.DataFrame(rows)
-    df = df.sort_values("date").reset_index(drop=True)
-    for col in ["open", "high", "low", "close", "volume"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df
-
-
 def build_example_data(example: dict, direction: str, max_forward: int,
-                       spy_df: pd.DataFrame = None) -> Optional[ExampleData]:
-    """Load OHLCV and build ExampleData for one example."""
+                       universe_cache: dict, spy_df: pd.DataFrame = None) -> Optional[ExampleData]:
+    """Build ExampleData using local 5yr OHLCV cache."""
     ticker = example["ticker"]
     entry_date = example["entryDate"]
 
     try:
-        df = fetch_ticker_ohlcv(ticker, lookback=MAX_LOOKBACK)
+        df = universe_cache.get(ticker)
+        if df is None:
+            print(f"  SKIP {ticker} — not in 5yr cache")
+            return None
 
-        date_matches = df.index[df["date"] == entry_date].tolist()
+        df = df.copy()
+        if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+            df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date").reset_index(drop=True)
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        entry_dt = pd.to_datetime(entry_date)
+        date_matches = df.index[df["date"] == entry_dt].tolist()
+        if not date_matches:
+            # Try matching date string
+            date_matches = df.index[df["date"].dt.strftime("%Y-%m-%d") == entry_date].tolist()
         if not date_matches:
             print(f"  SKIP {ticker} — entry date {entry_date} not found")
             return None
@@ -727,21 +741,28 @@ def main():
     # 1. Load examples
     raw_examples = load_examples(args.setup)
 
-    # 2. Fetch SPY data
-    print("\nFetching SPY data...")
-    try:
-        spy_df = fetch_ticker_ohlcv("SPY", lookback=MAX_LOOKBACK)
-        print(f"  SPY: {len(spy_df)} bars")
-    except Exception as e:
-        print(f"  SPY fetch failed: {e}")
-        spy_df = None
+    # 2. Load 5yr OHLCV cache
+    universe_cache = load_5yr_cache()
 
-    # 3. Build ExampleData
+    # 3. Get SPY from cache
+    spy_df = universe_cache.get("SPY")
+    if spy_df is not None:
+        spy_df = spy_df.copy()
+        if not pd.api.types.is_datetime64_any_dtype(spy_df["date"]):
+            spy_df["date"] = pd.to_datetime(spy_df["date"])
+        spy_df = spy_df.sort_values("date").reset_index(drop=True)
+        for col in ["open", "high", "low", "close", "volume"]:
+            spy_df[col] = pd.to_numeric(spy_df[col], errors="coerce")
+        print(f"SPY: {len(spy_df)} bars from local cache")
+    else:
+        print("WARNING: SPY not in cache")
+
+    # 4. Build ExampleData
     print(f"\nBuilding example data...")
     examples = []
     for raw in raw_examples:
         print(f"  {raw['ticker']:8s} {raw['entryDate']}...", end="", flush=True)
-        ex = build_example_data(raw, args.direction, args.max_forward, spy_df)
+        ex = build_example_data(raw, args.direction, args.max_forward, universe_cache, spy_df)
         if ex:
             examples.append(ex)
             print(f" OK — {ex.n_forward} fwd bars, MFE={ex.mfe_pct:+.2f}%")
