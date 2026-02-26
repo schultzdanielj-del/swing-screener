@@ -27,8 +27,10 @@ def test_parity(setup="dtss", n_tickers=20):
     
     # Get example tickers from signal grind
     signal_data = gs.load("signal")
+    # Signal grind stores examples under "example_signals"
+    example_entries = signal_data.get("example_signals", signal_data.get("examples", []))
     example_tickers = list(set(
-        ex["ticker"] for ex in signal_data.get("examples", [])
+        ex.get("ticker", ex.get("Ticker", "")) for ex in example_entries
     ))
     
     # Test examples first, then pad with random tickers
