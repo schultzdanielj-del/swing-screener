@@ -215,12 +215,13 @@ def _compute_adx(high, low, close, period):
         ndi_arr[i] = ndi_arr[i-1] * (1 - alpha) + ndm[i] * alpha
 
     # DI+ and DI-
-    di_p = np.where(atr_arr > 0, 100 * pdi_arr / atr_arr, 0)
-    di_n = np.where(atr_arr > 0, 100 * ndi_arr / atr_arr, 0)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        di_p = np.where(atr_arr > 0, 100 * pdi_arr / atr_arr, 0)
+        di_n = np.where(atr_arr > 0, 100 * ndi_arr / atr_arr, 0)
 
-    # DX
-    di_sum = di_p + di_n
-    dx = np.where(di_sum > 0, 100 * np.abs(di_p - di_n) / di_sum, 0)
+        # DX
+        di_sum = di_p + di_n
+        dx = np.where(di_sum > 0, 100 * np.abs(di_p - di_n) / di_sum, 0)
 
     # ADX = Wilder smooth of DX
     adx_arr = np.full(n, np.nan)
@@ -255,6 +256,14 @@ def _eval_signal_batch(args):
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     dates_array = df["date"].values
+    # Convert to string format for matching against pyramid JSON dates
+    # Cache has pandas Timestamps, pyramid has "YYYY-MM-DD" strings
+    if len(dates_array) > 0 and hasattr(dates_array[0], 'strftime'):
+        dates_str = np.array([str(d)[:10] for d in dates_array])
+    elif len(dates_array) > 0 and isinstance(dates_array[0], str):
+        dates_str = np.array([d[:10] for d in dates_array])
+    else:
+        dates_str = np.array([str(d)[:10] for d in dates_array])
     high = df["high"].values.astype(np.float64)
     low = df["low"].values.astype(np.float64)
     close = df["close"].values.astype(np.float64)
@@ -282,7 +291,7 @@ def _eval_signal_batch(args):
     # Process each signal date
     for sig_date, is_example in zip(sig_dates, is_example_flags):
         # Find signal bar by date — positional index
-        date_mask = dates_array == sig_date
+        date_mask = dates_str == sig_date
         idx_matches = np.where(date_mask)[0]
         if len(idx_matches) == 0:
             results.append({
@@ -661,7 +670,7 @@ def main():
             "direction": exit_cond["direction"],
             "threshold": exit_cond["threshold"],
         },
-        "pyramid_source": os.path.basename(args.pyramid),
+        "pyramid_source": os.path.basename(args.pyramid) if args.pyramid else "grinds/latest",
         "summary": {
             "total_signals": len(signals),
             "outcomes": len(outcomes),
