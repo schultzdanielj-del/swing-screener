@@ -907,7 +907,10 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     if all_conditions:
         print(f"\n  Validating examples after D1...")
         if not validate_examples(example_dfs, all_conditions):
-            print("  ⚠ WARNING: Some examples fail D1 conditions!")
+            print("  ✗ FATAL: Examples fail D1 conditions. Aborting.")
+            print("  This should never happen — ranges are derived from examples.")
+            print("  Check data sources: examples and universe must use same OHLCV.")
+            return None
 
     # ══ HISTORICAL TIERS (T2-T6) ══
     for tier_name, n_bars, description in TIERS[1:]:
@@ -947,10 +950,16 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 print(f"    + [{c['category']:>18}] {c['name']}")
             print(f"  Peak: {tier_result.get('baseline_peak')} → {tier_result.get('final_peak')}/day")
 
-            # Validate
+            # Validate — HARD GATE: if examples fail, roll back this tier's conditions
             print(f"\n  Validating examples after {tier_name}...")
             if not validate_examples(example_dfs, all_conditions):
-                print(f"  ⚠ WARNING: Some examples fail after {tier_name}!")
+                print(f"  ✗ ROLLING BACK {tier_name}: {len(new_conds)} conditions dropped (examples failed)")
+                # Remove the conditions we just added
+                for _ in new_conds:
+                    all_conditions.pop()
+                tier_results[tier_name]["conditions_added"] = 0
+                tier_results[tier_name]["rolled_back"] = True
+                new_conds = []
         else:
             final_peak = tier_result.get("final_peak") or tier_result.get("baseline_peak", "?")
             if tier_result.get("skipped"):
