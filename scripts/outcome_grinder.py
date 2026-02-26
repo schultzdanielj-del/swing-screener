@@ -234,6 +234,80 @@ def _compute_adx(high, low, close, period):
     return adx_arr
 
 
+def _compute_exit_series(engine, expr_name):
+    """Compute full-history exit expression series using ExpressionEngine.
+    
+    Parses expression names like 'adx_7_declining_count_true_10b' and computes
+    using the same indicator functions as the exit grinder (ExpressionEngine).
+    This ensures exact numerical parity across all grinders.
+    """
+    import re
+    
+    # Parse: {indicator}_{period}_{bool_condition}_{agg_type}_{window}b
+    # Example: adx_7_declining_count_true_10b
+    m = re.match(r'^(\w+?)_(\d+)_(\w+?)_(count_true|pct_true|since_true|true_in_row)_(\d+)b$', expr_name)
+    if not m:
+        raise ValueError(f"Cannot parse exit expression name: {expr_name}")
+    
+    indicator = m.group(1)    # adx
+    period = int(m.group(2))  # 7
+    bool_cond = m.group(3)    # declining
+    agg_type = m.group(4)     # count_true
+    agg_window = int(m.group(5))  # 10
+    
+    # Get indicator series from ExpressionEngine (same as exit grinder)
+    if indicator == "adx":
+        base_vals = engine._adx(period).values
+    elif indicator == "rsi":
+        base_vals = engine._rsi(period).values
+    elif indicator == "cci":
+        base_vals = engine._cci(period).values
+    elif indicator == "stoch":
+        base_vals = engine._stoch(period).values
+    else:
+        raise ValueError(f"Unsupported indicator in exit expression: {indicator}")
+    
+    # Compute boolean condition
+    n = len(base_vals)
+    bool_vals = np.zeros(n)
+    if bool_cond == "declining":
+        bool_vals[3:] = (base_vals[3:] < base_vals[:-3]).astype(float)
+    elif bool_cond == "rising":
+        bool_vals[3:] = (base_vals[3:] > base_vals[:-3]).astype(float)
+    else:
+        raise ValueError(f"Unsupported boolean condition: {bool_cond}")
+    
+    # Compute aggregation on full history
+    result = np.full(n, np.nan)
+    if agg_type == "count_true":
+        cumsum = np.cumsum(bool_vals)
+        result[agg_window-1:] = cumsum[agg_window-1:] - np.concatenate([[0], cumsum[:n-agg_window]])
+    elif agg_type == "pct_true":
+        cumsum = np.cumsum(bool_vals)
+        result[agg_window-1:] = (cumsum[agg_window-1:] - np.concatenate([[0], cumsum[:n-agg_window]])) / agg_window
+    elif agg_type == "since_true":
+        bars = 0
+        found = False
+        for i in range(n):
+            if bool_vals[i] > 0.5:
+                found = True
+                bars = 0
+            elif found:
+                bars += 1
+            if found:
+                result[i] = float(bars)
+    elif agg_type == "true_in_row":
+        streak = 0
+        for i in range(n):
+            if bool_vals[i] > 0.5:
+                streak += 1
+            else:
+                streak = 0
+            result[i] = float(streak)
+    
+    return result
+
+
 def _eval_signal_batch(args):
     """Evaluate exit condition + ADR filter on a batch of signals for one ticker.
 
@@ -246,6 +320,8 @@ def _eval_signal_batch(args):
         max_forward, min_adr, ohlcv_data = args
 
     import numpy as np
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     results = []
 
@@ -268,25 +344,15 @@ def _eval_signal_batch(args):
     low = df["low"].values.astype(np.float64)
     close = df["close"].values.astype(np.float64)
 
-    # Pre-compute ADX(7) for the full ticker history
-    adx7 = _compute_adx(high, low, close, 7)
+    # Compute exit expression using ExpressionEngine (same as exit grinder)
+    from scripts.expression_engine import ExpressionEngine
+    engine = ExpressionEngine(df)
+    exit_series = _compute_exit_series(engine, exit_cond["expr_name"])
+    n = len(close)
 
-    # Pre-compute ADX declining boolean: ADX(7) today < ADX(7) 3 bars ago
-    n = len(adx7)
-    adx_declining = np.zeros(n)
-    adx_declining[3:] = (adx7[3:] < adx7[:-3]).astype(float)
-
-    # Pre-compute count_true rolling 10-bar window on adx_declining
-    cumsum = np.cumsum(adx_declining)
-    count_true_10 = np.full(n, np.nan)
-    window = 10
-    count_true_10[window-1:] = cumsum[window-1:] - np.concatenate([[0], cumsum[:n-window]])
-
-    # Pre-compute ADR14 at each bar
+    # Pre-compute ADR14 using ExpressionEngine (same as exit grinder)
+    adr14 = engine._adr(14).values
     daily_range = high - low
-    adr14 = np.full(n, np.nan)
-    dr_cumsum = np.cumsum(daily_range)
-    adr14[13:] = (dr_cumsum[13:] - np.concatenate([[0], dr_cumsum[:n-14]])) / 14.0
 
     # Process each signal date
     for sig_date, is_example in zip(sig_dates, is_example_flags):
@@ -347,7 +413,7 @@ def _eval_signal_batch(args):
         # Scan forward bars (starting from entry bar + 1)
         for offset in range(1, actual_forward + 1):
             abs_idx = entry_idx + offset
-            val = count_true_10[abs_idx]
+            val = exit_series[abs_idx]
             if np.isnan(val):
                 continue
             if exit_dir == "below" and val < threshold:
