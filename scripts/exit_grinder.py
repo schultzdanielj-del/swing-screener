@@ -596,7 +596,7 @@ def grind_exits(examples: list, all_matrices: list, expr_names: list,
     print(f"\nDone: tested {tested:,} conditions in {elapsed:.1f}s")
     print(f"Passed filter: {passed:,} candidates (>= {min_triggered} examples)")
 
-    all_candidates.sort(key=lambda c: (c.floor_capture_eff, c.median_pct_move), reverse=True)
+    all_candidates.sort(key=lambda c: (c.median_pct_move, c.avg_pct_move), reverse=True)
     return all_candidates[:top_n]
 
 
