@@ -328,58 +328,72 @@ This step is designed to be re-run as examples grow. At 23 examples, floor/media
 
 ---
 
-## Step 7: Outcome Grind — Which Signals Actually Ran?
+## Step 7: Outcome Grind — Which Signals Are Clean, Tradeable Moves?
 
-**Goal:** Split the Step 3 signals into OUTCOME signals (the move played out like the examples) and non-outcome signals (it didn't). Then grind for any additional shared behavior.
+**Goal:** Split the Step 3 signals into OUTCOME signals (clean, tradeable moves worth being in) and non-outcome signals (junk — didn't go far enough, choppy, untradeable). Uses a base filter followed by a brute force expression matrix grind against the signal-to-exit segment.
 
-### How It Works
+**Input requirements:**
+- Step 3 signal results (all signals with ticker + signal bar date)
+- Step 6 exit conditions + exit grind results
+- Validated examples with entry dates
 
-**Phase 1: Apply exit conditions as base filter**
-- Take all Step 3 signals (e.g., 201 across 5yr)
-- Run the Step 6 exit conditions on each signal's post-signal bars
-- Signals where the exit conditions trigger = the move happened = **candidate outcome signals**
-- Signals where exit conditions never trigger = the move didn't happen = **non-outcome signals**
+### Phase 0: Find Example Signal Bars
 
-**Phase 2: Grind for additional post-signal behavior**
-- **Universe:** All Step 3 signals (both candidate outcome and non-outcome)
-- **Examples:** The validated examples (post-entry bar data)
-- **Expressions:** Post-signal expression library — measured relative to the signal bar, looking forward. Delay-insensitive design (see below).
-- **Method:** The exit conditions from Step 6 are the starting filter. The grinder then searches for additional post-signal conditions that the examples share, further separating outcome signals from the rest.
+The examples have **entry dates** (discretionary — the trader chose when to enter), but the outcome grinder needs the **signal bar** — the first bar that passed all Step 3 conditions for each example ticker. These are not necessarily the same date.
 
-**Output: OUTCOME SIGNALS** — the subset of Step 3 signals where the move played out like the examples AND the post-signal behavior matches. These are confirmed runners.
+**Process:** Run Step 3 signal conditions against each example ticker's OHLCV history. Find the first bar that passes all conditions leading up to (and including) the scan candle before entry. This becomes the anchor point so examples and non-example signals are measured from the same starting point.
 
-### Post-Signal Expression Library
+**Why this matters:** Entry bars are varied and discretionary. The signal bar is mechanical and consistent. All outcome analysis must compare apples to apples — signal bar forward, not entry bar forward.
 
-Expressions measured relative to the signal bar, looking FORWARD. Designed to be **delay-insensitive** — they don't care whether the move started on bar 1 or bar 6 after the signal.
+**Output:** Per-example signal bar dates.
 
-**"Anytime within N bars" expressions** (robust to delayed entry):
-- Min close within bars 1-N relative to signal bar close, in ADR multiples
-- Max extension below 20 EMA reached within N bars, in ADR multiples
-- Did price close below key MAs at any point within N bars? (yes/no)
-- Max drawdown from signal bar high within N bars, in ADR
+### Phase 1: Base Filter — Exit Triggered + Minimum Move
 
-**Cumulative/rolling metrics** (naturally delay-insensitive):
-- % of bars with close below signal bar close within N bars
-- % of red (down) candles within N bars
-- Number of consecutive closes below 8 EMA within N bars
-- Down-bar volume sum vs up-bar volume sum within N bars
-- Count of lower-lows in bars 1-N
+Apply Step 6 exit conditions to all signals' post-signal bars. Two requirements to pass:
 
-**Structural destination metrics:**
-- Bars to first close below 8 EMA / 21 EMA / 50 SMA / 200 SMA
-- Did it make lower-high AND lower-low within N bars?
-- Extension velocity: ADR per bar of move
+1. **Exit condition triggers** on the forward bars
+2. **Minimum move threshold:** Exit bar close must be ≥ 1 ADR below signal bar close (shorts) or ≥ 1 ADR above signal bar close (longs). Uses ADR14 at the signal bar for normalization.
 
-**Distance metrics:**
-- Total move from signal bar high to lowest low within N bars, in ADR
-- Total move in % terms
-- Move captured below each MA
+Both must be true. This is a simple, fast filter that trims the obvious garbage — signals where the exit technically triggered but the move was negligible, or the stock just chopped around the signal level without going anywhere meaningful.
 
-### Why Delay-Insensitive Design
+Signals passing both = **candidate outcome signals** for Phase 2.
+Signals failing either = eliminated before the expensive grind.
 
-A signal might fire Monday night but the move doesn't start until Thursday. "Anytime within N bars" and cumulative expressions don't care — they capture the outcome regardless of exactly when it started. If the move happened, the expressions see it. If it didn't, they don't.
+### Phase 2: Outcome Expression Grinder
 
-### Script: `scripts/outcome_grinder.py` (NEW)
+Brute force expression matrix comparing validated examples vs all signals across their **signal-to-exit segments**. This is the core of Step 7.
+
+- **Positives (examples):** Validated examples, measured from their signal bar (found in Phase 0) forward through exit
+- **Universe:** All Step 3 signals, measured from signal bar forward through exit
+- **Expression library:** Generic **segment expressions** — characterize the quality of the move from signal to exit. NOT the same library as Step 3 (pre-signal snapshot) or Step 6 (exit detection at each bar). This library analyzes ranges of bars as a segment. Designed to work across all setup types — shorts and longs.
+- **Method:** Same pyramid grinder pattern — build matrices, grind for conditions that separate real runners from noise
+
+**What Phase 2 is asking:** "Was this a clean, tradeable move?" A real runner from signal to exit looks fundamentally different from a choppy mess that technically triggered the exit condition and passed the 1 ADR threshold. The grinder finds what separates them.
+
+### Outcome Segment Expression Library
+
+**This is a distinct expression library from Step 3 and Step 6.** It analyzes the entire signal-to-exit segment as a unit, not individual bars.
+
+Expressions are generic, normalized (ADR/ATR/%), and work across any setup type. Categories informed by ta_knowledge.md — to be designed after reading ta_knowledge.md.
+
+**Key design principle:** These expressions characterize *move quality and tradeability* across a range of bars. They answer: "how did price get from signal to exit?" Not "what does the chart look like at one point in time" (Step 3) or "is the move done yet" (Step 6).
+
+Categories TBD — will be built after reading ta_knowledge.md. Must capture move conviction, velocity, structural behavior, and tradeability without being bespoke to any single setup.
+
+### Output
+
+**OUTCOME SIGNALS** — the subset of Step 3 signals where:
+1. The exit condition triggered (Phase 1)
+2. The move reached at least 1 ADR from signal bar close (Phase 1)
+3. The signal-to-exit segment matches example behavior (Phase 2)
+
+These are confirmed clean, tradeable moves.
+
+### Assembly Note
+
+Phase 0, Phase 1, and Phase 2 are built as separate blocks/scripts first, then chained together in the final outcome grinder pipeline. Each block is independently testable and re-runnable.
+
+### Script: `scripts/outcome_grinder.py`
 
 ---
 
@@ -465,7 +479,7 @@ This is optional and may not be needed if Steps 6-9 already produce strong EV.
 | 4 | **Backtest** | Visual verification of signals across history |
 | 5 | **Backtest Runner** | Charts + Railway upload + Historical tab |
 | 6 | **Exit Management Grind** | ~4,000 post-signal expressions grind against examples' forward paths. Scored by floor capture efficiency (worst example). Output: **EXIT CONDITIONS** |
-| 7 | **Outcome Grind** | Apply exit conditions + post-signal behavior matching to signals. Output: **OUTCOME SIGNALS** |
+| 7 | **Outcome Grind** | Phase 0: find example signal bars. Phase 1: exit filter + 1 ADR minimum move. Phase 2: segment expression grind. Output: **OUTCOME SIGNALS** |
 | 8 | **Pre-Signal Refinement** | Grind outcome vs non-outcome on pre-signal expressions. New conditions added to Step 3. Output: **TOTAL SIGNALS** (tighter, same outcome signals) |
 | 9 | **Environment Clustering** | OUTCOME SIGNALS ÷ TOTAL SIGNALS by market regime. Output: **EV per environment** |
 
