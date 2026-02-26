@@ -1,26 +1,29 @@
 """
 Outcome Grinder — Step 7 of ANALYSIS_SYSTEM.md
 
-Phase 1: Apply Step 6 exit conditions to all Step 3 signals.
-         Signals where exit triggers = OUTCOME SIGNALS.
-         Signals where exit never triggers = NON-OUTCOME SIGNALS.
-
-Phase 2: (Future) Grind for additional post-signal behavior that
-         separates examples from non-outcome signals.
+Phase 1: Apply Step 6 exit condition to all pyramid signals.
+         Two requirements for OUTCOME classification:
+         1. Exit condition triggers within max_forward bars
+         2. Move at exit is >= min_adr ADRs in the setup direction
 
 Input:
-    - Step 3 signals from Railway (backtest_signals table)
-    - Step 6 exit conditions from data/exit_grind/exit_grind_{setup}.json
-    - Examples from Railway
-    - OHLCV data from Railway
+    - Pyramid grinder results JSON (contains all signals + example signal bars)
+    - Exit grinder results JSON (contains ranked exit conditions)
+    - Local 5yr OHLCV cache (universe_ohlcv_5yr.pkl)
 
 Output:
     - data/outcome_grind/outcome_signals_{setup}.json
 
 Usage:
-    python scripts/outcome_grinder.py --setup dtss
-    python scripts/outcome_grinder.py --setup dtss --max-forward 120 --workers 12
-    python scripts/outcome_grinder.py --setup dtss --exit-rank 1  # use rank N exit condition
+    python scripts/outcome_grinder.py \
+        --pyramid cache/pyramid_dtss_sig576_pk4_20260226_104240.json \
+        --exit-grind data/exit_grind/exit_grind_dtss.json \
+        --cache cache/universe_ohlcv_5yr.pkl \
+        --setup dtss --direction short
+
+    python scripts/outcome_grinder.py \
+        --pyramid ... --exit-grind ... --cache ... \
+        --min-adr 1.5 --max-forward 120 --exit-rank 1
 """
 
 import argparse
@@ -28,9 +31,9 @@ import sys
 import os
 import time
 import json
+import pickle
 import numpy as np
 import pandas as pd
-import requests
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,283 +41,341 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ============================================================
 # Config
 # ============================================================
-RAILWAY_URL = "https://web-production-e3025.up.railway.app"
-MAX_LOOKBACK = 1500
 MAX_FORWARD_DEFAULT = 120
+MIN_ADR_DEFAULT = 1.0
 DEFAULT_WORKERS = os.cpu_count() or 8
 
 
 # ============================================================
-# Data Loading
+# Data Loading — all local, no API calls
 # ============================================================
 
-def load_signals(setup_type: str) -> list:
-    """Load Step 3 signals from Railway."""
-    r = requests.get(f"{RAILWAY_URL}/api/backtest/signals/{setup_type}")
-    r.raise_for_status()
-    d = r.json()
-    signals = d["results"]
-    print(f"Loaded {len(signals)} {setup_type.upper()} signals "
-          f"({d['unique_tickers']} unique tickers)")
-    return signals
-
-
-def load_examples(setup_type: str) -> list:
-    """Load validated examples from Railway."""
-    r = requests.get(f"{RAILWAY_URL}/api/examples/{setup_type}")
-    r.raise_for_status()
-    d = r.json()
-    examples = d["examples"]
-    print(f"Loaded {len(examples)} {setup_type.upper()} examples")
-    return examples
-
-
-def load_exit_conditions(setup_type: str) -> dict:
-    """Load Step 6 exit grinder results."""
-    path = f"data/exit_grind/exit_grind_{setup_type}.json"
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Exit grinder results not found: {path}")
+def load_pyramid(path: str) -> dict:
+    """Load pyramid grinder results JSON."""
     with open(path) as f:
-        d = json.load(f)
+        data = json.load(f)
+    # Get final signals from last tier
+    tier_order = ["5yr", "1yr", "6mo", "1mo", "1wk", "D1"]
+    signals = None
+    for tier in tier_order:
+        if tier in data.get("tier_results", {}):
+            tr = data["tier_results"][tier]
+            if "final_signals" in tr:
+                signals = tr["final_signals"]
+                break
+    if signals is None:
+        raise ValueError("No final_signals found in pyramid results")
 
-    # Handle different exit grinder output formats
-    n_conds = d.get("n_conditions_found") or len(d.get("top_conditions", d.get("results", [])))
+    example_sigs = data.get("example_signals", [])
+    print(f"Loaded pyramid: {len(signals)} signals, {len(example_sigs)} example signal bars")
+    print(f"  Conditions: {data['n_conditions']}, peak={data['summary']['final_peak']}, "
+          f"avg={data['summary']['final_avg']}")
+    return {
+        "signals": signals,
+        "example_signals": example_sigs,
+        "conditions": data.get("all_conditions", []),
+        "metadata": data,
+    }
 
-    # Normalize: older format used "results" key, newer uses "top_conditions"
-    if "top_conditions" not in d and "results" in d:
-        d["top_conditions"] = d["results"]
 
-    print(f"Loaded {n_conds} exit conditions from {path}")
-    print(f"  Keys: {list(d.keys())}")
-    return d
+def load_exit_grind(path: str, rank: int = 1) -> dict:
+    """Load exit grinder results and select exit condition by rank."""
+    with open(path) as f:
+        data = json.load(f)
+
+    results = data.get("results", data.get("top_conditions", []))
+    if not results:
+        raise ValueError("No exit conditions found")
+
+    if rank > len(results):
+        raise ValueError(f"Requested rank {rank} but only {len(results)} conditions")
+
+    ec = results[rank - 1]
+
+    # Normalize field names
+    expr_name = ec.get("expr_name", ec.get("expression", ""))
+    direction = ec.get("direction", "below")
+    threshold = ec.get("threshold", 0)
+
+    print(f"Exit condition #{rank}: {expr_name} {direction} {threshold}")
+    print(f"  Median % move: {ec.get('median_pct_move', 'N/A')}")
+    print(f"  Median capture eff: {ec.get('median_capture_eff', 'N/A')}")
+    print(f"  Trigger rate: {ec.get('examples_triggered', '?')}/{data.get('n_examples', '?')}")
+
+    return {
+        "expr_name": expr_name,
+        "direction": direction,
+        "threshold": threshold,
+        "raw": ec,
+    }
 
 
-def fetch_ticker_ohlcv(ticker: str, lookback: int = MAX_LOOKBACK) -> pd.DataFrame:
-    """Fetch OHLCV from Railway."""
-    r = requests.get(f"{RAILWAY_URL}/api/ohlcv/bulk/{ticker}",
-                     params={"lookback": lookback})
-    r.raise_for_status()
-    data = r.json()
-    if "error" in data:
-        raise ValueError(f"API error for {ticker}: {data['error']}")
-    rows = data["results"]
-    if not rows:
-        raise ValueError(f"No OHLCV data for {ticker}")
-    df = pd.DataFrame(rows)
+def load_ohlcv_cache(path: str) -> dict:
+    """Load local 5yr OHLCV cache. Returns {ticker: DataFrame}."""
+    print(f"Loading OHLCV cache from {path}...")
+    t0 = time.time()
+    with open(path, "rb") as f:
+        cache = pickle.load(f)
+    print(f"  Loaded {len(cache)} tickers in {time.time()-t0:.1f}s")
+    return cache
+
+
+# ============================================================
+# Exit Condition Evaluation
+# ============================================================
+
+def _compute_adx(high, low, close, period):
+    """Compute ADX. Returns numpy array same length as input."""
+    n = len(close)
+    if n < period * 2:
+        return np.full(n, np.nan)
+
+    # True Range
+    tr = np.zeros(n)
+    tr[0] = high[0] - low[0]
+    for i in range(1, n):
+        tr[i] = max(high[i] - low[i],
+                     abs(high[i] - close[i-1]),
+                     abs(low[i] - close[i-1]))
+
+    # +DM, -DM
+    pdm = np.zeros(n)
+    ndm = np.zeros(n)
+    for i in range(1, n):
+        up = high[i] - high[i-1]
+        down = low[i-1] - low[i]
+        if up > down and up > 0:
+            pdm[i] = up
+        if down > up and down > 0:
+            ndm[i] = down
+
+    # Wilder smoothing
+    alpha = 1.0 / period
+    atr_arr = np.zeros(n)
+    pdi_arr = np.zeros(n)
+    ndi_arr = np.zeros(n)
+
+    # Seed with SMA
+    atr_arr[period] = np.mean(tr[1:period+1])
+    pdi_arr[period] = np.mean(pdm[1:period+1])
+    ndi_arr[period] = np.mean(ndm[1:period+1])
+
+    for i in range(period + 1, n):
+        atr_arr[i] = atr_arr[i-1] * (1 - alpha) + tr[i] * alpha
+        pdi_arr[i] = pdi_arr[i-1] * (1 - alpha) + pdm[i] * alpha
+        ndi_arr[i] = ndi_arr[i-1] * (1 - alpha) + ndm[i] * alpha
+
+    # DI+ and DI-
+    di_p = np.where(atr_arr > 0, 100 * pdi_arr / atr_arr, 0)
+    di_n = np.where(atr_arr > 0, 100 * ndi_arr / atr_arr, 0)
+
+    # DX
+    di_sum = di_p + di_n
+    dx = np.where(di_sum > 0, 100 * np.abs(di_p - di_n) / di_sum, 0)
+
+    # ADX = Wilder smooth of DX
+    adx_arr = np.full(n, np.nan)
+    start = period * 2
+    if start < n:
+        adx_arr[start] = np.mean(dx[period+1:start+1])
+        for i in range(start + 1, n):
+            adx_arr[i] = adx_arr[i-1] * (1 - alpha) + dx[i] * alpha
+
+    return adx_arr
+
+
+def _eval_signal_batch(args):
+    """Evaluate exit condition + ADR filter on a batch of signals for one ticker.
+
+    Processes all signals for the same ticker in one shot to avoid
+    redundant OHLCV lookups. Runs in subprocess.
+
+    Returns list of result dicts.
+    """
+    ticker, sig_dates, is_example_flags, exit_cond, setup_direction, \
+        max_forward, min_adr, ohlcv_data = args
+
+    import numpy as np
+
+    results = []
+
+    # Reconstruct DataFrame from passed arrays
+    df = pd.DataFrame(ohlcv_data)
     df = df.sort_values("date").reset_index(drop=True)
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df
 
+    dates_array = df["date"].values
+    high = df["high"].values.astype(np.float64)
+    low = df["low"].values.astype(np.float64)
+    close = df["close"].values.astype(np.float64)
 
-# ============================================================
-# Exit Condition Evaluation (subprocess-safe)
-# ============================================================
+    # Pre-compute ADX(7) for the full ticker history
+    adx7 = _compute_adx(high, low, close, 7)
 
-def _apply_bool_aggregation(bool_series, agg_type, window):
-    """Apply rolling boolean aggregation to a 0/1 series.
+    # Pre-compute ADX declining boolean: ADX(7) today < ADX(7) 3 bars ago
+    n = len(adx7)
+    adx_declining = np.zeros(n)
+    adx_declining[3:] = (adx7[3:] < adx7[:-3]).astype(float)
 
-    Matches the logic in exit_grinder.py compute_boolean_aggregations().
-    """
-    import numpy as np
-    n = len(bool_series)
-    bseries = np.asarray(bool_series, dtype=np.float64)
+    # Pre-compute count_true rolling 10-bar window on adx_declining
+    cumsum = np.cumsum(adx_declining)
+    count_true_10 = np.full(n, np.nan)
+    window = 10
+    count_true_10[window-1:] = cumsum[window-1:] - np.concatenate([[0], cumsum[:n-window]])
 
-    if agg_type == "count_true":
-        cumsum = np.cumsum(bseries)
-        result = np.full(n, np.nan)
-        result[window-1:] = cumsum[window-1:] - np.concatenate([[0], cumsum[:n-window]])
-        return result
+    # Pre-compute ADR14 at each bar
+    daily_range = high - low
+    adr14 = np.full(n, np.nan)
+    dr_cumsum = np.cumsum(daily_range)
+    adr14[13:] = (dr_cumsum[13:] - np.concatenate([[0], dr_cumsum[:n-14]])) / 14.0
 
-    elif agg_type == "pct_true":
-        cumsum = np.cumsum(bseries)
-        result = np.full(n, np.nan)
-        result[window-1:] = (cumsum[window-1:] - np.concatenate([[0], cumsum[:n-window]])) / window
-        return result
+    # Process each signal date
+    for sig_date, is_example in zip(sig_dates, is_example_flags):
+        # Find signal bar by date — positional index
+        date_mask = dates_array == sig_date
+        idx_matches = np.where(date_mask)[0]
+        if len(idx_matches) == 0:
+            results.append({
+                "ticker": ticker, "date": sig_date,
+                "is_example": is_example, "status": "date_not_found",
+            })
+            continue
 
-    elif agg_type == "since_true":
-        result = np.full(n, np.nan)
-        last_true = -999
-        for j in range(n):
-            if bseries[j] > 0.5:
-                last_true = j
-            if last_true >= 0:
-                result[j] = j - last_true
-        return result
+        sig_idx = int(idx_matches[0])
+        entry_idx = sig_idx + 1  # entry = next trading day (iloc, not date math)
 
-    elif agg_type == "true_in_row":
-        result = np.full(n, np.nan)
-        streak = 0
-        for j in range(n):
-            if bseries[j] > 0.5:
-                streak += 1
-            else:
-                streak = 0
-            result[j] = streak
-        return result
+        if entry_idx >= n:
+            results.append({
+                "ticker": ticker, "date": sig_date,
+                "is_example": is_example, "status": "no_entry_bar",
+            })
+            continue
 
-    else:
-        raise ValueError(f"Unknown aggregation type: {agg_type}")
+        bars_available = n - entry_idx - 1
+        if bars_available < 5:
+            results.append({
+                "ticker": ticker, "date": sig_date,
+                "is_example": is_example, "status": "insufficient_bars",
+                "bars_available": bars_available,
+            })
+            continue
 
+        actual_forward = min(max_forward, bars_available)
 
-def _eval_signal(args):
-    """Evaluate exit condition on one signal's post-signal bars.
+        # Entry reference price
+        entry_high = high[entry_idx]
+        entry_close = close[entry_idx]
+        entry_low = low[entry_idx]
+        adr_at_entry = adr14[entry_idx] if not np.isnan(adr14[entry_idx]) else adr14[sig_idx]
+        if np.isnan(adr_at_entry) or adr_at_entry <= 0:
+            adr_at_entry = np.nanmean(daily_range[max(0, entry_idx-14):entry_idx])
+            if np.isnan(adr_at_entry) or adr_at_entry <= 0:
+                results.append({
+                    "ticker": ticker, "date": sig_date,
+                    "is_example": is_example, "status": "no_adr",
+                })
+                continue
 
-    Runs in subprocess — must reimport everything.
-    Returns dict with signal info + outcome classification.
-    """
-    signal, exit_cond, direction, max_forward, lookback = args
-
-    import sys, os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-    import numpy as np
-    import pandas as pd
-    import requests
-
-    ticker = signal["ticker"]
-    signal_date = signal["date"]
-
-    try:
-        # Fetch OHLCV
-        r = requests.get(f"https://web-production-e3025.up.railway.app/api/ohlcv/bulk/{ticker}",
-                         params={"lookback": lookback})
-        r.raise_for_status()
-        data = r.json()
-        if "error" in data or not data.get("results"):
-            return {"ticker": ticker, "date": signal_date, "status": "no_data"}
-
-        df = pd.DataFrame(data["results"])
-        df = df.sort_values("date").reset_index(drop=True)
-        for col in ["open", "high", "low", "close", "volume"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        # Find signal date — this is the SCAN candle date.
-        # Entry is the NEXT bar's open.
-        date_matches = df.index[df["date"] == signal_date].tolist()
-        if not date_matches:
-            return {"ticker": ticker, "date": signal_date, "status": "date_not_found"}
-
-        scan_idx = date_matches[0]
-        entry_idx = scan_idx + 1  # entry bar = day after scan
-
-        if entry_idx >= len(df):
-            return {"ticker": ticker, "date": signal_date, "status": "no_entry_bar"}
-
-        n_available = len(df) - entry_idx - 1
-        if n_available < 5:
-            return {"ticker": ticker, "date": signal_date, "status": "insufficient_bars",
-                    "bars_available": n_available}
-
-        actual_forward = min(max_forward, n_available)
-
-        # Compute the exit expression using ExitExprEngine
-        from scripts.exit_compute import ExitExprEngine
-
-        engine = ExitExprEngine(df, entry_idx, direction=direction,
-                                max_forward=actual_forward)
-
-        compute_spec = exit_cond["compute_spec"]
-
-        # Handle compound boolean aggregation specs
-        if compute_spec.get("op") == "__bool_aggregation__":
-            base_series = engine.compute(compute_spec["base_spec"])
-            series = _apply_bool_aggregation(
-                base_series, compute_spec["agg_type"], compute_spec["window"])
-        else:
-            series = engine.compute(compute_spec)
-
-        # Check if exit condition triggers
-        threshold = exit_cond["threshold"]
+        # === CHECK 1: Exit condition triggers? ===
+        # adx_7_declining_count_true_10b {direction} {threshold}
         exit_dir = exit_cond["direction"]
+        threshold = exit_cond["threshold"]
 
         triggered = False
-        trigger_bar = -1
-        for bar_i in range(1, len(series)):  # skip bar 0 (entry bar itself)
-            val = series[bar_i]
+        trigger_bar_offset = -1
+        trigger_abs_idx = -1
+
+        # Scan forward bars (starting from entry bar + 1)
+        for offset in range(1, actual_forward + 1):
+            abs_idx = entry_idx + offset
+            val = count_true_10[abs_idx]
             if np.isnan(val):
                 continue
-            if exit_dir == ">=" and val >= threshold:
+            if exit_dir == "below" and val < threshold:
                 triggered = True
-                trigger_bar = bar_i
+                trigger_bar_offset = offset
+                trigger_abs_idx = abs_idx
+                break
+            elif exit_dir == "above" and val > threshold:
+                triggered = True
+                trigger_bar_offset = offset
+                trigger_abs_idx = abs_idx
                 break
             elif exit_dir == "<=" and val <= threshold:
                 triggered = True
-                trigger_bar = bar_i
+                trigger_bar_offset = offset
+                trigger_abs_idx = abs_idx
                 break
-            elif exit_dir == ">" and val > threshold:
+            elif exit_dir == ">=" and val >= threshold:
                 triggered = True
-                trigger_bar = bar_i
-                break
-            elif exit_dir == "<" and val < threshold:
-                triggered = True
-                trigger_bar = bar_i
+                trigger_bar_offset = offset
+                trigger_abs_idx = abs_idx
                 break
 
-        # Compute move metrics at trigger bar (or end)
-        entry_high = df["high"].iloc[entry_idx]
-        entry_close = df["close"].iloc[entry_idx]
+        if not triggered:
+            # Compute move at end of window for reporting
+            end_idx = entry_idx + actual_forward
+            end_close = close[end_idx]
+            if setup_direction == "short":
+                pct_move = (entry_high - end_close) / entry_high * 100
+                adr_move = (entry_high - end_close) / adr_at_entry
+            else:
+                pct_move = (end_close - entry_low) / entry_low * 100
+                adr_move = (end_close - entry_low) / adr_at_entry
 
-        if triggered:
-            exit_idx = entry_idx + trigger_bar
-            exit_close = df["close"].iloc[exit_idx]
-        else:
-            exit_idx = entry_idx + actual_forward
-            exit_close = df["close"].iloc[exit_idx]
+            results.append({
+                "ticker": ticker, "date": sig_date,
+                "is_example": is_example, "status": "no_exit_trigger",
+                "pct_move_at_end": round(float(pct_move), 2),
+                "adr_move_at_end": round(float(adr_move), 2),
+                "bars_available": actual_forward,
+            })
+            continue
 
-        # Compute move (short direction: positive = price went down)
-        if direction == "short":
+        # Exit triggered — compute move at exit bar
+        exit_close = close[trigger_abs_idx]
+        if setup_direction == "short":
             pct_move = (entry_high - exit_close) / entry_high * 100
+            adr_move = (entry_high - exit_close) / adr_at_entry
         else:
-            entry_low = df["low"].iloc[entry_idx]
             pct_move = (exit_close - entry_low) / entry_low * 100
+            adr_move = (exit_close - entry_low) / adr_at_entry
 
-        # Compute MFE
-        fwd_slice = slice(entry_idx, entry_idx + actual_forward + 1)
-        if direction == "short":
-            mfe_price = df["low"].iloc[fwd_slice].min()
+        # === CHECK 2: Move >= min_adr? ===
+        is_outcome = adr_move >= min_adr
+
+        # Compute MFE for reporting
+        fwd_slice = slice(entry_idx, trigger_abs_idx + 1)
+        if setup_direction == "short":
+            mfe_price = float(np.min(low[fwd_slice]))
             mfe_pct = (entry_high - mfe_price) / entry_high * 100
+            mfe_adr = (entry_high - mfe_price) / adr_at_entry
         else:
-            mfe_price = df["high"].iloc[fwd_slice].max()
-            entry_low = df["low"].iloc[entry_idx]
+            mfe_price = float(np.max(high[fwd_slice]))
             mfe_pct = (mfe_price - entry_low) / entry_low * 100
+            mfe_adr = (mfe_price - entry_low) / adr_at_entry
 
         capture_eff = pct_move / mfe_pct if mfe_pct > 0 else 0.0
 
-        # ADR at entry for normalization
-        adr_vals = []
-        lookback_start = max(0, entry_idx - 14)
-        for j in range(lookback_start, entry_idx):
-            adr_vals.append(df["high"].iloc[j] - df["low"].iloc[j])
-        adr_at_entry = np.mean(adr_vals) if adr_vals else 1.0
+        status = "outcome" if is_outcome else "sub_adr"
 
-        if direction == "short":
-            adr_captured = (entry_high - exit_close) / adr_at_entry
-            mfe_adr = (entry_high - mfe_price) / adr_at_entry
-        else:
-            entry_low = df["low"].iloc[entry_idx]
-            adr_captured = (exit_close - entry_low) / adr_at_entry
-            mfe_adr = (mfe_price - entry_low) / adr_at_entry
+        results.append({
+            "ticker": ticker, "date": sig_date,
+            "is_example": is_example,
+            "status": status,
+            "exit_triggered": True,
+            "trigger_bar": trigger_bar_offset,
+            "pct_move": round(float(pct_move), 2),
+            "adr_move": round(float(adr_move), 2),
+            "mfe_pct": round(float(mfe_pct), 2),
+            "mfe_adr": round(float(mfe_adr), 2),
+            "capture_eff": round(float(capture_eff), 4),
+            "entry_high": round(float(entry_high), 2),
+            "exit_close": round(float(exit_close), 2),
+        })
 
-        return {
-            "ticker": ticker,
-            "date": signal_date,
-            "status": "outcome" if triggered else "non_outcome",
-            "exit_triggered": triggered,
-            "trigger_bar": trigger_bar if triggered else -1,
-            "bars_available": actual_forward,
-            "pct_move": round(pct_move, 4),
-            "mfe_pct": round(mfe_pct, 4),
-            "capture_eff": round(capture_eff, 4),
-            "adr_captured": round(adr_captured, 4),
-            "mfe_adr": round(mfe_adr, 4),
-            "entry_high": round(entry_high, 2),
-            "exit_close": round(exit_close, 2),
-        }
-
-    except Exception as e:
-        return {"ticker": ticker, "date": signal_date, "status": "error",
-                "error": str(e)}
+    return results
 
 
 # ============================================================
@@ -322,526 +383,254 @@ def _eval_signal(args):
 # ============================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Outcome Grinder — Step 7")
+    parser = argparse.ArgumentParser(description="Outcome Grinder — Step 7 Phase 1")
+    parser.add_argument("--pyramid", required=True, help="Path to pyramid grinder results JSON")
+    parser.add_argument("--exit-grind", required=True, help="Path to exit grinder results JSON")
+    parser.add_argument("--cache", required=True, help="Path to 5yr OHLCV cache pkl")
     parser.add_argument("--setup", default="dtss", help="Setup type")
+    parser.add_argument("--direction", default="short", help="Trade direction")
     parser.add_argument("--max-forward", type=int, default=MAX_FORWARD_DEFAULT)
-    parser.add_argument("--direction", default="short")
-    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    parser.add_argument("--min-adr", type=float, default=MIN_ADR_DEFAULT,
+                        help="Minimum ADR move at exit to qualify as outcome")
     parser.add_argument("--exit-rank", type=int, default=1,
-                        help="Which exit condition to use (1=best, 2=second best, etc.)")
-    parser.add_argument("--all-exits", action="store_true",
-                        help="Test all exit conditions and show overlap matrix")
+                        help="Which exit condition to use (1=best)")
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     args = parser.parse_args()
 
-    print(f"Outcome Grinder — Step 7")
+    print(f"Outcome Grinder — Step 7 Phase 1")
     print(f"Setup: {args.setup.upper()}, Direction: {args.direction}")
-    print(f"Max forward: {args.max_forward} bars, Workers: {args.workers}")
+    print(f"Max forward: {args.max_forward} bars, Min ADR: {args.min_adr}")
+    print(f"Workers: {args.workers}")
     print()
 
-    # ── 1. Load data ──
-    signals = load_signals(args.setup)
-    examples = load_examples(args.setup)
-    exit_data = load_exit_conditions(args.setup)
+    # ── 1. Load all data locally ──
+    pyramid = load_pyramid(args.pyramid)
+    exit_cond = load_exit_grind(args.exit_grind, rank=args.exit_rank)
+    ohlcv_cache = load_ohlcv_cache(args.cache)
 
-    # Build example set for cross-reference
-    example_set = set()
-    for ex in examples:
-        # Example entryDate is the entry date; signal date is the scan candle = 1 day before
-        # But signals are stored by scan date, so we need to match carefully
-        example_set.add((ex["ticker"], ex["entryDate"]))
+    signals = pyramid["signals"]
+    example_sigs = pyramid["example_signals"]
 
-    # ── 2. Select exit condition(s) ──
-    exit_conds = exit_data.get("top_conditions", exit_data.get("results", []))
-    if not exit_conds:
-        print("ERROR: No exit conditions found in Step 6 results.")
-        return
+    # Build example lookup: (ticker, signal_date) -> True
+    example_set = {(es["ticker"], es["date"]) for es in example_sigs}
+    print(f"\nExample signal bars: {len(example_set)}")
 
-    # Normalize field names across different exit grinder output formats
-    for ec in exit_conds:
-        # Old format used "expr_name", new uses "expression"
-        if "expr_name" in ec and "expression" not in ec:
-            ec["expression"] = ec["expr_name"]
-        # Old format used "above"/"below", new uses ">="/"<="
-        if ec.get("direction") == "above":
-            ec["direction"] = ">="
-        elif ec.get("direction") == "below":
-            ec["direction"] = "<="
-        # Old format: "floor_capture_eff", new: "floor_efficiency"
-        if "floor_capture_eff" in ec and "floor_efficiency" not in ec:
-            ec["floor_efficiency"] = ec["floor_capture_eff"]
-        # Ensure category exists
-        if "category" not in ec:
-            ec["category"] = "unknown"
+    # ── 2. Group signals by ticker for batch processing ──
+    from collections import defaultdict
+    ticker_groups = defaultdict(list)
+    for sig in signals:
+        ticker = sig["ticker"]
+        date = sig["date"]
+        is_example = (ticker, date) in example_set
+        ticker_groups[ticker].append((date, is_example))
 
-    if args.all_exits:
-        selected_exits = exit_conds
-        print(f"\nTesting ALL {len(selected_exits)} exit conditions")
-    else:
-        rank = args.exit_rank - 1
-        if rank >= len(exit_conds):
-            print(f"ERROR: Only {len(exit_conds)} exit conditions, requested rank {args.exit_rank}")
-            return
-        selected_exits = [exit_conds[rank]]
-        ec = selected_exits[0]
-        print(f"\nUsing exit condition #{args.exit_rank}:")
-        print(f"  Expression: {ec['expression']}")
-        print(f"  Direction: {ec['direction']}")
-        print(f"  Threshold: {ec['threshold']}")
-        print(f"  Floor capture eff: {ec.get('floor_efficiency', 'N/A')}")
+    # Check cache coverage
+    missing_tickers = [t for t in ticker_groups if t not in ohlcv_cache]
+    if missing_tickers:
+        print(f"\nWARNING: {len(missing_tickers)} tickers not in OHLCV cache: {missing_tickers[:10]}")
 
-    # ── 3. Build compute spec for exit condition ──
-    # Map expression name back to compute spec
-    # The exit_grind results store expression names; we need to reconstruct the compute spec
-    for ec in selected_exits:
-        ec["compute_spec"] = _build_compute_spec(ec["expression"], ec["category"])
-        if ec["compute_spec"] is None:
-            print(f"  WARNING: Cannot build compute spec for {ec['expression']} — skipping")
+    available_tickers = [t for t in ticker_groups if t in ohlcv_cache]
+    n_signals_available = sum(len(ticker_groups[t]) for t in available_tickers)
+    print(f"\nProcessing {n_signals_available} signals across {len(available_tickers)} tickers")
 
-    selected_exits = [ec for ec in selected_exits if ec.get("compute_spec") is not None]
-    if not selected_exits:
-        print("ERROR: No valid exit conditions after compute spec resolution.")
-        return
+    # ── 3. Build tasks — one per ticker ──
+    tasks = []
+    for ticker in available_tickers:
+        sigs = ticker_groups[ticker]
+        sig_dates = [s[0] for s in sigs]
+        is_example_flags = [s[1] for s in sigs]
 
-    # ── 4. Process each exit condition ──
-    for exit_idx, ec in enumerate(selected_exits):
-        if len(selected_exits) > 1:
-            print(f"\n{'='*80}")
-            print(f"Exit condition {exit_idx+1}/{len(selected_exits)}: "
-                  f"{ec['expression']} {ec['direction']} {ec['threshold']}")
-            print(f"{'='*80}")
-
-        exit_cond = {
-            "expression": ec["expression"],
-            "direction": ec["direction"],
-            "threshold": ec["threshold"],
-            "compute_spec": ec["compute_spec"],
+        # Pass OHLCV as dict-of-lists for pickling
+        df = ohlcv_cache[ticker]
+        ohlcv_data = {
+            "date": df["date"].tolist() if hasattr(df["date"], "tolist") else list(df["date"]),
+            "open": df["open"].tolist() if hasattr(df["open"], "tolist") else list(df["open"]),
+            "high": df["high"].tolist() if hasattr(df["high"], "tolist") else list(df["high"]),
+            "low": df["low"].tolist() if hasattr(df["low"], "tolist") else list(df["low"]),
+            "close": df["close"].tolist() if hasattr(df["close"], "tolist") else list(df["close"]),
+            "volume": df["volume"].tolist() if hasattr(df["volume"], "tolist") else list(df["volume"]),
         }
 
-        # ── 5. Run evaluation in parallel ──
-        tasks = [
-            (sig, exit_cond, args.direction, args.max_forward, MAX_LOOKBACK)
-            for sig in signals
-        ]
+        tasks.append((
+            ticker, sig_dates, is_example_flags,
+            {"direction": exit_cond["direction"], "threshold": exit_cond["threshold"]},
+            args.direction, args.max_forward, args.min_adr, ohlcv_data,
+        ))
 
-        print(f"\nEvaluating {len(signals)} signals ({args.workers} workers)...")
-        t0 = time.time()
+    # ── 4. Run in parallel ──
+    print(f"\nEvaluating {len(tasks)} ticker batches ({args.workers} workers)...")
+    t0 = time.time()
 
-        results = []
-        with ProcessPoolExecutor(max_workers=args.workers) as pool:
-            futures = {pool.submit(_eval_signal, task): task[0] for task in tasks}
-            done = 0
-            for future in as_completed(futures):
-                done += 1
-                try:
-                    result = future.result()
-                    results.append(result)
-                    if done % 50 == 0 or done == len(signals):
-                        outcomes = sum(1 for r in results if r.get("status") == "outcome")
-                        non_outcomes = sum(1 for r in results if r.get("status") == "non_outcome")
-                        errors = sum(1 for r in results if r.get("status") in ("error", "no_data", "date_not_found"))
-                        print(f"  [{done}/{len(signals)}] "
-                              f"outcomes={outcomes}, non-outcomes={non_outcomes}, "
-                              f"errors={errors}")
-                except Exception as e:
-                    done_sig = futures[future]
-                    results.append({
-                        "ticker": done_sig["ticker"],
-                        "date": done_sig["date"],
-                        "status": "error",
-                        "error": str(e),
-                    })
+    all_results = []
+    done_tickers = 0
+    with ProcessPoolExecutor(max_workers=args.workers) as pool:
+        futures = {pool.submit(_eval_signal_batch, task): task[0] for task in tasks}
+        for future in as_completed(futures):
+            done_tickers += 1
+            try:
+                batch_results = future.result()
+                all_results.extend(batch_results)
+            except Exception as e:
+                ticker = futures[future]
+                print(f"  ERROR on {ticker}: {e}")
 
-        elapsed = time.time() - t0
-        print(f"\nDone in {elapsed:.1f}s ({len(signals)/elapsed:.1f} signals/s)")
+            if done_tickers % 50 == 0 or done_tickers == len(tasks):
+                n_out = sum(1 for r in all_results if r["status"] == "outcome")
+                n_sub = sum(1 for r in all_results if r["status"] == "sub_adr")
+                n_no = sum(1 for r in all_results if r["status"] == "no_exit_trigger")
+                n_err = sum(1 for r in all_results if r["status"] in
+                           ("date_not_found", "no_entry_bar", "insufficient_bars", "no_adr"))
+                print(f"  [{done_tickers}/{len(tasks)}] "
+                      f"outcome={n_out}, sub_adr={n_sub}, no_trigger={n_no}, error={n_err}")
 
-        # ── 6. Classify and report ──
-        outcome_signals = [r for r in results if r.get("status") == "outcome"]
-        non_outcome_signals = [r for r in results if r.get("status") == "non_outcome"]
-        error_signals = [r for r in results
-                         if r.get("status") in ("error", "no_data", "date_not_found",
-                                                 "no_entry_bar", "insufficient_bars")]
+    elapsed = time.time() - t0
+    print(f"\nDone in {elapsed:.1f}s")
 
-        print(f"\n{'='*80}")
-        print(f"OUTCOME CLASSIFICATION — {ec['expression']} {ec['direction']} {ec['threshold']}")
-        print(f"{'='*80}")
-        print(f"  Total signals:     {len(signals)}")
-        print(f"  OUTCOME signals:   {len(outcome_signals)} ({len(outcome_signals)/len(signals)*100:.1f}%)")
-        print(f"  Non-outcome:       {len(non_outcome_signals)} ({len(non_outcome_signals)/len(signals)*100:.1f}%)")
-        print(f"  Errors/skipped:    {len(error_signals)}")
+    # ── 5. Classify and report ──
+    outcomes = [r for r in all_results if r["status"] == "outcome"]
+    sub_adr = [r for r in all_results if r["status"] == "sub_adr"]
+    no_trigger = [r for r in all_results if r["status"] == "no_exit_trigger"]
+    errors = [r for r in all_results if r["status"] in
+              ("date_not_found", "no_entry_bar", "insufficient_bars", "no_adr")]
 
-        # Check which examples are in the outcome set
-        example_outcomes = []
-        example_missing = []
-        for ex in examples:
-            # Match by ticker + entry date being 1 day after scan date
-            found = False
-            for r in outcome_signals:
-                if r["ticker"] == ex["ticker"]:
-                    # Signal date is scan date, example entryDate is entry date
-                    # They should be consecutive trading days
-                    found = True
-                    example_outcomes.append(r)
-                    break
-            if not found:
-                example_missing.append(ex)
+    total_classified = len(outcomes) + len(sub_adr) + len(no_trigger)
 
-        print(f"\n  Examples in outcomes: {len(example_outcomes)}/{len(examples)}")
-        if example_missing:
-            print(f"  Examples MISSING from outcomes:")
-            for ex in example_missing:
-                print(f"    {ex['ticker']} {ex['entryDate']}")
+    print(f"\n{'='*80}")
+    print(f"OUTCOME CLASSIFICATION")
+    print(f"Exit: {exit_cond['expr_name']} {exit_cond['direction']} {exit_cond['threshold']}")
+    print(f"Min ADR: {args.min_adr}")
+    print(f"{'='*80}")
+    print(f"  Total signals:      {len(signals)}")
+    print(f"  OUTCOME:            {len(outcomes):4d} ({len(outcomes)/len(signals)*100:.1f}%) — exit triggered + >= {args.min_adr} ADR move")
+    print(f"  Sub-ADR:            {len(sub_adr):4d} ({len(sub_adr)/len(signals)*100:.1f}%) — exit triggered but < {args.min_adr} ADR move")
+    print(f"  No exit trigger:    {len(no_trigger):4d} ({len(no_trigger)/len(signals)*100:.1f}%) — exit never fired in {args.max_forward} bars")
+    print(f"  Errors/skipped:     {len(errors):4d}")
 
-        # Stats on outcome signals
-        if outcome_signals:
-            pct_moves = [r["pct_move"] for r in outcome_signals if "pct_move" in r]
-            adr_caps = [r["adr_captured"] for r in outcome_signals if "adr_captured" in r]
-            trigger_bars = [r["trigger_bar"] for r in outcome_signals if r.get("trigger_bar", -1) > 0]
-            cap_effs = [r["capture_eff"] for r in outcome_signals if "capture_eff" in r]
+    # Example safety check
+    example_outcomes = [r for r in outcomes if r["is_example"]]
+    example_sub_adr = [r for r in sub_adr if r["is_example"]]
+    example_no_trigger = [r for r in no_trigger if r["is_example"]]
+    example_errors = [r for r in errors if r.get("is_example")]
 
-            print(f"\n  Outcome signal stats:")
-            print(f"    % Move:      floor={min(pct_moves):+.2f}%  median={np.median(pct_moves):+.2f}%  "
-                  f"avg={np.mean(pct_moves):+.2f}%")
-            print(f"    ADR captured: floor={min(adr_caps):+.2f}  median={np.median(adr_caps):+.2f}  "
-                  f"avg={np.mean(adr_caps):+.2f}")
-            print(f"    Trigger bar: avg={np.mean(trigger_bars):.1f}  "
-                  f"median={np.median(trigger_bars):.0f}  max={max(trigger_bars)}")
-            print(f"    Capture eff: floor={min(cap_effs):.3f}  median={np.median(cap_effs):.3f}  "
-                  f"avg={np.mean(cap_effs):.3f}")
+    print(f"\n  EXAMPLE SAFETY CHECK:")
+    print(f"    Examples as outcomes:    {len(example_outcomes)}/{len(example_set)}")
+    if example_sub_adr:
+        print(f"    Examples sub-ADR:       {len(example_sub_adr)} ⚠️")
+        for r in example_sub_adr:
+            print(f"      {r['ticker']} {r['date']} — {r['adr_move']:.2f} ADR (need {args.min_adr})")
+    if example_no_trigger:
+        print(f"    Examples no trigger:    {len(example_no_trigger)} ⚠️")
+        for r in example_no_trigger:
+            print(f"      {r['ticker']} {r['date']}")
+    if example_errors:
+        print(f"    Examples error:         {len(example_errors)} ⚠️")
+        for r in example_errors:
+            print(f"      {r['ticker']} {r['date']} — {r['status']}")
+    if len(example_outcomes) == len(example_set):
+        print(f"    ✅ All examples classified as outcomes")
 
-        # Stats on non-outcome signals
-        if non_outcome_signals:
-            pct_moves_no = [r["pct_move"] for r in non_outcome_signals if "pct_move" in r]
-            adr_caps_no = [r["adr_captured"] for r in non_outcome_signals if "adr_captured" in r]
-            if pct_moves_no:
-                print(f"\n  Non-outcome signal stats (at end of window):")
-                print(f"    % Move:      floor={min(pct_moves_no):+.2f}%  median={np.median(pct_moves_no):+.2f}%  "
-                      f"avg={np.mean(pct_moves_no):+.2f}%")
-                print(f"    ADR captured: floor={min(adr_caps_no):+.2f}  median={np.median(adr_caps_no):+.2f}  "
-                      f"avg={np.mean(adr_caps_no):+.2f}")
+    # Stats on outcomes
+    if outcomes:
+        pct_moves = [r["pct_move"] for r in outcomes]
+        adr_moves = [r["adr_move"] for r in outcomes]
+        trigger_bars = [r["trigger_bar"] for r in outcomes]
+        cap_effs = [r["capture_eff"] for r in outcomes]
 
-        # Win rate preview
-        total_classified = len(outcome_signals) + len(non_outcome_signals)
-        if total_classified > 0:
-            win_rate = len(outcome_signals) / total_classified
-            print(f"\n  Preliminary win rate: {win_rate:.1%} "
-                  f"({len(outcome_signals)}/{total_classified} classified signals)")
+        print(f"\n  Outcome stats:")
+        print(f"    % Move:      floor={min(pct_moves):+.1f}%  median={np.median(pct_moves):+.1f}%  avg={np.mean(pct_moves):+.1f}%")
+        print(f"    ADR move:    floor={min(adr_moves):.1f}  median={np.median(adr_moves):.1f}  avg={np.mean(adr_moves):.1f}")
+        print(f"    Trigger bar: avg={np.mean(trigger_bars):.1f}  median={np.median(trigger_bars):.0f}  max={max(trigger_bars)}")
+        print(f"    Capture eff: floor={min(cap_effs):.3f}  median={np.median(cap_effs):.3f}  avg={np.mean(cap_effs):.3f}")
 
-        # Daily distribution of outcome signals
-        if outcome_signals:
-            from collections import Counter
-            daily_counts = Counter()
-            for r in outcome_signals:
-                daily_counts[r["date"]] += 1
-            peak_day = max(daily_counts.values())
-            avg_day = np.mean(list(daily_counts.values()))
-            print(f"\n  Outcome signal distribution:")
-            print(f"    Total days with outcomes: {len(daily_counts)}")
-            print(f"    Peak outcomes/day: {peak_day}")
-            print(f"    Avg outcomes/day: {avg_day:.1f}")
+    # Stats on sub-ADR (exit triggered but move too small)
+    if sub_adr:
+        pct_sub = [r["pct_move"] for r in sub_adr]
+        adr_sub = [r["adr_move"] for r in sub_adr]
+        print(f"\n  Sub-ADR stats (exit triggered, move < {args.min_adr} ADR):")
+        print(f"    % Move:      floor={min(pct_sub):+.1f}%  median={np.median(pct_sub):+.1f}%  avg={np.mean(pct_sub):+.1f}%")
+        print(f"    ADR move:    floor={min(adr_sub):.2f}  median={np.median(adr_sub):.2f}  avg={np.mean(adr_sub):.2f}")
 
-        # ── 7. Save results ──
-        os.makedirs("data/outcome_grind", exist_ok=True)
-        outpath = f"data/outcome_grind/outcome_signals_{args.setup}.json"
+    # Stats on no-trigger
+    if no_trigger:
+        pct_no = [r.get("pct_move_at_end", 0) for r in no_trigger]
+        adr_no = [r.get("adr_move_at_end", 0) for r in no_trigger]
+        print(f"\n  No-trigger stats (at end of {args.max_forward}-bar window):")
+        print(f"    % Move:      floor={min(pct_no):+.1f}%  median={np.median(pct_no):+.1f}%  avg={np.mean(pct_no):+.1f}%")
+        print(f"    ADR move:    floor={min(adr_no):.2f}  median={np.median(adr_no):.2f}  avg={np.mean(adr_no):.2f}")
 
-        output = {
-            "setup_type": args.setup,
-            "direction": args.direction,
-            "max_forward": args.max_forward,
-            "exit_condition": {
-                "expression": ec["expression"],
-                "direction": ec["direction"],
-                "threshold": ec["threshold"],
-                "category": ec["category"],
-                "floor_efficiency": ec["floor_efficiency"],
-            },
-            "summary": {
-                "total_signals": len(signals),
-                "outcome_signals": len(outcome_signals),
-                "non_outcome_signals": len(non_outcome_signals),
-                "errors": len(error_signals),
-                "win_rate": len(outcome_signals) / total_classified if total_classified > 0 else 0,
-                "examples_in_outcomes": len(example_outcomes),
-                "examples_total": len(examples),
-            },
-            "outcome_signals": sorted(
-                [r for r in outcome_signals],
-                key=lambda r: r["date"]
-            ),
-            "non_outcome_signals": sorted(
-                [r for r in non_outcome_signals],
-                key=lambda r: r["date"]
-            ),
-            "error_signals": error_signals,
-        }
+    # Win rate preview
+    if total_classified > 0:
+        win_rate = len(outcomes) / total_classified
+        print(f"\n  Win rate (outcome / classified): {win_rate:.1%} ({len(outcomes)}/{total_classified})")
 
-        # Convert numpy types for JSON serialization
-        def convert(obj):
-            if isinstance(obj, (np.integer,)):
-                return int(obj)
-            elif isinstance(obj, (np.floating,)):
-                return float(obj)
-            elif isinstance(obj, np.ndarray):
-                return obj.tolist()
-            return obj
+    # Daily distribution of outcomes
+    if outcomes:
+        from collections import Counter
+        daily_counts = Counter(r["date"] for r in outcomes)
+        peak_day = max(daily_counts.values())
+        avg_day = np.mean(list(daily_counts.values()))
+        print(f"\n  Outcome distribution:")
+        print(f"    Days with outcomes: {len(daily_counts)}")
+        print(f"    Peak outcomes/day: {peak_day}")
+        print(f"    Avg outcomes/day: {avg_day:.1f}")
 
-        with open(outpath, "w") as f:
-            json.dump(output, f, indent=2, default=convert)
-        print(f"\nResults saved to {outpath}")
+    # ── 6. Save results ──
+    os.makedirs("data/outcome_grind", exist_ok=True)
+    outpath = f"data/outcome_grind/outcome_signals_{args.setup}.json"
 
-        # Print top 10 outcome signals by ADR captured
-        if outcome_signals:
-            top_outcomes = sorted(outcome_signals, key=lambda r: r.get("adr_captured", 0), reverse=True)
-            print(f"\n{'─'*80}")
-            print(f"TOP 10 OUTCOME SIGNALS by ADR captured:")
-            print(f"{'─'*80}")
-            print(f"{'Ticker':8s} {'Date':12s} {'%Move':>8s} {'ADR':>8s} {'MFE%':>8s} "
-                  f"{'CapEff':>8s} {'Bar#':>5s}")
-            for r in top_outcomes[:10]:
-                print(f"{r['ticker']:8s} {r['date']:12s} {r['pct_move']:+7.2f}% "
-                      f"{r['adr_captured']:+7.2f} {r['mfe_pct']:+7.2f}% "
-                      f"{r['capture_eff']:7.3f} {r['trigger_bar']:5d}")
+    output = {
+        "setup_type": args.setup,
+        "direction": args.direction,
+        "max_forward": args.max_forward,
+        "min_adr": args.min_adr,
+        "exit_condition": {
+            "expr_name": exit_cond["expr_name"],
+            "direction": exit_cond["direction"],
+            "threshold": exit_cond["threshold"],
+        },
+        "pyramid_source": os.path.basename(args.pyramid),
+        "summary": {
+            "total_signals": len(signals),
+            "outcomes": len(outcomes),
+            "sub_adr": len(sub_adr),
+            "no_trigger": len(no_trigger),
+            "errors": len(errors),
+            "win_rate": len(outcomes) / total_classified if total_classified > 0 else 0,
+            "examples_as_outcomes": len(example_outcomes),
+            "examples_total": len(example_set),
+        },
+        "outcomes": sorted(outcomes, key=lambda r: r["date"]),
+        "sub_adr": sorted(sub_adr, key=lambda r: r["date"]),
+        "no_trigger": sorted(no_trigger, key=lambda r: r["date"]),
+        "errors": errors,
+    }
 
-        # Print top 10 NON-outcome signals (the ones that fizzled most)
-        if non_outcome_signals:
-            worst = sorted(non_outcome_signals, key=lambda r: r.get("pct_move", 0))
-            print(f"\n{'─'*80}")
-            print(f"TOP 10 NON-OUTCOME SIGNALS (worst fizzles):")
-            print(f"{'─'*80}")
-            print(f"{'Ticker':8s} {'Date':12s} {'%Move':>8s} {'ADR':>8s} {'MFE%':>8s} "
-                  f"{'Bars':>5s}")
-            for r in worst[:10]:
-                bars = r.get("bars_available", "?")
-                print(f"{r['ticker']:8s} {r['date']:12s} {r.get('pct_move',0):+7.2f}% "
-                      f"{r.get('adr_captured',0):+7.2f} {r.get('mfe_pct',0):+7.2f}% "
-                      f"{bars:>5}")
+    def convert(obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        elif isinstance(obj, (np.floating,)):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
 
+    with open(outpath, "w") as f:
+        json.dump(output, f, indent=2, default=convert)
+    print(f"\nResults saved to {outpath}")
 
-def _build_compute_spec(expression_name: str, category: str) -> dict:
-    """Reconstruct compute spec from expression name.
-
-    The exit_grind results store expression names; we need to reconstruct the compute spec
-    for ExitExprEngine. Boolean aggregation expressions (e.g. close_above_avgc50_count_true_15b)
-    are compound: base boolean + rolling aggregation.
-    """
-    # ── Check for boolean aggregation pattern first ──
-    # Pattern: {base_name}_{agg_type}_{window}b
-    # agg_types: count_true, pct_true, since_true, true_in_row
-    import re
-    agg_match = re.match(r'^(.+)_(count_true|pct_true|since_true|true_in_row)_(\d+)b$',
-                         expression_name)
-    if agg_match:
-        base_name = agg_match.group(1)
-        agg_type = agg_match.group(2)
-        window = int(agg_match.group(3))
-        # Resolve the base boolean's compute spec
-        base_spec = _build_base_bool_spec(base_name)
-        if base_spec is None:
-            print(f"  WARNING: Cannot resolve base boolean: {base_name}")
-            return None
-        return {
-            "op": "__bool_aggregation__",
-            "base_spec": base_spec,
-            "agg_type": agg_type,
-            "window": window,
-        }
-
-    # ── MA reclaim expressions ──
-    if expression_name.startswith("bars_since_reclaim_"):
-        ma = expression_name.replace("bars_since_reclaim_", "")
-        return {"op": "bars_since_reclaim", "ma": ma}
-
-    if expression_name.startswith("close_above_") and "_count_true" not in expression_name:
-        ma = expression_name.replace("close_above_", "")
-        return {"op": "close_above_ma", "ma": ma}
-
-    if expression_name.startswith("bars_since_touch_"):
-        ma = expression_name.replace("bars_since_touch_", "")
-        return {"op": "bars_since_touch_ma", "ma": ma}
-
-    if expression_name.startswith("reclaim_then_lost_"):
-        ma = expression_name.replace("reclaim_then_lost_", "")
-        return {"op": "reclaim_then_lost", "ma": ma}
-
-    # ── Time ──
-    if expression_name == "bars_since_signal":
-        return {"op": "bars_since_signal"}
-
-    # ── Move captured ──
-    if expression_name.startswith("move_captured_close_"):
-        norm = expression_name.replace("move_captured_close_", "")
-        return {"op": "move_captured", "price": "close", "normalizer": norm}
-
-    if expression_name.startswith("move_captured_low_"):
-        norm = expression_name.replace("move_captured_low_", "")
-        return {"op": "move_captured", "price": "low", "normalizer": norm}
-
-    # ── MFE ──
-    if expression_name.startswith("mfe_close_"):
-        norm = expression_name.replace("mfe_close_", "")
-        return {"op": "mfe", "price": "close", "normalizer": norm}
-
-    if expression_name.startswith("mfe_low_"):
-        norm = expression_name.replace("mfe_low_", "")
-        return {"op": "mfe", "price": "low", "normalizer": norm}
-
-    # ── Extension from MA ──
-    # Pattern: ext_{ma}_{norm}  e.g. ext_avgc50_adr14
-    if expression_name.startswith("ext_") and not expression_name.startswith("ext_ceil"):
-        parts = expression_name.split("_")
-        if len(parts) >= 3:
-            ma = parts[1]
-            norm = parts[2]
-            return {"op": "extension_from_ma", "ma": ma, "normalizer": norm}
-
-    # ── Distance from MA ──
-    if expression_name.startswith("distance_from_"):
-        rest = expression_name.replace("distance_from_", "")
-        parts = rest.split("_")
-        if len(parts) >= 2:
-            ma = parts[0]
-            norm = "_".join(parts[1:])
-            return {"op": "distance_from_ma", "ma": ma, "normalizer": norm}
-
-    # ── Extension ceiling ratio ──
-    if expression_name.startswith("ext_ceil_"):
-        rest = expression_name.replace("ext_ceil_", "")
-        parts = rest.split("_")
-        if len(parts) >= 3 and parts[-1].startswith("lb"):
-            lookback = int(parts[-1][2:])
-            norm = parts[-2]
-            ma = "_".join(parts[:-2])
-            return {"op": "ext_ceiling_ratio", "ma": ma, "normalizer": norm,
-                    "lookback": lookback}
-
-    # ── Momentum ──
-    if expression_name.startswith("rsi_"):
-        parts = expression_name.split("_")
-        if "slope" in parts:
-            period = int(parts[1])
-            offset = int(parts[3])
-            return {"op": "rsi_slope", "period": period, "offset": offset}
-        else:
-            period = int(parts[1])
-            return {"op": "rsi", "period": period}
-
-    if expression_name.startswith("roc_"):
-        period = int(expression_name.replace("roc_", ""))
-        return {"op": "roc", "period": period}
-
-    if expression_name.startswith("stoch_"):
-        period = int(expression_name.replace("stoch_", ""))
-        return {"op": "stochastic", "period": period}
-
-    if expression_name.startswith("adx_") and "slope" not in expression_name:
-        period = int(expression_name.replace("adx_", ""))
-        return {"op": "adx", "period": period}
-
-    if expression_name.startswith("di_spread_"):
-        period = int(expression_name.replace("di_spread_", ""))
-        return {"op": "di_spread", "period": period}
-
-    if expression_name.startswith("macd_hist_slope_"):
-        parts = expression_name.split("_")
-        return {"op": "macd_histogram_slope",
-                "fast": int(parts[3]), "slow": int(parts[4]),
-                "signal": int(parts[5]), "offset": int(parts[6].rstrip("b"))}
-
-    if expression_name.startswith("macd_hist_"):
-        parts = expression_name.split("_")
-        return {"op": "macd_histogram",
-                "fast": int(parts[2]), "slow": int(parts[3]),
-                "signal": int(parts[4])}
-
-    # ── Volume ──
-    if expression_name.startswith("rvol_"):
-        period = int(expression_name.replace("rvol_", ""))
-        return {"op": "rvol", "avg_period": period}
-
-    # ── Bollinger ──
-    if expression_name.startswith("bb_pctb_"):
-        period = int(expression_name.replace("bb_pctb_", ""))
-        return {"op": "bollinger_pctb", "period": period}
-
-    # ── Relative strength ──
-    if expression_name.startswith("rs_vs_spy_"):
-        period = int(expression_name.replace("rs_vs_spy_", ""))
-        return {"op": "rs_vs_spy", "period": period}
-
-    # ── Bar range ──
-    if expression_name.startswith("bar_range_"):
-        norm = expression_name.replace("bar_range_", "")
-        return {"op": "bar_range", "normalizer": norm}
-
-    # ── Capture efficiency ──
-    if expression_name == "capture_efficiency":
-        return {"op": "capture_efficiency"}
-
-    # ── Retrace from MFE ──
-    if expression_name == "retrace_from_mfe_pct_raw":
-        return {"op": "retrace_from_mfe_pct"}
-
-    print(f"  WARNING: Unknown expression name pattern: {expression_name}")
-    return None
-
-
-def _build_base_bool_spec(base_name: str) -> dict:
-    """Build compute spec for a base boolean expression.
-
-    These are the native boolean ops from exit_expressions.py that get
-    aggregated into count_true/pct_true/since_true/true_in_row.
-    """
-    # close_above_{ma}
-    if base_name.startswith("close_above_"):
-        ma = base_name.replace("close_above_", "")
-        return {"op": "close_above_ma", "ma": ma}
-
-    # close_below_{ma}
-    if base_name.startswith("close_below_"):
-        ma = base_name.replace("close_below_", "")
-        return {"op": "close_below_ma", "ma": ma}
-
-    # is_green
-    if base_name == "is_green":
-        return {"op": "is_green"}
-
-    # is_red
-    if base_name == "is_red":
-        return {"op": "is_red"}
-
-    # below_signal_bar_low / below_signal_low
-    if base_name in ("below_signal_bar_low", "below_signal_low"):
-        return {"op": "below_signal_bar_low"}
-
-    # above_signal_bar_high / above_signal_high
-    if base_name in ("above_signal_bar_high", "above_signal_high"):
-        return {"op": "above_signal_bar_high"}
-
-    # gap_down
-    if base_name == "gap_down":
-        return {"op": "gap_down"}
-
-    # gap_up
-    if base_name == "gap_up":
-        return {"op": "gap_up"}
-
-    # lower_low
-    if base_name == "lower_low":
-        return {"op": "lower_low"}
-
-    # lower_high
-    if base_name == "lower_high":
-        return {"op": "lower_high"}
-
-    # higher_low
-    if base_name == "higher_low":
-        return {"op": "higher_low"}
-
-    # higher_high
-    if base_name == "higher_high":
-        return {"op": "higher_high"}
-
-    print(f"  WARNING: Unknown base boolean: {base_name}")
-    return None
+    # Top outcomes by ADR
+    if outcomes:
+        top = sorted(outcomes, key=lambda r: r["adr_move"], reverse=True)
+        print(f"\n{'─'*80}")
+        print(f"TOP 15 OUTCOMES by ADR move:")
+        print(f"{'─'*80}")
+        print(f"{'Ticker':8s} {'Date':12s} {'%Move':>8s} {'ADR':>6s} {'MFE%':>8s} "
+              f"{'CapEff':>7s} {'Bar#':>5s} {'Ex?':>4s}")
+        for r in top[:15]:
+            ex = "✓" if r["is_example"] else ""
+            print(f"{r['ticker']:8s} {r['date']:12s} {r['pct_move']:+7.1f}% "
+                  f"{r['adr_move']:5.1f} {r['mfe_pct']:+7.1f}% "
+                  f"{r['capture_eff']:6.3f} {r['trigger_bar']:5d} {ex:>4s}")
 
 
 if __name__ == "__main__":
