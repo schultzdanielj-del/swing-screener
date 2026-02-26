@@ -891,47 +891,63 @@ class ExitExprEngine:
         
         # ──── BOOLEAN AGGREGATIONS ────────────────────────
         elif op.startswith("bool_"):
-            base_series = self.compute(comp["base_op"])
+            # Compute boolean on the FULL history first, then do rolling
+            # aggregation with full lookback, then slice to forward window.
+            # This prevents the rolling window from "resetting" at entry bar.
+            
+            # Save/restore forward bounds to compute base on full history
+            orig_fwd_start = self.fwd_start
+            orig_fwd_end = self.fwd_end
+            orig_n_forward = self.n_forward
+            self.fwd_start = 0
+            self.fwd_end = len(self.c)
+            self.n_forward = len(self.c)
+            
+            try:
+                full_base = self.compute(comp["base_op"])
+            finally:
+                self.fwd_start = orig_fwd_start
+                self.fwd_end = orig_fwd_end
+                self.n_forward = orig_n_forward
+            
             window = comp["window"]
             agg_type = op[5:]  # strip "bool_"
             
-            result = np.full(self.n_forward, np.nan)
-            bool_vals = base_series > 0.5  # convert to boolean
+            full_bool = full_base > 0.5
+            n_full = len(full_bool)
+            full_result = np.full(n_full, np.nan)
             
             if agg_type == "count_true":
-                for i in range(self.n_forward):
-                    s = max(0, i - window + 1)
-                    result[i] = float(np.sum(bool_vals[s:i+1]))
+                cumsum = np.cumsum(full_bool.astype(float))
+                full_result[window-1:] = cumsum[window-1:] - np.concatenate([[0], cumsum[:n_full-window]])
             
             elif agg_type == "since_true":
                 bars = 0
                 found = False
-                for i in range(self.n_forward):
-                    if bool_vals[i]:
+                for i in range(n_full):
+                    if full_bool[i]:
                         found = True
                         bars = 0
                     elif found:
                         bars += 1
                     if found:
-                        result[i] = float(bars)
+                        full_result[i] = float(bars)
             
             elif agg_type == "true_in_row":
                 streak = 0
-                for i in range(self.n_forward):
-                    if bool_vals[i]:
+                for i in range(n_full):
+                    if full_bool[i]:
                         streak += 1
                     else:
                         streak = 0
-                    result[i] = float(streak)
+                    full_result[i] = float(streak)
             
             elif agg_type == "pct_true":
-                for i in range(self.n_forward):
-                    s = max(0, i - window + 1)
-                    seg = bool_vals[s:i+1]
-                    if len(seg) > 0:
-                        result[i] = float(np.sum(seg)) / len(seg)
+                cumsum = np.cumsum(full_bool.astype(float))
+                full_result[window-1:] = (cumsum[window-1:] - np.concatenate([[0], cumsum[:n_full-window]])) / window
             
-            return result
+            # Slice to forward window
+            return full_result[orig_fwd_start:orig_fwd_end]
         
         else:
             raise ValueError(f"Unknown exit expression op: {op}")
