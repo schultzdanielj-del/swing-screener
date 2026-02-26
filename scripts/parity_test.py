@@ -20,30 +20,31 @@ def test_parity(setup="dtss", n_tickers=20):
     cache = pickle.load(open(cache_path, "rb"))
     
     # Load exit grind to get the winning condition
-    exit_path = os.path.join("data", "exit_grind", f"exit_grind_{setup}.json")
-    if not os.path.exists(exit_path):
-        # Try grinds storage
-        from local_runner.grind_storage import GrindStorage
-        gs = GrindStorage(setup)
-        exit_data = gs.load("exit")
-        expr_name = exit_data["results"][0]["expr_name"]
-    else:
-        with open(exit_path) as f:
-            exit_data = json.load(f)
-        expr_name = exit_data["results"][0]["expr_name"]
+    from local_runner.grind_storage import GrindStorage
+    gs = GrindStorage(setup)
+    exit_data = gs.load("exit")
+    expr_name = exit_data["results"][0]["expr_name"]
+    
+    # Get example tickers from signal grind
+    signal_data = gs.load("signal")
+    example_tickers = list(set(
+        ex["ticker"] for ex in signal_data.get("examples", [])
+    ))
+    
+    # Test examples first, then pad with random tickers
+    test_tickers = list(example_tickers)
+    remaining = [t for t in cache.keys() if t not in set(test_tickers)]
+    np.random.seed(42)
+    extra = np.random.choice(remaining, min(n_tickers, len(remaining)), replace=False)
+    test_tickers.extend(extra)
     
     print(f"Testing parity for: {expr_name}")
-    print(f"Sampling {n_tickers} tickers...\n")
-    
-    # Sample tickers
-    tickers = list(cache.keys())
-    np.random.seed(42)
-    sample = np.random.choice(tickers, min(n_tickers, len(tickers)), replace=False)
+    print(f"Testing {len(example_tickers)} example tickers + {len(extra)} random tickers\n")
     
     mismatches = 0
     tested = 0
     
-    for ticker in sample:
+    for ticker in test_tickers:
         df = cache[ticker]
         if len(df) < 100:
             continue
