@@ -193,6 +193,76 @@ class ExitExprEngine:
                    "rs_vs_spy", "rs_vs_spy_slope") and "window" not in comp:
             comp["window"] = comp.get("period", 10)
         
+        # ──── SHARED OPS: delegate to backtest_conditions ─────────
+        # These ops exist in both exit_compute and backtest_conditions.
+        # To guarantee parity across all grinders, compute on full history
+        # via backtest_conditions.compute_series(), then slice to forward window.
+        _SHARED_OPS = {
+            "adx", "adx_slope", "body_range_ratio", "bollinger_bandwidth",
+            "bollinger_bandwidth_rank", "bollinger_pctb", "di_spread",
+            "extension", "lower_wick_ratio",
+            "macd_histogram", "macd_histogram_slope", "obv_slope",
+            "roc", "rsi", "rsi_slope", "stochastic", "upper_wick_ratio",
+            "count_true", "since_true", "true_in_row",
+        }
+        if op in _SHARED_OPS:
+            from scripts.backtest_conditions import compute_series as _bt_compute
+            full_series = _bt_compute(self._base, comp)
+            return full_series[self.fwd_start:self.fwd_end]
+        
+        # Boolean aggregations (bool_count_true, bool_since_true, etc.)
+        # Compute base on full history, aggregate on full history, then slice.
+        if op.startswith("bool_"):
+            # Temporarily expand to full history for base_op computation
+            orig_fwd_start = self.fwd_start
+            orig_fwd_end = self.fwd_end
+            orig_n_forward = self.n_forward
+            self.fwd_start = 0
+            self.fwd_end = len(self.c)
+            self.n_forward = len(self.c)
+            
+            try:
+                full_base = self.compute(comp["base_op"])
+            finally:
+                self.fwd_start = orig_fwd_start
+                self.fwd_end = orig_fwd_end
+                self.n_forward = orig_n_forward
+            
+            window = comp["window"]
+            agg_type = op[5:]  # strip "bool_"
+            
+            full_bool = full_base > 0.5
+            n_full = len(full_bool)
+            full_result = np.full(n_full, np.nan)
+            
+            if agg_type == "count_true":
+                cumsum = np.cumsum(full_bool.astype(float))
+                full_result[window-1:] = cumsum[window-1:] - np.concatenate([[0], cumsum[:n_full-window]])
+            elif agg_type == "pct_true":
+                cumsum = np.cumsum(full_bool.astype(float))
+                full_result[window-1:] = (cumsum[window-1:] - np.concatenate([[0], cumsum[:n_full-window]])) / window
+            elif agg_type == "since_true":
+                bars = 0
+                found = False
+                for i in range(n_full):
+                    if full_bool[i]:
+                        found = True
+                        bars = 0
+                    elif found:
+                        bars += 1
+                    if found:
+                        full_result[i] = float(bars)
+            elif agg_type == "true_in_row":
+                streak = 0
+                for i in range(n_full):
+                    if full_bool[i]:
+                        streak += 1
+                    else:
+                        streak = 0
+                    full_result[i] = float(streak)
+            
+            return full_result[orig_fwd_start:orig_fwd_end]
+        
         # ──── MOVE CAPTURED ────────────────────────────────
         if op == "move_captured":
             pr = comp["price_ref"]
@@ -889,65 +959,6 @@ class ExitExprEngine:
             result[1:] = rs[1:] - rs[:-1]
             return result
         
-        # ──── BOOLEAN AGGREGATIONS ────────────────────────
-        elif op.startswith("bool_"):
-            # Compute boolean on the FULL history first, then do rolling
-            # aggregation with full lookback, then slice to forward window.
-            # This prevents the rolling window from "resetting" at entry bar.
-            
-            # Save/restore forward bounds to compute base on full history
-            orig_fwd_start = self.fwd_start
-            orig_fwd_end = self.fwd_end
-            orig_n_forward = self.n_forward
-            self.fwd_start = 0
-            self.fwd_end = len(self.c)
-            self.n_forward = len(self.c)
-            
-            try:
-                full_base = self.compute(comp["base_op"])
-            finally:
-                self.fwd_start = orig_fwd_start
-                self.fwd_end = orig_fwd_end
-                self.n_forward = orig_n_forward
-            
-            window = comp["window"]
-            agg_type = op[5:]  # strip "bool_"
-            
-            full_bool = full_base > 0.5
-            n_full = len(full_bool)
-            full_result = np.full(n_full, np.nan)
-            
-            if agg_type == "count_true":
-                cumsum = np.cumsum(full_bool.astype(float))
-                full_result[window-1:] = cumsum[window-1:] - np.concatenate([[0], cumsum[:n_full-window]])
-            
-            elif agg_type == "since_true":
-                bars = 0
-                found = False
-                for i in range(n_full):
-                    if full_bool[i]:
-                        found = True
-                        bars = 0
-                    elif found:
-                        bars += 1
-                    if found:
-                        full_result[i] = float(bars)
-            
-            elif agg_type == "true_in_row":
-                streak = 0
-                for i in range(n_full):
-                    if full_bool[i]:
-                        streak += 1
-                    else:
-                        streak = 0
-                    full_result[i] = float(streak)
-            
-            elif agg_type == "pct_true":
-                cumsum = np.cumsum(full_bool.astype(float))
-                full_result[window-1:] = (cumsum[window-1:] - np.concatenate([[0], cumsum[:n_full-window]])) / window
-            
-            # Slice to forward window
-            return full_result[orig_fwd_start:orig_fwd_end]
         
         else:
             raise ValueError(f"Unknown exit expression op: {op}")
