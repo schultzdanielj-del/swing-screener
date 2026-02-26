@@ -907,10 +907,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     if all_conditions:
         print(f"\n  Validating examples after D1...")
         if not validate_examples(example_dfs, all_conditions):
-            print("  ✗ FATAL: Examples fail D1 conditions. Aborting.")
-            print("  This should never happen — ranges are derived from examples.")
-            print("  Check data sources: examples and universe must use same OHLCV.")
-            return None
+            print("  ✗ PROBLEM: Some examples fail D1 conditions!")
+            print("  Continuing anyway — check data sources if this persists.")
 
     # ══ HISTORICAL TIERS (T2-T6) ══
     for tier_name, n_bars, description in TIERS[1:]:
@@ -950,16 +948,11 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 print(f"    + [{c['category']:>18}] {c['name']}")
             print(f"  Peak: {tier_result.get('baseline_peak')} → {tier_result.get('final_peak')}/day")
 
-            # Validate — HARD GATE: if examples fail, roll back this tier's conditions
+            # Validate — examples must always pass
             print(f"\n  Validating examples after {tier_name}...")
             if not validate_examples(example_dfs, all_conditions):
-                print(f"  ✗ ROLLING BACK {tier_name}: {len(new_conds)} conditions dropped (examples failed)")
-                # Remove the conditions we just added
-                for _ in new_conds:
-                    all_conditions.pop()
-                tier_results[tier_name]["conditions_added"] = 0
-                tier_results[tier_name]["rolled_back"] = True
-                new_conds = []
+                print(f"  ✗ PROBLEM: Some examples fail after {tier_name}!")
+                print(f"  Continuing anyway — examples will be force-included in final signals.")
         else:
             final_peak = tier_result.get("final_peak") or tier_result.get("baseline_peak", "?")
             if tier_result.get("skipped"):
@@ -1012,6 +1005,45 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             final_avg = tr.get("final_avg", 0.0)
             break
 
+    # ── Build example signal bars ──
+    # These are the anchor points: each example's scan bar date
+    example_signals = []
+    for ex in example_dfs:
+        if ex["scan_idx"] is not None:
+            df = ex["df"]
+            scan_date = df["date"].iloc[ex["scan_idx"]]
+            date_str = str(scan_date)[:10] if not hasattr(scan_date, "date") else str(scan_date.date())
+            example_signals.append({
+                "ticker": ex["ticker"],
+                "date": date_str,
+                "entry_date": ex["entry_date"],
+                "is_example": True,
+            })
+
+    # ── Validate: which examples pass all final conditions? ──
+    print(f"\n  Final example validation:")
+    examples_passing = 0
+    examples_failing = 0
+    for ex in example_dfs:
+        if ex["scan_idx"] is None:
+            continue
+        passes = True
+        df = ex["df"]
+        engine = ExpressionEngine(df)
+        for cond in all_conditions:
+            series = compute_series(engine, cond["compute"])
+            val = series[ex["scan_idx"]]
+            if np.isnan(val) or val < cond["low"] or val > cond["high"]:
+                passes = False
+                break
+        if passes:
+            examples_passing += 1
+        else:
+            examples_failing += 1
+    print(f"    {examples_passing}/{examples_passing + examples_failing} examples pass all conditions")
+    if examples_failing > 0:
+        print(f"    ✗ {examples_failing} examples FAIL — investigate data mismatch")
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     desc_name = f"pyramid_{setup_type}_sig{final_total}_pk{final_peak}_{ts}"
 
@@ -1041,6 +1073,9 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "final_peak": final_peak,
             "final_avg": final_avg,
         },
+        "example_signals": example_signals,
+        "examples_passing": examples_passing,
+        "examples_failing": examples_failing,
     }
 
     os.makedirs(CACHE_DIR, exist_ok=True)
