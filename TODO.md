@@ -12,18 +12,24 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 
 4. **LSP data file was deleted** in a "cleanup" commit (`cdad877`). Restored today from `cae0755`.
 
-5. **LSP detector** (`scripts/lsp_detector.py`, 459 lines) was built and validated but never integrated into any grinder. Current accuracy: 78% exact match on 23 examples (4 misses: AAOI, BRK-B, SMMT, VUZI).
+5. **LSP detector** (`scripts/lsp_detector.py`, 459 lines) was built and validated but never integrated into any grinder. ~~Current accuracy: 78% exact match on 23 examples (4 misses: AAOI, BRK-B, SMMT, VUZI).~~ **UPDATE 2026-02-26: Now 23/23.** See "Data fixes" below.
+
+### Data fixes (2026-02-26 session):
+- **AAOI LSP relabeled:** Was Jan 10 @ $22.85 (labeling error — that pivot was broken by $0.01). Corrected to Dec 19 @ $24.08 (highest unbroken pivot high). Detector already picked this correctly.
+- **BRKB:** Was listed as `BRK-B` — ticker naming mismatch. yfinance uses `BRK-B`, TC2000/DB uses `BRKB`. Renamed in LSP data. Fetched 1,545 OHLCV rows into Railway DB via new `/api/universe/insert-ohlcv` endpoint.
+- **SMMT:** Was never in the universe — never fetched. Fetched 1,545 OHLCV rows into Railway DB.
+- **VUZI:** Already matched correctly — TODO was stale listing it as a miss.
+- **Detector now: 23/23 as #1 result on all labeled examples.**
 
 ### What exists but is disconnected:
-- `data/dtss_lsp_data.json` — 23 hand-labeled examples with LSP date + price ✅ (restored)
-- `scripts/lsp_detector.py` — algorithmic LSP detection, 78% accuracy ✅
+- `data/dtss_lsp_data.json` — 23 hand-labeled examples with LSP date + price ✅ (restored, corrected)
+- `scripts/lsp_detector.py` — algorithmic LSP detection, **23/23 accuracy** ✅
 - `expression_engine.py` — 8 LSP expressions built: `lsp_distance`, `lsp_bounce_recovery`, `lsp_right_peak_ratio`, `lsp_volume_ratio`, `avwap_lsp_distance`, `lsp_bars_back`, `lsp_prominence`, `lsp_pullback_depth` ✅
 - `expression_engine.set_lsp_context()` — injection method exists ✅
 - `backtest_conditions.compute_series()` — 88 ops, shared computation path ✅
 
 ### What's broken/missing:
 - Signal grinder: no LSP expressions, no `set_lsp_context()` calls
-- LSP detector: 78% accuracy, needs investigation on 4 misses
 - No grinder uses the LSP AVWAP as a condition
 - Exit/outcome grinders: computation parity fixed today but need re-run
 - Exit grinder: doesn't validate that exit doesn't fire during formation period (before entry date)
@@ -33,28 +39,19 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 ## The Fix — Ordered Task List
 
 ### Task 0: Rewrite LSP Detector
-**Why first:** Everything downstream depends on reliable LSP detection. For the 23 labeled examples we have hand-labeled data, but for the 4,000+ universe tickers in the backtest the detector must work.
+**Status: Accuracy validated (23/23), rewrite still needed for simplification.**
 
-**Current detector is overcomplicated.** Uses prominence scoring, volume weighting, recency bonuses — all unnecessary. The DTSS LSP has a simple definition:
+The detector currently works (23/23) but is overcomplicated — 460 lines of prominence scoring, volume weighting, recency bonuses. The rewrite should:
 
-**DTSS LSP = the highest pivot high that price never revisits/breaks before the signal bar.**
+1. Simplify to core logic: find all unbroken pivot highs AND pivot lows
+2. Return ALL unbroken pivots — don't pick "the" LSP, let the grinder discover which pivots matter via expressions
+3. "Unbroken pivot high" = pivot high where no subsequent bar's high exceeded it before the signal bar
+4. "Unbroken pivot low" = pivot low where no subsequent bar's low went below it before the signal bar
+5. Multi-window detection (5, 10, 15, 20, 30, 40)
 
-Not the most "prominent." Not the highest volume. Just: highest unbroken resistance level.
+**Key insight from this session:** The detector should NOT be opinionated about which pivot is "the" LSP. It returns all unbroken pivots. LSP expressions in the grinder discover the relationships automatically. This makes it truly setup-agnostic.
 
-**Rewrite approach:**
-1. Find all pivot highs in lookback (multi-window: 5, 10, 15, 20, 30, 40)
-2. For each pivot high: did any subsequent bar's high exceed this pivot's high before the signal bar?
-3. If no → unbroken level = LSP candidate
-4. Highest unbroken pivot high = the LSP
-
-**For universal use (all setup types):**
-- Detect both pivot highs AND pivot lows
-- Same "unbroken" logic: pivot low where no subsequent bar's low goes below it
-- Return all unbroken pivots (multiple), let the grinder/setup decide which matter
-- DTSS uses highest unbroken pivot high
-- Long setups (HTF, 3-4DB) would use lowest unbroken pivot low
-
-**Validate against 23 labeled examples.** Target: 23/23. With the correct definition this should be straightforward — the current 78% accuracy is because the detector was picking "most prominent" instead of "highest unbroken."
+**Validate:** Must still hit 23/23 on labeled examples (highest unbroken pivot high should match for DTSS).
 
 ### Task 1: Integrate LSP into Signal Grinder
 **What:** The pyramid grinder must use LSP data when grinding DTSS.
@@ -108,10 +105,11 @@ Not the most "prominent." Not the highest volume. Just: highest unbroken resista
 
 | File | Status | Purpose |
 |------|--------|---------|
-| `data/dtss_lsp_data.json` | ✅ Restored | 23 hand-labeled LSP dates + prices |
-| `scripts/lsp_detector.py` | ✅ Exists, 78% accuracy | Algorithmic LSP detection |
+| `data/dtss_lsp_data.json` | ✅ Corrected (23 examples, AAOI relabeled, BRKB renamed) | Hand-labeled LSP dates + prices |
+| `scripts/lsp_detector.py` | ✅ 23/23 accuracy, needs simplification rewrite | Algorithmic LSP detection |
 | `scripts/expression_engine.py` | ✅ Has LSP ops, unused | 8 LSP expressions + `set_lsp_context()` |
 | `scripts/backtest_conditions.py` | ✅ 88 ops, parity | Shared computation path |
+| `server.py` | ✅ New `/api/universe/insert-ohlcv` endpoint added | Railway FastAPI backend |
 | `local_runner/pyramid_grinder.py` | ❌ No LSP | Needs LSP injection |
 | `local_runner/matrix_builder.py` | ❌ No LSP | Needs LSP-aware example matrix |
 | `scripts/exit_grinder.py` | ⚠️ Parity fixed, needs re-run | Formation period validation missing |
