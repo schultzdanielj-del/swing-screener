@@ -1,0 +1,6097 @@
+{
+  "setup_type": "dtss",
+  "timestamp": "2026-02-25T15:03:55.864394+00:00",
+  "total_time_s": 172.2,
+  "peak_target": 5,
+  "n_conditions": 39,
+  "all_conditions": [
+    {
+      "name": "vwap_slope_50_off5_atr14",
+      "expr": "vwap_slope_50_off5_atr14",
+      "category": "vwap",
+      "compute": {
+        "op": "vwap_slope",
+        "period": 50,
+        "offset": 5,
+        "normalizer": "atr14"
+      },
+      "low": -0.06585292847465615,
+      "high": 0.702316237716885,
+      "tier": "D1"
+    },
+    {
+      "name": "ct_c_gt_avgc100_50",
+      "expr": "ct_c_gt_avgc100_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_avgc100",
+        "period": 50
+      },
+      "low": -1.55,
+      "high": 32.55,
+      "tier": "D1"
+    },
+    {
+      "name": "ct_c_lt_avgc100_50",
+      "expr": "ct_c_lt_avgc100_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lt_avgc100",
+        "period": 50
+      },
+      "low": -0.25,
+      "high": 5.25,
+      "tier": "D1"
+    },
+    {
+      "name": "ct_h_gt_maxh5_1_30",
+      "expr": "ct_h_gt_maxh5_1_30",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_maxh5_1",
+        "period": 30
+      },
+      "low": 4.5,
+      "high": 15.5,
+      "tier": "D1"
+    },
+    {
+      "name": "st_h_gt_maxh10_1_20",
+      "expr": "st_h_gt_maxh10_1_20",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_gt_maxh10_1",
+        "period": 20
+      },
+      "low": -1.25,
+      "high": 4.25,
+      "tier": "D1"
+    },
+    {
+      "name": "st_gap_up_10",
+      "expr": "st_gap_up_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "gap_up",
+        "period": 10
+      },
+      "low": -0.1,
+      "high": 2.1,
+      "tier": "D1"
+    },
+    {
+      "name": "ct_gap_up_half_atr_30",
+      "expr": "ct_gap_up_half_atr_30",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "gap_up_half_atr",
+        "period": 30
+      },
+      "low": -0.2,
+      "high": 4.2,
+      "tier": "D1"
+    },
+    {
+      "name": "ns_l_minl15_pct",
+      "expr": "ns_l_minl15_pct",
+      "category": "near_support",
+      "compute": {
+        "op": "distance_to_minl",
+        "price_ref": "L",
+        "minl_period": 15,
+        "normalizer": "pct"
+      },
+      "low": 2.2390271460982585,
+      "high": 48.22087128941412,
+      "tier": "1wk"
+    },
+    {
+      "name": "ct_avgc50_rising_15",
+      "expr": "ct_avgc50_rising_15",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc50_rising",
+        "period": 15
+      },
+      "low": 4.5,
+      "high": 15.5,
+      "tier": "1mo"
+    },
+    {
+      "name": "ct_outside_bar_50",
+      "expr": "ct_outside_bar_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "outside_bar",
+        "period": 50
+      },
+      "low": 0.75,
+      "high": 6.25,
+      "tier": "1mo"
+    },
+    {
+      "name": "undercut_xavgc21_50_atr14",
+      "expr": "undercut_xavgc21_50_atr14",
+      "category": "ma_cross",
+      "compute": {
+        "op": "ma_undercut_depth",
+        "ma": "xavgc21",
+        "period": 50,
+        "normalizer": "atr14"
+      },
+      "low": -3.575137726648336,
+      "high": -0.17424622282068442,
+      "tier": "6mo"
+    },
+    {
+      "name": "ct_gap_up_half_atr_50",
+      "expr": "ct_gap_up_half_atr_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "gap_up_half_atr",
+        "period": 50
+      },
+      "low": -0.25,
+      "high": 5.25,
+      "tier": "6mo"
+    },
+    {
+      "name": "close_position_1",
+      "expr": "close_position_1",
+      "category": "candle_pattern",
+      "compute": {
+        "op": "close_position_in_bar",
+        "period": 1
+      },
+      "low": 0.24909140930970228,
+      "high": 1.0357575519376332,
+      "tier": "1yr"
+    },
+    {
+      "name": "vol_price_div_20",
+      "expr": "vol_price_div_20",
+      "category": "volume_character",
+      "compute": {
+        "op": "volume_price_divergence",
+        "period": 20
+      },
+      "low": -0.8362242809831864,
+      "high": 0.9989157940149899,
+      "tier": "1yr"
+    },
+    {
+      "name": "slope_xavgc50_off10_atr14",
+      "expr": "slope_xavgc50_off10_atr14",
+      "category": "ma_slope",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "xavgc50",
+        "offset": 10,
+        "normalizer": "atr14"
+      },
+      "low": -0.055977232295251415,
+      "high": 1.2417820775065418,
+      "tier": "5yr"
+    },
+    {
+      "name": "vol_ratio_3",
+      "expr": "vol_ratio_3",
+      "category": "momentum",
+      "compute": {
+        "op": "volume_ratio",
+        "avg_period": 3
+      },
+      "low": 0.6012160520134914,
+      "high": 1.833937298056827,
+      "tier": "5yr"
+    },
+    {
+      "name": "adx_7",
+      "expr": "adx_7",
+      "category": "momentum",
+      "compute": {
+        "op": "adx",
+        "period": 7
+      },
+      "low": 29.73130640194348,
+      "high": 85.4613790085237,
+      "tier": "5yr"
+    },
+    {
+      "name": "undercut_avgc50_120_adr14",
+      "expr": "undercut_avgc50_120_adr14",
+      "category": "ma_cross",
+      "compute": {
+        "op": "ma_undercut_depth",
+        "ma": "avgc50",
+        "period": 120,
+        "normalizer": "adr14"
+      },
+      "low": -4.472550928400885,
+      "high": 0.24716208238357792,
+      "tier": "5yr"
+    },
+    {
+      "name": "lower_high_count_10",
+      "expr": "lower_high_count_10",
+      "category": "swing_structure",
+      "compute": {
+        "op": "lower_high_count",
+        "period": 10
+      },
+      "low": 0.0,
+      "high": 0.0,
+      "tier": "5yr"
+    },
+    {
+      "name": "swing_high_count_30",
+      "expr": "swing_high_count_30",
+      "category": "swing_structure",
+      "compute": {
+        "op": "swing_high_count",
+        "period": 30
+      },
+      "low": 2.8,
+      "high": 7.2,
+      "tier": "5yr"
+    },
+    {
+      "name": "nr_ratio_3",
+      "expr": "nr_ratio_3",
+      "category": "candle_pattern",
+      "compute": {
+        "op": "nr_ratio",
+        "period": 3
+      },
+      "low": 0.48720928878639974,
+      "high": 1.0244186052958857,
+      "tier": "5yr"
+    },
+    {
+      "name": "aroon_osc_50",
+      "expr": "aroon_osc_50",
+      "category": "aroon",
+      "compute": {
+        "op": "aroon_oscillator",
+        "period": 50
+      },
+      "low": -59.0,
+      "high": 95.0,
+      "tier": "5yr"
+    },
+    {
+      "name": "pctrank_atr14_252",
+      "expr": "pctrank_atr14_252",
+      "category": "percentile_rank",
+      "compute": {
+        "op": "percentile_rank",
+        "source": "atr14",
+        "period": 252
+      },
+      "low": 15.402229845626072,
+      "high": 91.647512864494,
+      "tier": "5yr"
+    },
+    {
+      "name": "slope_ratio_xavgc13_xavgc21_off10",
+      "expr": "slope_ratio_xavgc13_xavgc21_off10",
+      "category": "slope_ratio",
+      "compute": {
+        "op": "slope_ratio",
+        "fast_ma": "xavgc13",
+        "slow_ma": "xavgc21",
+        "offset": 10
+      },
+      "low": 0.7593478490803475,
+      "high": 4.836354038092635,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_c_gt_o_5",
+      "expr": "st_c_gt_o_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_o",
+        "period": 5
+      },
+      "low": -0.05,
+      "high": 1.05,
+      "tier": "5yr"
+    },
+    {
+      "name": "ct_v_gt_avgv20_50",
+      "expr": "ct_v_gt_avgv20_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "v_gt_avgv20",
+        "period": 50
+      },
+      "low": 13.15,
+      "high": 31.85,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_v_gt_avgv50_5",
+      "expr": "st_v_gt_avgv50_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "v_gt_avgv50",
+        "period": 5
+      },
+      "low": -1.1,
+      "high": 1.1,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_range_lt_half_atr_30",
+      "expr": "st_range_lt_half_atr_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "range_lt_half_atr",
+        "period": 30
+      },
+      "low": -2.25,
+      "high": 25.25,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_narrow_range_50",
+      "expr": "st_narrow_range_50",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "narrow_range",
+        "period": 50
+      },
+      "low": -2.85,
+      "high": 37.85,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_inside_bar_10",
+      "expr": "st_inside_bar_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "inside_bar",
+        "period": 10
+      },
+      "low": -1.35,
+      "high": 6.35,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_gap_down_half_atr_20",
+      "expr": "st_gap_down_half_atr_20",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "gap_down_half_atr",
+        "period": 20
+      },
+      "low": -1.7000000000000002,
+      "high": 13.7,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_rsi14_gt_70_30",
+      "expr": "st_rsi14_gt_70_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "rsi14_gt_70",
+        "period": 30
+      },
+      "low": -2.1,
+      "high": 22.1,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_rsi14_lt_40_10",
+      "expr": "st_rsi14_lt_40_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "rsi14_lt_40",
+        "period": 10
+      },
+      "low": -1.4,
+      "high": 7.4,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_stoch14_lt_20_20",
+      "expr": "st_stoch14_lt_20_20",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "stoch14_lt_20",
+        "period": 20
+      },
+      "low": -1.8,
+      "high": 15.8,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_stoch14_lt_20_50",
+      "expr": "st_stoch14_lt_20_50",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "stoch14_lt_20",
+        "period": 50
+      },
+      "low": -0.3500000000000001,
+      "high": 51.35,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_stoch14_lt_50_30",
+      "expr": "st_stoch14_lt_50_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "stoch14_lt_50",
+        "period": 30
+      },
+      "low": -1.9500000000000002,
+      "high": 18.95,
+      "tier": "5yr"
+    },
+    {
+      "name": "ct_adx14_gt_30_50",
+      "expr": "ct_adx14_gt_30_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "adx14_gt_30",
+        "period": 50
+      },
+      "low": 5.9,
+      "high": 52.1,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_macd_negative_5",
+      "expr": "st_macd_negative_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "macd_negative",
+        "period": 5
+      },
+      "low": -1.1,
+      "high": 1.1,
+      "tier": "5yr"
+    },
+    {
+      "name": "st_bop14_negative_20",
+      "expr": "st_bop14_negative_20",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "bop14_negative",
+        "period": 20
+      },
+      "low": -1.7000000000000002,
+      "high": 13.7,
+      "tier": "5yr"
+    }
+  ],
+  "tier_results": {
+    "D1": {
+      "conditions_added": 7,
+      "pass_rate": 0.0,
+      "n_passing": 0,
+      "passing_tickers": []
+    },
+    "1wk": {
+      "conditions_added": 1,
+      "conditions": [
+        "ns_l_minl15_pct"
+      ],
+      "final_peak": 4,
+      "final_avg": 3.2,
+      "final_total": 16,
+      "baseline_peak": 7,
+      "stats": {
+        "nodes_explored": 472,
+        "elapsed_s": 0.0,
+        "depth_reached": 1
+      },
+      "final_signals": [
+        {
+          "date": "2026-02-11",
+          "ticker": "ALH"
+        },
+        {
+          "date": "2026-02-12",
+          "ticker": "ALH"
+        },
+        {
+          "date": "2026-02-12",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-02-12",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-12",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-13",
+          "ticker": "ALH"
+        },
+        {
+          "date": "2026-02-13",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-02-13",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-13",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-17",
+          "ticker": "ALH"
+        },
+        {
+          "date": "2026-02-17",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-02-17",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-17",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-18",
+          "ticker": "CBC"
+        },
+        {
+          "date": "2026-02-18",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-02-18",
+          "ticker": "Q"
+        }
+      ],
+      "final_tickers": [
+        "ALH",
+        "CBC",
+        "LGN",
+        "Q",
+        "WULX"
+      ]
+    },
+    "1mo": {
+      "conditions_added": 2,
+      "conditions": [
+        "ct_avgc50_rising_15",
+        "ct_outside_bar_50"
+      ],
+      "final_peak": 5,
+      "final_avg": 3.4,
+      "final_total": 68,
+      "baseline_peak": 16,
+      "stats": {
+        "nodes_explored": 2574,
+        "elapsed_s": 0.0,
+        "depth_reached": 2
+      },
+      "final_signals": [
+        {
+          "date": "2026-01-21",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-21",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-21",
+          "ticker": "NPT"
+        },
+        {
+          "date": "2026-01-22",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-22",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-22",
+          "ticker": "NPT"
+        },
+        {
+          "date": "2026-01-23",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-23",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-23",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-23",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-26",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-26",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-26",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-26",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-27",
+          "ticker": "BDVL"
+        },
+        {
+          "date": "2026-01-27",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-27",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-27",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "APLX"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "APLX"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "APLX"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "NPT"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-02",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-02-02",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-02-02",
+          "ticker": "NPT"
+        },
+        {
+          "date": "2026-02-02",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-03",
+          "ticker": "APLX"
+        },
+        {
+          "date": "2026-02-03",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-02-03",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-03",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-04",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-02-04",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-04",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-05",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-06",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-09",
+          "ticker": "BDVL"
+        },
+        {
+          "date": "2026-02-09",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-09",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-09",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "BDVL"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "BDVL"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-12",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-12",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-13",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-17",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-02-17",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-18",
+          "ticker": "CBC"
+        },
+        {
+          "date": "2026-02-18",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-02-18",
+          "ticker": "Q"
+        }
+      ],
+      "final_tickers": [
+        "APLX",
+        "BDVL",
+        "CBC",
+        "CRCD",
+        "EVMN",
+        "FIGR",
+        "HOOZ",
+        "LGN",
+        "NPT",
+        "Q",
+        "SOLS",
+        "WULX"
+      ]
+    },
+    "6mo": {
+      "conditions_added": 2,
+      "conditions": [
+        "undercut_xavgc21_50_atr14",
+        "ct_gap_up_half_atr_50"
+      ],
+      "final_peak": 5,
+      "final_avg": 2.6,
+      "final_total": 304,
+      "baseline_peak": 10,
+      "stats": {
+        "nodes_explored": 2807,
+        "elapsed_s": 0.0,
+        "depth_reached": 2
+      },
+      "final_signals": [
+        {
+          "date": "2021-07-09",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-07-12",
+          "ticker": "REML"
+        },
+        {
+          "date": "2025-08-20",
+          "ticker": "IOTR"
+        },
+        {
+          "date": "2025-08-20",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-20",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-21",
+          "ticker": "IOTR"
+        },
+        {
+          "date": "2025-08-21",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-21",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-22",
+          "ticker": "IOTR"
+        },
+        {
+          "date": "2025-08-22",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-22",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-22",
+          "ticker": "RHLD"
+        },
+        {
+          "date": "2025-08-25",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-25",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-25",
+          "ticker": "RHLD"
+        },
+        {
+          "date": "2025-08-25",
+          "ticker": "RKLX"
+        },
+        {
+          "date": "2025-08-26",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-26",
+          "ticker": "RHLD"
+        },
+        {
+          "date": "2025-08-26",
+          "ticker": "RKLX"
+        },
+        {
+          "date": "2025-08-27",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-27",
+          "ticker": "MVLL"
+        },
+        {
+          "date": "2025-08-27",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-27",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-08-27",
+          "ticker": "VRTL"
+        },
+        {
+          "date": "2025-08-28",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-28",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-08-28",
+          "ticker": "MVLL"
+        },
+        {
+          "date": "2025-08-28",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-28",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-08-29",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-29",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-08-29",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-08-29",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-29",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-09-02",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-02",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-09-02",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-09-02",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-09-03",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-04",
+          "ticker": "AHL"
+        },
+        {
+          "date": "2025-09-04",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-04",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-09-05",
+          "ticker": "AHL"
+        },
+        {
+          "date": "2025-09-05",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-08",
+          "ticker": "AHL"
+        },
+        {
+          "date": "2025-09-08",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-08",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-09-09",
+          "ticker": "AHL"
+        },
+        {
+          "date": "2025-09-09",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-09",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-09-10",
+          "ticker": "AHL"
+        },
+        {
+          "date": "2025-09-10",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-09-11",
+          "ticker": "BMNR"
+        },
+        {
+          "date": "2025-09-11",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-11",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-09-11",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-09-11",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-09-12",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-12",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-09-12",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-09-12",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-09-12",
+          "ticker": "RKLX"
+        },
+        {
+          "date": "2025-09-15",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-15",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-09-15",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-09-15",
+          "ticker": "RKLX"
+        },
+        {
+          "date": "2025-09-16",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-16",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-09-16",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-09-16",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-09-16",
+          "ticker": "RKLX"
+        },
+        {
+          "date": "2025-09-17",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-17",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-09-17",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-09-17",
+          "ticker": "RKLX"
+        },
+        {
+          "date": "2025-09-18",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-18",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-09-18",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-09-18",
+          "ticker": "RKLX"
+        },
+        {
+          "date": "2025-09-19",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-19",
+          "ticker": "GMEU"
+        },
+        {
+          "date": "2025-09-19",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-09-19",
+          "ticker": "RDTL"
+        },
+        {
+          "date": "2025-09-22",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-22",
+          "ticker": "GMEU"
+        },
+        {
+          "date": "2025-09-22",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-09-22",
+          "ticker": "RDTL"
+        },
+        {
+          "date": "2025-09-23",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-24",
+          "ticker": "AMUU"
+        },
+        {
+          "date": "2025-09-24",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-24",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-09-24",
+          "ticker": "RDTL"
+        },
+        {
+          "date": "2025-09-25",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-25",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-09-26",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-26",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-09-26",
+          "ticker": "VRTL"
+        },
+        {
+          "date": "2025-09-29",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-29",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-09-30",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-30",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-01",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-01",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-02",
+          "ticker": "AMUU"
+        },
+        {
+          "date": "2025-10-02",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-02",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-10-03",
+          "ticker": "AMUU"
+        },
+        {
+          "date": "2025-10-03",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-03",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-10-06",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-06",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-10-07",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-10-09",
+          "ticker": "HOOW"
+        },
+        {
+          "date": "2025-10-09",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-10",
+          "ticker": "HOOW"
+        },
+        {
+          "date": "2025-10-10",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-10-10",
+          "ticker": "TEMT"
+        },
+        {
+          "date": "2025-10-13",
+          "ticker": "CRWU"
+        },
+        {
+          "date": "2025-10-13",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-10-13",
+          "ticker": "TEMT"
+        },
+        {
+          "date": "2025-10-14",
+          "ticker": "CRWU"
+        },
+        {
+          "date": "2025-10-14",
+          "ticker": "TEMT"
+        },
+        {
+          "date": "2025-10-15",
+          "ticker": "TEMT"
+        },
+        {
+          "date": "2025-10-16",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-10-17",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-10-23",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-23",
+          "ticker": "NOWL"
+        },
+        {
+          "date": "2025-10-24",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-10-24",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-24",
+          "ticker": "NOWL"
+        },
+        {
+          "date": "2025-10-24",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-10-27",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-27",
+          "ticker": "HOOW"
+        },
+        {
+          "date": "2025-10-27",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-27",
+          "ticker": "NOWL"
+        },
+        {
+          "date": "2025-10-27",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-10-28",
+          "ticker": "HOOW"
+        },
+        {
+          "date": "2025-10-28",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-28",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-10-28",
+          "ticker": "OTF"
+        },
+        {
+          "date": "2025-10-28",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-10-29",
+          "ticker": "HOOW"
+        },
+        {
+          "date": "2025-10-29",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-29",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-10-29",
+          "ticker": "OTF"
+        },
+        {
+          "date": "2025-10-29",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-10-30",
+          "ticker": "HOOW"
+        },
+        {
+          "date": "2025-10-30",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-30",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-10-30",
+          "ticker": "OTF"
+        },
+        {
+          "date": "2025-10-30",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-10-31",
+          "ticker": "AMRZ"
+        },
+        {
+          "date": "2025-10-31",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-31",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-11-03",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-11-10",
+          "ticker": "WYFI"
+        },
+        {
+          "date": "2025-11-12",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-11-13",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-11-14",
+          "ticker": "MIAX"
+        },
+        {
+          "date": "2025-11-19",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-11-20",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-11-21",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-11-24",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-11-25",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-11-26",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-11-28",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-12-01",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-12-02",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-12-03",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2025-12-03",
+          "ticker": "NIHI"
+        },
+        {
+          "date": "2025-12-04",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2025-12-04",
+          "ticker": "NIHI"
+        },
+        {
+          "date": "2025-12-05",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2025-12-08",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2025-12-09",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2025-12-10",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2025-12-10",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2025-12-10",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-11",
+          "ticker": "ASTX"
+        },
+        {
+          "date": "2025-12-11",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2025-12-11",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-12",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2025-12-12",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-15",
+          "ticker": "ASTX"
+        },
+        {
+          "date": "2025-12-15",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-16",
+          "ticker": "ASTX"
+        },
+        {
+          "date": "2025-12-16",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-17",
+          "ticker": "CORD"
+        },
+        {
+          "date": "2025-12-17",
+          "ticker": "MIAX"
+        },
+        {
+          "date": "2025-12-17",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-18",
+          "ticker": "CORD"
+        },
+        {
+          "date": "2025-12-19",
+          "ticker": "MIAX"
+        },
+        {
+          "date": "2025-12-22",
+          "ticker": "MIAX"
+        },
+        {
+          "date": "2025-12-22",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-23",
+          "ticker": "CORD"
+        },
+        {
+          "date": "2025-12-23",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2025-12-23",
+          "ticker": "MIAX"
+        },
+        {
+          "date": "2025-12-23",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-24",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2025-12-24",
+          "ticker": "MIAX"
+        },
+        {
+          "date": "2025-12-24",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-26",
+          "ticker": "BDVL"
+        },
+        {
+          "date": "2025-12-26",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2025-12-26",
+          "ticker": "MIAX"
+        },
+        {
+          "date": "2025-12-26",
+          "ticker": "NIQ"
+        },
+        {
+          "date": "2025-12-26",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-29",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2025-12-29",
+          "ticker": "MIAX"
+        },
+        {
+          "date": "2025-12-29",
+          "ticker": "NIQ"
+        },
+        {
+          "date": "2025-12-29",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-30",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2025-12-30",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2025-12-30",
+          "ticker": "MIAX"
+        },
+        {
+          "date": "2025-12-31",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2025-12-31",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-02",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-02",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-02",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-05",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-05",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-06",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-06",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-07",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-08",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-09",
+          "ticker": "AHMA"
+        },
+        {
+          "date": "2026-01-09",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-12",
+          "ticker": "AHMA"
+        },
+        {
+          "date": "2026-01-12",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-13",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-13",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-14",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-15",
+          "ticker": "AHMA"
+        },
+        {
+          "date": "2026-01-15",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-16",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-16",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-20",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-20",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-21",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-21",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-21",
+          "ticker": "NPT"
+        },
+        {
+          "date": "2026-01-22",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-22",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-22",
+          "ticker": "NPT"
+        },
+        {
+          "date": "2026-01-23",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-23",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-23",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-23",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-26",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-26",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-26",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-26",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-27",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-27",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-27",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "APLX"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "APLX"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "APLX"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "NPT"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-02",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-02-02",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-02-02",
+          "ticker": "NPT"
+        },
+        {
+          "date": "2026-02-02",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-03",
+          "ticker": "APLX"
+        },
+        {
+          "date": "2026-02-03",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-02-03",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-03",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-04",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-02-04",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-04",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-05",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-06",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-09",
+          "ticker": "BDVL"
+        },
+        {
+          "date": "2026-02-09",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-09",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-09",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "BDVL"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "BDVL"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-12",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-12",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-13",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-17",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-02-17",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-18",
+          "ticker": "CBC"
+        },
+        {
+          "date": "2026-02-18",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-02-18",
+          "ticker": "Q"
+        }
+      ],
+      "final_tickers": [
+        "AHL",
+        "AHMA",
+        "AMRZ",
+        "AMUU",
+        "APLX",
+        "APPX",
+        "ASTX",
+        "BDVL",
+        "BMNR",
+        "CBC",
+        "CORD",
+        "CRCD",
+        "CRWU",
+        "EVMN",
+        "FIGR",
+        "GLXY",
+        "GMEU",
+        "HOOW",
+        "HOOY",
+        "HOOZ",
+        "IONL",
+        "IONX",
+        "IOTR",
+        "LGN",
+        "MH",
+        "MIAX",
+        "MVLL",
+        "NIHI",
+        "NIQ",
+        "NOWL",
+        "NPB",
+        "NPT",
+        "OKLL",
+        "OMAH",
+        "OMDA",
+        "OTF",
+        "PLTG",
+        "Q",
+        "QBTX",
+        "RDTL",
+        "REML",
+        "RGTX",
+        "RHLD",
+        "RKLX",
+        "SLDE",
+        "SOLS",
+        "TEMT",
+        "VRTL",
+        "WULX",
+        "WYFI"
+      ]
+    },
+    "1yr": {
+      "conditions_added": 2,
+      "conditions": [
+        "close_position_1",
+        "vol_price_div_20"
+      ],
+      "final_peak": 5,
+      "final_avg": 2.2,
+      "final_total": 444,
+      "baseline_peak": 9,
+      "stats": {
+        "nodes_explored": 2303,
+        "elapsed_s": 0.0,
+        "depth_reached": 2
+      },
+      "final_signals": [
+        {
+          "date": "2021-04-23",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-04-26",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-04-27",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-04-28",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-04-29",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-04-30",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-05-04",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-05-05",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-05-26",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-05-27",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-05-28",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-06-01",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-07-09",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-07-12",
+          "ticker": "REML"
+        },
+        {
+          "date": "2025-02-19",
+          "ticker": "NFLU"
+        },
+        {
+          "date": "2025-02-19",
+          "ticker": "NFXL"
+        },
+        {
+          "date": "2025-02-19",
+          "ticker": "PC"
+        },
+        {
+          "date": "2025-02-20",
+          "ticker": "NFLU"
+        },
+        {
+          "date": "2025-02-20",
+          "ticker": "NFXL"
+        },
+        {
+          "date": "2025-02-20",
+          "ticker": "PC"
+        },
+        {
+          "date": "2025-02-24",
+          "ticker": "PC"
+        },
+        {
+          "date": "2025-02-24",
+          "ticker": "SOBO"
+        },
+        {
+          "date": "2025-02-25",
+          "ticker": "PC"
+        },
+        {
+          "date": "2025-02-25",
+          "ticker": "PTIR"
+        },
+        {
+          "date": "2025-02-25",
+          "ticker": "SOBO"
+        },
+        {
+          "date": "2025-02-26",
+          "ticker": "SOBO"
+        },
+        {
+          "date": "2025-02-27",
+          "ticker": "SOBO"
+        },
+        {
+          "date": "2025-02-28",
+          "ticker": "SOBO"
+        },
+        {
+          "date": "2025-03-05",
+          "ticker": "SARO"
+        },
+        {
+          "date": "2025-03-11",
+          "ticker": "SOBO"
+        },
+        {
+          "date": "2025-03-12",
+          "ticker": "AVS"
+        },
+        {
+          "date": "2025-03-19",
+          "ticker": "PLTY"
+        },
+        {
+          "date": "2025-03-20",
+          "ticker": "PLTY"
+        },
+        {
+          "date": "2025-03-20",
+          "ticker": "SOBO"
+        },
+        {
+          "date": "2025-03-21",
+          "ticker": "PLTY"
+        },
+        {
+          "date": "2025-03-24",
+          "ticker": "PLTY"
+        },
+        {
+          "date": "2025-03-25",
+          "ticker": "PLTY"
+        },
+        {
+          "date": "2025-03-26",
+          "ticker": "SOBO"
+        },
+        {
+          "date": "2025-04-03",
+          "ticker": "BRKU"
+        },
+        {
+          "date": "2025-04-08",
+          "ticker": "BRKU"
+        },
+        {
+          "date": "2025-04-15",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-04-15",
+          "ticker": "PLTY"
+        },
+        {
+          "date": "2025-04-16",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-04-16",
+          "ticker": "TTAN"
+        },
+        {
+          "date": "2025-04-17",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-04-17",
+          "ticker": "TTAN"
+        },
+        {
+          "date": "2025-04-21",
+          "ticker": "TTAN"
+        },
+        {
+          "date": "2025-04-22",
+          "ticker": "TTAN"
+        },
+        {
+          "date": "2025-04-24",
+          "ticker": "TTAN"
+        },
+        {
+          "date": "2025-04-25",
+          "ticker": "TTAN"
+        },
+        {
+          "date": "2025-04-29",
+          "ticker": "MRP"
+        },
+        {
+          "date": "2025-04-29",
+          "ticker": "TTAN"
+        },
+        {
+          "date": "2025-04-30",
+          "ticker": "MRP"
+        },
+        {
+          "date": "2025-05-01",
+          "ticker": "MRP"
+        },
+        {
+          "date": "2025-05-07",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-05-08",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-05-08",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-05-09",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-05-09",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-05-13",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-05-13",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-05-14",
+          "ticker": "MRP"
+        },
+        {
+          "date": "2025-05-14",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-05-15",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-05-15",
+          "ticker": "MRP"
+        },
+        {
+          "date": "2025-05-15",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-05-16",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-05-16",
+          "ticker": "MRP"
+        },
+        {
+          "date": "2025-05-16",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-05-19",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-05-19",
+          "ticker": "MRP"
+        },
+        {
+          "date": "2025-05-19",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-05-20",
+          "ticker": "MRP"
+        },
+        {
+          "date": "2025-05-20",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-05-22",
+          "ticker": "MRP"
+        },
+        {
+          "date": "2025-05-27",
+          "ticker": "KMTS"
+        },
+        {
+          "date": "2025-05-29",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-05-30",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-05-30",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-05-30",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-06-02",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-06-02",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-06-03",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-06-04",
+          "ticker": "BBNX"
+        },
+        {
+          "date": "2025-06-04",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-06-05",
+          "ticker": "BBNX"
+        },
+        {
+          "date": "2025-06-06",
+          "ticker": "BBNX"
+        },
+        {
+          "date": "2025-06-06",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-06-09",
+          "ticker": "BBNX"
+        },
+        {
+          "date": "2025-06-09",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-06-09",
+          "ticker": "VG"
+        },
+        {
+          "date": "2025-06-10",
+          "ticker": "BBNX"
+        },
+        {
+          "date": "2025-06-10",
+          "ticker": "MAZE"
+        },
+        {
+          "date": "2025-06-10",
+          "ticker": "SION"
+        },
+        {
+          "date": "2025-06-10",
+          "ticker": "VG"
+        },
+        {
+          "date": "2025-06-11",
+          "ticker": "BBNX"
+        },
+        {
+          "date": "2025-06-11",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-06-11",
+          "ticker": "VG"
+        },
+        {
+          "date": "2025-06-12",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-06-12",
+          "ticker": "SION"
+        },
+        {
+          "date": "2025-06-12",
+          "ticker": "VG"
+        },
+        {
+          "date": "2025-06-13",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-06-13",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-06-13",
+          "ticker": "VG"
+        },
+        {
+          "date": "2025-06-16",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-06-16",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-06-16",
+          "ticker": "SION"
+        },
+        {
+          "date": "2025-06-16",
+          "ticker": "VG"
+        },
+        {
+          "date": "2025-06-17",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-06-17",
+          "ticker": "SION"
+        },
+        {
+          "date": "2025-06-17",
+          "ticker": "VG"
+        },
+        {
+          "date": "2025-06-18",
+          "ticker": "PLTU"
+        },
+        {
+          "date": "2025-06-20",
+          "ticker": "HIMZ"
+        },
+        {
+          "date": "2025-06-20",
+          "ticker": "SAIL"
+        },
+        {
+          "date": "2025-06-24",
+          "ticker": "RDTL"
+        },
+        {
+          "date": "2025-06-26",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-06-26",
+          "ticker": "SAIL"
+        },
+        {
+          "date": "2025-06-27",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-06-30",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-06-30",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-07-01",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-07-01",
+          "ticker": "SAIL"
+        },
+        {
+          "date": "2025-07-01",
+          "ticker": "SION"
+        },
+        {
+          "date": "2025-07-02",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-07-02",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-07-03",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-07-03",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-07-03",
+          "ticker": "MAZE"
+        },
+        {
+          "date": "2025-07-03",
+          "ticker": "SION"
+        },
+        {
+          "date": "2025-07-07",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-07-07",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-07-07",
+          "ticker": "MAZE"
+        },
+        {
+          "date": "2025-07-07",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-07-07",
+          "ticker": "SION"
+        },
+        {
+          "date": "2025-07-08",
+          "ticker": "MAZE"
+        },
+        {
+          "date": "2025-07-08",
+          "ticker": "SION"
+        },
+        {
+          "date": "2025-07-09",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-07-09",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-07-09",
+          "ticker": "MAZE"
+        },
+        {
+          "date": "2025-07-09",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-07-10",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-07-10",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-07-10",
+          "ticker": "MAZE"
+        },
+        {
+          "date": "2025-07-11",
+          "ticker": "INTW"
+        },
+        {
+          "date": "2025-07-11",
+          "ticker": "VG"
+        },
+        {
+          "date": "2025-07-14",
+          "ticker": "INTW"
+        },
+        {
+          "date": "2025-07-14",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-07-14",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-07-14",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-07-14",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-07-15",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-07-15",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-07-15",
+          "ticker": "VG"
+        },
+        {
+          "date": "2025-07-16",
+          "ticker": "INTW"
+        },
+        {
+          "date": "2025-07-16",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-07-16",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-07-16",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-07-17",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-07-17",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-07-17",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-07-17",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-07-18",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-07-18",
+          "ticker": "MAZE"
+        },
+        {
+          "date": "2025-07-18",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-07-18",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-07-18",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-07-21",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-07-21",
+          "ticker": "TIC"
+        },
+        {
+          "date": "2025-07-22",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-07-22",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-07-23",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-07-23",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-07-23",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-07-23",
+          "ticker": "SOFX"
+        },
+        {
+          "date": "2025-07-24",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-07-24",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-07-24",
+          "ticker": "RDTL"
+        },
+        {
+          "date": "2025-07-25",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-07-25",
+          "ticker": "MAZE"
+        },
+        {
+          "date": "2025-07-25",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-07-25",
+          "ticker": "PLTW"
+        },
+        {
+          "date": "2025-07-25",
+          "ticker": "RDTL"
+        },
+        {
+          "date": "2025-07-28",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-07-29",
+          "ticker": "MAZE"
+        },
+        {
+          "date": "2025-07-29",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-07-29",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-07-30",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-07-30",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-07-30",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-07-30",
+          "ticker": "SAIL"
+        },
+        {
+          "date": "2025-07-31",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-07-31",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-07-31",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-07-31",
+          "ticker": "SAIL"
+        },
+        {
+          "date": "2025-08-01",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-01",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-01",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-08-04",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-04",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-04",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-08-04",
+          "ticker": "SAIL"
+        },
+        {
+          "date": "2025-08-04",
+          "ticker": "SFD"
+        },
+        {
+          "date": "2025-08-05",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-08-05",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-08-05",
+          "ticker": "SFD"
+        },
+        {
+          "date": "2025-08-06",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-08-07",
+          "ticker": "HOOG"
+        },
+        {
+          "date": "2025-08-08",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-08",
+          "ticker": "HOOG"
+        },
+        {
+          "date": "2025-08-08",
+          "ticker": "RHLD"
+        },
+        {
+          "date": "2025-08-11",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-11",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-08-11",
+          "ticker": "RHLD"
+        },
+        {
+          "date": "2025-08-12",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-12",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-12",
+          "ticker": "SION"
+        },
+        {
+          "date": "2025-08-13",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-13",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-13",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-13",
+          "ticker": "SION"
+        },
+        {
+          "date": "2025-08-14",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-14",
+          "ticker": "HOOG"
+        },
+        {
+          "date": "2025-08-14",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-14",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-14",
+          "ticker": "RHLD"
+        },
+        {
+          "date": "2025-08-15",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-15",
+          "ticker": "HOOG"
+        },
+        {
+          "date": "2025-08-15",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-08-15",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-15",
+          "ticker": "RHLD"
+        },
+        {
+          "date": "2025-08-18",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-19",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-19",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-20",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-20",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-21",
+          "ticker": "IOTR"
+        },
+        {
+          "date": "2025-08-21",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-21",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-22",
+          "ticker": "IOTR"
+        },
+        {
+          "date": "2025-08-22",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-22",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-25",
+          "ticker": "NPB"
+        },
+        {
+          "date": "2025-08-25",
+          "ticker": "RKLX"
+        },
+        {
+          "date": "2025-08-26",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-27",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-27",
+          "ticker": "MVLL"
+        },
+        {
+          "date": "2025-08-27",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-27",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-08-27",
+          "ticker": "VRTL"
+        },
+        {
+          "date": "2025-08-28",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-28",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-08-28",
+          "ticker": "MVLL"
+        },
+        {
+          "date": "2025-08-28",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-08-29",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-08-29",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-08-29",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-08-29",
+          "ticker": "OMAH"
+        },
+        {
+          "date": "2025-09-02",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-02",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-09-02",
+          "ticker": "IONX"
+        },
+        {
+          "date": "2025-09-02",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-09-04",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-04",
+          "ticker": "IONL"
+        },
+        {
+          "date": "2025-09-05",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-08",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-08",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-09-09",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-09",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-09-11",
+          "ticker": "BMNR"
+        },
+        {
+          "date": "2025-09-11",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-11",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-09-11",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-09-11",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-09-12",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-12",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-09-12",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-09-12",
+          "ticker": "RKLX"
+        },
+        {
+          "date": "2025-09-15",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-15",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-09-15",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-09-15",
+          "ticker": "RKLX"
+        },
+        {
+          "date": "2025-09-16",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-16",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-09-16",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-09-16",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-09-17",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-17",
+          "ticker": "RKLX"
+        },
+        {
+          "date": "2025-09-19",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-19",
+          "ticker": "GMEU"
+        },
+        {
+          "date": "2025-09-19",
+          "ticker": "RDTL"
+        },
+        {
+          "date": "2025-09-22",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-22",
+          "ticker": "GMEU"
+        },
+        {
+          "date": "2025-09-22",
+          "ticker": "RDTL"
+        },
+        {
+          "date": "2025-09-24",
+          "ticker": "AMUU"
+        },
+        {
+          "date": "2025-09-24",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-24",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-09-25",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-25",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-09-26",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-26",
+          "ticker": "VRTL"
+        },
+        {
+          "date": "2025-09-29",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-09-29",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-09-30",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-01",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-01",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-02",
+          "ticker": "AMUU"
+        },
+        {
+          "date": "2025-10-02",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-06",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-06",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-10-07",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-10-09",
+          "ticker": "HOOW"
+        },
+        {
+          "date": "2025-10-09",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-10",
+          "ticker": "TEMT"
+        },
+        {
+          "date": "2025-10-13",
+          "ticker": "CRWU"
+        },
+        {
+          "date": "2025-10-13",
+          "ticker": "TEMT"
+        },
+        {
+          "date": "2025-10-14",
+          "ticker": "CRWU"
+        },
+        {
+          "date": "2025-10-14",
+          "ticker": "TEMT"
+        },
+        {
+          "date": "2025-10-15",
+          "ticker": "TEMT"
+        },
+        {
+          "date": "2025-10-17",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-10-23",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-23",
+          "ticker": "NOWL"
+        },
+        {
+          "date": "2025-10-24",
+          "ticker": "NOWL"
+        },
+        {
+          "date": "2025-10-24",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-10-27",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-27",
+          "ticker": "HOOW"
+        },
+        {
+          "date": "2025-10-27",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-27",
+          "ticker": "NOWL"
+        },
+        {
+          "date": "2025-10-27",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-10-28",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-28",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-10-28",
+          "ticker": "OTF"
+        },
+        {
+          "date": "2025-10-28",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-10-29",
+          "ticker": "HOOW"
+        },
+        {
+          "date": "2025-10-29",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-29",
+          "ticker": "PLTG"
+        },
+        {
+          "date": "2025-10-30",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-31",
+          "ticker": "AMRZ"
+        },
+        {
+          "date": "2025-10-31",
+          "ticker": "HOOY"
+        },
+        {
+          "date": "2025-10-31",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-11-03",
+          "ticker": "OMDA"
+        },
+        {
+          "date": "2025-11-10",
+          "ticker": "WYFI"
+        },
+        {
+          "date": "2025-11-12",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-11-14",
+          "ticker": "MIAX"
+        },
+        {
+          "date": "2025-11-19",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-11-20",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-11-21",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-11-24",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-11-25",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-11-28",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-12-01",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-12-03",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2025-12-03",
+          "ticker": "NIHI"
+        },
+        {
+          "date": "2025-12-04",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2025-12-05",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2025-12-08",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2025-12-09",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2025-12-10",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2025-12-10",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-11",
+          "ticker": "ASTX"
+        },
+        {
+          "date": "2025-12-11",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2025-12-12",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2025-12-12",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-15",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-16",
+          "ticker": "ASTX"
+        },
+        {
+          "date": "2025-12-16",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-17",
+          "ticker": "CORD"
+        },
+        {
+          "date": "2025-12-17",
+          "ticker": "MIAX"
+        },
+        {
+          "date": "2025-12-17",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-18",
+          "ticker": "CORD"
+        },
+        {
+          "date": "2025-12-22",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-23",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2025-12-23",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-26",
+          "ticker": "BDVL"
+        },
+        {
+          "date": "2025-12-26",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2025-12-29",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2025-12-29",
+          "ticker": "NIQ"
+        },
+        {
+          "date": "2025-12-29",
+          "ticker": "SLDE"
+        },
+        {
+          "date": "2025-12-30",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2025-12-31",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2025-12-31",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-02",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-05",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-06",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-09",
+          "ticker": "AHMA"
+        },
+        {
+          "date": "2026-01-12",
+          "ticker": "AHMA"
+        },
+        {
+          "date": "2026-01-13",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-15",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-16",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-16",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-20",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-21",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-21",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-21",
+          "ticker": "NPT"
+        },
+        {
+          "date": "2026-01-22",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-22",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-22",
+          "ticker": "NPT"
+        },
+        {
+          "date": "2026-01-23",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-23",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-23",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-23",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-26",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-26",
+          "ticker": "FIGR"
+        },
+        {
+          "date": "2026-01-26",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-27",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-27",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "APLX"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-01-28",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "APLX"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "NPT"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-02",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-02-02",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-03",
+          "ticker": "APLX"
+        },
+        {
+          "date": "2026-02-03",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-02-03",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-03",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-04",
+          "ticker": "EVMN"
+        },
+        {
+          "date": "2026-02-04",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-04",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-05",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-09",
+          "ticker": "BDVL"
+        },
+        {
+          "date": "2026-02-09",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-09",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-09",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "HOOZ"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-10",
+          "ticker": "WULX"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "BDVL"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-11",
+          "ticker": "SOLS"
+        },
+        {
+          "date": "2026-02-13",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-17",
+          "ticker": "LGN"
+        },
+        {
+          "date": "2026-02-17",
+          "ticker": "Q"
+        },
+        {
+          "date": "2026-02-18",
+          "ticker": "CBC"
+        },
+        {
+          "date": "2026-02-18",
+          "ticker": "Q"
+        }
+      ],
+      "final_tickers": [
+        "AHMA",
+        "AMRZ",
+        "AMUU",
+        "APLX",
+        "APPX",
+        "ASTX",
+        "AVS",
+        "BBNX",
+        "BDVL",
+        "BMNR",
+        "BRKU",
+        "CBC",
+        "CORD",
+        "CRCD",
+        "CRWU",
+        "EVMN",
+        "FIGR",
+        "GLXY",
+        "GMEU",
+        "HIMZ",
+        "HOOG",
+        "HOOW",
+        "HOOY",
+        "HOOZ",
+        "INTW",
+        "IONL",
+        "IONX",
+        "IOTR",
+        "KMTS",
+        "KRMN",
+        "LGN",
+        "MAZE",
+        "MH",
+        "MIAX",
+        "MRP",
+        "MVLL",
+        "NFLU",
+        "NFXL",
+        "NIHI",
+        "NIQ",
+        "NOWL",
+        "NPB",
+        "NPT",
+        "OKLL",
+        "OMAH",
+        "OMDA",
+        "OTF",
+        "PC",
+        "PLTG",
+        "PLTU",
+        "PLTW",
+        "PLTY",
+        "PTIR",
+        "Q",
+        "QBTX",
+        "RDTL",
+        "REML",
+        "RGTX",
+        "RHLD",
+        "RKLX",
+        "SAIL",
+        "SARO",
+        "SFD",
+        "SION",
+        "SLDE",
+        "SOBO",
+        "SOFX",
+        "SOLS",
+        "TEMT",
+        "TIC",
+        "TTAN",
+        "VG",
+        "VRTL",
+        "WULX",
+        "WYFI"
+      ]
+    },
+    "5yr": {
+      "conditions_added": 25,
+      "conditions": [
+        "slope_xavgc50_off10_atr14",
+        "vol_ratio_3",
+        "adx_7",
+        "undercut_avgc50_120_adr14",
+        "lower_high_count_10",
+        "swing_high_count_30",
+        "nr_ratio_3",
+        "aroon_osc_50",
+        "pctrank_atr14_252",
+        "slope_ratio_xavgc13_xavgc21_off10",
+        "st_c_gt_o_5",
+        "ct_v_gt_avgv20_50",
+        "st_v_gt_avgv50_5",
+        "st_range_lt_half_atr_30",
+        "st_narrow_range_50",
+        "st_inside_bar_10",
+        "st_gap_down_half_atr_20",
+        "st_rsi14_gt_70_30",
+        "st_rsi14_lt_40_10",
+        "st_stoch14_lt_20_20",
+        "st_stoch14_lt_20_50",
+        "st_stoch14_lt_50_30",
+        "ct_adx14_gt_30_50",
+        "st_macd_negative_5",
+        "st_bop14_negative_20"
+      ],
+      "final_peak": 9,
+      "final_avg": 2.7,
+      "final_total": 368,
+      "baseline_peak": 480,
+      "stats": {
+        "nodes_explored": 45648,
+        "elapsed_s": 4.1,
+        "depth_reached": 26
+      },
+      "final_signals": [
+        {
+          "date": "2021-04-29",
+          "ticker": "VTLE"
+        },
+        {
+          "date": "2021-04-30",
+          "ticker": "AON"
+        },
+        {
+          "date": "2021-05-03",
+          "ticker": "VTLE"
+        },
+        {
+          "date": "2021-05-07",
+          "ticker": "BWA"
+        },
+        {
+          "date": "2021-05-07",
+          "ticker": "HBM"
+        },
+        {
+          "date": "2021-05-07",
+          "ticker": "MPC"
+        },
+        {
+          "date": "2021-05-11",
+          "ticker": "DVN"
+        },
+        {
+          "date": "2021-05-11",
+          "ticker": "GDXU"
+        },
+        {
+          "date": "2021-05-11",
+          "ticker": "GPRE"
+        },
+        {
+          "date": "2021-05-11",
+          "ticker": "GUSH"
+        },
+        {
+          "date": "2021-05-11",
+          "ticker": "HBM"
+        },
+        {
+          "date": "2021-05-11",
+          "ticker": "OIH"
+        },
+        {
+          "date": "2021-05-11",
+          "ticker": "PAGP"
+        },
+        {
+          "date": "2021-05-11",
+          "ticker": "RRC"
+        },
+        {
+          "date": "2021-05-11",
+          "ticker": "XOP"
+        },
+        {
+          "date": "2021-05-12",
+          "ticker": "AMTB"
+        },
+        {
+          "date": "2021-05-12",
+          "ticker": "COKE"
+        },
+        {
+          "date": "2021-05-12",
+          "ticker": "VLO"
+        },
+        {
+          "date": "2021-05-13",
+          "ticker": "DNOW"
+        },
+        {
+          "date": "2021-05-13",
+          "ticker": "VLO"
+        },
+        {
+          "date": "2021-05-14",
+          "ticker": "AMPH"
+        },
+        {
+          "date": "2021-05-14",
+          "ticker": "HUBG"
+        },
+        {
+          "date": "2021-05-14",
+          "ticker": "URA"
+        },
+        {
+          "date": "2021-05-17",
+          "ticker": "CTS"
+        },
+        {
+          "date": "2021-05-17",
+          "ticker": "EXE"
+        },
+        {
+          "date": "2021-05-17",
+          "ticker": "GCO"
+        },
+        {
+          "date": "2021-05-17",
+          "ticker": "NGD"
+        },
+        {
+          "date": "2021-05-18",
+          "ticker": "BRSL"
+        },
+        {
+          "date": "2021-05-18",
+          "ticker": "CNR"
+        },
+        {
+          "date": "2021-05-18",
+          "ticker": "HROW"
+        },
+        {
+          "date": "2021-05-18",
+          "ticker": "NGD"
+        },
+        {
+          "date": "2021-05-19",
+          "ticker": "CALY"
+        },
+        {
+          "date": "2021-05-20",
+          "ticker": "BKR"
+        },
+        {
+          "date": "2021-05-20",
+          "ticker": "COKE"
+        },
+        {
+          "date": "2021-05-20",
+          "ticker": "IRWD"
+        },
+        {
+          "date": "2021-05-20",
+          "ticker": "MUX"
+        },
+        {
+          "date": "2021-05-20",
+          "ticker": "PG"
+        },
+        {
+          "date": "2021-05-20",
+          "ticker": "TMQ"
+        },
+        {
+          "date": "2021-05-20",
+          "ticker": "VNDA"
+        },
+        {
+          "date": "2021-05-24",
+          "ticker": "AWR"
+        },
+        {
+          "date": "2021-05-24",
+          "ticker": "CALY"
+        },
+        {
+          "date": "2021-05-24",
+          "ticker": "HLF"
+        },
+        {
+          "date": "2021-05-24",
+          "ticker": "PGNY"
+        },
+        {
+          "date": "2021-05-24",
+          "ticker": "RDWR"
+        },
+        {
+          "date": "2021-05-24",
+          "ticker": "STNG"
+        },
+        {
+          "date": "2021-05-24",
+          "ticker": "TECH"
+        },
+        {
+          "date": "2021-05-25",
+          "ticker": "BSY"
+        },
+        {
+          "date": "2021-05-25",
+          "ticker": "HLF"
+        },
+        {
+          "date": "2021-05-25",
+          "ticker": "INTU"
+        },
+        {
+          "date": "2021-05-25",
+          "ticker": "MSI"
+        },
+        {
+          "date": "2021-05-26",
+          "ticker": "BSY"
+        },
+        {
+          "date": "2021-05-26",
+          "ticker": "DFH"
+        },
+        {
+          "date": "2021-05-26",
+          "ticker": "ESTA"
+        },
+        {
+          "date": "2021-05-26",
+          "ticker": "FSV"
+        },
+        {
+          "date": "2021-05-26",
+          "ticker": "INTU"
+        },
+        {
+          "date": "2021-05-26",
+          "ticker": "MAC"
+        },
+        {
+          "date": "2021-05-26",
+          "ticker": "TENB"
+        },
+        {
+          "date": "2021-05-27",
+          "ticker": "AMG"
+        },
+        {
+          "date": "2021-05-27",
+          "ticker": "CNR"
+        },
+        {
+          "date": "2021-05-27",
+          "ticker": "DFH"
+        },
+        {
+          "date": "2021-05-27",
+          "ticker": "IDCC"
+        },
+        {
+          "date": "2021-05-27",
+          "ticker": "INTU"
+        },
+        {
+          "date": "2021-05-27",
+          "ticker": "INVA"
+        },
+        {
+          "date": "2021-05-27",
+          "ticker": "TTI"
+        },
+        {
+          "date": "2021-05-27",
+          "ticker": "UPST"
+        },
+        {
+          "date": "2021-05-27",
+          "ticker": "ZLAB"
+        },
+        {
+          "date": "2021-05-28",
+          "ticker": "AAT"
+        },
+        {
+          "date": "2021-05-28",
+          "ticker": "DFH"
+        },
+        {
+          "date": "2021-05-28",
+          "ticker": "GNL"
+        },
+        {
+          "date": "2021-05-28",
+          "ticker": "NVDA"
+        },
+        {
+          "date": "2021-05-28",
+          "ticker": "STAA"
+        },
+        {
+          "date": "2021-05-28",
+          "ticker": "YUMC"
+        },
+        {
+          "date": "2021-05-28",
+          "ticker": "ZLAB"
+        },
+        {
+          "date": "2021-06-01",
+          "ticker": "CDE"
+        },
+        {
+          "date": "2021-06-01",
+          "ticker": "DFH"
+        },
+        {
+          "date": "2021-06-01",
+          "ticker": "DRN"
+        },
+        {
+          "date": "2021-06-01",
+          "ticker": "ESRT"
+        },
+        {
+          "date": "2021-06-01",
+          "ticker": "MUX"
+        },
+        {
+          "date": "2021-06-01",
+          "ticker": "OVV"
+        },
+        {
+          "date": "2021-06-01",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-06-01",
+          "ticker": "RWT"
+        },
+        {
+          "date": "2021-06-01",
+          "ticker": "SEM"
+        },
+        {
+          "date": "2021-06-02",
+          "ticker": "APA"
+        },
+        {
+          "date": "2021-06-02",
+          "ticker": "CDNA"
+        },
+        {
+          "date": "2021-06-02",
+          "ticker": "DRN"
+        },
+        {
+          "date": "2021-06-02",
+          "ticker": "MUX"
+        },
+        {
+          "date": "2021-06-02",
+          "ticker": "NTNX"
+        },
+        {
+          "date": "2021-06-02",
+          "ticker": "OVV"
+        },
+        {
+          "date": "2021-06-02",
+          "ticker": "PTEN"
+        },
+        {
+          "date": "2021-06-02",
+          "ticker": "SA"
+        },
+        {
+          "date": "2021-06-03",
+          "ticker": "ASH"
+        },
+        {
+          "date": "2021-06-03",
+          "ticker": "FTI"
+        },
+        {
+          "date": "2021-06-03",
+          "ticker": "HAL"
+        },
+        {
+          "date": "2021-06-03",
+          "ticker": "MUX"
+        },
+        {
+          "date": "2021-06-03",
+          "ticker": "OVV"
+        },
+        {
+          "date": "2021-06-03",
+          "ticker": "PTEN"
+        },
+        {
+          "date": "2021-06-03",
+          "ticker": "SU"
+        },
+        {
+          "date": "2021-06-03",
+          "ticker": "TDG"
+        },
+        {
+          "date": "2021-06-03",
+          "ticker": "VOX"
+        },
+        {
+          "date": "2021-06-04",
+          "ticker": "ADI"
+        },
+        {
+          "date": "2021-06-04",
+          "ticker": "BTU"
+        },
+        {
+          "date": "2021-06-04",
+          "ticker": "HCI"
+        },
+        {
+          "date": "2021-06-04",
+          "ticker": "OVV"
+        },
+        {
+          "date": "2021-06-04",
+          "ticker": "PTEN"
+        },
+        {
+          "date": "2021-06-04",
+          "ticker": "RIG"
+        },
+        {
+          "date": "2021-06-04",
+          "ticker": "SU"
+        },
+        {
+          "date": "2021-06-07",
+          "ticker": "CDP"
+        },
+        {
+          "date": "2021-06-07",
+          "ticker": "MRAM"
+        },
+        {
+          "date": "2021-06-07",
+          "ticker": "OVV"
+        },
+        {
+          "date": "2021-06-08",
+          "ticker": "BH"
+        },
+        {
+          "date": "2021-06-08",
+          "ticker": "BTU"
+        },
+        {
+          "date": "2021-06-08",
+          "ticker": "CVX"
+        },
+        {
+          "date": "2021-06-08",
+          "ticker": "HCI"
+        },
+        {
+          "date": "2021-06-08",
+          "ticker": "KOS"
+        },
+        {
+          "date": "2021-06-08",
+          "ticker": "LUMN"
+        },
+        {
+          "date": "2021-06-08",
+          "ticker": "MRAM"
+        },
+        {
+          "date": "2021-06-08",
+          "ticker": "RIG"
+        },
+        {
+          "date": "2021-06-09",
+          "ticker": "NDSN"
+        },
+        {
+          "date": "2021-06-10",
+          "ticker": "BH"
+        },
+        {
+          "date": "2021-06-11",
+          "ticker": "CRK"
+        },
+        {
+          "date": "2021-06-14",
+          "ticker": "ADC"
+        },
+        {
+          "date": "2021-06-14",
+          "ticker": "AMPH"
+        },
+        {
+          "date": "2021-06-14",
+          "ticker": "DYN"
+        },
+        {
+          "date": "2021-06-15",
+          "ticker": "AMPH"
+        },
+        {
+          "date": "2021-06-16",
+          "ticker": "CRK"
+        },
+        {
+          "date": "2021-06-16",
+          "ticker": "GDYN"
+        },
+        {
+          "date": "2021-06-16",
+          "ticker": "PMT"
+        },
+        {
+          "date": "2021-06-17",
+          "ticker": "CRK"
+        },
+        {
+          "date": "2021-06-17",
+          "ticker": "GNRC"
+        },
+        {
+          "date": "2021-06-17",
+          "ticker": "MRK"
+        },
+        {
+          "date": "2021-06-17",
+          "ticker": "PMT"
+        },
+        {
+          "date": "2021-06-17",
+          "ticker": "PZZA"
+        },
+        {
+          "date": "2021-06-17",
+          "ticker": "REGN"
+        },
+        {
+          "date": "2021-06-17",
+          "ticker": "TECH"
+        },
+        {
+          "date": "2021-06-17",
+          "ticker": "ZROZ"
+        },
+        {
+          "date": "2021-06-18",
+          "ticker": "RVLV"
+        },
+        {
+          "date": "2021-06-21",
+          "ticker": "AVTR"
+        },
+        {
+          "date": "2021-06-21",
+          "ticker": "COGT"
+        },
+        {
+          "date": "2021-06-21",
+          "ticker": "COP"
+        },
+        {
+          "date": "2021-06-21",
+          "ticker": "JKHY"
+        },
+        {
+          "date": "2021-06-21",
+          "ticker": "NBR"
+        },
+        {
+          "date": "2021-06-21",
+          "ticker": "SRPT"
+        },
+        {
+          "date": "2021-06-21",
+          "ticker": "WES"
+        },
+        {
+          "date": "2021-06-22",
+          "ticker": "DOCN"
+        },
+        {
+          "date": "2021-06-24",
+          "ticker": "ALGN"
+        },
+        {
+          "date": "2021-06-24",
+          "ticker": "HLX"
+        },
+        {
+          "date": "2021-06-24",
+          "ticker": "IRWD"
+        },
+        {
+          "date": "2021-06-24",
+          "ticker": "LECO"
+        },
+        {
+          "date": "2021-06-24",
+          "ticker": "PFSI"
+        },
+        {
+          "date": "2021-06-25",
+          "ticker": "ALGN"
+        },
+        {
+          "date": "2021-06-25",
+          "ticker": "ANAB"
+        },
+        {
+          "date": "2021-06-25",
+          "ticker": "AXGN"
+        },
+        {
+          "date": "2021-06-25",
+          "ticker": "CURE"
+        },
+        {
+          "date": "2021-06-25",
+          "ticker": "EXTR"
+        },
+        {
+          "date": "2021-06-25",
+          "ticker": "MVST"
+        },
+        {
+          "date": "2021-06-25",
+          "ticker": "RRC"
+        },
+        {
+          "date": "2021-06-25",
+          "ticker": "SKY"
+        },
+        {
+          "date": "2021-06-28",
+          "ticker": "AR"
+        },
+        {
+          "date": "2021-06-28",
+          "ticker": "HLF"
+        },
+        {
+          "date": "2021-06-28",
+          "ticker": "RRC"
+        },
+        {
+          "date": "2021-06-29",
+          "ticker": "ATEN"
+        },
+        {
+          "date": "2021-06-29",
+          "ticker": "UPWK"
+        },
+        {
+          "date": "2021-06-30",
+          "ticker": "ARLP"
+        },
+        {
+          "date": "2021-06-30",
+          "ticker": "MS"
+        },
+        {
+          "date": "2021-06-30",
+          "ticker": "UFO"
+        },
+        {
+          "date": "2021-07-01",
+          "ticker": "ARLP"
+        },
+        {
+          "date": "2021-07-01",
+          "ticker": "BIP"
+        },
+        {
+          "date": "2021-07-01",
+          "ticker": "CQP"
+        },
+        {
+          "date": "2021-07-01",
+          "ticker": "DLX"
+        },
+        {
+          "date": "2021-07-01",
+          "ticker": "LTBR"
+        },
+        {
+          "date": "2021-07-01",
+          "ticker": "MNTS"
+        },
+        {
+          "date": "2021-07-01",
+          "ticker": "SEB"
+        },
+        {
+          "date": "2021-07-01",
+          "ticker": "SKY"
+        },
+        {
+          "date": "2021-07-01",
+          "ticker": "STWD"
+        },
+        {
+          "date": "2021-07-02",
+          "ticker": "ARLP"
+        },
+        {
+          "date": "2021-07-02",
+          "ticker": "BIP"
+        },
+        {
+          "date": "2021-07-02",
+          "ticker": "BMRN"
+        },
+        {
+          "date": "2021-07-02",
+          "ticker": "MNTS"
+        },
+        {
+          "date": "2021-07-02",
+          "ticker": "MVST"
+        },
+        {
+          "date": "2021-07-02",
+          "ticker": "REMX"
+        },
+        {
+          "date": "2021-07-02",
+          "ticker": "SPLV"
+        },
+        {
+          "date": "2021-07-02",
+          "ticker": "STLD"
+        },
+        {
+          "date": "2021-07-02",
+          "ticker": "XLV"
+        },
+        {
+          "date": "2021-07-06",
+          "ticker": "CQP"
+        },
+        {
+          "date": "2021-07-06",
+          "ticker": "HLF"
+        },
+        {
+          "date": "2021-07-06",
+          "ticker": "MVST"
+        },
+        {
+          "date": "2021-07-06",
+          "ticker": "OBDC"
+        },
+        {
+          "date": "2021-07-07",
+          "ticker": "AOS"
+        },
+        {
+          "date": "2021-07-07",
+          "ticker": "BIP"
+        },
+        {
+          "date": "2021-07-07",
+          "ticker": "CSL"
+        },
+        {
+          "date": "2021-07-07",
+          "ticker": "FNV"
+        },
+        {
+          "date": "2021-07-07",
+          "ticker": "GGG"
+        },
+        {
+          "date": "2021-07-07",
+          "ticker": "MRSH"
+        },
+        {
+          "date": "2021-07-07",
+          "ticker": "TECH"
+        },
+        {
+          "date": "2021-07-07",
+          "ticker": "UPS"
+        },
+        {
+          "date": "2021-07-07",
+          "ticker": "VRSN"
+        },
+        {
+          "date": "2021-07-08",
+          "ticker": "BEAM"
+        },
+        {
+          "date": "2021-07-08",
+          "ticker": "BURL"
+        },
+        {
+          "date": "2021-07-08",
+          "ticker": "CQP"
+        },
+        {
+          "date": "2021-07-08",
+          "ticker": "PANW"
+        },
+        {
+          "date": "2021-07-08",
+          "ticker": "SPLV"
+        },
+        {
+          "date": "2021-07-08",
+          "ticker": "TECH"
+        },
+        {
+          "date": "2021-07-08",
+          "ticker": "TT"
+        },
+        {
+          "date": "2021-07-09",
+          "ticker": "BMI"
+        },
+        {
+          "date": "2021-07-09",
+          "ticker": "CQP"
+        },
+        {
+          "date": "2021-07-09",
+          "ticker": "CSL"
+        },
+        {
+          "date": "2021-07-09",
+          "ticker": "DRN"
+        },
+        {
+          "date": "2021-07-09",
+          "ticker": "TECK"
+        },
+        {
+          "date": "2021-07-12",
+          "ticker": "BAH"
+        },
+        {
+          "date": "2021-07-12",
+          "ticker": "CINF"
+        },
+        {
+          "date": "2021-07-12",
+          "ticker": "DRN"
+        },
+        {
+          "date": "2021-07-12",
+          "ticker": "FRT"
+        },
+        {
+          "date": "2021-07-12",
+          "ticker": "IRM"
+        },
+        {
+          "date": "2021-07-12",
+          "ticker": "LKQ"
+        },
+        {
+          "date": "2021-07-12",
+          "ticker": "REML"
+        },
+        {
+          "date": "2021-07-12",
+          "ticker": "TECK"
+        },
+        {
+          "date": "2021-07-12",
+          "ticker": "TT"
+        },
+        {
+          "date": "2021-07-13",
+          "ticker": "HIW"
+        },
+        {
+          "date": "2021-07-13",
+          "ticker": "INMD"
+        },
+        {
+          "date": "2021-07-13",
+          "ticker": "ORCL"
+        },
+        {
+          "date": "2021-07-13",
+          "ticker": "PFLT"
+        },
+        {
+          "date": "2021-07-14",
+          "ticker": "MWA"
+        },
+        {
+          "date": "2021-07-16",
+          "ticker": "ATRO"
+        },
+        {
+          "date": "2021-07-16",
+          "ticker": "AWK"
+        },
+        {
+          "date": "2021-07-16",
+          "ticker": "EXC"
+        },
+        {
+          "date": "2021-07-16",
+          "ticker": "KR"
+        },
+        {
+          "date": "2021-07-19",
+          "ticker": "AWK"
+        },
+        {
+          "date": "2021-07-19",
+          "ticker": "KR"
+        },
+        {
+          "date": "2021-07-20",
+          "ticker": "CACC"
+        },
+        {
+          "date": "2021-07-20",
+          "ticker": "DOV"
+        },
+        {
+          "date": "2021-07-20",
+          "ticker": "DRN"
+        },
+        {
+          "date": "2021-07-20",
+          "ticker": "KO"
+        },
+        {
+          "date": "2021-07-20",
+          "ticker": "KR"
+        },
+        {
+          "date": "2021-07-20",
+          "ticker": "METC"
+        },
+        {
+          "date": "2021-07-20",
+          "ticker": "PFE"
+        },
+        {
+          "date": "2021-07-21",
+          "ticker": "IRWD"
+        },
+        {
+          "date": "2021-07-22",
+          "ticker": "CHKP"
+        },
+        {
+          "date": "2021-07-22",
+          "ticker": "IDA"
+        },
+        {
+          "date": "2021-07-22",
+          "ticker": "IRWD"
+        },
+        {
+          "date": "2021-07-22",
+          "ticker": "NEE"
+        },
+        {
+          "date": "2021-07-23",
+          "ticker": "BSY"
+        },
+        {
+          "date": "2021-07-23",
+          "ticker": "CHKP"
+        },
+        {
+          "date": "2021-07-23",
+          "ticker": "IRWD"
+        },
+        {
+          "date": "2021-07-23",
+          "ticker": "TECH"
+        },
+        {
+          "date": "2021-07-26",
+          "ticker": "MRSH"
+        },
+        {
+          "date": "2021-07-26",
+          "ticker": "MS"
+        },
+        {
+          "date": "2021-07-26",
+          "ticker": "NTNX"
+        },
+        {
+          "date": "2021-07-27",
+          "ticker": "BCI"
+        },
+        {
+          "date": "2021-07-27",
+          "ticker": "ELAN"
+        },
+        {
+          "date": "2021-07-27",
+          "ticker": "MDLZ"
+        },
+        {
+          "date": "2021-07-27",
+          "ticker": "STGW"
+        },
+        {
+          "date": "2021-07-28",
+          "ticker": "ARLP"
+        },
+        {
+          "date": "2021-07-28",
+          "ticker": "PEGA"
+        },
+        {
+          "date": "2021-07-29",
+          "ticker": "MRSH"
+        },
+        {
+          "date": "2021-07-30",
+          "ticker": "COO"
+        },
+        {
+          "date": "2021-07-30",
+          "ticker": "MRSH"
+        },
+        {
+          "date": "2021-08-02",
+          "ticker": "ALKS"
+        },
+        {
+          "date": "2021-08-02",
+          "ticker": "COO"
+        },
+        {
+          "date": "2021-08-02",
+          "ticker": "TENB"
+        },
+        {
+          "date": "2021-08-03",
+          "ticker": "ARVN"
+        },
+        {
+          "date": "2021-08-03",
+          "ticker": "COO"
+        },
+        {
+          "date": "2021-08-03",
+          "ticker": "EVH"
+        },
+        {
+          "date": "2021-08-03",
+          "ticker": "JBL"
+        },
+        {
+          "date": "2021-08-03",
+          "ticker": "PEG"
+        },
+        {
+          "date": "2021-08-03",
+          "ticker": "PRGO"
+        },
+        {
+          "date": "2021-08-03",
+          "ticker": "TRUP"
+        },
+        {
+          "date": "2021-08-03",
+          "ticker": "TTC"
+        },
+        {
+          "date": "2021-08-04",
+          "ticker": "CBRE"
+        },
+        {
+          "date": "2021-08-05",
+          "ticker": "AEE"
+        },
+        {
+          "date": "2021-08-05",
+          "ticker": "DKS"
+        },
+        {
+          "date": "2021-08-05",
+          "ticker": "MWA"
+        },
+        {
+          "date": "2021-08-05",
+          "ticker": "NRG"
+        },
+        {
+          "date": "2021-08-05",
+          "ticker": "NVR"
+        },
+        {
+          "date": "2021-08-05",
+          "ticker": "PEG"
+        },
+        {
+          "date": "2021-08-05",
+          "ticker": "PRGO"
+        },
+        {
+          "date": "2021-08-06",
+          "ticker": "AEE"
+        },
+        {
+          "date": "2021-08-06",
+          "ticker": "BLX"
+        },
+        {
+          "date": "2021-08-06",
+          "ticker": "JHG"
+        },
+        {
+          "date": "2021-08-06",
+          "ticker": "PRGO"
+        },
+        {
+          "date": "2021-08-06",
+          "ticker": "STGW"
+        },
+        {
+          "date": "2021-08-11",
+          "ticker": "BTU"
+        },
+        {
+          "date": "2021-08-16",
+          "ticker": "BEAM"
+        },
+        {
+          "date": "2021-08-16",
+          "ticker": "DAC"
+        },
+        {
+          "date": "2021-08-16",
+          "ticker": "DLR"
+        },
+        {
+          "date": "2021-08-16",
+          "ticker": "ETR"
+        },
+        {
+          "date": "2021-08-16",
+          "ticker": "FSK"
+        },
+        {
+          "date": "2021-08-16",
+          "ticker": "PEG"
+        },
+        {
+          "date": "2021-08-16",
+          "ticker": "RJF"
+        },
+        {
+          "date": "2021-08-16",
+          "ticker": "XLF"
+        },
+        {
+          "date": "2021-08-17",
+          "ticker": "BEAM"
+        },
+        {
+          "date": "2021-08-17",
+          "ticker": "DAC"
+        },
+        {
+          "date": "2021-08-17",
+          "ticker": "DLR"
+        },
+        {
+          "date": "2021-08-17",
+          "ticker": "ETR"
+        },
+        {
+          "date": "2021-08-17",
+          "ticker": "IRM"
+        },
+        {
+          "date": "2021-08-17",
+          "ticker": "PEG"
+        },
+        {
+          "date": "2021-08-17",
+          "ticker": "RJF"
+        },
+        {
+          "date": "2021-08-18",
+          "ticker": "DAC"
+        },
+        {
+          "date": "2021-08-19",
+          "ticker": "ETR"
+        },
+        {
+          "date": "2021-08-20",
+          "ticker": "MMSI"
+        },
+        {
+          "date": "2021-08-23",
+          "ticker": "BMI"
+        },
+        {
+          "date": "2021-08-23",
+          "ticker": "SBLK"
+        },
+        {
+          "date": "2021-08-24",
+          "ticker": "GPI"
+        },
+        {
+          "date": "2021-09-14",
+          "ticker": "GPOR"
+        },
+        {
+          "date": "2021-09-15",
+          "ticker": "FLYW"
+        },
+        {
+          "date": "2021-09-16",
+          "ticker": "DNA"
+        },
+        {
+          "date": "2021-09-27",
+          "ticker": "APP"
+        },
+        {
+          "date": "2021-10-06",
+          "ticker": "DTM"
+        },
+        {
+          "date": "2021-10-07",
+          "ticker": "DTM"
+        },
+        {
+          "date": "2021-10-15",
+          "ticker": "APP"
+        },
+        {
+          "date": "2021-10-26",
+          "ticker": "S"
+        },
+        {
+          "date": "2021-10-28",
+          "ticker": "S"
+        },
+        {
+          "date": "2021-11-05",
+          "ticker": "MAMA"
+        },
+        {
+          "date": "2021-11-08",
+          "ticker": "ZETA"
+        },
+        {
+          "date": "2021-12-08",
+          "ticker": "ZETA"
+        },
+        {
+          "date": "2021-12-31",
+          "ticker": "EWCZ"
+        },
+        {
+          "date": "2022-01-03",
+          "ticker": "EWCZ"
+        },
+        {
+          "date": "2022-02-10",
+          "ticker": "ACT"
+        },
+        {
+          "date": "2022-05-31",
+          "ticker": "CRGY"
+        },
+        {
+          "date": "2022-08-01",
+          "ticker": "ACLX"
+        },
+        {
+          "date": "2022-10-10",
+          "ticker": "TSLQ"
+        },
+        {
+          "date": "2022-10-11",
+          "ticker": "TSLQ"
+        },
+        {
+          "date": "2022-11-15",
+          "ticker": "FIP"
+        },
+        {
+          "date": "2023-02-03",
+          "ticker": "MBLY"
+        },
+        {
+          "date": "2023-02-14",
+          "ticker": "MBLY"
+        },
+        {
+          "date": "2023-05-22",
+          "ticker": "NXT"
+        },
+        {
+          "date": "2023-05-24",
+          "ticker": "VTS"
+        },
+        {
+          "date": "2023-06-08",
+          "ticker": "URNJ"
+        },
+        {
+          "date": "2023-06-16",
+          "ticker": "URNJ"
+        },
+        {
+          "date": "2023-11-01",
+          "ticker": "KNF"
+        },
+        {
+          "date": "2023-11-07",
+          "ticker": "KNF"
+        },
+        {
+          "date": "2023-11-10",
+          "ticker": "LLYVK"
+        },
+        {
+          "date": "2023-12-15",
+          "ticker": "FTRE"
+        },
+        {
+          "date": "2023-12-27",
+          "ticker": "LLYVK"
+        },
+        {
+          "date": "2023-12-28",
+          "ticker": "FTRE"
+        },
+        {
+          "date": "2023-12-29",
+          "ticker": "LLYVK"
+        },
+        {
+          "date": "2024-01-08",
+          "ticker": "NVDU"
+        },
+        {
+          "date": "2024-01-09",
+          "ticker": "NVDU"
+        },
+        {
+          "date": "2024-01-23",
+          "ticker": "SN"
+        },
+        {
+          "date": "2024-01-26",
+          "ticker": "LLYVA"
+        },
+        {
+          "date": "2024-01-29",
+          "ticker": "LLYVA"
+        },
+        {
+          "date": "2024-06-17",
+          "ticker": "AHR"
+        },
+        {
+          "date": "2024-07-09",
+          "ticker": "TBBB"
+        },
+        {
+          "date": "2024-07-25",
+          "ticker": "LOAR"
+        },
+        {
+          "date": "2024-09-20",
+          "ticker": "TEM"
+        },
+        {
+          "date": "2024-09-23",
+          "ticker": "TEM"
+        },
+        {
+          "date": "2024-10-04",
+          "ticker": "LIF"
+        },
+        {
+          "date": "2024-10-30",
+          "ticker": "WAY"
+        },
+        {
+          "date": "2024-11-05",
+          "ticker": "VIK"
+        },
+        {
+          "date": "2024-12-09",
+          "ticker": "METU"
+        },
+        {
+          "date": "2025-04-24",
+          "ticker": "TTAN"
+        },
+        {
+          "date": "2025-06-10",
+          "ticker": "SION"
+        },
+        {
+          "date": "2025-07-14",
+          "ticker": "RGTX"
+        },
+        {
+          "date": "2025-07-18",
+          "ticker": "KRMN"
+        },
+        {
+          "date": "2025-07-23",
+          "ticker": "QBTX"
+        },
+        {
+          "date": "2025-08-29",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-02",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-04",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-05",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-08",
+          "ticker": "APPX"
+        },
+        {
+          "date": "2025-09-11",
+          "ticker": "OKLL"
+        },
+        {
+          "date": "2025-10-02",
+          "ticker": "GLXY"
+        },
+        {
+          "date": "2025-10-13",
+          "ticker": "TEMT"
+        },
+        {
+          "date": "2025-10-14",
+          "ticker": "TEMT"
+        },
+        {
+          "date": "2025-11-19",
+          "ticker": "MH"
+        },
+        {
+          "date": "2025-12-01",
+          "ticker": "MH"
+        },
+        {
+          "date": "2026-01-29",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-01-30",
+          "ticker": "CRCD"
+        },
+        {
+          "date": "2026-02-18",
+          "ticker": "Q"
+        }
+      ],
+      "final_tickers": [
+        "AAT",
+        "ACLX",
+        "ACT",
+        "ADC",
+        "ADI",
+        "AEE",
+        "AHR",
+        "ALGN",
+        "ALKS",
+        "AMG",
+        "AMPH",
+        "AMTB",
+        "ANAB",
+        "AON",
+        "AOS",
+        "APA",
+        "APP",
+        "APPX",
+        "AR",
+        "ARLP",
+        "ARVN",
+        "ASH",
+        "ATEN",
+        "ATRO",
+        "AVTR",
+        "AWK",
+        "AWR",
+        "AXGN",
+        "BAH",
+        "BCI",
+        "BEAM",
+        "BH",
+        "BIP",
+        "BKR",
+        "BLX",
+        "BMI",
+        "BMRN",
+        "BRSL",
+        "BSY",
+        "BTU",
+        "BURL",
+        "BWA",
+        "CACC",
+        "CALY",
+        "CBRE",
+        "CDE",
+        "CDNA",
+        "CDP",
+        "CHKP",
+        "CINF",
+        "CNR",
+        "COGT",
+        "COKE",
+        "COO",
+        "COP",
+        "CQP",
+        "CRCD",
+        "CRGY",
+        "CRK",
+        "CSL",
+        "CTS",
+        "CURE",
+        "CVX",
+        "DAC",
+        "DFH",
+        "DKS",
+        "DLR",
+        "DLX",
+        "DNA",
+        "DNOW",
+        "DOCN",
+        "DOV",
+        "DRN",
+        "DTM",
+        "DVN",
+        "DYN",
+        "ELAN",
+        "ESRT",
+        "ESTA",
+        "ETR",
+        "EVH",
+        "EWCZ",
+        "EXC",
+        "EXE",
+        "EXTR",
+        "FIP",
+        "FLYW",
+        "FNV",
+        "FRT",
+        "FSK",
+        "FSV",
+        "FTI",
+        "FTRE",
+        "GCO",
+        "GDXU",
+        "GDYN",
+        "GGG",
+        "GLXY",
+        "GNL",
+        "GNRC",
+        "GPI",
+        "GPOR",
+        "GPRE",
+        "GUSH",
+        "HAL",
+        "HBM",
+        "HCI",
+        "HIW",
+        "HLF",
+        "HLX",
+        "HROW",
+        "HUBG",
+        "IDA",
+        "IDCC",
+        "INMD",
+        "INTU",
+        "INVA",
+        "IRM",
+        "IRWD",
+        "JBL",
+        "JHG",
+        "JKHY",
+        "KNF",
+        "KO",
+        "KOS",
+        "KR",
+        "KRMN",
+        "LECO",
+        "LIF",
+        "LKQ",
+        "LLYVA",
+        "LLYVK",
+        "LOAR",
+        "LTBR",
+        "LUMN",
+        "MAC",
+        "MAMA",
+        "MBLY",
+        "MDLZ",
+        "METC",
+        "METU",
+        "MH",
+        "MMSI",
+        "MNTS",
+        "MPC",
+        "MRAM",
+        "MRK",
+        "MRSH",
+        "MS",
+        "MSI",
+        "MUX",
+        "MVST",
+        "MWA",
+        "NBR",
+        "NDSN",
+        "NEE",
+        "NGD",
+        "NRG",
+        "NTNX",
+        "NVDA",
+        "NVDU",
+        "NVR",
+        "NXT",
+        "OBDC",
+        "OIH",
+        "OKLL",
+        "ORCL",
+        "OVV",
+        "PAGP",
+        "PANW",
+        "PEG",
+        "PEGA",
+        "PFE",
+        "PFLT",
+        "PFSI",
+        "PG",
+        "PGNY",
+        "PMT",
+        "PRGO",
+        "PTEN",
+        "PZZA",
+        "Q",
+        "QBTX",
+        "RDWR",
+        "REGN",
+        "REML",
+        "REMX",
+        "RGTX",
+        "RIG",
+        "RJF",
+        "RRC",
+        "RVLV",
+        "RWT",
+        "S",
+        "SA",
+        "SBLK",
+        "SEB",
+        "SEM",
+        "SION",
+        "SKY",
+        "SN",
+        "SPLV",
+        "SRPT",
+        "STAA",
+        "STGW",
+        "STLD",
+        "STNG",
+        "STWD",
+        "SU",
+        "TBBB",
+        "TDG",
+        "TECH",
+        "TECK",
+        "TEM",
+        "TEMT",
+        "TENB",
+        "TMQ",
+        "TRUP",
+        "TSLQ",
+        "TT",
+        "TTAN",
+        "TTC",
+        "TTI",
+        "UFO",
+        "UPS",
+        "UPST",
+        "UPWK",
+        "URA",
+        "URNJ",
+        "VIK",
+        "VLO",
+        "VNDA",
+        "VOX",
+        "VRSN",
+        "VTLE",
+        "VTS",
+        "WAY",
+        "WES",
+        "XLF",
+        "XLV",
+        "XOP",
+        "YUMC",
+        "ZETA",
+        "ZLAB",
+        "ZROZ"
+      ]
+    }
+  },
+  "d1_result": {
+    "pass_rate": 0.0,
+    "n_passing": 0,
+    "passing_tickers": []
+  },
+  "params": {
+    "beam_width": 200,
+    "depth": 30,
+    "d1_beam": 200,
+    "d1_depth": 30,
+    "peak_target": 5,
+    "strict_nan": true
+  },
+  "summary": {
+    "final_total": 368,
+    "final_peak": 9,
+    "final_avg": 2.7,
+    "final_tickers": [
+      "AAT",
+      "ACLX",
+      "ACT",
+      "ADC",
+      "ADI",
+      "AEE",
+      "AHR",
+      "ALGN",
+      "ALKS",
+      "AMG",
+      "AMPH",
+      "AMTB",
+      "ANAB",
+      "AON",
+      "AOS",
+      "APA",
+      "APP",
+      "APPX",
+      "AR",
+      "ARLP",
+      "ARVN",
+      "ASH",
+      "ATEN",
+      "ATRO",
+      "AVTR",
+      "AWK",
+      "AWR",
+      "AXGN",
+      "BAH",
+      "BCI",
+      "BEAM",
+      "BH",
+      "BIP",
+      "BKR",
+      "BLX",
+      "BMI",
+      "BMRN",
+      "BRSL",
+      "BSY",
+      "BTU",
+      "BURL",
+      "BWA",
+      "CACC",
+      "CALY",
+      "CBRE",
+      "CDE",
+      "CDNA",
+      "CDP",
+      "CHKP",
+      "CINF",
+      "CNR",
+      "COGT",
+      "COKE",
+      "COO",
+      "COP",
+      "CQP",
+      "CRCD",
+      "CRGY",
+      "CRK",
+      "CSL",
+      "CTS",
+      "CURE",
+      "CVX",
+      "DAC",
+      "DFH",
+      "DKS",
+      "DLR",
+      "DLX",
+      "DNA",
+      "DNOW",
+      "DOCN",
+      "DOV",
+      "DRN",
+      "DTM",
+      "DVN",
+      "DYN",
+      "ELAN",
+      "ESRT",
+      "ESTA",
+      "ETR",
+      "EVH",
+      "EWCZ",
+      "EXC",
+      "EXE",
+      "EXTR",
+      "FIP",
+      "FLYW",
+      "FNV",
+      "FRT",
+      "FSK",
+      "FSV",
+      "FTI",
+      "FTRE",
+      "GCO",
+      "GDXU",
+      "GDYN",
+      "GGG",
+      "GLXY",
+      "GNL",
+      "GNRC",
+      "GPI",
+      "GPOR",
+      "GPRE",
+      "GUSH",
+      "HAL",
+      "HBM",
+      "HCI",
+      "HIW",
+      "HLF",
+      "HLX",
+      "HROW",
+      "HUBG",
+      "IDA",
+      "IDCC",
+      "INMD",
+      "INTU",
+      "INVA",
+      "IRM",
+      "IRWD",
+      "JBL",
+      "JHG",
+      "JKHY",
+      "KNF",
+      "KO",
+      "KOS",
+      "KR",
+      "KRMN",
+      "LECO",
+      "LIF",
+      "LKQ",
+      "LLYVA",
+      "LLYVK",
+      "LOAR",
+      "LTBR",
+      "LUMN",
+      "MAC",
+      "MAMA",
+      "MBLY",
+      "MDLZ",
+      "METC",
+      "METU",
+      "MH",
+      "MMSI",
+      "MNTS",
+      "MPC",
+      "MRAM",
+      "MRK",
+      "MRSH",
+      "MS",
+      "MSI",
+      "MUX",
+      "MVST",
+      "MWA",
+      "NBR",
+      "NDSN",
+      "NEE",
+      "NGD",
+      "NRG",
+      "NTNX",
+      "NVDA",
+      "NVDU",
+      "NVR",
+      "NXT",
+      "OBDC",
+      "OIH",
+      "OKLL",
+      "ORCL",
+      "OVV",
+      "PAGP",
+      "PANW",
+      "PEG",
+      "PEGA",
+      "PFE",
+      "PFLT",
+      "PFSI",
+      "PG",
+      "PGNY",
+      "PMT",
+      "PRGO",
+      "PTEN",
+      "PZZA",
+      "Q",
+      "QBTX",
+      "RDWR",
+      "REGN",
+      "REML",
+      "REMX",
+      "RGTX",
+      "RIG",
+      "RJF",
+      "RRC",
+      "RVLV",
+      "RWT",
+      "S",
+      "SA",
+      "SBLK",
+      "SEB",
+      "SEM",
+      "SION",
+      "SKY",
+      "SN",
+      "SPLV",
+      "SRPT",
+      "STAA",
+      "STGW",
+      "STLD",
+      "STNG",
+      "STWD",
+      "SU",
+      "TBBB",
+      "TDG",
+      "TECH",
+      "TECK",
+      "TEM",
+      "TEMT",
+      "TENB",
+      "TMQ",
+      "TRUP",
+      "TSLQ",
+      "TT",
+      "TTAN",
+      "TTC",
+      "TTI",
+      "UFO",
+      "UPS",
+      "UPST",
+      "UPWK",
+      "URA",
+      "URNJ",
+      "VIK",
+      "VLO",
+      "VNDA",
+      "VOX",
+      "VRSN",
+      "VTLE",
+      "VTS",
+      "WAY",
+      "WES",
+      "XLF",
+      "XLV",
+      "XOP",
+      "YUMC",
+      "ZETA",
+      "ZLAB",
+      "ZROZ"
+    ],
+    "n_unique_tickers": 245
+  }
+}

@@ -362,11 +362,12 @@ class PeakSpiderweb:
     """
 
     def __init__(self, candidate_values, row_dates, example_ranges,
-                 candidate_names, candidate_categories):
+                 candidate_names, candidate_categories, row_tickers=None):
         """
         Args:
             candidate_values: np.array (n_rows, n_candidates) — expression values
             row_dates: list of date strings, one per row
+            row_tickers: list of ticker strings, one per row (optional)
             example_ranges: dict {expr_name: (low, high)}
             candidate_names: list of expression names (len = n_candidates)
             candidate_categories: list of category strings
@@ -374,6 +375,8 @@ class PeakSpiderweb:
         self.n_rows, self.n_cands = candidate_values.shape
         self.candidate_names = candidate_names
         self.candidate_categories = candidate_categories
+        self.row_dates_list = row_dates
+        self.row_tickers_list = row_tickers or (["?"] * self.n_rows)
 
         # Build date-to-row mapping for peak scoring
         self.unique_dates = sorted(set(row_dates))
@@ -522,7 +525,10 @@ class PeakSpiderweb:
             next_level.sort(key=lambda n: n.peak)
             current_level = next_level[:beam_width]
 
-            if current_level[0].peak < best.peak:
+            if current_level[0].peak < best.peak or (
+                current_level[0].peak == best.peak and
+                np.sum(current_level[0].row_mask) < np.sum(best.row_mask)
+            ):
                 best = current_level[0]
 
             levels.append(self._level_summary(lv, current_level, time.time() - t0))
@@ -550,14 +556,24 @@ class PeakSpiderweb:
         for ci in best.conditions:
             name = self.candidate_names[ci]
             cat = self.candidate_categories[ci]
-            # We need the range — it's stored implicitly via cand_passes
-            # Reconstruct from the fact that cand_passes was built from example_ranges
             conditions.append({
                 "expr": name,
                 "name": name,
                 "category": cat,
                 "cand_index": int(ci),
             })
+
+        # Extract final signals (date + ticker for every surviving row)
+        surviving_indices = np.where(best.row_mask)[0]
+        final_signals = []
+        final_tickers_set = set()
+        for idx in surviving_indices:
+            date = self.row_dates_list[idx]
+            ticker = self.row_tickers_list[idx]
+            final_signals.append({"date": str(date)[:10], "ticker": ticker})
+            final_tickers_set.add(ticker)
+        final_signals.sort(key=lambda s: (s["date"], s["ticker"]))
+
         return {
             "conditions": conditions,
             "final_peak": peak,
@@ -569,7 +585,10 @@ class PeakSpiderweb:
                 "nodes_explored": nodes_explored,
                 "elapsed_s": round(elapsed, 1),
                 "depth_reached": len(levels),
-            }
+            },
+            "final_signals": final_signals,
+            "final_tickers": sorted(final_tickers_set),
+            "n_unique_tickers": len(final_tickers_set),
         }
 
     def _level_summary(self, level, nodes, elapsed):
@@ -727,6 +746,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     print(f"  {n_workers} workers, {len(batches)} batches of ~{batch_size} tickers")
 
     all_row_dates = []
+    all_row_tickers = []
     all_row_values = []
 
     with ProcessPoolExecutor(
@@ -743,6 +763,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
             for ticker, row_dates, cand_values in batch_results:
                 if row_dates and cand_values is not None and len(row_dates) > 0:
                     all_row_dates.extend(row_dates)
+                    all_row_tickers.extend([ticker] * len(row_dates))
                     all_row_values.append(cand_values)
             completed += 1
             if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
@@ -768,6 +789,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     search = PeakSpiderweb(
         candidate_values=candidate_values,
         row_dates=all_row_dates,
+        row_tickers=all_row_tickers,
         example_ranges=example_ranges,
         candidate_names=candidate_names,
         candidate_categories=candidate_categories,
@@ -940,6 +962,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "final_total": tier_result.get("final_total"),
             "baseline_peak": tier_result.get("baseline_peak"),
             "stats": tier_result.get("stats"),
+            "final_signals": tier_result.get("final_signals", []),
+            "n_unique_tickers": tier_result.get("n_unique_tickers", 0),
         }
 
         if new_conds:
@@ -1080,29 +1104,17 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 
     os.makedirs(CACHE_DIR, exist_ok=True)
 
-    # Timestamped file (never overwritten)
+    # Timestamped file (never overwritten — can always go back)
     out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
 
-    # Only overwrite latest if better
+    # Always overwrite latest — timestamped copies preserve history
     latest_path = os.path.join(CACHE_DIR, f"pyramid_results_{setup_type}.json")
-    save_as_latest = True
-    if os.path.exists(latest_path):
-        try:
-            with open(latest_path) as f:
-                prev = json.load(f)
-            prev_total = prev.get("summary", {}).get("final_total", 999999)
-            if final_total >= prev_total and final_total > 0:
-                save_as_latest = False
-                print(f"  (Keeping previous best: {prev_total} signals < this run's {final_total})")
-        except:
-            pass
-    if save_as_latest:
-        with open(latest_path, "w") as f:
-            json.dump(result, f, indent=2)
-        print(f"  Saved as latest: {latest_path}")
+    with open(latest_path, "w") as f:
+        json.dump(result, f, indent=2)
+    print(f"  Saved as latest: {latest_path}")
 
     # Compat format
     compat_result = {
@@ -1118,9 +1130,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         "source": "pyramid_grinder",
     }
     compat_path = os.path.join(CACHE_DIR, f"historical_results_{setup_type}.json")
-    if save_as_latest:
-        with open(compat_path, "w") as f:
-            json.dump(compat_result, f, indent=2)
+    with open(compat_path, "w") as f:
+        json.dump(compat_result, f, indent=2)
 
     return result
 

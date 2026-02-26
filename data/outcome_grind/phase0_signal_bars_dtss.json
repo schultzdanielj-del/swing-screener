@@ -1,0 +1,196 @@
+{
+  "setup_type": "dtss",
+  "n_conditions": 39,
+  "n_examples": 23,
+  "n_matched": 1,
+  "n_unmatched": 22,
+  "pyramid_results_file": "pyramid_results_dtss.json",
+  "results": [
+    {
+      "ticker": "AAOI",
+      "entry_date": "2024-02-16",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "ASST",
+      "entry_date": "2025-09-10",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "BETR",
+      "entry_date": "2025-10-24",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "BRK-B",
+      "entry_date": "2024-11-27",
+      "status": "fetch_error",
+      "signal_date": null,
+      "gap_bars": null,
+      "error": "No OHLCV for BRK-B"
+    },
+    {
+      "ticker": "BTBT",
+      "entry_date": "2025-10-20",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "CELH",
+      "entry_date": "2024-05-22",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "CVNA",
+      "entry_date": "2023-09-15",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "CVNA",
+      "entry_date": "2026-01-23",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "FTAI",
+      "entry_date": "2025-01-10",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "GAP",
+      "entry_date": "2024-06-03",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "GH",
+      "entry_date": "2025-05-01",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "GRPN",
+      "entry_date": "2025-08-07",
+      "status": "match_distant",
+      "signal_date": "2021-04-29",
+      "signal_bar_idx": 67,
+      "gap_bars": 1561,
+      "gap_cal_days": 1561,
+      "n_signals_before_entry": 1
+    },
+    {
+      "ticker": "IONQ",
+      "entry_date": "2025-10-14",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "LTH",
+      "entry_date": "2025-05-08",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "MSFT",
+      "entry_date": "2025-10-28",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "NOW",
+      "entry_date": "2023-09-11",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "ROOT",
+      "entry_date": "2024-05-01",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "SERV",
+      "entry_date": "2025-01-06",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "SMMT",
+      "entry_date": "2025-04-25",
+      "status": "fetch_error",
+      "signal_date": null,
+      "gap_bars": null,
+      "error": "No OHLCV for SMMT"
+    },
+    {
+      "ticker": "SOUN",
+      "entry_date": "2023-06-29",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "VUZI",
+      "entry_date": "2025-01-06",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "WING",
+      "entry_date": "2024-09-24",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    },
+    {
+      "ticker": "ZIM",
+      "entry_date": "2024-07-02",
+      "status": "no_signal_found",
+      "signal_date": null,
+      "gap_bars": null,
+      "total_signals_in_history": 0
+    }
+  ]
+}
