@@ -2193,6 +2193,34 @@ async def get_agent_status():
     return {"status": agent.get("status", "unknown"), "agent": agent}
 
 
+@app.post("/api/universe/insert-ohlcv")
+async def insert_ohlcv(request: Request):
+    """Insert OHLCV rows for a ticker. Also adds to tradable_universe and universe_tickers.
+    Body: {ticker: str, rows: [{date, open, high, low, close, volume}, ...]}
+    """
+    body = await request.json()
+    ticker = body.get("ticker", "").strip().upper()
+    rows = body.get("rows", [])
+    if not ticker or not rows:
+        return {"error": "Need ticker and rows"}
+    try:
+        with get_db() as db:
+            db.execute("INSERT OR IGNORE INTO universe_tickers (ticker, status, rows_stored) VALUES (?, 'done', 0)", (ticker,))
+            db.execute("INSERT OR IGNORE INTO tradable_universe (ticker) VALUES (?)", (ticker,))
+            ohlcv_rows = []
+            for r in rows:
+                ohlcv_rows.append((ticker, r["date"], r["open"], r["high"], r["low"], r["close"], r["volume"]))
+            db.executemany(
+                "INSERT OR REPLACE INTO universe_ohlcv (ticker, date, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?)",
+                ohlcv_rows
+            )
+            db.execute("UPDATE universe_tickers SET rows_stored=?, status='done' WHERE ticker=?", (len(ohlcv_rows), ticker))
+            db.commit()
+        return {"ok": True, "ticker": ticker, "rows_inserted": len(ohlcv_rows)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/api/analysis/grinder-results")
 async def save_grinder_results(request: Request):
     """Save grinder results."""
