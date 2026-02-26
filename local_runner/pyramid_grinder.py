@@ -1067,6 +1067,10 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     print(f"    {examples_passing}/{examples_passing + examples_failing} examples pass all conditions")
     if examples_failing > 0:
         print(f"    ✗ {examples_failing} examples FAIL — investigate data mismatch")
+        print(f"\n{'!'*80}")
+        print(f"VALIDATION FAILED — Results NOT saved. All examples must pass. No exceptions.")
+        print(f"{'!'*80}")
+        return None
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     desc_name = f"pyramid_{setup_type}_sig{final_total}_pk{final_peak}_{ts}"

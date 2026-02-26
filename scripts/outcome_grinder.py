@@ -656,7 +656,29 @@ def main():
         print(f"    Peak outcomes/day: {peak_day}")
         print(f"    Avg outcomes/day: {avg_day:.1f}")
 
-    # ── 6. Save results ──
+    # ── 6. MANDATORY VALIDATION: all examples must be outcomes ──
+    failed = []
+    if example_sub_adr:
+        for r in example_sub_adr:
+            failed.append(f"{r['ticker']} {r['date']} — sub-ADR ({r['adr_move']:.2f})")
+    if example_no_trigger:
+        for r in example_no_trigger:
+            failed.append(f"{r['ticker']} {r['date']} — exit never triggered")
+    if example_errors:
+        for r in example_errors:
+            failed.append(f"{r['ticker']} {r['date']} — {r['status']}")
+    
+    if failed:
+        print(f"\n{'!'*80}")
+        print(f"VALIDATION FAILED — not all examples classified as outcomes!")
+        print(f"  Failed ({len(failed)}/{len(example_set)}):")
+        for f in failed:
+            print(f"    {f}")
+        print(f"{'!'*80}")
+        print(f"\nResults NOT saved. All examples must pass. No exceptions.")
+        return
+
+    # ── 7. Save results ──
     from local_runner.grind_storage import GrindStorage
     gs_save = GrindStorage(args.setup)
 

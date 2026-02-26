@@ -843,7 +843,27 @@ def main():
     # 8. Report
     print_results(candidates, examples, top_n=args.top_n)
 
-    # 9. Save
+    # 9. MANDATORY VALIDATION: best result must trigger on ALL examples
+    if candidates:
+        best = candidates[0]
+        failed_examples = []
+        for i, ex in enumerate(examples):
+            if best.exit_bars[i] < 0:
+                failed_examples.append(f"{ex.ticker} {ex.entry_date}")
+        
+        if failed_examples:
+            print(f"\n{'!'*80}")
+            print(f"VALIDATION FAILED — best exit does NOT trigger on all examples!")
+            print(f"  Failed ({len(failed_examples)}/{len(examples)}):")
+            for f in failed_examples:
+                print(f"    {f}")
+            print(f"{'!'*80}")
+            print(f"\nResults NOT saved. Fix the exit condition or expression engine.")
+            return
+        
+        print(f"\n✓ Validation passed: best exit triggers on {len(examples)}/{len(examples)} examples")
+
+    # 10. Save
     save_results(candidates, examples, args.setup, args)
 
     # 10. Summary
