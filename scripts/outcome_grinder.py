@@ -40,6 +40,7 @@ import pandas as pd
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from scripts.expression_engine import ExpressionEngine
 
 # ============================================================
 # Config
@@ -318,7 +319,7 @@ def _eval_signal_batch(args):
     Returns list of result dicts.
     """
     ticker, sig_dates, is_example_flags, exit_cond, setup_direction, \
-        max_forward, min_adr, ohlcv_data = args
+        max_forward, min_adr, min_mfe, ohlcv_data = args
 
     import numpy as np
     import sys, os
@@ -452,8 +453,8 @@ def _eval_signal_batch(args):
             pct_move = (exit_close - sig_close) / sig_close * 100
             adr_move = (exit_close - sig_close) / adr_at_signal
 
-        # Outcome = exit triggered + move >= min_adr in correct direction
-        is_outcome = adr_move >= min_adr
+        # Outcome = exit triggered + move >= adr_floor + MFE >= mfe_floor
+        is_outcome = adr_move >= min_adr and mfe_adr >= min_mfe
 
         # MFE: signal bar to exit trigger bar
         fwd_slice = slice(sig_idx, trigger_abs_idx + 1)
@@ -509,7 +510,7 @@ def main():
 
     print(f"Outcome Grinder — Step 7 Phase 1")
     print(f"Setup: {args.setup.upper()}, Direction: {args.direction}")
-    print(f"Max forward: {args.max_forward} bars, Min ADR: {args.min_adr}")
+    print(f"Max forward: {args.max_forward} bars, Min ADR: auto (from examples)")
     print(f"Workers: {args.workers}")
     print()
 
@@ -548,6 +549,147 @@ def main():
     # Build example lookup: (ticker, signal_date) -> True
     example_set = {(es["ticker"], es["date"]) for es in example_sigs}
     print(f"\nExample signal bars: {len(example_set)}")
+
+    # ── 1b. Find earliest signal bar per example & compute ADR/MFE floors ──
+    # For each example, look up to 10 trading days before entry for signal bars
+    LOOKBACK_DAYS = 10
+    
+    # Build signal lookup: ticker -> list of signal dates
+    from collections import defaultdict
+    sig_by_ticker = defaultdict(set)
+    for sig in signals:
+        sig_by_ticker[sig["ticker"]].add(sig["date"])
+    
+    example_floors = []  # (ticker, entry_date, earliest_sig_date, adr_move, mfe_adr)
+    
+    for es in example_sigs:
+        ticker = es["ticker"]
+        entry_date = es.get("entry_date", "")
+        sig_date = es["date"]  # the signal bar the pyramid found
+        
+        if ticker not in ohlcv_cache:
+            continue
+        
+        df = ohlcv_cache[ticker]
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        
+        dates = df["date"].values
+        if len(dates) > 0 and hasattr(dates[0], 'strftime'):
+            dates_str = np.array([str(d)[:10] for d in dates])
+        elif len(dates) > 0 and isinstance(dates[0], str):
+            dates_str = np.array([d[:10] for d in dates])
+        else:
+            dates_str = np.array([str(d)[:10] for d in dates])
+        
+        # Find entry bar index
+        entry_matches = np.where(dates_str == entry_date[:10])[0] if entry_date else []
+        sig_matches = np.where(dates_str == sig_date[:10])[0]
+        
+        if len(sig_matches) == 0:
+            continue
+        
+        sig_idx = int(sig_matches[0])
+        
+        # If we have an entry date, find all signal bars within LOOKBACK_DAYS before it
+        if len(entry_matches) > 0:
+            entry_idx = int(entry_matches[0])
+            lookback_start = max(0, entry_idx - LOOKBACK_DAYS)
+            
+            # Find earliest signal bar for this ticker in the lookback window
+            earliest_sig_idx = None
+            for i in range(lookback_start, entry_idx):
+                if dates_str[i] in sig_by_ticker[ticker]:
+                    if earliest_sig_idx is None:
+                        earliest_sig_idx = i
+            
+            if earliest_sig_idx is None:
+                earliest_sig_idx = sig_idx  # fallback to the known signal bar
+        else:
+            earliest_sig_idx = sig_idx
+        
+        earliest_sig_close = float(df["close"].iloc[earliest_sig_idx])
+        earliest_sig_date = dates_str[earliest_sig_idx]
+        
+        # Compute exit trigger bar from earliest signal bar
+        engine = ExpressionEngine(df)
+        exit_series_vals = _compute_exit_series(engine, exit_cond["expr_name"])
+        adr14_vals = engine._adr(14).values
+        adr_at_sig = float(adr14_vals[earliest_sig_idx])
+        
+        if np.isnan(adr_at_sig) or adr_at_sig <= 0:
+            continue
+        
+        exit_dir = exit_cond["direction"]
+        threshold = exit_cond["threshold"]
+        n = len(df)
+        
+        trigger_idx = None
+        for offset in range(1, min(args.max_forward, n - earliest_sig_idx - 1) + 1):
+            abs_idx = earliest_sig_idx + offset
+            val = exit_series_vals[abs_idx]
+            if np.isnan(val):
+                continue
+            hit = False
+            if exit_dir == "below" and val < threshold:
+                hit = True
+            elif exit_dir == "above" and val > threshold:
+                hit = True
+            elif exit_dir == "<=" and val <= threshold:
+                hit = True
+            elif exit_dir == ">=" and val >= threshold:
+                hit = True
+            if hit:
+                trigger_idx = abs_idx
+                break
+        
+        if trigger_idx is None:
+            print(f"  WARNING: exit never triggers for example {ticker} {earliest_sig_date} (earliest sig bar)")
+            continue
+        
+        exit_close = float(df["close"].iloc[trigger_idx])
+        
+        # ADR move: signal close to exit close
+        if args.direction == "short":
+            adr_move = (earliest_sig_close - exit_close) / adr_at_sig
+            # MFE: lowest low between signal and exit
+            mfe_price = float(df["low"].iloc[earliest_sig_idx:trigger_idx + 1].min())
+            mfe_adr = (earliest_sig_close - mfe_price) / adr_at_sig
+        else:
+            adr_move = (exit_close - earliest_sig_close) / adr_at_sig
+            mfe_price = float(df["high"].iloc[earliest_sig_idx:trigger_idx + 1].max())
+            mfe_adr = (mfe_price - earliest_sig_close) / adr_at_sig
+        
+        example_floors.append({
+            "ticker": ticker,
+            "entry_date": entry_date,
+            "earliest_sig_date": earliest_sig_date,
+            "sig_close": earliest_sig_close,
+            "exit_close": exit_close,
+            "adr_move": round(adr_move, 2),
+            "mfe_adr": round(mfe_adr, 2),
+            "trigger_bar": trigger_idx - earliest_sig_idx,
+        })
+    
+    if example_floors:
+        adr_moves = [ef["adr_move"] for ef in example_floors]
+        mfe_adrs = [ef["mfe_adr"] for ef in example_floors]
+        
+        # Floor = worst example with wiggle room (90% of worst)
+        adr_floor = round(min(adr_moves) * 0.9, 2)
+        mfe_floor = round(min(mfe_adrs) * 0.9, 2)
+        
+        print(f"\n  Example floor analysis (from earliest signal bar, {LOOKBACK_DAYS}-day lookback):")
+        print(f"  {'Ticker':8s} {'Earliest Sig':12s} {'Entry':12s} {'ADR Move':>9s} {'MFE ADR':>8s} {'Bar#':>5s}")
+        for ef in sorted(example_floors, key=lambda x: x["adr_move"]):
+            print(f"  {ef['ticker']:8s} {ef['earliest_sig_date']:12s} {ef['entry_date'][:10]:12s} "
+                  f"{ef['adr_move']:+8.2f} {ef['mfe_adr']:+7.2f} {ef['trigger_bar']:5d}")
+        print(f"\n  Worst ADR move: {min(adr_moves):.2f}  →  ADR floor (90%): {adr_floor}")
+        print(f"  Worst MFE ADR:  {min(mfe_adrs):.2f}  →  MFE floor (90%): {mfe_floor}")
+    else:
+        print("\n  WARNING: Could not compute example floors!")
+        adr_floor = args.min_adr
+        mfe_floor = 0.0
 
     # ── 2. Group signals by ticker for batch processing ──
     from collections import defaultdict
@@ -588,7 +730,7 @@ def main():
         tasks.append((
             ticker, sig_dates, is_example_flags,
             {"expr_name": exit_cond["expr_name"], "direction": exit_cond["direction"], "threshold": exit_cond["threshold"]},
-            args.direction, args.max_forward, args.min_adr, ohlcv_data,
+            args.direction, args.max_forward, adr_floor, mfe_floor, ohlcv_data,
         ))
 
     # ── 4. Run in parallel ──
@@ -632,11 +774,12 @@ def main():
     print(f"\n{'='*80}")
     print(f"OUTCOME CLASSIFICATION")
     print(f"Exit: {exit_cond['expr_name']} {exit_cond['direction']} {exit_cond['threshold']}")
-    print(f"Min ADR: {args.min_adr}")
+    print(f"Min ADR: {adr_floor}")
+    print(f"Min MFE: {mfe_floor}")
     print(f"{'='*80}")
     print(f"  Total signals:      {len(signals)}")
-    print(f"  OUTCOME:            {len(outcomes):4d} ({len(outcomes)/len(signals)*100:.1f}%) — exit triggered + >= {args.min_adr} ADR move")
-    print(f"  Sub-ADR:            {len(sub_adr):4d} ({len(sub_adr)/len(signals)*100:.1f}%) — exit triggered but < {args.min_adr} ADR move")
+    print(f"  OUTCOME:            {len(outcomes):4d} ({len(outcomes)/len(signals)*100:.1f}%) — exit triggered + >= {adr_floor} ADR move")
+    print(f"  Sub-ADR:            {len(sub_adr):4d} ({len(sub_adr)/len(signals)*100:.1f}%) — exit triggered but < {adr_floor} ADR move")
     print(f"  No exit trigger:    {len(no_trigger):4d} ({len(no_trigger)/len(signals)*100:.1f}%) — exit never fired in {args.max_forward} bars")
     print(f"  Errors/skipped:     {len(errors):4d}")
 
@@ -651,7 +794,7 @@ def main():
     if example_sub_adr:
         print(f"    Examples sub-ADR:       {len(example_sub_adr)} ⚠️")
         for r in example_sub_adr:
-            print(f"      {r['ticker']} {r['date']} — {r['adr_move']:.2f} ADR (need {args.min_adr})")
+            print(f"      {r['ticker']} {r['date']} — {r['adr_move']:.2f} ADR (need {adr_floor})")
     if example_no_trigger:
         print(f"    Examples no trigger:    {len(example_no_trigger)} ⚠️")
         for r in example_no_trigger:
@@ -680,7 +823,7 @@ def main():
     if sub_adr:
         pct_sub = [r["pct_move"] for r in sub_adr]
         adr_sub = [r["adr_move"] for r in sub_adr]
-        print(f"\n  Sub-ADR stats (exit triggered, move < {args.min_adr} ADR):")
+        print(f"\n  Sub-ADR stats (exit triggered, move < {adr_floor} ADR):")
         print(f"    % Move:      floor={min(pct_sub):+.1f}%  median={np.median(pct_sub):+.1f}%  avg={np.mean(pct_sub):+.1f}%")
         print(f"    ADR move:    floor={min(adr_sub):.2f}  median={np.median(adr_sub):.2f}  avg={np.mean(adr_sub):.2f}")
 
@@ -744,7 +887,8 @@ def main():
         "setup_type": args.setup,
         "direction": args.direction,
         "max_forward": args.max_forward,
-        "min_adr": args.min_adr,
+        "min_adr": adr_floor,
+        "min_mfe": mfe_floor,
         "exit_condition": {
             "expr_name": exit_cond["expr_name"],
             "direction": exit_cond["direction"],
