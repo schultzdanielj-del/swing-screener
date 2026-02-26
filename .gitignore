@@ -33,3 +33,4 @@ input/*.csv
 Thumbs.db
 data/ohlcv_cache_universe.json
 local_runner/cache/
+local_runner/grinds/

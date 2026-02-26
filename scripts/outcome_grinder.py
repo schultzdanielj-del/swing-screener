@@ -15,14 +15,16 @@ Output:
     - data/outcome_grind/outcome_signals_{setup}.json
 
 Usage:
-    python scripts/outcome_grinder.py \
-        --pyramid cache/pyramid_dtss_sig576_pk4_20260226_104240.json \
-        --exit-grind data/exit_grind/exit_grind_dtss.json \
-        --cache cache/universe_ohlcv_5yr.pkl \
-        --setup dtss --direction short
+    # Auto-finds signal/exit from grinds/ storage:
+    python scripts/outcome_grinder.py --setup dtss
 
-    python scripts/outcome_grinder.py \
-        --pyramid ... --exit-grind ... --cache ... \
+    # Override specific inputs:
+    python scripts/outcome_grinder.py --setup dtss \
+        --pyramid path/to/signal.json \
+        --exit-grind path/to/exit.json
+
+    # Adjust parameters:
+    python scripts/outcome_grinder.py --setup dtss \
         --min-adr 1.5 --max-forward 120 --exit-rank 1
 """
 
@@ -118,6 +120,53 @@ def load_ohlcv_cache(path: str) -> dict:
         cache = pickle.load(f)
     print(f"  Loaded {len(cache)} tickers in {time.time()-t0:.1f}s")
     return cache
+
+
+def _parse_pyramid(data: dict) -> dict:
+    """Parse pyramid data that's already loaded as a dict."""
+    tier_order = ["5yr", "1yr", "6mo", "1mo", "1wk", "D1"]
+    signals = None
+    for tier in tier_order:
+        if tier in data.get("tier_results", {}):
+            tr = data["tier_results"][tier]
+            if "final_signals" in tr:
+                signals = tr["final_signals"]
+                break
+    if signals is None:
+        raise ValueError("No final_signals found in pyramid results")
+
+    example_sigs = data.get("example_signals", [])
+    print(f"Loaded pyramid: {len(signals)} signals, {len(example_sigs)} example signal bars")
+    print(f"  Conditions: {data['n_conditions']}, peak={data['summary']['final_peak']}, "
+          f"avg={data['summary']['final_avg']}")
+    return {
+        "signals": signals,
+        "example_signals": example_sigs,
+        "conditions": data.get("all_conditions", []),
+        "metadata": data,
+    }
+
+
+def _parse_exit_grind(data: dict, rank: int = 1) -> dict:
+    """Parse exit grind data that's already loaded as a dict."""
+    results = data.get("results", data.get("top_conditions", []))
+    if not results:
+        raise ValueError("No exit conditions found")
+    if rank > len(results):
+        raise ValueError(f"Requested rank {rank} but only {len(results)} conditions")
+
+    ec = results[rank - 1]
+    expr_name = ec.get("expr_name", ec.get("expression", ""))
+    direction = ec.get("direction", "below")
+    threshold = ec.get("threshold", 0)
+
+    print(f"Exit condition #{rank}: {expr_name} {direction} {threshold}")
+    return {
+        "expr_name": expr_name,
+        "direction": direction,
+        "threshold": threshold,
+        "raw": ec,
+    }
 
 
 # ============================================================
@@ -384,9 +433,9 @@ def _eval_signal_batch(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Outcome Grinder — Step 7 Phase 1")
-    parser.add_argument("--pyramid", required=True, help="Path to pyramid grinder results JSON")
-    parser.add_argument("--exit-grind", required=True, help="Path to exit grinder results JSON")
-    parser.add_argument("--cache", required=True, help="Path to 5yr OHLCV cache pkl")
+    parser.add_argument("--pyramid", default=None, help="Path to pyramid/signal grinder JSON (default: grinds/{setup}/signal/latest.json)")
+    parser.add_argument("--exit-grind", default=None, help="Path to exit grinder JSON (default: grinds/{setup}/exit/latest.json)")
+    parser.add_argument("--cache", default=None, help="Path to 5yr OHLCV cache pkl (default: local_runner/cache/universe_ohlcv_5yr.pkl)")
     parser.add_argument("--setup", default="dtss", help="Setup type")
     parser.add_argument("--direction", default="short", help="Trade direction")
     parser.add_argument("--max-forward", type=int, default=MAX_FORWARD_DEFAULT)
@@ -404,9 +453,33 @@ def main():
     print()
 
     # ── 1. Load all data locally ──
-    pyramid = load_pyramid(args.pyramid)
-    exit_cond = load_exit_grind(args.exit_grind, rank=args.exit_rank)
-    ohlcv_cache = load_ohlcv_cache(args.cache)
+    # Resolve paths via GrindStorage if not explicitly provided
+    from local_runner.grind_storage import GrindStorage
+    gs = GrindStorage(args.setup)
+
+    # Signal grind (pyramid)
+    if args.pyramid:
+        pyramid = load_pyramid(args.pyramid)
+    else:
+        print("Loading signal grind from grinds storage...")
+        pyramid_data = gs.load("signal")
+        pyramid = _parse_pyramid(pyramid_data)
+
+    # Exit grind
+    if args.exit_grind:
+        exit_cond = load_exit_grind(args.exit_grind, rank=args.exit_rank)
+    else:
+        print("Loading exit grind from grinds storage...")
+        exit_data = gs.load("exit")
+        exit_cond = _parse_exit_grind(exit_data, rank=args.exit_rank)
+
+    # OHLCV cache
+    if args.cache:
+        cache_path = args.cache
+    else:
+        cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "..", "local_runner", "cache", "universe_ohlcv_5yr.pkl")
+    ohlcv_cache = load_ohlcv_cache(cache_path)
 
     signals = pyramid["signals"]
     example_sigs = pyramid["example_signals"]
@@ -575,8 +648,8 @@ def main():
         print(f"    Avg outcomes/day: {avg_day:.1f}")
 
     # ── 6. Save results ──
-    os.makedirs("data/outcome_grind", exist_ok=True)
-    outpath = f"data/outcome_grind/outcome_signals_{args.setup}.json"
+    from local_runner.grind_storage import GrindStorage
+    gs_save = GrindStorage(args.setup)
 
     output = {
         "setup_type": args.setup,
@@ -605,17 +678,7 @@ def main():
         "errors": errors,
     }
 
-    def convert(obj):
-        if isinstance(obj, (np.integer,)):
-            return int(obj)
-        elif isinstance(obj, (np.floating,)):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return obj
-
-    with open(outpath, "w") as f:
-        json.dump(output, f, indent=2, default=convert)
+    outpath = gs_save.save("outcome", output)
     print(f"\nResults saved to {outpath}")
 
     # Top outcomes by ADR
