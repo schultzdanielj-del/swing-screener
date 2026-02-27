@@ -91,36 +91,26 @@ Needs validation on Dan's machine against real 5yr cache (synthetic data tested 
 - ✅ Output is flat expression columns — grinders see them identically to existing 4,017
 - ✅ 100% example pass rule — enforced by existing range computation (NaN auto-excluded)
 
-### Task B: LSP Expressions in Expression Engine
-**What:** Expose LSP data as proximity-ordered **levels** (clustered pivots at similar prices), not individual ranked pivots.
+### Task B: LSP Expressions in Expression Engine — ✅ COMPLETE (2026-02-27)
+**File:** `local_runner/brute_expressions.py` (44 lines added)
 
-**Level construction:**
-1. Detect all pivots across all timeframes (daily, weekly, monthly)
-2. Cluster pivots within 1 ATR of each other into a single **level**
-3. Each level tracks: price zone center, pivot count (stacking strength), timeframe count, total break count, highest pivot window, contextual AVWAP
-4. Order levels by proximity to the current bar's close: nearest above = `above1`, second nearest = `above2`, etc. Same below.
+**What was done:**
+- Imported `get_lsp_expression_names()` from `scripts/lsp_detector_v2.py` (with fallback if import fails)
+- Registered all 80 LSP expressions with `category: "lsp"` and `compute: {"op": "precomputed", "source": "lsp", "column": "<name>"}`
+- The `op: "precomputed"` marker tells the cache builder (Task E) to grab these from the LSP precompute dict rather than running through `compute_series()`
+- Updated compute estimate to separate precomputed expressions from arithmetic/boolean
+- Total expression count: 4,017 → 4,097 (+80 LSP)
+- Names 100% match `get_lsp_expression_names()` — verified programmatically
 
-**Why proximity-ordered:** A mega-level 20% away doesn't matter at the signal bar. The grinder needs to see what's nearby. Strength/stacking is metadata ON the nearest levels, not a separate ranking axis.
+**Compute spec pattern:**
+```json
+{"op": "precomputed", "source": "lsp", "column": "level_above1_distance"}
+```
 
-**Per-level expressions:**
-- `level_{dir}{rank}_distance` — distance from close to level center (normalized by ATR)
-- `level_{dir}{rank}_pivot_count` — how many individual pivots clustered at this level (stacking strength — the big deal)
-- `level_{dir}{rank}_timeframe_count` — how many timeframes (d/w/m) have a pivot at this level
-- `level_{dir}{rank}_break_count` — total times any pivot in this cluster was broken
-- `level_{dir}{rank}_max_window` — largest pivot window that detected a pivot here
-- `level_{dir}{rank}_bars_back_nearest` — bars back to the most recent pivot in this cluster
-- `level_{dir}{rank}_ctx_avwap_distance` — contextual AVWAP for this level (see Task D)
-- `level_{dir}{rank}_volume_ratio` — highest volume ratio among pivots in this cluster
-
-**Where `{dir}` = `above` or `below`, `{rank}` = 1-5 (nearest to furthest)**
-
-**Expression count:** 8 expressions × 5 ranks × 2 directions = **80 LSP expressions** on daily timeframe. These already incorporate weekly/monthly pivots via the clustering — a daily pivot at $100 and a monthly pivot at $101 merge into one level with `timeframe_count=2` and `pivot_count=2`.
-
-**No separate w_/m_ LSP expressions needed** — the multi-timeframe information is encoded in `timeframe_count` and `pivot_count` within each level. This is much cleaner than running LSP expressions per timeframe.
-
-**Context injection:** `set_lsp_context()` updated to accept a list of levels (above + below), each with full metadata.
-
-**Deduplication is built in:** Clustering handles the overlap between daily/weekly/monthly pivots naturally — they merge into the same level.
+The cache builder worker (Task E) will:
+1. Call `compute_all_lsp_series(daily_df)` → dict of 80 series
+2. For each expression with `op == "precomputed"` and `source == "lsp"`: grab `column` from that dict
+3. Write to the appropriate column index in the output array
 
 ### Task C: Higher Timeframe Resampling
 **What:** In the cache builder, resample daily OHLCV → weekly, monthly before computing expressions.
@@ -229,7 +219,7 @@ def _compute_ticker_full(args):
 
 | Component | Current | After V2 |
 |-----------|---------|----------|
-| Expression count | 4,017 | ~12,000+ (daily + weekly + monthly + LSP + AVWAP) |
+| Expression count | 4,097 (4,017 + 80 LSP) | ~12,131 (daily + weekly + monthly + LSP + AVWAP) |
 | Cache size (disk) | ~21 GB | ~63-70 GB |
 | Full cache build | ~40 min | ~90-150 min (one-time) |
 | Nightly append | ~5-8 min | ~12-20 min |
@@ -251,17 +241,17 @@ def _compute_ticker_full(args):
 ```
 Task A (LSP detector refactor)          — ✅ COMPLETE (2026-02-27)
     ↓
-Task B (LSP level expressions)          — NEXT: register 80 expressions in brute_expressions.py
+Task B (LSP level expressions)          — ✅ COMPLETE (2026-02-27): 80 expressions registered in brute_expressions.py
     ↓
-Task C (HTF resampling)                 — NEXT (parallel with B): resample daily→weekly/monthly, run full expr library
+Task C (HTF resampling)                 — NEXT: resample daily→weekly/monthly, run full expr library
     ↓
 Task D (Contextual AVWAPs)              — ✅ BUILT INTO Task A (compute_all_series includes ctx_avwap)
     ↓
-Task E (Cache builder integration)      — needs B, C
+Task E (Cache builder integration)      — needs C
     ↓
 Task F (Matrix builder + example flow)  — needs E
     ↓
-Task G (Expression library registry)    — needs B, C
+Task G (Expression library registry)    — needs C (HTF expression names)
     ↓
 Full cache rebuild + validation
     ↓
@@ -272,13 +262,13 @@ Tasks B and C can be done in parallel. Task D was folded into Task A.
 
 ### Next Session Starting Points
 
-**Task B:** Add 80 LSP expressions to `local_runner/brute_expressions.py`. Import `get_lsp_expression_names()` from `scripts/lsp_detector_v2.py`. Each expression needs `name`, `category: "lsp"`, and `compute` spec. The compute spec should match whatever the cache builder uses to map column names — these are precomputed columns, not live-computed ops.
-
 **Task C:** In `local_runner/expr_cache_builder.py`, add HTF resampling. For each ticker: resample daily→weekly/monthly using `resample_ohlcv()` from `lsp_detector_v2.py`, run `compute_series()` on resampled data, map back to daily indices. Prefix names with `w_`/`m_`. ~8,034 new expressions (4,017 × 2 timeframes).
 
-**Task E (after B+C):** Update `expr_cache_builder.py` worker to:
+**Task E (after C):** Update `expr_cache_builder.py` worker to:
 1. Resample daily→weekly/monthly
-2. Call `compute_all_lsp_series()` for LSP+AVWAP (80 expressions)
+2. Call `compute_all_lsp_series()` for LSP+AVWAP (80 expressions, registered in brute_expressions.py with `op: "precomputed"`)
 3. Run existing expression library on weekly/monthly data (~8,034 expressions)
 4. Concatenate all columns into expanded cache array
 5. Update manifest with new expression count + names
+
+**Task G (after C):** Register HTF expression names in `brute_expressions.py`. Same pattern as LSP: `{"op": "precomputed", "source": "htf", "column": "w_rsi_14"}`. Will need the HTF expression name list from Task C.

@@ -827,6 +827,45 @@ def generate_all():
                 "compute": {"op": "true_in_row", "condition": cond, "period": p}
             })
 
+    # ═══════════════════════════════════════════════════════
+    # LSP LEVELS — Precomputed by lsp_detector_v2.py
+    # ═══════════════════════════════════════════════════════
+    # These are NOT computed by ExpressionEngine/compute_series().
+    # They're produced by compute_all_lsp_series() during cache build.
+    # The compute spec uses op="precomputed" so the cache builder knows
+    # to grab these from the LSP precompute dict, not run them through
+    # the expression engine.
+    #
+    # 80 expressions total:
+    #   7 metrics × 5 ranks × 2 directions = 70 level expressions
+    #   1 ctx_avwap × 5 ranks × 2 directions = 10 AVWAP expressions
+
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "scripts"))
+        from lsp_detector_v2 import get_lsp_expression_names
+        lsp_names = get_lsp_expression_names()
+    except ImportError:
+        # Fallback: generate names directly (must stay in sync with lsp_detector_v2.py)
+        lsp_names = []
+        _metrics = ['distance', 'pivot_count', 'timeframe_count', 'break_count',
+                     'max_window', 'bars_back_nearest', 'volume_ratio']
+        for _d in ['above', 'below']:
+            for _r in range(1, 6):
+                for _m in _metrics:
+                    lsp_names.append(f"level_{_d}{_r}_{_m}")
+        for _d in ['above', 'below']:
+            for _r in range(1, 6):
+                lsp_names.append(f"level_{_d}{_r}_ctx_avwap_distance")
+
+    for name in lsp_names:
+        exprs.append({
+            "name": name,
+            "category": "lsp",
+            "compute": {"op": "precomputed", "source": "lsp", "column": name}
+        })
+
     return exprs
 
 
@@ -854,16 +893,19 @@ def main():
 
     # Estimate
     bool_count = cats.get("boolean", 0)
-    arith_count = len(exprs) - bool_count
+    precomputed_count = cats.get("lsp", 0)  # LSP expressions are precomputed, not run through engine
+    arith_count = len(exprs) - bool_count - precomputed_count
     tickers = 4167
     base_s = tickers * 24 / 1000
     arith_s = tickers * arith_count * 0.02 / 1000
     bool_s = tickers * bool_count * 1 / 1000
-    total_s = base_s + arith_s + bool_s
+    lsp_s = tickers * 0.5  # ~0.5s per ticker for LSP detector
+    total_s = base_s + arith_s + bool_s + lsp_s
     print(f"\n  Estimated compute (4,167 tickers on desktop):")
     print(f"    Base indicators:    {base_s:6.0f}s ({base_s/60:.1f} min)")
     print(f"    Arithmetic ({arith_count:,}):  {arith_s:6.0f}s ({arith_s/60:.1f} min)")
     print(f"    Booleans ({bool_count:,}):    {bool_s:6.0f}s ({bool_s/60:.1f} min)")
+    print(f"    LSP precompute ({precomputed_count}):  {lsp_s:6.0f}s ({lsp_s/60:.1f} min) [parallel across cores]")
     print(f"    TOTAL:              {total_s:6.0f}s ({total_s/60:.0f} min)")
     print()
 

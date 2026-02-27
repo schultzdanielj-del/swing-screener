@@ -56,7 +56,7 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 
 **Still needs:** Validation against real 5yr cache on Dan's machine (tested with synthetic data in sandbox). Run `python scripts/lsp_detector_v2.py validate` with the real cache.
 
-**Next:** Tasks B+C from EXPRESSION_ENGINE_V2.md (register expressions in brute_expressions.py + HTF resampling in cache builder).
+**Next:** Task C from EXPRESSION_ENGINE_V2.md (HTF resampling in cache builder), then Task E (cache builder integration for LSP + HTF).
 
 ### Task 1: Integrate LSP into Signal Grinder
 **What:** The pyramid grinder must use LSP data when grinding DTSS.
@@ -118,7 +118,7 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 | `server.py` | ✅ New `/api/universe/insert-ohlcv` endpoint added | Railway FastAPI backend |
 | `local_runner/pyramid_grinder.py` | ❌ No LSP | Needs LSP injection (after cache integration) |
 | `local_runner/matrix_builder.py` | ❌ No LSP | Needs LSP-aware example matrix |
-| `local_runner/brute_expressions.py` | ❌ No LSP expressions | Needs 80 LSP expressions registered (Task B) |
+| `local_runner/brute_expressions.py` | ✅ 80 LSP expressions registered | 4,097 total expressions (op: precomputed for LSP) |
 | `local_runner/expr_cache_builder.py` | ❌ No LSP/HTF | Needs LSP + HTF integration (Task E) |
 | `scripts/exit_grinder.py` | ⚠️ Parity fixed, needs re-run | Formation period validation missing |
 | `scripts/outcome_grinder.py` | ⚠️ Parity fixed, needs re-run | Needs corrected exit conditions |
