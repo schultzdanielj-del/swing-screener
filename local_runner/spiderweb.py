@@ -52,7 +52,10 @@ class SpiderwebSearch:
             uni_vals = universe_values[:, i]
 
             ex_valid = ex_vals[~np.isnan(ex_vals)]
-            if len(ex_valid) < max(3, self.n_examples * 0.7):
+            # CRITICAL: require ALL examples to have valid values.
+            # If any example is NaN, this expression cannot be a condition —
+            # it would fail validation for that example. No exceptions.
+            if len(ex_valid) < self.n_examples:
                 self.expr_thresholds.append((np.nan, np.nan))
                 masks.append(np.ones(self.n_universe, dtype=bool))
                 continue

@@ -975,6 +975,30 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         n_cached = len(expr_cache.get_available_tickers())
         print(f"  ✓ Expression series cache detected: {n_cached} tickers, "
               f"{expr_cache.n_expressions} expressions")
+
+        # Filter examples: ONLY keep examples that exist in the expr cache.
+        # If an example isn't cached, we can't compute all expressions for it,
+        # which means conditions could be selected that the example can't pass.
+        cached_tickers = expr_cache.get_available_tickers()
+        before_count = len(example_dfs)
+        excluded = []
+        filtered_dfs = []
+        for ex in example_dfs:
+            if ex["ticker"] in cached_tickers:
+                # Also verify scan_idx is within cached bar count
+                n_cached_bars = expr_cache.get_ticker_bar_count(ex["ticker"])
+                if ex["scan_idx"] < n_cached_bars:
+                    filtered_dfs.append(ex)
+                else:
+                    excluded.append(f"{ex['ticker']} (scan_idx {ex['scan_idx']} >= {n_cached_bars} cached bars)")
+            else:
+                excluded.append(f"{ex['ticker']} (not in expr cache)")
+        example_dfs = filtered_dfs
+        if excluded:
+            print(f"  ⚠ Excluded {len(excluded)} examples not in expr cache:")
+            for e in excluded:
+                print(f"    - {e}")
+            print(f"  Examples: {before_count} → {len(example_dfs)}")
     else:
         expr_cache = None
         print(f"  ⚠ No expression series cache — computing from scratch (slow)")
@@ -1009,8 +1033,10 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     if all_conditions:
         print(f"\n  Validating examples after D1...")
         if not validate_examples(example_dfs, all_conditions, expr_cache=expr_cache):
-            print("  ✗ PROBLEM: Some examples fail D1 conditions!")
-            print("  Continuing anyway — check data sources if this persists.")
+            print(f"\n{'!'*80}")
+            print(f"VALIDATION FAILED after D1 — aborting. All examples must pass. No exceptions.")
+            print(f"{'!'*80}")
+            return None
 
     # ══ HISTORICAL TIERS (T2-T6) ══
     for tier_name, n_bars, description in TIERS[1:]:
@@ -1055,8 +1081,10 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             # Validate — examples must always pass
             print(f"\n  Validating examples after {tier_name}...")
             if not validate_examples(example_dfs, all_conditions, expr_cache=expr_cache):
-                print(f"  ✗ PROBLEM: Some examples fail after {tier_name}!")
-                print(f"  Continuing anyway — examples will be force-included in final signals.")
+                print(f"\n{'!'*80}")
+                print(f"VALIDATION FAILED after {tier_name} — aborting. All examples must pass. No exceptions.")
+                print(f"{'!'*80}")
+                return None
         else:
             final_peak = tier_result.get("final_peak") or tier_result.get("baseline_peak", "?")
             if tier_result.get("skipped"):
