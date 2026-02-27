@@ -1,14 +1,21 @@
 """
-Matrix Builder — Precompute expression values for universe + examples.
+Matrix Builder — Load precomputed expression values for universe + examples.
+
+ALL data comes from the expression series cache (expr_series/*.npz files).
+No live computation — expressions are precomputed by expr_cache_builder.py.
+
+This ensures:
+  1. All grinders use the exact same computation path
+  2. LSP, HTF, and daily expressions all work identically
+  3. Universe matrix build is ~30s (file reads) instead of ~30 min (live compute)
 
 Two matrices:
-  1. Universe matrix: ALL tickers × ALL expressions at last bar (daily refresh)
-     - Shared across setups
-     - ~20-40 min to compute, cached to disk
-     - Rebuilds automatically if >24h old
+  1. Universe matrix: ALL tickers × ALL expressions at last bar
+     - Loaded from expr cache (last row per ticker)
+     - Rebuilds if cache fingerprint changes
 
-  2. Example matrix: setup examples × ALL expressions at entry bar (per-setup)
-     - Fast (~5s per example)
+  2. Example matrix: setup examples × ALL expressions at entry bar
+     - Loaded from expr cache (scan_idx row per example)
      - Rebuilds when examples change
 
 Usage:
@@ -24,6 +31,8 @@ import numpy as np
 import pandas as pd
 import requests
 from datetime import datetime, timezone, timedelta
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import cpu_count
 
 LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(LOCAL_DIR)
@@ -58,75 +67,40 @@ def _load_expressions(setup_type=None, force=False):
         return json.load(f)["expressions"]
 
 
-def _load_ohlcv_cache():
-    """Load OHLCV cache, building if needed."""
-    cache_file = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
-    if not os.path.exists(cache_file):
-        from cache_builder import build_cache
-        build_cache(force=True)
-    with open(cache_file, "rb") as f:
-        return pickle.load(f)
+# ══════════════════════════════════════════════════════════════
+# EXPR CACHE LOADING (parallel)
+# ══════════════════════════════════════════════════════════════
+
+def _load_ticker_last_bar(ticker):
+    """Load the last bar's expression values for a ticker from the expr cache.
+    Returns (ticker, values_array) or (ticker, None) if not cached.
+    """
+    from expr_cache_builder import load_ticker_cache
+    dates, data = load_ticker_cache(ticker)
+    if dates is None or data is None or len(data) == 0:
+        return (ticker, None)
+    # Last bar = last row
+    return (ticker, data[-1, :].astype(np.float64))
 
 
-_worker_expressions = None
-_worker_cache = None
-
-def _init_worker(expressions, cache_dict):
-    """Initialize worker process with shared expression list and OHLCV cache.
-    Cache is serialized ONCE per worker at startup, not per task."""
-    global _worker_expressions, _worker_cache
-    _worker_expressions = expressions
-    _worker_cache = cache_dict
-
-
-def _compute_ticker_worker_single(ticker):
-    """Worker function for single ticker (used inside batch)."""
-    global _worker_expressions, _worker_cache
-    expressions = _worker_expressions
-    df = _worker_cache.get(ticker)
-    if df is None or len(df) < 50:
-        return None
-    try:
-        from scripts.expression_engine import ExpressionEngine
-        engine = ExpressionEngine(df)
-        engine.set_target(len(df) - 1)
-        values = np.full(len(expressions), np.nan)
-        for j, expr in enumerate(expressions):
-            try:
-                val = engine.compute(expr)
-                if val is not None and not np.isnan(val):
-                    values[j] = val
-            except:
-                pass
-        return values
-    except:
-        return np.full(len(expressions), np.nan)
+def _load_ticker_at_bar(args):
+    """Load expression values at a specific bar index for a ticker.
+    args: (ticker, scan_idx, entry_date_str)
+    Returns (ticker, entry_date_str, values_array) or (..., None).
+    """
+    ticker, scan_idx, entry_date_str = args
+    from expr_cache_builder import load_ticker_cache
+    dates, data = load_ticker_cache(ticker)
+    if dates is None or data is None:
+        return (ticker, entry_date_str, None)
+    if scan_idx >= len(data):
+        return (ticker, entry_date_str, None)
+    return (ticker, entry_date_str, data[scan_idx, :].astype(np.float64))
 
 
-def _compute_ticker_batch(ticker_list):
-    """Process a batch of tickers. Returns list of (ticker, values) tuples."""
-    results = []
-    for ticker in ticker_list:
-        vals = _compute_ticker_worker_single(ticker)
-        results.append((ticker, vals))
-    return results
-
-
-def _compute_ticker_values(df, target_idx, expressions):
-    """Compute all expression values for one ticker at one bar."""
-    from scripts.expression_engine import ExpressionEngine
-    engine = ExpressionEngine(df)
-    engine.set_target(target_idx)
-    values = np.full(len(expressions), np.nan)
-    for j, expr in enumerate(expressions):
-        try:
-            val = engine.compute(expr)
-            if val is not None and not np.isnan(val):
-                values[j] = val
-        except:
-            pass
-    return values
-
+# ══════════════════════════════════════════════════════════════
+# FRESHNESS CHECK
+# ══════════════════════════════════════════════════════════════
 
 def _get_et_date():
     """Get current date in US/Eastern time (handles EST/EDT automatically)."""
@@ -164,9 +138,17 @@ def _universe_matrix_fresh():
         return False
 
 
+# ══════════════════════════════════════════════════════════════
+# UNIVERSE MATRIX — loads from expr cache
+# ══════════════════════════════════════════════════════════════
+
 def get_universe_matrix(progress_fn=None, force=False):
     """
-    Get or build the universe expression matrix.
+    Get or build the universe expression matrix by loading from the expression
+    series cache. Each ticker's last bar is extracted from its cached .npz file.
+
+    Falls back to live computation ONLY if no expression cache exists.
+
     Returns dict with universe_matrix, universe_tickers, expr_names, expr_categories.
     """
     path = os.path.join(CACHE_DIR, "universe_matrix.pkl")
@@ -176,17 +158,19 @@ def get_universe_matrix(progress_fn=None, force=False):
         if progress_fn:
             progress_fn("matrix", 5, msg)
 
-    # Check cache
+    # Load expression library
+    expressions = _load_expressions(force=False)
+
+    # Check cache freshness
     if not force and _universe_matrix_fresh():
         log("Matrix is fresh — loading from cache...")
         with open(path, "rb") as f:
             data = pickle.load(f)
-        # Verify expression count matches
-        expressions = _load_expressions(force=False)
         cached_n = data.get("n_exprs")
         current_n = len(expressions)
         if cached_n == current_n:
-            log(f"Cache OK: {data['n_universe']} tickers × {current_n} expressions (built {data.get('computed_at', 'unknown')})")
+            log(f"Cache OK: {data['n_universe']} tickers × {current_n} expressions "
+                f"(built {data.get('computed_at', 'unknown')})")
             if progress_fn:
                 progress_fn("matrix", 10, f"Universe matrix cached: {data['n_universe']} tickers")
             return data
@@ -194,7 +178,6 @@ def get_universe_matrix(progress_fn=None, force=False):
     elif force:
         log("Force rebuild requested.")
     else:
-        # Not fresh — log why
         if not os.path.exists(path):
             log("No matrix cache found — building from scratch...")
         else:
@@ -206,113 +189,199 @@ def get_universe_matrix(progress_fn=None, force=False):
             except:
                 log("Matrix cache unreadable — rebuilding...")
 
-    # Build from scratch
-    expressions = _load_expressions()
-    if progress_fn:
-        progress_fn("matrix", 5, f"Building universe matrix ({len(expressions)} expressions)...")
+    # ── Try loading from expression series cache (fast path) ──
+    from expr_cache_builder import ExprSeriesCache
+    expr_cache = ExprSeriesCache()
 
-    # Load OHLCV
-    universe_cache = _load_ohlcv_cache()
-    uni_tickers = list(universe_cache.keys())
-    universe_matrix = np.full((len(uni_tickers), len(expressions)), np.nan)
+    if expr_cache.is_valid(expressions):
+        return _build_universe_from_cache(expr_cache, expressions, path, progress_fn)
+    else:
+        log("⚠ Expression series cache not available or fingerprint mismatch.")
+        log("  Run: python local_runner/expr_cache_builder.py --build")
+        log("  Falling back to live computation (slow)...")
+        return _build_universe_live(expressions, path, progress_fn)
+
+
+def _build_universe_from_cache(expr_cache, expressions, save_path, progress_fn=None):
+    """Build universe matrix by reading last bar from each ticker's cache file.
+    Uses ProcessPoolExecutor for parallel file I/O.
+    """
+    def log(msg):
+        print(f"  [matrix] {msg}")
+        if progress_fn:
+            progress_fn("matrix", 5, msg)
+
+    log(f"Building from expression cache ({expr_cache.n_expressions} expressions)...")
+
+    # Get list of cached tickers
+    cached_tickers = sorted(expr_cache.get_available_tickers())
+    n_tickers = len(cached_tickers)
+    n_exprs = len(expressions)
 
     if progress_fn:
-        progress_fn("matrix", 10, f"Computing {len(uni_tickers)} tickers × {len(expressions)} expressions...")
+        progress_fn("matrix", 10, f"Loading {n_tickers} tickers from cache...")
 
     t0 = time.time()
 
-    # Parallel build — use all cores minus 1 for OS headroom
-    # Set MATRIX_WORKERS=1 to disable parallelism for debugging
-    from multiprocessing import cpu_count as _cpu_count
-    n_workers = int(os.environ.get("MATRIX_WORKERS", max(_cpu_count() - 1, 1)))
+    # Verify expression order matches
+    cache_names = expr_cache.expr_names
+    current_names = [e["name"] for e in expressions]
+    if cache_names != current_names:
+        log(f"⚠ Expression name mismatch between cache ({len(cache_names)}) "
+            f"and library ({len(current_names)}). Rebuild cache.")
+        log("  Run: python local_runner/expr_cache_builder.py --build --force")
+        raise RuntimeError("Expression cache fingerprint mismatch")
 
-    # Build ticker index for mapping results back
-    ticker_to_idx = {t: i for i, t in enumerate(uni_tickers)}
-    valid_tickers = [t for t in uni_tickers 
-                     if universe_cache.get(t) is not None and len(universe_cache[t]) >= 50]
+    universe_matrix = np.full((n_tickers, n_exprs), np.nan)
+    ticker_to_idx = {t: i for i, t in enumerate(cached_tickers)}
 
-    print(f"    {'Parallel' if n_workers > 1 else 'Sequential'} build: {len(valid_tickers)} tickers × {len(expressions)} expressions"
-          + (f", {n_workers} workers" if n_workers > 1 else ""))
+    # Parallel file loading
+    n_workers = max(cpu_count() - 1, 1)
 
-    completed = 0
+    log(f"Parallel load: {n_tickers} tickers, {n_workers} workers")
 
-    if n_workers <= 1:
-        # Sequential fallback
-        global _worker_expressions, _worker_cache
-        _worker_expressions = expressions
-        _worker_cache = universe_cache
-        for ticker in valid_tickers:
-            vals = _compute_ticker_worker_single(ticker)
-            if vals is not None:
-                universe_matrix[ticker_to_idx[ticker]] = vals
-            completed += 1
-            if completed % 100 == 0 or completed == len(valid_tickers):
+    completed_tickers = 0
+
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(_load_ticker_last_bar, ticker): ticker
+                   for ticker in cached_tickers}
+
+        for future in as_completed(futures):
+            ticker, values = future.result()
+            if values is not None:
+                idx = ticker_to_idx[ticker]
+                universe_matrix[idx] = values
+            completed_tickers += 1
+            if completed_tickers % 500 == 0 or completed_tickers == n_tickers:
                 elapsed = time.time() - t0
-                rate = completed / elapsed if elapsed > 0 else 0
-                eta = (len(valid_tickers) - completed) / rate if rate > 0 else 0
-                pct = 10 + int(85 * completed / len(valid_tickers))
-                msg = f"Universe: {completed}/{len(valid_tickers)} ({completed/len(valid_tickers)*100:.0f}%) [{elapsed:.0f}s, ~{eta:.0f}s left]"
+                rate = completed_tickers / elapsed if elapsed > 0 else 0
+                eta = (n_tickers - completed_tickers) / rate if rate > 0 else 0
+                pct = 10 + int(85 * completed_tickers / n_tickers)
+                msg = (f"Universe: {completed_tickers}/{n_tickers} "
+                       f"({completed_tickers/n_tickers*100:.0f}%) "
+                       f"[{elapsed:.0f}s, ~{eta:.0f}s left]")
                 print(f"    {msg}")
                 if progress_fn:
                     progress_fn("matrix", pct, msg)
-    else:
-        from concurrent.futures import ProcessPoolExecutor, as_completed
 
-        # Batch tickers — cache serialized once per worker via initializer
-        batch_size = max(len(valid_tickers) // (n_workers * 4), 50)
-        batches = [valid_tickers[i:i+batch_size] for i in range(0, len(valid_tickers), batch_size)]
+    data = {
+        "universe_matrix": universe_matrix,
+        "universe_tickers": cached_tickers,
+        "expr_names": current_names,
+        "expr_categories": [e.get("category", "unknown") for e in expressions],
+        "n_exprs": n_exprs,
+        "n_universe": n_tickers,
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "expr_cache",
+    }
 
-        print(f"    {len(batches)} batches of ~{batch_size} tickers")
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(save_path, "wb") as f:
+        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-        with ProcessPoolExecutor(max_workers=n_workers,
-                                 initializer=_init_worker, 
-                                 initargs=(expressions, universe_cache)) as executor:
-            futures = {executor.submit(_compute_ticker_batch, batch): batch 
-                       for batch in batches}
+    size_mb = os.path.getsize(save_path) / 1024 / 1024
+    elapsed = time.time() - t0
+    log(f"Universe matrix saved: {size_mb:.1f} MB ({elapsed:.0f}s) — "
+        f"{n_tickers} tickers × {n_exprs} expressions [from expr cache]")
+    if progress_fn:
+        progress_fn("matrix", 95, f"Universe matrix built: {size_mb:.1f} MB in {elapsed:.0f}s")
 
-            for future in as_completed(futures):
+    return data
+
+
+def _build_universe_live(expressions, save_path, progress_fn=None):
+    """FALLBACK: Build universe matrix by computing expressions live.
+    Only used when no expression cache exists.
+    WARNING: This path cannot compute LSP/HTF/precomputed expressions — they will be NaN.
+    """
+    def log(msg):
+        print(f"  [matrix] {msg}")
+        if progress_fn:
+            progress_fn("matrix", 5, msg)
+
+    log("Building universe matrix via live computation (NO expr cache)...")
+    log("⚠ LSP, weekly, and monthly expressions will be NaN (precomputed-only).")
+
+    # Load OHLCV
+    cache_file = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
+    if not os.path.exists(cache_file):
+        # Try 5yr cache
+        cache_file = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+    if not os.path.exists(cache_file):
+        from cache_builder import build_cache
+        cache_file = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
+        build_cache(force=True)
+    with open(cache_file, "rb") as f:
+        universe_cache = pickle.load(f)
+
+    uni_tickers = list(universe_cache.keys())
+    n_exprs = len(expressions)
+    universe_matrix = np.full((len(uni_tickers), n_exprs), np.nan)
+
+    if progress_fn:
+        progress_fn("matrix", 10, f"Computing {len(uni_tickers)} tickers × {n_exprs} expressions...")
+
+    t0 = time.time()
+
+    from scripts.expression_engine import ExpressionEngine
+
+    for i, ticker in enumerate(uni_tickers):
+        df = universe_cache.get(ticker)
+        if df is None or len(df) < 50:
+            continue
+        try:
+            engine = ExpressionEngine(df)
+            engine.set_target(len(df) - 1)
+            for j, expr in enumerate(expressions):
                 try:
-                    batch_results = future.result()
-                    for ticker, vals in batch_results:
-                        if vals is not None:
-                            universe_matrix[ticker_to_idx[ticker]] = vals
-                except Exception as e:
-                    pass  # leave as NaN
+                    val = engine.compute(expr)
+                    if val is not None and not np.isnan(val):
+                        universe_matrix[i, j] = val
+                except:
+                    pass
+        except:
+            pass
 
-                completed += 1
-                done_tickers = completed * batch_size
-                if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
-                    elapsed = time.time() - t0
-                    rate = done_tickers / elapsed if elapsed > 0 else 0
-                    eta = (len(valid_tickers) - done_tickers) / rate if rate > 0 else 0
-                    pct = 10 + int(85 * min(done_tickers, len(valid_tickers)) / len(valid_tickers))
-                    msg = f"Universe: ~{min(done_tickers, len(valid_tickers))}/{len(valid_tickers)} ({min(done_tickers, len(valid_tickers))/len(valid_tickers)*100:.0f}%) [{elapsed:.0f}s, ~{max(eta,0):.0f}s left]"
-                    print(f"    {msg}")
-                    if progress_fn:
-                        progress_fn("matrix", pct, msg)
+        if (i + 1) % 100 == 0 or (i + 1) == len(uni_tickers):
+            elapsed = time.time() - t0
+            rate = (i + 1) / elapsed if elapsed > 0 else 0
+            eta = (len(uni_tickers) - i - 1) / rate if rate > 0 else 0
+            pct = 10 + int(85 * (i + 1) / len(uni_tickers))
+            msg = (f"Universe: {i+1}/{len(uni_tickers)} "
+                   f"({(i+1)/len(uni_tickers)*100:.0f}%) "
+                   f"[{elapsed:.0f}s, ~{eta:.0f}s left]")
+            print(f"    {msg}")
+            if progress_fn:
+                progress_fn("matrix", pct, msg)
 
     data = {
         "universe_matrix": universe_matrix,
         "universe_tickers": uni_tickers,
         "expr_names": [e["name"] for e in expressions],
         "expr_categories": [e.get("category", "unknown") for e in expressions],
-        "n_exprs": len(expressions),
+        "n_exprs": n_exprs,
         "n_universe": len(uni_tickers),
         "computed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "live_compute",
     }
 
     os.makedirs(CACHE_DIR, exist_ok=True)
-    with open(path, "wb") as f:
+    with open(save_path, "wb") as f:
         pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    size_mb = os.path.getsize(path) / 1024 / 1024
+    size_mb = os.path.getsize(save_path) / 1024 / 1024
     elapsed = time.time() - t0
-    print(f"    Universe matrix saved: {size_mb:.1f} MB ({elapsed:.0f}s)")
+    log(f"Universe matrix saved: {size_mb:.1f} MB ({elapsed:.0f}s) [LIVE — some expressions NaN]")
     if progress_fn:
         progress_fn("matrix", 95, f"Universe matrix built: {size_mb:.1f} MB in {elapsed/60:.1f} min")
 
     return data
 
+
+# ══════════════════════════════════════════════════════════════
+# EXAMPLE MATRIX — kept for backward compat with get_example_matrix()
+# (pyramid_grinder uses its own compute_example_ranges instead)
+# ══════════════════════════════════════════════════════════════
 
 def get_example_matrix(setup_type, progress_fn=None):
     """
@@ -377,14 +446,24 @@ def get_example_matrix(setup_type, progress_fn=None):
                 if len(matches) > 0:
                     target_idx = matches.index[0] - 1
 
-            values = _compute_ticker_values(df, target_idx, expressions)
+            from scripts.expression_engine import ExpressionEngine
+            engine = ExpressionEngine(df)
+            engine.set_target(target_idx)
+            values = np.full(len(expressions), np.nan)
+            for j, expr in enumerate(expressions):
+                try:
+                    val = engine.compute(expr)
+                    if val is not None and not np.isnan(val):
+                        values[j] = val
+                except:
+                    pass
             n_valid = int(np.sum(~np.isnan(values)))
             return (i, ticker, ex_id, entry_date, values, f"{n_valid}/{len(expressions)}")
         except Exception as e:
             return (i, ticker, ex_id, entry_date, None, str(e))
 
     # Run all examples concurrently (I/O-bound: API fetch)
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor
     n_threads = min(10, len(raw_examples))
     completed = 0
 
@@ -430,6 +509,3 @@ def get_example_matrix(setup_type, progress_fn=None):
         progress_fn("examples", 100, f"Example matrix built: {len(raw_examples)} examples")
 
     return data
-
-
-

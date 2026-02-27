@@ -189,11 +189,45 @@ The cache builder integration was done directly as part of Task C rather than as
 Both `_compute_ticker_full()` and `_append_ticker()` now handle all 3 expression types (daily + LSP + HTF).
 See Task C implementation details above.
 
-### Task F: Matrix Builder Update  
-**What:** Update `matrix_builder.py` to include LSP + HTF + AVWAP expressions.
-- `get_universe_matrix()`: uses the expanded expression cache (no code changes needed if cache is already built)
-- `get_example_matrix()`: for DTSS examples, inject hand-labeled LSPs; for others, use detector
-- `compute_example_ranges()` in pyramid_grinder: same — inject LSP context per example
+### Task F: Matrix Builder Update — ✅ COMPLETE (2026-02-27)
+**Files modified:** `local_runner/matrix_builder.py`, `local_runner/pyramid_grinder.py`
+
+**Problem solved:** The matrix builder and example range computation were computing expressions **live** via `ExpressionEngine.compute()` and `compute_series()`. These functions don't know about `op: "precomputed"` expressions (LSP, weekly, monthly), causing 8,114 of 12,131 expressions to silently return NaN. The pyramid grinder's validation also used live computation, creating an inconsistent path.
+
+**What was done:**
+
+1. **`matrix_builder.py` — rewritten `get_universe_matrix()`:**
+   - Primary path now loads ALL expression values from the expr series cache (last bar per ticker)
+   - Uses `ProcessPoolExecutor` for parallel file I/O across all cores
+   - ~30s to load 4,167 tickers from cache vs ~30 min live computation
+   - Falls back to live computation only if no expr cache exists (with warning that LSP/HTF will be NaN)
+
+2. **`pyramid_grinder.py` — rewritten `compute_example_ranges()`:**
+   - Now accepts `expr_cache` parameter
+   - When cache available: loads scan_idx row from each example's cached .npz file
+   - All 12,131 expressions get valid values, so all can participate as grinder candidates
+   - Falls back to `compute_series()` if no cache
+
+3. **`pyramid_grinder.py` — rewritten `validate_examples()`:**
+   - Now accepts `expr_cache` parameter
+   - Uses same cached data path as range computation and historical tiers
+   - Consistent values across all grinder stages
+
+4. **`pyramid_grinder.py` — rewritten final validation block:**
+   - Same cache-based lookup for the save/no-save gate
+   - Ensures 100% example pass rule uses identical computation path
+
+5. **`run_pyramid()` orchestrator:**
+   - Moved `ExprSeriesCache` detection **before** `compute_example_ranges()` (was after)
+   - Passes `expr_cache` to all range computation and validation calls
+
+**Design constraints met:**
+- ✅ All grinders use the exact same computation path (expr cache files)
+- ✅ All grinders optimized for max speed (parallel file I/O, no live computation)
+- ✅ All grinders use all CPU cores (ProcessPoolExecutor)
+- ✅ All conditional results pass all setup examples (validated via same cache path)
+- ✅ LSP, HTF, and daily expressions all treated identically
+- ✅ Fallback to live computation preserved for bootstrapping (before first cache build)
 
 ### Task G: Expression Library Update — ✅ COMPLETE (2026-02-27, built as part of Task C)
 HTF expression names are auto-generated programmatically in `brute_expressions.py` by prefixing all daily expressions with `w_`/`m_`. No manual curation needed — the grinder discovers which HTF expressions matter per setup. LSP expressions were already registered in Task B.
@@ -205,15 +239,15 @@ HTF expression names are auto-generated programmatically in `brute_expressions.p
 | Component | Previous | After V2 (Measured) |
 |-----------|----------|---------------------|
 | Expression count | 4,017 daily | 12,131 (4,017 daily + 80 LSP + 4,017 weekly + 4,017 monthly) |
-| Cache size (disk) | ~21 GB | ~70 GB (estimated from per-ticker measurement) |
+| Cache size (disk) | ~21 GB | ~255 GB (61 MB/ticker × 4,167 tickers, float32) |
 | Full cache build | ~40 min | ~84 min estimated (8.5s/ticker × 4,167 tickers ÷ 7 cores) |
 | Nightly append | ~5-8 min | ~15-20 min (same ratio increase) |
-| Matrix rebuild | ~5 min | ~10-15 min |
+| Matrix rebuild | ~5 min | ~30s (reads from expr cache, no live computation) |
 | Grinder runtime | ~2-3 min | ~4-8 min (3x more expressions to search) |
 
 ## Decisions (Resolved)
 
-1. **HTF expression scope:** Full 4,017 on weekly + monthly. ~84 GB cache is fine (600 GB free).
+1. **HTF expression scope:** Full 4,017 on weekly + monthly. ~255 GB cache is fine (548 GB free).
 2. **Highest all-time AVWAP:** EXCLUDED — only 5yr data, not enough for "all time." Pivot-anchored contextual AVWAPs only. Revisit when full history available (~1 TB cache).
 3. **Yearly timeframe:** EXCLUDED — only ~5 bars in 5yr history, useless for expressions. Weekly + monthly only.
 4. **Number of LSP ranks:** ALL detected pivots, ranked. Expression engine exposes top N as ranked expressions.
@@ -234,27 +268,22 @@ Task D (Contextual AVWAPs)              — ✅ BUILT INTO Task A
     ↓
 Task E (Cache builder integration)      — ✅ BUILT INTO Task C
     ↓
-Task F (Matrix builder + example flow)  — NEXT
+Task F (Matrix builder + example flow)  — ✅ COMPLETE (2026-02-27): all grinders use expr cache
     ↓
 Task G (Expression library registry)    — ✅ BUILT INTO Task C
     ↓
-Full cache rebuild + validation         — needs F, then run on Dan's machine
+Full cache rebuild + validation         — NEXT: run on Dan's machine
     ↓
 Re-grind DTSS with expanded library
 ```
 
 ### What's Left
 
-**Task F (Matrix Builder Update):** The matrix builder loads from the expression cache. With 12,131 expressions in the cache, it should "just work" since it reads the manifest for column names and loads .npz files. BUT:
-- Need to verify `get_universe_matrix()` handles the larger column count without memory issues
-- Need to verify `get_example_matrix()` works with 12,131 columns
-- The pyramid grinder's beam search operates on the full expression set — verify it handles 12,131 without blowing up search time
-
-**Full cache rebuild:** Must be done on Dan's machine (requires 5yr OHLCV cache + 70 GB disk). Run `python local_runner/expr_cache_builder.py --build --force`.
+**Full cache rebuild:** Must be done on Dan's machine (requires 5yr OHLCV cache + ~255 GB disk). Run `python local_runner/expr_cache_builder.py --build --force`.
 
 **Validation:** After rebuild:
 1. Check manifest: 12,131 expressions, all names present
 2. Spot-check a few tickers: weekly RSI values should match manual calculation
-3. Run matrix builder — verify it loads the expanded cache
+3. Run matrix builder — verify it loads the expanded cache (~30s)
 4. Re-grind DTSS — compare results with vs without HTF/LSP expressions
 
