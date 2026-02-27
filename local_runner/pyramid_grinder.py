@@ -61,8 +61,6 @@ CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
 
-from scripts.expression_engine import ExpressionEngine
-from scripts.backtest_conditions import compute_series
 from brute_expressions import generate_all
 from expr_cache_builder import ExprSeriesCache
 
@@ -158,73 +156,54 @@ def load_example_data(setup_type, universe_cache):
 def compute_example_ranges(example_dfs, expressions, expr_cache=None):
     """Compute [min, max] range for every expression across all example scan bars.
 
-    If expr_cache is available, loads values from cached .npz files (fast, supports
-    all expression types including LSP/HTF/precomputed). Falls back to live
-    compute_series() if no cache (only daily expressions will work).
+    Loads values from expr cache .npz files. expr_cache is REQUIRED — all grinders
+    must use the same computation path (no live compute_series fallback).
 
     Returns:
         ranges: dict {expr_name: (low, high)} — only for expressions with enough valid examples
         example_matrix: np.array (n_examples, n_exprs) — point values at scan bars
     """
+    if expr_cache is None or not expr_cache.is_valid():
+        raise RuntimeError(
+            "Expression series cache is REQUIRED. No fallback computation paths allowed.\n"
+            "Run: python local_runner/expr_cache_builder.py --build"
+        )
+
     n_ex = len(example_dfs)
     n_expr = len(expressions)
     example_matrix = np.full((n_ex, n_expr), np.nan)
 
-    use_cache = expr_cache is not None and expr_cache.is_valid()
+    cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
+    expr_name_list = [e["name"] for e in expressions]
 
-    if use_cache:
-        # ── CACHED PATH: load from expr cache files ──
-        cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
-        expr_name_list = [e["name"] for e in expressions]
+    # Build mapping: our expression index → cache column index
+    expr_to_cache_col = []
+    for j, name in enumerate(expr_name_list):
+        expr_to_cache_col.append(cache_name_to_idx.get(name))
 
-        # Build mapping: our expression index → cache column index
-        expr_to_cache_col = []
-        for j, name in enumerate(expr_name_list):
-            expr_to_cache_col.append(cache_name_to_idx.get(name))
+    for i, ex in enumerate(example_dfs):
+        if ex["scan_idx"] is None:
+            continue
+        ticker = ex["ticker"]
+        scan_idx = ex["scan_idx"]
 
-        for i, ex in enumerate(example_dfs):
-            if ex["scan_idx"] is None:
-                continue
-            ticker = ex["ticker"]
-            scan_idx = ex["scan_idx"]
+        dates, data = expr_cache.get_ticker(ticker)
+        if dates is None or data is None:
+            raise RuntimeError(f"{ticker}: not in expr cache — cannot compute example ranges")
+        if scan_idx >= len(data):
+            raise RuntimeError(f"{ticker}: scan_idx {scan_idx} >= cached bars {len(data)}")
 
-            dates, data = expr_cache.get_ticker(ticker)
-            if dates is None or data is None:
-                print(f"    ⚠ {ticker}: not in expr cache, skipping")
-                continue
-            if scan_idx >= len(data):
-                print(f"    ⚠ {ticker}: scan_idx {scan_idx} >= cached bars {len(data)}")
-                continue
+        # Extract the scan bar row and map to our expression order
+        cached_row = data[scan_idx, :]
+        for j, cache_col in enumerate(expr_to_cache_col):
+            if cache_col is not None and cache_col < len(cached_row):
+                val = cached_row[cache_col]
+                if not np.isnan(val):
+                    example_matrix[i, j] = val
 
-            # Extract the scan bar row and map to our expression order
-            cached_row = data[scan_idx, :]
-            for j, cache_col in enumerate(expr_to_cache_col):
-                if cache_col is not None and cache_col < len(cached_row):
-                    val = cached_row[cache_col]
-                    if not np.isnan(val):
-                        example_matrix[i, j] = val
-
-        n_valid_total = int(np.sum(~np.isnan(example_matrix)))
-        print(f"  Loaded from expr cache: {n_valid_total:,} values "
-              f"({n_valid_total / max(n_ex * n_expr, 1) * 100:.1f}% fill)")
-    else:
-        # ── FALLBACK: compute live (only daily expressions work) ──
-        print(f"  ⚠ No expr cache — computing live (LSP/HTF expressions will be NaN)")
-        for i, ex in enumerate(example_dfs):
-            if ex["scan_idx"] is None:
-                continue
-            df = ex["df"]
-            scan_idx = ex["scan_idx"]
-            engine = ExpressionEngine(df)
-            for j, expr in enumerate(expressions):
-                try:
-                    series = compute_series(engine, expr["compute"])
-                    if series is not None and scan_idx < len(series):
-                        val = series[scan_idx]
-                        if not np.isnan(val):
-                            example_matrix[i, j] = val
-                except:
-                    pass
+    n_valid_total = int(np.sum(~np.isnan(example_matrix)))
+    print(f"  Loaded from expr cache: {n_valid_total:,} values "
+          f"({n_valid_total / max(n_ex * n_expr, 1) * 100:.1f}% fill)")
 
     # Derive ranges with 5% margin (same as spiderweb)
     # CRITICAL: require ALL examples (with scan_idx) to have non-NaN values.
@@ -255,23 +234,20 @@ _w_exprs = None
 _w_ranges = None
 _w_candidate_indices = None
 _w_n_bars_window = None
-_w_use_expr_cache = False
 _w_expr_name_to_idx = None
 
 
 def _init_tier_worker(cache, locked_conditions, expressions, ranges,
-                      candidate_indices, n_bars_window,
-                      use_expr_cache=False, expr_name_to_idx=None):
+                      candidate_indices, n_bars_window, expr_name_to_idx=None):
     """Initializer: serialize cache + config once per worker."""
     global _w_cache, _w_locked, _w_exprs, _w_ranges, _w_candidate_indices
-    global _w_n_bars_window, _w_use_expr_cache, _w_expr_name_to_idx
+    global _w_n_bars_window, _w_expr_name_to_idx
     _w_cache = cache
     _w_locked = locked_conditions
     _w_exprs = expressions
     _w_ranges = ranges
     _w_candidate_indices = candidate_indices
     _w_n_bars_window = n_bars_window
-    _w_use_expr_cache = use_expr_cache
     _w_expr_name_to_idx = expr_name_to_idx or {}
 
 
@@ -279,8 +255,8 @@ def _build_tier_batch(tickers):
     """For each ticker, compute candidate expression values at each bar in the window,
     but ONLY for bars that pass all locked conditions.
 
-    If _w_use_expr_cache is True, loads pre-computed series from disk instead of
-    calling compute_series(). Falls back to compute_series() for uncached tickers.
+    Loads pre-computed series from expr cache. Expr cache is REQUIRED — no fallback
+    to compute_series() (all grinders must use the same computation path).
 
     Returns list of (ticker, row_dates, candidate_values) where:
       - row_dates: list of date strings for surviving bars
@@ -302,89 +278,53 @@ def _build_tier_batch(tickers):
             else:
                 start_idx = max(50, n_bars - _w_n_bars_window)
 
-            # Try loading from expression cache
-            cached_data = None
-            if _w_use_expr_cache:
-                cached_data = _load_ticker_expr_cache(ticker, n_bars)
+            # Load from expression cache (REQUIRED)
+            cached_data = _load_ticker_expr_cache(ticker, n_bars)
 
-            if cached_data is not None:
-                # ── CACHED PATH: slice pre-computed arrays ──
-                cached_dates, cached_matrix = cached_data
-                # cached_matrix shape: (n_bars, n_all_expressions)
+            if cached_data is None:
+                # Not in cache — skip (filtered examples already exclude these)
+                results.append((ticker, [], None))
+                continue
 
-                # Step 1: Apply locked conditions using cached series
-                pass_mask = np.ones(n_bars, dtype=bool)
-                pass_mask[:start_idx] = False
+            cached_dates, cached_matrix = cached_data
+            # cached_matrix shape: (n_bars, n_all_expressions)
 
-                for cond in _w_locked:
-                    col_idx = _w_expr_name_to_idx.get(cond["name"])
-                    if col_idx is None:
-                        # Expression not in cache — can't apply, fail safe
-                        pass_mask[:] = False
-                        break
-                    series = cached_matrix[:, col_idx]
-                    in_range = (series >= cond["low"]) & (series <= cond["high"])
-                    in_range[np.isnan(series)] = False
-                    pass_mask &= in_range
+            # Step 1: Apply locked conditions using cached series
+            pass_mask = np.ones(n_bars, dtype=bool)
+            pass_mask[:start_idx] = False
 
-                surviving_indices = np.where(pass_mask)[0]
-                if len(surviving_indices) == 0:
-                    results.append((ticker, [], None))
-                    continue
+            for cond in _w_locked:
+                col_idx = _w_expr_name_to_idx.get(cond["name"])
+                if col_idx is None:
+                    # Expression not in cache — can't apply, fail safe
+                    pass_mask[:] = False
+                    break
+                series = cached_matrix[:, col_idx]
+                in_range = (series >= cond["low"]) & (series <= cond["high"])
+                in_range[np.isnan(series)] = False
+                pass_mask &= in_range
 
-                # Step 2: Extract candidate columns at surviving bars
-                n_cands = len(_w_candidate_indices)
-                # Map candidate_indices (position in expression list) to cache column indices
-                cand_col_indices = []
-                for ci in _w_candidate_indices:
-                    expr_name = _w_exprs[ci]["name"]
-                    col_idx = _w_expr_name_to_idx.get(expr_name)
-                    cand_col_indices.append(col_idx)
+            surviving_indices = np.where(pass_mask)[0]
+            if len(surviving_indices) == 0:
+                results.append((ticker, [], None))
+                continue
 
-                cand_values = np.full((len(surviving_indices), n_cands), np.nan, dtype=np.float32)
-                for ci_out, col_idx in enumerate(cand_col_indices):
-                    if col_idx is not None:
-                        cand_values[:, ci_out] = cached_matrix[surviving_indices, col_idx]
+            # Step 2: Extract candidate columns at surviving bars
+            n_cands = len(_w_candidate_indices)
+            # Map candidate_indices (position in expression list) to cache column indices
+            cand_col_indices = []
+            for ci in _w_candidate_indices:
+                expr_name = _w_exprs[ci]["name"]
+                col_idx = _w_expr_name_to_idx.get(expr_name)
+                cand_col_indices.append(col_idx)
 
-                row_dates = [str(cached_dates[idx]) for idx in surviving_indices]
-                results.append((ticker, row_dates, cand_values))
+            cand_values = np.full((len(surviving_indices), n_cands), np.nan, dtype=np.float32)
+            for ci_out, col_idx in enumerate(cand_col_indices):
+                if col_idx is not None:
+                    cand_values[:, ci_out] = cached_matrix[surviving_indices, col_idx]
 
-            else:
-                # ── FALLBACK: compute from scratch ──
-                engine = ExpressionEngine(df)
-
-                pass_mask = np.ones(n_bars, dtype=bool)
-                pass_mask[:start_idx] = False
-
-                for cond in _w_locked:
-                    series = compute_series(engine, cond["compute"])
-                    if series is None or len(series) != n_bars:
-                        pass_mask[:] = False
-                        break
-                    in_range = (series >= cond["low"]) & (series <= cond["high"])
-                    in_range[np.isnan(series)] = False
-                    pass_mask &= in_range
-
-                surviving_indices = np.where(pass_mask)[0]
-                if len(surviving_indices) == 0:
-                    results.append((ticker, [], None))
-                    continue
-
-                n_cands = len(_w_candidate_indices)
-                cand_values = np.full((len(surviving_indices), n_cands), np.nan)
-
-                for ci, expr_idx in enumerate(_w_candidate_indices):
-                    expr = _w_exprs[expr_idx]
-                    try:
-                        series = compute_series(engine, expr["compute"])
-                        if series is not None and len(series) == n_bars:
-                            cand_values[:, ci] = series[surviving_indices]
-                    except:
-                        pass
-
-                dates = df["date"].values
-                row_dates = [str(dates[idx])[:10] for idx in surviving_indices]
-                results.append((ticker, row_dates, cand_values))
+            row_dates = [str(cached_dates[idx]) for idx in surviving_indices]
+            results.append((ticker, row_dates, cand_values))
 
         except:
             results.append((ticker, [], None))
@@ -818,12 +758,14 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     batches = [all_tickers[i:i+batch_size]
                for i in range(0, len(all_tickers), batch_size)]
 
-    # Determine if expression cache is available
-    use_expr_cache = expr_cache is not None and expr_cache.is_valid()
-    expr_name_to_idx = {}
-    if use_expr_cache:
-        expr_name_to_idx = dict(expr_cache._expr_name_to_idx)
-        print(f"  Using expression series cache ({expr_cache.n_expressions} expressions)")
+    # Expression cache is REQUIRED — all grinders use the same computation path
+    if expr_cache is None or not expr_cache.is_valid():
+        raise RuntimeError(
+            "Expression series cache is REQUIRED for historical tier matrix build. "
+            "No fallback computation paths allowed."
+        )
+    expr_name_to_idx = dict(expr_cache._expr_name_to_idx)
+    print(f"  Using expression series cache ({expr_cache.n_expressions} expressions)")
 
     print(f"  {n_workers} workers, {len(batches)} batches of ~{batch_size} tickers")
 
@@ -836,7 +778,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
         initializer=_init_tier_worker,
         initargs=(universe_cache, locked_conditions, expressions,
                   example_ranges, candidate_indices, n_bars_window,
-                  use_expr_cache, expr_name_to_idx)
+                  expr_name_to_idx)
     ) as pool:
         futures = {pool.submit(_build_tier_batch, batch): batch for batch in batches}
         completed = 0
@@ -912,52 +854,41 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
 def validate_examples(example_dfs, conditions, expr_cache=None):
     """Verify 100% of examples pass all conditions at scan bar.
 
-    Uses expr cache if available (supports all expression types).
-    Falls back to compute_series() if no cache (daily expressions only).
+    Uses expr cache (REQUIRED — all grinders must use the same computation path).
     """
-    use_cache = expr_cache is not None and expr_cache.is_valid()
+    if expr_cache is None or not expr_cache.is_valid():
+        raise RuntimeError(
+            "Expression series cache is REQUIRED for validation. "
+            "No fallback computation paths allowed."
+        )
 
-    if use_cache:
-        cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
+    cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
 
     all_pass = True
     for ex in example_dfs:
         if ex["scan_idx"] is None:
             continue
 
-        if use_cache:
-            # ── CACHED PATH ──
-            ticker = ex["ticker"]
-            scan_idx = ex["scan_idx"]
-            dates, data = expr_cache.get_ticker(ticker)
-            if dates is None or data is None or scan_idx >= len(data):
-                print(f"    ✗ {ticker} — not in expr cache or scan_idx out of range")
+        ticker = ex["ticker"]
+        scan_idx = ex["scan_idx"]
+        dates, data = expr_cache.get_ticker(ticker)
+        if dates is None or data is None or scan_idx >= len(data):
+            print(f"    ✗ {ticker} — not in expr cache or scan_idx out of range")
+            all_pass = False
+            continue
+
+        cached_row = data[scan_idx, :]
+        for cond in conditions:
+            col_idx = cache_name_to_idx.get(cond["name"])
+            if col_idx is None:
+                print(f"    ✗ {ticker} FAILS {cond['name']}: expression not in cache")
                 all_pass = False
                 continue
-
-            cached_row = data[scan_idx, :]
-            for cond in conditions:
-                col_idx = cache_name_to_idx.get(cond["name"])
-                if col_idx is None:
-                    print(f"    ✗ {ticker} FAILS {cond['name']}: expression not in cache")
-                    all_pass = False
-                    continue
-                val = float(cached_row[col_idx])
-                if np.isnan(val) or val < cond["low"] or val > cond["high"]:
-                    print(f"    ✗ {ticker} FAILS {cond['name']}: "
-                          f"{val:.4f} not in [{cond['low']:.4f}, {cond['high']:.4f}]")
-                    all_pass = False
-        else:
-            # ── FALLBACK: compute live ──
-            df = ex["df"]
-            engine = ExpressionEngine(df)
-            for cond in conditions:
-                series = compute_series(engine, cond["compute"])
-                val = series[ex["scan_idx"]]
-                if np.isnan(val) or val < cond["low"] or val > cond["high"]:
-                    print(f"    ✗ {ex['ticker']} FAILS {cond['name']}: "
-                          f"{val:.4f} not in [{cond['low']:.4f}, {cond['high']:.4f}]")
-                    all_pass = False
+            val = float(cached_row[col_idx])
+            if np.isnan(val) or val < cond["low"] or val > cond["high"]:
+                print(f"    ✗ {ticker} FAILS {cond['name']}: "
+                      f"{val:.4f} not in [{cond['low']:.4f}, {cond['high']:.4f}]")
+                all_pass = False
     return all_pass
 
 
@@ -1235,8 +1166,11 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 print(f"    - {e}")
             print(f"  Examples: {before_count} → {len(example_dfs)}")
     else:
-        expr_cache = None
-        print(f"  ⚠ No expression series cache — computing from scratch (slow)")
+        raise RuntimeError(
+            "Expression series cache is REQUIRED. All grinders must use the same "
+            "computation path — no fallback to live compute_series().\n"
+            "Run: python local_runner/expr_cache_builder.py --build"
+        )
 
     # ══════════════════════════════════════════════════════════════
     # MULTI-PASS MODE
@@ -1468,58 +1402,15 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 
     # ── Final validation ──
     print(f"\n  Final example validation:")
-    examples_passing = 0
-    examples_failing = 0
-
-    use_cache = expr_cache is not None and expr_cache.is_valid()
-    if use_cache:
-        cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
-
-    for ex in example_dfs:
-        if ex["scan_idx"] is None:
-            continue
-        passes = True
-
-        if use_cache:
-            ticker = ex["ticker"]
-            scan_idx = ex["scan_idx"]
-            dates, data = expr_cache.get_ticker(ticker)
-            if dates is None or data is None or scan_idx >= len(data):
-                passes = False
-            else:
-                cached_row = data[scan_idx, :]
-                for cond in all_conditions:
-                    col_idx = cache_name_to_idx.get(cond["name"])
-                    if col_idx is None:
-                        passes = False
-                        break
-                    val = float(cached_row[col_idx])
-                    if np.isnan(val) or val < cond["low"] or val > cond["high"]:
-                        passes = False
-                        break
-        else:
-            df = ex["df"]
-            engine = ExpressionEngine(df)
-            for cond in all_conditions:
-                series = compute_series(engine, cond["compute"])
-                val = series[ex["scan_idx"]]
-                if np.isnan(val) or val < cond["low"] or val > cond["high"]:
-                    passes = False
-                    break
-
-        if passes:
-            examples_passing += 1
-        else:
-            examples_failing += 1
-
-    print(f"    {examples_passing}/{examples_passing + examples_failing} "
-          f"examples pass all conditions")
-    if examples_failing > 0:
-        print(f"    ✗ {examples_failing} examples FAIL — investigate data mismatch")
+    if not validate_examples(example_dfs, all_conditions, expr_cache=expr_cache):
         print(f"\n{'!'*80}")
         print(f"VALIDATION FAILED — Results NOT saved. All examples must pass. No exceptions.")
         print(f"{'!'*80}")
         return None
+
+    examples_passing = len([ex for ex in example_dfs if ex["scan_idx"] is not None])
+    examples_failing = 0
+    print(f"    {examples_passing}/{examples_passing} examples pass all conditions")
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     mode_tag = "mp" if multi_pass else "sp"
