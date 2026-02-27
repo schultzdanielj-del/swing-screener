@@ -866,6 +866,38 @@ def generate_all():
             "compute": {"op": "precomputed", "source": "lsp", "column": name}
         })
 
+    # ═══════════════════════════════════════════════════════
+    # HIGHER TIMEFRAME (HTF) — Weekly + Monthly versions of ALL daily expressions
+    # ═══════════════════════════════════════════════════════
+    # These are NOT computed live by ExpressionEngine. They're precomputed in
+    # the cache builder: resample daily→weekly/monthly, run compute_series()
+    # on the resampled data, map values back to daily bar indices (step function).
+    #
+    # The compute spec uses op="precomputed" with source="htf" so the cache
+    # builder routes them correctly. The "base_compute" field carries the
+    # original daily expression's compute spec for the cache builder to run
+    # on the resampled timeframe.
+    #
+    # Expression naming: w_<daily_name> (weekly), m_<daily_name> (monthly)
+
+    # Collect all non-precomputed expressions (daily arithmetic + boolean)
+    daily_exprs = [e for e in exprs if e["compute"].get("op") != "precomputed"]
+
+    for tf_prefix, tf_label in [("w", "weekly"), ("m", "monthly")]:
+        for daily_expr in daily_exprs:
+            htf_name = f"{tf_prefix}_{daily_expr['name']}"
+            exprs.append({
+                "name": htf_name,
+                "category": f"htf_{tf_label}",
+                "compute": {
+                    "op": "precomputed",
+                    "source": "htf",
+                    "timeframe": tf_prefix,
+                    "column": htf_name,
+                    "base_compute": daily_expr["compute"],
+                }
+            })
+
     return exprs
 
 
@@ -893,19 +925,28 @@ def main():
 
     # Estimate
     bool_count = cats.get("boolean", 0)
-    precomputed_count = cats.get("lsp", 0)  # LSP expressions are precomputed, not run through engine
-    arith_count = len(exprs) - bool_count - precomputed_count
+    precomputed_lsp = cats.get("lsp", 0)
+    htf_weekly = cats.get("htf_weekly", 0)
+    htf_monthly = cats.get("htf_monthly", 0)
+    precomputed_total = precomputed_lsp + htf_weekly + htf_monthly
+    arith_count = len(exprs) - bool_count - precomputed_total
+    daily_engine_count = arith_count + bool_count  # expressions run through compute_series on daily
     tickers = 4167
     base_s = tickers * 24 / 1000
     arith_s = tickers * arith_count * 0.02 / 1000
     bool_s = tickers * bool_count * 1 / 1000
     lsp_s = tickers * 0.5  # ~0.5s per ticker for LSP detector
-    total_s = base_s + arith_s + bool_s + lsp_s
+    # HTF: resample is cheap, expression compute is same cost as daily but on fewer bars
+    # Weekly has ~5x fewer bars, monthly ~21x fewer → compute is roughly 1/5 + 1/21 ≈ 0.25x daily
+    htf_s = (arith_s + bool_s) * 0.25  # rough estimate for weekly + monthly combined
+    total_s = base_s + arith_s + bool_s + lsp_s + htf_s
     print(f"\n  Estimated compute (4,167 tickers on desktop):")
     print(f"    Base indicators:    {base_s:6.0f}s ({base_s/60:.1f} min)")
     print(f"    Arithmetic ({arith_count:,}):  {arith_s:6.0f}s ({arith_s/60:.1f} min)")
     print(f"    Booleans ({bool_count:,}):    {bool_s:6.0f}s ({bool_s/60:.1f} min)")
-    print(f"    LSP precompute ({precomputed_count}):  {lsp_s:6.0f}s ({lsp_s/60:.1f} min) [parallel across cores]")
+    print(f"    LSP precompute ({precomputed_lsp}):  {lsp_s:6.0f}s ({lsp_s/60:.1f} min) [parallel across cores]")
+    print(f"    HTF weekly ({htf_weekly:,}):   ~{htf_s*0.8:5.0f}s (~{htf_s*0.8/60:.1f} min) [fewer bars]")
+    print(f"    HTF monthly ({htf_monthly:,}): ~{htf_s*0.2:5.0f}s (~{htf_s*0.2/60:.1f} min) [fewer bars]")
     print(f"    TOTAL:              {total_s:6.0f}s ({total_s/60:.0f} min)")
     print()
 

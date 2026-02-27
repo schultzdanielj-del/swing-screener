@@ -54,6 +54,112 @@ sys.path.insert(0, LOCAL_DIR)
 
 
 # ══════════════════════════════════════════════════════════════
+# HTF RESAMPLING HELPERS
+# ══════════════════════════════════════════════════════════════
+
+def resample_ohlcv(daily_df, freq='W'):
+    """Resample daily OHLCV to weekly ('W') or monthly ('ME').
+
+    Returns a new DataFrame with OHLCV columns + 'date' column.
+    Each row represents one week/month period.
+    Returns None if too few bars to resample.
+    """
+    if len(daily_df) < 10:
+        return None
+
+    df = daily_df.copy()
+    df = df.set_index('date')
+
+    resampled = df.resample(freq).agg({
+        'open': 'first',
+        'high': 'max',
+        'low': 'min',
+        'close': 'last',
+        'volume': 'sum'
+    }).dropna(subset=['close'])
+
+    if len(resampled) < 5:
+        return None
+
+    resampled = resampled.reset_index()
+    resampled.columns = ['date', 'open', 'high', 'low', 'close', 'volume']
+    return resampled
+
+
+def build_htf_to_daily_map(daily_dates, htf_df, freq='W'):
+    """Build mapping from daily bar index → HTF bar index.
+
+    For each daily bar, find which HTF period it belongs to.
+    The HTF value is constant within each period (step function).
+
+    Args:
+        daily_dates: pd.Series or array of daily date values (datetime64)
+        htf_df: resampled DataFrame with 'date' column (period end dates)
+        freq: 'W' for weekly, 'ME' for monthly
+
+    Returns:
+        np.array of shape (n_daily_bars,) with HTF bar indices.
+        -1 means no HTF bar available (before first HTF period).
+    """
+    n_daily = len(daily_dates)
+    mapping = np.full(n_daily, -1, dtype=np.int32)
+
+    # HTF dates are period-end dates. A daily bar belongs to the HTF period
+    # whose end date is >= the daily date and whose start is <= the daily date.
+    # Simplest: for each daily bar, find the latest HTF date that is >= daily date.
+    # With sorted dates, we can use searchsorted.
+
+    htf_dates = pd.to_datetime(htf_df['date']).values
+    daily_dt = pd.to_datetime(daily_dates).values
+
+    # For each daily bar, find the HTF period it falls into.
+    # searchsorted gives us the insertion point — the HTF bar at that index
+    # is the first one whose date >= daily date (using 'left' side).
+    indices = np.searchsorted(htf_dates, daily_dt, side='left')
+
+    # Clamp to valid range
+    indices = np.clip(indices, 0, len(htf_dates) - 1)
+
+    # Verify: the HTF date should be >= the daily date
+    # If not (daily bar is after last HTF bar), map to last HTF bar
+    for i in range(n_daily):
+        idx = indices[i]
+        if idx < len(htf_dates):
+            mapping[i] = idx
+        else:
+            mapping[i] = len(htf_dates) - 1
+
+    return mapping
+
+
+def map_htf_series_to_daily(htf_series, htf_to_daily_map):
+    """Map an HTF expression series back to daily bar indices.
+
+    Args:
+        htf_series: np.array of expression values at HTF frequency
+        htf_to_daily_map: np.array from build_htf_to_daily_map()
+
+    Returns:
+        np.array of shape (n_daily_bars,) with HTF values stepped to daily.
+    """
+    n_daily = len(htf_to_daily_map)
+    result = np.full(n_daily, np.nan, dtype=np.float32)
+
+    valid = htf_to_daily_map >= 0
+    valid_indices = htf_to_daily_map[valid]
+
+    # Clamp to actual HTF series length
+    in_range = valid_indices < len(htf_series)
+    daily_mask = np.where(valid)[0][in_range]
+    htf_indices = valid_indices[in_range]
+
+    if len(daily_mask) > 0:
+        result[daily_mask] = htf_series[htf_indices]
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════════
 # EXPRESSION LIBRARY FINGERPRINT
 # ══════════════════════════════════════════════════════════════
 
@@ -108,23 +214,58 @@ def save_manifest(manifest):
 # ══════════════════════════════════════════════════════════════
 
 _w_expressions = None
+_w_daily_indices = None      # indices of daily (non-precomputed) expressions
+_w_lsp_indices = None        # indices of LSP precomputed expressions
+_w_htf_weekly_indices = None  # indices of weekly HTF expressions
+_w_htf_monthly_indices = None # indices of monthly HTF expressions
+_w_htf_weekly_base = None    # base compute specs for weekly HTF expressions
+_w_htf_monthly_base = None   # base compute specs for monthly HTF expressions
 
 
 def _init_worker(expressions):
-    """Initialize worker with expression list."""
-    global _w_expressions
+    """Initialize worker with expression list and pre-classify indices."""
+    global _w_expressions, _w_daily_indices, _w_lsp_indices
+    global _w_htf_weekly_indices, _w_htf_monthly_indices
+    global _w_htf_weekly_base, _w_htf_monthly_base
+
     _w_expressions = expressions
+
+    _w_daily_indices = []
+    _w_lsp_indices = []
+    _w_htf_weekly_indices = []
+    _w_htf_monthly_indices = []
+    _w_htf_weekly_base = []
+    _w_htf_monthly_base = []
+
+    for j, expr in enumerate(expressions):
+        compute = expr["compute"]
+        if compute.get("op") == "precomputed":
+            source = compute.get("source")
+            if source == "lsp":
+                _w_lsp_indices.append(j)
+            elif source == "htf":
+                tf = compute.get("timeframe")
+                if tf == "w":
+                    _w_htf_weekly_indices.append(j)
+                    _w_htf_weekly_base.append(compute.get("base_compute"))
+                elif tf == "m":
+                    _w_htf_monthly_indices.append(j)
+                    _w_htf_monthly_base.append(compute.get("base_compute"))
+        else:
+            _w_daily_indices.append(j)
 
 
 def _compute_ticker_full(args):
-    """Compute all expression series for one ticker.
+    """Compute all expression series for one ticker (daily + LSP + HTF).
 
     Args: (ticker, df_dict) where df_dict has OHLCV columns + date
 
     Returns: (ticker, dates_array, data_array) or (ticker, None, None)
     """
     ticker, df_dict = args
-    global _w_expressions
+    global _w_expressions, _w_daily_indices, _w_lsp_indices
+    global _w_htf_weekly_indices, _w_htf_monthly_indices
+    global _w_htf_weekly_base, _w_htf_monthly_base
 
     try:
         from scripts.expression_engine import ExpressionEngine
@@ -146,17 +287,62 @@ def _compute_ticker_full(args):
         # Allocate output array
         data = np.full((n_bars, n_exprs), np.nan, dtype=np.float32)
 
-        for j, expr in enumerate(_w_expressions):
+        # ── 1. Daily expressions (non-precomputed) ──
+        for j in _w_daily_indices:
             try:
-                series = compute_series(engine, expr["compute"])
+                series = compute_series(engine, _w_expressions[j]["compute"])
                 if series is not None:
-                    if len(series) == n_bars:
-                        data[:, j] = series.astype(np.float32) if hasattr(series, 'astype') else np.array(series, dtype=np.float32)
-                    elif len(series) < n_bars:
-                        # Pad front with NaN (some indicators need warmup)
-                        data[n_bars - len(series):, j] = series.astype(np.float32) if hasattr(series, 'astype') else np.array(series, dtype=np.float32)
+                    arr = np.asarray(series, dtype=np.float32)
+                    if len(arr) == n_bars:
+                        data[:, j] = arr
+                    elif len(arr) < n_bars:
+                        data[n_bars - len(arr):, j] = arr
             except:
                 pass
+
+        # ── 2. LSP expressions (precomputed by lsp_detector_v2) ──
+        if _w_lsp_indices:
+            try:
+                from scripts.lsp_detector_v2 import compute_all_lsp_series
+                lsp_dict = compute_all_lsp_series(df)
+                for j in _w_lsp_indices:
+                    col_name = _w_expressions[j]["compute"]["column"]
+                    if col_name in lsp_dict:
+                        arr = lsp_dict[col_name]
+                        if len(arr) == n_bars:
+                            data[:, j] = arr.astype(np.float32)
+            except Exception:
+                pass  # LSP fails silently — columns stay NaN
+
+        # ── 3. HTF expressions (weekly + monthly) ──
+        for tf_freq, tf_indices, tf_base_computes in [
+            ("W", _w_htf_weekly_indices, _w_htf_weekly_base),
+            ("ME", _w_htf_monthly_indices, _w_htf_monthly_base),
+        ]:
+            if not tf_indices:
+                continue
+
+            htf_df = resample_ohlcv(df, tf_freq)
+            if htf_df is None or len(htf_df) < 5:
+                continue  # too few bars — HTF columns stay NaN
+
+            # Build daily→HTF mapping once per timeframe
+            htf_map = build_htf_to_daily_map(df["date"], htf_df, tf_freq)
+
+            # Create engine for HTF data
+            htf_engine = ExpressionEngine(htf_df)
+
+            for k, j in enumerate(tf_indices):
+                try:
+                    base_compute = tf_base_computes[k]
+                    htf_series = compute_series(htf_engine, base_compute)
+                    if htf_series is not None:
+                        htf_arr = np.asarray(htf_series, dtype=np.float32)
+                        # Map HTF series back to daily indices
+                        daily_arr = map_htf_series_to_daily(htf_arr, htf_map)
+                        data[:, j] = daily_arr
+                except:
+                    pass
 
         dates = df["date"].dt.strftime("%Y-%m-%d").values
         return (ticker, dates, data)
@@ -166,16 +352,19 @@ def _compute_ticker_full(args):
 
 
 def _append_ticker(args):
-    """Compute expression values for just the last bar of a ticker.
+    """Compute expression values for just the new bars of a ticker.
 
-    Used for nightly append — extends the cached array by 1 row.
+    Used for nightly append — extends the cached array by N new rows.
+    Must recompute full series (indicators need history) then extract new bars.
 
     Args: (ticker, df_dict, existing_n_bars)
 
-    Returns: (ticker, new_date, new_row) or (ticker, None, None)
+    Returns: (ticker, new_dates, new_data) or (ticker, None, None)
     """
     ticker, df_dict, existing_n_bars = args
-    global _w_expressions
+    global _w_expressions, _w_daily_indices, _w_lsp_indices
+    global _w_htf_weekly_indices, _w_htf_monthly_indices
+    global _w_htf_weekly_base, _w_htf_monthly_base
 
     try:
         from scripts.expression_engine import ExpressionEngine
@@ -190,23 +379,62 @@ def _append_ticker(args):
         if n_bars < 50 or n_bars <= existing_n_bars:
             return (ticker, None, None)
 
-        # How many new bars since last cache?
         n_new = n_bars - existing_n_bars
-
         n_exprs = len(_w_expressions)
         engine = ExpressionEngine(df)
 
         # Compute full series but only extract the new bars
         new_data = np.full((n_new, n_exprs), np.nan, dtype=np.float32)
 
-        for j, expr in enumerate(_w_expressions):
+        # ── 1. Daily expressions ──
+        for j in _w_daily_indices:
             try:
-                series = compute_series(engine, expr["compute"])
+                series = compute_series(engine, _w_expressions[j]["compute"])
                 if series is not None and len(series) == n_bars:
-                    arr = series.astype(np.float32) if hasattr(series, 'astype') else np.array(series, dtype=np.float32)
+                    arr = np.asarray(series, dtype=np.float32)
                     new_data[:, j] = arr[-n_new:]
             except:
                 pass
+
+        # ── 2. LSP expressions ──
+        if _w_lsp_indices:
+            try:
+                from scripts.lsp_detector_v2 import compute_all_lsp_series
+                lsp_dict = compute_all_lsp_series(df)
+                for j in _w_lsp_indices:
+                    col_name = _w_expressions[j]["compute"]["column"]
+                    if col_name in lsp_dict:
+                        arr = lsp_dict[col_name]
+                        if len(arr) == n_bars:
+                            new_data[:, j] = arr[-n_new:].astype(np.float32)
+            except Exception:
+                pass
+
+        # ── 3. HTF expressions ──
+        for tf_freq, tf_indices, tf_base_computes in [
+            ("W", _w_htf_weekly_indices, _w_htf_weekly_base),
+            ("ME", _w_htf_monthly_indices, _w_htf_monthly_base),
+        ]:
+            if not tf_indices:
+                continue
+
+            htf_df = resample_ohlcv(df, tf_freq)
+            if htf_df is None or len(htf_df) < 5:
+                continue
+
+            htf_map = build_htf_to_daily_map(df["date"], htf_df, tf_freq)
+            htf_engine = ExpressionEngine(htf_df)
+
+            for k, j in enumerate(tf_indices):
+                try:
+                    base_compute = tf_base_computes[k]
+                    htf_series = compute_series(htf_engine, base_compute)
+                    if htf_series is not None:
+                        htf_arr = np.asarray(htf_series, dtype=np.float32)
+                        daily_arr = map_htf_series_to_daily(htf_arr, htf_map)
+                        new_data[:, j] = daily_arr[-n_new:]
+                except:
+                    pass
 
         new_dates = df["date"].dt.strftime("%Y-%m-%d").values[-n_new:]
         return (ticker, new_dates, new_data)

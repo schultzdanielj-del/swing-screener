@@ -112,26 +112,60 @@ The cache builder worker (Task E) will:
 2. For each expression with `op == "precomputed"` and `source == "lsp"`: grab `column` from that dict
 3. Write to the appropriate column index in the output array
 
-### Task C: Higher Timeframe Resampling
-**What:** In the cache builder, resample daily OHLCV → weekly, monthly before computing expressions.
-**How:**
-```python
-def resample_ohlcv(daily_df, freq='W'):
-    """Resample daily OHLCV to weekly/monthly."""
-    df = daily_df.set_index('date')
-    resampled = df.resample(freq).agg({
-        'open': 'first', 'high': 'max', 'low': 'min', 
-        'close': 'last', 'volume': 'sum'
-    }).dropna()
-    return resampled.reset_index()
-```
-**Mapping back to daily bars:** Each daily bar maps to a weekly/monthly bar. The expression value for "weekly RSI on 2024-03-15" is the weekly RSI for the week containing that date. This means HTF expression series are step functions on the daily timeline (constant within each week/month).
+### Task C: Higher Timeframe Resampling — ✅ COMPLETE (2026-02-27)
+**Files modified:** `local_runner/expr_cache_builder.py`, `local_runner/brute_expressions.py`
 
-**Expression naming:** Prefix with timeframe: `w_` (weekly), `m_` (monthly). E.g., `w_rsi_14`, `m_ext_above_avgc50_adr`.
+**What was built:**
 
-**Expression count impact:** Current 4,017 × 2 additional timeframes = ~8,034 new expressions. Total ~12,051.
+1. **HTF expression registration in `brute_expressions.py`:**
+   - After generating all 4,017 daily expressions (arithmetic + boolean), generates `w_` and `m_` copies of every one
+   - Each HTF expression has `op: "precomputed", source: "htf", timeframe: "w"/"m"`, plus `base_compute` carrying the original daily compute spec
+   - Total: 4,017 weekly + 4,017 monthly = 8,034 new HTF expressions
+   - Grand total: 12,131 expressions (4,017 daily + 80 LSP + 4,017 weekly + 4,017 monthly)
 
-**Cache size impact:** Currently ~21 GB for 4,017 expressions. 3x expressions = ~63 GB total.
+2. **HTF helpers in `expr_cache_builder.py`:**
+   ```python
+   def resample_ohlcv(daily_df, freq='W'):
+       # Resamples daily→weekly/monthly using pandas resample
+       # Returns None if too few bars (<10 daily or <5 resampled)
+   
+   def build_htf_to_daily_map(daily_dates, htf_df, freq):
+       # Maps each daily bar index → HTF bar index via searchsorted
+       # Returns int32 array; -1 for unmapped bars
+   
+   def map_htf_series_to_daily(htf_series, htf_to_daily_map):
+       # Applies the mapping: step function from HTF values to daily grid
+   ```
+
+3. **Updated `_init_worker()`:**
+   - Pre-classifies all 12,131 expressions into 4 buckets at startup (once per worker process):
+     - `_w_daily_indices` (4,017) — computed via `compute_series()` on daily engine
+     - `_w_lsp_indices` (80) — computed via `compute_all_lsp_series()`
+     - `_w_htf_weekly_indices` (4,017) + `_w_htf_weekly_base` — computed on weekly engine
+     - `_w_htf_monthly_indices` (4,017) + `_w_htf_monthly_base` — computed on monthly engine
+
+4. **Updated `_compute_ticker_full()` — 3-phase computation:**
+   - Phase 1: Daily expressions via `compute_series(engine, spec)` (same as before)
+   - Phase 2: LSP expressions via `compute_all_lsp_series(df)` → dict lookup
+   - Phase 3: For each HTF timeframe: resample → build mapping → create HTF engine → run `compute_series()` with `base_compute` spec → map back to daily
+
+5. **Updated `_append_ticker()`:** Same 3-phase structure for nightly appends.
+
+**Test results (synthetic 1,260-bar ticker):**
+- Output shape: (1,260, 12,131) ✅
+- Time per ticker: ~8.5s (vs ~3-4s previously)
+- Daily NaN: 3.9%, Weekly NaN: 12.5%, Monthly NaN: 37.5% (warmup expected)
+
+**Performance estimates (4,167 tickers, 7 cores):**
+- Full cache build: ~84 min (vs ~40 min previously)
+- Cache size: ~70 GB (vs ~21 GB previously)
+
+**Design constraints met:**
+- ✅ Same `compute_series()` path for HTF expressions — just different ExpressionEngine instance
+- ✅ Precomputed in cache builder — grinders never see HTF computation
+- ✅ ProcessPoolExecutor compatible — all state in worker globals, initialized once
+- ✅ Step function mapping verified — daily bars within same week/month get identical values
+- ✅ Grinders unchanged — they see 12,131 flat columns, search works identically
 
 ### Task D: Contextual AVWAP Computation
 **What:** Precompute pivot-anchored contextual AVWAP series per level.
@@ -150,55 +184,10 @@ For each clustered level, take the most prominent pivot in the cluster. Search t
 
 **Note:** "Highest all-time AVWAP" excluded — only 5yr of data, not enough. Revisit when full history is available.
 
-### Task E: Integration into Cache Builder
-**What:** Update `expr_cache_builder.py` to:
-1. For each ticker: resample daily → weekly, monthly
-2. For each ticker: run LSP detector on all three timeframes, merge into unified pivot list
-3. For each ticker: precompute cumulative TP×V and V arrays for contextual AVWAP lookups
-4. For each bar: get proximity-ordered levels, set LSP context, compute LSP + AVWAP expressions
-5. For each timeframe (weekly, monthly): compute full expression library as series, map back to daily bar indices
-6. Save expanded array to cache (daily expressions + HTF expressions + LSP/AVWAP expressions)
-
-**Worker function outline:**
-```python
-def _compute_ticker_full(args):
-    ticker, df_dict = args
-    df = pd.DataFrame(df_dict)
-    
-    # 1. Resample
-    weekly_df = resample_ohlcv(df, 'W')
-    monthly_df = resample_ohlcv(df, 'ME')
-    
-    # 2. LSP detection (once per ticker, all timeframes)
-    detector = LSPDetector(df, weekly_df, monthly_df)
-    
-    # 3. Precompute AVWAP lookup arrays
-    cum_tpv, cum_v = precompute_avwap_arrays(df)
-    
-    # 4. Daily expressions (existing — series-based, fast)
-    engine = ExpressionEngine(df)
-    for j, expr in enumerate(daily_expressions):
-        data[:, j] = compute_series(engine, expr["compute"])
-    
-    # 5. HTF expressions (series on resampled data, mapped to daily indices)
-    w_engine = ExpressionEngine(weekly_df)
-    m_engine = ExpressionEngine(monthly_df)
-    for j, expr in enumerate(daily_expressions):  # same expressions, different data
-        w_series = compute_series(w_engine, expr["compute"])
-        m_series = compute_series(m_engine, expr["compute"])
-        # Map back: each daily bar gets the value from its containing week/month
-        data[:, weekly_offset + j] = map_htf_to_daily(w_series, weekly_df, df)
-        data[:, monthly_offset + j] = map_htf_to_daily(m_series, monthly_df, df)
-    
-    # 6. LSP + AVWAP expressions (per-bar — needs level context per bar)
-    for bar_idx in range(50, n_bars):  # skip warmup
-        levels = detector.get_levels_at_bar(bar_idx)
-        # Compute LSP expressions from level metadata
-        # Compute contextual AVWAP distances using cum_tpv/cum_v arrays
-        data[bar_idx, lsp_offset:lsp_offset+n_lsp_exprs] = compute_lsp_expressions(levels, df, bar_idx, cum_tpv, cum_v)
-```
-
-**Performance note:** Steps 4 and 5 are fast (series-based, same as current). Step 6 is per-bar but uses precomputed data — the `get_levels_at_bar()` call is just filtering and sorting, and AVWAP is two array lookups. Should add ~30-50% to current build time, not 10x.
+### Task E: Integration into Cache Builder — ✅ COMPLETE (2026-02-27, built as part of Task C)
+The cache builder integration was done directly as part of Task C rather than as a separate step.
+Both `_compute_ticker_full()` and `_append_ticker()` now handle all 3 expression types (daily + LSP + HTF).
+See Task C implementation details above.
 
 ### Task F: Matrix Builder Update  
 **What:** Update `matrix_builder.py` to include LSP + HTF + AVWAP expressions.
@@ -206,25 +195,21 @@ def _compute_ticker_full(args):
 - `get_example_matrix()`: for DTSS examples, inject hand-labeled LSPs; for others, use detector
 - `compute_example_ranges()` in pyramid_grinder: same — inject LSP context per example
 
-### Task G: Expression Library Update
-**What:** Update `brute_expressions.py` to include:
-- LSP expressions (36 new)
-- HTF expressions (curated subset × 3 timeframes)  
-- Contextual AVWAP expressions (8-12 new)
-- Total new expressions TBD based on HTF subset decision
+### Task G: Expression Library Update — ✅ COMPLETE (2026-02-27, built as part of Task C)
+HTF expression names are auto-generated programmatically in `brute_expressions.py` by prefixing all daily expressions with `w_`/`m_`. No manual curation needed — the grinder discovers which HTF expressions matter per setup. LSP expressions were already registered in Task B.
 
 ---
 
-## Performance Estimates
+## Performance Estimates (Updated with Measured Values)
 
-| Component | Current | After V2 |
-|-----------|---------|----------|
-| Expression count | 4,097 (4,017 + 80 LSP) | ~12,131 (daily + weekly + monthly + LSP + AVWAP) |
-| Cache size (disk) | ~21 GB | ~63-70 GB |
-| Full cache build | ~40 min | ~90-150 min (one-time) |
-| Nightly append | ~5-8 min | ~12-20 min |
+| Component | Previous | After V2 (Measured) |
+|-----------|----------|---------------------|
+| Expression count | 4,017 daily | 12,131 (4,017 daily + 80 LSP + 4,017 weekly + 4,017 monthly) |
+| Cache size (disk) | ~21 GB | ~70 GB (estimated from per-ticker measurement) |
+| Full cache build | ~40 min | ~84 min estimated (8.5s/ticker × 4,167 tickers ÷ 7 cores) |
+| Nightly append | ~5-8 min | ~15-20 min (same ratio increase) |
 | Matrix rebuild | ~5 min | ~10-15 min |
-| Grinder runtime | ~2-3 min | ~4-8 min (more expressions to search) |
+| Grinder runtime | ~2-3 min | ~4-8 min (3x more expressions to search) |
 
 ## Decisions (Resolved)
 
@@ -241,34 +226,35 @@ def _compute_ticker_full(args):
 ```
 Task A (LSP detector refactor)          — ✅ COMPLETE (2026-02-27)
     ↓
-Task B (LSP level expressions)          — ✅ COMPLETE (2026-02-27): 80 expressions registered in brute_expressions.py
+Task B (LSP level expressions)          — ✅ COMPLETE (2026-02-27)
     ↓
-Task C (HTF resampling)                 — NEXT: resample daily→weekly/monthly, run full expr library
+Task C (HTF resampling + integration)   — ✅ COMPLETE (2026-02-27): 8,034 HTF expressions + cache builder updated
     ↓
-Task D (Contextual AVWAPs)              — ✅ BUILT INTO Task A (compute_all_series includes ctx_avwap)
+Task D (Contextual AVWAPs)              — ✅ BUILT INTO Task A
     ↓
-Task E (Cache builder integration)      — needs C
+Task E (Cache builder integration)      — ✅ BUILT INTO Task C
     ↓
-Task F (Matrix builder + example flow)  — needs E
+Task F (Matrix builder + example flow)  — NEXT
     ↓
-Task G (Expression library registry)    — needs C (HTF expression names)
+Task G (Expression library registry)    — ✅ BUILT INTO Task C
     ↓
-Full cache rebuild + validation
+Full cache rebuild + validation         — needs F, then run on Dan's machine
     ↓
 Re-grind DTSS with expanded library
 ```
 
-Tasks B and C can be done in parallel. Task D was folded into Task A.
+### What's Left
 
-### Next Session Starting Points
+**Task F (Matrix Builder Update):** The matrix builder loads from the expression cache. With 12,131 expressions in the cache, it should "just work" since it reads the manifest for column names and loads .npz files. BUT:
+- Need to verify `get_universe_matrix()` handles the larger column count without memory issues
+- Need to verify `get_example_matrix()` works with 12,131 columns
+- The pyramid grinder's beam search operates on the full expression set — verify it handles 12,131 without blowing up search time
 
-**Task C:** In `local_runner/expr_cache_builder.py`, add HTF resampling. For each ticker: resample daily→weekly/monthly using `resample_ohlcv()` from `lsp_detector_v2.py`, run `compute_series()` on resampled data, map back to daily indices. Prefix names with `w_`/`m_`. ~8,034 new expressions (4,017 × 2 timeframes).
+**Full cache rebuild:** Must be done on Dan's machine (requires 5yr OHLCV cache + 70 GB disk). Run `python local_runner/expr_cache_builder.py --build --force`.
 
-**Task E (after C):** Update `expr_cache_builder.py` worker to:
-1. Resample daily→weekly/monthly
-2. Call `compute_all_lsp_series()` for LSP+AVWAP (80 expressions, registered in brute_expressions.py with `op: "precomputed"`)
-3. Run existing expression library on weekly/monthly data (~8,034 expressions)
-4. Concatenate all columns into expanded cache array
-5. Update manifest with new expression count + names
+**Validation:** After rebuild:
+1. Check manifest: 12,131 expressions, all names present
+2. Spot-check a few tickers: weekly RSI values should match manual calculation
+3. Run matrix builder — verify it loads the expanded cache
+4. Re-grind DTSS — compare results with vs without HTF/LSP expressions
 
-**Task G (after C):** Register HTF expression names in `brute_expressions.py`. Same pattern as LSP: `{"op": "precomputed", "source": "htf", "column": "w_rsi_14"}`. Will need the HTF expression name list from Task C.
