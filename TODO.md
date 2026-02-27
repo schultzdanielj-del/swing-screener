@@ -58,37 +58,35 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 
 **Next:** Task F from EXPRESSION_ENGINE_V2.md (matrix builder verification with 12,131 expressions), then full cache rebuild on Dan's machine.
 
-### Task 1: Integrate LSP into Signal Grinder
-**What:** The pyramid grinder must use LSP data when grinding DTSS.
-**How:**
-- For examples: use hand-labeled LSP from `dtss_lsp_data.json`
-- For universe tickers: use `LSPDetector` to find LSP on each signal date
-- Call `set_lsp_context()` on ExpressionEngine before computing expressions
-- Add LSP expressions to the expression library for DTSS grinds
-- The grinder stays universal in architecture but accepts setup-specific data injection
-**Key insight:** The LSP expressions should NOT be optional extras. For DTSS, `avwap_lsp_distance` (close below LSP AVWAP) is the defining condition. The grinder should discover this automatically if given the right expressions.
+### Task 1: Expression Engine V2 — ✅ COMPLETE (2026-02-27)
+**Built per EXPRESSION_ENGINE_V2.md.** Replaced Tasks 1-3 with a generic approach:
+- `lsp_detector_v2.py`: Detects ALL pivot levels, generates 80 precomputed LSP expressions per ticker
+- `brute_expressions.py`: Expanded from 4,017 → 12,131 expressions (daily + LSP + weekly + monthly)
+- `expr_cache_builder.py`: Updated to compute all 12,131 expressions per ticker (HTF resampling, LSP detection)
+- Full cache built: 4,119 tickers × 12,131 expressions = 49.8 GB on disk
+- See EXPRESSION_ENGINE_V2.md for full task breakdown (Tasks A-G all complete)
 
-### Task 2: LSP AVWAP as Core DTSS Condition
-**What:** Validate that "close below optimized LSP AVWAP" passes 23/23 examples.
-**How:**
-- For each example: anchor AVWAP at LSP bar (±3 bars, pick highest AVWAP on signal day)
-- Check: signal day close < LSP AVWAP?
-- This should be 23/23 by definition — if the DTSS worked, price broke below the LSP AVWAP
-**Why separate from Task 1:** This validates the concept before grinding. If any examples fail, we have an LSP labeling problem, not a grinder problem.
+### Task 2: Matrix Builder + Grinder Integration — ✅ COMPLETE (2026-02-27)
+**All grinders now use expr cache as single computation path:**
+- `matrix_builder.py`: Loads universe matrix from expr cache (~51s, was ~30 min)
+- `pyramid_grinder.py`: `compute_example_ranges()` + `validate_examples()` use expr cache
+- Historical tiers already used expr cache — now D1 tier does too
+- Spiderweb 70% example threshold fixed → 100% (was allowing conditions examples couldn't pass)
+- Examples not in expr cache filtered out before any computation
 
-### Task 3: Re-run Signal Grinder with LSP
-**What:** Full pyramid grind for DTSS with LSP expressions included.
-**Expect:** Much tighter conditions. The grinder should lock onto LSP-related expressions early because they're the strongest discriminators.
-**Validation:** All 23 examples must pass. Signal count should be lower than current 576 (which was found WITHOUT any LSP awareness).
+### Task 3: Re-grind DTSS with Expanded Library — IN PROGRESS
+**First run (beam=50, depth=10):** 19 conditions, peak 14/day, 3,303 signals/5yr. Too loose.
+**Second run (beam=500, depth=15):** Hit validation bug (70% threshold). Fixed, needs re-run.
+**Next:** Run with peak-target=6, beam=500, depth=15 after pulling fixes.
 
 ### Task 4: Re-run Exit Grinder with Formation Period Validation
 **What:** Exit conditions must NOT fire before the entry date.
-**Problem found today:** CELH earliest signal bar (2024-05-13) had exit trigger on bar 3 (2024-05-16), but entry wasn't until 2024-05-22. Exit fired during formation period. 19/20 examples failed when measured from earliest signal bar.
+**Problem found:** CELH earliest signal bar (2024-05-13) had exit trigger on bar 3 (2024-05-16), but entry wasn't until 2024-05-22. Exit fired during formation period. 19/20 examples failed when measured from earliest signal bar.
 **Fix:** Exit grinder must test from EVERY signal bar (not just last one before entry), and exit must not trigger before entry date on any of them.
 
 ### Task 5: Re-run Outcome Grinder with Fixed Measurements
 **What:** Measure from signal bar close (not entry bar), use ExpressionEngine for all computations.
-**Already partially fixed today:** Outcome grinder now uses ExpressionEngine, measures from signal bar close, auto-computes ADR/MFE floors.
+**Already partially fixed:** Outcome grinder now uses ExpressionEngine, measures from signal bar close, auto-computes ADR/MFE floors.
 **Needs:** Re-run with corrected exit conditions from Task 4.
 
 ### Task 6: Steps 8-9 (Pre-Signal Refinement + Environment Clustering)
