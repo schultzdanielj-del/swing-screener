@@ -1,8 +1,16 @@
 """
 Pyramidal Grinder — Nested time-horizon expression discovery.
 
-Replaces the old Phase 1 (spiderweb on today) + Phase 2 (flat 5yr historical scorer)
-with a single unified system that progressively widens the time window.
+MULTI-PASS MODE (default):
+  Runs 3 sequential passes to prevent HTF expressions from crowding out daily:
+    Pass 1 (Daily+LSP): Full pyramid (D1→5yr) with 4,097 daily+LSP expressions
+    Pass 2 (Weekly):     1mo→5yr tiers with 4,017 weekly expressions on top
+    Pass 3 (Monthly):    6mo→5yr tiers with 4,017 monthly expressions on top
+  Daily gets first crack at every horizon. Weekly/monthly only add value
+  where daily couldn't finish the job.
+
+SINGLE-PASS MODE (--single-pass):
+  Legacy mode: all 12,131 expressions in one pass through D1→5yr.
 
 Each tier:
   1. Builds a matrix of ticker-day rows for its window (pre-filtered by locked conditions)
@@ -21,10 +29,15 @@ Tiers:
 Constraint: 100% of setup examples ALWAYS pass all conditions (zero false negatives).
 
 Usage:
-    python local_runner/pyramid_grinder.py --setup dtss [--peak-target 15] [--beam 50] [--depth 10]
+    # Multi-pass (default):
+    python local_runner/pyramid_grinder.py --setup dtss --beam 10000 --depth 100 --peak-target 3
+
+    # Legacy single-pass:
+    python local_runner/pyramid_grinder.py --setup dtss --single-pass --beam 10000 --depth 100
 
 Requires:
   - 5-year OHLCV cache (local_runner/cache/universe_ohlcv_5yr.pkl)
+  - Expression series cache (local_runner/cache/expr_series/)
   - Example data (via Railway API)
   - Expression library (brute_expressions.py)
 """
@@ -663,7 +676,8 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
                 beam_width=50, depth=10):
     """Run D1 tier using the classic spiderweb on today's snapshot.
 
-    Uses cached universe matrix from matrix_builder (same expressions, same last bar).
+    Uses cached universe matrix from matrix_builder (all expressions), then filters
+    to the expressions passed in (which may be a timeframe subset for multi-pass mode).
     Returns list of condition dicts with {name, category, compute, low, high}.
     """
     from spiderweb import SpiderwebSearch
@@ -672,28 +686,52 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
     print(f"\n  ═══ D1: Loading universe matrix (cached if fresh) ═══")
     t0 = time.time()
 
+    # Load the full universe matrix (all expressions)
     uni_data = get_universe_matrix()
-    uni_matrix = uni_data["universe_matrix"]
+    full_uni_matrix = uni_data["universe_matrix"]
     tickers = uni_data["universe_tickers"]
-    expr_names = uni_data["expr_names"]
-    expr_categories = uni_data["expr_categories"]
+    full_expr_names = uni_data["expr_names"]
+    full_expr_categories = uni_data["expr_categories"]
 
-    # Verify expressions match
-    expected_names = [e["name"] for e in expressions]
-    if expr_names != expected_names:
-        print(f"  ⚠ Expression mismatch — cached {len(expr_names)} vs current {len(expected_names)}")
-        print(f"  Forcing matrix rebuild...")
-        uni_data = get_universe_matrix(force=True)
-        uni_matrix = uni_data["universe_matrix"]
-        tickers = uni_data["universe_tickers"]
-        expr_names = uni_data["expr_names"]
-        expr_categories = uni_data["expr_categories"]
+    # Build column subset: only the expressions in our pass
+    pass_expr_names = [e["name"] for e in expressions]
+    pass_expr_set = set(pass_expr_names)
+
+    # Map from full matrix column index to our pass expression index
+    full_name_to_col = {name: i for i, name in enumerate(full_expr_names)}
+    col_indices = []
+    for name in pass_expr_names:
+        idx = full_name_to_col.get(name)
+        if idx is not None:
+            col_indices.append(idx)
+        else:
+            col_indices.append(-1)  # not in matrix
+
+    # Filter matrices to pass-specific columns
+    valid_cols = [i for i in col_indices if i >= 0]
+    valid_pass_indices = [j for j, i in enumerate(col_indices) if i >= 0]
+
+    if len(valid_cols) == len(pass_expr_names):
+        # All expressions found in full matrix — just slice columns
+        uni_matrix = full_uni_matrix[:, valid_cols]
+        expr_names = [pass_expr_names[j] for j in valid_pass_indices]
+        expr_categories = [expressions[j].get("category", "unknown") for j in valid_pass_indices]
+        # Also filter example_matrix columns
+        filtered_example_matrix = example_matrix[:, valid_pass_indices]
+    else:
+        # Some expressions missing — build with what we have
+        uni_matrix = full_uni_matrix[:, valid_cols]
+        expr_names = [pass_expr_names[j] for j in valid_pass_indices]
+        expr_categories = [expressions[j].get("category", "unknown") for j in valid_pass_indices]
+        filtered_example_matrix = example_matrix[:, valid_pass_indices]
+        n_missing = len(pass_expr_names) - len(valid_cols)
+        print(f"  ⚠ {n_missing} expressions not in universe matrix (likely HTF/LSP)")
 
     print(f"  D1 matrix: {len(tickers)} tickers × {len(expr_names)} expressions ({time.time()-t0:.1f}s)")
 
     # Run spiderweb
     search = SpiderwebSearch(
-        example_values=example_matrix,
+        example_values=filtered_example_matrix,
         universe_values=uni_matrix,
         expr_names=expr_names,
         expr_categories=expr_categories,
@@ -927,8 +965,200 @@ def validate_examples(example_dfs, conditions, expr_cache=None):
 # MAIN ORCHESTRATOR
 # ══════════════════════════════════════════════════════════════
 
+def _filter_expressions_by_timeframe(expressions, timeframe):
+    """Filter expression list to a specific timeframe.
+
+    Args:
+        expressions: full expression list from generate_all()
+        timeframe: 'daily' (daily + LSP), 'weekly' (htf_weekly), 'monthly' (htf_monthly)
+
+    Returns:
+        filtered list of expression dicts
+    """
+    if timeframe == "daily":
+        return [e for e in expressions if e["category"] not in ("htf_weekly", "htf_monthly")]
+    elif timeframe == "weekly":
+        return [e for e in expressions if e["category"] == "htf_weekly"]
+    elif timeframe == "monthly":
+        return [e for e in expressions if e["category"] == "htf_monthly"]
+    else:
+        return expressions
+
+
+# Pass definitions for multi-pass pyramid
+# (pass_name, timeframe, tiers_to_run)
+# tiers_to_run = list of (tier_name, n_bars) from TIERS to use in this pass
+MULTI_PASS_DEFS = [
+    ("Pass 1 (Daily+LSP)", "daily", [
+        ("D1",   1),
+        ("1wk",  5),
+        ("1mo",  21),
+        ("6mo",  126),
+        ("1yr",  252),
+        ("5yr",  0),
+    ]),
+    ("Pass 2 (Weekly)", "weekly", [
+        ("1mo",  21),
+        ("6mo",  126),
+        ("1yr",  252),
+        ("5yr",  0),
+    ]),
+    ("Pass 3 (Monthly)", "monthly", [
+        ("6mo",  126),
+        ("1yr",  252),
+        ("5yr",  0),
+    ]),
+]
+
+
+def _run_single_pass(pass_name, pass_expressions, pass_tiers,
+                     universe_cache, example_dfs, all_expressions,
+                     example_ranges_full, example_matrix_full,
+                     locked_conditions, expr_cache,
+                     beam_width, depth, peak_target,
+                     d1_beam, d1_depth):
+    """Run one pass of the multi-pass pyramid.
+
+    Args:
+        pass_name: display name for logging
+        pass_expressions: filtered expression list for this pass's timeframe
+        pass_tiers: list of (tier_name, n_bars) to run
+        universe_cache: {ticker: DataFrame}
+        example_dfs: list of example dicts
+        all_expressions: FULL expression list (needed for D1 matrix builder)
+        example_ranges_full: ranges computed from ALL expressions
+        example_matrix_full: matrix computed from ALL expressions
+        locked_conditions: conditions locked from previous passes
+        expr_cache: ExprSeriesCache instance
+        beam_width, depth, peak_target: search params
+        d1_beam, d1_depth: D1-specific params
+
+    Returns:
+        new_conditions: list of conditions added by this pass
+        tier_results: dict of tier-level results
+    """
+    print(f"\n{'▓'*70}")
+    print(f"  {pass_name}")
+    print(f"  {len(pass_expressions)} candidate expressions, "
+          f"{len(locked_conditions)} locked conditions")
+    print(f"  Tiers: {' → '.join(t[0] for t in pass_tiers)}")
+    print(f"{'▓'*70}")
+
+    # Build example ranges for THIS pass's expressions only
+    # (We need ranges for the pass-specific candidates, but also need
+    # existing locked conditions to still work via the full ranges)
+    pass_ranges, pass_matrix = compute_example_ranges(
+        example_dfs, pass_expressions, expr_cache=expr_cache)
+    print(f"  {len(pass_ranges)} expressions have valid ranges for this pass")
+
+    new_conditions = []
+    tier_results = {}
+
+    for tier_name, n_bars in pass_tiers:
+
+        # D1 tier uses special spiderweb path
+        if tier_name == "D1":
+            print(f"\n{'─'*70}")
+            print(f"  TIER: D1 — Today (last bar) [{pass_name}]")
+            print(f"  Locked: {len(locked_conditions)} conditions from prior passes/tiers")
+            print(f"{'─'*70}")
+
+            d1_conditions, d1_result, d1_info = run_d1_tier(
+                universe_cache, pass_expressions, pass_ranges, pass_matrix,
+                beam_width=d1_beam, depth=d1_depth,
+            )
+
+            new_conditions.extend(d1_conditions)
+            tier_results["D1"] = {
+                "conditions_added": len(d1_conditions),
+                "pass_rate": d1_info.get("pass_rate", 0),
+                "n_passing": d1_info.get("n_passing", 0),
+                "passing_tickers": d1_info.get("passing_tickers", []),
+            }
+
+            print(f"\n  D1 result: {len(d1_conditions)} conditions, "
+                  f"{d1_info['n_passing']} tickers passing ({d1_info['pass_rate']:.2%})")
+
+            # Validate
+            all_so_far = locked_conditions + new_conditions
+            if all_so_far:
+                print(f"\n  Validating examples after D1...")
+                if not validate_examples(example_dfs, all_so_far, expr_cache=expr_cache):
+                    print(f"\n{'!'*80}")
+                    print(f"VALIDATION FAILED after D1 — aborting.")
+                    print(f"{'!'*80}")
+                    return None, None
+
+            continue
+
+        # Historical tiers (1wk through 5yr)
+        description = next((d for n, _, d in TIERS if n == tier_name), tier_name)
+
+        print(f"\n{'─'*70}")
+        print(f"  TIER: {tier_name} — {description} [{pass_name}]")
+        all_so_far = locked_conditions + new_conditions
+        print(f"  Locked: {len(all_so_far)} conditions (pass-inherited + this pass)")
+        print(f"{'─'*70}")
+
+        tier_new_conds, tier_result = run_historical_tier(
+            tier_name=tier_name,
+            n_bars_window=n_bars,
+            universe_cache=universe_cache,
+            expressions=pass_expressions,
+            example_ranges=pass_ranges,
+            locked_conditions=all_so_far,
+            beam_width=beam_width,
+            depth=depth,
+            peak_target=peak_target,
+            expr_cache=expr_cache,
+        )
+
+        new_conditions.extend(tier_new_conds)
+
+        tier_results[tier_name] = {
+            "conditions_added": len(tier_new_conds),
+            "conditions": [c["name"] for c in tier_new_conds],
+            "final_peak": tier_result.get("final_peak"),
+            "final_avg": tier_result.get("final_avg"),
+            "final_total": tier_result.get("final_total"),
+            "baseline_peak": tier_result.get("baseline_peak"),
+            "stats": tier_result.get("stats"),
+            "final_signals": tier_result.get("final_signals", []),
+            "n_unique_tickers": tier_result.get("n_unique_tickers", 0),
+        }
+
+        if tier_new_conds:
+            print(f"\n  {tier_name} added {len(tier_new_conds)} conditions:")
+            for c in tier_new_conds:
+                print(f"    + [{c['category']:>18}] {c['name']}")
+            print(f"  Peak: {tier_result.get('baseline_peak')} → "
+                  f"{tier_result.get('final_peak')}/day")
+
+            # Validate
+            all_so_far = locked_conditions + new_conditions
+            print(f"\n  Validating examples after {tier_name}...")
+            if not validate_examples(example_dfs, all_so_far, expr_cache=expr_cache):
+                print(f"\n{'!'*80}")
+                print(f"VALIDATION FAILED after {tier_name} — aborting.")
+                print(f"{'!'*80}")
+                return None, None
+        else:
+            if tier_result.get("skipped"):
+                print(f"  {tier_name}: Skipped ({tier_result.get('reason', 'no candidates')})")
+            else:
+                print(f"  {tier_name}: No conditions added (peak ≤{peak_target} or ceiling)")
+
+        # Early stop if zero signals
+        final_peak = tier_result.get("final_peak")
+        if final_peak is not None and final_peak == 0:
+            print(f"  Zero signals — stopping pass early.")
+            break
+
+    return new_conditions, tier_results
+
+
 def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
-                d1_depth=None, d1_beam=None):
+                d1_depth=None, d1_beam=None, multi_pass=True):
     """Run the full pyramid grinder.
 
     Args:
@@ -938,17 +1168,21 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         depth: search depth for historical tiers
         d1_depth: override depth for D1 tier (default: same as depth)
         d1_beam: override beam for D1 tier (default: same as beam_width)
+        multi_pass: if True, run 3-pass pyramid (daily→weekly→monthly).
+                    if False, run single-pass with all expressions (legacy mode).
     """
     d1_depth = d1_depth or depth
     d1_beam = d1_beam or beam_width
 
     print("\n" + "=" * 70)
-    print("  PYRAMIDAL GRINDER")
+    print("  PYRAMIDAL GRINDER" + (" — MULTI-PASS" if multi_pass else " — SINGLE-PASS"))
     print("=" * 70)
     print(f"  Setup: {setup_type.upper()}")
     print(f"  Peak target: ≤{peak_target} signals/day")
     print(f"  D1: beam={d1_beam}, depth={d1_depth}")
     print(f"  Historical tiers: beam={beam_width}, depth={depth}")
+    if multi_pass:
+        print(f"  Mode: 3-pass (daily→weekly→monthly)")
 
     t_total = time.time()
 
@@ -962,30 +1196,31 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     print(f"  {len(example_dfs)} examples loaded")
 
     print(f"\n  Loading expressions...")
-    expressions = generate_all()
-    print(f"  {len(expressions)} expressions")
+    all_expressions = generate_all()
+    print(f"  {len(all_expressions)} expressions total")
 
-    # ── Compute example ranges ──
-    print(f"\n  Computing example ranges...")
-    t0 = time.time()
+    if multi_pass:
+        daily_exprs = _filter_expressions_by_timeframe(all_expressions, "daily")
+        weekly_exprs = _filter_expressions_by_timeframe(all_expressions, "weekly")
+        monthly_exprs = _filter_expressions_by_timeframe(all_expressions, "monthly")
+        print(f"    Daily+LSP: {len(daily_exprs)}  Weekly: {len(weekly_exprs)}  "
+              f"Monthly: {len(monthly_exprs)}")
 
-    # ── Detect expression series cache (needed by example ranges + validation) ──
+    # ── Detect expression series cache ──
+    print(f"\n  Detecting expression cache...")
     expr_cache = ExprSeriesCache()
-    if expr_cache.is_valid(expressions):
+    if expr_cache.is_valid(all_expressions):
         n_cached = len(expr_cache.get_available_tickers())
-        print(f"  ✓ Expression series cache detected: {n_cached} tickers, "
+        print(f"  ✓ Expression series cache: {n_cached} tickers, "
               f"{expr_cache.n_expressions} expressions")
 
-        # Filter examples: ONLY keep examples that exist in the expr cache.
-        # If an example isn't cached, we can't compute all expressions for it,
-        # which means conditions could be selected that the example can't pass.
+        # Filter examples to those in expr cache
         cached_tickers = expr_cache.get_available_tickers()
         before_count = len(example_dfs)
         excluded = []
         filtered_dfs = []
         for ex in example_dfs:
             if ex["ticker"] in cached_tickers:
-                # Also verify scan_idx is within cached bar count
                 n_cached_bars = expr_cache.get_ticker_bar_count(ex["ticker"])
                 if ex["scan_idx"] < n_cached_bars:
                     filtered_dfs.append(ex)
@@ -1002,120 +1237,200 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     else:
         expr_cache = None
         print(f"  ⚠ No expression series cache — computing from scratch (slow)")
-        print(f"    Run: python local_runner/expr_cache_builder.py --build")
 
-    example_ranges, example_matrix = compute_example_ranges(
-        example_dfs, expressions, expr_cache=expr_cache)
-    print(f"  {len(example_ranges)} expressions have valid ranges ({time.time()-t0:.0f}s)")
+    # ══════════════════════════════════════════════════════════════
+    # MULTI-PASS MODE
+    # ══════════════════════════════════════════════════════════════
+    if multi_pass:
+        all_conditions = []
+        all_tier_results = {}
+        pass_summaries = []
 
-    # ── Tier results accumulator ──
-    all_conditions = []
-    tier_results = {}
+        for pass_def in MULTI_PASS_DEFS:
+            pass_name, timeframe, pass_tier_defs = pass_def
+            pass_exprs = _filter_expressions_by_timeframe(all_expressions, timeframe)
 
-    # ══ D1 TIER ══
-    d1_conditions, d1_result, d1_info = run_d1_tier(
-        universe_cache, expressions, example_ranges, example_matrix,
-        beam_width=d1_beam, depth=d1_depth,
-    )
+            t_pass = time.time()
+            new_conds, tier_results = _run_single_pass(
+                pass_name=pass_name,
+                pass_expressions=pass_exprs,
+                pass_tiers=pass_tier_defs,
+                universe_cache=universe_cache,
+                example_dfs=example_dfs,
+                all_expressions=all_expressions,
+                example_ranges_full=None,  # computed inside _run_single_pass
+                example_matrix_full=None,
+                locked_conditions=list(all_conditions),  # copy — prior passes locked
+                expr_cache=expr_cache,
+                beam_width=beam_width,
+                depth=depth,
+                peak_target=peak_target,
+                d1_beam=d1_beam,
+                d1_depth=d1_depth,
+            )
 
-    all_conditions.extend(d1_conditions)
-    tier_results["D1"] = {
-        "conditions_added": len(d1_conditions),
-        "pass_rate": d1_info.get("pass_rate", 0),
-        "n_passing": d1_info.get("n_passing", 0),
-        "passing_tickers": d1_info.get("passing_tickers", []),
-    }
+            if new_conds is None:
+                # Validation failed inside pass
+                return None
 
-    print(f"\n  D1 result: {len(d1_conditions)} conditions, "
-          f"{d1_info['n_passing']} tickers passing ({d1_info['pass_rate']:.2%})")
+            pass_time = time.time() - t_pass
+            all_conditions.extend(new_conds)
+            if tier_results:
+                all_tier_results.update({
+                    f"{timeframe}_{k}": v for k, v in tier_results.items()
+                })
 
-    # Validate examples
-    if all_conditions:
-        print(f"\n  Validating examples after D1...")
-        if not validate_examples(example_dfs, all_conditions, expr_cache=expr_cache):
-            print(f"\n{'!'*80}")
-            print(f"VALIDATION FAILED after D1 — aborting. All examples must pass. No exceptions.")
-            print(f"{'!'*80}")
-            return None
+            pass_summaries.append({
+                "pass_name": pass_name,
+                "timeframe": timeframe,
+                "conditions_added": len(new_conds),
+                "total_conditions": len(all_conditions),
+                "time_s": round(pass_time, 1),
+                "conditions": [c["name"] for c in new_conds],
+            })
 
-    # ══ HISTORICAL TIERS (T2-T6) ══
-    for tier_name, n_bars, description in TIERS[1:]:
-        print(f"\n{'─'*70}")
-        print(f"  TIER: {tier_name} — {description}")
-        print(f"  Locked: {len(all_conditions)} conditions from prior tiers")
-        print(f"{'─'*70}")
+            print(f"\n  ═══ {pass_name} complete: +{len(new_conds)} conditions "
+                  f"({len(all_conditions)} total) [{pass_time:.0f}s] ═══")
 
-        new_conds, tier_result = run_historical_tier(
-            tier_name=tier_name,
-            n_bars_window=n_bars,
-            universe_cache=universe_cache,
-            expressions=expressions,
-            example_ranges=example_ranges,
-            locked_conditions=all_conditions,
-            beam_width=beam_width,
-            depth=depth,
-            peak_target=peak_target,
-            expr_cache=expr_cache,
+        tier_results = all_tier_results
+
+    # ══════════════════════════════════════════════════════════════
+    # SINGLE-PASS MODE (legacy)
+    # ══════════════════════════════════════════════════════════════
+    else:
+        expressions = all_expressions
+
+        # Compute example ranges for all expressions
+        print(f"\n  Computing example ranges...")
+        t0 = time.time()
+        example_ranges, example_matrix = compute_example_ranges(
+            example_dfs, expressions, expr_cache=expr_cache)
+        print(f"  {len(example_ranges)} expressions have valid ranges ({time.time()-t0:.0f}s)")
+
+        all_conditions = []
+        tier_results = {}
+        pass_summaries = None
+
+        # D1 tier
+        d1_conditions, d1_result, d1_info = run_d1_tier(
+            universe_cache, expressions, example_ranges, example_matrix,
+            beam_width=d1_beam, depth=d1_depth,
         )
-
-        all_conditions.extend(new_conds)
-
-        tier_results[tier_name] = {
-            "conditions_added": len(new_conds),
-            "conditions": [c["name"] for c in new_conds],
-            "final_peak": tier_result.get("final_peak"),
-            "final_avg": tier_result.get("final_avg"),
-            "final_total": tier_result.get("final_total"),
-            "baseline_peak": tier_result.get("baseline_peak"),
-            "stats": tier_result.get("stats"),
-            "final_signals": tier_result.get("final_signals", []),
-            "n_unique_tickers": tier_result.get("n_unique_tickers", 0),
+        all_conditions.extend(d1_conditions)
+        tier_results["D1"] = {
+            "conditions_added": len(d1_conditions),
+            "pass_rate": d1_info.get("pass_rate", 0),
+            "n_passing": d1_info.get("n_passing", 0),
+            "passing_tickers": d1_info.get("passing_tickers", []),
         }
+        print(f"\n  D1 result: {len(d1_conditions)} conditions, "
+              f"{d1_info['n_passing']} tickers passing ({d1_info['pass_rate']:.2%})")
 
-        if new_conds:
-            print(f"\n  {tier_name} added {len(new_conds)} conditions:")
-            for c in new_conds:
-                print(f"    + [{c['category']:>18}] {c['name']}")
-            print(f"  Peak: {tier_result.get('baseline_peak')} → {tier_result.get('final_peak')}/day")
-
-            # Validate — examples must always pass
-            print(f"\n  Validating examples after {tier_name}...")
+        if all_conditions:
+            print(f"\n  Validating examples after D1...")
             if not validate_examples(example_dfs, all_conditions, expr_cache=expr_cache):
                 print(f"\n{'!'*80}")
-                print(f"VALIDATION FAILED after {tier_name} — aborting. All examples must pass. No exceptions.")
+                print(f"VALIDATION FAILED after D1 — aborting.")
                 print(f"{'!'*80}")
                 return None
-        else:
-            final_peak = tier_result.get("final_peak") or tier_result.get("baseline_peak", "?")
-            if tier_result.get("skipped"):
-                print(f"  {tier_name}: Skipped ({tier_result.get('reason', 'no candidates')})")
-            else:
-                print(f"  {tier_name}: No conditions added (peak already ≤{peak_target} or at ceiling)")
 
-        # Check if we've hit target at this tier
-        final_peak = tier_result.get("final_peak")
-        if final_peak is not None and final_peak <= peak_target:
-            print(f"\n  ✓ Peak target reached at {tier_name}: {final_peak}/day ≤ {peak_target}")
-            # Still run remaining tiers — they might find more
-            # But if peak is already 0, no point
-            if final_peak == 0:
+        # Historical tiers
+        for tier_name, n_bars, description in TIERS[1:]:
+            print(f"\n{'─'*70}")
+            print(f"  TIER: {tier_name} — {description}")
+            print(f"  Locked: {len(all_conditions)} conditions")
+            print(f"{'─'*70}")
+
+            new_conds, tier_result = run_historical_tier(
+                tier_name=tier_name,
+                n_bars_window=n_bars,
+                universe_cache=universe_cache,
+                expressions=expressions,
+                example_ranges=example_ranges,
+                locked_conditions=all_conditions,
+                beam_width=beam_width,
+                depth=depth,
+                peak_target=peak_target,
+                expr_cache=expr_cache,
+            )
+
+            all_conditions.extend(new_conds)
+            tier_results[tier_name] = {
+                "conditions_added": len(new_conds),
+                "conditions": [c["name"] for c in new_conds],
+                "final_peak": tier_result.get("final_peak"),
+                "final_avg": tier_result.get("final_avg"),
+                "final_total": tier_result.get("final_total"),
+                "baseline_peak": tier_result.get("baseline_peak"),
+                "stats": tier_result.get("stats"),
+                "final_signals": tier_result.get("final_signals", []),
+                "n_unique_tickers": tier_result.get("n_unique_tickers", 0),
+            }
+
+            if new_conds:
+                print(f"\n  {tier_name} added {len(new_conds)} conditions:")
+                for c in new_conds:
+                    print(f"    + [{c['category']:>18}] {c['name']}")
+                print(f"  Peak: {tier_result.get('baseline_peak')} → "
+                      f"{tier_result.get('final_peak')}/day")
+                print(f"\n  Validating examples after {tier_name}...")
+                if not validate_examples(example_dfs, all_conditions, expr_cache=expr_cache):
+                    print(f"\n{'!'*80}")
+                    print(f"VALIDATION FAILED after {tier_name} — aborting.")
+                    print(f"{'!'*80}")
+                    return None
+            else:
+                if tier_result.get("skipped"):
+                    print(f"  {tier_name}: Skipped ({tier_result.get('reason', 'no candidates')})")
+                else:
+                    print(f"  {tier_name}: No conditions added")
+
+            final_peak = tier_result.get("final_peak")
+            if final_peak is not None and final_peak == 0:
                 print(f"  Zero signals — stopping early.")
                 break
 
-    # ══ FINAL SUMMARY ══
+    # ══════════════════════════════════════════════════════════════
+    # FINAL SUMMARY (shared by both modes)
+    # ══════════════════════════════════════════════════════════════
     total_time = time.time() - t_total
 
     print(f"\n{'='*70}")
-    print(f"  PYRAMID COMPLETE")
+    print(f"  PYRAMID COMPLETE" + (" — MULTI-PASS" if multi_pass else ""))
     print(f"{'='*70}")
     print(f"  Total conditions: {len(all_conditions)}")
     print(f"  Total time: {total_time:.0f}s ({total_time/60:.1f} min)")
-    print(f"\n  Conditions by tier:")
-    for tier_name, _, desc in TIERS:
-        tr = tier_results.get(tier_name, {})
-        n = tr.get("conditions_added", 0)
-        if n > 0:
-            print(f"    {tier_name:>4}: {n} conditions")
+
+    if multi_pass and pass_summaries:
+        print(f"\n  Pass summary:")
+        for ps in pass_summaries:
+            print(f"    {ps['pass_name']}: +{ps['conditions_added']} conditions "
+                  f"[{ps['time_s']:.0f}s]")
+
+    # Count conditions by tier
+    tier_counts = defaultdict(int)
+    for c in all_conditions:
+        tier_counts[c.get("tier", "?")] += 1
+    if tier_counts:
+        print(f"\n  Conditions by tier:")
+        for tier, cnt in sorted(tier_counts.items()):
+            print(f"    {tier:>4}: {cnt} conditions")
+
+    # Count by timeframe category
+    cat_counts = defaultdict(int)
+    for c in all_conditions:
+        cat = c.get("category", "unknown")
+        if cat == "htf_weekly":
+            cat_counts["weekly"] += 1
+        elif cat == "htf_monthly":
+            cat_counts["monthly"] += 1
+        elif cat == "lsp":
+            cat_counts["lsp"] += 1
+        else:
+            cat_counts["daily"] += 1
+    print(f"\n  Conditions by timeframe:")
+    for tf, cnt in sorted(cat_counts.items()):
+        print(f"    {tf:>8}: {cnt}")
 
     print(f"\n  All conditions:")
     for i, c in enumerate(all_conditions, 1):
@@ -1124,13 +1439,13 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         print(f"    {i:2d}. [{tier:>4}] [{cat:>18}] {c['name']:35s} "
               f"[{c['low']:.4f} — {c['high']:.4f}]")
 
-    # ── Save with descriptive filename ──
-    # Get final signal count from last tier
+    # ── Get final signal count from last tier with data ──
     final_total = 0
     final_peak = 0
     final_avg = 0.0
-    for tier_name_rev in reversed(["D1", "1wk", "1mo", "6mo", "1yr", "5yr"]):
-        tr = tier_results.get(tier_name_rev, {})
+    # Check all tier results (both modes)
+    for key in sorted(tier_results.keys(), reverse=True):
+        tr = tier_results[key]
         if tr.get("final_total") is not None and tr["final_total"] > 0:
             final_total = tr["final_total"]
             final_peak = tr.get("final_peak", 0)
@@ -1138,7 +1453,6 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             break
 
     # ── Build example signal bars ──
-    # These are the anchor points: each example's scan bar date
     example_signals = []
     for ex in example_dfs:
         if ex["scan_idx"] is not None:
@@ -1152,7 +1466,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 "is_example": True,
             })
 
-    # ── Validate: which examples pass all final conditions? ──
+    # ── Final validation ──
     print(f"\n  Final example validation:")
     examples_passing = 0
     examples_failing = 0
@@ -1197,7 +1511,9 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             examples_passing += 1
         else:
             examples_failing += 1
-    print(f"    {examples_passing}/{examples_passing + examples_failing} examples pass all conditions")
+
+    print(f"    {examples_passing}/{examples_passing + examples_failing} "
+          f"examples pass all conditions")
     if examples_failing > 0:
         print(f"    ✗ {examples_failing} examples FAIL — investigate data mismatch")
         print(f"\n{'!'*80}")
@@ -1206,27 +1522,26 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         return None
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    desc_name = f"pyramid_{setup_type}_sig{final_total}_pk{final_peak}_{ts}"
+    mode_tag = "mp" if multi_pass else "sp"
+    desc_name = f"pyramid_{setup_type}_{mode_tag}_sig{final_total}_pk{final_peak}_{ts}"
 
     result = {
         "setup_type": setup_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "total_time_s": round(total_time, 1),
         "peak_target": peak_target,
+        "multi_pass": multi_pass,
         "n_conditions": len(all_conditions),
         "all_conditions": all_conditions,
         "tier_results": tier_results,
-        "d1_result": {
-            "pass_rate": d1_info.get("pass_rate"),
-            "n_passing": d1_info.get("n_passing"),
-            "passing_tickers": d1_info.get("passing_tickers", []),
-        },
+        "pass_summaries": pass_summaries,
         "params": {
             "beam_width": beam_width,
             "depth": depth,
             "d1_beam": d1_beam,
             "d1_depth": d1_depth,
             "peak_target": peak_target,
+            "multi_pass": multi_pass,
             "source": "pyramid_grinder",
         },
         "summary": {
@@ -1241,13 +1556,13 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 
     os.makedirs(CACHE_DIR, exist_ok=True)
 
-    # Timestamped file (never overwritten — can always go back)
+    # Timestamped file
     out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
 
-    # Always overwrite latest — timestamped copies preserve history
+    # Latest
     latest_path = os.path.join(CACHE_DIR, f"pyramid_results_{setup_type}.json")
     with open(latest_path, "w") as f:
         json.dump(result, f, indent=2)
@@ -1265,6 +1580,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         "n_phase1": len([c for c in all_conditions if c.get("tier") == "D1"]),
         "n_phase2": len([c for c in all_conditions if c.get("tier") != "D1"]),
         "source": "pyramid_grinder",
+        "multi_pass": multi_pass,
     }
     compat_path = os.path.join(CACHE_DIR, f"historical_results_{setup_type}.json")
     with open(compat_path, "w") as f:
@@ -1292,7 +1608,11 @@ def main():
                         help="Depth for D1 tier (default: same as --depth)")
     parser.add_argument("--runs", type=int, default=1,
                         help="Number of times to repeat the grinder (default: 1)")
+    parser.add_argument("--single-pass", action="store_true",
+                        help="Legacy single-pass mode (all 12K expressions in one pass)")
     args = parser.parse_args()
+
+    multi_pass = not args.single_pass
 
     n_runs = max(1, args.runs)
     results = []
@@ -1310,6 +1630,7 @@ def main():
             depth=args.depth,
             d1_depth=args.d1_depth,
             d1_beam=args.d1_beam,
+            multi_pass=multi_pass,
         )
         results.append(result)
 
