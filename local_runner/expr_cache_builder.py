@@ -527,7 +527,7 @@ def build_full(force=False):
     os.makedirs(EXPR_CACHE_DIR, exist_ok=True)
 
     # Parallel computation
-    n_workers = max(cpu_count() - 1, 1)
+    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", max(cpu_count() - 1, 1)))
     print(f"\n  Computing {len(work_items)} tickers × {len(expressions)} expressions")
     print(f"  Workers: {n_workers}")
 
@@ -551,6 +551,7 @@ def build_full(force=False):
                 future = pool.submit(_compute_ticker_full, item)
                 all_futures[future] = item[0]  # ticker name
 
+        first_errors = []
         for future in as_completed(all_futures):
             ticker = all_futures[future]
             try:
@@ -563,8 +564,12 @@ def build_full(force=False):
                     }
                 else:
                     failed += 1
+                    if len(first_errors) < 5:
+                        first_errors.append(f"{ticker}: returned None")
             except Exception as e:
                 failed += 1
+                if len(first_errors) < 5:
+                    first_errors.append(f"{ticker}: {type(e).__name__}: {str(e)[:200]}")
 
             completed += 1
             if completed % 100 == 0 or completed == len(work_items):
@@ -577,6 +582,11 @@ def build_full(force=False):
                       f"({len(ticker_info)} ok, {failed} failed)")
 
     total_time = time.time() - t0
+
+    if first_errors:
+        print(f"\n  First {len(first_errors)} errors:")
+        for err in first_errors:
+            print(f"    ✗ {err}")
 
     # Save manifest
     manifest = {
@@ -683,7 +693,7 @@ def append_new_bars():
         return manifest
 
     t0 = time.time()
-    n_workers = max(cpu_count() - 1, 1)
+    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", max(cpu_count() - 1, 1)))
     updated = 0
     failed = 0
 
