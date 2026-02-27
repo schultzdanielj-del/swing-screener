@@ -38,20 +38,25 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 
 ## The Fix — Ordered Task List
 
-### Task 0: Rewrite LSP Detector
-**Status: Accuracy validated (23/23), rewrite still needed for simplification.**
+### Task 0: Rewrite LSP Detector — ✅ COMPLETE (2026-02-27)
 
-The detector currently works (23/23) but is overcomplicated — 460 lines of prominence scoring, volume weighting, recency bonuses. The rewrite should:
+**Built:** `scripts/lsp_detector_v2.py` (1,004 lines) — full rewrite per EXPRESSION_ENGINE_V2.md Task A.
 
-1. Simplify to core logic: find all unbroken pivot highs AND pivot lows
-2. Return ALL unbroken pivots — don't pick "the" LSP, let the grinder discover which pivots matter via expressions
-3. "Unbroken pivot high" = pivot high where no subsequent bar's high exceeded it before the signal bar
-4. "Unbroken pivot low" = pivot low where no subsequent bar's low went below it before the signal bar
-5. Multi-window detection (5, 10, 15, 20, 30, 40)
+**What changed from v1:**
+- Accepts DataFrames only (no API calls) — designed for cache builder integration
+- Detects BOTH pivot highs AND lows (v1 was highs only)
+- Multi-timeframe: daily + weekly + monthly pivots detected and merged
+- Returns ALL pivots clustered into proximity-ordered levels (not opinionated about "the" LSP)
+- Precomputed cumulative break arrays for O(1) break count at any bar
+- Produces 80 expression series via `compute_all_lsp_series()`:
+  - 70 level metrics (7 metrics × 5 ranks × 2 directions above/below)
+  - 10 contextual AVWAP distances (1 × 5 ranks × 2 directions)
+- Performance: ~0.5s/ticker (1,260 bars), ~4 min for full universe on 8 cores
+- Old `lsp_detector.py` preserved (still used by validation scripts)
 
-**Key insight from this session:** The detector should NOT be opinionated about which pivot is "the" LSP. It returns all unbroken pivots. LSP expressions in the grinder discover the relationships automatically. This makes it truly setup-agnostic.
+**Still needs:** Validation against real 5yr cache on Dan's machine (tested with synthetic data in sandbox). Run `python scripts/lsp_detector_v2.py validate` with the real cache.
 
-**Validate:** Must still hit 23/23 on labeled examples (highest unbroken pivot high should match for DTSS).
+**Next:** Tasks B+C from EXPRESSION_ENGINE_V2.md (register expressions in brute_expressions.py + HTF resampling in cache builder).
 
 ### Task 1: Integrate LSP into Signal Grinder
 **What:** The pyramid grinder must use LSP data when grinding DTSS.
@@ -106,14 +111,18 @@ The detector currently works (23/23) but is overcomplicated — 460 lines of pro
 | File | Status | Purpose |
 |------|--------|---------|
 | `data/dtss_lsp_data.json` | ✅ Corrected (23 examples, AAOI relabeled, BRKB renamed) | Hand-labeled LSP dates + prices |
-| `scripts/lsp_detector.py` | ✅ 23/23 accuracy, needs simplification rewrite | Algorithmic LSP detection |
+| `scripts/lsp_detector.py` | ✅ 23/23 accuracy, superseded by v2 | Old algorithmic LSP detection (API-based) |
+| `scripts/lsp_detector_v2.py` | ✅ NEW (2026-02-27) — needs real-data validation | V2: DataFrame-based, multi-TF, 80 expressions, cache-builder ready |
 | `scripts/expression_engine.py` | ✅ Has LSP ops, unused | 8 LSP expressions + `set_lsp_context()` |
 | `scripts/backtest_conditions.py` | ✅ 88 ops, parity | Shared computation path |
 | `server.py` | ✅ New `/api/universe/insert-ohlcv` endpoint added | Railway FastAPI backend |
-| `local_runner/pyramid_grinder.py` | ❌ No LSP | Needs LSP injection |
+| `local_runner/pyramid_grinder.py` | ❌ No LSP | Needs LSP injection (after cache integration) |
 | `local_runner/matrix_builder.py` | ❌ No LSP | Needs LSP-aware example matrix |
+| `local_runner/brute_expressions.py` | ❌ No LSP expressions | Needs 80 LSP expressions registered (Task B) |
+| `local_runner/expr_cache_builder.py` | ❌ No LSP/HTF | Needs LSP + HTF integration (Task E) |
 | `scripts/exit_grinder.py` | ⚠️ Parity fixed, needs re-run | Formation period validation missing |
 | `scripts/outcome_grinder.py` | ⚠️ Parity fixed, needs re-run | Needs corrected exit conditions |
+| `EXPRESSION_ENGINE_V2.md` | ✅ Updated — Task A complete, B-G pending | V2 build plan + next steps |
 
 ---
 

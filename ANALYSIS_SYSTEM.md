@@ -196,7 +196,7 @@ The grinder uses one universal expression set for all setups. No setup-specific 
 
 - **Generic set** (`brute_expressions.json`) — 4,017 expressions across 29 categories: near_resistance (203), near_support (133), extension (98), extension_dynamics (91), extension_ceiling (40), extension_adr (6), MA slope (240), MA spread (46), spread_slope (64), slope_ratio (18), MA cross (72), MA stack (7), momentum (138), range (59), range_dynamics (13), retracement (26), swing_structure (48), gap (21), consecutive (4), candle_pattern (39), volume_character (49), volume_continuous (36), bollinger (25), macd (28), aroon (18), efficiency (9), vwap (36), percentile_rank (37), boolean (2,413 from 127 conditions × 19 aggregations each). Used by all setups and the universe matrix.
 
-**Note:** `expression_engine.py` still has LSP compute ops (`lsp_distance`, `lsp_bounce_recovery`, etc.) and `set_lsp_context()`. These are dormant — nothing calls them. They can be repurposed later if universal pivot detection is added to the expression library.
+**Note:** `expression_engine.py` still has old LSP compute ops (`lsp_distance`, `lsp_bounce_recovery`, etc.) and `set_lsp_context()`. These are dormant — nothing calls them. They are superseded by `scripts/lsp_detector_v2.py` which produces 80 LSP expressions as precomputed series in the expression cache. See `EXPRESSION_ENGINE_V2.md` for the integration plan (Tasks B-G remaining).
 
 ### Expression generation constraints
 - Every expression must be valid TC2000 PCF
