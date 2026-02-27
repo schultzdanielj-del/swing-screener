@@ -523,6 +523,10 @@ def build_full(force=False):
         }
         work_items.append((ticker, df_dict))
 
+    # Free the large caches — work_items has everything we need now
+    del universe_cache, valid_tickers
+    import gc; gc.collect()
+
     # Create output directory
     os.makedirs(EXPR_CACHE_DIR, exist_ok=True)
 
@@ -541,19 +545,29 @@ def build_full(force=False):
         initializer=_init_worker,
         initargs=(expressions,)
     ) as pool:
-        # Submit in chunks to manage memory — don't queue everything at once
-        chunk_size = n_workers * 4
-        all_futures = {}
-
-        for i in range(0, len(work_items), chunk_size):
-            chunk = work_items[i:i + chunk_size]
-            for item in chunk:
-                future = pool.submit(_compute_ticker_full, item)
-                all_futures[future] = item[0]  # ticker name
-
+        # TRUE chunked submission: only n_workers*2 items in flight at a time.
+        # Each result is saved to disk and discarded immediately to minimize memory.
+        # This prevents OOM from queued futures holding large numpy arrays.
+        max_in_flight = n_workers * 2
+        pending = {}
+        work_idx = 0
         first_errors = []
-        for future in as_completed(all_futures):
-            ticker = all_futures[future]
+
+        def _submit_next():
+            """Submit one work item if available."""
+            nonlocal work_idx
+            if work_idx < len(work_items):
+                item = work_items[work_idx]
+                future = pool.submit(_compute_ticker_full, item)
+                pending[future] = item[0]  # ticker name
+                work_idx += 1
+                return True
+            return False
+
+        def _collect_one(future):
+            """Collect one result, save to disk, free memory."""
+            nonlocal completed, failed
+            ticker = pending.pop(future)
             try:
                 ticker_out, dates, data = future.result()
                 if dates is not None and data is not None:
@@ -570,7 +584,7 @@ def build_full(force=False):
                 failed += 1
                 if len(first_errors) < 5:
                     first_errors.append(f"{ticker}: {type(e).__name__}: {str(e)[:200]}")
-
+            del future  # free the result memory immediately
             completed += 1
             if completed % 100 == 0 or completed == len(work_items):
                 elapsed = time.time() - t0
@@ -580,6 +594,19 @@ def build_full(force=False):
                 print(f"    {completed:,}/{len(work_items):,} ({pct:.0f}%) "
                       f"[{elapsed:.0f}s elapsed, ~{eta:.0f}s left] "
                       f"({len(ticker_info)} ok, {failed} failed)")
+
+        # Seed the initial batch
+        for _ in range(min(max_in_flight, len(work_items))):
+            _submit_next()
+
+        # Process as completed, immediately submit replacements
+        while pending:
+            # Wait for ANY one future to complete
+            done_iter = as_completed(pending)
+            future = next(done_iter)
+            _collect_one(future)
+            # Submit replacement to keep pipeline full
+            _submit_next()
 
     total_time = time.time() - t0
 
