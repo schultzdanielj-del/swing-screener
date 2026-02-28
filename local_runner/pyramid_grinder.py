@@ -3,7 +3,7 @@ Pyramidal Grinder — Nested time-horizon expression discovery.
 
 MULTI-PASS MODE (default):
   Runs 3 sequential passes to prevent HTF expressions from crowding out daily:
-    Pass 1 (Daily+LSP): Full pyramid (D1→5yr) with 4,097 daily+LSP expressions
+    Pass 1 (Daily+LSP+Algo): Full pyramid (D1→5yr) with 4,141 daily+LSP+algo expressions
     Pass 2 (Weekly):     1mo→5yr tiers with 4,017 weekly expressions on top
     Pass 3 (Monthly):    6mo→5yr tiers with 4,017 monthly expressions on top
   Daily gets first crack at every horizon. Weekly/monthly only add value
@@ -901,7 +901,7 @@ def _filter_expressions_by_timeframe(expressions, timeframe):
 
     Args:
         expressions: full expression list from generate_all()
-        timeframe: 'daily' (daily + LSP), 'weekly' (htf_weekly), 'monthly' (htf_monthly)
+        timeframe: 'daily' (daily + LSP + algo), 'weekly' (htf_weekly), 'monthly' (htf_monthly)
 
     Returns:
         filtered list of expression dicts
@@ -920,7 +920,7 @@ def _filter_expressions_by_timeframe(expressions, timeframe):
 # (pass_name, timeframe, tiers_to_run)
 # tiers_to_run = list of (tier_name, n_bars) from TIERS to use in this pass
 MULTI_PASS_DEFS = [
-    ("Pass 1 (Daily+LSP)", "daily", [
+    ("Pass 1 (Daily+LSP+Algo)", "daily", [
         ("D1",   1),
         ("1wk",  5),
         ("1mo",  21),
@@ -1134,7 +1134,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         daily_exprs = _filter_expressions_by_timeframe(all_expressions, "daily")
         weekly_exprs = _filter_expressions_by_timeframe(all_expressions, "weekly")
         monthly_exprs = _filter_expressions_by_timeframe(all_expressions, "monthly")
-        print(f"    Daily+LSP: {len(daily_exprs)}  Weekly: {len(weekly_exprs)}  "
+        print(f"    Daily+LSP+Algo: {len(daily_exprs)}  Weekly: {len(weekly_exprs)}  "
               f"Monthly: {len(monthly_exprs)}")
 
     # ── Detect expression series cache ──
