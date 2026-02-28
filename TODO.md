@@ -74,28 +74,27 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 - Spiderweb 70% example threshold fixed → 100% (was allowing conditions examples couldn't pass)
 - Examples not in expr cache filtered out before any computation
 
-### Task 3: Re-grind DTSS with Expanded Library — IN PROGRESS
+### Task 3: Multi-Pass Pyramid Grinder — ✅ COMPLETE (2026-02-27)
 
-**Grind results (12,131 expressions, 20 examples after filtering):**
-- beam=500, depth=15, peak-target=6: **29 conditions, peak 7/day, 1,192 signals/5yr.** Ceiling at 5yr.
-- beam=10000, depth=100, peak-target=6: **27 conditions, peak 6/day, 1,241 signals/5yr.** Hit target but terrible total.
+**Result: 339 signals, peak 3/day, 41 conditions, 20/20 examples pass. 12.4 min runtime.**
+- Saved: `pyramid_dtss_mp_sig339_pk3_20260227_165931.json`
+- Previous best (daily-only single-pass): 576 signals, peak 4/day, 41 conditions.
+- **41% fewer signals, lower peak.** Weekly added 2 conditions at 5yr where daily hit ceiling at peak 5.
 
-**Best-ever run (4,017 daily-only expressions, pre-V2):**
-- beam=10000, depth=100, peak-target=3: **41 conditions, peak 4/day, 576 signals/5yr, avg 1.4/day.**
-- Saved: `pyramid_dtss_sig576_pk4_20260226_104240.json`
+**What was built:**
+- `pyramid_grinder.py` multi-pass mode (default): 3 sequential passes
+  - Pass 1 (Daily+LSP, 4,097 exprs): D1→5yr, locked 39 conditions
+  - Pass 2 (Weekly, 4,017 exprs): 1mo→5yr, added 2 conditions at 5yr tier
+  - Pass 3 (Monthly, 4,017 exprs): 6mo→5yr, added 0 (already at target)
+- `--single-pass` flag for legacy mode (all 12K expressions in one pass)
+- All fallback computation paths removed — expr cache REQUIRED
+- D1 tier filters full 12K matrix to pass-specific columns
 
-**Root cause:** HTF expressions (w_/m_) crowd out daily heavyweights at D1. The old best locked 12 daily conditions at D1 (ext_ceil, undercut, swing_low_count — proven historical performers). New runs lock only 4-5 daily + 3-4 HTF at D1. HTF looks good on today's bar but doesn't carve historically.
+**Key insight confirmed:** HTF expressions crowd out daily at D1. Multi-pass ensures daily gets first crack at every horizon. Weekly/monthly only contribute where daily hit a ceiling.
 
-**Solution: Multi-Pass Pyramid (to be built)**
-Instead of mixing all 12,131 expressions in one pass, run three sequential passes:
-
-- **Pass 1 (Daily):** Run full pyramid (D1→5yr) with daily-only expressions (4,017). Lock all conditions. This should reproduce the ~576 result baseline.
-- **Pass 2 (Weekly):** Take Pass 1's locked conditions. Run 1mo→5yr tiers with weekly-only expressions (4,017) on top. Lock anything that helps.
-- **Pass 3 (Monthly):** Take all locked conditions. Run 6mo→5yr tiers with monthly-only expressions (4,017) on top. Lock anything that helps.
-
-Daily gets first crack at every horizon. Weekly/monthly only add value where daily couldn't finish the job. Worst case: passes 2-3 add zero conditions and you keep the 576 baseline.
-
-**Implementation:** Modify `pyramid_grinder.py` to accept `--pass` flag or restructure `run_pyramid()` to do all 3 passes internally. Each pass filters the expression library to its timeframe subset before searching.
+### Task 3.5: Algo Line Expressions — TODO
+**What:** Add algo line detection + expressions to the expression engine, same pattern as LSP/AVWAP integration. See `ta_knowledge.md` for algo line concepts.
+**Scope:** Detector → precomputed expressions → expr cache integration → grinder picks them up automatically.
 
 ### Task 4: Re-run Exit Grinder with Formation Period Validation
 **What:** Exit conditions must NOT fire before the entry date.
