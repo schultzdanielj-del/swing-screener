@@ -56,14 +56,14 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 
 **Still needs:** Validation against real 5yr cache on Dan's machine (tested with synthetic data in sandbox). Run `python scripts/lsp_detector_v2.py validate` with the real cache.
 
-**Next:** Task F from EXPRESSION_ENGINE_V2.md (matrix builder verification with 12,131 expressions), then full cache rebuild on Dan's machine.
+**Next:** Task F from EXPRESSION_ENGINE_V2.md (matrix builder verification with 12,175 expressions), then full cache rebuild on Dan's machine.
 
 ### Task 1: Expression Engine V2 — ✅ COMPLETE (2026-02-27)
 **Built per EXPRESSION_ENGINE_V2.md.** Replaced Tasks 1-3 with a generic approach:
 - `lsp_detector_v2.py`: Detects ALL pivot levels, generates 80 precomputed LSP expressions per ticker
-- `brute_expressions.py`: Expanded from 4,017 → 12,131 expressions (daily + LSP + weekly + monthly)
-- `expr_cache_builder.py`: Updated to compute all 12,131 expressions per ticker (HTF resampling, LSP detection)
-- Full cache built: 4,119 tickers × 12,131 expressions = 49.8 GB on disk
+- `brute_expressions.py`: Expanded from 4,017 → 12,175 expressions (daily + LSP + algo + weekly + monthly)
+- `expr_cache_builder.py`: Updated to compute all 12,175 expressions per ticker (HTF resampling, LSP detection, algo line detection)
+- Full cache built: 4,119 tickers × 12,175 expressions = ~50 GB on disk
 - See EXPRESSION_ENGINE_V2.md for full task breakdown (Tasks A-G all complete)
 
 ### Task 2: Matrix Builder + Grinder Integration — ✅ COMPLETE (2026-02-27)
@@ -83,7 +83,7 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 
 **What was built:**
 - `pyramid_grinder.py` multi-pass mode (default): 3 sequential passes
-  - Pass 1 (Daily+LSP, 4,097 exprs): D1→5yr, locked 39 conditions
+  - Pass 1 (Daily+LSP+Algo, 4,141 exprs): D1→5yr, locked 39 conditions
   - Pass 2 (Weekly, 4,017 exprs): 1mo→5yr, added 2 conditions at 5yr tier
   - Pass 3 (Monthly, 4,017 exprs): 6mo→5yr, added 0 (already at target)
 - `--single-pass` flag for legacy mode (all 12K expressions in one pass)
@@ -150,7 +150,7 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 | `server.py` | ✅ New `/api/universe/insert-ohlcv` endpoint added | Railway FastAPI backend |
 | `local_runner/pyramid_grinder.py` | ❌ No LSP | Needs LSP injection (after cache integration) |
 | `local_runner/matrix_builder.py` | ❌ No LSP | Needs LSP-aware example matrix |
-| `local_runner/brute_expressions.py` | ✅ 12,131 expressions (4,017 daily + 80 LSP + 8,034 HTF) | Expression library with HTF auto-generation |
+| `local_runner/brute_expressions.py` | ✅ 12,175 expressions (4,017 daily + 80 LSP + 44 algo + 8,034 HTF) | Expression library with HTF + algo auto-generation |
 | `local_runner/expr_cache_builder.py` | ✅ Updated for LSP + HTF (2026-02-27) | 3-phase worker: daily + LSP + HTF computation |
 | `scripts/exit_grinder.py` | ⚠️ Parity fixed, needs re-run | Formation period validation missing |
 | `scripts/outcome_grinder.py` | ⚠️ Parity fixed, needs re-run | Needs corrected exit conditions |

@@ -88,7 +88,7 @@ Needs validation on Dan's machine against real 5yr cache (synthetic data tested 
 - ✅ No API/network calls — pure DataFrame/numpy
 - ✅ Precomputed in cache builder — grinders never compute live
 - ✅ ProcessPoolExecutor compatible — stateless function, no shared state
-- ✅ Output is flat expression columns — grinders see them identically to existing 4,017
+- ✅ Output is flat expression columns — grinders see them identically to existing 4,017 daily
 - ✅ 100% example pass rule — enforced by existing range computation (NaN auto-excluded)
 
 ### Task B: LSP Expressions in Expression Engine — ✅ COMPLETE (2026-02-27)
@@ -99,7 +99,7 @@ Needs validation on Dan's machine against real 5yr cache (synthetic data tested 
 - Registered all 80 LSP expressions with `category: "lsp"` and `compute: {"op": "precomputed", "source": "lsp", "column": "<name>"}`
 - The `op: "precomputed"` marker tells the cache builder (Task E) to grab these from the LSP precompute dict rather than running through `compute_series()`
 - Updated compute estimate to separate precomputed expressions from arithmetic/boolean
-- Total expression count: 4,017 → 4,097 (+80 LSP)
+- Total expression count: 4,017 → 4,097 (+80 LSP) → 4,141 (+44 algo lines)
 - Names 100% match `get_lsp_expression_names()` — verified programmatically
 
 **Compute spec pattern:**
@@ -121,7 +121,7 @@ The cache builder worker (Task E) will:
    - After generating all 4,017 daily expressions (arithmetic + boolean), generates `w_` and `m_` copies of every one
    - Each HTF expression has `op: "precomputed", source: "htf", timeframe: "w"/"m"`, plus `base_compute` carrying the original daily compute spec
    - Total: 4,017 weekly + 4,017 monthly = 8,034 new HTF expressions
-   - Grand total: 12,131 expressions (4,017 daily + 80 LSP + 4,017 weekly + 4,017 monthly)
+   - Grand total: 12,175 expressions (4,017 daily + 80 LSP + 44 algo + 4,017 weekly + 4,017 monthly)
 
 2. **HTF helpers in `expr_cache_builder.py`:**
    ```python
@@ -138,21 +138,23 @@ The cache builder worker (Task E) will:
    ```
 
 3. **Updated `_init_worker()`:**
-   - Pre-classifies all 12,131 expressions into 4 buckets at startup (once per worker process):
+   - Pre-classifies all 12,175 expressions into 5 buckets at startup (once per worker process):
      - `_w_daily_indices` (4,017) — computed via `compute_series()` on daily engine
      - `_w_lsp_indices` (80) — computed via `compute_all_lsp_series()`
+     - `_w_algo_indices` (44) — computed via `compute_all_algo_series()` (daily-only)
      - `_w_htf_weekly_indices` (4,017) + `_w_htf_weekly_base` — computed on weekly engine
      - `_w_htf_monthly_indices` (4,017) + `_w_htf_monthly_base` — computed on monthly engine
 
-4. **Updated `_compute_ticker_full()` — 3-phase computation:**
+4. **Updated `_compute_ticker_full()` — 4-phase computation:**
    - Phase 1: Daily expressions via `compute_series(engine, spec)` (same as before)
    - Phase 2: LSP expressions via `compute_all_lsp_series(df)` → dict lookup
+   - Phase 2b: Algo line expressions via `compute_all_algo_series(df)` → dict lookup (daily-only)
    - Phase 3: For each HTF timeframe: resample → build mapping → create HTF engine → run `compute_series()` with `base_compute` spec → map back to daily
 
 5. **Updated `_append_ticker()`:** Same 3-phase structure for nightly appends.
 
 **Test results (synthetic 1,260-bar ticker):**
-- Output shape: (1,260, 12,131) ✅
+- Output shape: (1,260, 12,175) ✅
 - Time per ticker: ~8.5s (vs ~3-4s previously)
 - Daily NaN: 3.9%, Weekly NaN: 12.5%, Monthly NaN: 37.5% (warmup expected)
 
@@ -165,7 +167,7 @@ The cache builder worker (Task E) will:
 - ✅ Precomputed in cache builder — grinders never see HTF computation
 - ✅ ProcessPoolExecutor compatible — all state in worker globals, initialized once
 - ✅ Step function mapping verified — daily bars within same week/month get identical values
-- ✅ Grinders unchanged — they see 12,131 flat columns, search works identically
+- ✅ Grinders unchanged — they see 12,175 flat columns, search works identically
 
 ### Task D: Contextual AVWAP Computation
 **What:** Precompute pivot-anchored contextual AVWAP series per level.
@@ -192,7 +194,7 @@ See Task C implementation details above.
 ### Task F: Matrix Builder Update — ✅ COMPLETE (2026-02-27)
 **Files modified:** `local_runner/matrix_builder.py`, `local_runner/pyramid_grinder.py`
 
-**Problem solved:** The matrix builder and example range computation were computing expressions **live** via `ExpressionEngine.compute()` and `compute_series()`. These functions don't know about `op: "precomputed"` expressions (LSP, weekly, monthly), causing 8,114 of 12,131 expressions to silently return NaN. The pyramid grinder's validation also used live computation, creating an inconsistent path.
+**Problem solved:** The matrix builder and example range computation were computing expressions **live** via `ExpressionEngine.compute()` and `compute_series()`. These functions don't know about `op: "precomputed"` expressions (LSP, algo, weekly, monthly), causing 8,158 of 12,175 expressions to silently return NaN. The pyramid grinder's validation also used live computation, creating an inconsistent path.
 
 **What was done:**
 
@@ -205,7 +207,7 @@ See Task C implementation details above.
 2. **`pyramid_grinder.py` — rewritten `compute_example_ranges()`:**
    - Now accepts `expr_cache` parameter
    - When cache available: loads scan_idx row from each example's cached .npz file
-   - All 12,131 expressions get valid values, so all can participate as grinder candidates
+   - All 12,175 expressions get valid values, so all can participate as grinder candidates
    - Falls back to `compute_series()` if no cache
 
 3. **`pyramid_grinder.py` — rewritten `validate_examples()`:**
@@ -238,7 +240,7 @@ HTF expression names are auto-generated programmatically in `brute_expressions.p
 
 | Component | Previous | After V2 (Measured) |
 |-----------|----------|---------------------|
-| Expression count | 4,017 daily | 12,131 (4,017 daily + 80 LSP + 4,017 weekly + 4,017 monthly) |
+| Expression count | 4,017 daily | 12,175 (4,017 daily + 80 LSP + 44 algo + 4,017 weekly + 4,017 monthly) |
 | Cache size (disk) | ~21 GB | ~255 GB (61 MB/ticker × 4,167 tickers, float32) |
 | Full cache build | ~40 min | ~84 min estimated (8.5s/ticker × 4,167 tickers ÷ 7 cores) |
 | Nightly append | ~5-8 min | ~15-20 min (same ratio increase) |
@@ -282,7 +284,7 @@ Re-grind DTSS with expanded library
 **Full cache rebuild:** Must be done on Dan's machine (requires 5yr OHLCV cache + ~255 GB disk). Run `python local_runner/expr_cache_builder.py --build --force`.
 
 **Validation:** After rebuild:
-1. Check manifest: 12,131 expressions, all names present
+1. Check manifest: 12,175 expressions, all names present
 2. Spot-check a few tickers: weekly RSI values should match manual calculation
 3. Run matrix builder — verify it loads the expanded cache (~30s)
 4. Re-grind DTSS — compare results with vs without HTF/LSP expressions

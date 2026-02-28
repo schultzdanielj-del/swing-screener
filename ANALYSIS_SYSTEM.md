@@ -68,7 +68,7 @@ This gives a general starting point to understand what the setup looks like nume
 ### Phase 1: Spiderweb Search (single-day ceiling)
 
 The grinder precomputes two matrices:
-1. **Universe matrix** — every tradable ticker (~4,017 after ETF exclusions) × every expression (4,017), evaluated at the most recent bar. Shared across all setups. Auto-rebuilds nightly at 4:30pm ET. Parallelized across 8 CPU cores (~2.8 min on i5-12600K).
+1. **Universe matrix** — every tradable ticker (~4,167 after filtering) × every expression (4,141 daily+LSP+algo), evaluated at the most recent bar. Shared across all setups. Auto-rebuilds nightly at 4:30pm ET. Parallelized across 8 CPU cores (~2.8 min on i5-12600K).
 2. **Example matrix** — every setup example × every expression, evaluated at the scan candle (day before entry). Per-setup, fast (~5s per example).
 
 The spiderweb search then explores branching combinations of conditions:
@@ -112,7 +112,7 @@ python local_runner/pyramid_grinder.py --setup dtss --peak-target 3 --beam 10000
 5. **1 year:** Matrix from ~252 trading days. Same. Lock.
 6. **5 years:** Matrix from all trading days. Same. Lock.
 
-**Why this is fast:** Expression series cache pre-computes all 4,017 expressions for all 4,119 tickers × 5yr on disk (~21 GB). Tier matrix builds load pre-computed arrays instead of calling compute_series() thousands of times. Matmul pre-screening (beam × rows @ rows × candidates) estimates joint signal counts without materializing all combinations — only top candidates get exact peak scoring. OpenBLAS with MAX_THREADS=24 parallelizes matmul across all cores.
+**Why this is fast:** Expression series cache pre-computes all 12,175 expressions for all 4,119 tickers × 5yr on disk (~50 GB). Tier matrix builds load pre-computed arrays instead of calling compute_series() thousands of times. Matmul pre-screening (beam × rows @ rows × candidates) estimates joint signal counts without materializing all combinations — only top candidates get exact peak scoring. OpenBLAS with MAX_THREADS=24 parallelizes matmul across all cores.
 
 **Why peak-based:** Average 7.4/day sounds fine but hides days with 260 signals. Peak-based guarantee means no single day overwhelms manual review.
 
@@ -179,8 +179,8 @@ The grinder finds the ceiling of mechanical, single-threshold conditions. It can
 - `local_runner/agent.py` — Desktop polling agent with nightly auto-rebuild (triggers at 4:30pm ET)
 - `local_runner/nightly.py` — **✅ BUILT:** Single command nightly update pipeline. Chains: Railway append-daily → daily cache → 5yr cache → expression cache append → matrix rebuild. Stops early if DB is already current. Run manually or auto-triggered by agent.
 - `local_runner/cache_builder.py` — OHLCV caches: daily (300 bars, 57 MB) + 5yr (1,260 bars, 214 MB)
-- `local_runner/expr_cache_builder.py` — **✅ BUILT:** Pre-cached expression series for all tickers × 5yr. 4,119 tickers × 4,017 expressions, ~21 GB compressed .npz per ticker. `--build` (first-time, ~37.5 min), `--append` (nightly, ~5-8 min), `--status`. Manifest tracks expression fingerprint for auto-invalidation.
-- `local_runner/brute_expressions.py` — Expression generator: 4,017 generic expressions (same for all setups)
+- `local_runner/expr_cache_builder.py` — **✅ BUILT:** Pre-cached expression series for all tickers × 5yr. 4,119 tickers × 12,175 expressions (4,017 daily + 80 LSP + 44 algo + 4,017 weekly + 4,017 monthly), ~50 GB compressed .npz per ticker. `--build` (first-time, ~37.5 min), `--append` (nightly, ~5-8 min), `--status`. Manifest tracks expression fingerprint for auto-invalidation.
+- `local_runner/brute_expressions.py` — Expression generator: 12,175 expressions (4,017 daily + 80 LSP + 44 algo + 4,017 weekly + 4,017 monthly)
 - `scripts/expression_engine.py` — Computes expressions against OHLCV
 - `scripts/backtest_conditions.py` — Series computation for historical scoring. **88 ops** — full parity with expression_engine.py (excluding 8 LSP ops that require injected context). All generic expressions are available to all pyramid tiers.
 - `scripts/signal_distribution.py` — Parallel signal analyzer: runs all conditions across 5yr cache, outputs daily signal counts + per-signal CSV. Used to verify peak/avg before advancing.
@@ -194,9 +194,9 @@ The grinder finds the ceiling of mechanical, single-threshold conditions. It can
 
 The grinder uses one universal expression set for all setups. No setup-specific expressions — the pyramid grinder finds setup-specific discrimination by grinding the generic library against 5yr history.
 
-- **Generic set** (`brute_expressions.json`) — 4,017 expressions across 29 categories: near_resistance (203), near_support (133), extension (98), extension_dynamics (91), extension_ceiling (40), extension_adr (6), MA slope (240), MA spread (46), spread_slope (64), slope_ratio (18), MA cross (72), MA stack (7), momentum (138), range (59), range_dynamics (13), retracement (26), swing_structure (48), gap (21), consecutive (4), candle_pattern (39), volume_character (49), volume_continuous (36), bollinger (25), macd (28), aroon (18), efficiency (9), vwap (36), percentile_rank (37), boolean (2,413 from 127 conditions × 19 aggregations each). Used by all setups and the universe matrix.
+- **Generic set** (`brute_expressions.json`) — 4,017 daily expressions across 29 categories: near_resistance (203), near_support (133), extension (98), extension_dynamics (91), extension_ceiling (40), extension_adr (6), MA slope (240), MA spread (46), spread_slope (64), slope_ratio (18), MA cross (72), MA stack (7), momentum (138), range (59), range_dynamics (13), retracement (26), swing_structure (48), gap (21), consecutive (4), candle_pattern (39), volume_character (49), volume_continuous (36), bollinger (25), macd (28), aroon (18), efficiency (9), vwap (36), percentile_rank (37), boolean (2,413 from 127 conditions × 19 aggregations each). Plus 80 LSP level expressions (precomputed by lsp_detector_v2), 44 algo line expressions (precomputed by algo_line_detector, daily-only), and 8,034 HTF copies (4,017 weekly + 4,017 monthly). Total: 12,175. Used by all setups and the universe matrix.
 
-**Note:** `expression_engine.py` still has old LSP compute ops (`lsp_distance`, `lsp_bounce_recovery`, etc.) and `set_lsp_context()`. These are dormant — nothing calls them. They are superseded by `scripts/lsp_detector_v2.py` which produces 80 LSP expressions as precomputed series in the expression cache. See `EXPRESSION_ENGINE_V2.md` for the integration plan (Tasks B-G remaining).
+**Note:** `expression_engine.py` still has old LSP compute ops (`lsp_distance`, `lsp_bounce_recovery`, etc.) and `set_lsp_context()`. These are dormant — nothing calls them. They are superseded by `scripts/lsp_detector_v2.py` which produces 80 LSP expressions as precomputed series in the expression cache, and `scripts/algo_line_detector.py` which produces 44 algo line expressions (daily-only). See `EXPRESSION_ENGINE_V2.md` for the integration plan (Tasks B-G remaining).
 
 ### Expression generation constraints
 - Every expression must be valid TC2000 PCF
@@ -415,7 +415,7 @@ Phase 0, Phase 1, and Phase 2 are built as separate blocks/scripts first, then c
 
 - **Universe:** All Step 3 signals (the full signal set)
 - **Examples:** OUTCOME signals from Step 7
-- **Expressions:** The existing 4,017 pre-signal expression library (same as Step 3)
+- **Expressions:** The existing 12,175 pre-signal expression library (same as Step 3)
 - **Method:** Standard pyramid grinder. Outcome signals as examples, all signals as universe. Find any conditions that predict winners *before the move even starts*.
 
 ### Why This Can Find Things Step 3 Missed

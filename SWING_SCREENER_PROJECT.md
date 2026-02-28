@@ -34,8 +34,8 @@ Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds t
 
 ### What's built and working:
 - **Pyramid grinder** — 6-tier nested search (D1 → 1wk → 1mo → 6mo → 1yr → 5yr), peak-based scoring, beam=10000 exhaustive search
-- **Expression library** — 4,017 expressions across 29 categories, 127 boolean conditions, 88 compute ops
-- **Expression series cache** — 4,119 tickers × 4,017 expressions pre-cached (~21 GB), 14x grinder speedup
+- **Expression library** — 12,175 expressions: 4,017 daily across 29 categories, 80 LSP levels, 44 algo lines, 8,034 HTF (weekly + monthly)
+- **Expression series cache** — 4,119 tickers × 12,175 expressions pre-cached (~50 GB), 14x grinder speedup
 - **Nightly pipeline** — auto-triggers 4:30pm ET: Railway append → daily cache → 5yr cache → expr cache → matrix rebuild
 - **Backtest runner** — scans 5yr history, generates charts per signal, auto-uploads to Railway
 - **ScanPerfect web app** — Railway-deployed frontend with gallery, historical signal visualization, SPY bubble overlay
@@ -63,7 +63,7 @@ local_runner/          # Desktop grinder system (runs on Dan's machine)
 ├── pyramid_grinder.py # The grinder: 6-tier peak-based beam search
 ├── spiderweb.py       # Phase 1 beam search (used by D1 tier)
 ├── matrix_builder.py  # Universe + example matrix precomputation
-├── brute_expressions.py  # 4,017 expression generator
+├── brute_expressions.py  # 12,175 expression generator (daily + LSP + algo + HTF)
 ├── cache_builder.py   # OHLCV caches (daily + 5yr)
 ├── expr_cache_builder.py # Expression series cache (~21 GB)
 └── cache/             # Local caches (matrices, OHLCV, expr series)
