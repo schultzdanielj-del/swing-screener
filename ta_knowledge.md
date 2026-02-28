@@ -88,13 +88,67 @@
 ## Key D1 Levels — Algo Lines & LSP/MOC Lines
 
 ### Algo Lines
-- **Levels:** Highs and lows of D1 candles with volume solidly above the 50-period moving average of volume = significant support/resistance
-- **Trendlines:** Drawn connecting highs or lows of high-volume D1 candles specifically. These are meaningful vs arbitrary trendlines drawn from any wick.
-- **Penny precision:** When you understand which candles have real volume, you can draw trendlines to the penny. Most traders draw sloppy general trendlines overlapping random wicks — "like doing a portrait with crayons." Volume tells you which points actually matter for the connection.
-- **Breakout rule:** For breakout trades, the most shallow possible algo line that's still downsloping should be broken. This is the minimum resistance structure that needs to be cleared for the move to be valid.
-- **Best setups:** The shallowest downsloping algo line and the breakout AVWAP converge at the same price on the same day. Multiple resistance layers clearing simultaneously = maximum breakout conviction.
-- **Touch points:** More touches on an algo line = stronger. Must always originate from a high-volume D1 candle. Additional touches from subsequent high-volume candles add significance.
-- **Breaks against direction:** Breaking an algo line in the opposite direction to its slope is a big deal — upsloping line broken to the downside or downsloping line broken to the upside = significant structural change.
+
+#### Types
+- **H- (High-Minus):** Downsloping trendlines drawn from highs of high-volume D1 candles. Represent declining resistance.
+- **L+ (Low-Plus):** Upsloping trendlines drawn from lows of high-volume D1 candles. Represent rising support.
+
+#### Origination Rule
+- H- lines originate from the **high** of a D1 candle whose volume is **above the 50-period moving average of D1 volume**.
+- L+ lines originate from the **low** of a D1 candle whose volume is **above the 50-period moving average of D1 volume**.
+- The origination candle is the first anchor point of the trendline.
+
+#### Direction Constraint
+- H- lines must always be **downsloping or flat** from left to right (origin high ≥ subsequent touch highs when projected).
+- L+ lines must always be **upsloping or flat** from left to right (origin low ≤ subsequent touch lows when projected).
+
+#### Touch Points
+- A touch point is where a subsequent D1 candle's **high** (for H-) or **low** (for L+) comes within snap tolerance (~0.3% of price) of the projected trendline value at that bar.
+- Touch points do **NOT** require high volume to qualify. Any candle whose wick reaches the line counts.
+- However, touch points that **are** on high-volume candles (volume > 50-period MA) carry extra significance. More high-volume touches = stronger line.
+- **Minimum 2 touch points** (origin + 1 additional touch) to qualify as a valid algo line.
+- More total touches = stronger and more significant line.
+
+#### No-Violation Rule (Strict Wick Enforcement)
+- **H- lines:** No bar's **high** can exceed the projected line value at that bar, from origin through the current bar. Any wick piercing above the line invalidates it.
+- **L+ lines:** No bar's **low** can go below the projected line value at that bar, from origin through the current bar. Any wick piercing below the line invalidates it.
+- This is checked on every bar between origin and current bar — a single violation means the line is considered broken at that point.
+
+#### Broken Lines & Retests
+- When a line is violated (a candle crosses it), the line is "broken" from that bar forward.
+- Broken H- lines may flip to **support** — price coming back down to a broken H- from above is a potential support retest.
+- Broken L+ lines may flip to **resistance** — price coming back up to a broken L+ from below is a potential resistance retest.
+- Retests of broken algo lines are potential trade signals across multiple setup types.
+
+#### Span & Timeframe
+- Algo lines can span **thousands of candles** — lines from years ago remain relevant if unbroken.
+- Detection uses the **entire available daily history** (up to 5 years in the current system).
+- **Daily timeframe only** — algo lines are detected and validated on D1 candles. They do NOT need weekly or monthly timeframe detection. In the multi-pass grinder, algo line expressions participate in Pass 1 (daily) only and are excluded from Pass 2 (weekly) and Pass 3 (monthly).
+
+#### Significance Ranking
+Algo line significance scales with:
+1. **Touch count** — more touches = stronger line
+2. **High-volume touch count** — touches on candles with volume > 50-period MA add extra weight
+3. **Time span** — longer-lived lines carry more structural meaning
+
+#### Penny Precision
+- When you understand which candles have real volume, you can draw trendlines to the penny. Most traders draw sloppy general trendlines overlapping random wicks — "like doing a portrait with crayons." Volume tells you which points actually matter for the connection.
+
+#### Shallowest Line Concept
+- **For longs/breakouts:** The shallowest (least steep) H- line that is currently **above price and unbroken** is the key resistance to clear. This is the minimum resistance structure that needs to break for the move to be valid.
+- **For shorts/breakdowns:** The shallowest L+ line that is currently **below price and unbroken** is the key support to break. Same logic inverted.
+- The shallowest line matters most because it's the nearest, most gradual resistance/support — harder to avoid, more structurally significant than steep lines that price can simply move away from laterally.
+
+#### Convergence Signals
+- **Best breakout setups:** The shallowest H- and the breakout AVWAP converge at the same price on the same day. Multiple resistance layers clearing simultaneously = maximum breakout conviction.
+- **Best short setups:** The shallowest L+ and a relevant AVWAP converge at the same price = maximum breakdown conviction.
+- **Breaks against direction:** Breaking an algo line opposite to its slope (upsloping line broken downward, or downsloping line broken upward) is a significant structural change.
+
+#### Expression Design (for automated detection)
+Algo line expressions are generic (not setup-specific) so the grinder can discover relevance across any setup type:
+- **Per-line metrics (top 3 by proximity, each direction):** distance (ATR-normalized), touch count, high-volume touch count, slope (ATR per bar), broken status, retest distance if broken
+- **Shallowest line metrics (1 per direction):** distance, slope, touch count, AVWAP convergence distance
+- **44 total expressions:** 6 metrics × 3 ranks × 2 directions = 36, plus 4 shallowest metrics × 2 directions = 8
 
 ### LSP / MOC Lines
 - **MOC lines** = highs and lows of the highest RVOL D1 candles (the "very white" candles on RVOL vision)
