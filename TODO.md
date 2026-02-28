@@ -92,9 +92,26 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 
 **Key insight confirmed:** HTF expressions crowd out daily at D1. Multi-pass ensures daily gets first crack at every horizon. Weekly/monthly only contribute where daily hit a ceiling.
 
-### Task 3.5: Algo Line Expressions — TODO
-**What:** Add algo line detection + expressions to the expression engine, same pattern as LSP/AVWAP integration. See `ta_knowledge.md` for algo line concepts.
-**Scope:** Detector → precomputed expressions → expr cache integration → grinder picks them up automatically.
+### Task 3.5: Algo Line Expressions — ✅ COMPLETE (2026-02-28)
+**Built:** `scripts/algo_line_detector.py` — detects H- and L+ algo lines from high-volume D1 candles.
+
+**What it produces:**
+- Detects H- (downsloping from highs) and L+ (upsloping from lows) trendlines
+- Origination from candles with V > 50-period SMA(V), strict wick-based violation checking
+- 44 precomputed expressions per ticker:
+  - 6 metrics × 3 ranks × 2 directions = 36 ranked (distance, touch_count, hivol_touch_count, slope, broken, retest_distance)
+  - 4 shallowest metrics × 2 directions = 8 contextual (distance, slope, touch_count, avwap_convergence)
+- Daily timeframe only — skips weekly/monthly grinder passes
+- Touch tolerance: 0.3% (standard charting software snap)
+- Minimum 2 touch points to qualify
+
+**Integration:**
+- `brute_expressions.py`: 12,175 expressions (was 12,131 + 44 algo)
+- `expr_cache_builder.py`: Phase 2b between LSP and HTF, same worker pattern
+- Grinder picks up new columns automatically after cache rebuild
+- To revert: remove algo sections from brute_expressions.py + expr_cache_builder.py, rebuild cache
+
+**Needs:** Full cache rebuild on Dan's machine to include algo line columns.
 
 ### Task 4: Re-run Exit Grinder with Formation Period Validation
 **What:** Exit conditions must NOT fire before the entry date.

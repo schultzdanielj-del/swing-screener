@@ -216,6 +216,7 @@ def save_manifest(manifest):
 _w_expressions = None
 _w_daily_indices = None      # indices of daily (non-precomputed) expressions
 _w_lsp_indices = None        # indices of LSP precomputed expressions
+_w_algo_indices = None       # indices of algo line precomputed expressions
 _w_htf_weekly_indices = None  # indices of weekly HTF expressions
 _w_htf_monthly_indices = None # indices of monthly HTF expressions
 _w_htf_weekly_base = None    # base compute specs for weekly HTF expressions
@@ -224,7 +225,7 @@ _w_htf_monthly_base = None   # base compute specs for monthly HTF expressions
 
 def _init_worker(expressions):
     """Initialize worker with expression list and pre-classify indices."""
-    global _w_expressions, _w_daily_indices, _w_lsp_indices
+    global _w_expressions, _w_daily_indices, _w_lsp_indices, _w_algo_indices
     global _w_htf_weekly_indices, _w_htf_monthly_indices
     global _w_htf_weekly_base, _w_htf_monthly_base
 
@@ -232,6 +233,7 @@ def _init_worker(expressions):
 
     _w_daily_indices = []
     _w_lsp_indices = []
+    _w_algo_indices = []
     _w_htf_weekly_indices = []
     _w_htf_monthly_indices = []
     _w_htf_weekly_base = []
@@ -243,6 +245,8 @@ def _init_worker(expressions):
             source = compute.get("source")
             if source == "lsp":
                 _w_lsp_indices.append(j)
+            elif source == "algo":
+                _w_algo_indices.append(j)
             elif source == "htf":
                 tf = compute.get("timeframe")
                 if tf == "w":
@@ -256,14 +260,14 @@ def _init_worker(expressions):
 
 
 def _compute_ticker_full(args):
-    """Compute all expression series for one ticker (daily + LSP + HTF).
+    """Compute all expression series for one ticker (daily + LSP + algo + HTF).
 
     Args: (ticker, df_dict) where df_dict has OHLCV columns + date
 
     Returns: (ticker, dates_array, data_array) or (ticker, None, None)
     """
     ticker, df_dict = args
-    global _w_expressions, _w_daily_indices, _w_lsp_indices
+    global _w_expressions, _w_daily_indices, _w_lsp_indices, _w_algo_indices
     global _w_htf_weekly_indices, _w_htf_monthly_indices
     global _w_htf_weekly_base, _w_htf_monthly_base
 
@@ -314,6 +318,20 @@ def _compute_ticker_full(args):
             except Exception:
                 pass  # LSP fails silently — columns stay NaN
 
+        # ── 2b. Algo line expressions (precomputed by algo_line_detector) ──
+        if _w_algo_indices:
+            try:
+                from scripts.algo_line_detector import compute_all_algo_series
+                algo_dict = compute_all_algo_series(df)
+                for j in _w_algo_indices:
+                    col_name = _w_expressions[j]["compute"]["column"]
+                    if col_name in algo_dict:
+                        arr = algo_dict[col_name]
+                        if len(arr) == n_bars:
+                            data[:, j] = arr.astype(np.float32)
+            except Exception:
+                pass  # Algo lines fail silently — columns stay NaN
+
         # ── 3. HTF expressions (weekly + monthly) ──
         for tf_freq, tf_indices, tf_base_computes in [
             ("W", _w_htf_weekly_indices, _w_htf_weekly_base),
@@ -362,7 +380,7 @@ def _append_ticker(args):
     Returns: (ticker, new_dates, new_data) or (ticker, None, None)
     """
     ticker, df_dict, existing_n_bars = args
-    global _w_expressions, _w_daily_indices, _w_lsp_indices
+    global _w_expressions, _w_daily_indices, _w_lsp_indices, _w_algo_indices
     global _w_htf_weekly_indices, _w_htf_monthly_indices
     global _w_htf_weekly_base, _w_htf_monthly_base
 
@@ -405,6 +423,20 @@ def _append_ticker(args):
                     col_name = _w_expressions[j]["compute"]["column"]
                     if col_name in lsp_dict:
                         arr = lsp_dict[col_name]
+                        if len(arr) == n_bars:
+                            new_data[:, j] = arr[-n_new:].astype(np.float32)
+            except Exception:
+                pass
+
+        # ── 2b. Algo line expressions ──
+        if _w_algo_indices:
+            try:
+                from scripts.algo_line_detector import compute_all_algo_series
+                algo_dict = compute_all_algo_series(df)
+                for j in _w_algo_indices:
+                    col_name = _w_expressions[j]["compute"]["column"]
+                    if col_name in algo_dict:
+                        arr = algo_dict[col_name]
                         if len(arr) == n_bars:
                             new_data[:, j] = arr[-n_new:].astype(np.float32)
             except Exception:

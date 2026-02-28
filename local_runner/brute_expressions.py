@@ -867,6 +867,45 @@ def generate_all():
         })
 
     # ═══════════════════════════════════════════════════════
+    # ALGO LINES — Precomputed by algo_line_detector.py
+    # ═══════════════════════════════════════════════════════
+    # Same pattern as LSP: NOT computed by ExpressionEngine/compute_series().
+    # Produced by compute_all_algo_series() during cache build.
+    # Daily timeframe only — algo lines skip weekly/monthly grinder passes.
+    #
+    # 44 expressions total:
+    #   6 metrics × 3 ranks × 2 directions = 36 ranked expressions
+    #   4 shallowest metrics × 2 directions = 8 contextual expressions
+
+    try:
+        import sys as _sys2
+        _sys2.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "scripts"))
+        from algo_line_detector import get_algo_expression_names
+        algo_names = get_algo_expression_names()
+    except ImportError:
+        # Fallback: generate names directly (must stay in sync with algo_line_detector.py)
+        algo_names = []
+        _algo_metrics = ['distance', 'touch_count', 'hivol_touch_count',
+                         'slope', 'broken', 'retest_distance']
+        _algo_shallowest = ['shallowest_distance', 'shallowest_slope',
+                            'shallowest_touch_count', 'shallowest_avwap_convergence']
+        for _dir in ['hminus', 'lplus']:
+            for _r in range(1, 4):
+                for _m in _algo_metrics:
+                    algo_names.append(f"algo_{_dir}{_r}_{_m}")
+        for _dir in ['hminus', 'lplus']:
+            for _m in _algo_shallowest:
+                algo_names.append(f"algo_{_dir}_{_m}")
+
+    for name in algo_names:
+        exprs.append({
+            "name": name,
+            "category": "algo_lines",
+            "compute": {"op": "precomputed", "source": "algo", "column": name}
+        })
+
+    # ═══════════════════════════════════════════════════════
     # HIGHER TIMEFRAME (HTF) — Weekly + Monthly versions of ALL daily expressions
     # ═══════════════════════════════════════════════════════
     # These are NOT computed live by ExpressionEngine. They're precomputed in
