@@ -76,15 +76,16 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 
 ### Task 3: Multi-Pass Pyramid Grinder — ✅ COMPLETE (2026-02-27)
 
-**Result: 339 signals, peak 3/day, 41 conditions, 20/20 examples pass. 12.4 min runtime.**
-- Saved: `pyramid_dtss_mp_sig339_pk3_20260227_165931.json`
-- Previous best (daily-only single-pass): 576 signals, peak 4/day, 41 conditions.
-- **41% fewer signals, lower peak.** Weekly added 2 conditions at 5yr where daily hit ceiling at peak 5.
+**Latest result (with algo lines): 264 signals, peak 3/day, 41 conditions, 20/20 examples pass. 12.6 min runtime.**
+- Saved: `pyramid_dtss_mp_sig264_pk3_20260228_163923.json`
+- Previous (pre-algo): 339 signals, peak 3/day, 41 conditions.
+- **22% fewer signals, same peak.** Algo line expression (`algo_lplus2_slope`) contributed at 5yr tier.
+- 1 weekly HTF expression (`w_nr_h_maxh20_atr14`) also selected at 5yr.
 
 **What was built:**
 - `pyramid_grinder.py` multi-pass mode (default): 3 sequential passes
-  - Pass 1 (Daily+LSP+Algo, 4,141 exprs): D1→5yr, locked 39 conditions
-  - Pass 2 (Weekly, 4,017 exprs): 1mo→5yr, added 2 conditions at 5yr tier
+  - Pass 1 (Daily+LSP+Algo, 4,141 exprs): D1→5yr, locked 40 conditions
+  - Pass 2 (Weekly, 4,017 exprs): 1mo→5yr, added 1 condition at 5yr tier
   - Pass 3 (Monthly, 4,017 exprs): 6mo→5yr, added 0 (already at target)
 - `--single-pass` flag for legacy mode (all 12K expressions in one pass)
 - All fallback computation paths removed — expr cache REQUIRED
@@ -111,7 +112,53 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 - Grinder picks up new columns automatically after cache rebuild
 - To revert: remove algo sections from brute_expressions.py + expr_cache_builder.py, rebuild cache
 
-**Needs:** Full cache rebuild on Dan's machine to include algo line columns.
+**Needs:** Full cache rebuild on Dan's machine to include algo line columns. ✅ DONE (2026-02-28)
+
+### Task 3.6: Exit Grinder — Add LSP/Algo/AVWAP Expressions ⬜
+**Goal:** Upgrade exit expression library with the same structural detection systems used in the signal grinder (LSP, algo lines, AVWAPs). No weekly/monthly pass — exit detection is daily-only.
+
+**Current exit library:** 4,309 expressions (361 base + 3,948 boolean aggregations). Zero LSP/algo/AVWAP.
+
+**Steps:**
+
+#### Step 3.6a: Exit expressions — add LSP base expressions ⬜
+Add to `scripts/exit_expressions.py`:
+- Distance to nearest LSP above/below (ATR-normalized) at each forward bar
+- LSP break count change since entry (new levels broken during the move)
+- LSP level count in proximity (congestion detection)
+- ~14 new base expressions, category: "lsp_structure"
+Add to `scripts/exit_compute.py`:
+- `op` handler that runs `lsp_detector_v2` on pre-entry history, then evaluates LSP levels against each forward bar
+- Must compute LSP levels ONCE per example, then evaluate cheaply per bar
+
+#### Step 3.6b: Exit expressions — add algo line base expressions ⬜
+Add to `scripts/exit_expressions.py`:
+- Distance to nearest H-/L+ algo lines (ATR-normalized) at each forward bar
+- Broken status change (line broken during move)
+- Shallowest line distance/slope
+- ~12 new base expressions, category: "algo_lines"
+Add to `scripts/exit_compute.py`:
+- `op` handler that runs `algo_line_detector` on pre-entry history, then evaluates lines against each forward bar
+
+#### Step 3.6c: Exit expressions — add AVWAP base expressions ⬜
+Add to `scripts/exit_expressions.py`:
+- Distance to contextual AVWAPs anchored at key pivots near entry (ATR-normalized)
+- AVWAP slope/convergence post-entry
+- ~8 new base expressions, category: "avwap"
+Add to `scripts/exit_compute.py`:
+- `op` handler that computes AVWAPs from anchored pivots, evaluates at each forward bar
+
+#### Step 3.6d: Exit expressions — add threshold booleans + verify ⬜
+Add to `scripts/exit_expressions.py` boolean section:
+- Threshold booleans for new LSP/algo/AVWAP expressions (e.g., "nearest LSP broken", "price past shallowest H-", "price reclaimed AVWAP")
+- ~50 new boolean conditions → × 4 aggs × 7 windows = ~1,400 new boolean aggregation expressions
+- Verify total expression count, run `exit_expressions.py` standalone to confirm
+- Expected total: ~5,700 exit expressions (was 4,309)
+
+#### Step 3.6e: Run exit grinder with upgraded library ⬜
+- Run `scripts/exit_grinder.py --setup dtss` with expanded expressions
+- Validate 20/20 examples pass, check floor capture efficiency
+- Compare results vs previous exit grind (if any)
 
 ### Task 4: Re-run Exit Grinder with Formation Period Validation
 **What:** Exit conditions must NOT fire before the entry date.
@@ -131,7 +178,7 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 ## What NOT to Touch
 
 - Nightly pipeline — working, don't break it
-- Expression series cache — working, 21 GB, don't rebuild unless expressions change
+- Expression series cache — working, ~50 GB, 12,175 expressions, just rebuilt with algo lines (2026-02-28)
 - Frontend/ScanPerfect — working
 - Railway DB — working
 - Matrix builder — working (but will need LSP-aware rebuild for DTSS)
