@@ -17,7 +17,7 @@ and adds post-signal-specific computations (move captured, MFE, reclaims).
 import numpy as np
 import pandas as pd
 from scripts.expression_engine import ExpressionEngine
-from scripts.lsp_detector_v2 import LSPDetectorV2, resample_ohlcv
+from scripts.lsp_detector_v2 import LSPDetectorV2, resample_ohlcv, precompute_avwap_arrays, avwap_from_anchor
 from scripts.algo_line_detector import detect_algo_lines, _get_active_lines_at_bar, _find_shallowest_line, _line_price_at_bar
 from scripts.profiling_engine import (
     sma, ema, hma, rolling_max, rolling_min, rolling_sum,
@@ -88,6 +88,10 @@ class ExitExprEngine:
         
         # Algo lines frozen at entry bar (computed lazily on first use)
         self._algo_lines = None
+        
+        # AVWAP cumulative arrays (computed lazily on first use)
+        self._cum_tpv = None
+        self._cum_v = None
         
         # Cache
         self._cache = {}
@@ -223,6 +227,19 @@ class ExitExprEngine:
             self._algo_lines = {'hminus': [], 'lplus': []}
         
         return self._algo_lines
+    
+    def _get_avwap_arrays(self):
+        """Get precomputed cumulative AVWAP arrays. Computed lazily, cached.
+        
+        Uses precompute_avwap_arrays from lsp_detector_v2 — same computation
+        path as the signal grinder's cache builder.
+        Returns (cum_tpv, cum_v) for O(1) AVWAP computation at any bar.
+        """
+        if self._cum_tpv is not None:
+            return self._cum_tpv, self._cum_v
+        
+        self._cum_tpv, self._cum_v = precompute_avwap_arrays(self.df)
+        return self._cum_tpv, self._cum_v
     
     def compute(self, comp):
         """Compute a post-signal expression series.
@@ -1352,6 +1369,153 @@ class ExitExprEngine:
                 if shallowest is not None:
                     s_line, _, _ = shallowest
                     result[i] = s_line.slope_per_bar / atr_val
+            return result
+        
+        # ──── AVWAP ────────────────────────────────────────
+        # AVWAPs anchored at frozen LSP pivot points and at entry bar.
+        # Uses precompute_avwap_arrays + avwap_from_anchor from
+        # lsp_detector_v2 — same computation path as signal grinder.
+        # O(1) per bar after one-time precomputation.
+        
+        elif op == "avwap_lsp_distance":
+            """Distance from current price to AVWAP anchored at LSP pivot, ATR-normalized.
+            
+            The AVWAP is anchored at the most prominent pivot in the LSP level
+            cluster. As the trade progresses, the AVWAP evolves (incorporates
+            new volume data), making this a dynamic level unlike frozen LSP prices.
+            """
+            direction = comp["direction"]  # "above" or "below"
+            rank = comp["rank"]  # 1-based
+            levels = self._get_lsp_levels()
+            level_list = levels.get(direction, [])
+            
+            if rank > len(level_list):
+                return np.full(self.n_forward, np.nan)
+            
+            level = level_list[rank - 1]
+            if not hasattr(level, 'pivot_indices') or not level.pivot_indices:
+                return np.full(self.n_forward, np.nan)
+            
+            # Find the most prominent pivot in the cluster
+            detector = self._lsp_detector
+            if detector is None:
+                return np.full(self.n_forward, np.nan)
+            
+            best_pi = max(level.pivot_indices,
+                          key=lambda pi: detector.pivots[pi].max_window)
+            anchor_idx = detector.pivots[best_pi].idx
+            
+            cum_tpv, cum_v = self._get_avwap_arrays()
+            entry_atr = self._get_entry_atr()
+            fwd_c = self.c[self.fwd_start:self.fwd_end]
+            
+            result = np.full(self.n_forward, np.nan)
+            for i in range(self.n_forward):
+                abs_idx = self.fwd_start + i
+                avwap_val = avwap_from_anchor(cum_tpv, cum_v, anchor_idx, abs_idx)
+                if not np.isnan(avwap_val) and entry_atr > 0:
+                    result[i] = abs(fwd_c[i] - avwap_val) / entry_atr
+            return result
+        
+        elif op == "avwap_entry_distance":
+            """Distance from current price to AVWAP anchored at entry bar, ATR-normalized.
+            
+            Shows how far price has moved from the entry's average cost basis.
+            Growing distance = move extending cleanly.
+            """
+            cum_tpv, cum_v = self._get_avwap_arrays()
+            entry_atr = self._get_entry_atr()
+            fwd_c = self.c[self.fwd_start:self.fwd_end]
+            
+            result = np.full(self.n_forward, np.nan)
+            for i in range(self.n_forward):
+                abs_idx = self.fwd_start + i
+                avwap_val = avwap_from_anchor(cum_tpv, cum_v, self.entry_idx, abs_idx)
+                if not np.isnan(avwap_val) and entry_atr > 0:
+                    result[i] = abs(fwd_c[i] - avwap_val) / entry_atr
+            return result
+        
+        elif op == "avwap_lsp_slope":
+            """Slope of LSP-anchored AVWAP (1-bar change, ATR-normalized).
+            
+            Positive slope = AVWAP rising, negative = falling.
+            For shorts: rising AVWAP converging toward falling price = reaction zone.
+            """
+            direction = comp["direction"]
+            rank = comp["rank"]
+            levels = self._get_lsp_levels()
+            level_list = levels.get(direction, [])
+            
+            if rank > len(level_list):
+                return np.full(self.n_forward, np.nan)
+            
+            level = level_list[rank - 1]
+            if not hasattr(level, 'pivot_indices') or not level.pivot_indices:
+                return np.full(self.n_forward, np.nan)
+            
+            detector = self._lsp_detector
+            if detector is None:
+                return np.full(self.n_forward, np.nan)
+            
+            best_pi = max(level.pivot_indices,
+                          key=lambda pi: detector.pivots[pi].max_window)
+            anchor_idx = detector.pivots[best_pi].idx
+            
+            cum_tpv, cum_v = self._get_avwap_arrays()
+            entry_atr = self._get_entry_atr()
+            
+            # Compute AVWAP at each forward bar, then diff
+            avwap_vals = np.full(self.n_forward, np.nan)
+            for i in range(self.n_forward):
+                abs_idx = self.fwd_start + i
+                avwap_vals[i] = avwap_from_anchor(cum_tpv, cum_v, anchor_idx, abs_idx)
+            
+            result = np.full(self.n_forward, np.nan)
+            result[1:] = (avwap_vals[1:] - avwap_vals[:-1]) / entry_atr
+            return result
+        
+        elif op == "avwap_lsp_crossed":
+            """Whether price has crossed through the LSP-anchored AVWAP (0/1).
+            
+            For 'above' levels: crossed when close goes above AVWAP (reclaim)
+            For 'below' levels: crossed when close goes below AVWAP (breakdown)
+            Once crossed, stays crossed (running OR).
+            """
+            direction = comp["direction"]
+            rank = comp.get("rank", 1)
+            levels = self._get_lsp_levels()
+            level_list = levels.get(direction, [])
+            
+            if rank > len(level_list):
+                return np.zeros(self.n_forward)
+            
+            level = level_list[rank - 1]
+            if not hasattr(level, 'pivot_indices') or not level.pivot_indices:
+                return np.zeros(self.n_forward)
+            
+            detector = self._lsp_detector
+            if detector is None:
+                return np.zeros(self.n_forward)
+            
+            best_pi = max(level.pivot_indices,
+                          key=lambda pi: detector.pivots[pi].max_window)
+            anchor_idx = detector.pivots[best_pi].idx
+            
+            cum_tpv, cum_v = self._get_avwap_arrays()
+            fwd_c = self.c[self.fwd_start:self.fwd_end]
+            
+            result = np.zeros(self.n_forward)
+            ever_crossed = False
+            for i in range(self.n_forward):
+                abs_idx = self.fwd_start + i
+                avwap_val = avwap_from_anchor(cum_tpv, cum_v, anchor_idx, abs_idx)
+                if not np.isnan(avwap_val):
+                    if direction == "above" and fwd_c[i] > avwap_val:
+                        ever_crossed = True
+                    elif direction == "below" and fwd_c[i] < avwap_val:
+                        ever_crossed = True
+                if ever_crossed:
+                    result[i] = 1.0
             return result
         
         

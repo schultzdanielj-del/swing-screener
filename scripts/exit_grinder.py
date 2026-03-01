@@ -452,6 +452,10 @@ def _find_base_expr_name(cond: dict, matrix: dict) -> Optional[str]:
         return f"algo_{cond.get('line_type', 'hminus')}{cond.get('rank', 1)}_broken"
     elif op == "algo_distance":
         return f"algo_{cond.get('line_type', 'hminus')}{cond.get('rank', 1)}_distance_atr"
+    elif op == "avwap_lsp_distance":
+        return f"avwap_lsp_{cond.get('avwap_direction', 'above')}{cond.get('rank', 1)}_distance_atr"
+    elif op == "avwap_entry_distance":
+        return "avwap_entry_distance_atr"
     
     return None
 
