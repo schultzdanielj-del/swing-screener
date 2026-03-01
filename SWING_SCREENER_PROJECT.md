@@ -30,11 +30,13 @@ Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds t
 
 ---
 
-## CURRENT STATE (2026-02-25)
+## CURRENT STATE (2026-03-01)
 
 ### What's built and working:
 - **Pyramid grinder** — 6-tier nested search (D1 → 1wk → 1mo → 6mo → 1yr → 5yr), peak-based scoring, beam=10000 exhaustive search
-- **Expression library** — 12,175 expressions: 4,017 daily across 29 categories, 80 LSP levels, 44 algo lines, 8,034 HTF (weekly + monthly)
+- **Signal expression library** — 12,175 expressions: 4,017 daily across 29 categories, 80 LSP levels, 44 algo lines, 8,034 HTF (weekly + monthly)
+- **Exit expression library** — 6,410 expressions: 446 base (LSP + algo + AVWAP + entry-relative + 12 other categories) + 5,964 boolean aggregations
+- **Exit grinder** — brute-forces 6,410 expressions against forward paths, 100% example pass hardcoded, timestamped + latest saves. Single-stage result: 71% median MFE capture.
 - **Expression series cache** — 4,119 tickers × 12,175 expressions pre-cached (~50 GB), 14x grinder speedup
 - **Nightly pipeline** — auto-triggers 4:30pm ET: Railway append → daily cache → 5yr cache → expr cache → matrix rebuild
 - **Backtest runner** — scans 5yr history, generates charts per signal, auto-uploads to Railway
@@ -42,15 +44,16 @@ Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds t
 - **Railway SQLite DB** — 11M+ OHLCV rows, ~4,167 tradable tickers, 5yr daily data
 
 ### DTSS (Double Top Short Sell) — first completed setup:
-- 26 validated examples with entry dates
-- Production grind result: **26 conditions, peak 6/day, 201 total signals across 5yr, avg 2.1/day**
+- 20 validated examples (in exit grinder), 26 validated examples (in signal grinder, includes tickers not in 5yr cache)
+- Signal grind: **41 conditions, peak 3/day, 264 total signals across 5yr** (multi-pass with algo lines)
+- Exit grind (single-stage): `avg_range_atr_10b above 1.0541` — 71% median capture eff, 20/20 pass
 - Backtest runner complete, Historical tab with signal prevalence + SPY overlay
 
 ### What's next (per TODO.md):
+- **Task 3.7: Multi-Stage Exit Grinder** — replace single-condition exit with sequential stages (capital protection → trend riding → trailing). Single-stage hit 71% ceiling; multi-stage should push into excellent range.
+- **Task 4: Formation Period Validation** — exit conditions must not fire before entry date
 - **Step 7: Market Context** — correlate signal outcomes with market regime
-- **Step 8: EV Optimization** — exhaustive management parameter search (stop/target/trail combinations)
-- **Step 9: 3-4DB setup** — run 21 existing examples through the same pipeline
-- Future: HTF setup, frontend grinder control, dynamic nightly re-grind
+- Future: 3-4DB setup, HTF setup, frontend grinder control
 
 ---
 

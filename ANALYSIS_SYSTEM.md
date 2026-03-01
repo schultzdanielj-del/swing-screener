@@ -260,32 +260,43 @@ python scripts/backtest_runner.py --setup dtss --charts-only
 - **Method:** Brute force a comprehensive post-signal expression library (~4,000 expressions) against the forward price paths. The grinder finds which expression states correlate with the bars that captured the most move. The "exit candle" isn't an input — it's the output.
 - **Benchmark:** Entry bar high to exit bar close = captured move, in ADR. Simple, consistent, dependable.
 
-### Post-Signal Exit Expression Library (~4,000 expressions)
+### Post-Signal Exit Expression Library (~6,400 expressions)
 
 Every expression is evaluated at each forward bar relative to the signal bar. The grinder tests every bar as a candidate exit.
 
 | Category | Count | What it measures |
 |----------|-------|-----------------|
-| **move_captured** | 10 | Distance from entry high to current close/low in ADR/ATR, MFE, capture efficiency |
-| **extension_from_ma** | 20 | Extension from 8/12/21 EMA, 50/200 SMA in ADR/ATR + historical ceiling ratios per ticker |
-| **extension_dynamics** | 50 | Extension slope (1/3/5 bar), retrace from post-signal peak, acceleration — all 5 MAs × 2 norms |
-| **ma_reclaim** | 45 | Close above MAs, bars since reclaim, failed reclaims, distance from MA, sequential reclaim pairs |
-| **momentum_reversal** | 39 | RSI (7/14/21) + slopes, ROC (1/3/5/10), MACD histogram + slope, stochastic, ADX + DI spread |
-| **candle_character** | 20 | Bar range/body/wick ratios, gaps, rolling green/red % over 3/5/10 bars, streak counts |
-| **volume_character** | 20 | RVOL vs 20/50 avg, up/down volume ratios, OBV slope, volume vs signal bar, volume rank |
-| **structural** | 14 | MA touches/closes-through (50/200 SMA), swing counts, lower-low sequences, higher-low formation |
-| **range_compression** | 18 | ATR ratio vs entry, Bollinger bandwidth + %B + rank, inside bar counts, range contraction |
-| **retracement** | 9 | Retrace from MFE in ADR/%/ATR, position in post-signal range, bars since MFE, MFE still expanding |
-| **time** | 5 | Bars since signal, move per bar in ADR/ATR, velocity increasing/decreasing |
+| **extension_dynamics** | 70 | Extension slope (1/3/5 bar), retrace from post-signal peak, acceleration — all 5 MAs × 2 norms |
+| **momentum_reversal** | 56 | RSI (5/7/9/14/21) + slopes, ROC (1-20), MACD histogram + slope, stochastic, ADX + DI spread |
+| **extension_from_ma** | 50 | Extension from 8/12/21 EMA, 50/200 SMA in ADR/ATR + historical ceiling ratios per ticker |
+| **ma_reclaim** | 40 | Close above MAs, bars since reclaim, failed reclaims, distance from MA, sequential reclaim pairs |
+| **entry_relative** | 39 | Delta from entry (extension, RSI, ADX, stoch, BB %B, MA dist) + ratio to entry (RVOL, BB bw, LSP/algo/AVWAP dist) |
+| **candle_character** | 33 | Bar range/body/wick ratios, gaps, rolling green/red % over 3/5/10/20 bars, streak counts |
+| **structural** | 28 | MA touches/closes-through, swing counts, lower-low sequences, higher-low formation |
+| **volume_character** | 26 | RVOL vs 10/20/50 avg, up/down volume ratios, OBV slope, volume vs signal bar, volume rank |
+| **range_compression** | 25 | ATR ratio vs entry, Bollinger bandwidth + %B + rank, inside bar counts, range contraction |
+| **algo_lines** | 20 | Distance/broken/touch_count to H-/L+ algo lines (rank 1-3), shallowest unbroken line dist/slope |
+| **lsp_structure** | 17 | Distance to LSP above/below (rank 1-3), broken, congestion, nearest unbroken level |
+| **move_captured** | 11 | Distance from entry high to current close/low in ADR/ATR/%, MFE, capture efficiency |
+| **retracement** | 10 | Retrace from MFE in ADR/%/ATR, position in post-signal range, bars since MFE, MFE expanding |
+| **avwap** | 9 | LSP-anchored AVWAP distance (above/below × rank 1-2), entry AVWAP distance, AVWAP slope, AVWAP crossed |
+| **time** | 6 | Bars since signal, move per bar, velocity accelerating/decelerating |
 | **relative_strength** | 6 | Stock vs SPY performance + slope over 5/10/20 bars |
 
-**256 unique per-bar expressions** → expanded by:
-- **7 forward windows** (5, 10, 15, 20, 30, 40, 60 bars) → 1,792 continuous expressions
-- **~80 boolean conditions** × 4 aggregations (count_true, since_true, true_in_row, pct_true) × 7 windows → ~2,240 boolean expressions
+**446 unique per-bar expressions** → expanded by:
+- **~213 boolean conditions** (59 native + 154 threshold) × 4 aggregations × 7 windows → ~5,964 boolean expressions
 
-**Total: ~4,032 post-signal expressions** (comparable to the 4,017 pre-signal library).
+**Total: 6,410 post-signal expressions.**
 
-**Extension ceiling ratios** are critical: `ext_ceiling_ratio_{ma}_{norm}` measures current extension as % of that ticker's historical max extension from the same MA. Per ta_knowledge.md, each stock has hard caps — when a move approaches the historical floor/ceiling, the exit system tightens. The grinder discovers exactly where that tightening zone is across all examples.
+**Entry-relative expressions** are critical: `delta_from_entry` and `ratio_to_entry` ops let the grinder find conditions like "RSI rose 20 from entry" or "extension retraced 1.5 ADR from entry" — conditions that adapt to each stock's starting state rather than requiring one absolute threshold across all examples.
+
+**Structural detection systems (LSP, algo lines, AVWAPs)** are frozen at entry time. Levels are detected once from pre-entry history, then price is evaluated against those fixed levels at each forward bar. This is the same computation path used by the signal grinder's expression cache builder.
+
+### Current Single-Stage Result (2026-03-01)
+
+Best exit: `avg_range_atr_10b above 1.0541` — 71% median capture efficiency, 64% avg, 20/20 examples pass.
+
+**Finding:** Single-condition exit hits a ceiling. Structural expressions compute correctly but cannot beat simple volatility expansion as a standalone universal trigger. Multi-stage exit architecture is needed — see Task 3.7 in TODO.md.
 
 ### Scoring System — Reliability Over Max Extraction
 

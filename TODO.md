@@ -114,51 +114,62 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 
 **Needs:** Full cache rebuild on Dan's machine to include algo line columns. ✅ DONE (2026-02-28)
 
-### Task 3.6: Exit Grinder — Add LSP/Algo/AVWAP Expressions ⬜
+### Task 3.6: Exit Grinder — Add LSP/Algo/AVWAP Expressions ✅ COMPLETE (2026-03-01)
 **Goal:** Upgrade exit expression library with the same structural detection systems used in the signal grinder (LSP, algo lines, AVWAPs). No weekly/monthly pass — exit detection is daily-only.
 
-**Current exit library:** 4,309 expressions (361 base + 3,948 boolean aggregations). Zero LSP/algo/AVWAP.
+**Final exit library:** 6,410 expressions (446 base + 5,964 boolean aggregations).
 
-**Steps:**
+**Steps completed:**
 
-#### Step 3.6a: Exit expressions — add LSP base expressions ⬜
-Add to `scripts/exit_expressions.py`:
-- Distance to nearest LSP above/below (ATR-normalized) at each forward bar
-- LSP break count change since entry (new levels broken during the move)
-- LSP level count in proximity (congestion detection)
-- ~14 new base expressions, category: "lsp_structure"
-Add to `scripts/exit_compute.py`:
-- `op` handler that runs `lsp_detector_v2` on pre-entry history, then evaluates LSP levels against each forward bar
-- Must compute LSP levels ONCE per example, then evaluate cheaply per bar
+#### Step 3.6a: LSP base expressions ✅ (already existed)
+- 17 LSP base expressions: distance (above/below × rank 1-3), broken, congestion, nearest_unbroken
+- Compute: `_get_lsp_levels()` lazy loader using `LSPDetectorV2` on pre-entry history
+- Boolean conditions: 6 native (lsp_broken) + threshold booleans for distance/congestion
 
-#### Step 3.6b: Exit expressions — add algo line base expressions ⬜
-Add to `scripts/exit_expressions.py`:
-- Distance to nearest H-/L+ algo lines (ATR-normalized) at each forward bar
-- Broken status change (line broken during move)
-- Shallowest line distance/slope
-- ~12 new base expressions, category: "algo_lines"
-Add to `scripts/exit_compute.py`:
-- `op` handler that runs `algo_line_detector` on pre-entry history, then evaluates lines against each forward bar
+#### Step 3.6b: Algo line base expressions ✅ (2026-03-01)
+- 20 algo_lines base expressions: distance, broken, touch_count (rank 1-3), shallowest distance/slope
+- Compute: `_get_algo_lines()` lazy loader using `detect_algo_lines()` on pre-entry history
+- Uses same `_get_active_lines_at_bar()`, `_find_shallowest_line()`, `_line_price_at_bar()` helpers as signal grinder
+- Fixed `_find_base_expr_name()` for algo threshold boolean resolution
 
-#### Step 3.6c: Exit expressions — add AVWAP base expressions ⬜
-Add to `scripts/exit_expressions.py`:
-- Distance to contextual AVWAPs anchored at key pivots near entry (ATR-normalized)
-- AVWAP slope/convergence post-entry
-- ~8 new base expressions, category: "avwap"
-Add to `scripts/exit_compute.py`:
-- `op` handler that computes AVWAPs from anchored pivots, evaluates at each forward bar
+#### Step 3.6c: AVWAP base expressions ✅ (2026-03-01)
+- 9 avwap base expressions: LSP-anchored AVWAP distance (above/below × rank 1-2), entry AVWAP distance, LSP AVWAP slope, LSP AVWAP crossed
+- Compute: `_get_avwap_arrays()` lazy loader using `precompute_avwap_arrays()` + `avwap_from_anchor()` from lsp_detector_v2 — same computation path as signal grinder
+- O(1) per forward bar after one-time precomputation
 
-#### Step 3.6d: Exit expressions — add threshold booleans + verify ⬜
-Add to `scripts/exit_expressions.py` boolean section:
-- Threshold booleans for new LSP/algo/AVWAP expressions (e.g., "nearest LSP broken", "price past shallowest H-", "price reclaimed AVWAP")
-- ~50 new boolean conditions → × 4 aggs × 7 windows = ~1,400 new boolean aggregation expressions
-- Verify total expression count, run `exit_expressions.py` standalone to confirm
-- Expected total: ~5,700 exit expressions (was 4,309)
+#### Step 3.6d: Entry-relative expressions ✅ (2026-03-01)
+- 39 entry_relative base expressions: delta_from_entry (extension, RSI, ADX, DI spread, stoch, BB %B, MA distance) + ratio_to_entry (RVOL, BB bandwidth, LSP dist, algo dist, AVWAP dist)
+- Compute: generic `delta_from_entry` and `ratio_to_entry` ops that delegate to any base expression, then subtract/divide by entry bar value
+- 18 threshold booleans for RSI delta and extension delta
 
-#### Step 3.6e: Run exit grinder with upgraded library ⬜
-- Run `scripts/exit_grinder.py --setup dtss` with expanded expressions
-- Validate 20/20 examples pass, check floor capture efficiency
-- Compare results vs previous exit grind (if any)
+#### Step 3.6e: Run exit grinder with upgraded library ✅ (2026-03-01)
+- Ran with 6,410 expressions, 20/20 examples pass, 0 expression failures
+- Result: `avg_range_atr_10b above 1.0541` — 71% median capture eff, 64% avg
+- **Key finding:** Single-condition exit hits a ceiling. All structural expressions (LSP, algo, AVWAP, entry-relative) compute successfully but cannot beat a simple volatility expansion rule as a standalone universal trigger across 20 different tickers. Multi-stage exit is needed to unlock the structural expressions' value.
+
+**Additional fixes during this task:**
+- Hardcoded 100% example pass in exit grinder (removed `--min-trigger-pct` parameter)
+- Added timestamped + latest save pattern (matches signal grinder)
+- Fixed `obv_slope` offset param alias
+- Fixed `_find_base_expr_name` for algo + AVWAP + entry-relative mappings
+
+### Task 3.7: Multi-Stage Exit Grinder ⬜
+**Goal:** Replace single-condition exit with multi-stage exit that uses sequential conditions to handle both duds and runners optimally.
+
+**Problem:** Single-stage exit captures 71% median MFE — slightly above average. The structural expressions (LSP, algo, AVWAP) contain per-stock signal but can't outperform simple volatility expansion as a universal standalone trigger. The compromise: exit too early on runners to protect against duds.
+
+**Architecture concept:**
+- **Stage 1 (capital protection):** Tight condition that fires early on duds (stocks that stall/reverse). Should NOT fire on runners during their initial move.
+- **Stage 2 (trend riding):** Looser condition that lets runners breathe. Only active after Stage 1 hasn't fired for N bars (move is confirmed).
+- **Stage 3 (trailing):** MFE retrace-based trailing exit. Once move reaches X ADR, exit on Y% retrace from MFE.
+
+**Key design decisions needed:**
+- How to define stage transitions (time-based? MFE-based? condition-based?)
+- Whether to grind stages independently or jointly
+- How to score multi-stage results (aggregate capture efficiency across stages)
+- Entry-relative expressions likely shine here — Stage 1 uses "RSI rose 20 from entry" while Stage 2 uses "extension retraced 50% from peak"
+
+**The grinder should discover optimal stage boundaries, not have them hardcoded.**
 
 ### Task 4: Re-run Exit Grinder with Formation Period Validation
 **What:** Exit conditions must NOT fire before the entry date.
@@ -199,7 +210,9 @@ Add to `scripts/exit_expressions.py` boolean section:
 | `local_runner/matrix_builder.py` | ❌ No LSP | Needs LSP-aware example matrix |
 | `local_runner/brute_expressions.py` | ✅ 12,175 expressions (4,017 daily + 80 LSP + 44 algo + 8,034 HTF) | Expression library with HTF + algo auto-generation |
 | `local_runner/expr_cache_builder.py` | ✅ Updated for LSP + HTF (2026-02-27) | 3-phase worker: daily + LSP + HTF computation |
-| `scripts/exit_grinder.py` | ⚠️ Parity fixed, needs re-run | Formation period validation missing |
+| `scripts/exit_grinder.py` | ✅ 6,410 expressions, 100% pass hardcoded, timestamped saves | Single-stage exit grind — needs multi-stage upgrade (Task 3.7) |
+| `scripts/exit_expressions.py` | ✅ 446 base + 5,964 boolean aggs = 6,410 total | LSP + algo + AVWAP + entry-relative expressions |
+| `scripts/exit_compute.py` | ✅ Full parity — LSP, algo, AVWAP, entry-relative ops | Post-signal expression compute engine |
 | `scripts/outcome_grinder.py` | ⚠️ Parity fixed, needs re-run | Needs corrected exit conditions |
 | `EXPRESSION_ENGINE_V2.md` | ✅ Updated — Tasks A-E,G complete, F pending | V2 build plan + next steps |
 
