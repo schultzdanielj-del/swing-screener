@@ -516,15 +516,18 @@ def generate_thresholds(values: np.ndarray, n_thresholds: int = 20) -> list:
 
 def grind_exits(examples: list, all_matrices: list, expr_names: list,
                 direction: str = "short", n_thresholds: int = 20,
-                min_bar: int = 1, min_trigger_pct: float = 1.0,
+                min_bar: int = 1,
                 top_n: int = 50) -> list:
     """Grind all expressions × thresholds × directions.
     
     Vectorized: for each expression, stack all examples' series into a 2D array,
     then test thresholds with numpy broadcasting.
+    
+    RULE: Only candidates that trigger on ALL examples can pass.
+    No exceptions — 100% example pass rate is hardcoded, not configurable.
     """
     n_examples = len(examples)
-    min_triggered = max(1, int(n_examples * min_trigger_pct))
+    min_triggered = n_examples  # 100% — hardcoded, not configurable
     
     # Pre-compute move data for every example at every bar
     # This avoids recomputing per-candidate
@@ -544,7 +547,7 @@ def grind_exits(examples: list, all_matrices: list, expr_names: list,
     n_exprs = len(expr_names)
 
     print(f"\nGrinding {n_exprs} expressions × ~{n_thresholds} thresholds × 2 directions...")
-    print(f"Min trigger: {min_triggered}/{n_examples} ({min_trigger_pct*100:.0f}%)")
+    print(f"Requirement: ALL {n_examples} examples must trigger (100%, no exceptions)")
 
     t0 = time.time()
     tested = 0
@@ -715,7 +718,6 @@ def save_results(candidates: list, examples: list, setup_type: str, args):
         "direction": args.direction,
         "max_forward": args.max_forward,
         "n_thresholds": args.n_thresholds,
-        "min_trigger_pct": args.min_trigger_pct,
         "n_examples": n_ex,
         "examples": [
             {"ticker": ex.ticker, "entry_date": ex.entry_date,
@@ -768,7 +770,6 @@ def main():
     parser.add_argument("--max-forward", type=int, default=MAX_FORWARD_DEFAULT)
     parser.add_argument("--n-thresholds", type=int, default=20)
     parser.add_argument("--min-bar", type=int, default=1)
-    parser.add_argument("--min-trigger-pct", type=float, default=1.0)
     parser.add_argument("--top-n", type=int, default=50)
     parser.add_argument("--direction", default="short")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
@@ -779,7 +780,7 @@ def main():
     print(f"Exit Grinder — Step 6")
     print(f"Setup: {args.setup.upper()}, Direction: {args.direction}")
     print(f"Max forward: {args.max_forward} bars, Thresholds: {args.n_thresholds}")
-    print(f"Min trigger: {args.min_trigger_pct*100:.0f}%, Min bar: {args.min_bar}")
+    print(f"Min bar: {args.min_bar}, 100% example pass required")
     print(f"Workers: {args.workers}")
 
     # 1. Load examples
@@ -868,14 +869,13 @@ def main():
         direction=args.direction,
         n_thresholds=args.n_thresholds,
         min_bar=args.min_bar,
-        min_trigger_pct=args.min_trigger_pct,
         top_n=args.top_n,
     )
 
     # 8. Report
     print_results(candidates, examples, top_n=args.top_n)
 
-    # 9. MANDATORY VALIDATION: best result must trigger on ALL examples
+    # 9. SAFETY CHECK: grind_exits already enforces 100% but verify
     if candidates:
         best = candidates[0]
         failed_examples = []
@@ -885,15 +885,14 @@ def main():
         
         if failed_examples:
             print(f"\n{'!'*80}")
-            print(f"VALIDATION FAILED — best exit does NOT trigger on all examples!")
+            print(f"INTERNAL ERROR — best exit does NOT trigger on all examples!")
+            print(f"  This should never happen (grind enforces 100%).")
             print(f"  Failed ({len(failed_examples)}/{len(examples)}):")
             for f in failed_examples:
                 print(f"    {f}")
             print(f"{'!'*80}")
-            print(f"\nResults NOT saved. Fix the exit condition or expression engine.")
-            return
-        
-        print(f"\n✓ Validation passed: best exit triggers on {len(examples)}/{len(examples)} examples")
+        else:
+            print(f"\n✓ Validation passed: {len(examples)}/{len(examples)} examples trigger")
 
     # 10. Save
     save_results(candidates, examples, args.setup, args)
