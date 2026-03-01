@@ -9,7 +9,7 @@ GRINDER RULES:
     - All CPU cores used for every phase (matrix build, condition discovery, all passes)
     - 100% example pass rate required — ALL conditions must FIRE on ALL examples. No exceptions.
     - If any stage has remaining position (condition didn't fire), config is INVALID — thrown out.
-    - No backstop exits. No S99. Condition fires or config fails.
+    - No backstop exits. No S99. No partial credit.
     - Sort: floor capture efficiency primary, median secondary (matches exit_grinder.py)
     - Never aborts — handles errors gracefully, always produces output
 
@@ -17,7 +17,7 @@ How it works:
     1. Builds expression matrices (parallel, all cores)
     2. Finds all valid conditions (parallel, all cores)
     3. Runs 8 passes testing every structure variant (parallel, all cores)
-    4. Ranks ALL results across all passes, reports the best
+    4. Ranks ALL results across all passes, reports the #1 best
 
 Usage:
     python scripts/multistage_exit_grinder.py --setup dtss
@@ -675,63 +675,61 @@ def gen_refinement(best_results):
 # Reporting & Saving
 # ============================================================
 
-def rebuild_full_results(top_results, matrices, metas, top_n=50):
-    """Re-simulate top results to get full per-example data for reporting."""
-    full = []
-    for stages, med_eff, avg_eff, floor_eff, med_pct, avg_bars in top_results[:top_n]:
-        sim = simulate_all_examples(stages, matrices, metas)
-        if sim:
-            _, _, _, _, _, per_example = sim
-            full.append({
-                "stages": stages, "per_example": per_example,
-                "median_capture_eff": med_eff, "avg_capture_eff": avg_eff,
-                "floor_capture_eff": floor_eff, "median_effective_pct": med_pct,
-                "avg_bars_to_full_exit": avg_bars,
-            })
-    return full
+def rebuild_full_results(top_results, matrices, metas):
+    """Re-simulate the #1 result to get full per-example data for reporting."""
+    if not top_results:
+        return []
+    # Only rebuild the winner
+    stages, med_eff, avg_eff, floor_eff, med_pct, avg_bars = top_results[0]
+    sim = simulate_all_examples(stages, matrices, metas)
+    if sim:
+        _, _, _, _, _, per_example = sim
+        return [{
+            "stages": stages, "per_example": per_example,
+            "median_capture_eff": med_eff, "avg_capture_eff": avg_eff,
+            "floor_capture_eff": floor_eff, "median_effective_pct": med_pct,
+            "avg_bars_to_full_exit": avg_bars,
+        }]
+    return []
 
 
-def print_results(results, top_n=20):
+def print_results(results):
     if not results:
         print("\nNo valid configurations found.")
         return
 
+    r = results[0]
+    stages = r["stages"]
+    stage_ids = [s_id(s) for s in stages]
+
     print(f"\n{'='*120}")
-    print(f"TOP {min(top_n, len(results))} EXIT CONFIGURATIONS (all passes)")
-    print(f"Sorted by: floor capture efficiency (primary), median (secondary)")
-    print(f"Rule: ALL conditions must fire on ALL examples. No backstops. No exceptions.")
+    print(f"WINNER  [{len(stages)}-stage: {stage_ids}]  "
+          f"floor_eff={r['floor_capture_eff']:.3f}  "
+          f"median_eff={r['median_capture_eff']:.3f}  "
+          f"median_pct={r['median_effective_pct']:+.2f}%  "
+          f"avg_bars={r['avg_bars_to_full_exit']:.1f}")
     print(f"{'='*120}")
 
-    for rank, r in enumerate(results[:top_n], 1):
-        stages = r["stages"]
-        stage_ids = [s_id(s) for s in stages]
-        print(f"\n{'─'*120}")
-        print(f"#{rank}  [{len(stages)}-stage: {stage_ids}]  "
-              f"floor_eff={r['floor_capture_eff']:.3f}  "
-              f"median_eff={r['median_capture_eff']:.3f}  "
-              f"median_pct={r['median_effective_pct']:+.2f}%  "
-              f"avg_bars={r['avg_bars_to_full_exit']:.1f}")
+    for s in stages:
+        parts = [f"S{s_id(s)}: {s_expr(s)} {s_dir(s)} {s_thresh(s):.4f} "
+                 f"trim={s_trim(s):.0%}"]
+        if s_gate_type(s) == "mfe_adr":
+            parts.append(f"gate:MFE≥{s_gate_val(s):.1f}ADR")
+        elif s_gate_type(s) == "bars_min":
+            parts.append(f"gate:bars≥{int(s_gate_val(s))}")
+        if s_maxwin(s):
+            parts.append(f"maxwin={s_maxwin(s)}")
+        print(f"  {'  '.join(parts)}")
 
-        for s in stages:
-            parts = [f"S{s_id(s)}: {s_expr(s)} {s_dir(s)} {s_thresh(s):.4f} "
-                     f"trim={s_trim(s):.0%}"]
-            if s_gate_type(s) == "mfe_adr":
-                parts.append(f"gate:MFE≥{s_gate_val(s):.1f}ADR")
-            elif s_gate_type(s) == "bars_min":
-                parts.append(f"gate:bars≥{int(s_gate_val(s))}")
-            if s_maxwin(s):
-                parts.append(f"maxwin={s_maxwin(s)}")
-            print(f"      {'  '.join(parts)}")
-
-        print(f"      {'Ticker':8s} {'Entry':12s} {'MFE%':>7s} {'Eff%':>7s} "
-              f"{'CapEff':>7s}  Events")
-        for pe in r["per_example"]:
-            evts = " → ".join(
-                f"S{e['stage_id']}@b{e['bar']}({e['pct_trimmed']:.0%},{e['pct_move']:+.1f}%)"
-                for e in pe["events"])
-            print(f"      {pe['ticker']:8s} {pe['entry_date']:12s} "
-                  f"{pe['mfe_pct']:+6.2f}% {pe['effective_pct']:+6.2f}% "
-                  f"{pe['capture_eff']:6.3f}  {evts}")
+    print(f"\n  {'Ticker':8s} {'Entry':12s} {'MFE%':>7s} {'Eff%':>7s} "
+          f"{'CapEff':>7s}  Events")
+    for pe in r["per_example"]:
+        evts = " → ".join(
+            f"S{e['stage_id']}@b{e['bar']}({e['pct_trimmed']:.0%},{e['pct_move']:+.1f}%)"
+            for e in pe["events"])
+        print(f"  {pe['ticker']:8s} {pe['entry_date']:12s} "
+              f"{pe['mfe_pct']:+6.2f}% {pe['effective_pct']:+6.2f}% "
+              f"{pe['capture_eff']:6.3f}  {evts}")
 
 
 def save_results(results, examples, setup_type):
@@ -747,24 +745,24 @@ def save_results(results, examples, setup_type):
         "n_examples": len(examples),
         "examples": [{"ticker": ex.ticker, "entry_date": ex.entry_date,
                        "mfe_pct": ex.mfe_pct, "mfe_adr": ex.mfe_adr} for ex in examples],
-        "results": [],
+        "result": None,
     }
-    for rank, r in enumerate(results[:50]):
-        data["results"].append({
-            "rank": rank + 1,
-            "n_stages": len(r["stages"]),
-            "median_capture_eff": r["median_capture_eff"],
-            "avg_capture_eff": r["avg_capture_eff"],
-            "floor_capture_eff": r["floor_capture_eff"],
-            "median_effective_pct": r["median_effective_pct"],
-            "avg_bars_to_full_exit": r["avg_bars_to_full_exit"],
+
+    if best:
+        data["result"] = {
+            "n_stages": len(best["stages"]),
+            "median_capture_eff": best["median_capture_eff"],
+            "avg_capture_eff": best["avg_capture_eff"],
+            "floor_capture_eff": best["floor_capture_eff"],
+            "median_effective_pct": best["median_effective_pct"],
+            "avg_bars_to_full_exit": best["avg_bars_to_full_exit"],
             "stages": [{"stage_id": s_id(s), "expr_name": s_expr(s),
                          "direction": s_dir(s), "threshold": s_thresh(s),
                          "trim_pct": s_trim(s), "gate_type": s_gate_type(s),
                          "gate_value": s_gate_val(s), "max_window": s_maxwin(s)}
-                        for s in r["stages"]],
-            "per_example": r["per_example"],
-        })
+                        for s in best["stages"]],
+            "per_example": best["per_example"],
+        }
 
     nan_fix = lambda x: None if isinstance(x, float) and np.isnan(x) else x
     n_stg = len(best["stages"]) if best else 0
@@ -940,7 +938,7 @@ def main():
           f"{len(deduped)} unique from {len(all_top)} total")
     print(f"{'='*80}")
 
-    # Rebuild full results for reporting
+    # Rebuild #1 result for reporting
     full_results = rebuild_full_results(deduped, all_matrices, metas)
     print_results(full_results)
 
