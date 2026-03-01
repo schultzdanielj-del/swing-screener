@@ -17,6 +17,7 @@ and adds post-signal-specific computations (move captured, MFE, reclaims).
 import numpy as np
 import pandas as pd
 from scripts.expression_engine import ExpressionEngine
+from scripts.lsp_detector_v2 import LSPDetectorV2, resample_ohlcv
 from scripts.profiling_engine import (
     sma, ema, hma, rolling_max, rolling_min, rolling_sum,
     atr, rsi, stochastic_k, cci, adx, di_plus, di_minus,
@@ -79,6 +80,10 @@ class ExitExprEngine:
         # Pre-compute MFE (running best move for the direction)
         self._mfe_close = self._compute_mfe("close")
         self._mfe_low = self._compute_mfe("low")  # low for shorts, high for longs
+        
+        # LSP levels frozen at entry bar (computed lazily on first use)
+        self._lsp_levels = None
+        self._lsp_detector = None
         
         # Cache
         self._cache = {}
@@ -143,6 +148,52 @@ class ExitExprEngine:
     def _cached(self, key, fn):
         if key not in self._cache:
             self._cache[key] = fn()
+        return self._cache[key]
+    
+    def _get_lsp_levels(self):
+        """Get LSP levels frozen at entry bar. Computed lazily, cached.
+        
+        Returns dict with 'above': [Level, ...] and 'below': [Level, ...]
+        sorted by proximity (nearest first). Levels are FIXED at entry time
+        and do not change as forward bars progress.
+        """
+        if self._lsp_levels is not None:
+            return self._lsp_levels
+        
+        # Build detector from pre-entry data only
+        # Use full df for proper MA/indicator warmup, but detector uses
+        # all history up to entry bar for pivot detection
+        try:
+            pre_entry_df = self.df.iloc[:self.entry_idx + 1].copy()
+            if len(pre_entry_df) < 60:
+                # Not enough history for meaningful LSP detection
+                self._lsp_levels = {'above': [], 'below': []}
+                return self._lsp_levels
+            
+            weekly_df = resample_ohlcv(pre_entry_df, freq='W')
+            monthly_df = resample_ohlcv(pre_entry_df, freq='ME')
+            
+            self._lsp_detector = LSPDetectorV2(
+                pre_entry_df, weekly_df, monthly_df
+            )
+            
+            # Get levels at the entry bar (last bar of pre_entry_df)
+            entry_in_pre = len(pre_entry_df) - 1
+            self._lsp_levels = self._lsp_detector.get_levels_at_bar(
+                entry_in_pre, n_above=5, n_below=5
+            )
+        except Exception:
+            self._lsp_levels = {'above': [], 'below': []}
+        
+        return self._lsp_levels
+    
+    def _get_entry_atr(self):
+        """Get ATR at entry bar for LSP distance normalization."""
+        key = "_entry_atr"
+        if key not in self._cache:
+            atr_arr = self._base._atr(14).values
+            val = atr_arr[self.entry_idx]
+            self._cache[key] = val if not np.isnan(val) and val > 0 else 1.0
         return self._cache[key]
     
     def compute(self, comp):
@@ -957,6 +1008,128 @@ class ExitExprEngine:
             rs = self.compute({"op": "rs_vs_spy", "window": w})
             result = np.full(self.n_forward, np.nan)
             result[1:] = rs[1:] - rs[:-1]
+            return result
+        
+        # ──── LSP STRUCTURE ────────────────────────────────
+        # Levels are FROZEN at entry bar (computed once, cached).
+        # At each forward bar, we evaluate price vs those fixed levels.
+        
+        elif op == "lsp_distance":
+            """Distance from current price to frozen LSP level, ATR-normalized.
+            
+            For above levels: positive = price below level, negative = price above it
+            For below levels: positive = price above level, negative = price below it
+            """
+            direction = comp["direction"]  # "above" or "below"
+            rank = comp["rank"]  # 1-based rank (1=nearest)
+            levels = self._get_lsp_levels()
+            level_list = levels.get(direction, [])
+            
+            if rank > len(level_list):
+                return np.full(self.n_forward, np.nan)
+            
+            level = level_list[rank - 1]
+            level_price = level.center_price
+            entry_atr = self._get_entry_atr()
+            fwd_c = self.c[self.fwd_start:self.fwd_end]
+            
+            # Distance normalized by ATR at entry (fixed reference)
+            raw_dist = np.abs(fwd_c - level_price)
+            return raw_dist / entry_atr
+        
+        elif op == "lsp_broken":
+            """Whether price has broken through the frozen LSP level (0/1).
+            
+            For 'above' levels (resistance): broken when close > level price
+            For 'below' levels (support): broken when close < level price
+            Uses running max/min — once broken, stays broken.
+            """
+            direction = comp["direction"]
+            rank = comp["rank"]
+            levels = self._get_lsp_levels()
+            level_list = levels.get(direction, [])
+            
+            if rank > len(level_list):
+                return np.zeros(self.n_forward)
+            
+            level = level_list[rank - 1]
+            level_price = level.center_price
+            fwd_c = self.c[self.fwd_start:self.fwd_end]
+            
+            if direction == "above":
+                # Resistance broken when close goes above
+                broke = fwd_c > level_price
+            else:
+                # Support broken when close goes below
+                broke = fwd_c < level_price
+            
+            # Once broken, stays broken (running OR)
+            result = np.zeros(self.n_forward)
+            ever_broken = False
+            for i in range(self.n_forward):
+                if broke[i]:
+                    ever_broken = True
+                if ever_broken:
+                    result[i] = 1.0
+            return result
+        
+        elif op == "lsp_congestion":
+            """Count of frozen LSP levels within N ATR of current price.
+            
+            More levels nearby = denser S/R zone = harder to move through.
+            """
+            atr_range = comp["atr_range"]
+            levels = self._get_lsp_levels()
+            all_levels = levels.get("above", []) + levels.get("below", [])
+            
+            if not all_levels:
+                return np.zeros(self.n_forward)
+            
+            # Collect all level center prices
+            level_prices = np.array([lv.center_price for lv in all_levels])
+            entry_atr = self._get_entry_atr()
+            threshold = atr_range * entry_atr
+            fwd_c = self.c[self.fwd_start:self.fwd_end]
+            
+            result = np.zeros(self.n_forward)
+            for i in range(self.n_forward):
+                distances = np.abs(fwd_c[i] - level_prices)
+                result[i] = float(np.sum(distances <= threshold))
+            return result
+        
+        elif op == "lsp_nearest_unbroken":
+            """Distance to nearest unbroken LSP level in given direction, ATR-normalized.
+            
+            An 'unbroken' level = price has not yet closed beyond it.
+            Returns NaN if all levels in that direction are broken.
+            """
+            direction = comp["direction"]
+            levels = self._get_lsp_levels()
+            level_list = levels.get(direction, [])
+            
+            if not level_list:
+                return np.full(self.n_forward, np.nan)
+            
+            level_prices = np.array([lv.center_price for lv in level_list])
+            entry_atr = self._get_entry_atr()
+            fwd_c = self.c[self.fwd_start:self.fwd_end]
+            
+            result = np.full(self.n_forward, np.nan)
+            for i in range(self.n_forward):
+                # Check which levels are unbroken as of bar i
+                if direction == "above":
+                    # Running max close up to bar i
+                    max_close = np.max(fwd_c[:i + 1])
+                    unbroken_mask = level_prices > max_close
+                else:
+                    min_close = np.min(fwd_c[:i + 1])
+                    unbroken_mask = level_prices < min_close
+                
+                if np.any(unbroken_mask):
+                    unbroken_prices = level_prices[unbroken_mask]
+                    distances = np.abs(fwd_c[i] - unbroken_prices)
+                    result[i] = np.min(distances) / entry_atr
+            
             return result
         
         

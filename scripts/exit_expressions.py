@@ -377,6 +377,60 @@ def generate_exit_expressions():
         exprs.append({"name": f"rs_vs_spy_slope_{window}", "category": "relative_strength",
                        "compute": {"op": "rs_vs_spy_slope", "period": window}})
 
+    # ═══════════════════════════════════════════════════════════
+    # 13. LSP STRUCTURE — Last Structural Pivot levels post-entry
+    #     Per ta_knowledge.md: "LSP = the most prominent pivot
+    #     high/low visible on the left side of the chart"
+    #     "LSP + algo line convergence = high-probability reaction zone"
+    #
+    #     For exit: levels are FROZEN at entry bar, then we track
+    #     how price relates to those frozen levels as the trade
+    #     progresses. Key signals: approaching/touching/breaking
+    #     the nearest overhead resistance or support.
+    #
+    #     LSP levels computed ONCE per example (expensive), then
+    #     evaluated cheaply per forward bar.
+    # ═══════════════════════════════════════════════════════════
+
+    # Distance to nearest LSP above/below (ATR-normalized) at each forward bar
+    # Positive = price hasn't reached the level yet; negative = price passed it
+    for direction in ["above", "below"]:
+        for rank in [1, 2, 3]:
+            exprs.append({
+                "name": f"lsp_{direction}{rank}_distance_atr",
+                "category": "lsp_structure",
+                "compute": {"op": "lsp_distance", "direction": direction,
+                            "rank": rank, "normalizer": "atr"},
+            })
+
+    # LSP break detection — did price break through the level?
+    # For shorts: breaking below support = continuation (good)
+    # For longs: breaking above resistance = continuation (good)
+    for direction in ["above", "below"]:
+        for rank in [1, 2, 3]:
+            exprs.append({
+                "name": f"lsp_{direction}{rank}_broken",
+                "category": "lsp_structure",
+                "compute": {"op": "lsp_broken", "direction": direction, "rank": rank},
+            })
+
+    # LSP level count in proximity — congestion detection
+    # How many clustered levels exist within N ATR above/below current price?
+    for atr_range in [1.0, 2.0, 3.0]:
+        exprs.append({
+            "name": f"lsp_levels_within_{str(atr_range).replace('.','_')}atr",
+            "category": "lsp_structure",
+            "compute": {"op": "lsp_congestion", "atr_range": atr_range},
+        })
+
+    # Distance to nearest unbroken level (the real obstacle)
+    for direction in ["above", "below"]:
+        exprs.append({
+            "name": f"lsp_{direction}_nearest_unbroken_dist",
+            "category": "lsp_structure",
+            "compute": {"op": "lsp_nearest_unbroken", "direction": direction},
+        })
+
     return exprs
 
 
@@ -396,7 +450,7 @@ def generate_exit_boolean_conditions(base_exprs):
         "close_above_ma", "sequential_reclaim", "is_green", "is_doji",
         "touched_ma", "closed_below_ma", "below_signal_bar_low",
         "higher_low_formed", "mfe_expanding", "reclaim_then_lost",
-        "range_contracting",
+        "range_contracting", "lsp_broken",
     }
 
     native_bools = [e for e in base_exprs if e["compute"]["op"] in native_bool_ops]
@@ -529,6 +583,35 @@ def generate_exit_boolean_conditions(base_exprs):
             threshold_bools.append({
                 "name": f"bb_pctb_{p}_above_{str(thresh).replace('.','_')}",
                 "condition": {"base_op": "bollinger_pctb", "period": p,
+                              "threshold": thresh, "direction": "above"},
+            })
+
+    # LSP level broken (price passed through the frozen level)
+    for lsp_dir in ["above", "below"]:
+        for rank in [1, 2, 3]:
+            threshold_bools.append({
+                "name": f"lsp_{lsp_dir}{rank}_is_broken",
+                "condition": {"base_op": "lsp_broken", "lsp_direction": lsp_dir,
+                              "rank": rank, "threshold": 0.5, "direction": "above"},
+            })
+
+    # LSP distance thresholds — approaching the level
+    for lsp_dir in ["above", "below"]:
+        for rank in [1]:  # Only nearest level for threshold bools
+            for thresh in [0.5, 1.0, 2.0]:
+                threshold_bools.append({
+                    "name": f"lsp_{lsp_dir}{rank}_within_{str(thresh).replace('.','_')}atr",
+                    "condition": {"base_op": "lsp_distance", "lsp_direction": lsp_dir,
+                                  "rank": rank, "normalizer": "atr",
+                                  "threshold": thresh, "direction": "below"},
+                })
+
+    # LSP congestion — many levels nearby (dense S/R zone)
+    for atr_range in [2.0, 3.0]:
+        for thresh in [2, 3, 5]:
+            threshold_bools.append({
+                "name": f"lsp_congestion_{str(atr_range).replace('.','_')}atr_above_{thresh}",
+                "condition": {"base_op": "lsp_congestion", "atr_range": atr_range,
                               "threshold": thresh, "direction": "above"},
             })
 

@@ -441,6 +441,13 @@ def _find_base_expr_name(cond: dict, matrix: dict) -> Optional[str]:
         return f"bb_pctb_{cond['period']}"
     elif op == "rs_vs_spy":
         return f"rs_vs_spy_{cond.get('period', 10)}"
+    elif op == "lsp_broken":
+        return f"lsp_{cond.get('lsp_direction', 'above')}{cond.get('rank', 1)}_broken"
+    elif op == "lsp_distance":
+        return f"lsp_{cond.get('lsp_direction', 'above')}{cond.get('rank', 1)}_distance_atr"
+    elif op == "lsp_congestion":
+        atr_r = str(cond.get('atr_range', 2.0)).replace('.', '_')
+        return f"lsp_levels_within_{atr_r}atr"
     
     return None
 
