@@ -7,7 +7,10 @@ Separate from single-stage exit_grinder.py — both systems coexist.
 GRINDER RULES:
     - Uses exact same computation methods as exit_grinder.py (ExitExprEngine, same expressions)
     - All CPU cores used for every phase (matrix build, condition discovery, all passes)
-    - 100% example pass rate required — no exceptions
+    - 100% example pass rate required — ALL conditions must FIRE on ALL examples. No exceptions.
+    - If any stage has remaining position (condition didn't fire), config is INVALID — thrown out.
+    - No backstop exits. No S99. Condition fires or config fails.
+    - Sort: floor capture efficiency primary, median secondary (matches exit_grinder.py)
     - Never aborts — handles errors gracefully, always produces output
 
 How it works:
@@ -31,10 +34,9 @@ import numpy as np
 import pandas as pd
 import pickle
 import requests
-from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Tuple
+from dataclasses import dataclass, field
+from typing import Optional, List
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from functools import partial
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -113,11 +115,8 @@ class ExampleData:
 
 
 # ============================================================
-# Stage Config (pickleable, simple tuples for workers)
+# Stage Config (pickleable tuples for fast multiprocessing)
 # ============================================================
-
-# Stage config as tuple: (stage_id, expr_name, direction, threshold, trim_pct, gate_type, gate_value, max_window)
-# Using tuples instead of dataclasses for fast pickling in multiprocessing
 
 def make_stage(stage_id, expr_name, direction, threshold, trim_pct, gate_type="none", gate_value=0.0, max_window=None):
     return (stage_id, expr_name, direction, threshold, trim_pct, gate_type, gate_value, max_window)
@@ -276,17 +275,16 @@ def build_all_matrices(examples, expressions, direction, spy_df, workers):
 
 
 # ============================================================
-# Multi-Stage Simulator (pure numpy, no imports needed)
+# Multi-Stage Simulator
 # ============================================================
 
 def simulate_stages(stages, matrix, meta):
-    """Simulate multi-stage exit for one example. Pure computation, no I/O.
+    """Simulate multi-stage exit for one example.
     
-    stages: list of stage tuples
-    matrix: dict of expr_name → numpy array
-    meta: ExampleMeta
+    Returns: (events_list, effective_capture_pct, capture_efficiency, fully_exited)
     
-    Returns: (events_list, effective_capture_pct, capture_efficiency)
+    fully_exited is True only if ALL position was exited by conditions firing.
+    No backstop. No S99. If conditions don't fire, fully_exited=False.
     """
     n_fwd = meta.n_forward
     direction = meta.direction
@@ -345,20 +343,25 @@ def simulate_stages(stages, matrix, meta):
             fired.add(sid)
             break
 
-    if remaining > 0.001:
-        last_bar = min(n_fwd, len(fwd_close) - 1)
-        exit_price = fwd_close[last_bar]
-        pct_move = ((entry_high - exit_price) / entry_high * 100 if direction == "short"
-                    else (exit_price - entry_low) / entry_low * 100)
-        events.append((99, last_bar, exit_price, remaining, pct_move, 0.0))
+    # NO BACKSTOP. If remaining > 0, the config FAILED on this example.
+    fully_exited = remaining <= 0.001
 
-    effective_pct = sum(e[3] * e[4] for e in events)
-    capture_eff = effective_pct / meta.mfe_pct if meta.mfe_pct > 0 else 0.0
-    return events, effective_pct, capture_eff
+    if fully_exited:
+        effective_pct = sum(e[3] * e[4] for e in events)
+        capture_eff = effective_pct / meta.mfe_pct if meta.mfe_pct > 0 else 0.0
+    else:
+        effective_pct = 0.0
+        capture_eff = 0.0
+
+    return events, effective_pct, capture_eff, fully_exited
 
 
 def simulate_all_examples(stages, matrices, metas):
-    """Run simulation across all examples. Returns (median_eff, avg_eff, floor_eff, median_pct, avg_bars, per_example)."""
+    """Run simulation across all examples.
+    
+    Returns None if ANY example fails (condition didn't fire / position not fully exited).
+    This enforces the 100% pass rule — no exceptions.
+    """
     cap_effs = []
     eff_pcts = []
     bars_list = []
@@ -367,8 +370,13 @@ def simulate_all_examples(stages, matrices, metas):
     for meta in metas:
         matrix = matrices[meta.idx]
         if matrix is None:
-            continue
-        events, eff_pct, cap_eff = simulate_stages(stages, matrix, meta)
+            return None  # missing matrix = fail
+
+        events, eff_pct, cap_eff, fully_exited = simulate_stages(stages, matrix, meta)
+
+        if not fully_exited:
+            return None  # HARD FAIL: condition didn't fire on this example
+
         last_bar = max(e[1] for e in events) if events else 0
 
         per_example.append({
@@ -397,8 +405,7 @@ def simulate_all_examples(stages, matrices, metas):
 def _find_conditions_chunk(args):
     """Worker: find valid conditions for a chunk of expression names."""
     expr_chunk, matrices_pickle, n_examples, n_thresholds = args
-    
-    matrices = matrices_pickle  # already deserialized by ProcessPoolExecutor
+    matrices = matrices_pickle
     valid = []
 
     for expr_name in expr_chunk:
@@ -446,10 +453,8 @@ def find_all_valid_conditions_parallel(matrices, expr_names, n_examples, n_thres
     print(f"\n  Finding valid conditions across {len(expr_names)} expressions ({workers} workers)...")
     t0 = time.time()
 
-    # Chunk expression names across workers
     chunk_size = max(1, len(expr_names) // workers)
     chunks = [expr_names[i:i+chunk_size] for i in range(0, len(expr_names), chunk_size)]
-
     tasks = [(chunk, matrices, n_examples, n_thresholds) for chunk in chunks]
 
     all_valid = []
@@ -457,14 +462,13 @@ def find_all_valid_conditions_parallel(matrices, expr_names, n_examples, n_thres
         futures = {pool.submit(_find_conditions_chunk, t): i for i, t in enumerate(tasks)}
         for future in as_completed(futures):
             try:
-                chunk_valid = future.result()
-                all_valid.extend(chunk_valid)
+                all_valid.extend(future.result())
             except Exception as e:
                 print(f"    Chunk error: {e}")
 
     elapsed = time.time() - t0
     print(f"  Found {len(all_valid):,} valid conditions in {elapsed:.1f}s ({workers} workers)")
-    return all_valid  # list of (expr_name, direction, threshold) tuples
+    return all_valid
 
 
 # ============================================================
@@ -472,9 +476,8 @@ def find_all_valid_conditions_parallel(matrices, expr_names, n_examples, n_thres
 # ============================================================
 
 def _run_pass_chunk(args):
-    """Worker: test a chunk of stage configs and return (stages_tuple, median_eff, floor_eff, avg_eff, median_pct, avg_bars)."""
+    """Worker: test a chunk of stage configs."""
     stage_configs_chunk, matrices, metas_pickle = args
-    
     metas = metas_pickle
     results = []
 
@@ -488,19 +491,15 @@ def _run_pass_chunk(args):
 
 
 def run_pass_parallel(label, all_stage_configs, matrices, metas, workers, top_n=50):
-    """Run a pass: test all stage configs in parallel, return top results.
-    
-    all_stage_configs: list of list-of-stage-tuples (each is a multi-stage config)
-    """
+    """Run a pass: test all stage configs in parallel, return top results."""
     n_configs = len(all_stage_configs)
     if n_configs == 0:
-        print(f"\n  {label}: 0 configs to test. Skipping.")
+        print(f"\n  {label}: 0 configs. Skipping.")
         return []
 
     print(f"\n  {label} ({n_configs:,} configs, {workers} workers)...")
     t0 = time.time()
 
-    # Chunk across workers
     chunk_size = max(1, n_configs // workers)
     chunks = [all_stage_configs[i:i+chunk_size] for i in range(0, n_configs, chunk_size)]
     tasks = [(chunk, matrices, metas) for chunk in chunks]
@@ -510,32 +509,29 @@ def run_pass_parallel(label, all_stage_configs, matrices, metas, workers, top_n=
         futures = {pool.submit(_run_pass_chunk, t): i for i, t in enumerate(tasks)}
         for future in as_completed(futures):
             try:
-                chunk_results = future.result()
-                all_results.extend(chunk_results)
+                all_results.extend(future.result())
             except Exception as e:
                 print(f"    Chunk error: {e}")
 
-    # Sort by median capture efficiency
-    all_results.sort(key=lambda r: (r[1], r[3]), reverse=True)  # (median_eff, floor_eff)
+    # Sort: floor primary, median secondary (matches exit_grinder.py)
+    all_results.sort(key=lambda r: (r[3], r[1]), reverse=True)
 
     elapsed = time.time() - t0
-    best_eff = all_results[0][1] if all_results else 0
+    best_floor = all_results[0][3] if all_results else 0
+    best_med = all_results[0][1] if all_results else 0
     print(f"    {n_configs:,} configs in {elapsed:.1f}s → "
-          f"{len(all_results)} valid, best={best_eff:.3f}")
+          f"{len(all_results)} passed 100% rule, best floor={best_floor:.3f} median={best_med:.3f}")
 
     return all_results[:top_n]
 
 
 # ============================================================
-# Stage Config Generators (build all configs for each pass)
+# Stage Config Generators
 # ============================================================
 
 def gen_single_stage(conditions):
     """Pass 1: single condition exits 100%."""
-    configs = []
-    for expr, d, t in conditions:
-        configs.append([make_stage(1, expr, d, t, 1.0)])
-    return configs
+    return [[make_stage(1, e, d, t, 1.0)] for e, d, t in conditions]
 
 
 def gen_early_trim(conditions):
@@ -633,11 +629,10 @@ def gen_3stage_cross(best_conds):
 
 
 def gen_refinement(best_results):
-    """Pass 8: finer thresholds around best results, all structural variants."""
+    """Pass 8: finer thresholds around best results."""
     if not best_results:
         return []
 
-    # Collect unique conditions from top results
     seen = set()
     refine_targets = []
     for stages, *_ in best_results[:30]:
@@ -653,7 +648,6 @@ def gen_refinement(best_results):
             else np.linspace(-0.1, 0.1, 15)
         for offset in offsets:
             t = round(base_t + offset, 6)
-            # All structural variants
             configs.append([make_stage(1, expr, d, t, 1.0)])
             for max_win in [10, 15, 20]:
                 for trim in [0.25, 0.33, 0.50]:
@@ -704,6 +698,8 @@ def print_results(results, top_n=20):
 
     print(f"\n{'='*120}")
     print(f"TOP {min(top_n, len(results))} EXIT CONFIGURATIONS (all passes)")
+    print(f"Sorted by: floor capture efficiency (primary), median (secondary)")
+    print(f"Rule: ALL conditions must fire on ALL examples. No backstops. No exceptions.")
     print(f"{'='*120}")
 
     for rank, r in enumerate(results[:top_n], 1):
@@ -711,8 +707,8 @@ def print_results(results, top_n=20):
         stage_ids = [s_id(s) for s in stages]
         print(f"\n{'─'*120}")
         print(f"#{rank}  [{len(stages)}-stage: {stage_ids}]  "
+              f"floor_eff={r['floor_capture_eff']:.3f}  "
               f"median_eff={r['median_capture_eff']:.3f}  "
-              f"floor={r['floor_capture_eff']:.3f}  "
               f"median_pct={r['median_effective_pct']:+.2f}%  "
               f"avg_bars={r['avg_bars_to_full_exit']:.1f}")
 
@@ -772,9 +768,9 @@ def save_results(results, examples, setup_type):
 
     nan_fix = lambda x: None if isinstance(x, float) and np.isnan(x) else x
     n_stg = len(best["stages"]) if best else 0
-    eff = f"{best['median_capture_eff']:.3f}" if best else "na"
+    eff = f"{best['floor_capture_eff']:.3f}" if best else "na"
 
-    ts_path = f"data/multistage_exit/ms_exit_{setup_type}_{n_stg}stg_{eff}eff_{ts}.json"
+    ts_path = f"data/multistage_exit/ms_exit_{setup_type}_{n_stg}stg_{eff}floor_{ts}.json"
     with open(ts_path, "w") as f:
         json.dump(data, f, indent=2, default=nan_fix)
     latest = f"data/multistage_exit/ms_exit_{setup_type}.json"
@@ -785,7 +781,7 @@ def save_results(results, examples, setup_type):
 
 
 # ============================================================
-# Main — single command, all passes parallel, best result wins
+# Main
 # ============================================================
 
 def main():
@@ -801,6 +797,7 @@ def main():
 
     print(f"Multi-Stage Exit Grinder")
     print(f"Setup: {args.setup.upper()}, Direction: {args.direction}, Workers: {args.workers}")
+    print(f"RULE: ALL conditions must fire on ALL examples. No backstops. No exceptions.")
 
     # --- Load ---
     raw_examples = load_examples(args.setup)
@@ -864,15 +861,15 @@ def main():
 
     print(f"Total expressions: {len(all_expr_names)}")
 
-    # Build lightweight metas for parallel simulation
+    # Build lightweight metas
     metas = [ex.to_meta(i) for i, ex in enumerate(examples)]
 
-    # --- Find all valid conditions (parallel, all cores) ---
+    # --- Find valid conditions (parallel, all cores) ---
     conditions = find_all_valid_conditions_parallel(
         all_matrices, all_expr_names, len(examples), args.n_thresholds, args.workers)
 
     if not conditions:
-        print("No valid conditions found. Check expressions and examples.")
+        print("No valid conditions found.")
         return
 
     # --- Run all passes (parallel, all cores) ---
@@ -884,31 +881,26 @@ def main():
     print(f"{'='*80}")
 
     # Pass 1: single-stage baseline
-    configs = gen_single_stage(conditions)
-    r = run_pass_parallel("P1:single", configs, all_matrices, metas, args.workers)
+    r = run_pass_parallel("P1:single", gen_single_stage(conditions), all_matrices, metas, args.workers)
     all_top.extend(r)
 
     # Pass 2: early trim + full exit
-    configs = gen_early_trim(conditions)
-    r = run_pass_parallel("P2:early-trim", configs, all_matrices, metas, args.workers)
+    r = run_pass_parallel("P2:early-trim", gen_early_trim(conditions), all_matrices, metas, args.workers)
     all_top.extend(r)
 
     # Pass 3: MFE-gated
-    configs = gen_mfe_gated(conditions)
-    r = run_pass_parallel("P3:mfe-gated", configs, all_matrices, metas, args.workers)
+    r = run_pass_parallel("P3:mfe-gated", gen_mfe_gated(conditions), all_matrices, metas, args.workers)
     all_top.extend(r)
 
     # Pass 4: protection + trail
-    configs = gen_protection_trail(conditions)
-    r = run_pass_parallel("P4:protect+trail", configs, all_matrices, metas, args.workers)
+    r = run_pass_parallel("P4:protect+trail", gen_protection_trail(conditions), all_matrices, metas, args.workers)
     all_top.extend(r)
 
     # Pass 5: bar-gated
-    configs = gen_bar_gated(conditions)
-    r = run_pass_parallel("P5:bar-gated", configs, all_matrices, metas, args.workers)
+    r = run_pass_parallel("P5:bar-gated", gen_bar_gated(conditions), all_matrices, metas, args.workers)
     all_top.extend(r)
 
-    # Pass 6: cross-condition — use conditions from top results
+    # Pass 6: cross-condition
     best_conds_set = set()
     for stages, *_ in all_top[:100]:
         for stg in stages:
@@ -916,30 +908,28 @@ def main():
     best_conds = list(best_conds_set)
 
     if len(best_conds) >= 2:
-        configs = gen_cross_condition(best_conds)
-        r = run_pass_parallel("P6:cross-cond", configs, all_matrices, metas, args.workers)
+        r = run_pass_parallel("P6:cross-cond", gen_cross_condition(best_conds), all_matrices, metas, args.workers)
         all_top.extend(r)
 
     # Pass 7: 3-stage cross
     if len(best_conds) >= 3:
-        configs = gen_3stage_cross(best_conds)
-        r = run_pass_parallel("P7:3stg-cross", configs, all_matrices, metas, args.workers)
+        r = run_pass_parallel("P7:3stg-cross", gen_3stage_cross(best_conds), all_matrices, metas, args.workers)
         all_top.extend(r)
 
     # Pass 8: refinement
-    configs = gen_refinement(all_top)
-    if configs:
-        r = run_pass_parallel("P8:refine", configs, all_matrices, metas, args.workers)
+    refine_configs = gen_refinement(all_top)
+    if refine_configs:
+        r = run_pass_parallel("P8:refine", refine_configs, all_matrices, metas, args.workers)
         all_top.extend(r)
 
-    # --- Final ranking & dedup ---
-    all_top.sort(key=lambda r: (r[1], r[3]), reverse=True)
+    # --- Final ranking: floor primary, median secondary ---
+    all_top.sort(key=lambda r: (r[3], r[1]), reverse=True)
 
+    # Dedup
     seen = set()
     deduped = []
     for entry in all_top:
-        stages = entry[0]
-        key = tuple(stages)  # stage tuples are hashable
+        key = tuple(entry[0])
         if key not in seen:
             seen.add(key)
             deduped.append(entry)
@@ -950,7 +940,7 @@ def main():
           f"{len(deduped)} unique from {len(all_top)} total")
     print(f"{'='*80}")
 
-    # Rebuild full per-example data for top results
+    # Rebuild full results for reporting
     full_results = rebuild_full_results(deduped, all_matrices, metas)
     print_results(full_results)
 
@@ -958,21 +948,11 @@ def main():
         save_results(full_results, examples, args.setup)
         best = full_results[0]
         print(f"\n{'='*80}")
-        print(f"BEST: {best['median_capture_eff']:.1%} median capture efficiency "
+        print(f"BEST: floor={best['floor_capture_eff']:.1%} "
+              f"median={best['median_capture_eff']:.1%} "
               f"({best['median_effective_pct']:+.2f}% median move)")
+        print(f"ALL conditions fired on ALL examples. No backstops.")
         print(f"{'='*80}")
-
-    # --- Validation: 100% pass rule ---
-    if full_results:
-        best = full_results[0]
-        n_ex = len(examples)
-        n_triggered = len(best["per_example"])
-        if n_triggered < n_ex:
-            print(f"\n{'!'*80}")
-            print(f"WARNING: Best result only covers {n_triggered}/{n_ex} examples!")
-            print(f"{'!'*80}")
-        else:
-            print(f"\n✓ Validation: {n_triggered}/{n_ex} examples covered (100%)")
 
 
 if __name__ == "__main__":
