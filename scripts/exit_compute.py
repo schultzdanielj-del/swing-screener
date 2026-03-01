@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from scripts.expression_engine import ExpressionEngine
 from scripts.lsp_detector_v2 import LSPDetectorV2, resample_ohlcv
+from scripts.algo_line_detector import detect_algo_lines, _get_active_lines_at_bar, _find_shallowest_line, _line_price_at_bar
 from scripts.profiling_engine import (
     sma, ema, hma, rolling_max, rolling_min, rolling_sum,
     atr, rsi, stochastic_k, cci, adx, di_plus, di_minus,
@@ -84,6 +85,9 @@ class ExitExprEngine:
         # LSP levels frozen at entry bar (computed lazily on first use)
         self._lsp_levels = None
         self._lsp_detector = None
+        
+        # Algo lines frozen at entry bar (computed lazily on first use)
+        self._algo_lines = None
         
         # Cache
         self._cache = {}
@@ -195,6 +199,30 @@ class ExitExprEngine:
             val = atr_arr[self.entry_idx]
             self._cache[key] = val if not np.isnan(val) and val > 0 else 1.0
         return self._cache[key]
+    
+    def _get_algo_lines(self):
+        """Get algo lines frozen at entry bar. Computed lazily, cached.
+        
+        Returns dict with 'hminus': [AlgoLine, ...] and 'lplus': [AlgoLine, ...]
+        Lines are detected from pre-entry history only, then frozen.
+        The _get_active_lines_at_bar helper is used per forward bar to get
+        proximity-sorted active lines at each evaluation point.
+        """
+        if self._algo_lines is not None:
+            return self._algo_lines
+        
+        try:
+            pre_entry_df = self.df.iloc[:self.entry_idx + 1].copy()
+            if len(pre_entry_df) < 60:
+                self._algo_lines = {'hminus': [], 'lplus': []}
+                return self._algo_lines
+            
+            all_lines = detect_algo_lines(pre_entry_df)
+            self._algo_lines = all_lines
+        except Exception:
+            self._algo_lines = {'hminus': [], 'lplus': []}
+        
+        return self._algo_lines
     
     def compute(self, comp):
         """Compute a post-signal expression series.
@@ -1130,6 +1158,198 @@ class ExitExprEngine:
                     distances = np.abs(fwd_c[i] - unbroken_prices)
                     result[i] = np.min(distances) / entry_atr
             
+            return result
+        
+        # ──── ALGO LINES ───────────────────────────────────
+        # Lines are FROZEN at entry bar (detected once from pre-entry data).
+        # At each forward bar, we evaluate price vs those fixed lines using
+        # the same helper functions as the signal grinder's cache builder.
+        
+        elif op == "algo_distance":
+            """Distance from current price to frozen algo line, ATR-normalized.
+            
+            Uses _get_active_lines_at_bar() to get proximity-sorted lines
+            at each forward bar, then returns the distance for the requested rank.
+            Positive = line above price, negative = line below price.
+            """
+            line_type = comp["line_type"]  # "hminus" or "lplus"
+            rank = comp["rank"]  # 1-based
+            is_hminus = (line_type == "hminus")
+            all_lines = self._get_algo_lines()
+            line_list = all_lines.get(line_type, [])
+            
+            if not line_list:
+                return np.full(self.n_forward, np.nan)
+            
+            entry_atr = self._get_entry_atr()
+            fwd_c = self.c[self.fwd_start:self.fwd_end]
+            atr_arr = self._base._atr(14).values
+            
+            result = np.full(self.n_forward, np.nan)
+            for i in range(self.n_forward):
+                abs_idx = self.fwd_start + i
+                atr_val = atr_arr[abs_idx] if abs_idx < len(atr_arr) and not np.isnan(atr_arr[abs_idx]) else entry_atr
+                if atr_val <= 0:
+                    continue
+                active = _get_active_lines_at_bar(
+                    line_list, abs_idx, is_hminus, fwd_c[i], atr_val
+                )
+                if rank <= len(active):
+                    _, distance, _, _ = active[rank - 1]
+                    result[i] = abs(distance)  # absolute distance in ATR
+            return result
+        
+        elif op == "algo_broken":
+            """Whether price has broken through the frozen algo line (0/1).
+            
+            For H- lines: broken when close goes above the line price
+            For L+ lines: broken when close goes below the line price
+            Once broken, stays broken (running OR).
+            """
+            line_type = comp["line_type"]
+            rank = comp["rank"]
+            is_hminus = (line_type == "hminus")
+            all_lines = self._get_algo_lines()
+            line_list = all_lines.get(line_type, [])
+            
+            if not line_list:
+                return np.zeros(self.n_forward)
+            
+            entry_atr = self._get_entry_atr()
+            fwd_c = self.c[self.fwd_start:self.fwd_end]
+            atr_arr = self._base._atr(14).values
+            
+            # Get the line at entry bar to identify which specific line we track
+            abs_entry = self.fwd_start
+            atr_at_entry = atr_arr[abs_entry] if not np.isnan(atr_arr[abs_entry]) else entry_atr
+            active_at_entry = _get_active_lines_at_bar(
+                line_list, abs_entry, is_hminus, fwd_c[0], max(atr_at_entry, 0.01)
+            )
+            
+            if rank > len(active_at_entry):
+                return np.zeros(self.n_forward)
+            
+            # Track this specific line through the trade
+            tracked_line = active_at_entry[rank - 1][0]
+            
+            result = np.zeros(self.n_forward)
+            ever_broken = False
+            for i in range(self.n_forward):
+                abs_idx = self.fwd_start + i
+                line_price = _line_price_at_bar(
+                    tracked_line.origin_idx, tracked_line.origin_price,
+                    tracked_line.slope_per_bar, abs_idx
+                )
+                if line_price <= 0:
+                    continue
+                if is_hminus:
+                    # H- line broken when close goes above
+                    if fwd_c[i] > line_price:
+                        ever_broken = True
+                else:
+                    # L+ line broken when close goes below
+                    if fwd_c[i] < line_price:
+                        ever_broken = True
+                if ever_broken:
+                    result[i] = 1.0
+            return result
+        
+        elif op == "algo_touch_count":
+            """Touch count of the nearest frozen algo line at entry.
+            
+            More touches = more significant S/R. Fixed at entry time.
+            """
+            line_type = comp["line_type"]
+            rank = comp["rank"]
+            is_hminus = (line_type == "hminus")
+            all_lines = self._get_algo_lines()
+            line_list = all_lines.get(line_type, [])
+            
+            if not line_list:
+                return np.full(self.n_forward, np.nan)
+            
+            entry_atr = self._get_entry_atr()
+            fwd_c = self.c[self.fwd_start:self.fwd_end]
+            atr_arr = self._base._atr(14).values
+            
+            # Get at entry bar
+            abs_entry = self.fwd_start
+            atr_at_entry = atr_arr[abs_entry] if not np.isnan(atr_arr[abs_entry]) else entry_atr
+            active_at_entry = _get_active_lines_at_bar(
+                line_list, abs_entry, is_hminus, fwd_c[0], max(atr_at_entry, 0.01)
+            )
+            
+            if rank > len(active_at_entry):
+                return np.full(self.n_forward, np.nan)
+            
+            touch_count = float(active_at_entry[rank - 1][0].touch_count)
+            return np.full(self.n_forward, touch_count)
+        
+        elif op == "algo_shallowest_distance":
+            """Distance to shallowest unbroken algo line, ATR-normalized.
+            
+            Per ta_knowledge.md: shallowest H- above = nearest overhead
+            resistance. Shallowest L+ below = nearest support.
+            Evaluated per forward bar since lines can break during the trade.
+            """
+            line_type = comp["line_type"]
+            is_hminus = (line_type == "hminus")
+            all_lines = self._get_algo_lines()
+            line_list = all_lines.get(line_type, [])
+            
+            if not line_list:
+                return np.full(self.n_forward, np.nan)
+            
+            entry_atr = self._get_entry_atr()
+            fwd_c = self.c[self.fwd_start:self.fwd_end]
+            atr_arr = self._base._atr(14).values
+            
+            result = np.full(self.n_forward, np.nan)
+            for i in range(self.n_forward):
+                abs_idx = self.fwd_start + i
+                atr_val = atr_arr[abs_idx] if abs_idx < len(atr_arr) and not np.isnan(atr_arr[abs_idx]) else entry_atr
+                if atr_val <= 0:
+                    continue
+                active = _get_active_lines_at_bar(
+                    line_list, abs_idx, is_hminus, fwd_c[i], atr_val
+                )
+                shallowest = _find_shallowest_line(active, is_hminus, fwd_c[i])
+                if shallowest is not None:
+                    _, s_distance, _ = shallowest
+                    result[i] = abs(s_distance)
+            return result
+        
+        elif op == "algo_shallowest_slope":
+            """Slope of shallowest unbroken algo line, ATR-normalized.
+            
+            Negative slope for H- = resistance descending toward price.
+            Positive slope for L+ = support rising toward price.
+            """
+            line_type = comp["line_type"]
+            is_hminus = (line_type == "hminus")
+            all_lines = self._get_algo_lines()
+            line_list = all_lines.get(line_type, [])
+            
+            if not line_list:
+                return np.full(self.n_forward, np.nan)
+            
+            entry_atr = self._get_entry_atr()
+            fwd_c = self.c[self.fwd_start:self.fwd_end]
+            atr_arr = self._base._atr(14).values
+            
+            result = np.full(self.n_forward, np.nan)
+            for i in range(self.n_forward):
+                abs_idx = self.fwd_start + i
+                atr_val = atr_arr[abs_idx] if abs_idx < len(atr_arr) and not np.isnan(atr_arr[abs_idx]) else entry_atr
+                if atr_val <= 0:
+                    continue
+                active = _get_active_lines_at_bar(
+                    line_list, abs_idx, is_hminus, fwd_c[i], atr_val
+                )
+                shallowest = _find_shallowest_line(active, is_hminus, fwd_c[i])
+                if shallowest is not None:
+                    s_line, _, _ = shallowest
+                    result[i] = s_line.slope_per_bar / atr_val
             return result
         
         

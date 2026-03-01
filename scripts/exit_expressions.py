@@ -431,6 +431,70 @@ def generate_exit_expressions():
             "compute": {"op": "lsp_nearest_unbroken", "direction": direction},
         })
 
+    # ═══════════════════════════════════════════════════════════
+    # 14. ALGO LINES — H- and L+ trendlines from high-volume candles
+    #     Per ta_knowledge.md: "H- lines: downsloping, originate from
+    #     HIGHS of candles with V > 50-period MA(V)"
+    #     "Retests of broken algo lines are potential trade signals"
+    #     "LSP + algo line convergence = high-probability reaction zone"
+    #
+    #     For exit: lines are FROZEN at entry bar, then we track
+    #     how price relates to those frozen lines as the trade
+    #     progresses. Key signals: approaching/touching/breaking
+    #     the nearest overhead H- or support L+.
+    #
+    #     Algo lines computed ONCE per example (expensive), then
+    #     evaluated cheaply per forward bar.
+    # ═══════════════════════════════════════════════════════════
+
+    # Distance to nearest H-/L+ algo line (ATR-normalized) at each forward bar
+    # For shorts: H- lines above = overhead resistance, L+ below = support targets
+    # For longs: L+ lines below = support, H- above = resistance targets
+    for line_type in ["hminus", "lplus"]:
+        for rank in [1, 2, 3]:
+            exprs.append({
+                "name": f"algo_{line_type}{rank}_distance_atr",
+                "category": "algo_lines",
+                "compute": {"op": "algo_distance", "line_type": line_type,
+                            "rank": rank},
+            })
+
+    # Algo line broken detection — did price break through during the trade?
+    # Once broken, stays broken (running OR).
+    for line_type in ["hminus", "lplus"]:
+        for rank in [1, 2, 3]:
+            exprs.append({
+                "name": f"algo_{line_type}{rank}_broken",
+                "category": "algo_lines",
+                "compute": {"op": "algo_broken", "line_type": line_type,
+                            "rank": rank},
+            })
+
+    # Touch count on nearest algo lines — line strength indicator
+    # More touches = more significant as S/R
+    for line_type in ["hminus", "lplus"]:
+        for rank in [1, 2]:
+            exprs.append({
+                "name": f"algo_{line_type}{rank}_touch_count",
+                "category": "algo_lines",
+                "compute": {"op": "algo_touch_count", "line_type": line_type,
+                            "rank": rank},
+            })
+
+    # Shallowest unbroken line — the real obstacle
+    # Per ta_knowledge.md: shallowest H- above = nearest overhead resistance
+    for line_type in ["hminus", "lplus"]:
+        exprs.append({
+            "name": f"algo_{line_type}_shallowest_dist",
+            "category": "algo_lines",
+            "compute": {"op": "algo_shallowest_distance", "line_type": line_type},
+        })
+        exprs.append({
+            "name": f"algo_{line_type}_shallowest_slope",
+            "category": "algo_lines",
+            "compute": {"op": "algo_shallowest_slope", "line_type": line_type},
+        })
+
     return exprs
 
 
@@ -450,7 +514,7 @@ def generate_exit_boolean_conditions(base_exprs):
         "close_above_ma", "sequential_reclaim", "is_green", "is_doji",
         "touched_ma", "closed_below_ma", "below_signal_bar_low",
         "higher_low_formed", "mfe_expanding", "reclaim_then_lost",
-        "range_contracting", "lsp_broken",
+        "range_contracting", "lsp_broken", "algo_broken",
     }
 
     native_bools = [e for e in base_exprs if e["compute"]["op"] in native_bool_ops]
@@ -614,6 +678,25 @@ def generate_exit_boolean_conditions(base_exprs):
                 "condition": {"base_op": "lsp_congestion", "atr_range": atr_range,
                               "threshold": thresh, "direction": "above"},
             })
+
+    # Algo line broken (price passed through the frozen line)
+    for line_type in ["hminus", "lplus"]:
+        for rank in [1, 2, 3]:
+            threshold_bools.append({
+                "name": f"algo_{line_type}{rank}_is_broken",
+                "condition": {"base_op": "algo_broken", "line_type": line_type,
+                              "rank": rank, "threshold": 0.5, "direction": "above"},
+            })
+
+    # Algo line distance thresholds — approaching the line
+    for line_type in ["hminus", "lplus"]:
+        for rank in [1]:  # Only nearest line for threshold bools
+            for thresh in [0.5, 1.0, 2.0]:
+                threshold_bools.append({
+                    "name": f"algo_{line_type}{rank}_within_{str(thresh).replace('.','_')}atr",
+                    "condition": {"base_op": "algo_distance", "line_type": line_type,
+                                  "rank": rank, "threshold": thresh, "direction": "below"},
+                })
 
     # RS vs SPY thresholds
     for window in [10, 20]:
