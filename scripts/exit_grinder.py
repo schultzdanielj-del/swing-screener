@@ -694,17 +694,25 @@ def print_mfe_summary(examples: list):
 
 
 def save_results(candidates: list, examples: list, setup_type: str, args):
-    """Save results to JSON."""
+    """Save results to JSON — timestamped archive + latest overwrite."""
+    from datetime import datetime
+
     os.makedirs("data/exit_grind", exist_ok=True)
-    outpath = f"data/exit_grind/exit_grind_{setup_type}.json"
+
+    best = candidates[0] if candidates else None
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    n_ex = len(examples)
+    triggered = best.examples_triggered if best else 0
+    floor_pct = f"{best.floor_pct_move:+.1f}" if best else "na"
 
     data = {
         "setup_type": setup_type,
+        "timestamp": datetime.now().isoformat(),
         "direction": args.direction,
         "max_forward": args.max_forward,
         "n_thresholds": args.n_thresholds,
         "min_trigger_pct": args.min_trigger_pct,
-        "n_examples": len(examples),
+        "n_examples": n_ex,
         "examples": [
             {"ticker": ex.ticker, "entry_date": ex.entry_date,
              "entry_high": ex.entry_high, "mfe_pct": ex.mfe_pct}
@@ -732,9 +740,18 @@ def save_results(candidates: list, examples: list, setup_type: str, args):
         ],
     }
 
-    with open(outpath, "w") as f:
+    # Timestamped file (archive — never overwritten)
+    desc_name = f"exit_grind_{setup_type}_{triggered}of{n_ex}_{floor_pct}pct_{ts}"
+    ts_path = os.path.join("data/exit_grind", f"{desc_name}.json")
+    with open(ts_path, "w") as f:
         json.dump(data, f, indent=2, default=lambda x: None if isinstance(x, float) and np.isnan(x) else x)
-    print(f"\nResults saved to {outpath}")
+    print(f"\n  Saved: {ts_path}")
+
+    # Latest file (overwritten each run — default for downstream consumers)
+    latest_path = os.path.join("data/exit_grind", f"exit_grind_{setup_type}.json")
+    with open(latest_path, "w") as f:
+        json.dump(data, f, indent=2, default=lambda x: None if isinstance(x, float) and np.isnan(x) else x)
+    print(f"  Saved as latest: {latest_path}")
 
 
 # ============================================================
