@@ -448,6 +448,10 @@ def _find_base_expr_name(cond: dict, matrix: dict) -> Optional[str]:
     elif op == "lsp_congestion":
         atr_r = str(cond.get('atr_range', 2.0)).replace('.', '_')
         return f"lsp_levels_within_{atr_r}atr"
+    elif op == "algo_broken":
+        return f"algo_{cond.get('line_type', 'hminus')}{cond.get('rank', 1)}_broken"
+    elif op == "algo_distance":
+        return f"algo_{cond.get('line_type', 'hminus')}{cond.get('rank', 1)}_distance_atr"
     
     return None
 
