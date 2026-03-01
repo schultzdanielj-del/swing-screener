@@ -5,23 +5,23 @@ Grinds for optimal multi-stage conditional exits with position sizing.
 Separate from single-stage exit_grinder.py — both systems coexist.
 
 How it works:
-    1. Builds expression matrices for all examples (same as single-stage grinder)
-    2. Grinds each stage independently to find top candidates:
-       - Stage 1 (Capital Protection): exits duds early, trims partial position
-       - Stage 2 (Partial Profit): books gains once move confirmed, trims more
-       - Stage 3 (Trailing Exit): rides remainder until trend breaks, exits 100%
-    3. Tests all combinations of top candidates from each stage
-    4. Reports best multi-stage configs ranked by capture efficiency
+    1. Builds expression matrices (same as single-stage grinder)
+    2. Finds all conditions that trigger on 100% of examples (one grind)
+    3. Runs multiple passes testing every structure variant:
+       - Pass 1: single-stage (baseline, same as exit_grinder)
+       - Pass 2: 2-stage early trim + full exit
+       - Pass 3: 2-stage MFE-gated partial + full exit
+       - Pass 4: 3-stage protection + partial + trailing
+       - Pass 5: re-grind tighter around best results from passes 1-4
+    4. Ranks ALL results across all passes, reports the best
 
-Scoring:
-    effective_capture = Σ (trim_pct_i × captured_move_at_exit_i)
-    capture_efficiency = effective_capture / MFE
+Each pass is cheap — just simulation over pre-built matrices.
+Expression matrix build is the only expensive step (done once).
 
 Usage:
     python scripts/multistage_exit_grinder.py --setup dtss
     python scripts/multistage_exit_grinder.py --setup dtss --workers 12
-    python scripts/multistage_exit_grinder.py --setup dtss --base-only     # faster, skip bool aggs
-    python scripts/multistage_exit_grinder.py --setup dtss --top-k 10      # fewer combos
+    python scripts/multistage_exit_grinder.py --setup dtss --base-only
 """
 
 import argparse
@@ -54,14 +54,11 @@ DEFAULT_WORKERS = os.cpu_count() or 8
 LOCAL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "local_runner")
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 
-# Grindable parameter sets
-TRIM_PCTS = [0.33, 0.50, 0.75, 1.0]
-STAGE1_MAX_WINDOWS = [10, 15, 20, 25]
-STAGE2_MFE_GATES_ADR = [1.0, 1.5, 2.0, 2.5, 3.0]
-STAGE3_MFE_GATES_ADR = [2.0, 3.0, 4.0, 5.0]
-STAGE3_BAR_GATES = [15, 20, 30, 40]
-
-TOP_K_PER_STAGE = 15
+# Stage parameter sets
+TRIM_PCTS = [0.25, 0.33, 0.50, 0.75, 1.0]
+MAX_WINDOWS = [8, 12, 15, 20, 25, 30]
+MFE_GATES = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
+BAR_GATES = [10, 15, 20, 30, 40]
 
 
 # ============================================================
@@ -116,6 +113,7 @@ class StageExitEvent:
 
 @dataclass
 class MultiStageResult:
+    label: str               # which pass produced this
     stages: List[StageConfig]
     per_example: List[dict]
     median_capture_eff: float
@@ -142,22 +140,19 @@ def load_5yr_cache():
     return cache
 
 
-def load_examples(setup_type: str) -> list:
+def load_examples(setup_type):
     r = requests.get(f"{RAILWAY_URL}/api/examples/{setup_type}")
     r.raise_for_status()
     return r.json()["examples"]
 
 
-def build_example_data(example: dict, direction: str, max_forward: int,
-                       universe_cache: dict) -> Optional[ExampleData]:
+def build_example_data(example, direction, max_forward, universe_cache):
     ticker = example["ticker"]
     entry_date = example["entryDate"]
-
     try:
         df = universe_cache.get(ticker)
         if df is None:
             return None
-
         df = df.copy()
         if not pd.api.types.is_datetime64_any_dtype(df["date"]):
             df["date"] = pd.to_datetime(df["date"])
@@ -172,7 +167,6 @@ def build_example_data(example: dict, direction: str, max_forward: int,
         if not date_matches:
             return None
         entry_idx = date_matches[0]
-
         n_available = len(df) - entry_idx - 1
         if n_available < 5:
             return None
@@ -245,18 +239,15 @@ def _build_one_example_matrix(args):
 
 def build_all_matrices(examples, expressions, direction, spy_df, workers):
     spy_records = spy_df.to_dict("records") if spy_df is not None else None
-    tasks = []
-    for ex in examples:
-        tasks.append(({
-            "ticker": ex.ticker, "entry_idx": ex.entry_idx,
-            "n_forward": ex.n_forward, "df_records": ex.df.to_dict("records"),
-        }, expressions, direction, spy_records))
+    tasks = [({
+        "ticker": ex.ticker, "entry_idx": ex.entry_idx,
+        "n_forward": ex.n_forward, "df_records": ex.df.to_dict("records"),
+    }, expressions, direction, spy_records) for ex in examples]
 
     print(f"\nComputing {len(expressions)} expressions × {len(examples)} examples "
           f"({workers} workers)...")
     t0 = time.time()
     matrices = [None] * len(examples)
-
     with ProcessPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(_build_one_example_matrix, t): i for i, t in enumerate(tasks)}
         done = 0
@@ -271,7 +262,6 @@ def build_all_matrices(examples, expressions, direction, spy_df, workers):
             except Exception as e:
                 done += 1
                 print(f"  [{done}/{len(examples)}] ERROR: {e}")
-
     print(f"Matrix build: {time.time()-t0:.1f}s")
     return matrices
 
@@ -280,136 +270,133 @@ def build_all_matrices(examples, expressions, direction, spy_df, workers):
 # Multi-Stage Simulator
 # ============================================================
 
-class MultiStageSimulator:
+def simulate_example(stages, matrix, example):
+    """Walk forward bar-by-bar, apply stages in order with position tracking."""
+    n_fwd = example.n_forward
+    direction = example.direction
+    entry_high, entry_low = example.entry_high, example.entry_low
+    adr = example.adr_at_entry
+    fwd_close, fwd_low, fwd_high = example.fwd_close, example.fwd_low, example.fwd_high
 
-    @staticmethod
-    def simulate_example(stages, matrix, example):
-        """Walk forward bar-by-bar, apply stages in order with position tracking."""
-        n_fwd = example.n_forward
-        direction = example.direction
-        entry_high, entry_low = example.entry_high, example.entry_low
-        adr = example.adr_at_entry
-        fwd_close, fwd_low, fwd_high = example.fwd_close, example.fwd_low, example.fwd_high
+    if direction == "short":
+        running_mfe_adr = (entry_high - np.minimum.accumulate(fwd_low)) / adr
+    else:
+        running_mfe_adr = (np.maximum.accumulate(fwd_high) - entry_low) / adr
 
-        if direction == "short":
-            running_mfe_adr = (entry_high - np.minimum.accumulate(fwd_low)) / adr
-        else:
-            running_mfe_adr = (np.maximum.accumulate(fwd_high) - entry_low) / adr
+    events = []
+    remaining = 1.0
+    fired = set()
 
-        events = []
-        remaining = 1.0
-        fired = set()
+    for bar in range(1, min(n_fwd + 1, len(fwd_close))):
+        if remaining <= 0.001:
+            break
+        mfe_now = running_mfe_adr[bar] if bar < len(running_mfe_adr) else 0.0
 
-        for bar in range(1, min(n_fwd + 1, len(fwd_close))):
-            if remaining <= 0.001:
-                break
-            mfe_now = running_mfe_adr[bar] if bar < len(running_mfe_adr) else 0.0
-
-            for stage in stages:
-                if stage.stage_id in fired or remaining <= 0.001:
-                    continue
-                if stage.max_window is not None and bar > stage.max_window:
-                    continue
-                if stage.gate_type == "mfe_adr" and mfe_now < stage.gate_value:
-                    continue
-                if stage.gate_type == "bars_min" and bar < stage.gate_value:
-                    continue
-
-                series = matrix.get(stage.condition.expr_name)
-                if series is None or bar >= len(series):
-                    continue
-                val = series[bar]
-                if np.isnan(val):
-                    continue
-
-                hit = (val > stage.condition.threshold if stage.condition.direction == "above"
-                       else val < stage.condition.threshold)
-                if not hit:
-                    continue
-
-                exit_price = fwd_close[bar]
-                if direction == "short":
-                    pct_move = (entry_high - exit_price) / entry_high * 100
-                else:
-                    pct_move = (exit_price - entry_low) / entry_low * 100
-
-                trimmed = remaining * min(stage.trim_pct, 1.0)
-                remaining -= trimmed
-                events.append(StageExitEvent(
-                    stage.stage_id, bar, exit_price, trimmed, pct_move, remaining))
-                fired.add(stage.stage_id)
-                break
-
-        # Backstop: exit remaining at last bar
-        if remaining > 0.001:
-            last_bar = min(n_fwd, len(fwd_close) - 1)
-            exit_price = fwd_close[last_bar]
-            pct_move = ((entry_high - exit_price) / entry_high * 100 if direction == "short"
-                        else (exit_price - entry_low) / entry_low * 100)
-            events.append(StageExitEvent(99, last_bar, exit_price, remaining, pct_move, 0.0))
-
-        effective_pct = sum(e.pct_trimmed * e.pct_move for e in events)
-        capture_eff = effective_pct / example.mfe_pct if example.mfe_pct > 0 else 0.0
-        return events, effective_pct, capture_eff
-
-    @staticmethod
-    def simulate_all(stages, matrices, examples):
-        """Run simulation across all examples. Returns MultiStageResult."""
-        per_example = []
-        cap_effs, eff_pcts, bars_list = [], [], []
-
-        for i, ex in enumerate(examples):
-            if matrices[i] is None:
+        for stage in stages:
+            if stage.stage_id in fired or remaining <= 0.001:
                 continue
-            events, eff_pct, cap_eff = MultiStageSimulator.simulate_example(
-                stages, matrices[i], ex)
-            last_bar = max(e.bar for e in events) if events else 0
+            if stage.max_window is not None and bar > stage.max_window:
+                continue
+            if stage.gate_type == "mfe_adr" and mfe_now < stage.gate_value:
+                continue
+            if stage.gate_type == "bars_min" and bar < stage.gate_value:
+                continue
 
-            per_example.append({
-                "ticker": ex.ticker, "entry_date": ex.entry_date,
-                "mfe_pct": ex.mfe_pct, "mfe_adr": ex.mfe_adr,
-                "effective_pct": eff_pct, "capture_eff": cap_eff,
-                "events": [{"stage_id": e.stage_id, "bar": e.bar, "price": e.price,
-                            "pct_trimmed": e.pct_trimmed, "pct_move": e.pct_move}
-                           for e in events],
-                "bars_to_full_exit": last_bar,
-            })
-            cap_effs.append(cap_eff)
-            eff_pcts.append(eff_pct)
-            bars_list.append(last_bar)
+            series = matrix.get(stage.condition.expr_name)
+            if series is None or bar >= len(series):
+                continue
+            val = series[bar]
+            if np.isnan(val):
+                continue
 
-        if not cap_effs:
-            return None
+            hit = (val > stage.condition.threshold if stage.condition.direction == "above"
+                   else val < stage.condition.threshold)
+            if not hit:
+                continue
 
-        return MultiStageResult(
-            stages=stages, per_example=per_example,
-            median_capture_eff=float(np.median(cap_effs)),
-            avg_capture_eff=float(np.mean(cap_effs)),
-            floor_capture_eff=float(np.min(cap_effs)),
-            median_effective_pct=float(np.median(eff_pcts)),
-            avg_bars_to_full_exit=float(np.mean(bars_list)),
-        )
+            exit_price = fwd_close[bar]
+            if direction == "short":
+                pct_move = (entry_high - exit_price) / entry_high * 100
+            else:
+                pct_move = (exit_price - entry_low) / entry_low * 100
+
+            trimmed = remaining * min(stage.trim_pct, 1.0)
+            remaining -= trimmed
+            events.append(StageExitEvent(
+                stage.stage_id, bar, exit_price, trimmed, pct_move, remaining))
+            fired.add(stage.stage_id)
+            break
+
+    # Backstop
+    if remaining > 0.001:
+        last_bar = min(n_fwd, len(fwd_close) - 1)
+        exit_price = fwd_close[last_bar]
+        pct_move = ((entry_high - exit_price) / entry_high * 100 if direction == "short"
+                    else (exit_price - entry_low) / entry_low * 100)
+        events.append(StageExitEvent(99, last_bar, exit_price, remaining, pct_move, 0.0))
+
+    effective_pct = sum(e.pct_trimmed * e.pct_move for e in events)
+    capture_eff = effective_pct / example.mfe_pct if example.mfe_pct > 0 else 0.0
+    return events, effective_pct, capture_eff
+
+
+def simulate_all(stages, matrices, examples):
+    """Run simulation across all examples."""
+    per_example = []
+    cap_effs, eff_pcts, bars_list = [], [], []
+
+    for i, ex in enumerate(examples):
+        if matrices[i] is None:
+            continue
+        events, eff_pct, cap_eff = simulate_example(stages, matrices[i], ex)
+        last_bar = max(e.bar for e in events) if events else 0
+        per_example.append({
+            "ticker": ex.ticker, "entry_date": ex.entry_date,
+            "mfe_pct": ex.mfe_pct, "mfe_adr": ex.mfe_adr,
+            "effective_pct": eff_pct, "capture_eff": cap_eff,
+            "events": [{"stage_id": e.stage_id, "bar": e.bar, "price": e.price,
+                        "pct_trimmed": e.pct_trimmed, "pct_move": e.pct_move}
+                       for e in events],
+            "bars_to_full_exit": last_bar,
+        })
+        cap_effs.append(cap_eff)
+        eff_pcts.append(eff_pct)
+        bars_list.append(last_bar)
+
+    if not cap_effs:
+        return None
+    return MultiStageResult(
+        label="", stages=stages, per_example=per_example,
+        median_capture_eff=float(np.median(cap_effs)),
+        avg_capture_eff=float(np.mean(cap_effs)),
+        floor_capture_eff=float(np.min(cap_effs)),
+        median_effective_pct=float(np.median(eff_pcts)),
+        avg_bars_to_full_exit=float(np.mean(bars_list)),
+    )
 
 
 # ============================================================
-# Stage Grinders (find top-K candidates per stage)
+# Condition Discovery (one grind for all passes)
 # ============================================================
 
-def _grind_conditions(examples, matrices, expr_names, n_thresholds):
-    """Shared loop: for each expression × threshold × direction, find first trigger bar.
+def find_all_valid_conditions(examples, matrices, expr_names, n_thresholds):
+    """Find all (expr, direction, threshold) combos that trigger on 100% of examples.
     
-    Returns list of (StageCondition, trigger_bars_dict) for conditions that
-    trigger on ALL examples.
+    This is the expensive step — done ONCE, then reused by all passes.
+    Returns list of StageCondition objects.
     """
     n_examples = len(examples)
     valid = []
-    tested = 0
+
+    print(f"\n  Finding valid conditions across {len(expr_names)} expressions...")
+    t0 = time.time()
 
     for expr_i, expr_name in enumerate(expr_names):
         if (expr_i + 1) % 500 == 0:
-            print(f"    [{expr_i+1}/{len(expr_names)}] {len(valid)} valid conditions so far")
+            elapsed = time.time() - t0
+            rate = (expr_i + 1) / elapsed if elapsed > 0 else 0
+            print(f"    [{expr_i+1}/{len(expr_names)}] {rate:.0f}/s, {len(valid)} valid")
 
-        # Gather series
         example_series = []
         all_values = []
         for i, matrix in enumerate(matrices):
@@ -426,208 +413,335 @@ def _grind_conditions(examples, matrices, expr_names, n_thresholds):
         combined = np.concatenate(all_values)
         thresholds = list(set(round(float(t), 6)
                               for t in np.percentile(combined, np.linspace(5, 95, n_thresholds))))
-        if not thresholds:
-            continue
 
         for thresh in thresholds:
             for dir_test in ["above", "below"]:
-                tested += 1
-                trigger_bars = {}
-                for ex_idx, series in example_series:
+                all_hit = True
+                for _, series in example_series:
+                    hit = False
                     for bar in range(1, len(series)):
                         val = series[bar]
                         if np.isnan(val):
                             continue
-                        hit = (val > thresh) if dir_test == "above" else (val < thresh)
-                        if hit:
-                            trigger_bars[ex_idx] = bar
+                        if (dir_test == "above" and val > thresh) or \
+                           (dir_test == "below" and val < thresh):
+                            hit = True
                             break
+                    if not hit:
+                        all_hit = False
+                        break
+                if all_hit:
+                    valid.append(StageCondition(expr_name, dir_test, thresh))
 
-                if len(trigger_bars) >= n_examples:
-                    valid.append((StageCondition(expr_name, dir_test, thresh), trigger_bars))
-
-    print(f"    Tested {tested:,} expr×thresh×dir → {len(valid)} conditions pass all examples")
+    elapsed = time.time() - t0
+    print(f"  Found {len(valid):,} valid conditions in {elapsed:.1f}s")
     return valid
 
 
-def grind_stage1(examples, matrices, expr_names, n_thresholds, top_k):
-    """Stage 1: Capital Protection. Early exit on duds, partial trim."""
-    print(f"\n  STAGE 1 — Capital Protection ({len(expr_names)} expressions)")
-    conditions = _grind_conditions(examples, matrices, expr_names, n_thresholds)
-
-    candidates = []
-    for cond, _ in conditions:
-        for max_win in STAGE1_MAX_WINDOWS:
-            for trim in TRIM_PCTS:
-                stage = StageConfig(1, cond, trim, "none", 0.0, max_win)
-                result = MultiStageSimulator.simulate_all([stage], matrices, examples)
-                if result:
-                    candidates.append({"stage": stage, "eff": result.median_capture_eff})
-
-    candidates.sort(key=lambda c: c["eff"], reverse=True)
-    # Deduplicate: keep best trim/window per unique condition
-    seen = set()
-    deduped = []
-    for c in candidates:
-        key = (c["stage"].condition.expr_name, c["stage"].condition.direction,
-               c["stage"].condition.threshold)
-        if key not in seen:
-            seen.add(key)
-            deduped.append(c)
-        if len(deduped) >= top_k:
-            break
-
-    print(f"    → {len(deduped)} Stage 1 candidates (from {len(candidates)} configs)")
-    for i, c in enumerate(deduped[:5]):
-        s = c["stage"]
-        print(f"      #{i+1}: {s.condition.expr_name} {s.condition.direction} "
-              f"{s.condition.threshold:.4f} trim={s.trim_pct:.0%} "
-              f"maxwin={s.max_window} eff={c['eff']:.3f}")
-    return deduped
-
-
-def grind_stage2(examples, matrices, expr_names, n_thresholds, top_k):
-    """Stage 2: Partial Profit. MFE-gated, trims on confirmation."""
-    print(f"\n  STAGE 2 — Partial Profit ({len(expr_names)} expressions)")
-    conditions = _grind_conditions(examples, matrices, expr_names, n_thresholds)
-
-    candidates = []
-    for cond, _ in conditions:
-        for gate in STAGE2_MFE_GATES_ADR:
-            for trim in TRIM_PCTS:
-                stage = StageConfig(2, cond, trim, "mfe_adr", gate, None)
-                result = MultiStageSimulator.simulate_all([stage], matrices, examples)
-                if result:
-                    candidates.append({"stage": stage, "eff": result.median_capture_eff})
-
-    candidates.sort(key=lambda c: c["eff"], reverse=True)
-    seen = set()
-    deduped = []
-    for c in candidates:
-        key = (c["stage"].condition.expr_name, c["stage"].condition.direction,
-               c["stage"].condition.threshold)
-        if key not in seen:
-            seen.add(key)
-            deduped.append(c)
-        if len(deduped) >= top_k:
-            break
-
-    print(f"    → {len(deduped)} Stage 2 candidates (from {len(candidates)} configs)")
-    for i, c in enumerate(deduped[:5]):
-        s = c["stage"]
-        print(f"      #{i+1}: {s.condition.expr_name} {s.condition.direction} "
-              f"{s.condition.threshold:.4f} trim={s.trim_pct:.0%} "
-              f"gate={s.gate_value:.1f}ADR eff={c['eff']:.3f}")
-    return deduped
-
-
-def grind_stage3(examples, matrices, expr_names, n_thresholds, top_k):
-    """Stage 3: Trailing Exit. Exits 100% remaining on trend break."""
-    print(f"\n  STAGE 3 — Trailing Exit ({len(expr_names)} expressions)")
-    conditions = _grind_conditions(examples, matrices, expr_names, n_thresholds)
-
-    gate_configs = [(("mfe_adr", g) for g in STAGE3_MFE_GATES_ADR)]
-    gate_configs = [("mfe_adr", g) for g in STAGE3_MFE_GATES_ADR] + \
-                   [("bars_min", float(g)) for g in STAGE3_BAR_GATES]
-
-    candidates = []
-    for cond, _ in conditions:
-        for gate_type, gate_val in gate_configs:
-            stage = StageConfig(3, cond, 1.0, gate_type, gate_val, None)
-            result = MultiStageSimulator.simulate_all([stage], matrices, examples)
-            if result:
-                candidates.append({"stage": stage, "eff": result.median_capture_eff})
-
-    candidates.sort(key=lambda c: c["eff"], reverse=True)
-    seen = set()
-    deduped = []
-    for c in candidates:
-        key = (c["stage"].condition.expr_name, c["stage"].condition.direction,
-               c["stage"].condition.threshold)
-        if key not in seen:
-            seen.add(key)
-            deduped.append(c)
-        if len(deduped) >= top_k:
-            break
-
-    print(f"    → {len(deduped)} Stage 3 candidates (from {len(candidates)} configs)")
-    for i, c in enumerate(deduped[:5]):
-        s = c["stage"]
-        gate_str = f"mfe≥{s.gate_value:.1f}ADR" if s.gate_type == "mfe_adr" \
-            else f"bars≥{int(s.gate_value)}"
-        print(f"      #{i+1}: {s.condition.expr_name} {s.condition.direction} "
-              f"{s.condition.threshold:.4f} {gate_str} eff={c['eff']:.3f}")
-    return deduped
-
-
 # ============================================================
-# Joint Optimization (combine top-K from each stage)
+# Pass Functions — each tests a different structural variant
 # ============================================================
 
-def combine_stages(s1_cands, s2_cands, s3_cands, matrices, examples):
-    """Test all combos: 3-stage, 2-stage (1+3, 2+3, 1+2)."""
-    combos = []
-
-    # 3-stage
-    for c1 in s1_cands:
-        for c2 in s2_cands:
-            for c3 in s3_cands:
-                combos.append([c1["stage"], c2["stage"], c3["stage"]])
-
-    # 2-stage variants
-    for c1 in s1_cands:
-        for c3 in s3_cands:
-            combos.append([c1["stage"], c3["stage"]])
-    for c2 in s2_cands:
-        for c3 in s3_cands:
-            combos.append([c2["stage"], c3["stage"]])
-    for c1 in s1_cands:
-        for c2 in s2_cands:
-            combos.append([c1["stage"], c2["stage"]])
-
-    n1, n2, n3 = len(s1_cands), len(s2_cands), len(s3_cands)
-    print(f"\n  COMBINING: {n1}×{n2}×{n3}={n1*n2*n3} 3-stage + "
-          f"{n1*n3+n2*n3+n1*n2} 2-stage = {len(combos)} total combos")
-
-    results = []
+def run_pass(label, stage_builders, conditions, matrices, examples, top_n=50):
+    """Generic pass runner.
+    
+    stage_builders: list of functions, each takes a StageCondition and returns
+                    list of list[StageConfig] (one or more stage combos to test)
+    
+    For each condition, calls each builder to get stage configs, simulates, collects.
+    """
+    print(f"\n  {label} ({len(conditions)} conditions)...")
     t0 = time.time()
-    for i, stages in enumerate(combos):
-        if (i + 1) % 1000 == 0:
-            print(f"    [{i+1}/{len(combos)}] {len(results)} valid")
-        result = MultiStageSimulator.simulate_all(stages, matrices, examples)
-        if result:
-            results.append(result)
+    results = []
+    tested = 0
 
-    print(f"    {len(combos):,} combos in {time.time()-t0:.1f}s → {len(results)} valid")
-    results.sort(key=lambda r: (r.median_capture_eff, r.floor_capture_eff), reverse=True)
-    return results[:50]
+    for cond in conditions:
+        for builder in stage_builders:
+            for stages in builder(cond):
+                tested += 1
+                result = simulate_all(stages, matrices, examples)
+                if result:
+                    result.label = label
+                    results.append(result)
+
+    elapsed = time.time() - t0
+    results.sort(key=lambda r: r.median_capture_eff, reverse=True)
+    best_eff = results[0].median_capture_eff if results else 0
+    print(f"    {tested:,} configs tested in {elapsed:.1f}s → "
+          f"{len(results)} valid, best={best_eff:.3f}")
+    return results[:top_n]
+
+
+# --- Pass 1: Single stage (baseline) ---
+def _single_stage_builder(cond):
+    """Same as current exit_grinder: one condition exits 100%."""
+    configs = []
+    for trim in [1.0]:  # single stage always exits 100%
+        configs.append([StageConfig(1, cond, trim, "none", 0.0, None)])
+    return configs
+
+
+# --- Pass 2: Early trim + full exit (same condition for both) ---
+def _early_trim_builder(cond):
+    """Stage 1: early partial trim (max_window). Stage 2: same condition exits rest."""
+    configs = []
+    for max_win in MAX_WINDOWS:
+        for trim in [0.25, 0.33, 0.50]:
+            configs.append([
+                StageConfig(1, cond, trim, "none", 0.0, max_win),
+                StageConfig(2, cond, 1.0, "none", 0.0, None),  # exit rest anytime
+            ])
+    return configs
+
+
+# --- Pass 3: MFE-gated partial + full exit ---
+def _mfe_gated_builder(cond):
+    """Stage 1: MFE-gated partial. Stage 2: same condition exits rest later."""
+    configs = []
+    for gate in MFE_GATES:
+        for trim in TRIM_PCTS:
+            if trim >= 1.0:
+                # Single stage with MFE gate
+                configs.append([
+                    StageConfig(1, cond, 1.0, "mfe_adr", gate, None),
+                ])
+            else:
+                configs.append([
+                    StageConfig(1, cond, trim, "mfe_adr", gate, None),
+                    StageConfig(2, cond, 1.0, "none", 0.0, None),
+                ])
+    return configs
+
+
+# --- Pass 4: 2-stage with different gates ---
+def _protection_trail_builder(cond):
+    """Stage 1: early trim with max_window. Stage 2: MFE-gated full exit."""
+    configs = []
+    for max_win in [10, 15, 20]:
+        for trim in [0.25, 0.33, 0.50]:
+            for gate in [1.5, 2.0, 3.0]:
+                configs.append([
+                    StageConfig(1, cond, trim, "none", 0.0, max_win),
+                    StageConfig(2, cond, 1.0, "mfe_adr", gate, None),
+                ])
+    return configs
+
+
+# --- Pass 5: bar-gated trailing ---
+def _bar_gated_builder(cond):
+    """Stage 1: exit rest after minimum bars elapsed."""
+    configs = []
+    for bar_min in BAR_GATES:
+        configs.append([
+            StageConfig(1, cond, 1.0, "bars_min", float(bar_min), None),
+        ])
+    return configs
+
+
+# ============================================================
+# Cross-condition combination pass
+# ============================================================
+
+def run_cross_condition_pass(label, all_results, conditions, matrices, examples, top_n=50):
+    """Take best conditions from prior passes, try mixing different conditions per stage.
+    
+    This is the combinatorial pass: best S1 condition × best S2 condition.
+    """
+    # Collect unique best conditions from prior results
+    seen_conds = {}
+    for r in all_results:
+        for s in r.stages:
+            if s.stage_id == 99:
+                continue
+            key = (s.condition.expr_name, s.condition.direction, s.condition.threshold)
+            if key not in seen_conds:
+                seen_conds[key] = s.condition
+    
+    best_conds = list(seen_conds.values())
+    if len(best_conds) < 2:
+        print(f"\n  {label}: need 2+ unique conditions, have {len(best_conds)}. Skipping.")
+        return []
+
+    # Cap to top conditions to keep combinatorial manageable
+    best_conds = best_conds[:30]
+    n = len(best_conds)
+    
+    print(f"\n  {label} ({n} unique conditions, testing cross-combos)...")
+    t0 = time.time()
+    results = []
+    tested = 0
+
+    for i, cond_a in enumerate(best_conds):
+        for j, cond_b in enumerate(best_conds):
+            if i == j:
+                continue
+
+            # 2-stage: different condition per stage
+            for max_win in [10, 15, 20]:
+                for trim in [0.25, 0.33, 0.50]:
+                    tested += 1
+                    stages = [
+                        StageConfig(1, cond_a, trim, "none", 0.0, max_win),
+                        StageConfig(2, cond_b, 1.0, "none", 0.0, None),
+                    ]
+                    result = simulate_all(stages, matrices, examples)
+                    if result:
+                        result.label = label
+                        results.append(result)
+
+            # MFE-gated cross
+            for gate in [1.5, 2.0, 3.0]:
+                for trim in [0.33, 0.50]:
+                    tested += 1
+                    stages = [
+                        StageConfig(1, cond_a, trim, "none", 0.0, 15),
+                        StageConfig(2, cond_b, 1.0, "mfe_adr", gate, None),
+                    ]
+                    result = simulate_all(stages, matrices, examples)
+                    if result:
+                        result.label = label
+                        results.append(result)
+
+    elapsed = time.time() - t0
+    results.sort(key=lambda r: r.median_capture_eff, reverse=True)
+    best_eff = results[0].median_capture_eff if results else 0
+    print(f"    {tested:,} cross-combos in {elapsed:.1f}s → "
+          f"{len(results)} valid, best={best_eff:.3f}")
+    return results[:top_n]
+
+
+# ============================================================
+# 3-stage cross-condition pass
+# ============================================================
+
+def run_3stage_cross_pass(label, all_results, matrices, examples, top_n=50):
+    """3-stage with potentially different conditions per stage."""
+    seen_conds = {}
+    for r in all_results:
+        for s in r.stages:
+            if s.stage_id == 99:
+                continue
+            key = (s.condition.expr_name, s.condition.direction, s.condition.threshold)
+            if key not in seen_conds:
+                seen_conds[key] = s.condition
+
+    best_conds = list(seen_conds.values())[:20]
+    if len(best_conds) < 3:
+        print(f"\n  {label}: need 3+ conditions, have {len(best_conds)}. Skipping.")
+        return []
+
+    n = len(best_conds)
+    print(f"\n  {label} ({n} conditions, 3-stage cross-combos)...")
+    t0 = time.time()
+    results = []
+    tested = 0
+
+    # Sample: don't test all n³, test top conditions with variety
+    for i, c1 in enumerate(best_conds[:10]):
+        for j, c2 in enumerate(best_conds[:10]):
+            for k, c3 in enumerate(best_conds[:10]):
+                if i == j == k:
+                    continue  # at least one different
+
+                for trim1 in [0.25, 0.33]:
+                    for trim2 in [0.33, 0.50]:
+                        tested += 1
+                        stages = [
+                            StageConfig(1, c1, trim1, "none", 0.0, 15),
+                            StageConfig(2, c2, trim2, "mfe_adr", 1.5, None),
+                            StageConfig(3, c3, 1.0, "mfe_adr", 3.0, None),
+                        ]
+                        result = simulate_all(stages, matrices, examples)
+                        if result:
+                            result.label = label
+                            results.append(result)
+
+    elapsed = time.time() - t0
+    results.sort(key=lambda r: r.median_capture_eff, reverse=True)
+    best_eff = results[0].median_capture_eff if results else 0
+    print(f"    {tested:,} 3-stage combos in {elapsed:.1f}s → "
+          f"{len(results)} valid, best={best_eff:.3f}")
+    return results[:top_n]
+
+
+# ============================================================
+# Refinement pass
+# ============================================================
+
+def run_refinement_pass(label, best_results, matrices, examples, n_thresholds=40, top_n=50):
+    """Re-grind around the best results with finer thresholds and more parameter combos."""
+    if not best_results:
+        return []
+
+    # Collect the conditions from top results
+    refine_conds = set()
+    for r in best_results[:20]:
+        for s in r.stages:
+            if s.stage_id == 99:
+                continue
+            refine_conds.add((s.condition.expr_name, s.condition.direction, s.condition.threshold))
+
+    if not refine_conds:
+        return []
+
+    print(f"\n  {label} (refining {len(refine_conds)} conditions with finer params)...")
+    t0 = time.time()
+    results = []
+    tested = 0
+
+    for expr_name, direction, base_thresh in refine_conds:
+        # Generate finer thresholds around the winning value
+        offsets = np.linspace(-0.15, 0.15, 15) * abs(base_thresh) if base_thresh != 0 \
+            else np.linspace(-0.1, 0.1, 15)
+        fine_thresholds = [round(base_thresh + o, 6) for o in offsets]
+
+        for thresh in fine_thresholds:
+            cond = StageCondition(expr_name, direction, thresh)
+
+            # Test all structural variants with this refined condition
+            for builder in [_single_stage_builder, _early_trim_builder,
+                            _mfe_gated_builder, _protection_trail_builder,
+                            _bar_gated_builder]:
+                for stages in builder(cond):
+                    tested += 1
+                    result = simulate_all(stages, matrices, examples)
+                    if result:
+                        result.label = label
+                        results.append(result)
+
+    elapsed = time.time() - t0
+    results.sort(key=lambda r: r.median_capture_eff, reverse=True)
+    best_eff = results[0].median_capture_eff if results else 0
+    print(f"    {tested:,} refined configs in {elapsed:.1f}s → "
+          f"{len(results)} valid, best={best_eff:.3f}")
+    return results[:top_n]
 
 
 # ============================================================
 # Reporting & Saving
 # ============================================================
 
-def print_results(results, examples, top_n=20):
+def print_results(results, top_n=20):
     if not results:
-        print("\nNo valid multi-stage configurations found.")
+        print("\nNo valid configurations found.")
         return
 
     print(f"\n{'='*120}")
-    print(f"TOP {min(top_n, len(results))} MULTI-STAGE EXIT CONFIGURATIONS")
+    print(f"TOP {min(top_n, len(results))} EXIT CONFIGURATIONS (all passes)")
     print(f"{'='*120}")
 
     for rank, r in enumerate(results[:top_n], 1):
         stage_ids = [s.stage_id for s in r.stages]
         print(f"\n{'─'*120}")
-        print(f"#{rank}  [{len(r.stages)}-stage: {stage_ids}]  "
+        print(f"#{rank}  [{r.label}] [{len(r.stages)}-stage: {stage_ids}]  "
               f"median_eff={r.median_capture_eff:.3f}  "
-              f"floor_eff={r.floor_capture_eff:.3f}  "
+              f"floor={r.floor_capture_eff:.3f}  "
               f"median_pct={r.median_effective_pct:+.2f}%  "
               f"avg_bars={r.avg_bars_to_full_exit:.1f}")
 
         for s in r.stages:
-            parts = [f"Stage {s.stage_id}: {s.condition.expr_name} "
-                     f"{s.condition.direction} {s.condition.threshold:.4f}  "
+            parts = [f"S{s.stage_id}: {s.condition.expr_name} "
+                     f"{s.condition.direction} {s.condition.threshold:.4f} "
                      f"trim={s.trim_pct:.0%}"]
             if s.gate_type == "mfe_adr":
                 parts.append(f"gate:MFE≥{s.gate_value:.1f}ADR")
@@ -637,7 +751,7 @@ def print_results(results, examples, top_n=20):
                 parts.append(f"maxwin={s.max_window}")
             print(f"      {'  '.join(parts)}")
 
-        print(f"\n      {'Ticker':8s} {'Entry':12s} {'MFE%':>7s} {'Eff%':>7s} "
+        print(f"      {'Ticker':8s} {'Entry':12s} {'MFE%':>7s} {'Eff%':>7s} "
               f"{'CapEff':>7s}  Events")
         for pe in r.per_example:
             evts = " → ".join(
@@ -665,7 +779,7 @@ def save_results(results, examples, setup_type):
     }
     for rank, r in enumerate(results[:50]):
         data["results"].append({
-            "rank": rank + 1,
+            "rank": rank + 1, "label": r.label,
             "n_stages": len(r.stages),
             "median_capture_eff": r.median_capture_eff,
             "avg_capture_eff": r.avg_capture_eff,
@@ -698,7 +812,7 @@ def save_results(results, examples, setup_type):
 
 
 # ============================================================
-# Main — single command does everything
+# Main — single command, multiple passes, best result wins
 # ============================================================
 
 def main():
@@ -708,16 +822,14 @@ def main():
     parser.add_argument("--n-thresholds", type=int, default=20)
     parser.add_argument("--direction", default="short")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
-    parser.add_argument("--top-k", type=int, default=TOP_K_PER_STAGE)
     parser.add_argument("--base-only", action="store_true",
                         help="Skip boolean aggregations (faster)")
     args = parser.parse_args()
 
     print(f"Multi-Stage Exit Grinder")
-    print(f"Setup: {args.setup.upper()}, Direction: {args.direction}, "
-          f"Workers: {args.workers}, Top-K: {args.top_k}")
+    print(f"Setup: {args.setup.upper()}, Direction: {args.direction}, Workers: {args.workers}")
 
-    # Load
+    # --- Load data ---
     raw_examples = load_examples(args.setup)
     print(f"Loaded {len(raw_examples)} {args.setup.upper()} examples")
     universe_cache = load_5yr_cache()
@@ -731,7 +843,6 @@ def main():
         for col in ["open", "high", "low", "close", "volume"]:
             spy_df[col] = pd.to_numeric(spy_df[col], errors="coerce")
 
-    # Build examples
     examples = []
     for raw in raw_examples:
         ex = build_example_data(raw, args.direction, args.max_forward, universe_cache)
@@ -750,7 +861,7 @@ def main():
     print(f"\n{len(examples)} examples | MFE: floor={min(mfes):+.2f}% "
           f"median={np.median(mfes):+.2f}% avg={np.mean(mfes):+.2f}%")
 
-    # Build expression matrices
+    # --- Build expression matrices (expensive, done once) ---
     base_exprs = generate_exit_expressions()
     native_bools, threshold_bools = generate_exit_boolean_conditions(base_exprs)
     print(f"\n{len(base_exprs)} base expressions, "
@@ -778,31 +889,84 @@ def main():
         all_matrices = base_matrices
         all_expr_names = [e["name"] for e in base_exprs]
 
-    print(f"\nTotal expressions to grind: {len(all_expr_names)}")
+    print(f"Total expressions: {len(all_expr_names)}")
 
-    # Grind each stage
-    print(f"\n{'='*80}")
-    print(f"GRINDING STAGES")
-    print(f"{'='*80}")
+    # --- Find all valid conditions (done once) ---
+    conditions = find_all_valid_conditions(examples, all_matrices, all_expr_names, args.n_thresholds)
 
-    s1 = grind_stage1(examples, all_matrices, all_expr_names, args.n_thresholds, args.top_k)
-    s2 = grind_stage2(examples, all_matrices, all_expr_names, args.n_thresholds, args.top_k)
-    s3 = grind_stage3(examples, all_matrices, all_expr_names, args.n_thresholds, args.top_k)
-
-    if not s1 and not s2 and not s3:
-        print("\nNo candidates found for any stage. Aborting.")
+    if not conditions:
+        print("No valid conditions found. Aborting.")
         return
 
-    # Combine
-    results = combine_stages(s1, s2, s3, all_matrices, examples)
-    print_results(results, examples)
+    # --- Run all passes ---
+    all_results = []
+    t_total = time.time()
 
-    if results:
-        save_results(results, examples, args.setup)
-        best = results[0]
+    print(f"\n{'='*80}")
+    print(f"RUNNING PASSES")
+    print(f"{'='*80}")
+
+    # Pass 1: single-stage baseline
+    r1 = run_pass("P1:single", [_single_stage_builder], conditions, all_matrices, examples)
+    all_results.extend(r1)
+
+    # Pass 2: early trim + full exit
+    r2 = run_pass("P2:early-trim", [_early_trim_builder], conditions, all_matrices, examples)
+    all_results.extend(r2)
+
+    # Pass 3: MFE-gated
+    r3 = run_pass("P3:mfe-gated", [_mfe_gated_builder], conditions, all_matrices, examples)
+    all_results.extend(r3)
+
+    # Pass 4: protection + trail
+    r4 = run_pass("P4:protect+trail", [_protection_trail_builder], conditions, all_matrices, examples)
+    all_results.extend(r4)
+
+    # Pass 5: bar-gated
+    r5 = run_pass("P5:bar-gated", [_bar_gated_builder], conditions, all_matrices, examples)
+    all_results.extend(r5)
+
+    # Pass 6: cross-condition (different exprs per stage)
+    r6 = run_cross_condition_pass("P6:cross-cond", all_results, conditions, all_matrices, examples)
+    all_results.extend(r6)
+
+    # Pass 7: 3-stage cross
+    r7 = run_3stage_cross_pass("P7:3stg-cross", all_results, all_matrices, examples)
+    all_results.extend(r7)
+
+    # Pass 8: refinement around best
+    all_results.sort(key=lambda r: r.median_capture_eff, reverse=True)
+    r8 = run_refinement_pass("P8:refine", all_results[:30], all_matrices, examples)
+    all_results.extend(r8)
+
+    # --- Final ranking ---
+    all_results.sort(key=lambda r: (r.median_capture_eff, r.floor_capture_eff), reverse=True)
+
+    # Deduplicate (same stages = same result)
+    seen = set()
+    deduped = []
+    for r in all_results:
+        key = tuple((s.condition.expr_name, s.condition.direction, s.condition.threshold,
+                      s.trim_pct, s.gate_type, s.gate_value, s.max_window)
+                     for s in r.stages)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(r)
+
+    total_time = time.time() - t_total
+    print(f"\n{'='*80}")
+    print(f"ALL PASSES COMPLETE: {total_time:.1f}s total, "
+          f"{len(deduped)} unique configs from {len(all_results)} total")
+    print(f"{'='*80}")
+
+    print_results(deduped)
+
+    if deduped:
+        save_results(deduped, examples, args.setup)
+        best = deduped[0]
         print(f"\n{'='*80}")
         print(f"BEST: {best.median_capture_eff:.1%} median capture efficiency "
-              f"({best.median_effective_pct:+.2f}% median move)")
+              f"({best.median_effective_pct:+.2f}% median move) [{best.label}]")
         print(f"{'='*80}")
 
 
