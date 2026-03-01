@@ -263,6 +263,8 @@ class ExitExprEngine:
         if op in ("pct_green_rolling", "avg_body_ratio_rolling", "avg_bar_range_rolling",
                    "up_vol_ratio_rolling", "obv_slope") and "window" not in comp:
             comp["window"] = comp.get("period", 10)
+        if op == "obv_slope" and "offset" not in comp:
+            comp["offset"] = comp.get("period", comp.get("window", 10))
         if op == "rvol" and "avg_period" not in comp:
             comp["avg_period"] = comp.get("avg_period", 20)
         if op == "atr_ratio_vs_entry" and "window" not in comp:
