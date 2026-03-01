@@ -551,6 +551,121 @@ def generate_exit_expressions():
             "compute": {"op": "avwap_lsp_crossed", "direction": direction, "rank": 1},
         })
 
+    # ═══════════════════════════════════════════════════════════
+    # 16. ENTRY-RELATIVE — expression value change from entry bar
+    #     The grinder tests absolute thresholds, but the same RSI=50
+    #     means different things if entry was at RSI=30 vs RSI=70.
+    #     Delta-from-entry lets the grinder find "RSI rose 20 from
+    #     entry" which adapts to each stock's starting state.
+    #
+    #     Only computed for key state indicators where relative
+    #     change from entry adds signal. Skips expressions that
+    #     are already entry-relative (move_captured, MFE, retrace).
+    # ═══════════════════════════════════════════════════════════
+
+    # Extension from MA — delta from entry
+    for ma in MAS:
+        for norm in NORMS:
+            exprs.append({
+                "name": f"ext_{ma}_{norm}_delta_entry",
+                "category": "entry_relative",
+                "compute": {"op": "delta_from_entry", "base_op": "extension",
+                            "ma": ma, "normalizer": norm},
+            })
+
+    # RSI — delta from entry
+    for p in [5, 9, 14, 21]:
+        exprs.append({
+            "name": f"rsi_{p}_delta_entry",
+            "category": "entry_relative",
+            "compute": {"op": "delta_from_entry", "base_op": "rsi", "period": p},
+        })
+
+    # ADX — delta from entry (trend strength change)
+    for p in [7, 14]:
+        exprs.append({
+            "name": f"adx_{p}_delta_entry",
+            "category": "entry_relative",
+            "compute": {"op": "delta_from_entry", "base_op": "adx", "period": p},
+        })
+
+    # DI spread — delta from entry
+    for p in [7, 14]:
+        exprs.append({
+            "name": f"di_spread_{p}_delta_entry",
+            "category": "entry_relative",
+            "compute": {"op": "delta_from_entry", "base_op": "di_spread", "period": p},
+        })
+
+    # Stochastic — delta from entry
+    for p in [5, 14]:
+        exprs.append({
+            "name": f"stoch_{p}_delta_entry",
+            "category": "entry_relative",
+            "compute": {"op": "delta_from_entry", "base_op": "stochastic", "period": p},
+        })
+
+    # RVOL — ratio to entry (volume character change)
+    for avg_p in [10, 20, 50]:
+        exprs.append({
+            "name": f"rvol_{avg_p}_ratio_entry",
+            "category": "entry_relative",
+            "compute": {"op": "ratio_to_entry", "base_op": "rvol", "avg_period": avg_p},
+        })
+
+    # Bollinger %B — delta from entry
+    for p in [10, 20]:
+        exprs.append({
+            "name": f"bb_pctb_{p}_delta_entry",
+            "category": "entry_relative",
+            "compute": {"op": "delta_from_entry", "base_op": "bollinger_pctb", "period": p},
+        })
+
+    # Bollinger bandwidth — ratio to entry (compression change)
+    for p in [10, 20]:
+        exprs.append({
+            "name": f"bb_bw_{p}_ratio_entry",
+            "category": "entry_relative",
+            "compute": {"op": "ratio_to_entry", "base_op": "bollinger_bandwidth", "period": p},
+        })
+
+    # Distance from MA — delta from entry
+    for ma in FAST_MAS:
+        for norm in NORMS:
+            exprs.append({
+                "name": f"dist_from_{ma}_{norm}_delta_entry",
+                "category": "entry_relative",
+                "compute": {"op": "delta_from_entry", "base_op": "distance_from_ma",
+                            "ma": ma, "normalizer": norm},
+            })
+
+    # LSP nearest distance — ratio to entry (approaching/departing S/R)
+    for direction in ["above", "below"]:
+        exprs.append({
+            "name": f"lsp_{direction}1_dist_ratio_entry",
+            "category": "entry_relative",
+            "compute": {"op": "ratio_to_entry", "base_op": "lsp_distance",
+                        "direction": direction, "rank": 1, "normalizer": "atr"},
+        })
+
+    # Algo nearest distance — ratio to entry
+    for line_type in ["hminus", "lplus"]:
+        exprs.append({
+            "name": f"algo_{line_type}1_dist_ratio_entry",
+            "category": "entry_relative",
+            "compute": {"op": "ratio_to_entry", "base_op": "algo_distance",
+                        "line_type": line_type, "rank": 1},
+        })
+
+    # AVWAP entry distance — ratio to entry (how much has the entry AVWAP moved)
+    for direction in ["above", "below"]:
+        exprs.append({
+            "name": f"avwap_lsp_{direction}1_dist_ratio_entry",
+            "category": "entry_relative",
+            "compute": {"op": "ratio_to_entry", "base_op": "avwap_lsp_distance",
+                        "direction": direction, "rank": 1},
+        })
+
     return exprs
 
 
@@ -771,6 +886,28 @@ def generate_exit_boolean_conditions(base_exprs):
             "condition": {"base_op": "avwap_entry_distance",
                           "threshold": thresh, "direction": "above"},
         })
+
+    # Entry-relative RSI delta thresholds
+    for p in [9, 14]:
+        for thresh in [-20, -10, 10, 20, 30]:
+            threshold_bools.append({
+                "name": f"rsi_{p}_delta_entry_{'above' if thresh >= 0 else 'below'}_{abs(thresh)}",
+                "condition": {"base_op": "delta_from_entry_rsi", "period": p,
+                              "threshold": thresh,
+                              "direction": "above" if thresh >= 0 else "below"},
+            })
+
+    # Entry-relative extension delta thresholds
+    for ma in ["xavgc21", "avgc50"]:
+        for norm in ["adr14"]:
+            for thresh in [-2.0, -1.0, 1.0, 2.0]:
+                dir_name = "above" if thresh >= 0 else "below"
+                threshold_bools.append({
+                    "name": f"ext_{ma}_{norm}_delta_entry_{dir_name}_{str(abs(thresh)).replace('.','_')}",
+                    "condition": {"base_op": "delta_from_entry_extension",
+                                  "ma": ma, "normalizer": norm,
+                                  "threshold": thresh, "direction": dir_name},
+                })
 
     # RS vs SPY thresholds
     for window in [10, 20]:

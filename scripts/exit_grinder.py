@@ -456,6 +456,10 @@ def _find_base_expr_name(cond: dict, matrix: dict) -> Optional[str]:
         return f"avwap_lsp_{cond.get('avwap_direction', 'above')}{cond.get('rank', 1)}_distance_atr"
     elif op == "avwap_entry_distance":
         return "avwap_entry_distance_atr"
+    elif op == "delta_from_entry_rsi":
+        return f"rsi_{cond.get('period', 14)}_delta_entry"
+    elif op == "delta_from_entry_extension":
+        return f"ext_{cond.get('ma', 'avgc50')}_{cond.get('normalizer', 'adr14')}_delta_entry"
     
     return None
 

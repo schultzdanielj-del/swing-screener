@@ -1371,6 +1371,40 @@ class ExitExprEngine:
                     result[i] = s_line.slope_per_bar / atr_val
             return result
         
+        # ──── ENTRY-RELATIVE ───────────────────────────────
+        # Compute any base expression, then subtract or divide by
+        # its value at entry bar (bar 0 of forward window).
+        # Adapts absolute thresholds to each stock's starting state.
+        
+        elif op == "delta_from_entry":
+            """Value at bar_i minus value at entry bar.
+            
+            Passes all params (except op) through to the base expression.
+            """
+            base_comp = {k: v for k, v in comp.items() if k != "op"}
+            base_comp["op"] = comp["base_op"]
+            del base_comp["base_op"]
+            base_series = self.compute(base_comp)
+            entry_val = base_series[0]
+            if np.isnan(entry_val):
+                return np.full(self.n_forward, np.nan)
+            return base_series - entry_val
+        
+        elif op == "ratio_to_entry":
+            """Value at bar_i divided by value at entry bar.
+            
+            Passes all params (except op) through to the base expression.
+            Returns NaN if entry value is zero or NaN.
+            """
+            base_comp = {k: v for k, v in comp.items() if k != "op"}
+            base_comp["op"] = comp["base_op"]
+            del base_comp["base_op"]
+            base_series = self.compute(base_comp)
+            entry_val = base_series[0]
+            if np.isnan(entry_val) or entry_val == 0:
+                return np.full(self.n_forward, np.nan)
+            return base_series / entry_val
+        
         # ──── AVWAP ────────────────────────────────────────
         # AVWAPs anchored at frozen LSP pivot points and at entry bar.
         # Uses precompute_avwap_arrays + avwap_from_anchor from
