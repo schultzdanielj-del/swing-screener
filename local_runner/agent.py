@@ -155,7 +155,7 @@ def handle_pipeline_job(job):
             proc = subprocess.Popen(
                 cmd, cwd=REPO_ROOT,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
+                text=True, bufsize=1, encoding='utf-8', errors='replace',
             )
             for line in proc.stdout:
                 line = line.rstrip()
