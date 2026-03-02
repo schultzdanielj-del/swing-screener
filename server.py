@@ -94,6 +94,14 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_ohlcv_example ON ohlcv(example_id);
             CREATE INDEX IF NOT EXISTS idx_extension_example ON extension(example_id);
             CREATE INDEX IF NOT EXISTS idx_examples_setup ON examples(setup_type);
+            CREATE TABLE IF NOT EXISTS rejected_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setup_type TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                signal_date TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(setup_type, ticker, signal_date)
+            );
         """)
 
 init_db()
@@ -2632,7 +2640,29 @@ async def save_vetting_decision(setup_type: str, req: VettingDecision):
         except Exception as e:
             result["example_error"] = str(e)
 
+    elif req.verdict == "no":
+        try:
+            with get_db() as db:
+                db.execute(
+                    "INSERT OR IGNORE INTO rejected_signals (setup_type, ticker, signal_date) VALUES (?,?,?)",
+                    (setup_type, req.ticker, req.signal_date)
+                )
+            result["message"] = f"Rejected: {req.ticker} {req.signal_date}"
+        except Exception as e:
+            result["reject_error"] = str(e)
+
     return result
+
+
+@app.get("/api/vetting/{setup_type}/rejected")
+async def get_rejected_signals(setup_type: str):
+    """Get all rejected signals for a setup type."""
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT ticker, signal_date, created_at FROM rejected_signals WHERE setup_type=? ORDER BY created_at DESC",
+            (setup_type,)
+        ).fetchall()
+    return {"setup_type": setup_type, "count": len(rows), "rejected": [dict(r) for r in rows]}
 
 
 # Serve frontend (MUST be last - catches all routes)
