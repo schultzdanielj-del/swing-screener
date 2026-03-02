@@ -697,6 +697,51 @@ function VettingPage({ setup }) {
   const [filter, setFilter] = useState('all');
   const [saving, setSaving] = useState(false);
   const [earningsDates, setEarningsDates] = useState([]);
+  const [pipe, setPipe] = useState(null);
+  const [filterLogs, setFilterLogs] = useState([]);
+  const [showLogs, setShowLogs] = useState(false);
+  const filterLogRef = useRef(null);
+
+  // Poll pipeline state for agent status + step state
+  useEffect(() => {
+    const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
+    load(); const id = setInterval(load, 5000); return () => clearInterval(id);
+  }, []);
+
+  const stepState = pipe?.steps?.find(s=>s.id==='sample_expansion')?.state;
+  const stepStatus = stepState?.status || 'pending';
+  const isFilterRunning = ['running','claimed','queued'].includes(stepStatus);
+
+  // Poll logs while filter is running
+  useEffect(() => {
+    if (!isFilterRunning) return;
+    setShowLogs(true);
+    const poll = () => fetch(`${API}/api/pipeline/logs/sample_expansion?after=${filterLogs.length}`).then(r=>r.json())
+      .then(d => { if(d.lines?.length) setFilterLogs(p=>[...p,...d.lines]); }).catch(()=>{});
+    poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
+  }, [isFilterRunning]);
+
+  // Auto-scroll logs
+  useEffect(() => { if(filterLogRef.current) filterLogRef.current.scrollTop = filterLogRef.current.scrollHeight; }, [filterLogs]);
+
+  // Refresh signals when filter finishes
+  const prevRunning = useRef(false);
+  useEffect(() => {
+    if (prevRunning.current && !isFilterRunning) {
+      // Just finished — reload signals
+      setLoading(true);
+      fetch(`${API}/api/vetting/${setup}/signals`).then(r=>r.json())
+        .then(d=>{setSignals(d.signals||[]);setLoading(false);setCurrentIdx(0);}).catch(()=>setLoading(false));
+    }
+    prevRunning.current = isFilterRunning;
+  }, [isFilterRunning]);
+
+  function reloadSamples() {
+    setFilterLogs([]);
+    fetch(`${API}/api/pipeline/run/sample_expansion`, {method:'POST'}).then(r=>r.json()).then(d => {
+      if(d.error) alert(d.error);
+    });
+  }
 
   useEffect(() => {
     setLoading(true);
@@ -748,7 +793,46 @@ function VettingPage({ setup }) {
   signals.forEach(s=>{if(s.verdict)counts[s.verdict]++;else counts.unvetted++;});
 
   if(loading) return <div className="empty-state"><div className="icon">⏳</div>Loading signals...</div>;
-  if(signals.length===0) return <div className="empty-state"><div className="icon">∅</div>No filtered signals. Click "Reload Samples" to run signal filter.</div>;
+  if(signals.length===0) return (
+    <div>
+      <div className="stat-row" style={{marginBottom:16}}>
+        <div className="stat-box">
+          <div className="stat-label">Filter Status</div>
+          <div className={`stat-val ${stepStatus==='done'?'green':isFilterRunning?'amber':''}`}>{stepStatus.toUpperCase()}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Agent</div>
+          <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
+            {pipe?.agent_status?.toUpperCase() || '?'}
+          </div>
+        </div>
+      </div>
+      <div style={{display:'flex',gap:8,marginBottom:16}}>
+        {isFilterRunning
+          ? <button className="btn btn-stop" onClick={()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'})}>■ STOP</button>
+          : <button className="btn btn-go" onClick={reloadSamples} disabled={pipe?.agent_status!=='online'}>▶ RELOAD SAMPLES</button>
+        }
+      </div>
+      {pipe?.agent_status !== 'online' && !isFilterRunning && (
+        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
+          <div style={{fontSize:11,color:'var(--amber)',marginBottom:6}}>Agent offline — start it to run signal filter:</div>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--cyan)',background:'var(--bg)',
+            padding:'6px 10px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer'}}>
+            python local_runner/agent.py <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:8}}>click to copy</span>
+          </div>
+        </div>
+      )}
+      {showLogs && filterLogs.length > 0 && (
+        <div className="log-box" ref={filterLogRef}>
+          {filterLogs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')||l.includes('done')?'ok':''}>{l}</div>)}
+        </div>
+      )}
+      {!showLogs && !isFilterRunning && (
+        <div className="empty-state"><div className="icon">∅</div>No filtered signals. Click RELOAD SAMPLES to run signal filter.</div>
+      )}
+    </div>
+  );
 
   return (
     <div className="vet-layout">
@@ -758,6 +842,13 @@ function VettingPage({ setup }) {
             <button key={f} className={`vet-filter-btn ${filter===f?'on':''}`}
               onClick={()=>{setFilter(f);setCurrentIdx(0);}}>{f} {f==='all'?signals.length:f==='unvetted'?counts.unvetted:counts[f]}</button>
           ))}
+          <button className={`vet-filter-btn ${isFilterRunning?'on':''}`}
+            onClick={isFilterRunning ? ()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'}) : reloadSamples}
+            disabled={!isFilterRunning && pipe?.agent_status!=='online'}
+            style={{marginLeft:'auto',fontSize:9,opacity:isFilterRunning?1:0.7}}
+            title={pipe?.agent_status!=='online'?'Agent offline':'Re-run signal filter'}>
+            {isFilterRunning ? '■ STOP' : '↻ Reload'}
+          </button>
         </div>
         {(counts.yes > 0 || counts.no > 0) && counts.unvetted === 0 && (
           <div style={{padding:'8px 14px',borderBottom:'1px solid var(--border)',background:'rgba(52,211,153,0.03)'}}>
