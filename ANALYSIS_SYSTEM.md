@@ -207,21 +207,46 @@ The grinder uses one universal expression set for all setups. No setup-specific 
 
 ---
 
-## Step 4: Backtest & Visual Verification
+## Step 4: Signal Filter + Example Expansion Loop
 
-**Goal:** Confirm the signal grind conditions identify the right pattern across history, not just on the known examples.
+**Goal:** Expand the example set by vetting grinder signals, feeding confirmed winners back in, and re-grinding until convergence.
 
-**✅ COMPLETE** — `scripts/backtest_runner.py` + Historical tab in frontend.
+**IN PROGRESS** — `scripts/signal_filter.py` built (2026-03-01). Chart vetting UI still needed.
 
-**Process:**
+### The Pipeline:
 
-1. Run conditions across full 5yr history — every trading day, every tradable ticker
-2. Generate charts for signals, visual verification that they look like the setup
-3. Check signal clustering — signals should cluster around specific dates/periods, not spread evenly
-4. Verify all original examples still pass (zero false negatives)
-5. User reviews and identifies any signals that are legitimate new examples → add to example library
+1. **Signal filter** (`scripts/signal_filter.py`):
+   - Dedup example signal bars (consecutive → rightmost)
+   - Measure example exit distances (rightmost signal close → exit close in ADR) → derive floor
+   - Scan all 5yr signals (parallel)
+   - Dedup backtest signals (same rightmost logic)
+   - Apply exit condition, measure signal close → exit close in ADR
+   - Filter: keep only signals ≥ example floor ADR, rank by exit distance descending
+   - Output: `data/signal_filter/filtered_dtss.json`
 
-**Output:** Validated signal set with historical data stored in Railway. Signal prevalence + SPY overlay visualization in frontend Historical tab.
+2. **Chart vetting** (needs UI):
+   - Flip through ranked signals (best first)
+   - Tag as winner: real DTSS setup + catchable entry + it worked
+   - Winners get added to example library
+
+3. **Re-grind** with expanded examples:
+   - More examples → tighter conditions → fewer signals → less noise
+   - Repeat from step 1
+
+4. **Convergence:** When the grind produces signals and all the good ones are already in the example set, the setup is locked.
+
+### Deduplication rule:
+- Same ticker, back-to-back signal bars (no gap) = one signal
+- Keep the rightmost (latest) bar in each consecutive cluster
+- Any gap (even 1 non-signal bar) = separate signal
+- Applied identically to examples and backtest signals
+
+### Exit distance measurement:
+- Rightmost deduplicated signal bar close → exit bar close
+- Measured in ADR units at the signal bar
+- Same method for examples and backtest signals (apples to apples)
+- Example floor ADR = minimum across all example measurements
+- Backtest signals must meet or exceed this floor
 
 ---
 

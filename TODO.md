@@ -153,36 +153,46 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 - Fixed `obv_slope` offset param alias
 - Fixed `_find_base_expr_name` for algo + AVWAP + entry-relative mappings
 
-### Task 3.7: Multi-Stage Exit Grinder ⬜
-**Goal:** Replace single-condition exit with multi-stage exit that uses sequential conditions to handle both duds and runners optimally.
+### Task 3.7: Multi-Stage Exit Grinder ✅ COMPLETE (2026-03-01)
+**Result:** Multi-stage did not beat single-stage for DTSS. Single-stage winner holds: `bars_since_reclaim_xavgc8 >= 18` (43% floor capture, 72% median). Multi-stage may help other setups. Script preserved at `scripts/multistage_exit_grinder.py`.
 
-**Problem:** Single-stage exit captures 71% median MFE — slightly above average. The structural expressions (LSP, algo, AVWAP) contain per-stock signal but can't outperform simple volatility expansion as a universal standalone trigger. The compromise: exit too early on runners to protect against duds.
+### Task 4: Signal Filter + Vetting Pipeline ⬜ IN PROGRESS (2026-03-01)
+**Replaces old Tasks 4-5.** The old formation period / outcome grinder tasks are deprioritized. The real next step is expanding the example set through a vetting loop.
 
-**Architecture concept:**
-- **Stage 1 (capital protection):** Tight condition that fires early on duds (stocks that stall/reverse). Should NOT fire on runners during their initial move.
-- **Stage 2 (trend riding):** Looser condition that lets runners breathe. Only active after Stage 1 hasn't fired for N bars (move is confirmed).
-- **Stage 3 (trailing):** MFE retrace-based trailing exit. Once move reaches X ADR, exit on Y% retrace from MFE.
+**Built this session:**
+- `scripts/signal_filter.py` — 6-phase pipeline:
+  1. Dedup example signal bars (consecutive → rightmost)
+  2. Measure example exit distances (rightmost signal close → exit close in ADR)
+  3. Scan all 5yr signals (parallel, all cores)
+  4. Dedup backtest signals (same rightmost logic)
+  5. Apply exit condition, measure signal close → exit close in ADR
+  6. Filter: keep only signals ≥ example floor ADR, rank descending
+- Output: `data/signal_filter/filtered_dtss.json` — ranked signals for chart vetting
 
-**Key design decisions needed:**
-- How to define stage transitions (time-based? MFE-based? condition-based?)
-- Whether to grind stages independently or jointly
-- How to score multi-stage results (aggregate capture efficiency across stages)
-- Entry-relative expressions likely shine here — Stage 1 uses "RSI rose 20 from entry" while Stage 2 uses "extension retraced 50% from peak"
+**Pipeline Dashboard (remote):**
+- `app/pipeline.html` — served from Railway, accessible from anywhere
+- `local_runner/pipeline_agent.py` — desktop agent polls Railway for jobs, runs locally, streams logs back
+- 13 new `/api/pipeline/*` endpoints in `server.py`
+- Architecture: Railway queues jobs → desktop agent polls → runs subprocess → streams logs back
 
-**The grinder should discover optimal stage boundaries, not have them hardcoded.**
+**The vetting loop:**
+1. Run signal filter → get ranked signals with exit distance
+2. Flip through charts (top-ranked first = most obvious winners)
+3. Tag winners as new examples (real DTSS + catchable entry + it worked)
+4. Re-grind with expanded example set → conditions tighten
+5. Repeat until convergence (no new examples to add)
 
-### Task 4: Re-run Exit Grinder with Formation Period Validation
-**What:** Exit conditions must NOT fire before the entry date.
-**Problem found:** CELH earliest signal bar (2024-05-13) had exit trigger on bar 3 (2024-05-16), but entry wasn't until 2024-05-22. Exit fired during formation period. 19/20 examples failed when measured from earliest signal bar.
-**Fix:** Exit grinder must test from EVERY signal bar (not just last one before entry), and exit must not trigger before entry date on any of them.
+**Still needs:**
+- Chart vetting UI in ScanPerfect (thumbs up/skip per signal, feeds back to examples)
+- Re-grind trigger from dashboard after examples added
 
-### Task 5: Re-run Outcome Grinder with Fixed Measurements
-**What:** Measure from signal bar close (not entry bar), use ExpressionEngine for all computations.
-**Already partially fixed:** Outcome grinder now uses ExpressionEngine, measures from signal bar close, auto-computes ADR/MFE floors.
-**Needs:** Re-run with corrected exit conditions from Task 4.
+### Task 5: Market Regime Filter ⬜
+**What:** Correlate signal outcomes with market conditions. Which market environments produce winners vs losers? This is the "when to trade it" filter.
+**Blocked by:** Needs enough vetted signals to have meaningful win/loss data.
 
-### Task 6: Steps 8-9 (Pre-Signal Refinement + Environment Clustering)
-**What:** These steps are unchanged in concept but need the corrected inputs from Tasks 3-5.
+### Task 6: Live Scan + Watchlist ⬜
+**What:** Nightly scan → apply conditions to today's bars → rank by expected value → output watchlist.
+**Blocked by:** Task 5 (need regime filter for EV calculation).
 
 ---
 
@@ -205,15 +215,19 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 | `scripts/lsp_detector_v2.py` | ✅ NEW (2026-02-27) — needs real-data validation | V2: DataFrame-based, multi-TF, 80 expressions, cache-builder ready |
 | `scripts/expression_engine.py` | ✅ Has LSP ops, unused | 8 LSP expressions + `set_lsp_context()` |
 | `scripts/backtest_conditions.py` | ✅ 88 ops, parity | Shared computation path |
-| `server.py` | ✅ New `/api/universe/insert-ohlcv` endpoint added | Railway FastAPI backend |
-| `local_runner/pyramid_grinder.py` | ❌ No LSP | Needs LSP injection (after cache integration) |
-| `local_runner/matrix_builder.py` | ❌ No LSP | Needs LSP-aware example matrix |
+| `scripts/signal_filter.py` | ✅ NEW (2026-03-01) | Dedup + exit + rank for chart vetting. Derives ADR floor from deduplicated example signal bars. |
+| `scripts/multistage_exit_grinder.py` | ✅ COMPLETE — did not beat single-stage for DTSS | 8-pass multi-stage exit search, preserved for other setups |
+| `server.py` | ✅ Pipeline endpoints added (2026-03-01) | Railway FastAPI backend + 13 `/api/pipeline/*` endpoints |
+| `app/pipeline.html` | ✅ NEW (2026-03-01) | Remote pipeline dashboard served from Railway |
+| `local_runner/pipeline_agent.py` | ✅ NEW (2026-03-01) | Desktop agent: polls Railway for pipeline jobs, runs locally, streams logs |
+| `local_runner/pyramid_grinder.py` | ✅ Production | Multi-pass pyramid grinder, expr cache required |
+| `local_runner/matrix_builder.py` | ✅ Production | Loads universe matrix from expr cache (~51s) |
 | `local_runner/brute_expressions.py` | ✅ 12,175 expressions (4,017 daily + 80 LSP + 44 algo + 8,034 HTF) | Expression library with HTF + algo auto-generation |
 | `local_runner/expr_cache_builder.py` | ✅ Updated for LSP + HTF (2026-02-27) | 3-phase worker: daily + LSP + HTF computation |
-| `scripts/exit_grinder.py` | ✅ 6,410 expressions, 100% pass hardcoded, timestamped saves | Single-stage exit grind — needs multi-stage upgrade (Task 3.7) |
+| `scripts/exit_grinder.py` | ✅ 6,410 expressions, 100% pass hardcoded | Single-stage exit — winner: `bars_since_reclaim_xavgc8 >= 18` |
 | `scripts/exit_expressions.py` | ✅ 446 base + 5,964 boolean aggs = 6,410 total | LSP + algo + AVWAP + entry-relative expressions |
 | `scripts/exit_compute.py` | ✅ Full parity — LSP, algo, AVWAP, entry-relative ops | Post-signal expression compute engine |
-| `scripts/outcome_grinder.py` | ⚠️ Parity fixed, needs re-run | Needs corrected exit conditions |
+| `scripts/outcome_grinder.py` | ⚠️ Deprioritized — vetting loop takes precedence | May revisit after example expansion |
 | `EXPRESSION_ENGINE_V2.md` | ✅ Updated — Tasks A-E,G complete, F pending | V2 build plan + next steps |
 
 ---
