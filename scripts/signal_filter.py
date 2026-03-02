@@ -344,6 +344,38 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, max_forward=MAX
 # ============================================================
 # Phase 4: Filter by example floor + rank
 # ============================================================
+def exclude_existing_examples(signals, example_signals):
+    """
+    Remove signals that match existing examples.
+    Match by ticker + signal bar within 5 bars of an example's signal bar.
+    This ensures the vetting pile only shows NEW potential examples.
+    """
+    # Build lookup: ticker → set of signal bar indices from examples
+    example_bars = {}
+    for ex in example_signals:
+        ticker = ex["ticker"]
+        bar_idx = ex["signal_bar_idx"]
+        if ticker not in example_bars:
+            example_bars[ticker] = set()
+        # Mark a window around the example signal bar
+        for offset in range(-5, 6):
+            example_bars[ticker].add(bar_idx + offset)
+
+    before = len(signals)
+    filtered = []
+    for sig in signals:
+        ticker = sig["ticker"]
+        bar_idx = sig["bar_idx"]
+        if ticker in example_bars and bar_idx in example_bars[ticker]:
+            continue  # skip — this is an existing example
+        filtered.append(sig)
+
+    removed = before - len(filtered)
+    if removed > 0:
+        print(f"  ✓ Excluded {removed} signals matching existing examples")
+    return filtered
+
+
 def filter_and_rank(results, min_adr, direction):
     """Filter to signals above min_adr threshold, sort by move descending."""
     filtered = [r for r in results if r["move_adr"] >= min_adr]
@@ -622,9 +654,13 @@ def main():
     print(f"\n  PHASE 5: Apply exit condition + measure distance")
     with_exit = apply_exit_and_measure(deduped, cache, exit_cond, direction, args.max_forward)
 
-    # Phase 6: Filter + rank
-    print(f"\n  PHASE 6: Filter + rank (≥ {min_adr:.1f} ADR)")
-    filtered = filter_and_rank(with_exit, min_adr, direction)
+    # Phase 6: Exclude existing examples
+    print(f"\n  PHASE 6: Exclude existing examples")
+    new_signals = exclude_existing_examples(with_exit, example_signals)
+
+    # Phase 7: Filter + rank
+    print(f"\n  PHASE 7: Filter + rank (≥ {min_adr:.1f} ADR)")
+    filtered = filter_and_rank(new_signals, min_adr, direction)
 
     # Save
     print(f"\n  SAVING RESULTS")
