@@ -28,10 +28,11 @@ import pandas as pd
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, os.path.join(REPO_ROOT, "local_runner"))
 
-from scripts.expression_engine import ExpressionEngine
-from scripts.backtest_conditions import compute_series
+from expr_cache_builder import ExprSeriesCache
 
 # ============================================================
 # Config
@@ -134,16 +135,33 @@ def load_examples(setup_type):
 # ============================================================
 _worker_cache = None
 _worker_conditions = None
+_worker_expr_cache = None
+_worker_cond_col_indices = None
 
 
-def _init_scan_worker(cache, conditions):
-    global _worker_cache, _worker_conditions
+def _init_scan_worker(cache, conditions, expr_cache_dir, cond_col_indices):
+    global _worker_cache, _worker_conditions, _worker_expr_cache, _worker_cond_col_indices
     _worker_cache = cache
     _worker_conditions = conditions
+    _worker_expr_cache = expr_cache_dir
+    _worker_cond_col_indices = cond_col_indices
+
+
+def _load_ticker_npz(ticker):
+    """Load expression cache .npz for a ticker."""
+    safe = ticker.replace("/", "_").replace("\\", "_")
+    path = os.path.join(_worker_expr_cache, f"{safe}.npz")
+    if not os.path.exists(path):
+        return None, None
+    try:
+        loaded = np.load(path, allow_pickle=True)
+        return loaded["dates"], loaded["data"]
+    except:
+        return None, None
 
 
 def _scan_batch(tickers):
-    """Scan a batch of tickers. Returns list of {ticker, date, bar_idx, close}."""
+    """Scan a batch of tickers using expression cache. Returns list of signals."""
     signals = []
     skipped = 0
     for ticker in tickers:
@@ -152,13 +170,26 @@ def _scan_batch(tickers):
             skipped += 1
             continue
         try:
-            engine = ExpressionEngine(df)
+            dates_cache, data_cache = _load_ticker_npz(ticker)
+            if dates_cache is None:
+                skipped += 1
+                continue
+
             n_bars = len(df)
+            # Verify bar count matches
+            if len(dates_cache) != n_bars:
+                skipped += 1
+                continue
+
             pass_mask = np.ones(n_bars, dtype=bool)
             pass_mask[:50] = False  # warmup
 
-            for cond in _worker_conditions:
-                series = compute_series(engine, cond["compute"])
+            for i, cond in enumerate(_worker_conditions):
+                col_idx = _worker_cond_col_indices[i]
+                if col_idx is None:
+                    pass_mask[:] = False
+                    break
+                series = data_cache[:, col_idx]
                 low, high = cond["low"], cond["high"]
                 in_range = (series >= low) & (series <= high)
                 in_range[np.isnan(series)] = False
@@ -180,21 +211,31 @@ def _scan_batch(tickers):
     return signals, skipped
 
 
-def scan_all_signals(cache, conditions, workers):
-    """Scan full universe for signal conditions."""
+def scan_all_signals(cache, conditions, workers, expr_cache):
+    """Scan full universe for signal conditions using expression cache."""
     tickers = list(cache.keys())
     batch_size = max(1, len(tickers) // (workers * 4))
     batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
 
+    # Map condition names to expression cache column indices
+    cond_col_indices = []
+    for cond in conditions:
+        col_idx = expr_cache.expr_index(cond["name"])
+        if col_idx is None:
+            print(f"  WARNING: condition '{cond['name']}' not in expression cache!")
+        cond_col_indices.append(col_idx)
+
+    expr_cache_dir = os.path.join(REPO_ROOT, "local_runner", "cache", "expr_series")
+
     print(f"\n  Scanning {len(tickers):,} tickers x {len(conditions)} conditions...")
-    print(f"  {workers} workers, {len(batches)} batches")
+    print(f"  {workers} workers, {len(batches)} batches (using expression cache)")
     t0 = time.time()
 
     all_signals = []
     with ProcessPoolExecutor(
         max_workers=workers,
         initializer=_init_scan_worker,
-        initargs=(cache, conditions)
+        initargs=(cache, conditions, expr_cache_dir, cond_col_indices)
     ) as pool:
         futures = [pool.submit(_scan_batch, batch) for batch in batches]
         done = 0
@@ -259,14 +300,23 @@ def deduplicate_signals(signals):
 # ============================================================
 # Phase 3: Apply exit condition, measure distance
 # ============================================================
-def apply_exit_and_measure(signals, cache, exit_cond, direction, max_forward=MAX_FORWARD):
+def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache, max_forward=MAX_FORWARD):
     """
     For each signal, run forward and check if exit condition fires.
     Measure signal close -> exit close in ADR units.
+    Uses expression cache for exit condition (same computation path).
     """
     expr_name = exit_cond["expression"]
     exit_thresh = exit_cond["threshold"]
     exit_dir = exit_cond["direction"]  # ">=" or "<="
+
+    exit_col_idx = expr_cache.expr_index(expr_name)
+    if exit_col_idx is None:
+        print(f"  ERROR: exit expression '{expr_name}' not in expression cache!")
+        return []
+
+    # Also need ADR -- check if it's in the cache
+    adr_col_idx = expr_cache.expr_index("adr14")
 
     print(f"\n  Applying exit: {expr_name} {exit_dir} {exit_thresh}")
     print(f"  Direction: {direction}, max forward: {max_forward} bars")
@@ -274,6 +324,9 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, max_forward=MAX
     results = []
     no_exit = 0
     errors = 0
+
+    # Pre-load expression cache per ticker (avoid repeated file loads)
+    _ticker_cache = {}
 
     for i, sig in enumerate(signals):
         ticker = sig["ticker"]
@@ -285,11 +338,26 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, max_forward=MAX
             continue
 
         try:
-            engine = ExpressionEngine(df)
+            # Load expression cache for this ticker (cached per ticker)
+            if ticker not in _ticker_cache:
+                dates, data = expr_cache.get_ticker(ticker)
+                _ticker_cache[ticker] = (dates, data)
+            cached_dates, cached_data = _ticker_cache[ticker]
 
-            # Compute ADR at signal bar
-            adr_series = engine._adr(14)
-            adr_at_signal = float(adr_series.values[bar_idx])
+            if cached_dates is None or len(cached_dates) != len(df):
+                errors += 1
+                continue
+
+            # ADR at signal bar
+            if adr_col_idx is not None:
+                adr_at_signal = float(cached_data[bar_idx, adr_col_idx])
+            else:
+                # Fallback: compute ADR manually from OHLCV
+                h = df["high"].values
+                l = df["low"].values
+                start = max(0, bar_idx - 13)
+                adr_at_signal = float(np.mean(h[start:bar_idx+1] - l[start:bar_idx+1]))
+
             if adr_at_signal <= 0 or np.isnan(adr_at_signal):
                 errors += 1
                 continue
@@ -302,8 +370,8 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, max_forward=MAX
                 errors += 1
                 continue
 
-            # Compute exit expression series
-            exit_series = compute_series(engine, {"op": expr_name})
+            # Get exit expression series from cache
+            exit_series = cached_data[:, exit_col_idx]
 
             # Find first bar after signal where exit fires
             exit_bar = None
@@ -424,11 +492,17 @@ def filter_and_rank(results, min_adr, direction):
 # ============================================================
 # Phase 5: Deduplicate examples (same logic)
 # ============================================================
-def deduplicate_examples(examples, cache, conditions):
+def deduplicate_examples(examples, cache, conditions, expr_cache):
     """
-    For examples that have multiple signal bars, find and deduplicate them
-    using the same logic as backtest signals.
+    For each example, verify it passes all conditions at scan bar using expression cache,
+    then record the signal bar. Uses the SAME computation path as the pyramid grinder.
     """
+    # Map condition names to cache column indices
+    cond_col_indices = []
+    for cond in conditions:
+        col_idx = expr_cache.expr_index(cond["name"])
+        cond_col_indices.append(col_idx)
+
     results = []
     for ex in examples:
         ticker = ex.get("ticker")
@@ -447,26 +521,47 @@ def deduplicate_examples(examples, cache, conditions):
         entry_idx = dates_str.index(entry_date)
         scan_idx = entry_idx - 1  # scan candle is day before entry
 
-        # For examples, use the scan bar (entry - 1) directly.
-        # The pyramid grinder validated these examples; minor compute differences
-        # between expr cache and compute_series can cause 1-2 conditions to fail,
-        # so we don't re-verify all conditions here.
-        rightmost_idx = scan_idx
+        # Load expression cache for this ticker
+        cached_dates, cached_data = expr_cache.get_ticker(ticker)
+        if cached_dates is None:
+            print(f"    {ticker}: not in expression cache, skipping")
+            continue
 
-        signal_date = dates_str[rightmost_idx]
-        signal_close = float(df["close"].values[rightmost_idx])
+        # Verify bar count matches
+        if len(cached_dates) != len(df):
+            print(f"    {ticker}: bar count mismatch (ohlcv={len(df)}, expr_cache={len(cached_dates)})")
+            continue
+
+        # Verify ALL conditions pass at scan bar using expression cache
+        n_fail = 0
+        for i, cond in enumerate(conditions):
+            col_idx = cond_col_indices[i]
+            if col_idx is None:
+                n_fail += 1
+                continue
+            val = cached_data[scan_idx, col_idx]
+            if np.isnan(val) or val < cond["low"] or val > cond["high"]:
+                n_fail += 1
+                print(f"    {ticker}: FAIL {cond['name']} = {val:.4f} range [{cond['low']:.4f}, {cond['high']:.4f}]")
+
+        if n_fail > 0:
+            print(f"    {ticker}: {n_fail}/{len(conditions)} conditions failed -- GRINDER BUG")
+            continue
+
+        signal_date = dates_str[scan_idx]
+        signal_close = float(df["close"].values[scan_idx])
 
         results.append({
             "id": ex.get("id"),
             "ticker": ticker,
             "entry_date": entry_date,
             "signal_date": signal_date,
-            "signal_bar_idx": rightmost_idx,
+            "signal_bar_idx": scan_idx,
             "signal_close": round(signal_close, 2),
-            "cluster_size": len(signal_bars),
+            "cluster_size": 1,
             "is_example": True,
         })
-        print(f"    {ticker}: signal {signal_date} ({len(signal_bars)} bar cluster) -> entry {entry_date}")
+        print(f"    {ticker}: signal {signal_date} -> entry {entry_date}")
 
     print(f"  OK: {len(results)}/{len(examples)} examples matched with signal bars")
     return results
@@ -512,14 +607,17 @@ def save_results(filtered, example_signals, setup_type, args):
     return latest_path
 
 
-def measure_example_exit_distances(example_signals, cache, exit_cond, direction, max_forward=MAX_FORWARD):
+def measure_example_exit_distances(example_signals, cache, exit_cond, direction, expr_cache, max_forward=MAX_FORWARD):
     """
     For each deduplicated example signal bar, measure signal close -> exit close in ADR.
-    Same measurement as backtest signals so the floor is comparable.
+    Uses expression cache for exit condition (same computation path).
     """
     expr_name = exit_cond["expression"]
     exit_thresh = exit_cond["threshold"]
     exit_dir = exit_cond["direction"]
+
+    exit_col_idx = expr_cache.expr_index(expr_name)
+    adr_col_idx = expr_cache.expr_index("adr14")
 
     print(f"  Measuring example exit distances from deduplicated signal bars...")
 
@@ -534,9 +632,22 @@ def measure_example_exit_distances(example_signals, cache, exit_cond, direction,
             continue
 
         try:
-            engine = ExpressionEngine(df)
-            adr_series = engine._adr(14)
-            adr_at_signal = float(adr_series.values[bar_idx])
+            # Load expression cache
+            cached_dates, cached_data = expr_cache.get_ticker(ticker)
+            if cached_dates is None or len(cached_dates) != len(df):
+                ex["move_adr"] = None
+                ex["error"] = "expr cache mismatch"
+                continue
+
+            # ADR at signal bar
+            if adr_col_idx is not None:
+                adr_at_signal = float(cached_data[bar_idx, adr_col_idx])
+            else:
+                h = df["high"].values
+                l = df["low"].values
+                start = max(0, bar_idx - 13)
+                adr_at_signal = float(np.mean(h[start:bar_idx+1] - l[start:bar_idx+1]))
+
             signal_close = float(df["close"].values[bar_idx])
 
             if adr_at_signal <= 0 or np.isnan(adr_at_signal):
@@ -547,8 +658,12 @@ def measure_example_exit_distances(example_signals, cache, exit_cond, direction,
             n_available = len(df) - bar_idx - 1
             actual_forward = min(max_forward, n_available)
 
-            # Compute exit series
-            exit_series = compute_series(engine, {"op": expr_name})
+            # Get exit series from expression cache
+            if exit_col_idx is None:
+                ex["move_adr"] = None
+                ex["error"] = "exit expr not in cache"
+                continue
+            exit_series = cached_data[:, exit_col_idx]
 
             # Find first exit bar after signal
             exit_bar = None
@@ -637,14 +752,23 @@ def main():
     exit_cond = load_exit_condition(setup)
     examples = load_examples(setup)
 
+    # Load expression cache -- SAME computation path as pyramid grinder
+    print(f"  Loading expression cache...")
+    expr_cache = ExprSeriesCache()
+    if not expr_cache.is_valid():
+        print("  ERROR: Expression cache not found or invalid.")
+        print("  Run: python local_runner/expr_cache_builder.py --build")
+        sys.exit(1)
+    print(f"  Expression cache: {expr_cache.n_expressions} expressions")
+
     # Phase 1: Deduplicate examples FIRST -- need their exit distances for the floor
     print(f"\n  PHASE 1: Deduplicate example signal bars")
-    example_signals = deduplicate_examples(examples, cache, conditions)
+    example_signals = deduplicate_examples(examples, cache, conditions, expr_cache)
 
     # Phase 2: Measure example exit distances from deduplicated signal bars
     print(f"\n  PHASE 2: Measure example exit distances")
     example_floor = measure_example_exit_distances(
-        example_signals, cache, exit_cond, direction, args.max_forward)
+        example_signals, cache, exit_cond, direction, expr_cache, args.max_forward)
 
     min_adr = args.min_adr if args.min_adr is not None else example_floor
     print(f"\n  ADR floor from examples: {example_floor:.1f}")
@@ -652,7 +776,7 @@ def main():
 
     # Phase 3: Scan all backtest signals
     print(f"\n  PHASE 3: Scan all signals")
-    raw_signals = scan_all_signals(cache, conditions, args.workers)
+    raw_signals = scan_all_signals(cache, conditions, args.workers, expr_cache)
 
     # Phase 4: Deduplicate backtest signals
     print(f"\n  PHASE 4: Deduplicate (consecutive -> rightmost)")
@@ -660,7 +784,7 @@ def main():
 
     # Phase 5: Apply exit + measure
     print(f"\n  PHASE 5: Apply exit condition + measure distance")
-    with_exit = apply_exit_and_measure(deduped, cache, exit_cond, direction, args.max_forward)
+    with_exit = apply_exit_and_measure(deduped, cache, exit_cond, direction, expr_cache, args.max_forward)
 
     # Phase 6: Exclude existing examples
     print(f"\n  PHASE 6: Exclude existing examples")
