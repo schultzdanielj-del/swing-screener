@@ -450,28 +450,16 @@ def grind_signal_exits(example_signals, forward_matrices, expr_names,
 # ============================================================
 # Display
 # ============================================================
-def print_results(candidates, example_signals, n_show=20):
-    """Print ranked exit conditions."""
-    print(f"\n  {'='*70}")
-    print(f"  TOP {min(n_show, len(candidates))} SIGNAL EXIT CONDITIONS")
-    print(f"  (ranked by median capture efficiency)")
-    print(f"  {'='*70}")
-
-    for rank, c in enumerate(candidates[:n_show], 1):
-        print(f"\n  #{rank:3d}  {c.expression} {c.direction} {c.threshold}")
-        print(f"       Capture eff: floor={c.floor_capture_eff:.2f}  "
-              f"median={c.median_capture_eff:.2f}  mean={c.mean_capture_eff:.2f}")
-        print(f"       ADR move:    floor={c.floor_adr:.1f}  "
-              f"median={c.median_adr:.1f}  mean={c.mean_adr:.1f}")
-        print(f"       Avg bars to exit: {c.avg_bars_to_exit:.0f}")
-
-        # Per-example detail
-        for i, ex in enumerate(example_signals):
-            bar = c.exit_bars[i] if i < len(c.exit_bars) else "?"
-            adr = c.move_adrs[i] if i < len(c.move_adrs) else 0
-            eff = c.capture_effs[i] if i < len(c.capture_effs) else 0
-            print(f"         {ex.ticker:6s} bar={bar:3}  "
-                  f"move={adr:+.1f} ADR  eff={eff:.2f}")
+def print_results(candidates, example_signals):
+    """Print the best exit condition."""
+    if not candidates:
+        print("\n  No candidates found.")
+        return
+    c = candidates[0]
+    print(f"\n  BEST: {c.expression} {c.direction} {c.threshold}")
+    print(f"  Capture eff: floor={c.floor_capture_eff:.2f}  median={c.median_capture_eff:.2f}")
+    print(f"  ADR move:    floor={c.floor_adr:.1f}  median={c.median_adr:.1f}")
+    print(f"  Avg bars to exit: {c.avg_bars_to_exit:.0f}")
 
 
 # ============================================================
