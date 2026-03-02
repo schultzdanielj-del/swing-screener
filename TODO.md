@@ -12,7 +12,7 @@ The UI steps were reorganized but the under-the-hood wiring is incomplete. Each 
 | 1 | Optimal Samples | `optimal_samples` | Read-only display (manual) | ✅ Works (shows DB counts) |
 | 2 | Signal Brute Forcing | `signal_brute` | `pyramid_grinder.py` → `signal_exit_grinder.py` | ⚠️ Runs but needs expr cache |
 | 3 | Sample Expansion | `sample_expansion` | `signal_filter.py` → chart vetting UI | ❌ BROKEN — filter writes local, vetting reads Railway |
-| 4 | MFE Capture | `mfe_capture` | `exit_grinder.py` | ❌ Script path wrong in agent |
+| 4 | MFE Capture | `mfe_capture` | `exit_grinder.py` | ✅ Script exists (trade mgmt exit optimizer) |
 | 5 | Market Grinder | `market_grind` | Not built | ⬜ Placeholder |
 
 ---
@@ -63,11 +63,7 @@ The UI steps were reorganized but the under-the-hood wiring is incomplete. Each 
 **Runs on:** Local machine (via agent)
 **Agent mapping:** `"mfe_capture": [["python", "scripts/exit_grinder.py", "--setup", "{setup}"]]`
 
-**ISSUE:** `scripts/exit_grinder.py` doesn't exist. The actual scripts are:
-- `scripts/signal_exit_grinder.py` — cache-compatible signal exit (already runs in Step 2)
-- A separate trade management exit optimizer may need to be built
-
-**FIX NEEDED:** Determine what MFE Capture actually runs. If it's the same signal_exit_grinder, it's redundant with Step 2. If it's a separate trade management exit optimizer, that script needs to be built.
+**Status:** Script exists and path is correct. `scripts/exit_grinder.py` is the single-stage trade management exit optimizer (Step 6 of ANALYSIS_SYSTEM.md, 924 lines). This is conceptually different from `scripts/signal_exit_grinder.py` which runs in Step 2 to find the best exit condition for signal filtering. MFE Capture runs the full post-trade exit optimizer on validated examples.
 
 ---
 
@@ -75,17 +71,22 @@ The UI steps were reorganized but the under-the-hood wiring is incomplete. Each 
 
 ### P0 — Critical (pipeline can't function)
 
-1. **signal_filter.py must upload to Railway after saving locally**
-   - After `save_results()`, POST filtered JSON to `/api/vetting/{setup}/upload-signals`
-   - This bridges local→Railway gap so vetting UI can read signals
+1. **✅ FIXED: signal_filter.py uploads to Railway after saving locally**
+   - After `save_results()`, POSTs filtered JSON to `/api/vetting/{setup}/upload-signals`
+   - Also uploads exit grind data to `/api/vetting/{setup}/upload-exit`
+   - Graceful failure with manual fallback message
 
-2. **Fix MFE Capture agent script path**
-   - `scripts/exit_grinder.py` doesn't exist
-   - Either point to correct script or mark as "not built yet"
+2. **✅ FIXED: MFE Capture agent script path is CORRECT**
+   - `scripts/exit_grinder.py` exists (924 lines, trade management exit optimizer)
+   - Different from `signal_exit_grinder.py` (signal-level exit for filtering)
+   - No code change needed — was a false alarm in the audit
 
-3. **Expression cache detection on first run**
-   - pyramid_grinder crashes with RuntimeError if cache not found
-   - The cache IS built but the error message is confusing — need better detection/messaging
+3. **✅ FIXED: Expression cache fingerprint mismatch**
+   - Root cause: pyramid_grinder validated with `generate_all()` (signal-only)
+     but cache was built with `_load_expressions()` (signal + generic exit)
+   - Fix: pyramid_grinder now uses `load_cache_expressions()` for fingerprint check
+   - Grinder still uses signal-only expressions for actual grinding
+   - Better error message on mismatch showing both fingerprints
 
 ### P1 — Important (UX/reliability)
 
@@ -226,12 +227,13 @@ PIPELINE_STEP_SCRIPTS = {
 
 ## Build Plan — What's Left
 
-### Immediate: Fix Pipeline Data Flow ⬜
-- [ ] signal_filter.py: add upload to Railway after local save
-- [ ] Fix MFE Capture script path in agent (or mark not built)
-- [ ] Verify Step 2 → Step 3 data handoff works end-to-end
-- [ ] Verify "Reload Samples" triggers filter + upload + UI refresh
-- [ ] Test full pipeline: grind → filter → upload → vet → example creation
+### Immediate: Fix Pipeline Data Flow ✅ (2026-03-02)
+- [x] signal_filter.py: add upload to Railway after local save
+- [x] Fix expression cache fingerprint mismatch (pyramid_grinder used wrong expr list)
+- [x] MFE Capture script path confirmed correct (was false alarm)
+- [ ] Verify Step 2 → Step 3 data handoff works end-to-end (needs live test)
+- [ ] Verify "Reload Samples" triggers filter + upload + UI refresh (needs live test)
+- [ ] Test full pipeline: grind → filter → upload → vet → example creation (needs live test)
 
 ### Phase: AI Vetting Review ⬜
 - [ ] `scripts/ai_vet_review.py` — claude -p reviews YES/NO decisions
