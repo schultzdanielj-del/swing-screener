@@ -1,6 +1,6 @@
 # Swing Screener Project — State Document
 
-**Last updated:** 2026-02-25
+**Last updated:** 2026-03-02
 **GitHub repo:** https://github.com/schultzdanielj-del/swing-screener
 
 ---
@@ -30,32 +30,32 @@ Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds t
 
 ---
 
-## CURRENT STATE (2026-03-01)
+## CURRENT STATE (2026-03-02)
 
 ### What's built and working:
-- **Pyramid grinder** — 6-tier nested search (D1 → 1wk → 1mo → 6mo → 1yr → 5yr), peak-based scoring, beam=10000 exhaustive search
-- **Signal expression library** — 12,175 expressions: 4,017 daily across 29 categories, 80 LSP levels, 44 algo lines, 8,034 HTF (weekly + monthly)
-- **Exit expression library** — 6,410 expressions: 446 base (LSP + algo + AVWAP + entry-relative + 12 other categories) + 5,964 boolean aggregations
-- **Exit grinder** — brute-forces 6,410 expressions against forward paths, 100% example pass hardcoded, timestamped + latest saves. Single-stage result: 71% median MFE capture.
-- **Expression series cache** — 4,119 tickers × 12,175 expressions pre-cached (~50 GB), 14x grinder speedup
-- **Nightly pipeline** — auto-triggers 4:30pm ET: Railway append → daily cache → 5yr cache → expr cache → matrix rebuild
-- **Backtest runner** — scans 5yr history, generates charts per signal, auto-uploads to Railway
-- **ScanPerfect web app** — Railway-deployed frontend with gallery, historical signal visualization, SPY bubble overlay
-- **Railway SQLite DB** — 11M+ OHLCV rows, ~4,167 tradable tickers, 5yr daily data
+- **Unified frontend** — single-page app with rail nav, setup analysis with steps 1-6, vetting UI, examples gallery with chart toggle, nightly refresh, agent status
+- **Pyramid grinder** — 6-tier nested search, peak-based scoring, beam=10000
+- **Signal + exit grind combined** — agent runs pyramid_grinder then signal_exit_grinder back-to-back as one step
+- **Signal filter** — dedup, exit condition, ADR floor, rank, excludes existing examples
+- **Chart vetting UI** — embedded candlestick charts, EMA/SMA overlays, earnings overlay (Yahoo Finance), YES/NO/MAYBE verdicts, auto-example creation, rejected signals DB
+- **Expression library** — 12,175 expressions (4,017 daily + 80 LSP + 44 algo + 4,017 weekly + 4,017 monthly)
+- **Expression series cache** — 4,119 tickers × 12,175 expressions pre-cached (~50 GB)
+- **Nightly pipeline** — auto-triggers 4:30pm ET
+- **Railway SQLite DB** — 11M+ OHLCV rows, ~4,167 tradable tickers, rejected_signals table
 
-### DTSS (Double Top Short Sell) — first completed setup:
-- 20 validated examples (in exit grinder), 26 validated examples (in signal grinder, includes tickers not in 5yr cache)
-- Signal grind: **41 conditions, peak 3/day, 264 total signals across 5yr** (multi-pass with algo lines)
-- Exit grind (single-stage): `avg_range_atr_10b above 1.0541` — 71% median capture eff, 20/20 pass
-- Backtest runner complete, Historical tab with signal prevalence + SPY overlay
+### DTSS (Double Top Short Sell):
+- **36 validated examples** (23 original + 14 from vetting pass 1, minus 1 removed)
+- 8 rejected signals in DB
+- Last grind: 26 conditions, peak 6/day, 201 total signals across 5yr
+- **Ready for re-grind with expanded 36-example set**
 
-### What's next (per TODO.md):
-- **Task 3.7: Multi-Stage Exit Grinder** — replace single-condition exit with sequential stages (capital protection → trend riding → trailing). Single-stage hit 71% ceiling; multi-stage should push into excellent range.
-- **Task 4: Formation Period Validation** — exit conditions must not fire before entry date
-- **Step 7: Market Context** — correlate signal outcomes with market regime
-- Future: 3-4DB setup, HTF setup, frontend grinder control
-
----
+### What's next:
+- Re-grind DTSS with 36 examples (tighter conditions expected)
+- Build AI vetting review (claude -p checks YES/NO against examples)
+- Setup Home page (anti-curve-fit metrics, condition display)
+- Wire exit grinder backend (single vs multi-stage)
+- Market grinder (Step 6)
+- 3-4DB setup (21 examples loaded, not yet ground)
 
 ## ARCHITECTURE
 

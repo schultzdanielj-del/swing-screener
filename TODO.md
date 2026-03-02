@@ -1,137 +1,132 @@
-# TODO — UI & Pipeline Rebuild (2026-03-02)
+# TODO — Swing Screener (2026-03-02)
 
 ## Current State
 
-**Pipeline is working end-to-end:**
-- Signal grind → signal exit grind → signal filter → chart vetting → example creation
-- 36 DTSS examples (23 original + 14 from first vetting pass, minus 1 removed)
-- 8 rejected signals in DB
-- Expression cache: 4,119 tickers × 12,175 expressions (~50 GB)
+**Unified UI: ✅ BUILT**
+- Single-page app at root URL, rail nav (Nightly / Setup Analysis / Watchlist)
+- Setup selector: DTSS | 3-4DB
+- Steps 1-6: Examples → Signal Grinder → Signal Filter → Chart Vetting → Exit Grinder → Market Grinder
+- Vetting UI embedded with earnings overlay, auto-example creation, rejected signals DB
+- Agent offline hint with click-to-copy terminal command
+
+**Pipeline: ✅ WORKING END-TO-END**
+- Signal grind + signal exit grind combined into one step (agent runs back-to-back)
+- Signal filter → chart vetting → example creation/rejection
+- 36 DTSS examples (23 original + 14 from vetting pass 1, minus 1 removed)
+- 8 rejected signals in `rejected_signals` DB table
 - Ready for re-grind with expanded example set
 
-**What needs building:** Unified frontend that replaces the current scattered pages (pipeline.html, vetting.html, index.html) with a single app.
+**Data:**
+- Expression cache: 4,119 tickers × 12,175 expressions (~50 GB)
+- Railway DB: 11M+ OHLCV rows, ~4,167 tradable tickers
 
 ---
 
-## Frontend Architecture
+## Architecture (as built)
 
-### Top-Level Navigation
+### Frontend: `app/index.html` (unified SPA)
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  NIGHTLY REFRESH  │  SETUP ANALYSIS  │  DAILY WATCHLIST  │
-└──────────────────────────────────────────────────────────┘
-```
+**Rail navigation:** Nightly Refresh | Setup Analysis | Daily Watchlist
 
-### 1. Nightly Refresh
-Single page. Shows cache/data freshness status, run button.
-- OHLCV append status (last run, rows added)
-- Daily cache / 5yr cache / expression cache / matrix status
-- One-click "Run Nightly" button → agent executes
+**Setup Analysis steps:**
+1. **Examples** — gallery with mini chart toggle, rejected signals list, stats
+2. **Signal Grinder** — runs pyramid_grinder.py then signal_exit_grinder.py back-to-back
+3. **Signal Filter** — dedup, exit condition, ADR floor, rank for vetting
+4. **Chart Vetting** — full candlestick charts with EMAs/SMAs, earnings overlay (purple E markers), YES/NO/MAYBE verdicts, "Submit for Audit" button for AI review
+5. **Exit Grinder** — single-stage vs multi-stage toggle, finds best exit for max MFE capture
+6. **Market Grinder** — placeholder (clusters outcomes vs market regime)
 
-### 2. Setup Analysis
-Setup selector at top: **DTSS** | **3-4DB** (only two for now).
+**Key features:**
+- Agent status dot (green=online, red=offline) with click-to-copy start command
+- Live log streaming for all grinder steps
+- Setup selector (DTSS / 3-4DB)
+- Keyboard shortcuts in vetting (↑↓ nav, 1/2/3 for yes/maybe/no)
 
-#### 2a. Setup Home (default view)
-- Current best conditions (from latest pyramid result)
-- Stats: n_examples, n_signals, peak/day, avg/day
-- Setup description, anti-curve-fit score, ideal market conditions
+### Backend: `server.py`
 
-#### 2b. Steps (sub-nav within a setup)
+**Vetting endpoints:**
+- `GET /api/vetting/{setup}/signals` — filtered signals, excludes examples within ±5 days
+- `GET /api/vetting/{setup}/ohlcv/{ticker}` — OHLCV centered on signal date
+- `POST /api/vetting/{setup}/decide` — saves verdict, creates example (YES) or rejected_signal (NO)
+- `GET /api/vetting/earnings/{ticker}` — Yahoo Finance earnings dates
+- `GET /api/vetting/{setup}/rejected` — all rejected signals
 
-**Step 1: Examples**
-- Gallery of validated examples + rejected signals
-- Toggle charts on/off
-- Add/remove examples
-- Stats: count, date range, ticker diversity
+**Pipeline endpoints:**
+- `GET /api/pipeline/steps` — step states + vetting stats + agent status
+- `POST /api/pipeline/run/{step_id}` — queue job for agent
+- `POST /api/pipeline/stop` — stop running job
+- `POST /api/pipeline/reset/{step_id}` — reset step state
 
-**Step 2: Signal Grinder**
-- Run → agent executes pyramid_grinder
-- Live logs, result summary (conditions, signal count, peak/day)
+**DB tables added this session:**
+- `rejected_signals` (setup_type, ticker, signal_date)
 
-**Step 3: Signal Exit Grinder**
-- Run → agent executes signal_exit_grinder
-- Result: best exit condition, median capture eff
+### Agent: `local_runner/agent.py`
 
-**Step 4: Signal Filter**
-- Run → agent executes signal_filter
-- Result: N filtered signals, ADR distribution
-- Auto-uploads to Railway when done
+- Multi-command step support: signal_grind runs pyramid_grinder then signal_exit_grinder sequentially
+- Streams logs back to Railway in batches of 20 lines
+- Reports per-command progress headers for combined steps
 
-**Step 5: Chart Vetting + AI Review**
-- Manual vetting UI (YES/NO/MAYBE)
-- Live stats: vetted/total, yes/no/maybe
-- **AI Review (final sub-step):**
-  - `claude -p` via agent checks each YES/NO against examples + setup definition
-  - Flags disagreements for human review
-  - Must pass before re-grind
-
-**Step 6: Exit Grinder**
-- Choose single-stage or multi-stage
-- Run → agent executes chosen grinder
-- Keep/discard results
-
-**Step 7: Market Grinder**
-- Cluster outcomes vs market regime (SPY, VIX, breadth)
-- Find optimal market conditions for entry
-
-**Steps 2-7 independently runnable.**
-
-### 3. Daily Watchlist (future, placeholder)
-- Nightly scan → today's signals ranked by EV
+### Old files (backed up, not served):
+- `app/index_old.html` — original ScanPerfect frontend
+- `app/pipeline_old.html` — standalone pipeline dashboard
+- `app/vetting_old.html` — standalone vetting UI
 
 ---
 
-## Build Plan
+## Pipeline Steps (server-side definition)
 
-### Phase 1: Core UI Shell ⬜
-- [ ] Single-page app with top nav (Nightly / Setup Analysis / Watchlist)
-- [ ] Setup selector within Setup Analysis
-- [ ] Sub-nav for steps 1-7
-- [ ] Hash-based routing, dark theme
+| Step ID | Name | Description |
+|---------|------|-------------|
+| `nightly` | Nightly Refresh | OHLCV append, cache rebuild, matrix rebuild |
+| `signal_grind` | Signal Grinder | pyramid_grinder.py → signal_exit_grinder.py (combined) |
+| `signal_filter` | Signal Filter | Dedup, exit condition, ADR floor, rank |
+| `vetting` | Chart Vetting | Manual YES/NO/MAYBE + AI audit (manual step) |
+| `exit_manage` | Exit Grinder | Single or multi-stage MFE capture optimization |
+| `market_grind` | Market Grinder | Outcome clustering vs market regime |
 
-### Phase 2: Wire Existing Functionality ⬜
-- [ ] Nightly page: status + run button
-- [ ] Examples page: gallery + rejected list
-- [ ] Steps 2-4: run/logs/results (reuse pipeline endpoints)
-- [ ] Step 5: embed vetting UI
-- [ ] Step 6: exit grinder with single/multi toggle
+---
+
+## Build Plan — What's Left
 
 ### Phase 3: Setup Home ⬜
-- [ ] Latest pyramid result display
-- [ ] Anti-curve-fit metrics
-- [ ] Setup description, signal distribution chart
+- [ ] Latest pyramid result display (conditions, signal count, peak/day)
+- [ ] Anti-curve-fit metrics (examples vs conditions ratio, time spread)
+- [ ] Setup description from ta_knowledge.md
 
 ### Phase 4: AI Vetting Review ⬜
-- [ ] `scripts/ai_vet_review.py` — loads decisions, builds prompts, calls `claude -p`
+- [ ] `scripts/ai_vet_review.py` — loads YES/NO decisions + existing examples + DTSS definition
+- [ ] For each decision, builds prompt with OHLCV context
+- [ ] Shells out to `claude -p` (uses Max subscription, $0 cost)
+- [ ] Compares against established examples — flags disagreements
 - [ ] Saves ai_verdict + reasoning per signal
-- [ ] Pipeline step in agent
-- [ ] Frontend: show agree/disagree, flag conflicts
+- [ ] Wire into "Submit for Audit" button in vetting UI
+- [ ] Agent runs as pipeline step after manual vetting
 
-### Phase 5: Market Grinder ⬜
-- [ ] Step 7 implementation
-- [ ] Blocked by: enough vetted examples with outcomes
+### Phase 5: Exit Grinder Backend ⬜
+- [ ] Wire exit_manage step to correct scripts in agent
+- [ ] Single-stage: scripts/signal_exit_grinder.py (already built)
+- [ ] Multi-stage: scripts/multistage_exit_grinder.py (already built)
+- [ ] Pass mode selection from frontend → agent job → script
 
-### Phase 6: Daily Watchlist ⬜
-- [ ] Blocked by: market grinder (need EV for ranking)
+### Phase 6: Market Grinder ⬜
+- [ ] Step 6 implementation
+- [ ] Blocked by: enough vetted examples with win/loss outcomes
+
+### Phase 7: Daily Watchlist ⬜
+- [ ] Nightly scan → today's signals ranked by EV
+- [ ] Blocked by: market grinder
 
 ---
 
-## Key Files
+## Immediate Next Action
 
-| File | Purpose |
-|------|---------|
-| `app/index.html` | Main frontend (will become unified app) |
-| `app/pipeline.html` | Current pipeline dashboard (merge into unified) |
-| `app/vetting.html` | Current vetting UI (embed in step 5) |
-| `server.py` | Railway FastAPI backend |
-| `local_runner/agent.py` | Desktop agent |
-| `local_runner/pyramid_grinder.py` | Signal grinder |
-| `scripts/signal_exit_grinder.py` | Signal exit grinder |
-| `scripts/signal_filter.py` | Signal filter |
-| `scripts/exit_grinder.py` | Trade exit grinder (shelved) |
-| `scripts/multistage_exit_grinder.py` | Multi-stage exit |
-| `ta_knowledge.md` | TA concepts, setup definitions |
+**Re-grind with 36 examples:**
+1. Start agent locally: `python local_runner/agent.py`
+2. Open UI → Setup Analysis → DTSS → Signal Grinder → RUN
+3. Wait for grind + exit grind to complete (~10-15 min)
+4. Signal Filter → RUN
+5. Chart Vetting → vet new signals
+6. Repeat until convergence
 
 ---
 

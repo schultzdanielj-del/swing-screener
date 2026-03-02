@@ -14,7 +14,7 @@
 
 **Why this matters:** With 23 examples, you can trust floor and median metrics but not the tails. At 50 examples, you start trusting more aggressive extraction. At 100+, you can squeeze hard because the distribution is well-characterized. The system's output quality scales directly with example count.
 
-**Re-run flow:** Add examples → re-run Step 3 (signal grind tightens with more data points) → re-run Step 6 (exit conditions refine — more examples = more confidence in aggressive exits) → re-run Steps 7-9 (outcome/environment models sharpen). Each step's scripts accept the current example set and produce fresh results. No manual state to manage.
+**Re-run flow:** Add examples via chart vetting → re-run signal grinder (tightens with more data points) → re-run signal filter → vet new signals → repeat until convergence. Then re-run exit grinder (more examples = more confident exits) → run market grinder. Each step's scripts accept the current example set and produce fresh results. No manual state to manage.
 
 **Rule: never hard-code example counts or tune to a specific example set.** All thresholds are relative (percentiles, ratios, floor/median) so they adapt automatically as examples grow.
 
@@ -207,70 +207,61 @@ The grinder uses one universal expression set for all setups. No setup-specific 
 
 ---
 
-## Step 4: Signal Filter + Example Expansion Loop
+## Step 4: Signal Filter + Chart Vetting + Example Expansion
 
-**Goal:** Expand the example set by vetting grinder signals, feeding confirmed winners back in, and re-grinding until convergence.
+**Goal:** Filter grinder signals down to vettable candidates, manually review charts, expand examples, and re-grind until convergence.
 
-**IN PROGRESS** — `scripts/signal_filter.py` built (2026-03-01). Chart vetting UI still needed.
+**✅ COMPLETE** — Full pipeline built and working (2026-03-02).
 
 ### The Pipeline:
 
-1. **Signal filter** (`scripts/signal_filter.py`):
-   - Dedup example signal bars (consecutive → rightmost)
-   - Measure example exit distances (rightmost signal close → exit close in ADR) → derive floor
-   - Scan all 5yr signals (parallel)
-   - Dedup backtest signals (same rightmost logic)
-   - Apply exit condition, measure signal close → exit close in ADR
-   - Filter: keep only signals ≥ example floor ADR, rank by exit distance descending
+1. **Signal grinder** (Step 3) produces raw signals across 5yr history
+2. **Signal exit grinder** runs back-to-back with signal grinder (combined into one agent step)
+3. **Signal filter** (`scripts/signal_filter.py`):
+   - Dedup consecutive signals (rightmost kept)
+   - Apply exit condition from signal exit grinder
+   - Measure signal close → exit close in ADR
+   - Filter: keep only signals ≥ example floor ADR
+   - Exclude signals matching existing examples (±5 day window)
+   - Rank by ADR descending
    - Output: `data/signal_filter/filtered_dtss.json`
 
-2. **Chart vetting** (needs UI):
-   - Flip through ranked signals (best first)
-   - Tag as winner: real DTSS setup + catchable entry + it worked
-   - Winners get added to example library
+4. **Chart vetting** (unified UI, step 4):
+   - Embedded candlestick chart with EMA 8/21, SMA 50/200
+   - Earnings overlay (purple E markers from Yahoo Finance)
+   - 250-bar lookback + 80-bar forward, all bars visible
+   - YES = create example in Railway DB (click entry candle first)
+   - NO = create rejected signal in `rejected_signals` table
+   - MAYBE = flag for review
+   - Keyboard shortcuts: ↑↓ navigate, 1/2/3 for yes/maybe/no
+   - Auto-advances to next unvetted signal after verdict
 
-3. **Re-grind** with expanded examples:
+5. **AI review** ("Submit for Audit" — when all signals vetted):
+   - Runs `claude -p` via agent for each YES/NO decision
+   - Compares against existing examples + setup definition from ta_knowledge.md
+   - Flags disagreements for human review
+   - Must pass before re-grind (NOT YET BUILT)
+
+6. **Re-grind** with expanded examples:
    - More examples → tighter conditions → fewer signals → less noise
-   - Repeat from step 1
+   - Repeat from step 1 (signal grinder)
+   - Convergence: when grind produces signals and all good ones already in example set
 
-4. **Convergence:** When the grind produces signals and all the good ones are already in the example set, the setup is locked.
+### First Vetting Pass Results (2026-03-02, DTSS):
+- Input: 100 filtered signals from 23-example grind
+- Output: 14 new examples (YES), 8 rejected (NO), 1 later removed
+- Result: 36 total examples, ready for re-grind
 
-### Deduplication rule:
-- Same ticker, back-to-back signal bars (no gap) = one signal
-- Keep the rightmost (latest) bar in each consecutive cluster
-- Any gap (even 1 non-signal bar) = separate signal
+### Deduplication Rules:
+- Same ticker, consecutive signal bars (no gap) = one signal, keep rightmost
+- Any gap (even 1 bar) = separate signal
 - Applied identically to examples and backtest signals
 
-### Exit distance measurement:
-- Rightmost deduplicated signal bar close → exit bar close
-- Measured in ADR units at the signal bar
-- Same method for examples and backtest signals (apples to apples)
+### Exit Distance Measurement:
+- Rightmost deduped signal bar close → exit bar close, in ADR units
+- Same method for examples and backtest signals
 - Example floor ADR = minimum across all example measurements
-- Backtest signals must meet or exceed this floor
-
----
-
-## Step 5: Backtest Runner
-
-**✅ COMPLETE**
-
-**Script:** `scripts/backtest_runner.py`
-
-Scans 5yr cache with grind conditions, generates charts per signal, auto-uploads to Railway. Frontend Historical tab shows signal prevalence bar chart + SPY candlestick bubble overlay.
-
-**Usage:**
-```bash
-# Full run: scan + charts + upload to Railway
-python scripts/backtest_runner.py --setup dtss
-
-# Scan + upload only, no charts
-python scripts/backtest_runner.py --setup dtss --no-charts
-
-# Regenerate charts from existing CSV
-python scripts/backtest_runner.py --setup dtss --charts-only
-```
-
----
+- Backtest signals must meet or exceed floor
 
 ## Step 6: Exit Management Grind — How Do the Examples Resolve?
 
