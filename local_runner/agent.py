@@ -80,11 +80,13 @@ def check_for_jobs():
 # ── V2 Pipeline step handling ──────────────────────────────────────────
 
 PIPELINE_STEP_SCRIPTS = {
-    "signal_grind":    ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}"],
-    "exit_grind":      ["python", "scripts/signal_exit_grinder.py", "--setup", "{setup}"],
-    "signal_filter":   ["python", "scripts/signal_filter.py", "--setup", "{setup}"],
-    "outcome_grind":   ["python", "scripts/outcome_grinder.py", "--setup", "{setup}"],
-    "backtest":        ["python", "scripts/backtest_runner.py", "--setup", "{setup}"],
+    "signal_grind":    [
+        ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}"],
+        ["python", "scripts/signal_exit_grinder.py", "--setup", "{setup}"],
+    ],
+    "signal_filter":   [["python", "scripts/signal_filter.py", "--setup", "{setup}"]],
+    "outcome_grind":   [["python", "scripts/outcome_grinder.py", "--setup", "{setup}"]],
+    "backtest":        [["python", "scripts/backtest_runner.py", "--setup", "{setup}"]],
 }
 
 
@@ -121,54 +123,60 @@ def handle_pipeline_job(job):
     job_id = job.get("job_id", "")
     setup_type = job.get("setup_type", "dtss")
 
-    cmd_template = PIPELINE_STEP_SCRIPTS.get(step_id)
-    if not cmd_template:
+    cmd_templates = PIPELINE_STEP_SCRIPTS.get(step_id)
+    if not cmd_templates:
         print(f"  ✗ Unknown pipeline step: {step_id}")
         pipeline_post_status(step_id, "error", error=f"Unknown step: {step_id}")
         return
 
-    cmd = [c.replace("{setup}", setup_type) for c in cmd_template]
+    cmds = [[c.replace("{setup}", setup_type) for c in tpl] for tpl in cmd_templates]
 
     print(f"\n{'='*60}")
     print(f"  PIPELINE: {step_id} ({job_id})")
-    print(f"  Command:  {' '.join(cmd)}")
+    for i, cmd in enumerate(cmds):
+        print(f"  Command {i+1}/{len(cmds)}: {' '.join(cmd)}")
     print(f"{'='*60}")
 
     pipeline_post_status(step_id, "running")
     t0 = time.time()
-    log_buffer = []
 
     try:
-        proc = subprocess.Popen(
-            cmd, cwd=REPO_ROOT,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
-        )
-        for line in proc.stdout:
-            line = line.rstrip()
-            print(f"    {line}")
-            log_buffer.append(line)
-            # Flush logs every 20 lines
-            if len(log_buffer) >= 20:
+        for cmd_idx, cmd in enumerate(cmds):
+            if len(cmds) > 1:
+                header = f"── Step {cmd_idx+1}/{len(cmds)}: {' '.join(cmd)} ──"
+                print(f"\n  {header}")
+                pipeline_post_logs(step_id, [header])
+
+            log_buffer = []
+            proc = subprocess.Popen(
+                cmd, cwd=REPO_ROOT,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1,
+            )
+            for line in proc.stdout:
+                line = line.rstrip()
+                print(f"    {line}")
+                log_buffer.append(line)
+                if len(log_buffer) >= 20:
+                    pipeline_post_logs(step_id, log_buffer)
+                    log_buffer = []
+
+            proc.wait()
+
+            if log_buffer:
                 pipeline_post_logs(step_id, log_buffer)
-                log_buffer = []
 
-        proc.wait()
+            if proc.returncode != 0:
+                duration = time.time() - t0
+                print(f"\n  ✗ {step_id} failed at command {cmd_idx+1} (exit code {proc.returncode})")
+                pipeline_post_status(step_id, "error", duration_s=round(duration, 1),
+                                     exit_code=proc.returncode,
+                                     error=f"Command {cmd_idx+1} failed (exit {proc.returncode})")
+                return
+
         duration = time.time() - t0
-
-        # Flush remaining logs
-        if log_buffer:
-            pipeline_post_logs(step_id, log_buffer)
-
-        if proc.returncode == 0:
-            print(f"\n  ✓ {step_id} complete ({duration:.1f}s)")
-            pipeline_post_status(step_id, "done", duration_s=round(duration, 1),
-                                 exit_code=0)
-        else:
-            print(f"\n  ✗ {step_id} failed (exit code {proc.returncode})")
-            pipeline_post_status(step_id, "error", duration_s=round(duration, 1),
-                                 exit_code=proc.returncode,
-                                 error=f"Exit code {proc.returncode}")
+        print(f"\n  ✓ {step_id} complete ({duration:.1f}s)")
+        pipeline_post_status(step_id, "done", duration_s=round(duration, 1), exit_code=0)
 
     except Exception as e:
         import traceback

@@ -308,6 +308,17 @@ function NightlyPage() {
         }
         <button className="btn" onClick={doReset}>↻ Reset</button>
       </div>
+      {pipe?.agent_status !== 'online' && (
+        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
+          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--amber)',marginBottom:6}}>Agent is offline. Start it locally:</div>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--cyan)',background:'var(--bg)',
+            padding:'8px 12px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer',userSelect:'all'}}>
+            python local_runner/agent.py
+            <span style={{float:'right',fontSize:9,color:'var(--text-muted)'}}>click to copy</span>
+          </div>
+        </div>
+      )}
       {nightly?.state?.result_summary && (
         <div className="card" style={{borderColor:'rgba(52,211,153,0.15)',background:'rgba(52,211,153,0.03)'}}>
           <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--green)',whiteSpace:'pre-wrap'}}>{nightly.state.result_summary}</div>
@@ -355,11 +366,8 @@ function StepPage({ stepId, setup }) {
   }
 
   const cmds = {
-    signal_grind: `pyramid_grinder.py --setup ${setup}`,
-    exit_grind: `signal_exit_grinder.py --setup ${setup}`,
+    signal_grind: `pyramid_grinder.py → signal_exit_grinder.py --setup ${setup}`,
     signal_filter: `signal_filter.py --setup ${setup}`,
-    outcome_grind: `outcome_grinder.py --setup ${setup}`,
-    backtest: `backtest_runner.py --setup ${setup}`,
   };
 
   return (
@@ -393,6 +401,15 @@ function StepPage({ stepId, setup }) {
         }
         <button className="btn" onClick={()=>fetch(`${API}/api/pipeline/reset/${stepId}`,{method:'POST'})}>↻ Reset</button>
       </div>
+      {pipe?.agent_status !== 'online' && (
+        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--cyan)',background:'var(--bg)',
+            padding:'6px 10px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer'}}>
+            python local_runner/agent.py <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:8}}>click to copy</span>
+          </div>
+        </div>
+      )}
       {step?.state?.result_summary && (
         <div className="card" style={{borderColor:'rgba(52,211,153,0.15)',background:'rgba(52,211,153,0.03)'}}>
           <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--green)',whiteSpace:'pre-wrap'}}>{step.state.result_summary}</div>
@@ -416,12 +433,42 @@ function StepPage({ stepId, setup }) {
 }
 
 // ═══════════════════════════════════════════════════════
+// MINI CHART (for examples gallery)
+// ═══════════════════════════════════════════════════════
+function MiniChart({ data, entryDate }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const canvas = ref.current; if (!canvas || !data.length) return;
+    const W = canvas.width = canvas.parentElement.clientWidth - 24;
+    const H = canvas.height = 80;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#08090b'; ctx.fillRect(0, 0, W, H);
+    const prices = data.flatMap(c => [c.high, c.low]);
+    const mn = Math.min(...prices)*0.998, mx = Math.max(...prices)*1.002;
+    const cw = W / data.length, bw = Math.max(1, cw * 0.6);
+    const py = p => H * (1 - (p - mn) / (mx - mn));
+    data.forEach((c, i) => {
+      const x = i * cw + cw / 2, up = c.close >= c.open;
+      const color = c.date === entryDate ? '#3b82f6' : up ? '#26A69A' : '#EF5350';
+      ctx.strokeStyle = color; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.moveTo(x, py(c.high)); ctx.lineTo(x, py(c.low)); ctx.stroke();
+      const t = py(Math.max(c.open, c.close)), b = py(Math.min(c.open, c.close));
+      if (up) { ctx.strokeStyle = color; ctx.strokeRect(x-bw/2, t, bw, Math.max(1,b-t)); }
+      else { ctx.fillStyle = color; ctx.fillRect(x-bw/2, t, bw, Math.max(1,b-t)); }
+    });
+  }, [data, entryDate]);
+  return <canvas ref={ref} style={{display:'block', marginTop:6, borderRadius:3}} />;
+}
+
+// ═══════════════════════════════════════════════════════
 // EXAMPLES PAGE
 // ═══════════════════════════════════════════════════════
 function ExamplesPage({ setup }) {
   const [examples, setExamples] = useState([]);
   const [rejected, setRejected] = useState([]);
   const [showRejected, setShowRejected] = useState(false);
+  const [showCharts, setShowCharts] = useState(false);
+  const [chartData, setChartData] = useState({});
 
   useEffect(() => {
     fetch(`${API}/api/examples/${setup}`).then(r=>r.json())
@@ -429,6 +476,19 @@ function ExamplesPage({ setup }) {
     fetch(`${API}/api/vetting/${setup}/rejected`).then(r=>r.json())
       .then(d => setRejected(d.rejected || [])).catch(()=>{});
   }, [setup]);
+
+  function loadChart(ticker, entryDate) {
+    const key = `${ticker}_${entryDate}`;
+    if (chartData[key]) return;
+    fetch(`${API}/api/vetting/${setup}/ohlcv/${ticker}?signal_date=${entryDate}&lookback=60&forward=30`)
+      .then(r=>r.json()).then(d => setChartData(prev => ({...prev, [key]: d.data || []}))).catch(()=>{});
+  }
+
+  useEffect(() => {
+    if (showCharts && !showRejected) {
+      examples.forEach(ex => loadChart(ex.ticker, ex.entryDate));
+    }
+  }, [showCharts, examples, showRejected]);
 
   return (
     <div>
@@ -462,16 +522,28 @@ function ExamplesPage({ setup }) {
         <button className={`btn ${showRejected?'btn-stop':''}`} onClick={()=>setShowRejected(true)}>
           Rejected ({rejected.length})
         </button>
+        {!showRejected && (
+          <button className="btn" onClick={()=>setShowCharts(p=>!p)} style={{marginLeft:'auto'}}>
+            {showCharts ? '▣ Hide Charts' : '▢ Show Charts'}
+          </button>
+        )}
       </div>
 
       {!showRejected ? (
-        <div className="ex-grid">
-          {examples.map(ex => (
-            <div key={`${ex.ticker}_${ex.entryDate}`} className="ex-card">
-              <div className="ex-ticker">{ex.ticker}</div>
-              <div className="ex-date">{ex.entryDate}</div>
-            </div>
-          ))}
+        <div className="ex-grid" style={showCharts ? {gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))'} : {}}>
+          {examples.map(ex => {
+            const key = `${ex.ticker}_${ex.entryDate}`;
+            const data = chartData[key];
+            return (
+              <div key={key} className="ex-card">
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span className="ex-ticker">{ex.ticker}</span>
+                  <span className="ex-date">{ex.entryDate}</span>
+                </div>
+                {showCharts && data && data.length > 0 && <MiniChart data={data} entryDate={ex.entryDate} />}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <div className="ex-grid">
@@ -688,6 +760,14 @@ function VettingPage({ setup }) {
               onClick={()=>{setFilter(f);setCurrentIdx(0);}}>{f} {f==='all'?signals.length:f==='unvetted'?counts.unvetted:counts[f]}</button>
           ))}
         </div>
+        {(counts.yes > 0 || counts.no > 0) && counts.unvetted === 0 && (
+          <div style={{padding:'8px 14px',borderBottom:'1px solid var(--border)',background:'rgba(52,211,153,0.03)'}}>
+            <button className="btn btn-go" style={{width:'100%',fontSize:10}}
+              onClick={()=>alert('AI Audit will review your ' + counts.yes + ' YES and ' + counts.no + ' NO picks against existing examples using claude -p. Coming soon.')}>
+              ✓ SUBMIT FOR AUDIT ({counts.yes} yes, {counts.no} no)
+            </button>
+          </div>
+        )}
         {filtered.map((sig,i) => (
           <div key={`${sig.ticker}_${sig.date}`}
             className={`vet-item ${i===currentIdx?'on':''} ${sig.verdict?'v-'+sig.verdict:''}`}
@@ -738,6 +818,105 @@ function VettingPage({ setup }) {
       <div className="kbd-hint">
         <kbd>↑</kbd><kbd>↓</kbd> nav · <kbd>1</kbd> yes · <kbd>2</kbd> maybe · <kbd>3</kbd> no · click = entry
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// EXIT MANAGE PAGE (single vs multi-stage)
+// ═══════════════════════════════════════════════════════
+function ExitManagePage({ setup }) {
+  const [mode, setMode] = useState('single'); // 'single' | 'multi'
+  const [pipe, setPipe] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const logRef = useRef(null);
+
+  useEffect(() => {
+    const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
+    load(); const id = setInterval(load, 5000); return () => clearInterval(id);
+  }, []);
+
+  const step = pipe?.steps?.find(s => s.id === 'exit_manage');
+  const st = step?.state?.status || 'pending';
+  const isRun = ['running','claimed','queued'].includes(st);
+
+  useEffect(() => {
+    if (!isRun) return;
+    const poll = () => fetch(`${API}/api/pipeline/logs/exit_manage?after=${logs.length}`).then(r=>r.json())
+      .then(d => { if(d.lines?.length) setLogs(p=>[...p,...d.lines]); }).catch(()=>{});
+    poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
+  }, [isRun]);
+
+  useEffect(() => { if(logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
+
+  function doRun() {
+    fetch(`${API}/api/pipeline/run/exit_manage`, {method:'POST'}).then(r=>r.json()).then(d => {
+      if(d.error) alert(d.error); else setLogs([]);
+    });
+  }
+
+  return (
+    <div>
+      <div className="card" style={{marginBottom:16}}>
+        <div className="card-title">Exit Strategy</div>
+        <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-dim)',marginBottom:12}}>
+          Find the best exit conditions for maximum MFE capture after the signal bar.
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button className={`btn ${mode==='single'?'btn-go':''}`} onClick={()=>setMode('single')}>Single-Stage</button>
+          <button className={`btn ${mode==='multi'?'btn-go':''}`} onClick={()=>setMode('multi')}>Multi-Stage</button>
+        </div>
+        <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',marginTop:8}}>
+          {mode === 'single'
+            ? 'One exit condition that triggers for all trades. Simpler, less overfitting risk.'
+            : 'Multiple exit stages: trim, MFE gate, cross-conditions. More complex, higher capture potential.'}
+        </div>
+      </div>
+
+      <div className="stat-row" style={{marginBottom:16}}>
+        <div className="stat-box">
+          <div className="stat-label">Status</div>
+          <div className={`stat-val ${st==='done'?'green':isRun?'amber':''}`}>{st.toUpperCase()}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Mode</div>
+          <div className="stat-val blue" style={{fontSize:14}}>{mode.toUpperCase()}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Duration</div>
+          <div className="stat-val" style={{fontSize:13}}>{step?.state?.duration_s ? fmtDur(step.state.duration_s) : '—'}</div>
+        </div>
+      </div>
+
+      <div style={{display:'flex',gap:8,marginBottom:16}}>
+        {isRun
+          ? <button className="btn btn-stop" onClick={()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'})}>■ STOP</button>
+          : <button className="btn btn-go" onClick={doRun} disabled={pipe?.agent_status!=='online'}>▶ RUN {mode.toUpperCase()}</button>
+        }
+        <button className="btn" onClick={()=>fetch(`${API}/api/pipeline/reset/exit_manage`,{method:'POST'})}>↻ Reset</button>
+      </div>
+      {pipe?.agent_status !== 'online' && (
+        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--cyan)',background:'var(--bg)',
+            padding:'6px 10px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer'}}>
+            python local_runner/agent.py <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:8}}>click to copy</span>
+          </div>
+        </div>
+      )}
+      {step?.state?.result_summary && (
+        <div className="card" style={{borderColor:'rgba(52,211,153,0.15)',background:'rgba(52,211,153,0.03)'}}>
+          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--green)',whiteSpace:'pre-wrap'}}>{step.state.result_summary}</div>
+        </div>
+      )}
+      {logs.length > 0 && (
+        <div className="log-box" ref={logRef}>
+          {logs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')?'ok':''}>{l}</div>)}
+        </div>
+      )}
+      {logs.length === 0 && st === 'pending' && (
+        <div className="empty-state"><div className="icon">🎯</div>Ready to grind exits</div>
+      )}
     </div>
   );
 }
@@ -830,11 +1009,10 @@ function App() {
     { id:'home', label:'Home', icon:'◉' },
     { id:'examples', label:'Examples', num:'1' },
     { id:'signal_grind', label:'Signal Grinder', num:'2' },
-    { id:'exit_grind', label:'Exit Grinder', num:'3' },
-    { id:'signal_filter', label:'Signal Filter', num:'4' },
-    { id:'vetting', label:'Chart Vetting', num:'5' },
-    { id:'trade_exit', label:'Exit Grinder', num:'6' },
-    { id:'market_grind', label:'Market Grinder', num:'7' },
+    { id:'signal_filter', label:'Signal Filter', num:'3' },
+    { id:'vetting', label:'Chart Vetting', num:'4' },
+    { id:'exit_manage', label:'Exit Grinder', num:'5' },
+    { id:'market_grind', label:'Market Grinder', num:'6' },
   ];
 
   const titles = {
@@ -842,10 +1020,9 @@ function App() {
     home: `${setup.toUpperCase()} — Overview`,
     examples: `${setup.toUpperCase()} — Examples`,
     signal_grind: `${setup.toUpperCase()} — Signal Grinder`,
-    exit_grind: `${setup.toUpperCase()} — Signal Exit Grinder`,
     signal_filter: `${setup.toUpperCase()} — Signal Filter`,
     vetting: `${setup.toUpperCase()} — Chart Vetting`,
-    trade_exit: `${setup.toUpperCase()} — Exit Grinder`,
+    exit_manage: `${setup.toUpperCase()} — Exit Grinder`,
     market_grind: `${setup.toUpperCase()} — Market Grinder`,
     watchlist: 'Daily Watchlist',
   };
@@ -899,10 +1076,9 @@ function App() {
           {section === 'setup' && tab === 'home' && <SetupHomePage setup={setup} />}
           {section === 'setup' && tab === 'examples' && <ExamplesPage setup={setup} />}
           {section === 'setup' && tab === 'signal_grind' && <StepPage stepId="signal_grind" setup={setup} />}
-          {section === 'setup' && tab === 'exit_grind' && <StepPage stepId="exit_grind" setup={setup} />}
           {section === 'setup' && tab === 'signal_filter' && <StepPage stepId="signal_filter" setup={setup} />}
           {section === 'setup' && tab === 'vetting' && <VettingPage setup={setup} />}
-          {section === 'setup' && tab === 'trade_exit' && <StepPage stepId="outcome_grind" setup={setup} />}
+          {section === 'setup' && tab === 'exit_manage' && <ExitManagePage setup={setup} />}
           {section === 'setup' && tab === 'market_grind' && <div className="empty-state"><div className="icon">🌍</div>Market Grinder — coming soon</div>}
         </div>
       </div>
