@@ -19,6 +19,11 @@ import json
 import time
 import warnings
 
+# Force UTF-8 output on Windows
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import requests

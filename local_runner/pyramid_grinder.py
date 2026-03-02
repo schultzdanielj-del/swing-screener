@@ -48,6 +48,11 @@ import time
 import json
 import pickle
 import argparse
+
+# Force UTF-8 output on Windows (cp1252 can't handle ≤, ✓, etc.)
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
