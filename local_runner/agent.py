@@ -81,8 +81,7 @@ def check_for_jobs():
 
 PIPELINE_STEP_SCRIPTS = {
     "signal_grind":    ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}"],
-    "exit_grind":      ["python", "scripts/exit_grinder.py", "--setup", "{setup}"],
-    "multistage_exit": ["python", "scripts/multistage_exit_grinder.py", "--setup", "{setup}"],
+    "exit_grind":      ["python", "scripts/signal_exit_grinder.py", "--setup", "{setup}"],
     "signal_filter":   ["python", "scripts/signal_filter.py", "--setup", "{setup}"],
     "outcome_grind":   ["python", "scripts/outcome_grinder.py", "--setup", "{setup}"],
     "backtest":        ["python", "scripts/backtest_runner.py", "--setup", "{setup}"],

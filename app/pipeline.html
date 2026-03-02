@@ -421,7 +421,11 @@ function renderDet() {
   const canRun = s.can_run;
 
   let btns = '';
-  if (isRun) {
+  if (s.is_manual) {
+    // Manual step (vetting) — show link to vetting UI
+    btns = `<a href="/vetting.html?setup=dtss" target="_blank" class="btn btn-go" style="text-decoration:none;display:inline-block;">⚡ OPEN VETTING UI</a>
+            <button class="btn" onclick="doReset('${s.id}')">↻ Reset</button>`;
+  } else if (isRun) {
     btns = `<button class="btn btn-stop" onclick="doStop()">■ STOP</button>`;
   } else {
     const dis = canRun ? '' : 'disabled';
@@ -439,12 +443,34 @@ function renderInfo(s) {
   const st = s.state || {};
   let h = '';
 
+  // Vetting step — show stats instead of command
+  if (s.id === 'vetting') {
+    const vs = st.vetting_stats;
+    if (vs) {
+      const pct = vs.n_total > 0 ? Math.round(vs.n_vetted / vs.n_total * 100) : 0;
+      h += `<div class="isec"><div class="ilbl">Vetting Progress</div><div class="sum-box">`;
+      h += `${vs.n_vetted} / ${vs.n_total} signals vetted (${pct}%)\n`;
+      h += `\n✓ YES: ${vs.n_yes}    ? MAYBE: ${vs.n_maybe}    ✗ NO: ${vs.n_no}`;
+      h += `\n\nTotal examples in DB: ${vs.n_examples}`;
+      h += `Total rejected in DB: ${vs.n_rejected}`;
+      h += `</div></div>`;
+      h += `<div class="isec"><div class="ilbl">Next Step</div><div class="ival">`;
+      h += vs.n_vetted >= vs.n_total
+        ? 'All signals vetted. Reset steps 1-3 and re-grind with expanded examples.'
+        : 'Continue vetting signals in the Vetting UI.';
+      h += `</div></div>`;
+    } else {
+      h += `<div class="isec"><div class="ilbl">Status</div><div class="ival">Waiting for signal filter to complete.</div></div>`;
+    }
+    document.getElementById('infoBox').innerHTML = h;
+    return;
+  }
+
   // Command
   const cmds = {
     nightly: 'python local_runner/nightly.py',
     signal_grind: 'python local_runner/pyramid_grinder.py --setup dtss --peak-target 3 --beam 10000 --depth 100',
-    exit_grind: 'python scripts/exit_grinder.py --setup dtss --max-forward 120',
-    multistage_exit: 'python scripts/multistage_exit_grinder.py --setup dtss',
+    exit_grind: 'python scripts/signal_exit_grinder.py --setup dtss',
     signal_filter: 'python scripts/signal_filter.py --setup dtss',
     outcome_grind: 'python scripts/outcome_grinder.py --setup dtss',
     backtest: 'python scripts/backtest_runner.py --setup dtss',

@@ -2254,16 +2254,17 @@ PIPELINE_STEPS = [
     {"id": "signal_grind", "name": "1. Signal Grinder", "category": "grind",
      "description": "Multi-pass pyramid grinder. ~5-15 min per peak target.",
      "prerequisites": [], "result_files": ["data/pyramid_results_dtss.json"]},
-    {"id": "exit_grind", "name": "2. Exit Grinder", "category": "grind",
-     "description": "Find best TA-driven exit condition across 6,410 expressions.",
-     "prerequisites": [], "result_files": ["data/exit_grind/exit_grind_dtss.json"]},
-    {"id": "multistage_exit", "name": "3. Multi-Stage Exit", "category": "grind",
-     "description": "8-pass multi-stage exit search: trims, MFE gates, cross-conditions.",
-     "prerequisites": [], "result_files": ["data/multistage_exit/ms_exit_dtss.json"]},
-    {"id": "signal_filter", "name": "4. Signal Filter", "category": "analysis",
-     "description": "Dedup consecutive signals, apply exit condition, filter by example floor ADR, rank for vetting.",
+    {"id": "exit_grind", "name": "2. Signal Exit Grinder", "category": "grind",
+     "description": "Find best cache-compatible exit condition for signal filtering.",
+     "prerequisites": [], "result_files": ["data/signal_exit_grind/signal_exit_dtss.json"]},
+    {"id": "signal_filter", "name": "3. Signal Filter", "category": "analysis",
+     "description": "Dedup, apply exit, filter by ADR floor, rank for vetting.",
      "prerequisites": ["signal_grind", "exit_grind"],
      "result_files": ["data/signal_filter/filtered_dtss.json"]},
+    {"id": "vetting", "name": "4. Chart Vetting", "category": "analysis",
+     "description": "Review filtered signals. YES = add example, NO = reject. Re-grind after.",
+     "prerequisites": ["signal_filter"],
+     "result_files": [], "is_manual": True},
     {"id": "outcome_grind", "name": "5. Outcome Grinder", "category": "analysis",
      "description": "Apply exit condition to all pyramid signals. Classify outcomes.",
      "prerequisites": ["signal_grind", "exit_grind"],
@@ -2323,6 +2324,43 @@ async def get_pipeline_steps():
                 if prereq_state.get("status") != "done":
                     can_run = False
                     break
+
+        # Vetting step: compute live stats from vetting decisions + DB
+        if step_def["id"] == "vetting":
+            try:
+                vetting_path = VETTING_DATA_DIR / "vetting" / "vetting_dtss.json"
+                filtered_path = VETTING_DATA_DIR / "signal_filter" / "filtered_dtss.json"
+                decisions = {}
+                if vetting_path.exists():
+                    with open(vetting_path) as f:
+                        decisions = json.load(f)
+                n_total = 0
+                if filtered_path.exists():
+                    with open(filtered_path) as f:
+                        n_total = len(json.load(f).get("signals", []))
+                counts = {"yes": 0, "maybe": 0, "no": 0}
+                for v in decisions.values():
+                    vd = v.get("verdict", "")
+                    if vd in counts:
+                        counts[vd] += 1
+                n_vetted = sum(counts.values())
+                with get_db() as db:
+                    n_examples = db.execute(
+                        "SELECT COUNT(*) FROM examples WHERE setup_type='dtss'"
+                    ).fetchone()[0]
+                    n_rejected = db.execute(
+                        "SELECT COUNT(*) FROM rejected_signals WHERE setup_type='dtss'"
+                    ).fetchone()[0]
+                step_state["vetting_stats"] = {
+                    "n_total": n_total, "n_vetted": n_vetted,
+                    "n_yes": counts["yes"], "n_maybe": counts["maybe"], "n_no": counts["no"],
+                    "n_examples": n_examples, "n_rejected": n_rejected,
+                }
+                if n_vetted > 0:
+                    step_state["status"] = "done" if n_vetted >= n_total else "running"
+                    step_state["result_summary"] = f"{n_vetted}/{n_total} vetted · {counts['yes']} yes · {counts['no']} no · {n_examples} total examples"
+            except:
+                pass
 
         steps_out.append({**step_def, "state": step_state, "can_run": can_run})
 
