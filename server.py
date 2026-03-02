@@ -2461,6 +2461,29 @@ async def pipeline_stop():
 
 VETTING_DATA_DIR = Path("data")  # repo-local data dir (signal_filter output lives here)
 
+@app.post("/api/vetting/{setup_type}/upload-signals")
+async def upload_vetting_signals(setup_type: str, request: Request):
+    """Upload filtered signals JSON from desktop. No git required."""
+    body = await request.json()
+    out_dir = VETTING_DATA_DIR / "signal_filter"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"filtered_{setup_type}.json"
+    with open(path, "w") as f:
+        json.dump(body, f, indent=2, default=str)
+    n = len(body.get("signals", []))
+    return {"status": "ok", "path": str(path), "n_signals": n}
+
+@app.post("/api/vetting/{setup_type}/upload-exit")
+async def upload_vetting_exit(setup_type: str, request: Request):
+    """Upload signal exit grind JSON from desktop. No git required."""
+    body = await request.json()
+    out_dir = VETTING_DATA_DIR / "signal_exit_grind"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"signal_exit_{setup_type}.json"
+    with open(path, "w") as f:
+        json.dump(body, f, indent=2, default=str)
+    return {"status": "ok", "path": str(path)}
+
 @app.get("/api/vetting/{setup_type}/signals")
 async def get_vetting_signals(setup_type: str):
     """Load filtered signals for chart vetting. Ranked by move_adr descending."""
