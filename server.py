@@ -2360,7 +2360,11 @@ async def get_pipeline_steps():
                     "n_examples": n_examples, "n_rejected": n_rejected,
                 }
                 if step_def["id"] == "sample_expansion" and n_vetted > 0:
-                    step_state["status"] = "done" if n_vetted >= n_total else "running"
+                    # Show vetting progress, but don't override to 'running' — that
+                    # conflicts with the Reload button which checks isFilterRunning.
+                    # Only mark 'done' when all signals are vetted.
+                    if n_vetted >= n_total:
+                        step_state["status"] = "done"
                     step_state["result_summary"] = f"{n_vetted}/{n_total} vetted · {counts['yes']} yes · {counts['no']} no · {n_examples} total optimal samples"
             except:
                 pass
