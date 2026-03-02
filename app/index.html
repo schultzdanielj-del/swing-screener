@@ -842,14 +842,6 @@ function VettingPage({ setup }) {
             <button key={f} className={`vet-filter-btn ${filter===f?'on':''}`}
               onClick={()=>{setFilter(f);setCurrentIdx(0);}}>{f} {f==='all'?signals.length:f==='unvetted'?counts.unvetted:counts[f]}</button>
           ))}
-          <button className={`vet-filter-btn ${isFilterRunning?'on':''}`}
-            onClick={isFilterRunning ? ()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'}) : reloadSamples}
-            disabled={!isFilterRunning && pipe?.agent_status!=='online'}
-            style={{marginLeft:'auto',fontSize:10,border:'1px solid var(--cyan)',color:isFilterRunning?'#fff':'var(--cyan)',
-              background:isFilterRunning?'var(--red)':'transparent',padding:'3px 12px'}}
-            title={pipe?.agent_status!=='online'?'Agent offline — start agent first':'Re-run signal filter'}>
-            {isFilterRunning ? '■ STOP' : '↻ RELOAD'}
-          </button>
         </div>
         {(counts.yes > 0 || counts.no > 0) && counts.unvetted === 0 && (
           <div style={{padding:'8px 14px',borderBottom:'1px solid var(--border)',background:'rgba(52,211,153,0.03)'}}>
@@ -888,6 +880,17 @@ function VettingPage({ setup }) {
                 </span>
               </div>
               <div className="vet-btns">
+                <button
+                  onClick={isFilterRunning ? ()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'}) : reloadSamples}
+                  disabled={!isFilterRunning && pipe?.agent_status!=='online'}
+                  style={{padding:'4px 10px',borderRadius:4,fontSize:10,fontFamily:'var(--mono)',fontWeight:700,cursor:'pointer',marginRight:12,
+                    border:isFilterRunning?'1px solid var(--red)':'1px solid var(--cyan)',
+                    color:isFilterRunning?'#fff':'var(--cyan)',
+                    background:isFilterRunning?'var(--red)':'transparent',
+                    opacity:(!isFilterRunning && pipe?.agent_status!=='online')?0.4:1}}
+                  title={pipe?.agent_status!=='online'?'Agent offline — start agent first':'Re-run signal filter'}>
+                  {isFilterRunning ? '■ STOP' : '↻ RELOAD'}
+                </button>
                 {selectedEntry && <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--blue)',marginRight:8}}>Entry: {selectedEntry}</span>}
                 <button className={`vet-btn yes ${current.verdict==='yes'?'sel':''}`} onClick={()=>saveVerdict('yes')} disabled={saving}>YES (1)</button>
                 <button className={`vet-btn maybe ${current.verdict==='maybe'?'sel':''}`} onClick={()=>saveVerdict('maybe')} disabled={saving}>MAYBE (2)</button>
