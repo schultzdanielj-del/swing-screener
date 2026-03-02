@@ -2499,6 +2499,38 @@ async def get_vetting_signals(setup_type: str):
         with open(vetting_path) as f:
             decisions = json.load(f)
     signals = data.get("signals", [])
+
+    # Load existing examples and exclude signals that duplicate them
+    with get_db() as db:
+        examples = db.execute(
+            "SELECT ticker, entry_date FROM examples WHERE setup_type=?",
+            (setup_type,)
+        ).fetchall()
+    example_dates = {}  # ticker -> set of entry dates as datetime
+    for ex in examples:
+        t, d = ex["ticker"], ex["entry_date"]
+        if t not in example_dates:
+            example_dates[t] = []
+        try:
+            example_dates[t].append(datetime.strptime(d, "%Y-%m-%d"))
+        except:
+            pass
+
+    def is_example_dup(sig):
+        t = sig.get("ticker", "")
+        if t not in example_dates:
+            return False
+        try:
+            sig_dt = datetime.strptime(sig["date"], "%Y-%m-%d")
+        except:
+            return False
+        for ex_dt in example_dates[t]:
+            if abs((sig_dt - ex_dt).days) <= 5:
+                return True
+        return False
+
+    signals = [s for s in signals if not is_example_dup(s)]
+
     # Attach existing decisions
     for sig in signals:
         key = f"{sig['ticker']}_{sig['date']}"

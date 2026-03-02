@@ -132,7 +132,7 @@ function VettingChart({ candles, ticker, signalDate, selectedDate, onSelectDate,
   const [dims, setDims] = useState({ w: 900, h: 520 });
   const [hoverIdx, setHoverIdx] = useState(null);
   const [scrollOffset, setScrollOffset] = useState(0);
-  const VISIBLE = 140;
+  const VISIBLE = Math.max(candles.length, 330);
 
   const UP = '#26A69A', DOWN = '#EF5350', BG = '#0a0e17', GRID = 'rgba(42,53,80,0.4)';
   const EMA8 = '#5dade2', EMA21 = '#d4a853', SMA50 = '#f5c542', SMA200 = '#e74c3c';
@@ -170,7 +170,7 @@ function VettingChart({ candles, ticker, signalDate, selectedDate, onSelectDate,
   useEffect(() => {
     const sigIdx = enriched.findIndex(c => c.date === signalDate);
     if (sigIdx >= 0) {
-      setScrollOffset(Math.max(0, sigIdx - Math.floor(VISIBLE * 0.35)));
+      setScrollOffset(Math.max(0, sigIdx - Math.floor(VISIBLE * 0.5)));
     } else {
       setScrollOffset(maxOffset);
     }
@@ -400,7 +400,7 @@ function App() {
     if (!current) { setCandles([]); return; }
     setChartLoading(true);
     setSelectedEntry(current.entry_date || null);
-    fetch(`/api/vetting/${SETUP}/ohlcv/${current.ticker}?signal_date=${current.date}&lookback=120&forward=80`)
+    fetch(`/api/vetting/${SETUP}/ohlcv/${current.ticker}?signal_date=${current.date}&lookback=250&forward=80`)
       .then(r => r.json())
       .then(d => { setCandles(d.data || []); setChartLoading(false); })
       .catch(() => setChartLoading(false));
