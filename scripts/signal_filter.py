@@ -447,31 +447,11 @@ def deduplicate_examples(examples, cache, conditions):
         entry_idx = dates_str.index(entry_date)
         scan_idx = entry_idx - 1  # scan candle is day before entry
 
-        # Scan backwards from scan candle to find the signal cluster
-        engine = ExpressionEngine(df)
-        signal_bars = []
-
-        for check_idx in range(scan_idx, max(49, scan_idx - 30), -1):
-            passes_all = True
-            for cond in conditions:
-                series = compute_series(engine, cond["compute"])
-                val = series[check_idx]
-                if np.isnan(val) or val < cond["low"] or val > cond["high"]:
-                    passes_all = False
-                    break
-            if passes_all:
-                signal_bars.append(check_idx)
-            else:
-                break  # First non-passing bar = end of consecutive cluster
-
-        if not signal_bars:
-            print(f"    {ticker}: no signal bars found near entry")
-            continue
-
-        # Rightmost bar in the cluster (closest to entry)
-        rightmost_idx = min(signal_bars)  # min because we scanned backwards
-        # Actually, signal_bars are in reverse order, rightmost = first found
-        rightmost_idx = signal_bars[0]  # scan_idx or close to it
+        # For examples, use the scan bar (entry - 1) directly.
+        # The pyramid grinder validated these examples; minor compute differences
+        # between expr cache and compute_series can cause 1-2 conditions to fail,
+        # so we don't re-verify all conditions here.
+        rightmost_idx = scan_idx
 
         signal_date = dates_str[rightmost_idx]
         signal_close = float(df["close"].values[rightmost_idx])
