@@ -2259,7 +2259,7 @@ PIPELINE_STEPS = [
      "prerequisites": [], "result_files": ["data/pyramid_results_dtss.json", "data/signal_exit_grind/signal_exit_dtss.json"]},
     {"id": "sample_expansion", "name": "3. Sample Expansion", "category": "pipeline",
      "description": "Signal filter + chart vetting. Review signals, YES = new optimal sample, NO = reject.",
-     "prerequisites": ["signal_brute"],
+     "prerequisites": [],
      "result_files": ["data/signal_filter/filtered_dtss.json"], "is_manual": True},
     {"id": "mfe_capture", "name": "4. MFE Capture", "category": "pipeline",
      "description": "Find best exit conditions for max MFE capture. Single or multi-stage.",
