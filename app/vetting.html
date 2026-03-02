@@ -125,7 +125,7 @@ function sma(data, period) {
 }
 
 // ── Candlestick Chart ──
-function VettingChart({ candles, ticker, signalDate, selectedDate, onSelectDate, exitDate }) {
+function VettingChart({ candles, ticker, signalDate, selectedDate, onSelectDate, exitDate, earningsDates }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const volCanvasRef = useRef(null);
@@ -286,6 +286,27 @@ function VettingChart({ candles, ticker, signalDate, selectedDate, onSelectDate,
     ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.font = 'bold 52px Plus Jakarta Sans';
     ctx.textAlign = 'right'; ctx.fillText(ticker, CHART_W - 12, MARGIN.top + 56);
 
+    // Earnings markers — mark the reaction candle (day after earnings report)
+    if (earningsDates && earningsDates.length > 0) {
+      const edSet = new Set(earningsDates);
+      visible.forEach((c, i) => {
+        // Check if THIS candle's date is an earnings date (report after close, reaction next day)
+        // OR if the previous candle is an earnings date (this is the reaction candle)
+        const prevDate = i > 0 ? visible[i-1].date : (offset > 0 ? enriched[offset-1]?.date : null);
+        const isReaction = prevDate && edSet.has(prevDate);
+        const isReport = edSet.has(c.date);
+        if (isReport || isReaction) {
+          const x = candleX(i);
+          // Subtle background highlight
+          ctx.fillStyle = isReaction ? 'rgba(168,85,247,0.12)' : 'rgba(168,85,247,0.06)';
+          ctx.fillRect(x - candleW / 2, MARGIN.top, candleW, CHART_H);
+          // "E" label at top
+          ctx.fillStyle = '#a855f7'; ctx.font = 'bold 9px JetBrains Mono'; ctx.textAlign = 'center';
+          ctx.fillText('E', x, MARGIN.top + 10);
+        }
+      });
+    }
+
     // Hover
     if (hoverIdx != null && visible[hoverIdx]) {
       const c = visible[hoverIdx], x = candleX(hoverIdx);
@@ -296,7 +317,7 @@ function VettingChart({ candles, ticker, signalDate, selectedDate, onSelectDate,
       ctx.fillStyle = isUp ? UP : DOWN; ctx.font = '11px JetBrains Mono'; ctx.textAlign = 'left';
       ctx.fillText(`${c.date}  O:${c.open?.toFixed(2)} H:${c.high?.toFixed(2)} L:${c.low?.toFixed(2)} C:${c.close?.toFixed(2)}  V:${(c.volume/1e6)?.toFixed(1)}M`, 8, 16);
     }
-  }, [visible, dims, hoverIdx, selectedDate, signalDate, exitDate]);
+  }, [visible, dims, hoverIdx, selectedDate, signalDate, exitDate, earningsDates]);
 
   // Volume
   useEffect(() => {
@@ -352,6 +373,7 @@ function VettingChart({ candles, ticker, signalDate, selectedDate, onSelectDate,
         <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: SIGNAL_COLOR, marginLeft: 12 }}>◆ signal</span>
         <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: SELECTED_COLOR }}>◆ entry</span>
         <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: EXIT_COLOR }}>◆ exit</span>
+        <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: '#a855f7' }}>E earnings</span>
         <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
           scroll to pan · click to set entry
         </span>
@@ -377,6 +399,7 @@ function App() {
   const [selectedEntry, setSelectedEntry] = useState(null);
   const [filter, setFilter] = useState('all'); // all, unvetted, yes, maybe, no
   const [saving, setSaving] = useState(false);
+  const [earningsDates, setEarningsDates] = useState([]);
 
   // Load signals
   useEffect(() => {
@@ -397,13 +420,19 @@ function App() {
 
   // Load chart when current changes
   useEffect(() => {
-    if (!current) { setCandles([]); return; }
+    if (!current) { setCandles([]); setEarningsDates([]); return; }
     setChartLoading(true);
     setSelectedEntry(current.entry_date || null);
     fetch(`/api/vetting/${SETUP}/ohlcv/${current.ticker}?signal_date=${current.date}&lookback=250&forward=80`)
       .then(r => r.json())
       .then(d => { setCandles(d.data || []); setChartLoading(false); })
       .catch(() => setChartLoading(false));
+    // Fetch earnings dates async (non-blocking)
+    setEarningsDates([]);
+    fetch(`/api/vetting/earnings/${current.ticker}`)
+      .then(r => r.json())
+      .then(d => setEarningsDates(d.earnings_dates || []))
+      .catch(() => {});
   }, [current?.ticker, current?.date]);
 
   // Save verdict
@@ -556,6 +585,7 @@ function App() {
                     selectedDate={selectedEntry}
                     onSelectDate={setSelectedEntry}
                     exitDate={current.exit_date}
+                    earningsDates={earningsDates}
                   />
                 )}
               </div>

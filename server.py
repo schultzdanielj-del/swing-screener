@@ -2654,6 +2654,21 @@ async def save_vetting_decision(setup_type: str, req: VettingDecision):
     return result
 
 
+@app.get("/api/vetting/earnings/{ticker}")
+async def get_earnings_dates(ticker: str):
+    """Fetch earnings report dates from Yahoo Finance for chart overlay."""
+    try:
+        import yfinance as yf
+        t = yf.Ticker(ticker)
+        cal = t.get_earnings_dates(limit=40)
+        if cal is None or cal.empty:
+            return {"ticker": ticker, "earnings_dates": []}
+        dates = [d.strftime("%Y-%m-%d") for d in cal.index]
+        return {"ticker": ticker, "earnings_dates": dates}
+    except Exception as e:
+        return {"ticker": ticker, "earnings_dates": [], "error": str(e)}
+
+
 @app.get("/api/vetting/{setup_type}/rejected")
 async def get_rejected_signals(setup_type: str):
     """Get all rejected signals for a setup type."""
