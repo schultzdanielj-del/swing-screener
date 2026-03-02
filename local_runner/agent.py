@@ -80,13 +80,12 @@ def check_for_jobs():
 # ── V2 Pipeline step handling ──────────────────────────────────────────
 
 PIPELINE_STEP_SCRIPTS = {
-    "signal_grind":    [
+    "signal_brute":    [
         ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}"],
         ["python", "scripts/signal_exit_grinder.py", "--setup", "{setup}"],
     ],
-    "signal_filter":   [["python", "scripts/signal_filter.py", "--setup", "{setup}"]],
-    "outcome_grind":   [["python", "scripts/outcome_grinder.py", "--setup", "{setup}"]],
-    "backtest":        [["python", "scripts/backtest_runner.py", "--setup", "{setup}"]],
+    "sample_expansion": [["python", "scripts/signal_filter.py", "--setup", "{setup}"]],
+    "mfe_capture":     [["python", "scripts/exit_grinder.py", "--setup", "{setup}"]],
 }
 
 

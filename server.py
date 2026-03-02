@@ -2251,24 +2251,23 @@ PIPELINE_STEPS = [
     {"id": "nightly", "name": "Nightly Refresh", "category": "data",
      "description": "Append new OHLCV bars, rebuild caches and matrix.",
      "prerequisites": [], "result_files": []},
-    {"id": "signal_grind", "name": "Signal Grinder", "category": "grind",
+    {"id": "optimal_samples", "name": "1. Optimal Samples", "category": "pipeline",
+     "description": "Current validated optimal samples for this setup.",
+     "prerequisites": [], "result_files": [], "is_manual": True},
+    {"id": "signal_brute", "name": "2. Signal Brute Forcing", "category": "pipeline",
      "description": "Pyramid grinder + signal exit grinder (runs back-to-back).",
      "prerequisites": [], "result_files": ["data/pyramid_results_dtss.json", "data/signal_exit_grind/signal_exit_dtss.json"]},
-    {"id": "signal_filter", "name": "Signal Filter", "category": "analysis",
-     "description": "Dedup, apply exit, filter by ADR floor, rank for vetting.",
-     "prerequisites": ["signal_grind"],
-     "result_files": ["data/signal_filter/filtered_dtss.json"]},
-    {"id": "vetting", "name": "Chart Vetting", "category": "analysis",
-     "description": "Review filtered signals. YES = add example, NO = reject.",
-     "prerequisites": ["signal_filter"],
-     "result_files": [], "is_manual": True},
-    {"id": "exit_manage", "name": "Exit Grinder", "category": "grind",
+    {"id": "sample_expansion", "name": "3. Sample Expansion", "category": "pipeline",
+     "description": "Signal filter + chart vetting. Review signals, YES = new optimal sample, NO = reject.",
+     "prerequisites": ["signal_brute"],
+     "result_files": ["data/signal_filter/filtered_dtss.json"], "is_manual": True},
+    {"id": "mfe_capture", "name": "4. MFE Capture", "category": "pipeline",
      "description": "Find best exit conditions for max MFE capture. Single or multi-stage.",
-     "prerequisites": ["signal_grind"],
+     "prerequisites": ["signal_brute"],
      "result_files": []},
-    {"id": "market_grind", "name": "Market Grinder", "category": "analysis",
+    {"id": "market_grind", "name": "5. Market Grinder", "category": "pipeline",
      "description": "Cluster outcomes vs market regime. Find optimal conditions.",
-     "prerequisites": ["signal_grind"],
+     "prerequisites": ["signal_brute"],
      "result_files": []},
 ]
 
@@ -2323,8 +2322,8 @@ async def get_pipeline_steps():
                     can_run = False
                     break
 
-        # Vetting step: compute live stats from vetting decisions + DB
-        if step_def["id"] == "vetting":
+        # Optimal Samples + Sample Expansion: compute live stats
+        if step_def["id"] in ("optimal_samples", "sample_expansion"):
             try:
                 vetting_path = VETTING_DATA_DIR / "vetting" / "vetting_dtss.json"
                 filtered_path = VETTING_DATA_DIR / "signal_filter" / "filtered_dtss.json"
@@ -2354,9 +2353,9 @@ async def get_pipeline_steps():
                     "n_yes": counts["yes"], "n_maybe": counts["maybe"], "n_no": counts["no"],
                     "n_examples": n_examples, "n_rejected": n_rejected,
                 }
-                if n_vetted > 0:
+                if step_def["id"] == "sample_expansion" and n_vetted > 0:
                     step_state["status"] = "done" if n_vetted >= n_total else "running"
-                    step_state["result_summary"] = f"{n_vetted}/{n_total} vetted · {counts['yes']} yes · {counts['no']} no · {n_examples} total examples"
+                    step_state["result_summary"] = f"{n_vetted}/{n_total} vetted · {counts['yes']} yes · {counts['no']} no · {n_examples} total optimal samples"
             except:
                 pass
 
