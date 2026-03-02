@@ -472,6 +472,104 @@ def save_results(filtered, example_signals, setup_type, args):
     return latest_path
 
 
+def measure_example_exit_distances(example_signals, cache, exit_cond, direction, max_forward=MAX_FORWARD):
+    """
+    For each deduplicated example signal bar, measure signal close → exit close in ADR.
+    Same measurement as backtest signals so the floor is comparable.
+    """
+    expr_name = exit_cond["expression"]
+    exit_thresh = exit_cond["threshold"]
+    exit_dir = exit_cond["direction"]
+
+    print(f"  Measuring example exit distances from deduplicated signal bars...")
+
+    for ex in example_signals:
+        ticker = ex["ticker"]
+        bar_idx = ex["signal_bar_idx"]
+        df = cache.get(ticker)
+
+        if df is None or bar_idx >= len(df) - 1:
+            ex["move_adr"] = None
+            ex["error"] = "no data"
+            continue
+
+        try:
+            engine = ExpressionEngine(df)
+            adr_series = engine._adr(14)
+            adr_at_signal = float(adr_series.values[bar_idx])
+            signal_close = float(df["close"].values[bar_idx])
+
+            if adr_at_signal <= 0 or np.isnan(adr_at_signal):
+                ex["move_adr"] = None
+                ex["error"] = "bad ADR"
+                continue
+
+            n_available = len(df) - bar_idx - 1
+            actual_forward = min(max_forward, n_available)
+
+            # Compute exit series
+            exit_series = compute_series(engine, {"op": expr_name})
+
+            # Find first exit bar after signal
+            exit_bar = None
+            exit_close = None
+            for fwd in range(1, actual_forward + 1):
+                check_idx = bar_idx + fwd
+                val = exit_series[check_idx]
+                if np.isnan(val):
+                    continue
+                if exit_dir == ">=" and val >= exit_thresh:
+                    exit_bar = fwd
+                    exit_close = float(df["close"].values[check_idx])
+                    break
+                elif exit_dir == "<=" and val <= exit_thresh:
+                    exit_bar = fwd
+                    exit_close = float(df["close"].values[check_idx])
+                    break
+
+            if exit_bar is None:
+                ex["move_adr"] = None
+                ex["exit_bar"] = None
+                ex["error"] = "no exit triggered"
+                print(f"    {ticker}: NO EXIT within {actual_forward} bars")
+                continue
+
+            if direction == "short":
+                move_adr = (signal_close - exit_close) / adr_at_signal
+            else:
+                move_adr = (exit_close - signal_close) / adr_at_signal
+
+            exit_date = str(df["date"].values[bar_idx + exit_bar])[:10]
+
+            ex["adr_at_signal"] = round(adr_at_signal, 2)
+            ex["exit_bar"] = exit_bar
+            ex["exit_date"] = exit_date
+            ex["exit_close"] = round(exit_close, 2)
+            ex["move_adr"] = round(move_adr, 2)
+
+            print(f"    {ticker}: signal {ex['signal_date']} → exit {exit_date} "
+                  f"= {move_adr:.1f} ADR ({exit_bar} bars)")
+
+        except Exception as e:
+            ex["move_adr"] = None
+            ex["error"] = str(e)
+
+    # Compute floor from examples that had valid exits
+    valid_adrs = [ex["move_adr"] for ex in example_signals if ex.get("move_adr") is not None]
+    if valid_adrs:
+        floor = min(valid_adrs)
+        median = sorted(valid_adrs)[len(valid_adrs) // 2]
+        print(f"\n  ✓ Example exit distances (from deduped signal bars):")
+        print(f"    {len(valid_adrs)}/{len(example_signals)} examples had valid exits")
+        print(f"    Floor: {floor:.1f} ADR")
+        print(f"    Median: {median:.1f} ADR")
+        print(f"    Mean: {sum(valid_adrs)/len(valid_adrs):.1f} ADR")
+        return floor
+    else:
+        print(f"  ⚠ No examples had valid exit distances!")
+        return 0.0
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -479,7 +577,7 @@ def main():
     parser = argparse.ArgumentParser(description="Signal Filter — Dedup + Exit + Rank")
     parser.add_argument("--setup", default="dtss", help="Setup type")
     parser.add_argument("--min-adr", type=float, default=None,
-                        help="Min exit distance in ADR (default: example floor)")
+                        help="Min exit distance in ADR (default: derived from examples)")
     parser.add_argument("--max-forward", type=int, default=MAX_FORWARD)
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     args = parser.parse_args()
@@ -499,38 +597,41 @@ def main():
     exit_cond = load_exit_condition(setup)
     examples = load_examples(setup)
 
-    # Phase 1: Scan
+    # Phase 1: Deduplicate examples FIRST — need their exit distances for the floor
+    print(f"\n  PHASE 1: Deduplicate example signal bars")
+    example_signals = deduplicate_examples(examples, cache, conditions)
+
+    # Phase 2: Measure example exit distances from deduplicated signal bars
+    print(f"\n  PHASE 2: Measure example exit distances")
+    example_floor = measure_example_exit_distances(
+        example_signals, cache, exit_cond, direction, args.max_forward)
+
+    min_adr = args.min_adr if args.min_adr is not None else example_floor
+    print(f"\n  ADR floor from examples: {example_floor:.1f}")
+    print(f"  Using filter threshold: {min_adr:.1f} ADR")
+
+    # Phase 3: Scan all backtest signals
+    print(f"\n  PHASE 3: Scan all signals")
     raw_signals = scan_all_signals(cache, conditions, args.workers)
 
-    # Phase 2: Deduplicate
-    print(f"\n  PHASE 2: Deduplicate (consecutive → rightmost)")
+    # Phase 4: Deduplicate backtest signals
+    print(f"\n  PHASE 4: Deduplicate (consecutive → rightmost)")
     deduped = deduplicate_signals(raw_signals)
 
-    # Phase 3: Apply exit + measure
-    print(f"\n  PHASE 3: Apply exit condition + measure distance")
+    # Phase 5: Apply exit + measure
+    print(f"\n  PHASE 5: Apply exit condition + measure distance")
     with_exit = apply_exit_and_measure(deduped, cache, exit_cond, direction, args.max_forward)
 
-    # Compute example floor for default threshold
-    example_adrs = [exit_cond["per_example_adr"][i]
-                    for i in range(len(exit_cond["per_example_adr"]))]
-    example_floor = min(example_adrs)
-    min_adr = args.min_adr if args.min_adr is not None else example_floor
-    print(f"\n  Example ADR floor: {example_floor:.1f}")
-    print(f"  Using threshold: {min_adr:.1f} ADR")
-
-    # Phase 4: Filter + rank
-    print(f"\n  PHASE 4: Filter + rank")
+    # Phase 6: Filter + rank
+    print(f"\n  PHASE 6: Filter + rank (≥ {min_adr:.1f} ADR)")
     filtered = filter_and_rank(with_exit, min_adr, direction)
-
-    # Phase 5: Deduplicate examples
-    print(f"\n  PHASE 5: Deduplicate example signal bars")
-    example_signals = deduplicate_examples(examples, cache, conditions)
 
     # Save
     print(f"\n  SAVING RESULTS")
     save_results(filtered, example_signals, setup, {
         "exit_expr": f"{exit_cond['expression']} {exit_cond['direction']} {exit_cond['threshold']}",
         "min_adr": min_adr,
+        "example_floor_adr": example_floor,
         "n_raw": len(raw_signals),
         "n_deduped": len(deduped),
         "n_with_exit": len(with_exit),
@@ -539,7 +640,8 @@ def main():
     total_time = time.time() - t0
     print(f"\n{'='*60}")
     print(f"  DONE in {total_time:.0f}s")
-    print(f"  {len(raw_signals):,} raw → {len(deduped):,} deduped → "
+    print(f"  Examples: {len(example_signals)} deduped, floor {example_floor:.1f} ADR")
+    print(f"  Signals: {len(raw_signals):,} raw → {len(deduped):,} deduped → "
           f"{len(with_exit):,} with exit → {len(filtered):,} filtered")
     print(f"  Ready for chart vetting in data/signal_filter/")
     print(f"{'='*60}\n")
