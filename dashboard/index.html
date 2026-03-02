@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swing Screener — Pipeline</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+
+  :root {
+    --bg: #0a0a0b;
+    --surface: #111113;
+    --surface-2: #18181b;
+    --surface-3: #1e1e22;
+    --border: #27272a;
+    --border-bright: #3f3f46;
+    --text: #fafafa;
+    --text-dim: #a1a1aa;
+    --text-muted: #71717a;
+    --green: #22c55e;
+    --green-dim: #16a34a;
+    --green-bg: rgba(34, 197, 94, 0.08);
+    --red: #ef4444;
+    --red-dim: #dc2626;
+    --red-bg: rgba(239, 68, 68, 0.08);
+    --amber: #f59e0b;
+    --amber-bg: rgba(245, 158, 11, 0.08);
+    --blue: #3b82f6;
+    --blue-bg: rgba(59, 130, 246, 0.08);
+    --cyan: #06b6d4;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'DM Sans', system-ui, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ── Header ───────────────────────────────── */
+  .header {
+    border-bottom: 1px solid var(--border);
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .header h1 {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: var(--text);
+  }
+
+  .header h1 span {
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+
+  .connection-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--red);
+    transition: background 0.3s;
+  }
+
+  .connection-dot.connected { background: var(--green); }
+
+  .header-right {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* ── Layout ───────────────────────────────── */
+  .main {
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    height: calc(100vh - 65px);
+  }
+
+  /* ── Pipeline Steps Panel ─────────────────── */
+  .steps-panel {
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 0;
+  }
+
+  .steps-panel::-webkit-scrollbar { width: 4px; }
+  .steps-panel::-webkit-scrollbar-track { background: transparent; }
+  .steps-panel::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+
+  .category-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 20px 24px 8px;
+  }
+
+  .step-card {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+    position: relative;
+  }
+
+  .step-card:hover { background: var(--surface); }
+  .step-card.active { background: var(--surface-2); }
+
+  .step-card.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--blue);
+  }
+
+  .step-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+
+  .step-name {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .step-badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 3px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .badge-pending { color: var(--text-muted); background: var(--surface-3); }
+  .badge-running { color: var(--amber); background: var(--amber-bg); animation: pulse-badge 2s infinite; }
+  .badge-done { color: var(--green); background: var(--green-bg); }
+  .badge-error { color: var(--red); background: var(--red-bg); }
+  .badge-stopped { color: var(--text-muted); background: var(--surface-3); }
+
+  @keyframes pulse-badge {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+
+  .step-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+
+  .step-meta {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .step-meta .value { color: var(--text-dim); }
+
+  /* ── Detail Panel ─────────────────────────── */
+  .detail-panel {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .detail-header {
+    padding: 20px 28px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  .detail-title {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .detail-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 16px;
+    border: 1px solid var(--border-bright);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: var(--surface-2);
+    color: var(--text-dim);
+    letter-spacing: 0.3px;
+  }
+
+  .btn:hover:not(:disabled) {
+    background: var(--surface-3);
+    border-color: var(--text-muted);
+    color: var(--text);
+  }
+
+  .btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  .btn-run {
+    background: var(--green-dim);
+    border-color: var(--green);
+    color: #fff;
+  }
+
+  .btn-run:hover:not(:disabled) {
+    background: var(--green);
+    border-color: var(--green);
+  }
+
+  .btn-stop {
+    background: var(--red-dim);
+    border-color: var(--red);
+    color: #fff;
+  }
+
+  .btn-stop:hover:not(:disabled) {
+    background: var(--red);
+  }
+
+  /* ── Tabs ──────────────────────────────────── */
+  .detail-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    padding: 0 28px;
+    flex-shrink: 0;
+  }
+
+  .tab {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 10px 16px;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+  }
+
+  .tab:hover { color: var(--text-dim); }
+  .tab.active { color: var(--text); border-bottom-color: var(--blue); }
+
+  /* ── Tab Content ───────────────────────────── */
+  .tab-content {
+    flex: 1;
+    overflow: hidden;
+    display: none;
+  }
+
+  .tab-content.active { display: flex; flex-direction: column; }
+
+  /* ── Log Viewer ────────────────────────────── */
+  .log-viewer {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 28px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    background: var(--bg);
+  }
+
+  .log-viewer::-webkit-scrollbar { width: 6px; }
+  .log-viewer::-webkit-scrollbar-track { background: transparent; }
+  .log-viewer::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+
+  .log-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  .log-line.highlight {
+    color: var(--green);
+    font-weight: 500;
+  }
+
+  .log-line.error-line {
+    color: var(--red);
+  }
+
+  .log-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+
+  /* ── Info Panel ────────────────────────────── */
+  .info-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 28px;
+  }
+
+  .info-section {
+    margin-bottom: 24px;
+  }
+
+  .info-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+
+  .info-value {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-dim);
+    background: var(--surface);
+    padding: 10px 14px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    word-break: break-all;
+  }
+
+  .info-value.command {
+    font-size: 12px;
+    color: var(--cyan);
+    user-select: all;
+  }
+
+  .prereq-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .prereq-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+
+  .prereq-check {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid var(--border-bright);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+  }
+
+  .prereq-check.met { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+  .prereq-check.unmet { border-color: var(--red); color: var(--red); background: var(--red-bg); }
+
+  .result-file {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    margin-bottom: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+
+  .result-file .path { color: var(--text-dim); }
+  .result-file .meta { color: var(--text-muted); font-size: 11px; }
+  .result-file .exists { color: var(--green); }
+  .result-file .missing { color: var(--text-muted); }
+
+  .summary-box {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--green);
+    background: var(--green-bg);
+    padding: 12px 14px;
+    border-radius: 5px;
+    border: 1px solid rgba(34, 197, 94, 0.15);
+    white-space: pre-wrap;
+  }
+
+  .error-box {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--red);
+    background: var(--red-bg);
+    padding: 12px 14px;
+    border-radius: 5px;
+    border: 1px solid rgba(239, 68, 68, 0.15);
+    white-space: pre-wrap;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  /* ── Empty State ───────────────────────────── */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    gap: 8px;
+  }
+
+  .empty-state .icon {
+    font-size: 32px;
+    opacity: 0.3;
+  }
+
+  .empty-state .msg {
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+
+  /* ── Running indicator ─────────────────────── */
+  .running-bar {
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--amber), transparent);
+    animation: slide 1.5s infinite;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+  }
+
+  @keyframes slide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="connection-dot" id="connectionDot"></div>
+    <h1>SWING SCREENER <span>/ pipeline</span></h1>
+  </div>
+  <div class="header-right" id="clock"></div>
+</div>
+
+<div class="main">
+  <div class="steps-panel" id="stepsPanel"></div>
+
+  <div class="detail-panel" id="detailPanel">
+    <div class="empty-state" id="emptyState">
+      <div class="icon">◆</div>
+      <div class="msg">Select a step to view details</div>
+    </div>
+
+    <div id="detailContent" style="display:none; flex-direction:column; height:100%;">
+      <div class="detail-header">
+        <div class="detail-title" id="detailTitle"></div>
+        <div class="detail-actions" id="detailActions"></div>
+      </div>
+
+      <div class="detail-tabs">
+        <div class="tab active" data-tab="logs" onclick="switchTab('logs')">Logs</div>
+        <div class="tab" data-tab="info" onclick="switchTab('info')">Info</div>
+      </div>
+
+      <div class="tab-content active" id="tab-logs">
+        <div class="log-viewer" id="logViewer">
+          <div class="log-placeholder">No logs yet — run this step to see output</div>
+        </div>
+      </div>
+
+      <div class="tab-content" id="tab-info">
+        <div class="info-content" id="infoContent"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+let pipelineData = null;
+let selectedStep = null;
+let ws = null;
+let wsConnected = false;
+let logBuffers = {};  // step_id -> [lines]
+let autoScroll = true;
+
+// ============================================================
+// WebSocket
+// ============================================================
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    wsConnected = true;
+    document.getElementById('connectionDot').classList.add('connected');
+    // Heartbeat
+    setInterval(() => {
+      if (ws.readyState === 1) ws.send('ping');
+    }, 15000);
+  };
+
+  ws.onclose = () => {
+    wsConnected = false;
+    document.getElementById('connectionDot').classList.remove('connected');
+    setTimeout(connectWS, 2000);
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'log') {
+      handleLogMessage(msg);
+    } else if (msg.type === 'step_status') {
+      handleStatusUpdate(msg);
+    }
+  };
+}
+
+function handleLogMessage(msg) {
+  if (!logBuffers[msg.step_id]) logBuffers[msg.step_id] = [];
+  logBuffers[msg.step_id].push(msg.text);
+
+  // Keep buffer reasonable
+  if (logBuffers[msg.step_id].length > 5000) {
+    logBuffers[msg.step_id] = logBuffers[msg.step_id].slice(-3000);
+  }
+
+  if (selectedStep === msg.step_id) {
+    appendLogLine(msg.text);
+  }
+}
+
+function handleStatusUpdate(msg) {
+  // Refresh pipeline state
+  fetchPipeline();
+}
+
+// ============================================================
+// API
+// ============================================================
+async function fetchPipeline() {
+  try {
+    const r = await fetch('/api/pipeline');
+    pipelineData = await r.json();
+    renderSteps();
+    if (selectedStep) renderDetail();
+  } catch (e) {
+    console.error('Failed to fetch pipeline:', e);
+  }
+}
+
+async function runStep(stepId) {
+  try {
+    logBuffers[stepId] = [];
+    const r = await fetch(`/api/run/${stepId}`, { method: 'POST' });
+    const data = await r.json();
+    if (data.error) alert(data.error);
+    fetchPipeline();
+  } catch (e) {
+    alert('Failed to start: ' + e.message);
+  }
+}
+
+async function stopStep() {
+  try {
+    await fetch('/api/stop', { method: 'POST' });
+    fetchPipeline();
+  } catch (e) {
+    alert('Failed to stop: ' + e.message);
+  }
+}
+
+async function resetStep(stepId) {
+  if (!confirm(`Reset "${stepId}" to pending? This clears status only, not result files.`)) return;
+  try {
+    await fetch(`/api/reset/${stepId}`, { method: 'POST' });
+    fetchPipeline();
+  } catch (e) {
+    alert('Failed to reset: ' + e.message);
+  }
+}
+
+async function loadLogs(stepId) {
+  try {
+    const r = await fetch(`/api/logs/${stepId}?tail=500`);
+    const data = await r.json();
+    if (data.exists && data.lines.length > 0) {
+      logBuffers[stepId] = data.lines;
+      renderLogs(stepId);
+    }
+  } catch (e) {
+    console.error('Failed to load logs:', e);
+  }
+}
+
+// ============================================================
+// Rendering
+// ============================================================
+function renderSteps() {
+  if (!pipelineData) return;
+  const panel = document.getElementById('stepsPanel');
+  let html = '';
+  let lastCategory = null;
+
+  for (const step of pipelineData.steps) {
+    if (step.category !== lastCategory) {
+      const labels = { data: 'Data', grind: 'Grinders', analysis: 'Analysis' };
+      html += `<div class="category-label">${labels[step.category] || step.category}</div>`;
+      lastCategory = step.category;
+    }
+
+    const state = step.state || {};
+    const status = state.status || 'pending';
+    const isActive = selectedStep === step.id;
+    const isRunning = pipelineData.running === step.id;
+
+    html += `
+      <div class="step-card ${isActive ? 'active' : ''}" onclick="selectStep('${step.id}')">
+        ${isRunning ? '<div class="running-bar"></div>' : ''}
+        <div class="step-header">
+          <div class="step-name">${step.name}</div>
+          <div class="step-badge badge-${status}">${status}</div>
+        </div>
+        <div class="step-desc">${step.description}</div>
+        ${state.duration_s ? `
+          <div class="step-meta">
+            <span>Duration: <span class="value">${formatDuration(state.duration_s)}</span></span>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  panel.innerHTML = html;
+}
+
+function renderDetail() {
+  if (!selectedStep || !pipelineData) return;
+
+  const step = pipelineData.steps.find(s => s.id === selectedStep);
+  if (!step) return;
+
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('detailContent').style.display = 'flex';
+
+  // Title
+  document.getElementById('detailTitle').textContent = step.name;
+
+  // Actions
+  const state = step.state || {};
+  const status = state.status || 'pending';
+  const isRunning = pipelineData.running === step.id;
+  const canRun = step.can_run;
+
+  let actionsHtml = '';
+  if (isRunning) {
+    actionsHtml = `<button class="btn btn-stop" onclick="stopStep()">⬛ STOP</button>`;
+  } else {
+    actionsHtml = `
+      <button class="btn btn-run" onclick="runStep('${step.id}')" ${canRun ? '' : 'disabled'}
+              title="${canRun ? 'Run this step' : (pipelineData.running ? 'Another step is running' : 'Prerequisites not met')}">
+        ▶ RUN
+      </button>
+      <button class="btn" onclick="resetStep('${step.id}')">↻ Reset</button>
+    `;
+  }
+  document.getElementById('detailActions').innerHTML = actionsHtml;
+
+  // Info tab
+  renderInfoTab(step);
+
+  // Logs
+  renderLogs(step.id);
+}
+
+function renderInfoTab(step) {
+  const state = step.state || {};
+  let html = '';
+
+  // Command
+  html += `
+    <div class="info-section">
+      <div class="info-label">Command</div>
+      <div class="info-value command">${step.command_str}</div>
+    </div>
+  `;
+
+  // Prerequisites
+  if (step.prerequisites.length > 0) {
+    html += `<div class="info-section"><div class="info-label">Prerequisites</div><div class="prereq-list">`;
+    for (const prereq of step.prerequisites) {
+      const prereqStep = pipelineData.steps.find(s => s.id === prereq);
+      const prereqState = prereqStep?.state || {};
+      const met = prereqState.status === 'done';
+      html += `
+        <div class="prereq-item">
+          <div class="prereq-check ${met ? 'met' : 'unmet'}">${met ? '✓' : '✗'}</div>
+          <span style="color: ${met ? 'var(--green)' : 'var(--text-muted)'}">${prereqStep?.name || prereq}</span>
+        </div>
+      `;
+    }
+    html += `</div></div>`;
+  }
+
+  // Result files
+  if (step.result_files.length > 0) {
+    html += `<div class="info-section"><div class="info-label">Result Files</div>`;
+    const rfStatus = step.result_files_status || {};
+    for (const rf of step.result_files) {
+      const info = rfStatus[rf] || {};
+      if (info.exists) {
+        html += `
+          <div class="result-file">
+            <span class="path exists">✓ ${rf}</span>
+            <span class="meta">${info.size_kb} KB · ${info.modified ? new Date(info.modified).toLocaleString() : ''}</span>
+          </div>
+        `;
+      } else {
+        html += `
+          <div class="result-file">
+            <span class="path missing">○ ${rf}</span>
+            <span class="meta">not yet created</span>
+          </div>
+        `;
+      }
+    }
+    html += `</div>`;
+  }
+
+  // Result summary
+  if (state.result_summary) {
+    html += `
+      <div class="info-section">
+        <div class="info-label">Result Summary</div>
+        <div class="summary-box">${escapeHtml(state.result_summary)}</div>
+      </div>
+    `;
+  }
+
+  // Error
+  if (state.error) {
+    html += `
+      <div class="info-section">
+        <div class="info-label">Error Output</div>
+        <div class="error-box">${escapeHtml(state.error)}</div>
+      </div>
+    `;
+  }
+
+  // Timing
+  if (state.started_at) {
+    html += `
+      <div class="info-section">
+        <div class="info-label">Timing</div>
+        <div class="info-value">
+Started: ${new Date(state.started_at).toLocaleString()}
+${state.finished_at ? `Finished: ${new Date(state.finished_at).toLocaleString()}` : 'Still running...'}
+${state.duration_s ? `Duration: ${formatDuration(state.duration_s)}` : ''}
+${state.exit_code !== null ? `Exit code: ${state.exit_code}` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  document.getElementById('infoContent').innerHTML = html;
+}
+
+function renderLogs(stepId) {
+  const viewer = document.getElementById('logViewer');
+  const lines = logBuffers[stepId] || [];
+
+  if (lines.length === 0) {
+    viewer.innerHTML = '<div class="log-placeholder">No logs yet — run this step to see output</div>';
+    return;
+  }
+
+  let html = '';
+  for (const line of lines) {
+    const cls = getLogLineClass(line);
+    html += `<div class="log-line ${cls}">${escapeHtml(line)}</div>`;
+  }
+  viewer.innerHTML = html;
+
+  if (autoScroll) {
+    viewer.scrollTop = viewer.scrollHeight;
+  }
+}
+
+function appendLogLine(text) {
+  const viewer = document.getElementById('logViewer');
+  // Remove placeholder if present
+  const placeholder = viewer.querySelector('.log-placeholder');
+  if (placeholder) placeholder.remove();
+
+  const div = document.createElement('div');
+  div.className = `log-line ${getLogLineClass(text)}`;
+  div.textContent = text;
+  viewer.appendChild(div);
+
+  if (autoScroll) {
+    viewer.scrollTop = viewer.scrollHeight;
+  }
+}
+
+function getLogLineClass(text) {
+  const lower = (text || '').toLowerCase();
+  if (lower.includes('error') || lower.includes('traceback') || lower.includes('exception')) return 'error-line';
+  if (lower.includes('✓') || lower.includes('complete') || lower.includes('winner') ||
+      lower.includes('best:') || lower.includes('done') || lower.includes('pass')) return 'highlight';
+  return '';
+}
+
+// ============================================================
+// Interactions
+// ============================================================
+function selectStep(stepId) {
+  selectedStep = stepId;
+  renderSteps();  // Update active highlight
+  renderDetail();
+  loadLogs(stepId);
+}
+
+function switchTab(tabName) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === `tab-${tabName}`));
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+function formatDuration(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function updateClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toLocaleTimeString('en-US', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+}
+
+// ============================================================
+// Init
+// ============================================================
+connectWS();
+fetchPipeline();
+setInterval(updateClock, 1000);
+setInterval(fetchPipeline, 10000);  // Refresh every 10s
+updateClock();
+
+// Auto-scroll toggle on user scroll
+document.getElementById('logViewer')?.addEventListener('scroll', function() {
+  const el = this;
+  autoScroll = (el.scrollHeight - el.scrollTop - el.clientHeight) < 50;
+});
+</script>
+</body>
+</html>
