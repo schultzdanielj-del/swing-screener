@@ -174,9 +174,51 @@ def _expr_fingerprint(expressions):
 
 
 def _load_expressions():
-    """Load expression library."""
+    """Load full expression library: signal + exit expressions."""
     from brute_expressions import generate_all
-    return generate_all()
+    signal_exprs = generate_all()
+
+    # Add generic exit expressions (those that compute per-bar, no entry context)
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(LOCAL_DIR)))
+        from scripts.exit_expressions import generate_exit_expressions
+        exit_exprs = generate_exit_expressions()
+
+        # Only include generic ops (no entry-relative or context-dependent ones)
+        ENTRY_RELATIVE_OPS = {
+            'atr_ratio_vs_entry', 'bars_since_mfe', 'bars_since_reclaim',
+            'bars_since_signal', 'bars_since_touch_ma', 'below_signal_bar_low',
+            'capture_efficiency', 'delta_from_entry', 'mfe', 'mfe_expanding',
+            'move_captured', 'move_pct', 'move_per_bar', 'position_in_post_range',
+            'ratio_to_entry', 'reclaim_then_lost', 'retrace_from_mfe',
+            'retrace_from_mfe_pct', 'sequential_reclaim', 'velocity_change',
+            'vol_rank_post_signal', 'vol_vs_signal_bar', 'inside_bar_count',
+        }
+        CONTEXT_OPS = {
+            'algo_broken', 'algo_distance', 'algo_shallowest_distance',
+            'algo_shallowest_slope', 'algo_touch_count',
+            'avwap_entry_distance', 'avwap_lsp_crossed', 'avwap_lsp_distance',
+            'avwap_lsp_slope', 'lsp_broken', 'lsp_congestion', 'lsp_distance',
+            'lsp_nearest_unbroken', 'rs_vs_spy', 'rs_vs_spy_slope',
+        }
+        EXCLUDE_OPS = ENTRY_RELATIVE_OPS | CONTEXT_OPS
+
+        # Deduplicate by name (signal exprs take priority)
+        existing_names = {e["name"] for e in signal_exprs}
+        added = 0
+        for e in exit_exprs:
+            if e["compute"]["op"] in EXCLUDE_OPS:
+                continue
+            if e["name"] not in existing_names:
+                signal_exprs.append(e)
+                existing_names.add(e["name"])
+                added += 1
+        if added > 0:
+            print(f"  Added {added} generic exit expressions to cache library")
+    except ImportError:
+        pass  # exit_expressions not available
+
+    return signal_exprs
 
 
 def _load_5yr_cache():

@@ -731,6 +731,240 @@ def compute_series(engine, comp):
         vol_roc = engine.v.rolling(p).mean().pct_change(p)
         return (price_roc - vol_roc).values
 
+    # ══════════════════════════════════════════════════════════════
+    # EXIT GRINDER OPS — generic (per-bar, no entry context needed)
+    # These must match exit_compute.py ExitExprEngine implementations.
+    # ══════════════════════════════════════════════════════════════
+
+    elif op == "avg_bar_range_rolling":
+        w = comp.get("window", comp.get("period", 10))
+        norm = _get_normalizer(engine, comp.get("normalizer", "adr14"))
+        rng = (engine.h - engine.l) / norm
+        return rng.rolling(w, min_periods=w).mean().values
+
+    elif op == "avg_body_ratio_rolling":
+        w = comp.get("window", comp.get("period", 10))
+        rng = engine.h - engine.l
+        body = (engine.c - engine.o).abs()
+        rng_safe = rng.replace(0, np.nan)
+        ratio = body / rng_safe
+        return ratio.rolling(w, min_periods=w).mean().values
+
+    elif op == "avg_rvol_rolling":
+        w = comp.get("window", comp.get("period", 10))
+        avg_p = comp.get("avg_period", 20)
+        avg_vol = engine.v.rolling(avg_p).mean()
+        avg_vol_safe = avg_vol.replace(0, np.nan)
+        rvol = engine.v / avg_vol_safe
+        return rvol.rolling(w, min_periods=w).mean().values
+
+    elif op == "bar_range":
+        norm = _get_normalizer(engine, comp["normalizer"])
+        return ((engine.h - engine.l) / norm).values
+
+    elif op == "close_above_ma":
+        ma = engine._ma(comp["ma"])
+        return (engine.c > ma).astype(float).values
+
+    elif op == "closed_below_ma":
+        ma = engine._ma(comp["ma"])
+        return (engine.c < ma).astype(float).values
+
+    elif op == "consecutive_green":
+        green = (engine.c > engine.o).values.astype(float)
+        result = np.zeros(len(green))
+        for i in range(len(green)):
+            if green[i]:
+                result[i] = result[i-1] + 1 if i > 0 else 1
+        return result
+
+    elif op == "consecutive_red":
+        red = (engine.c < engine.o).values.astype(float)
+        result = np.zeros(len(red))
+        for i in range(len(red)):
+            if red[i]:
+                result[i] = result[i-1] + 1 if i > 0 else 1
+        return result
+
+    elif op == "distance_from_ma":
+        ma = engine._ma(comp["ma"])
+        norm = _get_normalizer(engine, comp["normalizer"])
+        return ((engine.c - ma) / norm).values
+
+    elif op == "down_vol_ratio_rolling":
+        w = comp.get("window", comp.get("period", 10))
+        c_arr = engine.c.values
+        o_arr = engine.o.values
+        v_arr = engine.v.values.astype(float)
+        down = c_arr < o_arr
+        n = len(c_arr)
+        result = np.full(n, np.nan)
+        for i in range(w - 1, n):
+            s = i - w + 1
+            total = np.sum(v_arr[s:i+1])
+            if total > 0:
+                result[i] = np.sum(v_arr[s:i+1][down[s:i+1]]) / total
+        return result
+
+    elif op == "ext_accel":
+        ma = engine._ma(comp["ma"])
+        norm = _get_normalizer(engine, comp["normalizer"])
+        ext = ((engine.c - ma) / norm).values
+        slope = np.full(len(ext), np.nan)
+        slope[1:] = ext[1:] - ext[:-1]
+        accel = np.full(len(ext), np.nan)
+        accel[2:] = slope[2:] - slope[1:-1]
+        return accel
+
+    elif op == "ext_ceiling_ratio":
+        ma = engine._ma(comp["ma"])
+        norm = _get_normalizer(engine, comp["normalizer"])
+        ext = ((engine.c - ma) / norm).values
+        lb = comp["lookback"]
+        n = len(ext)
+        result = np.full(n, np.nan)
+        for i in range(lb, n):
+            ceiling = np.nanmax(ext[max(0, i - lb):i])
+            if ceiling != 0 and not np.isnan(ceiling):
+                result[i] = ext[i] / ceiling
+        return result
+
+    elif op == "ext_retrace_from_peak":
+        ma = engine._ma(comp["ma"])
+        norm = _get_normalizer(engine, comp["normalizer"])
+        ext = ((engine.c - ma) / norm).values
+        # Running peak of extension (most extreme), then retrace from it
+        running_peak = np.minimum.accumulate(ext)  # for shorts, most negative
+        return ext - running_peak
+
+    elif op == "ext_slope":
+        ma = engine._ma(comp["ma"])
+        norm = _get_normalizer(engine, comp["normalizer"])
+        ext = ((engine.c - ma) / norm).values
+        offset = comp["offset"]
+        result = np.full(len(ext), np.nan)
+        result[offset:] = ext[offset:] - ext[:-offset]
+        return result
+
+    elif op == "gap_from_prior":
+        norm = _get_normalizer(engine, comp["normalizer"])
+        o_arr = engine.o.values
+        c_arr = engine.c.values
+        result = np.full(len(o_arr), np.nan)
+        result[1:] = (o_arr[1:] - c_arr[:-1]) / norm.values[1:]
+        return result
+
+    elif op == "higher_low_formed":
+        l_arr = engine.l.values
+        n = len(l_arr)
+        result = np.zeros(n)
+        running_min = l_arr[0]
+        for i in range(1, n):
+            if l_arr[i] < running_min:
+                running_min = l_arr[i]
+            elif l_arr[i] > running_min and i >= 2:
+                result[i] = 1.0
+        return result
+
+    elif op == "is_doji":
+        rng = engine.h - engine.l
+        body = (engine.c - engine.o).abs()
+        rng_safe = rng.replace(0, np.nan)
+        ratio = body / rng_safe
+        return (ratio < 0.1).astype(float).values
+
+    elif op == "is_green":
+        return (engine.c > engine.o).astype(float).values
+
+    elif op == "lower_low_sequence":
+        l_arr = engine.l.values
+        n = len(l_arr)
+        result = np.zeros(n)
+        count = 0
+        for i in range(1, n):
+            if l_arr[i] < l_arr[i-1]:
+                count += 1
+            else:
+                count = 0
+            result[i] = count
+        return result
+
+    elif op == "new_high_count":
+        p = comp["period"]
+        h_arr = engine.h.values
+        n = len(h_arr)
+        hits = np.zeros(n)
+        for i in range(1, n):
+            s = max(0, i - p)
+            if h_arr[i] > np.max(h_arr[s:i]):
+                hits[i] = 1.0
+        return np.cumsum(hits)
+
+    elif op == "new_low_count":
+        p = comp["period"]
+        l_arr = engine.l.values
+        n = len(l_arr)
+        hits = np.zeros(n)
+        for i in range(1, n):
+            s = max(0, i - p)
+            if l_arr[i] < np.min(l_arr[s:i]):
+                hits[i] = 1.0
+        return np.cumsum(hits)
+
+    elif op == "pct_green_rolling":
+        w = comp.get("window", comp.get("period", 10))
+        green = (engine.c > engine.o).astype(float)
+        return green.rolling(w, min_periods=w).mean().values
+
+    elif op == "range_contracting":
+        w = comp.get("window", comp.get("period", 10))
+        rng = (engine.h - engine.l).values
+        n = len(rng)
+        result = np.zeros(n)
+        for i in range(2 * w - 1, n):
+            recent = np.mean(rng[i - w + 1:i + 1])
+            prior = np.mean(rng[i - 2 * w + 1:i - w + 1])
+            if prior > 0:
+                result[i] = float(recent < prior)
+        return result
+
+    elif op == "rvol":
+        avg_p = comp.get("avg_period", 20)
+        avg_vol = engine.v.rolling(avg_p).mean()
+        avg_vol_safe = avg_vol.replace(0, np.nan)
+        return (engine.v / avg_vol_safe).values
+
+    elif op == "touched_ma":
+        ma = engine._ma(comp["ma"])
+        # Low touched or crossed below MA
+        return (engine.l <= ma).astype(float).values
+
+    elif op == "up_vol_ratio_rolling":
+        w = comp.get("window", comp.get("period", 10))
+        c_arr = engine.c.values
+        o_arr = engine.o.values
+        v_arr = engine.v.values.astype(float)
+        up = c_arr > o_arr
+        n = len(c_arr)
+        result = np.full(n, np.nan)
+        for i in range(w - 1, n):
+            s = i - w + 1
+            total = np.sum(v_arr[s:i+1])
+            if total > 0:
+                result[i] = np.sum(v_arr[s:i+1][up[s:i+1]]) / total
+        return result
+
+    elif op == "vol_trend_rolling":
+        w = comp.get("window", comp.get("period", 10))
+        v_arr = engine.v.values.astype(float)
+        n = len(v_arr)
+        result = np.full(n, np.nan)
+        for i in range(w - 1, n):
+            s = i - w + 1
+            if v_arr[s] > 0:
+                result[i] = v_arr[i] / v_arr[s] - 1
+        return result
+
     else:
         raise ValueError(f"Unsupported op for backtest series: {op}")
 
