@@ -845,9 +845,10 @@ function VettingPage({ setup }) {
           <button className={`vet-filter-btn ${isFilterRunning?'on':''}`}
             onClick={isFilterRunning ? ()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'}) : reloadSamples}
             disabled={!isFilterRunning && pipe?.agent_status!=='online'}
-            style={{marginLeft:'auto',fontSize:9,opacity:isFilterRunning?1:0.7}}
-            title={pipe?.agent_status!=='online'?'Agent offline':'Re-run signal filter'}>
-            {isFilterRunning ? '■ STOP' : '↻ Reload'}
+            style={{marginLeft:'auto',fontSize:10,border:'1px solid var(--cyan)',color:isFilterRunning?'#fff':'var(--cyan)',
+              background:isFilterRunning?'var(--red)':'transparent',padding:'3px 12px'}}
+            title={pipe?.agent_status!=='online'?'Agent offline — start agent first':'Re-run signal filter'}>
+            {isFilterRunning ? '■ STOP' : '↻ RELOAD'}
           </button>
         </div>
         {(counts.yes > 0 || counts.no > 0) && counts.unvetted === 0 && (
