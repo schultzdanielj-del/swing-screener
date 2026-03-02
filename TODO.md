@@ -157,72 +157,38 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 **Result:** Multi-stage did not beat single-stage for DTSS. Single-stage winner holds: `bars_since_reclaim_xavgc8 >= 18` (43% floor capture, 72% median). Multi-stage may help other setups. Script preserved at `scripts/multistage_exit_grinder.py`.
 
 ### Task 4: Signal Filter + Vetting Pipeline 🔧 IN PROGRESS (2026-03-02)
-**Replaces old Tasks 4-5.** The old formation period / outcome grinder tasks are deprioritized. The real next step is expanding the example set through a vetting loop.
+**Replaces old Tasks 4-5.** Expanding the example set through a vetting loop.
 
-**Architectural fix (2026-03-02): Two types of exit grinds.**
-The original exit grinder (`exit_grinder.py`) uses entry-relative expressions (e.g. `bars_since_reclaim_xavgc8 >= 18`) that require the entry bar as an anchor. These can't be precomputed into the expression cache. The signal filter needs cache-compatible exits. Solution: two separate exit grinds for two separate purposes.
+**Two types of exit grinds (architectural decision 2026-03-02):**
+1. **Signal exit grind** (`scripts/signal_exit_grinder.py`) — cache-compatible, signal bar anchor, expression cache only
+2. **Trade exit grind** (`scripts/exit_grinder.py`) — SHELVED, entry-relative, ExitExprEngine
 
-1. **Signal exit grind** (`scripts/signal_exit_grinder.py`) — NEW:
-   - Uses ONLY expressions in the expression cache (same 12,175+ as signal grinder)
-   - Runs forward from DEDUPLICATED SIGNAL BAR (scan candle = entry - 1)
-   - 100% example pass rate hardcoded
-   - Output: `data/signal_exit_grind/signal_exit_{setup}.json`
-   - Purpose: filter backtest signals for chart vetting ("did this signal produce a move?")
-   - Same computation path as signal grinder — no grinder rule violations
+**Signal exit grind result:** `ns_c_minl65_atr14 <= 1.134945`
+- 20/20 examples, median capture eff 0.71, floor 1.7 ADR, median 5.1 ADR, avg 20 bars
 
-2. **Trade exit grind** (`scripts/exit_grinder.py`) — SHELVED:
-   - Uses 6,410 expressions from `exit_expressions.py` (many entry-relative)
-   - Runs forward from ENTRY BAR
-   - Uses ExitExprEngine (separate computation path — intentionally different)
-   - Winner: `bars_since_reclaim_xavgc8 >= 18` (43% floor capture, 72% median)
-   - Purpose: live trade management ("when to cover/sell")
-   - Shelved until setup library : signal : conditions ratio is much stronger
+**Signal filter result:** 264 raw -> 230 deduped -> 176 with exit -> 100 filtered
+- Threshold 1.5 ADR (90% of example floor). Median 4.0 ADR, max 11.1 ADR
 
-**Built:**
-- `scripts/signal_exit_grinder.py` — cache-compatible exit grinder:
-  - Resolves example signal bars (scan candle) with full condition verification
-  - Builds forward matrices directly from expression cache
-  - Grinds all cache expressions × thresholds × directions
-  - 100% example pass hardcoded, same MFE/capture efficiency scoring
-  - Output format compatible with signal_filter.py
-- `scripts/signal_filter.py` — 7-phase pipeline:
-  1. Dedup example signal bars (verify all conditions pass via expr cache)
-  2. Measure example exit distances (rightmost signal close → exit close in ADR)
-  3. Scan all 5yr signals (parallel, all cores, expression cache)
-  4. Dedup backtest signals (consecutive → rightmost)
-  5. Apply exit condition, measure signal close → exit close in ADR
-  6. Exclude existing examples from results
-  7. Filter: keep only signals ≥ example floor ADR, rank descending
-- `signal_filter.py` now loads exit from `data/signal_exit_grind/` (cache-compatible)
-- Output: `data/signal_filter/filtered_dtss.json` — ranked signals for chart vetting
-- **Single computation path enforced:** ALL signal conditions AND exit conditions read from expression cache.
+**Vetting UI:** `app/vetting.html?setup=dtss`
+- Chart + YES/MAYBE/NO, click candle for entry, YES auto-creates example in Railway DB
+- Keyboard: 1/2/3 for verdicts, arrows to navigate. Filter tabs.
 
-**Pipeline Dashboard (remote):**
-- `app/pipeline.html` — served from Railway, accessible from anywhere
-- Pipeline agent integrated into `local_runner/agent.py` — polls both grinder and pipeline job queues
-- 13 new `/api/pipeline/*` endpoints in `server.py`
-- Architecture: Railway queues jobs → desktop agent polls → runs subprocess → streams logs back
+**Upload:** `python scripts/upload_vetting_data.py --setup dtss` (no git needed)
 
-**⚠️ NEXT STEPS (run on desktop):**
+**Full pipeline sequence:**
 ```
-git pull
-# 1. Run signal exit grinder (discovers cache-compatible exit)
-python scripts/signal_exit_grinder.py --setup dtss
-# 2. Run signal filter (uses signal exit result)
-python scripts/signal_filter.py --setup dtss
-# 3. Begin chart vetting from ranked output
+1. Signal grind -> 264 signals, 41 conditions
+2. Signal exit grind -> cache-compatible exit condition
+3. Signal filter -> 100 filtered signals ranked by ADR
+4. Upload to Railway -> python scripts/upload_vetting_data.py
+5. Chart vetting -> YES creates example, re-grind, repeat
+6. [FUTURE] Trade exit grind (shelved)
+7. [FUTURE] Market regime grinder
 ```
 
-**The vetting loop (after filter works):**
-1. Run signal filter → get ranked signals with exit distance
-2. Flip through charts (top-ranked first = most obvious winners)
-3. Tag winners as new examples (real DTSS + catchable entry + it worked)
-4. Re-grind with expanded example set → conditions tighten
-5. Repeat until convergence (no new examples to add)
-
-**Still needs:**
-- Chart vetting UI in ScanPerfect (thumbs up/skip per signal, feeds back to examples)
-- Re-grind trigger from dashboard after examples added
+**TODO:**
+- Fix vetting chart zoom: lookback 120->250, visible 140->200 to see LSP
+- Build unified pipeline UI: agent-driven, auto-upload, frontend-only workflow
 
 ### Task 5: Market Regime Filter ⬜
 **What:** Correlate signal outcomes with market conditions. Which market environments produce winners vs losers? This is the "when to trade it" filter.
