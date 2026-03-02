@@ -78,13 +78,41 @@ def load_pyramid_conditions(setup_type):
 
 def load_exit_condition(setup_type):
     """Load best exit condition from exit grind results."""
-    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        "data", "exit_grind", f"exit_grind_{setup_type}.json")
-    with open(path) as f:
-        data = json.load(f)
-    best = data["top_conditions"][0]
-    print(f"  Exit condition: {best['expression']} {best['direction']} {best['threshold']}")
-    return best
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    paths = [
+        os.path.join(repo_root, "data", "exit_grind", f"exit_grind_{setup_type}.json"),
+        os.path.join(repo_root, "data", f"exit_grind_{setup_type}.json"),
+    ]
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
+            data = json.load(f)
+
+        # Format 1: exit_grinder.py output — key is "results"
+        if "results" in data and isinstance(data["results"], list) and len(data["results"]) > 0:
+            best = data["results"][0]
+            # Normalize key names (expr_name vs expression)
+            expr = best.get("expression") or best.get("expr_name", "?")
+            direction = best.get("direction", ">=")
+            threshold = best.get("threshold", 0)
+            print(f"  Exit condition: {expr} {direction} {threshold}")
+            return {"expression": expr, "direction": direction, "threshold": threshold, **best}
+
+        # Format 2: legacy — key is "top_conditions"
+        if "top_conditions" in data and len(data["top_conditions"]) > 0:
+            best = data["top_conditions"][0]
+            print(f"  Exit condition: {best['expression']} {best['direction']} {best['threshold']}")
+            return best
+
+        # Format 3: flat dict with expression key
+        if "expression" in data:
+            print(f"  Exit condition: {data['expression']}")
+            return data
+
+        raise ValueError(f"Unrecognized exit grind format in {path}, keys: {list(data.keys())}")
+
+    raise FileNotFoundError(f"No exit grind results found for {setup_type}. Checked: {[os.path.basename(p) for p in paths]}")
 
 
 def load_examples(setup_type):
