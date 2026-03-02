@@ -1,0 +1,2039 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ScanPerfect</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0a0e17;
+      --bg-secondary: #111827;
+      --bg-card: #1a2035;
+      --bg-card-hover: #1e2642;
+      --border: #2a3550;
+      --border-active: #3b82f6;
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent-blue: #3b82f6;
+      --accent-green: #26A69A;
+      --accent-red: #EF5350;
+      --accent-yellow: #f59e0b;
+      --accent-pink: #ec4899;
+      --font-body: 'Plus Jakarta Sans', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--font-body);
+      min-height: 100vh;
+    }
+
+    #root { display: flex; min-height: 100vh; }
+
+    /* Sidebar */
+    .sidebar {
+      width: 240px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      padding: 20px 0;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    .sidebar-logo {
+      font-family: var(--font-mono);
+      font-size: 16px;
+      font-weight: 700;
+      padding: 0 20px 20px;
+      border-bottom: 1px solid var(--border);
+      color: var(--accent-blue);
+      letter-spacing: -0.5px;
+    }
+    .sidebar-logo span { color: var(--text-muted); font-weight: 400; }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      transition: all 0.15s;
+      border-left: 3px solid transparent;
+    }
+    .nav-item:hover { background: var(--bg-card); color: var(--text-primary); }
+    .nav-item.active {
+      background: rgba(59,130,246,0.08);
+      color: var(--accent-blue);
+      border-left-color: var(--accent-blue);
+    }
+    .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+
+    /* Setup section in sidebar */
+    .nav-setup-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 20px 6px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .nav-setup-header:hover .nav-setup-label { color: var(--text-primary); }
+    .nav-setup-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .nav-setup-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--text-muted);
+      transition: color 0.15s;
+    }
+    .nav-setup-arrow {
+      margin-left: auto;
+      font-size: 10px;
+      color: var(--text-muted);
+      transition: transform 0.2s;
+    }
+    .nav-setup-arrow.open { transform: rotate(90deg); }
+    .nav-sub-items {
+      overflow: hidden;
+      transition: max-height 0.2s ease;
+    }
+    .nav-sub-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 20px 7px 36px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      transition: all 0.15s;
+      border-left: 3px solid transparent;
+    }
+    .nav-sub-item:hover { color: var(--text-secondary); background: var(--bg-card); }
+    .nav-sub-item.active {
+      color: var(--accent-blue);
+      background: rgba(59,130,246,0.06);
+      border-left-color: var(--accent-blue);
+    }
+    .nav-sub-icon { font-size: 13px; width: 16px; text-align: center; opacity: 0.7; }
+    .nav-divider { height: 1px; background: var(--border); margin: 8px 16px; }
+
+    /* Main content */
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .topbar {
+      height: 56px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      flex-shrink: 0;
+    }
+    .topbar-title { font-size: 15px; font-weight: 600; }
+    .topbar-actions { display: flex; gap: 8px; }
+
+    .content { flex: 1; overflow-y: auto; padding: 24px; position: relative; z-index: 10; }
+
+    /* Buttons */
+    .btn {
+      font-family: var(--font-body);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn:hover { background: var(--bg-card-hover); border-color: var(--text-muted); }
+    .btn-primary { background: var(--accent-blue); border-color: var(--accent-blue); color: white; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Tables */
+    .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(42,53,80,0.5);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+    .table tr:hover td { background: rgba(59,130,246,0.03); }
+
+    /* Status badges */
+    .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+    }
+    .badge-pass { background: rgba(38,166,154,0.15); color: var(--accent-green); }
+    .badge-fail { background: rgba(239,83,80,0.15); color: var(--accent-red); }
+    .badge-warn { background: rgba(245,158,11,0.15); color: var(--accent-yellow); }
+
+    /* Empty state */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+    .empty-state-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.4; }
+    .empty-state-title { font-size: 16px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
+    .empty-state-desc { font-size: 13px; max-width: 360px; line-height: 1.6; }
+
+    /* Setup type tabs */
+    .setup-tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+    .setup-tab {
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      border-radius: 6px;
+      cursor: pointer;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      transition: all 0.15s;
+    }
+    .setup-tab:hover { color: var(--text-secondary); border-color: var(--text-muted); }
+    .setup-tab.active { background: var(--accent-blue); border-color: var(--accent-blue); color: white; }
+
+    /* Stats row */
+    .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+    .stat-value { font-size: 24px; font-weight: 700; font-family: var(--font-mono); margin-top: 4px; }
+
+    /* Feature placeholder */
+    .feature-placeholder {
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+    .feature-placeholder-num {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 4px;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useCallback, useEffect, useRef } = React;
+
+    // ============================================
+    // DATA LAYER — setup types, examples, conditions
+    // ============================================
+    const SETUP_TYPES = {
+      '3-4db': { name: '3-4DB', desc: '3-4 Day Bounce (Short)', color: '#EF5350' },
+      'dtss':  { name: 'DTSS',  desc: 'Double Top Short Sell', color: '#ec4899' },
+      'htf':   { name: 'HTF',   desc: 'High Tight Flag (Long)', color: '#26A69A' },
+    };
+
+    // ============================================
+    // NAV PAGES
+    // ============================================
+    const SETUP_TABS = [
+      { id: 'examples',    label: 'Examples',    icon: '◉' },
+      { id: 'description', label: 'Description', icon: '📋' },
+      { id: 'conditions',  label: 'Conditions',  icon: '⚙' },
+      { id: 'historical',  label: 'Historical',  icon: '📊' },
+      { id: 'management',  label: 'Management',  icon: '💰' },
+    ];
+
+    // ============================================
+    // PLACEHOLDER COMPONENT
+    // ============================================
+    function FeaturePlaceholder({ number, title, description }) {
+      return (
+        <div className="feature-placeholder">
+          <span className="feature-placeholder-num">FEATURE {number}</span>
+          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-secondary)' }}>{title}</div>
+          <div style={{ fontSize: 13, maxWidth: 400, lineHeight: 1.6 }}>{description}</div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // DASHBOARD PAGE
+    // ============================================
+    function DashboardPage({ setPage }) {
+      return (
+        <div>
+          <div className="stats-row">
+            <div className="stat-card">
+              <div className="stat-label">Setup Types</div>
+              <div className="stat-value">{Object.keys(SETUP_TYPES).length}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">3-4DB Examples</div>
+              <div className="stat-value" style={{ color: 'var(--accent-green)' }}>14</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Active Conditions</div>
+              <div className="stat-value" style={{ color: 'var(--accent-blue)' }}>18</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Pass Rate</div>
+              <div className="stat-value" style={{ color: 'var(--accent-green)' }}>100%</div>
+            </div>
+          </div>
+
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-title">⚡ Quick Actions</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn" onClick={() => setPage('examples')}>◉ Examples</button>
+              <button className="btn" onClick={() => setPage('validate')}>✓ Run Validation</button>
+              <button className="btn" onClick={() => setPage('conditions')}>⚙ Edit Conditions</button>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title">📋 Setup Types</div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Setup</th>
+                  <th>Type</th>
+                  <th>Examples</th>
+                  <th>Conditions</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>3-4DB</td>
+                  <td>Short</td>
+                  <td>19</td>
+                  <td>9</td>
+                  <td><span className="badge badge-pass">ACTIVE</span></td>
+                </tr>
+                <tr>
+                  <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>DTSS</td>
+                  <td>Short</td>
+                  <td>0</td>
+                  <td>0</td>
+                  <td><span className="badge badge-warn">PENDING</span></td>
+                </tr>
+                <tr>
+                  <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>HTF</td>
+                  <td>Long</td>
+                  <td>0</td>
+                  <td>0</td>
+                  <td><span className="badge badge-warn">PENDING</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // EXAMPLES PAGE
+    // ============================================
+    function ExampleCard({ example, activeSetup, onDelete, deleting, chartView, timeView, onUpdated }) {
+      const entryDate = example.entryDate || example.chartDate || '';
+      const imgUrl = `/api/chart-image/${activeSetup}/${example.id}` + (timeView === 'entry' ? '?at_entry=1' : '');
+      const [editing, setEditing] = useState(false);
+      const [editDate, setEditDate] = useState(entryDate);
+      const [saving, setSaving] = useState(false);
+
+      async function handleDateSave() {
+        if (!editDate || editDate === entryDate) { setEditing(false); return; }
+        setSaving(true);
+        try {
+          const res = await fetch(`/api/examples/${activeSetup}/${example.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entry_date: editDate }),
+          });
+          if (res.ok) {
+            setEditing(false);
+            if (onUpdated) onUpdated();
+          }
+        } catch (e) { console.error(e); }
+        finally { setSaving(false); }
+      }
+
+      return (
+        <div style={{
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          overflow: 'hidden',
+          transition: 'border-color 0.15s',
+        }}
+          onMouseOver={e => e.currentTarget.style.borderColor = 'var(--border-active)'}
+          onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border)'}
+        >
+          {chartView === 'd1' ? (
+            <img src={imgUrl} alt={`${example.ticker} chart`} style={{ width: '100%', display: 'block' }} onError={e => { e.target.style.display = 'none'; }} />
+          ) : (
+            <ExtensionMiniChart exampleId={example.id} activeSetup={activeSetup} metric={chartView} entryDate={entryDate} timeView={timeView} />
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>{example.ticker}</span>
+              {editing ? (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleDateSave(); if (e.key === 'Escape') setEditing(false); }} style={{ background: 'var(--bg-primary)', border: '1px solid var(--accent-blue)', borderRadius: 4, padding: '2px 6px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none' }} autoFocus />
+                  <button onClick={handleDateSave} disabled={saving} style={{ background: 'none', border: 'none', color: 'var(--accent-green)', cursor: 'pointer', fontSize: 11, padding: 0 }}>{saving ? '...' : '✓'}</button>
+                  <button onClick={() => { setEditing(false); setEditDate(entryDate); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, padding: 0 }}>✕</button>
+                </span>
+              ) : (
+                <span onClick={() => setEditing(true)} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer', borderBottom: '1px dashed var(--border)' }} title="Click to edit entry date">{entryDate}</span>
+              )}
+              {example.hasAnalysis && <span className="badge badge-pass" style={{ fontSize: 9, padding: '2px 6px' }}>✓</span>}
+            </div>
+            <button
+              onClick={() => onDelete(example.id)}
+              disabled={deleting === example.id}
+              style={{ background:'none', border:'none', color:'var(--text-muted)', cursor:'pointer', fontSize: 12, padding: '2px 6px', borderRadius: 4 }}
+              onMouseOver={e => e.target.style.color = 'var(--accent-red)'}
+              onMouseOut={e => e.target.style.color = 'var(--text-muted)'}
+              title={`Delete ${example.ticker}`}
+            >
+              {deleting === example.id ? '...' : '✕'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function ExtensionMiniChart({ exampleId, activeSetup, metric, entryDate, timeView }) {
+      const canvasRef = useRef(null);
+      const [data, setData] = useState(null);
+
+      useEffect(() => {
+        const params = new URLSearchParams();
+        if (entryDate) params.set('entry_date', entryDate);
+        fetch(`/api/extension-data/${activeSetup}/${exampleId}?${params}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(d => setData(d))
+          .catch(() => {});
+      }, [exampleId, activeSetup, entryDate]);
+
+      useEffect(() => {
+        if (!data || !canvasRef.current) return;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width = canvas.offsetWidth * 2;
+        const H = canvas.height = canvas.offsetHeight * 2;
+        ctx.scale(2, 2);
+        const w = W / 2, h = H / 2;
+
+        const col = metric === '50sma' ? 'ext_sma50_xatr' : 'ext_sma200_xatr';
+        const lineColor = metric === '50sma' ? '#FFD700' : '#FF0000';
+
+        let plotData = data.filter(d => d[col] !== null);
+
+        // At Entry mode: trim to entry date, add empty space
+        let entryIdx = -1;
+        if (entryDate) {
+          entryIdx = plotData.findIndex(d => d.date === entryDate);
+          if (entryIdx < 0) {
+            // Find closest before
+            for (let i = plotData.length - 1; i >= 0; i--) {
+              if (plotData[i].date <= entryDate) { entryIdx = i; break; }
+            }
+          }
+        }
+
+        if (timeView === 'entry' && entryIdx >= 0) {
+          plotData = plotData.slice(0, entryIdx + 1);
+        }
+
+        const vals = plotData.map(d => d[col]);
+        const dates = plotData.map(d => d.date);
+
+        if (vals.length < 2) return;
+
+        const minV = Math.min(...vals, 0);
+        const maxV = Math.max(...vals, 0);
+        const range = maxV - minV || 1;
+        const pad = { t: 20, b: 20, l: 8, r: 8 };
+
+        // At entry: reserve ~15% empty space on right
+        const rightPad = timeView === 'entry' ? 0.15 : 0;
+        const cw = (w - pad.l - pad.r) * (1 - rightPad);
+        const ch = h - pad.t - pad.b;
+
+        ctx.fillStyle = '#0a0e17';
+        ctx.fillRect(0, 0, w, h);
+
+        // Zero line
+        const zeroY = pad.t + ch * (1 - (0 - minV) / range);
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = 0.5;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(pad.l, zeroY);
+        ctx.lineTo(w - pad.r, zeroY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Fill above/below zero
+        const n = vals.length;
+        const xStep = cw / (n - 1);
+
+        function xAt(i) { return pad.l + i * xStep; }
+        function yAt(v) { return pad.t + ch * (1 - (v - minV) / range); }
+
+        // Green fill (above zero)
+        ctx.fillStyle = 'rgba(38,166,154,0.12)';
+        ctx.beginPath();
+        ctx.moveTo(xAt(0), zeroY);
+        for (let i = 0; i < n; i++) {
+          const y = Math.min(yAt(vals[i]), zeroY);
+          ctx.lineTo(xAt(i), y);
+        }
+        ctx.lineTo(xAt(n - 1), zeroY);
+        ctx.closePath();
+        ctx.fill();
+
+        // Red fill (below zero)
+        ctx.fillStyle = 'rgba(239,83,80,0.12)';
+        ctx.beginPath();
+        ctx.moveTo(xAt(0), zeroY);
+        for (let i = 0; i < n; i++) {
+          const y = Math.max(yAt(vals[i]), zeroY);
+          ctx.lineTo(xAt(i), y);
+        }
+        ctx.lineTo(xAt(n - 1), zeroY);
+        ctx.closePath();
+        ctx.fill();
+
+        // Line
+        ctx.strokeStyle = lineColor;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+          const x = xAt(i);
+          const y = yAt(vals[i]);
+          i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        // Entry date crosshair at open price
+        if (entryDate) {
+          const idx = dates.indexOf(entryDate);
+          if (idx >= 0) {
+            const entryVal = vals[idx];
+            const ex = xAt(idx);
+            const ey = yAt(entryVal);
+
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 1;
+            ctx.globalAlpha = 0.7;
+            ctx.setLineDash([4, 3]);
+
+            // Vertical line
+            ctx.beginPath();
+            ctx.moveTo(ex, pad.t);
+            ctx.lineTo(ex, h - pad.b);
+            ctx.stroke();
+
+            // Horizontal line at value
+            ctx.beginPath();
+            ctx.moveTo(pad.l, ey);
+            ctx.lineTo(w - pad.r, ey);
+            ctx.stroke();
+
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 1;
+
+            // Value label
+            ctx.fillStyle = '#3b82f6';
+            ctx.font = 'bold 9px sans-serif';
+            ctx.fillText(entryVal.toFixed(1) + 'x', w - pad.r - 40, ey - 4);
+          }
+        }
+
+        // Label
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '10px sans-serif';
+        ctx.fillText(metric === '50sma' ? 'xATR from 50 SMA' : 'xATR from 200 SMA', pad.l + 4, pad.t + 12);
+
+      }, [data, metric, entryDate, timeView]);
+
+      if (!data) return <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>Loading...</div>;
+
+      return <canvas ref={canvasRef} style={{ width: '100%', height: 160, display: 'block' }} />;
+    }
+
+    function ExamplesPage({ activeSetup }) {
+      const [examples, setExamples] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [deleting, setDeleting] = useState(null);
+      const [ticker, setTicker] = useState('');
+      const [entryDate, setEntryDate] = useState('');
+      const [saving, setSaving] = useState(false);
+      const [addError, setAddError] = useState(null);
+      const [chartView, setChartView] = useState('d1');
+      const [timeView, setTimeView] = useState('after'); // 'entry' or 'after'
+
+      function loadExamples() {
+        setLoading(true);
+        fetch(`/api/examples/${activeSetup}`)
+          .then(r => r.json())
+          .then(data => { setExamples(data.examples || []); setLoading(false); })
+          .catch(() => setLoading(false));
+      }
+
+      useEffect(() => { loadExamples(); }, [activeSetup]);
+
+      async function handleSave() {
+        if (!ticker.trim() || !entryDate) return;
+        setSaving(true);
+        setAddError(null);
+        try {
+          const res = await fetch(`/api/examples/${activeSetup}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ticker: ticker.trim().toUpperCase(), chart_date: entryDate, entry_date: entryDate }),
+          });
+          if (!res.ok) {
+            const msg = await res.json().catch(() => ({ detail: res.statusText }));
+            throw new Error(msg.detail || 'Save failed');
+          }
+          setTicker(''); setEntryDate('');
+          loadExamples();
+        } catch (e) { setAddError(e.message); }
+        finally { setSaving(false); }
+      }
+
+      async function handleDelete(exampleId) {
+        const ex = examples.find(e => e.id === exampleId);
+        const label = ex ? `${ex.ticker} (${ex.entryDate})` : `#${exampleId}`;
+        if (!confirm(`Delete ${label} from ${activeSetup.toUpperCase()}?`)) return;
+        setDeleting(exampleId);
+        try {
+          const res = await fetch(`/api/examples/${activeSetup}/${exampleId}`, { method: 'DELETE' });
+          if (!res.ok) {
+            const msg = await res.json().catch(() => ({ detail: res.statusText }));
+            alert(msg.detail || 'Delete failed');
+          } else {
+            loadExamples();
+          }
+        } catch (e) {
+          alert(e.message);
+        } finally {
+          setDeleting(null);
+        }
+      }
+
+      return (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                Examples — {SETUP_TYPES[activeSetup].name}
+              </span>
+              <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                {examples.length}
+              </span>
+              <div style={{ display: 'flex', gap: 2, background: 'var(--bg-primary)', borderRadius: 6, padding: 2 }}>
+                {['d1','50sma','200sma'].map(v => (
+                  <button key={v} onClick={() => setChartView(v)} style={{ background: chartView === v ? 'var(--bg-card)' : 'transparent', border: 'none', borderRadius: 4, padding: '3px 10px', fontSize: 11, fontWeight: 600, color: chartView === v ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer' }}>
+                    {v === 'd1' ? 'D1' : v === '50sma' ? '50 SMA %' : '200 SMA %'}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 2, background: 'var(--bg-primary)', borderRadius: 6, padding: 2 }}>
+                <button onClick={() => setTimeView('entry')} style={{ background: timeView === 'entry' ? 'var(--bg-card)' : 'transparent', border: 'none', borderRadius: 4, padding: '3px 10px', fontSize: 11, fontWeight: 600, color: timeView === 'entry' ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer' }}>At Entry</button>
+                <button onClick={() => setTimeView('after')} style={{ background: timeView === 'after' ? 'var(--bg-card)' : 'transparent', border: 'none', borderRadius: 4, padding: '3px 10px', fontSize: 11, fontWeight: 600, color: timeView === 'after' ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer' }}>After</button>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input type="text" value={ticker} onChange={e => setTicker(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleSave()} placeholder="TICKER" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 12, width: 80, outline: 'none' }} />
+              <input type="date" value={entryDate} onChange={e => setEntryDate(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSave()} style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none' }} />
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving || !ticker.trim() || !entryDate} style={{ fontSize: 11, padding: '5px 12px' }}>
+                {saving ? '⏳' : '＋ Add'}
+              </button>
+              {addError && <span style={{ color: 'var(--accent-red)', fontSize: 11 }}>⚠ {addError}</span>}
+            </div>
+          </div>
+
+          {loading ? (
+            <div style={{ padding: 40, color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' }}>Loading...</div>
+          ) : examples.length > 0 ? (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: 16,
+            }}>
+              {examples.map(ex => (
+                <ExampleCard
+                  key={ex.ticker + chartView + timeView}
+                  example={ex}
+                  activeSetup={activeSetup}
+                  onDelete={handleDelete}
+                  deleting={deleting}
+                  chartView={chartView}
+                  timeView={timeView}
+                  onUpdated={loadExamples}
+                />
+              ))}
+            </div>
+          ) : (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No examples yet — add one above.</div>
+          )}
+        </div>
+      );
+    }
+
+    // ============================================
+    // CANDLESTICK CHART — Canvas-based interactive
+    // ============================================
+    function CandlestickChart({ candles, ticker, selectedDate, onSelectDate }) {
+      const containerRef = useRef(null);
+      const canvasRef = useRef(null);
+      const volumeCanvasRef = useRef(null);
+      const [dims, setDims] = useState({ w: 900, h: 500 });
+      const [hoverIdx, setHoverIdx] = useState(null);
+      const [scrollOffset, setScrollOffset] = useState(0);
+      const VISIBLE_CANDLES = 120;
+
+      // Colors
+      const UP = '#26A69A';
+      const DOWN = '#EF5350';
+      const BG = '#0a0e17';
+      const GRID = 'rgba(42,53,80,0.4)';
+      const EMA8_COLOR = '#5dade2';
+      const EMA21_COLOR = '#d4a853';
+      const SMA50_COLOR = '#f5c542';
+      const SMA200_COLOR = '#e74c3c';
+      const SELECTED_COLOR = '#3b82f6';
+
+      // Responsive sizing
+      useEffect(() => {
+        function resize() {
+          if (containerRef.current) {
+            const w = containerRef.current.clientWidth;
+            setDims({ w, h: Math.max(420, Math.min(560, w * 0.55)) });
+          }
+        }
+        resize();
+        window.addEventListener('resize', resize);
+        return () => window.removeEventListener('resize', resize);
+      }, []);
+
+      // Clamp scroll
+      const maxOffset = Math.max(0, candles.length - VISIBLE_CANDLES);
+      const offset = Math.min(Math.max(0, scrollOffset), maxOffset);
+      const visible = candles.slice(offset, offset + VISIBLE_CANDLES);
+
+      // Layout constants
+      const MARGIN = { top: 32, right: 64, bottom: 0, left: 0 };
+      const VOL_HEIGHT = 80;
+      const CHART_H = dims.h - MARGIN.top - VOL_HEIGHT;
+      const CHART_W = dims.w - MARGIN.right;
+
+      const candleW = CHART_W / VISIBLE_CANDLES;
+      const bodyW = Math.max(1, candleW * 0.6);
+
+      // Price range
+      const priceVals = visible.flatMap(c => [c.high, c.low]).filter(v => v != null);
+      const minPrice = Math.min(...priceVals);
+      const maxPrice = Math.max(...priceVals);
+      const priceRange = maxPrice - minPrice || 1;
+      const pricePad = priceRange * 0.05;
+      const pMin = minPrice - pricePad;
+      const pMax = maxPrice + pricePad;
+
+      function priceY(p) {
+        return MARGIN.top + CHART_H * (1 - (p - pMin) / (pMax - pMin));
+      }
+      function candleX(i) {
+        return i * candleW + candleW / 2;
+      }
+
+      // Volume range
+      const volMax = Math.max(...visible.map(c => c.volume || 0)) || 1;
+
+      // Draw main chart
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas || !visible.length) return;
+        canvas.width = dims.w;
+        canvas.height = dims.h - VOL_HEIGHT;
+        const ctx = canvas.getContext('2d');
+
+        // Background
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Grid lines
+        ctx.strokeStyle = GRID;
+        ctx.lineWidth = 0.5;
+        const gridSteps = 6;
+        for (let i = 0; i <= gridSteps; i++) {
+          const y = MARGIN.top + (CHART_H / gridSteps) * i;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(CHART_W, y);
+          ctx.stroke();
+
+          // Price labels
+          const price = pMax - ((pMax - pMin) / gridSteps) * i;
+          ctx.fillStyle = '#64748b';
+          ctx.font = '10px JetBrains Mono';
+          ctx.textAlign = 'left';
+          ctx.fillText(price.toFixed(2), CHART_W + 6, y + 3);
+        }
+
+        // MA lines
+        function drawMA(key, color) {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          let started = false;
+          visible.forEach((c, i) => {
+            if (c[key] == null) return;
+            const x = candleX(i);
+            const y = priceY(c[key]);
+            if (!started) { ctx.moveTo(x, y); started = true; }
+            else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+        }
+        drawMA('ema8', EMA8_COLOR);
+        drawMA('ema21', EMA21_COLOR);
+        drawMA('sma50', SMA50_COLOR);
+        drawMA('sma200', SMA200_COLOR);
+
+        // Candles
+        visible.forEach((c, i) => {
+          const x = candleX(i);
+          const isUp = c.close >= c.open;
+          const color = isUp ? UP : DOWN;
+          const isSelected = c.date === selectedDate;
+          const isHovered = i === hoverIdx;
+
+          // Selected highlight
+          if (isSelected) {
+            ctx.fillStyle = 'rgba(59,130,246,0.12)';
+            ctx.fillRect(x - candleW / 2, MARGIN.top, candleW, CHART_H);
+            ctx.strokeStyle = SELECTED_COLOR;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.moveTo(x, MARGIN.top);
+            ctx.lineTo(x, MARGIN.top + CHART_H);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+
+          // Hover highlight
+          if (isHovered && !isSelected) {
+            ctx.fillStyle = 'rgba(255,255,255,0.03)';
+            ctx.fillRect(x - candleW / 2, MARGIN.top, candleW, CHART_H);
+          }
+
+          // Wick
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, priceY(c.high));
+          ctx.lineTo(x, priceY(c.low));
+          ctx.stroke();
+
+          // Body
+          const bodyTop = priceY(Math.max(c.open, c.close));
+          const bodyBot = priceY(Math.min(c.open, c.close));
+          const bodyH = Math.max(1, bodyBot - bodyTop);
+
+          if (isUp) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x - bodyW / 2, bodyTop, bodyW, bodyH);
+          } else {
+            ctx.fillStyle = color;
+            ctx.fillRect(x - bodyW / 2, bodyTop, bodyW, bodyH);
+          }
+
+          // Selected marker
+          if (isSelected) {
+            ctx.fillStyle = SELECTED_COLOR;
+            ctx.beginPath();
+            ctx.arc(x, priceY(c.low) + 12, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = SELECTED_COLOR;
+            ctx.font = 'bold 10px JetBrains Mono';
+            ctx.textAlign = 'center';
+            ctx.fillText('ENTRY', x, priceY(c.low) + 24);
+          }
+        });
+
+        // Ticker label
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        ctx.font = 'bold 48px Plus Jakarta Sans';
+        ctx.textAlign = 'right';
+        ctx.fillText(ticker, CHART_W - 12, MARGIN.top + 52);
+
+        // Hover crosshair + data
+        if (hoverIdx != null && visible[hoverIdx]) {
+          const c = visible[hoverIdx];
+          const x = candleX(hoverIdx);
+          ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+          ctx.lineWidth = 0.5;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(x, MARGIN.top);
+          ctx.lineTo(x, MARGIN.top + CHART_H);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // OHLCV bar at top
+          const isUp = c.close >= c.open;
+          const ohlcText = `${c.date}   O: ${c.open?.toFixed(2)}   H: ${c.high?.toFixed(2)}   L: ${c.low?.toFixed(2)}   C: ${c.close?.toFixed(2)}   Vol: ${(c.volume/1e6)?.toFixed(1)}M`;
+          ctx.fillStyle = isUp ? UP : DOWN;
+          ctx.font = '11px JetBrains Mono';
+          ctx.textAlign = 'left';
+          ctx.fillText(ohlcText, 8, 16);
+        }
+
+      }, [visible, dims, hoverIdx, selectedDate]);
+
+      // Draw volume chart
+      useEffect(() => {
+        const canvas = volumeCanvasRef.current;
+        if (!canvas || !visible.length) return;
+        canvas.width = dims.w;
+        canvas.height = VOL_HEIGHT;
+        const ctx = canvas.getContext('2d');
+
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Grid
+        ctx.strokeStyle = GRID;
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(CHART_W, 0);
+        ctx.stroke();
+
+        visible.forEach((c, i) => {
+          const x = candleX(i);
+          const isUp = c.close >= c.open;
+          const vol = c.volume || 0;
+          const barH = (vol / volMax) * (VOL_HEIGHT - 8);
+          const isSelected = c.date === selectedDate;
+
+          // Selected highlight in volume too
+          if (isSelected) {
+            ctx.fillStyle = 'rgba(59,130,246,0.12)';
+            ctx.fillRect(x - candleW / 2, 0, candleW, VOL_HEIGHT);
+          }
+
+          ctx.fillStyle = isUp ? 'rgba(38,166,154,0.35)' : 'rgba(239,83,80,0.35)';
+          ctx.fillRect(x - bodyW / 2, VOL_HEIGHT - barH, bodyW, barH);
+        });
+
+        // Vol avg line
+        ctx.strokeStyle = 'rgba(245,158,11,0.5)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        let started = false;
+        visible.forEach((c, i) => {
+          if (c.volAvg20 == null) return;
+          const x = candleX(i);
+          const y = VOL_HEIGHT - (c.volAvg20 / volMax) * (VOL_HEIGHT - 8);
+          if (!started) { ctx.moveTo(x, y); started = true; }
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        // Date labels
+        ctx.fillStyle = '#64748b';
+        ctx.font = '9px JetBrains Mono';
+        ctx.textAlign = 'center';
+        const step = Math.max(1, Math.floor(VISIBLE_CANDLES / 8));
+        visible.forEach((c, i) => {
+          if (i % step === 0) {
+            const x = candleX(i);
+            const parts = c.date.split('-');
+            ctx.fillText(parts[1] + '/' + parts[2], x, VOL_HEIGHT - 2);
+          }
+        });
+      }, [visible, dims, selectedDate]);
+
+      // Mouse handlers
+      function getIdx(e, canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const idx = Math.floor(mx / candleW);
+        return idx >= 0 && idx < visible.length ? idx : null;
+      }
+
+      function handleMouseMove(e) {
+        setHoverIdx(getIdx(e, canvasRef.current));
+      }
+      function handleMouseLeave() {
+        setHoverIdx(null);
+      }
+      function handleClick(e) {
+        const idx = getIdx(e, canvasRef.current);
+        if (idx != null && visible[idx]) {
+          onSelectDate(visible[idx].date);
+        }
+      }
+      function handleWheel(e) {
+        e.preventDefault();
+        setScrollOffset(prev => {
+          const delta = e.deltaY > 0 ? 5 : -5;
+          return Math.min(Math.max(0, prev + delta), maxOffset);
+        });
+      }
+
+      // Initialize scroll to show most recent data
+      useEffect(() => {
+        setScrollOffset(maxOffset);
+      }, [candles]);
+
+      // MA legend
+      const legendItems = [
+        { label: 'EMA 8', color: EMA8_COLOR },
+        { label: 'EMA 21', color: EMA21_COLOR },
+        { label: 'SMA 50', color: SMA50_COLOR },
+        { label: 'SMA 200', color: SMA200_COLOR },
+      ];
+
+      return (
+        <div ref={containerRef} style={{ width: '100%' }}>
+          {/* Legend */}
+          <div style={{ display: 'flex', gap: 16, padding: '8px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)' }}>
+            {legendItems.map(l => (
+              <span key={l.label} style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: l.color, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ width: 12, height: 2, background: l.color, display: 'inline-block' }}></span>
+                {l.label}
+              </span>
+            ))}
+            <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+              scroll to pan • click candle to select entry
+            </span>
+          </div>
+          {/* Price canvas */}
+          <canvas
+            ref={canvasRef}
+            width={dims.w}
+            height={dims.h - VOL_HEIGHT}
+            style={{ display: 'block', cursor: 'crosshair' }}
+            onMouseMove={handleMouseMove}
+            onMouseLeave={handleMouseLeave}
+            onClick={handleClick}
+            onWheel={handleWheel}
+          />
+          {/* Volume canvas */}
+          <canvas
+            ref={volumeCanvasRef}
+            width={dims.w}
+            height={VOL_HEIGHT}
+            style={{ display: 'block' }}
+            onMouseMove={handleMouseMove}
+            onClick={handleClick}
+            onWheel={handleWheel}
+          />
+        </div>
+      );
+    }
+
+    // ============================================
+    // CONDITIONS PAGE — Feature 4 placeholder
+    // ============================================
+    function ConditionsPage({ activeSetup, embedded }) {
+      const LEVELS = [
+        { id: 1, name: 'Quick scan', time: '~30s', desc: 'Fast check, rough filter' },
+        { id: 2, name: 'Light grind', time: '~2 min', desc: 'Good for iteration' },
+        { id: 3, name: 'Medium grind', time: '~10 min', desc: 'Solid search depth' },
+        { id: 4, name: 'Heavy grind', time: '~30 min', desc: 'Deep combo exploration' },
+        { id: 5, name: 'Overnight', time: '~2-8 hours', desc: 'Maximum depth, best results' },
+      ];
+
+      const [grindLevel, setGrindLevel] = useState(3);
+      const [agentStatus, setAgentStatus] = useState('unknown');
+      const [jobStatus, setJobStatus] = useState(null);
+      const [results, setResults] = useState(null);
+      const [polling, setPolling] = useState(false);
+
+      // Poll agent and job status
+      useEffect(() => {
+        function poll() {
+          fetch('/api/grinder/agent/status').then(r=>r.json()).then(d => setAgentStatus(d.status)).catch(()=>{});
+          fetch(`/api/grinder/jobs/status?setup_type=${activeSetup}`).then(r=>r.json()).then(d => {
+            setJobStatus(d.job);
+            if (d.job && (d.job.status === 'running' || d.job.status === 'claimed')) {
+              setPolling(true);
+            } else {
+              setPolling(false);
+            }
+          }).catch(()=>{});
+          fetch(`/api/grinder/results/${activeSetup}`).then(r=>r.json()).then(d => {
+            if (d.status === 'ok') setResults(d.results);
+          }).catch(()=>{});
+        }
+        poll();
+        const iv = setInterval(poll, polling ? 3000 : 10000);
+        return () => clearInterval(iv);
+      }, [activeSetup, polling]);
+
+      function startGrind() {
+        fetch('/api/grinder/jobs', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ setup_type: activeSetup, grind_level: grindLevel, action: 'grind' })
+        }).then(r=>r.json()).then(d => {
+          setPolling(true);
+          setJobStatus({ ...d, status: 'pending', grind_level: grindLevel, progress: {phase:'',progress_pct:0,detail:'Queued...'} });
+        });
+      }
+
+      function stopGrind() {
+        fetch('/api/grinder/jobs/reset?setup_type=' + activeSetup, {method:'POST'}).then(() => {
+          setJobStatus(null);
+          setPolling(false);
+        });
+      }
+
+      const level = LEVELS[grindLevel - 1];
+      const isRunning = jobStatus && (jobStatus.status === 'running' || jobStatus.status === 'claimed' || jobStatus.status === 'pending');
+      const progress = jobStatus?.progress || {};
+      const agentOnline = agentStatus === 'online';
+      console.log('GRINDER STATE:', {isRunning, jobStatus: jobStatus?.status, grindLevel, agentOnline});
+
+      return (
+        <div>
+          {/* Agent Status */}
+          <div className="card" style={{padding:'12px 16px',marginBottom:12,display:'flex',alignItems:'center',gap:12}}>
+            <div style={{width:10,height:10,borderRadius:'50%',background: agentOnline ? '#22c55e' : '#ef4444',flexShrink:0}} />
+            <div style={{fontSize:13}}>
+              <span style={{fontWeight:600}}>Desktop Agent:</span>{' '}
+              <span style={{color: agentOnline ? '#22c55e' : 'var(--text-muted)'}}>{agentOnline ? 'Online' : 'Offline'}</span>
+              {!agentOnline && <span style={{color:'var(--text-muted)',marginLeft:8,fontSize:11}}>Run: python local_runner/agent.py</span>}
+            </div>
+          </div>
+
+          {/* Grinder Control */}
+          <div className="card">
+            <div className="card-title">🕸 The Grinder — Spiderweb Condition Search</div>
+
+            <div style={{padding:'16px 0'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <div style={{fontSize:13,fontWeight:600}}>Grind Level: {grindLevel}</div>
+                <div style={{fontSize:12,color:'var(--text-muted)'}}>{level.name} · {level.time}</div>
+              </div>
+
+              <input type="range" min="1" max="5" value={grindLevel} disabled={isRunning}
+                onChange={e => setGrindLevel(parseInt(e.target.value))}
+                style={{width:'100%',accentColor:'var(--accent)',cursor: isRunning ? 'not-allowed' : 'pointer'}} />
+
+              <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-muted)',marginTop:4}}>
+                <span>Quick</span><span>Light</span><span>Medium</span><span>Heavy</span><span>Overnight</span>
+              </div>
+
+              <div style={{fontSize:12,color:'var(--text-muted)',marginTop:8}}>{level.desc}</div>
+
+              <div style={{marginTop:16,display:'flex',gap:8,alignItems:'center'}}>
+                <button className="btn" onClick={startGrind} disabled={isRunning}
+                  style={{opacity: isRunning ? 0.5 : 1}}>
+                  {isRunning ? '⏳ Grinding...' : '🚀 Start Grind'}
+                </button>
+                {isRunning && <button className="btn" onClick={stopGrind}
+                  style={{marginLeft:8,background:'rgba(239,68,68,0.2)',borderColor:'rgba(239,68,68,0.3)',color:'#ef4444'}}>
+                  ⏹ Stop
+                </button>}
+                {isRunning && <span style={{fontSize:12,color:'var(--text-muted)'}}>Level {jobStatus?.grind_level || grindLevel}</span>}
+              </div>
+            </div>
+
+            {/* Progress bar */}
+            {isRunning && (
+              <div style={{marginTop:8}}>
+                <div style={{height:6,background:'var(--bg-tertiary)',borderRadius:3,overflow:'hidden'}}>
+                  <div style={{height:'100%',width: `${progress.progress_pct || 0}%`,background:'var(--accent)',borderRadius:3,transition:'width 0.5s ease'}} />
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',marginTop:4,fontSize:11,color:'var(--text-muted)'}}>
+                  <span>{progress.phase || 'Starting...'}</span>
+                  <span>{progress.detail || ''}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Completed status */}
+            {jobStatus?.status === 'complete' && !isRunning && (
+              <div style={{marginTop:8,padding:'8px 12px',background:'rgba(34,197,94,0.1)',borderRadius:6,fontSize:12,color:'#22c55e'}}>
+                ✓ Last grind complete: {jobStatus.message}
+              </div>
+            )}
+            {jobStatus?.status === 'error' && !isRunning && (
+              <div style={{marginTop:8,padding:'8px 12px',background:'rgba(239,68,68,0.1)',borderRadius:6,fontSize:12,color:'#ef4444'}}>
+                ✗ Error: {jobStatus.message}
+              </div>
+            )}
+          </div>
+
+          {/* Results */}
+          {results && results.levels && (
+            <div className="card" style={{marginTop:12}}>
+              <div className="card-title">
+                📊 Results
+                <span style={{fontWeight:400,color:'var(--text-muted)',fontSize:12,marginLeft:8}}>
+                  Level {results.grind_level} · {results.stats?.depth_reached} deep · {results.stats?.nodes_explored?.toLocaleString()} combos tested
+                </span>
+              </div>
+
+              {/* Big number */}
+              <div style={{textAlign:'center',padding:'20px 0'}}>
+                <div style={{fontSize:48,fontWeight:700,color:'var(--accent)'}}>
+                  {(results.best_rate * 100).toFixed(1)}%
+                </div>
+                <div style={{fontSize:14,color:'var(--text-muted)'}}>
+                  {results.best_passing?.toLocaleString()} / {results.stats?.n_universe?.toLocaleString()} tickers pass
+                </div>
+                <div style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>
+                  All {results.stats?.n_examples} examples pass ✓
+                </div>
+              </div>
+
+              {/* Progression chart */}
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:12,fontWeight:600,marginBottom:8}}>Filter Progression</div>
+                <div style={{display:'flex',alignItems:'flex-end',gap:2,height:80}}>
+                  {results.levels.map((lv, i) => {
+                    const maxRate = results.levels[0]?.best_rate || 1;
+                    const h = Math.max(4, Math.min(76, (lv.best_rate / maxRate) * 76));
+                    return (
+                      <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center'}}>
+                        <div style={{fontSize:9,color:'var(--text-muted)',marginBottom:2}}>
+                          {(lv.best_rate*100).toFixed(1)}%
+                        </div>
+                        <div style={{width:'100%',height:h,background: i===results.levels.length-1 ? 'var(--accent)' : 'var(--bg-tertiary)',borderRadius:2}} />
+                        <div style={{fontSize:9,color:'var(--text-muted)',marginTop:2}}>{lv.level}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{fontSize:10,color:'var(--text-muted)',textAlign:'center',marginTop:4}}>Conditions stacked →</div>
+              </div>
+
+              {/* Best conditions */}
+              <div>
+                <div style={{fontSize:12,fontWeight:600,marginBottom:8}}>Best Condition Combo ({results.best_thresholds?.length})</div>
+                <table className="table" style={{fontSize:11}}>
+                  <thead>
+                    <tr><th>#</th><th>Category</th><th>Expression</th><th>Range</th></tr>
+                  </thead>
+                  <tbody>
+                    {(results.best_thresholds || []).map((t, i) => (
+                      <tr key={i}>
+                        <td>{i+1}</td>
+                        <td><span className="badge" style={{fontSize:10}}>{t.category}</span></td>
+                        <td style={{fontFamily:'var(--font-mono)',fontSize:10}}>{t.expr}</td>
+                        <td style={{fontFamily:'var(--font-mono)',fontSize:10,whiteSpace:'nowrap'}}>
+                          [{typeof t.low === 'number' ? t.low.toFixed(3) : t.low} — {typeof t.high === 'number' ? t.high.toFixed(3) : t.high}]
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{fontSize:11,color:'var(--text-muted)',marginTop:12}}>
+                Computed {results.timestamp ? new Date(results.timestamp).toLocaleString() : ''} · 
+                {results.stats?.total_time_s ? ` ${(results.stats.total_time_s/60).toFixed(1)} min` : ''}
+              </div>
+
+              {/* Passing Tickers */}
+              {results.passing_tickers && results.passing_tickers.length > 0 && (
+                <div style={{marginTop:20}}>
+                  <div style={{fontSize:12,fontWeight:600,marginBottom:8}}>
+                    Passing Tickers ({results.passing_tickers.length})
+                  </div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                    {results.passing_tickers.map((t, i) => (
+                      <a key={i} 
+                         href={`https://app.tc2000.com/chart/${t}`}
+                         target="_blank" rel="noopener noreferrer"
+                         style={{
+                           padding:'4px 10px',fontSize:12,fontFamily:'monospace',fontWeight:600,
+                           background:'rgba(139,92,246,0.15)',border:'1px solid rgba(139,92,246,0.3)',
+                           borderRadius:4,color:'#a78bfa',textDecoration:'none',cursor:'pointer',
+                           transition:'all 0.15s'
+                         }}
+                         onMouseOver={e => {e.target.style.background='rgba(139,92,246,0.3)';e.target.style.borderColor='rgba(139,92,246,0.5)'}}
+                         onMouseOut={e => {e.target.style.background='rgba(139,92,246,0.15)';e.target.style.borderColor='rgba(139,92,246,0.3)'}}
+                      >{t}</a>
+                    ))}
+                  </div>
+                  <div style={{fontSize:10,color:'var(--text-muted)',marginTop:6}}>
+                    Click to open in TC2000
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* No results yet */}
+          {!results && !isRunning && (
+            <div className="card" style={{marginTop:12}}>
+              <div className="empty-state">
+                <div className="empty-state-icon">🕸</div>
+                <div className="empty-state-title">No grinder results yet</div>
+                <div className="empty-state-desc">
+                  {agentOnline 
+                    ? 'Set your grind level and hit Start to discover optimal scan conditions.'
+                    : 'Start the desktop agent first: python local_runner/agent.py'}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ============================================
+    // VALIDATE PAGE — Feature 4 placeholder
+    // ============================================
+    function ValidatePage() {
+      return (
+        <div>
+          <FeaturePlaceholder
+            number={4}
+            title="Auto-Validate All Examples"
+            description="Run every example through the current ruleset. Shows pass/fail per condition per example. Validates automatically on any ruleset update. Zero false negatives is the target."
+          />
+        </div>
+      );
+    }
+
+    // ============================================
+    // DESCRIPTION PAGE — Setup TA knowledge & rules
+    // ============================================
+    function DescriptionPage({ activeSetup }) {
+      const setup = SETUP_TYPES[activeSetup];
+      const [lspData, setLspData] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [newEntry, setNewEntry] = useState({ ticker: '', date: '', price: '' });
+      const [adding, setAdding] = useState(false);
+
+      function loadData() {
+        fetch(`/api/setup-data/${activeSetup}`)
+          .then(r => r.json())
+          .then(d => { setLspData(d.data || []); setLoading(false); })
+          .catch(() => setLoading(false));
+      }
+      useEffect(() => { setLoading(true); loadData(); }, [activeSetup]);
+
+      function handleAdd() {
+        if (!newEntry.ticker || !newEntry.date || !newEntry.price) return;
+        setAdding(true);
+        fetch(`/api/setup-data/${activeSetup}/lsp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticker: newEntry.ticker.toUpperCase(), date: newEntry.date, price: parseFloat(newEntry.price), entry_date: '', example_id: 0 }),
+        }).then(() => { setNewEntry({ ticker: '', date: '', price: '' }); setAdding(false); loadData(); })
+          .catch(() => setAdding(false));
+      }
+
+      function handleDelete(idx) {
+        if (!confirm(`Delete LSP entry for ${lspData[idx]?.ticker}?`)) return;
+        fetch(`/api/setup-data/${activeSetup}/lsp/${idx}`, { method: 'DELETE' })
+          .then(() => loadData());
+      }
+
+      const inputStyle = {
+        background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4,
+        padding: '6px 10px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 12,
+      };
+
+      return (
+        <div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-title">📋 {setup.name} — Setup Description</div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.7 }}>
+              {activeSetup === 'dtss' && 'Double Top Short Sell — Price approaches prior high (LSP) resistance after a strong uptrend. The first test holds, second test fails. Short at the rejection when momentum stalls, extension is extreme, and the stock can\'t break through.'}
+              {activeSetup === '3-4db' && '3-4 Day Bounce — Stock pulls back after a move, bounces weakly for 3-4 days on declining volume, then fails. The bounce is a dead cat — momentum is gone and sellers take control.'}
+              {activeSetup === 'htf' && 'High Tight Flag — Tight consolidation after a powerful run (50%+ in 8 weeks or less). Breakout long when the flag resolves with volume confirmation.'}
+            </div>
+          </div>
+
+          {/* Setup-specific data */}
+          {activeSetup === 'dtss' && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">📍 LSP Data — Prior High Resistance Levels
+                <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 12, marginLeft: 8 }}>
+                  {lspData.length} entries
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+                Last Significant Price — the prior high each example is testing. Used by the profiler to validate MAXH approximations.
+              </div>
+
+              {loading ? (
+                <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Loading...</div>
+              ) : (
+                <>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Ticker</th>
+                        <th>LSP Date</th>
+                        <th>LSP Price</th>
+                        <th>Entry Date</th>
+                        <th style={{ width: 40 }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lspData.map((row, i) => (
+                        <tr key={i}>
+                          <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{row.ticker}</td>
+                          <td>{row.date}</td>
+                          <td>${parseFloat(row.price).toFixed(2)}</td>
+                          <td style={{ color: 'var(--text-muted)' }}>{row.entry_date || '—'}</td>
+                          <td>
+                            <span onClick={() => handleDelete(i)} style={{ cursor: 'pointer', color: 'var(--accent-red)', fontSize: 14 }}>✕</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* Add new entry */}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+                    <input style={{ ...inputStyle, width: 80 }} placeholder="TICKER" value={newEntry.ticker}
+                      onChange={e => setNewEntry(p => ({ ...p, ticker: e.target.value }))} />
+                    <input style={{ ...inputStyle, width: 120 }} type="date" value={newEntry.date}
+                      onChange={e => setNewEntry(p => ({ ...p, date: e.target.value }))} />
+                    <input style={{ ...inputStyle, width: 90 }} placeholder="Price" type="number" step="0.01" value={newEntry.price}
+                      onChange={e => setNewEntry(p => ({ ...p, price: e.target.value }))} />
+                    <button className="btn btn-sm btn-primary" onClick={handleAdd} disabled={adding}>
+                      {adding ? '...' : '+ Add'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          <FeaturePlaceholder
+            number="—"
+            title="TA Knowledge & Market Context"
+            description="Setup-specific technical analysis rules, market stage requirements, extension structures, and entry/exit criteria will be displayed here."
+          />
+        </div>
+      );
+    }
+
+    // ============================================
+    // CONDITIONS ANALYSIS PAGE — Profiler + Collaborative
+    // ============================================
+    function ConditionsAnalysisPage({ activeSetup }) {
+      const [profilerStatus, setProfilerStatus] = useState(null);
+
+      // Poll profiler status
+      useEffect(() => {
+        let interval;
+        function poll() {
+          fetch(`/api/analysis/status/${activeSetup}/profiler`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d) setProfilerStatus(d); })
+            .catch(() => {});
+        }
+        poll();
+        interval = setInterval(poll, 3000);
+        return () => clearInterval(interval);
+      }, [activeSetup]);
+
+      const isRunning = profilerStatus?.status === 'running';
+      const progress = profilerStatus?.progress || 0;
+      const statusText = profilerStatus?.message || 'idle';
+
+      function kickOff() {
+        fetch(`/api/analysis/profile/${activeSetup}`, { method: 'POST' })
+          .then(() => setProfilerStatus({ status: 'running', progress: 0, message: 'Starting...' }))
+          .catch(e => console.error(e));
+      }
+
+      return (
+        <div>
+          {/* PROFILER SECTION */}
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-title">🔬 Profiler — Expression Discovery</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <button className="btn btn-primary" onClick={kickOff} disabled={isRunning}>
+                {isRunning ? '⏳ Running...' : '▶ Run Profiler'}
+              </button>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                {statusText}
+              </span>
+            </div>
+            {/* Progress bar */}
+            {isRunning && (
+              <div style={{ background: 'var(--bg-secondary)', borderRadius: 4, height: 8, marginBottom: 16, overflow: 'hidden' }}>
+                <div style={{
+                  width: `${Math.max(progress, 2)}%`,
+                  height: '100%',
+                  background: 'var(--accent-blue)',
+                  borderRadius: 4,
+                  transition: 'width 0.5s ease',
+                }} />
+              </div>
+            )}
+            {/* Top discriminators would go here */}
+            <div style={{ color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic' }}>
+              Top discriminating expressions will appear here after profiler completes.
+            </div>
+          </div>
+
+          {/* COLLABORATIVE CONDITIONS SECTION */}
+          <div className="card">
+            <div className="card-title">🎯 Collaborative Conditions — Scan Rules</div>
+            <ConditionsPage activeSetup={activeSetup} embedded={true} />
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================
+    // HISTORICAL ANALYSIS PAGE — Signal Prevalence + SPY Overlay
+    // ============================================
+    function HistoricalPage({ activeSetup }) {
+      const [signalData, setSignalData] = useState(null);
+      const [spyData, setSpyData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        let cancelled = false;
+        async function load() {
+          setLoading(true);
+          setError(null);
+          try {
+            const setupMap = { 'DTSS': 'dtss', '3-4DB': '3-4db', 'HTF': 'htf' };
+            const setupKey = setupMap[activeSetup] || activeSetup.toLowerCase();
+            const [sigRes, spyRes] = await Promise.all([
+              fetch('/api/backtest/signals/' + setupKey + '?limit=10000'),
+              fetch('/api/ohlcv/bulk/SPY?lookback=1260')
+            ]);
+            if (cancelled) return;
+            const sigJson = await sigRes.json();
+            const spyJson = await spyRes.json();
+            const byDate = {};
+            (sigJson.results || []).forEach(r => {
+              byDate[r.date] = (byDate[r.date] || 0) + 1;
+            });
+            setSignalData({ byDate, total: sigJson.count, tickers: sigJson.unique_tickers });
+            setSpyData((spyJson.results || []).reverse());
+          } catch (e) {
+            if (!cancelled) setError(e.message);
+          } finally {
+            if (!cancelled) setLoading(false);
+          }
+        }
+        load();
+        return () => { cancelled = true; };
+      }, [activeSetup]);
+
+      if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Loading historical data...</div>;
+      if (error) return <div style={{ padding: 40, color: 'var(--accent-red)' }}>Error: {error}</div>;
+      if (!signalData || !spyData || spyData.length === 0) return <div style={{ padding: 40, color: 'var(--text-muted)' }}>No backtest data available. Run backtest first.</div>;
+
+      return (
+        <div>
+          <SignalBarChart signalData={signalData} spyData={spyData} />
+          <div style={{ height: 20 }} />
+          <SpyCandleBubbleChart signalData={signalData} spyData={spyData} />
+        </div>
+      );
+    }
+
+    function SignalBarChart({ signalData, spyData }) {
+      const canvasRef = useRef(null);
+      const containerRef = useRef(null);
+
+      useEffect(() => {
+        if (!canvasRef.current || !containerRef.current) return;
+        const canvas = canvasRef.current;
+        const container = containerRef.current;
+        const dpr = window.devicePixelRatio || 1;
+        const w = container.offsetWidth;
+        const h = 200;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+
+        const { byDate } = signalData;
+        const dates = spyData.map(d => d.date);
+        const counts = dates.map(d => byDate[d] || 0);
+        const maxCount = Math.max(...counts, 1);
+
+        const padL = 40, padR = 10, padT = 24, padB = 30;
+        const chartW = w - padL - padR;
+        const chartH = h - padT - padB;
+        const barW = Math.max(1, chartW / dates.length);
+
+        ctx.fillStyle = '#1a2035';
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '11px "JetBrains Mono"';
+        ctx.fillText('SIGNAL PREVALENCE \u2014 ' + signalData.total + ' signals, ' + signalData.tickers + ' tickers', padL, 15);
+
+        ctx.strokeStyle = '#2a3550';
+        ctx.lineWidth = 0.5;
+        const yTicks = [0, Math.round(maxCount * 0.25), Math.round(maxCount * 0.5), Math.round(maxCount * 0.75), maxCount];
+        const seen = new Set();
+        yTicks.forEach(v => {
+          if (seen.has(v)) return;
+          seen.add(v);
+          const y = padT + chartH - (v / maxCount) * chartH;
+          ctx.beginPath();
+          ctx.moveTo(padL, y);
+          ctx.lineTo(w - padR, y);
+          ctx.stroke();
+          ctx.fillStyle = '#64748b';
+          ctx.font = '9px "JetBrains Mono"';
+          ctx.textAlign = 'right';
+          ctx.fillText(v.toString(), padL - 4, y + 3);
+        });
+
+        dates.forEach((date, i) => {
+          const count = counts[i];
+          if (count === 0) return;
+          const x = padL + i * barW;
+          const barH = (count / maxCount) * chartH;
+          const y = padT + chartH - barH;
+          const t = Math.min(1, count / Math.max(maxCount * 0.5, 1));
+          const r = Math.round(59 + t * 180);
+          const g = Math.round(130 + t * (83 - 130));
+          const b = Math.round(246 + t * (80 - 246));
+          ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
+          ctx.fillRect(x, y, Math.max(barW - 0.5, 1), barH);
+        });
+
+        ctx.fillStyle = '#64748b';
+        ctx.font = '9px "JetBrains Mono"';
+        ctx.textAlign = 'center';
+        let lastYear = '';
+        dates.forEach((date, i) => {
+          const yr = date.substring(0, 4);
+          if (yr !== lastYear) {
+            lastYear = yr;
+            ctx.fillText(yr, padL + i * barW, h - 8);
+          }
+        });
+      }, [signalData, spyData]);
+
+      return (
+        <div ref={containerRef} style={{
+          background: '#1a2035',
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          overflow: 'hidden',
+        }}>
+          <canvas ref={canvasRef} />
+        </div>
+      );
+    }
+
+    function SpyCandleBubbleChart({ signalData, spyData }) {
+      const canvasRef = useRef(null);
+      const scrollRef = useRef(null);
+      const [tooltip, setTooltip] = useState(null);
+
+      const candleW = 5;
+      const gap = 1.5;
+      const cellW = candleW + gap;
+      const padL = 55, padR = 20, padT = 28, padB = 55;
+      const chartH = 400;
+      const totalW = padL + spyData.length * cellW + padR;
+      const canvasH = padT + chartH + padB;
+
+      useEffect(() => {
+        if (!canvasRef.current) return;
+        const canvas = canvasRef.current;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = totalW * dpr;
+        canvas.height = canvasH * dpr;
+        canvas.style.width = totalW + 'px';
+        canvas.style.height = canvasH + 'px';
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+
+        const { byDate } = signalData;
+        const prices = spyData.map(d => [d.low, d.high]).flat();
+        const minP = Math.min(...prices);
+        const maxP = Math.max(...prices);
+        const priceRange = maxP - minP || 1;
+        const maxCount = Math.max(...Object.values(byDate), 1);
+
+        function yFromPrice(p) {
+          return padT + chartH - ((p - minP) / priceRange) * chartH;
+        }
+
+        ctx.fillStyle = '#0f1520';
+        ctx.fillRect(0, 0, totalW, canvasH);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '11px "JetBrains Mono"';
+        ctx.fillText('SPY DAILY \u2014 SIGNAL CLUSTER OVERLAY (scroll \u2192)', padL, 16);
+
+        // Y axis gridlines
+        ctx.strokeStyle = '#1e2a3d';
+        ctx.lineWidth = 0.5;
+        const pStep = Math.pow(10, Math.floor(Math.log10(priceRange / 5)));
+        const niceStep = priceRange / 5 > pStep * 5 ? pStep * 10 : priceRange / 5 > pStep * 2 ? pStep * 5 : pStep * 2;
+        const firstTick = Math.ceil(minP / niceStep) * niceStep;
+        for (let p = firstTick; p <= maxP; p += niceStep) {
+          const y = yFromPrice(p);
+          ctx.beginPath();
+          ctx.moveTo(padL, y);
+          ctx.lineTo(totalW - padR, y);
+          ctx.stroke();
+          ctx.fillStyle = '#64748b';
+          ctx.font = '9px "JetBrains Mono"';
+          ctx.textAlign = 'right';
+          ctx.fillText('$' + Math.round(p), padL - 4, y + 3);
+        }
+
+        // Candlesticks
+        spyData.forEach((bar, i) => {
+          const x = padL + i * cellW + cellW / 2;
+          const isGreen = bar.close >= bar.open;
+          const bodyTop = yFromPrice(Math.max(bar.open, bar.close));
+          const bodyBot = yFromPrice(Math.min(bar.open, bar.close));
+          const wickTop = yFromPrice(bar.high);
+          const wickBot = yFromPrice(bar.low);
+
+          ctx.strokeStyle = isGreen ? '#26A69A' : '#EF5350';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, wickTop);
+          ctx.lineTo(x, wickBot);
+          ctx.stroke();
+
+          ctx.fillStyle = isGreen ? '#26A69A' : '#EF5350';
+          ctx.fillRect(x - candleW / 2, bodyTop, candleW, Math.max(bodyBot - bodyTop, 1));
+        });
+
+        // Signal bubbles — draw below the candles
+        spyData.forEach((bar, i) => {
+          const count = byDate[bar.date] || 0;
+          if (count === 0) return;
+          const x = padL + i * cellW + cellW / 2;
+          const bubbleY = padT + chartH + 25;
+          const radius = 4 + Math.sqrt(count / maxCount) * 18;
+          const t = count / maxCount;
+          const r = Math.round(59 + t * 200);
+          const g = Math.round(130 - t * 60);
+          const b = Math.round(246 - t * 180);
+          ctx.beginPath();
+          ctx.arc(x, bubbleY, radius, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',0.55)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(' + r + ',' + g + ',' + b + ',0.9)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          if (radius > 8) {
+            ctx.fillStyle = '#fff';
+            ctx.font = Math.min(11, Math.round(radius * 0.8)) + 'px "JetBrains Mono"';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(count.toString(), x, bubbleY);
+          }
+        });
+
+        // Draw vertical lines from bubbles up to candle area for large signals
+        spyData.forEach((bar, i) => {
+          const count = byDate[bar.date] || 0;
+          if (count < 5) return;
+          const x = padL + i * cellW + cellW / 2;
+          const wickBot = yFromPrice(bar.low);
+          const t = count / maxCount;
+          ctx.strokeStyle = 'rgba(' + Math.round(59 + t * 200) + ',' + Math.round(130 - t * 60) + ',' + Math.round(246 - t * 180) + ',0.25)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([2, 3]);
+          ctx.beginPath();
+          ctx.moveTo(x, wickBot + 2);
+          ctx.lineTo(x, padT + chartH + 10);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        });
+
+        // X axis labels
+        ctx.fillStyle = '#64748b';
+        ctx.font = '9px "JetBrains Mono"';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        let lastLabel = '';
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        spyData.forEach((bar, i) => {
+          const m = bar.date.substring(0, 7);
+          if (m !== lastLabel) {
+            lastLabel = m;
+            const x = padL + i * cellW + cellW / 2;
+            const mm = parseInt(bar.date.substring(5, 7));
+            const yr = bar.date.substring(2, 4);
+            if (mm === 1 || mm === 4 || mm === 7 || mm === 10) {
+              ctx.fillText(months[mm - 1] + " '" + yr, x, padT + chartH + 42);
+            }
+          }
+        });
+
+        // Scroll to end
+        if (scrollRef.current) {
+          scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+        }
+      }, [signalData, spyData]);
+
+      function handleMouseMove(e) {
+        if (!canvasRef.current || !scrollRef.current) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const idx = Math.floor((mx - padL) / cellW);
+        if (idx < 0 || idx >= spyData.length) { setTooltip(null); return; }
+        const bar = spyData[idx];
+        const count = signalData.byDate[bar.date] || 0;
+        setTooltip({
+          x: e.clientX,
+          y: e.clientY,
+          date: bar.date,
+          open: bar.open.toFixed(2),
+          high: bar.high.toFixed(2),
+          low: bar.low.toFixed(2),
+          close: bar.close.toFixed(2),
+          signals: count,
+        });
+      }
+
+      return (
+        <div style={{ position: 'relative' }}>
+          <div
+            ref={scrollRef}
+            onMouseMove={handleMouseMove}
+            onMouseLeave={() => setTooltip(null)}
+            style={{
+              background: '#0f1520',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              cursor: 'crosshair',
+            }}
+          >
+            <canvas ref={canvasRef} />
+          </div>
+          {tooltip && (
+            <div style={{
+              position: 'fixed',
+              left: tooltip.x + 14,
+              top: tooltip.y - 10,
+              background: '#1a2035',
+              border: '1px solid #3b82f6',
+              borderRadius: 6,
+              padding: '6px 10px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              color: '#e2e8f0',
+              pointerEvents: 'none',
+              zIndex: 1000,
+              whiteSpace: 'nowrap',
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 2 }}>{tooltip.date}</div>
+              <div>O: {tooltip.open}  H: {tooltip.high}  L: {tooltip.low}  C: {tooltip.close}</div>
+              {tooltip.signals > 0 && (
+                <div style={{ color: '#EF5350', fontWeight: 700, marginTop: 2 }}>
+                  {tooltip.signals} signal{tooltip.signals !== 1 ? 's' : ''}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ============================================
+    // MANAGEMENT ANALYSIS PAGE — EV Optimization
+    // ============================================
+    function ManagementPage({ activeSetup }) {
+      return (
+        <div>
+          <FeaturePlaceholder
+            number="7"
+            title="EV Optimization — Trade Management"
+            description="Brute-force test 3.6M parameter combinations for stops, targets, and trailing strategies. Find optimal management per market regime. The formula: best setups × best markets × best management = highest EV."
+          />
+        </div>
+      );
+    }
+
+    // ============================================
+    // APP SHELL
+    // ============================================
+    function App() {
+      const [page, setPage] = useState('dashboard');
+      const [activeSetup, setActiveSetup] = useState('dtss');
+      const [activeTab, setActiveTab] = useState('examples');
+      const [expandedSetups, setExpandedSetups] = useState({ 'dtss': true });
+
+      function toggleSetup(key) {
+        setExpandedSetups(prev => ({ ...prev, [key]: !prev[key] }));
+      }
+
+      function selectSetupTab(setupKey, tabId) {
+        setActiveSetup(setupKey);
+        setActiveTab(tabId);
+        setPage('setup');
+        if (!expandedSetups[setupKey]) {
+          setExpandedSetups(prev => ({ ...prev, [setupKey]: true }));
+        }
+      }
+
+      // Figure out topbar title
+      let topbarTitle = 'Dashboard';
+      if (page === 'setup') {
+        const setup = SETUP_TYPES[activeSetup];
+        const tab = SETUP_TABS.find(t => t.id === activeTab);
+        topbarTitle = `${setup.name} — ${tab?.label || ''}`;
+      }
+
+      return (
+        <>
+          <div className="sidebar">
+            <div className="sidebar-logo">
+              scan<span>/</span>perfect
+            </div>
+
+            {/* Dashboard */}
+            <div
+              className={`nav-item ${page === 'dashboard' ? 'active' : ''}`}
+              onClick={() => setPage('dashboard')}
+              style={{ marginTop: 12 }}
+            >
+              <span className="nav-icon">◫</span>
+              Dashboard
+            </div>
+
+            <div className="nav-divider" />
+
+            {/* Setup sections */}
+            {Object.entries(SETUP_TYPES).map(([key, s]) => (
+              <React.Fragment key={key}>
+                <div className="nav-setup-header" onClick={() => toggleSetup(key)}>
+                  <div className="nav-setup-dot" style={{ background: s.color }} />
+                  <span className="nav-setup-label">{s.name}</span>
+                  <span className={`nav-setup-arrow ${expandedSetups[key] ? 'open' : ''}`}>▸</span>
+                </div>
+                <div className="nav-sub-items" style={{ maxHeight: expandedSetups[key] ? 200 : 0 }}>
+                  {SETUP_TABS.map(tab => (
+                    <div
+                      key={tab.id}
+                      className={`nav-sub-item ${page === 'setup' && activeSetup === key && activeTab === tab.id ? 'active' : ''}`}
+                      onClick={() => selectSetupTab(key, tab.id)}
+                    >
+                      <span className="nav-sub-icon">{tab.icon}</span>
+                      {tab.label}
+                    </div>
+                  ))}
+                </div>
+              </React.Fragment>
+            ))}
+          </div>
+          <div className="main">
+            <div className="topbar">
+              <div className="topbar-title">{topbarTitle}</div>
+            </div>
+            <div className="content">
+              {page === 'dashboard' && <DashboardPage setPage={(p) => { if (p === 'examples') { setPage('setup'); setActiveTab('examples'); } else setPage(p); }} />}
+              {page === 'setup' && activeTab === 'examples' && <ExamplesPage activeSetup={activeSetup} />}
+              {page === 'setup' && activeTab === 'description' && <DescriptionPage activeSetup={activeSetup} />}
+              {page === 'setup' && activeTab === 'conditions' && <ConditionsAnalysisPage activeSetup={activeSetup} />}
+              {page === 'setup' && activeTab === 'historical' && <HistoricalPage activeSetup={activeSetup} />}
+              {page === 'setup' && activeTab === 'management' && <ManagementPage activeSetup={activeSetup} />}
+            </div>
+          </div>
+        </>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
