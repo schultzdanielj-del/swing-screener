@@ -364,7 +364,7 @@ def main():
                 handle_pipeline_job(pj)
 
             # Heartbeat every 30s
-            if time.time() - last_heartbeat > 30:
+            if time.time() - last_heartbeat > 10:
                 heartbeat()
                 last_heartbeat = time.time()
 

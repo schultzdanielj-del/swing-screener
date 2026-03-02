@@ -1001,7 +1001,7 @@ function App() {
   useEffect(() => {
     const check = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json())
       .then(d=>setAgentOnline(d.agent_status==='online')).catch(()=>setAgentOnline(false));
-    check(); const id = setInterval(check, 15000); return ()=>clearInterval(id);
+    check(); const id = setInterval(check, 5000); return ()=>clearInterval(id);
   }, []);
 
   const setupSteps = [

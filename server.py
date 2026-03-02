@@ -2194,7 +2194,7 @@ async def get_agent_status():
     if last_hb:
         try:
             hb_time = datetime.fromisoformat(last_hb.replace('+00:00', '').replace('Z', ''))
-            if (datetime.utcnow() - hb_time).total_seconds() > 120:
+            if (datetime.utcnow() - hb_time).total_seconds() > 20:
                 agent["status"] = "offline"
         except:
             pass
@@ -2306,7 +2306,7 @@ async def get_pipeline_steps():
         try:
             hb_time = datetime.fromisoformat(last_hb.replace('+00:00', '').replace('Z', ''))
             age = (datetime.utcnow() - hb_time).total_seconds()
-            agent_status = "online" if age < 60 else "offline"
+            agent_status = "online" if age < 20 else "offline"
         except:
             agent_status = "unknown"
 
