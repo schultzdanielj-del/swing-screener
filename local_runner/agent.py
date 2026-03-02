@@ -77,6 +77,112 @@ def check_for_jobs():
     return []
 
 
+# ── V2 Pipeline step handling ──────────────────────────────────────────
+
+PIPELINE_STEP_SCRIPTS = {
+    "signal_grind":    ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}"],
+    "exit_grind":      ["python", "scripts/exit_grinder.py", "--setup", "{setup}"],
+    "multistage_exit": ["python", "scripts/multistage_exit_grinder.py", "--setup", "{setup}"],
+    "signal_filter":   ["python", "scripts/signal_filter.py", "--setup", "{setup}"],
+    "outcome_grind":   ["python", "scripts/outcome_grinder.py", "--setup", "{setup}"],
+    "backtest":        ["python", "scripts/backtest_runner.py", "--setup", "{setup}"],
+}
+
+
+def check_for_pipeline_jobs():
+    try:
+        r = requests.get(f"{API_BASE}/api/pipeline/jobs/pending", timeout=10)
+        if r.status_code == 200:
+            return r.json().get("jobs", [])
+    except:
+        pass
+    return []
+
+
+def pipeline_post_status(step_id, status, **kwargs):
+    try:
+        payload = {"step_id": step_id, "status": status,
+                   "timestamp": now_utc().isoformat(), **kwargs}
+        requests.post(f"{API_BASE}/api/pipeline/status", json=payload, timeout=10)
+    except:
+        pass
+
+
+def pipeline_post_logs(step_id, lines):
+    try:
+        requests.post(f"{API_BASE}/api/pipeline/logs",
+                      json={"step_id": step_id, "lines": lines}, timeout=10)
+    except:
+        pass
+
+
+def handle_pipeline_job(job):
+    import subprocess
+    step_id = job.get("step_id", "")
+    job_id = job.get("job_id", "")
+    setup_type = job.get("setup_type", "dtss")
+
+    cmd_template = PIPELINE_STEP_SCRIPTS.get(step_id)
+    if not cmd_template:
+        print(f"  ✗ Unknown pipeline step: {step_id}")
+        pipeline_post_status(step_id, "error", error=f"Unknown step: {step_id}")
+        return
+
+    cmd = [c.replace("{setup}", setup_type) for c in cmd_template]
+
+    print(f"\n{'='*60}")
+    print(f"  PIPELINE: {step_id} ({job_id})")
+    print(f"  Command:  {' '.join(cmd)}")
+    print(f"{'='*60}")
+
+    pipeline_post_status(step_id, "running")
+    t0 = time.time()
+    log_buffer = []
+
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=REPO_ROOT,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
+        )
+        for line in proc.stdout:
+            line = line.rstrip()
+            print(f"    {line}")
+            log_buffer.append(line)
+            # Flush logs every 20 lines
+            if len(log_buffer) >= 20:
+                pipeline_post_logs(step_id, log_buffer)
+                log_buffer = []
+
+        proc.wait()
+        duration = time.time() - t0
+
+        # Flush remaining logs
+        if log_buffer:
+            pipeline_post_logs(step_id, log_buffer)
+
+        if proc.returncode == 0:
+            print(f"\n  ✓ {step_id} complete ({duration:.1f}s)")
+            pipeline_post_status(step_id, "done", duration_s=round(duration, 1),
+                                 exit_code=0)
+        else:
+            print(f"\n  ✗ {step_id} failed (exit code {proc.returncode})")
+            pipeline_post_status(step_id, "error", duration_s=round(duration, 1),
+                                 exit_code=proc.returncode,
+                                 error=f"Exit code {proc.returncode}")
+
+    except Exception as e:
+        import traceback
+        duration = time.time() - t0
+        error_msg = f"{type(e).__name__}: {e}"
+        print(f"\n  ✗ {step_id} error: {error_msg}")
+        traceback.print_exc()
+        if log_buffer:
+            pipeline_post_logs(step_id, log_buffer)
+        pipeline_post_status(step_id, "error", duration_s=round(duration, 1),
+                             error=error_msg)
+
+
 def heartbeat():
     try:
         requests.post(f"{API_BASE}/api/grinder/agent/heartbeat", json={
@@ -241,10 +347,15 @@ def main():
 
     while True:
         try:
-            # Poll for jobs
+            # Poll for grinder jobs (legacy)
             jobs = check_for_jobs()
             for job in jobs:
                 handle_job(job)
+
+            # Poll for v2 pipeline jobs
+            pipe_jobs = check_for_pipeline_jobs()
+            for pj in pipe_jobs:
+                handle_pipeline_job(pj)
 
             # Heartbeat every 30s
             if time.time() - last_heartbeat > 30:
