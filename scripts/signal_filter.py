@@ -1,5 +1,5 @@
 """
-Signal Filter — Deduplicate, apply exit, rank for vetting.
+Signal Filter -- Deduplicate, apply exit, rank for vetting.
 
 Scans all 5yr history for signal conditions, then:
   1. Deduplicates: consecutive signal bars for same ticker -> keep rightmost
@@ -89,7 +89,7 @@ def load_exit_condition(setup_type):
         with open(path) as f:
             data = json.load(f)
 
-        # Format 1: exit_grinder.py output — key is "results"
+        # Format 1: exit_grinder.py output -- key is "results"
         if "results" in data and isinstance(data["results"], list) and len(data["results"]) > 0:
             best = data["results"][0]
             # Normalize key names (expr_name vs expression)
@@ -99,7 +99,7 @@ def load_exit_condition(setup_type):
             print(f"  Exit condition: {expr} {direction} {threshold}")
             return {"expression": expr, "direction": direction, "threshold": threshold, **best}
 
-        # Format 2: legacy — key is "top_conditions"
+        # Format 2: legacy -- key is "top_conditions"
         if "top_conditions" in data and len(data["top_conditions"]) > 0:
             best = data["top_conditions"][0]
             print(f"  Exit condition: {best['expression']} {best['direction']} {best['threshold']}")
@@ -186,7 +186,7 @@ def scan_all_signals(cache, conditions, workers):
     batch_size = max(1, len(tickers) // (workers * 4))
     batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
 
-    print(f"\n  Scanning {len(tickers):,} tickers × {len(conditions)} conditions...")
+    print(f"\n  Scanning {len(tickers):,} tickers x {len(conditions)} conditions...")
     print(f"  {workers} workers, {len(batches)} batches")
     t0 = time.time()
 
@@ -213,7 +213,7 @@ def scan_all_signals(cache, conditions, workers):
 
 
 # ============================================================
-# Phase 2: Deduplicate — consecutive bars -> keep rightmost
+# Phase 2: Deduplicate -- consecutive bars -> keep rightmost
 # ============================================================
 def deduplicate_signals(signals):
     """
@@ -242,7 +242,7 @@ def deduplicate_signals(signals):
                 break
             j += 1
 
-        # signals[i:j] is a consecutive run — keep the rightmost (j-1)
+        # signals[i:j] is a consecutive run -- keep the rightmost (j-1)
         rightmost = signals[j - 1]
         cluster_size = j - i
         rightmost["cluster_size"] = cluster_size
@@ -395,7 +395,7 @@ def exclude_existing_examples(signals, example_signals):
         ticker = sig["ticker"]
         bar_idx = sig["bar_idx"]
         if ticker in example_bars and bar_idx in example_bars[ticker]:
-            continue  # skip — this is an existing example
+            continue  # skip -- this is an existing example
         filtered.append(sig)
 
     removed = before - len(filtered)
@@ -626,7 +626,7 @@ def measure_example_exit_distances(example_signals, cache, exit_cond, direction,
         print(f"    Mean: {sum(valid_adrs)/len(valid_adrs):.1f} ADR")
         return floor
     else:
-        print(f"  ⚠ No examples had valid exit distances!")
+        print(f"  WARNING: No examples had valid exit distances!")
         return 0.0
 
 
@@ -634,7 +634,7 @@ def measure_example_exit_distances(example_signals, cache, exit_cond, direction,
 # Main
 # ============================================================
 def main():
-    parser = argparse.ArgumentParser(description="Signal Filter — Dedup + Exit + Rank")
+    parser = argparse.ArgumentParser(description="Signal Filter -- Dedup + Exit + Rank")
     parser.add_argument("--setup", default="dtss", help="Setup type")
     parser.add_argument("--min-adr", type=float, default=None,
                         help="Min exit distance in ADR (default: derived from examples)")
@@ -647,7 +647,7 @@ def main():
     direction = config["direction"]
 
     print(f"\n{'='*60}")
-    print(f"  SIGNAL FILTER — {setup.upper()}")
+    print(f"  SIGNAL FILTER -- {setup.upper()}")
     print(f"{'='*60}")
     t0 = time.time()
 
@@ -657,7 +657,7 @@ def main():
     exit_cond = load_exit_condition(setup)
     examples = load_examples(setup)
 
-    # Phase 1: Deduplicate examples FIRST — need their exit distances for the floor
+    # Phase 1: Deduplicate examples FIRST -- need their exit distances for the floor
     print(f"\n  PHASE 1: Deduplicate example signal bars")
     example_signals = deduplicate_examples(examples, cache, conditions)
 
