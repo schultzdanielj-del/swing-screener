@@ -31,6 +31,11 @@ from dataclasses import dataclass, field
 from typing import Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+# Force UTF-8 output on Windows (cp1252 can't handle ✓, ⚠, etc.)
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

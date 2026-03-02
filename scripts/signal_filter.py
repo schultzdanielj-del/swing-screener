@@ -29,6 +29,11 @@ import requests
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 
+# Force UTF-8 output on Windows (cp1252 can't handle ✓, ⚠, etc.)
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, os.path.join(REPO_ROOT, "local_runner"))
