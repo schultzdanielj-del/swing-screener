@@ -445,6 +445,7 @@ function renderInfo(s) {
     signal_grind: 'python local_runner/pyramid_grinder.py --setup dtss --peak-target 3 --beam 10000 --depth 100',
     exit_grind: 'python scripts/exit_grinder.py --setup dtss --max-forward 120',
     multistage_exit: 'python scripts/multistage_exit_grinder.py --setup dtss',
+    signal_filter: 'python scripts/signal_filter.py --setup dtss',
     outcome_grind: 'python scripts/outcome_grinder.py --setup dtss',
     backtest: 'python scripts/backtest_runner.py --setup dtss',
   };
