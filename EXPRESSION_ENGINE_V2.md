@@ -281,11 +281,19 @@ Re-grind DTSS with expanded library
 
 ### What's Left
 
-**Full cache rebuild:** Must be done on Dan's machine (requires 5yr OHLCV cache + ~255 GB disk). Run `python local_runner/expr_cache_builder.py --build --force`.
+**Cache rebuilt (2026-03-02):** Expression cache now includes generic exit expressions (27 new ops in backtest_conditions.py). `_load_expressions()` merges signal + exit libraries, deduplicates by name. Cache built successfully overnight.
 
-**Validation:** After rebuild:
-1. Check manifest: 12,175 expressions, all names present
-2. Spot-check a few tickers: weekly RSI values should match manual calculation
-3. Run matrix builder — verify it loads the expanded cache (~30s)
-4. Re-grind DTSS — compare results with vs without HTF/LSP expressions
+**Task 4 (Signal Filter) — blocked items resolved, needs re-run:**
+- Signal filter uses expression cache as single computation path (no compute_series, no ExpressionEngine)
+- Loads correct grinder result: `pyramid_dtss_mp_sig264_pk3_20260228_163923.json` (264 signals, 41 conditions)
+- 20/23 examples pass all conditions (3 skipped: BRK-B, SMMT, VUZI not in 5yr cache)
+- Exit expression `avg_range_atr_10b` should now be in rebuilt cache
+- **Next:** restart agent, trigger step 4 from pipeline dashboard, verify exit phase works
+
+**Changes made 2026-03-02 session:**
+- `scripts/backtest_conditions.py`: 88 → 115 ops (added 27 generic exit ops from exit_compute.py: avg_bar_range_rolling, avg_body_ratio_rolling, consecutive_green/red, distance_from_ma, vol ratios, ext_accel, gap_from_prior, etc.)
+- `local_runner/expr_cache_builder.py`: `_load_expressions()` merges generic exit expressions (filters out entry-relative and context-dependent ops that can't be precomputed)
+- `scripts/signal_filter.py`: Complete rewrite to use expression cache as single computation path. Loads pyramid results from `local_runner/cache/` (picks latest by mtime). No fallbacks — missing expressions cause clear error with rebuild command.
+- `local_runner/agent.py`: Now polls both grinder job queue AND pipeline job queue
+- Suppressed All-NaN slice warnings in backtest_conditions.py (ext_ceiling_ratio warmup bars)
 
