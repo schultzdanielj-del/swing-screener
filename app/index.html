@@ -115,6 +115,8 @@
     .b-pending { color:var(--text-muted); background:var(--surface-3); }
     .b-error { color:var(--red); background:var(--red-bg); }
     @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.5;} }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+    .pulse-dot { animation: pulse 1.5s ease-in-out infinite; }
 
     .btn {
       font-family:var(--mono); font-size:11px; font-weight:600;
@@ -868,7 +870,34 @@ function VettingPage({ setup }) {
         ))}
       </div>
       <div className="vet-chart">
-        {current ? (
+        {isFilterRunning || (showLogs && filterLogs.length > 0) ? (
+          <div style={{display:'flex',flexDirection:'column',height:'100%'}}>
+            <div style={{padding:'10px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:12}}>
+              {isFilterRunning && <span className="pulse-dot" style={{width:8,height:8,borderRadius:'50%',background:'var(--green)',display:'inline-block'}} />}
+              <span style={{fontFamily:'var(--mono)',fontSize:12,fontWeight:700,color:isFilterRunning?'var(--green)':'var(--text-dim)'}}>
+                {isFilterRunning ? 'Signal Filter Running...' : 'Signal Filter Complete'}
+              </span>
+              {isFilterRunning && filterLogs.length > 0 && (
+                <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',marginLeft:'auto'}}>
+                  {filterLogs.length} lines
+                </span>
+              )}
+              {!isFilterRunning && filterLogs.length > 0 && (
+                <button onClick={()=>{setShowLogs(false);setFilterLogs([]);}}
+                  style={{marginLeft:'auto',padding:'2px 8px',borderRadius:3,fontSize:9,fontFamily:'var(--mono)',
+                    border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer'}}>
+                  ✕ CLOSE
+                </button>
+              )}
+            </div>
+            <div className="log-box" ref={filterLogRef} style={{flex:1,maxHeight:'none',borderRadius:0,border:'none'}}>
+              {filterLogs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')||l.toLowerCase().includes('done')?'ok':''}>{l}</div>)}
+              {isFilterRunning && filterLogs.length === 0 && (
+                <div style={{color:'var(--text-muted)'}}>Waiting for agent to start signal_filter.py...</div>
+              )}
+            </div>
+          </div>
+        ) : current ? (
           <>
             <div className="vet-chart-hdr">
               <div className="vet-chart-info">
