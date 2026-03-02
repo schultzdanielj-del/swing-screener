@@ -2,10 +2,10 @@
 Signal Filter — Deduplicate, apply exit, rank for vetting.
 
 Scans all 5yr history for signal conditions, then:
-  1. Deduplicates: consecutive signal bars for same ticker → keep rightmost
+  1. Deduplicates: consecutive signal bars for same ticker -> keep rightmost
   2. Applies exit condition: run each signal forward, check if exit fires
-  3. Measures exit distance: signal close → exit close (in ADR)
-  4. Filters: keep only signals where exit distance ≥ example floor
+  3. Measures exit distance: signal close -> exit close (in ADR)
+  4. Filters: keep only signals where exit distance >= example floor
   5. Ranks: sort by exit distance descending
   6. Outputs: ranked JSON for chart vetting + uploads to Railway
 
@@ -119,7 +119,7 @@ def load_examples(setup_type):
     """Load validated examples from Railway."""
     import requests
     try:
-        r = requests.get(f"{RAILWAY_URL}/api/setups/{setup_type}/examples", timeout=30)
+        r = requests.get(f"{RAILWAY_URL}/api/examples/{setup_type}", timeout=30)
         r.raise_for_status()
         examples = r.json().get("examples", [])
         print(f"  Loaded {len(examples)} examples from Railway")
@@ -208,12 +208,12 @@ def scan_all_signals(cache, conditions, workers):
                 print(f"    {pct:.0f}% [{elapsed:.0f}s] {len(all_signals):,} signals")
 
     elapsed = time.time() - t0
-    print(f"\n  ✓ {len(all_signals):,} raw signals in {elapsed:.0f}s")
+    print(f"\n  OK: {len(all_signals):,} raw signals in {elapsed:.0f}s")
     return all_signals
 
 
 # ============================================================
-# Phase 2: Deduplicate — consecutive bars → keep rightmost
+# Phase 2: Deduplicate — consecutive bars -> keep rightmost
 # ============================================================
 def deduplicate_signals(signals):
     """
@@ -251,7 +251,7 @@ def deduplicate_signals(signals):
 
         i = j
 
-    print(f"  ✓ Deduplicated: {len(signals):,} → {len(deduped):,} signals "
+    print(f"  OK: Deduplicated: {len(signals):,} -> {len(deduped):,} signals "
           f"({len(signals) - len(deduped):,} collapsed)")
     return deduped
 
@@ -262,7 +262,7 @@ def deduplicate_signals(signals):
 def apply_exit_and_measure(signals, cache, exit_cond, direction, max_forward=MAX_FORWARD):
     """
     For each signal, run forward and check if exit condition fires.
-    Measure signal close → exit close in ADR units.
+    Measure signal close -> exit close in ADR units.
     """
     expr_name = exit_cond["expression"]
     exit_thresh = exit_cond["threshold"]
@@ -326,7 +326,7 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, max_forward=MAX
                 no_exit += 1
                 continue
 
-            # Measure distance: signal close → exit close in ADR
+            # Measure distance: signal close -> exit close in ADR
             if direction == "short":
                 move_pct = (signal_close - exit_close) / signal_close * 100
                 move_adr = (signal_close - exit_close) / adr_at_signal
@@ -365,7 +365,7 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, max_forward=MAX
         if (i + 1) % 50 == 0:
             print(f"    {i + 1}/{len(signals)} processed, {len(results)} with exit")
 
-    print(f"\n  ✓ Exit applied: {len(results)} triggered, {no_exit} no exit, {errors} errors")
+    print(f"\n  OK: Exit applied: {len(results)} triggered, {no_exit} no exit, {errors} errors")
     return results
 
 
@@ -378,7 +378,7 @@ def exclude_existing_examples(signals, example_signals):
     Match by ticker + signal bar within 5 bars of an example's signal bar.
     This ensures the vetting pile only shows NEW potential examples.
     """
-    # Build lookup: ticker → set of signal bar indices from examples
+    # Build lookup: ticker -> set of signal bar indices from examples
     example_bars = {}
     for ex in example_signals:
         ticker = ex["ticker"]
@@ -400,7 +400,7 @@ def exclude_existing_examples(signals, example_signals):
 
     removed = before - len(filtered)
     if removed > 0:
-        print(f"  ✓ Excluded {removed} signals matching existing examples")
+        print(f"  OK: Excluded {removed} signals matching existing examples")
     return filtered
 
 
@@ -409,7 +409,7 @@ def filter_and_rank(results, min_adr, direction):
     filtered = [r for r in results if r["move_adr"] >= min_adr]
     filtered.sort(key=lambda r: r["move_adr"], reverse=True)
 
-    print(f"  ✓ Filtered: {len(results)} → {len(filtered)} signals (≥ {min_adr:.1f} ADR)")
+    print(f"  OK: Filtered: {len(results)} -> {len(filtered)} signals (>= {min_adr:.1f} ADR)")
 
     if filtered:
         moves = [r["move_adr"] for r in filtered]
@@ -486,9 +486,9 @@ def deduplicate_examples(examples, cache, conditions):
             "cluster_size": len(signal_bars),
             "is_example": True,
         })
-        print(f"    {ticker}: signal {signal_date} ({len(signal_bars)} bar cluster) → entry {entry_date}")
+        print(f"    {ticker}: signal {signal_date} ({len(signal_bars)} bar cluster) -> entry {entry_date}")
 
-    print(f"  ✓ {len(results)}/{len(examples)} examples matched with signal bars")
+    print(f"  OK: {len(results)}/{len(examples)} examples matched with signal bars")
     return results
 
 
@@ -534,7 +534,7 @@ def save_results(filtered, example_signals, setup_type, args):
 
 def measure_example_exit_distances(example_signals, cache, exit_cond, direction, max_forward=MAX_FORWARD):
     """
-    For each deduplicated example signal bar, measure signal close → exit close in ADR.
+    For each deduplicated example signal bar, measure signal close -> exit close in ADR.
     Same measurement as backtest signals so the floor is comparable.
     """
     expr_name = exit_cond["expression"]
@@ -607,7 +607,7 @@ def measure_example_exit_distances(example_signals, cache, exit_cond, direction,
             ex["exit_close"] = round(exit_close, 2)
             ex["move_adr"] = round(move_adr, 2)
 
-            print(f"    {ticker}: signal {ex['signal_date']} → exit {exit_date} "
+            print(f"    {ticker}: signal {ex['signal_date']} -> exit {exit_date} "
                   f"= {move_adr:.1f} ADR ({exit_bar} bars)")
 
         except Exception as e:
@@ -619,7 +619,7 @@ def measure_example_exit_distances(example_signals, cache, exit_cond, direction,
     if valid_adrs:
         floor = min(valid_adrs)
         median = sorted(valid_adrs)[len(valid_adrs) // 2]
-        print(f"\n  ✓ Example exit distances (from deduped signal bars):")
+        print(f"\n  OK: Example exit distances (from deduped signal bars):")
         print(f"    {len(valid_adrs)}/{len(example_signals)} examples had valid exits")
         print(f"    Floor: {floor:.1f} ADR")
         print(f"    Median: {median:.1f} ADR")
@@ -675,7 +675,7 @@ def main():
     raw_signals = scan_all_signals(cache, conditions, args.workers)
 
     # Phase 4: Deduplicate backtest signals
-    print(f"\n  PHASE 4: Deduplicate (consecutive → rightmost)")
+    print(f"\n  PHASE 4: Deduplicate (consecutive -> rightmost)")
     deduped = deduplicate_signals(raw_signals)
 
     # Phase 5: Apply exit + measure
@@ -687,7 +687,7 @@ def main():
     new_signals = exclude_existing_examples(with_exit, example_signals)
 
     # Phase 7: Filter + rank
-    print(f"\n  PHASE 7: Filter + rank (≥ {min_adr:.1f} ADR)")
+    print(f"\n  PHASE 7: Filter + rank (>= {min_adr:.1f} ADR)")
     filtered = filter_and_rank(new_signals, min_adr, direction)
 
     # Save
@@ -705,8 +705,8 @@ def main():
     print(f"\n{'='*60}")
     print(f"  DONE in {total_time:.0f}s")
     print(f"  Examples: {len(example_signals)} deduped, floor {example_floor:.1f} ADR")
-    print(f"  Signals: {len(raw_signals):,} raw → {len(deduped):,} deduped → "
-          f"{len(with_exit):,} with exit → {len(filtered):,} filtered")
+    print(f"  Signals: {len(raw_signals):,} raw -> {len(deduped):,} deduped -> "
+          f"{len(with_exit):,} with exit -> {len(filtered):,} filtered")
     print(f"  Ready for chart vetting in data/signal_filter/")
     print(f"{'='*60}\n")
 
