@@ -2455,5 +2455,130 @@ async def pipeline_stop():
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# VETTING — Signal filter results + chart vetting workflow
+# ---------------------------------------------------------------------------
+
+VETTING_DATA_DIR = Path("data")  # repo-local data dir (signal_filter output lives here)
+
+@app.get("/api/vetting/{setup_type}/signals")
+async def get_vetting_signals(setup_type: str):
+    """Load filtered signals for chart vetting. Ranked by move_adr descending."""
+    path = VETTING_DATA_DIR / "signal_filter" / f"filtered_{setup_type}.json"
+    if not path.exists():
+        raise HTTPException(404, f"No filtered signals for {setup_type}. Run signal_filter.py first.")
+    with open(path) as f:
+        data = json.load(f)
+    # Load existing vetting decisions
+    vetting_path = VETTING_DATA_DIR / "vetting" / f"vetting_{setup_type}.json"
+    decisions = {}
+    if vetting_path.exists():
+        with open(vetting_path) as f:
+            decisions = json.load(f)
+    signals = data.get("signals", [])
+    # Attach existing decisions
+    for sig in signals:
+        key = f"{sig['ticker']}_{sig['date']}"
+        sig["verdict"] = decisions.get(key, {}).get("verdict")
+        sig["entry_date"] = decisions.get(key, {}).get("entry_date")
+    return {
+        "setup_type": setup_type,
+        "n_signals": len(signals),
+        "exit_condition": data.get("exit_condition", ""),
+        "min_adr_threshold": data.get("min_adr_threshold", 0),
+        "signals": signals,
+    }
+
+
+@app.get("/api/vetting/{setup_type}/ohlcv/{ticker}")
+async def get_vetting_ohlcv(setup_type: str, ticker: str,
+                             signal_date: str = Query(...),
+                             lookback: int = Query(120),
+                             forward: int = Query(80)):
+    """Fetch OHLCV centered on signal date for chart vetting."""
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT date, open, high, low, close, volume FROM universe_ohlcv "
+            "WHERE ticker=? ORDER BY date",
+            (ticker,)
+        ).fetchall()
+    if not rows:
+        raise HTTPException(404, f"No OHLCV for {ticker}")
+    all_data = [dict(r) for r in rows]
+    dates = [r["date"] for r in all_data]
+    try:
+        sig_idx = dates.index(signal_date)
+    except ValueError:
+        # Find nearest date
+        sig_idx = min(range(len(dates)), key=lambda i: abs(
+            (datetime.strptime(dates[i], "%Y-%m-%d") - datetime.strptime(signal_date, "%Y-%m-%d")).days))
+    start = max(0, sig_idx - lookback)
+    end = min(len(all_data), sig_idx + forward)
+    return {"ticker": ticker, "signal_date": signal_date, "data": all_data[start:end]}
+
+
+class VettingDecision(BaseModel):
+    ticker: str
+    signal_date: str
+    verdict: str  # "yes", "maybe", "no"
+    entry_date: str = None  # required for "yes"
+
+
+@app.post("/api/vetting/{setup_type}/decide")
+async def save_vetting_decision(setup_type: str, req: VettingDecision):
+    """Save a vetting decision for a signal."""
+    if req.verdict not in ("yes", "maybe", "no"):
+        raise HTTPException(400, "verdict must be yes/maybe/no")
+    if req.verdict == "yes" and not req.entry_date:
+        raise HTTPException(400, "entry_date required for yes verdict")
+
+    vetting_dir = VETTING_DATA_DIR / "vetting"
+    vetting_dir.mkdir(exist_ok=True)
+    vetting_path = vetting_dir / f"vetting_{setup_type}.json"
+
+    decisions = {}
+    if vetting_path.exists():
+        with open(vetting_path) as f:
+            decisions = json.load(f)
+
+    key = f"{req.ticker}_{req.signal_date}"
+    decisions[key] = {
+        "ticker": req.ticker,
+        "signal_date": req.signal_date,
+        "verdict": req.verdict,
+        "entry_date": req.entry_date,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    with open(vetting_path, "w") as f:
+        json.dump(decisions, f, indent=2)
+
+    # If yes, also create the example
+    result = {"status": "saved", "verdict": req.verdict}
+    if req.verdict == "yes":
+        try:
+            ohlcv_df = fetch_ohlcv(req.ticker, req.entry_date)
+            if ohlcv_df is not None:
+                with get_db() as db:
+                    existing = db.execute(
+                        "SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                        (setup_type, req.ticker, req.entry_date)
+                    ).fetchone()
+                    if not existing:
+                        eid = db.execute(
+                            "INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
+                            (setup_type, req.ticker, req.entry_date, req.entry_date)
+                        ).lastrowid
+                        store_ohlcv(db, eid, ohlcv_df)
+                        result["example_id"] = eid
+                        result["message"] = f"Example created: {req.ticker} {req.entry_date}"
+                    else:
+                        result["message"] = f"Example already exists: {req.ticker} {req.entry_date}"
+        except Exception as e:
+            result["example_error"] = str(e)
+
+    return result
+
+
 # Serve frontend (MUST be last - catches all routes)
 app.mount("/", StaticFiles(directory="app", html=True), name="frontend")

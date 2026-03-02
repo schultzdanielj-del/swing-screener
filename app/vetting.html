@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ScanPerfect — Vetting</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0a0e17;
+      --bg-secondary: #111827;
+      --bg-card: #1a2035;
+      --border: #2a3550;
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent-blue: #3b82f6;
+      --accent-green: #26A69A;
+      --accent-red: #EF5350;
+      --accent-yellow: #f59e0b;
+      --font-body: 'Plus Jakarta Sans', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: var(--bg-primary); color: var(--text-primary); font-family: var(--font-body); }
+    .top-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 20px; background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+    }
+    .top-bar h1 { font-size: 16px; font-weight: 700; }
+    .top-bar .stats { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); display: flex; gap: 20px; }
+    .stat-val { color: var(--text-primary); font-weight: 600; }
+    .main { display: flex; height: calc(100vh - 45px); }
+    .sidebar {
+      width: 280px; min-width: 280px; background: var(--bg-secondary);
+      border-right: 1px solid var(--border); overflow-y: auto;
+    }
+    .sidebar-item {
+      padding: 8px 14px; cursor: pointer; border-bottom: 1px solid rgba(42,53,80,0.3);
+      transition: background 0.1s;
+    }
+    .sidebar-item:hover { background: rgba(59,130,246,0.08); }
+    .sidebar-item.active { background: rgba(59,130,246,0.15); border-left: 3px solid var(--accent-blue); }
+    .sidebar-item.verdict-yes { border-left: 3px solid var(--accent-green); }
+    .sidebar-item.verdict-maybe { border-left: 3px solid var(--accent-yellow); }
+    .sidebar-item.verdict-no { border-left: 3px solid var(--accent-red); opacity: 0.5; }
+    .sidebar-ticker { font-family: var(--font-mono); font-size: 13px; font-weight: 700; }
+    .sidebar-date { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+    .sidebar-adr { font-family: var(--font-mono); font-size: 11px; font-weight: 600; }
+    .sidebar-adr.positive { color: var(--accent-green); }
+    .chart-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .chart-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 16px; background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+    }
+    .chart-info { display: flex; align-items: center; gap: 16px; }
+    .chart-ticker { font-size: 20px; font-weight: 700; font-family: var(--font-mono); }
+    .chart-meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
+    .verdict-buttons { display: flex; gap: 8px; }
+    .verdict-btn {
+      padding: 8px 20px; border: 2px solid; border-radius: 6px; font-family: var(--font-mono);
+      font-size: 13px; font-weight: 700; cursor: pointer; background: transparent;
+      transition: all 0.15s;
+    }
+    .verdict-btn:hover { transform: translateY(-1px); }
+    .verdict-btn.yes { color: var(--accent-green); border-color: var(--accent-green); }
+    .verdict-btn.yes:hover, .verdict-btn.yes.selected { background: var(--accent-green); color: #000; }
+    .verdict-btn.maybe { color: var(--accent-yellow); border-color: var(--accent-yellow); }
+    .verdict-btn.maybe:hover, .verdict-btn.maybe.selected { background: var(--accent-yellow); color: #000; }
+    .verdict-btn.no { color: var(--accent-red); border-color: var(--accent-red); }
+    .verdict-btn.no:hover, .verdict-btn.no.selected { background: var(--accent-red); color: #fff; }
+    .chart-canvas-wrap { flex: 1; position: relative; }
+    .keyboard-hint {
+      position: fixed; bottom: 12px; right: 16px; font-family: var(--font-mono);
+      font-size: 10px; color: var(--text-muted); background: var(--bg-card);
+      padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border);
+    }
+    kbd { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; font-size: 10px; }
+    .filter-bar {
+      display: flex; gap: 8px; align-items: center; padding: 6px 14px;
+      background: var(--bg-card); border-bottom: 1px solid var(--border);
+      font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
+    }
+    .filter-btn {
+      padding: 3px 10px; border-radius: 4px; border: 1px solid var(--border);
+      background: transparent; color: var(--text-secondary); cursor: pointer;
+      font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+    }
+    .filter-btn.active { background: var(--accent-blue); color: #fff; border-color: var(--accent-blue); }
+    .loading { display: flex; align-items: center; justify-content: center; height: 100vh; color: var(--text-muted); font-size: 14px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+const SETUP = new URLSearchParams(window.location.search).get('setup') || 'dtss';
+
+// ── MA helpers ──
+function ema(data, period) {
+  const k = 2 / (period + 1);
+  const result = new Array(data.length).fill(null);
+  let prev = null;
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] == null) continue;
+    if (prev == null) { prev = data[i]; result[i] = prev; }
+    else { prev = data[i] * k + prev * (1 - k); result[i] = prev; }
+  }
+  return result;
+}
+function sma(data, period) {
+  const result = new Array(data.length).fill(null);
+  for (let i = period - 1; i < data.length; i++) {
+    let sum = 0, count = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      if (data[j] != null) { sum += data[j]; count++; }
+    }
+    if (count === period) result[i] = sum / count;
+  }
+  return result;
+}
+
+// ── Candlestick Chart ──
+function VettingChart({ candles, ticker, signalDate, selectedDate, onSelectDate, exitDate }) {
+  const containerRef = useRef(null);
+  const canvasRef = useRef(null);
+  const volCanvasRef = useRef(null);
+  const [dims, setDims] = useState({ w: 900, h: 520 });
+  const [hoverIdx, setHoverIdx] = useState(null);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const VISIBLE = 140;
+
+  const UP = '#26A69A', DOWN = '#EF5350', BG = '#0a0e17', GRID = 'rgba(42,53,80,0.4)';
+  const EMA8 = '#5dade2', EMA21 = '#d4a853', SMA50 = '#f5c542', SMA200 = '#e74c3c';
+  const SIGNAL_COLOR = '#f59e0b', SELECTED_COLOR = '#3b82f6', EXIT_COLOR = '#a855f7';
+
+  useEffect(() => {
+    function resize() {
+      if (containerRef.current) {
+        const w = containerRef.current.clientWidth;
+        setDims({ w, h: Math.max(400, containerRef.current.clientHeight) });
+      }
+    }
+    resize();
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+
+  // Compute MAs
+  const closes = candles.map(c => c.close);
+  const ema8 = ema(closes, 8);
+  const ema21 = ema(closes, 21);
+  const sma50v = sma(closes, 50);
+  const sma200v = sma(closes, 200);
+  const vols = candles.map(c => c.volume || 0);
+  const volAvg = sma(vols, 20);
+  const enriched = candles.map((c, i) => ({
+    ...c, ema8: ema8[i], ema21: ema21[i], sma50: sma50v[i], sma200: sma200v[i], volAvg20: volAvg[i]
+  }));
+
+  const maxOffset = Math.max(0, enriched.length - VISIBLE);
+  const offset = Math.min(Math.max(0, scrollOffset), maxOffset);
+  const visible = enriched.slice(offset, offset + VISIBLE);
+
+  // Auto-scroll to signal bar on load
+  useEffect(() => {
+    const sigIdx = enriched.findIndex(c => c.date === signalDate);
+    if (sigIdx >= 0) {
+      setScrollOffset(Math.max(0, sigIdx - Math.floor(VISIBLE * 0.35)));
+    } else {
+      setScrollOffset(maxOffset);
+    }
+  }, [candles, signalDate]);
+
+  const MARGIN = { top: 32, right: 64, bottom: 0 };
+  const VOL_H = 70;
+  const CHART_H = dims.h - MARGIN.top - VOL_H;
+  const CHART_W = dims.w - MARGIN.right;
+  const candleW = CHART_W / VISIBLE;
+  const bodyW = Math.max(1, candleW * 0.6);
+
+  const prices = visible.flatMap(c => [c.high, c.low]);
+  const pMin = Math.min(...prices) * 0.995;
+  const pMax = Math.max(...prices) * 1.005;
+  const priceY = p => MARGIN.top + CHART_H * (1 - (p - pMin) / (pMax - pMin));
+  const candleX = i => i * candleW + candleW / 2;
+  const volMax = Math.max(...visible.map(c => c.volume || 0)) || 1;
+
+  // Draw price chart
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !visible.length) return;
+    canvas.width = dims.w; canvas.height = dims.h - VOL_H;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = BG; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Grid
+    ctx.strokeStyle = GRID; ctx.lineWidth = 0.5;
+    for (let i = 0; i <= 6; i++) {
+      const y = MARGIN.top + (CHART_H / 6) * i;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CHART_W, y); ctx.stroke();
+      const price = pMax - ((pMax - pMin) / 6) * i;
+      ctx.fillStyle = '#64748b'; ctx.font = '10px JetBrains Mono'; ctx.textAlign = 'left';
+      ctx.fillText(price.toFixed(2), CHART_W + 6, y + 3);
+    }
+
+    // MAs
+    function drawMA(key, color) {
+      ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.beginPath();
+      let started = false;
+      visible.forEach((c, i) => {
+        if (c[key] == null) return;
+        const x = candleX(i), y = priceY(c[key]);
+        if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+    drawMA('ema8', EMA8); drawMA('ema21', EMA21); drawMA('sma50', SMA50); drawMA('sma200', SMA200);
+
+    // Candles
+    visible.forEach((c, i) => {
+      const x = candleX(i);
+      const isUp = c.close >= c.open;
+      const color = isUp ? UP : DOWN;
+      const isSig = c.date === signalDate;
+      const isSel = c.date === selectedDate;
+      const isExit = c.date === exitDate;
+
+      // Signal bar highlight (yellow)
+      if (isSig) {
+        ctx.fillStyle = 'rgba(245,158,11,0.1)';
+        ctx.fillRect(x - candleW / 2, MARGIN.top, candleW, CHART_H);
+        ctx.strokeStyle = SIGNAL_COLOR; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(x, MARGIN.top); ctx.lineTo(x, MARGIN.top + CHART_H); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Selected (entry) highlight (blue)
+      if (isSel && !isSig) {
+        ctx.fillStyle = 'rgba(59,130,246,0.12)';
+        ctx.fillRect(x - candleW / 2, MARGIN.top, candleW, CHART_H);
+        ctx.strokeStyle = SELECTED_COLOR; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(x, MARGIN.top); ctx.lineTo(x, MARGIN.top + CHART_H); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Exit highlight (purple)
+      if (isExit) {
+        ctx.strokeStyle = EXIT_COLOR; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(x, MARGIN.top); ctx.lineTo(x, MARGIN.top + CHART_H); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Wick
+      ctx.strokeStyle = color; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, priceY(c.high)); ctx.lineTo(x, priceY(c.low)); ctx.stroke();
+
+      // Body
+      const bTop = priceY(Math.max(c.open, c.close));
+      const bBot = priceY(Math.min(c.open, c.close));
+      const bH = Math.max(1, bBot - bTop);
+      if (isUp) { ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.strokeRect(x - bodyW/2, bTop, bodyW, bH); }
+      else { ctx.fillStyle = color; ctx.fillRect(x - bodyW/2, bTop, bodyW, bH); }
+
+      // Labels
+      if (isSig) {
+        ctx.fillStyle = SIGNAL_COLOR; ctx.font = 'bold 9px JetBrains Mono'; ctx.textAlign = 'center';
+        ctx.fillText('SIGNAL', x, MARGIN.top + CHART_H - 4);
+      }
+      if (isSel && !isSig) {
+        ctx.fillStyle = SELECTED_COLOR; ctx.beginPath(); ctx.arc(x, priceY(c.low) + 12, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.font = 'bold 9px JetBrains Mono'; ctx.textAlign = 'center';
+        ctx.fillText('ENTRY', x, priceY(c.low) + 24);
+      }
+      if (isExit) {
+        ctx.fillStyle = EXIT_COLOR; ctx.font = 'bold 9px JetBrains Mono'; ctx.textAlign = 'center';
+        ctx.fillText('EXIT', x, MARGIN.top + 14);
+      }
+    });
+
+    // Ticker watermark
+    ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.font = 'bold 52px Plus Jakarta Sans';
+    ctx.textAlign = 'right'; ctx.fillText(ticker, CHART_W - 12, MARGIN.top + 56);
+
+    // Hover
+    if (hoverIdx != null && visible[hoverIdx]) {
+      const c = visible[hoverIdx], x = candleX(hoverIdx);
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 0.5; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(x, MARGIN.top); ctx.lineTo(x, MARGIN.top + CHART_H); ctx.stroke();
+      ctx.setLineDash([]);
+      const isUp = c.close >= c.open;
+      ctx.fillStyle = isUp ? UP : DOWN; ctx.font = '11px JetBrains Mono'; ctx.textAlign = 'left';
+      ctx.fillText(`${c.date}  O:${c.open?.toFixed(2)} H:${c.high?.toFixed(2)} L:${c.low?.toFixed(2)} C:${c.close?.toFixed(2)}  V:${(c.volume/1e6)?.toFixed(1)}M`, 8, 16);
+    }
+  }, [visible, dims, hoverIdx, selectedDate, signalDate, exitDate]);
+
+  // Volume
+  useEffect(() => {
+    const canvas = volCanvasRef.current;
+    if (!canvas || !visible.length) return;
+    canvas.width = dims.w; canvas.height = VOL_H;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = BG; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = GRID; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(CHART_W, 0); ctx.stroke();
+
+    visible.forEach((c, i) => {
+      const x = candleX(i), isUp = c.close >= c.open;
+      const barH = ((c.volume || 0) / volMax) * (VOL_H - 8);
+      ctx.fillStyle = isUp ? 'rgba(38,166,154,0.35)' : 'rgba(239,83,80,0.35)';
+      ctx.fillRect(x - bodyW/2, VOL_H - barH, bodyW, barH);
+    });
+    // Vol avg
+    ctx.strokeStyle = 'rgba(245,158,11,0.5)'; ctx.lineWidth = 1; ctx.beginPath();
+    let started = false;
+    visible.forEach((c, i) => {
+      if (c.volAvg20 == null) return;
+      const x = candleX(i), y = VOL_H - (c.volAvg20 / volMax) * (VOL_H - 8);
+      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    // Date labels
+    ctx.fillStyle = '#64748b'; ctx.font = '9px JetBrains Mono'; ctx.textAlign = 'center';
+    const step = Math.max(1, Math.floor(VISIBLE / 8));
+    visible.forEach((c, i) => {
+      if (i % step === 0) {
+        const p = c.date.split('-');
+        ctx.fillText(p[1] + '/' + p[2], candleX(i), VOL_H - 2);
+      }
+    });
+  }, [visible, dims, selectedDate]);
+
+  function getIdx(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const idx = Math.floor(mx / candleW);
+    return idx >= 0 && idx < visible.length ? idx : null;
+  }
+
+  return (
+    <div ref={containerRef} style={{ width: '100%', height: '100%' }}>
+      <div style={{ display: 'flex', gap: 16, padding: '6px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)' }}>
+        {[{l:'EMA 8',c:EMA8},{l:'EMA 21',c:EMA21},{l:'SMA 50',c:SMA50},{l:'SMA 200',c:SMA200}].map(m => (
+          <span key={m.l} style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: m.c, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 12, height: 2, background: m.c, display: 'inline-block' }}></span>{m.l}
+          </span>
+        ))}
+        <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: SIGNAL_COLOR, marginLeft: 12 }}>◆ signal</span>
+        <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: SELECTED_COLOR }}>◆ entry</span>
+        <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: EXIT_COLOR }}>◆ exit</span>
+        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+          scroll to pan · click to set entry
+        </span>
+      </div>
+      <canvas ref={canvasRef} style={{ display: 'block', cursor: 'crosshair' }}
+        onMouseMove={e => setHoverIdx(getIdx(e, canvasRef.current))}
+        onMouseLeave={() => setHoverIdx(null)}
+        onClick={e => { const idx = getIdx(e, canvasRef.current); if (idx != null && visible[idx]) onSelectDate(visible[idx].date); }}
+        onWheel={e => { e.preventDefault(); setScrollOffset(p => Math.min(Math.max(0, p + (e.deltaY > 0 ? 5 : -5)), maxOffset)); }}
+      />
+      <canvas ref={volCanvasRef} style={{ display: 'block' }} />
+    </div>
+  );
+}
+
+// ── Main App ──
+function App() {
+  const [signals, setSignals] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [candles, setCandles] = useState([]);
+  const [chartLoading, setChartLoading] = useState(false);
+  const [selectedEntry, setSelectedEntry] = useState(null);
+  const [filter, setFilter] = useState('all'); // all, unvetted, yes, maybe, no
+  const [saving, setSaving] = useState(false);
+
+  // Load signals
+  useEffect(() => {
+    fetch(`/api/vetting/${SETUP}/signals`)
+      .then(r => r.json())
+      .then(d => { setSignals(d.signals || []); setLoading(false); })
+      .catch(e => { console.error(e); setLoading(false); });
+  }, []);
+
+  // Filtered list
+  const filtered = signals.filter(s => {
+    if (filter === 'all') return true;
+    if (filter === 'unvetted') return !s.verdict;
+    return s.verdict === filter;
+  });
+
+  const current = filtered[currentIdx] || null;
+
+  // Load chart when current changes
+  useEffect(() => {
+    if (!current) { setCandles([]); return; }
+    setChartLoading(true);
+    setSelectedEntry(current.entry_date || null);
+    fetch(`/api/vetting/${SETUP}/ohlcv/${current.ticker}?signal_date=${current.date}&lookback=120&forward=80`)
+      .then(r => r.json())
+      .then(d => { setCandles(d.data || []); setChartLoading(false); })
+      .catch(() => setChartLoading(false));
+  }, [current?.ticker, current?.date]);
+
+  // Save verdict
+  function saveVerdict(verdict) {
+    if (!current) return;
+    if (verdict === 'yes' && !selectedEntry) {
+      alert('Click a candle to set the entry date first');
+      return;
+    }
+    setSaving(true);
+    fetch(`/api/vetting/${SETUP}/decide`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ticker: current.ticker,
+        signal_date: current.date,
+        verdict,
+        entry_date: verdict === 'yes' ? selectedEntry : null,
+      }),
+    })
+    .then(r => r.json())
+    .then(d => {
+      // Update local state
+      const key = `${current.ticker}_${current.date}`;
+      setSignals(prev => prev.map(s =>
+        `${s.ticker}_${s.date}` === key
+          ? { ...s, verdict, entry_date: verdict === 'yes' ? selectedEntry : null }
+          : s
+      ));
+      setSaving(false);
+      // Auto-advance to next unvetted
+      const nextIdx = filtered.findIndex((s, i) => i > currentIdx && !s.verdict);
+      if (nextIdx >= 0) setCurrentIdx(nextIdx);
+      else if (currentIdx < filtered.length - 1) setCurrentIdx(currentIdx + 1);
+    })
+    .catch(() => setSaving(false));
+  }
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handler(e) {
+      if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        setCurrentIdx(i => Math.min(i + 1, filtered.length - 1));
+      }
+      if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        setCurrentIdx(i => Math.max(i - 1, 0));
+      }
+      if (e.key === '1' || e.key === 'y') saveVerdict('yes');
+      if (e.key === '2' || e.key === 'm') saveVerdict('maybe');
+      if (e.key === '3' || e.key === 'n') saveVerdict('no');
+    }
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [current, selectedEntry, currentIdx, filtered.length]);
+
+  // Counts
+  const counts = { yes: 0, maybe: 0, no: 0, unvetted: 0 };
+  signals.forEach(s => { if (s.verdict) counts[s.verdict]++; else counts.unvetted++; });
+
+  if (loading) return <div className="loading">Loading signals...</div>;
+
+  return (
+    <div>
+      <div className="top-bar">
+        <h1>⚡ Vetting — {SETUP.toUpperCase()}</h1>
+        <div className="stats">
+          <span><span className="stat-val">{signals.length}</span> signals</span>
+          <span style={{color:'var(--accent-green)'}}><span className="stat-val">{counts.yes}</span> yes</span>
+          <span style={{color:'var(--accent-yellow)'}}><span className="stat-val">{counts.maybe}</span> maybe</span>
+          <span style={{color:'var(--accent-red)'}}><span className="stat-val">{counts.no}</span> no</span>
+          <span><span className="stat-val">{counts.unvetted}</span> left</span>
+        </div>
+      </div>
+      <div className="main">
+        <div className="sidebar">
+          <div className="filter-bar">
+            {['all','unvetted','yes','maybe','no'].map(f => (
+              <button key={f} className={`filter-btn ${filter === f ? 'active' : ''}`}
+                onClick={() => { setFilter(f); setCurrentIdx(0); }}>
+                {f} {f === 'all' ? signals.length : f === 'unvetted' ? counts.unvetted : counts[f]}
+              </button>
+            ))}
+          </div>
+          {filtered.map((sig, i) => (
+            <div key={`${sig.ticker}_${sig.date}`}
+              className={`sidebar-item ${i === currentIdx ? 'active' : ''} ${sig.verdict ? 'verdict-' + sig.verdict : ''}`}
+              onClick={() => setCurrentIdx(i)}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span className="sidebar-ticker">{sig.ticker}</span>
+                <span className={`sidebar-adr positive`}>+{sig.move_adr?.toFixed(1)} ADR</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                <span className="sidebar-date">{sig.date}</span>
+                <span className="sidebar-date">
+                  {sig.exit_bar}d · {sig.capture_eff ? (sig.capture_eff * 100).toFixed(0) + '% eff' : ''}
+                  {sig.verdict && <span style={{ marginLeft: 6, textTransform: 'uppercase', fontWeight: 700,
+                    color: sig.verdict === 'yes' ? 'var(--accent-green)' : sig.verdict === 'maybe' ? 'var(--accent-yellow)' : 'var(--accent-red)' }}>
+                    {sig.verdict}
+                  </span>}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="chart-area">
+          {current ? (
+            <>
+              <div className="chart-header">
+                <div className="chart-info">
+                  <span className="chart-ticker">{current.ticker}</span>
+                  <span className="chart-meta">
+                    Signal: {current.date} · Exit: {current.exit_date} ({current.exit_bar}d)
+                    · Move: +{current.move_adr?.toFixed(1)} ADR ({current.move_pct?.toFixed(1)}%)
+                    · MFE: {current.mfe_adr?.toFixed(1)} ADR
+                    · Eff: {current.capture_eff ? (current.capture_eff * 100).toFixed(0) : '?'}%
+                  </span>
+                </div>
+                <div className="verdict-buttons">
+                  {selectedEntry && (
+                    <span className="chart-meta" style={{ marginRight: 8, color: 'var(--accent-blue)' }}>
+                      Entry: {selectedEntry}
+                    </span>
+                  )}
+                  <button className={`verdict-btn yes ${current.verdict === 'yes' ? 'selected' : ''}`}
+                    onClick={() => saveVerdict('yes')} disabled={saving}>
+                    YES (1)
+                  </button>
+                  <button className={`verdict-btn maybe ${current.verdict === 'maybe' ? 'selected' : ''}`}
+                    onClick={() => saveVerdict('maybe')} disabled={saving}>
+                    MAYBE (2)
+                  </button>
+                  <button className={`verdict-btn no ${current.verdict === 'no' ? 'selected' : ''}`}
+                    onClick={() => saveVerdict('no')} disabled={saving}>
+                    NO (3)
+                  </button>
+                </div>
+              </div>
+              <div className="chart-canvas-wrap">
+                {chartLoading ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
+                    Loading chart...
+                  </div>
+                ) : (
+                  <VettingChart
+                    candles={candles}
+                    ticker={current.ticker}
+                    signalDate={current.date}
+                    selectedDate={selectedEntry}
+                    onSelectDate={setSelectedEntry}
+                    exitDate={current.exit_date}
+                  />
+                )}
+              </div>
+            </>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
+              {filtered.length === 0 ? 'No signals match filter' : 'Select a signal'}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="keyboard-hint">
+        <kbd>↑</kbd><kbd>↓</kbd> navigate · <kbd>1</kbd> yes · <kbd>2</kbd> maybe · <kbd>3</kbd> no · click candle = entry
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
