@@ -366,8 +366,7 @@ function StepPage({ stepId, setup }) {
   }
 
   const cmds = {
-    signal_grind: `pyramid_grinder.py → signal_exit_grinder.py --setup ${setup}`,
-    signal_filter: `signal_filter.py --setup ${setup}`,
+    signal_brute: `pyramid_grinder.py → signal_exit_grinder.py --setup ${setup}`,
   };
 
   return (
@@ -494,7 +493,7 @@ function ExamplesPage({ setup }) {
     <div>
       <div className="stat-row" style={{marginBottom:16}}>
         <div className="stat-box">
-          <div className="stat-label">Examples</div>
+          <div className="stat-label">Optimal Samples</div>
           <div className="stat-val green">{examples.length}</div>
         </div>
         <div className="stat-box">
@@ -517,7 +516,7 @@ function ExamplesPage({ setup }) {
 
       <div style={{display:'flex',gap:8,marginBottom:16}}>
         <button className={`btn ${!showRejected?'btn-go':''}`} onClick={()=>setShowRejected(false)}>
-          Examples ({examples.length})
+          Optimal Samples ({examples.length})
         </button>
         <button className={`btn ${showRejected?'btn-stop':''}`} onClick={()=>setShowRejected(true)}>
           Rejected ({rejected.length})
@@ -749,7 +748,7 @@ function VettingPage({ setup }) {
   signals.forEach(s=>{if(s.verdict)counts[s.verdict]++;else counts.unvetted++;});
 
   if(loading) return <div className="empty-state"><div className="icon">⏳</div>Loading signals...</div>;
-  if(signals.length===0) return <div className="empty-state"><div className="icon">∅</div>No filtered signals. Run Signal Filter first.</div>;
+  if(signals.length===0) return <div className="empty-state"><div className="icon">∅</div>No filtered signals. Click "Reload Samples" to run signal filter.</div>;
 
   return (
     <div className="vet-layout">
@@ -763,7 +762,7 @@ function VettingPage({ setup }) {
         {(counts.yes > 0 || counts.no > 0) && counts.unvetted === 0 && (
           <div style={{padding:'8px 14px',borderBottom:'1px solid var(--border)',background:'rgba(52,211,153,0.03)'}}>
             <button className="btn btn-go" style={{width:'100%',fontSize:10}}
-              onClick={()=>alert('AI Audit will review your ' + counts.yes + ' YES and ' + counts.no + ' NO picks against existing examples using claude -p. Coming soon.')}>
+              onClick={()=>alert('AI Audit will review your ' + counts.yes + ' YES and ' + counts.no + ' NO picks against existing optimal samples using claude -p. Coming soon.')}>
               ✓ SUBMIT FOR AUDIT ({counts.yes} yes, {counts.no} no)
             </button>
           </div>
@@ -836,13 +835,13 @@ function ExitManagePage({ setup }) {
     load(); const id = setInterval(load, 5000); return () => clearInterval(id);
   }, []);
 
-  const step = pipe?.steps?.find(s => s.id === 'exit_manage');
+  const step = pipe?.steps?.find(s => s.id === 'mfe_capture');
   const st = step?.state?.status || 'pending';
   const isRun = ['running','claimed','queued'].includes(st);
 
   useEffect(() => {
     if (!isRun) return;
-    const poll = () => fetch(`${API}/api/pipeline/logs/exit_manage?after=${logs.length}`).then(r=>r.json())
+    const poll = () => fetch(`${API}/api/pipeline/logs/mfe_capture?after=${logs.length}`).then(r=>r.json())
       .then(d => { if(d.lines?.length) setLogs(p=>[...p,...d.lines]); }).catch(()=>{});
     poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
   }, [isRun]);
@@ -850,7 +849,7 @@ function ExitManagePage({ setup }) {
   useEffect(() => { if(logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
 
   function doRun() {
-    fetch(`${API}/api/pipeline/run/exit_manage`, {method:'POST'}).then(r=>r.json()).then(d => {
+    fetch(`${API}/api/pipeline/run/mfe_capture`, {method:'POST'}).then(r=>r.json()).then(d => {
       if(d.error) alert(d.error); else setLogs([]);
     });
   }
@@ -893,7 +892,7 @@ function ExitManagePage({ setup }) {
           ? <button className="btn btn-stop" onClick={()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'})}>■ STOP</button>
           : <button className="btn btn-go" onClick={doRun} disabled={pipe?.agent_status!=='online'}>▶ RUN {mode.toUpperCase()}</button>
         }
-        <button className="btn" onClick={()=>fetch(`${API}/api/pipeline/reset/exit_manage`,{method:'POST'})}>↻ Reset</button>
+        <button className="btn" onClick={()=>fetch(`${API}/api/pipeline/reset/mfe_capture`,{method:'POST'})}>↻ Reset</button>
       </div>
       {pipe?.agent_status !== 'online' && (
         <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
@@ -933,14 +932,14 @@ function SetupHomePage({ setup }) {
     fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
   }, [setup]);
 
-  const vetting = pipe?.steps?.find(s=>s.id==='vetting');
+  const vetting = pipe?.steps?.find(s=>s.id==='sample_expansion');
   const vs = vetting?.state?.vetting_stats;
 
   return (
     <div>
       <div className="stat-row" style={{marginBottom:16}}>
         <div className="stat-box">
-          <div className="stat-label">Examples</div>
+          <div className="stat-label">Optimal Samples</div>
           <div className="stat-val green">{examples.length}</div>
         </div>
         <div className="stat-box">
@@ -974,7 +973,7 @@ function SetupHomePage({ setup }) {
       </div>
 
       <div className="card">
-        <div className="card-title">Examples ({examples.length})</div>
+        <div className="card-title">Optimal Samples ({examples.length})</div>
         <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-dim)',lineHeight:1.8}}>
           {examples.map(e => `${e.ticker} ${e.entryDate}`).join(' · ')}
         </div>
@@ -1007,22 +1006,20 @@ function App() {
 
   const setupSteps = [
     { id:'home', label:'Home', icon:'◉' },
-    { id:'examples', label:'Examples', num:'1' },
-    { id:'signal_grind', label:'Signal Grinder', num:'2' },
-    { id:'signal_filter', label:'Signal Filter', num:'3' },
-    { id:'vetting', label:'Chart Vetting', num:'4' },
-    { id:'exit_manage', label:'Exit Grinder', num:'5' },
-    { id:'market_grind', label:'Market Grinder', num:'6' },
+    { id:'optimal_samples', label:'Optimal Samples', num:'1' },
+    { id:'signal_brute', label:'Signal Brute Forcing', num:'2' },
+    { id:'sample_expansion', label:'Sample Expansion', num:'3' },
+    { id:'mfe_capture', label:'MFE Capture', num:'4' },
+    { id:'market_grind', label:'Market Grinder', num:'5' },
   ];
 
   const titles = {
     nightly: 'Nightly Refresh',
     home: `${setup.toUpperCase()} — Overview`,
-    examples: `${setup.toUpperCase()} — Examples`,
-    signal_grind: `${setup.toUpperCase()} — Signal Grinder`,
-    signal_filter: `${setup.toUpperCase()} — Signal Filter`,
-    vetting: `${setup.toUpperCase()} — Chart Vetting`,
-    exit_manage: `${setup.toUpperCase()} — Exit Grinder`,
+    optimal_samples: `${setup.toUpperCase()} — Optimal Samples`,
+    signal_brute: `${setup.toUpperCase()} — Signal Brute Forcing`,
+    sample_expansion: `${setup.toUpperCase()} — Sample Expansion`,
+    mfe_capture: `${setup.toUpperCase()} — MFE Capture`,
     market_grind: `${setup.toUpperCase()} — Market Grinder`,
     watchlist: 'Daily Watchlist',
   };
@@ -1074,11 +1071,10 @@ function App() {
           {section === 'nightly' && <NightlyPage />}
           {section === 'watchlist' && <WatchlistPage />}
           {section === 'setup' && tab === 'home' && <SetupHomePage setup={setup} />}
-          {section === 'setup' && tab === 'examples' && <ExamplesPage setup={setup} />}
-          {section === 'setup' && tab === 'signal_grind' && <StepPage stepId="signal_grind" setup={setup} />}
-          {section === 'setup' && tab === 'signal_filter' && <StepPage stepId="signal_filter" setup={setup} />}
-          {section === 'setup' && tab === 'vetting' && <VettingPage setup={setup} />}
-          {section === 'setup' && tab === 'exit_manage' && <ExitManagePage setup={setup} />}
+          {section === 'setup' && tab === 'optimal_samples' && <ExamplesPage setup={setup} />}
+          {section === 'setup' && tab === 'signal_brute' && <StepPage stepId="signal_brute" setup={setup} />}
+          {section === 'setup' && tab === 'sample_expansion' && <VettingPage setup={setup} />}
+          {section === 'setup' && tab === 'mfe_capture' && <ExitManagePage setup={setup} />}
           {section === 'setup' && tab === 'market_grind' && <div className="empty-state"><div className="icon">🌍</div>Market Grinder — coming soon</div>}
         </div>
       </div>
