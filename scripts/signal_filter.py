@@ -790,9 +790,13 @@ def main():
     example_floor = measure_example_exit_distances(
         example_signals, cache, exit_cond, direction, expr_cache, args.max_forward)
 
-    min_adr = args.min_adr if args.min_adr is not None else example_floor
+    if args.min_adr is not None:
+        min_adr = args.min_adr
+    else:
+        # 10% wiggle below example floor — don't cut right at the dot
+        min_adr = round(example_floor * 0.9, 1)
     print(f"\n  ADR floor from examples: {example_floor:.1f}")
-    print(f"  Using filter threshold: {min_adr:.1f} ADR")
+    print(f"  Using filter threshold: {min_adr:.1f} ADR (90% of floor)")
 
     # Phase 3: Scan all backtest signals
     print(f"\n  PHASE 3: Scan all signals")
