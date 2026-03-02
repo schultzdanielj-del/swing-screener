@@ -156,26 +156,53 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 ### Task 3.7: Multi-Stage Exit Grinder ✅ COMPLETE (2026-03-01)
 **Result:** Multi-stage did not beat single-stage for DTSS. Single-stage winner holds: `bars_since_reclaim_xavgc8 >= 18` (43% floor capture, 72% median). Multi-stage may help other setups. Script preserved at `scripts/multistage_exit_grinder.py`.
 
-### Task 4: Signal Filter + Vetting Pipeline ⬜ IN PROGRESS (2026-03-01)
+### Task 4: Signal Filter + Vetting Pipeline 🔧 IN PROGRESS (2026-03-01)
 **Replaces old Tasks 4-5.** The old formation period / outcome grinder tasks are deprioritized. The real next step is expanding the example set through a vetting loop.
 
-**Built this session:**
-- `scripts/signal_filter.py` — 6-phase pipeline:
-  1. Dedup example signal bars (consecutive → rightmost)
+**Built:**
+- `scripts/signal_filter.py` — 7-phase pipeline:
+  1. Dedup example signal bars (verify all conditions pass via expr cache)
   2. Measure example exit distances (rightmost signal close → exit close in ADR)
-  3. Scan all 5yr signals (parallel, all cores)
-  4. Dedup backtest signals (same rightmost logic)
+  3. Scan all 5yr signals (parallel, all cores, expression cache)
+  4. Dedup backtest signals (consecutive → rightmost)
   5. Apply exit condition, measure signal close → exit close in ADR
-  6. Filter: keep only signals ≥ example floor ADR, rank descending
+  6. Exclude existing examples from results
+  7. Filter: keep only signals ≥ example floor ADR, rank descending
 - Output: `data/signal_filter/filtered_dtss.json` — ranked signals for chart vetting
+- **Single computation path enforced:** ALL signal conditions AND exit conditions read from expression cache. No compute_series, no ExpressionEngine, no OHLCV fallbacks. Same data the pyramid grinder uses.
 
 **Pipeline Dashboard (remote):**
 - `app/pipeline.html` — served from Railway, accessible from anywhere
-- `local_runner/pipeline_agent.py` — desktop agent polls Railway for jobs, runs locally, streams logs back
+- Pipeline agent integrated into `local_runner/agent.py` — polls both grinder and pipeline job queues
 - 13 new `/api/pipeline/*` endpoints in `server.py`
 - Architecture: Railway queues jobs → desktop agent polls → runs subprocess → streams logs back
 
-**The vetting loop:**
+**Status after 2026-03-02 session:**
+- Signal filter loads correct grinder result: `pyramid_dtss_mp_sig264_pk3_20260228_163923.json` (264 signals, 41 conditions, Feb 28 run). Searches `local_runner/cache/` and picks latest by mtime.
+- **20/23 examples pass** all 41 conditions via expression cache (3 skipped: BRK-B, SMMT, VUZI not in 5yr cache — expected).
+- **264 raw signals found** — exact match with grinder result. Computation path is correct.
+- **BLOCKED: exit expression `avg_range_atr_10b` not in expression cache.** Exit grinder uses expressions from `exit_expressions.py` which are separate from the main 4,017 signal expression library. Cache needs rebuild.
+
+**Fix applied (needs cache rebuild):**
+- `backtest_conditions.py`: Added 27 generic exit ops (avg_bar_range_rolling, consecutive_green/red, distance_from_ma, pct_green_rolling, vol ratios, ext_accel, etc.) — same math as exit_compute.py but full-series.
+- `expr_cache_builder.py`: `_load_expressions()` now merges generic exit expressions into the cache library. Excludes entry-relative ops (need signal bar context) and context-dependent ops (LSP/algo/SPY). Deduplicates by name (signal exprs take priority).
+- `signal_filter.py`: No fallbacks — if exit expression isn't in cache, prints error with rebuild command and stops.
+
+**⚠️ NEXT STEP: Rebuild expression cache on desktop, then re-run step 4:**
+```
+git pull
+python local_runner/expr_cache_builder.py --build --force
+python local_runner/agent.py
+# Then trigger step 4 from pipeline dashboard
+```
+
+**After cache rebuild, expected behavior:**
+- Expression cache will include ~200+ additional generic exit expressions
+- Signal filter phase 5 (exit condition) will work — `avg_range_atr_10b` will be in cache
+- Example exit distances will be measured → ADR floor derived
+- Backtest signals filtered by ADR floor → ranked output for chart vetting
+
+**The vetting loop (after filter works):**
 1. Run signal filter → get ranked signals with exit distance
 2. Flip through charts (top-ranked first = most obvious winners)
 3. Tag winners as new examples (real DTSS + catchable entry + it worked)
@@ -199,7 +226,7 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 ## What NOT to Touch
 
 - Nightly pipeline — working, don't break it
-- Expression series cache — working, ~50 GB, 12,175 expressions, just rebuilt with algo lines (2026-02-28)
+- Expression series cache — **needs rebuild** (`--build --force`) to include exit expressions. Currently 12,175 exprs, will grow by ~200+ generic exit exprs.
 - Frontend/ScanPerfect — working
 - Railway DB — working
 - Matrix builder — working (but will need LSP-aware rebuild for DTSS)
@@ -214,16 +241,16 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 | `scripts/lsp_detector.py` | ✅ 23/23 accuracy, superseded by v2 | Old algorithmic LSP detection (API-based) |
 | `scripts/lsp_detector_v2.py` | ✅ NEW (2026-02-27) — needs real-data validation | V2: DataFrame-based, multi-TF, 80 expressions, cache-builder ready |
 | `scripts/expression_engine.py` | ✅ Has LSP ops, unused | 8 LSP expressions + `set_lsp_context()` |
-| `scripts/backtest_conditions.py` | ✅ 88 ops, parity | Shared computation path |
-| `scripts/signal_filter.py` | ✅ NEW (2026-03-01) | Dedup + exit + rank for chart vetting. Derives ADR floor from deduplicated example signal bars. |
+| `scripts/backtest_conditions.py` | ✅ 115 ops (88 signal + 27 exit), parity | Shared computation path — ALL grinders route through this |
+| `scripts/signal_filter.py` | 🔧 Blocked on cache rebuild | Dedup + exit + rank for chart vetting. Uses expr cache only. No fallbacks. |
 | `scripts/multistage_exit_grinder.py` | ✅ COMPLETE — did not beat single-stage for DTSS | 8-pass multi-stage exit search, preserved for other setups |
 | `server.py` | ✅ Pipeline endpoints added (2026-03-01) | Railway FastAPI backend + 13 `/api/pipeline/*` endpoints |
 | `app/pipeline.html` | ✅ NEW (2026-03-01) | Remote pipeline dashboard served from Railway |
-| `local_runner/pipeline_agent.py` | ✅ NEW (2026-03-01) | Desktop agent: polls Railway for pipeline jobs, runs locally, streams logs |
+| `local_runner/agent.py` | ✅ Updated: polls both grinder + pipeline job queues (2026-03-02) | Desktop agent — handles grinder jobs AND pipeline step execution |
 | `local_runner/pyramid_grinder.py` | ✅ Production | Multi-pass pyramid grinder, expr cache required |
 | `local_runner/matrix_builder.py` | ✅ Production | Loads universe matrix from expr cache (~51s) |
 | `local_runner/brute_expressions.py` | ✅ 12,175 expressions (4,017 daily + 80 LSP + 44 algo + 8,034 HTF) | Expression library with HTF + algo auto-generation |
-| `local_runner/expr_cache_builder.py` | ✅ Updated for LSP + HTF (2026-02-27) | 3-phase worker: daily + LSP + HTF computation |
+| `local_runner/expr_cache_builder.py` | ✅ Updated: now includes generic exit expressions (2026-03-02) | 3-phase worker: daily + LSP + HTF. _load_expressions() merges signal + exit libs. **Needs --force rebuild.** |
 | `scripts/exit_grinder.py` | ✅ 6,410 expressions, 100% pass hardcoded | Single-stage exit — winner: `bars_since_reclaim_xavgc8 >= 18` |
 | `scripts/exit_expressions.py` | ✅ 446 base + 5,964 boolean aggs = 6,410 total | LSP + algo + AVWAP + entry-relative expressions |
 | `scripts/exit_compute.py` | ✅ Full parity — LSP, algo, AVWAP, entry-relative ops | Post-signal expression compute engine |
