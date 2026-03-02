@@ -2292,6 +2292,12 @@ def _save_pipeline_logs(logs):
 async def get_pipeline_steps():
     """Get all pipeline steps with current state."""
     state = _load_pipeline_state()
+
+    # Clean up jobs for step IDs that no longer exist
+    valid_ids = {s["id"] for s in PIPELINE_STEPS}
+    if state.get("jobs"):
+        state["jobs"] = [j for j in state["jobs"] if j.get("step_id") in valid_ids]
+        _save_pipeline_state(state)
     agent = _load_grinder_json(GRINDER_AGENT_FILE, {})
 
     agent_status = "unknown"
