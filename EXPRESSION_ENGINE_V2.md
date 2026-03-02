@@ -281,22 +281,91 @@ Re-grind DTSS with expanded library
 
 ### What's Left
 
-**Cache rebuilt (2026-03-02):** Expression cache now includes generic exit expressions (27 new ops in backtest_conditions.py). `_load_expressions()` merges signal + exit libraries, deduplicates by name. Cache built successfully overnight.
+**All V2 build tasks (A-G) COMPLETE.** Cache rebuilt with 12,421 expressions (12,175 signal + 246 generic exit).
 
-**Signal Exit Grinder — NEW (2026-03-02):**
-- `scripts/signal_exit_grinder.py` — cache-compatible exit discovery for signal filtering
-- Runs from DEDUPLICATED SIGNAL BAR (scan candle = entry - 1), not entry bar
-- Uses ONLY expressions in the expression cache (same 12,175+ as signal grinder)
-- 100% example pass rate hardcoded
-- Output: `data/signal_exit_grind/signal_exit_{setup}.json` — feeds signal_filter.py
-- Separate from `scripts/exit_grinder.py` (trade management exit, entry-relative, shelved)
+---
 
-**Two types of exit grinds (architectural decision 2026-03-02):**
-1. **Signal exit grind** (`signal_exit_grinder.py`): cache-compatible, signal bar anchor, for filtering backtest signals. Same computation path as signal grinder. No grinder rule violations.
-2. **Trade exit grind** (`exit_grinder.py`): entry-relative, entry bar anchor, for live trade management. Uses ExitExprEngine (separate computation path). Shelved until setup library is stronger.
+## Post-V2 Pipeline Progress (2026-03-02)
 
-**Task 4 (Signal Filter) — updated pipeline:**
-- `signal_filter.py` now loads exit condition from `data/signal_exit_grind/` (signal exit, cache-compatible)
-- No longer loads from `data/exit_grind/` (trade exit, entry-relative — incompatible with expr cache)
-- **Next:** Run signal exit grinder on desktop → signal filter → chart vetting
+### Two Types of Exit Grinds (architectural decision)
 
+The original exit grinder (`exit_grinder.py`) uses entry-relative expressions (e.g. `bars_since_reclaim_xavgc8 >= 18`) that require the entry bar as an anchor. These cannot be precomputed into the expression cache, which means they violate grinder rule #1 (all grinders use identical computation methods) when used in the signal filtering pipeline. Solution: two separate exit grinds for two separate purposes.
+
+1. **Signal exit grind** (`scripts/signal_exit_grinder.py`) -- NEW, cache-compatible:
+   - Uses ONLY expressions in the expression cache (same 12,421 as signal grinder)
+   - Runs forward from DEDUPLICATED SIGNAL BAR (scan candle = entry - 1)
+   - 100% example pass rate hardcoded
+   - Same computation path as signal grinder -- no grinder rule violations
+   - Purpose: filter backtest signals for chart vetting ("did this signal produce a move worth looking at?")
+   - Output: `data/signal_exit_grind/signal_exit_{setup}.json`
+
+2. **Trade exit grind** (`scripts/exit_grinder.py`) -- SHELVED:
+   - Uses 6,410 expressions from `exit_expressions.py` (many entry-relative)
+   - Runs forward from ENTRY BAR via `ExitExprEngine` (separate computation path)
+   - Winner: `bars_since_reclaim_xavgc8 >= 18` (43% floor capture, 72% median)
+   - Purpose: live trade management ("when to cover/sell")
+   - Shelved until example library is large enough for statistical weight
+
+### Signal Exit Grind -- RUN (2026-03-02)
+
+**Result:** `ns_c_minl65_atr14 <= 1.134945`
+- Close within ~1.13 ATR of the 65-bar low -> exit triggers (price has dropped enough)
+- 20/20 examples pass, median capture eff 0.71, floor 1.7 ADR, median 5.1 ADR
+- Avg 20 bars to exit
+- 118,600 candidates passed 100% filter out of 263,838 tested
+- Runtime: 33s
+
+### Signal Filter -- RUN (2026-03-02)
+
+**Pipeline result:**
+- 264 raw signals (exact match with grinder) -> 230 deduped -> 176 with exit -> 100 filtered
+- ADR floor from examples: 1.7 -> filter threshold: 1.5 ADR (90% wiggle)
+- Filtered signals: floor 1.6 ADR, median 4.0 ADR, max 11.1 ADR, avg exit 34 bars
+- 21 existing example signals excluded
+- Output: `data/signal_filter/filtered_dtss.json` -- 100 ranked signals for chart vetting
+- Runtime: 86s
+
+### Chart Vetting UI -- BUILT (2026-03-02)
+
+**File:** `app/vetting.html` -- accessible at `/vetting.html?setup=dtss`
+
+**Features:**
+- Sidebar with all filtered signals ranked by ADR (biggest winners first)
+- Canvas candlestick chart with EMA8/21, SMA50/200, volume
+- Signal bar (yellow), exit bar (purple), entry bar (blue) markers
+- Chart auto-centers on signal bar so setup formation is visible
+- Click any candle to set entry date -> YES creates example in Railway DB
+- YES/MAYBE/NO buttons + keyboard shortcuts (1/2/3)
+- Auto-advances to next unvetted signal after verdict
+- Filter tabs: all/unvetted/yes/maybe/no with counts
+- Verdicts persist in `data/vetting/vetting_{setup}.json`
+
+**API endpoints (server.py):**
+- `GET /api/vetting/{setup}/signals` -- load filtered signals + existing verdicts
+- `GET /api/vetting/{setup}/ohlcv/{ticker}` -- OHLCV centered on signal date from universe_ohlcv
+- `POST /api/vetting/{setup}/decide` -- save verdict; YES auto-creates example via existing `/api/examples` flow
+
+### The Full Pipeline (end-to-end working)
+
+```
+1. Signal grind (pyramid_grinder.py)
+   -> 264 signals from 41 conditions across 5yr, peak 3/day
+
+2. Signal exit grind (signal_exit_grinder.py)
+   -> Discover cache-compatible exit: ns_c_minl65_atr14 <= 1.134945
+
+3. Signal filter (signal_filter.py)
+   -> 264 raw -> 230 deduped -> 176 with exit -> 100 filtered (>=1.5 ADR)
+
+4. Chart vetting (vetting.html)
+   -> Review 100 signals, tag YES/MAYBE/NO, YES creates new example
+
+5. Re-grind with expanded examples
+   -> Conditions tighten, repeat until convergence
+
+6. [FUTURE] Trade exit grind (exit_grinder.py)
+   -> Once example library is strong, find entry-relative exit for live trading
+
+7. [FUTURE] Market regime grinder
+   -> Use expanded win/loss data to find optimal market conditions
+```
