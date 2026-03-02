@@ -61,20 +61,43 @@ def load_5yr_cache():
 
 
 def load_pyramid_conditions(setup_type):
-    """Load signal conditions from pyramid results."""
-    # Try multiple paths
-    paths = [
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                     "data", f"pyramid_results_{setup_type}.json"),
+    """Load signal conditions from pyramid results.
+    
+    Searches both local_runner/cache/ and data/ directories.
+    If multiple files exist, picks the latest by timestamp in filename.
+    """
+    import glob
+
+    search_dirs = [
+        os.path.join(REPO_ROOT, "local_runner", "cache"),
+        os.path.join(REPO_ROOT, "data"),
     ]
-    for p in paths:
-        if os.path.exists(p):
-            with open(p) as f:
-                data = json.load(f)
-            conditions = data.get("all_conditions", [])
-            print(f"  Loaded {len(conditions)} conditions from {os.path.basename(p)}")
-            return conditions
-    raise FileNotFoundError(f"No pyramid results found for {setup_type}")
+
+    # Collect all matching files
+    candidates = []
+    for d in search_dirs:
+        # Exact name match
+        exact = os.path.join(d, f"pyramid_results_{setup_type}.json")
+        if os.path.exists(exact):
+            candidates.append(exact)
+        # Timestamped files (e.g. pyramid_dtss_mp_sig264_pk3_20260228_163923.json)
+        pattern = os.path.join(d, f"pyramid_{setup_type}_*.json")
+        candidates.extend(glob.glob(pattern))
+
+    if not candidates:
+        raise FileNotFoundError(f"No pyramid results found for {setup_type}")
+
+    # Pick the most recently modified file
+    candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    best = candidates[0]
+
+    with open(best) as f:
+        data = json.load(f)
+    conditions = data.get("all_conditions", [])
+    total = data.get("summary", {}).get("final_total", "?")
+    print(f"  Loaded {len(conditions)} conditions from {os.path.basename(best)}")
+    print(f"  Grinder result: {total} total signals, {data.get('timestamp', '?')}")
+    return conditions
 
 
 def load_exit_condition(setup_type):
