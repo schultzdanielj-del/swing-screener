@@ -34,6 +34,53 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "local_runner"))
 
 from expr_cache_builder import ExprSeriesCache
 
+
+def compute_exit_series_from_ohlcv(df, expr_name):
+    """Compute an exit expression series directly from OHLCV.
+    
+    Exit grinder expressions (exit_expressions.py) are NOT in the main
+    expression cache. This computes them on-the-fly from OHLCV data.
+    Only implements expressions that the exit grinder actually selects.
+    """
+    h = df["high"].values.astype(np.float64)
+    l = df["low"].values.astype(np.float64)
+    c = df["close"].values.astype(np.float64)
+    n = len(df)
+
+    # avg_range_atr_{period}b -- average (H-L) over period, normalized by ATR14
+    if expr_name.startswith("avg_range_atr_") and expr_name.endswith("b"):
+        period = int(expr_name.replace("avg_range_atr_", "").replace("b", ""))
+        bar_range = h - l
+        # ATR14
+        tr = np.maximum(h[1:] - l[1:], np.maximum(np.abs(h[1:] - c[:-1]), np.abs(l[1:] - c[:-1])))
+        tr = np.concatenate([[h[0] - l[0]], tr])
+        atr = np.full(n, np.nan)
+        atr[13] = np.mean(tr[:14])
+        for i in range(14, n):
+            atr[i] = (atr[i-1] * 13 + tr[i]) / 14
+        # Rolling avg of bar range
+        avg_range = np.full(n, np.nan)
+        for i in range(period - 1, n):
+            avg_range[i] = np.mean(bar_range[i - period + 1:i + 1])
+        result = avg_range / atr
+        return result
+
+    # avg_range_adr_{period}b -- same but normalized by ADR14 (SMA of range)
+    if expr_name.startswith("avg_range_adr_") and expr_name.endswith("b"):
+        period = int(expr_name.replace("avg_range_adr_", "").replace("b", ""))
+        bar_range = h - l
+        adr = np.full(n, np.nan)
+        for i in range(13, n):
+            adr[i] = np.mean(bar_range[i - 13:i + 1])
+        avg_range = np.full(n, np.nan)
+        for i in range(period - 1, n):
+            avg_range[i] = np.mean(bar_range[i - period + 1:i + 1])
+        result = avg_range / adr
+        return result
+
+    raise ValueError(f"Unknown exit expression: {expr_name}. "
+                     f"Add computation to compute_exit_series_from_ohlcv()")
+
 # ============================================================
 # Config
 # ============================================================
@@ -334,9 +381,9 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache, max
     exit_dir = exit_cond["direction"]  # ">=" or "<="
 
     exit_col_idx = expr_cache.expr_index(expr_name)
-    if exit_col_idx is None:
-        print(f"  ERROR: exit expression '{expr_name}' not in expression cache!")
-        return []
+    exit_from_ohlcv = exit_col_idx is None  # fallback: compute from OHLCV
+    if exit_from_ohlcv:
+        print(f"  Exit expression '{expr_name}' not in expression cache -- computing from OHLCV")
 
     # Also need ADR -- check if it's in the cache
     adr_col_idx = expr_cache.expr_index("adr14")
@@ -393,8 +440,11 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache, max
                 errors += 1
                 continue
 
-            # Get exit expression series from cache
-            exit_series = cached_data[:, exit_col_idx]
+            # Get exit expression series
+            if exit_from_ohlcv:
+                exit_series = compute_exit_series_from_ohlcv(df, expr_name)
+            else:
+                exit_series = cached_data[:, exit_col_idx]
 
             # Find first bar after signal where exit fires
             exit_bar = None
@@ -640,6 +690,7 @@ def measure_example_exit_distances(example_signals, cache, exit_cond, direction,
     exit_dir = exit_cond["direction"]
 
     exit_col_idx = expr_cache.expr_index(expr_name)
+    exit_from_ohlcv = exit_col_idx is None
     adr_col_idx = expr_cache.expr_index("adr14")
 
     print(f"  Measuring example exit distances from deduplicated signal bars...")
@@ -681,12 +732,11 @@ def measure_example_exit_distances(example_signals, cache, exit_cond, direction,
             n_available = len(df) - bar_idx - 1
             actual_forward = min(max_forward, n_available)
 
-            # Get exit series from expression cache
-            if exit_col_idx is None:
-                ex["move_adr"] = None
-                ex["error"] = "exit expr not in cache"
-                continue
-            exit_series = cached_data[:, exit_col_idx]
+            # Get exit series
+            if exit_from_ohlcv:
+                exit_series = compute_exit_series_from_ohlcv(df, expr_name)
+            else:
+                exit_series = cached_data[:, exit_col_idx]
 
             # Find first exit bar after signal
             exit_bar = None
