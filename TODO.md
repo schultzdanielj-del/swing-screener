@@ -156,10 +156,35 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 ### Task 3.7: Multi-Stage Exit Grinder ✅ COMPLETE (2026-03-01)
 **Result:** Multi-stage did not beat single-stage for DTSS. Single-stage winner holds: `bars_since_reclaim_xavgc8 >= 18` (43% floor capture, 72% median). Multi-stage may help other setups. Script preserved at `scripts/multistage_exit_grinder.py`.
 
-### Task 4: Signal Filter + Vetting Pipeline 🔧 IN PROGRESS (2026-03-01)
+### Task 4: Signal Filter + Vetting Pipeline 🔧 IN PROGRESS (2026-03-02)
 **Replaces old Tasks 4-5.** The old formation period / outcome grinder tasks are deprioritized. The real next step is expanding the example set through a vetting loop.
 
+**Architectural fix (2026-03-02): Two types of exit grinds.**
+The original exit grinder (`exit_grinder.py`) uses entry-relative expressions (e.g. `bars_since_reclaim_xavgc8 >= 18`) that require the entry bar as an anchor. These can't be precomputed into the expression cache. The signal filter needs cache-compatible exits. Solution: two separate exit grinds for two separate purposes.
+
+1. **Signal exit grind** (`scripts/signal_exit_grinder.py`) — NEW:
+   - Uses ONLY expressions in the expression cache (same 12,175+ as signal grinder)
+   - Runs forward from DEDUPLICATED SIGNAL BAR (scan candle = entry - 1)
+   - 100% example pass rate hardcoded
+   - Output: `data/signal_exit_grind/signal_exit_{setup}.json`
+   - Purpose: filter backtest signals for chart vetting ("did this signal produce a move?")
+   - Same computation path as signal grinder — no grinder rule violations
+
+2. **Trade exit grind** (`scripts/exit_grinder.py`) — SHELVED:
+   - Uses 6,410 expressions from `exit_expressions.py` (many entry-relative)
+   - Runs forward from ENTRY BAR
+   - Uses ExitExprEngine (separate computation path — intentionally different)
+   - Winner: `bars_since_reclaim_xavgc8 >= 18` (43% floor capture, 72% median)
+   - Purpose: live trade management ("when to cover/sell")
+   - Shelved until setup library : signal : conditions ratio is much stronger
+
 **Built:**
+- `scripts/signal_exit_grinder.py` — cache-compatible exit grinder:
+  - Resolves example signal bars (scan candle) with full condition verification
+  - Builds forward matrices directly from expression cache
+  - Grinds all cache expressions × thresholds × directions
+  - 100% example pass hardcoded, same MFE/capture efficiency scoring
+  - Output format compatible with signal_filter.py
 - `scripts/signal_filter.py` — 7-phase pipeline:
   1. Dedup example signal bars (verify all conditions pass via expr cache)
   2. Measure example exit distances (rightmost signal close → exit close in ADR)
@@ -168,8 +193,9 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
   5. Apply exit condition, measure signal close → exit close in ADR
   6. Exclude existing examples from results
   7. Filter: keep only signals ≥ example floor ADR, rank descending
+- `signal_filter.py` now loads exit from `data/signal_exit_grind/` (cache-compatible)
 - Output: `data/signal_filter/filtered_dtss.json` — ranked signals for chart vetting
-- **Single computation path enforced:** ALL signal conditions AND exit conditions read from expression cache. No compute_series, no ExpressionEngine, no OHLCV fallbacks. Same data the pyramid grinder uses.
+- **Single computation path enforced:** ALL signal conditions AND exit conditions read from expression cache.
 
 **Pipeline Dashboard (remote):**
 - `app/pipeline.html` — served from Railway, accessible from anywhere
@@ -177,30 +203,15 @@ The system was built with a critical flaw: **Step 4.5 "Strip Bespoke System"** r
 - 13 new `/api/pipeline/*` endpoints in `server.py`
 - Architecture: Railway queues jobs → desktop agent polls → runs subprocess → streams logs back
 
-**Status after 2026-03-02 session:**
-- Signal filter loads correct grinder result: `pyramid_dtss_mp_sig264_pk3_20260228_163923.json` (264 signals, 41 conditions, Feb 28 run). Searches `local_runner/cache/` and picks latest by mtime.
-- **20/23 examples pass** all 41 conditions via expression cache (3 skipped: BRK-B, SMMT, VUZI not in 5yr cache — expected).
-- **264 raw signals found** — exact match with grinder result. Computation path is correct.
-- **BLOCKED: exit expression `avg_range_atr_10b` not in expression cache.** Exit grinder uses expressions from `exit_expressions.py` which are separate from the main 4,017 signal expression library. Cache needs rebuild.
-
-**Fix applied (needs cache rebuild):**
-- `backtest_conditions.py`: Added 27 generic exit ops (avg_bar_range_rolling, consecutive_green/red, distance_from_ma, pct_green_rolling, vol ratios, ext_accel, etc.) — same math as exit_compute.py but full-series.
-- `expr_cache_builder.py`: `_load_expressions()` now merges generic exit expressions into the cache library. Excludes entry-relative ops (need signal bar context) and context-dependent ops (LSP/algo/SPY). Deduplicates by name (signal exprs take priority).
-- `signal_filter.py`: No fallbacks — if exit expression isn't in cache, prints error with rebuild command and stops.
-
-**⚠️ NEXT STEP: Rebuild expression cache on desktop, then re-run step 4:**
+**⚠️ NEXT STEPS (run on desktop):**
 ```
 git pull
-python local_runner/expr_cache_builder.py --build --force
-python local_runner/agent.py
-# Then trigger step 4 from pipeline dashboard
+# 1. Run signal exit grinder (discovers cache-compatible exit)
+python scripts/signal_exit_grinder.py --setup dtss
+# 2. Run signal filter (uses signal exit result)
+python scripts/signal_filter.py --setup dtss
+# 3. Begin chart vetting from ranked output
 ```
-
-**After cache rebuild, expected behavior:**
-- Expression cache will include ~200+ additional generic exit expressions
-- Signal filter phase 5 (exit condition) will work — `avg_range_atr_10b` will be in cache
-- Example exit distances will be measured → ADR floor derived
-- Backtest signals filtered by ADR floor → ranked output for chart vetting
 
 **The vetting loop (after filter works):**
 1. Run signal filter → get ranked signals with exit distance
@@ -251,8 +262,9 @@ python local_runner/agent.py
 | `local_runner/matrix_builder.py` | ✅ Production | Loads universe matrix from expr cache (~51s) |
 | `local_runner/brute_expressions.py` | ✅ 12,175 expressions (4,017 daily + 80 LSP + 44 algo + 8,034 HTF) | Expression library with HTF + algo auto-generation |
 | `local_runner/expr_cache_builder.py` | ✅ Updated: now includes generic exit expressions (2026-03-02) | 3-phase worker: daily + LSP + HTF. _load_expressions() merges signal + exit libs. **Needs --force rebuild.** |
-| `scripts/exit_grinder.py` | ✅ 6,410 expressions, 100% pass hardcoded | Single-stage exit — winner: `bars_since_reclaim_xavgc8 >= 18` |
-| `scripts/exit_expressions.py` | ✅ 446 base + 5,964 boolean aggs = 6,410 total | LSP + algo + AVWAP + entry-relative expressions |
+| `scripts/exit_grinder.py` | ✅ 6,410 expressions, 100% pass hardcoded — SHELVED | Trade management exit — entry-relative, uses ExitExprEngine. Shelved until example library stronger. |
+| `scripts/signal_exit_grinder.py` | ✅ NEW (2026-03-02) — needs first run on desktop | Signal filtering exit — cache-compatible, uses expression cache only. Same computation path as signal grinder. |
+| `scripts/exit_expressions.py` | ✅ 446 base + 5,964 boolean aggs = 6,410 total | LSP + algo + AVWAP + entry-relative expressions (for trade exit grinder) |
 | `scripts/exit_compute.py` | ✅ Full parity — LSP, algo, AVWAP, entry-relative ops | Post-signal expression compute engine |
 | `scripts/outcome_grinder.py` | ⚠️ Deprioritized — vetting loop takes precedence | May revisit after example expansion |
 | `EXPRESSION_ENGINE_V2.md` | ✅ Updated — Tasks A-E,G complete, F pending | V2 build plan + next steps |

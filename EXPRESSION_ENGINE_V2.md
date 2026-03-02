@@ -283,17 +283,20 @@ Re-grind DTSS with expanded library
 
 **Cache rebuilt (2026-03-02):** Expression cache now includes generic exit expressions (27 new ops in backtest_conditions.py). `_load_expressions()` merges signal + exit libraries, deduplicates by name. Cache built successfully overnight.
 
-**Task 4 (Signal Filter) — blocked items resolved, needs re-run:**
-- Signal filter uses expression cache as single computation path (no compute_series, no ExpressionEngine)
-- Loads correct grinder result: `pyramid_dtss_mp_sig264_pk3_20260228_163923.json` (264 signals, 41 conditions)
-- 20/23 examples pass all conditions (3 skipped: BRK-B, SMMT, VUZI not in 5yr cache)
-- Exit expression `avg_range_atr_10b` should now be in rebuilt cache
-- **Next:** restart agent, trigger step 4 from pipeline dashboard, verify exit phase works
+**Signal Exit Grinder — NEW (2026-03-02):**
+- `scripts/signal_exit_grinder.py` — cache-compatible exit discovery for signal filtering
+- Runs from DEDUPLICATED SIGNAL BAR (scan candle = entry - 1), not entry bar
+- Uses ONLY expressions in the expression cache (same 12,175+ as signal grinder)
+- 100% example pass rate hardcoded
+- Output: `data/signal_exit_grind/signal_exit_{setup}.json` — feeds signal_filter.py
+- Separate from `scripts/exit_grinder.py` (trade management exit, entry-relative, shelved)
 
-**Changes made 2026-03-02 session:**
-- `scripts/backtest_conditions.py`: 88 → 115 ops (added 27 generic exit ops from exit_compute.py: avg_bar_range_rolling, avg_body_ratio_rolling, consecutive_green/red, distance_from_ma, vol ratios, ext_accel, gap_from_prior, etc.)
-- `local_runner/expr_cache_builder.py`: `_load_expressions()` merges generic exit expressions (filters out entry-relative and context-dependent ops that can't be precomputed)
-- `scripts/signal_filter.py`: Complete rewrite to use expression cache as single computation path. Loads pyramid results from `local_runner/cache/` (picks latest by mtime). No fallbacks — missing expressions cause clear error with rebuild command.
-- `local_runner/agent.py`: Now polls both grinder job queue AND pipeline job queue
-- Suppressed All-NaN slice warnings in backtest_conditions.py (ext_ceiling_ratio warmup bars)
+**Two types of exit grinds (architectural decision 2026-03-02):**
+1. **Signal exit grind** (`signal_exit_grinder.py`): cache-compatible, signal bar anchor, for filtering backtest signals. Same computation path as signal grinder. No grinder rule violations.
+2. **Trade exit grind** (`exit_grinder.py`): entry-relative, entry bar anchor, for live trade management. Uses ExitExprEngine (separate computation path). Shelved until setup library is stronger.
+
+**Task 4 (Signal Filter) — updated pipeline:**
+- `signal_filter.py` now loads exit condition from `data/signal_exit_grind/` (signal exit, cache-compatible)
+- No longer loads from `data/exit_grind/` (trade exit, entry-relative — incompatible with expr cache)
+- **Next:** Run signal exit grinder on desktop → signal filter → chart vetting
 
