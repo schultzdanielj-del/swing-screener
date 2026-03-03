@@ -384,31 +384,44 @@ def handle_job(job):
 # ── Auto AI Review for pending samples ─────────────────────────────────
 
 REVIEW_PROMPTS = {
-    "dtss": """You are reviewing a stock chart to determine if it shows a valid DTSS (Double Top Short Sell) setup.
+    "dtss": """You are an expert swing trader reviewing a chart to grade the quality of a DTSS (Double Top Short Sell) setup. This is NOT a basic pattern check — the grinder already confirmed the mathematical conditions. Your job is to evaluate setup QUALITY using advanced TA principles.
 
-DTSS criteria:
-- Clear prior high / resistance level (left side pivot)
-- Second rally into the same zone — can be slightly above or below the prior peak
-- Rejection candle or reversal pattern at the double top level
-- Volume often spikes on the failed attempt then dries up
-- MAs may be flattening or starting to roll over
-- The stock should be FAILING at or near the double top, not still rallying up to it
-- After the double top, price should break down through the LSP (left side pivot) AVWAP and continue lower
-- This is a SHORT setup — the stock goes DOWN after entry
+THE SETUP: Stock rallies to a prior high (resistance), fails to break through, forming a double top. Entry is on the short side after the failure confirms.
 
-The entry bar is marked on the chart. Look at the price action BEFORE the entry to confirm the double top pattern exists, and AFTER to confirm the stock actually broke down.
+The entry bar is marked on the chart. You can see price history before and after entry.
 
-REJECT if:
-- No clear double top pattern visible
-- Stock is still in an uptrend with no reversal
-- The "double top" is really just consolidation in a trend
-- The move after entry is tiny or the stock bounces back up quickly
-- Entry is too late (stock already crashed before the marked entry)
-- Entry is too early (stock hasn't confirmed the top yet)
+EVALUATE THESE QUALITY FACTORS:
+
+1. **LSP (Left Side Pivot) Clarity**: Is the prior high/resistance level clean and obvious? A prominent structural pivot that institutions would defend? Or is it a messy, unclear level buried in chop? Clean LSP = higher quality.
+
+2. **Double Top Structure**: How clean is the second rally into resistance? Best setups show a clear rejection — price reaches the zone and immediately reverses. Worst setups show indecisive chop around the level. The peaks can be slightly above or below each other — that's fine. What matters is the REJECTION quality.
+
+3. **Volume Pattern**: Look for volume spike on the failed attempt at the high, then volume drying up on any bounce. Heavy volume rejection at resistance followed by low-volume drift = trapped buyers. This is critical.
+
+4. **Moving Average Confirmation**: Are MAs flattening or rolling over at the entry point? The 10/20 MAs (thin lines) rolling over while price is below them = strong. MAs still pointing up with price above = weak setup, too early.
+
+5. **Entry Timing**: Is the entry at the right spot?
+   - Too early = stock hasn't confirmed the failure yet, could still break out
+   - Too late = stock already crashed 10%+, the easy money is gone
+   - Just right = entry catches the break below the LSP/support after the double top confirms
+
+6. **Post-Entry Follow-Through**: Does the stock actually break down cleanly after entry? Clean waterfall decline = A+ example. Choppy back-and-forth that eventually works = B grade. Barely moves or bounces back = poor example that will hurt the grinder.
+
+7. **Extension Context**: Is the stock extended above its 50/200 SMAs at the double top? Extended stocks have more room to fall = better short setups. Stock trading near or below its MAs at the "double top" is less compelling.
+
+GRADING SCALE:
+- **A+**: Clean LSP, obvious rejection, volume confirms, MAs rolling, perfect entry timing, strong follow-through. Train the system on this.
+- **A**: Solid on most factors, minor imperfection on one. Still a great example.
+- **B**: Decent setup but has 1-2 weak factors (messy structure, mediocre timing, choppy follow-through). Acceptable but not ideal.
+- **C**: Multiple weak factors. Would add noise to the example library.
+- **F**: Not really a DTSS or fundamentally flawed. Reject.
 
 Respond in this exact format:
 VERDICT: APPROVE or REJECT
-REASONING: 2-3 sentences explaining what you see on the chart and why you made this call.""",
+GRADE: A+, A, B, C, or F
+REASONING: 3-4 sentences covering the key quality factors you see. Be specific about what's strong and what's weak. Reference actual price action visible on the chart.
+
+APPROVE grades A+ through B. REJECT grades C and F.""",
 }
 
 
@@ -483,6 +496,7 @@ def review_pending_samples():
                     )
                     output = result.stdout.strip()
                     verdict = "REJECT"
+                    grade = ""
                     reasoning = output
 
                     for line in output.split("\n"):
@@ -490,12 +504,16 @@ def review_pending_samples():
                         if up.startswith("VERDICT:"):
                             v = up.replace("VERDICT:", "").strip()
                             verdict = "APPROVE" if "APPROVE" in v else "REJECT"
+                        elif up.startswith("GRADE:"):
+                            grade = line.strip()[len("GRADE:"):].strip()
                         elif line.strip().upper().startswith("REASONING:"):
                             reasoning = line.strip()[len("REASONING:"):].strip()
                             idx = output.index(line) + len(line)
                             rest = output[idx:].strip()
                             if rest:
                                 reasoning += " " + rest
+                    if grade:
+                        reasoning = f"[{grade}] {reasoning}"
                 except subprocess.TimeoutExpired:
                     verdict, reasoning = "REJECT", "CLI timeout"
                 except FileNotFoundError:
