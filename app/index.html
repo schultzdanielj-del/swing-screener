@@ -302,10 +302,6 @@ function NightlyPage() {
           <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
             {pipe?.agent_status?.toUpperCase() || '?'}
           </div>
-          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
-            style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--cyan)',marginTop:4,cursor:'pointer',userSelect:'all'}}>
-            python local_runner/agent.py <span style={{fontSize:8,color:'var(--text-muted)',marginLeft:4}}>copy</span>
-          </div>
         </div>
       </div>
       <div style={{display:'flex',gap:8,marginBottom:16}}>
@@ -315,7 +311,17 @@ function NightlyPage() {
         }
         <button className="btn" onClick={doReset}>↻ Reset</button>
       </div>
-
+      {pipe?.agent_status !== 'online' && (
+        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
+          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--amber)',marginBottom:6}}>Agent is offline. Start it locally:</div>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--cyan)',background:'var(--bg)',
+            padding:'8px 12px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer',userSelect:'all'}}>
+            python local_runner/agent.py
+            <span style={{float:'right',fontSize:9,color:'var(--text-muted)'}}>click to copy</span>
+          </div>
+        </div>
+      )}
       {nightly?.state?.result_summary && (
         <div className="card" style={{borderColor:'rgba(52,211,153,0.15)',background:'rgba(52,211,153,0.03)'}}>
           <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--green)',whiteSpace:'pre-wrap'}}>{nightly.state.result_summary}</div>
@@ -367,7 +373,9 @@ function StepPage({ stepId, setup }) {
     });
   }
 
-
+  const cmds = {
+    signal_brute: `pyramid_grinder.py → signal_exit_grinder.py --setup ${setup}`,
+  };
 
   return (
     <div>
@@ -385,13 +393,14 @@ function StepPage({ stepId, setup }) {
           <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
             {pipe?.agent_status?.toUpperCase() || '?'}
           </div>
-          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
-            style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--cyan)',marginTop:4,cursor:'pointer',userSelect:'all'}}>
-            python local_runner/agent.py <span style={{fontSize:8,color:'var(--text-muted)',marginLeft:4}}>copy</span>
-          </div>
         </div>
       </div>
-
+      {cmds[stepId] && (
+        <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--cyan)',background:'var(--surface-2)',
+          padding:'6px 12px',borderRadius:4,marginBottom:12,border:'1px solid var(--border)'}}>
+          {cmds[stepId]}
+        </div>
+      )}
       {stepId === 'signal_brute' && !isRun && (
         <div style={{display:'flex',gap:12,marginBottom:12,alignItems:'center'}}>
           {[['beam','Beam'],['depth','Depth'],['peak_target','Peak']].map(([k,label])=>(
@@ -413,7 +422,15 @@ function StepPage({ stepId, setup }) {
         }
         <button className="btn" onClick={()=>fetch(`${API}/api/pipeline/reset/${stepId}`,{method:'POST'})}>↻ Reset</button>
       </div>
-
+      {pipe?.agent_status !== 'online' && (
+        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--cyan)',background:'var(--bg)',
+            padding:'6px 10px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer'}}>
+            python local_runner/agent.py <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:8}}>click to copy</span>
+          </div>
+        </div>
+      )}
       {step?.state?.result_summary && (
         <div className="card" style={{borderColor:'rgba(52,211,153,0.15)',background:'rgba(52,211,153,0.03)'}}>
           <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--green)',whiteSpace:'pre-wrap'}}>{step.state.result_summary}</div>
@@ -820,10 +837,6 @@ function VettingPage({ setup }) {
           <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
             {pipe?.agent_status?.toUpperCase() || '?'}
           </div>
-          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
-            style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--cyan)',marginTop:4,cursor:'pointer',userSelect:'all'}}>
-            python local_runner/agent.py <span style={{fontSize:8,color:'var(--text-muted)',marginLeft:4}}>copy</span>
-          </div>
         </div>
       </div>
       <div style={{display:'flex',gap:8,marginBottom:16}}>
@@ -832,7 +845,16 @@ function VettingPage({ setup }) {
           : <button className="btn btn-go" onClick={reloadSamples} disabled={pipe?.agent_status!=='online'}>▶ RELOAD SAMPLES</button>
         }
       </div>
-
+      {pipe?.agent_status !== 'online' && !isFilterRunning && (
+        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
+          <div style={{fontSize:11,color:'var(--amber)',marginBottom:6}}>Agent offline — start it to run signal filter:</div>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--cyan)',background:'var(--bg)',
+            padding:'6px 10px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer'}}>
+            python local_runner/agent.py <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:8}}>click to copy</span>
+          </div>
+        </div>
+      )}
       {showLogs && filterLogs.length > 0 && (
         <div className="log-box" ref={filterLogRef}>
           {filterLogs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')||l.includes('done')?'ok':''}>{l}</div>)}
@@ -1023,16 +1045,6 @@ function ExitManagePage({ setup }) {
           <div className="stat-label">Duration</div>
           <div className="stat-val" style={{fontSize:13}}>{step?.state?.duration_s ? fmtDur(step.state.duration_s) : '—'}</div>
         </div>
-        <div className="stat-box">
-          <div className="stat-label">Agent</div>
-          <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
-            {pipe?.agent_status?.toUpperCase() || '?'}
-          </div>
-          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
-            style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--cyan)',marginTop:4,cursor:'pointer',userSelect:'all'}}>
-            python local_runner/agent.py <span style={{fontSize:8,color:'var(--text-muted)',marginLeft:4}}>copy</span>
-          </div>
-        </div>
       </div>
 
       <div style={{display:'flex',gap:8,marginBottom:16}}>
@@ -1042,7 +1054,15 @@ function ExitManagePage({ setup }) {
         }
         <button className="btn" onClick={()=>fetch(`${API}/api/pipeline/reset/mfe_capture`,{method:'POST'})}>↻ Reset</button>
       </div>
-
+      {pipe?.agent_status !== 'online' && (
+        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--cyan)',background:'var(--bg)',
+            padding:'6px 10px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer'}}>
+            python local_runner/agent.py <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:8}}>click to copy</span>
+          </div>
+        </div>
+      )}
       {step?.state?.result_summary && (
         <div className="card" style={{borderColor:'rgba(52,211,153,0.15)',background:'rgba(52,211,153,0.03)'}}>
           <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--green)',whiteSpace:'pre-wrap'}}>{step.state.result_summary}</div>

@@ -86,7 +86,8 @@
     border: 1px solid var(--border);
     border-radius: 4px;
     user-select: all;
-    cursor: pointer;
+    cursor: text;
+    display: none;
   }
 
   .hdr-right {
@@ -323,7 +324,7 @@
     <div class="agent-dot" id="agentDot"></div>
     <h1>PIPELINE <span>/ swing screener</span></h1>
     <div class="agent-label" id="agentLabel">agent: checking…</div>
-    <span class="agent-cmd" id="agentCmd" onclick="navigator.clipboard.writeText('python local_runner/agent.py');this.style.color='var(--green)';setTimeout(()=>this.style.color='var(--cyan)',1000);" style="cursor:pointer;">python local_runner/agent.py</span>
+    <span class="agent-cmd" id="agentCmd">python local_runner/agent.py</span>
   </div>
   <div class="hdr-right">
     <a href="/" class="back-link">← ScanPerfect</a>
@@ -611,11 +612,13 @@ function updateAgent() {
   if (!data) return;
   const dot = document.getElementById('agentDot');
   const lbl = document.getElementById('agentLabel');
+  const cmd = document.getElementById('agentCmd');
   const st = data.agent_status || 'unknown';
   const on = st === 'online';
   dot.classList.toggle('online', on);
   lbl.className = `agent-label ${on?'online':''}`;
   lbl.textContent = `agent: ${st}`;
+  cmd.style.display = on ? 'none' : 'inline-block';
 }
 
 // ── Helpers ───────────────────────────
