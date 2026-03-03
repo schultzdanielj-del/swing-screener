@@ -741,7 +741,13 @@ function VettingPage({ setup }) {
   function reloadSamples() {
     setFilterLogs([]);
     fetch(`${API}/api/pipeline/run/sample_expansion`, {method:'POST'}).then(r=>r.json()).then(d => {
-      if(d.error) alert(d.error);
+      if(d.error) {
+        if(d.error.includes('Prerequisite')) {
+          alert('Signal Brute Forcing (Step 2) must run first.\n\nAfter adding new examples through vetting, the full chain needs to re-run:\n  Step 2: Grind → finds conditions that pass ALL examples\n  Step 3: Filter → scans with those conditions\n\nGo to Step 2 and run the grind first.');
+        } else {
+          alert(d.error);
+        }
+      }
     });
   }
 
