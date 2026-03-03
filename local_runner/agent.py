@@ -90,6 +90,7 @@ PIPELINE_STEP_SCRIPTS = {
         ["python", "scripts/signal_exit_grinder.py", "--setup", "{setup}"],
     ],
     "sample_expansion": [["python", "scripts/signal_filter.py", "--setup", "{setup}"]],
+    "sample_review":    [["python", "scripts/review_samples.py", "--setup", "{setup}"]],
     "mfe_capture":     [["python", "scripts/exit_grinder.py", "--setup", "{setup}"]],
 }
 
