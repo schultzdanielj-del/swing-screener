@@ -193,10 +193,17 @@ def get_universe_matrix(progress_fn=None, force=False):
     from expr_cache_builder import ExprSeriesCache
     expr_cache = ExprSeriesCache()
 
-    if expr_cache.is_valid(expressions):
+    if expr_cache.is_valid():
+        # Cache exists — check if our expressions are a subset of what's cached
+        cache_names = set(expr_cache.expr_names)
+        our_names = [e["name"] for e in expressions]
+        missing = [n for n in our_names if n not in cache_names]
+        if missing:
+            log(f"⚠ {len(missing)} expressions not in cache. Falling back to live computation.")
+            return _build_universe_live(expressions, path, progress_fn)
         return _build_universe_from_cache(expr_cache, expressions, path, progress_fn)
     else:
-        log("⚠ Expression series cache not available or fingerprint mismatch.")
+        log("⚠ Expression series cache not available.")
         log("  Run: python local_runner/expr_cache_builder.py --build")
         log("  Falling back to live computation (slow)...")
         return _build_universe_live(expressions, path, progress_fn)
@@ -223,14 +230,19 @@ def _build_universe_from_cache(expr_cache, expressions, save_path, progress_fn=N
 
     t0 = time.time()
 
-    # Verify expression order matches
+    # Verify our expressions exist in cache (cache may have more, that's OK)
     cache_names = expr_cache.expr_names
     current_names = [e["name"] for e in expressions]
-    if cache_names != current_names:
-        log(f"⚠ Expression name mismatch between cache ({len(cache_names)}) "
-            f"and library ({len(current_names)}). Rebuild cache.")
-        log("  Run: python local_runner/expr_cache_builder.py --build --force")
-        raise RuntimeError("Expression cache fingerprint mismatch")
+    cache_name_set = set(cache_names)
+    missing = [n for n in current_names if n not in cache_name_set]
+    if missing:
+        log(f"⚠ {len(missing)} expressions not in cache. Cannot build from cache.")
+        raise RuntimeError(f"Missing expressions in cache: {missing[:5]}")
+
+    # Build column index mapping: our expression index -> cache column index
+    cache_name_to_idx = {n: i for i, n in enumerate(cache_names)}
+    col_map = [cache_name_to_idx[n] for n in current_names]
+    exact_match = (cache_names == current_names)
 
     universe_matrix = np.full((n_tickers, n_exprs), np.nan)
     ticker_to_idx = {t: i for i, t in enumerate(cached_tickers)}
@@ -250,7 +262,10 @@ def _build_universe_from_cache(expr_cache, expressions, save_path, progress_fn=N
             ticker, values = future.result()
             if values is not None:
                 idx = ticker_to_idx[ticker]
-                universe_matrix[idx] = values
+                if exact_match:
+                    universe_matrix[idx] = values
+                else:
+                    universe_matrix[idx] = values[col_map]
             completed_tickers += 1
             if completed_tickers % 500 == 0 or completed_tickers == n_tickers:
                 elapsed = time.time() - t0
