@@ -102,6 +102,13 @@ def init_db():
                 created_at TEXT DEFAULT (datetime('now')),
                 UNIQUE(setup_type, ticker, signal_date)
             );
+            CREATE TABLE IF NOT EXISTS earnings_dates (
+                ticker TEXT NOT NULL,
+                earnings_date TEXT NOT NULL,
+                updated_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(ticker, earnings_date)
+            );
+            CREATE INDEX IF NOT EXISTS idx_earnings_ticker ON earnings_dates(ticker);
         """)
 
 init_db()
@@ -2750,17 +2757,80 @@ async def save_vetting_decision(setup_type: str, req: VettingDecision):
 
 @app.get("/api/vetting/earnings/{ticker}")
 async def get_earnings_dates(ticker: str):
-    """Fetch earnings report dates from Yahoo Finance for chart overlay."""
+    """Get cached earnings dates from DB for chart overlay."""
     try:
-        import yfinance as yf
-        t = yf.Ticker(ticker)
-        cal = t.get_earnings_dates(limit=40)
-        if cal is None or cal.empty:
-            return {"ticker": ticker, "earnings_dates": []}
-        dates = [d.strftime("%Y-%m-%d") for d in cal.index]
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT earnings_date FROM earnings_dates WHERE ticker = ? ORDER BY earnings_date",
+                [ticker.upper()]
+            ).fetchall()
+            dates = [r[0] for r in rows]
         return {"ticker": ticker, "earnings_dates": dates}
     except Exception as e:
         return {"ticker": ticker, "earnings_dates": [], "error": str(e)}
+
+
+@app.post("/api/universe/refresh-earnings")
+async def refresh_earnings(background_tasks: BackgroundTasks):
+    """Batch scrape earnings dates for all tradable tickers, store in DB."""
+    def _do_refresh():
+        import yfinance as yf
+        import time as _time
+
+        with get_db() as db:
+            tickers = [r[0] for r in db.execute("SELECT ticker FROM tradable_universe ORDER BY ticker").fetchall()]
+
+        total = len(tickers)
+        success = 0
+        failed = 0
+        total_dates = 0
+        t0 = _time.time()
+
+        print(f"  Earnings refresh: {total} tickers")
+
+        for i, ticker in enumerate(tickers):
+            try:
+                t = yf.Ticker(ticker)
+                cal = t.get_earnings_dates(limit=20)
+                if cal is not None and not cal.empty:
+                    dates = [d.strftime("%Y-%m-%d") for d in cal.index]
+                    with get_db() as db:
+                        for d in dates:
+                            db.execute(
+                                "INSERT OR REPLACE INTO earnings_dates (ticker, earnings_date, updated_at) VALUES (?, ?, datetime('now'))",
+                                [ticker, d]
+                            )
+                        db.commit()
+                    total_dates += len(dates)
+                success += 1
+            except Exception as e:
+                failed += 1
+
+            if (i + 1) % 100 == 0:
+                elapsed = _time.time() - t0
+                rate = (i + 1) / elapsed
+                eta = (total - i - 1) / rate if rate > 0 else 0
+                print(f"    {i+1}/{total} ({success} ok, {failed} fail, {total_dates} dates, ETA {eta:.0f}s)")
+
+            # Rate limit: ~2 per second to avoid Yahoo throttling
+            if (i + 1) % 2 == 0:
+                _time.sleep(0.5)
+
+        elapsed = _time.time() - t0
+        print(f"  Earnings refresh done: {success}/{total} tickers, {total_dates} dates, {elapsed:.0f}s")
+
+    background_tasks.add_task(_do_refresh)
+    return {"status": "started", "message": "Earnings refresh running in background"}
+
+
+@app.get("/api/universe/earnings-status")
+async def earnings_status():
+    """Check earnings data freshness."""
+    with get_db() as db:
+        count = db.execute("SELECT COUNT(DISTINCT ticker) FROM earnings_dates").fetchone()[0]
+        total_dates = db.execute("SELECT COUNT(*) FROM earnings_dates").fetchone()[0]
+        latest = db.execute("SELECT MAX(updated_at) FROM earnings_dates").fetchone()[0]
+    return {"tickers_with_earnings": count, "total_dates": total_dates, "last_updated": latest}
 
 
 @app.get("/api/vetting/{setup_type}/rejected")
