@@ -476,7 +476,32 @@ async def get_examples(setup_type: str):
         examples = []
         for r in rows:
             has = db.execute("SELECT 1 FROM signal_analysis WHERE example_id=?", (r["id"],)).fetchone() is not None
-            examples.append({"id": r["id"], "ticker": r["ticker"], "chartDate": r["chart_date"], "entryDate": r["entry_date"], "hasAnalysis": has})
+            ex = {"id": r["id"], "ticker": r["ticker"], "chartDate": r["chart_date"], "entryDate": r["entry_date"], "hasAnalysis": has}
+
+            # Compute ADR move: entry candle high → max favorable excursion close
+            try:
+                ohlcv = db.execute(
+                    "SELECT date, open, high, low, close FROM universe_ohlcv WHERE ticker=? AND date >= ? ORDER BY date LIMIT 120",
+                    (r["ticker"], r["entry_date"])
+                ).fetchall()
+                if ohlcv and len(ohlcv) >= 2:
+                    # ADR(14): use 14 bars before entry
+                    pre = db.execute(
+                        "SELECT high, low FROM universe_ohlcv WHERE ticker=? AND date < ? ORDER BY date DESC LIMIT 14",
+                        (r["ticker"], r["entry_date"])
+                    ).fetchall()
+                    if pre and len(pre) >= 5:
+                        adr = sum(abs(p["high"] - p["low"]) for p in pre) / len(pre)
+                        if adr > 0:
+                            entry_high = ohlcv[0]["high"]
+                            # For short setup: best move = entry high - lowest close after
+                            best_close = min(bar["close"] for bar in ohlcv[1:])
+                            move_adr = (entry_high - best_close) / adr
+                            ex["adrMove"] = round(move_adr, 1)
+            except:
+                pass
+
+            examples.append(ex)
     return {"setupType": setup_type, "examples": examples}
 
 @app.get("/api/chart-image/{setup_type}/{example_id}")

@@ -559,7 +559,10 @@ function ExamplesPage({ setup }) {
               <div key={key} className="ex-card">
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                   <span className="ex-ticker">{ex.ticker}</span>
-                  <span className="ex-date">{ex.entryDate}</span>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    {ex.adrMove != null && <span style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--green)',fontWeight:600}}>+{ex.adrMove} ADR</span>}
+                    <span className="ex-date">{ex.entryDate}</span>
+                  </div>
                 </div>
                 {showCharts && data && data.length > 0 && <MiniChart data={data} entryDate={ex.entryDate} />}
               </div>
