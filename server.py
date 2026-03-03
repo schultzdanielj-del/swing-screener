@@ -2391,6 +2391,21 @@ async def pipeline_run_step(step_id: str):
         return {"error": f"Unknown step: {step_id}"}
 
     state = _load_pipeline_state()
+
+    # Clean stale jobs (older than 2 hours and still "active")
+    now = datetime.now()
+    clean_jobs = []
+    for j in state.get("jobs", []):
+        created = j.get("created_at", "")
+        try:
+            age = (now - datetime.fromisoformat(created)).total_seconds()
+        except:
+            age = 99999
+        if j.get("status") in ("queued", "running", "claimed") and age > 7200:
+            continue  # Drop stale job
+        clean_jobs.append(j)
+    state["jobs"] = clean_jobs
+
     for j in state.get("jobs", []):
         if j.get("status") in ("queued", "running", "claimed"):
             return {"error": f"Already running: {j.get('step_id')}"}
@@ -2487,12 +2502,14 @@ async def pipeline_get_logs(step_id: str, after: int = 0):
 
 @app.post("/api/pipeline/reset/{step_id}")
 async def pipeline_reset_step(step_id: str):
-    """Reset a step to pending."""
+    """Reset a step to pending and clean up any associated jobs."""
     state = _load_pipeline_state()
     state.setdefault("steps", {})[step_id] = {
         "status": "pending", "started_at": None, "finished_at": None,
         "duration_s": None, "exit_code": None, "error": None, "result_summary": None,
     }
+    # Remove ALL jobs for this step (prevents zombie jobs blocking future runs)
+    state["jobs"] = [j for j in state.get("jobs", []) if j.get("step_id") != step_id]
     _save_pipeline_state(state)
     return {"ok": True, "step_id": step_id}
 
