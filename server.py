@@ -109,6 +109,18 @@ def init_db():
                 UNIQUE(ticker, earnings_date)
             );
             CREATE INDEX IF NOT EXISTS idx_earnings_ticker ON earnings_dates(ticker);
+            CREATE TABLE IF NOT EXISTS pending_examples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setup_type TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                signal_date TEXT NOT NULL,
+                entry_date TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                review_notes TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                reviewed_at TEXT,
+                UNIQUE(setup_type, ticker, entry_date)
+            );
         """)
 
 init_db()
@@ -2414,10 +2426,13 @@ async def get_pipeline_steps():
                     n_rejected = db.execute(
                         "SELECT COUNT(*) FROM rejected_signals WHERE setup_type='dtss'"
                     ).fetchone()[0]
+                    n_pending = db.execute(
+                        "SELECT COUNT(*) FROM pending_examples WHERE setup_type='dtss'"
+                    ).fetchone()[0]
                 step_state["vetting_stats"] = {
                     "n_total": n_total, "n_vetted": n_vetted,
                     "n_yes": counts["yes"], "n_maybe": counts["maybe"], "n_no": counts["no"],
-                    "n_examples": n_examples, "n_rejected": n_rejected,
+                    "n_examples": n_examples, "n_rejected": n_rejected, "n_pending": n_pending,
                 }
                 if step_def["id"] == "sample_expansion" and n_vetted > 0:
                     # Show vetting progress, but don't override to 'running' — that
@@ -2770,27 +2785,23 @@ async def save_vetting_decision(setup_type: str, req: VettingDecision):
     with open(vetting_path, "w") as f:
         json.dump(decisions, f, indent=2)
 
-    # If yes, also create the example
+    # If yes, add to pending (AI review gate before becoming example)
     result = {"status": "saved", "verdict": req.verdict}
     if req.verdict == "yes":
         try:
-            ohlcv_df = fetch_ohlcv(req.ticker, req.entry_date)
-            if ohlcv_df is not None:
-                with get_db() as db:
-                    existing = db.execute(
-                        "SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
-                        (setup_type, req.ticker, req.entry_date)
-                    ).fetchone()
-                    if not existing:
-                        eid = db.execute(
-                            "INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
-                            (setup_type, req.ticker, req.entry_date, req.entry_date)
-                        ).lastrowid
-                        store_ohlcv(db, eid, ohlcv_df)
-                        result["example_id"] = eid
-                        result["message"] = f"Example created: {req.ticker} {req.entry_date}"
-                    else:
-                        result["message"] = f"Example already exists: {req.ticker} {req.entry_date}"
+            with get_db() as db:
+                existing = db.execute(
+                    "SELECT id FROM pending_examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                    (setup_type, req.ticker, req.entry_date)
+                ).fetchone()
+                if not existing:
+                    db.execute(
+                        "INSERT INTO pending_examples (setup_type, ticker, signal_date, entry_date) VALUES (?,?,?,?)",
+                        (setup_type, req.ticker, req.signal_date, req.entry_date)
+                    )
+                    result["message"] = f"Added to pending review: {req.ticker} {req.entry_date}"
+                else:
+                    result["message"] = f"Already pending: {req.ticker} {req.entry_date}"
         except Exception as e:
             result["example_error"] = str(e)
 
@@ -2838,6 +2849,69 @@ async def get_earnings_dates(ticker: str):
         return {"ticker": ticker, "earnings_dates": []}
     except Exception as e:
         return {"ticker": ticker, "earnings_dates": [], "error": str(e)}
+
+
+@app.get("/api/pending/{setup_type}")
+async def get_pending_examples(setup_type: str):
+    """Get pending examples awaiting AI review."""
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT id, ticker, signal_date, entry_date, status, review_notes, created_at FROM pending_examples WHERE setup_type=? ORDER BY created_at DESC",
+            [setup_type]
+        ).fetchall()
+    return {"pending": [dict(r) for r in rows]}
+
+
+@app.post("/api/pending/{setup_type}/{pending_id}/approve")
+async def approve_pending(setup_type: str, pending_id: int):
+    """Approve pending example — move to examples table."""
+    with get_db() as db:
+        row = db.execute("SELECT * FROM pending_examples WHERE id=? AND setup_type=?", (pending_id, setup_type)).fetchone()
+        if not row:
+            raise HTTPException(404, "Not found")
+        ticker, entry_date = row["ticker"], row["entry_date"]
+        existing = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?", (setup_type, ticker, entry_date)).fetchone()
+        if not existing:
+            ohlcv_df = fetch_ohlcv(ticker, entry_date)
+            if ohlcv_df is not None:
+                eid = db.execute("INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
+                    (setup_type, ticker, entry_date, entry_date)).lastrowid
+                store_ohlcv(db, eid, ohlcv_df)
+        db.execute("DELETE FROM pending_examples WHERE id=?", (pending_id,))
+    return {"status": "approved", "ticker": ticker, "entry_date": entry_date}
+
+
+@app.post("/api/pending/{setup_type}/{pending_id}/reject")
+async def reject_pending(setup_type: str, pending_id: int):
+    """Reject pending example — remove from pending, add to rejected."""
+    with get_db() as db:
+        row = db.execute("SELECT * FROM pending_examples WHERE id=? AND setup_type=?", (pending_id, setup_type)).fetchone()
+        if not row:
+            raise HTTPException(404, "Not found")
+        db.execute("INSERT OR IGNORE INTO rejected_signals (setup_type, ticker, signal_date) VALUES (?,?,?)",
+            (setup_type, row["ticker"], row["signal_date"]))
+        db.execute("DELETE FROM pending_examples WHERE id=?", (pending_id,))
+    return {"status": "rejected", "ticker": row["ticker"]}
+
+
+@app.post("/api/pending/{setup_type}/approve-all")
+async def approve_all_pending(setup_type: str):
+    """Approve all pending examples at once."""
+    with get_db() as db:
+        rows = db.execute("SELECT * FROM pending_examples WHERE setup_type=?", [setup_type]).fetchall()
+        approved = 0
+        for row in rows:
+            existing = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                (setup_type, row["ticker"], row["entry_date"])).fetchone()
+            if not existing:
+                ohlcv_df = fetch_ohlcv(row["ticker"], row["entry_date"])
+                if ohlcv_df is not None:
+                    eid = db.execute("INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
+                        (setup_type, row["ticker"], row["entry_date"], row["entry_date"])).lastrowid
+                    store_ohlcv(db, eid, ohlcv_df)
+                    approved += 1
+        db.execute("DELETE FROM pending_examples WHERE setup_type=?", [setup_type])
+    return {"status": "ok", "approved": approved}
 
 
 @app.post("/api/universe/refresh-earnings")

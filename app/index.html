@@ -481,16 +481,18 @@ function MiniChart({ data, entryDate }) {
 function ExamplesPage({ setup }) {
   const [examples, setExamples] = useState([]);
   const [rejected, setRejected] = useState([]);
-  const [showRejected, setShowRejected] = useState(false);
+  const [pending, setPending] = useState([]);
+  const [tab, setTab] = useState('examples');
   const [showCharts, setShowCharts] = useState(false);
   const [chartData, setChartData] = useState({});
 
-  useEffect(() => {
-    fetch(`${API}/api/examples/${setup}`).then(r=>r.json())
-      .then(d => setExamples(d.examples || [])).catch(()=>{});
-    fetch(`${API}/api/vetting/${setup}/rejected`).then(r=>r.json())
-      .then(d => setRejected(d.rejected || [])).catch(()=>{});
-  }, [setup]);
+  const reload = () => {
+    fetch(`${API}/api/examples/${setup}`).then(r=>r.json()).then(d => setExamples(d.examples || [])).catch(()=>{});
+    fetch(`${API}/api/vetting/${setup}/rejected`).then(r=>r.json()).then(d => setRejected(d.rejected || [])).catch(()=>{});
+    fetch(`${API}/api/pending/${setup}`).then(r=>r.json()).then(d => setPending(d.pending || [])).catch(()=>{});
+  };
+
+  useEffect(reload, [setup]);
 
   function loadChart(ticker, entryDate) {
     const key = `${ticker}_${entryDate}`;
@@ -500,10 +502,10 @@ function ExamplesPage({ setup }) {
   }
 
   useEffect(() => {
-    if (showCharts && !showRejected) {
+    if (showCharts && tab==='examples') {
       examples.forEach(ex => loadChart(ex.ticker, ex.entryDate));
     }
-  }, [showCharts, examples, showRejected]);
+  }, [showCharts, examples, tab]);
 
   return (
     <div>
@@ -531,20 +533,24 @@ function ExamplesPage({ setup }) {
       </div>
 
       <div style={{display:'flex',gap:8,marginBottom:16}}>
-        <button className={`btn ${!showRejected?'btn-go':''}`} onClick={()=>setShowRejected(false)}>
+        <button className={`btn ${tab==='examples'?'btn-go':''}`} onClick={()=>setTab('examples')}>
           Optimal Samples ({examples.length})
         </button>
-        <button className={`btn ${showRejected?'btn-stop':''}`} onClick={()=>setShowRejected(true)}>
+        <button className={`btn ${tab==='pending'?'btn-go':''}`} onClick={()=>setTab('pending')}
+          style={pending.length>0?{borderColor:'var(--amber)',color:'var(--amber)'}:{}}>
+          Pending ({pending.length})
+        </button>
+        <button className={`btn ${tab==='rejected'?'btn-stop':''}`} onClick={()=>setTab('rejected')}>
           Rejected ({rejected.length})
         </button>
-        {!showRejected && (
+        {tab==='examples' && (
           <button className="btn" onClick={()=>setShowCharts(p=>!p)} style={{marginLeft:'auto'}}>
             {showCharts ? '▣ Hide Charts' : '▢ Show Charts'}
           </button>
         )}
       </div>
 
-      {!showRejected ? (
+      {tab==='examples' ? (
         <div className="ex-grid" style={showCharts ? {gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))'} : {}}>
           {examples.map(ex => {
             const key = `${ex.ticker}_${ex.entryDate}`;
@@ -556,7 +562,7 @@ function ExamplesPage({ setup }) {
                   <div style={{display:'flex',alignItems:'center',gap:8}}>
                     {ex.adrMove != null && <span style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--green)',fontWeight:600}}>+{ex.adrMove} ADR</span>}
                     <span className="ex-date">{ex.entryDate}</span>
-                    <span onClick={()=>{if(confirm(`Delete ${ex.ticker} ${ex.entryDate}?`))fetch(`${API}/api/examples/${setup}/${ex.id}`,{method:'DELETE'}).then(()=>setExamples(p=>p.filter(e=>e.id!==ex.id)))}}
+                    <span onClick={()=>{if(confirm(`Delete ${ex.ticker} ${ex.entryDate}?`))fetch(`${API}/api/examples/${setup}/${ex.id}`,{method:'DELETE'}).then(reload)}}
                       style={{color:'var(--text-muted)',cursor:'pointer',fontSize:14,lineHeight:1,padding:'0 2px'}}
                       onMouseOver={e=>e.target.style.color='var(--red)'}
                       onMouseOut={e=>e.target.style.color='var(--text-muted)'}>×</span>
@@ -566,6 +572,36 @@ function ExamplesPage({ setup }) {
               </div>
             );
           })}
+        </div>
+      ) : tab==='pending' ? (
+        <div>
+          {pending.length > 0 && (
+            <div style={{display:'flex',gap:8,marginBottom:12}}>
+              <button className="btn btn-go" onClick={()=>{if(confirm(`Approve all ${pending.length} pending examples?`))
+                fetch(`${API}/api/pending/${setup}/approve-all`,{method:'POST'}).then(reload)}}>
+                ✓ Approve All ({pending.length})
+              </button>
+            </div>
+          )}
+          <div className="ex-grid">
+            {pending.map(p => (
+              <div key={p.id} className="ex-card" style={{borderColor:'rgba(251,191,36,0.2)'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span className="ex-ticker">{p.ticker}</span>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span className="ex-date">{p.entry_date}</span>
+                    <span onClick={()=>fetch(`${API}/api/pending/${setup}/${p.id}/approve`,{method:'POST'}).then(reload)}
+                      style={{color:'var(--green)',cursor:'pointer',fontSize:11,fontFamily:'var(--mono)'}}
+                      title="Approve">✓</span>
+                    <span onClick={()=>fetch(`${API}/api/pending/${setup}/${p.id}/reject`,{method:'POST'}).then(reload)}
+                      style={{color:'var(--red)',cursor:'pointer',fontSize:14,lineHeight:1}}
+                      title="Reject">×</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {pending.length === 0 && <div className="empty-state"><div className="icon">∅</div>No pending examples. Vet signals and click YES to add picks here.</div>}
+          </div>
         </div>
       ) : (
         <div className="ex-grid">
