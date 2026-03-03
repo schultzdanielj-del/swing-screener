@@ -518,6 +518,17 @@ async def get_examples(setup_type: str):
 
 @app.get("/api/chart-image/{setup_type}/{example_id}")
 async def get_chart_image(setup_type: str, example_id: int, at_entry: int = Query(0)):
+
+@app.get("/api/chart/{setup_type}/{ticker}/{entry_date}")
+async def get_chart_by_ticker(setup_type: str, ticker: str, entry_date: str):
+    """Generate chart PNG for any ticker+date (used by AI review)."""
+    ohlcv_df = fetch_ohlcv(ticker, entry_date)
+    if ohlcv_df is None:
+        raise HTTPException(404, f"No OHLCV data for {ticker}")
+    png = generate_chart_png(ohlcv_df, ticker, entry_date, at_entry=True, setup_type=setup_type)
+    if png is None:
+        raise HTTPException(500, "Chart generation failed")
+    return Response(content=png, media_type="image/png")
     with get_db() as db:
         ex = db.execute("SELECT id, ticker, entry_date FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
         if not ex: raise HTTPException(404, f"No example with id {example_id}")
