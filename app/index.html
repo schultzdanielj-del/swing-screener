@@ -253,6 +253,7 @@ function NightlyPage() {
   const [pipe, setPipe] = useState(null);
   const [logs, setLogs] = useState([]);
   const logRef = useRef(null);
+  const logCountRef = useRef(0);
 
   useEffect(() => {
     const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
@@ -262,9 +263,9 @@ function NightlyPage() {
   useEffect(() => {
     if (!pipe) return;
     const step = pipe.steps.find(s => s.id === 'nightly');
-    if (!step || !['running','claimed','queued'].includes(step.state?.status)) return;
-    const poll = () => fetch(`${API}/api/pipeline/logs/nightly?after=${logs.length}`).then(r=>r.json())
-      .then(d => { if(d.lines?.length) setLogs(p=>[...p,...d.lines]); }).catch(()=>{});
+    if (!step || !['running','claimed','queued'].includes(step.state?.status)) { logCountRef.current = 0; return; }
+    const poll = () => fetch(`${API}/api/pipeline/logs/nightly?after=${logCountRef.current}`).then(r=>r.json())
+      .then(d => { if(d.lines?.length) { logCountRef.current += d.lines.length; setLogs(p=>[...p,...d.lines]); } }).catch(()=>{});
     poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
   }, [pipe?.steps?.find(s=>s.id==='nightly')?.state?.status]);
 
@@ -342,6 +343,7 @@ function StepPage({ stepId, setup }) {
   const [pipe, setPipe] = useState(null);
   const [logs, setLogs] = useState([]);
   const logRef = useRef(null);
+  const logCountRef = useRef(0);
 
   useEffect(() => {
     const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
@@ -353,9 +355,9 @@ function StepPage({ stepId, setup }) {
   const isRun = ['running','claimed','queued'].includes(st);
 
   useEffect(() => {
-    if (!isRun) return;
-    const poll = () => fetch(`${API}/api/pipeline/logs/${stepId}?after=${logs.length}`).then(r=>r.json())
-      .then(d => { if(d.lines?.length) setLogs(p=>[...p,...d.lines]); }).catch(()=>{});
+    if (!isRun) { logCountRef.current = 0; return; }
+    const poll = () => fetch(`${API}/api/pipeline/logs/${stepId}?after=${logCountRef.current}`).then(r=>r.json())
+      .then(d => { if(d.lines?.length) { logCountRef.current += d.lines.length; setLogs(p=>[...p,...d.lines]); } }).catch(()=>{});
     poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
   }, [isRun]);
 
@@ -363,7 +365,7 @@ function StepPage({ stepId, setup }) {
 
   function doRun() {
     fetch(`${API}/api/pipeline/run/${stepId}`, {method:'POST'}).then(r=>r.json()).then(d => {
-      if(d.error) alert(d.error); else setLogs([]);
+      if(d.error) alert(d.error); else { setLogs([]); logCountRef.current = 0; }
     });
   }
 
@@ -715,11 +717,12 @@ function VettingPage({ setup }) {
   const isFilterRunning = ['running','claimed','queued'].includes(stepStatus);
 
   // Poll logs while filter is running
+  const filterLogCountRef = useRef(0);
   useEffect(() => {
-    if (!isFilterRunning) return;
+    if (!isFilterRunning) { filterLogCountRef.current = 0; return; }
     setShowLogs(true);
-    const poll = () => fetch(`${API}/api/pipeline/logs/sample_expansion?after=${filterLogs.length}`).then(r=>r.json())
-      .then(d => { if(d.lines?.length) setFilterLogs(p=>[...p,...d.lines]); }).catch(()=>{});
+    const poll = () => fetch(`${API}/api/pipeline/logs/sample_expansion?after=${filterLogCountRef.current}`).then(r=>r.json())
+      .then(d => { if(d.lines?.length) { filterLogCountRef.current += d.lines.length; setFilterLogs(p=>[...p,...d.lines]); } }).catch(()=>{});
     poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
   }, [isFilterRunning]);
 
@@ -959,6 +962,7 @@ function ExitManagePage({ setup }) {
   const [pipe, setPipe] = useState(null);
   const [logs, setLogs] = useState([]);
   const logRef = useRef(null);
+  const logCountRef = useRef(0);
 
   useEffect(() => {
     const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
@@ -970,9 +974,9 @@ function ExitManagePage({ setup }) {
   const isRun = ['running','claimed','queued'].includes(st);
 
   useEffect(() => {
-    if (!isRun) return;
-    const poll = () => fetch(`${API}/api/pipeline/logs/mfe_capture?after=${logs.length}`).then(r=>r.json())
-      .then(d => { if(d.lines?.length) setLogs(p=>[...p,...d.lines]); }).catch(()=>{});
+    if (!isRun) { logCountRef.current = 0; return; }
+    const poll = () => fetch(`${API}/api/pipeline/logs/mfe_capture?after=${logCountRef.current}`).then(r=>r.json())
+      .then(d => { if(d.lines?.length) { logCountRef.current += d.lines.length; setLogs(p=>[...p,...d.lines]); } }).catch(()=>{});
     poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
   }, [isRun]);
 
