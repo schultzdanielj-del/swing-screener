@@ -116,6 +116,8 @@ def init_db():
                 signal_date TEXT NOT NULL,
                 entry_date TEXT NOT NULL,
                 status TEXT DEFAULT 'pending',
+                ai_verdict TEXT,
+                ai_reasoning TEXT,
                 review_notes TEXT,
                 created_at TEXT DEFAULT (datetime('now')),
                 reviewed_at TEXT,
@@ -2867,7 +2869,7 @@ async def get_pending_examples(setup_type: str):
     """Get pending examples awaiting AI review."""
     with get_db() as db:
         rows = db.execute(
-            "SELECT id, ticker, signal_date, entry_date, status, review_notes, created_at FROM pending_examples WHERE setup_type=? ORDER BY created_at DESC",
+            "SELECT id, ticker, signal_date, entry_date, status, ai_verdict, ai_reasoning, review_notes, created_at FROM pending_examples WHERE setup_type=? ORDER BY created_at DESC",
             [setup_type]
         ).fetchall()
     return {"pending": [dict(r) for r in rows]}
@@ -2905,11 +2907,28 @@ async def reject_pending(setup_type: str, pending_id: int):
     return {"status": "rejected", "ticker": row["ticker"]}
 
 
+@app.post("/api/pending/{setup_type}/{pending_id}/review")
+async def store_ai_review(setup_type: str, pending_id: int, request: Request):
+    """Store AI verdict + reasoning on a pending example."""
+    body = await request.json()
+    ai_verdict = body.get("ai_verdict", "")
+    ai_reasoning = body.get("ai_reasoning", "")
+    with get_db() as db:
+        row = db.execute("SELECT id FROM pending_examples WHERE id=? AND setup_type=?", (pending_id, setup_type)).fetchone()
+        if not row:
+            raise HTTPException(404, "Not found")
+        db.execute(
+            "UPDATE pending_examples SET ai_verdict=?, ai_reasoning=?, status='reviewed', reviewed_at=datetime('now') WHERE id=?",
+            (ai_verdict, ai_reasoning, pending_id)
+        )
+    return {"status": "ok", "ai_verdict": ai_verdict}
+
+
 @app.post("/api/pending/{setup_type}/approve-all")
 async def approve_all_pending(setup_type: str):
-    """Approve all pending examples at once."""
+    """Approve all AI-approved pending examples at once."""
     with get_db() as db:
-        rows = db.execute("SELECT * FROM pending_examples WHERE setup_type=?", [setup_type]).fetchall()
+        rows = db.execute("SELECT * FROM pending_examples WHERE setup_type=? AND ai_verdict='APPROVE'", [setup_type]).fetchall()
         approved = 0
         for row in rows:
             existing = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
@@ -2921,7 +2940,7 @@ async def approve_all_pending(setup_type: str):
                         (setup_type, row["ticker"], row["entry_date"], row["entry_date"])).lastrowid
                     store_ohlcv(db, eid, ohlcv_df)
                     approved += 1
-        db.execute("DELETE FROM pending_examples WHERE setup_type=?", [setup_type])
+        db.execute("DELETE FROM pending_examples WHERE setup_type=? AND ai_verdict='APPROVE'", [setup_type])
     return {"status": "ok", "approved": approved}
 
 

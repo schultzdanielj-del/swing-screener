@@ -576,30 +576,50 @@ function ExamplesPage({ setup }) {
       ) : tab==='pending' ? (
         <div>
           {pending.length > 0 && (
-            <div style={{display:'flex',gap:8,marginBottom:12}}>
-              <button className="btn btn-go" onClick={()=>{if(confirm(`Approve all ${pending.length} pending examples?`))
+            <div style={{display:'flex',gap:8,marginBottom:12,alignItems:'center'}}>
+              <button className="btn btn-go" onClick={()=>{if(confirm(`Approve all ${pending.filter(p=>p.ai_verdict==='APPROVE').length} AI-approved items?`))
                 fetch(`${API}/api/pending/${setup}/approve-all`,{method:'POST'}).then(reload)}}>
-                ✓ Approve All ({pending.length})
+                ✓ Approve All AI-Approved
               </button>
+              <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)'}}>
+                {pending.filter(p=>p.status==='pending').length} awaiting AI review · {pending.filter(p=>p.ai_verdict==='APPROVE').length} AI approved · {pending.filter(p=>p.ai_verdict==='REJECT').length} AI rejected
+              </span>
             </div>
           )}
           <div className="ex-grid">
-            {pending.map(p => (
-              <div key={p.id} className="ex-card" style={{borderColor:'rgba(251,191,36,0.2)'}}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                  <span className="ex-ticker">{p.ticker}</span>
-                  <div style={{display:'flex',alignItems:'center',gap:8}}>
-                    <span className="ex-date">{p.entry_date}</span>
-                    <span onClick={()=>fetch(`${API}/api/pending/${setup}/${p.id}/approve`,{method:'POST'}).then(reload)}
-                      style={{color:'var(--green)',cursor:'pointer',fontSize:11,fontFamily:'var(--mono)'}}
-                      title="Approve">✓</span>
-                    <span onClick={()=>fetch(`${API}/api/pending/${setup}/${p.id}/reject`,{method:'POST'}).then(reload)}
-                      style={{color:'var(--red)',cursor:'pointer',fontSize:14,lineHeight:1}}
-                      title="Reject">×</span>
+            {pending.map(p => {
+              const isApprove = p.ai_verdict === 'APPROVE';
+              const isReject = p.ai_verdict === 'REJECT';
+              const isWaiting = !p.ai_verdict;
+              const borderColor = isApprove ? 'rgba(38,166,154,0.3)' : isReject ? 'rgba(239,83,80,0.3)' : 'rgba(251,191,36,0.2)';
+              return (
+                <div key={p.id} className="ex-card" style={{borderColor}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:p.ai_reasoning?6:0}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      {isApprove && <span style={{color:'var(--green)',fontWeight:700,fontSize:11,fontFamily:'var(--mono)'}}>✓ AI APPROVE</span>}
+                      {isReject && <span style={{color:'var(--red)',fontWeight:700,fontSize:11,fontFamily:'var(--mono)'}}>✗ AI REJECT</span>}
+                      {isWaiting && <span style={{color:'var(--amber)',fontWeight:700,fontSize:11,fontFamily:'var(--mono)'}}>⏳ WAITING</span>}
+                      <span className="ex-ticker">{p.ticker}</span>
+                    </div>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <span className="ex-date">{p.entry_date}</span>
+                      <span onClick={()=>fetch(`${API}/api/pending/${setup}/${p.id}/approve`,{method:'POST'}).then(reload)}
+                        style={{color:'var(--green)',cursor:'pointer',fontSize:13,fontFamily:'var(--mono)',fontWeight:700}}
+                        title="Approve into examples">✓</span>
+                      <span onClick={()=>fetch(`${API}/api/pending/${setup}/${p.id}/reject`,{method:'POST'}).then(reload)}
+                        style={{color:'var(--red)',cursor:'pointer',fontSize:15,lineHeight:1,fontWeight:700}}
+                        title="Reject">×</span>
+                    </div>
                   </div>
+                  {p.ai_reasoning && (
+                    <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-dim)',lineHeight:1.5,
+                      padding:'6px 8px',background:'var(--surface-2)',borderRadius:4,marginTop:4}}>
+                      {p.ai_reasoning}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {pending.length === 0 && <div className="empty-state"><div className="icon">∅</div>No pending examples. Vet signals and click YES to add picks here.</div>}
           </div>
         </div>
