@@ -157,7 +157,7 @@ migrate_unique_constraint()
 
 # Ensure pending_examples table exists (may be missing on existing DBs)
 with get_db() as db:
-    db.executescript("""
+    db.execute("""
         CREATE TABLE IF NOT EXISTS pending_examples (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             setup_type TEXT NOT NULL,
@@ -171,7 +171,7 @@ with get_db() as db:
             created_at TEXT DEFAULT (datetime('now')),
             reviewed_at TEXT,
             UNIQUE(setup_type, ticker, entry_date)
-        );
+        )
     """)
 
 # Migrate extension table: old schema had ext_sma50_pct/ext_sma200_pct, new uses xatr + atr14
@@ -2893,6 +2893,40 @@ async def get_pending_examples(setup_type: str):
             [setup_type]
         ).fetchall()
     return {"pending": [dict(r) for r in rows]}
+
+
+@app.post("/api/pending/{setup_type}/backfill")
+async def backfill_pending(setup_type: str):
+    """Backfill YES vetting decisions that missed the pending table."""
+    vetting_path = VETTING_DATA_DIR / "vetting" / f"vetting_{setup_type}.json"
+    if not vetting_path.exists():
+        return {"status": "no vetting file", "added": 0}
+    with open(vetting_path) as f:
+        decisions = json.load(f)
+    added = 0
+    with get_db() as db:
+        for key, v in decisions.items():
+            if v.get("verdict") != "yes":
+                continue
+            ticker = v["ticker"]
+            entry_date = v.get("entry_date")
+            signal_date = v.get("signal_date", "")
+            if not entry_date:
+                continue
+            # Skip if already in examples
+            existing_ex = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                (setup_type, ticker, entry_date)).fetchone()
+            if existing_ex:
+                continue
+            # Skip if already pending
+            existing_p = db.execute("SELECT id FROM pending_examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                (setup_type, ticker, entry_date)).fetchone()
+            if existing_p:
+                continue
+            db.execute("INSERT OR IGNORE INTO pending_examples (setup_type, ticker, signal_date, entry_date) VALUES (?,?,?,?)",
+                (setup_type, ticker, signal_date, entry_date))
+            added += 1
+    return {"status": "ok", "added": added}
 
 
 @app.post("/api/pending/{setup_type}/{pending_id}/approve")
