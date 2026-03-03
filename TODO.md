@@ -1,89 +1,77 @@
-# TODO — Swing Screener (2026-03-02)
+# TODO — Swing Screener (2026-03-03)
 
-## Current State — PIPELINE DATA FLOW FIXED, RE-GRIND NEEDED
+## Current State — RE-GRIND RUNNING OVERNIGHT
 
-Pipeline wiring between local machine and Railway is fixed. The immediate blocker is that 10/36 DTSS examples fail the current 41 conditions — examples added through vetting weren't part of the original grind. A full re-grind (Step 2) with all 36 examples is required before the filter (Step 3) will produce valid results.
+Pyramid grinder running overnight with 33 DTSS examples (36 minus BRK-B, SMMT, VUZI not in cache). First run after UI pipeline fixes. Matrix rebuilt from live computation (~45 min) due to fingerprint mismatch bug — now fixed, next run will use cache (~50s).
 
 ### Pipeline Steps
 
-| # | Step | Server ID | What Runs | Status |
-|---|------|-----------|-----------|--------|
-| 0 | Nightly Refresh | `nightly` | `python local_runner/nightly.py` | ✅ Works |
-| 1 | Optimal Samples | `optimal_samples` | Read-only display (manual) | ✅ Works |
-| 2 | Signal Brute Forcing | `signal_brute` | `pyramid_grinder.py` → `signal_exit_grinder.py` | ⚠️ NEEDS RE-RUN (36 examples, only 23 pass current conditions) |
-| 3 | Sample Expansion | `sample_expansion` | `signal_filter.py` → chart vetting UI | ✅ Wired (uploads to Railway, live logs, prerequisite on Step 2) |
-| 4 | MFE Capture | `mfe_capture` | `exit_grinder.py` | ✅ Script exists (trade mgmt exit optimizer) |
-| 5 | Market Grinder | `market_grind` | Not built | ⬜ Placeholder |
+| # | Step | Server ID | Status |
+|---|------|-----------|--------|
+| 0 | Nightly Refresh | `nightly` | ✅ Works |
+| 1 | Optimal Samples | `optimal_samples` | ✅ Works |
+| 2 | Signal Brute Forcing | `signal_brute` | ⏳ Running overnight (re-grind with 33 examples) |
+| 3 | Sample Expansion | `sample_expansion` | ✅ Wired (prerequisite on Step 2) |
+| 4 | MFE Capture | `mfe_capture` | ✅ Script exists |
+| 5 | Market Grinder | `market_grind` | ⬜ Placeholder |
 
-### Pipeline Chain (enforced by prerequisites)
+### Pipeline Chain (enforced)
 
 ```
 Step 2: Grind (finds conditions passing ALL examples)
   ↓ prerequisite
-Step 3: Filter (scans universe with those conditions) → Upload to Railway → Vet
+Step 3: Filter → Upload to Railway → Vet
   ↓ vetting adds new examples
-Step 2: Re-grind (with expanded example set)
-  ... repeat
+Step 2: Re-grind with expanded set
 ```
 
-Steps cannot be run out of order. Adding examples through vetting invalidates the current grind conditions.
+---
+
+## BUGS FIXED — 2026-03-02/03 Session
+
+### Pipeline data flow (previous session)
+1. **signal_filter.py → Railway upload** — POSTs filtered signals + exit grind to Railway after local save
+2. **Expression cache fingerprint mismatch in pyramid_grinder** — removed broken `load_cache_expressions` import, uses simple `is_valid()` 
+3. **Windows UTF-8 crash** — added `sys.stdout.reconfigure(encoding='utf-8')` to signal_filter.py, exit_grinder.py
+
+### UI/Agent fixes (this session)
+4. **Duplicate log lines** — stale closure bug. `logs.length` inside `setInterval` closure always read initial value (0). Every poll sent `?after=0` and got ALL lines back. Fixed with `useRef` in all 4 pages (NightlyPage, StepPage, VettingPage, ExitManagePage).
+5. **Zombie jobs blocking runs** — old jobs stuck with status "running" or "claimed" blocked new runs with "Already running" error. No way to unjam from UI. Fixed: run endpoint auto-cleans dead jobs (agent heartbeat > 30s = dead, nuke all jobs). Re-running same step replaces old job. Reset also removes associated jobs.
+6. **STOP button non-functional** — server set `stop_requested` but agent never checked. Fixed: agent polls `GET /api/pipeline/stop-check/{step_id}` every 10s during subprocess, terminates process on stop. New server endpoint added.
+7. **Agent shows OFFLINE during runs** — heartbeat was in main loop which blocked during subprocess. Fixed: agent sends heartbeat every 10s from inside the subprocess read loop.
+8. **Grinder output not streaming** — Python buffers stdout when run as subprocess. Fixed: `PYTHONUNBUFFERED=1` env var on subprocess.
+9. **Matrix builder 45-min rebuild every run** — ROOT CAUSE: matrix builder called `is_valid(expressions)` with signal-only list (12,175) but cache was built with signal+exit (12,421). Fingerprint mismatch → fell back to live computation every time. Fixed: `is_valid()` with no args + column mapping so cache subset works. Next run should load in ~50s.
+
+### Still unverified (need live test after overnight grind)
+- [ ] Log streaming shows grinder output without duplicates
+- [ ] STOP button actually kills subprocess
+- [ ] Agent shows ONLINE during runs
+- [ ] Matrix loads from cache in ~50s (fingerprint fix)
+- [ ] Full chain: grind → filter → upload → vetting UI shows signals
 
 ---
 
-## COMPLETED — Pipeline Data Flow Fixes (2026-03-02)
+## IMMEDIATE — After Overnight Grind
 
-### What was fixed:
-
-1. **signal_filter.py → Railway upload**: After saving locally, POSTs filtered signals + exit grind to Railway via `/api/vetting/{setup}/upload-signals` and `/upload-exit`. Vetting UI can now read results. Graceful failure with manual fallback.
-
-2. **Expression cache fingerprint mismatch**: pyramid_grinder was validating with `generate_all()` (signal-only) but cache was built with `_load_expressions()` (signal + generic exit). Fixed: uses `load_cache_expressions()` for fingerprint check. Better diagnostic error on mismatch.
-
-3. **MFE Capture script path**: `scripts/exit_grinder.py` exists (924 lines). Agent path was correct. False alarm in original audit.
-
-4. **Windows UTF-8 crash**: signal_filter.py and exit_grinder.py lacked `sys.stdout.reconfigure(encoding='utf-8')` for Windows cp1252. Unicode chars crashed the upload. Fixed.
-
-5. **Sample Expansion UI**: Added RELOAD button (top header bar), live log overlay on chart area while running, auto-refresh signals on completion, prerequisite enforcement with clear messaging.
-
----
-
-## IMMEDIATE — Re-Grind DTSS with 36 Examples
-
-### Problem
-Current grind used fewer examples. Vetting added 13 new examples (36 total). The 41 conditions from the old grind don't pass 10 of the new examples:
-
-**Failing examples (conditions failed):**
-- ACHR: 3/41 failed
-- AIR: 1/41
-- DELL: 2/41
-- HLIT: 1/41
-- HNRG: 1/41
-- ISRG: 5/41
-- MPC: 1/41
-- PACB: 2/41
-- PSIX: 6/41
-- UTSL: 2/41
-
-**Not in cache (expected):** BRK-B, SMMT, VUZI
-
-### What needs to happen
-1. Run Step 2 (Signal Brute Forcing) from UI or agent — pyramid_grinder.py with all 36 examples
-2. Grinder must find conditions where 100% of examples pass (non-negotiable)
-3. Then run Step 3 (Sample Expansion) to filter + upload + vet new signals
+1. Check terminal / `local_runner/cache/pyramid_results_dtss.json` for results
+2. Verify 100% example pass rate (non-negotiable)
+3. Pull latest code (matrix builder fix)
+4. Run Step 3 from UI — signal_filter.py → upload → verify vetting UI has signals
+5. Verify matrix loads from cache on next Step 2 run (~50s not 45 min)
 
 ---
 
 ## Data Locations
 
 ```
-LOCAL MACHINE (Dan's PC):
+LOCAL MACHINE:
   local_runner/cache/
     universe_ohlcv_5yr.pkl          — 5yr OHLCV cache
-    universe_ohlcv.pkl              — daily OHLCV cache
+    universe_ohlcv.pkl              — daily OHLCV cache  
     expr_series/                    — expression cache (~50 GB)
+    universe_matrix.pkl             — D1 point-value matrix (rebuilt daily)
     pyramid_results_{setup}.json    — latest pyramid grind result
-    historical_results_{setup}.json — compat format
     brute_expressions.json          — expression library
-    classification.json             — ETF classifier
   data/
     signal_exit_grind/
       signal_exit_{setup}.json      — latest exit grind result
@@ -94,109 +82,80 @@ RAILWAY SERVER:
   data/
     pipeline_state.json             — step states, job queue
     pipeline_logs.json              — step log history
-    signal_filter/
-      filtered_{setup}.json         — filtered signals (READ BY VETTING UI)
-    signal_exit_grind/
-      signal_exit_{setup}.json      — exit grind (for vetting display)
-    vetting/
-      vetting_{setup}.json          — vetting decisions
+    signal_filter/filtered_{setup}.json — filtered signals (vetting UI reads)
+    signal_exit_grind/signal_exit_{setup}.json — exit grind (vetting display)
+    vetting/vetting_{setup}.json    — vetting decisions
   SQLite DB:
-    examples                        — validated optimal samples
-    rejected_signals                — rejected signals from vetting
-    universe_ohlcv                  — 11M+ OHLCV rows
-    tradable_universe               — ~4,167 tickers
+    examples, rejected_signals, universe_ohlcv, tradable_universe
 ```
 
 ---
 
 ## Architecture
 
-### Frontend: `app/index.html` (unified SPA)
-
-**Setup Analysis steps:**
-1. **Optimal Samples** — gallery with mini chart toggle, rejected signals list, stats
-2. **Signal Brute Forcing** — runs pyramid_grinder.py then signal_exit_grinder.py, live log streaming
-3. **Sample Expansion** — signal filter + chart vetting. RELOAD button in header, live log overlay, auto-upload to Railway, auto-refresh on completion. Prerequisite: Step 2 must complete first.
-4. **MFE Capture** — single-stage vs multi-stage toggle, exit optimizer
-5. **Market Grinder** — placeholder
-
-### Backend: `server.py`
-
-**Pipeline endpoints:**
-- `GET /api/pipeline/steps` — step states + vetting stats + agent status
-- `POST /api/pipeline/run/{step_id}` — queue job (checks prerequisites)
-- `POST /api/pipeline/stop` — stop running job
-- `POST /api/pipeline/reset/{step_id}` — reset step state
-
-**Vetting endpoints:**
-- `GET /api/vetting/{setup}/signals` — filtered signals for chart vetting
-- `POST /api/vetting/{setup}/decide` — saves verdict, creates example or rejected_signal
-- `POST /api/vetting/{setup}/upload-signals` — upload filtered JSON from desktop
-- `POST /api/vetting/{setup}/upload-exit` — upload exit grind from desktop
-
 ### Agent: `local_runner/agent.py`
+- Subprocess runs with `PYTHONUNBUFFERED=1` for real-time output
+- Heartbeat every 10s during subprocess (prevents OFFLINE status)
+- Polls for stop requests every 10s, terminates process on stop
+- Log buffer: posts to Railway every 20 lines
 
-```python
-PIPELINE_STEP_SCRIPTS = {
-    "signal_brute":     [pyramid_grinder, signal_exit_grinder],
-    "sample_expansion": [signal_filter],  # auto-uploads to Railway
-    "mfe_capture":      [exit_grinder],   # trade management exit optimizer
-}
-```
+### Server: `server.py`
+- Run endpoint auto-cleans dead jobs before checking conflicts
+- Agent dead (no heartbeat 30s) → all jobs cleared
+- Same step re-run → old job replaced
+- Stop-check endpoint: `GET /api/pipeline/stop-check/{step_id}`
+
+### Frontend: `app/index.html`
+- Log polling uses `useRef` for after count (not stale closure)
+- Reset clears logs + counter
 
 ---
 
 ## Grinder Rules (NON-NEGOTIABLE)
 
-1. All grinders must use the **exact same computation methods** as each other
-2. All grinders must be **optimized for maximum speed** (no bottlenecks)
-3. All grinders must use **as many CPU cores as possible**
-4. All conditional results must **pass 100% of setup examples** — no exceptions
-5. Any violation of these rules **invalidates results**
-6. Expression cache is the **single computation path** — no fallback to live compute
+1. All grinders must use **identical computation methods**
+2. All grinders must be **optimized for maximum speed**
+3. All grinders must use **full CPU cores**
+4. All results must **pass 100% of setup examples** — no exceptions
+5. Expression cache is the **single computation path**
 
 ---
 
 ## Data
 
-- Expression cache: 4,119 tickers x 12,421 expressions (~50 GB)
+- Expression cache: 4,119 tickers × 12,421 expressions (~50 GB)
 - Railway DB: 11M+ OHLCV rows, ~4,167 tickers
-- 36 DTSS optimal samples (needs re-grind to find conditions passing all 36)
-- 8 rejected signals in `rejected_signals` DB table
+- 36 DTSS examples (33 in cache, 3 excluded: BRK-B, SMMT, VUZI)
 
 ---
 
 ## Build Plan
 
-### Immediate: Re-Grind DTSS
-- [ ] Run pyramid_grinder.py with all 36 examples
-- [ ] Verify 100% example pass rate
-- [ ] Run signal_exit_grinder.py
-- [ ] Run signal_filter.py -> verify upload to Railway
-- [ ] Vet new signals in UI
+### Immediate: Verify re-grind + full chain
+- [ ] Grind results with 100% pass rate
+- [ ] Matrix cache loads in ~50s
+- [ ] Filter → upload → vetting UI works
 
 ### Phase: AI Vetting Review
-- [ ] `scripts/ai_vet_review.py` -- claude -p reviews YES/NO decisions
+- [ ] claude -p reviews YES/NO decisions
 - [ ] Wire into "Submit for Audit" button
 
-### Phase: MFE Capture Backend
-- [ ] Define scope (vs signal_exit_grinder in Step 2)
+### Phase: MFE Capture
+- [ ] Define scope vs signal_exit_grinder
 - [ ] Single-stage vs multi-stage from UI
 
 ### Phase: Market Grinder
 - [ ] Step 5 implementation
-- [ ] Blocked by: enough vetted examples with outcomes
 
 ### Phase: Daily Watchlist
-- [ ] Nightly scan -> today's signals ranked by EV
-- [ ] Blocked by: market grinder
+- [ ] Nightly scan → today's signals ranked by EV
 
 ---
 
 ## Rules
 
 1. NEVER proceed without explicit go-ahead
-2. All grinders: 100% of examples must pass. No exceptions.
+2. All grinders: 100% example pass. No exceptions.
 3. Push all work to GitHub before ending chat
 4. Break work into small tasks
 5. All OHLCV from Railway DB or local caches
