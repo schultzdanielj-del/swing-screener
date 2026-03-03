@@ -121,6 +121,17 @@ def pipeline_post_logs(step_id, lines):
         pass
 
 
+def _check_stop_requested(step_id):
+    """Poll server to see if stop was requested."""
+    try:
+        r = requests.get(f"{API_BASE}/api/pipeline/stop-check/{step_id}", timeout=5)
+        if r.status_code == 200:
+            return r.json().get("stop", False)
+        return False
+    except:
+        return False
+
+
 def handle_pipeline_job(job):
     import subprocess
     step_id = job.get("step_id", "")
@@ -129,7 +140,7 @@ def handle_pipeline_job(job):
 
     cmd_templates = PIPELINE_STEP_SCRIPTS.get(step_id)
     if not cmd_templates:
-        print(f"  ✗ Unknown pipeline step: {step_id}")
+        print(f"  FAIL: Unknown pipeline step: {step_id}")
         pipeline_post_status(step_id, "error", error=f"Unknown step: {step_id}")
         return
 
@@ -143,11 +154,12 @@ def handle_pipeline_job(job):
 
     pipeline_post_status(step_id, "running")
     t0 = time.time()
+    last_heartbeat = time.time()
 
     try:
         for cmd_idx, cmd in enumerate(cmds):
             if len(cmds) > 1:
-                header = f"── Step {cmd_idx+1}/{len(cmds)}: {' '.join(cmd)} ──"
+                header = f"-- Step {cmd_idx+1}/{len(cmds)}: {' '.join(cmd)} --"
                 print(f"\n  {header}")
                 pipeline_post_logs(step_id, [header])
 
@@ -157,6 +169,8 @@ def handle_pipeline_job(job):
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1, encoding='utf-8', errors='replace',
             )
+
+            stopped = False
             for line in proc.stdout:
                 line = line.rstrip()
                 print(f"    {line}")
@@ -165,28 +179,51 @@ def handle_pipeline_job(job):
                     pipeline_post_logs(step_id, log_buffer)
                     log_buffer = []
 
+                # Heartbeat every 10s during subprocess
+                now = time.time()
+                if now - last_heartbeat > 10:
+                    heartbeat()
+                    last_heartbeat = now
+
+                    # Check for stop request every heartbeat
+                    if _check_stop_requested(step_id):
+                        print(f"\n  STOP requested — killing {step_id}")
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                        stopped = True
+                        break
+
             proc.wait()
 
             if log_buffer:
                 pipeline_post_logs(step_id, log_buffer)
 
+            if stopped:
+                duration = time.time() - t0
+                print(f"\n  {step_id} stopped by user ({duration:.1f}s)")
+                pipeline_post_status(step_id, "pending", duration_s=round(duration, 1))
+                return
+
             if proc.returncode != 0:
                 duration = time.time() - t0
-                print(f"\n  ✗ {step_id} failed at command {cmd_idx+1} (exit code {proc.returncode})")
+                print(f"\n  FAIL: {step_id} failed at command {cmd_idx+1} (exit code {proc.returncode})")
                 pipeline_post_status(step_id, "error", duration_s=round(duration, 1),
                                      exit_code=proc.returncode,
                                      error=f"Command {cmd_idx+1} failed (exit {proc.returncode})")
                 return
 
         duration = time.time() - t0
-        print(f"\n  ✓ {step_id} complete ({duration:.1f}s)")
+        print(f"\n  OK: {step_id} complete ({duration:.1f}s)")
         pipeline_post_status(step_id, "done", duration_s=round(duration, 1), exit_code=0)
 
     except Exception as e:
         import traceback
         duration = time.time() - t0
         error_msg = f"{type(e).__name__}: {e}"
-        print(f"\n  ✗ {step_id} error: {error_msg}")
+        print(f"\n  FAIL: {step_id} error: {error_msg}")
         traceback.print_exc()
         if log_buffer:
             pipeline_post_logs(step_id, log_buffer)

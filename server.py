@@ -2508,6 +2508,16 @@ async def pipeline_stop():
     return {"ok": True}
 
 
+@app.get("/api/pipeline/stop-check/{step_id}")
+async def pipeline_stop_check(step_id: str):
+    """Agent polls this to check if stop was requested."""
+    state = _load_pipeline_state()
+    for j in state.get("jobs", []):
+        if j.get("step_id") == step_id and j.get("status") == "stop_requested":
+            return {"stop": True}
+    return {"stop": False}
+
+
 # ---------------------------------------------------------------------------
 # VETTING — Signal filter results + chart vetting workflow
 # ---------------------------------------------------------------------------
