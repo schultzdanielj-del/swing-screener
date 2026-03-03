@@ -17,6 +17,7 @@ import os
 import sys
 import json
 import time
+import subprocess
 import warnings
 
 # Force UTF-8 output on Windows
@@ -380,6 +381,124 @@ def handle_job(job):
         post_status(job_id, "error", error_msg)
 
 
+# ── Auto AI Review for pending samples ─────────────────────────────────
+
+REVIEW_PROMPTS = {
+    "dtss": """You are reviewing a stock chart to determine if it shows a valid DTSS (Double Top Short Sell) setup.
+
+DTSS criteria:
+- Clear prior high / resistance level (left side pivot)
+- Second rally into the same zone — can be slightly above or below the prior peak
+- Rejection candle or reversal pattern at the double top level
+- Volume often spikes on the failed attempt then dries up
+- MAs may be flattening or starting to roll over
+- The stock should be FAILING at or near the double top, not still rallying up to it
+- After the double top, price should break down through the LSP (left side pivot) AVWAP and continue lower
+- This is a SHORT setup — the stock goes DOWN after entry
+
+The entry bar is marked on the chart. Look at the price action BEFORE the entry to confirm the double top pattern exists, and AFTER to confirm the stock actually broke down.
+
+REJECT if:
+- No clear double top pattern visible
+- Stock is still in an uptrend with no reversal
+- The "double top" is really just consolidation in a trend
+- The move after entry is tiny or the stock bounces back up quickly
+- Entry is too late (stock already crashed before the marked entry)
+- Entry is too early (stock hasn't confirmed the top yet)
+
+Respond in this exact format:
+VERDICT: APPROVE or REJECT
+REASONING: 2-3 sentences explaining what you see on the chart and why you made this call.""",
+}
+
+
+def review_pending_samples():
+    """Check for unreviewed pending samples and AI-vet them automatically."""
+    for setup_type in ["dtss"]:
+        try:
+            r = requests.get(f"{API_BASE}/api/pending/{setup_type}", timeout=10)
+            if r.status_code != 200:
+                continue
+            pending = r.json().get("pending", [])
+            unreviewed = [p for p in pending if p.get("status") == "pending" and not p.get("ai_verdict")]
+            if not unreviewed:
+                continue
+
+            prompt = REVIEW_PROMPTS.get(setup_type)
+            if not prompt:
+                continue
+
+            import tempfile
+            tmpdir = tempfile.mkdtemp()
+
+            for p in unreviewed:
+                ticker = p["ticker"]
+                entry_date = p["entry_date"]
+                pid = p["id"]
+
+                print(f"\n  AI Review: {ticker} {entry_date}...", end=" ", flush=True)
+
+                # Download chart
+                chart_path = os.path.join(tmpdir, f"{ticker}_{entry_date}.png")
+                try:
+                    cr = requests.get(f"{API_BASE}/api/chart/{setup_type}/{ticker}/{entry_date}", timeout=60)
+                    cr.raise_for_status()
+                    with open(chart_path, "wb") as f:
+                        f.write(cr.content)
+                except Exception as e:
+                    print(f"SKIP ({e})")
+                    continue
+
+                # Claude CLI review
+                try:
+                    result = subprocess.run(
+                        ["claude", "-p", prompt, "--image", chart_path],
+                        capture_output=True, text=True, timeout=120
+                    )
+                    output = result.stdout.strip()
+                    verdict = "REJECT"
+                    reasoning = output
+
+                    for line in output.split("\n"):
+                        up = line.strip().upper()
+                        if up.startswith("VERDICT:"):
+                            v = up.replace("VERDICT:", "").strip()
+                            verdict = "APPROVE" if "APPROVE" in v else "REJECT"
+                        elif line.strip().upper().startswith("REASONING:"):
+                            reasoning = line.strip()[len("REASONING:"):].strip()
+                            idx = output.index(line) + len(line)
+                            rest = output[idx:].strip()
+                            if rest:
+                                reasoning += " " + rest
+                except subprocess.TimeoutExpired:
+                    verdict, reasoning = "REJECT", "CLI timeout"
+                except FileNotFoundError:
+                    print("claude CLI not found")
+                    return
+
+                # Store result
+                try:
+                    requests.post(
+                        f"{API_BASE}/api/pending/{setup_type}/{pid}/review",
+                        json={"ai_verdict": verdict, "ai_reasoning": reasoning},
+                        timeout=30,
+                    )
+                except:
+                    pass
+
+                tag = "✓" if verdict == "APPROVE" else "✗"
+                print(f"{tag} {verdict} — {reasoning[:80]}")
+
+                time.sleep(1)
+
+            # Cleanup
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+        except Exception as e:
+            pass  # Silent fail, will retry next cycle
+
+
 def main():
     print("\n" + "=" * 60)
     print("  GRINDER DESKTOP AGENT v2")
@@ -408,6 +527,8 @@ def main():
     last_heartbeat = time.time()
     last_nightly_check = 0
 
+    last_review_check = 0
+
     while True:
         try:
             # Poll for grinder jobs (legacy)
@@ -419,6 +540,11 @@ def main():
             pipe_jobs = check_for_pipeline_jobs()
             for pj in pipe_jobs:
                 handle_pipeline_job(pj)
+
+            # Auto-review pending samples every 15s
+            if time.time() - last_review_check > 15:
+                review_pending_samples()
+                last_review_check = time.time()
 
             # Heartbeat every 30s
             if time.time() - last_heartbeat > 10:
