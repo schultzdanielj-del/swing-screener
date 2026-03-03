@@ -373,10 +373,6 @@ function StepPage({ stepId, setup }) {
     });
   }
 
-  const cmds = {
-    signal_brute: `pyramid_grinder.py → signal_exit_grinder.py --setup ${setup}`,
-  };
-
   return (
     <div>
       <div className="stat-row" style={{marginBottom:16}}>
@@ -393,14 +389,12 @@ function StepPage({ stepId, setup }) {
           <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
             {pipe?.agent_status?.toUpperCase() || '?'}
           </div>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--cyan)',marginTop:4,cursor:'pointer',userSelect:'all'}}>
+            python local_runner/agent.py <span style={{fontSize:8,color:'var(--text-muted)',marginLeft:4}}>copy</span>
+          </div>
         </div>
       </div>
-      {cmds[stepId] && (
-        <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--cyan)',background:'var(--surface-2)',
-          padding:'6px 12px',borderRadius:4,marginBottom:12,border:'1px solid var(--border)'}}>
-          {cmds[stepId]}
-        </div>
-      )}
       {stepId === 'signal_brute' && !isRun && (
         <div style={{display:'flex',gap:12,marginBottom:12,alignItems:'center'}}>
           {[['beam','Beam'],['depth','Depth'],['peak_target','Peak']].map(([k,label])=>(
