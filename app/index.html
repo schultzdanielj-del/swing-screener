@@ -1084,17 +1084,19 @@ function ExitManagePage({ setup }) {
 function SetupHomePage({ setup }) {
   const [examples, setExamples] = useState([]);
   const [pipe, setPipe] = useState(null);
+  const [grindHistory, setGrindHistory] = useState([]);
 
   useEffect(() => {
     fetch(`${API}/api/examples/${setup}`).then(r=>r.json()).then(d=>setExamples(d.examples||[])).catch(()=>{});
     fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
+    fetch(`${API}/api/grinder/history/${setup}`).then(r=>r.json()).then(d=>setGrindHistory(d.runs||[])).catch(()=>{});
   }, [setup]);
 
   const vetting = pipe?.steps?.find(s=>s.id==='sample_expansion');
   const vs = vetting?.state?.vetting_stats;
   const grind = pipe?.steps?.find(s=>s.id==='signal_brute');
 
-  // Quality scoring
+  // Dataset metrics
   const n = examples.length;
   const tickers = new Set(examples.map(e=>e.ticker)).size;
   const adrs = examples.filter(e=>e.adrMove!=null).map(e=>e.adrMove).sort((a,b)=>a-b);
@@ -1105,34 +1107,57 @@ function SetupHomePage({ setup }) {
   const tickerRatio = n > 0 ? tickers / n : 0;
   const hasGrind = grind?.state?.status === 'done';
 
-  // Score components (0-100 each)
-  const sampleScore = Math.min(100, Math.round(n / 1.5)); // 150 = 100
-  const diversityScore = Math.min(100, Math.round(tickerRatio * 120)); // 83%+ unique = 100
-  const moveScore = Math.min(100, Math.round(medianAdr * 10)); // 10 ADR median = 100
-  const floorScore = Math.min(100, Math.round(minAdr * 20)); // 5 ADR min = 100
-  const spreadScore = Math.min(100, Math.round(dateSpanYrs * 25)); // 4yr span = 100
-  const grindScore = hasGrind ? 100 : 0;
+  // Convergence metrics (from grind history)
+  const gh = grindHistory;
+  const nRuns = gh.length;
+  let condStability = 0, sigStability = 0, condOverlap = 0;
+  if (nRuns >= 2) {
+    const last = gh[nRuns-1], prev = gh[nRuns-2];
+    // Condition count change
+    const condDelta = Math.abs(last.n_conditions - prev.n_conditions);
+    const maxCond = Math.max(last.n_conditions, prev.n_conditions, 1);
+    condStability = Math.max(0, Math.round(100 - (condDelta / maxCond) * 200));
+    // Signal count change
+    const sigDelta = Math.abs(last.final_total - prev.final_total);
+    const maxSig = Math.max(last.final_total, prev.final_total, 1);
+    sigStability = Math.max(0, Math.round(100 - (sigDelta / maxSig) * 150));
+    // Condition overlap (how many expressions are shared)
+    const prevSet = new Set(prev.conditions || []);
+    const lastSet = new Set(last.conditions || []);
+    const shared = [...lastSet].filter(c => prevSet.has(c)).length;
+    const unionSize = new Set([...prevSet, ...lastSet]).size || 1;
+    condOverlap = Math.round((shared / unionSize) * 100);
+  }
 
-  const weights = {samples:0.30, diversity:0.10, move:0.15, floor:0.15, spread:0.15, grind:0.15};
-  const overall = Math.round(
-    sampleScore * weights.samples +
-    diversityScore * weights.diversity +
-    moveScore * weights.move +
-    floorScore * weights.floor +
-    spreadScore * weights.spread +
-    grindScore * weights.grind
-  );
+  // Vetting yield
+  const vettingYield = vs && vs.n_vetted > 0
+    ? Math.round((vs.n_no / vs.n_vetted) * 100)
+    : 0;
+
+  // Score components
+  const sampleScore = Math.min(100, Math.round(n / 1.5));
+  const diversityScore = Math.min(100, Math.round(tickerRatio * 120));
+  const spreadScore = Math.min(100, Math.round(dateSpanYrs * 25));
+  const moveScore = Math.min(100, Math.round(minAdr * 20));
+  const convergenceScore = nRuns >= 2 ? Math.round((condStability + sigStability + condOverlap) / 3) : 0;
+  const yieldScore = vs && vs.n_vetted >= 10 ? vettingYield : 0;
+
+  const overall = nRuns >= 2
+    ? Math.round(sampleScore*0.20 + diversityScore*0.10 + spreadScore*0.10 + moveScore*0.10 + convergenceScore*0.35 + yieldScore*0.15)
+    : Math.round(sampleScore*0.35 + diversityScore*0.15 + spreadScore*0.15 + moveScore*0.15 + (hasGrind?20:0));
   const grade = overall >= 85 ? 'A' : overall >= 70 ? 'B' : overall >= 55 ? 'C' : overall >= 40 ? 'D' : 'F';
   const gradeColor = overall >= 70 ? 'var(--green)' : overall >= 50 ? 'var(--amber)' : 'var(--red)';
+  const readiness = overall >= 80 ? 'Ready for live' : overall >= 60 ? 'Getting close — keep cycling' : overall >= 40 ? 'Needs more vetting cycles' : 'Early stage — collect examples';
 
-  const scoreBar = (label, val) => (
+  const scoreBar = (label, val, note) => (
     <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
-      <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',width:80,flexShrink:0}}>{label}</span>
+      <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',width:90,flexShrink:0}}>{label}</span>
       <div style={{flex:1,height:6,background:'var(--surface-3)',borderRadius:3,overflow:'hidden'}}>
         <div style={{width:`${val}%`,height:'100%',borderRadius:3,
           background:val>=70?'var(--green)':val>=50?'var(--amber)':'var(--red)',transition:'width 0.3s'}} />
       </div>
       <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-dim)',width:28,textAlign:'right'}}>{val}</span>
+      {note && <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--text-muted)',width:90,flexShrink:0}}>{note}</span>}
     </div>
   );
 
@@ -1145,39 +1170,63 @@ function SetupHomePage({ setup }) {
           <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',marginTop:2}}>{overall}/100</div>
         </div>
         <div className="stat-box">
-          <div className="stat-label">Optimal Samples</div>
-          <div className="stat-val green">{examples.length}</div>
+          <div className="stat-label">Samples</div>
+          <div className="stat-val green">{n}</div>
         </div>
         <div className="stat-box">
-          <div className="stat-label">Setup</div>
-          <div className="stat-val blue" style={{fontSize:14}}>{setup.toUpperCase()}</div>
+          <div className="stat-label">Grinds</div>
+          <div className="stat-val blue">{nRuns}</div>
         </div>
-        {vs && (
-          <>
-            <div className="stat-box">
-              <div className="stat-label">Vetted</div>
-              <div className="stat-val amber">{vs.n_vetted}/{vs.n_total}</div>
-            </div>
-            <div className="stat-box">
-              <div className="stat-label">Rejected</div>
-              <div className="stat-val" style={{color:'var(--red)'}}>{vs.n_rejected}</div>
-            </div>
-          </>
+        {nRuns >= 2 && (
+          <div className="stat-box">
+            <div className="stat-label">Convergence</div>
+            <div className="stat-val" style={{color:convergenceScore>=70?'var(--green)':convergenceScore>=40?'var(--amber)':'var(--red)'}}>{convergenceScore}%</div>
+          </div>
+        )}
+        {vs && vs.n_vetted > 0 && (
+          <div className="stat-box">
+            <div className="stat-label">Vetting NO%</div>
+            <div className="stat-val" style={{color:vettingYield>=80?'var(--green)':vettingYield>=50?'var(--amber)':'var(--red)'}}>{vettingYield}%</div>
+          </div>
         )}
       </div>
 
       <div className="card" style={{marginBottom:12}}>
-        <div className="card-title">Dataset Quality</div>
-        {scoreBar('Samples', sampleScore)}
-        {scoreBar('Diversity', diversityScore)}
-        {scoreBar('Move Size', moveScore)}
-        {scoreBar('Move Floor', floorScore)}
-        {scoreBar('Date Spread', spreadScore)}
-        {scoreBar('Grind Done', grindScore)}
-        <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--text-muted)',marginTop:8}}>
-          {n} examples · {tickers} tickers · median {medianAdr} ADR · min {minAdr} ADR · {dateSpanYrs.toFixed(1)}yr span
-        </div>
+        <div className="card-title" style={{marginBottom:8}}>Dataset Quality — <span style={{color:gradeColor,fontWeight:400}}>{readiness}</span></div>
+        {scoreBar('Samples', sampleScore, `${n}/150`)}
+        {scoreBar('Diversity', diversityScore, `${tickers} tickers`)}
+        {scoreBar('Date Spread', spreadScore, `${dateSpanYrs.toFixed(1)}yr`)}
+        {scoreBar('Move Floor', moveScore, `${minAdr} ADR`)}
+        {nRuns >= 2 && scoreBar('Cond Stability', condStability, `Δ${Math.abs((gh[nRuns-1]?.n_conditions||0)-(gh[nRuns-2]?.n_conditions||0))} conds`)}
+        {nRuns >= 2 && scoreBar('Sig Stability', sigStability, `Δ${Math.abs((gh[nRuns-1]?.final_total||0)-(gh[nRuns-2]?.final_total||0))} sigs`)}
+        {nRuns >= 2 && scoreBar('Cond Overlap', condOverlap, `${Math.round(condOverlap)}% shared`)}
+        {vs && vs.n_vetted >= 10 && scoreBar('Vetting Yield', yieldScore, `${vs.n_no}/${vs.n_vetted} NO`)}
+        {nRuns < 2 && (
+          <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',marginTop:8,fontStyle:'italic'}}>
+            Need 2+ grind runs to show convergence metrics. Run grind → vet → add examples → re-grind.
+          </div>
+        )}
       </div>
+
+      {nRuns > 0 && (
+        <div className="card" style={{marginBottom:12}}>
+          <div className="card-title">Grind History</div>
+          <div style={{fontFamily:'var(--mono)',fontSize:10,overflowX:'auto'}}>
+            <div style={{display:'grid',gridTemplateColumns:'auto repeat(4,1fr)',gap:'4px 12px',color:'var(--text-muted)',marginBottom:4}}>
+              <span>Run</span><span>Examples</span><span>Conditions</span><span>Signals</span><span>Peak</span>
+            </div>
+            {gh.map((r,i) => (
+              <div key={i} style={{display:'grid',gridTemplateColumns:'auto repeat(4,1fr)',gap:'4px 12px',color:'var(--text-dim)'}}>
+                <span style={{color:'var(--text-muted)'}}>#{i+1}</span>
+                <span>{r.n_examples}</span>
+                <span>{r.n_conditions}</span>
+                <span>{r.final_total}</span>
+                <span>{r.final_peak}/day</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <div className="card-title">Pipeline Status</div>

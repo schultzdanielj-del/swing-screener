@@ -2063,6 +2063,7 @@ async def delete_lsp_entry(setup_type: str, idx: int):
 
 GRINDER_JOBS_FILE = os.path.join("data", "grinder_jobs.json")
 GRINDER_RESULTS_FILE = os.path.join("data", "grinder_results.json")
+GRINDER_HISTORY_FILE = os.path.join("data", "grinder_history.json")
 GRINDER_AGENT_FILE = os.path.join("data", "grinder_agent.json")
 
 import json as _grinder_json
@@ -2146,6 +2147,22 @@ async def update_job_status(request: Request):
         setup_type = data.get("setup_type", "unknown")
         results[setup_type] = data
         _save_grinder_json(GRINDER_RESULTS_FILE, results)
+        # Append to history
+        history = _load_grinder_json(GRINDER_HISTORY_FILE, {})
+        if setup_type not in history:
+            history[setup_type] = []
+        history[setup_type].append({
+            "timestamp": data.get("timestamp", datetime.now().isoformat()),
+            "n_conditions": data.get("n_conditions", 0),
+            "n_examples": data.get("examples_passing", 0),
+            "final_total": data.get("summary", {}).get("final_total", 0),
+            "final_peak": data.get("summary", {}).get("final_peak", 0),
+            "final_avg": data.get("summary", {}).get("final_avg", 0),
+            "conditions": [c.get("expr", "") for c in data.get("all_conditions", [])],
+        })
+        # Keep last 20
+        history[setup_type] = history[setup_type][-20:]
+        _save_grinder_json(GRINDER_HISTORY_FILE, history)
     return {"ok": True}
 
 
@@ -2197,6 +2214,13 @@ async def get_grinder_results(setup_type: str):
     if setup_type not in results:
         return {"status": "none", "results": None}
     return {"status": "ok", "results": results[setup_type]}
+
+
+@app.get("/api/grinder/history/{setup_type}")
+async def get_grinder_history(setup_type: str):
+    """Get grind history for convergence tracking."""
+    history = _load_grinder_json(GRINDER_HISTORY_FILE, {})
+    return {"runs": history.get(setup_type, [])}
 
 
 @app.post("/api/grinder/agent/register")
