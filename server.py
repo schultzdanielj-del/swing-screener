@@ -2810,15 +2810,32 @@ async def save_vetting_decision(setup_type: str, req: VettingDecision):
 
 @app.get("/api/vetting/earnings/{ticker}")
 async def get_earnings_dates(ticker: str):
-    """Get cached earnings dates from DB for chart overlay."""
+    """Get earnings dates — cached in DB, fetched on-demand from Yahoo if missing."""
+    ticker = ticker.upper()
     try:
         with get_db() as db:
             rows = db.execute(
                 "SELECT earnings_date FROM earnings_dates WHERE ticker = ? ORDER BY earnings_date",
-                [ticker.upper()]
+                [ticker]
             ).fetchall()
             dates = [r[0] for r in rows]
-        return {"ticker": ticker, "earnings_dates": dates}
+        if dates:
+            return {"ticker": ticker, "earnings_dates": dates}
+        # Cache miss — fetch from Yahoo
+        import yfinance as yf
+        t = yf.Ticker(ticker)
+        cal = t.get_earnings_dates(limit=20)
+        if cal is not None and not cal.empty:
+            dates = [d.strftime("%Y-%m-%d") for d in cal.index]
+            with get_db() as db:
+                for d in dates:
+                    db.execute(
+                        "INSERT OR REPLACE INTO earnings_dates (ticker, earnings_date, updated_at) VALUES (?, ?, datetime('now'))",
+                        [ticker, d]
+                    )
+                db.commit()
+            return {"ticker": ticker, "earnings_dates": sorted(dates)}
+        return {"ticker": ticker, "earnings_dates": []}
     except Exception as e:
         return {"ticker": ticker, "earnings_dates": [], "error": str(e)}
 
