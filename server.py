@@ -2459,9 +2459,12 @@ async def get_pipeline_steps():
                     n_rejected = db.execute(
                         "SELECT COUNT(*) FROM rejected_signals WHERE setup_type='dtss'"
                     ).fetchone()[0]
-                    n_pending = db.execute(
-                        "SELECT COUNT(*) FROM pending_examples WHERE setup_type='dtss'"
-                    ).fetchone()[0]
+                    try:
+                        n_pending = db.execute(
+                            "SELECT COUNT(*) FROM pending_examples WHERE setup_type='dtss'"
+                        ).fetchone()[0]
+                    except:
+                        n_pending = 0
                 step_state["vetting_stats"] = {
                     "n_total": n_total, "n_vetted": n_vetted,
                     "n_yes": counts["yes"], "n_maybe": counts["maybe"], "n_no": counts["no"],
@@ -2887,12 +2890,15 @@ async def get_earnings_dates(ticker: str):
 @app.get("/api/pending/{setup_type}")
 async def get_pending_examples(setup_type: str):
     """Get pending examples awaiting AI review."""
-    with get_db() as db:
-        rows = db.execute(
-            "SELECT id, ticker, signal_date, entry_date, status, ai_verdict, ai_reasoning, review_notes, created_at FROM pending_examples WHERE setup_type=? ORDER BY created_at DESC",
-            [setup_type]
-        ).fetchall()
-    return {"pending": [dict(r) for r in rows]}
+    try:
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT id, ticker, signal_date, entry_date, status, ai_verdict, ai_reasoning, review_notes, created_at FROM pending_examples WHERE setup_type=? ORDER BY created_at DESC",
+                [setup_type]
+            ).fetchall()
+        return {"pending": [dict(r) for r in rows]}
+    except Exception as e:
+        return {"pending": [], "error": str(e)}
 
 
 @app.post("/api/pending/{setup_type}/backfill")
