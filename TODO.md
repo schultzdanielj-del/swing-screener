@@ -1,154 +1,116 @@
 # TODO — Swing Screener (2026-03-03)
 
-## Current State — RE-GRIND RUNNING OVERNIGHT
+## Current State — GRIND COMPLETE, SAMPLE EXPANSION ACTIVE
 
-Pyramid grinder running overnight with 33 DTSS examples (36 minus BRK-B, SMMT, VUZI not in cache). First run after UI pipeline fixes. Matrix rebuilt from live computation (~45 min) due to fingerprint mismatch bug — now fixed, next run will use cache (~50s).
+Latest pyramid grind complete: **53 conditions, 91 signals (5yr scan: 409 raw -> 129 filtered for vetting), peak 3/day, 35/35 examples pass, 13.4 min runtime.** Tighter than previous best (264 signals, 41 conditions, 20 examples). Expression cache loads in ~50s (fingerprint bug fixed).
+
+48 DTSS examples in Railway DB (was 51, removed FRT/FITB/WGO as sub-A+ quality).
 
 ### Pipeline Steps
 
 | # | Step | Server ID | Status |
 |---|------|-----------|--------|
-| 0 | Nightly Refresh | `nightly` | ✅ Works |
-| 1 | Optimal Samples | `optimal_samples` | ✅ Works |
-| 2 | Signal Brute Forcing | `signal_brute` | ⏳ Running overnight (re-grind with 33 examples) |
-| 3 | Sample Expansion | `sample_expansion` | ✅ Wired (prerequisite on Step 2) |
-| 4 | MFE Capture | `mfe_capture` | ✅ Script exists |
-| 5 | Market Grinder | `market_grind` | ⬜ Placeholder |
+| 0 | Nightly Refresh | nightly | Works (6 steps now - includes earnings refresh) |
+| 1 | Optimal Samples | optimal_samples | Works (shows ADR move from exit grinder) |
+| 2 | Signal Brute Forcing | signal_brute | Complete - UI has beam/depth/peak params |
+| 3 | Sample Expansion | sample_expansion | 129 signals ready to vet |
+| 3b | AI Sample Review | sample_review | NEW - automated Claude CLI review pipeline |
+| 4 | MFE Capture | mfe_capture | Script exists |
+| 5 | Market Grinder | market_grind | Placeholder |
 
-### Pipeline Chain (enforced)
+### Vetting Flow (NEW)
 
-```
-Step 2: Grind (finds conditions passing ALL examples)
-  ↓ prerequisite
-Step 3: Filter → Upload to Railway → Vet
-  ↓ vetting adds new examples
-Step 2: Re-grind with expanded set
-```
-
----
-
-## BUGS FIXED — 2026-03-02/03 Session
-
-### Pipeline data flow (previous session)
-1. **signal_filter.py → Railway upload** — POSTs filtered signals + exit grind to Railway after local save
-2. **Expression cache fingerprint mismatch in pyramid_grinder** — removed broken `load_cache_expressions` import, uses simple `is_valid()` 
-3. **Windows UTF-8 crash** — added `sys.stdout.reconfigure(encoding='utf-8')` to signal_filter.py, exit_grinder.py
-
-### UI/Agent fixes (this session)
-4. **Duplicate log lines** — stale closure bug. `logs.length` inside `setInterval` closure always read initial value (0). Every poll sent `?after=0` and got ALL lines back. Fixed with `useRef` in all 4 pages (NightlyPage, StepPage, VettingPage, ExitManagePage).
-5. **Zombie jobs blocking runs** — old jobs stuck with status "running" or "claimed" blocked new runs with "Already running" error. No way to unjam from UI. Fixed: run endpoint auto-cleans dead jobs (agent heartbeat > 30s = dead, nuke all jobs). Re-running same step replaces old job. Reset also removes associated jobs.
-6. **STOP button non-functional** — server set `stop_requested` but agent never checked. Fixed: agent polls `GET /api/pipeline/stop-check/{step_id}` every 10s during subprocess, terminates process on stop. New server endpoint added.
-7. **Agent shows OFFLINE during runs** — heartbeat was in main loop which blocked during subprocess. Fixed: agent sends heartbeat every 10s from inside the subprocess read loop.
-8. **Grinder output not streaming** — Python buffers stdout when run as subprocess. Fixed: `PYTHONUNBUFFERED=1` env var on subprocess.
-9. **Matrix builder 45-min rebuild every run** — ROOT CAUSE: matrix builder called `is_valid(expressions)` with signal-only list (12,175) but cache was built with signal+exit (12,421). Fingerprint mismatch → fell back to live computation every time. Fixed: `is_valid()` with no args + column mapping so cache subset works. Next run should load in ~50s.
-
-### Still unverified (need live test after overnight grind)
-- [ ] Log streaming shows grinder output without duplicates
-- [ ] STOP button actually kills subprocess
-- [ ] Agent shows ONLINE during runs
-- [ ] Matrix loads from cache in ~50s (fingerprint fix)
-- [ ] Full chain: grind → filter → upload → vetting UI shows signals
+Vet signals (YES/MAYBE/NO) in Sample Expansion
+  -> YES picks go to pending_reviews table (not directly to examples)
+Click SUBMIT FOR AUDIT
+  -> triggers sample_review pipeline job
+Agent runs review_samples.py -> claude -p reviews each pick
+  -> AI verdicts uploaded to Railway
+Check Optimal Samples > Pending tab
+  -> APPROVE or REJECT each pick
+Approved = example created | Rejected = rejected_signals
 
 ---
 
-## IMMEDIATE — After Overnight Grind
+## Latest Grind Results (2026-03-03)
 
-1. Check terminal / `local_runner/cache/pyramid_results_dtss.json` for results
-2. Verify 100% example pass rate (non-negotiable)
-3. Pull latest code (matrix builder fix)
-4. Run Step 3 from UI — signal_filter.py → upload → verify vetting UI has signals
-5. Verify matrix loads from cache on next Step 2 run (~50s not 45 min)
+53 conditions (49 daily, 4 weekly, 0 monthly)
+35/35 examples pass (BRK-B, SMMT, VUZI excluded - not in 5yr cache)
+Pass 1 (Daily+LSP+Algo): 49 conditions
+Pass 2 (Weekly): 4 conditions
+Pass 3 (Monthly): 0 conditions
+Signal filter: 409 raw -> 326 deduped -> 233 with exit -> 129 filtered (1.8 ADR floor)
+Runtime: 13.4 min (matrix cached ~50s)
 
----
-
-## Data Locations
-
-```
-LOCAL MACHINE:
-  local_runner/cache/
-    universe_ohlcv_5yr.pkl          — 5yr OHLCV cache
-    universe_ohlcv.pkl              — daily OHLCV cache  
-    expr_series/                    — expression cache (~50 GB)
-    universe_matrix.pkl             — D1 point-value matrix (rebuilt daily)
-    pyramid_results_{setup}.json    — latest pyramid grind result
-    brute_expressions.json          — expression library
-  data/
-    signal_exit_grind/
-      signal_exit_{setup}.json      — latest exit grind result
-    signal_filter/
-      filtered_{setup}.json         — latest filter result (auto-uploads to Railway)
-
-RAILWAY SERVER:
-  data/
-    pipeline_state.json             — step states, job queue
-    pipeline_logs.json              — step log history
-    signal_filter/filtered_{setup}.json — filtered signals (vetting UI reads)
-    signal_exit_grind/signal_exit_{setup}.json — exit grind (vetting display)
-    vetting/vetting_{setup}.json    — vetting decisions
-  SQLite DB:
-    examples, rejected_signals, universe_ohlcv, tradable_universe
-```
+Previous best: 264 signals, 41 conditions, 20 examples, peak 3/day
 
 ---
 
-## Architecture
+## Built This Session (2026-03-03)
 
-### Agent: `local_runner/agent.py`
-- Subprocess runs with `PYTHONUNBUFFERED=1` for real-time output
-- Heartbeat every 10s during subprocess (prevents OFFLINE status)
-- Polls for stop requests every 10s, terminates process on stop
-- Log buffer: posts to Railway every 20 lines
-
-### Server: `server.py`
-- Run endpoint auto-cleans dead jobs before checking conflicts
-- Agent dead (no heartbeat 30s) → all jobs cleared
-- Same step re-run → old job replaced
-- Stop-check endpoint: `GET /api/pipeline/stop-check/{step_id}`
-
-### Frontend: `app/index.html`
-- Log polling uses `useRef` for after count (not stale closure)
-- Reset clears logs + counter
+### Features
+1. Grinder param UI - beam/depth/peak-target inputs on pipeline Step 2 (defaults: 10000/100/3)
+2. Earnings dates DB cache - new earnings_dates table, batch scrape endpoint, nightly step 6
+3. ADR move on Optimal Samples - reads exit grinder per-example captured ADR
+4. AI Sample Review pipeline - full automated flow:
+   - pending_reviews DB table
+   - YES verdict -> pending (not direct example creation)
+   - sample_review pipeline step wired to SUBMIT FOR AUDIT button
+   - scripts/review_samples.py - CLI script calls claude -p per pending pick
+   - Server endpoints: GET pending, POST review-results, POST approve, POST reject-pending
+   - UI: 3-tab Optimal Samples page (Examples / Pending / Rejected) with approve/reject buttons
+5. lxml added to requirements.txt - fixes earnings scraping on Railway
 
 ---
 
-## Grinder Rules (NON-NEGOTIABLE)
+## NEXT - Priority Order
 
-1. All grinders must use **identical computation methods**
-2. All grinders must be **optimized for maximum speed**
-3. All grinders must use **full CPU cores**
-4. All results must **pass 100% of setup examples** — no exceptions
-5. Expression cache is the **single computation path**
+### 1. Sample Expansion (NOW)
+- Vet the 129 filtered signals (Sample Expansion page)
+- Submit YES picks for AI review -> approve/reject in Pending tab
+- Target: grow from 48 to 80+ examples
+- Re-grind after each batch of new examples
+
+### 2. Condition Pruning (AFTER sample expansion)
+- Leave-one-out pruning: remove each condition, measure peak/day impact
+- Drop conditions where removal adds <3 signals and peak stays under threshold
+- May not be needed if re-grind with 80+ examples naturally drops weak conditions
+
+### 3. Entry Bar Detection/Grinder (NEW - future)
+- Build entry grinder that sits between signal and exit
+- Signal fires day X -> entry grinder finds optimal entry bar within X+1 to X+5 window
+- Same architecture as exit grinder but forward-looking from signal
+- Requires 60-80+ examples with accurate entry dates (already have entry dates on all examples)
+- Grind expressions on post-signal bars to find conditions that fire on actual entry day
+
+### 4. Market Grinder (Step 5)
+- Correlate signal outcomes with market regime (SPY extension, breadth, VIX)
+- Needs enough examples to split by regime with statistical meaning
+- Best after sample expansion when signal count is higher
+
+### 5. Overfit Mitigation
+- Filter power per condition diagnostic
+- Leave-one-out condition importance scoring
+- Growing example library is the primary defense (48 -> 150 target)
 
 ---
 
 ## Data
 
-- Expression cache: 4,119 tickers × 12,421 expressions (~50 GB)
+- Expression cache: 4,119 tickers x 12,421 expressions (~50 GB)
 - Railway DB: 11M+ OHLCV rows, ~4,167 tickers
-- 36 DTSS examples (33 in cache, 3 excluded: BRK-B, SMMT, VUZI)
+- Earnings dates: batch scraped nightly for all tradable tickers
+- 48 DTSS examples (45 in cache, 3 excluded: BRK-B, SMMT, VUZI)
 
 ---
 
-## Build Plan
+## Grinder Rules (NON-NEGOTIABLE)
 
-### Immediate: Verify re-grind + full chain
-- [ ] Grind results with 100% pass rate
-- [ ] Matrix cache loads in ~50s
-- [ ] Filter → upload → vetting UI works
-
-### Phase: AI Vetting Review
-- [ ] claude -p reviews YES/NO decisions
-- [ ] Wire into "Submit for Audit" button
-
-### Phase: MFE Capture
-- [ ] Define scope vs signal_exit_grinder
-- [ ] Single-stage vs multi-stage from UI
-
-### Phase: Market Grinder
-- [ ] Step 5 implementation
-
-### Phase: Daily Watchlist
-- [ ] Nightly scan → today's signals ranked by EV
+1. All grinders must use identical computation methods
+2. All grinders must be optimized for maximum speed
+3. All grinders must use full CPU cores
+4. All results must pass 100% of setup examples - no exceptions
+5. Expression cache is the single computation path
 
 ---
 
@@ -162,3 +124,4 @@ RAILWAY SERVER:
 6. Read ta_knowledge.md before any TA work
 7. NEVER dump large data into context
 8. Expression cache = single computation path
+9. Best grind benchmark: 264 signals, peak 3/day, avg 1.3/day, 41 conditions, 20 examples

@@ -12,7 +12,7 @@
 
 **Every step (3-9) is designed to be re-run as the example library grows.** New examples come from Step 4 backtest review — signals that turn out to be legitimate setups get added to the example library, and the pipeline re-runs from Step 3 forward.
 
-**Why this matters:** With 23 examples, you can trust floor and median metrics but not the tails. At 50 examples, you start trusting more aggressive extraction. At 100+, you can squeeze hard because the distribution is well-characterized. The system's output quality scales directly with example count.
+**Why this matters:** With 48 examples, you can trust floor and median metrics but not the tails. At 80 examples, you start trusting more aggressive extraction. At 150+, you can squeeze hard because the distribution is well-characterized. The system's output quality scales directly with example count.
 
 **Re-run flow:** Add examples via chart vetting → re-run signal grinder (tightens with more data points) → re-run signal filter → vet new signals → repeat until convergence. Then re-run exit grinder (more examples = more confident exits) → run market grinder. Each step's scripts accept the current example set and produce fresh results. No manual state to manage.
 
@@ -94,9 +94,10 @@ for /L %p in (2,1,10) do python local_runner/pyramid_grinder.py --setup dtss --p
 python local_runner/pyramid_grinder.py --setup dtss --peak-target 3 --beam 10000 --depth 100
 ```
 
-**Best result (2026-02-24, peak-target=3, beam=10000):**
-- 26 conditions, peak 6/day, 201 total signals across 5yr, avg 2.1/day (~3.4/month to vet)
-- Runtime: ~5 min with expression cache + matmul vectorization
+**Best result (2026-03-03, peak-target=3, beam=10000, 35 examples):**
+- 53 conditions, peak 3/day, 91 signals (409 raw in 5yr scan), avg 1.4/day
+- Runtime: 13.4 min with expression cache
+- Previous best (2026-02-24, 20 examples): 41 conditions, 264 signals, peak 3/day
 
 **Key parameters:**
 - **beam=10000** — explores 10K paths per level (exhaustive — search terminates when no path improves)
@@ -349,7 +350,7 @@ Best exit: `avg_range_atr_10b above 1.0541` — 71% median capture efficiency, 6
 
 ### Scales With Examples
 
-This step is designed to be re-run as examples grow. At 23 examples, floor/median scoring finds reliable-but-conservative exits. At 50+, the floor metric has more resolution and can accept tighter conditions. At 100+, tail behavior is well-characterized and the system can discover more aggressive extraction strategies that still maintain high floor scores. The scoring math adapts automatically — no manual tuning needed.
+This step is designed to be re-run as examples grow. At 23 examples, floor/median scoring finds reliable-but-conservative exits. At 50+, the floor metric has more resolution and can accept tighter conditions. At 150+, tail behavior is well-characterized and the system can discover more aggressive extraction strategies that still maintain high floor scores. The scoring math adapts automatically — no manual tuning needed.
 
 ### Script: `scripts/exit_grinder.py` (NEW)
 
