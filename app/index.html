@@ -345,6 +345,8 @@ function StepPage({ stepId, setup }) {
   const logRef = useRef(null);
   const logCountRef = useRef(0);
 
+  const [grinderParams, setGrinderParams] = useState({beam: 10000, depth: 100, peak_target: 3});
+
   useEffect(() => {
     const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
     load(); const id = setInterval(load, 5000); return () => clearInterval(id);
@@ -364,7 +366,9 @@ function StepPage({ stepId, setup }) {
   useEffect(() => { if(logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
 
   function doRun() {
-    fetch(`${API}/api/pipeline/run/${stepId}`, {method:'POST'}).then(r=>r.json()).then(d => {
+    const opts = {method:'POST', headers:{'Content-Type':'application/json'}};
+    if (stepId === 'signal_brute') opts.body = JSON.stringify({params: grinderParams});
+    fetch(`${API}/api/pipeline/run/${stepId}`, opts).then(r=>r.json()).then(d => {
       if(d.error) alert(d.error); else { setLogs([]); logCountRef.current = 0; }
     });
   }
@@ -395,6 +399,20 @@ function StepPage({ stepId, setup }) {
         <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--cyan)',background:'var(--surface-2)',
           padding:'6px 12px',borderRadius:4,marginBottom:12,border:'1px solid var(--border)'}}>
           {cmds[stepId]}
+        </div>
+      )}
+      {stepId === 'signal_brute' && !isRun && (
+        <div style={{display:'flex',gap:12,marginBottom:12,alignItems:'center'}}>
+          {[['beam','Beam'],['depth','Depth'],['peak_target','Peak']].map(([k,label])=>(
+            <div key={k} style={{display:'flex',alignItems:'center',gap:6}}>
+              <label style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-dim)'}}>{label}</label>
+              <input type="number" value={grinderParams[k]}
+                onChange={e=>setGrinderParams(p=>({...p,[k]:parseInt(e.target.value)||0}))}
+                style={{width:80,fontFamily:'var(--mono)',fontSize:12,color:'var(--text)',
+                  background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:4,
+                  padding:'4px 8px',outline:'none'}} />
+            </div>
+          ))}
         </div>
       )}
       <div style={{display:'flex',gap:8,marginBottom:16}}>

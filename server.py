@@ -2384,8 +2384,18 @@ async def get_pipeline_steps():
 
 
 @app.post("/api/pipeline/run/{step_id}")
-async def pipeline_run_step(step_id: str):
+async def pipeline_run_step(step_id: str, request: Request = None):
     """Queue a pipeline step for the desktop agent."""
+    # Read optional params from request body (e.g. beam, depth, peak_target)
+    step_params = {}
+    if request:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                step_params = body.get("params", {})
+        except:
+            pass  # No body or not JSON
+
     step_def = next((s for s in PIPELINE_STEPS if s["id"] == step_id), None)
     if not step_def:
         return {"error": f"Unknown step: {step_id}"}
@@ -2429,7 +2439,7 @@ async def pipeline_run_step(step_id: str):
 
     job = {
         "job_id": f"pipe_{step_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        "step_id": step_id, "status": "queued",
+        "step_id": step_id, "status": "queued", "params": step_params,
         "created_at": datetime.now().isoformat(),
     }
     state.setdefault("jobs", []).append(job)

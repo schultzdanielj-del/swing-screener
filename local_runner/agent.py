@@ -146,6 +146,17 @@ def handle_pipeline_job(job):
 
     cmds = [[c.replace("{setup}", setup_type) for c in tpl] for tpl in cmd_templates]
 
+    # Inject grinder params from job (beam, depth, peak_target) into pyramid_grinder command
+    job_params = job.get('params', {})
+    if step_id == 'signal_brute' and job_params:
+        grinder_cmd = cmds[0]  # First command is pyramid_grinder
+        param_map = {'beam': '--beam', 'depth': '--depth', 'peak_target': '--peak-target'}
+        for key, flag in param_map.items():
+            val = job_params.get(key)
+            if val is not None:
+                grinder_cmd.extend([flag, str(val)])
+
+
     print(f"\n{'='*60}")
     print(f"  PIPELINE: {step_id} ({job_id})")
     for i, cmd in enumerate(cmds):
