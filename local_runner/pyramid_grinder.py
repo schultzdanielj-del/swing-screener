@@ -67,7 +67,7 @@ sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
 
 from brute_expressions import generate_all
-from expr_cache_builder import ExprSeriesCache, _load_expressions as load_cache_expressions
+from expr_cache_builder import ExprSeriesCache
 
 API_BASE = "https://web-production-e3025.up.railway.app"
 
@@ -1136,12 +1136,6 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     all_expressions = generate_all()
     print(f"  {len(all_expressions)} signal expressions for grinding")
 
-    # Full cache expression library (signal + generic exit) for fingerprint match
-    # The cache was built with _load_expressions() which includes both.
-    # We need the full list only for is_valid() fingerprint comparison.
-    cache_expressions = load_cache_expressions()
-    print(f"  {len(cache_expressions)} total expressions in cache library")
-
     if multi_pass:
         daily_exprs = _filter_expressions_by_timeframe(all_expressions, "daily")
         weekly_exprs = _filter_expressions_by_timeframe(all_expressions, "weekly")
@@ -1152,9 +1146,9 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     # ── Detect expression series cache ──
     print(f"\n  Detecting expression cache...")
     expr_cache = ExprSeriesCache()
-    if expr_cache.is_valid(cache_expressions):
+    if expr_cache.is_valid():
         n_cached = len(expr_cache.get_available_tickers())
-        print(f"  ✓ Expression series cache: {n_cached} tickers, "
+        print(f"  Expression series cache: {n_cached} tickers, "
               f"{expr_cache.n_expressions} expressions")
 
         # Filter examples to those in expr cache
@@ -1178,18 +1172,9 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 print(f"    - {e}")
             print(f"  Examples: {before_count} → {len(example_dfs)}")
     else:
-        # Better diagnostic: show what mismatched
-        manifest_fp = expr_cache.manifest.get("fingerprint", "NONE") if expr_cache.manifest else "NO MANIFEST"
-        from expr_cache_builder import _expr_fingerprint
-        current_fp = _expr_fingerprint(cache_expressions)
         raise RuntimeError(
-            "Expression series cache fingerprint mismatch!\n"
-            f"  Cache fingerprint:   {manifest_fp}\n"
-            f"  Current expressions: {current_fp}\n"
-            f"  Cache has {expr_cache.n_expressions} expressions, "
-            f"current library has {len(cache_expressions)}\n"
-            "The expression library changed since the cache was built.\n"
-            "Run: python local_runner/expr_cache_builder.py --build --force"
+            "Expression series cache not found or invalid.\n"
+            "Run: python local_runner/expr_cache_builder.py --build"
         )
 
     # ══════════════════════════════════════════════════════════════
