@@ -438,7 +438,8 @@ def review_pending_samples():
                 continue
 
             import tempfile
-            tmpdir = tempfile.mkdtemp()
+            chart_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "cache", "review_charts")
+            os.makedirs(chart_dir, exist_ok=True)
 
             for p in unreviewed:
                 ticker = p["ticker"]
@@ -448,7 +449,7 @@ def review_pending_samples():
                 print(f"\n  AI Review: {ticker} {entry_date}...", end=" ", flush=True)
 
                 # Download chart
-                chart_path = os.path.join(tmpdir, f"{ticker}_{entry_date}.png")
+                chart_path = os.path.join(chart_dir, f"{ticker}_{entry_date}.png")
                 try:
                     cr = requests.get(f"{API_BASE}/api/chart/{setup_type}/{ticker}/{entry_date}", timeout=60)
                     cr.raise_for_status()
@@ -483,10 +484,12 @@ def review_pending_samples():
 
                     if claude_cmd == "npx":
                         cli_args = ["npx", "@anthropic-ai/claude-code", "-p",
-                            f"Look at the image file at {chart_path} and review it.\n\n{prompt}"]
+                            f"Look at the image file at {chart_path} and review it.\n\n{prompt}",
+                            "--allowedTools", "Read"]
                     else:
                         cli_args = [claude_cmd, "-p",
-                            f"Look at the image file at {chart_path} and review it.\n\n{prompt}"]
+                            f"Look at the image file at {chart_path} and review it.\n\n{prompt}",
+                            "--allowedTools", "Read"]
 
                     result = subprocess.run(
                         cli_args,
@@ -533,10 +536,6 @@ def review_pending_samples():
                 print(f"{tag} {verdict} — {reasoning[:80]}")
 
                 time.sleep(1)
-
-            # Cleanup
-            import shutil
-            shutil.rmtree(tmpdir, ignore_errors=True)
 
         except Exception as e:
             pass  # Silent fail, will retry next cycle
