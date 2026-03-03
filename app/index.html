@@ -840,13 +840,28 @@ function VettingPage({ setup }) {
   });
   const current = filtered[currentIdx] || null;
 
+  // Prefetch cache: load current + next 3 charts
+  const ohlcvCache = useRef({});
+
+  function fetchOhlcv(ticker, date) {
+    const key = `${ticker}_${date}`;
+    if (ohlcvCache.current[key]) return Promise.resolve(ohlcvCache.current[key]);
+    return fetch(`${API}/api/vetting/${setup}/ohlcv/${ticker}?signal_date=${date}&lookback=250&forward=80`)
+      .then(r=>r.json()).then(d => { ohlcvCache.current[key] = d.data || []; return ohlcvCache.current[key]; });
+  }
+
   useEffect(() => {
     if(!current){setCandles([]);setEarningsDates([]);return;}
     setChartLoading(true); setSelectedEntry(current.entry_date||null);
-    fetch(`${API}/api/vetting/${setup}/ohlcv/${current.ticker}?signal_date=${current.date}&lookback=250&forward=80`)
-      .then(r=>r.json()).then(d=>{setCandles(d.data||[]);setChartLoading(false);}).catch(()=>setChartLoading(false));
+    fetchOhlcv(current.ticker, current.date)
+      .then(data=>{setCandles(data);setChartLoading(false);}).catch(()=>setChartLoading(false));
     setEarningsDates([]);
     fetch(`${API}/api/vetting/earnings/${current.ticker}`).then(r=>r.json()).then(d=>setEarningsDates(d.earnings_dates||[])).catch(()=>{});
+    // Prefetch next 3
+    for(let i=1;i<=3;i++){
+      const next=filtered[currentIdx+i];
+      if(next) fetchOhlcv(next.ticker, next.date).catch(()=>{});
+    }
   }, [current?.ticker, current?.date]);
 
   function saveVerdict(verdict) {
