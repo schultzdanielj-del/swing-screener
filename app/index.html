@@ -556,6 +556,10 @@ function ExamplesPage({ setup }) {
                   <div style={{display:'flex',alignItems:'center',gap:8}}>
                     {ex.adrMove != null && <span style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--green)',fontWeight:600}}>+{ex.adrMove} ADR</span>}
                     <span className="ex-date">{ex.entryDate}</span>
+                    <span onClick={()=>{if(confirm(`Delete ${ex.ticker} ${ex.entryDate}?`))fetch(`${API}/api/examples/${setup}/${ex.id}`,{method:'DELETE'}).then(()=>setExamples(p=>p.filter(e=>e.id!==ex.id)))}}
+                      style={{color:'var(--text-muted)',cursor:'pointer',fontSize:14,lineHeight:1,padding:'0 2px'}}
+                      onMouseOver={e=>e.target.style.color='var(--red)'}
+                      onMouseOut={e=>e.target.style.color='var(--text-muted)'}>×</span>
                   </div>
                 </div>
                 {showCharts && data && data.length > 0 && <MiniChart data={data} entryDate={ex.entryDate} />}
@@ -1088,10 +1092,58 @@ function SetupHomePage({ setup }) {
 
   const vetting = pipe?.steps?.find(s=>s.id==='sample_expansion');
   const vs = vetting?.state?.vetting_stats;
+  const grind = pipe?.steps?.find(s=>s.id==='signal_brute');
+
+  // Quality scoring
+  const n = examples.length;
+  const tickers = new Set(examples.map(e=>e.ticker)).size;
+  const adrs = examples.filter(e=>e.adrMove!=null).map(e=>e.adrMove).sort((a,b)=>a-b);
+  const medianAdr = adrs.length > 0 ? adrs[Math.floor(adrs.length/2)] : 0;
+  const minAdr = adrs.length > 0 ? adrs[0] : 0;
+  const dates = examples.map(e=>e.entryDate).sort();
+  const dateSpanYrs = dates.length >= 2 ? (new Date(dates[dates.length-1]) - new Date(dates[0])) / (365.25*86400000) : 0;
+  const tickerRatio = n > 0 ? tickers / n : 0;
+  const hasGrind = grind?.state?.status === 'done';
+
+  // Score components (0-100 each)
+  const sampleScore = Math.min(100, Math.round(n / 1.5)); // 150 = 100
+  const diversityScore = Math.min(100, Math.round(tickerRatio * 120)); // 83%+ unique = 100
+  const moveScore = Math.min(100, Math.round(medianAdr * 10)); // 10 ADR median = 100
+  const floorScore = Math.min(100, Math.round(minAdr * 20)); // 5 ADR min = 100
+  const spreadScore = Math.min(100, Math.round(dateSpanYrs * 25)); // 4yr span = 100
+  const grindScore = hasGrind ? 100 : 0;
+
+  const weights = {samples:0.30, diversity:0.10, move:0.15, floor:0.15, spread:0.15, grind:0.15};
+  const overall = Math.round(
+    sampleScore * weights.samples +
+    diversityScore * weights.diversity +
+    moveScore * weights.move +
+    floorScore * weights.floor +
+    spreadScore * weights.spread +
+    grindScore * weights.grind
+  );
+  const grade = overall >= 85 ? 'A' : overall >= 70 ? 'B' : overall >= 55 ? 'C' : overall >= 40 ? 'D' : 'F';
+  const gradeColor = overall >= 70 ? 'var(--green)' : overall >= 50 ? 'var(--amber)' : 'var(--red)';
+
+  const scoreBar = (label, val) => (
+    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+      <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',width:80,flexShrink:0}}>{label}</span>
+      <div style={{flex:1,height:6,background:'var(--surface-3)',borderRadius:3,overflow:'hidden'}}>
+        <div style={{width:`${val}%`,height:'100%',borderRadius:3,
+          background:val>=70?'var(--green)':val>=50?'var(--amber)':'var(--red)',transition:'width 0.3s'}} />
+      </div>
+      <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-dim)',width:28,textAlign:'right'}}>{val}</span>
+    </div>
+  );
 
   return (
     <div>
       <div className="stat-row" style={{marginBottom:16}}>
+        <div className="stat-box">
+          <div className="stat-label">Quality</div>
+          <div className="stat-val" style={{color:gradeColor,fontSize:24}}>{grade}</div>
+          <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',marginTop:2}}>{overall}/100</div>
+        </div>
         <div className="stat-box">
           <div className="stat-label">Optimal Samples</div>
           <div className="stat-val green">{examples.length}</div>
@@ -1112,6 +1164,19 @@ function SetupHomePage({ setup }) {
             </div>
           </>
         )}
+      </div>
+
+      <div className="card" style={{marginBottom:12}}>
+        <div className="card-title">Dataset Quality</div>
+        {scoreBar('Samples', sampleScore)}
+        {scoreBar('Diversity', diversityScore)}
+        {scoreBar('Move Size', moveScore)}
+        {scoreBar('Move Floor', floorScore)}
+        {scoreBar('Date Spread', spreadScore)}
+        {scoreBar('Grind Done', grindScore)}
+        <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--text-muted)',marginTop:8}}>
+          {n} examples · {tickers} tickers · median {medianAdr} ADR · min {minAdr} ADR · {dateSpanYrs.toFixed(1)}yr span
+        </div>
       </div>
 
       <div className="card">
