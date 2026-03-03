@@ -1,118 +1,78 @@
 # TODO — Swing Screener (2026-03-02)
 
-## Current State — BROKEN DATA FLOW
+## Current State — PIPELINE DATA FLOW FIXED, RE-GRIND NEEDED
 
-The UI steps were reorganized but the under-the-hood wiring is incomplete. Each component saves/reads from different locations, and there's no mechanism to pass data between local machine and Railway server between steps.
+Pipeline wiring between local machine and Railway is fixed. The immediate blocker is that 10/36 DTSS examples fail the current 41 conditions — examples added through vetting weren't part of the original grind. A full re-grind (Step 2) with all 36 examples is required before the filter (Step 3) will produce valid results.
 
-### Pipeline Steps (as renamed)
+### Pipeline Steps
 
 | # | Step | Server ID | What Runs | Status |
 |---|------|-----------|-----------|--------|
 | 0 | Nightly Refresh | `nightly` | `python local_runner/nightly.py` | ✅ Works |
-| 1 | Optimal Samples | `optimal_samples` | Read-only display (manual) | ✅ Works (shows DB counts) |
-| 2 | Signal Brute Forcing | `signal_brute` | `pyramid_grinder.py` → `signal_exit_grinder.py` | ⚠️ Runs but needs expr cache |
-| 3 | Sample Expansion | `sample_expansion` | `signal_filter.py` → chart vetting UI | ❌ BROKEN — filter writes local, vetting reads Railway |
+| 1 | Optimal Samples | `optimal_samples` | Read-only display (manual) | ✅ Works |
+| 2 | Signal Brute Forcing | `signal_brute` | `pyramid_grinder.py` → `signal_exit_grinder.py` | ⚠️ NEEDS RE-RUN (36 examples, only 23 pass current conditions) |
+| 3 | Sample Expansion | `sample_expansion` | `signal_filter.py` → chart vetting UI | ✅ Wired (uploads to Railway, live logs, prerequisite on Step 2) |
 | 4 | MFE Capture | `mfe_capture` | `exit_grinder.py` | ✅ Script exists (trade mgmt exit optimizer) |
 | 5 | Market Grinder | `market_grind` | Not built | ⬜ Placeholder |
 
----
+### Pipeline Chain (enforced by prerequisites)
 
-## DATA FLOW AUDIT — Where Things Break
+```
+Step 2: Grind (finds conditions passing ALL examples)
+  ↓ prerequisite
+Step 3: Filter (scans universe with those conditions) → Upload to Railway → Vet
+  ↓ vetting adds new examples
+Step 2: Re-grind (with expanded example set)
+  ... repeat
+```
 
-### Step 2: Signal Brute Forcing
-**Runs on:** Local machine (via agent)
-**Scripts:** pyramid_grinder.py → signal_exit_grinder.py (back-to-back)
-
-**pyramid_grinder.py WRITES:**
-- `local_runner/cache/pyramid_results_{setup}.json` (latest)
-- `local_runner/cache/pyramid_{setup}_mp_sig{N}_pk{N}_{timestamp}.json` (timestamped)
-- `local_runner/cache/historical_results_{setup}.json` (compat format)
-
-**signal_exit_grinder.py WRITES:**
-- `data/signal_exit_grind/signal_exit_{setup}.json` (latest)
-- `data/signal_exit_grind/signal_exit_{setup}_{N}ex_{tag}_{timestamp}.json` (timestamped)
-
-**ISSUE:** Results stay on local machine. Nothing uploads to Railway. Step 3 needs these files but if running locally that's fine. But vetting UI on Railway needs the filtered results which come from Step 3.
-
-### Step 3: Sample Expansion
-**Runs on:** Local machine (via agent), then vetting in browser (reads Railway)
-**Scripts:** signal_filter.py (local) → vetting UI (Railway)
-
-**signal_filter.py READS:**
-- `local_runner/cache/pyramid_results_{setup}.json` (from Step 2) ✅ local→local
-- `data/signal_exit_grind/signal_exit_{setup}.json` (from Step 2) ✅ local→local
-- Railway API `/api/examples/{setup}` for example list ✅ local→Railway
-- `local_runner/cache/universe_ohlcv_5yr.pkl` for OHLCV ✅ local
-- Expression cache for exit computation ✅ local
-
-**signal_filter.py WRITES:**
-- `data/signal_filter/filtered_{setup}.json` (LOCAL only)
-- `data/signal_filter/filtered_{setup}_{N}sig_{timestamp}.json` (LOCAL timestamped)
-
-**Vetting UI READS:**
-- Railway: `data/signal_filter/filtered_{setup}.json` ← ❌ FILE IS ON LOCAL MACHINE, NOT RAILWAY
-- Railway: `data/vetting/vetting_{setup}.json` (decisions)
-
-**Upload endpoints EXIST but are NEVER CALLED:**
-- `POST /api/vetting/{setup}/upload-signals` — accepts filtered JSON
-- `POST /api/vetting/{setup}/upload-exit` — accepts exit grind JSON
-
-**FIX NEEDED:** signal_filter.py must upload results to Railway after saving locally. OR the agent must upload after signal_filter completes.
-
-### Step 4: MFE Capture
-**Runs on:** Local machine (via agent)
-**Agent mapping:** `"mfe_capture": [["python", "scripts/exit_grinder.py", "--setup", "{setup}"]]`
-
-**Status:** Script exists and path is correct. `scripts/exit_grinder.py` is the single-stage trade management exit optimizer (Step 6 of ANALYSIS_SYSTEM.md, 924 lines). This is conceptually different from `scripts/signal_exit_grinder.py` which runs in Step 2 to find the best exit condition for signal filtering. MFE Capture runs the full post-trade exit optimizer on validated examples.
+Steps cannot be run out of order. Adding examples through vetting invalidates the current grind conditions.
 
 ---
 
-## COMPLETE FIX LIST
+## COMPLETED — Pipeline Data Flow Fixes (2026-03-02)
 
-### P0 — Critical (pipeline can't function)
+### What was fixed:
 
-1. **✅ FIXED: signal_filter.py uploads to Railway after saving locally**
-   - After `save_results()`, POSTs filtered JSON to `/api/vetting/{setup}/upload-signals`
-   - Also uploads exit grind data to `/api/vetting/{setup}/upload-exit`
-   - Graceful failure with manual fallback message
+1. **signal_filter.py → Railway upload**: After saving locally, POSTs filtered signals + exit grind to Railway via `/api/vetting/{setup}/upload-signals` and `/upload-exit`. Vetting UI can now read results. Graceful failure with manual fallback.
 
-2. **✅ FIXED: MFE Capture agent script path is CORRECT**
-   - `scripts/exit_grinder.py` exists (924 lines, trade management exit optimizer)
-   - Different from `signal_exit_grinder.py` (signal-level exit for filtering)
-   - No code change needed — was a false alarm in the audit
+2. **Expression cache fingerprint mismatch**: pyramid_grinder was validating with `generate_all()` (signal-only) but cache was built with `_load_expressions()` (signal + generic exit). Fixed: uses `load_cache_expressions()` for fingerprint check. Better diagnostic error on mismatch.
 
-3. **✅ FIXED: Expression cache fingerprint mismatch**
-   - Root cause: pyramid_grinder validated with `generate_all()` (signal-only)
-     but cache was built with `_load_expressions()` (signal + generic exit)
-   - Fix: pyramid_grinder now uses `load_cache_expressions()` for fingerprint check
-   - Grinder still uses signal-only expressions for actual grinding
-   - Better error message on mismatch showing both fingerprints
+3. **MFE Capture script path**: `scripts/exit_grinder.py` exists (924 lines). Agent path was correct. False alarm in original audit.
 
-### P1 — Important (UX/reliability)
+4. **Windows UTF-8 crash**: signal_filter.py and exit_grinder.py lacked `sys.stdout.reconfigure(encoding='utf-8')` for Windows cp1252. Unicode chars crashed the upload. Fixed.
 
-4. **Agent should upload grind results to Railway after Step 2 completes**
-   - Upload pyramid_results and signal_exit to Railway endpoints
-   - Enables Railway-hosted pipeline status to show actual results
-
-5. **"Reload Samples" button in Step 3 needs to:**
-   - Queue `sample_expansion` step via agent (runs signal_filter.py)
-   - signal_filter.py uploads results to Railway
-   - Vetting UI refreshes with new signals
-
-6. **Vetting decisions need to sync back**
-   - Currently saved to Railway `data/vetting/vetting_{setup}.json`
-   - When user marks YES, example is created in Railway DB ✅ (this works)
-   - When user marks NO, rejected_signal is created in Railway DB ✅ (this works)
-
-### P2 — Quality of life
-
-7. **Remove terminal command display from Step 2 info panel** (index.html StepPage still shows it)
-8. **Pipeline steps should be runnable in any order** (currently prerequisites block some)
-9. **Step status should reflect actual data availability** not just "did the step run"
+5. **Sample Expansion UI**: Added RELOAD button (top header bar), live log overlay on chart area while running, auto-refresh signals on completion, prerequisite enforcement with clear messaging.
 
 ---
 
-## Data Locations Summary
+## IMMEDIATE — Re-Grind DTSS with 36 Examples
+
+### Problem
+Current grind used fewer examples. Vetting added 13 new examples (36 total). The 41 conditions from the old grind don't pass 10 of the new examples:
+
+**Failing examples (conditions failed):**
+- ACHR: 3/41 failed
+- AIR: 1/41
+- DELL: 2/41
+- HLIT: 1/41
+- HNRG: 1/41
+- ISRG: 5/41
+- MPC: 1/41
+- PACB: 2/41
+- PSIX: 6/41
+- UTSL: 2/41
+
+**Not in cache (expected):** BRK-B, SMMT, VUZI
+
+### What needs to happen
+1. Run Step 2 (Signal Brute Forcing) from UI or agent — pyramid_grinder.py with all 36 examples
+2. Grinder must find conditions where 100% of examples pass (non-negotiable)
+3. Then run Step 3 (Sample Expansion) to filter + upload + vet new signals
+
+---
+
+## Data Locations
 
 ```
 LOCAL MACHINE (Dan's PC):
@@ -128,7 +88,7 @@ LOCAL MACHINE (Dan's PC):
     signal_exit_grind/
       signal_exit_{setup}.json      — latest exit grind result
     signal_filter/
-      filtered_{setup}.json         — latest filter result (NEEDS UPLOAD TO RAILWAY)
+      filtered_{setup}.json         — latest filter result (auto-uploads to Railway)
 
 RAILWAY SERVER:
   data/
@@ -149,59 +109,40 @@ RAILWAY SERVER:
 
 ---
 
-## Architecture (as built)
+## Architecture
 
 ### Frontend: `app/index.html` (unified SPA)
 
-**Rail navigation:** Nightly Refresh | Setup Analysis | Daily Watchlist
-
 **Setup Analysis steps:**
 1. **Optimal Samples** — gallery with mini chart toggle, rejected signals list, stats
-2. **Signal Brute Forcing** — runs pyramid_grinder.py then signal_exit_grinder.py back-to-back
-3. **Sample Expansion** — signal filter + chart vetting merged. Full candlestick charts with EMAs/SMAs, earnings overlay, YES/NO/MAYBE verdicts, "Reload Samples" button
-4. **MFE Capture** — single-stage vs multi-stage toggle, finds best exit for max MFE capture
-5. **Market Grinder** — placeholder (clusters outcomes vs market regime)
-
-**Key features:**
-- Agent status dot (green=online, red=offline) with click-to-copy start command when offline
-- Heartbeat: 10s interval, 20s timeout, 5s UI poll
-- Live log streaming for all grinder steps
-- Setup selector (DTSS / 3-4DB)
-- Keyboard shortcuts in vetting (↑↓ nav, 1/2/3 for yes/maybe/no)
+2. **Signal Brute Forcing** — runs pyramid_grinder.py then signal_exit_grinder.py, live log streaming
+3. **Sample Expansion** — signal filter + chart vetting. RELOAD button in header, live log overlay, auto-upload to Railway, auto-refresh on completion. Prerequisite: Step 2 must complete first.
+4. **MFE Capture** — single-stage vs multi-stage toggle, exit optimizer
+5. **Market Grinder** — placeholder
 
 ### Backend: `server.py`
 
 **Pipeline endpoints:**
 - `GET /api/pipeline/steps` — step states + vetting stats + agent status
-- `POST /api/pipeline/run/{step_id}` — queue job for agent
+- `POST /api/pipeline/run/{step_id}` — queue job (checks prerequisites)
 - `POST /api/pipeline/stop` — stop running job
 - `POST /api/pipeline/reset/{step_id}` — reset step state
-- Stale job cleanup: removes jobs with IDs not in current PIPELINE_STEPS
 
 **Vetting endpoints:**
 - `GET /api/vetting/{setup}/signals` — filtered signals for chart vetting
-- `GET /api/vetting/{setup}/ohlcv/{ticker}` — OHLCV centered on signal date
 - `POST /api/vetting/{setup}/decide` — saves verdict, creates example or rejected_signal
 - `POST /api/vetting/{setup}/upload-signals` — upload filtered JSON from desktop
 - `POST /api/vetting/{setup}/upload-exit` — upload exit grind from desktop
-- `GET /api/vetting/earnings/{ticker}` — Yahoo Finance earnings dates
-- `GET /api/vetting/{setup}/rejected` — all rejected signals
 
 ### Agent: `local_runner/agent.py`
 
-**Pipeline step scripts:**
 ```python
 PIPELINE_STEP_SCRIPTS = {
     "signal_brute":     [pyramid_grinder, signal_exit_grinder],
-    "sample_expansion": [signal_filter],
-    "mfe_capture":      [exit_grinder],  # ← BROKEN: script doesn't exist
+    "sample_expansion": [signal_filter],  # auto-uploads to Railway
+    "mfe_capture":      [exit_grinder],   # trade management exit optimizer
 }
 ```
-
-- Multi-command step support: runs scripts sequentially, fails on first error
-- Streams logs to Railway in batches of 20 lines
-- Heartbeat every 10s
-- UTF-8 subprocess output on Windows
 
 ---
 
@@ -218,38 +159,36 @@ PIPELINE_STEP_SCRIPTS = {
 
 ## Data
 
-- Expression cache: 4,119 tickers × 12,175 expressions (~50 GB)
-- Railway DB: 11M+ OHLCV rows, ~4,167 tradable tickers
-- 36 DTSS optimal samples (23 original + 14 from vetting pass 1, minus 1 removed)
+- Expression cache: 4,119 tickers x 12,421 expressions (~50 GB)
+- Railway DB: 11M+ OHLCV rows, ~4,167 tickers
+- 36 DTSS optimal samples (needs re-grind to find conditions passing all 36)
 - 8 rejected signals in `rejected_signals` DB table
 
 ---
 
-## Build Plan — What's Left
+## Build Plan
 
-### Immediate: Fix Pipeline Data Flow ✅ (2026-03-02)
-- [x] signal_filter.py: add upload to Railway after local save
-- [x] Fix expression cache fingerprint mismatch (pyramid_grinder used wrong expr list)
-- [x] MFE Capture script path confirmed correct (was false alarm)
-- [ ] Verify Step 2 → Step 3 data handoff works end-to-end (needs live test)
-- [ ] Verify "Reload Samples" triggers filter + upload + UI refresh (needs live test)
-- [ ] Test full pipeline: grind → filter → upload → vet → example creation (needs live test)
+### Immediate: Re-Grind DTSS
+- [ ] Run pyramid_grinder.py with all 36 examples
+- [ ] Verify 100% example pass rate
+- [ ] Run signal_exit_grinder.py
+- [ ] Run signal_filter.py -> verify upload to Railway
+- [ ] Vet new signals in UI
 
-### Phase: AI Vetting Review ⬜
-- [ ] `scripts/ai_vet_review.py` — claude -p reviews YES/NO decisions
+### Phase: AI Vetting Review
+- [ ] `scripts/ai_vet_review.py` -- claude -p reviews YES/NO decisions
 - [ ] Wire into "Submit for Audit" button
 
-### Phase: MFE Capture Backend ⬜
-- [ ] Define what this step actually does (vs signal_exit_grinder in Step 2)
-- [ ] Build or wire correct script
+### Phase: MFE Capture Backend
+- [ ] Define scope (vs signal_exit_grinder in Step 2)
 - [ ] Single-stage vs multi-stage from UI
 
-### Phase: Market Grinder ⬜
+### Phase: Market Grinder
 - [ ] Step 5 implementation
 - [ ] Blocked by: enough vetted examples with outcomes
 
-### Phase: Daily Watchlist ⬜
-- [ ] Nightly scan → today's signals ranked by EV
+### Phase: Daily Watchlist
+- [ ] Nightly scan -> today's signals ranked by EV
 - [ ] Blocked by: market grinder
 
 ---
