@@ -482,9 +482,11 @@ def review_pending_samples():
                         return
 
                     if claude_cmd == "npx":
-                        cli_args = ["npx", "@anthropic-ai/claude-code", "-p", prompt, "--image", chart_path]
+                        cli_args = ["npx", "@anthropic-ai/claude-code", "-p",
+                            f"Look at the image file at {chart_path} and review it.\n\n{prompt}"]
                     else:
-                        cli_args = [claude_cmd, "-p", prompt, "--image", chart_path]
+                        cli_args = [claude_cmd, "-p",
+                            f"Look at the image file at {chart_path} and review it.\n\n{prompt}"]
 
                     result = subprocess.run(
                         cli_args,
