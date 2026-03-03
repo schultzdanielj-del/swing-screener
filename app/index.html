@@ -1135,7 +1135,6 @@ function SetupHomePage({ setup }) {
     : 0;
 
   // Score components
-  const sampleScore = Math.min(100, Math.round(n / 1.5));
   const diversityScore = Math.min(100, Math.round(tickerRatio * 120));
   const spreadScore = Math.min(100, Math.round(dateSpanYrs * 25));
   const moveScore = Math.min(100, Math.round(minAdr * 20));
@@ -1143,8 +1142,8 @@ function SetupHomePage({ setup }) {
   const yieldScore = vs && vs.n_vetted >= 10 ? vettingYield : 0;
 
   const overall = nRuns >= 2
-    ? Math.round(sampleScore*0.20 + diversityScore*0.10 + spreadScore*0.10 + moveScore*0.10 + convergenceScore*0.35 + yieldScore*0.15)
-    : Math.round(sampleScore*0.35 + diversityScore*0.15 + spreadScore*0.15 + moveScore*0.15 + (hasGrind?20:0));
+    ? Math.round(diversityScore*0.10 + spreadScore*0.10 + moveScore*0.10 + convergenceScore*0.45 + yieldScore*0.15)
+    : Math.round(diversityScore*0.20 + spreadScore*0.20 + moveScore*0.20 + (hasGrind?20:0));
   const grade = overall >= 85 ? 'A' : overall >= 70 ? 'B' : overall >= 55 ? 'C' : overall >= 40 ? 'D' : 'F';
   const gradeColor = overall >= 70 ? 'var(--green)' : overall >= 50 ? 'var(--amber)' : 'var(--red)';
   const readiness = overall >= 80 ? 'Ready for live' : overall >= 60 ? 'Getting close — keep cycling' : overall >= 40 ? 'Needs more vetting cycles' : 'Early stage — collect examples';
@@ -1193,7 +1192,6 @@ function SetupHomePage({ setup }) {
 
       <div className="card" style={{marginBottom:12}}>
         <div className="card-title" style={{marginBottom:8}}>Dataset Quality — <span style={{color:gradeColor,fontWeight:400}}>{readiness}</span></div>
-        {scoreBar('Samples', sampleScore, `${n}/150`)}
         {scoreBar('Diversity', diversityScore, `${tickers} tickers`)}
         {scoreBar('Date Spread', spreadScore, `${dateSpanYrs.toFixed(1)}yr`)}
         {scoreBar('Move Floor', moveScore, `${minAdr} ADR`)}
