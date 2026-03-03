@@ -2392,23 +2392,35 @@ async def pipeline_run_step(step_id: str):
 
     state = _load_pipeline_state()
 
-    # Clean stale jobs (older than 2 hours and still "active")
-    now = datetime.now()
-    clean_jobs = []
-    for j in state.get("jobs", []):
-        created = j.get("created_at", "")
+    # Remove ALL stale/dead jobs — if agent hasn't heartbeated in 30s, any
+    # "running" job is dead. Just nuke everything that isn't actively alive.
+    now = datetime.utcnow()
+    agent = _load_grinder_json(GRINDER_AGENT_FILE, {})
+    last_hb = agent.get("last_heartbeat", "")
+    agent_alive = False
+    if last_hb:
         try:
-            age = (now - datetime.fromisoformat(created)).total_seconds()
+            hb_time = datetime.fromisoformat(last_hb.replace('+00:00', '').replace('Z', ''))
+            age = (now - hb_time).total_seconds()
+            agent_alive = age < 30
         except:
-            age = 99999
-        if j.get("status") in ("queued", "running", "claimed") and age > 7200:
-            continue  # Drop stale job
-        clean_jobs.append(j)
-    state["jobs"] = clean_jobs
+            pass
 
-    for j in state.get("jobs", []):
-        if j.get("status") in ("queued", "running", "claimed"):
-            return {"error": f"Already running: {j.get('step_id')}"}
+    if not agent_alive:
+        # Agent is dead — no job can be running. Clear everything.
+        state["jobs"] = []
+    else:
+        # Agent is alive — only block if there's a job for a DIFFERENT step
+        # that's actively running. If it's the SAME step, kill the old job
+        # and let the new one take over.
+        active_other = [j for j in state.get("jobs", [])
+                        if j.get("status") in ("queued", "running", "claimed")
+                        and j.get("step_id") != step_id]
+        if active_other:
+            return {"error": f"Already running: {active_other[0].get('step_id')}"}
+        # Remove any old jobs for THIS step
+        state["jobs"] = [j for j in state.get("jobs", [])
+                         if j.get("step_id") != step_id]
 
     for prereq in step_def["prerequisites"]:
         prereq_state = state.get("steps", {}).get(prereq, {})
