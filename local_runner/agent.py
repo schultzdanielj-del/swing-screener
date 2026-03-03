@@ -449,11 +449,37 @@ def review_pending_samples():
                     print(f"SKIP ({e})")
                     continue
 
-                # Claude CLI review
+                # Claude CLI review — try multiple commands for Windows compat
                 try:
+                    # Find working claude command
+                    claude_cmd = None
+                    for cmd in ["claude", "claude.exe", "npx", "claude-code"]:
+                        try:
+                            if cmd == "npx":
+                                test = subprocess.run(["npx", "@anthropic-ai/claude-code", "--version"],
+                                    capture_output=True, text=True, timeout=10)
+                            else:
+                                test = subprocess.run([cmd, "--version"],
+                                    capture_output=True, text=True, timeout=10)
+                            if test.returncode == 0:
+                                claude_cmd = cmd
+                                break
+                        except (FileNotFoundError, subprocess.TimeoutExpired):
+                            continue
+
+                    if not claude_cmd:
+                        print("claude CLI not found (tried claude, claude.exe, npx, claude-code)")
+                        return
+
+                    if claude_cmd == "npx":
+                        cli_args = ["npx", "@anthropic-ai/claude-code", "-p", prompt, "--image", chart_path]
+                    else:
+                        cli_args = [claude_cmd, "-p", prompt, "--image", chart_path]
+
                     result = subprocess.run(
-                        ["claude", "-p", prompt, "--image", chart_path],
-                        capture_output=True, text=True, timeout=120
+                        cli_args,
+                        capture_output=True, text=True, timeout=120,
+                        shell=(sys.platform == "win32"),
                     )
                     output = result.stdout.strip()
                     verdict = "REJECT"
