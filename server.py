@@ -155,6 +155,25 @@ def migrate_unique_constraint():
 
 migrate_unique_constraint()
 
+# Ensure pending_examples table exists (may be missing on existing DBs)
+with get_db() as db:
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS pending_examples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            setup_type TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            signal_date TEXT NOT NULL,
+            entry_date TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            ai_verdict TEXT,
+            ai_reasoning TEXT,
+            review_notes TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            reviewed_at TEXT,
+            UNIQUE(setup_type, ticker, entry_date)
+        );
+    """)
+
 # Migrate extension table: old schema had ext_sma50_pct/ext_sma200_pct, new uses xatr + atr14
 with get_db() as db:
     cols = [r[1] for r in db.execute("PRAGMA table_info(extension)").fetchall()]
