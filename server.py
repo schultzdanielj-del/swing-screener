@@ -173,6 +173,12 @@ with get_db() as db:
             UNIQUE(setup_type, ticker, entry_date)
         )
     """)
+    # Add columns if missing (table may have been created without them)
+    cols = [r[1] for r in db.execute("PRAGMA table_info(pending_examples)").fetchall()]
+    if "ai_verdict" not in cols:
+        db.execute("ALTER TABLE pending_examples ADD COLUMN ai_verdict TEXT")
+    if "ai_reasoning" not in cols:
+        db.execute("ALTER TABLE pending_examples ADD COLUMN ai_reasoning TEXT")
 
 # Migrate extension table: old schema had ext_sma50_pct/ext_sma200_pct, new uses xatr + atr14
 with get_db() as db:
