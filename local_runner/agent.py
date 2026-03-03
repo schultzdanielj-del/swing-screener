@@ -388,7 +388,15 @@ REVIEW_PROMPTS = {
 
 THE SETUP: Stock rallies to a prior high (resistance), fails to break through, forming a double top. Entry is on the short side after the failure confirms.
 
-The entry bar is marked on the chart. You can see price history before and after entry.
+CHART LEGEND:
+- Green/red candlesticks with volume bars below
+- Light blue thin line = 8 EMA (baby line)
+- Tan thin line = 21 EMA (daddy line)
+- Gold thicker line = 50 SMA
+- Red thickest line = 200 SMA
+- Blue dashed vertical line = entry date
+- Blue dashed horizontal line = entry price
+- Chart shows ~100 bars before entry and ~30 bars after
 
 EVALUATE THESE QUALITY FACTORS:
 
@@ -398,28 +406,28 @@ EVALUATE THESE QUALITY FACTORS:
 
 3. **Volume Pattern**: Look for volume spike on the failed attempt at the high, then volume drying up on any bounce. Heavy volume rejection at resistance followed by low-volume drift = trapped buyers. This is critical.
 
-4. **Moving Average Confirmation**: Are MAs flattening or rolling over at the entry point? The 10/20 MAs (thin lines) rolling over while price is below them = strong. MAs still pointing up with price above = weak setup, too early.
+4. **Moving Average Confirmation**: At entry, are the 8/21 EMAs flattening or rolling over? Is price below the 8/21 EMAs? Best: price below all short-term MAs with MAs fanning downward. Worst: MAs still pointing up, price above them.
 
 5. **Entry Timing**: Is the entry at the right spot?
    - Too early = stock hasn't confirmed the failure yet, could still break out
    - Too late = stock already crashed 10%+, the easy money is gone
-   - Just right = entry catches the break below the LSP/support after the double top confirms
+   - Just right = entry catches the break below support after the double top confirms
 
-6. **Post-Entry Follow-Through**: Does the stock actually break down cleanly after entry? Clean waterfall decline = A+ example. Choppy back-and-forth that eventually works = B grade. Barely moves or bounces back = poor example that will hurt the grinder.
+6. **Post-Entry Move**: Look at the bars AFTER the blue entry line. Does the stock break down cleanly? Clean waterfall decline = A+. Choppy action that eventually works = B. Barely moves or bounces back = poor example.
 
-7. **Extension Context**: Is the stock extended above its 50/200 SMAs at the double top? Extended stocks have more room to fall = better short setups. Stock trading near or below its MAs at the "double top" is less compelling.
+7. **Extension**: At the double top, is the stock extended well above the 50 SMA (gold line) and 200 SMA (red line)? More extension = more room to fall = better short setup.
 
 GRADING SCALE:
-- **A+**: Clean LSP, obvious rejection, volume confirms, MAs rolling, perfect entry timing, strong follow-through. Train the system on this.
-- **A**: Solid on most factors, minor imperfection on one. Still a great example.
-- **B**: Decent setup but has 1-2 weak factors (messy structure, mediocre timing, choppy follow-through). Acceptable but not ideal.
+- **A+**: Clean LSP, obvious rejection, volume confirms, MAs rolling, perfect timing, strong breakdown after entry.
+- **A**: Solid on most factors, minor imperfection on one.
+- **B**: Decent but 1-2 weak factors. Acceptable example.
 - **C**: Multiple weak factors. Would add noise to the example library.
-- **F**: Not really a DTSS or fundamentally flawed. Reject.
+- **F**: Not really a DTSS or fundamentally flawed.
 
 Respond in this exact format:
 VERDICT: APPROVE or REJECT
 GRADE: A+, A, B, C, or F
-REASONING: 3-4 sentences covering the key quality factors you see. Be specific about what's strong and what's weak. Reference actual price action visible on the chart.
+REASONING: 3-4 sentences covering the key quality factors. Be specific about what you see on the chart — reference the price action, volume bars, and MA positions.
 
 APPROVE grades A+ through B. REJECT grades C and F.""",
 }

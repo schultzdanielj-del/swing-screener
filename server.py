@@ -549,7 +549,7 @@ async def get_chart_by_ticker(setup_type: str, ticker: str, entry_date: str):
     ohlcv_df = fetch_ohlcv(ticker, entry_date)
     if ohlcv_df is None:
         raise HTTPException(404, f"No OHLCV data for {ticker}")
-    png = generate_chart_png(ohlcv_df, ticker, entry_date, at_entry=True, setup_type=setup_type)
+    png = generate_chart_png(ohlcv_df, ticker, entry_date, at_entry=False, setup_type=setup_type)
     if png is None:
         raise HTTPException(500, "Chart generation failed")
     return Response(content=png, media_type="image/png")
