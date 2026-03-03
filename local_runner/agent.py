@@ -164,10 +164,13 @@ def handle_pipeline_job(job):
                 pipeline_post_logs(step_id, [header])
 
             log_buffer = []
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
             proc = subprocess.Popen(
                 cmd, cwd=REPO_ROOT,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1, encoding='utf-8', errors='replace',
+                env=env,
             )
 
             stopped = False
