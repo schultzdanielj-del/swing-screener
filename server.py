@@ -518,9 +518,6 @@ async def get_examples(setup_type: str):
             examples.append(ex)
     return {"setupType": setup_type, "examples": examples}
 
-@app.get("/api/chart-image/{setup_type}/{example_id}")
-async def get_chart_image(setup_type: str, example_id: int, at_entry: int = Query(0)):
-
 @app.get("/api/chart/{setup_type}/{ticker}/{entry_date}")
 async def get_chart_by_ticker(setup_type: str, ticker: str, entry_date: str):
     """Generate chart PNG for any ticker+date (used by AI review)."""
@@ -531,6 +528,10 @@ async def get_chart_by_ticker(setup_type: str, ticker: str, entry_date: str):
     if png is None:
         raise HTTPException(500, "Chart generation failed")
     return Response(content=png, media_type="image/png")
+
+
+@app.get("/api/chart-image/{setup_type}/{example_id}")
+async def get_chart_image(setup_type: str, example_id: int, at_entry: int = Query(0)):
     with get_db() as db:
         ex = db.execute("SELECT id, ticker, entry_date FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
         if not ex: raise HTTPException(404, f"No example with id {example_id}")
