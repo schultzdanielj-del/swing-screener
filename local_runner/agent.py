@@ -464,16 +464,17 @@ def review_pending_samples():
 
                 # Claude CLI review — try multiple commands for Windows compat
                 try:
+                    is_win = sys.platform == "win32"
                     # Find working claude command
                     claude_cmd = None
                     for cmd in ["claude", "claude.exe", "npx", "claude-code"]:
                         try:
                             if cmd == "npx":
                                 test = subprocess.run(["npx", "@anthropic-ai/claude-code", "--version"],
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, timeout=10, shell=is_win)
                             else:
                                 test = subprocess.run([cmd, "--version"],
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, timeout=10, shell=is_win)
                             if test.returncode == 0:
                                 claude_cmd = cmd
                                 break
@@ -492,7 +493,7 @@ def review_pending_samples():
                     result = subprocess.run(
                         cli_args,
                         capture_output=True, text=True, timeout=120,
-                        shell=(sys.platform == "win32"),
+                        shell=is_win,
                     )
                     output = result.stdout.strip()
                     verdict = "REJECT"
