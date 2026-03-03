@@ -384,52 +384,40 @@ def handle_job(job):
 # ── Auto AI Review for pending samples ─────────────────────────────────
 
 REVIEW_PROMPTS = {
-    "dtss": """You are an expert swing trader reviewing a chart to grade the quality of a DTSS (Double Top Short Sell) setup. This is NOT a basic pattern check — the grinder already confirmed the mathematical conditions. Your job is to evaluate setup QUALITY using advanced TA principles.
+    "dtss": """You are reviewing a stock chart for a DTSS (Double Top Short Sell) setup. The mathematical conditions already passed. Your job is to check if the chart VISUALLY looks like a legitimate double top short setup.
 
-THE SETUP: Stock rallies to a prior high (resistance), fails to break through, forming a double top. Entry is on the short side after the failure confirms.
+THE SETUP: Stock rallies to a prior high (resistance), fails to break through forming a double top, then breaks down. Entry is on the short side.
 
 CHART LEGEND:
 - Green/red candlesticks with volume bars below
-- Light blue thin line = 8 EMA (baby line)
-- Tan thin line = 21 EMA (daddy line)
+- Light blue thin line = 8 EMA
+- Tan thin line = 21 EMA
 - Gold thicker line = 50 SMA
 - Red thickest line = 200 SMA
 - Blue dashed vertical line = entry date
 - Blue dashed horizontal line = entry price
 - Chart shows ~100 bars before entry and ~30 bars after
 
-EVALUATE THESE QUALITY FACTORS:
+CHECK THESE THINGS:
 
-1. **LSP (Left Side Pivot) Clarity**: Is the prior high/resistance level clean and obvious? A prominent structural pivot that institutions would defend? Or is it a messy, unclear level buried in chop? Clean LSP = higher quality.
+1. **Is there a visible double top?** Can you see two peaks at roughly the same price level? This is the core pattern — if you can't see it, reject.
 
-2. **Double Top Structure**: How clean is the second rally into resistance? Best setups show a clear rejection — price reaches the zone and immediately reverses. Worst setups show indecisive chop around the level. The peaks can be slightly above or below each other — that's fine. What matters is the REJECTION quality.
+2. **Is the LSP (left side pivot / prior high) clean?** Is the resistance level obvious and prominent, or is it buried in messy chop where you'd have to squint to find it?
 
-3. **Volume Pattern**: Look for volume spike on the failed attempt at the high, then volume drying up on any bounce. Heavy volume rejection at resistance followed by low-volume drift = trapped buyers. This is critical.
+3. **Did the stock actually break down after entry?** Look at the bars after the blue entry line. If the stock dropped significantly — good. If it went sideways or bounced back up — bad example.
 
-4. **Moving Average Confirmation**: At entry, are the 8/21 EMAs flattening or rolling over? Is price below the 8/21 EMAs? Best: price below all short-term MAs with MAs fanning downward. Worst: MAs still pointing up, price above them.
-
-5. **Entry Timing**: Is the entry at the right spot?
-   - Too early = stock hasn't confirmed the failure yet, could still break out
-   - Too late = stock already crashed 10%+, the easy money is gone
-   - Just right = entry catches the break below support after the double top confirms
-
-6. **Post-Entry Move**: Look at the bars AFTER the blue entry line. Does the stock break down cleanly? Clean waterfall decline = A+. Choppy action that eventually works = B. Barely moves or bounces back = poor example.
-
-7. **Extension**: At the double top, is the stock extended well above the 50 SMA (gold line) and 200 SMA (red line)? More extension = more room to fall = better short setup.
-
-GRADING SCALE:
-- **A+**: Clean LSP, obvious rejection, volume confirms, MAs rolling, perfect timing, strong breakdown after entry.
-- **A**: Solid on most factors, minor imperfection on one.
-- **B**: Decent but 1-2 weak factors. Acceptable example.
-- **C**: Multiple weak factors. Would add noise to the example library.
-- **F**: Not really a DTSS or fundamentally flawed.
+GRADING:
+- **A**: Clear double top, obvious resistance level, stock broke down after entry
+- **B**: Pattern is there but one element is a bit messy
+- **C**: Hard to see the pattern, or stock barely moved after entry
+- **F**: No double top visible, or stock went UP after entry
 
 Respond in this exact format:
 VERDICT: APPROVE or REJECT
-GRADE: A+, A, B, C, or F
-REASONING: 3-4 sentences covering the key quality factors. Be specific about what you see on the chart — reference the price action, volume bars, and MA positions.
+GRADE: A, B, C, or F
+REASONING: 2-3 sentences about what you see. Be specific.
 
-APPROVE grades A+ through B. REJECT grades C and F.""",
+APPROVE grades A and B. REJECT grades C and F.""",
 }
 
 
