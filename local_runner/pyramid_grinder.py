@@ -240,13 +240,15 @@ _w_ranges = None
 _w_candidate_indices = None
 _w_n_bars_window = None
 _w_expr_name_to_idx = None
+_w_blackout = None  # {ticker: [(entry_idx, exit_idx), ...]} — bars to exclude
 
 
 def _init_tier_worker(cache, locked_conditions, expressions, ranges,
-                      candidate_indices, n_bars_window, expr_name_to_idx=None):
+                      candidate_indices, n_bars_window, expr_name_to_idx=None,
+                      blackout_map=None):
     """Initializer: serialize cache + config once per worker."""
     global _w_cache, _w_locked, _w_exprs, _w_ranges, _w_candidate_indices
-    global _w_n_bars_window, _w_expr_name_to_idx
+    global _w_n_bars_window, _w_expr_name_to_idx, _w_blackout
     _w_cache = cache
     _w_locked = locked_conditions
     _w_exprs = expressions
@@ -254,6 +256,7 @@ def _init_tier_worker(cache, locked_conditions, expressions, ranges,
     _w_candidate_indices = candidate_indices
     _w_n_bars_window = n_bars_window
     _w_expr_name_to_idx = expr_name_to_idx or {}
+    _w_blackout = blackout_map or {}
 
 
 def _build_tier_batch(tickers):
@@ -308,6 +311,18 @@ def _build_tier_batch(tickers):
                 in_range = (series >= cond["low"]) & (series <= cond["high"])
                 in_range[np.isnan(series)] = False
                 pass_mask &= in_range
+
+            # Step 1b: Apply blackout mask — exclude post-entry bars per example
+            # These are bars between entry and exit for any example in this ticker.
+            # Prevents the re-grind from learning conditions that fire on in-play
+            # post-entry price action rather than legitimate pre-entry setups.
+            if _w_blackout and ticker in _w_blackout:
+                for entry_idx, exit_idx in _w_blackout[ticker]:
+                    # Mask bars entry_idx+1 through exit_idx (inclusive)
+                    blackout_start = max(0, entry_idx + 1)
+                    blackout_end = min(n_bars, exit_idx + 1)
+                    if blackout_start < blackout_end:
+                        pass_mask[blackout_start:blackout_end] = False
 
             surviving_indices = np.where(pass_mask)[0]
             if len(surviving_indices) == 0:
@@ -721,7 +736,7 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
 def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
                         example_ranges, locked_conditions,
                         beam_width=50, depth=10, peak_target=15,
-                        expr_cache=None):
+                        expr_cache=None, blackout_map=None):
     """Run a historical tier: build matrix of surviving ticker-day rows, then spiderweb.
 
     Args:
@@ -734,6 +749,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
         beam_width, depth: spiderweb params
         peak_target: stop when peak/day ≤ this
         expr_cache: ExprSeriesCache instance (or None to compute from scratch)
+        blackout_map: {ticker: [(entry_idx, exit_idx), ...]} — post-entry bars to exclude
 
     Returns:
         new_conditions: list of condition dicts added by this tier
@@ -783,7 +799,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
         initializer=_init_tier_worker,
         initargs=(universe_cache, locked_conditions, expressions,
                   example_ranges, candidate_indices, n_bars_window,
-                  expr_name_to_idx)
+                  expr_name_to_idx, blackout_map)
     ) as pool:
         futures = {pool.submit(_build_tier_batch, batch): batch for batch in batches}
         completed = 0
@@ -952,7 +968,7 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
                      example_ranges_full, example_matrix_full,
                      locked_conditions, expr_cache,
                      beam_width, depth, peak_target,
-                     d1_beam, d1_depth):
+                     d1_beam, d1_depth, blackout_map=None):
     """Run one pass of the multi-pass pyramid.
 
     Args:
@@ -968,6 +984,7 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
         expr_cache: ExprSeriesCache instance
         beam_width, depth, peak_target: search params
         d1_beam, d1_depth: D1-specific params
+        blackout_map: {ticker: [(entry_idx, exit_idx), ...]} — post-entry bars to exclude
 
     Returns:
         new_conditions: list of conditions added by this pass
@@ -1047,6 +1064,7 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
             depth=depth,
             peak_target=peak_target,
             expr_cache=expr_cache,
+            blackout_map=blackout_map,
         )
 
         new_conditions.extend(tier_new_conds)
@@ -1094,7 +1112,8 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
 
 
 def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
-                d1_depth=None, d1_beam=None, multi_pass=True):
+                d1_depth=None, d1_beam=None, multi_pass=True,
+                blackout_map=None):
     """Run the full pyramid grinder.
 
     Args:
@@ -1106,6 +1125,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         d1_beam: override beam for D1 tier (default: same as beam_width)
         multi_pass: if True, run 3-pass pyramid (daily→weekly→monthly).
                     if False, run single-pass with all expressions (legacy mode).
+        blackout_map: {ticker: [(entry_idx, exit_idx), ...]} — post-entry bars to exclude
+                      from universe matrix. Pass None to disable (default).
     """
     d1_depth = d1_depth or depth
     d1_beam = d1_beam or beam_width
@@ -1206,6 +1227,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 peak_target=peak_target,
                 d1_beam=d1_beam,
                 d1_depth=d1_depth,
+                blackout_map=blackout_map,
             )
 
             if new_conds is None:
@@ -1291,6 +1313,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 depth=depth,
                 peak_target=peak_target,
                 expr_cache=expr_cache,
+                blackout_map=blackout_map,
             )
 
             all_conditions.extend(new_conds)
@@ -1489,6 +1512,104 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 # CLI
 # ══════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════
+# BLACKOUT MAP LOADER
+# ══════════════════════════════════════════════════════════════
+
+def _load_blackout_map(setup_type):
+    """Load profit grinder output and build blackout map for the re-grind.
+
+    Reads data/profit_grind/profit_{setup}.json (rank-1 condition).
+    For each example, maps entry_bar_idx → exit_bar_idx in absolute bar space.
+    The OHLCV 5yr cache is used to resolve entry dates to bar indices,
+    matching exactly how pyramid_grinder resolves example scan_idx.
+
+    Returns:
+        {ticker: [(entry_idx, exit_idx), ...]}
+        or {} if file not found (blackout disabled — warns but does not abort).
+    """
+    profit_path = os.path.join(
+        REPO_ROOT, "data", "profit_grind", f"profit_{setup_type}.json"
+    )
+    if not os.path.exists(profit_path):
+        print(f"\n  WARNING: --blackout specified but no profit grind file found:")
+        print(f"    {profit_path}")
+        print(f"  Run: python scripts/profit_grinder.py --setup {setup_type}")
+        print(f"  Continuing WITHOUT blackout masking.\n")
+        return {}
+
+    with open(profit_path) as f:
+        data = json.load(f)
+
+    top_conditions = data.get("top_conditions", [])
+    if not top_conditions:
+        print(f"\n  WARNING: profit grind file has no top_conditions. Skipping blackout.\n")
+        return {}
+
+    # Use rank-1 condition (best median capture efficiency)
+    best = top_conditions[0]
+    per_example_exit_bars = best.get("per_example_exit_bars", [])  # forward offsets from entry
+    examples = data.get("examples", [])
+
+    if not examples or not per_example_exit_bars:
+        print(f"\n  WARNING: profit grind file missing examples or exit bars. Skipping blackout.\n")
+        return {}
+
+    # Load 5yr cache to resolve entry dates to bar indices
+    # (same cache the pyramid grinder uses — identical resolution)
+    print(f"\n  Loading blackout map from profit grind (rank-1: "
+          f"{best.get('expression')} {best.get('direction')} {best.get('threshold')}) ...")
+    universe_cache = load_5yr_cache()
+
+    blackout_map = {}
+    n_mapped = 0
+    n_skipped = 0
+
+    for i, ex in enumerate(examples):
+        ticker = ex.get("ticker")
+        entry_date = ex.get("entry_date")
+        exit_bar_offset = per_example_exit_bars[i] if i < len(per_example_exit_bars) else None
+
+        if not ticker or not entry_date or exit_bar_offset is None:
+            n_skipped += 1
+            continue
+
+        df = universe_cache.get(ticker)
+        if df is None:
+            n_skipped += 1
+            continue
+
+        # Resolve entry_date to bar index (same method as load_example_data)
+        if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+            df = df.copy()
+            df["date"] = pd.to_datetime(df["date"])
+        dates_str = [str(d)[:10] for d in df["date"].values]
+        if entry_date not in dates_str:
+            n_skipped += 1
+            continue
+
+        entry_idx = dates_str.index(entry_date)
+        # exit_bar_offset is bars after entry bar (1-based forward offset)
+        exit_idx = entry_idx + int(exit_bar_offset)
+        exit_idx = min(exit_idx, len(df) - 1)  # clamp to valid range
+
+        if ticker not in blackout_map:
+            blackout_map[ticker] = []
+        blackout_map[ticker].append((entry_idx, exit_idx))
+        n_mapped += 1
+
+    total_bars_blacked = sum(
+        exit_idx - entry_idx
+        for intervals in blackout_map.values()
+        for entry_idx, exit_idx in intervals
+    )
+    print(f"  Blackout map: {n_mapped} examples mapped, {n_skipped} skipped")
+    print(f"  Tickers with blackout: {len(blackout_map)}")
+    print(f"  Total bars blacked out: {total_bars_blacked:,}\n")
+
+    return blackout_map
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pyramidal Grinder")
     parser.add_argument("--setup", default="dtss", help="Setup type")
@@ -1506,9 +1627,17 @@ def main():
                         help="Number of times to repeat the grinder (default: 1)")
     parser.add_argument("--single-pass", action="store_true",
                         help="Legacy single-pass mode (all 12K expressions in one pass)")
+    parser.add_argument("--blackout", action="store_true",
+                        help="Load profit grinder output and mask post-entry bars "
+                             "from universe before grinding (Step 4 Setup Grinder re-grind)")
     args = parser.parse_args()
 
     multi_pass = not args.single_pass
+
+    # ── Blackout map loading ──
+    blackout_map = None
+    if args.blackout:
+        blackout_map = _load_blackout_map(args.setup)
 
     n_runs = max(1, args.runs)
     results = []
@@ -1527,6 +1656,7 @@ def main():
             d1_depth=args.d1_depth,
             d1_beam=args.d1_beam,
             multi_pass=multi_pass,
+            blackout_map=blackout_map,
         )
         results.append(result)
 

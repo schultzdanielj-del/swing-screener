@@ -66,13 +66,32 @@ def load_5yr_cache():
     return cache
 
 
-def load_pyramid_conditions(setup_type):
+def load_pyramid_conditions(setup_type, conditions_file=None):
     """Load signal conditions from pyramid results.
-    
+
+    Args:
+        setup_type: e.g. "dtss"
+        conditions_file: optional path override — load conditions directly from
+            this file instead of searching for pyramid results. Supports both
+            pyramid result files and condition_pruner output files.
+            Keys checked in order: "all_conditions", "pruned_conditions".
+
     Searches both local_runner/cache/ and data/ directories.
     If multiple files exist, picks the latest by timestamp in filename.
     """
     import glob
+
+    if conditions_file:
+        if not os.path.exists(conditions_file):
+            raise FileNotFoundError(f"Conditions file not found: {conditions_file}")
+        with open(conditions_file) as f:
+            data = json.load(f)
+        conditions = data.get("all_conditions", data.get("pruned_conditions", []))
+        n_dropped = data.get("n_dropped", 0)
+        print(f"  Loaded {len(conditions)} conditions from {os.path.basename(conditions_file)}")
+        if n_dropped:
+            print(f"  (pruned from {data.get('n_input_conditions', '?')}, {n_dropped} dropped)")
+        return conditions
 
     search_dirs = [
         os.path.join(REPO_ROOT, "local_runner", "cache"),
@@ -798,6 +817,10 @@ def main():
                         help="Min exit distance in ADR (default: derived from examples)")
     parser.add_argument("--max-forward", type=int, default=MAX_FORWARD)
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    parser.add_argument("--conditions-file", default=None,
+                        help="Path to conditions JSON file — load conditions directly "
+                             "instead of auto-discovering latest pyramid result. "
+                             "Accepts pyramid result files or condition_pruner output.")
     args = parser.parse_args()
 
     setup = args.setup
@@ -811,7 +834,7 @@ def main():
 
     # Load data
     cache = load_5yr_cache()
-    conditions = load_pyramid_conditions(setup)
+    conditions = load_pyramid_conditions(setup, conditions_file=args.conditions_file)
     exit_cond = load_exit_condition(setup)
     examples = load_examples(setup)
 
