@@ -2909,6 +2909,15 @@ async def get_exit_grind_choice(setup_type: str):
         return json.load(f)
 
 
+@app.post("/api/exit-grind/{setup_type}/clear-choice")
+async def clear_exit_grind_choice(setup_type: str):
+    """Clear the exit choice, re-locking setup_grinder_b."""
+    path = VETTING_DATA_DIR / "exit_grind_choice" / f"{setup_type}.json"
+    if path.exists():
+        path.unlink()
+    return {"status": "ok", "cleared": True}
+
+
 @app.get("/api/vetting/{setup_type}/signals")
 async def get_vetting_signals(setup_type: str):
     """Load filtered signals for chart vetting. Ranked by move_adr descending."""

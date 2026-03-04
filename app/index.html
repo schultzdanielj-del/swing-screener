@@ -448,6 +448,261 @@ function StepPage({ stepId, setup }) {
 }
 
 // ═══════════════════════════════════════════════════════
+// EXIT GRINDER PAGE (Step 4a)
+// ═══════════════════════════════════════════════════════
+function ExitGrinderPage({ setup }) {
+  const [pipe, setPipe]     = useState(null);
+  const [results, setResults] = useState(null);
+  const [choosing, setChoosing] = useState(null); // 'single'|'multi'|null
+  const [logs, setLogs]     = useState([]);
+  const logRef  = useRef(null);
+  const logCountRef = useRef(0);
+
+  const stepId = 'setup_grinder_a';
+
+  // Poll pipeline state
+  useEffect(() => {
+    const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
+    load(); const id = setInterval(load, 5000); return () => clearInterval(id);
+  }, []);
+
+  // Poll exit grind results
+  useEffect(() => {
+    const load = () => fetch(`${API}/api/exit-grind/${setup}/results`)
+      .then(r=>r.ok ? r.json() : null).then(d=>{ if(d) setResults(d); }).catch(()=>{});
+    load(); const id = setInterval(load, 8000); return () => clearInterval(id);
+  }, [setup]);
+
+  const step = pipe?.steps?.find(s => s.id === stepId);
+  const st   = step?.state?.status || 'pending';
+  const isRun = ['running','claimed','queued'].includes(st);
+
+  // Log streaming
+  useEffect(() => {
+    if (!isRun) { logCountRef.current = 0; return; }
+    const poll = () => fetch(`${API}/api/pipeline/logs/${stepId}?after=${logCountRef.current}`)
+      .then(r=>r.json())
+      .then(d => { if(d.lines?.length) { logCountRef.current += d.lines.length; setLogs(p=>[...p,...d.lines]); } })
+      .catch(()=>{});
+    poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
+  }, [isRun]);
+
+  useEffect(() => { if(logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
+
+  function doRun() {
+    fetch(`${API}/api/pipeline/run/${stepId}`, {method:'POST'})
+      .then(r=>r.json()).then(d => { if(d.error) alert(d.error); else { setLogs([]); logCountRef.current = 0; } });
+  }
+
+  function doChoose(choice) {
+    setChoosing(choice);
+    fetch(`${API}/api/exit-grind/${setup}/choose`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({choice})
+    }).then(r=>r.json()).then(d => {
+      if(d.error) { alert(d.error); setChoosing(null); }
+      else setResults(r => r ? {...r, choice} : r);
+    }).catch(()=>setChoosing(null));
+  }
+
+  const pct = v => v != null ? `${(v*100).toFixed(1)}%` : '—';
+  const adr = v => v != null ? `${v.toFixed(2)} ADR` : '—';
+  const bars = v => v != null ? `${v.toFixed(1)} bars` : '—';
+
+  const choiceMade = results?.choice;
+  const s = results?.single;
+  const m = results?.multi;
+
+  return (
+    <div>
+      {/* Status row */}
+      <div className="stat-row" style={{marginBottom:16}}>
+        <div className="stat-box">
+          <div className="stat-label">Status</div>
+          <div className={`stat-val ${st==='done'?'green':isRun?'amber':''}`}>{st.toUpperCase()}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Duration</div>
+          <div className="stat-val" style={{fontSize:13}}>{step?.state?.duration_s ? fmtDur(step.state.duration_s) : '—'}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Agent</div>
+          <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
+            {pipe?.agent_status?.toUpperCase() || '?'}
+          </div>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--cyan)',marginTop:4,cursor:'pointer',userSelect:'all'}}>
+            python local_runner/agent.py <span style={{fontSize:8,color:'var(--text-muted)',marginLeft:4}}>copy</span>
+          </div>
+        </div>
+        {choiceMade && (
+          <div className="stat-box">
+            <div className="stat-label">Exit Choice</div>
+            <div className="stat-val green">{choiceMade.toUpperCase()}-STAGE</div>
+          </div>
+        )}
+      </div>
+
+      {/* Run/Stop */}
+      <div style={{display:'flex',gap:8,marginBottom:16}}>
+        {isRun
+          ? <button className="btn btn-stop" onClick={()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'})}>■ STOP</button>
+          : <button className="btn btn-go" onClick={doRun} disabled={pipe?.agent_status!=='online'}>▶ RUN</button>
+        }
+        <button className="btn" onClick={()=>fetch(`${API}/api/pipeline/reset/${stepId}`,{method:'POST'})}>↻ Reset</button>
+      </div>
+
+      {pipe?.agent_status !== 'online' && (
+        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--cyan)',background:'var(--bg)',
+            padding:'6px 10px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer'}}>
+            python local_runner/agent.py <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:8}}>click to copy</span>
+          </div>
+        </div>
+      )}
+
+      {/* Results panel — single vs multi side by side */}
+      {(s || m) && (
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
+          {/* Single-stage */}
+          <div className="card" style={{
+            borderColor: choiceMade==='single' ? 'var(--green)' : 'var(--border)',
+            background: choiceMade==='single' ? 'rgba(52,211,153,0.05)' : undefined,
+            position:'relative'
+          }}>
+            <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-muted)',marginBottom:8,letterSpacing:'0.05em'}}>
+              SINGLE-STAGE EXIT
+            </div>
+            {s ? (
+              <>
+                <div style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--cyan)',marginBottom:10,wordBreak:'break-all'}}>
+                  {s.expression} {s.direction} {s.threshold?.toFixed(6)}
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:12}}>
+                  {[
+                    ['Floor Capture', pct(s.floor_capture_eff)],
+                    ['Median Capture', pct(s.median_capture_eff)],
+                    ['Floor ADR', adr(s.floor_adr)],
+                    ['Median ADR', adr(s.median_adr)],
+                    ['Avg Bars', bars(s.avg_bars_to_exit)],
+                    ['Examples', s.n_examples ?? '—'],
+                  ].map(([label,val])=>(
+                    <div key={label}>
+                      <div style={{fontSize:9,color:'var(--text-muted)',fontFamily:'var(--mono)',marginBottom:2}}>{label}</div>
+                      <div style={{fontSize:12,color:'var(--text)',fontFamily:'var(--mono)'}}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  className="btn btn-go"
+                  style={{width:'100%',opacity: choiceMade==='single'?0.5:1}}
+                  disabled={!!choiceMade || choosing==='single'}
+                  onClick={()=>doChoose('single')}
+                >
+                  {choiceMade==='single' ? '✓ SELECTED' : choosing==='single' ? 'Saving…' : 'Use Single-Stage'}
+                </button>
+              </>
+            ) : (
+              <div style={{color:'var(--text-muted)',fontSize:11,fontFamily:'var(--mono)'}}>Not yet run</div>
+            )}
+          </div>
+
+          {/* Multi-stage */}
+          <div className="card" style={{
+            borderColor: choiceMade==='multi' ? 'var(--green)' : 'var(--border)',
+            background: choiceMade==='multi' ? 'rgba(52,211,153,0.05)' : undefined,
+          }}>
+            <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-muted)',marginBottom:8,letterSpacing:'0.05em'}}>
+              MULTI-STAGE EXIT
+            </div>
+            {m ? (
+              <>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:10}}>
+                  {[
+                    ['Stages', m.n_stages ?? '—'],
+                    ['Floor Capture', pct(m.floor_capture_eff)],
+                    ['Median Capture', pct(m.median_capture_eff)],
+                    ['Avg Bars (full)', bars(m.avg_bars_to_full_exit)],
+                    ['Examples', m.n_examples ?? '—'],
+                  ].map(([label,val])=>(
+                    <div key={label}>
+                      <div style={{fontSize:9,color:'var(--text-muted)',fontFamily:'var(--mono)',marginBottom:2}}>{label}</div>
+                      <div style={{fontSize:12,color:'var(--text)',fontFamily:'var(--mono)'}}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* Stage breakdown */}
+                {m.stages?.length > 0 && (
+                  <div style={{marginBottom:12}}>
+                    {m.stages.map((stg, i) => (
+                      <div key={i} style={{
+                        fontFamily:'var(--mono)',fontSize:10,color:'var(--text-dim)',
+                        padding:'4px 6px',background:'var(--surface-2)',borderRadius:3,marginBottom:4,
+                        borderLeft:`2px solid var(--cyan)`
+                      }}>
+                        <span style={{color:'var(--cyan)'}}>S{i+1}</span>{' '}
+                        {stg.trim_pct != null ? `trim ${(stg.trim_pct*100).toFixed(0)}%` : ''}{' '}
+                        {stg.gate_type && stg.gate_value != null ? `· gate ${stg.gate_type} ${stg.gate_value}` : ''}{' '}
+                        · {stg.expr_name} {stg.direction} {stg.threshold?.toFixed(4)}
+                        {stg.max_window ? ` · max ${stg.max_window}b` : ''}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  className="btn btn-go"
+                  style={{width:'100%',opacity: choiceMade==='multi'?0.5:1}}
+                  disabled={!!choiceMade || choosing==='multi'}
+                  onClick={()=>doChoose('multi')}
+                >
+                  {choiceMade==='multi' ? '✓ SELECTED' : choosing==='multi' ? 'Saving…' : 'Use Multi-Stage'}
+                </button>
+              </>
+            ) : (
+              <div style={{color:'var(--text-muted)',fontSize:11,fontFamily:'var(--mono)'}}>Not yet run</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Change choice link */}
+      {choiceMade && (
+        <div style={{marginBottom:12,fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)'}}>
+          Choice locked. To change:{' '}
+          <span style={{color:'var(--cyan)',cursor:'pointer'}}
+            onClick={()=>{
+              if(!confirm('Clear exit choice? This will reset 4b.')) return;
+              fetch(`${API}/api/exit-grind/${setup}/clear-choice`,{method:'POST'})
+                .then(()=>{
+                  fetch(`${API}/api/pipeline/reset/setup_grinder_b`,{method:'POST'});
+                  setResults(r=>r?{...r,choice:null}:r);
+                });
+            }}>change choice</span>
+        </div>
+      )}
+
+      {/* Error */}
+      {step?.state?.error && (
+        <div className="card" style={{borderColor:'rgba(248,113,113,0.15)',background:'rgba(248,113,113,0.03)',marginBottom:12}}>
+          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--red)',whiteSpace:'pre-wrap'}}>{step.state.error}</div>
+        </div>
+      )}
+
+      {/* Logs */}
+      {logs.length > 0 && (
+        <div className="log-box" ref={logRef}>
+          {logs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')||l.includes('done')?'ok':''}>{l}</div>)}
+        </div>
+      )}
+      {logs.length === 0 && st === 'pending' && !s && !m && (
+        <div className="empty-state"><div className="icon">⚡</div>Ready to run</div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
 // MINI CHART (for examples gallery)
 // ═══════════════════════════════════════════════════════
 function MiniChart({ data, entryDate }) {
@@ -1346,7 +1601,8 @@ function App() {
     { id:'optimal_samples', label:'Optimal Samples', num:'1' },
     { id:'signal_brute', label:'Signal Brute Forcing', num:'2' },
     { id:'sample_expansion', label:'Sample Expansion', num:'3' },
-    { id:'setup_grinder', label:'Setup Grinder', num:'4' },
+    { id:'setup_grinder_a', label:'Exit Grinder', num:'4a' },
+    { id:'setup_grinder_b', label:'Setup Grinder', num:'4b' },
     { id:'market_grind', label:'Market Grinder', num:'5' },
   ];
 
@@ -1356,7 +1612,8 @@ function App() {
     optimal_samples: `${setup.toUpperCase()} — Optimal Samples`,
     signal_brute: `${setup.toUpperCase()} — Signal Brute Forcing`,
     sample_expansion: `${setup.toUpperCase()} — Sample Expansion`,
-    setup_grinder: `${setup.toUpperCase()} — Setup Grinder`,
+    setup_grinder_a: `${setup.toUpperCase()} — Exit Grinder`,
+    setup_grinder_b: `${setup.toUpperCase()} — Setup Grinder`,
     market_grind: `${setup.toUpperCase()} — Market Grinder`,
     watchlist: 'Daily Watchlist',
   };
@@ -1411,7 +1668,8 @@ function App() {
           {section === 'setup' && tab === 'optimal_samples' && <ExamplesPage setup={setup} />}
           {section === 'setup' && tab === 'signal_brute' && <StepPage stepId="signal_brute" setup={setup} />}
           {section === 'setup' && tab === 'sample_expansion' && <VettingPage setup={setup} />}
-          {section === 'setup' && tab === 'setup_grinder' && <StepPage stepId="setup_grinder" setup={setup} />}
+          {section === 'setup' && tab === 'setup_grinder_a' && <ExitGrinderPage setup={setup} />}
+          {section === 'setup' && tab === 'setup_grinder_b' && <StepPage stepId="setup_grinder_b" setup={setup} />}
           {section === 'setup' && tab === 'market_grind' && <div className="empty-state"><div className="icon">🌍</div>Market Grinder — coming soon</div>}
         </div>
       </div>
