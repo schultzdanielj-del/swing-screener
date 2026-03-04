@@ -509,37 +509,52 @@ FINAL VERDICT: REJECT"""
                         cwd=chart_directory,
                     )
                     output = result.stdout.strip()
+                    stderr_out = result.stderr.strip() if result.stderr else ""
                     verdict = None
                     grade = ""
                     reasoning = ""
 
+                    # First pass: look for explicit verdict lines
                     for line in output.split("\n"):
                         up = line.strip().upper()
-                        if "FINAL VERDICT:" in up:
-                            verdict = "APPROVE" if "APPROVE" in up else "REJECT"
-                        elif up.startswith("VERDICT:"):
+                        if "FINAL VERDICT:" in up or up.startswith("VERDICT:"):
                             verdict = "APPROVE" if "APPROVE" in up else "REJECT"
                         elif up.startswith("GRADE:"):
                             grade = line.strip()[len("GRADE:"):].strip()
                         elif line.strip().upper().startswith("REASONING:"):
                             reasoning = line.strip()[len("REASONING:"):].strip()
 
-                    # Fallback: check grade lines
+                    # Second pass: smart extraction from essay
                     if verdict is None:
-                        out_upper = output.upper()
-                        if "GRADE: A" in out_upper or "GRADE: B" in out_upper:
+                        out_lower = output.lower()
+                        # Positive signals
+                        pos = sum([
+                            "double top" in out_lower and ("clear" in out_lower or "visible" in out_lower or "obvious" in out_lower),
+                            "broke down" in out_lower or "breakdown" in out_lower or "declined" in out_lower,
+                            "resistance" in out_lower and ("rejected" in out_lower or "failed" in out_lower),
+                            "good" in out_lower and "setup" in out_lower,
+                            "valid" in out_lower,
+                        ])
+                        # Negative signals
+                        neg = sum([
+                            "no double top" in out_lower or "no clear double top" in out_lower,
+                            "not a dtss" in out_lower or "doesn't qualify" in out_lower,
+                            "bounced back" in out_lower or "went up" in out_lower or "rallied after" in out_lower,
+                            "poor" in out_lower and "setup" in out_lower,
+                            "not visible" in out_lower or "can't see" in out_lower or "no visible" in out_lower,
+                        ])
+                        if pos > neg:
                             verdict = "APPROVE"
-                        elif "GRADE: C" in out_upper or "GRADE: F" in out_upper:
+                        elif neg > pos:
                             verdict = "REJECT"
                         else:
                             verdict = "UNKNOWN"
 
-                    # Use trimmed essay as reasoning if no structured one found
+                    # Use trimmed essay as reasoning
                     if not reasoning:
-                        # Strip markdown headers and clean up
                         clean = "\n".join(l for l in output.split("\n") 
                             if not l.strip().startswith("#") and not l.strip().startswith("---"))
-                        reasoning = clean.strip()[:400]
+                        reasoning = clean.strip()[:500]
 
                     if grade:
                         reasoning = f"[{grade}] {reasoning}"
