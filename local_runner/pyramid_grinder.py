@@ -1442,7 +1442,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     mode_tag = "mp" if multi_pass else "sp"
-    desc_name = f"pyramid_{setup_type}_{mode_tag}_sig{final_total}_pk{final_peak}_{ts}"
+    blackout_tag = "_blackout" if blackout_map else ""
+    desc_name = f"pyramid_{setup_type}_{mode_tag}{blackout_tag}_sig{final_total}_pk{final_peak}_{ts}"
 
     result = {
         "setup_type": setup_type,
@@ -1450,6 +1451,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         "total_time_s": round(total_time, 1),
         "peak_target": peak_target,
         "multi_pass": multi_pass,
+        "blackout": bool(blackout_map),
         "n_conditions": len(all_conditions),
         "all_conditions": all_conditions,
         "tier_results": tier_results,
@@ -1461,6 +1463,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "d1_depth": d1_depth,
             "peak_target": peak_target,
             "multi_pass": multi_pass,
+            "blackout": bool(blackout_map),
             "source": "pyramid_grinder",
         },
         "summary": {
@@ -1475,14 +1478,20 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 
     os.makedirs(CACHE_DIR, exist_ok=True)
 
-    # Timestamped file
+    # Timestamped archive — always unique, never overwrites anything
     out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
 
-    # Latest
-    latest_path = os.path.join(CACHE_DIR, f"pyramid_results_{setup_type}.json")
+    # Latest pointer — blackout runs write to a SEPARATE file.
+    # Base pipeline: pyramid_results_{setup}.json
+    # Blackout re-grind: pyramid_results_{setup}_blackout.json
+    # These NEVER overwrite each other.
+    if blackout_map:
+        latest_path = os.path.join(CACHE_DIR, f"pyramid_results_{setup_type}_blackout.json")
+    else:
+        latest_path = os.path.join(CACHE_DIR, f"pyramid_results_{setup_type}.json")
     with open(latest_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"  Saved as latest: {latest_path}")

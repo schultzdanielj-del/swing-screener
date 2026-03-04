@@ -98,32 +98,32 @@ def load_conditions(setup_type, conditions_file=None):
         os.path.join(REPO_ROOT, "data"),
     ]
 
-    # Prefer blackout-tagged results first
-    blackout_candidates = []
-    all_candidates = []
+    # Resolution order (strict — never falls through to base pipeline results):
+    # 1. pyramid_results_{setup}_blackout.json  — latest pointer from --blackout run
+    # 2. pyramid_{setup}_*_blackout_*.json      — any timestamped blackout archive
+    # Refuses to load base pipeline results to prevent mixing stages.
+    blackout_latest = os.path.join(
+        os.path.join(REPO_ROOT, "local_runner", "cache"),
+        f"pyramid_results_{setup_type}_blackout.json"
+    )
+    blackout_archives = []
     for d in search_dirs:
-        for p in glob.glob(os.path.join(d, f"pyramid_{setup_type}_*blackout*.json")):
-            blackout_candidates.append(p)
-        for p in glob.glob(os.path.join(d, f"pyramid_{setup_type}_*.json")):
-            all_candidates.append(p)
-        exact = os.path.join(d, f"pyramid_results_{setup_type}.json")
-        if os.path.exists(exact):
-            all_candidates.append(exact)
+        for p in glob.glob(os.path.join(d, f"pyramid_{setup_type}_*_blackout_*.json")):
+            blackout_archives.append(p)
 
-    pool = blackout_candidates if blackout_candidates else all_candidates
-    if not pool:
-        raise FileNotFoundError(
-            f"No pyramid results found for {setup_type}.\n"
-            f"  Run: python local_runner/pyramid_grinder.py --setup {setup_type} --blackout"
-        )
-
-    pool.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    best = pool[0]
-
-    if blackout_candidates:
-        print(f"  Found blackout pyramid result: {os.path.basename(best)}")
+    if os.path.exists(blackout_latest):
+        best = blackout_latest
+        print(f"  Found blackout latest: {os.path.basename(best)}")
+    elif blackout_archives:
+        blackout_archives.sort(key=os.path.getmtime, reverse=True)
+        best = blackout_archives[0]
+        print(f"  Found blackout archive: {os.path.basename(best)}")
     else:
-        print(f"  WARNING: No blackout result found, using: {os.path.basename(best)}")
+        raise FileNotFoundError(
+            f"No blackout pyramid result found for {setup_type}.\n"
+            f"  Run: python local_runner/pyramid_grinder.py --setup {setup_type} --blackout\n"
+            f"  Use --conditions-file to point at a specific file if needed."
+        )
 
     with open(best) as f:
         data = json.load(f)
