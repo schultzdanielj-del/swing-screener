@@ -777,6 +777,20 @@ def save_results(results, examples, setup_type):
     print(f"\n  Saved: {ts_path}")
     print(f"  Saved: {latest}")
 
+    # Upload to Railway
+    try:
+        r = requests.post(
+            f"{RAILWAY_URL}/api/exit-grind/{setup_type}/upload-multistage",
+            json=data,
+            timeout=60
+        )
+        if r.status_code == 200:
+            print(f"  Uploaded to Railway OK")
+        else:
+            print(f"  WARNING: Railway upload failed: {r.status_code} {r.text[:100]}")
+    except Exception as e:
+        print(f"  WARNING: Railway upload error: {e}")
+
 
 # ============================================================
 # Main
