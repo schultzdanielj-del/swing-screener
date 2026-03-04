@@ -2372,13 +2372,14 @@ PIPELINE_STEPS = [
      "description": "AI reviews pending YES picks via Claude CLI. Approve/reject in Optimal Samples > Pending.",
      "prerequisites": ["sample_expansion"],
      "result_files": []},
-    {"id": "mfe_capture", "name": "4. MFE Capture", "category": "pipeline",
-     "description": "Find best exit conditions for max MFE capture. Single or multi-stage.",
-     "prerequisites": ["signal_brute"],
-     "result_files": []},
+    {"id": "profit_grinder", "name": "4. Profit Grinder", "category": "pipeline",
+     "description": "Exit grind from entry bar HIGH -> max MFE capture. Produces exit conditions for real trades + per-example exit dates for blackout filter.",
+     "prerequisites": ["sample_expansion"],
+     "script": "scripts/profit_grinder.py",
+     "result_files": ["data/profit_grind/profit_dtss.json"]},
     {"id": "market_grind", "name": "5. Market Grinder", "category": "pipeline",
      "description": "Cluster outcomes vs market regime. Find optimal conditions.",
-     "prerequisites": ["signal_brute"],
+     "prerequisites": ["profit_grinder"],
      "result_files": []},
 ]
 
@@ -2702,6 +2703,37 @@ async def upload_vetting_exit(setup_type: str, request: Request):
     with open(path, "w") as f:
         json.dump(body, f, indent=2, default=str)
     return {"status": "ok", "path": str(path)}
+
+
+@app.post("/api/profit-grind/{setup_type}/upload")
+async def upload_profit_grind(setup_type: str, request: Request):
+    """Upload profit grinder results from desktop agent."""
+    body = await request.json()
+    out_dir = VETTING_DATA_DIR / "profit_grind"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"profit_{setup_type}.json"
+    with open(path, "w") as f:
+        json.dump(body, f, indent=2, default=str)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    n_ex = body.get("n_examples", 0)
+    top = body.get("top_conditions", [{}])
+    floor_tag = top[0].get("floor_adr", "na") if top else "na"
+    archive_path = out_dir / f"profit_{setup_type}_{n_ex}ex_{floor_tag}adr_{ts}.json"
+    with open(archive_path, "w") as f:
+        json.dump(body, f, indent=2, default=str)
+    return {"status": "ok", "path": str(path), "archive": str(archive_path)}
+
+
+@app.get("/api/profit-grind/{setup_type}")
+async def get_profit_grind(setup_type: str):
+    """Get latest profit grinder results."""
+    path = VETTING_DATA_DIR / "profit_grind" / f"profit_{setup_type}.json"
+    if not path.exists():
+        raise HTTPException(404, f"No profit grind results for {setup_type}. Run profit_grinder.py first.")
+    with open(path) as f:
+        data = json.load(f)
+    return data
+
 
 @app.get("/api/vetting/{setup_type}/signals")
 async def get_vetting_signals(setup_type: str):

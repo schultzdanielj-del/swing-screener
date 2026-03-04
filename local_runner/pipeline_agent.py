@@ -52,6 +52,10 @@ STEP_COMMANDS = {
         sys.executable, os.path.join(REPO_ROOT, "scripts", "signal_filter.py"),
         "--setup", "dtss",
     ],
+    "profit_grinder": [
+        sys.executable, os.path.join(REPO_ROOT, "scripts", "profit_grinder.py"),
+        "--setup", "dtss", "--max-forward", "120",
+    ],
     "outcome_grind": [
         sys.executable, os.path.join(REPO_ROOT, "scripts", "outcome_grinder.py"),
         "--setup", "dtss",
