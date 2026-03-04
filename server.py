@@ -2372,13 +2372,17 @@ PIPELINE_STEPS = [
      "description": "AI reviews pending YES picks via Claude CLI. Approve/reject in Optimal Samples > Pending.",
      "prerequisites": ["sample_expansion"],
      "result_files": []},
-    {"id": "setup_grinder", "name": "4. Setup Grinder", "category": "pipeline",
-     "description": "Profit grind -> blackout re-grind -> condition prune + signal filter. Three scripts run in sequence.",
+    {"id": "setup_grinder_a", "name": "4a. Exit Grinder", "category": "pipeline",
+     "description": "Single-stage + multi-stage exit grinders run sequentially. Review results and choose which exit to use before running 4b.",
      "prerequisites": ["sample_expansion"],
-     "result_files": ["data/profit_grind/profit_dtss.json", "data/setup_refiner/refined_dtss.json"]},
+     "result_files": ["data/profit_grind/profit_dtss.json", "data/multistage_exit/ms_exit_dtss.json"]},
+    {"id": "setup_grinder_b", "name": "4b. Setup Grinder", "category": "pipeline",
+     "description": "Blackout re-grind + condition prune + signal filter. Requires exit choice from 4a.",
+     "prerequisites": ["setup_grinder_a"],
+     "result_files": ["data/setup_refiner/refined_dtss.json"]},
     {"id": "market_grind", "name": "5. Market Grinder", "category": "pipeline",
      "description": "Cluster outcomes vs market regime. Find optimal conditions.",
-     "prerequisites": ["setup_grinder"],
+     "prerequisites": ["setup_grinder_b"],
      "result_files": []},
 ]
 
@@ -2438,6 +2442,11 @@ async def get_pipeline_steps():
                 if prereq_state.get("status") != "done":
                     can_run = False
                     break
+            # setup_grinder_b also requires an exit choice
+            if step_def["id"] == "setup_grinder_b" and can_run:
+                choice_path = VETTING_DATA_DIR / "exit_grind_choice" / "dtss.json"
+                if not choice_path.exists():
+                    can_run = False
 
         # Optimal Samples + Sample Expansion: compute live stats
         if step_def["id"] in ("optimal_samples", "sample_expansion"):
@@ -2486,25 +2495,51 @@ async def get_pipeline_steps():
             except:
                 pass
 
-        # setup_grinder: inject result_summary from saved output files
-        if step_def["id"] == "setup_grinder" and step_state.get("status") == "done":
+        # setup_grinder_a: inject result_summary + choice status
+        if step_def["id"] == "setup_grinder_a" and step_state.get("status") == "done":
+            try:
+                profit_path = VETTING_DATA_DIR / "profit_grind" / "profit_dtss.json"
+                ms_path = VETTING_DATA_DIR / "multistage_exit" / "ms_exit_dtss.json"
+                choice_path = VETTING_DATA_DIR / "exit_grind_choice" / "dtss.json"
+                parts = []
+                if profit_path.exists():
+                    with open(profit_path) as f:
+                        pd_ = json.load(f)
+                    top = pd_.get("top_conditions", [{}])
+                    if top:
+                        eff = top[0].get("floor_capture_eff", None)
+                        if eff is not None:
+                            parts.append(f"single floor {eff:.0%}")
+                if ms_path.exists():
+                    with open(ms_path) as f:
+                        md = json.load(f)
+                    r = md.get("result")
+                    if r:
+                        eff = r.get("floor_capture_eff", None)
+                        n_stg = r.get("n_stages", "?")
+                        if eff is not None:
+                            parts.append(f"multi ({n_stg}-stage) floor {eff:.0%}")
+                if choice_path.exists():
+                    with open(choice_path) as f:
+                        cd = json.load(f)
+                    parts.append(f"choice: {cd.get('choice','?')}")
+                else:
+                    parts.append("no choice yet")
+                if parts:
+                    step_state["result_summary"] = " · ".join(parts)
+            except:
+                pass
+
+        # setup_grinder_b: inject result_summary from refined output
+        if step_def["id"] == "setup_grinder_b" and step_state.get("status") == "done":
             try:
                 refined_path = VETTING_DATA_DIR / "setup_refiner" / "refined_dtss.json"
-                profit_path = VETTING_DATA_DIR / "profit_grind" / "profit_dtss.json"
                 parts = []
                 if refined_path.exists():
                     with open(refined_path) as f:
                         rd = json.load(f)
                     parts.append(f"{rd.get('n_conditions','?')} conds")
                     parts.append(f"{rd.get('n_signals','?')} signals")
-                if profit_path.exists():
-                    with open(profit_path) as f:
-                        pd_ = json.load(f)
-                    top = pd_.get('top_conditions', [{}])
-                    if top:
-                        eff = top[0].get('floor_capture_eff', None)
-                        if eff is not None:
-                            parts.append(f"floor {eff:.0%} capture")
                 if parts:
                     step_state["result_summary"] = " · ".join(parts)
             except:
@@ -2577,6 +2612,12 @@ async def pipeline_run_step(step_id: str, request: Request = None):
         prereq_state = state.get("steps", {}).get(prereq, {})
         if prereq_state.get("status") != "done":
             return {"error": f"Prerequisite not met: {prereq}"}
+
+    # setup_grinder_b requires an exit choice from 4a
+    if step_id == "setup_grinder_b":
+        choice_path = VETTING_DATA_DIR / "exit_grind_choice" / "dtss.json"
+        if not choice_path.exists():
+            return {"error": "No exit choice made. Run 4a and choose single or multi-stage exit first."}
 
     job = {
         "job_id": f"pipe_{step_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
@@ -2769,6 +2810,103 @@ async def get_profit_grind(setup_type: str):
     with open(path) as f:
         data = json.load(f)
     return data
+
+
+@app.post("/api/exit-grind/{setup_type}/upload-multistage")
+async def upload_multistage_exit(setup_type: str, request: Request):
+    """Upload multi-stage exit grinder results from desktop agent."""
+    body = await request.json()
+    out_dir = VETTING_DATA_DIR / "multistage_exit"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"ms_exit_{setup_type}.json"
+    with open(path, "w") as f:
+        json.dump(body, f, indent=2, default=str)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    r = body.get("result") or {}
+    n_stg = r.get("n_stages", "na")
+    eff = r.get("floor_capture_eff", "na")
+    archive_path = out_dir / f"ms_exit_{setup_type}_{n_stg}stg_{eff}floor_{ts}.json"
+    with open(archive_path, "w") as f:
+        json.dump(body, f, indent=2, default=str)
+    return {"status": "ok", "path": str(path), "archive": str(archive_path)}
+
+
+@app.get("/api/exit-grind/{setup_type}/results")
+async def get_exit_grind_results(setup_type: str):
+    """Return single-stage and multi-stage exit grinder results side by side."""
+    profit_path = VETTING_DATA_DIR / "profit_grind" / f"profit_{setup_type}.json"
+    ms_path = VETTING_DATA_DIR / "multistage_exit" / f"ms_exit_{setup_type}.json"
+    choice_path = VETTING_DATA_DIR / "exit_grind_choice" / f"{setup_type}.json"
+
+    out = {"single": None, "multi": None, "choice": None}
+
+    if profit_path.exists():
+        with open(profit_path) as f:
+            pd_ = json.load(f)
+        top = pd_.get("top_conditions", [{}])
+        best = top[0] if top else {}
+        out["single"] = {
+            "expression": best.get("expression"),
+            "direction": best.get("direction"),
+            "threshold": best.get("threshold"),
+            "floor_capture_eff": best.get("floor_capture_eff"),
+            "median_capture_eff": best.get("median_capture_eff"),
+            "mean_capture_eff": best.get("mean_capture_eff"),
+            "floor_adr": best.get("floor_adr"),
+            "median_adr": best.get("median_adr"),
+            "mean_adr": best.get("mean_adr"),
+            "avg_bars_to_exit": best.get("avg_bars_to_exit"),
+            "n_examples": pd_.get("n_examples"),
+        }
+
+    if ms_path.exists():
+        with open(ms_path) as f:
+            md = json.load(f)
+        r = md.get("result")
+        if r:
+            out["multi"] = {
+                "n_stages": r.get("n_stages"),
+                "floor_capture_eff": r.get("floor_capture_eff"),
+                "median_capture_eff": r.get("median_capture_eff"),
+                "avg_capture_eff": r.get("avg_capture_eff"),
+                "avg_bars_to_full_exit": r.get("avg_bars_to_full_exit"),
+                "stages": r.get("stages", []),
+                "n_examples": md.get("n_examples"),
+            }
+
+    if choice_path.exists():
+        with open(choice_path) as f:
+            out["choice"] = json.load(f).get("choice")
+
+    if out["single"] is None and out["multi"] is None:
+        raise HTTPException(404, f"No exit grinder results for {setup_type}. Run setup_grinder_a first.")
+
+    return out
+
+
+@app.post("/api/exit-grind/{setup_type}/choose")
+async def choose_exit_grind(setup_type: str, request: Request):
+    """Store user's choice of single or multi-stage exit. Unlocks setup_grinder_b."""
+    body = await request.json()
+    choice = body.get("choice")
+    if choice not in ("single", "multi"):
+        raise HTTPException(400, "choice must be 'single' or 'multi'")
+    out_dir = VETTING_DATA_DIR / "exit_grind_choice"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{setup_type}.json"
+    with open(path, "w") as f:
+        json.dump({"choice": choice, "set_at": datetime.now().isoformat()}, f)
+    return {"status": "ok", "choice": choice}
+
+
+@app.get("/api/exit-grind/{setup_type}/choice")
+async def get_exit_grind_choice(setup_type: str):
+    """Get current exit choice for this setup. 404 if none chosen yet."""
+    path = VETTING_DATA_DIR / "exit_grind_choice" / f"{setup_type}.json"
+    if not path.exists():
+        raise HTTPException(404, f"No exit choice made for {setup_type}.")
+    with open(path) as f:
+        return json.load(f)
 
 
 @app.get("/api/vetting/{setup_type}/signals")
