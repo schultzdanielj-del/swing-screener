@@ -923,8 +923,8 @@ def main():
         description="Setup Refiner — condition prune + signal filter (isolated stage)")
     parser.add_argument("--setup", default="dtss", help="Setup type")
     parser.add_argument("--min-power", type=float, default=DEFAULT_MIN_POWER,
-                        help="Min filter power threshold (default: {:.0%}). "
-                             "Conditions eliminating less than N pct of passing rows get pruned.".format(DEFAULT_MIN_POWER))
+                        help="Min filter power threshold (default: 0.10). "
+                             "Conditions eliminating less than N pct of passing rows get pruned.")
     parser.add_argument("--min-adr", type=float, default=None,
                         help="Min exit distance in ADR (default: derived from examples)")
     parser.add_argument("--conditions-file", default=None,
