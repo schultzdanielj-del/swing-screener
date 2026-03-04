@@ -1578,36 +1578,68 @@ def _load_blackout_map(setup_type):
     with open(profit_path) as f:
         data = json.load(f)
 
-    top_conditions = data.get("top_conditions", [])
-    if not top_conditions:
-        print(f"\n  WARNING: profit grind file has no top_conditions. Skipping blackout.\n")
-        return {}
-
-    # Use rank-1 condition (best median capture efficiency)
-    best = top_conditions[0]
-    per_example_exit_bars = best.get("per_example_exit_bars", [])  # forward offsets from entry
+    # New format: exit_dates is a dict of "ticker|entry_date" -> exit_date string
+    exit_dates = data.get("exit_dates", {})
     examples = data.get("examples", [])
 
-    if not examples or not per_example_exit_bars:
-        print(f"\n  WARNING: profit grind file missing examples or exit bars. Skipping blackout.\n")
+    # Fallback: old format used top_conditions[0]["per_example_exit_bars"]
+    if not exit_dates:
+        top_conditions = data.get("top_conditions", [])
+        results = data.get("results", [])
+        best = (top_conditions[0] if top_conditions else
+                results[0] if results else None)
+        if not best or not examples:
+            print(f"\n  WARNING: profit grind file missing exit data. Skipping blackout.\n")
+            return {}
+        per_example_exit_bars = (best.get("per_example_exit_bars") or
+                                  best.get("exit_bars") or [])
+        if not per_example_exit_bars:
+            print(f"\n  WARNING: profit grind file missing exit bars. Skipping blackout.\n")
+            return {}
+        # Convert bar offsets to dates using 5yr cache
+        universe_cache = load_5yr_cache()
+        for i, ex in enumerate(examples):
+            ticker = ex.get("ticker")
+            entry_date = ex.get("entry_date")
+            offset = per_example_exit_bars[i] if i < len(per_example_exit_bars) else None
+            if not ticker or not entry_date or offset is None or offset < 0:
+                continue
+            df = universe_cache.get(ticker)
+            if df is None:
+                continue
+            if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+                df = df.copy()
+                df["date"] = pd.to_datetime(df["date"])
+            dates_str = [str(d)[:10] for d in df["date"].values]
+            if entry_date not in dates_str:
+                continue
+            entry_idx = dates_str.index(entry_date)
+            exit_idx = min(entry_idx + int(offset), len(df) - 1)
+            exit_dates[f"{ticker}|{entry_date}"] = dates_str[exit_idx]
+
+    if not exit_dates:
+        print(f"\n  WARNING: Could not build exit dates for blackout. Skipping.\n")
         return {}
 
-    # Load 5yr cache to resolve entry dates to bar indices
-    # (same cache the pyramid grinder uses — identical resolution)
+    results = data.get("results", [])
+    best = results[0] if results else {}
     print(f"\n  Loading blackout map from profit grind (rank-1: "
-          f"{best.get('expression')} {best.get('direction')} {best.get('threshold')}) ...")
+          f"{best.get('expr_name')} {best.get('direction')} {best.get('threshold')}) ...")
+
+    # Load 5yr cache to resolve dates to bar indices
     universe_cache = load_5yr_cache()
 
     blackout_map = {}
     n_mapped = 0
     n_skipped = 0
 
-    for i, ex in enumerate(examples):
+    for ex in examples:
         ticker = ex.get("ticker")
         entry_date = ex.get("entry_date")
-        exit_bar_offset = per_example_exit_bars[i] if i < len(per_example_exit_bars) else None
+        key = f"{ticker}|{entry_date}"
+        exit_date = exit_dates.get(key)
 
-        if not ticker or not entry_date or exit_bar_offset is None:
+        if not ticker or not entry_date or not exit_date:
             n_skipped += 1
             continue
 
@@ -1616,19 +1648,18 @@ def _load_blackout_map(setup_type):
             n_skipped += 1
             continue
 
-        # Resolve entry_date to bar index (same method as load_example_data)
         if not pd.api.types.is_datetime64_any_dtype(df["date"]):
             df = df.copy()
             df["date"] = pd.to_datetime(df["date"])
         dates_str = [str(d)[:10] for d in df["date"].values]
-        if entry_date not in dates_str:
+
+        if entry_date not in dates_str or exit_date not in dates_str:
             n_skipped += 1
             continue
 
         entry_idx = dates_str.index(entry_date)
-        # exit_bar_offset is bars after entry bar (1-based forward offset)
-        exit_idx = entry_idx + int(exit_bar_offset)
-        exit_idx = min(exit_idx, len(df) - 1)  # clamp to valid range
+        exit_idx = dates_str.index(exit_date)
+        exit_idx = min(exit_idx, len(df) - 1)
 
         if ticker not in blackout_map:
             blackout_map[ticker] = []
