@@ -486,31 +486,20 @@ def review_pending_samples():
                     chart_filename = os.path.basename(chart_path)
                     chart_directory = os.path.dirname(chart_path)
                     
-                    system = "You are a stock chart reviewer. You ONLY output exactly 3 lines. No markdown, no headers, no essays. Just these 3 lines:\nVERDICT: APPROVE or REJECT\nGRADE: A, B, C, or F\nREASONING: one sentence"
-                    
-                    review_prompt = f"""Read the image file '{chart_filename}' in the current directory.
+                    review_prompt = f"""Read the image file '{chart_filename}' in the current directory. It is a stock chart image.
 
 {prompt}
 
-YOUR RESPONSE MUST BE EXACTLY 3 LINES. NOTHING ELSE. NO MARKDOWN. NO HEADERS. NO ANALYSIS. JUST THESE 3 LINES:
-VERDICT: APPROVE
-GRADE: A
-REASONING: Clear double top with clean LSP and strong breakdown.
-
-OR:
-VERDICT: REJECT
-GRADE: F
-REASONING: No visible double top pattern.
-
-START YOUR RESPONSE WITH THE WORD VERDICT"""
+End your response with one of these exact lines:
+FINAL VERDICT: APPROVE
+or
+FINAL VERDICT: REJECT"""
                     
                     if claude_cmd == "npx":
                         cli_args = ["npx", "@anthropic-ai/claude-code", "-p", review_prompt,
-                            "--system-prompt", system,
                             "--allowedTools", "Read"]
                     else:
                         cli_args = [claude_cmd, "-p", review_prompt,
-                            "--system-prompt", system,
                             "--allowedTools", "Read"]
 
                     result = subprocess.run(
@@ -526,42 +515,31 @@ START YOUR RESPONSE WITH THE WORD VERDICT"""
 
                     for line in output.split("\n"):
                         up = line.strip().upper()
-                        if up.startswith("VERDICT:"):
-                            v = up.replace("VERDICT:", "").strip()
-                            verdict = "APPROVE" if "APPROVE" in v else "REJECT"
+                        if "FINAL VERDICT:" in up:
+                            verdict = "APPROVE" if "APPROVE" in up else "REJECT"
+                        elif up.startswith("VERDICT:"):
+                            verdict = "APPROVE" if "APPROVE" in up else "REJECT"
                         elif up.startswith("GRADE:"):
                             grade = line.strip()[len("GRADE:"):].strip()
                         elif line.strip().upper().startswith("REASONING:"):
                             reasoning = line.strip()[len("REASONING:"):].strip()
-                            idx = output.index(line) + len(line)
-                            rest = output[idx:].strip()
-                            if rest:
-                                reasoning += " " + rest
 
-                    # Fallback: if no VERDICT: line found, look for grade
+                    # Fallback: check grade lines
                     if verdict is None:
                         out_upper = output.upper()
-                        # Only match APPROVE/REJECT if they appear at start of a line
-                        for line in output.split("\n"):
-                            stripped = line.strip().upper()
-                            if stripped == "APPROVE" or stripped.startswith("APPROVE "):
-                                verdict = "APPROVE"
-                                break
-                            elif stripped == "REJECT" or stripped.startswith("REJECT "):
-                                verdict = "REJECT"
-                                break
-                        # Still nothing - check grade
-                        if verdict is None:
-                            if "GRADE: A" in out_upper or "GRADE: B" in out_upper:
-                                verdict = "APPROVE"
-                            elif "GRADE: C" in out_upper or "GRADE: F" in out_upper:
-                                verdict = "REJECT"
-                            else:
-                                verdict = "UNKNOWN"
+                        if "GRADE: A" in out_upper or "GRADE: B" in out_upper:
+                            verdict = "APPROVE"
+                        elif "GRADE: C" in out_upper or "GRADE: F" in out_upper:
+                            verdict = "REJECT"
+                        else:
+                            verdict = "UNKNOWN"
 
-                    # If no structured reasoning, use first 300 chars of output
+                    # Use trimmed essay as reasoning if no structured one found
                     if not reasoning:
-                        reasoning = output[:300]
+                        # Strip markdown headers and clean up
+                        clean = "\n".join(l for l in output.split("\n") 
+                            if not l.strip().startswith("#") and not l.strip().startswith("---"))
+                        reasoning = clean.strip()[:400]
 
                     if grade:
                         reasoning = f"[{grade}] {reasoning}"
