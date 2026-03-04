@@ -94,10 +94,12 @@ for /L %p in (2,1,10) do python local_runner/pyramid_grinder.py --setup dtss --p
 python local_runner/pyramid_grinder.py --setup dtss --peak-target 3 --beam 10000 --depth 100
 ```
 
-**Best result (2026-03-03, peak-target=3, beam=10000, 35 examples):**
-- 53 conditions, peak 3/day, 91 signals (409 raw in 5yr scan), avg 1.4/day
-- Runtime: 13.4 min with expression cache
-- Previous best (2026-02-24, 20 examples): 41 conditions, 264 signals, peak 3/day
+**Best result (2026-03-03, grind #4, 62 examples, 59 resolved):**
+- 86 conditions (69 daily, 12 weekly, 5 monthly), peak 4/day (1mo) / 11/day (5yr), 168 signals
+- Runtime: 14.1 min with expression cache
+- Previous: grind #3 (48 examples): ~76 conditions, ~200 signals
+- Previous: grind #2 (35 examples): 53 conditions, 91 signals
+- Previous: grind #1 (20 examples): 41 conditions, 264 signals, peak 3/day
 
 **Key parameters:**
 - **beam=10000** — explores 10K paths per level (exhaustive — search terminates when no path improves)
@@ -263,6 +265,34 @@ The grinder uses one universal expression set for all setups. No setup-specific 
 - Same method for examples and backtest signals
 - Example floor ADR = minimum across all example measurements
 - Backtest signals must meet or exceed floor
+
+## Step 5: Entry Bar Grinder — When Exactly To Pull The Trigger
+
+**Goal:** Find conditions that identify the EXACT entry bar across all examples. The signal grinder (Step 3) finds "this setup exists somewhere nearby." The entry bar grinder finds "enter TODAY."
+
+**Why this is critical:** With 10 setups running, you can't have 50 potentials on a watchlist all waiting 3-5 days to maybe fire. Need: scan fires tonight → enter tomorrow morning. One bar precision.
+
+### How It Works
+
+- **Examples (positives):** The entry bar itself for each of the 62 examples. Not the bar before. Not a window. THE bar.
+- **Universe (negatives):** The 168 grinder signals (all bars that passed signal conditions). Most of these are NOT entry bars — they're bars where the setup conditions aligned but the actual entry trigger hasn't fired yet.
+- **Method:** Same pyramid grinder architecture. Find conditions true on entry bars that are NOT true on other signal bars. The grinder separates "entry is now" from "setup exists but wait."
+- **Expression library:** Same 12,175 expressions evaluated on the entry bar itself.
+
+### Output
+
+Additional filter conditions that, applied on top of the 86 signal conditions, identify the entry bar. The subset of 168 signals that pass BOTH the signal conditions AND the entry bar conditions = "enter tomorrow morning."
+
+### Validation
+
+After applying entry bar conditions to signals:
+- Check: does each example's entry bar still pass? (must be 100%)
+- Check: for the non-example signals that pass, does an entry-quality bar actually occur?
+- The filtered signal count should be much smaller than 168 — these are actionable entries, not watchlist items
+
+### Script: `local_runner/entry_bar_grinder.py` (NEW — to build)
+
+---
 
 ## Step 6: Exit Management Grind — How Do the Examples Resolve?
 
@@ -513,19 +543,21 @@ This is optional and may not be needed if Steps 6-9 already produce strong EV.
 |------|------|--------|
 | 1 | **Load** | Data & TA knowledge — everything is already in the system |
 | 2 | **Receive** | User presents examples, entry dates, and setup context |
-| 3 | **Signal Grind** | THE GRINDER — pyramid grinder finds pre-signal conditions. Output: **SIGNALS** (~201/5yr for DTSS) |
-| 4 | **Backtest** | Visual verification of signals across history |
-| 5 | **Backtest Runner** | Charts + Railway upload + Historical tab |
-| 6 | **Exit Management Grind** | ~4,000 post-signal expressions grind against examples' forward paths. Scored by floor capture efficiency (worst example). Output: **EXIT CONDITIONS** |
-| 7 | **Outcome Grind** | Phase 0: find example signal bars. Phase 1: exit filter + 1 ADR minimum move. Phase 2: segment expression grind. Output: **OUTCOME SIGNALS** |
-| 8 | **Pre-Signal Refinement** | Grind outcome vs non-outcome on pre-signal expressions. New conditions added to Step 3. Output: **TOTAL SIGNALS** (tighter, same outcome signals) |
+| 3 | **Signal Grind** | THE GRINDER — pyramid grinder finds pre-signal conditions. Output: **SIGNALS** (~168/5yr for DTSS) |
+| 4 | **Sample Expansion** | Vet signals, AI review, expand example library, re-grind until stable |
+| 5 | **Entry Bar Grind** | Find conditions on THE entry bar that separate it from other signal bars. Output: **ENTRY SIGNALS** (actionable subset of SIGNALS) |
+| 6 | **Exit Management Grind** | Post-entry expression grind. Entry bar high → exit. Output: **EXIT CONDITIONS** |
+| 7 | **Outcome Grind** | Phase 1: exit filter + min move. Phase 2: segment expression grind. Output: **OUTCOME SIGNALS** |
+| 8 | **Pre-Signal Refinement** | Grind outcome vs non-outcome on pre-signal expressions. Output: **TOTAL SIGNALS** (tighter) |
 | 9 | **Environment Clustering** | OUTCOME SIGNALS ÷ TOTAL SIGNALS by market regime. Output: **EV per environment** |
 
-**The output:** For any setup, the system produces: signal conditions (when to watch) × exit conditions (how the move resolves) × environment scoring (when it works best) = **EV**.
+**The pipeline delivers:**
+1. Signal grind → "this setup exists" (watchlist)
+2. Entry bar grind → "enter TODAY" (action)
+3. Exit grind → "exit HERE" (capture)
+4. Market grinder → "take THIS one" (selection, juices win rate)
 
-**What the system does NOT do:** Entry. That's discretionary TA — the trader's skill and edge.
-
-**Re-run on example growth:** Steps 3-9 re-run as examples are added from Step 4 backtest review. More examples → tighter signal grind, more confident exit conditions (floor metric gains resolution), sharper outcome/environment models. The system's output quality scales directly with example count. All scoring uses relative metrics (floor, median, percentiles) that adapt automatically.
+**The math:** Losers solidly under 1 ADR. Winners median 5.8+ ADR. Even 36% win rate = positive expectancy. Market grinder juicing to 50% = massive profit factor. 20 quality setups/year × 10 setups = plenty of opportunity. 2.5%/month compounding for 20 years = mid 8 figures.
 
 **Presentation:** A separate PRESENTATION_SYSTEM handles nightly data updates, signal detection, and rank-ordered EV presentation. That system consumes the outputs of this analysis system.
 

@@ -1,97 +1,146 @@
-# TODO — Swing Screener (2026-03-03)
+# TODO — Swing Screener (2026-03-04)
 
-## Current State — GRIND COMPLETE, SAMPLE EXPANSION ACTIVE
+## Current State — DTSS SIGNAL GRIND DONE, MFE CAPTURE NEXT
 
-Latest pyramid grind complete: **53 conditions, 91 signals (5yr scan: 409 raw -> 129 filtered for vetting), peak 3/day, 35/35 examples pass, 13.4 min runtime.** Tighter than previous best (264 signals, 41 conditions, 20 examples). Expression cache loads in ~50s (fingerprint bug fixed).
+Latest pyramid grind (grind #4): **86 conditions, 168 signals, peak 4/day (weekly pass) / 11/day (5yr), 59/59 examples pass, 14.1 min runtime.** 62 examples in Railway DB (59 resolved in grinder — BRK-B, SMMT, VUZI not in 5yr cache).
 
-48 DTSS examples in Railway DB (was 51, removed FRT/FITB/WGO as sub-A+ quality).
+AI vetting pipeline operational — Claude Code reviews chart images, sentiment-based verdict parsing. 8/19 approved in first batch.
+
+Exit grinder: `slope_xavgc21_off7_adr14 <= -1.123253` — median 5.8 ADR capture, floor 1.9 ADR, avg 21 bars to exit.
 
 ### Pipeline Steps
 
 | # | Step | Server ID | Status |
 |---|------|-----------|--------|
-| 0 | Nightly Refresh | nightly | Works (6 steps now - includes earnings refresh) |
-| 1 | Optimal Samples | optimal_samples | Works (shows ADR move from exit grinder) |
-| 2 | Signal Brute Forcing | signal_brute | Complete - UI has beam/depth/peak params |
-| 3 | Sample Expansion | sample_expansion | 129 signals ready to vet |
-| 3b | AI Sample Review | sample_review | NEW - automated Claude CLI review pipeline |
-| 4 | MFE Capture | mfe_capture | Script exists |
-| 5 | Market Grinder | market_grind | Placeholder |
+| 0 | Nightly Refresh | nightly | Works (6 steps) |
+| 1 | Optimal Samples | optimal_samples | 62 DTSS examples |
+| 2 | Signal Brute Forcing | signal_brute | Complete — grind #4 done |
+| 3 | Sample Expansion | sample_expansion | 168 signals to vet |
+| 3b | AI Sample Review | sample_review | Working — Claude Code + sentiment parsing |
+| 4 | MFE Capture | mfe_capture | **NEXT: Entry bar grind + MFE capture grind** |
+| 5 | Market Grinder | market_grind | After MFE capture |
 
-### Vetting Flow (NEW)
+### Vetting Flow
 
 Vet signals (YES/MAYBE/NO) in Sample Expansion
-  -> YES picks go to pending_reviews table (not directly to examples)
-Click SUBMIT FOR AUDIT
-  -> triggers sample_review pipeline job
-Agent runs review_samples.py -> claude -p reviews each pick
-  -> AI verdicts uploaded to Railway
+  -> YES picks go to pending_examples table
+Agent auto-reviews pending every 15s via Claude Code CLI
+  -> AI verdict (APPROVE/REJECT/UNKNOWN) + reasoning stored in DB
+  -> Sentiment analysis extracts verdict from essay-style output
 Check Optimal Samples > Pending tab
-  -> APPROVE or REJECT each pick
-Approved = example created | Rejected = rejected_signals
+  -> User APPROVE or REJECT each pick
+  -> Approved = example created | Rejected = removed
 
 ---
 
-## Latest Grind Results (2026-03-03)
+## Grind History (DTSS)
 
-53 conditions (49 daily, 4 weekly, 0 monthly)
-35/35 examples pass (BRK-B, SMMT, VUZI excluded - not in 5yr cache)
-Pass 1 (Daily+LSP+Algo): 49 conditions
-Pass 2 (Weekly): 4 conditions
-Pass 3 (Monthly): 0 conditions
-Signal filter: 409 raw -> 326 deduped -> 233 with exit -> 129 filtered (1.8 ADR floor)
-Runtime: 13.4 min (matrix cached ~50s)
+| Grind | Date | Examples | Conditions | Signals | Peak/day | Notes |
+|-------|------|----------|------------|---------|----------|-------|
+| 1 | ~2026-02-24 | 20 | 41 | 264 | 3 | First production grind |
+| 2 | ~2026-03-01 | 35 | 53 | 91 | 3 | After first vetting pass |
+| 3 | ~2026-03-02 | 48 | ~76 | ~200 | ~3 | After second vetting pass |
+| 4 | 2026-03-03 | 62 (59 resolved) | 86 | 168 | 4 (1mo) / 11 (5yr) | After AI vetting |
 
-Previous best: 264 signals, 41 conditions, 20 examples, peak 3/day
-
----
-
-## Built This Session (2026-03-03)
-
-### Features
-1. Grinder param UI - beam/depth/peak-target inputs on pipeline Step 2 (defaults: 10000/100/3)
-2. Earnings dates DB cache - new earnings_dates table, batch scrape endpoint, nightly step 6
-3. ADR move on Optimal Samples - reads exit grinder per-example captured ADR
-4. AI Sample Review pipeline - full automated flow:
-   - pending_reviews DB table
-   - YES verdict -> pending (not direct example creation)
-   - sample_review pipeline step wired to SUBMIT FOR AUDIT button
-   - scripts/review_samples.py - CLI script calls claude -p per pending pick
-   - Server endpoints: GET pending, POST review-results, POST approve, POST reject-pending
-   - UI: 3-tab Optimal Samples page (Examples / Pending / Rejected) with approve/reject buttons
-5. lxml added to requirements.txt - fixes earnings scraping on Railway
+Pass breakdown (grind #4):
+- Pass 1 (Daily+LSP+Algo): 69 conditions [379s]
+- Pass 2 (Weekly): 12 conditions [267s]
+- Pass 3 (Monthly): 5 conditions [200s]
+- Total: 86 conditions, 847s (14.1 min)
 
 ---
 
-## NEXT - Priority Order
+## NEXT — Priority Order
 
-### 1. Sample Expansion (NOW)
-- Vet the 129 filtered signals (Sample Expansion page)
-- Submit YES picks for AI review -> approve/reject in Pending tab
-- Target: grow from 48 to 80+ examples
-- Re-grind after each batch of new examples
+### 1. Entry Bar Grinder (NEW — Part of MFE Capture)
 
-### 2. Condition Pruning (AFTER sample expansion)
-- Leave-one-out pruning: remove each condition, measure peak/day impact
-- Drop conditions where removal adds <3 signals and peak stays under threshold
-- May not be needed if re-grind with 80+ examples naturally drops weak conditions
+**The missing piece.** Signal fires on some bar. We need to find the ACTUAL ENTRY BAR — the bar where you pull the trigger.
 
-### 3. Entry Bar Detection/Grinder (NEW - future)
-- Build entry grinder that sits between signal and exit
-- Signal fires day X -> entry grinder finds optimal entry bar within X+1 to X+5 window
-- Same architecture as exit grinder but forward-looking from signal
-- Requires 60-80+ examples with accurate entry dates (already have entry dates on all examples)
-- Grind expressions on post-signal bars to find conditions that fire on actual entry day
+**Architecture:**
+- Input: 62 examples with known entry dates + 168 grinder signals
+- Grind target: the ENTRY BAR ITSELF across all examples
+- Find conditions that are true ON the entry bar that distinguish it from surrounding signal bars
+- Apply as additional filter on the 168 signals
+- Result: signals that pass = "entry is TODAY" (not "setup exists somewhere nearby")
 
-### 4. Market Grinder (Step 5)
-- Correlate signal outcomes with market regime (SPY extension, breadth, VIX)
-- Needs enough examples to split by regime with statistical meaning
-- Best after sample expansion when signal count is higher
+**Why this matters:** Can't have 50 potentials across 10 setups all waiting 5 days to fire. Too much data. Need "scan fires today, enter tomorrow morning."
 
-### 5. Overfit Mitigation
-- Filter power per condition diagnostic
-- Leave-one-out condition importance scoring
-- Growing example library is the primary defense (48 -> 150 target)
+**This is a brand new grind** — same architecture as pyramid grinder but different target. Not the bar before entry, not a window. THE bar.
+
+### 2. MFE Capture Grind (Exit Optimization)
+
+Current exit: `slope_xavgc21_off7_adr14 <= -1.123253` (median 5.8 ADR, floor 1.9 ADR)
+Optimize entry bar high to exit for maximum capture.
+
+### 3. Market Grinder (Step 5)
+
+After entry bar + MFE capture are done:
+- Correlate signal outcomes with market regime
+- Find which conditions produce highest win rate
+- Even 50% win rate with losers under 1 ADR and winners at 5-6+ ADR = massive profit factor
+- 20 quality setups/year on a rare setup is a great result
+- Target: 2.5%/month compounding, mid 8 figures in 20 years
+
+### 4. Next Setup: 3-4DB
+
+21 examples already loaded. Run through same pipeline after DTSS is fully complete.
+
+---
+
+## AI Vetting System (Built 2026-03-04)
+
+### Architecture
+- Agent polls pending_examples table every 15s
+- Downloads chart PNG via `/api/chart/{setup}/{ticker}/{date}`
+- Charts saved to `cache/review_charts/` (project dir, not temp)
+- Calls `claude -p` from chart directory with `--allowedTools Read`
+- `--system-prompt` forces review context
+- Parses essay-style output via sentiment analysis (positive/negative signal counting)
+- Posts verdict + reasoning to Railway
+
+### Prompt
+Checks 3 things the grinder CAN'T do visually:
+1. Is there a visible double top?
+2. Is the LSP (left side pivot / prior high) clean?
+3. Did the stock actually break down after entry?
+
+Grades A/B/C/F. Approves A+B, rejects C+F.
+
+### Anti-Discretion-Drift
+AI review prevents the user from loosening criteria during long vetting sessions. The AI applies the same criteria consistently regardless of how many charts have been reviewed.
+
+### Known Issues (Resolved)
+- Claude Code ignores strict output format -> fixed with sentiment-based parsing
+- `--image` flag doesn't exist in claude CLI -> reference file by path in prompt
+- Windows `shell=True` needed for both detection AND call
+- Temp directory permissions -> use project `cache/review_charts/` dir
+- Essay responses defaulting to REJECT -> fixed fallback logic
+
+### Endpoints
+- `GET /api/pending/{setup}` — list pending items
+- `POST /api/pending/{setup}/{id}/review` — store AI verdict
+- `POST /api/pending/{setup}/{id}/approve` — user approves, creates example
+- `POST /api/pending/{setup}/{id}/reject` — user rejects, removes
+- `POST /api/pending/{setup}/reset-reviews` — clear all reviews for retry
+- `POST /api/pending/{setup}/backfill` — recover lost YES picks from vetting file
+- `GET /api/chart/{setup}/{ticker}/{date}` — chart PNG for any ticker+date
+
+---
+
+## The Math
+
+**Why this works even with low win rate:**
+- Losers: solidly under 1 ADR (entry method gives tight stops)
+- Winners: median 5.8 ADR capture
+- Even 36% win rate -> positive expectancy
+- 50% win rate (after market grinder filtering) -> massive profit factor
+- 10% position size, single 25% net winner/month = 2.5% compounding
+- 20 years of 2.5%/month = mid 8 figures
+
+**The pipeline delivers:**
+1. Entry bar grind -> tells you WHEN to enter (today, not "sometime this week")
+2. MFE capture grind -> tells you WHERE to exit
+3. Market grinder -> tells you WHICH signals to take (juices win rate)
 
 ---
 
@@ -99,8 +148,8 @@ Previous best: 264 signals, 41 conditions, 20 examples, peak 3/day
 
 - Expression cache: 4,119 tickers x 12,421 expressions (~50 GB)
 - Railway DB: 11M+ OHLCV rows, ~4,167 tickers
-- Earnings dates: batch scraped nightly for all tradable tickers
-- 48 DTSS examples (45 in cache, 3 excluded: BRK-B, SMMT, VUZI)
+- Earnings dates: batch scraped nightly
+- 62 DTSS examples (59 in cache, 3 excluded: BRK-B, SMMT, VUZI)
 
 ---
 
@@ -124,4 +173,3 @@ Previous best: 264 signals, 41 conditions, 20 examples, peak 3/day
 6. Read ta_knowledge.md before any TA work
 7. NEVER dump large data into context
 8. Expression cache = single computation path
-9. Best grind benchmark: 264 signals, peak 3/day, avg 1.3/day, 41 conditions, 20 examples
