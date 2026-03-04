@@ -1346,7 +1346,7 @@ function App() {
     { id:'optimal_samples', label:'Optimal Samples', num:'1' },
     { id:'signal_brute', label:'Signal Brute Forcing', num:'2' },
     { id:'sample_expansion', label:'Sample Expansion', num:'3' },
-    { id:'mfe_capture', label:'MFE Capture', num:'4' },
+    { id:'setup_grinder', label:'Setup Grinder', num:'4' },
     { id:'market_grind', label:'Market Grinder', num:'5' },
   ];
 
@@ -1356,7 +1356,7 @@ function App() {
     optimal_samples: `${setup.toUpperCase()} — Optimal Samples`,
     signal_brute: `${setup.toUpperCase()} — Signal Brute Forcing`,
     sample_expansion: `${setup.toUpperCase()} — Sample Expansion`,
-    mfe_capture: `${setup.toUpperCase()} — MFE Capture`,
+    setup_grinder: `${setup.toUpperCase()} — Setup Grinder`,
     market_grind: `${setup.toUpperCase()} — Market Grinder`,
     watchlist: 'Daily Watchlist',
   };
@@ -1411,7 +1411,7 @@ function App() {
           {section === 'setup' && tab === 'optimal_samples' && <ExamplesPage setup={setup} />}
           {section === 'setup' && tab === 'signal_brute' && <StepPage stepId="signal_brute" setup={setup} />}
           {section === 'setup' && tab === 'sample_expansion' && <VettingPage setup={setup} />}
-          {section === 'setup' && tab === 'mfe_capture' && <ExitManagePage setup={setup} />}
+          {section === 'setup' && tab === 'setup_grinder' && <StepPage stepId="setup_grinder" setup={setup} />}
           {section === 'setup' && tab === 'market_grind' && <div className="empty-state"><div className="icon">🌍</div>Market Grinder — coming soon</div>}
         </div>
       </div>

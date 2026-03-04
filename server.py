@@ -2372,14 +2372,13 @@ PIPELINE_STEPS = [
      "description": "AI reviews pending YES picks via Claude CLI. Approve/reject in Optimal Samples > Pending.",
      "prerequisites": ["sample_expansion"],
      "result_files": []},
-    {"id": "profit_grinder", "name": "4. Profit Grinder", "category": "pipeline",
-     "description": "Exit grind from entry bar HIGH -> max MFE capture. Produces exit conditions for real trades + per-example exit dates for blackout filter.",
+    {"id": "setup_grinder", "name": "4. Setup Grinder", "category": "pipeline",
+     "description": "Profit grind -> blackout re-grind -> condition prune + signal filter. Three scripts run in sequence.",
      "prerequisites": ["sample_expansion"],
-     "script": "scripts/profit_grinder.py",
-     "result_files": ["data/profit_grind/profit_dtss.json"]},
+     "result_files": ["data/profit_grind/profit_dtss.json", "data/setup_refiner/refined_dtss.json"]},
     {"id": "market_grind", "name": "5. Market Grinder", "category": "pipeline",
      "description": "Cluster outcomes vs market regime. Find optimal conditions.",
-     "prerequisites": ["profit_grinder"],
+     "prerequisites": ["setup_grinder"],
      "result_files": []},
 ]
 
@@ -2484,6 +2483,30 @@ async def get_pipeline_steps():
                     if n_vetted >= n_total:
                         step_state["status"] = "done"
                     step_state["result_summary"] = f"{n_vetted}/{n_total} vetted · {counts['yes']} yes · {counts['no']} no · {n_examples} total optimal samples"
+            except:
+                pass
+
+        # setup_grinder: inject result_summary from saved output files
+        if step_def["id"] == "setup_grinder" and step_state.get("status") == "done":
+            try:
+                refined_path = VETTING_DATA_DIR / "setup_refiner" / "refined_dtss.json"
+                profit_path = VETTING_DATA_DIR / "profit_grind" / "profit_dtss.json"
+                parts = []
+                if refined_path.exists():
+                    with open(refined_path) as f:
+                        rd = json.load(f)
+                    parts.append(f"{rd.get('n_conditions','?')} conds")
+                    parts.append(f"{rd.get('n_signals','?')} signals")
+                if profit_path.exists():
+                    with open(profit_path) as f:
+                        pd_ = json.load(f)
+                    top = pd_.get('top_conditions', [{}])
+                    if top:
+                        eff = top[0].get('floor_capture_eff', None)
+                        if eff is not None:
+                            parts.append(f"floor {eff:.0%} capture")
+                if parts:
+                    step_state["result_summary"] = " · ".join(parts)
             except:
                 pass
 
