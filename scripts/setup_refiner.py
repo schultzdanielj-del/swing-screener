@@ -134,13 +134,69 @@ def load_conditions(setup_type, conditions_file=None):
 
 
 def load_exit_condition(setup_type):
-    """Load best exit condition.
+    """Load best exit condition based on the choice stored in Railway.
 
     Priority:
-      1. profit_grind/profit_{setup}.json  — produced by profit_grinder.py (Step 4 script 1)
-      2. signal_exit_grinder output        — fallback
+      1. Railway /api/exit-grind/{setup}/choice  — routes to single or multi
+         - single: profit_grind/profit_{setup}.json  top condition
+         - multi:  multistage_exit/ms_exit_{setup}.json  result stages
+      2. Local profit_grind fallback (no choice set yet)
+      3. signal_exit_grinder output — legacy fallback
     """
-    # 1. Profit grinder output (Step 4 script 1)
+    # 1. Check Railway for explicit choice
+    try:
+        r = requests.get(f"{RAILWAY_URL}/api/exit-grind/{setup_type}/choice", timeout=10)
+        if r.status_code == 200:
+            choice = r.json().get("choice")
+            print(f"  Exit choice from Railway: {choice}")
+
+            if choice == "single":
+                profit_path = os.path.join(REPO_ROOT, "data", "profit_grind", f"profit_{setup_type}.json")
+                if os.path.exists(profit_path):
+                    with open(profit_path) as f:
+                        pdata = json.load(f)
+                    top = pdata.get("top_conditions", [])
+                    if top:
+                        best = top[0]
+                        ec = {
+                            "expression": best.get("expression"),
+                            "threshold": best.get("threshold"),
+                            "direction": best.get("direction", "<="),
+                        }
+                        print(f"  Exit (single-stage, profit grind): {ec['expression']} {ec['direction']} {ec['threshold']}")
+                        return ec
+                raise FileNotFoundError(
+                    f"Choice is 'single' but no profit grind output found.\n"
+                    f"  Run: python scripts/profit_grinder.py --setup {setup_type}"
+                )
+
+            elif choice == "multi":
+                ms_path = os.path.join(REPO_ROOT, "data", "multistage_exit", f"ms_exit_{setup_type}.json")
+                if os.path.exists(ms_path):
+                    with open(ms_path) as f:
+                        mdata = json.load(f)
+                    result = mdata.get("result")
+                    if result and result.get("stages"):
+                        # Return multi-stage descriptor — caller must handle list of stages
+                        ec = {
+                            "type": "multi",
+                            "stages": result["stages"],
+                            "n_stages": result["n_stages"],
+                            "floor_capture_eff": result.get("floor_capture_eff"),
+                            "median_capture_eff": result.get("median_capture_eff"),
+                        }
+                        print(f"  Exit (multi-stage, {result['n_stages']} stages): "
+                              + " → ".join(f"{s['expr_name']} {s['direction']} {s['threshold']:.4f} (trim {s['trim_pct']:.0%})"
+                                           for s in result["stages"]))
+                        return ec
+                raise FileNotFoundError(
+                    f"Choice is 'multi' but no multistage exit output found.\n"
+                    f"  Run: python scripts/multistage_exit_grinder.py --setup {setup_type}"
+                )
+    except requests.RequestException as e:
+        print(f"  WARNING: Could not fetch exit choice from Railway ({e}). Falling back to local files.")
+
+    # 2. Local fallback: profit grind (no choice set)
     profit_path = os.path.join(REPO_ROOT, "data", "profit_grind", f"profit_{setup_type}.json")
     if os.path.exists(profit_path):
         with open(profit_path) as f:
@@ -153,10 +209,10 @@ def load_exit_condition(setup_type):
                 "threshold": best.get("threshold"),
                 "direction": best.get("direction", "<="),
             }
-            print(f"  Exit (profit grind): {ec['expression']} {ec['direction']} {ec['threshold']}")
+            print(f"  Exit (profit grind, no choice set): {ec['expression']} {ec['direction']} {ec['threshold']}")
             return ec
 
-    # 2. Fallback: signal_exit_grinder output
+    # 3. Legacy fallback: signal_exit_grinder output
     search_dirs = [
         os.path.join(REPO_ROOT, "data", "signal_exit_grinder"),
         os.path.join(REPO_ROOT, "data"),
@@ -664,6 +720,18 @@ def run_refiner(setup_type, conditions_file=None, min_power=DEFAULT_MIN_POWER,
     conditions, source_path = load_conditions(setup_type, conditions_file)
     cache = load_5yr_cache()
     exit_cond = load_exit_condition(setup_type)
+    # Normalize multi-stage exit to single-stage for signal measurement.
+    # setup_refiner uses the exit condition to find where each trade exits and
+    # measure ADR capture. Multi-stage logic lives in multistage_exit_grinder.py.
+    # We use the first stage (fires first) as the effective exit signal here.
+    if exit_cond.get("type") == "multi":
+        first_stage = exit_cond["stages"][0]
+        print(f"  Multi-stage exit: using stage 1 of {exit_cond['n_stages']} for signal measurement")
+        exit_cond = {
+            "expression": first_stage["expr_name"],
+            "threshold": first_stage["threshold"],
+            "direction": first_stage["direction"],
+        }
     examples = load_examples(setup_type)
 
     print(f"\n  Loading expression cache...")

@@ -92,8 +92,11 @@ PIPELINE_STEP_SCRIPTS = {
     ],
     "sample_expansion": [["python", "scripts/signal_filter.py", "--setup", "{setup}"]],
     "sample_review":    [["python", "scripts/review_samples.py", "--setup", "{setup}"]],
-    "setup_grinder": [
+    "setup_grinder_a": [
         ["python", "scripts/profit_grinder.py", "--setup", "{setup}"],
+        ["python", "scripts/multistage_exit_grinder.py", "--setup", "{setup}"],
+    ],
+    "setup_grinder_b": [
         ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}",
          "--blackout", "--beam", "10000", "--depth", "100", "--peak-target", "3"],
         ["python", "scripts/setup_refiner.py", "--setup", "{setup}"],
