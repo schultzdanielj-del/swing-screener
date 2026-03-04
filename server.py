@@ -2990,6 +2990,15 @@ async def store_ai_review(setup_type: str, pending_id: int, request: Request):
     return {"status": "ok", "ai_verdict": ai_verdict}
 
 
+@app.post("/api/pending/{setup_type}/reset-reviews")
+async def reset_pending_reviews(setup_type: str):
+    """Reset all AI reviews so they get re-reviewed."""
+    with get_db() as db:
+        db.execute("UPDATE pending_examples SET ai_verdict=NULL, ai_reasoning=NULL, status='pending', reviewed_at=NULL WHERE setup_type=?", [setup_type])
+        n = db.execute("SELECT changes()").fetchone()[0]
+    return {"status": "ok", "reset": n}
+
+
 @app.post("/api/pending/{setup_type}/approve-all")
 async def approve_all_pending(setup_type: str):
     """Approve all AI-approved pending examples at once."""
