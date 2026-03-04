@@ -482,19 +482,24 @@ def review_pending_samples():
                         print("claude CLI not found (tried claude, claude.exe, npx, claude-code)")
                         return
 
+                    # Run claude from the chart directory so Read tool can find the file
+                    chart_filename = os.path.basename(chart_path)
+                    chart_directory = os.path.dirname(chart_path)
+                    
+                    review_prompt = f"Read the image file '{chart_filename}' in the current directory and analyze it as a stock chart.\n\n{prompt}"
+                    
                     if claude_cmd == "npx":
-                        cli_args = ["npx", "@anthropic-ai/claude-code", "-p",
-                            f"Look at the image file at {chart_path} and review it.\n\n{prompt}",
+                        cli_args = ["npx", "@anthropic-ai/claude-code", "-p", review_prompt,
                             "--allowedTools", "Read"]
                     else:
-                        cli_args = [claude_cmd, "-p",
-                            f"Look at the image file at {chart_path} and review it.\n\n{prompt}",
+                        cli_args = [claude_cmd, "-p", review_prompt,
                             "--allowedTools", "Read"]
 
                     result = subprocess.run(
                         cli_args,
-                        capture_output=True, text=True, timeout=120,
+                        capture_output=True, text=True, timeout=180,
                         shell=is_win,
+                        cwd=chart_directory,
                     )
                     output = result.stdout.strip()
                     verdict = "REJECT"
