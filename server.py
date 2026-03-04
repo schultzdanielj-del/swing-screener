@@ -2728,6 +2728,19 @@ async def upload_vetting_exit(setup_type: str, request: Request):
     return {"status": "ok", "path": str(path)}
 
 
+@app.post("/api/setup-grinder/{setup_type}/upload-signals")
+async def upload_setup_grinder_signals(setup_type: str, request: Request):
+    """Upload refined signals from setup_refiner.py. Isolated — never touches signal_filter output."""
+    body = await request.json()
+    out_dir = VETTING_DATA_DIR / "setup_refiner"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"refined_{setup_type}.json"
+    with open(path, "w") as f:
+        json.dump(body, f, indent=2, default=str)
+    n = len(body.get("signals", []))
+    return {"status": "ok", "path": str(path), "n_signals": n}
+
+
 @app.post("/api/profit-grind/{setup_type}/upload")
 async def upload_profit_grind(setup_type: str, request: Request):
     """Upload profit grinder results from desktop agent."""

@@ -210,118 +210,140 @@ def load_examples(setup_type):
 # PRUNER — leave-one-out filter power
 # ══════════════════════════════════════════════════════════════
 
-_pw_cache = None
-_pw_expr_cache_dir = None
-_pw_cond_col_indices = None
-_pw_cond_lows = None
-_pw_cond_highs = None
+def prune_conditions(conditions, cache, examples, expr_cache, workers, min_power):
+    """Leave-one-out filter power analysis. Returns (kept, dropped, power_table).
 
+    Loads all ticker expression data into memory once, then does all 87 passes
+    in-memory — no repeated disk I/O per condition.
+    """
+    n_conds = len(conditions)
 
-def _init_prune_worker(cache, expr_cache_dir, cond_col_indices, cond_lows, cond_highs):
-    global _pw_cache, _pw_expr_cache_dir, _pw_cond_col_indices
-    global _pw_cond_lows, _pw_cond_highs
-    _pw_cache = cache
-    _pw_expr_cache_dir = expr_cache_dir
-    _pw_cond_col_indices = cond_col_indices
-    _pw_cond_lows = cond_lows
-    _pw_cond_highs = cond_highs
+    # Map condition names to expr cache column indices
+    cond_col_indices = []
+    for cond in conditions:
+        idx = expr_cache.expr_index(cond["name"])
+        if idx is None:
+            print(f"  WARNING: {cond['name']} not in expr cache — treated as no-op")
+        cond_col_indices.append(idx)
+    cond_lows  = np.array([c["low"]  for c in conditions], dtype=np.float64)
+    cond_highs = np.array([c["high"] for c in conditions], dtype=np.float64)
 
-
-def _load_npz(ticker):
-    safe = ticker.replace("/", "_").replace("\\", "_")
-    path = os.path.join(_pw_expr_cache_dir, f"{safe}.npz")
-    if not os.path.exists(path):
-        return None
-    try:
-        loaded = np.load(path, allow_pickle=True)
-        return loaded["data"]
-    except Exception:
-        return None
-
-
-def _prune_batch_full(tickers):
-    total = 0
-    for ticker in tickers:
-        df = _pw_cache.get(ticker)
+    # Load all tickers into memory once
+    print(f"  Loading expression data into memory...")
+    t0 = time.time()
+    ticker_arrays = []  # list of (n_bars, n_expr) float32 arrays, one per ticker
+    for ticker in cache.keys():
+        df = cache.get(ticker)
         if df is None or len(df) < 100:
             continue
-        data = _load_npz(ticker)
-        if data is None or len(data) != len(df):
+        cached_dates, cached_data = expr_cache.get_ticker(ticker)
+        if cached_dates is None or len(cached_dates) != len(df):
             continue
-        n_bars = len(df)
-        mask = np.ones(n_bars, dtype=bool)
-        mask[:50] = False
-        for i, col_idx in enumerate(_pw_cond_col_indices):
-            if col_idx is None:
-                mask[:] = False
-                break
-            series = data[:, col_idx]
-            in_range = (series >= _pw_cond_lows[i]) & (series <= _pw_cond_highs[i])
-            in_range[np.isnan(series)] = False
-            mask &= in_range
-            if not np.any(mask):
-                break
-        total += int(np.sum(mask))
-    return total
+        ticker_arrays.append(cached_data)
+    print(f"  Loaded {len(ticker_arrays)} tickers  ({time.time()-t0:.1f}s)")
 
+    # For each ticker build a boolean pass-mask per condition (shape: n_bars)
+    # Then for each leave-one-out pass, just AND the masks excluding one column.
+    # This is pure numpy — no subprocess overhead, no disk I/O.
+    print(f"  Building per-condition pass masks...")
+    t0 = time.time()
+    # cond_masks[i] = flat bool array of all bars passing condition i across all tickers
+    # We work ticker by ticker to avoid OOM, accumulating counts.
 
-def _prune_batch_without(args):
-    tickers, drop_idx = args
-    total = 0
-    n_conds = len(_pw_cond_col_indices)
-    for ticker in tickers:
-        df = _pw_cache.get(ticker)
-        if df is None or len(df) < 100:
-            continue
-        data = _load_npz(ticker)
-        if data is None or len(data) != len(df):
-            continue
-        n_bars = len(df)
-        mask = np.ones(n_bars, dtype=bool)
-        mask[:50] = False
-        for i in range(n_conds):
-            if i == drop_idx:
+    # Baseline: all conditions AND'd — count passing bar-rows
+    def count_passing(drop_idx=None):
+        total = 0
+        for arr in ticker_arrays:
+            n_bars = arr.shape[0]
+            mask = np.ones(n_bars, dtype=bool)
+            mask[:50] = False
+            for i, col_idx in enumerate(cond_col_indices):
+                if i == drop_idx:
+                    continue
+                if col_idx is None:
+                    mask[:] = False
+                    break
+                series = arr[:, col_idx].astype(np.float64)
+                in_range = (series >= cond_lows[i]) & (series <= cond_highs[i])
+                in_range[np.isnan(series)] = False
+                mask &= in_range
+                if not np.any(mask):
+                    break
+            total += int(np.sum(mask))
+        return total
+
+    print(f"  BASELINE: counting with all {n_conds} conditions...")
+    t = time.time()
+    baseline = count_passing()
+    print(f"  Baseline: {baseline:,} passing bar-rows  ({time.time()-t:.1f}s)")
+
+    # Leave-one-out
+    print(f"\n  LEAVE-ONE-OUT ({n_conds} conditions)...")
+    powers = []
+    for i, cond in enumerate(conditions):
+        t_i = time.time()
+        without = count_passing(drop_idx=i)
+        power = (without - baseline) / baseline if baseline > 0 else 0.0
+        powers.append(power)
+        flag = "DROP" if power < min_power else "KEEP"
+        tier = cond.get("tier", "?")
+        cat  = cond.get("category", "?")[:16]
+        print(f"  [{i+1:2d}/{n_conds}] {flag}  power={power:+.3f}  "
+              f"[{tier:>4}][{cat:>16}] {cond['name']}  ({time.time()-t_i:.1f}s)")
+
+    # Required-condition check
+    required = set()
+    if examples:
+        for i, cond in enumerate(conditions):
+            if powers[i] >= min_power:
                 continue
-            col_idx = _pw_cond_col_indices[i]
-            if col_idx is None:
-                mask[:] = False
-                break
-            series = data[:, col_idx]
-            in_range = (series >= _pw_cond_lows[i]) & (series <= _pw_cond_highs[i])
-            in_range[np.isnan(series)] = False
-            mask &= in_range
-            if not np.any(mask):
-                break
-        total += int(np.sum(mask))
-    return total
+            without_conds = [c for j, c in enumerate(conditions) if j != i]
+            fails = _validate_examples(examples, without_conds, cache, expr_cache)
+            if fails:
+                required.add(cond["name"])
+                print(f"  REQUIRED (example fails without): {cond['name']}")
 
+    kept, dropped = [], []
+    for i, cond in enumerate(conditions):
+        entry = {**cond, "filter_power": round(powers[i], 4)}
+        if powers[i] >= min_power or cond["name"] in required:
+            kept.append(entry)
+        else:
+            dropped.append(entry)
 
-def _parallel_scan(cache, cond_col_indices, cond_lows, cond_highs,
-                   workers, expr_cache_dir, drop_idx=None):
-    tickers = list(cache.keys())
-    batch_size = max(1, len(tickers) // (workers * 4))
-    batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
-    total = 0
-    if drop_idx is None:
-        with ProcessPoolExecutor(
-            max_workers=workers,
-            initializer=_init_prune_worker,
-            initargs=(cache, expr_cache_dir, cond_col_indices, cond_lows, cond_highs)
-        ) as pool:
-            for f in as_completed([pool.submit(_prune_batch_full, b) for b in batches]):
-                total += f.result()
-    else:
-        with ProcessPoolExecutor(
-            max_workers=workers,
-            initializer=_init_prune_worker,
-            initargs=(cache, expr_cache_dir, cond_col_indices, cond_lows, cond_highs)
-        ) as pool:
-            for f in as_completed([pool.submit(_prune_batch_without, (b, drop_idx))
-                                    for b in batches]):
-                total += f.result()
-    return total
+    power_table = [
+        {
+            "name": conditions[i]["name"],
+            "tier": conditions[i].get("tier", "?"),
+            "category": conditions[i].get("category", "?"),
+            "filter_power": round(powers[i], 4),
+            "kept": conditions[i]["name"] in {c["name"] for c in kept},
+            "required_override": conditions[i]["name"] in required,
+        }
+        for i in range(n_conds)
+    ]
 
+    print(f"\n  Pruning: {n_conds} → {len(kept)} kept, {len(dropped)} dropped")
+    if dropped:
+        print(f"  Dropped: {[c['name'] for c in dropped]}")
 
+    # Final validation on pruned set
+    if examples:
+        fails = _validate_examples(examples, kept, cache, expr_cache)
+        if fails:
+            print(f"\n  {'!'*60}")
+            print(f"  VALIDATION FAILED on pruned set ({len(fails)} failures):")
+            for f in fails[:5]:
+                print(f"    {f}")
+            print(f"  Falling back to full unpruned set.")
+            print(f"  {'!'*60}")
+            kept = [{**c, "filter_power": round(powers[i], 4)}
+                    for i, c in enumerate(conditions)]
+            dropped = []
+        else:
+            print(f"  OK: {len(examples)}/{len(examples)} examples pass pruned conditions")
+
+    return kept, dropped, power_table
 def _validate_examples(examples, conditions, cache, expr_cache):
     """Return list of failure strings. Empty = all pass."""
     name_to_idx = dict(expr_cache._expr_name_to_idx)
@@ -825,7 +847,7 @@ def upload_to_railway(setup_type, filtered_signals, pruned_conditions,
         "n_conditions": len(pruned_conditions),
         "signals": filtered_signals,
     }
-    url = f"{RAILWAY_URL}/api/vetting/{setup_type}/upload-signals"
+    url = f"{RAILWAY_URL}/api/setup-grinder/{setup_type}/upload-signals"
     try:
         r = requests.post(url, json=payload, timeout=60)
         r.raise_for_status()
