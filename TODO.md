@@ -6,22 +6,6 @@ Latest pyramid grind (grind #4): **86 conditions, 168 signals, peak 4/day (weekl
 
 AI vetting pipeline operational — Claude Code reviews chart images, sentiment-based verdict parsing.
 
-### Step 4: Setup Grinder — ALL SCRIPTS BUILT, READY TO RUN
-
-All sub-step scripts complete. Stage isolation enforced — no script overwrites any other stage's outputs.
-
-| Sub-step | Script | Output |
-|----------|--------|--------|
-| 1. Profit Grinder | `scripts/profit_grinder.py` | `data/profit_grind/profit_{setup}.json` |
-| 2. Blackout Re-grind | `pyramid_grinder.py --blackout` | `cache/pyramid_results_{setup}_blackout.json` |
-| 3+4. Prune + Filter | `scripts/setup_refiner.py` | `data/setup_refiner/refined_{setup}.json` |
-
-```bash
-python scripts/profit_grinder.py --setup dtss
-python local_runner/pyramid_grinder.py --setup dtss --blackout --beam 10000 --depth 100 --peak-target 3
-python scripts/setup_refiner.py --setup dtss
-```
-
 ### Pipeline Steps
 
 | # | Step | Server ID | Status |
@@ -31,8 +15,30 @@ python scripts/setup_refiner.py --setup dtss
 | 2 | Signal Brute Forcing | signal_brute | Complete — grind #4 done |
 | 3 | Sample Expansion | sample_expansion | 168 signals to vet |
 | 3b | AI Sample Review | sample_review | Working |
-| **4** | **Setup Grinder** | setup_grinder | **Scripts built — READY TO RUN** |
-| 5 | Market Grinder | market_grind | After Setup Grinder |
+| **4a** | **Exit Grinder** | setup_grinder_a | **Scripts built — READY TO RUN** |
+| **4b** | **Setup Grinder** | setup_grinder_b | Locked until 4a choice made |
+| 5 | Market Grinder | market_grind | After 4b |
+
+### Step 4a: Exit Grinder — READY TO RUN
+
+Runs two exit grinders sequentially. User reviews results in UI and chooses single or multi-stage before 4b unlocks.
+
+| Script | Output |
+|--------|--------|
+| `scripts/profit_grinder.py` | `data/profit_grind/profit_{setup}.json` |
+| `scripts/multistage_exit_grinder.py` | `data/multistage_exit/ms_exit_{setup}.json` |
+
+Agent step: `setup_grinder_a`
+
+### Step 4b: Setup Grinder — locked until 4a choice
+
+| Script | Output |
+|--------|--------|
+| `pyramid_grinder.py --blackout` | `cache/pyramid_results_{setup}_blackout.json` |
+| `scripts/setup_refiner.py` | `data/setup_refiner/refined_{setup}.json` |
+
+`setup_refiner.py` reads exit choice from Railway → routes to single or multi exit condition.
+Agent step: `setup_grinder_b`
 
 ---
 
@@ -53,37 +59,21 @@ Pass breakdown (grind #4):
 
 ---
 
-## NEXT — Step 4: Setup Grinder
+## NEXT — Step 4a: Exit Grinder
 
-Step 4 in the UI is a single step called "Setup Grinder" that runs the full loop internally:
+Run `setup_grinder_a` in the UI (agent must be online). Runs profit_grinder.py then multistage_exit_grinder.py sequentially.
 
-### Sub-steps (run in order, no user intervention between them):
+When complete: review results in ExitGrinderPage (single vs multi side by side), click "Use Single-Stage" or "Use Multi-Stage".
 
-**1. Profit Grinder** (`scripts/profit_grinder.py`)
-- Already built. Run exit grind from entry bar HIGH across all examples
-- Outputs: exit condition + per-example exit dates
-- Exit dates feed the blackout filter
+That choice unlocks Step 4b.
 
-**2. Blackout Filter → Re-grind** (matrix_builder.py change + pyramid_grinder re-run)
-- Matrix builder loads profit grinder output
-- Masks entry→exit bars per ticker per setup (post-entry bars excluded from universe)
-- Re-runs pyramid grinder on clean universe
-- Produces new condition set that can't fire on post-entry noise
+## After 4a — Step 4b: Setup Grinder
 
-**3. Condition Pruning** (new script: `scripts/condition_pruner.py`)
-- Leave-one-out on every condition in the new condition set
-- Measure filter power: how much of the remaining universe each condition eliminates
-- Drop conditions below minimum filter power threshold (~10-15% universe reduction)
-- Tightens scan, reduces overfitting
+Run `setup_grinder_b` in the UI. Runs blackout pyramid re-grind + setup_refiner sequentially.
 
-**4. Signal Filter + Vetting** (existing `scripts/signal_filter.py` + UI)
-- Run signal filter on pruned condition set
-- Upload signals to Railway for chart vetting
-- User vets in Sample Expansion UI
-- New YES picks → examples → loop back to step 1 until convergence
+setup_refiner.py reads exit choice from Railway and routes to the correct exit condition.
 
-### Convergence condition:
-Re-grind produces signals already in the example set → no new examples added → done.
+Output: pruned condition set + filtered signals uploaded to Railway for next vetting pass.
 
 ---
 

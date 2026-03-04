@@ -210,7 +210,7 @@ The grinder uses one universal expression set for all setups. No setup-specific 
 
 ---
 
-## Step 4: Signal Filter + Chart Vetting + Example Expansion
+## Step 4: Sample Expansion (Signal Filter + Chart Vetting + Example Expansion)
 
 **Goal:** Filter grinder signals down to vettable candidates, manually review charts, expand examples, and re-grind until convergence.
 
@@ -229,7 +229,7 @@ The grinder uses one universal expression set for all setups. No setup-specific 
    - Rank by ADR descending
    - Output: `data/signal_filter/filtered_dtss.json`
 
-4. **Chart vetting** (unified UI, step 4):
+4. **Chart vetting** (unified UI, step 3 / Sample Expansion):
    - Embedded candlestick chart with EMA 8/21, SMA 50/200
    - Earnings overlay (purple E markers from Yahoo Finance)
    - 250-bar lookback + 80-bar forward, all bars visible
@@ -265,6 +265,81 @@ The grinder uses one universal expression set for all setups. No setup-specific 
 - Same method for examples and backtest signals
 - Example floor ADR = minimum across all example measurements
 - Backtest signals must meet or exceed floor
+
+---
+
+## Step 4a: Exit Grinder
+
+**Goal:** Find the optimal TA-driven exit conditions from the ENTRY BAR HIGH across all validated examples. Produces both a single-stage and multi-stage exit. User reviews results and chooses which to carry into 4b.
+
+**UI step:** `setup_grinder_a` — runs both grinders sequentially, then presents results side by side for review and choice.
+
+### Single-Stage Exit (`scripts/profit_grinder.py`)
+
+Brute forces ~12K expressions against validated examples' forward price paths. Benchmarks from entry bar high to exit bar close in ADR. Output: best single exit condition + per-example exit dates (used by blackout filter).
+
+- Writes to: `data/profit_grind/profit_{setup}.json`
+- Uploads to Railway via `POST /api/profit-grind/{setup_type}/upload`
+
+### Multi-Stage Exit (`scripts/multistage_exit_grinder.py`)
+
+Tests all structural variants (1–N stage configurations with trim percentages, gates, and exit conditions per stage). All CPU cores, 100% example pass rate required, no backstops.
+
+- Writes to: `data/multistage_exit/ms_exit_{setup}.json`
+- Uploads to Railway via `POST /api/exit-grind/{setup_type}/upload-multistage`
+
+### Choosing an Exit
+
+Frontend (`ExitGrinderPage`) displays single vs multi side by side:
+- Single: expression, threshold, floor/median capture %, floor/median ADR, avg bars to exit
+- Multi: n_stages, capture stats, stage-by-stage breakdown (trim%, gate, condition, max window)
+
+User clicks "Use Single-Stage" or "Use Multi-Stage" → POST to `/api/exit-grind/{setup}/choose` → unlocks 4b.
+
+**Current DTSS result (as of 2026-03-01):**
+- Single: `slope_xavgc21_off7_adr14 <= -1.126631`, ~71% median capture
+- Multi: see latest run output
+
+### API Endpoints
+- `GET /api/exit-grind/{setup}/results` — single + multi results + current choice
+- `POST /api/exit-grind/{setup}/choose` — store choice (`"single"` or `"multi"`)
+- `GET /api/exit-grind/{setup}/choice` — get current choice (404 if none)
+- `POST /api/exit-grind/{setup}/clear-choice` — clear choice, re-locks 4b
+
+---
+
+## Step 4b: Setup Grinder (Blackout Re-Grind + Condition Pruning)
+
+**Goal:** Re-grind the signal pyramid with post-entry bars masked (blackout filter), then prune low-power conditions and produce a clean signal set for the next vetting pass.
+
+**UI step:** `setup_grinder_b` — locked until a choice is made in 4a. Runs blackout pyramid + setup_refiner sequentially.
+
+### Sub-steps (agent runs in order):
+
+**1. Blackout Re-Grind** (`pyramid_grinder.py --blackout`)
+
+`matrix_builder.py` loads `data/profit_grind/profit_{setup}.json` (per-example exit dates) and masks entry→exit bars per ticker. Universe rows in that window are excluded from the pyramid grinder's universe matrix. This prevents the grinder from "seeing" post-entry price action and building conditions that only fire because a stock already moved.
+
+Re-runs pyramid grinder on the cleaned universe. Same params: beam=10000, depth=100, peak=3.
+
+Output: `cache/pyramid_results_{setup}_blackout.json`
+
+**2. Condition Pruning + Signal Filter** (`scripts/setup_refiner.py`)
+
+- Leave-one-out on every condition in the blackout grind result
+- Measures filter power per condition: % of remaining universe eliminated
+- Drops conditions below ~10–15% threshold (low-power conditions add overfitting risk without discriminating)
+- Runs signal filter on pruned conditions
+- Reads exit choice from Railway (`GET /api/exit-grind/{setup}/choice`) → routes to single or multi exit
+- For multi-stage: uses first stage as effective exit for signal measurement
+
+Output: `data/setup_refiner/refined_{setup}.json`
+
+Uploads cleaned signal set to Railway for the next vetting pass (Step 3 / Sample Expansion).
+
+### Convergence Condition
+
+When the blackout re-grind produces signals that are all already in the example set, the loop is done. No new examples → no re-grind needed → advance to Step 5.
 
 ## Step 5: Entry Bar Grinder — When Exactly To Pull The Trigger
 
