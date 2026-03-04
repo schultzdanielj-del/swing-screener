@@ -211,16 +211,71 @@ def load_examples(setup_type):
 # ══════════════════════════════════════════════════════════════
 
 def prune_conditions(conditions, cache, examples, expr_cache, workers, min_power):
-    """Condition pruning — currently a pass-through (no-op).
+    """Prune weak conditions using filter_power already saved in the pyramid JSON.
 
-    Full leave-one-out filter power analysis requires rescanning the universe
-    per condition which is expensive. Skipping for now — all conditions kept.
-    TODO: implement fast pruning using per-condition signal counts from pyramid JSON.
+    No rescanning. No expression cache. Pure JSON math — runs in under a second.
+    filter_power = (signals_without_this_condition - signals_with_all) / signals_with_all
+    Conditions below min_power get dropped unless an example depends on them.
     """
-    print(f"  Pruning skipped — keeping all {len(conditions)} conditions.")
-    kept = [{**c, "filter_power": None} for c in conditions]
-    dropped = []
-    power_table = []
+    n_conds = len(conditions)
+    has_power = all(c.get("filter_power") is not None for c in conditions)
+
+    if not has_power:
+        print(f"  WARNING: filter_power not in pyramid JSON — skipping prune.")
+        print(f"  Re-run pyramid grinder to get per-condition filter_power.")
+        kept = [{**c, "filter_power": None} for c in conditions]
+        return kept, [], []
+
+    kept, dropped, power_table = [], [], []
+    for cond in conditions:
+        fp = cond.get("filter_power", 0.0)
+        flag = "KEEP" if fp >= min_power else "DROP"
+        tier = cond.get("tier", "?")
+        cat  = cond.get("category", "?")[:16]
+        print(f"  {flag}  power={fp:+.3f}  [{tier:>4}][{cat:>16}] {cond['name']}")
+        entry = {**cond, "filter_power": fp}
+        if fp >= min_power:
+            kept.append(entry)
+        else:
+            dropped.append(entry)
+        power_table.append({
+            "name": cond["name"],
+            "tier": tier,
+            "category": cond.get("category", "?"),
+            "filter_power": fp,
+            "kept": fp >= min_power,
+            "required_override": False,
+        })
+
+    # Required-condition check: never drop a condition an example depends on
+    if examples and dropped:
+        for i, cond in enumerate(conditions):
+            if cond in kept:
+                continue
+            without_conds = [c for c in conditions if c["name"] != cond["name"]]
+            fails = _validate_examples(examples, without_conds, cache, expr_cache)
+            if fails:
+                print(f"  REQUIRED (example fails without): {cond['name']}")
+                kept.append({**cond, "filter_power": cond.get("filter_power", 0.0)})
+                dropped = [c for c in dropped if c["name"] != cond["name"]]
+                for pt in power_table:
+                    if pt["name"] == cond["name"]:
+                        pt["required_override"] = True
+
+    print(f"\n  Pruning: {n_conds} → {len(kept)} kept, {len(dropped)} dropped")
+    if dropped:
+        print(f"  Dropped: {[c['name'] for c in dropped]}")
+
+    # Final validation
+    if examples:
+        fails = _validate_examples(examples, kept, cache, expr_cache)
+        if fails:
+            print(f"\n  VALIDATION FAILED on pruned set — falling back to full set.")
+            kept = list(conditions)
+            dropped = []
+        else:
+            print(f"  OK: {len(examples)}/{len(examples)} examples pass pruned conditions")
+
     return kept, dropped, power_table
 def _init_scan_worker(cache, conditions, expr_cache_dir, cond_col_indices):
     global _sw_cache, _sw_conditions, _sw_expr_cache_dir, _sw_cond_col_indices

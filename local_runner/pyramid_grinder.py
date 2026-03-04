@@ -569,15 +569,35 @@ class PeakSpiderweb:
     def _build_result(self, best, levels, nodes_explored, t0, baseline_peak):
         peak, avg, total = self._daily_stats(best.row_mask)
         elapsed = time.time() - t0
+
+        # Per-condition leave-one-out signal counts — pure numpy, instant.
+        # signals_without[i] = total signals if condition i were removed.
+        # filter_power[i] = (signals_without - signals_with_all) / signals_with_all
+        # This lets setup_refiner prune weak conditions from JSON alone, no rescan.
+        cond_list = list(best.conditions)
+        loo_totals = []
+        for drop_i, ci in enumerate(cond_list):
+            # AND all masks except this one
+            without_mask = np.ones(self.n_rows, dtype=bool)
+            for j, cj in enumerate(cond_list):
+                if j != drop_i:
+                    without_mask &= self.cand_passes[cj]
+            loo_totals.append(int(np.sum(without_mask)))
+
         conditions = []
-        for ci in best.conditions:
+        for drop_i, ci in enumerate(cond_list):
             name = self.candidate_names[ci]
             cat = self.candidate_categories[ci]
+            without = loo_totals[drop_i]
+            fp = (without - total) / total if total > 0 else 0.0
             conditions.append({
                 "expr": name,
                 "name": name,
                 "category": cat,
                 "cand_index": int(ci),
+                "signals_with_all": total,
+                "signals_without": without,
+                "filter_power": round(fp, 4),
             })
 
         # Extract final signals (date + ticker for every surviving row)
@@ -863,6 +883,9 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
             "low": low,
             "high": high,
             "tier": tier_name,
+            "filter_power": cond.get("filter_power"),
+            "signals_with_all": cond.get("signals_with_all"),
+            "signals_without": cond.get("signals_without"),
         })
 
     return new_conditions, result
