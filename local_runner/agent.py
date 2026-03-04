@@ -412,10 +412,10 @@ GRADING:
 - **C**: Hard to see the pattern, or stock barely moved after entry
 - **F**: No double top visible, or stock went UP after entry
 
-Respond in this exact format:
+IMPORTANT: Your ENTIRE response must be ONLY these 3 lines. No headers, no markdown, no essays. Just these 3 lines:
 VERDICT: APPROVE or REJECT
 GRADE: A, B, C, or F
-REASONING: 2-3 sentences about what you see. Be specific.
+REASONING: 2-3 sentences max.
 
 APPROVE grades A and B. REJECT grades C and F.""",
 }
@@ -502,9 +502,9 @@ def review_pending_samples():
                         cwd=chart_directory,
                     )
                     output = result.stdout.strip()
-                    verdict = "REJECT"
+                    verdict = None
                     grade = ""
-                    reasoning = output
+                    reasoning = ""
 
                     for line in output.split("\n"):
                         up = line.strip().upper()
@@ -519,6 +519,25 @@ def review_pending_samples():
                             rest = output[idx:].strip()
                             if rest:
                                 reasoning += " " + rest
+
+                    # Fallback: if no VERDICT: line found, scan for keywords
+                    if verdict is None:
+                        out_upper = output.upper()
+                        if "APPROVE" in out_upper and "REJECT" not in out_upper:
+                            verdict = "APPROVE"
+                        elif "REJECT" in out_upper:
+                            verdict = "REJECT"
+                        elif "GRADE: A" in out_upper or "GRADE: B" in out_upper:
+                            verdict = "APPROVE"
+                        elif "GRADE: C" in out_upper or "GRADE: F" in out_upper:
+                            verdict = "REJECT"
+                        else:
+                            verdict = "REJECT"
+
+                    # If no structured reasoning, use first 300 chars of output
+                    if not reasoning:
+                        reasoning = output[:300]
+
                     if grade:
                         reasoning = f"[{grade}] {reasoning}"
                 except subprocess.TimeoutExpired:
