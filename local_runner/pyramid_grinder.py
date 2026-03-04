@@ -1038,9 +1038,9 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
                 print(f"\n  Validating examples after D1...")
                 if not validate_examples(example_dfs, all_so_far, expr_cache=expr_cache):
                     print(f"\n{'!'*80}")
-                    print(f"VALIDATION FAILED after D1 — aborting.")
+                    print(f"VALIDATION FAILED after D1 — dropping D1 conditions, continuing.")
                     print(f"{'!'*80}")
-                    return None, None
+                    new_conditions = []  # discard D1 conditions that broke validation
 
             continue
 
@@ -1093,9 +1093,10 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
             print(f"\n  Validating examples after {tier_name}...")
             if not validate_examples(example_dfs, all_so_far, expr_cache=expr_cache):
                 print(f"\n{'!'*80}")
-                print(f"VALIDATION FAILED after {tier_name} — aborting.")
+                print(f"VALIDATION FAILED after {tier_name} — dropping {tier_name} conditions, continuing.")
                 print(f"{'!'*80}")
-                return None, None
+                # Roll back only the conditions added by this tier
+                new_conditions = new_conditions[:-len(tier_new_conds)]
         else:
             if tier_result.get("skipped"):
                 print(f"  {tier_name}: Skipped ({tier_result.get('reason', 'no candidates')})")
@@ -1231,8 +1232,11 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             )
 
             if new_conds is None:
-                # Validation failed inside pass
-                return None
+                # Should not happen — _run_single_pass no longer aborts
+                # but guard defensively: skip this pass, continue
+                print(f"  WARNING: pass returned None — skipping, continuing with next pass")
+                new_conds = []
+                tier_results = {}
 
             pass_time = time.time() - t_pass
             all_conditions.extend(new_conds)
@@ -1291,9 +1295,9 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             print(f"\n  Validating examples after D1...")
             if not validate_examples(example_dfs, all_conditions, expr_cache=expr_cache):
                 print(f"\n{'!'*80}")
-                print(f"VALIDATION FAILED after D1 — aborting.")
+                print(f"VALIDATION FAILED after D1 — dropping D1 conditions, continuing.")
                 print(f"{'!'*80}")
-                return None
+                all_conditions = []  # discard D1 conditions that broke validation
 
         # Historical tiers
         for tier_name, n_bars, description in TIERS[1:]:
@@ -1338,9 +1342,10 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 print(f"\n  Validating examples after {tier_name}...")
                 if not validate_examples(example_dfs, all_conditions, expr_cache=expr_cache):
                     print(f"\n{'!'*80}")
-                    print(f"VALIDATION FAILED after {tier_name} — aborting.")
+                    print(f"VALIDATION FAILED after {tier_name} — dropping {tier_name} conditions, continuing.")
                     print(f"{'!'*80}")
-                    return None
+                    # Roll back only the conditions added by this tier
+                    all_conditions = all_conditions[:-len(new_conds)]
             else:
                 if tier_result.get("skipped"):
                     print(f"  {tier_name}: Skipped ({tier_result.get('reason', 'no candidates')})")

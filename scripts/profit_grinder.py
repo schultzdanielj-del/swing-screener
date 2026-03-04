@@ -282,47 +282,20 @@ def generate_thresholds(values, n_thresholds=N_THRESHOLDS):
     return result
 
 
-def grind_profits(example_entries, forward_matrices, expr_names,
-                  ohlcv_cache, direction, n_thresholds=N_THRESHOLDS,
-                  min_bar=1):
-    """
-    Brute-force all cache expressions x thresholds x directions.
+# ============================================================
+# Parallel worker for grind_profits
+# ============================================================
+def _grind_expr_chunk(args):
+    """Worker: grind a chunk of expressions. Returns list of ProfitCandidate dicts."""
+    (expr_indices, expr_names, forward_matrices,
+     fwd_closes, fwd_dates, example_entries,
+     direction, n_thresholds, min_bar) = args
 
-    For each candidate, find first forward bar where condition triggers,
-    measure entry_high -> exit_close in ADR.
-
-    RULE: 100% example pass — hardcoded, no exceptions.
-    """
     n_examples = len(example_entries)
-    n_exprs = len(expr_names)
+    candidates = []
 
-    # Pre-build forward close arrays and date arrays for move + date computation
-    fwd_closes = []
-    fwd_dates = []
-    for ex in example_entries:
-        df = ohlcv_cache.get(ex.ticker)
-        start = ex.entry_bar_idx + 1
-        end = start + ex.n_forward
-        fwd_closes.append(df["close"].values[start:end].astype(np.float64))
-        # Date strings for exit date reporting
-        all_dates = [str(d)[:10] for d in df["date"].values]
-        fwd_dates.append(all_dates[start:end])
-
-    print(f"\n  Grinding {n_exprs:,} expressions x ~{n_thresholds} thresholds x 2 directions")
-    print(f"  Benchmark: entry bar high -> exit bar close (ADR)")
-    print(f"  Requirement: ALL {n_examples} examples must trigger (100%, no exceptions)")
-
-    t0 = time.time()
-    tested = 0
-    passed = 0
-    all_candidates = []
-
-    for expr_i in range(n_exprs):
-        if (expr_i + 1) % 1000 == 0:
-            elapsed = time.time() - t0
-            rate = (expr_i + 1) / elapsed if elapsed > 0 else 0
-            print(f"    [{expr_i + 1}/{n_exprs}] {rate:.0f} expr/s  "
-                  f"{passed} candidates  {tested:,} tested")
+    for expr_i in expr_indices:
+        expr_name = expr_names[expr_i]
 
         # Gather forward values for this expression across all examples
         example_series = []
@@ -337,23 +310,30 @@ def grind_profits(example_entries, forward_matrices, expr_names,
                 all_values.append(vals)
 
         if len(example_series) < n_examples:
-            continue  # can't reach 100% if any example has no data
-
+            continue
         if not all_values:
             continue
 
         combined = np.concatenate(all_values)
-        thresholds = generate_thresholds(combined, n_thresholds)
+        clean = combined[~np.isnan(combined)]
+        if len(clean) < 5:
+            continue
+        pcts = np.linspace(5, 95, n_thresholds)
+        thresholds_raw = np.percentile(clean, pcts)
+        seen = set()
+        thresholds = []
+        for t in thresholds_raw:
+            t_r = round(float(t), 6)
+            if t_r not in seen:
+                seen.add(t_r)
+                thresholds.append(t_r)
         if not thresholds:
             continue
 
-        expr_name = expr_names[expr_i]
-
         for thresh in thresholds:
             for dir_label, dir_op in [(">=", "ge"), ("<=", "le")]:
-                tested += 1
                 exit_bars = []
-                exit_dates = []
+                exit_dates_out = []
                 move_adrs = []
                 capture_effs = []
                 triggered = 0
@@ -373,16 +353,13 @@ def grind_profits(example_entries, forward_matrices, expr_names,
                             if bar < len(closes):
                                 exit_close = float(closes[bar])
                                 exit_date = dates[bar] if bar < len(dates) else ""
-
                                 if direction == "short":
                                     move = (ex.entry_high - exit_close) / ex.adr_at_entry
                                 else:
                                     move = (exit_close - ex.entry_high) / ex.adr_at_entry
-
                                 cap_eff = move / ex.mfe_adr if ex.mfe_adr > 0 else 0.0
-
                                 exit_bars.append(bar)
-                                exit_dates.append(exit_date)
+                                exit_dates_out.append(exit_date)
                                 move_adrs.append(move)
                                 capture_effs.append(cap_eff)
                                 triggered += 1
@@ -395,13 +372,12 @@ def grind_profits(example_entries, forward_matrices, expr_names,
                 if triggered < n_examples:
                     continue
 
-                passed += 1
-                all_candidates.append(ProfitCandidate(
+                candidates.append(ProfitCandidate(
                     expression=expr_name,
                     direction=dir_label,
                     threshold=round(thresh, 6),
                     exit_bars=exit_bars,
-                    exit_dates=exit_dates,
+                    exit_dates=exit_dates_out,
                     move_adrs=[round(m, 4) for m in move_adrs],
                     capture_effs=[round(e, 4) for e in capture_effs],
                     n_triggered=triggered,
@@ -414,9 +390,70 @@ def grind_profits(example_entries, forward_matrices, expr_names,
                     avg_bars_to_exit=round(float(np.mean(exit_bars)), 1),
                 ))
 
+    return candidates
+
+
+def grind_profits(example_entries, forward_matrices, expr_names,
+                  ohlcv_cache, direction, n_thresholds=N_THRESHOLDS,
+                  min_bar=1, workers=None):
+    """
+    Brute-force all cache expressions x thresholds x directions.
+    Parallel across all cores — splits expression range into chunks.
+
+    RULE: 100% example pass — hardcoded, no exceptions.
+    """
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    workers = workers or max((os.cpu_count() or 1) - 1, 1)
+    n_examples = len(example_entries)
+    n_exprs = len(expr_names)
+
+    # Pre-build forward close and date arrays (small, passed to workers)
+    fwd_closes = []
+    fwd_dates = []
+    for ex in example_entries:
+        df = ohlcv_cache.get(ex.ticker)
+        start = ex.entry_bar_idx + 1
+        end = start + ex.n_forward
+        fwd_closes.append(df["close"].values[start:end].astype(np.float64))
+        all_dates = [str(d)[:10] for d in df["date"].values]
+        fwd_dates.append(all_dates[start:end])
+
+    print(f"\n  Grinding {n_exprs:,} expressions x ~{n_thresholds} thresholds x 2 directions")
+    print(f"  Benchmark: entry bar high -> exit bar close (ADR)")
+    print(f"  Requirement: ALL {n_examples} examples must trigger (100%, no exceptions)")
+    print(f"  Workers: {workers}")
+
+    # Split expressions into chunks — one chunk per worker
+    chunk_size = max(1, n_exprs // workers)
+    chunks = []
+    for i in range(0, n_exprs, chunk_size):
+        chunks.append(list(range(i, min(i + chunk_size, n_exprs))))
+
+    t0 = time.time()
+    all_candidates = []
+
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_grind_expr_chunk, (
+                chunk, expr_names, forward_matrices,
+                fwd_closes, fwd_dates, example_entries,
+                direction, n_thresholds, min_bar
+            )): chunk_i
+            for chunk_i, chunk in enumerate(chunks)
+        }
+        done = 0
+        for future in as_completed(futures):
+            chunk_candidates = future.result()
+            all_candidates.extend(chunk_candidates)
+            done += 1
+            if done % max(len(chunks) // 5, 1) == 0 or done == len(chunks):
+                elapsed = time.time() - t0
+                pct = done / len(chunks) * 100
+                print(f"    {pct:.0f}%  [{elapsed:.0f}s]  {len(all_candidates)} candidates so far")
+
     elapsed = time.time() - t0
-    print(f"\n  Done: tested {tested:,} conditions in {elapsed:.1f}s")
-    print(f"  Passed 100% filter: {passed:,} candidates")
+    print(f"\n  Done in {elapsed:.1f}s  —  {len(all_candidates):,} candidates passed 100% filter")
 
     # Sort by median capture efficiency (primary), then median ADR (secondary)
     all_candidates.sort(
@@ -424,7 +461,6 @@ def grind_profits(example_entries, forward_matrices, expr_names,
         reverse=True
     )
     return all_candidates
-
 
 # ============================================================
 # Display
@@ -664,6 +700,7 @@ def main():
         example_entries, forward_matrices, expr_names,
         ohlcv_cache, direction,
         n_thresholds=args.n_thresholds,
+        workers=args.workers,
     )
 
     # Validate — 100% pass is hardcoded in grinder but double-check
