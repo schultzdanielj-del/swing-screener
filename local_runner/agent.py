@@ -488,7 +488,21 @@ def review_pending_samples():
                     
                     system = "You are a stock chart reviewer. You ONLY output exactly 3 lines. No markdown, no headers, no essays. Just these 3 lines:\nVERDICT: APPROVE or REJECT\nGRADE: A, B, C, or F\nREASONING: one sentence"
                     
-                    review_prompt = f"Read the image file '{chart_filename}' in the current directory.\n\n{prompt}"
+                    review_prompt = f"""Read the image file '{chart_filename}' in the current directory.
+
+{prompt}
+
+YOUR RESPONSE MUST BE EXACTLY 3 LINES. NOTHING ELSE. NO MARKDOWN. NO HEADERS. NO ANALYSIS. JUST THESE 3 LINES:
+VERDICT: APPROVE
+GRADE: A
+REASONING: Clear double top with clean LSP and strong breakdown.
+
+OR:
+VERDICT: REJECT
+GRADE: F
+REASONING: No visible double top pattern.
+
+START YOUR RESPONSE WITH THE WORD VERDICT"""
                     
                     if claude_cmd == "npx":
                         cli_args = ["npx", "@anthropic-ai/claude-code", "-p", review_prompt,
