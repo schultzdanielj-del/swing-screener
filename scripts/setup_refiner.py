@@ -134,7 +134,29 @@ def load_conditions(setup_type, conditions_file=None):
 
 
 def load_exit_condition(setup_type):
-    """Load best exit condition from signal_exit_grinder output."""
+    """Load best exit condition.
+
+    Priority:
+      1. profit_grind/profit_{setup}.json  — produced by profit_grinder.py (Step 4 script 1)
+      2. signal_exit_grinder output        — fallback
+    """
+    # 1. Profit grinder output (Step 4 script 1)
+    profit_path = os.path.join(REPO_ROOT, "data", "profit_grind", f"profit_{setup_type}.json")
+    if os.path.exists(profit_path):
+        with open(profit_path) as f:
+            pdata = json.load(f)
+        top = pdata.get("top_conditions", [])
+        if top:
+            best = top[0]
+            ec = {
+                "expression": best.get("expression"),
+                "threshold": best.get("threshold"),
+                "direction": best.get("direction", "<="),
+            }
+            print(f"  Exit (profit grind): {ec['expression']} {ec['direction']} {ec['threshold']}")
+            return ec
+
+    # 2. Fallback: signal_exit_grinder output
     search_dirs = [
         os.path.join(REPO_ROOT, "data", "signal_exit_grinder"),
         os.path.join(REPO_ROOT, "data"),
@@ -144,36 +166,34 @@ def load_exit_condition(setup_type):
         exact = os.path.join(d, f"exit_{setup_type}.json")
         if os.path.exists(exact):
             with open(exact) as f:
-                data = json.load(f)
-            top = data.get("top_conditions", [data]) if "top_conditions" in data else [data]
+                edata = json.load(f)
+            top = edata.get("top_conditions", [edata]) if "top_conditions" in edata else [edata]
             best = top[0]
             ec = {
                 "expression": best.get("expression", best.get("name")),
                 "threshold": best.get("threshold"),
                 "direction": best.get("direction", "<="),
             }
-            print(f"  Exit: {ec['expression']} {ec['direction']} {ec['threshold']}")
+            print(f"  Exit (signal exit grind): {ec['expression']} {ec['direction']} {ec['threshold']}")
             return ec
         for p in sorted(glob.glob(os.path.join(d, f"exit_{setup_type}_*.json")),
-                         key=os.path.getmtime, reverse=True):
+                        key=os.path.getmtime, reverse=True):
             with open(p) as f:
-                data = json.load(f)
-            top = data.get("top_conditions", [data]) if "top_conditions" in data else [data]
+                edata = json.load(f)
+            top = edata.get("top_conditions", [edata]) if "top_conditions" in edata else [edata]
             best = top[0]
             ec = {
                 "expression": best.get("expression", best.get("name")),
                 "threshold": best.get("threshold"),
                 "direction": best.get("direction", "<="),
             }
-            print(f"  Exit: {ec['expression']} {ec['direction']} {ec['threshold']}  "
+            print(f"  Exit (signal exit grind): {ec['expression']} {ec['direction']} {ec['threshold']}  "
                   f"({os.path.basename(p)})")
             return ec
     raise FileNotFoundError(
         f"No exit condition found for {setup_type}.\n"
-        f"  Run: python scripts/signal_exit_grinder.py --setup {setup_type}"
+        f"  Run: python scripts/profit_grinder.py --setup {setup_type}"
     )
-
-
 def load_examples(setup_type):
     try:
         r = requests.get(f"{RAILWAY_URL}/api/examples/{setup_type}", timeout=30)
