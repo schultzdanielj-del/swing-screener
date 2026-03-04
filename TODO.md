@@ -6,7 +6,21 @@ Latest pyramid grind (grind #4): **86 conditions, 168 signals, peak 4/day (weekl
 
 AI vetting pipeline operational — Claude Code reviews chart images, sentiment-based verdict parsing.
 
-Profit grinder built (`scripts/profit_grinder.py`) — benchmarks from entry bar high, expression cache only, outputs per-example exit dates for blackout filter. NOT YET RUN.
+### Step 4: Setup Grinder — ALL SCRIPTS BUILT, READY TO RUN
+
+All sub-step scripts complete. Stage isolation enforced — no script overwrites any other stage's outputs.
+
+| Sub-step | Script | Output |
+|----------|--------|--------|
+| 1. Profit Grinder | `scripts/profit_grinder.py` | `data/profit_grind/profit_{setup}.json` |
+| 2. Blackout Re-grind | `pyramid_grinder.py --blackout` | `cache/pyramid_results_{setup}_blackout.json` |
+| 3+4. Prune + Filter | `scripts/setup_refiner.py` | `data/setup_refiner/refined_{setup}.json` |
+
+```bash
+python scripts/profit_grinder.py --setup dtss
+python local_runner/pyramid_grinder.py --setup dtss --blackout --beam 10000 --depth 100 --peak-target 3
+python scripts/setup_refiner.py --setup dtss
+```
 
 ### Pipeline Steps
 
@@ -17,7 +31,7 @@ Profit grinder built (`scripts/profit_grinder.py`) — benchmarks from entry bar
 | 2 | Signal Brute Forcing | signal_brute | Complete — grind #4 done |
 | 3 | Sample Expansion | sample_expansion | 168 signals to vet |
 | 3b | AI Sample Review | sample_review | Working |
-| **4** | **Setup Grinder** | setup_grinder | **NEXT — build this** |
+| **4** | **Setup Grinder** | setup_grinder | **Scripts built — READY TO RUN** |
 | 5 | Market Grinder | market_grind | After Setup Grinder |
 
 ---
