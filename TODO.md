@@ -1,35 +1,24 @@
 # TODO — Swing Screener (2026-03-04)
 
-## Current State — DTSS SIGNAL GRIND DONE, MFE CAPTURE NEXT
+## Current State
 
 Latest pyramid grind (grind #4): **86 conditions, 168 signals, peak 4/day (weekly pass) / 11/day (5yr), 59/59 examples pass, 14.1 min runtime.** 62 examples in Railway DB (59 resolved in grinder — BRK-B, SMMT, VUZI not in 5yr cache).
 
-AI vetting pipeline operational — Claude Code reviews chart images, sentiment-based verdict parsing. 8/19 approved in first batch.
+AI vetting pipeline operational — Claude Code reviews chart images, sentiment-based verdict parsing.
 
-Exit grinder: `slope_xavgc21_off7_adr14 <= -1.123253` — median 5.8 ADR capture, floor 1.9 ADR, avg 21 bars to exit.
+Profit grinder built (`scripts/profit_grinder.py`) — benchmarks from entry bar high, expression cache only, outputs per-example exit dates for blackout filter. NOT YET RUN.
 
 ### Pipeline Steps
 
 | # | Step | Server ID | Status |
 |---|------|-----------|--------|
-| 0 | Nightly Refresh | nightly | Works (6 steps) |
+| 0 | Nightly Refresh | nightly | Works |
 | 1 | Optimal Samples | optimal_samples | 62 DTSS examples |
 | 2 | Signal Brute Forcing | signal_brute | Complete — grind #4 done |
 | 3 | Sample Expansion | sample_expansion | 168 signals to vet |
-| 3b | AI Sample Review | sample_review | Working — Claude Code + sentiment parsing |
-| 4 | MFE Capture | mfe_capture | **NEXT: Entry bar grind + MFE capture grind** |
-| 5 | Market Grinder | market_grind | After MFE capture |
-
-### Vetting Flow
-
-Vet signals (YES/MAYBE/NO) in Sample Expansion
-  -> YES picks go to pending_examples table
-Agent auto-reviews pending every 15s via Claude Code CLI
-  -> AI verdict (APPROVE/REJECT/UNKNOWN) + reasoning stored in DB
-  -> Sentiment analysis extracts verdict from essay-style output
-Check Optimal Samples > Pending tab
-  -> User APPROVE or REJECT each pick
-  -> Approved = example created | Rejected = removed
+| 3b | AI Sample Review | sample_review | Working |
+| **4** | **Setup Grinder** | setup_grinder | **NEXT — build this** |
+| 5 | Market Grinder | market_grind | After Setup Grinder |
 
 ---
 
@@ -50,71 +39,48 @@ Pass breakdown (grind #4):
 
 ---
 
-## NEXT — Priority Order
+## NEXT — Step 4: Setup Grinder
 
-### 1. Entry Bar Grinder (NEW — Part of MFE Capture)
+Step 4 in the UI is a single step called "Setup Grinder" that runs the full loop internally:
 
-**The missing piece.** Signal fires on some bar. We need to find the ACTUAL ENTRY BAR — the bar where you pull the trigger.
+### Sub-steps (run in order, no user intervention between them):
 
-**Architecture:**
-- Input: 62 examples with known entry dates + 168 grinder signals
-- Grind target: the ENTRY BAR ITSELF across all examples
-- Find conditions that are true ON the entry bar that distinguish it from surrounding signal bars
-- Apply as additional filter on the 168 signals
-- Result: signals that pass = "entry is TODAY" (not "setup exists somewhere nearby")
+**1. Profit Grinder** (`scripts/profit_grinder.py`)
+- Already built. Run exit grind from entry bar HIGH across all examples
+- Outputs: exit condition + per-example exit dates
+- Exit dates feed the blackout filter
 
-**Why this matters:** Can't have 50 potentials across 10 setups all waiting 5 days to fire. Too much data. Need "scan fires today, enter tomorrow morning."
+**2. Blackout Filter → Re-grind** (matrix_builder.py change + pyramid_grinder re-run)
+- Matrix builder loads profit grinder output
+- Masks entry→exit bars per ticker per setup (post-entry bars excluded from universe)
+- Re-runs pyramid grinder on clean universe
+- Produces new condition set that can't fire on post-entry noise
 
-**This is a brand new grind** — same architecture as pyramid grinder but different target. Not the bar before entry, not a window. THE bar.
+**3. Condition Pruning** (new script: `scripts/condition_pruner.py`)
+- Leave-one-out on every condition in the new condition set
+- Measure filter power: how much of the remaining universe each condition eliminates
+- Drop conditions below minimum filter power threshold (~10-15% universe reduction)
+- Tightens scan, reduces overfitting
 
-### 2. MFE Capture Grind (Exit Optimization)
+**4. Signal Filter + Vetting** (existing `scripts/signal_filter.py` + UI)
+- Run signal filter on pruned condition set
+- Upload signals to Railway for chart vetting
+- User vets in Sample Expansion UI
+- New YES picks → examples → loop back to step 1 until convergence
 
-Current exit: `slope_xavgc21_off7_adr14 <= -1.123253` (median 5.8 ADR, floor 1.9 ADR)
-Optimize entry bar high to exit for maximum capture.
-
-### 3. Market Grinder (Step 5)
-
-After entry bar + MFE capture are done:
-- Correlate signal outcomes with market regime
-- Find which conditions produce highest win rate
-- Even 50% win rate with losers under 1 ADR and winners at 5-6+ ADR = massive profit factor
-- 20 quality setups/year on a rare setup is a great result
-- Target: 2.5%/month compounding, mid 8 figures in 20 years
-
-### 4. Next Setup: 3-4DB
-
-21 examples already loaded. Run through same pipeline after DTSS is fully complete.
+### Convergence condition:
+Re-grind produces signals already in the example set → no new examples added → done.
 
 ---
 
-## AI Vetting System (Built 2026-03-04)
+## AI Vetting System
 
 ### Architecture
 - Agent polls pending_examples table every 15s
 - Downloads chart PNG via `/api/chart/{setup}/{ticker}/{date}`
-- Charts saved to `cache/review_charts/` (project dir, not temp)
-- Calls `claude -p` from chart directory with `--allowedTools Read`
-- `--system-prompt` forces review context
-- Parses essay-style output via sentiment analysis (positive/negative signal counting)
+- Calls `claude -p` with `--allowedTools Read`
+- Parses essay-style output via sentiment analysis
 - Posts verdict + reasoning to Railway
-
-### Prompt
-Checks 3 things the grinder CAN'T do visually:
-1. Is there a visible double top?
-2. Is the LSP (left side pivot / prior high) clean?
-3. Did the stock actually break down after entry?
-
-Grades A/B/C/F. Approves A+B, rejects C+F.
-
-### Anti-Discretion-Drift
-AI review prevents the user from loosening criteria during long vetting sessions. The AI applies the same criteria consistently regardless of how many charts have been reviewed.
-
-### Known Issues (Resolved)
-- Claude Code ignores strict output format -> fixed with sentiment-based parsing
-- `--image` flag doesn't exist in claude CLI -> reference file by path in prompt
-- Windows `shell=True` needed for both detection AND call
-- Temp directory permissions -> use project `cache/review_charts/` dir
-- Essay responses defaulting to REJECT -> fixed fallback logic
 
 ### Endpoints
 - `GET /api/pending/{setup}` — list pending items
@@ -122,25 +88,19 @@ AI review prevents the user from loosening criteria during long vetting sessions
 - `POST /api/pending/{setup}/{id}/approve` — user approves, creates example
 - `POST /api/pending/{setup}/{id}/reject` — user rejects, removes
 - `POST /api/pending/{setup}/reset-reviews` — clear all reviews for retry
-- `POST /api/pending/{setup}/backfill` — recover lost YES picks from vetting file
-- `GET /api/chart/{setup}/{ticker}/{date}` — chart PNG for any ticker+date
+- `POST /api/pending/{setup}/backfill` — recover lost YES picks
+- `GET /api/chart/{setup}/{ticker}/{date}` — chart PNG
 
 ---
 
 ## The Math
 
-**Why this works even with low win rate:**
-- Losers: solidly under 1 ADR (entry method gives tight stops)
-- Winners: median 5.8 ADR capture
+- Losers: solidly under 1 ADR
+- Winners: median 5.8 ADR capture (from signal_exit_grinder)
 - Even 36% win rate -> positive expectancy
-- 50% win rate (after market grinder filtering) -> massive profit factor
-- 10% position size, single 25% net winner/month = 2.5% compounding
+- 50% win rate (after market grinder) -> massive profit factor
+- 10% position size, 25% net winner/month = 2.5% compounding
 - 20 years of 2.5%/month = mid 8 figures
-
-**The pipeline delivers:**
-1. Entry bar grind -> tells you WHEN to enter (today, not "sometime this week")
-2. MFE capture grind -> tells you WHERE to exit
-3. Market grinder -> tells you WHICH signals to take (juices win rate)
 
 ---
 
