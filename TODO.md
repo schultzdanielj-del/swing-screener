@@ -22,16 +22,21 @@ Latest results:
 | 3 | Sample Expansion | sample_expansion | 168 signals to vet |
 | 3b | AI Sample Review | sample_review | Working |
 | **4a** | **Exit Grinder** | setup_grinder_a | **Done — single-stage chosen (70% median capture)** |
-| **4b** | **Setup Grinder** | setup_grinder_b | **Blackout grind done. Refiner needs re-run (bug fixed).** |
+| **4b** | **Setup Grinder** | setup_grinder_b | **Blackout grind done (87 conds, 164 signals). Refiner signal reading fixed. Condition pruning NOT working — filter_power missing from pyramid JSON. Needs fix before Step 4 is complete.** |
 | 5 | Market Grinder | market_grind | Next |
 
 ---
 
-## IMMEDIATE NEXT — Re-run setup_refiner then Step 5
+## IMMEDIATE NEXT — Fix condition pruning in setup_refiner
 
-1. `python scripts/setup_refiner.py --setup dtss` — re-run with fix (reads 164 signals from pyramid JSON, not re-scanning)
-2. Review refined signals in vetting UI
-3. Build Step 5: Market Grinder
+87 conditions with zero pruning is too many — overfitting risk. The pruner skips because `filter_power` isn't in the pyramid JSON. Two options:
+
+1. Compute filter_power inside setup_refiner directly — leave-one-out on each condition using the expression cache (remove condition, count how many more universe bars pass → that's its filter power). This keeps all computation local and fast.
+2. Add filter_power to pyramid_grinder output and re-run the blackout grind.
+
+Option 1 is better — no re-grind needed, setup_refiner becomes self-contained.
+
+After pruning works: re-run refiner, verify condition count drops, confirm remaining conditions still pass 100% of examples, then Step 4 is truly done. Step 5: Market Grinder follows.
 
 ---
 
