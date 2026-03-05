@@ -260,7 +260,7 @@ def load_all_examples(raw_examples, direction, max_forward, universe_cache, expr
     t0 = time.time()
 
     metas = []
-    matrices = {}
+    matrix_list = []
     with ProcessPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(_load_one_example, task): task[0] for task in tasks}
         done = 0
@@ -271,22 +271,14 @@ def load_all_examples(raw_examples, direction, max_forward, universe_cache, expr
             if err:
                 print(f"  [{done}/{len(tasks)}] {err}")
             elif meta_dict:
+                # Assign sequential index matching position in metas/matrix_list
+                meta_dict["idx"] = len(metas)
                 meta = ExampleMeta(**meta_dict)
                 metas.append(meta)
-                matrices[meta.idx] = matrix_dict
+                matrix_list.append(matrix_dict)
                 print(f"  [{done}/{len(tasks)}] {ticker:8s} OK — "
                       f"{meta.n_forward} fwd bars, MFE={meta.mfe_pct:+.2f}% "
                       f"({meta.mfe_adr:.1f} ADR), {len(matrix_dict)} exprs")
-
-    # Re-index metas sequentially
-    for new_idx, meta in enumerate(metas):
-        old_idx = meta.idx
-        meta.idx = new_idx
-        if old_idx != new_idx:
-            matrices[new_idx] = matrices.pop(old_idx)
-
-    # Convert matrices dict to list
-    matrix_list = [matrices.get(i) for i in range(len(metas))]
 
     elapsed = time.time() - t0
     print(f"\n{len(metas)} examples loaded in {elapsed:.1f}s")
@@ -829,11 +821,22 @@ def main():
 
     # Collect expression names that exist in at least one matrix
     all_expr_names_in_matrices = set()
+    # Also check how many matrices have each expression
+    expr_example_counts = {}
     for matrix in all_matrices:
         if matrix:
             all_expr_names_in_matrices.update(matrix.keys())
+            for k in matrix.keys():
+                expr_example_counts[k] = expr_example_counts.get(k, 0) + 1
     active_expr_names = sorted(all_expr_names_in_matrices)
     print(f"Active expressions (non-NaN in at least one example): {len(active_expr_names):,}")
+
+    # Check how many expressions exist in ALL examples
+    n_ex = len(metas)
+    in_all = sum(1 for k, v in expr_example_counts.items() if v >= n_ex)
+    in_most = sum(1 for k, v in expr_example_counts.items() if v >= n_ex - 1)
+    print(f"  In all {n_ex} examples: {in_all:,}")
+    print(f"  In {n_ex-1}+ examples: {in_most:,}")
 
     # 4. Find valid conditions (parallel)
     conditions = find_all_valid_conditions_parallel(
