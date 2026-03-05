@@ -2505,9 +2505,9 @@ async def get_pipeline_steps():
                 if profit_path.exists():
                     with open(profit_path) as f:
                         pd_ = json.load(f)
-                    top = pd_.get("top_conditions", [{}])
-                    if top:
-                        eff = top[0].get("floor_capture_eff", None)
+                    results = pd_.get("results", [])
+                    if results:
+                        eff = results[0].get("floor_capture_eff", None)
                         if eff is not None:
                             parts.append(f"single floor {eff:.0%}")
                 if ms_path.exists():
@@ -2843,20 +2843,23 @@ async def get_exit_grind_results(setup_type: str):
     if profit_path.exists():
         with open(profit_path) as f:
             pd_ = json.load(f)
-        top = pd_.get("top_conditions", [{}])
-        best = top[0] if top else {}
+        results = pd_.get("results", [])
+        best = results[0] if results else {}
+        adr_list = [x for x in (best.get("adr_captured") or []) if x is not None]
+        eff_list = [x for x in (best.get("capture_effs") or []) if x is not None]
         out["single"] = {
-            "expression": best.get("expression"),
+            "expression": best.get("expr_name"),
             "direction": best.get("direction"),
             "threshold": best.get("threshold"),
             "floor_capture_eff": best.get("floor_capture_eff"),
             "median_capture_eff": best.get("median_capture_eff"),
-            "mean_capture_eff": best.get("mean_capture_eff"),
-            "floor_adr": best.get("floor_adr"),
-            "median_adr": best.get("median_adr"),
-            "mean_adr": best.get("mean_adr"),
+            "mean_capture_eff": best.get("avg_pct_move"),
+            "floor_adr": min(adr_list) if adr_list else None,
+            "median_adr": float(sorted(adr_list)[len(adr_list)//2]) if adr_list else None,
+            "mean_adr": float(sum(adr_list)/len(adr_list)) if adr_list else None,
             "avg_bars_to_exit": best.get("avg_bars_to_exit"),
             "n_examples": pd_.get("n_examples"),
+            "results": results,
         }
 
     if ms_path.exists():
