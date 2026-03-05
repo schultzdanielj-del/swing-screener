@@ -168,8 +168,6 @@ def load_exit_condition(setup_type):
                         }
                         print(f"  Exit (single-stage, profit grind): {ec['expression']} {ec['direction']} {ec['threshold']}")
                         return ec
-                        print(f"  Exit (single-stage, profit grind): {ec['expression']} {ec['direction']} {ec['threshold']}")
-                        return ec
                 raise FileNotFoundError(
                     f"Choice is 'single' but no profit grind output found.\n"
                     f"  Run: python scripts/profit_grinder.py --setup {setup_type}"
@@ -272,30 +270,219 @@ def load_examples(setup_type):
 # PRUNER — leave-one-out filter power
 # ══════════════════════════════════════════════════════════════
 
-def prune_conditions(conditions, cache, examples, expr_cache, workers, min_power):
-    """Prune weak conditions using filter_power already saved in the pyramid JSON.
+def _validate_examples(examples, conditions, cache, expr_cache):
+    """Verify all examples pass the given conditions using expr cache.
 
-    No rescanning. No expression cache. Pure JSON math — runs in under a second.
-    filter_power = (signals_without_this_condition - signals_with_all) / signals_with_all
-    Conditions below min_power get dropped unless an example depends on them.
+    Returns list of failure descriptions (empty = all pass).
+    Uses same computation path as pyramid_grinder.validate_examples().
+    """
+    cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
+    failed = []
+
+    for ex in examples:
+        ticker = ex.get("ticker")
+        entry_date = ex.get("entryDate", ex.get("entry_date"))
+        df = cache.get(ticker)
+        if df is None:
+            failed.append(f"{ticker}: not in OHLCV cache")
+            continue
+
+        if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+            df = df.copy()
+            df["date"] = pd.to_datetime(df["date"])
+
+        # Scan bar = day before entry
+        entry_dt = pd.to_datetime(entry_date)
+        match = df[df["date"] < entry_dt]
+        if len(match) == 0:
+            failed.append(f"{ticker}: no scan bar before {entry_date}")
+            continue
+        scan_idx = match.index[-1]
+
+        dates_cache, data_cache = expr_cache.get_ticker(ticker)
+        if dates_cache is None:
+            failed.append(f"{ticker}: not in expr cache")
+            continue
+        if len(dates_cache) != len(df):
+            failed.append(f"{ticker}: bar count mismatch")
+            continue
+        if scan_idx >= len(data_cache):
+            failed.append(f"{ticker}: scan_idx out of range")
+            continue
+
+        cached_row = data_cache[scan_idx, :]
+        for cond in conditions:
+            col_idx = cache_name_to_idx.get(cond["name"])
+            if col_idx is None:
+                failed.append(f"{ticker}: condition {cond['name']} not in cache")
+                break
+            val = float(cached_row[col_idx])
+            if np.isnan(val) or val < cond["low"] or val > cond["high"]:
+                failed.append(
+                    f"{ticker} FAILS {cond['name']}: "
+                    f"{val:.4f} not in [{cond['low']:.4f}, {cond['high']:.4f}]"
+                )
+                break
+
+    return failed
+
+
+# ── Leave-one-out parallel workers ──
+
+_loo_cache = None
+_loo_expr_cache_dir = None
+_loo_cond_col_indices = None
+_loo_cond_lows = None
+_loo_cond_highs = None
+
+
+def _init_loo_worker(cache, expr_cache_dir, cond_col_indices, cond_lows, cond_highs):
+    global _loo_cache, _loo_expr_cache_dir, _loo_cond_col_indices
+    global _loo_cond_lows, _loo_cond_highs
+    _loo_cache = cache
+    _loo_expr_cache_dir = expr_cache_dir
+    _loo_cond_col_indices = cond_col_indices
+    _loo_cond_lows = cond_lows
+    _loo_cond_highs = cond_highs
+
+
+def _load_loo_npz(ticker):
+    safe = ticker.replace("/", "_").replace("\\", "_")
+    path = os.path.join(_loo_expr_cache_dir, f"{safe}.npz")
+    if not os.path.exists(path):
+        return None
+    try:
+        loaded = np.load(path, allow_pickle=True)
+        return loaded["data"]
+    except Exception:
+        return None
+
+
+def _loo_count_batch(args):
+    """Count passing bars for a batch of tickers, optionally dropping one condition.
+
+    args: (tickers, drop_idx)  — drop_idx=None means full scan (baseline).
+    Returns int: total passing bar-rows.
+    """
+    tickers, drop_idx = args
+    total = 0
+    n_conds = len(_loo_cond_col_indices)
+    for ticker in tickers:
+        df = _loo_cache.get(ticker)
+        if df is None or len(df) < 100:
+            continue
+        data = _load_loo_npz(ticker)
+        if data is None or len(data) != len(df):
+            continue
+        n_bars = len(df)
+        mask = np.ones(n_bars, dtype=bool)
+        mask[:50] = False
+        for i in range(n_conds):
+            if i == drop_idx:
+                continue
+            col_idx = _loo_cond_col_indices[i]
+            if col_idx is None:
+                mask[:] = False
+                break
+            series = data[:, col_idx]
+            in_range = (series >= _loo_cond_lows[i]) & (series <= _loo_cond_highs[i])
+            in_range[np.isnan(series)] = False
+            mask &= in_range
+            if not np.any(mask):
+                break
+        total += int(np.sum(mask))
+    return total
+
+
+def _loo_scan_universe(cache, cond_col_indices, cond_lows, cond_highs,
+                       expr_cache_dir, workers, drop_idx=None):
+    """Scan full universe counting passing bars, optionally dropping one condition."""
+    tickers = list(cache.keys())
+    batch_size = max(1, len(tickers) // (workers * 4))
+    batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
+
+    total = 0
+    with ProcessPoolExecutor(
+        max_workers=workers,
+        initializer=_init_loo_worker,
+        initargs=(cache, expr_cache_dir, cond_col_indices, cond_lows, cond_highs)
+    ) as pool:
+        futures = [pool.submit(_loo_count_batch, (batch, drop_idx)) for batch in batches]
+        for f in as_completed(futures):
+            total += f.result()
+    return total
+
+
+def prune_conditions(conditions, cache, examples, expr_cache, workers, min_power):
+    """Prune weak conditions using leave-one-out filter power computed from expr cache.
+
+    For each condition:
+      1. Count universe bars passing ALL conditions (baseline)
+      2. Count universe bars passing all conditions EXCEPT this one (without)
+      3. filter_power = (without - baseline) / baseline
+         → fraction of extra bars that leak through when this condition is removed
+      4. Drop conditions below min_power threshold
+
+    Conditions an example depends on are never dropped (required-condition check).
+    Final pruned set must still pass 100% of examples.
     """
     n_conds = len(conditions)
-    has_power = all(c.get("filter_power") is not None for c in conditions)
+    expr_cache_dir = os.path.join(CACHE_DIR, "expr_series")
 
-    if not has_power:
-        print(f"  WARNING: filter_power not in pyramid JSON — skipping prune.")
-        print(f"  Re-run pyramid grinder to get per-condition filter_power.")
+    # Build arrays for workers
+    cond_col_indices = [expr_cache.expr_index(c["name"]) for c in conditions]
+    cond_lows = np.array([c["low"] for c in conditions], dtype=np.float64)
+    cond_highs = np.array([c["high"] for c in conditions], dtype=np.float64)
+
+    # Check all expressions resolve
+    missing = [conditions[i]["name"] for i in range(n_conds) if cond_col_indices[i] is None]
+    if missing:
+        print(f"  WARNING: {len(missing)} conditions not in expr cache: {missing[:5]}")
+        print(f"  These will block all bars — consider re-building expr cache.")
+
+    # Step 1: baseline scan (all conditions)
+    print(f"\n  Computing baseline (all {n_conds} conditions)...")
+    t0 = time.time()
+    baseline = _loo_scan_universe(
+        cache, cond_col_indices, cond_lows, cond_highs,
+        expr_cache_dir, workers, drop_idx=None
+    )
+    print(f"  Baseline: {baseline:,} passing bar-rows  ({time.time()-t0:.0f}s)")
+
+    if baseline == 0:
+        print(f"  WARNING: 0 bars pass all conditions — cannot compute filter power.")
         kept = [{**c, "filter_power": None} for c in conditions]
         return kept, [], []
 
+    # Step 2: leave-one-out for each condition
+    print(f"\n  Leave-one-out scan ({n_conds} conditions)...")
+    t0 = time.time()
+    filter_powers = []
+    for drop_idx in range(n_conds):
+        without = _loo_scan_universe(
+            cache, cond_col_indices, cond_lows, cond_highs,
+            expr_cache_dir, workers, drop_idx=drop_idx
+        )
+        fp = (without - baseline) / baseline if baseline > 0 else 0.0
+        filter_powers.append(fp)
+        elapsed = time.time() - t0
+        eta = (elapsed / (drop_idx + 1)) * (n_conds - drop_idx - 1)
+        print(f"    [{drop_idx+1:>3}/{n_conds}] {conditions[drop_idx]['name']:<50} "
+              f"power={fp:>8.1%}  without={without:>8,}  "
+              f"[{elapsed:.0f}s, ETA {eta:.0f}s]")
+
+    total_loo_time = time.time() - t0
+    print(f"  Leave-one-out complete: {total_loo_time:.0f}s total")
+
+    # Step 3: classify keep/drop
     kept, dropped, power_table = [], [], []
-    for cond in conditions:
-        fp = cond.get("filter_power", 0.0)
+    for i, cond in enumerate(conditions):
+        fp = filter_powers[i]
         flag = "KEEP" if fp >= min_power else "DROP"
         tier = cond.get("tier", "?")
-        cat  = cond.get("category", "?")[:16]
-        print(f"  {flag}  power={fp:+.3f}  [{tier:>4}][{cat:>16}] {cond['name']}")
-        entry = {**cond, "filter_power": fp}
+        cat = cond.get("category", "?")[:16]
+        print(f"  {flag}  power={fp:>8.1%}  [{tier:>4}][{cat:>16}] {cond['name']}")
+        entry = {**cond, "filter_power": round(fp, 6)}
         if fp >= min_power:
             kept.append(entry)
         else:
@@ -304,39 +491,44 @@ def prune_conditions(conditions, cache, examples, expr_cache, workers, min_power
             "name": cond["name"],
             "tier": tier,
             "category": cond.get("category", "?"),
-            "filter_power": fp,
+            "filter_power": round(fp, 6),
             "kept": fp >= min_power,
             "required_override": False,
         })
 
-    # Required-condition check: never drop a condition an example depends on
+    # Step 4: required-condition check — never drop what examples need
     if examples and dropped:
-        for i, cond in enumerate(conditions):
-            if cond in kept:
-                continue
-            without_conds = [c for c in conditions if c["name"] != cond["name"]]
+        reinstated = []
+        for dc in dropped:
+            without_conds = [c for c in conditions if c["name"] != dc["name"]]
             fails = _validate_examples(examples, without_conds, cache, expr_cache)
             if fails:
-                print(f"  REQUIRED (example fails without): {cond['name']}")
-                kept.append({**cond, "filter_power": cond.get("filter_power", 0.0)})
-                dropped = [c for c in dropped if c["name"] != cond["name"]]
+                print(f"  REQUIRED (example fails without): {dc['name']}")
+                kept.append(dc)
+                reinstated.append(dc["name"])
                 for pt in power_table:
-                    if pt["name"] == cond["name"]:
+                    if pt["name"] == dc["name"]:
                         pt["required_override"] = True
+                        pt["kept"] = True
+        dropped = [c for c in dropped if c["name"] not in reinstated]
 
     print(f"\n  Pruning: {n_conds} → {len(kept)} kept, {len(dropped)} dropped")
     if dropped:
         print(f"  Dropped: {[c['name'] for c in dropped]}")
 
-    # Final validation
+    # Step 5: final validation — pruned set must pass 100% of examples
     if examples:
         fails = _validate_examples(examples, kept, cache, expr_cache)
         if fails:
-            print(f"\n  VALIDATION FAILED on pruned set — falling back to full set.")
-            kept = list(conditions)
+            print(f"\n  VALIDATION FAILED on pruned set ({len(fails)} failures):")
+            for f in fails[:10]:
+                print(f"    {f}")
+            print(f"  Falling back to full condition set.")
+            kept = [{**c, "filter_power": round(filter_powers[i], 6)}
+                    for i, c in enumerate(conditions)]
             dropped = []
         else:
-            print(f"  OK: {len(examples)}/{len(examples)} examples pass pruned conditions")
+            print(f"  OK: all examples pass pruned conditions ({len(kept)} conditions)")
 
     return kept, dropped, power_table
 def _init_scan_worker(cache, conditions, expr_cache_dir, cond_col_indices):
@@ -766,53 +958,58 @@ def run_refiner(setup_type, conditions_file=None, min_power=DEFAULT_MIN_POWER,
             conditions, cache, examples, expr_cache, workers, min_power
         )
 
-    # ── Load signals from pyramid JSON (not re-scanning) ──
+    # ── Scan signals ──
+    # If conditions were pruned, we must re-scan the universe with the pruned set
+    # because fewer conditions means MORE signals can pass (superset of original).
+    # If no pruning, load from pyramid JSON directly.
     print(f"\n  {'─'*60}")
-    print(f"  PHASE 2: LOADING SIGNALS FROM PYRAMID RESULT")
+    print(f"  PHASE 2: SIGNAL SCAN")
     print(f"  {'─'*60}")
 
-    # Read final_signals from the last tier with data
-    with open(source_path) as f:
-        pyramid_data = json.load(f)
-    tier_results = pyramid_data.get("tier_results", {})
-    raw_signal_list = []
-    for key in sorted(tier_results.keys(), reverse=True):
-        tr = tier_results[key]
-        fs = tr.get("final_signals", [])
-        if fs:
-            raw_signal_list = fs
-            print(f"  Using {len(fs)} signals from tier '{key}'")
-            break
-
-    if not raw_signal_list:
-        print(f"  WARNING: No final_signals in pyramid result. Falling back to scan.")
-        raw_signal_list_fallback = scan_signals(cache, pruned, expr_cache, workers)
-        # Convert to signal format with bar_idx
-        raw_signals = raw_signal_list_fallback
+    if dropped:
+        print(f"  {len(dropped)} conditions pruned → re-scanning with {len(pruned)} conditions")
+        raw_signals = scan_signals(cache, pruned, expr_cache, workers)
         n_raw = len(raw_signals)
     else:
-        # Convert pyramid signals to setup_refiner format (need bar_idx)
-        raw_signals = []
-        for sig in raw_signal_list:
-            ticker = sig["ticker"]
-            date_str = sig["date"]
-            df = cache.get(ticker)
-            if df is None:
-                continue
-            if not pd.api.types.is_datetime64_any_dtype(df["date"]):
-                df["date"] = pd.to_datetime(df["date"])
-            date_matches = df.index[df["date"].dt.strftime("%Y-%m-%d") == date_str].tolist()
-            if not date_matches:
-                continue
-            bar_idx = date_matches[0]
-            raw_signals.append({
-                "ticker": ticker,
-                "date": date_str,
-                "bar_idx": int(bar_idx),
-                "close": float(df["close"].values[bar_idx]),
-            })
-        n_raw = len(raw_signals)
-        print(f"  Resolved {n_raw} signals with bar indices")
+        # No pruning — use pyramid signals directly
+        with open(source_path) as f:
+            pyramid_data = json.load(f)
+        tier_results = pyramid_data.get("tier_results", {})
+        raw_signal_list = []
+        for key in sorted(tier_results.keys(), reverse=True):
+            tr = tier_results[key]
+            fs = tr.get("final_signals", [])
+            if fs:
+                raw_signal_list = fs
+                print(f"  Using {len(fs)} signals from tier '{key}'")
+                break
+
+        if not raw_signal_list:
+            print(f"  WARNING: No final_signals in pyramid result. Falling back to scan.")
+            raw_signals = scan_signals(cache, pruned, expr_cache, workers)
+            n_raw = len(raw_signals)
+        else:
+            raw_signals = []
+            for sig in raw_signal_list:
+                ticker = sig["ticker"]
+                date_str = sig["date"]
+                df = cache.get(ticker)
+                if df is None:
+                    continue
+                if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+                    df["date"] = pd.to_datetime(df["date"])
+                date_matches = df.index[df["date"].dt.strftime("%Y-%m-%d") == date_str].tolist()
+                if not date_matches:
+                    continue
+                bar_idx = date_matches[0]
+                raw_signals.append({
+                    "ticker": ticker,
+                    "date": date_str,
+                    "bar_idx": int(bar_idx),
+                    "close": float(df["close"].values[bar_idx]),
+                })
+            n_raw = len(raw_signals)
+            print(f"  Resolved {n_raw} signals with bar indices")
 
     # ── Dedup ──
     deduped = deduplicate_signals(raw_signals)
