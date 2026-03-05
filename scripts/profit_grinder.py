@@ -473,37 +473,50 @@ def _find_base_expr_name(cond: dict, matrix: dict) -> Optional[str]:
 # Vectorized Threshold Testing
 # ============================================================
 
-def compute_move_at_bar(example: ExampleData, bar_idx: int) -> dict:
-    """Compute move metrics at a specific forward bar."""
-    abs_idx = example.entry_idx + bar_idx
-    if abs_idx >= len(example.df):
-        return None
-    exit_close = example.df["close"].iloc[abs_idx]
-    entry_high = example.entry_high
+def _build_move_arrays(examples: list, direction: str, min_bar: int) -> tuple:
+    """Precompute pct_move, adr_captured, capture_eff arrays for all examples × bars.
+    Returns (pct_arr, adr_arr, eff_arr) each shape (n_examples, max_bars).
+    No ExpressionEngine — pure numpy from OHLCV arrays.
+    """
+    n_examples = len(examples)
+    max_bars = max(ex.n_forward for ex in examples) + 1
 
-    if example.direction == "short":
-        raw_move = entry_high - exit_close
-        pct_move = raw_move / entry_high * 100
-    else:
-        entry_low = example.df["low"].iloc[example.entry_idx]
-        raw_move = exit_close - entry_low
-        pct_move = raw_move / entry_low * 100
+    pct_arr  = np.full((n_examples, max_bars), np.nan)
+    adr_arr  = np.full((n_examples, max_bars), np.nan)
+    eff_arr  = np.full((n_examples, max_bars), np.nan)
 
-    # ADR at entry for normalization
-    from scripts.expression_engine import ExpressionEngine
-    eng = ExpressionEngine(example.df)
-    adr_series = eng._adr(14).values
-    adr_val = adr_series[example.entry_idx]
-    adr_captured = raw_move / adr_val if adr_val > 0 else 0.0
+    for i, ex in enumerate(examples):
+        closes = ex.df["close"].values
+        highs  = ex.df["high"].values
+        lows   = ex.df["low"].values
+        entry_high = ex.entry_high
+        entry_idx  = ex.entry_idx
 
-    capture_eff = pct_move / example.mfe_pct if example.mfe_pct > 0 else 0.0
+        # ADR14 at entry — rolling mean of (high-low) over 14 bars
+        hl = highs - lows
+        start14 = max(0, entry_idx - 13)
+        adr_val = float(np.mean(hl[start14:entry_idx + 1]))
+        if adr_val <= 0:
+            adr_val = 1.0
 
-    return {
-        "exit_close": exit_close,
-        "pct_move": pct_move,
-        "adr_captured": adr_captured,
-        "capture_eff": capture_eff,
-    }
+        for bar in range(min_bar, ex.n_forward + 1):
+            abs_idx = entry_idx + bar
+            if abs_idx >= len(closes):
+                break
+            exit_close = closes[abs_idx]
+            if direction == "short":
+                raw_move = entry_high - exit_close
+                pct_move = raw_move / entry_high * 100
+            else:
+                entry_low = lows[entry_idx]
+                raw_move = exit_close - entry_low
+                pct_move = raw_move / entry_low * 100
+
+            pct_arr[i, bar] = pct_move
+            adr_arr[i, bar] = raw_move / adr_val
+            eff_arr[i, bar] = pct_move / ex.mfe_pct if ex.mfe_pct > 0 else 0.0
+
+    return pct_arr, adr_arr, eff_arr
 
 
 def generate_thresholds(values: np.ndarray, n_thresholds: int = 20) -> list:
@@ -523,133 +536,152 @@ def generate_thresholds(values: np.ndarray, n_thresholds: int = 20) -> list:
     return result
 
 
-def grind_exits(examples: list, all_matrices: list, expr_names: list,
-                direction: str = "short", n_thresholds: int = 20,
-                min_bar: int = 1,
-                top_n: int = 50) -> list:
-    """Grind all expressions × thresholds × directions.
-    
-    Vectorized: for each expression, stack all examples' series into a 2D array,
-    then test thresholds with numpy broadcasting.
-    
-    RULE: Only candidates that trigger on ALL examples can pass.
-    No exceptions — 100% example pass rate is hardcoded, not configurable.
-    """
-    n_examples = len(examples)
-    min_triggered = n_examples  # 100% — hardcoded, not configurable
-    
-    # Pre-compute move data for every example at every bar
-    # This avoids recomputing per-candidate
-    max_bars = max(ex.n_forward for ex in examples) + 1
-    move_cache = {}  # (example_idx, bar) → move dict
-    
-    print(f"\nPre-computing move data for {n_examples} examples × {max_bars} bars...")
-    t0 = time.time()
-    for i, ex in enumerate(examples):
-        for bar in range(min_bar, ex.n_forward + 1):
-            move = compute_move_at_bar(ex, bar)
-            if move:
-                move_cache[(i, bar)] = move
-    print(f"Move cache: {len(move_cache)} entries in {time.time()-t0:.1f}s")
+def _grind_chunk(args):
+    """Worker: grind a chunk of expressions. Returns list of result dicts."""
+    (expr_chunk, all_matrices, n_examples, n_thresholds, min_bar,
+     pct_arr, adr_arr, eff_arr) = args
 
-    all_candidates = []
-    n_exprs = len(expr_names)
+    import numpy as np
 
-    print(f"\nGrinding {n_exprs} expressions × ~{n_thresholds} thresholds × 2 directions...")
-    print(f"Requirement: ALL {n_examples} examples must trigger (100%, no exceptions)")
+    results = []
+    min_triggered = n_examples
 
-    t0 = time.time()
-    tested = 0
-    passed = 0
-
-    for expr_i, expr_name in enumerate(expr_names):
-        if (expr_i + 1) % 500 == 0:
-            elapsed = time.time() - t0
-            rate = (expr_i + 1) / elapsed if elapsed > 0 else 0
-            print(f"  [{expr_i+1}/{n_exprs}] {rate:.0f} expr/s, "
-                  f"{passed} candidates, {tested} tested")
-
-        # Gather this expression's values across all examples
-        all_values = []
+    for expr_name in expr_chunk:
         example_series = []
+        all_values = []
         for i, matrix in enumerate(all_matrices):
             if matrix is not None and expr_name in matrix:
-                series = matrix[expr_name]
+                series = np.asarray(matrix[expr_name], dtype=np.float64)
                 example_series.append((i, series))
                 vals = series[~np.isnan(series)]
                 if len(vals) > 0:
                     all_values.append(vals)
 
-        if len(example_series) < min_triggered:
-            continue
-
-        if not all_values:
+        if len(example_series) < min_triggered or not all_values:
             continue
 
         combined = np.concatenate(all_values)
-        thresholds = generate_thresholds(combined, n_thresholds)
-        if not thresholds:
+        clean = combined[~np.isnan(combined)]
+        if len(clean) < 5:
             continue
+        thresholds = np.unique(np.percentile(clean, np.linspace(5, 95, n_thresholds)))
 
-        # Test both directions
         for thresh in thresholds:
             for dir_test in ["above", "below"]:
-                tested += 1
-                
-                exit_bars = [-1] * n_examples
-                pct_moves = [np.nan] * n_examples
-                adr_captured = [np.nan] * n_examples
-                capture_effs = [np.nan] * n_examples
+                exit_bars = np.full(n_examples, -1, dtype=np.int32)
                 triggered = 0
 
                 for ex_idx, series in example_series:
-                    # Find first bar >= min_bar where condition triggers
                     for bar in range(min_bar, len(series)):
                         val = series[bar]
                         if np.isnan(val):
                             continue
                         hit = (val > thresh) if dir_test == "above" else (val < thresh)
                         if hit:
-                            key = (ex_idx, bar)
-                            if key in move_cache:
-                                move = move_cache[key]
-                                exit_bars[ex_idx] = bar
-                                pct_moves[ex_idx] = move["pct_move"]
-                                adr_captured[ex_idx] = move["adr_captured"]
-                                capture_effs[ex_idx] = move["capture_eff"]
-                                triggered += 1
+                            exit_bars[ex_idx] = bar
+                            triggered += 1
                             break
 
                 if triggered < min_triggered:
                     continue
 
-                valid_pcts = [p for p in pct_moves if not np.isnan(p)]
-                valid_effs = [e for e in capture_effs if not np.isnan(e)]
-                valid_bars = [b for b in exit_bars if b >= 0]
+                valid_mask = exit_bars >= 0
+                bars_valid = exit_bars[valid_mask]
+                pct_valid  = pct_arr[valid_mask, bars_valid]
+                adr_valid  = adr_arr[valid_mask, bars_valid]
+                eff_valid  = eff_arr[valid_mask, bars_valid]
 
-                passed += 1
-                all_candidates.append(ExitCandidate(
-                    expr_name=expr_name,
-                    direction=dir_test,
-                    threshold=thresh,
-                    exit_bars=exit_bars,
-                    pct_moves=pct_moves,
-                    adr_captured=adr_captured,
-                    capture_effs=capture_effs,
-                    examples_triggered=triggered,
-                    floor_pct_move=min(valid_pcts),
-                    median_pct_move=float(np.median(valid_pcts)),
-                    avg_pct_move=float(np.mean(valid_pcts)),
-                    floor_capture_eff=min(valid_effs),
-                    median_capture_eff=float(np.median(valid_effs)),
-                    avg_bars_to_exit=float(np.mean(valid_bars)),
-                ))
+                # Filter out NaN rows
+                ok = ~(np.isnan(pct_valid) | np.isnan(eff_valid))
+                if ok.sum() < min_triggered:
+                    continue
+
+                results.append({
+                    "expr_name": expr_name,
+                    "direction": dir_test,
+                    "threshold": round(float(thresh), 6),
+                    "exit_bars": exit_bars.tolist(),
+                    "pct_moves": pct_arr[:, 0].tolist(),  # placeholder — filled below
+                    "adr_captured": adr_valid[ok].tolist(),
+                    "capture_effs": eff_valid[ok].tolist(),
+                    "examples_triggered": int(triggered),
+                    "floor_pct_move": float(np.min(pct_valid[ok])),
+                    "median_pct_move": float(np.median(pct_valid[ok])),
+                    "avg_pct_move": float(np.mean(pct_valid[ok])),
+                    "floor_capture_eff": float(np.min(eff_valid[ok])),
+                    "median_capture_eff": float(np.median(eff_valid[ok])),
+                    "avg_bars_to_exit": float(np.mean(bars_valid[ok])),
+                    # full per-example arrays for save_results
+                    "_pct_full": [float(pct_arr[i, exit_bars[i]]) if exit_bars[i] >= 0 else float('nan') for i in range(n_examples)],
+                    "_adr_full": [float(adr_arr[i, exit_bars[i]]) if exit_bars[i] >= 0 else float('nan') for i in range(n_examples)],
+                    "_eff_full": [float(eff_arr[i, exit_bars[i]]) if exit_bars[i] >= 0 else float('nan') for i in range(n_examples)],
+                })
+
+    return results
+
+
+def grind_exits(examples: list, all_matrices: list, expr_names: list,
+                direction: str = "short", n_thresholds: int = 20,
+                min_bar: int = 1, top_n: int = 50,
+                workers: int = None) -> list:
+    """Grind all expressions × thresholds × directions. Parallel across all cores."""
+    import math
+    workers = workers or (os.cpu_count() or 8)
+    n_examples = len(examples)
+
+    print(f"\nPre-computing move arrays ({n_examples} examples × up to 120 bars)...")
+    t0 = time.time()
+    pct_arr, adr_arr, eff_arr = _build_move_arrays(examples, direction, min_bar)
+    print(f"  Done in {time.time()-t0:.1f}s")
+
+    n_exprs = len(expr_names)
+    print(f"\nGrinding {n_exprs:,} expressions × ~{n_thresholds} thresholds × 2 directions ({workers} workers)...")
+    print(f"Requirement: ALL {n_examples} examples must trigger (100%, no exceptions)")
+
+    # Split expressions into chunks — one per worker
+    chunk_size = max(1, math.ceil(n_exprs / workers))
+    chunks = [expr_names[i:i+chunk_size] for i in range(0, n_exprs, chunk_size)]
+
+    tasks = [(chunk, all_matrices, n_examples, n_thresholds, min_bar,
+              pct_arr, adr_arr, eff_arr) for chunk in chunks]
+
+    t0 = time.time()
+    all_raw = []
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_grind_chunk, task): i for i, task in enumerate(tasks)}
+        done = 0
+        for future in as_completed(futures):
+            chunk_results = future.result()
+            all_raw.extend(chunk_results)
+            done += 1
+            if done % 4 == 0 or done == len(chunks):
+                elapsed = time.time() - t0
+                print(f"  [{done}/{len(chunks)} chunks done, {len(all_raw)} candidates, {elapsed:.0f}s]")
 
     elapsed = time.time() - t0
-    print(f"\nDone: tested {tested:,} conditions in {elapsed:.1f}s")
-    print(f"Passed filter: {passed:,} candidates (>= {min_triggered} examples)")
+    print(f"\nDone in {elapsed:.1f}s — {len(all_raw):,} candidates passed 100% filter")
 
-    all_candidates.sort(key=lambda c: (c.median_pct_move, c.avg_pct_move), reverse=True)
+    # Convert raw dicts to ExitCandidate objects
+    all_candidates = []
+    for r in all_raw:
+        all_candidates.append(ExitCandidate(
+            expr_name=r["expr_name"],
+            direction=r["direction"],
+            threshold=r["threshold"],
+            exit_bars=r["exit_bars"],
+            pct_moves=r["_pct_full"],
+            adr_captured=r["_adr_full"],
+            capture_effs=r["_eff_full"],
+            examples_triggered=r["examples_triggered"],
+            floor_pct_move=r["floor_pct_move"],
+            median_pct_move=r["median_pct_move"],
+            avg_pct_move=r["avg_pct_move"],
+            floor_capture_eff=r["floor_capture_eff"],
+            median_capture_eff=r["median_capture_eff"],
+            avg_bars_to_exit=r["avg_bars_to_exit"],
+        ))
+
+    all_candidates.sort(key=lambda c: (c.floor_capture_eff, c.median_capture_eff), reverse=True)
     return all_candidates[:top_n]
 
 
@@ -907,6 +939,7 @@ def main():
         n_thresholds=args.n_thresholds,
         min_bar=args.min_bar,
         top_n=args.top_n,
+        workers=args.workers,
     )
 
     # 8. Report
