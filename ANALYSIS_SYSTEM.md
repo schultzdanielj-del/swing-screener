@@ -341,7 +341,121 @@ Uploads cleaned signal set to Railway for the next vetting pass (Step 3 / Sample
 
 When the blackout re-grind produces signals that are all already in the example set, the loop is done. No new examples → no re-grind needed → advance to Step 5.
 
-## Step 5: Entry Bar Grinder — When Exactly To Pull The Trigger
+---
+
+## Step 5: Market Grinder — What Market Conditions Favor This Setup?
+
+**Goal:** Find the market regimes where this setup's signals have the highest win rate. Given tonight's market conditions, output an expected win rate so you know whether to trust tonight's signals.
+
+**Why this matters:** The same setup may fire in both favorable and unfavorable conditions. The market grinder finds which conditions predict winners vs losers, letting you skip signals in bad regimes and size up in good ones.
+
+### Winner / Loser Classification
+
+Every deduped signal from Step 4b gets classified as winner or loser. The classification uses all available data, with vetting verdicts overriding auto-classification:
+
+| Signal type | Default classification | Override |
+|-------------|----------------------|----------|
+| Setup examples (confirmed by human vetting) | **WINNER** | — |
+| Exit-triggered signals (exit condition fired within window) | **WINNER** | Mark NO in Step 4 viewer → becomes LOSER |
+| No-exit signals (exit never triggered) | **LOSER** | — |
+
+**Key property:** More vetting = cleaner populations = better regime model. Every NO verdict on an exit-triggered signal removes a false winner. But the system works with zero vetting too — exit triggered / no-exit is a good-enough proxy at scale.
+
+**Why this scales:** A setup with 500 signals across 5yr doesn't need full manual vetting. Auto-classification handles all 500 and produces a valid regime model. Manual vetting improves signal quality but isn't required.
+
+**Alignment with the sample expansion loop:** Steps 2-4 can be re-run as many times as needed to grow the example library. Each re-grind tightens conditions and produces a new signal set. The market grinder always operates on the latest signal set — running it again after a re-grind automatically picks up the improved classifications.
+
+### Step 4 Signal Viewer (prerequisite UI)
+
+Before running the market grinder, the vetting UI needs a source toggle so all Step 4 signals (not just the 42 filtered ones) can be browsed and optionally vetted.
+
+**The Sample Expansion page (VettingPage) gets a Step 2 / Step 4 toggle:**
+
+- **Step 2 mode** (default): reads from `data/signal_filter/filtered_{setup}.json` — the 42 filtered signals, same as today. Full YES/NO/MAYBE vetting enabled.
+- **Step 4 mode**: reads from `data/setup_refiner/refined_{setup}.json` — all 132 deduped signals including the 86 with no exit trigger. YES/NO verdicts enabled (NO overrides feed market grinder). MAYBE disabled (not meaningful here).
+
+In Step 4 mode, signals with no exit trigger are visually distinguished in the list (dim color + "no exit" tag). The chart and navigation work identically.
+
+**New server endpoint required:**
+- `GET /api/setup-grinder/{setup_type}/signals` — reads `data/setup_refiner/refined_{setup_type}.json`, returns all signals with exit status. Returns both exit-triggered and no-exit signals. Attaches any existing vetting verdicts.
+
+### Market Regime Indicators
+
+At each signal date, compute SPY conditions using the 5yr OHLCV cache and expression cache:
+
+**Price/trend:**
+- SPY close vs SMA50, SMA200 (above/below)
+- SPY EMA8 vs EMA21 vs SMA50 (MA stack state)
+- SPY extension from SMA50 and SMA200 in ATR
+- SPY SMA50 slope (rising/flat/falling)
+- SPY SMA200 slope
+
+**Momentum:**
+- SPY RSI(14) — overbought/oversold/neutral
+- SPY ROC(20) — 1-month momentum
+- SPY % from 52-week high
+
+**Volatility:**
+- SPY ATR14 relative to its own 50-day average (expanding/contracting)
+- SPY 20-day realized volatility
+
+**Regime buckets:** Each indicator is bucketed into 3-5 quantile groups (e.g. SPY RSI: <40 / 40-60 / >60). Win rate is computed per bucket. Buckets with fewer than ~5 signals are flagged as low-confidence.
+
+### Grinder Method
+
+For each regime indicator + bucket combination:
+1. Count WINNER signals in bucket
+2. Count total signals in bucket
+3. Win rate = winners / total
+4. Compare to overall baseline win rate (winners / all signals)
+5. Score = win rate lift vs baseline
+
+Find combinations of regime conditions (2-3 at most) that produce the highest win rate lift with enough signals to be statistically meaningful.
+
+**Important:** This is a discriminative analysis, not a brute-force grind. The expression space is small (20-30 SPY indicators vs 12,175 ticker expressions). Exhaustive search over all pairs and triples is fast and doesn't require beam search.
+
+### Output
+
+**Per signal date:**
+- All regime indicator values at that date
+- Winner/loser classification
+- Source (example / exit-triggered / no-exit)
+
+**Regime model:**
+- Which indicator combinations predict high win rates
+- Win rate per regime bucket (with confidence intervals based on sample count)
+- Overall baseline win rate
+
+**Live prediction (current market):**
+- Compute all regime indicators for today's SPY bar
+- Output: expected win rate given current conditions
+- This feeds into the nightly watchlist — signals get a regime-adjusted win rate displayed alongside them
+
+### Script: `scripts/market_grinder.py` (NEW)
+
+**Input:**
+- `data/setup_refiner/refined_{setup}.json` — deduped signals with exit status
+- `data/vetting/vetting_{setup}.json` — manual verdicts (optional, applied as overrides)
+- `local_runner/cache/universe_ohlcv_5yr.pkl` — SPY OHLCV (ticker = "SPY")
+- Railway DB examples table — setup examples (always winners)
+
+**Output:**
+- `data/market_grind/market_{setup}.json` — regime model + per-signal classifications
+- Uploads to Railway via `POST /api/market-grind/{setup_type}/upload`
+
+**Agent step:** `market_grind` pipeline step, triggered from the Market Grinder UI page.
+
+### UI (Market Grinder Page)
+
+Replace the "coming soon" placeholder on Step 5 with:
+- RUN button (triggers agent)
+- Results display: regime model table showing win rate per bucket
+- Current market indicator: "Today's regime → expected win rate: X%"
+- Per-signal classification table (ticker, date, winner/loser, source)
+
+---
+
+## Step 6: Entry Bar Grinder — When Exactly To Pull The Trigger
 
 **Goal:** Find conditions that identify the EXACT entry bar across all examples. The signal grinder (Step 3) finds "this setup exists somewhere nearby." The entry bar grinder finds "enter TODAY."
 
@@ -369,11 +483,11 @@ After applying entry bar conditions to signals:
 
 ---
 
-## Step 6: Exit Management Grind — How Do the Examples Resolve?
+## Step 7: Exit Management Grind — How Do the Examples Resolve?
 
 **Goal:** Find the optimal TA-driven exit conditions on the validated examples' post-entry bars. No fixed bar counts, no arbitrary targets — the TA tells us when the move is done.
 
-**This step MUST come before the outcome grind (Step 7) because it defines what "the move played out" looks like.**
+**This step MUST come before the outcome grind (Step 8) because it defines what "the move played out" looks like.**
 
 ### How It Works
 
@@ -381,38 +495,6 @@ After applying entry bar conditions to signals:
 - **Data:** Post-entry OHLCV bars for each example, pulled from the 5yr cache. Open-ended — span enough bars to encompass all behavior (let the data tell us, not a predefined number).
 - **Method:** Brute force a comprehensive post-signal expression library (~4,000 expressions) against the forward price paths. The grinder finds which expression states correlate with the bars that captured the most move. The "exit candle" isn't an input — it's the output.
 - **Benchmark:** Entry bar high to exit bar close = captured move, in ADR. Simple, consistent, dependable.
-
-### Post-Signal Exit Expression Library (~6,400 expressions)
-
-Every expression is evaluated at each forward bar relative to the signal bar. The grinder tests every bar as a candidate exit.
-
-| Category | Count | What it measures |
-|----------|-------|-----------------|
-| **extension_dynamics** | 70 | Extension slope (1/3/5 bar), retrace from post-signal peak, acceleration — all 5 MAs × 2 norms |
-| **momentum_reversal** | 56 | RSI (5/7/9/14/21) + slopes, ROC (1-20), MACD histogram + slope, stochastic, ADX + DI spread |
-| **extension_from_ma** | 50 | Extension from 8/12/21 EMA, 50/200 SMA in ADR/ATR + historical ceiling ratios per ticker |
-| **ma_reclaim** | 40 | Close above MAs, bars since reclaim, failed reclaims, distance from MA, sequential reclaim pairs |
-| **entry_relative** | 39 | Delta from entry (extension, RSI, ADX, stoch, BB %B, MA dist) + ratio to entry (RVOL, BB bw, LSP/algo/AVWAP dist) |
-| **candle_character** | 33 | Bar range/body/wick ratios, gaps, rolling green/red % over 3/5/10/20 bars, streak counts |
-| **structural** | 28 | MA touches/closes-through, swing counts, lower-low sequences, higher-low formation |
-| **volume_character** | 26 | RVOL vs 10/20/50 avg, up/down volume ratios, OBV slope, volume vs signal bar, volume rank |
-| **range_compression** | 25 | ATR ratio vs entry, Bollinger bandwidth + %B + rank, inside bar counts, range contraction |
-| **algo_lines** | 20 | Distance/broken/touch_count to H-/L+ algo lines (rank 1-3), shallowest unbroken line dist/slope |
-| **lsp_structure** | 17 | Distance to LSP above/below (rank 1-3), broken, congestion, nearest unbroken level |
-| **move_captured** | 11 | Distance from entry high to current close/low in ADR/ATR/%, MFE, capture efficiency |
-| **retracement** | 10 | Retrace from MFE in ADR/%/ATR, position in post-signal range, bars since MFE, MFE expanding |
-| **avwap** | 9 | LSP-anchored AVWAP distance (above/below × rank 1-2), entry AVWAP distance, AVWAP slope, AVWAP crossed |
-| **time** | 6 | Bars since signal, move per bar, velocity accelerating/decelerating |
-| **relative_strength** | 6 | Stock vs SPY performance + slope over 5/10/20 bars |
-
-**446 unique per-bar expressions** → expanded by:
-- **~213 boolean conditions** (59 native + 154 threshold) × 4 aggregations × 7 windows → ~5,964 boolean expressions
-
-**Total: 6,410 post-signal expressions.**
-
-**Entry-relative expressions** are critical: `delta_from_entry` and `ratio_to_entry` ops let the grinder find conditions like "RSI rose 20 from entry" or "extension retraced 1.5 ADR from entry" — conditions that adapt to each stock's starting state rather than requiring one absolute threshold across all examples.
-
-**Structural detection systems (LSP, algo lines, AVWAPs)** are frozen at entry time. Levels are detected once from pre-entry history, then price is evaluated against those fixed levels at each forward bar. This is the same computation path used by the signal grinder's expression cache builder.
 
 ### Current Single-Stage Result (2026-03-01)
 
@@ -432,36 +514,11 @@ Best exit: `avg_range_atr_10b above 1.0541` — 71% median capture efficiency, 6
 2. **Secondary: Median capture efficiency** — typical outcome. Tiebreaker between conditions with similar floors.
 3. **Hard constraint: every example must capture > 0 ADR.** If any example loses money under an exit condition, that condition is eliminated. Zero tolerance.
 
-**Why not average/max?** With ~23 examples you can't trust the tails. A 15 ADR monster outlier skews the average but its real prevalence is unknown. Floor and median are honest with small samples — they tell you what reliably happens. As the example library grows (50, 100+), the tails become trustworthy and more aggressive extraction becomes statistically justified.
-
-**Plateau detection:** Find regions where many nearby exit conditions all produce similar high-floor scores. Plateaus = robust zones where small parameter changes don't break the system. Same principle as the signal grinder's peak-based plateau detection.
-
-### Process
-
-1. Pull post-entry OHLCV for each example from 5yr cache (open-ended forward window)
-2. Compute MFE per example (lowest low for shorts — the theoretical max captured move)
-3. At each forward bar, compute all ~4,032 post-signal expressions
-4. For each expression + threshold combination, identify which bar would be the exit bar (first bar where condition triggers)
-5. Measure captured move (entry high → exit bar close) and capture efficiency (captured / MFE)
-6. Score: rank by floor capture efficiency, break ties with median
-7. Plateau detection: find robust parameter regions
-8. Output: the exit conditions that mark "this move is done"
-
-### Output
-
-**Exit conditions** — the TA expression states that reliably mark "the move is done" with the highest floor capture efficiency across all examples. These become the base filter for Step 7: a Step 3 signal only counts as an outcome signal if these exit conditions eventually triggered on its post-signal bars.
-
-**Exit scoring report** — per-example breakdown showing captured move, MFE, efficiency, and which bar triggered the exit. Visual verification that the exits make TA sense.
-
-### Scales With Examples
-
-This step is designed to be re-run as examples grow. At 23 examples, floor/median scoring finds reliable-but-conservative exits. At 50+, the floor metric has more resolution and can accept tighter conditions. At 150+, tail behavior is well-characterized and the system can discover more aggressive extraction strategies that still maintain high floor scores. The scoring math adapts automatically — no manual tuning needed.
-
 ### Script: `scripts/exit_grinder.py` (NEW)
 
 ---
 
-## Step 7: Outcome Grind — Which Signals Are Clean, Tradeable Moves?
+## Step 8: Outcome Grind — Which Signals Are Clean, Tradeable Moves?
 
 **Goal:** Split the Step 3 signals into OUTCOME signals (clean, tradeable moves worth being in) and non-outcome signals (junk — didn't go far enough, choppy, untradeable). Uses a base filter followed by a brute force expression matrix grind against the signal-to-exit segment.
 
@@ -470,145 +527,69 @@ This step is designed to be re-run as examples grow. At 23 examples, floor/media
 - Step 6 exit conditions + exit grind results
 - Validated examples with entry dates
 
-### Phase 0: Example Signal Bars — ✅ HANDLED BY PYRAMID
-
-The pyramid grinder already outputs `example_signals` with signal bar dates for all examples. Phase 0 is no longer a separate step — the signal bar for each example is the bar where all conditions first fire leading up to the entry date. These are included in the pyramid's 576 total signals, tagged with `is_example: true`.
-
-**Key insight from build:** Signal conditions can fire on multiple consecutive bars for the same ticker. The 576 signals are not 576 unique trade opportunities — they're 576 "watchlist appearances" where some tickers appear multiple consecutive days. This is fine for outcome analysis (each signal bar gets its own forward window) and doesn't need deduplication.
-
-### Phase 1: Base Filter — Exit Triggered + Minimum Move — ✅ BUILT
+### Phase 1: Base Filter — Exit Triggered + Minimum Move
 
 Apply Step 6 exit conditions to all signals' post-signal bars. Two requirements to pass:
 
 1. **Exit condition triggers** on the forward bars
-2. **Minimum move threshold:** Exit bar close must be ≥ 1 ADR below signal bar close (shorts) or ≥ 1 ADR above signal bar close (longs). Uses ADR14 at the entry bar for normalization.
+2. **Minimum move threshold:** Exit bar close must be ≥ 1 ADR below signal bar close (shorts) or ≥ 1 ADR above signal bar close (longs).
 
-Both must be true. This is a simple, fast filter that trims the obvious garbage — signals where the exit technically triggered but the move was negligible, or the stock just chopped around the signal level without going anywhere meaningful.
-
-**Implementation:** `scripts/outcome_grinder.py` — fully local, no API calls. Reads pyramid signal grind + exit grind from `local_runner/grinds/{setup}/` via GrindStorage. Uses local 5yr OHLCV cache. Batch-processes signals grouped by ticker (one ADX computation per ticker). All date handling via positional iloc indexing — never calendar day arithmetic. ProcessPoolExecutor with all CPU cores.
-
-**Initial DTSS results (2026-02-26, needs investigation):**
-- 576 total signals → 187 outcomes (32.7%), 373 sub-ADR, 12 no trigger, 4 errors
-- 3 examples failed: WING (0.96 ADR, barely missed), ZIM (-1.78 ADR, wrong direction), FTAI (no trigger in 120 bars)
-- Outcome stats: median +12% move, median 3.5 ADR, median 0.845 capture efficiency
-- ⚠️ Results need investigation — 3 missing examples suggests exit condition or measurement issues
-
-Signals passing both = **candidate outcome signals** for Phase 2.
-Signals failing either = eliminated before the expensive grind.
+Both must be true.
 
 ### Phase 2: Outcome Expression Grinder
 
-Brute force expression matrix comparing validated examples vs all signals across their **signal-to-exit segments**. This is the core of Step 7.
+Brute force expression matrix comparing validated examples vs all signals across their signal-to-exit segments.
 
-- **Positives (examples):** Validated examples, measured from their signal bar (found in Phase 0) forward through exit
+- **Positives (examples):** Validated examples, measured from their signal bar forward through exit
 - **Universe:** All Step 3 signals, measured from signal bar forward through exit
-- **Expression library:** Generic **segment expressions** — characterize the quality of the move from signal to exit. NOT the same library as Step 3 (pre-signal snapshot) or Step 6 (exit detection at each bar). This library analyzes ranges of bars as a segment. Designed to work across all setup types — shorts and longs.
-- **Method:** Same pyramid grinder pattern — build matrices, grind for conditions that separate real runners from noise
-
-**What Phase 2 is asking:** "Was this a clean, tradeable move?" A real runner from signal to exit looks fundamentally different from a choppy mess that technically triggered the exit condition and passed the 1 ADR threshold. The grinder finds what separates them.
-
-### Outcome Segment Expression Library
-
-**This is a distinct expression library from Step 3 and Step 6.** It analyzes the entire signal-to-exit segment as a unit, not individual bars.
-
-Expressions are generic, normalized (ADR/ATR/%), and work across any setup type. Categories informed by ta_knowledge.md — to be designed after reading ta_knowledge.md.
-
-**Key design principle:** These expressions characterize *move quality and tradeability* across a range of bars. They answer: "how did price get from signal to exit?" Not "what does the chart look like at one point in time" (Step 3) or "is the move done yet" (Step 6).
-
-Categories TBD — will be built after reading ta_knowledge.md. Must capture move conviction, velocity, structural behavior, and tradeability without being bespoke to any single setup.
+- **Expression library:** Generic segment expressions — characterize the quality of the move from signal to exit
 
 ### Output
 
-**OUTCOME SIGNALS** — the subset of Step 3 signals where:
-1. The exit condition triggered (Phase 1)
-2. The move reached at least 1 ADR from signal bar close (Phase 1)
-3. The signal-to-exit segment matches example behavior (Phase 2)
-
-These are confirmed clean, tradeable moves.
-
-### Assembly Note
-
-Phase 0, Phase 1, and Phase 2 are built as separate blocks/scripts first, then chained together in the final outcome grinder pipeline. Each block is independently testable and re-runnable.
+**OUTCOME SIGNALS** — the subset of Step 3 signals where the exit triggered, the move reached at least 1 ADR, and the signal-to-exit segment matches example behavior.
 
 ### Script: `scripts/outcome_grinder.py`
 
-**Usage:** `python scripts/outcome_grinder.py --setup dtss` (auto-finds signal/exit from grinds storage)
-
-**Override:** `python scripts/outcome_grinder.py --setup dtss --pyramid path/to/signal.json --exit-grind path/to/exit.json`
-
-**Output:** Saves to `local_runner/grinds/{setup}/outcome/` via GrindStorage.
-
 ---
 
-## Step 8: Pre-Signal Refinement Grind — Did Step 3 Miss Anything?
+## Step 9: Pre-Signal Refinement Grind — Did Step 3 Miss Anything?
 
 **Goal:** Check if there are pre-signal (scan bar) conditions that distinguish outcome signals from non-outcome signals — conditions that Step 3 couldn't find because it was comparing examples vs the entire 4,000 ticker universe instead of comparing within the signal set.
 
 ### How It Works
 
 - **Universe:** All Step 3 signals (the full signal set)
-- **Examples:** OUTCOME signals from Step 7
+- **Examples:** OUTCOME signals from Step 8
 - **Expressions:** The existing 12,175 pre-signal expression library (same as Step 3)
-- **Method:** Standard pyramid grinder. Outcome signals as examples, all signals as universe. Find any conditions that predict winners *before the move even starts*.
+- **Method:** Standard pyramid grinder. Outcome signals as examples, all signals as universe.
 
-### Why This Can Find Things Step 3 Missed
-
-Step 3 compared 23 examples vs ~4,000 tickers. That's a very different discrimination problem than comparing outcome signals vs non-outcome signals within an already-filtered set of ~200 signals. A subtle pre-signal tell that's invisible when comparing against the full market may become obvious when comparing within the signal set.
-
-### What Happens With Results
-
-Any new conditions found get **added to Step 3's condition set**. Rerun Step 3 with the expanded conditions to produce **TOTAL SIGNALS**.
-
-**Critical property: TOTAL SIGNALS ≤ original signals, but OUTCOME SIGNALS don't change.** The new conditions only eliminate signals that were non-outcome anyway — the outcome signals pass by definition because they share those conditions with the examples. So the win rate goes up (fewer losers, same winners) without needing to re-run Steps 6-7.
-
-### Output
-
-- **TOTAL SIGNALS** — the tightened signal set (Step 3 conditions + Step 8 conditions)
-- **OUTCOME SIGNALS** — unchanged from Step 7
-- These two sets are the inputs to Step 9
+**Critical property: TOTAL SIGNALS ≤ original signals, but OUTCOME SIGNALS don't change.** The new conditions only eliminate signals that were non-outcome anyway — the outcome signals pass by definition. Win rate goes up without re-running Steps 7-8.
 
 ### Script: `scripts/presignal_grinder.py` (NEW)
 
 ---
 
-## Step 9: Environment Clustering — When Does This Setup Work Best?
+## Step 10: Environment Clustering — When Does This Setup Work Best?
 
 **Goal:** Find the market environments where the setup produces the highest win rate on quality moves.
 
 ### The Math
 
 - **Win rate** = OUTCOME SIGNALS ÷ TOTAL SIGNALS, computed per market environment
-- This is win rate on **quality moves only** — signals that ran like the examples. Small wins and scratches are NOT counted as wins. So the win rate will be lower than a traditional backtest but represents real, tradeable runner probability.
 - **EV** = (win rate × average captured distance under optimal exit) − (loss rate × average loss)
-  - Win rate comes from this step
-  - Average captured distance comes from Step 6 exit management
-  - Average loss comes from analyzing non-outcome signals (potential Step 10 refinement)
 
 ### Process
 
-1. **Compute market context at each signal** — SPY regime (above/below key MAs, extension, trend), breadth metrics, signal clustering density, VIX level, sector rotation state, etc.
-2. **Split signals by environment** — for each market context factor, bucket TOTAL SIGNALS into quantile groups
-3. **Compute win rate per bucket** — OUTCOME SIGNALS in bucket ÷ TOTAL SIGNALS in bucket
-4. **Find the high-EV environments** — which market conditions produce the highest concentration of outcome signals?
-5. **Optionally: check if optimal exit varies by environment** — from Step 6, does the best exit strategy differ in bear vs neutral vs bull markets?
+1. Compute market context at each signal — SPY regime, breadth, VIX, etc.
+2. Split signals by environment — bucket TOTAL SIGNALS into quantile groups
+3. Compute win rate per bucket — OUTCOME SIGNALS ÷ TOTAL SIGNALS in bucket
+4. Find high-EV environments
 
 ### Output
 
-**Environment scoring model** — given tonight's market context, what's the expected win rate and EV? This feeds into the presentation system for nightly signal ranking.
+**Environment scoring model** — given tonight's market context, what's the expected win rate and EV?
 
 ### Script: `scripts/environment_scorer.py` (NEW)
-
----
-
-## Future: Loss Reduction (Step 10, optional)
-
-**Goal:** Analyze non-outcome signals for common early post-signal behavior that predicts failure. If there's a consistent tell in the first bar or two after the signal fires, add near-entry management rules to cut losses faster and improve the loss side of EV.
-
-**Input:** Non-outcome signals from Step 7 (signals where the move didn't play out)
-**Method:** Profile the first 1-5 bars after each non-outcome signal. Look for common patterns — gap ups, immediate reclaim of a key level, volume failure, etc.
-**Output:** Early management rules that reduce average loss size without affecting winners.
-
-This is optional and may not be needed if Steps 6-9 already produce strong EV.
 
 ---
 
@@ -616,15 +597,18 @@ This is optional and may not be needed if Steps 6-9 already produce strong EV.
 
 | Step | What | Output |
 |------|------|--------|
-| 1 | **Load** | Data & TA knowledge — everything is already in the system |
-| 2 | **Receive** | User presents examples, entry dates, and setup context |
-| 3 | **Signal Grind** | THE GRINDER — pyramid grinder finds pre-signal conditions. Output: **SIGNALS** (~168/5yr for DTSS) |
-| 4 | **Sample Expansion** | Vet signals, AI review, expand example library, re-grind until stable |
-| 5 | **Entry Bar Grind** | Find conditions on THE entry bar that separate it from other signal bars. Output: **ENTRY SIGNALS** (actionable subset of SIGNALS) |
-| 6 | **Exit Management Grind** | Post-entry expression grind. Entry bar high → exit. Output: **EXIT CONDITIONS** |
-| 7 | **Outcome Grind** | Phase 1: exit filter + min move. Phase 2: segment expression grind. Output: **OUTCOME SIGNALS** |
-| 8 | **Pre-Signal Refinement** | Grind outcome vs non-outcome on pre-signal expressions. Output: **TOTAL SIGNALS** (tighter) |
-| 9 | **Environment Clustering** | OUTCOME SIGNALS ÷ TOTAL SIGNALS by market regime. Output: **EV per environment** |
+| 1 | **Load** | Data & TA knowledge |
+| 2 | **Receive** | Examples, entry dates, setup context |
+| 3 | **Signal Grind** | Pyramid grinder → **SIGNALS** (~132/5yr for DTSS) |
+| 4 | **Sample Expansion** | Vet signals, expand examples, re-grind until stable |
+| 4a | **Exit Grinder** | Single + multi-stage exit → **EXIT CONDITIONS** |
+| 4b | **Setup Grinder** | Blackout re-grind + refiner → clean signal set |
+| **5** | **Market Grinder** | SPY regime analysis → **WIN RATE per regime** |
+| 6 | **Entry Bar Grind** | Entry bar conditions → **ENTRY SIGNALS** |
+| 7 | **Exit Management Grind** | Post-entry expression grind → **EXIT CONDITIONS** |
+| 8 | **Outcome Grind** | Exit filter + segment grind → **OUTCOME SIGNALS** |
+| 9 | **Pre-Signal Refinement** | Outcome vs non-outcome → **TOTAL SIGNALS** (tighter) |
+| 10 | **Environment Clustering** | OUTCOME ÷ TOTAL by regime → **EV per environment** |
 
 **The pipeline delivers:**
 1. Signal grind → "this setup exists" (watchlist)
@@ -633,8 +617,6 @@ This is optional and may not be needed if Steps 6-9 already produce strong EV.
 4. Market grinder → "take THIS one" (selection, juices win rate)
 
 **The math:** Losers solidly under 1 ADR. Winners median 5.8+ ADR. Even 36% win rate = positive expectancy. Market grinder juicing to 50% = massive profit factor. 20 quality setups/year × 10 setups = plenty of opportunity. 2.5%/month compounding for 20 years = mid 8 figures.
-
-**Presentation:** A separate PRESENTATION_SYSTEM handles nightly data updates, signal detection, and rank-ordered EV presentation. That system consumes the outputs of this analysis system.
 
 ---
 
@@ -662,16 +644,6 @@ runs = gs.list_runs("signal")    # newest first
 print(gs.summary())              # all steps status
 ```
 
-### Grinder integration
-Each grinder saves via `gs.save()` and loads upstream dependencies via `gs.load()`. CLI flags (e.g. `--pyramid`, `--exit-grind`) override the default latest.json lookup.
-
-### Support files (NOT in grinds/)
-These stay in `local_runner/cache/`:
-- `brute_expressions.json` — expression library
-- `classification.json` — ETF classifier
-- `expr_series/` — expression series cache (~21 GB)
-- `universe_ohlcv_5yr.pkl` / `universe_ohlcv.pkl` — OHLCV caches
-
 ---
 
 ## Reference
@@ -687,14 +659,14 @@ These stay in `local_runner/cache/`:
   - `GET /api/universe/status` — universe data status
   - `GET /api/backtest/summary` — backtest results summary
   - `POST /api/backtest/run` — run backtest
-  - `POST /api/backtest/signals/upload` — desktop runner uploads signals per setup_type (replaces existing)
-  - `GET /api/backtest/signals/{setup_type}` — get signals for Historical tab (per-setup)
+  - `POST /api/backtest/signals/upload` — desktop runner uploads signals per setup_type
+  - `GET /api/backtest/signals/{setup_type}` — get signals for Historical tab
   - `GET /api/chart-image/{type}/{id}` — chart image
   - `GET /docs` — full Swagger API docs
   - **Nightly endpoints:**
-  - `POST /api/universe/append-daily` — incremental OHLCV update (checks DB max date vs yfinance latest trading day, fetches only missing days, rebuilds tradable_universe)
+  - `POST /api/universe/append-daily` — incremental OHLCV update
   - **Grinder endpoints:**
-  - `POST /api/grinder/start` — submit a grind job (setup_type, grind_level)
+  - `POST /api/grinder/start` — submit a grind job
   - `GET /api/grinder/jobs/pending` — pending jobs for agent pickup
   - `POST /api/grinder/status` — agent posts job status updates
   - `POST /api/grinder/progress` — agent posts progress updates
@@ -702,5 +674,9 @@ These stay in `local_runner/cache/`:
   - `GET /api/grinder/results/{setup_type}` — get latest results
   - `GET /api/grinder/agent/status` — check if desktop agent is online
   - `POST /api/grinder/agent/heartbeat` — agent heartbeat
+  - **Market Grinder endpoints (NEW):**
+  - `GET /api/setup-grinder/{setup_type}/signals` — all Step 4b signals with exit status
+  - `POST /api/market-grind/{setup_type}/upload` — upload market grinder results
+  - `GET /api/market-grind/{setup_type}/results` — get latest regime model
 - **Infrastructure:** SQLite on Railway persistent volume (/app/data)
 - **DB tables:** examples, ohlcv, extension, conditions, signal_analysis, universe_ohlcv, tradable_universe, scan_backtest, scan_backtest_clean, ticker_sectors, backtest_status, ticker_classification, universe_exclusions, backtest_signals
