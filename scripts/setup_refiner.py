@@ -563,8 +563,16 @@ def prune_conditions(conditions, cache, examples, expr_cache, workers, min_power
                         pt["required_override"] = True
                         pt["kept"] = True
         dropped = [c for c in dropped if c["name"] not in reinstated]
+        if reinstated:
+            print(f"  Reinstated {len(reinstated)} required conditions (examples depend on them)")
 
-    print(f"\n  Pruning: {n_conds} → {len(kept)} kept, {len(dropped)} dropped")
+    n_by_power = len([c for c in kept if c.get("filter_power") is not None and c["filter_power"] >= min_power])
+    n_required = len(kept) - n_by_power
+    print(f"\n  ┌─────────────────────────────────────────────┐")
+    print(f"  │  PRUNING SUMMARY                            │")
+    print(f"  │  {n_conds:>3} input → {len(kept):>3} kept, {len(dropped):>3} dropped       │")
+    print(f"  │  {n_by_power:>3} kept by power, {n_required:>3} required by examples │")
+    print(f"  └─────────────────────────────────────────────┘")
     if dropped:
         print(f"  Dropped: {[c['name'] for c in dropped]}")
 
