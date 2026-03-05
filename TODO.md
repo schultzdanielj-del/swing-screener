@@ -28,21 +28,24 @@ Final DTSS configuration:
 
 ## IMMEDIATE NEXT — Step 5: Market Grinder
 
-**Goal:** Find market conditions (SPY regime, breadth, VIX, etc.) that predict which signals become winners vs losers.
+See ANALYSIS_SYSTEM.md Step 5 for full spec. Two tasks to build before the grinder itself:
 
-**Input:**
-- 42 filtered signals with exit data (from refiner output)
-- 86 signals with no exit trigger (worth investigating — long runners or exit too tight?)
-- SPY OHLCV for regime classification at each signal date
-- Expression cache for market-level indicators
+### Task 1: Step 4 Signal Viewer (UI + Server)
 
-**Key question:** Of the signals over 5 years, which ones produced tradable moves? And what was the market doing when the good ones fired vs the bad ones?
+The Sample Expansion vetting page needs a **Step 2 / Step 4** source toggle so we can browse the full 132 Step 4 signals (not just the 42 filtered ones). This is the UI needed to audit signals for hidden examples and assign market grinder verdicts.
 
-**Prerequisites (all met):**
-- 87 signal conditions (Step 4b blackout grind)
-- Exit condition chosen (Step 4a)
-- 132 deduped signals with dates across 5yr history
-- 5yr OHLCV cache + expression cache
+**Server change:**
+- Add `GET /api/setup-grinder/{setup_type}/signals` — reads from `data/setup_refiner/refined_{setup_type}.json`, returns all signals including the 86 with no exit trigger
+
+**Frontend change (VettingPage):**
+- Add two-button toggle at top: **Step 2** (reads `/api/vetting/{setup}/signals`) vs **Step 4** (reads `/api/setup-grinder/{setup}/signals`)
+- In Step 4 mode: signals with no exit trigger shown in list with a visual indicator (e.g. dim color, "no exit" tag)
+- YES/NO verdicts still enabled in Step 4 mode — NO overrides feed the Market Grinder winner/loser classification
+- MAYBE disabled in Step 4 mode (not needed for market grinder)
+
+### Task 2: Market Grinder Script + UI
+
+See ANALYSIS_SYSTEM.md Step 5 for full spec.
 
 ---
 
@@ -63,6 +66,8 @@ Final DTSS configuration:
 1. **setup_refiner.py** — Rebuilt with single-pass LOO condition pruning via boolean matrix (61s for 87 conditions × 4,167 tickers). Cache-excluded tickers skipped in validation. NPZ column slicing (87 cols instead of 12,175). Phase 2 re-scans when conditions pruned.
 
 2. **Server endpoint fix reverted** — vetting signals endpoint reads from signal_filter path (sample expansion stage), not setup_refiner path. These are different pipeline stages.
+
+3. **Market Grinder design finalized** — winner/loser classification system documented. See ANALYSIS_SYSTEM.md Step 5.
 
 ---
 
@@ -91,7 +96,7 @@ Final DTSS configuration:
 
 **Without pruning (--skip-prune):** 87 conditions, 164 → 132 deduped → 44 with exit → 42 filtered. Median 4.46 ADR captured. This is the final Step 4 output.
 
-**86 of 132 deduped signals (66%) had no exit trigger within 120 bars.** Worth investigating — could be long-duration winners or the exit condition is too specific.
+**86 of 132 deduped signals (66%) had no exit trigger within 120 bars.** These are auto-classified as losers in the Market Grinder (unless manually overridden with a NO verdict in the Step 4 viewer).
 
 ---
 
