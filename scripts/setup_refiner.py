@@ -501,11 +501,14 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache):
                 val = exit_series[idx]
                 if np.isnan(val):
                     continue
-                if exit_dir == ">=" and val >= exit_thresh:
+                # Handle both formats: "below"/"above" (new) and "<="/">=" (old)
+                is_below = exit_dir in ("<=", "below")
+                is_above = exit_dir in (">=", "above")
+                if is_above and val >= exit_thresh:
                     exit_bar = fwd
                     exit_close = float(df["close"].values[idx])
                     break
-                elif exit_dir == "<=" and val <= exit_thresh:
+                elif is_below and val <= exit_thresh:
                     exit_bar = fwd
                     exit_close = float(df["close"].values[idx])
                     break
