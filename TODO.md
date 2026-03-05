@@ -2,13 +2,13 @@
 
 ## Current State
 
-**Step 4 rebuild complete.** All grinders now use the shared expression cache (12,175 expressions). Exit grinders exclude boolean aggregations (ct_, st_, tir_ — 2,413 monotonic expressions that fire early, not at move exhaustion). 9,762 expressions tested for exits.
+**Step 4 COMPLETE.** Signal conditions, exit condition, and blackout re-grind all finalized.
 
-Latest results:
-- **4a Exit Grinder (single-stage):** `slope_xavgc21_off7_adr14 below -1.1142` — 70% median capture, 24% floor, 20.7 avg bars, 59/59 examples
-- **4a Exit Grinder (multi-stage):** Running — results pending
-- **4b Blackout re-grind:** 87 conditions, 164 signals
-- **4b Setup Refiner:** Needs re-run after fix (was reading 790 signals from re-scan instead of 164 from pyramid JSON)
+Final DTSS configuration:
+- **Signal conditions:** 87 conditions from blackout re-grind (62 examples, 59 resolved)
+- **Exit condition:** `slope_xavgc21_off7_adr14 below -1.1142` — 70% median capture, 24% floor, 20.7 avg bars
+- **Refiner output:** 164 raw → 132 deduped → 44 with exit → 42 filtered signals across 5yr
+- **Condition pruning:** Built and functional (single-pass LOO, ~61s) but not applied — 87 conditions kept as-is. Pruning to 12 conditions was too aggressive (blew selectivity). The conditions are finding the right neighborhood; rejects are near-misses (triple tops, misshapen, untradable) not garbage.
 
 62 examples in Railway DB (59 resolved in grinder — BRK-B, SMMT, VUZI not in 5yr cache).
 
@@ -19,38 +19,34 @@ Latest results:
 | 0 | Nightly Refresh | nightly | Works |
 | 1 | Optimal Samples | optimal_samples | 62 DTSS examples |
 | 2 | Signal Brute Forcing | signal_brute | Complete — grind #4 done |
-| 3 | Sample Expansion | sample_expansion | 168 signals to vet |
-| 3b | AI Sample Review | sample_review | Working |
-| **4a** | **Exit Grinder** | setup_grinder_a | **Done — single-stage chosen (70% median capture)** |
-| **4b** | **Setup Grinder** | setup_grinder_b | **Blackout grind done (87 conds, 164 signals). Refiner signal reading fixed. Condition pruning NOT working — filter_power missing from pyramid JSON. Needs fix before Step 4 is complete.** |
-| 5 | Market Grinder | market_grind | Next |
+| 3 | Sample Expansion | sample_expansion | Complete — 3 vetting rounds done |
+| 4a | Exit Grinder | setup_grinder_a | **Done — single-stage chosen (70% median capture)** |
+| 4b | Setup Grinder | setup_grinder_b | **Done — 87 conditions, 164 signals, refiner working** |
+| **5** | **Market Grinder** | **market_grind** | **NEXT** |
 
 ---
 
-## IMMEDIATE NEXT — Fix condition pruning in setup_refiner
+## IMMEDIATE NEXT — Step 5: Market Grinder
 
-87 conditions with zero pruning is too many — overfitting risk. The pruner skips because `filter_power` isn't in the pyramid JSON. Two options:
+**Goal:** Find market conditions (SPY regime, breadth, VIX, etc.) that predict which signals become winners vs losers.
 
-1. Compute filter_power inside setup_refiner directly — leave-one-out on each condition using the expression cache (remove condition, count how many more universe bars pass → that's its filter power). This keeps all computation local and fast.
-2. Add filter_power to pyramid_grinder output and re-run the blackout grind.
+**Input:**
+- 42 filtered signals with exit data (from refiner output)
+- 86 signals with no exit trigger (worth investigating — long runners or exit too tight?)
+- SPY OHLCV for regime classification at each signal date
+- Expression cache for market-level indicators
 
-Option 1 is better — no re-grind needed, setup_refiner becomes self-contained.
+**Key question:** Of the signals over 5 years, which ones produced tradable moves? And what was the market doing when the good ones fired vs the bad ones?
 
-After pruning works: re-run refiner, verify condition count drops, confirm remaining conditions still pass 100% of examples, then Step 4 is truly done. Step 5: Market Grinder follows.
+**Prerequisites (all met):**
+- 87 signal conditions (Step 4b blackout grind)
+- Exit condition chosen (Step 4a)
+- 132 deduped signals with dates across 5yr history
+- 5yr OHLCV cache + expression cache
 
 ---
 
-## Grinder Architecture Changes (2026-03-05)
-
-**All grinders now use the shared expression cache.** Key changes this session:
-
-1. **profit_grinder.py** — Rewritten. Loads from expr cache .npz files (12,175 expressions). No ExitExprEngine, no exit_expressions.py, no exit_compute.py. Boolean aggregations excluded (9,762 tested). Median-primary scoring with 0.15 floor minimum. 50 thresholds (was 20).
-
-2. **multistage_exit_grinder.py** — Rewritten. Same cache-based approach. Fixed broken matrix re-indexing bug that caused 0 valid conditions. Boolean aggregations excluded.
-
-3. **setup_refiner.py** — Fixed to read `final_signals` from pyramid JSON instead of re-scanning universe (was finding 790 vs pyramid's 164). Fixed exit direction format (`below`/`above` vs `<=`/`>=`). Fixed `results` key (was `top_conditions`).
-
-4. **exit_expressions.py / exit_compute.py** — Still in repo but no longer imported by any grinder. Can be deleted in a cleanup pass.
+## Grinder Architecture
 
 ### Grinder Rules (NON-NEGOTIABLE)
 
@@ -61,6 +57,12 @@ After pruning works: re-run refiner, verify condition count drops, confirm remai
 5. All results must pass 100% of setup examples — none can abort or fail
 6. Expression cache is the single computation path
 7. Boolean aggregations (ct_, st_, tir_) excluded from exit grinders — monotonically increasing during trends, structurally wrong for exit detection
+
+### Changes This Session (2026-03-05)
+
+1. **setup_refiner.py** — Rebuilt with single-pass LOO condition pruning via boolean matrix (61s for 87 conditions × 4,167 tickers). Cache-excluded tickers skipped in validation. NPZ column slicing (87 cols instead of 12,175). Phase 2 re-scans when conditions pruned.
+
+2. **Server endpoint fix reverted** — vetting signals endpoint reads from signal_filter path (sample expansion stage), not setup_refiner path. These are different pipeline stages.
 
 ---
 
@@ -83,7 +85,19 @@ After pruning works: re-run refiner, verify condition count drops, confirm remai
 | Single | `slope_xavgc21_off7_adr14 below -1.1142` | 24% | 70% | 20.7 | **Chosen** — EMA21 slope flattening = move exhaustion |
 | Multi (old) | ext_ceil + bb_pctb | 30.9% | 59.7% | 19.5 | Not competitive |
 
-Key insight: Boolean aggregations (count_true, since_true, true_in_row) are monotonically increasing during trends — they always fire early. Excluding them let the grinder find `slope_xavgc21` which actually describes move exhaustion. Market grinder filtering to optimal conditions should push median capture toward 80%+.
+---
+
+## Refiner Results (2026-03-05)
+
+**Without pruning (--skip-prune):** 87 conditions, 164 → 132 deduped → 44 with exit → 42 filtered. Median 4.46 ADR captured. This is the final Step 4 output.
+
+**86 of 132 deduped signals (66%) had no exit trigger within 120 bars.** Worth investigating — could be long-duration winners or the exit condition is too specific.
+
+---
+
+## Condition Pruning (BUILT, NOT APPLIED)
+
+`setup_refiner.py --min-power 0.10` pruned 87 → 12 conditions. Too aggressive — individual filter power doesn't account for collective filtering. Would need iterative pruning to be useful, but unclear if pruning is needed at all. The 87-condition signal set finds the right neighborhood; rejects are near-misses not garbage.
 
 ---
 
@@ -104,17 +118,6 @@ Key insight: Boolean aggregations (count_true, since_true, true_in_row) are mono
 - Railway DB: 11M+ OHLCV rows, ~4,167 tickers
 - Earnings dates: batch scraped nightly
 - 62 DTSS examples (59 in cache, 3 excluded: BRK-B, SMMT, VUZI)
-
----
-
-## AI Vetting System
-
-### Architecture
-- Agent polls pending_examples table every 15s
-- Downloads chart PNG via `/api/chart/{setup}/{ticker}/{date}`
-- Calls `claude -p` with `--allowedTools Read`
-- Parses essay-style output via sentiment analysis
-- Posts verdict + reasoning to Railway
 
 ---
 
