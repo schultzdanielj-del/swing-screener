@@ -327,7 +327,13 @@ def _validate_examples(examples, conditions, cache, expr_cache):
     return failed
 
 
-# ── Leave-one-out parallel workers ──
+# ── Single-pass LOO workers ──
+# Instead of 87 separate universe scans, we do ONE pass per ticker:
+#   1. Load NPZ, evaluate all N conditions into a boolean matrix (n_bars × N)
+#   2. Compute baseline mask = AND of all columns
+#   3. For each condition i, the without-i count = sum(baseline | ~col_i)
+#      (removing a condition can only ADD passing bars, never remove them)
+# This gives us baseline + all N leave-one-out counts in a single data pass.
 
 _loo_cache = None
 _loo_expr_cache_dir = None
@@ -358,15 +364,16 @@ def _load_loo_npz(ticker):
         return None
 
 
-def _loo_count_batch(args):
-    """Count passing bars for a batch of tickers, optionally dropping one condition.
+def _loo_single_pass_batch(tickers):
+    """Single-pass LOO for a batch of tickers.
 
-    args: (tickers, drop_idx)  — drop_idx=None means full scan (baseline).
-    Returns int: total passing bar-rows.
+    Returns: (baseline_count, np.array of without_counts[n_conds])
+    All N leave-one-out counts computed in one data pass per ticker.
     """
-    tickers, drop_idx = args
-    total = 0
     n_conds = len(_loo_cond_col_indices)
+    batch_baseline = 0
+    batch_without = np.zeros(n_conds, dtype=np.int64)
+
     for ticker in tickers:
         df = _loo_cache.get(ticker)
         if df is None or len(df) < 100:
@@ -374,57 +381,88 @@ def _loo_count_batch(args):
         data = _load_loo_npz(ticker)
         if data is None or len(data) != len(df):
             continue
+
         n_bars = len(df)
-        mask = np.ones(n_bars, dtype=bool)
-        mask[:50] = False
+
+        # Build boolean matrix: (n_bars, n_conds) — True = bar passes condition
+        bool_matrix = np.ones((n_bars, n_conds), dtype=bool)
+        any_missing = False
         for i in range(n_conds):
-            if i == drop_idx:
-                continue
             col_idx = _loo_cond_col_indices[i]
             if col_idx is None:
-                mask[:] = False
-                break
+                bool_matrix[:, i] = False
+                any_missing = True
+                continue
             series = data[:, col_idx]
             in_range = (series >= _loo_cond_lows[i]) & (series <= _loo_cond_highs[i])
             in_range[np.isnan(series)] = False
-            mask &= in_range
-            if not np.any(mask):
-                break
-        total += int(np.sum(mask))
-    return total
+            bool_matrix[:, i] = in_range
 
+        # Skip first 50 bars
+        bool_matrix[:50, :] = False
 
-def _loo_scan_universe(cache, cond_col_indices, cond_lows, cond_highs,
-                       expr_cache_dir, workers, drop_idx=None):
-    """Scan full universe counting passing bars, optionally dropping one condition."""
-    tickers = list(cache.keys())
-    batch_size = max(1, len(tickers) // (workers * 4))
-    batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
+        if any_missing:
+            # If any condition can't resolve, baseline is 0 for this ticker
+            continue
 
-    total = 0
-    with ProcessPoolExecutor(
-        max_workers=workers,
-        initializer=_init_loo_worker,
-        initargs=(cache, expr_cache_dir, cond_col_indices, cond_lows, cond_highs)
-    ) as pool:
-        futures = [pool.submit(_loo_count_batch, (batch, drop_idx)) for batch in batches]
-        for f in as_completed(futures):
-            total += f.result()
-    return total
+        # Baseline = AND of all columns
+        baseline_mask = np.all(bool_matrix, axis=1)  # (n_bars,)
+        ticker_baseline = int(np.sum(baseline_mask))
+        batch_baseline += ticker_baseline
+
+        if ticker_baseline == 0:
+            # If no bars pass all conditions, removing any single condition
+            # might still yield 0 or very few. Need to compute properly.
+            # without_i = bars where all conditions EXCEPT i pass
+            for i in range(n_conds):
+                # All cols except i
+                cols = list(range(n_conds))
+                cols.pop(i)
+                without_mask = np.all(bool_matrix[:, cols], axis=1)
+                batch_without[i] += int(np.sum(without_mask))
+        else:
+            # Fast path: for each condition i, without_i mask = baseline OR (NOT cond_i)
+            # Equivalent: bars that pass all other conditions (may or may not pass i)
+            # = baseline_mask | (~bool_matrix[:, i] & all_others_pass)
+            # Simpler: without_i = sum where all columns except i are True
+            # Since baseline = all True, any bar in baseline is always in without_i.
+            # Additional bars: those where only condition i fails.
+            # without_i_mask = baseline_mask | (all_except_i & ~cond_i)
+            # But easiest: for each i, mask_without_i = AND of all cols except i
+            # We can compute this efficiently:
+            #   all_pass_except_i = baseline_mask | ~bool_matrix[:, i]
+            #   Wait, that's not right either.
+            #
+            # Correct: without_i = AND of all columns j where j != i
+            # = baseline_mask is AND of all including i
+            # If bar passes baseline, it passes without_i (superset).
+            # If bar fails baseline, it fails at least one condition.
+            #   If it fails ONLY condition i, it passes without_i.
+            #   If it fails any other condition too, it fails without_i.
+            #
+            # Efficient: n_fails[bar] = count of False in bool_matrix[bar, :]
+            # without_i passes if: the ONLY failure (if any) is condition i
+            # = (n_fails == 0) OR (n_fails == 1 AND bool_matrix[:, i] == False)
+
+            n_fails = np.sum(~bool_matrix, axis=1)  # (n_bars,)
+            for i in range(n_conds):
+                without_i_count = int(np.sum(
+                    (n_fails == 0) | ((n_fails == 1) & (~bool_matrix[:, i]))
+                ))
+                batch_without[i] += without_i_count
+
+    return batch_baseline, batch_without
 
 
 def prune_conditions(conditions, cache, examples, expr_cache, workers, min_power):
     """Prune weak conditions using leave-one-out filter power computed from expr cache.
 
-    For each condition:
-      1. Count universe bars passing ALL conditions (baseline)
-      2. Count universe bars passing all conditions EXCEPT this one (without)
-      3. filter_power = (without - baseline) / baseline
-         → fraction of extra bars that leak through when this condition is removed
-      4. Drop conditions below min_power threshold
+    Single-pass approach: one data load per ticker computes baseline + all N
+    leave-one-out counts simultaneously via boolean matrix algebra.
 
-    Conditions an example depends on are never dropped (required-condition check).
-    Final pruned set must still pass 100% of examples.
+    filter_power = (without_i - baseline) / baseline
+    → fraction of extra bars that leak through when condition i is removed.
+    Drop conditions below min_power. Never drop what examples need.
     """
     n_conds = len(conditions)
     expr_cache_dir = os.path.join(CACHE_DIR, "expr_series")
@@ -440,48 +478,62 @@ def prune_conditions(conditions, cache, examples, expr_cache, workers, min_power
         print(f"  WARNING: {len(missing)} conditions not in expr cache: {missing[:5]}")
         print(f"  These will block all bars — consider re-building expr cache.")
 
-    # Step 1: baseline scan (all conditions)
-    print(f"\n  Computing baseline (all {n_conds} conditions)...")
+    # Single-pass LOO scan
+    print(f"\n  Single-pass LOO scan ({n_conds} conditions, {len(cache):,} tickers)...")
     t0 = time.time()
-    baseline = _loo_scan_universe(
-        cache, cond_col_indices, cond_lows, cond_highs,
-        expr_cache_dir, workers, drop_idx=None
-    )
-    print(f"  Baseline: {baseline:,} passing bar-rows  ({time.time()-t0:.0f}s)")
 
-    if baseline == 0:
+    tickers = list(cache.keys())
+    batch_size = max(1, len(tickers) // (workers * 4))
+    batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
+
+    total_baseline = 0
+    total_without = np.zeros(n_conds, dtype=np.int64)
+
+    with ProcessPoolExecutor(
+        max_workers=workers,
+        initializer=_init_loo_worker,
+        initargs=(cache, expr_cache_dir, cond_col_indices, cond_lows, cond_highs)
+    ) as pool:
+        futures = [pool.submit(_loo_single_pass_batch, batch) for batch in batches]
+        done = 0
+        for f in as_completed(futures):
+            b, w = f.result()
+            total_baseline += b
+            total_without += w
+            done += 1
+            if done % max(len(batches) // 5, 1) == 0 or done == len(batches):
+                pct = done / len(batches) * 100
+                print(f"    {pct:.0f}%  baseline={total_baseline:,}  [{time.time()-t0:.0f}s]")
+
+    scan_time = time.time() - t0
+    print(f"  Baseline: {total_baseline:,} passing bar-rows")
+    print(f"  LOO scan complete: {scan_time:.0f}s (single pass)")
+
+    if total_baseline == 0:
         print(f"  WARNING: 0 bars pass all conditions — cannot compute filter power.")
         kept = [{**c, "filter_power": None} for c in conditions]
         return kept, [], []
 
-    # Step 2: leave-one-out for each condition
-    print(f"\n  Leave-one-out scan ({n_conds} conditions)...")
-    t0 = time.time()
+    # Compute filter powers
     filter_powers = []
-    for drop_idx in range(n_conds):
-        without = _loo_scan_universe(
-            cache, cond_col_indices, cond_lows, cond_highs,
-            expr_cache_dir, workers, drop_idx=drop_idx
-        )
-        fp = (without - baseline) / baseline if baseline > 0 else 0.0
+    for i in range(n_conds):
+        fp = (int(total_without[i]) - total_baseline) / total_baseline
         filter_powers.append(fp)
-        elapsed = time.time() - t0
-        eta = (elapsed / (drop_idx + 1)) * (n_conds - drop_idx - 1)
-        print(f"    [{drop_idx+1:>3}/{n_conds}] {conditions[drop_idx]['name']:<50} "
-              f"power={fp:>8.1%}  without={without:>8,}  "
-              f"[{elapsed:.0f}s, ETA {eta:.0f}s]")
 
-    total_loo_time = time.time() - t0
-    print(f"  Leave-one-out complete: {total_loo_time:.0f}s total")
-
-    # Step 3: classify keep/drop
-    kept, dropped, power_table = [], [], []
+    # Print results sorted by power (highest first for readability)
+    print(f"\n  Filter power results:")
     for i, cond in enumerate(conditions):
         fp = filter_powers[i]
         flag = "KEEP" if fp >= min_power else "DROP"
         tier = cond.get("tier", "?")
         cat = cond.get("category", "?")[:16]
-        print(f"  {flag}  power={fp:>8.1%}  [{tier:>4}][{cat:>16}] {cond['name']}")
+        print(f"  {flag}  power={fp:>8.1%}  without={int(total_without[i]):>8,}  "
+              f"[{tier:>4}][{cat:>16}] {cond['name']}")
+
+    # Classify keep/drop
+    kept, dropped, power_table = [], [], []
+    for i, cond in enumerate(conditions):
+        fp = filter_powers[i]
         entry = {**cond, "filter_power": round(fp, 6)}
         if fp >= min_power:
             kept.append(entry)
@@ -496,7 +548,7 @@ def prune_conditions(conditions, cache, examples, expr_cache, workers, min_power
             "required_override": False,
         })
 
-    # Step 4: required-condition check — never drop what examples need
+    # Required-condition check — never drop what examples need
     if examples and dropped:
         reinstated = []
         for dc in dropped:
@@ -516,7 +568,7 @@ def prune_conditions(conditions, cache, examples, expr_cache, workers, min_power
     if dropped:
         print(f"  Dropped: {[c['name'] for c in dropped]}")
 
-    # Step 5: final validation — pruned set must pass 100% of examples
+    # Final validation — pruned set must pass 100% of examples
     if examples:
         fails = _validate_examples(examples, kept, cache, expr_cache)
         if fails:
