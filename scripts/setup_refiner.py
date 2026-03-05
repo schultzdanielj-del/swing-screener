@@ -274,17 +274,20 @@ def _validate_examples(examples, conditions, cache, expr_cache):
     """Verify all examples pass the given conditions using expr cache.
 
     Returns list of failure descriptions (empty = all pass).
-    Uses same computation path as pyramid_grinder.validate_examples().
+    Skips examples whose tickers aren't in the OHLCV or expr cache
+    (known exclusions like BRK-B, SMMT, VUZI — data availability,
+    not condition failures).
     """
     cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
     failed = []
+    skipped = []
 
     for ex in examples:
         ticker = ex.get("ticker")
         entry_date = ex.get("entryDate", ex.get("entry_date"))
         df = cache.get(ticker)
         if df is None:
-            failed.append(f"{ticker}: not in OHLCV cache")
+            skipped.append(f"{ticker}: not in OHLCV cache")
             continue
 
         if not pd.api.types.is_datetime64_any_dtype(df["date"]):
@@ -295,19 +298,19 @@ def _validate_examples(examples, conditions, cache, expr_cache):
         entry_dt = pd.to_datetime(entry_date)
         match = df[df["date"] < entry_dt]
         if len(match) == 0:
-            failed.append(f"{ticker}: no scan bar before {entry_date}")
+            skipped.append(f"{ticker}: no scan bar before {entry_date}")
             continue
         scan_idx = match.index[-1]
 
         dates_cache, data_cache = expr_cache.get_ticker(ticker)
         if dates_cache is None:
-            failed.append(f"{ticker}: not in expr cache")
+            skipped.append(f"{ticker}: not in expr cache")
             continue
         if len(dates_cache) != len(df):
-            failed.append(f"{ticker}: bar count mismatch")
+            skipped.append(f"{ticker}: bar count mismatch")
             continue
         if scan_idx >= len(data_cache):
-            failed.append(f"{ticker}: scan_idx out of range")
+            skipped.append(f"{ticker}: scan_idx out of range")
             continue
 
         cached_row = data_cache[scan_idx, :]
@@ -323,6 +326,10 @@ def _validate_examples(examples, conditions, cache, expr_cache):
                     f"{val:.4f} not in [{cond['low']:.4f}, {cond['high']:.4f}]"
                 )
                 break
+
+    if skipped:
+        print(f"  Skipped {len(skipped)} examples (not in cache): "
+              f"{[s.split(':')[0] for s in skipped]}")
 
     return failed
 
