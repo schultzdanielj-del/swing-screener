@@ -359,14 +359,21 @@ def _init_loo_worker(cache, expr_cache_dir, cond_col_indices, cond_lows, cond_hi
     _loo_cond_highs = cond_highs
 
 
-def _load_loo_npz(ticker):
+def _load_loo_cols(ticker):
+    """Load only the needed expression columns for a ticker.
+
+    Returns (n_bars, n_conds) array with columns in condition order,
+    or None if ticker not cached or has missing conditions.
+    """
     safe = ticker.replace("/", "_").replace("\\", "_")
     path = os.path.join(_loo_expr_cache_dir, f"{safe}.npz")
     if not os.path.exists(path):
         return None
     try:
         loaded = np.load(path, allow_pickle=True)
-        return loaded["data"]
+        full_data = loaded["data"]
+        # Slice to only the columns we need — (n_bars, n_conds) instead of (n_bars, 12175)
+        return full_data[:, _loo_cond_col_indices]
     except Exception:
         return None
 
@@ -385,32 +392,23 @@ def _loo_single_pass_batch(tickers):
         df = _loo_cache.get(ticker)
         if df is None or len(df) < 100:
             continue
-        data = _load_loo_npz(ticker)
+        data = _load_loo_cols(ticker)
         if data is None or len(data) != len(df):
             continue
 
         n_bars = len(df)
 
-        # Build boolean matrix: (n_bars, n_conds) — True = bar passes condition
+        # data is already (n_bars, n_conds) — columns in condition order
+        # Build boolean matrix directly
         bool_matrix = np.ones((n_bars, n_conds), dtype=bool)
-        any_missing = False
         for i in range(n_conds):
-            col_idx = _loo_cond_col_indices[i]
-            if col_idx is None:
-                bool_matrix[:, i] = False
-                any_missing = True
-                continue
-            series = data[:, col_idx]
+            series = data[:, i]
             in_range = (series >= _loo_cond_lows[i]) & (series <= _loo_cond_highs[i])
             in_range[np.isnan(series)] = False
             bool_matrix[:, i] = in_range
 
         # Skip first 50 bars
         bool_matrix[:50, :] = False
-
-        if any_missing:
-            # If any condition can't resolve, baseline is 0 for this ticker
-            continue
 
         # Baseline = AND of all columns
         baseline_mask = np.all(bool_matrix, axis=1)  # (n_bars,)
@@ -479,11 +477,16 @@ def prune_conditions(conditions, cache, examples, expr_cache, workers, min_power
     cond_lows = np.array([c["low"] for c in conditions], dtype=np.float64)
     cond_highs = np.array([c["high"] for c in conditions], dtype=np.float64)
 
-    # Check all expressions resolve
+    # Check all expressions resolve — can't slice NPZ with None indices
     missing = [conditions[i]["name"] for i in range(n_conds) if cond_col_indices[i] is None]
     if missing:
-        print(f"  WARNING: {len(missing)} conditions not in expr cache: {missing[:5]}")
-        print(f"  These will block all bars — consider re-building expr cache.")
+        print(f"  ERROR: {len(missing)} conditions not in expr cache: {missing[:5]}")
+        print(f"  Cannot run LOO scan — rebuild expr cache first.")
+        kept = [{**c, "filter_power": None} for c in conditions]
+        return kept, [], []
+
+    # Convert to numpy array for column slicing in workers
+    cond_col_indices = np.array(cond_col_indices, dtype=np.int64)
 
     # Single-pass LOO scan
     print(f"\n  Single-pass LOO scan ({n_conds} conditions, {len(cache):,} tickers)...")
