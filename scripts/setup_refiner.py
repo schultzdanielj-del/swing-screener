@@ -206,11 +206,12 @@ def load_exit_condition(setup_type):
     if os.path.exists(profit_path):
         with open(profit_path) as f:
             pdata = json.load(f)
-        top = pdata.get("top_conditions", [])
+        top = pdata.get("top_conditions") or pdata.get("results", [])
         if top:
             best = top[0]
+            expr = best.get("expression") or best.get("expr_name")
             ec = {
-                "expression": best.get("expression"),
+                "expression": expr,
                 "threshold": best.get("threshold"),
                 "direction": best.get("direction", "<="),
             }
