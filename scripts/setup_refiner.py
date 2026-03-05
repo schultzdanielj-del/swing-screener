@@ -766,12 +766,53 @@ def run_refiner(setup_type, conditions_file=None, min_power=DEFAULT_MIN_POWER,
             conditions, cache, examples, expr_cache, workers, min_power
         )
 
-    # ── Scan ──
+    # ── Load signals from pyramid JSON (not re-scanning) ──
     print(f"\n  {'─'*60}")
-    print(f"  PHASE 2: SIGNAL SCAN ({len(pruned)} conditions)")
+    print(f"  PHASE 2: LOADING SIGNALS FROM PYRAMID RESULT")
     print(f"  {'─'*60}")
-    raw_signals = scan_signals(cache, pruned, expr_cache, workers)
-    n_raw = len(raw_signals)
+
+    # Read final_signals from the last tier with data
+    with open(source_path) as f:
+        pyramid_data = json.load(f)
+    tier_results = pyramid_data.get("tier_results", {})
+    raw_signal_list = []
+    for key in sorted(tier_results.keys(), reverse=True):
+        tr = tier_results[key]
+        fs = tr.get("final_signals", [])
+        if fs:
+            raw_signal_list = fs
+            print(f"  Using {len(fs)} signals from tier '{key}'")
+            break
+
+    if not raw_signal_list:
+        print(f"  WARNING: No final_signals in pyramid result. Falling back to scan.")
+        raw_signal_list_fallback = scan_signals(cache, pruned, expr_cache, workers)
+        # Convert to signal format with bar_idx
+        raw_signals = raw_signal_list_fallback
+        n_raw = len(raw_signals)
+    else:
+        # Convert pyramid signals to setup_refiner format (need bar_idx)
+        raw_signals = []
+        for sig in raw_signal_list:
+            ticker = sig["ticker"]
+            date_str = sig["date"]
+            df = cache.get(ticker)
+            if df is None:
+                continue
+            if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+                df["date"] = pd.to_datetime(df["date"])
+            date_matches = df.index[df["date"].dt.strftime("%Y-%m-%d") == date_str].tolist()
+            if not date_matches:
+                continue
+            bar_idx = date_matches[0]
+            raw_signals.append({
+                "ticker": ticker,
+                "date": date_str,
+                "bar_idx": int(bar_idx),
+                "close": float(df["close"].values[bar_idx]),
+            })
+        n_raw = len(raw_signals)
+        print(f"  Resolved {n_raw} signals with bar indices")
 
     # ── Dedup ──
     deduped = deduplicate_signals(raw_signals)
