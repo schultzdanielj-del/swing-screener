@@ -391,13 +391,17 @@ def _grind_chunk(args):
     return results
 
 
-def grind_exits(examples, expr_names, direction="short", n_thresholds=20,
+def grind_exits(examples, expr_names, expr_col_map=None, direction="short", n_thresholds=20,
                 min_bar=1, top_n=50, workers=None):
     """Grind all expressions x thresholds x directions. Parallel across CPU cores."""
     import math
     workers = workers or (os.cpu_count() or 8)
     n_examples = len(examples)
     n_exprs = len(expr_names)
+
+    # If no col_map, assume 1:1 mapping (expr_names[i] = column i)
+    if expr_col_map is None:
+        expr_col_map = list(range(n_exprs))
 
     print(f"\nPre-computing move arrays ({n_examples} examples)...")
     t0 = time.time()
@@ -411,14 +415,14 @@ def grind_exits(examples, expr_names, direction="short", n_thresholds=20,
     print(f"\nGrinding {n_exprs:,} expressions x ~{n_thresholds} thresholds x 2 directions ({workers} workers)...")
     print(f"Requirement: ALL {n_examples} examples must trigger (100%, no exceptions)")
 
-    # Split expression columns into chunks — one per worker
-    all_col_indices = list(range(n_exprs))
+    # Split into chunks using actual cache column indices
     chunk_size = max(1, math.ceil(n_exprs / workers))
     chunks = []
     for i in range(0, n_exprs, chunk_size):
-        idx_chunk = all_col_indices[i:i+chunk_size]
-        name_chunk = [expr_names[j] for j in idx_chunk]
-        chunks.append((idx_chunk, name_chunk))
+        # Use actual cache column indices, not sequential indices
+        cache_col_chunk = expr_col_map[i:i+chunk_size]
+        name_chunk = expr_names[i:i+chunk_size]
+        chunks.append((cache_col_chunk, name_chunk))
 
     tasks = [(idx_chunk, name_chunk, fwd_matrices, n_forwards, n_examples,
               n_thresholds, min_bar, pct_arr, adr_arr, eff_arr)
@@ -440,8 +444,15 @@ def grind_exits(examples, expr_names, direction="short", n_thresholds=20,
     elapsed = time.time() - t0
     print(f"\nDone in {elapsed:.1f}s — {len(all_raw):,} candidates passed 100% filter")
 
-    # Sort by floor then median capture efficiency
-    all_raw.sort(key=lambda r: (r["floor_capture_eff"], r["median_capture_eff"]), reverse=True)
+    # Filter: minimum floor capture efficiency (drop conditions where worst example is terrible)
+    MIN_FLOOR = 0.15
+    before = len(all_raw)
+    all_raw = [r for r in all_raw if r["floor_capture_eff"] >= MIN_FLOOR]
+    if before > len(all_raw):
+        print(f"  Filtered {before - len(all_raw)} candidates below {MIN_FLOOR:.0%} floor")
+
+    # Sort: MEDIAN capture primary, floor secondary
+    all_raw.sort(key=lambda r: (r["median_capture_eff"], r["floor_capture_eff"]), reverse=True)
     return all_raw[:top_n]
 
 
@@ -590,7 +601,7 @@ def main():
     parser = argparse.ArgumentParser(description="Profit Grinder — Step 4a (expr cache)")
     parser.add_argument("--setup", default="dtss", help="Setup type")
     parser.add_argument("--max-forward", type=int, default=MAX_FORWARD_DEFAULT)
-    parser.add_argument("--n-thresholds", type=int, default=20)
+    parser.add_argument("--n-thresholds", type=int, default=50)
     parser.add_argument("--min-bar", type=int, default=1)
     parser.add_argument("--top-n", type=int, default=50)
     parser.add_argument("--direction", default="short")
@@ -610,9 +621,24 @@ def main():
         print("ERROR: Expression cache not valid. Run expr_cache_builder.py --build first.")
         sys.exit(1)
 
-    expr_names = expr_cache.expr_names
-    print(f"\nExpression cache: {len(expr_names)} expressions, "
-          f"{len(expr_cache.get_available_tickers())} tickers")
+    all_expr_names = expr_cache.expr_names
+
+    # Filter out boolean aggregations — monotonically increasing during trends,
+    # structurally wrong for exit detection (they fire early, not at move exhaustion)
+    BOOL_PREFIXES = ("ct_", "st_", "tir_")
+    # Build mapping: filtered index -> actual cache column index
+    expr_names = []
+    expr_col_map = []  # expr_col_map[i] = actual column index in .npz for expr_names[i]
+    for col_i, name in enumerate(all_expr_names):
+        if not name.startswith(BOOL_PREFIXES):
+            expr_names.append(name)
+            expr_col_map.append(col_i)
+
+    n_excluded = len(all_expr_names) - len(expr_names)
+    print(f"\nExpression cache: {len(all_expr_names)} total, "
+          f"{n_excluded} boolean aggregations excluded, "
+          f"{len(expr_names)} expressions for exit grind")
+    print(f"  {len(expr_cache.get_available_tickers())} tickers")
 
     # 2. Load examples from Railway
     raw_examples = load_examples(args.setup)
@@ -640,6 +666,7 @@ def main():
     # 6. Grind
     candidates = grind_exits(
         examples, expr_names,
+        expr_col_map=expr_col_map,
         direction=args.direction,
         n_thresholds=args.n_thresholds,
         min_bar=args.min_bar,

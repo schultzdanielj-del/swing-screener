@@ -211,8 +211,12 @@ def _load_one_example(args):
             return None, None, f"SKIP {ticker} — only {actual_forward} forward bars in cache"
 
         # Convert matrix to dict {expr_name: series} for simulation compatibility
+        # expr_names is the FULL cache list — filter out booleans when building dict
+        BOOL_PREFIXES = ("ct_", "st_", "tir_")
         matrix_dict = {}
         for col_i, name in enumerate(expr_names):
+            if name.startswith(BOOL_PREFIXES):
+                continue
             series = fwd_matrix[:, col_i]
             if not np.all(np.isnan(series)):
                 matrix_dict[name] = series
@@ -778,7 +782,7 @@ def main():
     parser = argparse.ArgumentParser(description="Multi-Stage Exit Grinder (expr cache)")
     parser.add_argument("--setup", default="dtss")
     parser.add_argument("--max-forward", type=int, default=MAX_FORWARD_DEFAULT)
-    parser.add_argument("--n-thresholds", type=int, default=20)
+    parser.add_argument("--n-thresholds", type=int, default=50)
     parser.add_argument("--direction", default="short")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     args = parser.parse_args()
@@ -794,9 +798,17 @@ def main():
         print("ERROR: Expression cache not valid. Run expr_cache_builder.py --build first.")
         sys.exit(1)
 
-    expr_names = expr_cache.expr_names
-    print(f"\nExpression cache: {len(expr_names):,} expressions, "
-          f"{len(expr_cache.get_available_tickers())} tickers")
+    all_expr_names = expr_cache.expr_names
+
+    # Filter out boolean aggregations — monotonically increasing during trends,
+    # structurally wrong for exit detection (fire early, not at move exhaustion)
+    BOOL_PREFIXES = ("ct_", "st_", "tir_")
+    expr_names = [n for n in all_expr_names if not n.startswith(BOOL_PREFIXES)]
+    n_excluded = len(all_expr_names) - len(expr_names)
+    print(f"\nExpression cache: {len(all_expr_names)} total, "
+          f"{n_excluded} boolean aggregations excluded, "
+          f"{len(expr_names)} expressions for exit grind")
+    print(f"  {len(expr_cache.get_available_tickers())} tickers")
 
     # 2. Load examples + OHLCV
     raw_examples = load_examples(args.setup)
@@ -805,7 +817,7 @@ def main():
 
     # 3. Load all examples from cache (parallel)
     metas, all_matrices = load_all_examples(
-        raw_examples, args.direction, args.max_forward, universe_cache, expr_names, args.workers)
+        raw_examples, args.direction, args.max_forward, universe_cache, all_expr_names, args.workers)
 
     if len(metas) < 3:
         print(f"Only {len(metas)} examples. Aborting.")
