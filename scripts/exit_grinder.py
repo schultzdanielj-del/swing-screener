@@ -882,7 +882,7 @@ def main():
     )
 
     # 8. Report
-    print_results(candidates, examples, top_n=args.top_n)
+    print_results(candidates, examples, top_n=3)
 
     # 9. SAFETY CHECK: grind_exits already enforces 100% but verify
     if candidates:

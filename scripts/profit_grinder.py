@@ -675,7 +675,7 @@ def main():
     )
 
     # 7. Report
-    print_results(candidates, examples, top_n=1)
+    print_results(candidates, examples, top_n=3)
 
     # 8. Safety check
     if candidates:
