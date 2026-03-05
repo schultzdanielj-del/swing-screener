@@ -155,14 +155,19 @@ def load_exit_condition(setup_type):
                 if os.path.exists(profit_path):
                     with open(profit_path) as f:
                         pdata = json.load(f)
-                    top = pdata.get("top_conditions", [])
+                    # Support both old format (top_conditions) and new format (results)
+                    top = pdata.get("top_conditions") or pdata.get("results", [])
                     if top:
                         best = top[0]
+                        # New format uses expr_name, old uses expression
+                        expr = best.get("expression") or best.get("expr_name")
                         ec = {
-                            "expression": best.get("expression"),
+                            "expression": expr,
                             "threshold": best.get("threshold"),
                             "direction": best.get("direction", "<="),
                         }
+                        print(f"  Exit (single-stage, profit grind): {ec['expression']} {ec['direction']} {ec['threshold']}")
+                        return ec
                         print(f"  Exit (single-stage, profit grind): {ec['expression']} {ec['direction']} {ec['threshold']}")
                         return ec
                 raise FileNotFoundError(
