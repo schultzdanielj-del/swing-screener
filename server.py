@@ -2923,18 +2923,10 @@ async def clear_exit_grind_choice(setup_type: str):
 
 @app.get("/api/vetting/{setup_type}/signals")
 async def get_vetting_signals(setup_type: str):
-    """Load filtered signals for chart vetting. Ranked by move_adr descending.
-
-    Prefers setup_refiner output (refined_) over signal_filter output (filtered_).
-    """
-    refined_path = VETTING_DATA_DIR / "setup_refiner" / f"refined_{setup_type}.json"
-    filtered_path = VETTING_DATA_DIR / "signal_filter" / f"filtered_{setup_type}.json"
-    if refined_path.exists():
-        path = refined_path
-    elif filtered_path.exists():
-        path = filtered_path
-    else:
-        raise HTTPException(404, f"No signals for {setup_type}. Run setup_refiner.py or signal_filter.py first.")
+    """Load filtered signals for chart vetting. Ranked by move_adr descending."""
+    path = VETTING_DATA_DIR / "signal_filter" / f"filtered_{setup_type}.json"
+    if not path.exists():
+        raise HTTPException(404, f"No filtered signals for {setup_type}. Run signal_filter.py first.")
     with open(path) as f:
         data = json.load(f)
     # Load existing vetting decisions
