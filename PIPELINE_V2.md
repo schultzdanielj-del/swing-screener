@@ -52,13 +52,20 @@ Cycle N:
   Layer 2: Scan           — apply conditions to 5yr history → raw signals
   Layer 3: Exit Filter    — apply exit condition → signals that moved
   Layer 4: Classify       — label every signal winner or loser
-  Layer 5: Vet            — human review of unvetted signals (optional per cycle)
+  Layer 5: Vet            — human review → AI queue → final approval → example library
   Layer 6: Regime         — correlate signal classifications vs market conditions
   Layer 7: Health Check   — measure cycle quality, compare to previous cycle
   → if healthier: promote to current. if worse: revert.
   → if live-ready: run tonight's watchlist from current conditions
   → queue Cycle N+1
 ```
+
+**Regrind is manual, not automatic.**
+Vetting and adding examples does not trigger a regrind. Examples accumulate until you
+decide there are enough new ones to warrant a regrind. The UI shows a "regrind needed"
+indicator when examples have been added since the last grind. You trigger the regrind
+explicitly when ready — for example, after a vetting session that added 5-10 new examples,
+or after clearing the AI review queue.
 
 ---
 
@@ -139,6 +146,12 @@ across all examples. This runs once per setup type and re-runs whenever the exam
 library grows materially. It is NOT re-run every cycle — only when examples change
 enough to warrant it.
 
+**ADR target:**
+The ADR target for winner classification is derived from the sample median, not a
+fixed threshold. Signals that trigger the exit but fall well short of sample-median
+ADR are worth manual review — they may be technically valid but not sample-quality
+moves. The goal is sample-type exits, not scratching tiny winners.
+
 **Output:**
 - Each signal labeled: exit_triggered (bool), move_adr, mfe_adr, capture_eff
 - Signals split into: moved (candidate winner) / didn't move (candidate loser)
@@ -157,7 +170,8 @@ model. More vetting = more accurate labels, but the model runs at any completene
 1. **Example → AUTO WIN.** Every signal bar that matches a validated example is a winner.
    Examples are the ground truth. They never get reclassified.
 
-2. **Manual YES → WIN.** Human reviewed the chart and confirmed it as a good setup.
+2. **Manual YES (AI-approved) → WIN.** Human reviewed, AI confirmed, human gave final
+   approval. Signal is labeled WIN and added to example library.
 
 3. **Exit triggered + move >= ADR threshold → AUTO WIN.** Mechanical confirmation
    that the setup resolved correctly.
@@ -172,19 +186,20 @@ model. More vetting = more accurate labels, but the model runs at any completene
 on all of them. Manual vetting improves label accuracy but is never a prerequisite.
 
 **Output:**
-- Full signal set with winner/loser labels and label source (auto/manual)
+- Full signal set with winner/loser labels and label source (auto/manual/ai-approved)
 - Win rate on current signal set
 - Ratio of manually vetted vs auto-classified signals
 
 **Reuse from V1:** Classification logic already implemented in signal_filter.py +
-vetting endpoints — transplant as-is.
+vetting endpoints — transplant rules, rewire storage to cycle-versioned schema.
 
 ---
 
 ## Layer 5: Vet
 
-**What it solves:** Improve label accuracy by having a human review edge cases.
-Also the mechanism for adding new examples to the library.
+**What it solves:** Improve label accuracy and grow the example library through a
+two-stage human + AI gate. Neither stage alone is sufficient — human identifies
+candidates, AI checks them against the example library, human makes the final call.
 
 **When to vet:**
 - When the health check (Layer 7) says label accuracy is limiting regime model quality
@@ -196,10 +211,31 @@ Also the mechanism for adding new examples to the library.
 - Ordered by move_adr descending — best candidates first
 - Existing examples are excluded from the vetting pile
 
-**Vetting decisions:**
-- YES → adds to example library + labels signal as WIN
-- NO → labels signal as LOSS (overrides auto-win if exit triggered)
+**Stage 1 — Human review:**
+- One key per decision: 1=YES, 2=NO, 3=SKIP
+- YES → goes to AI review queue (not yet in example library)
+- NO → immediately labeled LOSS
 - SKIP → stays in unvetted pile
+
+**Stage 2 — AI review queue:**
+- AI receives the chart + the full example library as context
+- AI checks: does this chart genuinely match the setup pattern of the examples?
+- AI outputs: GREEN LIGHT or FLAG with specific reasoning
+- You review the AI verdict and make the final call: approve or reject
+- Approved → added to example library + labeled WIN
+- Rejected → labeled LOSS
+
+**Why two stages:**
+Human vetting at speed catches obvious candidates but can drift during long sessions.
+The AI is checking against the full example library simultaneously — it doesn't get
+fatigued or loosen criteria. It catches discretion drift. The human has final authority
+but the AI acts as a quality control gate.
+
+**Regrind trigger:**
+Adding examples does NOT trigger an automatic regrind. The UI shows a persistent
+"regrind needed" indicator whenever examples have been added since the last grind.
+The workflow is: vet a batch → clear the AI review queue → check the indicator →
+decide when you have enough new examples to warrant a regrind → trigger it manually.
 
 **Convergence signal:**
 Track examples added per cycle. When two consecutive cycles add near-zero new examples
@@ -207,14 +243,15 @@ from a full vetting pass, the example library has converged. Stop driving vettin
 the primary activity and focus on regime model quality instead.
 
 **UI requirements:**
-- One key per decision (1=yes, 2=no, 3=skip)
-- Instant chart load — no gaps
+- Stage 1: one key per decision, instant chart load, no gaps
 - Shows: ticker, date, move_adr, mfe_adr, capture_eff, exit_date
 - 250-bar lookback, 80-bar forward, EMA 8/21, SMA 50/200, earnings markers
-- Auto-advances after decision
-- Shows vetting progress: N remaining, examples added this session
+- Auto-advances after decision, shows N remaining and examples added this session
+- Stage 2: AI review queue visible in UI, shows AI verdict + reasoning per pick
+- Persistent "regrind needed" indicator showing N examples added since last grind
 
-**Reuse from V1:** Chart vetting UI — the core works. Needs speed improvements.
+**Reuse from V1:** Chart vetting UI core — transplant with speed improvements and
+AI queue addition.
 
 ---
 
@@ -262,6 +299,12 @@ Volatility:
 **No hardcoded thresholds.** The correlations are data-derived and update every cycle
 as more classified signals are added. The model gets sharper over time automatically.
 
+**Rolling score for entry window:**
+The signal fires on day X but the entry bar may not come until X+1 or X+2. The regime
+score is computed as a rolling average across the signal-to-entry window, not just the
+signal day. This prevents a signal from getting a high score on day X when conditions
+deteriorate before the entry actually triggers.
+
 **Output:**
 - Regime score for tonight (0.0 to 1.0, where 1.0 = historically best conditions)
 - Which indicators are most predictive for this setup
@@ -290,6 +333,7 @@ Example coverage:
 - examples_passing: must be 100% — hard fail if not
 - examples_added_this_cycle: convergence signal
 - cumulative_examples: total in library
+- examples_since_last_grind: drives the "regrind needed" indicator
 
 Classification quality:
 - win_rate_auto: winners / total using auto-classification only
@@ -333,9 +377,21 @@ Cycle delta (comparison to previous cycle):
 Once live-ready, after each market close:
 
 1. Run today's conditions against tonight's bars (last bar of 5yr cache, updated nightly)
-2. For each signal that fires: compute tonight's regime score from current SPY conditions
+2. For each signal that fires: compute rolling regime score across the signal window
 3. Rank signals by regime score × estimated win rate
-4. Output: ranked list of tickers with regime-adjusted EV
+4. For each ranked signal, run AI chart vet: does this look like the setup or is it
+   garbage? Garbage signals are flagged, not removed — you see the flag and decide.
+5. Pull fundamental context for each signal ticker: recent earnings result, sector
+   theme momentum, any known catalyst. Informational only — does not filter signals.
+6. Output: ranked list with regime-adjusted EV, AI vet status, and fundamental notes
+
+**Watchlist entry contains:**
+- Ticker, signal bar date, setup type
+- Regime score (rolling, 0.0–1.0)
+- Historical win rate at this regime score
+- Expected move in ADR (from sample median)
+- AI vet: LOOKS GOOD / FLAGGED + brief reason
+- Fundamental notes: earnings recency/direction, sector theme, notable catalyst
 
 The watchlist is the end product. Every cycle of the loop makes it more accurate.
 
@@ -406,7 +462,7 @@ These components are correct and reusable:
 | Exit filter + measurement | `scripts/signal_filter.py` exit phase | ✅ Keep |
 | Exit grinder | `scripts/exit_grinder.py` | ✅ Keep as-is |
 | Classification logic | `server.py` vetting endpoints | ✅ Keep rules, rewire storage |
-| Chart vetting UI | `app/index.html` vetting page | ✅ Keep, speed improvements |
+| Chart vetting UI | `app/index.html` vetting page | ✅ Keep, add AI queue + speed |
 | Example library | Railway DB `examples` table | ✅ Keep — 71 DTSS examples |
 | OHLCV data | Railway SQLite | ✅ Keep |
 
@@ -418,9 +474,10 @@ These need to be rebuilt or are new:
 | Grinder → Railway upload | BUG-003 — add upload on completion |
 | Cycle versioning / revert | New — data contract layer |
 | Health check script | New — `scripts/health_check.py` |
+| AI review queue | New — server.py endpoint + UI queue view |
 | Market regime model | New — `scripts/market_grinder.py` |
-| Nightly watchlist output | New — runs from current conditions |
-| UI cycle management | New — show health metrics, diff, revert button |
+| Nightly watchlist output | New — ranked list with regime score + AI vet + fundamentals |
+| UI cycle management | New — health metrics, diff, revert button, regrind indicator |
 
 ---
 
@@ -433,9 +490,10 @@ Build in this order so each piece is useful immediately when complete:
 3. **Fix BUG-003** (grinder → Railway upload) — closes the data flow gap
 4. **Cycle versioning** — data contract, promote/revert logic in Railway
 5. **Health check script** — measure cycle quality after every grind
-6. **UI: health metrics + diff + revert** — control surface for the loop
-7. **Market regime model** — runs on existing classified signal set
-8. **UI: regime display + nightly watchlist** — the live product
+6. **UI: health metrics + diff + revert + regrind indicator** — control surface for the loop
+7. **AI review queue** — two-stage vetting gate, server endpoint + UI
+8. **Market regime model** — runs on existing classified signal set
+9. **UI: regime display + nightly watchlist** — the live product
 
 At step 5, the loop is runnable end-to-end with the existing example library and
-classified signals. Steps 6-8 improve the live product incrementally.
+classified signals. Steps 6-9 improve the live product incrementally.
