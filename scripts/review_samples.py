@@ -72,7 +72,7 @@ def review_with_cli(chart_path, prompt):
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         output = result.stdout.strip()
-        verdict = "REJECT"
+        verdict = None
         reasoning = output
 
         for line in output.split("\n"):
@@ -86,6 +86,21 @@ def review_with_cli(chart_path, prompt):
                 rest = output[idx:].strip()
                 if rest:
                     reasoning += " " + rest
+
+        # Fallback: if no VERDICT: line found, scan full output for keywords
+        if verdict is None:
+            up_output = output.upper()
+            if "APPROVE" in up_output and "REJECT" not in up_output:
+                verdict = "APPROVE"
+            elif "REJECT" in up_output and "APPROVE" not in up_output:
+                verdict = "REJECT"
+            elif "APPROVE" in up_output and "REJECT" in up_output:
+                # Both present — take the last one mentioned
+                last_approve = up_output.rfind("APPROVE")
+                last_reject = up_output.rfind("REJECT")
+                verdict = "APPROVE" if last_approve > last_reject else "REJECT"
+            else:
+                verdict = "REJECT"
 
         return verdict, reasoning
     except subprocess.TimeoutExpired:
