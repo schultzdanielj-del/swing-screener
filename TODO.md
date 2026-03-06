@@ -86,7 +86,34 @@ Replace Step 5 "coming soon" placeholder with:
 
 ---
 
-## Grinder Architecture
+## Expression Library — Future Categories
+
+### Extension Structure Expressions (HIGH PRIORITY)
+New category: `extension_structure` — trendline breaks and statistical reversal points on the 50 SMA and 200 SMA extension series.
+
+**Why:** The extension chart has its own downtrends, uptrends, and statistically common reversal levels (per ta_knowledge.md). These structural breaks on the extension series are some of the most powerful signals for timing entries and exits. Expected to produce conditions with 10%+ individual filter power.
+
+**Two sub-categories:**
+
+**1. Extension trendline breaks** (`ext_trendline_break`)
+- Fit a linear trendline to the extension series over N bars (lookbacks: 10, 20, 30, 50)
+- Measure deviation of current value from the trendline (ATR-normalized)
+- Positive = broke above downtrend, negative = broke below uptrend
+- MAs: `avgc50`, `avgc200`
+- ~16 expressions (2 MAs × 4 lookbacks × 2: raw deviation + boolean break)
+
+**2. Statistical reversal proximity** (`ext_reversal_proximity`)
+- Identify historical peak clustering on the extension series (per-stock bimodal distribution — stocks tend to reverse at the same extension levels repeatedly)
+- Express current extension as % distance from the nearest historical cluster peak
+- Detects when price is at a statistically common reversal point vs. in open space
+- MAs: `avgc50`, `avgc200`
+- Requires per-stock precomputation (cluster detection on 5yr extension history)
+
+**Implementation order:** Trendline breaks first (universal, no per-stock profiling). Statistical reversal proximity second (requires new precompute step in expr_cache_builder).
+
+**Note:** Requires expr cache rebuild after implementation (~50 GB, ~8 workers, several hours).
+
+
 
 ### Grinder Rules (NON-NEGOTIABLE)
 
