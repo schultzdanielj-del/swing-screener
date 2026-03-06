@@ -89,36 +89,44 @@ Replace Step 5 "coming soon" placeholder with:
 ## Expression Library — Future Categories
 
 ### Extension Structure Expressions (HIGH PRIORITY)
-New category: `extension_structure` — trendline breaks and statistical reversal points on the 50 SMA and 200 SMA extension series.
 
-**Why:** The extension chart has its own downtrends, uptrends, and statistically common reversal levels (per ta_knowledge.md). These structural breaks on the extension series are some of the most powerful signals for timing entries and exits. Expected to produce conditions with 10%+ individual filter power.
+**Core insight:** The 50 SMA and 200 SMA extension series (already computed as `ext_avgc50_adr14` and `ext_avgc200_adr14`) are tradeable charts in their own right. They have their own trendlines, channels, momentum, reversal levels, and oscillator behavior — completely independent of the price chart. It may be possible to trade purely off these charts without looking at price. This makes full price-structure parity on these series essential.
 
-**Two sub-categories:**
+**Implementation:** Treat the extension series as a price-like input. In `expr_cache_builder.py`, after computing main expressions, run a second pass treating `ext_avgc50_adr14` and `ext_avgc200_adr14` as the "close price" input to all applicable ops. In `backtest_conditions.py`, add an `on_series` op handler that substitutes the named series for close. In `brute_expressions.py`, add a new `extension_structure` generator block.
 
-**1. Extension trendline breaks** (`ext_trendline_break`)
-- Fit a linear trendline to the extension series over N bars (lookbacks: 10, 20, 30, 50)
-- Measure deviation of current value from the trendline (ATR-normalized)
-- Positive = broke above downtrend, negative = broke below uptrend
-- MAs: `avgc50`, `avgc200`
-- ~16 expressions (2 MAs × 4 lookbacks × 2: raw deviation + boolean break)
+**Scope: ~3,630 new expressions across 16 categories × 2 MAs × 3 timeframes (daily + weekly + monthly)**
 
-**2. Extension channel breaks** (`ext_channel_break`)
-- Fit a regression channel to the extension series over N bars (lookbacks: 10, 20, 30, 50)
-- Express current value relative to the channel: 0 = lower band, 0.5 = midline, 1 = upper band
-- Values outside 0–1 = channel break — a significant shift in chart behavior regardless of direction or setup type
-- MAs: `avgc50`, `avgc200`
-- ~16 expressions (2 MAs × 4 lookbacks × 2: channel position + boolean break)
+| Category | Count | Notes |
+|---|---|---|
+| ROC (24 periods × 2 MAs × 3 HTF) | 144 | How fast extension is changing |
+| RSI + RSI slope (6 periods × 5 variants × 2 MAs × 3 HTF) | 180 | Overbought/oversold on extension oscillator |
+| ROC delta (7 periods × 3 compare × 2 MAs × 3 HTF) | 126 | Acceleration of extension change |
+| MA cross on extension (20 pairs × 2 MAs × 3 HTF) | 120 | Fast vs slow smoothed extension crossovers |
+| ADX + ADX slope (4 periods × 5 variants × 2 MAs × 3 HTF) | 120 | Trend strength on extension series |
+| Bollinger %B (4 periods × 3 std × 2 MAs × 3 HTF) | 72 | Extension relative to its own bands |
+| Range position (11 lookbacks × 2 MAs × 3 HTF) | 66 | Where in N-bar high/low range |
+| Trendline deviation (10 lookbacks × 2 MAs × 3 HTF) | 60 | IREN-style trendline breaks on extension chart |
+| Channel position (10 lookbacks × 2 MAs × 3 HTF) | 60 | RIVN/SPY-style channel breaks on extension chart |
+| Pullback from N-bar high (10 lookbacks × 2 MAs × 3 HTF) | 60 | Pullback from extension peak |
+| ROC acceleration (3 outer × 3 inner × 2 MAs × 3 HTF) | 54 | Second derivative of extension |
+| Stochastic (9 periods × 2 MAs × 3 HTF) | 54 | Stochastic on extension oscillator |
+| Floor ratio / rolling min (9 lookbacks × 2 MAs × 3 HTF) | 54 | How close to statistical floor (IREN bottom bounce) |
+| Smoothed MA of extension (9 periods × 2 MAs × 3 HTF) | 54 | Smoothed version of the oscillator |
+| Peak ratio HTF only (5 lookbacks × 2 MAs × 2 HTF) | 20 | Ceiling proximity — weekly + monthly only (daily exists) |
+| Ceiling ratio HTF only (4 lookbacks × 2 MAs × 2 HTF) | 16 | Statistical ceiling — weekly + monthly only |
+| Slope (8 offsets × 2 MAs × 3 HTF) | 48 | Direction of extension movement |
+| CCI (7 periods × 2 MAs × 3 HTF) | 42 | CCI on extension oscillator |
+| Boolean aggregations (~20 conditions × 19 agg ops × 2 MAs × 3 HTF) | 2,280 | ct_/st_/tir_ on extension conditions |
+| **TOTAL** | **3,630** | Cache: 12,421 → 16,051 (~65 GB) |
 
-**3. Statistical reversal proximity** (`ext_reversal_proximity`)
-- Identify historical peak clustering on the extension series (per-stock bimodal distribution — stocks tend to reverse at the same extension levels repeatedly)
-- Express current extension as % distance from the nearest historical cluster peak
-- Detects when price is at a statistically common reversal point vs. in open space
-- MAs: `avgc50`, `avgc200`
-- Requires per-stock precomputation (cluster detection on 5yr extension history)
+**Implementation files:**
+1. `scripts/backtest_conditions.py` — add `on_series` op handler
+2. `local_runner/brute_expressions.py` — add `extension_structure` generator block
+3. `local_runner/expr_cache_builder.py` — second-pass computation using extension series as input
 
-**Implementation order:** Trendline breaks + channel breaks first (universal, no per-stock profiling). Statistical reversal proximity second (requires new precompute step in expr_cache_builder).
+**Cache rebuild:** ~65 GB output, `EXPR_CACHE_WORKERS=8`, several hours. Full rebuild required (fingerprint change).
 
-**Note:** Requires expr cache rebuild after implementation (~50 GB, ~8 workers, several hours).
+**Note:** No volume-based ops (VWAP, volume character, etc.) — extension series has no volume structure. No LSP/algo line detection — requires OHLCV candle structure. Peak/floor rolling ops are the correct analog to LSP for this series type.
 
 
 
