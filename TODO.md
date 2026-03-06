@@ -102,14 +102,21 @@ New category: `extension_structure` — trendline breaks and statistical reversa
 - MAs: `avgc50`, `avgc200`
 - ~16 expressions (2 MAs × 4 lookbacks × 2: raw deviation + boolean break)
 
-**2. Statistical reversal proximity** (`ext_reversal_proximity`)
+**2. Extension channel breaks** (`ext_channel_break`)
+- Fit a regression channel to the extension series over N bars (lookbacks: 10, 20, 30, 50)
+- Express current value relative to the channel: 0 = lower band, 0.5 = midline, 1 = upper band
+- Values outside 0–1 = channel break. Negative = broke below uptrend channel (key signal for 200 SMA extension uptrend breaking down). >1 = broke above downtrend channel.
+- MAs: `avgc50`, `avgc200`
+- ~16 expressions (2 MAs × 4 lookbacks × 2: channel position + boolean break)
+
+**3. Statistical reversal proximity** (`ext_reversal_proximity`)
 - Identify historical peak clustering on the extension series (per-stock bimodal distribution — stocks tend to reverse at the same extension levels repeatedly)
 - Express current extension as % distance from the nearest historical cluster peak
 - Detects when price is at a statistically common reversal point vs. in open space
 - MAs: `avgc50`, `avgc200`
 - Requires per-stock precomputation (cluster detection on 5yr extension history)
 
-**Implementation order:** Trendline breaks first (universal, no per-stock profiling). Statistical reversal proximity second (requires new precompute step in expr_cache_builder).
+**Implementation order:** Trendline breaks + channel breaks first (universal, no per-stock profiling). Statistical reversal proximity second (requires new precompute step in expr_cache_builder).
 
 **Note:** Requires expr cache rebuild after implementation (~50 GB, ~8 workers, several hours).
 
