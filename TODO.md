@@ -1,203 +1,110 @@
 # TODO — Swing Screener (2026-03-06)
 
+## DIRECTION: V2 ONLY — No more V1 patching
+
+**Decision (2026-03-06):** Stop patching V1. Build V2 properly. The file collision bug (wrong exit condition loaded → 0 signals) is a symptom of the V1 architecture. V2 eliminates file-based handoffs entirely — all state lives in Railway SQLite with cycle versioning.
+
+**V2 design docs:**
+- `PIPELINE_V2.md` — full pipeline design
+- `DATA_CONTRACT.md` — V2 schema (committed 2026-03-06)
+
+---
+
 ## Current State
 
-**71 DTSS examples.** Grind #5 in progress (Steps 2 → 3 → 4 re-running with new examples).
+**71 DTSS examples.** Signal density confirmed: 281 filtered signals over 5yr (~1/week forward cadence). Workable.
 
-**Step 4 Signal Viewer — COMPLETE.** Sample Expansion page now has Step 2 / Step 4 source toggle. Step 4 mode reads from `refined_{setup}.json`, deduplicates against existing examples, disables MAYBE, shows "NO EXIT" badge on signals with no exit trigger.
+**Signal density analysis (2026-03-06):**
+- 946 raw → 612 deduped → 496 with exit → 281 filtered (≥2.9 ADR)
+- Example floor: 3.2 ADR, median: 5.8 ADR — strong payoff profile
+- Exit triggers on 81% of deduped signals — exit condition is doing real work
+- ~1 actionable signal/week in forward scan
 
-**AI audit auto-fires on YES.** No more manual "Submit for Audit" button. Every YES verdict immediately queues a `sample_review` job if the agent is online and no other step is running.
-
-**review_samples.py parser fixed.** Fallback keyword scanner handles unstructured Claude CLI responses (APPROVE/REJECT keyword scan when VERDICT: line not found).
-
-Final DTSS configuration (grind #4, pre-grind #5):
-- **Signal conditions:** 87 conditions from blackout re-grind (62 examples, 59 resolved)
-- **Exit condition:** `slope_xavgc21_off7_adr14 below -1.1142` — 70% median capture, 24% floor, 20.7 avg bars
-- **Refiner output:** 164 raw → 132 deduped → 44 with exit → 42 filtered signals across 5yr
-
-### Pipeline Steps
-
-| # | Step | Server ID | Status |
-|---|------|-----------|--------|
-| 0 | Nightly Refresh | nightly | Works |
-| 1 | Optimal Samples | optimal_samples | **71 DTSS examples** |
-| 2 | Signal Brute Forcing | signal_brute | **Grind #5 running** |
-| 3 | Sample Expansion | sample_expansion | Re-running after grind #5 |
-| 4a | Exit Grinder | setup_grinder_a | Done — single-stage chosen (70% median capture) |
-| 4b | Setup Grinder | setup_grinder_b | Re-running after grind #5 |
-| **5** | **Market Grinder** | **market_grind** | **NEXT — build after grind #5 complete** |
+**Expr cache stale:** Last full rebuild predates the 9 new examples added before grind #5. 35/71 examples verified in signal_filter (the 36 that failed have stale cache data). **Fix: rebuild expr cache before next grind.**
 
 ---
 
-## IMMEDIATE NEXT — Step 5: Market Grinder
+## V2 Build Order
 
-Step 4 Signal Viewer is done (Task 1 complete). Now build the Market Grinder.
+### ✅ Done
+1. `DATA_CONTRACT.md` — V2 schema defined and committed
 
-### What the Market Grinder Does
+### 🔲 Next: Wire V2 tables into server.py `init_db`
 
-**Inputs:**
-- Setup examples (always winners — confirmed by human vetting)
-- ALL deduped signals from Step 4b (`refined_{setup}.json`) — the full historical universe of every time the scan would have fired, exit trigger or not
+Add all 7 new V2 tables to `init_db()` in `server.py`:
+- `grind_cycles`
+- `cycle_conditions`
+- `cycle_signals`
+- `exit_conditions`
+- `cycle_health`
+- `regime_model`
+- `signal_regime_scores`
+- `nightly_watchlist`
 
-**The ratio:**
-- Examples = confirmed winners (numerator)
-- All Step 4b signals minus examples = everything else the scan ever fired on (denominator)
-- Win rate = examples / total signals at any historical point
+Schema is fully specified in `DATA_CONTRACT.md`. Railway auto-deploys on push — tables created on next startup.
 
-**The grinder:**
-- Computes SPY regime indicators at each historical signal date
-- Buckets signals by regime state
-- Computes win rate per bucket vs baseline
-- Finds which SPY conditions correlate with higher win rates
+### 🔲 Then: grind_upload.py
+Script that runs after pyramid_grinder.py completes and uploads the result to Railway as a new `grind_cycle` row + `cycle_conditions` rows. Replaces the current zero-upload situation (BUG-003).
 
-**Output:** A live win rate estimator — given today's SPY conditions, what's the expected win rate on tonight's signals.
+### 🔲 Then: scan_signals.py (replaces signal_filter.py)
+Reads conditions from `cycle_conditions` (not a local JSON file). Writes signals to `cycle_signals`. No file handoffs.
 
-### Market Grinder Script (`scripts/market_grinder.py`) — TO BUILD
+### 🔲 Then: cycle_health.py
+Computes all `cycle_health` metrics from `cycle_signals` + `grind_cycles`. Uploads to Railway. Powers the health dashboard.
 
-**Inputs:**
-- `data/setup_refiner/refined_{setup}.json` — all deduped signals (exit or no-exit)
-- Railway DB examples table — always winners
-- `local_runner/cache/universe_ohlcv_5yr.pkl` — SPY OHLCV
+### 🔲 Then: V2 UI
+- Health metrics panel
+- Cycle diff (conditions added/removed vs prev cycle)
+- Revert button (flip is_current in transaction)
+- Regrind indicator
+- Unified watchlist (reads nightly_watchlist table)
 
-**Classification:**
-- Examples → winner
-- All other signals → loser (no exit trigger = didn't pay, exit trigger = exit fired but not a confirmed setup)
-- Manual NO verdicts on exit-triggered signals → loser override
-
-**Regime indicators (computed on SPY at each signal date):**
-- SPY vs SMA50, SMA200 (above/below)
-- SPY EMA8 vs EMA21 vs SMA50 stack
-- SPY extension from SMA50/SMA200 in ATR
-- SPY SMA50/SMA200 slope
-- SPY RSI(14) — bucketed <40 / 40-60 / >60
-- SPY ROC(20)
-- SPY % from 52-week high
-- SPY ATR14 vs its 50d average (expanding/contracting)
-
-**Output:** `data/market_grind/market_{setup}.json`
-
-### UI (Market Grinder Page) — TO BUILD
-
-Replace Step 5 "coming soon" placeholder with:
-- RUN button
-- Regime model table: win rate per bucket vs baseline
-- Current market indicator: "Today's regime → expected win rate: X%"
-- Per-signal classification table
+### 🔲 Then: Market Grinder (V2-native)
+Built on `cycle_signals` table, not `refined_{setup}.json`. SPY regime indicators → win rate by bucket → live win rate estimator.
 
 ---
 
-## Expression Library — Future Categories
+## Pipeline Steps (V1 reference — being replaced)
 
-### Extension Structure Expressions (HIGH PRIORITY)
-
-**Core insight:** The 50 SMA and 200 SMA extension series (already computed as `ext_avgc50_adr14` and `ext_avgc200_adr14`) are tradeable charts in their own right. They have their own trendlines, channels, momentum, reversal levels, and oscillator behavior — completely independent of the price chart. It may be possible to trade purely off these charts without looking at price. This makes full price-structure parity on these series essential.
-
-**Implementation:** Treat the extension series as a price-like input. In `expr_cache_builder.py`, after computing main expressions, run a second pass treating `ext_avgc50_adr14` and `ext_avgc200_adr14` as the "close price" input to all applicable ops. In `backtest_conditions.py`, add an `on_series` op handler that substitutes the named series for close. In `brute_expressions.py`, add a new `extension_structure` generator block.
-
-**Scope: ~3,630 new expressions across 16 categories × 2 MAs × 3 timeframes (daily + weekly + monthly)**
-
-| Category | Count | Notes |
-|---|---|---|
-| ROC (24 periods × 2 MAs × 3 HTF) | 144 | How fast extension is changing |
-| RSI + RSI slope (6 periods × 5 variants × 2 MAs × 3 HTF) | 180 | Overbought/oversold on extension oscillator |
-| ROC delta (7 periods × 3 compare × 2 MAs × 3 HTF) | 126 | Acceleration of extension change |
-| MA cross on extension (20 pairs × 2 MAs × 3 HTF) | 120 | Fast vs slow smoothed extension crossovers |
-| ADX + ADX slope (4 periods × 5 variants × 2 MAs × 3 HTF) | 120 | Trend strength on extension series |
-| Bollinger %B (4 periods × 3 std × 2 MAs × 3 HTF) | 72 | Extension relative to its own bands |
-| Range position (11 lookbacks × 2 MAs × 3 HTF) | 66 | Where in N-bar high/low range |
-| Trendline deviation (10 lookbacks × 2 MAs × 3 HTF) | 60 | IREN-style trendline breaks on extension chart |
-| Channel position (10 lookbacks × 2 MAs × 3 HTF) | 60 | RIVN/SPY-style channel breaks on extension chart |
-| Pullback from N-bar high (10 lookbacks × 2 MAs × 3 HTF) | 60 | Pullback from extension peak |
-| ROC acceleration (3 outer × 3 inner × 2 MAs × 3 HTF) | 54 | Second derivative of extension |
-| Stochastic (9 periods × 2 MAs × 3 HTF) | 54 | Stochastic on extension oscillator |
-| Floor ratio / rolling min (9 lookbacks × 2 MAs × 3 HTF) | 54 | How close to statistical floor (IREN bottom bounce) |
-| Smoothed MA of extension (9 periods × 2 MAs × 3 HTF) | 54 | Smoothed version of the oscillator |
-| Peak ratio HTF only (5 lookbacks × 2 MAs × 2 HTF) | 20 | Ceiling proximity — weekly + monthly only (daily exists) |
-| Ceiling ratio HTF only (4 lookbacks × 2 MAs × 2 HTF) | 16 | Statistical ceiling — weekly + monthly only |
-| Slope (8 offsets × 2 MAs × 3 HTF) | 48 | Direction of extension movement |
-| CCI (7 periods × 2 MAs × 3 HTF) | 42 | CCI on extension oscillator |
-| Boolean aggregations (~20 conditions × 19 agg ops × 2 MAs × 3 HTF) | 2,280 | ct_/st_/tir_ on extension conditions |
-| **TOTAL** | **3,630** | Cache: 12,421 → 16,051 (~65 GB) |
-
-**Implementation files:**
-1. `scripts/backtest_conditions.py` — add `on_series` op handler
-2. `local_runner/brute_expressions.py` — add `extension_structure` generator block
-3. `local_runner/expr_cache_builder.py` — second-pass computation using extension series as input
-
-**Cache rebuild:** ~65 GB output, `EXPR_CACHE_WORKERS=8`, several hours. Full rebuild required (fingerprint change).
-
-**Note:** No volume-based ops (VWAP, volume character, etc.) — extension series has no volume structure. No LSP/algo line detection — requires OHLCV candle structure. Peak/floor rolling ops are the correct analog to LSP for this series type.
-
-
-
-### Grinder Rules (NON-NEGOTIABLE)
-
-1. All grinders must use the largest possible shared expression set — flag out what can't compute for the specific job
-2. All grinders must use the exact same computation methods so results replicate across pipeline steps
-3. All grinders must use precached, precomputed, local data for fastest completion
-4. All grinders must be optimized to remove network and CPU bottlenecks
-5. All results must pass 100% of setup examples — none can abort or fail
-6. Expression cache is the single computation path
-7. Boolean aggregations (ct_, st_, tir_) excluded from exit grinders — monotonically increasing during trends, structurally wrong for exit detection
-
-### Changes This Session (2026-03-06)
-
-1. **Step 4 Signal Viewer built** — `GET /api/setup-grinder/{setup_type}/signals` endpoint added to server.py. Reads `refined_{setup}.json`, deduplicates against examples (same 5-day window as Step 2), attaches vetting verdicts. VettingPage gets Step 2 / Step 4 source toggle with MAYBE disabled in Step 4 mode and "NO EXIT" badge for signals without exit_date.
-
-2. **AI audit auto-fires on YES** — `save_vetting_decision` in server.py now queues `sample_review` job immediately when verdict is YES. SUBMIT FOR AUDIT button removed from frontend. Guards: agent alive, no other step running, no review already queued.
-
-3. **review_samples.py parser fixed** — Added fallback keyword scanner: if no `VERDICT:` line found in Claude CLI response, scans full output for APPROVE/REJECT keywords. If both present, takes the last one. Previously all verdicts defaulted to UNKNOWN.
-
-### Changes Previous Session (2026-03-05)
-
-1. **setup_refiner.py** — Rebuilt with single-pass LOO condition pruning via boolean matrix (61s for 87 conditions × 4,167 tickers).
-2. **Server endpoint fix reverted** — vetting signals endpoint reads from signal_filter path, not setup_refiner path.
-3. **Market Grinder design finalized** — winner/loser classification system documented.
+| # | Step | Status |
+|---|------|--------|
+| 0 | Nightly Refresh | Works |
+| 1 | Optimal Samples | 71 DTSS examples |
+| 2 | Signal Brute Forcing | Grind #5 done (94 conditions) |
+| 3 | Sample Expansion | signal_filter.py — being replaced by scan_signals.py |
+| 4a | Exit Grinder | Done — slope_xavgc21_off7_adr14 ≤ -1.128826 |
+| 4b | Setup Grinder | Replaced by cycle_health.py in V2 |
+| 5 | Market Grinder | V2-native — build after cycle_signals table exists |
 
 ---
 
 ## Grind History (DTSS)
 
-| Grind | Date | Examples | Conditions | Signals | Peak/day | Notes |
-|-------|------|----------|------------|---------|----------|-------|
-| 1 | ~2026-02-24 | 20 | 41 | 264 | 3 | First production grind |
-| 2 | ~2026-03-01 | 35 | 53 | 91 | 3 | After first vetting pass |
-| 3 | ~2026-03-02 | 48 | ~76 | ~200 | ~3 | After second vetting pass |
-| 4 | 2026-03-03 | 62 (59 resolved) | 86 | 168 | 4 (1mo) / 11 (5yr) | After AI vetting |
-| 4b-blackout | 2026-03-05 | 62 (59 resolved) | 87 | 164 | — | Blackout re-grind |
-| **5** | **2026-03-06** | **71** | **TBD** | **TBD** | **TBD** | **In progress** |
+| Grind | Date | Examples | Conditions | Signals (5yr) | Notes |
+|-------|------|----------|------------|---------------|-------|
+| 1 | ~2026-02-24 | 20 | 41 | 264 | First production grind |
+| 2 | ~2026-03-01 | 35 | 53 | 91 | After first vetting pass |
+| 3 | ~2026-03-02 | 48 | ~76 | ~200 | After second vetting pass |
+| 4 | 2026-03-03 | 62 | 86 | 168 | After AI vetting |
+| 4b-blackout | 2026-03-05 | 62 | 87 | 164 | Blackout re-grind |
+| 5 | 2026-03-06 | 71 | 94 | 281 filtered | signal_filter run confirmed |
 
 ---
 
-## Exit Grinder Results (2026-03-05)
+## Exit Grinder Results (locked)
 
-| Type | Expression | Floor | Median | Avg Bars | Notes |
-|------|-----------|-------|--------|----------|-------|
-| Single | `slope_xavgc21_off7_adr14 below -1.1142` | 24% | 70% | 20.7 | **Chosen** — EMA21 slope flattening = move exhaustion |
-| Multi (old) | ext_ceil + bb_pctb | 30.9% | 59.7% | 19.5 | Not competitive |
-
----
-
-## Refiner Results (2026-03-05)
-
-**Without pruning (--skip-prune):** 87 conditions, 164 → 132 deduped → 44 with exit → 42 filtered. Median 4.46 ADR captured.
-
-**86 of 132 deduped signals (66%) had no exit trigger within 120 bars.** These are the denominator for the Market Grinder win rate calculation (losers by default).
-
----
-
-## Condition Pruning (BUILT, NOT APPLIED)
-
-`setup_refiner.py --min-power 0.10` pruned 87 → 12 conditions. Too aggressive. Not applied — 87-condition signal set finds the right neighborhood.
+| Expression | Floor | Median | Avg Bars |
+|-----------|-------|--------|----------|
+| `slope_xavgc21_off7_adr14 ≤ -1.128826` | 3.2 ADR | 5.8 ADR | 38 bars |
 
 ---
 
 ## The Math
 
 - Losers: solidly under 1 ADR
-- Winners: median 6.0 ADR captured, floor 3.4 ADR
-- Even 36% win rate -> positive expectancy
-- 50% win rate (after market grinder) -> massive profit factor
+- Winners: median 5.8 ADR, floor 3.2 ADR
+- Even 36% win rate → positive expectancy
+- 50% win rate (after market grinder) → massive profit factor
 - 10% position size, 25% net winner/month = 2.5% compounding
 - 20 years of 2.5%/month = mid 8 figures
 
@@ -205,9 +112,8 @@ Replace Step 5 "coming soon" placeholder with:
 
 ## Data
 
-- Expression cache: 4,119 tickers x 12,421 expressions (~50 GB)
+- Expression cache: 4,119 tickers × 12,421 expressions (~50 GB) — **stale, needs rebuild**
 - Railway DB: 11M+ OHLCV rows, ~4,167 tickers
-- Earnings dates: batch scraped nightly
 - 71 DTSS examples (68 in cache, 3 excluded: BRK-B, SMMT, VUZI)
 
 ---
@@ -222,3 +128,12 @@ Replace Step 5 "coming soon" placeholder with:
 6. Read ta_knowledge.md before any TA work
 7. NEVER dump large data into context
 8. Expression cache = single computation path
+9. **V2 only — no V1 patching**
+
+---
+
+## Expression Library — Future (post-V2)
+
+### Extension Structure Expressions
+
+~3,630 new expressions treating 50 SMA and 200 SMA extension series as standalone price charts with full indicator suite. Scope and implementation documented in previous TODO versions. Deferred until V2 pipeline is stable.
