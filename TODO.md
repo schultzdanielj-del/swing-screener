@@ -105,7 +105,7 @@ New category: `extension_structure` — trendline breaks and statistical reversa
 **2. Extension channel breaks** (`ext_channel_break`)
 - Fit a regression channel to the extension series over N bars (lookbacks: 10, 20, 30, 50)
 - Express current value relative to the channel: 0 = lower band, 0.5 = midline, 1 = upper band
-- Values outside 0–1 = channel break. Negative = broke below uptrend channel (key signal for 200 SMA extension uptrend breaking down). >1 = broke above downtrend channel.
+- Values outside 0–1 = channel break — a significant shift in chart behavior regardless of direction or setup type
 - MAs: `avgc50`, `avgc200`
 - ~16 expressions (2 MAs × 4 lookbacks × 2: channel position + boolean break)
 
