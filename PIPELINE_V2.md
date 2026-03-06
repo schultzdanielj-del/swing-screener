@@ -2,16 +2,17 @@
 
 **The goal, stated plainly:**
 
-Find 2-7 high-quality short setups per day historically, where the math works: losers
-under 1 ADR, winners median ~5-6 ADR, win rate high enough that the expectancy is
-strongly positive. Compound at 2.5%/month for 20 years.
+Always be in the highest probability positions the market is offering right now.
+The system solves the same optimization problem every night: given everything the market
+is doing, across every setup type the system knows, what are the mathematically strongest
+positions to be in tomorrow? Compound at 2.5%/month for 20 years.
 
 **What the system produces nightly:**
 
-A ranked watchlist of tickers where the setup is present right now. The list contains
-only the absolute highest-potential setups — trimmed to the number a human can realistically
-stalk, alert, and enter during the ~90-minute entry window. Ranked highest to lowest by
-regime-adjusted EV. You focus exclusively on the top of the list. The AI vet filters
+A single unified ranked watchlist across all setup types. The list contains only the
+absolute highest-potential setups — trimmed to the number a human can realistically
+stalk, alert, and enter during the ~90-minute entry window. Ranked highest to lowest
+by regime-adjusted EV. You focus exclusively on the top of the list. The AI vet filters
 out trash before it reaches you.
 
 ---
@@ -37,20 +38,32 @@ Every cycle is a versioned snapshot. A bad grind doesn't corrupt anything. You c
 the new cycle to the previous one, keep it if it's better, revert if it's worse.
 Revert = restore previous cycle's result data and delete the current bad one. One click.
 
+**The system is setup-type agnostic.**
+DTSS is the guinea pig. The target is ~10 setup types running simultaneously. Each
+setup type has its own example library, grind cycle, and regime model — but they all
+run on the same expression cache, grinder engine, and infrastructure. The watchlist
+unifies them. More setup types means more candidates competing for the same slots —
+only the highest EV opportunities make the cut regardless of setup type. A market that
+is excellent for DTSS and poor for HTF longs will surface DTSS picks. The regime model
+per setup type handles this automatically.
+
 **The expression library is the substrate.**
-12,131 expressions covering every TA concept: price structure, extensions, AVWAP,
-volume character, momentum, MA relationships, LSP levels, algo lines, HTF context.
-This is complete and is not being rebuilt. The brute force search against this library
-is the correct method. What changes is what the search is optimizing against.
+15,805 expressions covering every TA concept: price structure, extensions, AVWAP,
+volume character, momentum, MA relationships, LSP levels, algo lines, HTF context,
+and extension structure (RSI/stochastic/Bollinger applied to the SMA extension series
+themselves — treating extension exhaustion as a standalone chart). This is complete
+and is not being rebuilt. The brute force search against this library is the correct
+method. What changes is what the search is optimizing against.
 
 ---
 
 ## The Loop
 
 Each full cycle executes all layers in order, then feeds results back into the next cycle.
+One loop instance runs per setup type. The watchlist aggregates across all instances.
 
 ```
-Cycle N:
+Cycle N (per setup type):
   Layer 1: Grind          — examples vs universe → candidate conditions
   Layer 2: Scan           — apply conditions to 5yr history → raw signals
   Layer 3: Exit Filter    — apply exit condition → signals that moved
@@ -59,7 +72,7 @@ Cycle N:
   Layer 6: Regime         — correlate signal classifications vs market conditions
   Layer 7: Health Check   — measure cycle quality, compare to previous cycle
   → if healthier: promote to current. if worse: revert.
-  → if live-ready: run tonight's watchlist from current conditions
+  → if live-ready: contribute tonight's signals to unified watchlist
   → queue Cycle N+1
 ```
 
@@ -79,7 +92,7 @@ universe. More examples → tighter discrimination → fewer false positives.
 
 **Inputs:**
 - Example library (all validated setup examples with entry dates)
-- Expression series cache (12,131 expressions × 4,119 tickers × 5yr)
+- Expression series cache (15,805 expressions × 4,119 tickers × 5yr)
 - Universe OHLCV cache
 
 **Method:**
@@ -272,8 +285,13 @@ addition and speed improvements.
 ## Layer 6: Regime Model
 
 **What it solves:** Given tonight's market conditions, what is the expected win rate
-for this setup? Weights signals up or down based on how favorable the current
-environment is historically.
+for this setup type? Weights signals up or down based on how favorable the current
+environment is historically for this specific setup.
+
+**Per setup type:** Each setup type has its own regime model. A market environment
+that is excellent for DTSS (extended breadth, deteriorating internals, rising VIX) may
+be poor for HTF longs. The models are independent — each reflects the historical
+win rate correlation for its own setup type.
 
 **When it runs:** Every cycle, as soon as there are enough classified signals to
 produce meaningful correlations. Minimum viable: ~50 classified signals across at
@@ -388,20 +406,23 @@ Cycle delta (comparison to previous cycle):
 
 ## Nightly Watchlist (live mode)
 
-**Purpose:** A platter of the absolute highest-potential setups for tonight. Trimmed
-to the number a human can realistically stalk and enter during the ~90-minute entry
-window where most setups trigger. Ranked highest to lowest by regime-adjusted EV —
-you focus on the top, trim the bottom. The AI vet filters trash before it gets to you.
+**Purpose:** Always be in the highest probability positions the market is offering
+right now. The watchlist is the answer to that question every night — unified across
+all setup types, ranked by regime-adjusted EV, trimmed to what a human can manage.
 
-Once live-ready, after each market close:
+More setup types means more candidates competing for the same watchlist slots. Only
+the highest EV opportunities make the cut regardless of setup type. The regime model
+per setup type surfaces the right setup for tonight's market automatically.
 
-1. Run today's conditions against tonight's bars (last bar of 5yr cache, updated nightly)
-2. For each signal that fires: compute rolling regime score across the signal window
-3. Run AI chart vet on each signal: does this look like the setup or is it garbage?
-   AI is checking chart shape only — same pattern-matching logic as Stage 2 of vetting.
-   Flagged signals stay on the list but are visually marked so you can skip them fast.
-4. Rank all signals by regime score × estimated win rate, highest to lowest
-5. Trim the bottom — you decide how many to carry tonight based on your capacity
+Once a setup type is live-ready, it contributes to the unified nightly watchlist.
+After each market close:
+
+1. For each live setup type: run tonight's bars against current conditions
+2. For each signal that fires: compute rolling regime score across the entry window
+3. Run AI chart vet on each signal — chart shape check only, flags but doesn't remove
+4. Pool all signals across all setup types into one list
+5. Rank by regime score × estimated win rate, highest to lowest
+6. Trim the bottom — you decide how many to carry tonight based on your capacity
 
 **Watchlist entry contains:**
 - Ticker, signal bar date, setup type
@@ -414,7 +435,8 @@ Once live-ready, after each market close:
 Earnings recency, sector theme, catalyst notes. No other part of the core pipeline
 depends on this. Not in scope for initial build.
 
-The watchlist is the end product. Every cycle of the loop makes it more accurate.
+The watchlist is the end product. Every cycle of the loop, on every setup type, makes
+it more accurate.
 
 ---
 
@@ -500,8 +522,8 @@ These need to be rebuilt or are new:
 | Cycle versioning / revert | New — data contract layer |
 | Health check script | New — `scripts/health_check.py` |
 | AI review queue | New — server.py endpoint + UI queue view |
-| Market regime model | New — `scripts/market_grinder.py` |
-| Nightly watchlist | New — ranked list with regime score + AI vet |
+| Market regime model | New — `scripts/market_grinder.py` per setup type |
+| Nightly watchlist | New — unified ranked list across all setup types |
 | UI cycle management | New — health metrics, diff, revert button, regrind indicator |
 
 ---
@@ -518,7 +540,7 @@ Build in this order so each piece is useful immediately when complete:
 6. **UI: health metrics + diff + revert + regrind indicator** — control surface for the loop
 7. **AI review queue** — two-stage vetting gate, server endpoint + UI
 8. **Market regime model** — runs on existing classified signal set
-9. **UI: regime display + nightly watchlist** — the live product
+9. **UI: regime display + unified nightly watchlist** — the live product
 
-At step 5, the loop is runnable end-to-end with the existing example library and
-classified signals. Steps 6-9 improve the live product incrementally.
+At step 5, the loop is runnable end-to-end with DTSS. Each additional setup type plugs
+into the same infrastructure. Steps 6-9 build toward the unified multi-setup watchlist.
