@@ -8,17 +8,30 @@ Nothing in here gets touched until explicitly approved.
 
 ## Project Goal
 
-**A nightly automated watchlist of signals for setups, dynamically rank ordered by EV.**
+Find 2-7 high-quality short setups per day historically, where the math works: losers
+under 1 ADR, winners median ~5-6 ADR, win rate high enough that the expectancy is
+strongly positive. Compound at 2.5%/month for 20 years.
 
-The watchlist shows signal bars for potential setups and ranks them by how likely they
-are to produce an entry candle very soon (ideally 1 day away) for a trade that will run
-big — where "big" means running as much as the setup examples did on average/median.
+The system is a nightly automated watchlist of signals for setups, dynamically rank
+ordered by EV. The watchlist shows signal bars for potential setups and ranks them by
+how likely they are to produce an entry candle very soon (ideally 1 day away) for a
+trade that will run as much as the setup examples did on average/median.
 
 Ranking is driven by historical EV:
 - **Win rate** = ratio of signals that produced a winning entry bar like the examples,
   calculated per market condition bucket via the market grinder
 - **Exit capture** = median MFE capture on exits from the exit grinder
 - **EV** = win rate × median captured move
+
+This goal has direct implications for what the grinder must do:
+- Signal count must be low and consistent — 2-7/day. Not 50, not 0, not spiking to
+  100 on random days.
+- Every signal must be a legitimate instance of the setup — not a false positive that
+  happens to pass conditions.
+- The conditions must be robust — they need to hold up on new data, not just fit the
+  example set.
+- The system needs to scale — it has to work the same way with 150 examples as it
+  does with 62.
 
 Everything in the system exists to serve this goal. Any fix, change, or addition must
 make the nightly watchlist more accurate, more reliable, or higher EV. If it doesn't
@@ -57,9 +70,9 @@ despite more examples.
 
 ### Why This Violates the Project Goal
 
-The nightly watchlist needs 2-7 high-quality signals per day — consistent and reliable.
-A grinder that produces 10x more signals when 6 more examples are added is not fit for
-purpose. The signal count must be stable and predictable as the example library grows.
+Signal count must be low and consistent — 2-7/day — and the system must scale reliably
+as examples grow. A grinder that produces 10x more signals when 6 more examples are
+added violates both requirements directly.
 
 ### Why This Is a Structural Problem
 
