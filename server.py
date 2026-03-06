@@ -2982,6 +2982,33 @@ async def get_vetting_signals(setup_type: str):
     }
 
 
+@app.get("/api/setup-grinder/{setup_type}/signals")
+async def get_setup_grinder_signals(setup_type: str):
+    """Load refined signals from setup_refiner for Step 4 vetting. Returns all signals including those without an exit trigger."""
+    path = VETTING_DATA_DIR / "setup_refiner" / f"refined_{setup_type}.json"
+    if not path.exists():
+        raise HTTPException(404, f"No refined signals for {setup_type}. Run setup_refiner.py first.")
+    with open(path) as f:
+        data = json.load(f)
+    # Load existing vetting decisions (shared with Step 2 vetting)
+    vetting_path = VETTING_DATA_DIR / "vetting" / f"vetting_{setup_type}.json"
+    decisions = {}
+    if vetting_path.exists():
+        with open(vetting_path) as f:
+            decisions = json.load(f)
+    signals = data.get("signals", [])
+    # Attach existing decisions
+    for sig in signals:
+        key = f"{sig['ticker']}_{sig['date']}"
+        sig["verdict"] = decisions.get(key, {}).get("verdict")
+        sig["entry_date"] = decisions.get(key, {}).get("entry_date")
+    return {
+        "setup_type": setup_type,
+        "n_signals": len(signals),
+        "signals": signals,
+    }
+
+
 @app.get("/api/vetting/{setup_type}/ohlcv/{ticker}")
 async def get_vetting_ohlcv(setup_type: str, ticker: str,
                              signal_date: str = Query(...),

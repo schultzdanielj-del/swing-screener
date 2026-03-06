@@ -1035,6 +1035,7 @@ function VettingPage({ setup }) {
   const [filterLogs, setFilterLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(false);
   const filterLogRef = useRef(null);
+  const [source, setSource] = useState('step2'); // 'step2' | 'step4'
 
   // Poll pipeline state for agent status + step state
   useEffect(() => {
@@ -1084,11 +1085,19 @@ function VettingPage({ setup }) {
     });
   }
 
+  function signalFetchUrl() {
+    return source === 'step4'
+      ? `${API}/api/setup-grinder/${setup}/signals`
+      : `${API}/api/vetting/${setup}/signals`;
+  }
+
   useEffect(() => {
     setLoading(true);
-    fetch(`${API}/api/vetting/${setup}/signals`).then(r=>r.json())
+    setSignals([]);
+    setCurrentIdx(0);
+    fetch(signalFetchUrl()).then(r=>r.json())
       .then(d=>{setSignals(d.signals||[]);setLoading(false);}).catch(()=>setLoading(false));
-  }, [setup]);
+  }, [setup, source]);
 
   const filtered = signals.filter(s => {
     if(filter==='all') return true; if(filter==='unvetted') return !s.verdict; return s.verdict===filter;
@@ -1139,7 +1148,7 @@ function VettingPage({ setup }) {
       if(e.key==='ArrowDown'||e.key==='j'){e.preventDefault();setCurrentIdx(i=>Math.min(i+1,filtered.length-1));}
       if(e.key==='ArrowUp'||e.key==='k'){e.preventDefault();setCurrentIdx(i=>Math.max(i-1,0));}
       if(e.key==='1'||e.key==='y') saveVerdict('yes');
-      if(e.key==='2'||e.key==='m') saveVerdict('maybe');
+      if(e.key==='2'||e.key==='m') { if(source!=='step4') saveVerdict('maybe'); }
       if(e.key==='3'||e.key==='n') saveVerdict('no');
     }
     window.addEventListener('keydown',handler); return ()=>window.removeEventListener('keydown',handler);
@@ -1193,11 +1202,27 @@ function VettingPage({ setup }) {
   return (
     <div className="vet-layout">
       <div className="vet-list">
-        <div className="vet-filter-bar">
-          {['all','unvetted','yes','maybe','no'].map(f=>(
-            <button key={f} className={`vet-filter-btn ${filter===f?'on':''}`}
-              onClick={()=>{setFilter(f);setCurrentIdx(0);}}>{f} {f==='all'?signals.length:f==='unvetted'?counts.unvetted:counts[f]}</button>
+        <div style={{display:'flex',gap:0,padding:'8px 10px 0',borderBottom:'1px solid var(--border)'}}>
+          {[['step2','Step 2'],['step4','Step 4']].map(([s,label])=>(
+            <button key={s} onClick={()=>{setSource(s);setFilter('all');}}
+              style={{flex:1,padding:'5px 0',fontSize:10,fontFamily:'var(--mono)',fontWeight:700,cursor:'pointer',
+                border:'1px solid var(--border)',borderRadius: s==='step2'?'4px 0 0 4px':'0 4px 4px 0',
+                background:source===s?'var(--cyan)':'transparent',
+                color:source===s?'var(--bg)':'var(--text-muted)',
+                marginLeft:s==='step4'?-1:0}}>{label}</button>
           ))}
+        </div>
+        <div className="vet-filter-bar">
+          {['all','unvetted','yes','maybe','no'].map(f=>{
+            const disabled = source==='step4' && f==='maybe';
+            return (
+              <button key={f} className={`vet-filter-btn ${filter===f?'on':''}`}
+                disabled={disabled}
+                onClick={()=>{if(!disabled){setFilter(f);setCurrentIdx(0);}}}
+                style={disabled?{opacity:0.3,cursor:'not-allowed'}:{}}
+              >{f} {f==='all'?signals.length:f==='unvetted'?counts.unvetted:counts[f]}</button>
+            );
+          })}
         </div>
         {(counts.yes > 0 || counts.no > 0) && counts.unvetted === 0 && (
           <div style={{padding:'8px 14px',borderBottom:'1px solid var(--border)',background:'rgba(52,211,153,0.03)'}}>
@@ -1212,13 +1237,19 @@ function VettingPage({ setup }) {
             </button>
           </div>
         )}
-        {filtered.map((sig,i) => (
+        {filtered.map((sig,i) => {
+          const noExit = source==='step4' && !sig.exit_date;
+          return (
           <div key={`${sig.ticker}_${sig.date}`}
             className={`vet-item ${i===currentIdx?'on':''} ${sig.verdict?'v-'+sig.verdict:''}`}
+            style={noExit?{opacity:0.45}:{}}
             onClick={()=>setCurrentIdx(i)}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <span className="vet-ticker">{sig.ticker}</span>
-              <span className="vet-adr" style={{fontFamily:'var(--mono)',fontSize:11}}>+{sig.move_adr?.toFixed(1)}</span>
+              <span style={{display:'flex',alignItems:'center',gap:4}}>
+                {noExit && <span style={{fontSize:8,fontFamily:'var(--mono)',padding:'1px 4px',borderRadius:2,background:'rgba(251,191,36,0.15)',color:'var(--amber)',fontWeight:700,letterSpacing:'0.05em'}}>NO EXIT</span>}
+                <span className="vet-adr" style={{fontFamily:'var(--mono)',fontSize:11}}>+{sig.move_adr?.toFixed(1)}</span>
+              </span>
             </div>
             <div className="vet-meta">
               <span>{sig.date}</span>
@@ -1226,7 +1257,8 @@ function VettingPage({ setup }) {
                 color:sig.verdict==='yes'?'var(--green)':sig.verdict==='maybe'?'var(--amber)':'var(--red)'}}>{sig.verdict}</span>}</span>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
       <div className="vet-chart">
         {isFilterRunning || (showLogs && filterLogs.length > 0) ? (
@@ -1281,7 +1313,7 @@ function VettingPage({ setup }) {
                 </button>
                 {selectedEntry && <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--blue)',marginRight:8}}>Entry: {selectedEntry}</span>}
                 <button className={`vet-btn yes ${current.verdict==='yes'?'sel':''}`} onClick={()=>saveVerdict('yes')} disabled={saving}>YES (1)</button>
-                <button className={`vet-btn maybe ${current.verdict==='maybe'?'sel':''}`} onClick={()=>saveVerdict('maybe')} disabled={saving}>MAYBE (2)</button>
+                <button className={`vet-btn maybe ${current.verdict==='maybe'?'sel':''}`} onClick={()=>saveVerdict('maybe')} disabled={saving||source==='step4'} style={source==='step4'?{opacity:0.3,cursor:'not-allowed'}:{}}>MAYBE (2)</button>
                 <button className={`vet-btn no ${current.verdict==='no'?'sel':''}`} onClick={()=>saveVerdict('no')} disabled={saving}>NO (3)</button>
               </div>
             </div>
