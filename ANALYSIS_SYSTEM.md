@@ -351,33 +351,40 @@ When the blackout re-grind produces signals that are all already in the example 
 
 ### Winner / Loser Classification
 
-Every deduped signal from Step 4b gets classified as winner or loser. The classification uses all available data, with vetting verdicts overriding auto-classification:
+Every deduped signal from Step 4b gets classified as winner or loser using all available data. Vetting verdicts override auto-classification. The rule is simple:
 
-| Signal type | Default classification | Override |
-|-------------|----------------------|----------|
-| Setup examples (confirmed by human vetting) | **WINNER** | — |
-| Exit-triggered signals (exit condition fired within window) | **WINNER** | Mark NO in Step 4 viewer → becomes LOSER |
-| No-exit signals (exit never triggered) | **LOSER** | — |
+| Signal | Classification |
+|--------|---------------|
+| Setup examples (confirmed by human vetting) | **AUTO YES — always winner** |
+| Exit-triggered signals (exit condition fired within window) | **AUTO YES — winner** |
+| Exit-triggered signals manually marked NO in Step 4 viewer | **NO — loser (override)** |
+| No-exit signals (exit never triggered within window) | **AUTO NO — loser** |
 
-**Key property:** More vetting = cleaner populations = better regime model. Every NO verdict on an exit-triggered signal removes a false winner. But the system works with zero vetting too — exit triggered / no-exit is a good-enough proxy at scale.
+**The override mechanism:** If you vet an exit-triggered signal and it's a bad/no-win setup — chop, extended bear trend, untradeable — mark it NO. It moves to the loser pile regardless of the exit trigger. This cleans up false winners in the regime model.
 
-**Why this scales:** A setup with 500 signals across 5yr doesn't need full manual vetting. Auto-classification handles all 500 and produces a valid regime model. Manual vetting improves signal quality but isn't required.
+**Key properties:**
+- The system works with zero manual vetting — exit triggered / no-exit is a good-enough proxy at any scale
+- Every NO verdict on an exit-triggered signal improves the model — more vetting = cleaner populations = better regime signal
+- Partial vetting is automatically better than no vetting
+- Works identically whether a setup has 132 signals or 500+ signals
 
-**Alignment with the sample expansion loop:** Steps 2-4 can be re-run as many times as needed to grow the example library. Each re-grind tightens conditions and produces a new signal set. The market grinder always operates on the latest signal set — running it again after a re-grind automatically picks up the improved classifications.
+**Why this scales:** A setup with 500 signals across 5yr doesn't need full manual vetting. Auto-classification handles all 500 and produces a valid regime model. For large setups, the manual vetting pass is optional quality improvement, not a prerequisite.
+
+**Alignment with the sample expansion loop:** Steps 2-4 can be re-run as many times as needed to grow the example library. Each re-grind tightens conditions and produces a new signal set. The market grinder always operates on the latest signal set — re-running it after a re-grind automatically picks up improved classifications from expanded examples.
 
 ### Step 4 Signal Viewer (prerequisite UI)
 
-Before running the market grinder, the vetting UI needs a source toggle so all Step 4 signals (not just the 42 filtered ones) can be browsed and optionally vetted.
+Before running the market grinder, the vetting UI needs a source toggle so all Step 4b signals can be browsed and optionally vetted.
 
 **The Sample Expansion page (VettingPage) gets a Step 2 / Step 4 toggle:**
 
-- **Step 2 mode** (default): reads from `data/signal_filter/filtered_{setup}.json` — the 42 filtered signals, same as today. Full YES/NO/MAYBE vetting enabled.
-- **Step 4 mode**: reads from `data/setup_refiner/refined_{setup}.json` — all 132 deduped signals including the 86 with no exit trigger. YES/NO verdicts enabled (NO overrides feed market grinder). MAYBE disabled (not meaningful here).
+- **Step 2 mode** (default): reads from `data/signal_filter/filtered_{setup}.json` — the ADR-filtered signals. Full YES/NO/MAYBE vetting enabled.
+- **Step 4 mode**: reads from `data/setup_refiner/refined_{setup}.json` — all deduped signals including those with no exit trigger. YES/NO verdicts enabled (NO overrides feed Market Grinder classification). MAYBE disabled (not meaningful here).
 
 In Step 4 mode, signals with no exit trigger are visually distinguished in the list (dim color + "no exit" tag). The chart and navigation work identically.
 
 **New server endpoint required:**
-- `GET /api/setup-grinder/{setup_type}/signals` — reads `data/setup_refiner/refined_{setup_type}.json`, returns all signals with exit status. Returns both exit-triggered and no-exit signals. Attaches any existing vetting verdicts.
+- `GET /api/setup-grinder/{setup_type}/signals` — reads `data/setup_refiner/refined_{setup_type}.json`, returns all signals with exit status. Attaches any existing vetting verdicts.
 
 ### Market Regime Indicators
 
@@ -420,6 +427,7 @@ Find combinations of regime conditions (2-3 at most) that produce the highest wi
 - All regime indicator values at that date
 - Winner/loser classification
 - Source (example / exit-triggered / no-exit)
+- Manual verdict if applied
 
 **Regime model:**
 - Which indicator combinations predict high win rates
@@ -675,7 +683,7 @@ print(gs.summary())              # all steps status
   - `GET /api/grinder/agent/status` — check if desktop agent is online
   - `POST /api/grinder/agent/heartbeat` — agent heartbeat
   - **Market Grinder endpoints (NEW):**
-  - `GET /api/setup-grinder/{setup_type}/signals` — all Step 4b signals with exit status
+  - `GET /api/setup-grinder/{setup_type}/signals` — all Step 4b signals with exit status and verdicts
   - `POST /api/market-grind/{setup_type}/upload` — upload market grinder results
   - `GET /api/market-grind/{setup_type}/results` — get latest regime model
 - **Infrastructure:** SQLite on Railway persistent volume (/app/data)
