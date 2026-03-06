@@ -657,8 +657,8 @@ def main():
 
     print_mfe_summary(examples)
 
-    # 5. Verify expression count matches cache
-    expected_cols = len(expr_names)
+    # 5. Verify expression count matches cache (compare against total cache cols, not filtered)
+    expected_cols = len(all_expr_names)
     for ex in examples:
         if ex.fwd_matrix.shape[1] != expected_cols:
             print(f"WARNING: {ex.ticker} has {ex.fwd_matrix.shape[1]} cols, expected {expected_cols}")
