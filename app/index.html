@@ -1224,19 +1224,6 @@ function VettingPage({ setup }) {
             );
           })}
         </div>
-        {(counts.yes > 0 || counts.no > 0) && counts.unvetted === 0 && (
-          <div style={{padding:'8px 14px',borderBottom:'1px solid var(--border)',background:'rgba(52,211,153,0.03)'}}>
-            <button className="btn btn-go" style={{width:'100%',fontSize:10}}
-              onClick={()=>{
-                if(!window.confirm('Submit ' + counts.yes + ' YES picks for AI review?')) return;
-                fetch(`${API}/api/pipeline/run/sample_review`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({setup:setup||'dtss'})})
-                  .then(r=>r.json()).then(d=>{alert('AI review job queued. Check Optimal Samples > Pending tab when done.');})
-                  .catch(e=>alert('Failed: '+e));
-              }}>
-              ✓ SUBMIT FOR AUDIT ({counts.yes} yes, {counts.no} no)
-            </button>
-          </div>
-        )}
         {filtered.map((sig,i) => {
           const noExit = source==='step4' && !sig.exit_date;
           return (

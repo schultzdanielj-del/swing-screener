@@ -3124,6 +3124,46 @@ async def save_vetting_decision(setup_type: str, req: VettingDecision):
         except Exception as e:
             result["example_error"] = str(e)
 
+        # Auto-queue sample_review job so AI audit starts immediately
+        try:
+            state = _load_pipeline_state()
+            now = datetime.utcnow()
+            agent = _load_grinder_json(GRINDER_AGENT_FILE, {})
+            last_hb = agent.get("last_heartbeat", "")
+            agent_alive = False
+            if last_hb:
+                try:
+                    hb_time = datetime.fromisoformat(last_hb.replace('+00:00', '').replace('Z', ''))
+                    agent_alive = (now - hb_time).total_seconds() < 30
+                except:
+                    pass
+            # Only queue if agent is alive and no other step is actively running
+            active_other = [j for j in state.get("jobs", [])
+                            if j.get("status") in ("queued", "running", "claimed")
+                            and j.get("step_id") != "sample_review"]
+            already_queued = any(j.get("step_id") == "sample_review"
+                                 and j.get("status") in ("queued", "running", "claimed")
+                                 for j in state.get("jobs", []))
+            if agent_alive and not active_other and not already_queued:
+                state["jobs"] = [j for j in state.get("jobs", []) if j.get("step_id") != "sample_review"]
+                job = {
+                    "job_id": f"pipe_sample_review_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    "step_id": "sample_review", "status": "queued", "params": {"setup": setup_type},
+                    "created_at": datetime.now().isoformat(),
+                }
+                state.setdefault("jobs", []).append(job)
+                state.setdefault("steps", {})["sample_review"] = {
+                    "status": "queued", "started_at": None, "finished_at": None,
+                    "duration_s": None, "exit_code": None, "error": None, "result_summary": None,
+                }
+                _save_pipeline_state(state)
+                logs = _load_pipeline_logs()
+                logs["sample_review"] = []
+                _save_pipeline_logs(logs)
+                result["review_queued"] = True
+        except Exception as e:
+            result["review_queue_error"] = str(e)
+
     elif req.verdict == "no":
         try:
             with get_db() as db:
