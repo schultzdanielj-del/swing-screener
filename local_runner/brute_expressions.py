@@ -828,6 +828,300 @@ def generate_all():
             })
 
     # ═══════════════════════════════════════════════════════
+    # EXTENSION STRUCTURE — Full price-structure parity on extension series
+    # ═══════════════════════════════════════════════════════
+    # Treats ext_avgc50_adr14 and ext_avgc200_adr14 as standalone price-like
+    # charts and runs the complete price-structure expression suite against them.
+    # No volume ops — extension series has no volume structure.
+    #
+    # Daily expressions use op="on_series" (auto-duplicated to w_/m_ by HTF block).
+    # HTF-only expressions (peak_ratio, ceiling_ratio) are added as precomputed.
+    #
+    # ~1,198 daily × 3 (daily+weekly+monthly) + 36 HTF-only = 3,630 total
+
+    ext_series_map = {
+        "ext50": "ext_avgc50_adr14",
+        "ext200": "ext_avgc200_adr14",
+    }
+
+    for ext_label, ext_series_name in ext_series_map.items():
+
+        # --- Slope (8 offsets) ---
+        for offset in [1, 2, 3, 5, 7, 10, 15, 20]:
+            exprs.append({
+                "name": f"es_{ext_label}_slope_off{offset}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "slope", "offset": offset}}
+            })
+
+        # --- ROC (24 periods) ---
+        for p in list(range(1, 21)) + [25, 30, 40, 50]:
+            exprs.append({
+                "name": f"es_{ext_label}_roc_{p}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "roc", "period": p}}
+            })
+
+        # --- RSI + RSI slope (6 periods × 5 variants) ---
+        for p in [5, 7, 9, 14, 21, 28]:
+            exprs.append({
+                "name": f"es_{ext_label}_rsi_{p}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "rsi", "period": p}}
+            })
+            for offset in [1, 3, 5, 10]:
+                exprs.append({
+                    "name": f"es_{ext_label}_rsi_slope_{p}_off{offset}",
+                    "category": "extension_structure",
+                    "compute": {"op": "on_series", "series": ext_series_name,
+                                "inner_op": {"op": "rsi_slope", "period": p, "offset": offset}}
+                })
+
+        # --- ROC delta (7 periods × 3 compare) ---
+        for p in [3, 5, 10, 15, 20, 30, 50]:
+            for co in [3, 5, 10]:
+                exprs.append({
+                    "name": f"es_{ext_label}_roc_delta_{p}_vs{co}",
+                    "category": "extension_structure",
+                    "compute": {"op": "on_series", "series": ext_series_name,
+                                "inner_op": {"op": "roc_delta", "period": p, "compare_offset": co}}
+                })
+
+        # --- MA cross on extension (20 pairs) ---
+        # Fast vs slow smoothed extension crossovers
+        es_ma_pairs = [
+            (3, 7), (3, 10), (3, 15), (3, 20),
+            (5, 10), (5, 15), (5, 20), (5, 30),
+            (7, 15), (7, 20), (7, 30), (7, 50),
+            (10, 20), (10, 30), (10, 50),
+            (15, 30), (15, 50),
+            (20, 50), (30, 50), (30, 65),
+        ]
+        for fast_p, slow_p in es_ma_pairs:
+            exprs.append({
+                "name": f"es_{ext_label}_ma_cross_{fast_p}_{slow_p}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "ma_cross", "fast_period": fast_p,
+                                         "slow_period": slow_p}}
+            })
+
+        # --- ADX + ADX slope (4 periods × 5 variants) ---
+        for p in [7, 10, 14, 20]:
+            exprs.append({
+                "name": f"es_{ext_label}_adx_{p}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "adx", "period": p}}
+            })
+            for offset in [1, 3, 5, 10]:
+                exprs.append({
+                    "name": f"es_{ext_label}_adx_slope_{p}_off{offset}",
+                    "category": "extension_structure",
+                    "compute": {"op": "on_series", "series": ext_series_name,
+                                "inner_op": {"op": "adx_slope", "period": p, "offset": offset}}
+                })
+
+        # --- Bollinger %B (4 periods × 3 std mults) ---
+        for p in [5, 10, 15, 20]:
+            for std_mult in [1.5, 2.0, 3.0]:
+                exprs.append({
+                    "name": f"es_{ext_label}_bb_{p}_std{std_mult}",
+                    "category": "extension_structure",
+                    "compute": {"op": "on_series", "series": ext_series_name,
+                                "inner_op": {"op": "bollinger_pctb", "period": p,
+                                             "std_mult": std_mult}}
+                })
+
+        # --- Range position (11 lookbacks) ---
+        for p in [3, 5, 7, 10, 15, 20, 30, 50, 65, 90, 120]:
+            exprs.append({
+                "name": f"es_{ext_label}_range_pos_{p}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "range_position", "period": p}}
+            })
+
+        # --- Trendline deviation (10 lookbacks) ---
+        for lb in [5, 7, 10, 15, 20, 30, 50, 65, 90, 120]:
+            exprs.append({
+                "name": f"es_{ext_label}_tl_dev_{lb}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "trendline_deviation", "lookback": lb}}
+            })
+
+        # --- Channel position (10 lookbacks) ---
+        for lb in [5, 7, 10, 15, 20, 30, 50, 65, 90, 120]:
+            exprs.append({
+                "name": f"es_{ext_label}_ch_pos_{lb}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "channel_position", "lookback": lb}}
+            })
+
+        # --- Pullback from N-bar high (10 lookbacks) ---
+        for p in [3, 5, 7, 10, 15, 20, 30, 50, 65, 120]:
+            exprs.append({
+                "name": f"es_{ext_label}_pullback_{p}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "pullback", "period": p}}
+            })
+
+        # --- ROC acceleration (3 outer × 3 inner) ---
+        for outer in [5, 10, 20]:
+            for inner_p in [3, 5, 10]:
+                exprs.append({
+                    "name": f"es_{ext_label}_roc_accel_{outer}_{inner_p}",
+                    "category": "extension_structure",
+                    "compute": {"op": "on_series", "series": ext_series_name,
+                                "inner_op": {"op": "roc_acceleration",
+                                             "outer_period": outer, "inner_period": inner_p}}
+                })
+
+        # --- Stochastic (9 periods) ---
+        for p in [3, 5, 7, 9, 10, 14, 21, 28, 50]:
+            exprs.append({
+                "name": f"es_{ext_label}_stoch_{p}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "stochastic", "period": p}}
+            })
+
+        # --- Floor ratio (9 lookbacks) ---
+        for lb in [5, 10, 15, 20, 30, 50, 65, 90, 120]:
+            exprs.append({
+                "name": f"es_{ext_label}_floor_{lb}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "floor_ratio", "lookback": lb}}
+            })
+
+        # --- Smoothed MA of extension (9 periods) ---
+        for p in [3, 5, 7, 10, 15, 20, 30, 50, 65]:
+            exprs.append({
+                "name": f"es_{ext_label}_sma_{p}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "smoothed_ma", "period": p}}
+            })
+
+        # --- Slope (already added above, 8 per MA = 16 total for both MAs) ---
+
+        # --- CCI (7 periods) ---
+        for p in [5, 7, 10, 14, 20, 30, 50]:
+            exprs.append({
+                "name": f"es_{ext_label}_cci_{p}",
+                "category": "extension_structure",
+                "compute": {"op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "cci", "period": p}}
+            })
+
+        # --- Boolean aggregations on extension structure ---
+        # ~20 boolean conditions × 19 agg ops = 380 per MA
+        es_bool_conditions = [
+            # RSI thresholds (8)
+            {"cond_name": "rsi14_gt_50", "op": "rsi", "period": 14, "threshold": 50, "direction": "gt"},
+            {"cond_name": "rsi14_gt_70", "op": "rsi", "period": 14, "threshold": 70, "direction": "gt"},
+            {"cond_name": "rsi14_lt_30", "op": "rsi", "period": 14, "threshold": 30, "direction": "lt"},
+            {"cond_name": "rsi14_lt_50", "op": "rsi", "period": 14, "threshold": 50, "direction": "lt"},
+            {"cond_name": "rsi7_gt_70", "op": "rsi", "period": 7, "threshold": 70, "direction": "gt"},
+            {"cond_name": "rsi7_lt_30", "op": "rsi", "period": 7, "threshold": 30, "direction": "lt"},
+            {"cond_name": "rsi21_gt_50", "op": "rsi", "period": 21, "threshold": 50, "direction": "gt"},
+            {"cond_name": "rsi21_lt_50", "op": "rsi", "period": 21, "threshold": 50, "direction": "lt"},
+            # Stochastic thresholds (4)
+            {"cond_name": "stoch14_gt_80", "op": "stochastic", "period": 14, "threshold": 80, "direction": "gt"},
+            {"cond_name": "stoch14_lt_20", "op": "stochastic", "period": 14, "threshold": 20, "direction": "lt"},
+            {"cond_name": "stoch14_gt_50", "op": "stochastic", "period": 14, "threshold": 50, "direction": "gt"},
+            {"cond_name": "stoch14_lt_50", "op": "stochastic", "period": 14, "threshold": 50, "direction": "lt"},
+            # Slope direction (2)
+            {"cond_name": "slope1_pos", "op": "slope", "offset": 1, "threshold": 0, "direction": "positive"},
+            {"cond_name": "slope1_neg", "op": "slope", "offset": 1, "threshold": 0, "direction": "negative"},
+            # CCI thresholds (2)
+            {"cond_name": "cci14_gt_100", "op": "cci", "period": 14, "threshold": 100, "direction": "gt"},
+            {"cond_name": "cci14_lt_neg100", "op": "cci", "period": 14, "threshold": -100, "direction": "lt"},
+            # ADX thresholds (2)
+            {"cond_name": "adx14_gt_25", "op": "adx", "period": 14, "threshold": 25, "direction": "gt"},
+            {"cond_name": "adx14_lt_20", "op": "adx", "period": 14, "threshold": 20, "direction": "lt"},
+            # ROC direction (2)
+            {"cond_name": "roc5_pos", "op": "roc", "period": 5, "threshold": 0, "direction": "positive"},
+            {"cond_name": "roc5_neg", "op": "roc", "period": 5, "threshold": 0, "direction": "negative"},
+        ]
+
+        for bc in es_bool_conditions:
+            cond_name = bc["cond_name"]
+            bool_op = {k: v for k, v in bc.items() if k != "cond_name"}
+
+            for p in ct_periods:
+                exprs.append({
+                    "name": f"ct_es_{ext_label}_{cond_name}_{p}",
+                    "category": "extension_structure",
+                    "compute": {"op": "on_series_bool_agg", "series": ext_series_name,
+                                "bool_op": bool_op, "agg_op": "count_true",
+                                "agg_period": p}
+                })
+            for p in st_periods:
+                exprs.append({
+                    "name": f"st_es_{ext_label}_{cond_name}_{p}",
+                    "category": "extension_structure",
+                    "compute": {"op": "on_series_bool_agg", "series": ext_series_name,
+                                "bool_op": bool_op, "agg_op": "since_true",
+                                "agg_period": p}
+                })
+            for p in tir_periods:
+                exprs.append({
+                    "name": f"tir_es_{ext_label}_{cond_name}_{p}",
+                    "category": "extension_structure",
+                    "compute": {"op": "on_series_bool_agg", "series": ext_series_name,
+                                "bool_op": bool_op, "agg_op": "true_in_row",
+                                "agg_period": p}
+                })
+
+    # --- Extension structure: Peak ratio & Ceiling ratio — HTF ONLY ---
+    # These are weekly + monthly only (daily peak_ratio is already above).
+    # Added as precomputed so they are NOT duplicated by the HTF block.
+    for ext_label, ext_series_name in ext_series_map.items():
+        for tf_prefix, tf_label in [("w", "weekly"), ("m", "monthly")]:
+            # Peak ratio HTF (5 lookbacks)
+            for lb in [10, 20, 30, 50, 120]:
+                htf_name = f"{tf_prefix}_es_{ext_label}_peak_{lb}"
+                exprs.append({
+                    "name": htf_name,
+                    "category": f"htf_{tf_label}",
+                    "compute": {
+                        "op": "precomputed",
+                        "source": "htf",
+                        "timeframe": tf_prefix,
+                        "column": htf_name,
+                        "base_compute": {
+                            "op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "peak_ratio", "lookback": lb}
+                        },
+                    }
+                })
+            # Ceiling ratio HTF (4 lookbacks)
+            for lb in [20, 50, 120, 252]:
+                htf_name = f"{tf_prefix}_es_{ext_label}_ceiling_{lb}"
+                exprs.append({
+                    "name": htf_name,
+                    "category": f"htf_{tf_label}",
+                    "compute": {
+                        "op": "precomputed",
+                        "source": "htf",
+                        "timeframe": tf_prefix,
+                        "column": htf_name,
+                        "base_compute": {
+                            "op": "on_series", "series": ext_series_name,
+                            "inner_op": {"op": "ceiling_ratio", "lookback": lb}
+                        },
+                    }
+                })
+
+    # ═══════════════════════════════════════════════════════
     # LSP LEVELS — Precomputed by lsp_detector_v2.py
     # ═══════════════════════════════════════════════════════
     # These are NOT computed by ExpressionEngine/compute_series().

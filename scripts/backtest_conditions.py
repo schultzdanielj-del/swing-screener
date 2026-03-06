@@ -61,13 +61,17 @@ CONDITIONS = [
 ]
 
 
-def compute_series(engine, comp):
+def compute_series(engine, comp, **kwargs):
     """Compute full indicator series for one expression.
     
     Returns numpy array of values across all bars. Each series is computed
     once per ticker — not per-bar.
     
     Covers all ops that brute_expressions.py can generate.
+    
+    kwargs:
+        series_registry: dict mapping series name → numpy array, used by
+                        on_series ops to access pre-computed extension series.
     """
     op = comp["op"]
     
@@ -967,8 +971,279 @@ def compute_series(engine, comp):
                 result[i] = v_arr[i] / v_arr[s] - 1
         return result
 
+    elif op == "on_series":
+        # Extension structure op: run an inner op on a named series as if it were price.
+        # series_data must be passed via kwargs or pre-injected on the engine.
+        series_name = comp["series"]
+        inner_op = comp["inner_op"]
+        # Get the series data — passed via series_registry kwarg
+        s_data = kwargs.get("series_registry", {}).get(series_name)
+        if s_data is None:
+            # Try to compute from engine (e.g. ext_avgc50_adr14)
+            try:
+                base_comp = _EXT_SERIES_COMPUTE.get(series_name)
+                if base_comp:
+                    s_data = compute_series(engine, base_comp)
+            except:
+                pass
+        if s_data is None:
+            return np.full(len(engine.c), np.nan)
+        return compute_on_series(np.asarray(s_data, dtype=np.float64), inner_op)
+
+    elif op == "on_series_bool_agg":
+        # Boolean aggregation on extension structure series.
+        # Computes a boolean condition from the series, then applies ct_/st_/tir_.
+        series_name = comp["series"]
+        bool_spec = comp["bool_op"]  # {op, period, threshold, direction}
+        agg_op = comp["agg_op"]      # "count_true", "since_true", "true_in_row"
+        agg_period = comp["agg_period"]
+
+        s_data = kwargs.get("series_registry", {}).get(series_name)
+        if s_data is None:
+            try:
+                base_comp = _EXT_SERIES_COMPUTE.get(series_name)
+                if base_comp:
+                    s_data = compute_series(engine, base_comp)
+            except:
+                pass
+        if s_data is None:
+            return np.full(len(engine.c), np.nan)
+
+        # Compute the indicator on the series
+        indicator = compute_on_series(
+            np.asarray(s_data, dtype=np.float64), bool_spec
+        )
+        # Apply threshold to get boolean
+        threshold = bool_spec.get("threshold", 0)
+        direction = bool_spec.get("direction", "gt")
+        if direction == "gt":
+            bool_s = pd.Series(indicator > threshold)
+        elif direction == "lt":
+            bool_s = pd.Series(indicator < threshold)
+        elif direction == "positive":
+            bool_s = pd.Series(indicator > 0)
+        elif direction == "negative":
+            bool_s = pd.Series(indicator < 0)
+        else:
+            bool_s = pd.Series(indicator > threshold)
+
+        # Apply aggregation
+        if agg_op == "count_true":
+            return count_true(bool_s, agg_period).values
+        elif agg_op == "since_true":
+            return since_true(bool_s, agg_period).values
+        elif agg_op == "true_in_row":
+            return true_in_row(bool_s, agg_period).values
+        else:
+            return np.full(len(engine.c), np.nan)
+
     else:
         raise ValueError(f"Unsupported op for backtest series: {op}")
+
+
+# ══════════════════════════════════════════════════════════════
+# ON_SERIES — Compute inner ops on a 1D series (extension structure)
+# ══════════════════════════════════════════════════════════════
+
+# Map extension series names to their compute specs (for live backtest fallback)
+_EXT_SERIES_COMPUTE = {
+    "ext_avgc50_adr14": {"op": "extension", "ma": "avgc50", "normalizer": "adr14"},
+    "ext_avgc200_adr14": {"op": "extension", "ma": "avgc200", "normalizer": "adr14"},
+}
+
+
+def compute_on_series(series, inner_op):
+    """Run an inner op on a 1D float64 numpy array treated as 'close price'.
+
+    This enables the full price-structure expression suite to be applied
+    to extension series (ext_avgc50_adr14, ext_avgc200_adr14) or any
+    other derived series.
+
+    The series is treated as a standalone price chart — no OHLCV required.
+    High=Low=Close=series for ops that reference H/L.
+    """
+    s = pd.Series(series)
+    n = len(s)
+    op = inner_op["op"]
+
+    if op == "slope":
+        offset = inner_op["offset"]
+        return (s - s.shift(offset)).values
+
+    elif op == "roc":
+        p = inner_op["period"]
+        shifted = s.shift(p)
+        return (100 * (s / shifted.replace(0, np.nan) - 1)).values
+
+    elif op == "rsi":
+        p = inner_op["period"]
+        delta = s.diff()
+        gain = delta.clip(lower=0)
+        loss = (-delta).clip(lower=0)
+        avg_gain = gain.ewm(span=p, adjust=False).mean()
+        avg_loss = loss.ewm(span=p, adjust=False).mean()
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        return (100 - 100 / (1 + rs)).values
+
+    elif op == "rsi_slope":
+        p = inner_op["period"]
+        offset = inner_op["offset"]
+        delta = s.diff()
+        gain = delta.clip(lower=0)
+        loss = (-delta).clip(lower=0)
+        avg_gain = gain.ewm(span=p, adjust=False).mean()
+        avg_loss = loss.ewm(span=p, adjust=False).mean()
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi_s = 100 - 100 / (1 + rs)
+        return (rsi_s - rsi_s.shift(offset)).values
+
+    elif op == "stochastic":
+        p = inner_op["period"]
+        min_s = s.rolling(p, min_periods=1).min()
+        max_s = s.rolling(p, min_periods=1).max()
+        rng = max_s - min_s
+        return ((s - min_s) / rng.replace(0, np.nan) * 100).values
+
+    elif op == "cci":
+        p = inner_op["period"]
+        # CCI on single series: typical = series itself (no H/L)
+        sma = s.rolling(p, min_periods=1).mean()
+        mad = s.rolling(p, min_periods=1).apply(
+            lambda x: np.mean(np.abs(x - np.mean(x))), raw=True
+        )
+        return ((s - sma) / (0.015 * mad).replace(0, np.nan)).values
+
+    elif op == "adx":
+        p = inner_op["period"]
+        # ADX on single series: use absolute changes as +DM/-DM proxy
+        diff = s.diff()
+        plus_dm = diff.clip(lower=0)
+        minus_dm = (-diff).clip(lower=0)
+        atr_proxy = diff.abs().ewm(span=p, adjust=False).mean()
+        plus_di = 100 * plus_dm.ewm(span=p, adjust=False).mean() / atr_proxy.replace(0, np.nan)
+        minus_di = 100 * minus_dm.ewm(span=p, adjust=False).mean() / atr_proxy.replace(0, np.nan)
+        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+        return dx.ewm(span=p, adjust=False).mean().values
+
+    elif op == "adx_slope":
+        p = inner_op["period"]
+        offset = inner_op["offset"]
+        diff = s.diff()
+        plus_dm = diff.clip(lower=0)
+        minus_dm = (-diff).clip(lower=0)
+        atr_proxy = diff.abs().ewm(span=p, adjust=False).mean()
+        plus_di = 100 * plus_dm.ewm(span=p, adjust=False).mean() / atr_proxy.replace(0, np.nan)
+        minus_di = 100 * minus_dm.ewm(span=p, adjust=False).mean() / atr_proxy.replace(0, np.nan)
+        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+        adx_s = dx.ewm(span=p, adjust=False).mean()
+        return (adx_s - adx_s.shift(offset)).values
+
+    elif op == "range_position":
+        p = inner_op["period"]
+        max_s = s.rolling(p, min_periods=1).max()
+        min_s = s.rolling(p, min_periods=1).min()
+        rng = max_s - min_s
+        return ((s - min_s) / rng.replace(0, np.nan)).values
+
+    elif op == "pullback":
+        p = inner_op["period"]
+        max_s = s.rolling(p, min_periods=1).max()
+        return (max_s - s).values
+
+    elif op == "floor_ratio":
+        lb = inner_op["lookback"]
+        min_s = s.rolling(lb, min_periods=1).min()
+        rng = s.rolling(lb, min_periods=1).max() - min_s
+        return ((s - min_s) / rng.replace(0, np.nan)).values
+
+    elif op == "peak_ratio":
+        lb = inner_op["lookback"]
+        max_s = s.rolling(lb, min_periods=1).max()
+        return (s / max_s.replace(0, np.nan)).values
+
+    elif op == "ceiling_ratio":
+        lb = inner_op["lookback"]
+        max_s = s.rolling(lb, min_periods=1).max()
+        min_s = s.rolling(lb, min_periods=1).min()
+        rng = max_s - min_s
+        return ((max_s - s) / rng.replace(0, np.nan)).values
+
+    elif op == "trendline_deviation":
+        lb = inner_op["lookback"]
+        # Linear regression residual over lookback window
+        arr = s.values
+        result = np.full(n, np.nan)
+        for i in range(lb - 1, n):
+            window = arr[i - lb + 1:i + 1]
+            if np.any(np.isnan(window)):
+                continue
+            x = np.arange(lb, dtype=np.float64)
+            slope_val = (np.mean(x * window) - np.mean(x) * np.mean(window)) / \
+                        (np.mean(x * x) - np.mean(x) ** 2 + 1e-10)
+            intercept = np.mean(window) - slope_val * np.mean(x)
+            projected = slope_val * (lb - 1) + intercept
+            result[i] = arr[i] - projected
+        return result
+
+    elif op == "channel_position":
+        lb = inner_op["lookback"]
+        # Position within linear regression channel
+        arr = s.values
+        result = np.full(n, np.nan)
+        for i in range(lb - 1, n):
+            window = arr[i - lb + 1:i + 1]
+            if np.any(np.isnan(window)):
+                continue
+            x = np.arange(lb, dtype=np.float64)
+            slope_val = (np.mean(x * window) - np.mean(x) * np.mean(window)) / \
+                        (np.mean(x * x) - np.mean(x) ** 2 + 1e-10)
+            intercept = np.mean(window) - slope_val * np.mean(x)
+            projected_line = slope_val * x + intercept
+            residuals = window - projected_line
+            std_resid = np.std(residuals)
+            if std_resid > 0:
+                result[i] = (arr[i] - (slope_val * (lb - 1) + intercept)) / std_resid
+        return result
+
+    elif op == "bollinger_pctb":
+        p = inner_op["period"]
+        std_mult = inner_op.get("std_mult", 2.0)
+        sma = s.rolling(p, min_periods=1).mean()
+        std = s.rolling(p, min_periods=1).std()
+        upper = sma + std_mult * std
+        lower = sma - std_mult * std
+        bw = upper - lower
+        return ((s - lower) / bw.replace(0, np.nan)).values
+
+    elif op == "smoothed_ma":
+        p = inner_op["period"]
+        return s.rolling(p, min_periods=1).mean().values
+
+    elif op == "ma_cross":
+        fast_p = inner_op["fast_period"]
+        slow_p = inner_op["slow_period"]
+        fast = s.rolling(fast_p, min_periods=1).mean()
+        slow = s.rolling(slow_p, min_periods=1).mean()
+        return (fast - slow).values
+
+    elif op == "roc_delta":
+        p = inner_op["period"]
+        co = inner_op["compare_offset"]
+        shifted = s.shift(p)
+        roc_now = s / shifted.replace(0, np.nan) - 1
+        shifted_co = s.shift(co)
+        shifted_cop = s.shift(co + p)
+        roc_prev = shifted_co / shifted_cop.replace(0, np.nan) - 1
+        return (100 * (roc_now - roc_prev)).values
+
+    elif op == "roc_acceleration":
+        outer = inner_op["outer_period"]
+        inner_p = inner_op["inner_period"]
+        roc_s = s.pct_change(outer) * 100
+        return roc_s.diff(inner_p).values
+
+    else:
+        raise ValueError(f"Unsupported inner op for on_series: {op}")
 
 
 def _get_normalizer(engine, norm_name):

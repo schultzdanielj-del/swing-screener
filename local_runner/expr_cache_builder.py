@@ -257,6 +257,8 @@ def save_manifest(manifest):
 
 _w_expressions = None
 _w_daily_indices = None      # indices of daily (non-precomputed) expressions
+_w_ext_struct_indices = None # indices of on_series/on_series_bool_agg (2nd pass)
+_w_ext_series_name_to_idx = None  # map ext series name → column index in data
 _w_lsp_indices = None        # indices of LSP precomputed expressions
 _w_algo_indices = None       # indices of algo line precomputed expressions
 _w_htf_weekly_indices = None  # indices of weekly HTF expressions
@@ -267,19 +269,35 @@ _w_htf_monthly_base = None   # base compute specs for monthly HTF expressions
 
 def _init_worker(expressions):
     """Initialize worker with expression list and pre-classify indices."""
-    global _w_expressions, _w_daily_indices, _w_lsp_indices, _w_algo_indices
+    global _w_expressions, _w_daily_indices, _w_ext_struct_indices
+    global _w_ext_series_name_to_idx
+    global _w_lsp_indices, _w_algo_indices
     global _w_htf_weekly_indices, _w_htf_monthly_indices
     global _w_htf_weekly_base, _w_htf_monthly_base
 
     _w_expressions = expressions
 
     _w_daily_indices = []
+    _w_ext_struct_indices = []
     _w_lsp_indices = []
     _w_algo_indices = []
     _w_htf_weekly_indices = []
     _w_htf_monthly_indices = []
     _w_htf_weekly_base = []
     _w_htf_monthly_base = []
+
+    # Build name→index map for finding extension series columns
+    _name_to_idx = {}
+    for j, expr in enumerate(expressions):
+        _name_to_idx[expr["name"]] = j
+
+    # Map extension series names to their column indices
+    _w_ext_series_name_to_idx = {}
+    for series_name in ["ext_avgc50_adr14", "ext_avgc200_adr14"]:
+        if series_name in _name_to_idx:
+            _w_ext_series_name_to_idx[series_name] = _name_to_idx[series_name]
+
+    _ON_SERIES_OPS = {"on_series", "on_series_bool_agg"}
 
     for j, expr in enumerate(expressions):
         compute = expr["compute"]
@@ -297,6 +315,8 @@ def _init_worker(expressions):
                 elif tf == "m":
                     _w_htf_monthly_indices.append(j)
                     _w_htf_monthly_base.append(compute.get("base_compute"))
+        elif compute.get("op") in _ON_SERIES_OPS:
+            _w_ext_struct_indices.append(j)
         else:
             _w_daily_indices.append(j)
 
@@ -309,7 +329,9 @@ def _compute_ticker_full(args):
     Returns: (ticker, dates_array, data_array) or (ticker, None, None)
     """
     ticker, df_dict = args
-    global _w_expressions, _w_daily_indices, _w_lsp_indices, _w_algo_indices
+    global _w_expressions, _w_daily_indices, _w_ext_struct_indices
+    global _w_ext_series_name_to_idx
+    global _w_lsp_indices, _w_algo_indices
     global _w_htf_weekly_indices, _w_htf_monthly_indices
     global _w_htf_weekly_base, _w_htf_monthly_base
 
@@ -404,6 +426,33 @@ def _compute_ticker_full(args):
                 except:
                     pass
 
+        # ── 4. Extension structure (on_series — second pass) ──
+        # These require the extension series (ext_avgc50_adr14, ext_avgc200_adr14)
+        # to be already computed in step 1 above.
+        if _w_ext_struct_indices and _w_ext_series_name_to_idx:
+            from scripts.backtest_conditions import compute_on_series
+
+            # Build series_registry from already-computed columns
+            series_registry = {}
+            for sname, sidx in _w_ext_series_name_to_idx.items():
+                col_data = data[:, sidx]
+                if not np.all(np.isnan(col_data)):
+                    series_registry[sname] = col_data.astype(np.float64)
+
+            if series_registry:
+                for j in _w_ext_struct_indices:
+                    try:
+                        series = compute_series(
+                            engine, _w_expressions[j]["compute"],
+                            series_registry=series_registry
+                        )
+                        if series is not None:
+                            arr = np.asarray(series, dtype=np.float32)
+                            if len(arr) == n_bars:
+                                data[:, j] = arr
+                    except:
+                        pass
+
         dates = df["date"].dt.strftime("%Y-%m-%d").values
         return (ticker, dates, data)
 
@@ -422,7 +471,9 @@ def _append_ticker(args):
     Returns: (ticker, new_dates, new_data) or (ticker, None, None)
     """
     ticker, df_dict, existing_n_bars = args
-    global _w_expressions, _w_daily_indices, _w_lsp_indices, _w_algo_indices
+    global _w_expressions, _w_daily_indices, _w_ext_struct_indices
+    global _w_ext_series_name_to_idx
+    global _w_lsp_indices, _w_algo_indices
     global _w_htf_weekly_indices, _w_htf_monthly_indices
     global _w_htf_weekly_base, _w_htf_monthly_base
 
@@ -509,6 +560,37 @@ def _append_ticker(args):
                         new_data[:, j] = daily_arr[-n_new:]
                 except:
                     pass
+
+        # ── 4. Extension structure (on_series — second pass) ──
+        if _w_ext_struct_indices and _w_ext_series_name_to_idx:
+            from scripts.backtest_conditions import compute_on_series
+
+            # Need full-length extension series to compute, then extract new bars
+            series_registry = {}
+            for sname, sidx in _w_ext_series_name_to_idx.items():
+                # Compute the extension series from the engine (full length)
+                from scripts.backtest_conditions import _EXT_SERIES_COMPUTE
+                base_comp = _EXT_SERIES_COMPUTE.get(sname)
+                if base_comp:
+                    try:
+                        full_series = compute_series(engine, base_comp)
+                        if full_series is not None and len(full_series) == n_bars:
+                            series_registry[sname] = np.asarray(full_series, dtype=np.float64)
+                    except:
+                        pass
+
+            if series_registry:
+                for j in _w_ext_struct_indices:
+                    try:
+                        series = compute_series(
+                            engine, _w_expressions[j]["compute"],
+                            series_registry=series_registry
+                        )
+                        if series is not None and len(series) == n_bars:
+                            arr = np.asarray(series, dtype=np.float32)
+                            new_data[:, j] = arr[-n_new:]
+                    except:
+                        pass
 
         new_dates = df["date"].dt.strftime("%Y-%m-%d").values[-n_new:]
         return (ticker, new_dates, new_data)
