@@ -105,3 +105,112 @@ Do not change beam/depth params as a workaround.
 Do not change the example range computation as a workaround for this specific bug.
 
 ---
+
+## BUG-002: Pipeline Agent Step IDs Don't Match UI Step IDs
+
+**Status:** Confirmed
+**Severity:** Critical — the agent cannot run any current UI pipeline steps except nightly
+**Discovered:** 2026-03-06 during live system audit
+
+### What Was Observed
+
+`pipeline_agent.py` has a `STEP_COMMANDS` dict with these keys:
+- `nightly`, `signal_grind`, `exit_grind`, `multistage_exit`, `signal_filter`,
+  `profit_grinder`, `outcome_grind`, `backtest`
+
+The Railway UI pipeline exposes these step IDs:
+- `nightly`, `optimal_samples`, `signal_brute`, `sample_expansion`, `sample_review`,
+  `setup_grinder_a`, `setup_grinder_b`, `market_grind`
+
+The only match is `nightly`. Every other UI step has no corresponding agent command.
+
+When the UI queues `signal_brute`, the agent receives the job, looks it up in
+`STEP_COMMANDS`, finds nothing, and posts `error: Unknown step`. Same for
+`setup_grinder_a`, `setup_grinder_b`, `market_grind`, `sample_review`.
+
+This is confirmed by live Railway state: `sample_review` and `setup_grinder_b` are
+both in `error` status right now. `setup_grinder_a` shows `done` because it was run
+manually, not through the agent.
+
+### Root Cause
+
+The UI pipeline step IDs were renamed or redesigned at some point after the agent's
+`STEP_COMMANDS` dict was written. The two were never resynchronized.
+
+### Consequence
+
+The agent is effectively non-functional for the current pipeline. Any step triggered
+from the UI immediately errors. The only way anything has been run is manually from
+the command line, which means no log streaming to Railway, no status tracking, and
+no reliable record of what ran with what parameters.
+
+### What Needs to Be Fixed
+
+`pipeline_agent.py` `STEP_COMMANDS` must be updated to match current UI step IDs,
+with each key mapping to the correct script and arguments:
+- `signal_brute` → pyramid_grinder.py + signal_exit_grinder.py (sequential)
+- `sample_expansion` → signal_filter.py
+- `sample_review` → review_samples.py
+- `setup_grinder_a` → profit_grinder.py + multistage_exit_grinder.py (sequential)
+- `setup_grinder_b` → pyramid_grinder.py --blackout + setup_refiner.py (sequential)
+- `market_grind` → market_grinder.py (not yet built)
+
+---
+
+## BUG-003: Grinder Results Are Never Uploaded to Railway
+
+**Status:** Confirmed
+**Severity:** High — Railway has no accurate record of current grind state
+**Discovered:** 2026-03-06 during live system audit
+
+### What Was Observed
+
+`GET /api/grinder/results/dtss` returns a stale Phase 1 spiderweb result from
+2026-02-23: 5 conditions, 3 passing tickers. This is the old single-day ceiling
+result from before the pyramid grinder existed.
+
+The actual pyramid grinder output (86+ conditions, 168 signals, grind #4 from
+2026-03-03) exists only as a local JSON file on the desktop machine. It has never
+been uploaded to Railway.
+
+The signal count mismatch that triggered the BUG-001 investigation (1,691 signals
+from grind #5) also only exists locally.
+
+Railway's `backtest_signals` table for DTSS has **0 rows**.
+
+The vetting UI shows 568 signals loaded (from a manual signal_filter run that did
+upload), but the grinder results endpoint that the UI would use to show "what
+conditions produced these signals" is stale and wrong.
+
+### Root Cause
+
+Two separate problems:
+
+1. The pyramid grinder has no upload step. It writes results to local JSON files
+   only (`local_runner/cache/pyramid_results_{setup}.json`). There is no code
+   anywhere that POSTs pyramid results to Railway after a grind completes.
+
+2. The backtest runner (`backtest_runner.py`) does upload signals via
+   `POST /api/backtest/signals/upload`, but it has not been run since the
+   grinder results changed. The upload and the grind are decoupled — running
+   the grinder doesn't trigger the backtest runner.
+
+### Consequence
+
+Railway is operating on stale data throughout. The UI's "current conditions" display,
+historical signal counts, and any downstream steps that read grinder output from
+Railway are all working from the wrong data. There is no single source of truth —
+the desktop has the real data, Railway has old data, and nothing enforces consistency.
+
+### What Needs to Be Fixed
+
+Every grinder that runs locally must upload its results to Railway as part of the
+same run. This should not be optional or a separate manual step. Specifically:
+
+- `pyramid_grinder.py` must POST results to a Railway endpoint on completion
+- `backtest_runner.py` must be triggered automatically after a grind completes,
+  not run separately
+- Railway must be the authoritative store for all grinder outputs so the UI
+  and downstream steps always read current data
+
+---
