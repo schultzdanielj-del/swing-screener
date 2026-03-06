@@ -8,9 +8,11 @@ strongly positive. Compound at 2.5%/month for 20 years.
 
 **What the system produces nightly:**
 
-A ranked shortlist of tickers where the setup is present right now, the historical math
-says this setup has strong positive EV in current market conditions, and the entry is
-likely 1-2 days away.
+A ranked watchlist of tickers where the setup is present right now. The list contains
+only the absolute highest-potential setups — trimmed to the number a human can realistically
+stalk, alert, and enter during the ~90-minute entry window. Ranked highest to lowest by
+regime-adjusted EV. You focus exclusively on the top of the list. The AI vet filters
+out trash before it reaches you.
 
 ---
 
@@ -33,6 +35,7 @@ is positive. Those are measurable thresholds, not judgment calls.
 **Revert without fear.**
 Every cycle is a versioned snapshot. A bad grind doesn't corrupt anything. You compare
 the new cycle to the previous one, keep it if it's better, revert if it's worse.
+Revert = restore previous cycle's result data and delete the current bad one. One click.
 
 **The expression library is the substrate.**
 12,131 expressions covering every TA concept: price structure, extensions, AVWAP,
@@ -150,7 +153,9 @@ enough to warrant it.
 The ADR target for winner classification is derived from the sample median, not a
 fixed threshold. Signals that trigger the exit but fall well short of sample-median
 ADR are worth manual review — they may be technically valid but not sample-quality
-moves. The goal is sample-type exits, not scratching tiny winners.
+moves. The goal is sample-type exits, not scratching tiny winners. Small winners that
+don't reach sample-median ADR are treated as losers for EV purposes — that capital
+should work elsewhere.
 
 **Output:**
 - Each signal labeled: exit_triggered (bool), move_adr, mfe_adr, capture_eff
@@ -218,9 +223,12 @@ candidates, AI checks them against the example library, human makes the final ca
 - SKIP → stays in unvetted pile
 
 **Stage 2 — AI review queue:**
-- AI receives the chart + the full example library as context
-- AI checks: does this chart genuinely match the setup pattern of the examples?
-- AI outputs: GREEN LIGHT or FLAG with specific reasoning
+- AI receives the chart (same format as the existing vetting UI) + the full example
+  library as context
+- AI checks: does this chart genuinely match the shape and setup pattern of the
+  existing examples? Is it the same setup or something superficially similar but wrong?
+- AI outputs: GREEN LIGHT or FLAG with specific reasoning (e.g. "double top not formed",
+  "no volume confirmation", "trend not extended enough")
 - You review the AI verdict and make the final call: approve or reject
 - Approved → added to example library + labeled WIN
 - Rejected → labeled LOSS
@@ -230,6 +238,12 @@ Human vetting at speed catches obvious candidates but can drift during long sess
 The AI is checking against the full example library simultaneously — it doesn't get
 fatigued or loosen criteria. It catches discretion drift. The human has final authority
 but the AI acts as a quality control gate.
+
+**AI vet scope — chart shape only:**
+The AI vet is purely about chart pattern matching. It is looking at the shape of the
+chart and comparing it to the example library. It is not doing fundamental analysis,
+earnings checks, or anything else. Those are addons that may be layered in later but
+no other part of the core pipeline depends on them.
 
 **Regrind trigger:**
 Adding examples does NOT trigger an automatic regrind. The UI shows a persistent
@@ -250,8 +264,8 @@ the primary activity and focus on regime model quality instead.
 - Stage 2: AI review queue visible in UI, shows AI verdict + reasoning per pick
 - Persistent "regrind needed" indicator showing N examples added since last grind
 
-**Reuse from V1:** Chart vetting UI core — transplant with speed improvements and
-AI queue addition.
+**Reuse from V1:** Existing chart vetting UI is good enough — transplant with AI queue
+addition and speed improvements.
 
 ---
 
@@ -374,24 +388,31 @@ Cycle delta (comparison to previous cycle):
 
 ## Nightly Watchlist (live mode)
 
+**Purpose:** A platter of the absolute highest-potential setups for tonight. Trimmed
+to the number a human can realistically stalk and enter during the ~90-minute entry
+window where most setups trigger. Ranked highest to lowest by regime-adjusted EV —
+you focus on the top, trim the bottom. The AI vet filters trash before it gets to you.
+
 Once live-ready, after each market close:
 
 1. Run today's conditions against tonight's bars (last bar of 5yr cache, updated nightly)
 2. For each signal that fires: compute rolling regime score across the signal window
-3. Rank signals by regime score × estimated win rate
-4. For each ranked signal, run AI chart vet: does this look like the setup or is it
-   garbage? Garbage signals are flagged, not removed — you see the flag and decide.
-5. Pull fundamental context for each signal ticker: recent earnings result, sector
-   theme momentum, any known catalyst. Informational only — does not filter signals.
-6. Output: ranked list with regime-adjusted EV, AI vet status, and fundamental notes
+3. Run AI chart vet on each signal: does this look like the setup or is it garbage?
+   AI is checking chart shape only — same pattern-matching logic as Stage 2 of vetting.
+   Flagged signals stay on the list but are visually marked so you can skip them fast.
+4. Rank all signals by regime score × estimated win rate, highest to lowest
+5. Trim the bottom — you decide how many to carry tonight based on your capacity
 
 **Watchlist entry contains:**
 - Ticker, signal bar date, setup type
-- Regime score (rolling, 0.0–1.0)
+- Regime score (rolling across entry window, 0.0–1.0)
 - Historical win rate at this regime score
 - Expected move in ADR (from sample median)
-- AI vet: LOOKS GOOD / FLAGGED + brief reason
-- Fundamental notes: earnings recency/direction, sector theme, notable catalyst
+- AI vet status: LOOKS GOOD / FLAGGED + one-line reason if flagged
+
+**Fundamental context (future addon):**
+Earnings recency, sector theme, catalyst notes. No other part of the core pipeline
+depends on this. Not in scope for initial build.
 
 The watchlist is the end product. Every cycle of the loop makes it more accurate.
 
@@ -417,7 +438,11 @@ reverted_at       — timestamp if reverted
 ```
 
 **Current pointer:** One cycle per setup type is "current." The watchlist always reads
-from current. Reverting moves the current pointer back one cycle.
+from current.
+
+**Revert mechanics:** Revert = restore the previous cycle's result data as current and
+delete the bad cycle. One operation. No manual reconstruction. The previous cycle's
+conditions, signals, and health metrics become current instantly.
 
 **Railway is the authoritative store.** All compute runs locally, all results upload
 to Railway on completion. The UI reads only from Railway. Local files are ephemeral.
@@ -462,7 +487,7 @@ These components are correct and reusable:
 | Exit filter + measurement | `scripts/signal_filter.py` exit phase | ✅ Keep |
 | Exit grinder | `scripts/exit_grinder.py` | ✅ Keep as-is |
 | Classification logic | `server.py` vetting endpoints | ✅ Keep rules, rewire storage |
-| Chart vetting UI | `app/index.html` vetting page | ✅ Keep, add AI queue + speed |
+| Chart vetting UI | `app/index.html` vetting page | ✅ Keep, add AI queue |
 | Example library | Railway DB `examples` table | ✅ Keep — 71 DTSS examples |
 | OHLCV data | Railway SQLite | ✅ Keep |
 
@@ -476,7 +501,7 @@ These need to be rebuilt or are new:
 | Health check script | New — `scripts/health_check.py` |
 | AI review queue | New — server.py endpoint + UI queue view |
 | Market regime model | New — `scripts/market_grinder.py` |
-| Nightly watchlist output | New — ranked list with regime score + AI vet + fundamentals |
+| Nightly watchlist | New — ranked list with regime score + AI vet |
 | UI cycle management | New — health metrics, diff, revert button, regrind indicator |
 
 ---
