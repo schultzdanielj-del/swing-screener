@@ -1,0 +1,1481 @@
+{
+  "setup_type": "dtss",
+  "timestamp": "2026-03-05T14:17:09.856803",
+  "stage": "setup_refiner",
+  "computation_path": "expression_cache_only",
+  "source_conditions_file": "pyramid_results_dtss_blackout.json",
+  "skip_prune": false,
+  "n_conditions_input": 87,
+  "n_conditions_kept": 87,
+  "n_conditions_dropped": 0,
+  "exit_condition": {
+    "expression": "slope_xavgc21_off7_adr14",
+    "threshold": -1.114178,
+    "direction": "below"
+  },
+  "min_adr_threshold": 0.0,
+  "n_raw_signals": 790,
+  "n_deduped": 588,
+  "n_with_exit": 0,
+  "n_filtered": 0,
+  "pruned_conditions": [
+    {
+      "name": "roc_delta_50_vs10",
+      "expr": "roc_delta_50_vs10",
+      "category": "momentum",
+      "compute": {
+        "op": "roc_delta",
+        "period": 50,
+        "compare_offset": 10
+      },
+      "low": -27.657000923156737,
+      "high": 88.86366214752198,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "vol_ratio_3",
+      "expr": "vol_ratio_3",
+      "category": "momentum",
+      "compute": {
+        "op": "volume_ratio",
+        "avg_period": 3
+      },
+      "low": 0.4853888005018234,
+      "high": 1.8394528776407242,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "range_width_15",
+      "expr": "range_width_15",
+      "category": "range",
+      "compute": {
+        "op": "range_width",
+        "period": 15,
+        "normalizer": "atr14"
+      },
+      "low": 2.6387948989868164,
+      "high": 7.470345497131348,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "channel_slope_15",
+      "expr": "channel_slope_15",
+      "category": "range",
+      "compute": {
+        "op": "channel_slope",
+        "ref": "maxh",
+        "period": 15,
+        "normalizer": "atr14"
+      },
+      "low": -1.8492970883846283,
+      "high": 5.203739327192307,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "ext_ceil_avgc200_lb504_atr14",
+      "expr": "ext_ceil_avgc200_lb504_atr14",
+      "category": "extension_ceiling",
+      "compute": {
+        "op": "extension_ceiling_ratio",
+        "ma": "avgc200",
+        "lookback": 504,
+        "normalizer": "atr14"
+      },
+      "low": 0.2902559831738472,
+      "high": 1.0337973341345787,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "undercut_avgc50_20_adr14",
+      "expr": "undercut_avgc50_20_adr14",
+      "category": "ma_cross",
+      "compute": {
+        "op": "ma_undercut_depth",
+        "ma": "avgc50",
+        "period": 20,
+        "normalizer": "adr14"
+      },
+      "low": -5.205764830112457,
+      "high": 2.2145808339118958,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "undercut_avgc200_120_atr14",
+      "expr": "undercut_avgc200_120_atr14",
+      "category": "ma_cross",
+      "compute": {
+        "op": "ma_undercut_depth",
+        "ma": "avgc200",
+        "period": 120,
+        "normalizer": "atr14"
+      },
+      "low": -4.0780229568481445,
+      "high": 2.7417502403259277,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "swing_low_count_30",
+      "expr": "swing_low_count_30",
+      "category": "swing_structure",
+      "compute": {
+        "op": "swing_low_count",
+        "period": 30
+      },
+      "low": 2.75,
+      "high": 8.25,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "swing_low_count_120",
+      "expr": "swing_low_count_120",
+      "category": "swing_structure",
+      "compute": {
+        "op": "swing_low_count",
+        "period": 120
+      },
+      "low": 20.55,
+      "high": 30.45,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "gap_count_50_t0.3",
+      "expr": "gap_count_50_t0.3",
+      "category": "gap",
+      "compute": {
+        "op": "gap_count",
+        "period": 50,
+        "threshold": 0.3
+      },
+      "low": 4.15,
+      "high": 22.85,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "cmf_slope_20_off10",
+      "expr": "cmf_slope_20_off10",
+      "category": "volume_character",
+      "compute": {
+        "op": "cmf_slope",
+        "period": 20,
+        "offset": 10
+      },
+      "low": -0.14816396869719028,
+      "high": 0.5305834580212831,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "vwap_slope_50_off10_adr14",
+      "expr": "vwap_slope_50_off10_adr14",
+      "category": "vwap",
+      "compute": {
+        "op": "vwap_slope",
+        "period": 50,
+        "offset": 10,
+        "normalizer": "adr14"
+      },
+      "low": -0.30773427411913873,
+      "high": 1.379814126342535,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "ct_h_gt_h1_30",
+      "expr": "ct_h_gt_h1_30",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_h1",
+        "period": 30
+      },
+      "low": 9.55,
+      "high": 19.45,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "ct_c_gt_o_5",
+      "expr": "ct_c_gt_o_5",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_o",
+        "period": 5
+      },
+      "low": 1.85,
+      "high": 5.15,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "ct_xavgc21_gt_xavgc100_50",
+      "expr": "ct_xavgc21_gt_xavgc100_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc21_gt_xavgc100",
+        "period": 50
+      },
+      "low": 32.15,
+      "high": 50.85,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_avgc200_falling_30",
+      "expr": "st_avgc200_falling_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "avgc200_falling",
+        "period": 30
+      },
+      "low": -1.8,
+      "high": 15.8,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_h_gt_maxh5_1_10",
+      "expr": "st_h_gt_maxh5_1_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_gt_maxh5_1",
+        "period": 10
+      },
+      "low": -1.2,
+      "high": 3.2,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_h_gt_maxh10_1_20",
+      "expr": "st_h_gt_maxh10_1_20",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_gt_maxh10_1",
+        "period": 20
+      },
+      "low": -1.5,
+      "high": 9.5,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_h_gt_maxh65_1_5",
+      "expr": "st_h_gt_maxh65_1_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_gt_maxh65_1",
+        "period": 5
+      },
+      "low": -1.1,
+      "high": 1.1,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_l_lt_minl10_1_50",
+      "expr": "st_l_lt_minl10_1_50",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "l_lt_minl10_1",
+        "period": 50
+      },
+      "low": 0.7999999999999998,
+      "high": 27.2,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "ct_c_gt_maxc50_1_15",
+      "expr": "ct_c_gt_maxc50_1_15",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_maxc50_1",
+        "period": 15
+      },
+      "low": -0.25,
+      "high": 5.25,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "ct_outside_bar_50",
+      "expr": "ct_outside_bar_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "outside_bar",
+        "period": 50
+      },
+      "low": 0.75,
+      "high": 6.25,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_gap_up_5",
+      "expr": "st_gap_up_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "gap_up",
+        "period": 5
+      },
+      "low": -1.15,
+      "high": 2.15,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_stoch14_gt_80_30",
+      "expr": "st_stoch14_gt_80_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "stoch14_gt_80",
+        "period": 30
+      },
+      "low": -1.9,
+      "high": 17.9,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_cci14_lt_neg100_10",
+      "expr": "st_cci14_lt_neg100_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "cci14_lt_neg100",
+        "period": 10
+      },
+      "low": -1.4,
+      "high": 7.4,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "algo_hminus3_hivol_touch_count",
+      "expr": "algo_hminus3_hivol_touch_count",
+      "category": "algo_lines",
+      "compute": {
+        "op": "precomputed",
+        "source": "algo",
+        "column": "algo_hminus3_hivol_touch_count"
+      },
+      "low": 0.9,
+      "high": 3.1,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "rsi_slope_28_off1",
+      "expr": "rsi_slope_28_off1",
+      "category": "momentum",
+      "compute": {
+        "op": "rsi_slope",
+        "period": 28,
+        "offset": 1
+      },
+      "low": -4.612954831123352,
+      "high": 14.495995736122131,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 38
+    },
+    {
+      "name": "bb_bw_rank_30_lb120",
+      "expr": "bb_bw_rank_30_lb120",
+      "category": "bollinger",
+      "compute": {
+        "op": "bollinger_bandwidth_rank",
+        "period": 30,
+        "lookback": 120
+      },
+      "low": -0.021320437453687197,
+      "high": 0.904484668187797,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 37
+    },
+    {
+      "name": "ct_avgc100_rising_50",
+      "expr": "ct_avgc100_rising_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc100_rising",
+        "period": 50
+      },
+      "low": 35.3,
+      "high": 50.7,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 37
+    },
+    {
+      "name": "ct_h_gt_maxh10_1_50",
+      "expr": "ct_h_gt_maxh10_1_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_maxh10_1",
+        "period": 50
+      },
+      "low": 4.2,
+      "high": 21.8,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 42
+    },
+    {
+      "name": "ct_h_gt_maxh50_1_3",
+      "expr": "ct_h_gt_maxh50_1_3",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_maxh50_1",
+        "period": 3
+      },
+      "low": -0.1,
+      "high": 2.1,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 38
+    },
+    {
+      "name": "st_gap_down_half_atr_20",
+      "expr": "st_gap_down_half_atr_20",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "gap_down_half_atr",
+        "period": 20
+      },
+      "low": -1.9,
+      "high": 17.9,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 42
+    },
+    {
+      "name": "st_adx14_gt_30_5",
+      "expr": "st_adx14_gt_30_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "adx14_gt_30",
+        "period": 5
+      },
+      "low": -1.05,
+      "high": 0.05,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 37
+    },
+    {
+      "name": "ct_c_lt_bbbot_15",
+      "expr": "ct_c_lt_bbbot_15",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lt_bbbot",
+        "period": 15
+      },
+      "low": -0.05,
+      "high": 1.05,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 38
+    },
+    {
+      "name": "st_bop14_positive_10",
+      "expr": "st_bop14_positive_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "bop14_positive",
+        "period": 10
+      },
+      "low": -1.05,
+      "high": 0.05,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 36
+    },
+    {
+      "name": "algo_lplus2_touch_count",
+      "expr": "algo_lplus2_touch_count",
+      "category": "algo_lines",
+      "compute": {
+        "op": "precomputed",
+        "source": "algo",
+        "column": "algo_lplus2_touch_count"
+      },
+      "low": 1.9,
+      "high": 4.1,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 37
+    },
+    {
+      "name": "nr_c_maxh70_atr14",
+      "expr": "nr_c_maxh70_atr14",
+      "category": "near_resistance",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 70,
+        "normalizer": "atr14"
+      },
+      "low": -0.8175057917833328,
+      "high": 6.274176731705666,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 141
+    },
+    {
+      "name": "slope_avgc200_off2_adr14",
+      "expr": "slope_avgc200_off2_adr14",
+      "category": "ma_slope",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc200",
+        "offset": 2,
+        "normalizer": "adr14"
+      },
+      "low": 0.009052577335387467,
+      "high": 0.16469232654199004,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 151
+    },
+    {
+      "name": "bars_since_cross_xavgc50",
+      "expr": "bars_since_cross_xavgc50",
+      "category": "ma_cross",
+      "compute": {
+        "op": "bars_since_ma_cross",
+        "ma": "xavgc50",
+        "max_lookback": 120
+      },
+      "low": -2.6500000000000004,
+      "high": 99.65,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 147
+    },
+    {
+      "name": "swing_high_count_90",
+      "expr": "swing_high_count_90",
+      "category": "swing_structure",
+      "compute": {
+        "op": "swing_high_count",
+        "period": 90
+      },
+      "low": 13.55,
+      "high": 23.45,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 147
+    },
+    {
+      "name": "cmf_14",
+      "expr": "cmf_14",
+      "category": "volume_character",
+      "compute": {
+        "op": "cmf",
+        "period": 14
+      },
+      "low": -0.09240493066608906,
+      "high": 0.43118014074862004,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 144
+    },
+    {
+      "name": "vwap_slope_50_off3_adr14",
+      "expr": "vwap_slope_50_off3_adr14",
+      "category": "vwap",
+      "compute": {
+        "op": "vwap_slope",
+        "period": 50,
+        "offset": 3,
+        "normalizer": "adr14"
+      },
+      "low": -0.0606586741283536,
+      "high": 0.5961035707965493,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 149
+    },
+    {
+      "name": "st_h_lt_xavgc21_50",
+      "expr": "st_h_lt_xavgc21_50",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_lt_xavgc21",
+        "period": 50
+      },
+      "low": -2.85,
+      "high": 37.85,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 147
+    },
+    {
+      "name": "ct_c_gt_c1_20",
+      "expr": "ct_c_gt_c1_20",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_c1",
+        "period": 20
+      },
+      "low": 8.7,
+      "high": 15.3,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 151
+    },
+    {
+      "name": "st_v_gt_3x_avgv20_10",
+      "expr": "st_v_gt_3x_avgv20_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "v_gt_3x_avgv20",
+        "period": 10
+      },
+      "low": -1.05,
+      "high": 0.05,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 145
+    },
+    {
+      "name": "st_v_gt_3x_avgv20_30",
+      "expr": "st_v_gt_3x_avgv20_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "v_gt_3x_avgv20",
+        "period": 30
+      },
+      "low": -2.1500000000000004,
+      "high": 23.15,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 156
+    },
+    {
+      "name": "st_avgc100_falling_30",
+      "expr": "st_avgc100_falling_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "avgc100_falling",
+        "period": 30
+      },
+      "low": -1.7000000000000002,
+      "high": 13.7,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 145
+    },
+    {
+      "name": "st_range_lt_half_atr_30",
+      "expr": "st_range_lt_half_atr_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "range_lt_half_atr",
+        "period": 30
+      },
+      "low": -2.25,
+      "high": 25.25,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 174
+    },
+    {
+      "name": "st_range_lt_half_atr_50",
+      "expr": "st_range_lt_half_atr_50",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "range_lt_half_atr",
+        "period": 50
+      },
+      "low": -2.85,
+      "high": 37.85,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 145
+    },
+    {
+      "name": "ct_inside_bar_50",
+      "expr": "ct_inside_bar_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "inside_bar",
+        "period": 50
+      },
+      "low": -0.45,
+      "high": 9.45,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 148
+    },
+    {
+      "name": "ct_gap_up_half_atr_20",
+      "expr": "ct_gap_up_half_atr_20",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "gap_up_half_atr",
+        "period": 20
+      },
+      "low": -0.15000000000000002,
+      "high": 3.15,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 141
+    },
+    {
+      "name": "st_gap_down_half_atr_10",
+      "expr": "st_gap_down_half_atr_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "gap_down_half_atr",
+        "period": 10
+      },
+      "low": -1.4,
+      "high": 7.4,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 153
+    },
+    {
+      "name": "st_bb_squeeze_15",
+      "expr": "st_bb_squeeze_15",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "bb_squeeze",
+        "period": 15
+      },
+      "low": -1.65,
+      "high": 12.65,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 151
+    },
+    {
+      "name": "ct_aroon_up14_gt_70_50",
+      "expr": "ct_aroon_up14_gt_70_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "aroon_up14_gt_70",
+        "period": 50
+      },
+      "low": 7.7,
+      "high": 36.3,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 143
+    },
+    {
+      "name": "ns_l_minl35_atr14",
+      "expr": "ns_l_minl35_atr14",
+      "category": "near_support",
+      "compute": {
+        "op": "distance_to_minl",
+        "price_ref": "L",
+        "minl_period": 35,
+        "normalizer": "atr14"
+      },
+      "low": 0.5712685704231262,
+      "high": 6.797430741786957,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 780
+    },
+    {
+      "name": "undercut_xavgc8_50_atr14",
+      "expr": "undercut_xavgc8_50_atr14",
+      "category": "ma_cross",
+      "compute": {
+        "op": "ma_undercut_depth",
+        "ma": "xavgc8",
+        "period": 50,
+        "normalizer": "atr14"
+      },
+      "low": -2.9024298965930937,
+      "high": -0.4138389050960541,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 792
+    },
+    {
+      "name": "ct_xavgc8_gt_avgc50_7",
+      "expr": "ct_xavgc8_gt_avgc50_7",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc8_gt_avgc50",
+        "period": 7
+      },
+      "low": 0.7,
+      "high": 7.3,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 772
+    },
+    {
+      "name": "ct_c_gt_maxc10_1_50",
+      "expr": "ct_c_gt_maxc10_1_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_maxc10_1",
+        "period": 50
+      },
+      "low": 6.2,
+      "high": 23.8,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 792
+    },
+    {
+      "name": "ct_body_gt_half_range_50",
+      "expr": "ct_body_gt_half_range_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "body_gt_half_range",
+        "period": 50
+      },
+      "low": 16.25,
+      "high": 32.75,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 785
+    },
+    {
+      "name": "ct_gap_up_half_atr_50",
+      "expr": "ct_gap_up_half_atr_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "gap_up_half_atr",
+        "period": 50
+      },
+      "low": -0.30000000000000004,
+      "high": 6.3,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 788
+    },
+    {
+      "name": "st_rsi14_gt_80_5",
+      "expr": "st_rsi14_gt_80_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "rsi14_gt_80",
+        "period": 5
+      },
+      "low": -1.05,
+      "high": 0.05,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 797
+    },
+    {
+      "name": "st_c_lt_bbbot_15",
+      "expr": "st_c_lt_bbbot_15",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_lt_bbbot",
+        "period": 15
+      },
+      "low": -1.6,
+      "high": 11.6,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 785
+    },
+    {
+      "name": "rsi_slope_21_off1",
+      "expr": "rsi_slope_21_off1",
+      "category": "momentum",
+      "compute": {
+        "op": "rsi_slope",
+        "period": 21,
+        "offset": 1
+      },
+      "low": -4.560283839702606,
+      "high": 18.9953493475914,
+      "tier": "1yr",
+      "filter_power": null,
+      "signals_with_all": 951,
+      "signals_without": 1002
+    },
+    {
+      "name": "ext_slope_xavgc8_off15",
+      "expr": "ext_slope_xavgc8_off15",
+      "category": "extension_dynamics",
+      "compute": {
+        "op": "extension_slope",
+        "ma": "xavgc8",
+        "offset": 15,
+        "normalizer": "adr14"
+      },
+      "low": -0.6375705420970916,
+      "high": 4.85306767821312,
+      "tier": "1yr",
+      "filter_power": null,
+      "signals_with_all": 951,
+      "signals_without": 995
+    },
+    {
+      "name": "st_h_lt_xavgc8_5",
+      "expr": "st_h_lt_xavgc8_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_lt_xavgc8",
+        "period": 5
+      },
+      "low": -1.2,
+      "high": 3.2,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 2831,
+      "signals_without": 3000
+    },
+    {
+      "name": "st_v_lt_half_avgv20_15",
+      "expr": "st_v_lt_half_avgv20_15",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "v_lt_half_avgv20",
+        "period": 15
+      },
+      "low": -1.65,
+      "high": 12.65,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 2831,
+      "signals_without": 2992
+    },
+    {
+      "name": "st_c_gt_bbtop_50",
+      "expr": "st_c_gt_bbtop_50",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_bbtop",
+        "period": 50
+      },
+      "low": -2.6500000000000004,
+      "high": 33.65,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 2831,
+      "signals_without": 3155
+    },
+    {
+      "name": "algo_hminus2_distance",
+      "expr": "algo_hminus2_distance",
+      "category": "algo_lines",
+      "compute": {
+        "op": "precomputed",
+        "source": "algo",
+        "column": "algo_hminus2_distance"
+      },
+      "low": -8.614613771438599,
+      "high": 2.250337839126587,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 2831,
+      "signals_without": 2978
+    },
+    {
+      "name": "algo_lplus3_distance",
+      "expr": "algo_lplus3_distance",
+      "category": "algo_lines",
+      "compute": {
+        "op": "precomputed",
+        "source": "algo",
+        "column": "algo_lplus3_distance"
+      },
+      "low": -0.9958294421434403,
+      "high": 3.539320507645607,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 2831,
+      "signals_without": 3204
+    },
+    {
+      "name": "w_nr_h_maxh5_atr14",
+      "expr": "w_nr_h_maxh5_atr14",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_nr_h_maxh5_atr14",
+        "base_compute": {
+          "op": "distance_to_maxh",
+          "price_ref": "H",
+          "maxh_period": 5,
+          "normalizer": "atr14"
+        }
+      },
+      "low": -2.4093760631978514,
+      "high": 0.3597881428897381,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 38,
+      "signals_without": 41
+    },
+    {
+      "name": "w_nr_h_maxh20_atr14",
+      "expr": "w_nr_h_maxh20_atr14",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_nr_h_maxh20_atr14",
+        "base_compute": {
+          "op": "distance_to_maxh",
+          "price_ref": "H",
+          "maxh_period": 20,
+          "normalizer": "atr14"
+        }
+      },
+      "low": -0.604786890745163,
+      "high": 0.41774858832359313,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 38,
+      "signals_without": 60
+    },
+    {
+      "name": "w_undercut_xavgc21_50_atr14",
+      "expr": "w_undercut_xavgc21_50_atr14",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_undercut_xavgc21_50_atr14",
+        "base_compute": {
+          "op": "ma_undercut_depth",
+          "ma": "xavgc21",
+          "period": 50,
+          "normalizer": "atr14"
+        }
+      },
+      "low": -3.261495880037546,
+      "high": 0.006459123641252534,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 38,
+      "signals_without": 47
+    },
+    {
+      "name": "w_nr_c_maxh15_atr14",
+      "expr": "w_nr_c_maxh15_atr14",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_nr_c_maxh15_atr14",
+        "base_compute": {
+          "op": "distance_to_maxh",
+          "price_ref": "C",
+          "maxh_period": 15,
+          "normalizer": "atr14"
+        }
+      },
+      "low": -0.3703275263309479,
+      "high": 2.4483308136463164,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 164,
+      "signals_without": 172
+    },
+    {
+      "name": "w_st_h_lt_avgc200_20",
+      "expr": "w_st_h_lt_avgc200_20",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_st_h_lt_avgc200_20",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "h_lt_avgc200",
+          "period": 20
+        }
+      },
+      "low": -1.6,
+      "high": 11.6,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 164,
+      "signals_without": 190
+    },
+    {
+      "name": "w_ct_v_gt_avgv10_20",
+      "expr": "w_ct_v_gt_avgv10_20",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_ct_v_gt_avgv10_20",
+        "base_compute": {
+          "op": "count_true",
+          "condition": "v_gt_avgv10",
+          "period": 20
+        }
+      },
+      "low": 3.6,
+      "high": 12.4,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 164,
+      "signals_without": 174
+    },
+    {
+      "name": "w_st_avgc200_falling_30",
+      "expr": "w_st_avgc200_falling_30",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_st_avgc200_falling_30",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "avgc200_falling",
+          "period": 30
+        }
+      },
+      "low": -1.55,
+      "high": 10.55,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 164,
+      "signals_without": 198
+    },
+    {
+      "name": "w_st_bb_squeeze_30",
+      "expr": "w_st_bb_squeeze_30",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_st_bb_squeeze_30",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "bb_squeeze",
+          "period": 30
+        }
+      },
+      "low": -2.2,
+      "high": 24.2,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 164,
+      "signals_without": 173
+    },
+    {
+      "name": "w_slope_xavgc8_off20_atr14",
+      "expr": "w_slope_xavgc8_off20_atr14",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_slope_xavgc8_off20_atr14",
+        "base_compute": {
+          "op": "ma_slope",
+          "ma": "xavgc8",
+          "offset": 20,
+          "normalizer": "atr14"
+        }
+      },
+      "low": 0.5270994216203689,
+      "high": 3.9280457586050033,
+      "tier": "1yr",
+      "filter_power": null,
+      "signals_with_all": 219,
+      "signals_without": 238
+    },
+    {
+      "name": "w_st_range_gt_1_5_atr_5",
+      "expr": "w_st_range_gt_1_5_atr_5",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_st_range_gt_1_5_atr_5",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "range_gt_1_5_atr",
+          "period": 5
+        }
+      },
+      "low": -1.2,
+      "high": 3.2,
+      "tier": "1yr",
+      "filter_power": null,
+      "signals_with_all": 219,
+      "signals_without": 231
+    },
+    {
+      "name": "w_st_rsi14_gt_80_20",
+      "expr": "w_st_rsi14_gt_80_20",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_st_rsi14_gt_80_20",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "rsi14_gt_80",
+          "period": 20
+        }
+      },
+      "low": -1.9,
+      "high": 17.9,
+      "tier": "1yr",
+      "filter_power": null,
+      "signals_with_all": 219,
+      "signals_without": 232
+    },
+    {
+      "name": "w_stoch_5",
+      "expr": "w_stoch_5",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_stoch_5",
+        "base_compute": {
+          "op": "stochastic",
+          "period": 5
+        }
+      },
+      "low": 12.991483974456788,
+      "high": 89.08628053665161,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 1047,
+      "signals_without": 1113
+    },
+    {
+      "name": "w_ct_stoch14_gt_80_7",
+      "expr": "w_ct_stoch14_gt_80_7",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_ct_stoch14_gt_80_7",
+        "base_compute": {
+          "op": "count_true",
+          "condition": "stoch14_gt_80",
+          "period": 7
+        }
+      },
+      "low": -0.2,
+      "high": 4.2,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 1047,
+      "signals_without": 1182
+    },
+    {
+      "name": "m_hivol_pct_10_x1.5",
+      "expr": "m_hivol_pct_10_x1.5",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_hivol_pct_10_x1.5",
+        "base_compute": {
+          "op": "high_volume_bar_pct",
+          "period": 10,
+          "multiplier": 1.5,
+          "avg_period": 50
+        }
+      },
+      "low": -0.04000000059604645,
+      "high": 0.8400000125169754,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 111,
+      "signals_without": 122
+    },
+    {
+      "name": "m_lower_wick_ratio",
+      "expr": "m_lower_wick_ratio",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_lower_wick_ratio",
+        "base_compute": {
+          "op": "lower_wick_ratio"
+        }
+      },
+      "low": -0.012792877946048976,
+      "high": 0.5581237954087556,
+      "tier": "1yr",
+      "filter_power": null,
+      "signals_with_all": 164,
+      "signals_without": 173
+    },
+    {
+      "name": "m_cci_7",
+      "expr": "m_cci_7",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_cci_7",
+        "base_compute": {
+          "op": "cci",
+          "period": 7
+        }
+      },
+      "low": -80.70863723754883,
+      "high": 159.83185195922852,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 779,
+      "signals_without": 850
+    },
+    {
+      "name": "m_avg_body_ratio_5",
+      "expr": "m_avg_body_ratio_5",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_avg_body_ratio_5",
+        "base_compute": {
+          "op": "avg_candle_body_ratio",
+          "period": 5
+        }
+      },
+      "low": 0.2502984419465065,
+      "high": 0.6929697677493095,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 779,
+      "signals_without": 833
+    },
+    {
+      "name": "m_st_v_gt_avgv10_10",
+      "expr": "m_st_v_gt_avgv10_10",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_st_v_gt_avgv10_10",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "v_gt_avgv10",
+          "period": 10
+        }
+      },
+      "low": -0.35000000000000003,
+      "high": 7.35,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 779,
+      "signals_without": 834
+    }
+  ],
+  "dropped_conditions": [],
+  "filter_power_table": [],
+  "signals": []
+}

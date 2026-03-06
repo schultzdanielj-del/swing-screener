@@ -1,0 +1,13 @@
+{
+  "setup_type": "dtss",
+  "timestamp": "2026-03-01T22:32:18.808166",
+  "exit_condition": "avg_range_atr_10b above 1.054124",
+  "min_adr_threshold": 0.0,
+  "n_raw_signals": 362,
+  "n_deduped": 298,
+  "n_with_exit": 0,
+  "n_filtered": 0,
+  "n_examples_matched": 0,
+  "example_signals": [],
+  "signals": []
+}

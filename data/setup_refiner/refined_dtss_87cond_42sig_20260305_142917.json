@@ -1,0 +1,2154 @@
+{
+  "setup_type": "dtss",
+  "timestamp": "2026-03-05T14:29:17.922118",
+  "stage": "setup_refiner",
+  "computation_path": "expression_cache_only",
+  "source_conditions_file": "pyramid_results_dtss_blackout.json",
+  "skip_prune": false,
+  "n_conditions_input": 87,
+  "n_conditions_kept": 87,
+  "n_conditions_dropped": 0,
+  "exit_condition": {
+    "expression": "slope_xavgc21_off7_adr14",
+    "threshold": -1.114178,
+    "direction": "below"
+  },
+  "min_adr_threshold": 0.0,
+  "n_raw_signals": 164,
+  "n_deduped": 132,
+  "n_with_exit": 44,
+  "n_filtered": 42,
+  "pruned_conditions": [
+    {
+      "name": "roc_delta_50_vs10",
+      "expr": "roc_delta_50_vs10",
+      "category": "momentum",
+      "compute": {
+        "op": "roc_delta",
+        "period": 50,
+        "compare_offset": 10
+      },
+      "low": -27.657000923156737,
+      "high": 88.86366214752198,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "vol_ratio_3",
+      "expr": "vol_ratio_3",
+      "category": "momentum",
+      "compute": {
+        "op": "volume_ratio",
+        "avg_period": 3
+      },
+      "low": 0.4853888005018234,
+      "high": 1.8394528776407242,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "range_width_15",
+      "expr": "range_width_15",
+      "category": "range",
+      "compute": {
+        "op": "range_width",
+        "period": 15,
+        "normalizer": "atr14"
+      },
+      "low": 2.6387948989868164,
+      "high": 7.470345497131348,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "channel_slope_15",
+      "expr": "channel_slope_15",
+      "category": "range",
+      "compute": {
+        "op": "channel_slope",
+        "ref": "maxh",
+        "period": 15,
+        "normalizer": "atr14"
+      },
+      "low": -1.8492970883846283,
+      "high": 5.203739327192307,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "ext_ceil_avgc200_lb504_atr14",
+      "expr": "ext_ceil_avgc200_lb504_atr14",
+      "category": "extension_ceiling",
+      "compute": {
+        "op": "extension_ceiling_ratio",
+        "ma": "avgc200",
+        "lookback": 504,
+        "normalizer": "atr14"
+      },
+      "low": 0.2902559831738472,
+      "high": 1.0337973341345787,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "undercut_avgc50_20_adr14",
+      "expr": "undercut_avgc50_20_adr14",
+      "category": "ma_cross",
+      "compute": {
+        "op": "ma_undercut_depth",
+        "ma": "avgc50",
+        "period": 20,
+        "normalizer": "adr14"
+      },
+      "low": -5.205764830112457,
+      "high": 2.2145808339118958,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "undercut_avgc200_120_atr14",
+      "expr": "undercut_avgc200_120_atr14",
+      "category": "ma_cross",
+      "compute": {
+        "op": "ma_undercut_depth",
+        "ma": "avgc200",
+        "period": 120,
+        "normalizer": "atr14"
+      },
+      "low": -4.0780229568481445,
+      "high": 2.7417502403259277,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "swing_low_count_30",
+      "expr": "swing_low_count_30",
+      "category": "swing_structure",
+      "compute": {
+        "op": "swing_low_count",
+        "period": 30
+      },
+      "low": 2.75,
+      "high": 8.25,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "swing_low_count_120",
+      "expr": "swing_low_count_120",
+      "category": "swing_structure",
+      "compute": {
+        "op": "swing_low_count",
+        "period": 120
+      },
+      "low": 20.55,
+      "high": 30.45,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "gap_count_50_t0.3",
+      "expr": "gap_count_50_t0.3",
+      "category": "gap",
+      "compute": {
+        "op": "gap_count",
+        "period": 50,
+        "threshold": 0.3
+      },
+      "low": 4.15,
+      "high": 22.85,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "cmf_slope_20_off10",
+      "expr": "cmf_slope_20_off10",
+      "category": "volume_character",
+      "compute": {
+        "op": "cmf_slope",
+        "period": 20,
+        "offset": 10
+      },
+      "low": -0.14816396869719028,
+      "high": 0.5305834580212831,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "vwap_slope_50_off10_adr14",
+      "expr": "vwap_slope_50_off10_adr14",
+      "category": "vwap",
+      "compute": {
+        "op": "vwap_slope",
+        "period": 50,
+        "offset": 10,
+        "normalizer": "adr14"
+      },
+      "low": -0.30773427411913873,
+      "high": 1.379814126342535,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "ct_h_gt_h1_30",
+      "expr": "ct_h_gt_h1_30",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_h1",
+        "period": 30
+      },
+      "low": 9.55,
+      "high": 19.45,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "ct_c_gt_o_5",
+      "expr": "ct_c_gt_o_5",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_o",
+        "period": 5
+      },
+      "low": 1.85,
+      "high": 5.15,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "ct_xavgc21_gt_xavgc100_50",
+      "expr": "ct_xavgc21_gt_xavgc100_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc21_gt_xavgc100",
+        "period": 50
+      },
+      "low": 32.15,
+      "high": 50.85,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_avgc200_falling_30",
+      "expr": "st_avgc200_falling_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "avgc200_falling",
+        "period": 30
+      },
+      "low": -1.8,
+      "high": 15.8,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_h_gt_maxh5_1_10",
+      "expr": "st_h_gt_maxh5_1_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_gt_maxh5_1",
+        "period": 10
+      },
+      "low": -1.2,
+      "high": 3.2,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_h_gt_maxh10_1_20",
+      "expr": "st_h_gt_maxh10_1_20",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_gt_maxh10_1",
+        "period": 20
+      },
+      "low": -1.5,
+      "high": 9.5,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_h_gt_maxh65_1_5",
+      "expr": "st_h_gt_maxh65_1_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_gt_maxh65_1",
+        "period": 5
+      },
+      "low": -1.1,
+      "high": 1.1,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_l_lt_minl10_1_50",
+      "expr": "st_l_lt_minl10_1_50",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "l_lt_minl10_1",
+        "period": 50
+      },
+      "low": 0.7999999999999998,
+      "high": 27.2,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "ct_c_gt_maxc50_1_15",
+      "expr": "ct_c_gt_maxc50_1_15",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_maxc50_1",
+        "period": 15
+      },
+      "low": -0.25,
+      "high": 5.25,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "ct_outside_bar_50",
+      "expr": "ct_outside_bar_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "outside_bar",
+        "period": 50
+      },
+      "low": 0.75,
+      "high": 6.25,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_gap_up_5",
+      "expr": "st_gap_up_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "gap_up",
+        "period": 5
+      },
+      "low": -1.15,
+      "high": 2.15,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_stoch14_gt_80_30",
+      "expr": "st_stoch14_gt_80_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "stoch14_gt_80",
+        "period": 30
+      },
+      "low": -1.9,
+      "high": 17.9,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "st_cci14_lt_neg100_10",
+      "expr": "st_cci14_lt_neg100_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "cci14_lt_neg100",
+        "period": 10
+      },
+      "low": -1.4,
+      "high": 7.4,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "algo_hminus3_hivol_touch_count",
+      "expr": "algo_hminus3_hivol_touch_count",
+      "category": "algo_lines",
+      "compute": {
+        "op": "precomputed",
+        "source": "algo",
+        "column": "algo_hminus3_hivol_touch_count"
+      },
+      "low": 0.9,
+      "high": 3.1,
+      "tier": "D1",
+      "filter_power": null
+    },
+    {
+      "name": "rsi_slope_28_off1",
+      "expr": "rsi_slope_28_off1",
+      "category": "momentum",
+      "compute": {
+        "op": "rsi_slope",
+        "period": 28,
+        "offset": 1
+      },
+      "low": -4.612954831123352,
+      "high": 14.495995736122131,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 38
+    },
+    {
+      "name": "bb_bw_rank_30_lb120",
+      "expr": "bb_bw_rank_30_lb120",
+      "category": "bollinger",
+      "compute": {
+        "op": "bollinger_bandwidth_rank",
+        "period": 30,
+        "lookback": 120
+      },
+      "low": -0.021320437453687197,
+      "high": 0.904484668187797,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 37
+    },
+    {
+      "name": "ct_avgc100_rising_50",
+      "expr": "ct_avgc100_rising_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "avgc100_rising",
+        "period": 50
+      },
+      "low": 35.3,
+      "high": 50.7,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 37
+    },
+    {
+      "name": "ct_h_gt_maxh10_1_50",
+      "expr": "ct_h_gt_maxh10_1_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_maxh10_1",
+        "period": 50
+      },
+      "low": 4.2,
+      "high": 21.8,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 42
+    },
+    {
+      "name": "ct_h_gt_maxh50_1_3",
+      "expr": "ct_h_gt_maxh50_1_3",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "h_gt_maxh50_1",
+        "period": 3
+      },
+      "low": -0.1,
+      "high": 2.1,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 38
+    },
+    {
+      "name": "st_gap_down_half_atr_20",
+      "expr": "st_gap_down_half_atr_20",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "gap_down_half_atr",
+        "period": 20
+      },
+      "low": -1.9,
+      "high": 17.9,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 42
+    },
+    {
+      "name": "st_adx14_gt_30_5",
+      "expr": "st_adx14_gt_30_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "adx14_gt_30",
+        "period": 5
+      },
+      "low": -1.05,
+      "high": 0.05,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 37
+    },
+    {
+      "name": "ct_c_lt_bbbot_15",
+      "expr": "ct_c_lt_bbbot_15",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_lt_bbbot",
+        "period": 15
+      },
+      "low": -0.05,
+      "high": 1.05,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 38
+    },
+    {
+      "name": "st_bop14_positive_10",
+      "expr": "st_bop14_positive_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "bop14_positive",
+        "period": 10
+      },
+      "low": -1.05,
+      "high": 0.05,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 36
+    },
+    {
+      "name": "algo_lplus2_touch_count",
+      "expr": "algo_lplus2_touch_count",
+      "category": "algo_lines",
+      "compute": {
+        "op": "precomputed",
+        "source": "algo",
+        "column": "algo_lplus2_touch_count"
+      },
+      "low": 1.9,
+      "high": 4.1,
+      "tier": "1wk",
+      "filter_power": null,
+      "signals_with_all": 32,
+      "signals_without": 37
+    },
+    {
+      "name": "nr_c_maxh70_atr14",
+      "expr": "nr_c_maxh70_atr14",
+      "category": "near_resistance",
+      "compute": {
+        "op": "distance_to_maxh",
+        "price_ref": "C",
+        "maxh_period": 70,
+        "normalizer": "atr14"
+      },
+      "low": -0.8175057917833328,
+      "high": 6.274176731705666,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 141
+    },
+    {
+      "name": "slope_avgc200_off2_adr14",
+      "expr": "slope_avgc200_off2_adr14",
+      "category": "ma_slope",
+      "compute": {
+        "op": "ma_slope",
+        "ma": "avgc200",
+        "offset": 2,
+        "normalizer": "adr14"
+      },
+      "low": 0.009052577335387467,
+      "high": 0.16469232654199004,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 151
+    },
+    {
+      "name": "bars_since_cross_xavgc50",
+      "expr": "bars_since_cross_xavgc50",
+      "category": "ma_cross",
+      "compute": {
+        "op": "bars_since_ma_cross",
+        "ma": "xavgc50",
+        "max_lookback": 120
+      },
+      "low": -2.6500000000000004,
+      "high": 99.65,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 147
+    },
+    {
+      "name": "swing_high_count_90",
+      "expr": "swing_high_count_90",
+      "category": "swing_structure",
+      "compute": {
+        "op": "swing_high_count",
+        "period": 90
+      },
+      "low": 13.55,
+      "high": 23.45,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 147
+    },
+    {
+      "name": "cmf_14",
+      "expr": "cmf_14",
+      "category": "volume_character",
+      "compute": {
+        "op": "cmf",
+        "period": 14
+      },
+      "low": -0.09240493066608906,
+      "high": 0.43118014074862004,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 144
+    },
+    {
+      "name": "vwap_slope_50_off3_adr14",
+      "expr": "vwap_slope_50_off3_adr14",
+      "category": "vwap",
+      "compute": {
+        "op": "vwap_slope",
+        "period": 50,
+        "offset": 3,
+        "normalizer": "adr14"
+      },
+      "low": -0.0606586741283536,
+      "high": 0.5961035707965493,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 149
+    },
+    {
+      "name": "st_h_lt_xavgc21_50",
+      "expr": "st_h_lt_xavgc21_50",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_lt_xavgc21",
+        "period": 50
+      },
+      "low": -2.85,
+      "high": 37.85,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 147
+    },
+    {
+      "name": "ct_c_gt_c1_20",
+      "expr": "ct_c_gt_c1_20",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_c1",
+        "period": 20
+      },
+      "low": 8.7,
+      "high": 15.3,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 151
+    },
+    {
+      "name": "st_v_gt_3x_avgv20_10",
+      "expr": "st_v_gt_3x_avgv20_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "v_gt_3x_avgv20",
+        "period": 10
+      },
+      "low": -1.05,
+      "high": 0.05,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 145
+    },
+    {
+      "name": "st_v_gt_3x_avgv20_30",
+      "expr": "st_v_gt_3x_avgv20_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "v_gt_3x_avgv20",
+        "period": 30
+      },
+      "low": -2.1500000000000004,
+      "high": 23.15,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 156
+    },
+    {
+      "name": "st_avgc100_falling_30",
+      "expr": "st_avgc100_falling_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "avgc100_falling",
+        "period": 30
+      },
+      "low": -1.7000000000000002,
+      "high": 13.7,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 145
+    },
+    {
+      "name": "st_range_lt_half_atr_30",
+      "expr": "st_range_lt_half_atr_30",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "range_lt_half_atr",
+        "period": 30
+      },
+      "low": -2.25,
+      "high": 25.25,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 174
+    },
+    {
+      "name": "st_range_lt_half_atr_50",
+      "expr": "st_range_lt_half_atr_50",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "range_lt_half_atr",
+        "period": 50
+      },
+      "low": -2.85,
+      "high": 37.85,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 145
+    },
+    {
+      "name": "ct_inside_bar_50",
+      "expr": "ct_inside_bar_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "inside_bar",
+        "period": 50
+      },
+      "low": -0.45,
+      "high": 9.45,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 148
+    },
+    {
+      "name": "ct_gap_up_half_atr_20",
+      "expr": "ct_gap_up_half_atr_20",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "gap_up_half_atr",
+        "period": 20
+      },
+      "low": -0.15000000000000002,
+      "high": 3.15,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 141
+    },
+    {
+      "name": "st_gap_down_half_atr_10",
+      "expr": "st_gap_down_half_atr_10",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "gap_down_half_atr",
+        "period": 10
+      },
+      "low": -1.4,
+      "high": 7.4,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 153
+    },
+    {
+      "name": "st_bb_squeeze_15",
+      "expr": "st_bb_squeeze_15",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "bb_squeeze",
+        "period": 15
+      },
+      "low": -1.65,
+      "high": 12.65,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 151
+    },
+    {
+      "name": "ct_aroon_up14_gt_70_50",
+      "expr": "ct_aroon_up14_gt_70_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "aroon_up14_gt_70",
+        "period": 50
+      },
+      "low": 7.7,
+      "high": 36.3,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 134,
+      "signals_without": 143
+    },
+    {
+      "name": "ns_l_minl35_atr14",
+      "expr": "ns_l_minl35_atr14",
+      "category": "near_support",
+      "compute": {
+        "op": "distance_to_minl",
+        "price_ref": "L",
+        "minl_period": 35,
+        "normalizer": "atr14"
+      },
+      "low": 0.5712685704231262,
+      "high": 6.797430741786957,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 780
+    },
+    {
+      "name": "undercut_xavgc8_50_atr14",
+      "expr": "undercut_xavgc8_50_atr14",
+      "category": "ma_cross",
+      "compute": {
+        "op": "ma_undercut_depth",
+        "ma": "xavgc8",
+        "period": 50,
+        "normalizer": "atr14"
+      },
+      "low": -2.9024298965930937,
+      "high": -0.4138389050960541,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 792
+    },
+    {
+      "name": "ct_xavgc8_gt_avgc50_7",
+      "expr": "ct_xavgc8_gt_avgc50_7",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "xavgc8_gt_avgc50",
+        "period": 7
+      },
+      "low": 0.7,
+      "high": 7.3,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 772
+    },
+    {
+      "name": "ct_c_gt_maxc10_1_50",
+      "expr": "ct_c_gt_maxc10_1_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "c_gt_maxc10_1",
+        "period": 50
+      },
+      "low": 6.2,
+      "high": 23.8,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 792
+    },
+    {
+      "name": "ct_body_gt_half_range_50",
+      "expr": "ct_body_gt_half_range_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "body_gt_half_range",
+        "period": 50
+      },
+      "low": 16.25,
+      "high": 32.75,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 785
+    },
+    {
+      "name": "ct_gap_up_half_atr_50",
+      "expr": "ct_gap_up_half_atr_50",
+      "category": "boolean",
+      "compute": {
+        "op": "count_true",
+        "condition": "gap_up_half_atr",
+        "period": 50
+      },
+      "low": -0.30000000000000004,
+      "high": 6.3,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 788
+    },
+    {
+      "name": "st_rsi14_gt_80_5",
+      "expr": "st_rsi14_gt_80_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "rsi14_gt_80",
+        "period": 5
+      },
+      "low": -1.05,
+      "high": 0.05,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 797
+    },
+    {
+      "name": "st_c_lt_bbbot_15",
+      "expr": "st_c_lt_bbbot_15",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_lt_bbbot",
+        "period": 15
+      },
+      "low": -1.6,
+      "high": 11.6,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 737,
+      "signals_without": 785
+    },
+    {
+      "name": "rsi_slope_21_off1",
+      "expr": "rsi_slope_21_off1",
+      "category": "momentum",
+      "compute": {
+        "op": "rsi_slope",
+        "period": 21,
+        "offset": 1
+      },
+      "low": -4.560283839702606,
+      "high": 18.9953493475914,
+      "tier": "1yr",
+      "filter_power": null,
+      "signals_with_all": 951,
+      "signals_without": 1002
+    },
+    {
+      "name": "ext_slope_xavgc8_off15",
+      "expr": "ext_slope_xavgc8_off15",
+      "category": "extension_dynamics",
+      "compute": {
+        "op": "extension_slope",
+        "ma": "xavgc8",
+        "offset": 15,
+        "normalizer": "adr14"
+      },
+      "low": -0.6375705420970916,
+      "high": 4.85306767821312,
+      "tier": "1yr",
+      "filter_power": null,
+      "signals_with_all": 951,
+      "signals_without": 995
+    },
+    {
+      "name": "st_h_lt_xavgc8_5",
+      "expr": "st_h_lt_xavgc8_5",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "h_lt_xavgc8",
+        "period": 5
+      },
+      "low": -1.2,
+      "high": 3.2,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 2831,
+      "signals_without": 3000
+    },
+    {
+      "name": "st_v_lt_half_avgv20_15",
+      "expr": "st_v_lt_half_avgv20_15",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "v_lt_half_avgv20",
+        "period": 15
+      },
+      "low": -1.65,
+      "high": 12.65,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 2831,
+      "signals_without": 2992
+    },
+    {
+      "name": "st_c_gt_bbtop_50",
+      "expr": "st_c_gt_bbtop_50",
+      "category": "boolean",
+      "compute": {
+        "op": "since_true",
+        "condition": "c_gt_bbtop",
+        "period": 50
+      },
+      "low": -2.6500000000000004,
+      "high": 33.65,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 2831,
+      "signals_without": 3155
+    },
+    {
+      "name": "algo_hminus2_distance",
+      "expr": "algo_hminus2_distance",
+      "category": "algo_lines",
+      "compute": {
+        "op": "precomputed",
+        "source": "algo",
+        "column": "algo_hminus2_distance"
+      },
+      "low": -8.614613771438599,
+      "high": 2.250337839126587,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 2831,
+      "signals_without": 2978
+    },
+    {
+      "name": "algo_lplus3_distance",
+      "expr": "algo_lplus3_distance",
+      "category": "algo_lines",
+      "compute": {
+        "op": "precomputed",
+        "source": "algo",
+        "column": "algo_lplus3_distance"
+      },
+      "low": -0.9958294421434403,
+      "high": 3.539320507645607,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 2831,
+      "signals_without": 3204
+    },
+    {
+      "name": "w_nr_h_maxh5_atr14",
+      "expr": "w_nr_h_maxh5_atr14",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_nr_h_maxh5_atr14",
+        "base_compute": {
+          "op": "distance_to_maxh",
+          "price_ref": "H",
+          "maxh_period": 5,
+          "normalizer": "atr14"
+        }
+      },
+      "low": -2.4093760631978514,
+      "high": 0.3597881428897381,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 38,
+      "signals_without": 41
+    },
+    {
+      "name": "w_nr_h_maxh20_atr14",
+      "expr": "w_nr_h_maxh20_atr14",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_nr_h_maxh20_atr14",
+        "base_compute": {
+          "op": "distance_to_maxh",
+          "price_ref": "H",
+          "maxh_period": 20,
+          "normalizer": "atr14"
+        }
+      },
+      "low": -0.604786890745163,
+      "high": 0.41774858832359313,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 38,
+      "signals_without": 60
+    },
+    {
+      "name": "w_undercut_xavgc21_50_atr14",
+      "expr": "w_undercut_xavgc21_50_atr14",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_undercut_xavgc21_50_atr14",
+        "base_compute": {
+          "op": "ma_undercut_depth",
+          "ma": "xavgc21",
+          "period": 50,
+          "normalizer": "atr14"
+        }
+      },
+      "low": -3.261495880037546,
+      "high": 0.006459123641252534,
+      "tier": "1mo",
+      "filter_power": null,
+      "signals_with_all": 38,
+      "signals_without": 47
+    },
+    {
+      "name": "w_nr_c_maxh15_atr14",
+      "expr": "w_nr_c_maxh15_atr14",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_nr_c_maxh15_atr14",
+        "base_compute": {
+          "op": "distance_to_maxh",
+          "price_ref": "C",
+          "maxh_period": 15,
+          "normalizer": "atr14"
+        }
+      },
+      "low": -0.3703275263309479,
+      "high": 2.4483308136463164,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 164,
+      "signals_without": 172
+    },
+    {
+      "name": "w_st_h_lt_avgc200_20",
+      "expr": "w_st_h_lt_avgc200_20",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_st_h_lt_avgc200_20",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "h_lt_avgc200",
+          "period": 20
+        }
+      },
+      "low": -1.6,
+      "high": 11.6,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 164,
+      "signals_without": 190
+    },
+    {
+      "name": "w_ct_v_gt_avgv10_20",
+      "expr": "w_ct_v_gt_avgv10_20",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_ct_v_gt_avgv10_20",
+        "base_compute": {
+          "op": "count_true",
+          "condition": "v_gt_avgv10",
+          "period": 20
+        }
+      },
+      "low": 3.6,
+      "high": 12.4,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 164,
+      "signals_without": 174
+    },
+    {
+      "name": "w_st_avgc200_falling_30",
+      "expr": "w_st_avgc200_falling_30",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_st_avgc200_falling_30",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "avgc200_falling",
+          "period": 30
+        }
+      },
+      "low": -1.55,
+      "high": 10.55,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 164,
+      "signals_without": 198
+    },
+    {
+      "name": "w_st_bb_squeeze_30",
+      "expr": "w_st_bb_squeeze_30",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_st_bb_squeeze_30",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "bb_squeeze",
+          "period": 30
+        }
+      },
+      "low": -2.2,
+      "high": 24.2,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 164,
+      "signals_without": 173
+    },
+    {
+      "name": "w_slope_xavgc8_off20_atr14",
+      "expr": "w_slope_xavgc8_off20_atr14",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_slope_xavgc8_off20_atr14",
+        "base_compute": {
+          "op": "ma_slope",
+          "ma": "xavgc8",
+          "offset": 20,
+          "normalizer": "atr14"
+        }
+      },
+      "low": 0.5270994216203689,
+      "high": 3.9280457586050033,
+      "tier": "1yr",
+      "filter_power": null,
+      "signals_with_all": 219,
+      "signals_without": 238
+    },
+    {
+      "name": "w_st_range_gt_1_5_atr_5",
+      "expr": "w_st_range_gt_1_5_atr_5",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_st_range_gt_1_5_atr_5",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "range_gt_1_5_atr",
+          "period": 5
+        }
+      },
+      "low": -1.2,
+      "high": 3.2,
+      "tier": "1yr",
+      "filter_power": null,
+      "signals_with_all": 219,
+      "signals_without": 231
+    },
+    {
+      "name": "w_st_rsi14_gt_80_20",
+      "expr": "w_st_rsi14_gt_80_20",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_st_rsi14_gt_80_20",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "rsi14_gt_80",
+          "period": 20
+        }
+      },
+      "low": -1.9,
+      "high": 17.9,
+      "tier": "1yr",
+      "filter_power": null,
+      "signals_with_all": 219,
+      "signals_without": 232
+    },
+    {
+      "name": "w_stoch_5",
+      "expr": "w_stoch_5",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_stoch_5",
+        "base_compute": {
+          "op": "stochastic",
+          "period": 5
+        }
+      },
+      "low": 12.991483974456788,
+      "high": 89.08628053665161,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 1047,
+      "signals_without": 1113
+    },
+    {
+      "name": "w_ct_stoch14_gt_80_7",
+      "expr": "w_ct_stoch14_gt_80_7",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_ct_stoch14_gt_80_7",
+        "base_compute": {
+          "op": "count_true",
+          "condition": "stoch14_gt_80",
+          "period": 7
+        }
+      },
+      "low": -0.2,
+      "high": 4.2,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 1047,
+      "signals_without": 1182
+    },
+    {
+      "name": "m_hivol_pct_10_x1.5",
+      "expr": "m_hivol_pct_10_x1.5",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_hivol_pct_10_x1.5",
+        "base_compute": {
+          "op": "high_volume_bar_pct",
+          "period": 10,
+          "multiplier": 1.5,
+          "avg_period": 50
+        }
+      },
+      "low": -0.04000000059604645,
+      "high": 0.8400000125169754,
+      "tier": "6mo",
+      "filter_power": null,
+      "signals_with_all": 111,
+      "signals_without": 122
+    },
+    {
+      "name": "m_lower_wick_ratio",
+      "expr": "m_lower_wick_ratio",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_lower_wick_ratio",
+        "base_compute": {
+          "op": "lower_wick_ratio"
+        }
+      },
+      "low": -0.012792877946048976,
+      "high": 0.5581237954087556,
+      "tier": "1yr",
+      "filter_power": null,
+      "signals_with_all": 164,
+      "signals_without": 173
+    },
+    {
+      "name": "m_cci_7",
+      "expr": "m_cci_7",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_cci_7",
+        "base_compute": {
+          "op": "cci",
+          "period": 7
+        }
+      },
+      "low": -80.70863723754883,
+      "high": 159.83185195922852,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 779,
+      "signals_without": 850
+    },
+    {
+      "name": "m_avg_body_ratio_5",
+      "expr": "m_avg_body_ratio_5",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_avg_body_ratio_5",
+        "base_compute": {
+          "op": "avg_candle_body_ratio",
+          "period": 5
+        }
+      },
+      "low": 0.2502984419465065,
+      "high": 0.6929697677493095,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 779,
+      "signals_without": 833
+    },
+    {
+      "name": "m_st_v_gt_avgv10_10",
+      "expr": "m_st_v_gt_avgv10_10",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_st_v_gt_avgv10_10",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "v_gt_avgv10",
+          "period": 10
+        }
+      },
+      "low": -0.35000000000000003,
+      "high": 7.35,
+      "tier": "5yr",
+      "filter_power": null,
+      "signals_with_all": 779,
+      "signals_without": 834
+    }
+  ],
+  "dropped_conditions": [],
+  "filter_power_table": [],
+  "signals": [
+    {
+      "ticker": "MSFT",
+      "date": "2025-10-27",
+      "bar_idx": 1181,
+      "close": 530.527099609375,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-27",
+      "signal_close": 530.53,
+      "adr_at_signal": 6.9,
+      "exit_bar": 20,
+      "exit_date": "2025-11-24",
+      "exit_close": 474.0,
+      "move_adr": 8.19,
+      "mfe_adr": 9.06,
+      "capture_eff": 0.904
+    },
+    {
+      "ticker": "PSIX",
+      "date": "2025-09-23",
+      "bar_idx": 1157,
+      "close": 115.77999877929688,
+      "cluster_size": 2,
+      "cluster_start_date": "2025-09-22",
+      "signal_close": 115.78,
+      "adr_at_signal": 6.37,
+      "exit_bar": 36,
+      "exit_date": "2025-11-12",
+      "exit_close": 64.63,
+      "move_adr": 8.03,
+      "mfe_adr": 11.24,
+      "capture_eff": 0.714
+    },
+    {
+      "ticker": "GTM",
+      "date": "2025-11-03",
+      "bar_idx": 1186,
+      "close": 11.800000190734863,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-11-03",
+      "signal_close": 11.8,
+      "adr_at_signal": 0.38,
+      "exit_bar": 13,
+      "exit_date": "2025-11-20",
+      "exit_close": 9.07,
+      "move_adr": 7.25,
+      "mfe_adr": 7.33,
+      "capture_eff": 0.989
+    },
+    {
+      "ticker": "CVNA",
+      "date": "2026-01-22",
+      "bar_idx": 1240,
+      "close": 478.45001220703125,
+      "cluster_size": 1,
+      "cluster_start_date": "2026-01-22",
+      "signal_close": 478.45,
+      "adr_at_signal": 20.58,
+      "exit_bar": 19,
+      "exit_date": "2026-02-19",
+      "exit_close": 332.79,
+      "move_adr": 7.08,
+      "mfe_adr": 7.94,
+      "capture_eff": 0.891
+    },
+    {
+      "ticker": "PHAT",
+      "date": "2026-01-07",
+      "bar_idx": 1230,
+      "close": 18.079999923706055,
+      "cluster_size": 1,
+      "cluster_start_date": "2026-01-07",
+      "signal_close": 18.08,
+      "adr_at_signal": 0.88,
+      "exit_bar": 25,
+      "exit_date": "2026-02-12",
+      "exit_close": 12.02,
+      "move_adr": 6.88,
+      "mfe_adr": 7.1,
+      "capture_eff": 0.97
+    },
+    {
+      "ticker": "PPL",
+      "date": "2025-10-07",
+      "bar_idx": 1167,
+      "close": 37.187198638916016,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-07",
+      "signal_close": 37.19,
+      "adr_at_signal": 0.52,
+      "exit_bar": 43,
+      "exit_date": "2025-12-08",
+      "exit_close": 33.66,
+      "move_adr": 6.86,
+      "mfe_adr": 7.2,
+      "capture_eff": 0.952
+    },
+    {
+      "ticker": "DUK",
+      "date": "2025-10-10",
+      "bar_idx": 1170,
+      "close": 124.86199188232422,
+      "cluster_size": 2,
+      "cluster_start_date": "2025-10-09",
+      "signal_close": 124.86,
+      "adr_at_signal": 1.63,
+      "exit_bar": 40,
+      "exit_date": "2025-12-08",
+      "exit_close": 114.25,
+      "move_adr": 6.52,
+      "mfe_adr": 7.18,
+      "capture_eff": 0.908
+    },
+    {
+      "ticker": "APP",
+      "date": "2025-12-19",
+      "bar_idx": 1177,
+      "close": 721.3699951171875,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-12-19",
+      "signal_close": 721.37,
+      "adr_at_signal": 31.55,
+      "exit_bar": 22,
+      "exit_date": "2026-01-23",
+      "exit_close": 524.41,
+      "move_adr": 6.24,
+      "mfe_adr": 6.73,
+      "capture_eff": 0.928
+    },
+    {
+      "ticker": "AYI",
+      "date": "2026-01-06",
+      "bar_idx": 1229,
+      "close": 375.1172180175781,
+      "cluster_size": 1,
+      "cluster_start_date": "2026-01-06",
+      "signal_close": 375.12,
+      "adr_at_signal": 9.03,
+      "exit_bar": 6,
+      "exit_date": "2026-01-14",
+      "exit_close": 318.99,
+      "move_adr": 6.21,
+      "mfe_adr": 7.0,
+      "capture_eff": 0.888
+    },
+    {
+      "ticker": "ZGN",
+      "date": "2026-01-15",
+      "bar_idx": 1021,
+      "close": 11.020000457763672,
+      "cluster_size": 1,
+      "cluster_start_date": "2026-01-15",
+      "signal_close": 11.02,
+      "adr_at_signal": 0.28,
+      "exit_bar": 7,
+      "exit_date": "2026-01-27",
+      "exit_close": 9.27,
+      "move_adr": 6.19,
+      "mfe_adr": 6.51,
+      "capture_eff": 0.951
+    },
+    {
+      "ticker": "DUK",
+      "date": "2025-10-07",
+      "bar_idx": 1167,
+      "close": 123.42680358886719,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-07",
+      "signal_close": 123.43,
+      "adr_at_signal": 1.54,
+      "exit_bar": 43,
+      "exit_date": "2025-12-08",
+      "exit_close": 114.25,
+      "move_adr": 5.97,
+      "mfe_adr": 6.67,
+      "capture_eff": 0.895
+    },
+    {
+      "ticker": "FUBO",
+      "date": "2025-09-22",
+      "bar_idx": 1156,
+      "close": 4.559999942779541,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-09-22",
+      "signal_close": 4.56,
+      "adr_at_signal": 0.25,
+      "exit_bar": 46,
+      "exit_date": "2025-11-25",
+      "exit_close": 3.11,
+      "move_adr": 5.89,
+      "mfe_adr": 6.18,
+      "capture_eff": 0.954
+    },
+    {
+      "ticker": "FUBO",
+      "date": "2025-09-15",
+      "bar_idx": 1151,
+      "close": 4.360000133514404,
+      "cluster_size": 3,
+      "cluster_start_date": "2025-09-11",
+      "signal_close": 4.36,
+      "adr_at_signal": 0.23,
+      "exit_bar": 51,
+      "exit_date": "2025-11-25",
+      "exit_close": 3.11,
+      "move_adr": 5.53,
+      "mfe_adr": 5.84,
+      "capture_eff": 0.947
+    },
+    {
+      "ticker": "SLS",
+      "date": "2025-10-15",
+      "bar_idx": 1173,
+      "close": 2.180000066757202,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-15",
+      "signal_close": 2.18,
+      "adr_at_signal": 0.12,
+      "exit_bar": 19,
+      "exit_date": "2025-11-11",
+      "exit_close": 1.51,
+      "move_adr": 5.45,
+      "mfe_adr": 6.02,
+      "capture_eff": 0.905
+    },
+    {
+      "ticker": "ZGN",
+      "date": "2025-12-03",
+      "bar_idx": 992,
+      "close": 10.899999618530273,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-12-03",
+      "signal_close": 10.9,
+      "adr_at_signal": 0.3,
+      "exit_bar": 36,
+      "exit_date": "2026-01-27",
+      "exit_close": 9.27,
+      "move_adr": 5.35,
+      "mfe_adr": 5.65,
+      "capture_eff": 0.948
+    },
+    {
+      "ticker": "LC",
+      "date": "2025-12-10",
+      "bar_idx": 1212,
+      "close": 19.760000228881836,
+      "cluster_size": 3,
+      "cluster_start_date": "2025-12-08",
+      "signal_close": 19.76,
+      "adr_at_signal": 0.7,
+      "exit_bar": 36,
+      "exit_date": "2026-02-03",
+      "exit_close": 16.1,
+      "move_adr": 5.23,
+      "mfe_adr": 5.6,
+      "capture_eff": 0.934
+    },
+    {
+      "ticker": "IONQ",
+      "date": "2025-10-13",
+      "bar_idx": 1171,
+      "close": 82.08999633789062,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-13",
+      "signal_close": 82.09,
+      "adr_at_signal": 6.31,
+      "exit_bar": 26,
+      "exit_date": "2025-11-18",
+      "exit_close": 49.12,
+      "move_adr": 5.22,
+      "mfe_adr": 6.22,
+      "capture_eff": 0.84
+    },
+    {
+      "ticker": "SLS",
+      "date": "2025-10-17",
+      "bar_idx": 1175,
+      "close": 2.140000104904175,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-17",
+      "signal_close": 2.14,
+      "adr_at_signal": 0.13,
+      "exit_bar": 17,
+      "exit_date": "2025-11-11",
+      "exit_close": 1.51,
+      "move_adr": 4.77,
+      "mfe_adr": 5.3,
+      "capture_eff": 0.9
+    },
+    {
+      "ticker": "EFC",
+      "date": "2026-01-07",
+      "bar_idx": 1230,
+      "close": 13.478940963745117,
+      "cluster_size": 1,
+      "cluster_start_date": "2026-01-07",
+      "signal_close": 13.48,
+      "adr_at_signal": 0.19,
+      "exit_bar": 18,
+      "exit_date": "2026-02-03",
+      "exit_close": 12.6,
+      "move_adr": 4.73,
+      "mfe_adr": 5.97,
+      "capture_eff": 0.793
+    },
+    {
+      "ticker": "CRNC",
+      "date": "2025-10-02",
+      "bar_idx": 1164,
+      "close": 13.300000190734863,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-02",
+      "signal_close": 13.3,
+      "adr_at_signal": 0.9,
+      "exit_bar": 25,
+      "exit_date": "2025-11-06",
+      "exit_close": 9.22,
+      "move_adr": 4.56,
+      "mfe_adr": 4.72,
+      "capture_eff": 0.965
+    },
+    {
+      "ticker": "ANET",
+      "date": "2025-10-29",
+      "bar_idx": 1184,
+      "close": 162.02999877929688,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-29",
+      "signal_close": 162.03,
+      "adr_at_signal": 6.06,
+      "exit_bar": 10,
+      "exit_date": "2025-11-12",
+      "exit_close": 134.98,
+      "move_adr": 4.46,
+      "mfe_adr": 4.89,
+      "capture_eff": 0.913
+    },
+    {
+      "ticker": "W",
+      "date": "2026-01-08",
+      "bar_idx": 1231,
+      "close": 113.44999694824219,
+      "cluster_size": 1,
+      "cluster_start_date": "2026-01-08",
+      "signal_close": 113.45,
+      "adr_at_signal": 4.65,
+      "exit_bar": 21,
+      "exit_date": "2026-02-09",
+      "exit_close": 92.79,
+      "move_adr": 4.45,
+      "mfe_adr": 6.19,
+      "capture_eff": 0.718
+    },
+    {
+      "ticker": "ANET",
+      "date": "2025-10-31",
+      "bar_idx": 1186,
+      "close": 157.69000244140625,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-31",
+      "signal_close": 157.69,
+      "adr_at_signal": 5.14,
+      "exit_bar": 8,
+      "exit_date": "2025-11-12",
+      "exit_close": 134.98,
+      "move_adr": 4.42,
+      "mfe_adr": 4.92,
+      "capture_eff": 0.898
+    },
+    {
+      "ticker": "AEE",
+      "date": "2025-10-16",
+      "bar_idx": 1175,
+      "close": 104.45789337158203,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-16",
+      "signal_close": 104.46,
+      "adr_at_signal": 1.41,
+      "exit_bar": 37,
+      "exit_date": "2025-12-09",
+      "exit_close": 98.34,
+      "move_adr": 4.33,
+      "mfe_adr": 4.62,
+      "capture_eff": 0.936
+    },
+    {
+      "ticker": "PACB",
+      "date": "2026-01-22",
+      "bar_idx": 1240,
+      "close": 2.6700000762939453,
+      "cluster_size": 2,
+      "cluster_start_date": "2026-01-21",
+      "signal_close": 2.67,
+      "adr_at_signal": 0.2,
+      "exit_bar": 13,
+      "exit_date": "2026-02-10",
+      "exit_close": 1.81,
+      "move_adr": 4.27,
+      "mfe_adr": 4.91,
+      "capture_eff": 0.869
+    },
+    {
+      "ticker": "BETR",
+      "date": "2025-10-23",
+      "bar_idx": 1126,
+      "close": 86.06999969482422,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-23",
+      "signal_close": 86.07,
+      "adr_at_signal": 9.69,
+      "exit_bar": 23,
+      "exit_date": "2025-11-25",
+      "exit_close": 45.5,
+      "move_adr": 4.19,
+      "mfe_adr": 4.63,
+      "capture_eff": 0.905
+    },
+    {
+      "ticker": "ROAD",
+      "date": "2025-08-25",
+      "bar_idx": 1137,
+      "close": 121.12000274658203,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-08-25",
+      "signal_close": 121.12,
+      "adr_at_signal": 4.99,
+      "exit_bar": 63,
+      "exit_date": "2025-11-21",
+      "exit_close": 101.16,
+      "move_adr": 4.0,
+      "mfe_adr": 5.23,
+      "capture_eff": 0.764
+    },
+    {
+      "ticker": "ASST",
+      "date": "2025-09-09",
+      "bar_idx": 650,
+      "close": 125.5999984741211,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-09-09",
+      "signal_close": 125.6,
+      "adr_at_signal": 20.05,
+      "exit_bar": 15,
+      "exit_date": "2025-09-30",
+      "exit_close": 50.0,
+      "move_adr": 3.77,
+      "mfe_adr": 4.07,
+      "capture_eff": 0.926
+    },
+    {
+      "ticker": "RGNX",
+      "date": "2025-12-12",
+      "bar_idx": 1214,
+      "close": 13.869999885559082,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-12-12",
+      "signal_close": 13.87,
+      "adr_at_signal": 0.84,
+      "exit_bar": 34,
+      "exit_date": "2026-02-03",
+      "exit_close": 10.86,
+      "move_adr": 3.59,
+      "mfe_adr": 5.2,
+      "capture_eff": 0.69
+    },
+    {
+      "ticker": "LWLG",
+      "date": "2025-10-16",
+      "bar_idx": 1174,
+      "close": 5.179999828338623,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-16",
+      "signal_close": 5.18,
+      "adr_at_signal": 0.65,
+      "exit_bar": 43,
+      "exit_date": "2025-12-17",
+      "exit_close": 2.97,
+      "move_adr": 3.4,
+      "mfe_adr": 3.6,
+      "capture_eff": 0.944
+    },
+    {
+      "ticker": "BTBT",
+      "date": "2025-10-15",
+      "bar_idx": 1173,
+      "close": 4.059999942779541,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-15",
+      "signal_close": 4.06,
+      "adr_at_signal": 0.35,
+      "exit_bar": 19,
+      "exit_date": "2025-11-11",
+      "exit_close": 2.95,
+      "move_adr": 3.21,
+      "mfe_adr": 3.45,
+      "capture_eff": 0.933
+    },
+    {
+      "ticker": "RGNX",
+      "date": "2025-11-28",
+      "bar_idx": 1204,
+      "close": 13.390000343322754,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-11-28",
+      "signal_close": 13.39,
+      "adr_at_signal": 0.79,
+      "exit_bar": 44,
+      "exit_date": "2026-02-03",
+      "exit_close": 10.86,
+      "move_adr": 3.2,
+      "mfe_adr": 4.91,
+      "capture_eff": 0.652
+    },
+    {
+      "ticker": "JPM",
+      "date": "2025-12-23",
+      "bar_idx": 1221,
+      "close": 324.4664001464844,
+      "cluster_size": 2,
+      "cluster_start_date": "2025-12-22",
+      "signal_close": 324.47,
+      "adr_at_signal": 6.54,
+      "exit_bar": 19,
+      "exit_date": "2026-01-22",
+      "exit_close": 303.63,
+      "move_adr": 3.19,
+      "mfe_adr": 3.57,
+      "capture_eff": 0.894
+    },
+    {
+      "ticker": "LNT",
+      "date": "2025-10-06",
+      "bar_idx": 1166,
+      "close": 67.06624603271484,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-06",
+      "signal_close": 67.07,
+      "adr_at_signal": 0.87,
+      "exit_bar": 45,
+      "exit_date": "2025-12-09",
+      "exit_close": 64.37,
+      "move_adr": 3.1,
+      "mfe_adr": 3.32,
+      "capture_eff": 0.935
+    },
+    {
+      "ticker": "MIR",
+      "date": "2025-10-15",
+      "bar_idx": 1173,
+      "close": 24.93000030517578,
+      "cluster_size": 2,
+      "cluster_start_date": "2025-10-14",
+      "signal_close": 24.93,
+      "adr_at_signal": 1.12,
+      "exit_bar": 86,
+      "exit_date": "2026-02-19",
+      "exit_close": 21.47,
+      "move_adr": 3.08,
+      "mfe_adr": 3.64,
+      "capture_eff": 0.845
+    },
+    {
+      "ticker": "ZGN",
+      "date": "2025-10-21",
+      "bar_idx": 962,
+      "close": 10.470000267028809,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-21",
+      "signal_close": 10.47,
+      "adr_at_signal": 0.4,
+      "exit_bar": 66,
+      "exit_date": "2026-01-27",
+      "exit_close": 9.27,
+      "move_adr": 2.96,
+      "mfe_adr": 3.19,
+      "capture_eff": 0.93
+    },
+    {
+      "ticker": "TEN",
+      "date": "2025-10-31",
+      "bar_idx": 1185,
+      "close": 24.3799991607666,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-31",
+      "signal_close": 24.38,
+      "adr_at_signal": 0.7,
+      "exit_bar": 32,
+      "exit_date": "2025-12-17",
+      "exit_close": 22.75,
+      "move_adr": 2.34,
+      "mfe_adr": 2.67,
+      "capture_eff": 0.876
+    },
+    {
+      "ticker": "BTBT",
+      "date": "2025-10-17",
+      "bar_idx": 1175,
+      "close": 3.6500000953674316,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-10-17",
+      "signal_close": 3.65,
+      "adr_at_signal": 0.36,
+      "exit_bar": 17,
+      "exit_date": "2025-11-11",
+      "exit_close": 2.95,
+      "move_adr": 1.95,
+      "mfe_adr": 2.17,
+      "capture_eff": 0.897
+    },
+    {
+      "ticker": "LNT",
+      "date": "2025-09-29",
+      "bar_idx": 1161,
+      "close": 65.74696350097656,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-09-29",
+      "signal_close": 65.75,
+      "adr_at_signal": 0.8,
+      "exit_bar": 50,
+      "exit_date": "2025-12-09",
+      "exit_close": 64.37,
+      "move_adr": 1.73,
+      "mfe_adr": 1.97,
+      "capture_eff": 0.88
+    },
+    {
+      "ticker": "JPM",
+      "date": "2025-12-16",
+      "bar_idx": 1216,
+      "close": 314.1330261230469,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-12-16",
+      "signal_close": 314.13,
+      "adr_at_signal": 6.49,
+      "exit_bar": 24,
+      "exit_date": "2026-01-22",
+      "exit_close": 303.63,
+      "move_adr": 1.62,
+      "mfe_adr": 2.0,
+      "capture_eff": 0.809
+    },
+    {
+      "ticker": "WGS",
+      "date": "2025-11-11",
+      "bar_idx": 1192,
+      "close": 139.91000366210938,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-11-11",
+      "signal_close": 139.91,
+      "adr_at_signal": 9.23,
+      "exit_bar": 34,
+      "exit_date": "2025-12-31",
+      "exit_close": 130.06,
+      "move_adr": 1.07,
+      "mfe_adr": 2.22,
+      "capture_eff": 0.481
+    },
+    {
+      "ticker": "LTBR",
+      "date": "2025-09-19",
+      "bar_idx": 1155,
+      "close": 18.260000228881836,
+      "cluster_size": 1,
+      "cluster_start_date": "2025-09-19",
+      "signal_close": 18.26,
+      "adr_at_signal": 1.16,
+      "exit_bar": 43,
+      "exit_date": "2025-11-19",
+      "exit_close": 17.05,
+      "move_adr": 1.04,
+      "mfe_adr": 1.64,
+      "capture_eff": 0.637
+    }
+  ]
+}

@@ -1,0 +1,2092 @@
+{
+  "setup_type": "dtss",
+  "timestamp": "2026-03-06T13:00:31.536776",
+  "n_examples": 68,
+  "computation_source": "expression_cache",
+  "examples": [
+    {
+      "ticker": "AAOI",
+      "entry_date": "2024-02-16",
+      "mfe_pct": 72.92929369993885,
+      "mfe_adr": 9.65277526367206
+    },
+    {
+      "ticker": "ACHR",
+      "entry_date": "2025-07-18",
+      "mfe_pct": 52.29424319654415,
+      "mfe_adr": 10.525654340466751
+    },
+    {
+      "ticker": "AEE",
+      "entry_date": "2025-11-28",
+      "mfe_pct": 8.765303236556234,
+      "mfe_adr": 6.8928181981414856
+    },
+    {
+      "ticker": "AIR",
+      "entry_date": "2022-06-08",
+      "mfe_pct": 35.67753151360088,
+      "mfe_adr": 10.358892706601265
+    },
+    {
+      "ticker": "ASST",
+      "entry_date": "2025-09-10",
+      "mfe_pct": 96.99603167791216,
+      "mfe_adr": 9.099665184379237
+    },
+    {
+      "ticker": "AVAV",
+      "entry_date": "2023-05-23",
+      "mfe_pct": 21.48767831393299,
+      "mfe_adr": 9.232661563180228
+    },
+    {
+      "ticker": "ALTS",
+      "entry_date": "2025-02-20",
+      "mfe_pct": 52.57452648067951,
+      "mfe_adr": 6.082866712858818
+    },
+    {
+      "ticker": "APP",
+      "entry_date": "2025-12-22",
+      "mfe_pct": 51.35567333104193,
+      "mfe_adr": 12.96894612301671
+    },
+    {
+      "ticker": "AX",
+      "entry_date": "2022-01-13",
+      "mfe_pct": 44.796892531231556,
+      "mfe_adr": 19.366318679569407
+    },
+    {
+      "ticker": "BTBT",
+      "entry_date": "2025-10-20",
+      "mfe_pct": 67.2527484159051,
+      "mfe_adr": 7.705036176373311
+    },
+    {
+      "ticker": "BETR",
+      "entry_date": "2025-10-24",
+      "mfe_pct": 72.90969905171295,
+      "mfe_adr": 6.619417598342459
+    },
+    {
+      "ticker": "CELH",
+      "entry_date": "2024-05-22",
+      "mfe_pct": 73.9301964030781,
+      "mfe_adr": 14.74236076741585
+    },
+    {
+      "ticker": "CEPU",
+      "entry_date": "2023-08-29",
+      "mfe_pct": 29.708225533807052,
+      "mfe_adr": 6.380469932867469
+    },
+    {
+      "ticker": "CSL",
+      "entry_date": "2022-06-08",
+      "mfe_pct": 17.827755104777914,
+      "mfe_adr": 6.85672478947219
+    },
+    {
+      "ticker": "CVNA",
+      "entry_date": "2023-09-15",
+      "mfe_pct": 55.51418533016271,
+      "mfe_adr": 8.08477061119245
+    },
+    {
+      "ticker": "CVNA",
+      "entry_date": "2026-01-23",
+      "mfe_pct": 35.303663964551,
+      "mfe_adr": 8.543240581268375
+    },
+    {
+      "ticker": "DELL",
+      "entry_date": "2022-02-10",
+      "mfe_pct": 37.27900522230879,
+      "mfe_adr": 14.94560527173199
+    },
+    {
+      "ticker": "DNLI",
+      "entry_date": "2024-11-11",
+      "mfe_pct": 68.2868313407178,
+      "mfe_adr": 17.614152969569936
+    },
+    {
+      "ticker": "EBC",
+      "entry_date": "2025-02-06",
+      "mfe_pct": 29.030879262519193,
+      "mfe_adr": 11.93758764311662
+    },
+    {
+      "ticker": "EME",
+      "entry_date": "2025-01-22",
+      "mfe_pct": 41.15240137860757,
+      "mfe_adr": 16.557213121445166
+    },
+    {
+      "ticker": "FFIC",
+      "entry_date": "2024-11-25",
+      "mfe_pct": 40.983358311574044,
+      "mfe_adr": 12.475235400616077
+    },
+    {
+      "ticker": "FRT",
+      "entry_date": "2024-11-29",
+      "mfe_pct": 30.24247463603711,
+      "mfe_adr": 23.418599855287557
+    },
+    {
+      "ticker": "FTAI",
+      "entry_date": "2025-01-10",
+      "mfe_pct": 58.67650801412496,
+      "mfe_adr": 14.999496158995605
+    },
+    {
+      "ticker": "FUBO",
+      "entry_date": "2025-09-23",
+      "mfe_pct": 73.94067640364146,
+      "mfe_adr": 13.46005378933151
+    },
+    {
+      "ticker": "GAP",
+      "entry_date": "2024-06-03",
+      "mfe_pct": 36.72846153620883,
+      "mfe_adr": 10.521290088111698
+    },
+    {
+      "ticker": "GFS",
+      "entry_date": "2023-04-03",
+      "mfe_pct": 28.962280093543097,
+      "mfe_adr": 9.062949960260113
+    },
+    {
+      "ticker": "GH",
+      "entry_date": "2025-05-01",
+      "mfe_pct": 31.292513476146606,
+      "mfe_adr": 6.7102741227162195
+    },
+    {
+      "ticker": "GRPN",
+      "entry_date": "2025-08-07",
+      "mfe_pct": 65.90065237696008,
+      "mfe_adr": 13.46865913874559
+    },
+    {
+      "ticker": "GTM",
+      "entry_date": "2025-11-04",
+      "mfe_pct": 52.55889558475146,
+      "mfe_adr": 15.523560160648715
+    },
+    {
+      "ticker": "HAL",
+      "entry_date": "2022-06-09",
+      "mfe_pct": 45.393235455448526,
+      "mfe_adr": 13.105380920198082
+    },
+    {
+      "ticker": "HCC",
+      "entry_date": "2022-06-07",
+      "mfe_pct": 36.99324128787503,
+      "mfe_adr": 7.727092687678761
+    },
+    {
+      "ticker": "HLIT",
+      "entry_date": "2024-10-28",
+      "mfe_pct": 48.83570615850918,
+      "mfe_adr": 23.806298930832646
+    },
+    {
+      "ticker": "HNRG",
+      "entry_date": "2022-08-23",
+      "mfe_pct": 36.704400181426045,
+      "mfe_adr": 5.853560092549725
+    },
+    {
+      "ticker": "INVA",
+      "entry_date": "2022-04-05",
+      "mfe_pct": 44.133267956062646,
+      "mfe_adr": 13.788793996454961
+    },
+    {
+      "ticker": "IONQ",
+      "entry_date": "2025-10-14",
+      "mfe_pct": 63.01184127547514,
+      "mfe_adr": 8.074188601665288
+    },
+    {
+      "ticker": "ISRG",
+      "entry_date": "2021-12-31",
+      "mfe_pct": 48.974462666828806,
+      "mfe_adr": 20.4486396475403
+    },
+    {
+      "ticker": "LABU",
+      "entry_date": "2024-11-11",
+      "mfe_pct": 78.63858439671534,
+      "mfe_adr": 17.54742019328597
+    },
+    {
+      "ticker": "LTH",
+      "entry_date": "2025-05-08",
+      "mfe_pct": 29.236927576029835,
+      "mfe_adr": 7.052741709274484
+    },
+    {
+      "ticker": "MET",
+      "entry_date": "2022-04-21",
+      "mfe_pct": 20.964508303141578,
+      "mfe_adr": 11.443022722432138
+    },
+    {
+      "ticker": "MOD",
+      "entry_date": "2025-01-22",
+      "mfe_pct": 55.60504328376997,
+      "mfe_adr": 16.110324382353856
+    },
+    {
+      "ticker": "MPC",
+      "entry_date": "2023-04-03",
+      "mfe_pct": 24.771313052518284,
+      "mfe_adr": 8.326878780049963
+    },
+    {
+      "ticker": "MSFT",
+      "entry_date": "2025-10-28",
+      "mfe_pct": 29.01569603115948,
+      "mfe_adr": 21.23804898419888
+    },
+    {
+      "ticker": "NEOV",
+      "entry_date": "2025-01-06",
+      "mfe_pct": 69.17808381359978,
+      "mfe_adr": 10.27616651221146
+    },
+    {
+      "ticker": "NOW",
+      "entry_date": "2023-09-11",
+      "mfe_pct": 13.268632621503345,
+      "mfe_adr": 6.439553287195576
+    },
+    {
+      "ticker": "NSP",
+      "entry_date": "2023-06-09",
+      "mfe_pct": 27.174003845928755,
+      "mfe_adr": 12.693492389928393
+    },
+    {
+      "ticker": "NUE",
+      "entry_date": "2022-01-05",
+      "mfe_pct": 30.133417192512717,
+      "mfe_adr": 9.310326834822728
+    },
+    {
+      "ticker": "PACB",
+      "entry_date": "2026-01-23",
+      "mfe_pct": 44.68864542441563,
+      "mfe_adr": 6.078291307679525
+    },
+    {
+      "ticker": "PDS",
+      "entry_date": "2024-07-31",
+      "mfe_pct": 30.02402675527455,
+      "mfe_adr": 9.196455604384516
+    },
+    {
+      "ticker": "PNR",
+      "entry_date": "2024-05-15",
+      "mfe_pct": 15.389096989579915,
+      "mfe_adr": 8.75663458939603
+    },
+    {
+      "ticker": "PR",
+      "entry_date": "2022-06-08",
+      "mfe_pct": 47.6288542199688,
+      "mfe_adr": 9.070253843190164
+    },
+    {
+      "ticker": "PSIX",
+      "entry_date": "2025-09-24",
+      "mfe_pct": 63.09941579359919,
+      "mfe_adr": 11.53507245595204
+    },
+    {
+      "ticker": "SERV",
+      "entry_date": "2025-01-06",
+      "mfe_pct": 80.86242392440226,
+      "mfe_adr": 6.92752333999985
+    },
+    {
+      "ticker": "REPX",
+      "entry_date": "2025-01-21",
+      "mfe_pct": 40.847693776010196,
+      "mfe_adr": 13.599514131954832
+    },
+    {
+      "ticker": "ROOT",
+      "entry_date": "2024-05-01",
+      "mfe_pct": 60.67921793285797,
+      "mfe_adr": 8.10023205412459
+    },
+    {
+      "ticker": "SFM",
+      "entry_date": "2025-06-03",
+      "mfe_pct": 58.37912087912088,
+      "mfe_adr": 19.47499220878849
+    },
+    {
+      "ticker": "SOUN",
+      "entry_date": "2023-06-29",
+      "mfe_pct": 70.84148785506987,
+      "mfe_adr": 7.279516743886149
+    },
+    {
+      "ticker": "SLS",
+      "entry_date": "2025-10-20",
+      "mfe_pct": 43.95161391110871,
+      "mfe_adr": 6.873873626670144
+    },
+    {
+      "ticker": "TJX",
+      "entry_date": "2022-01-05",
+      "mfe_pct": 29.945356188368343,
+      "mfe_adr": 17.308822632931225
+    },
+    {
+      "ticker": "TRNS",
+      "entry_date": "2024-07-24",
+      "mfe_pct": 35.90945891452672,
+      "mfe_adr": 10.873559843158931
+    },
+    {
+      "ticker": "UTSL",
+      "entry_date": "2024-11-27",
+      "mfe_pct": 40.48800754283601,
+      "mfe_adr": 11.305814514259385
+    },
+    {
+      "ticker": "VCTR",
+      "entry_date": "2025-02-10",
+      "mfe_pct": 34.15656305260596,
+      "mfe_adr": 11.108195073460234
+    },
+    {
+      "ticker": "WAL",
+      "entry_date": "2022-01-12",
+      "mfe_pct": 44.773718477767424,
+      "mfe_adr": 15.60273241708339
+    },
+    {
+      "ticker": "VRTX",
+      "entry_date": "2024-11-11",
+      "mfe_pct": 27.10523316290353,
+      "mfe_adr": 11.402898091262259
+    },
+    {
+      "ticker": "WGO",
+      "entry_date": "2024-04-01",
+      "mfe_pct": 32.20685771700335,
+      "mfe_adr": 11.74043455770138
+    },
+    {
+      "ticker": "WHD",
+      "entry_date": "2024-11-25",
+      "mfe_pct": 51.488828245941,
+      "mfe_adr": 15.90560081015201
+    },
+    {
+      "ticker": "WING",
+      "entry_date": "2024-09-24",
+      "mfe_pct": 52.51397304619704,
+      "mfe_adr": 19.319925026140048
+    },
+    {
+      "ticker": "ZIM",
+      "entry_date": "2024-07-02",
+      "mfe_pct": 30.529854354101833,
+      "mfe_adr": 7.646127519604002
+    },
+    {
+      "ticker": "ZVRA",
+      "entry_date": "2024-02-20",
+      "mfe_pct": 42.307696590358965,
+      "mfe_adr": 9.603565212847798
+    }
+  ],
+  "result": {
+    "n_stages": 2,
+    "median_capture_eff": 0.5912364854650781,
+    "avg_capture_eff": 0.5953724641481488,
+    "floor_capture_eff": 0.3062837133486771,
+    "median_effective_pct": 24.08591345730443,
+    "avg_bars_to_full_exit": 17.308823529411764,
+    "stages": [
+      {
+        "stage_id": 1,
+        "expr_name": "spread_avgc10_avgc50_adr14",
+        "direction": "below",
+        "threshold": -1.045314,
+        "trim_pct": 0.5,
+        "gate_type": "none",
+        "gate_value": 0.0,
+        "max_window": 25
+      },
+      {
+        "stage_id": 2,
+        "expr_name": "spread_avgc10_avgc50_adr14",
+        "direction": "below",
+        "threshold": -1.045314,
+        "trim_pct": 1.0,
+        "gate_type": "none",
+        "gate_value": 0.0,
+        "max_window": null
+      }
+    ],
+    "per_example": [
+      {
+        "ticker": "AAOI",
+        "entry_date": "2024-02-16",
+        "mfe_pct": 72.92929369993885,
+        "mfe_adr": 9.65277526367206,
+        "effective_pct": 40.000000385322956,
+        "capture_eff": 0.5484764537813767,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 10,
+            "price": 14.960000038146973,
+            "pct_trimmed": 0.5,
+            "pct_move": 39.555555401426375
+          },
+          {
+            "stage_id": 2,
+            "bar": 11,
+            "price": 14.739999771118164,
+            "pct_trimmed": 0.5,
+            "pct_move": 40.44444536921954
+          }
+        ],
+        "bars_to_full_exit": 11
+      },
+      {
+        "ticker": "ACHR",
+        "entry_date": "2025-07-18",
+        "mfe_pct": 52.29424319654415,
+        "mfe_adr": 10.525654340466751,
+        "effective_pct": 29.497449737263757,
+        "capture_eff": 0.5640668634671643,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 16,
+            "price": 9.539999961853027,
+            "pct_trimmed": 0.5,
+            "pct_move": 30.517113766056532
+          },
+          {
+            "stage_id": 2,
+            "bar": 20,
+            "price": 9.819999694824219,
+            "pct_trimmed": 0.5,
+            "pct_move": 28.477785708470986
+          }
+        ],
+        "bars_to_full_exit": 20
+      },
+      {
+        "ticker": "AEE",
+        "entry_date": "2025-11-28",
+        "mfe_pct": 8.765303236556234,
+        "mfe_adr": 6.8928181981414856,
+        "effective_pct": 7.877237688903093,
+        "capture_eff": 0.8986839903097238,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 8,
+            "price": 97.7699966430664,
+            "pct_trimmed": 0.5,
+            "pct_move": 7.631603764298685
+          },
+          {
+            "stage_id": 2,
+            "bar": 9,
+            "price": 97.25,
+            "pct_trimmed": 0.5,
+            "pct_move": 8.1228716135075
+          }
+        ],
+        "bars_to_full_exit": 9
+      },
+      {
+        "ticker": "AIR",
+        "entry_date": "2022-06-08",
+        "mfe_pct": 35.67753151360088,
+        "mfe_adr": 10.358892706601265,
+        "effective_pct": 22.212693759280466,
+        "capture_eff": 0.622596149927374,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 8,
+            "price": 40.52000045776367,
+            "pct_trimmed": 0.5,
+            "pct_move": 22.77491992552943
+          },
+          {
+            "stage_id": 2,
+            "bar": 9,
+            "price": 41.11000061035156,
+            "pct_trimmed": 0.5,
+            "pct_move": 21.6504675930315
+          }
+        ],
+        "bars_to_full_exit": 9
+      },
+      {
+        "ticker": "ASST",
+        "entry_date": "2025-09-10",
+        "mfe_pct": 96.99603167791216,
+        "mfe_adr": 9.099665184379237,
+        "effective_pct": 80.11904746767075,
+        "capture_eff": 0.8260033537631353,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 14,
+            "price": 50.0,
+            "pct_trimmed": 0.5,
+            "pct_move": 80.15873015873017
+          },
+          {
+            "stage_id": 2,
+            "bar": 15,
+            "price": 50.20000076293945,
+            "pct_trimmed": 0.5,
+            "pct_move": 80.07936477661133
+          }
+        ],
+        "bars_to_full_exit": 15
+      },
+      {
+        "ticker": "AVAV",
+        "entry_date": "2023-05-23",
+        "mfe_pct": 21.48767831393299,
+        "mfe_adr": 9.232661563180228,
+        "effective_pct": 12.865912592757322,
+        "capture_eff": 0.5987576882335789,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 10,
+            "price": 98.16999816894531,
+            "pct_trimmed": 0.5,
+            "pct_move": 12.652372362244932
+          },
+          {
+            "stage_id": 2,
+            "bar": 11,
+            "price": 97.69000244140625,
+            "pct_trimmed": 0.5,
+            "pct_move": 13.079452823269714
+          }
+        ],
+        "bars_to_full_exit": 11
+      },
+      {
+        "ticker": "ALTS",
+        "entry_date": "2025-02-20",
+        "mfe_pct": 52.57452648067951,
+        "mfe_adr": 6.082866712858818,
+        "effective_pct": 40.85365932453756,
+        "capture_eff": 0.7770618597877582,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 15,
+            "price": 4.090000152587891,
+            "pct_trimmed": 0.5,
+            "pct_move": 44.57994459126463
+          },
+          {
+            "stage_id": 2,
+            "bar": 16,
+            "price": 4.639999866485596,
+            "pct_trimmed": 0.5,
+            "pct_move": 37.1273740578105
+          }
+        ],
+        "bars_to_full_exit": 16
+      },
+      {
+        "ticker": "APP",
+        "entry_date": "2025-12-22",
+        "mfe_pct": 51.35567333104193,
+        "mfe_adr": 12.96894612301671,
+        "effective_pct": 26.898010479379163,
+        "capture_eff": 0.523759279836385,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 22,
+            "price": 535.4400024414062,
+            "pct_trimmed": 0.5,
+            "pct_move": 27.44813818833573
+          },
+          {
+            "stage_id": 2,
+            "bar": 23,
+            "price": 543.5599975585938,
+            "pct_trimmed": 0.5,
+            "pct_move": 26.347882770422597
+          }
+        ],
+        "bars_to_full_exit": 23
+      },
+      {
+        "ticker": "AX",
+        "entry_date": "2022-01-13",
+        "mfe_pct": 44.796892531231556,
+        "mfe_adr": 19.366318679569407,
+        "effective_pct": 15.86017316589247,
+        "capture_eff": 0.3540462802154201,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 11,
+            "price": 51.5,
+            "pct_trimmed": 0.5,
+            "pct_move": 16.65318136116348
+          },
+          {
+            "stage_id": 2,
+            "bar": 12,
+            "price": 52.47999954223633,
+            "pct_trimmed": 0.5,
+            "pct_move": 15.06716497062146
+          }
+        ],
+        "bars_to_full_exit": 12
+      },
+      {
+        "ticker": "BTBT",
+        "entry_date": "2025-10-20",
+        "mfe_pct": 67.2527484159051,
+        "mfe_adr": 7.705036176373311,
+        "effective_pct": 45.824177361617146,
+        "capture_eff": 0.6813725600956978,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 18,
+            "price": 2.5199999809265137,
+            "pct_trimmed": 0.5,
+            "pct_move": 44.615387356291244
+          },
+          {
+            "stage_id": 2,
+            "bar": 19,
+            "price": 2.4100000858306885,
+            "pct_trimmed": 0.5,
+            "pct_move": 47.032967366943055
+          }
+        ],
+        "bars_to_full_exit": 19
+      },
+      {
+        "ticker": "BETR",
+        "entry_date": "2025-10-24",
+        "mfe_pct": 72.90969905171295,
+        "mfe_adr": 6.619417598342459,
+        "effective_pct": 50.02697327135654,
+        "capture_eff": 0.6861497704972518,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 22,
+            "price": 45.5,
+            "pct_trimmed": 0.5,
+            "pct_move": 50.911642246678426
+          },
+          {
+            "stage_id": 2,
+            "bar": 23,
+            "price": 47.13999938964844,
+            "pct_trimmed": 0.5,
+            "pct_move": 49.14230429603465
+          }
+        ],
+        "bars_to_full_exit": 23
+      },
+      {
+        "ticker": "CELH",
+        "entry_date": "2024-05-22",
+        "mfe_pct": 73.9301964030781,
+        "mfe_adr": 14.74236076741585,
+        "effective_pct": 35.503287663218686,
+        "capture_eff": 0.48022715196980725,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 13,
+            "price": 65.81999969482422,
+            "pct_trimmed": 0.5,
+            "pct_move": 33.4142633173071
+          },
+          {
+            "stage_id": 2,
+            "bar": 14,
+            "price": 61.689998626708984,
+            "pct_trimmed": 0.5,
+            "pct_move": 37.59231200913027
+          }
+        ],
+        "bars_to_full_exit": 14
+      },
+      {
+        "ticker": "CEPU",
+        "entry_date": "2023-08-29",
+        "mfe_pct": 29.708225533807052,
+        "mfe_adr": 6.380469932867469,
+        "effective_pct": 14.65517625240415,
+        "capture_eff": 0.4933036554380203,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 13,
+            "price": 5.631394863128662,
+            "pct_trimmed": 0.5,
+            "pct_move": 13.660478763672588
+          },
+          {
+            "stage_id": 2,
+            "bar": 14,
+            "price": 5.501638889312744,
+            "pct_trimmed": 0.5,
+            "pct_move": 15.64987374113571
+          }
+        ],
+        "bars_to_full_exit": 14
+      },
+      {
+        "ticker": "CSL",
+        "entry_date": "2022-06-08",
+        "mfe_pct": 17.827755104777914,
+        "mfe_adr": 6.85672478947219,
+        "effective_pct": 12.944019009507041,
+        "capture_eff": 0.7260599516558307,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 10,
+            "price": 221.96710205078125,
+            "pct_trimmed": 0.5,
+            "pct_move": 14.559478033262947
+          },
+          {
+            "stage_id": 2,
+            "bar": 11,
+            "price": 230.36074829101562,
+            "pct_trimmed": 0.5,
+            "pct_move": 11.328559985751136
+          }
+        ],
+        "bars_to_full_exit": 11
+      },
+      {
+        "ticker": "CVNA",
+        "entry_date": "2023-09-15",
+        "mfe_pct": 55.51418533016271,
+        "mfe_adr": 8.08477061119245,
+        "effective_pct": 34.955673083699736,
+        "capture_eff": 0.629671008874684,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 13,
+            "price": 37.630001068115234,
+            "pct_trimmed": 0.5,
+            "pct_move": 33.28014175522874
+          },
+          {
+            "stage_id": 2,
+            "bar": 14,
+            "price": 35.7400016784668,
+            "pct_trimmed": 0.5,
+            "pct_move": 36.631204412170725
+          }
+        ],
+        "bars_to_full_exit": 14
+      },
+      {
+        "ticker": "CVNA",
+        "entry_date": "2026-01-23",
+        "mfe_pct": 35.303663964551,
+        "mfe_adr": 8.543240581268375,
+        "effective_pct": 29.449158013469876,
+        "capture_eff": 0.8341671856790919,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 14,
+            "price": 344.1400146484375,
+            "pct_trimmed": 0.5,
+            "pct_move": 29.318736409715378
+          },
+          {
+            "stage_id": 2,
+            "bar": 15,
+            "price": 342.8699951171875,
+            "pct_trimmed": 0.5,
+            "pct_move": 29.57957961722438
+          }
+        ],
+        "bars_to_full_exit": 15
+      },
+      {
+        "ticker": "DELL",
+        "entry_date": "2022-02-10",
+        "mfe_pct": 37.27900522230879,
+        "mfe_adr": 14.94560527173199,
+        "effective_pct": 13.72278696956704,
+        "capture_eff": 0.3681103314783449,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 13,
+            "price": 48.92222213745117,
+            "pct_trimmed": 0.5,
+            "pct_move": 12.902181974276388
+          },
+          {
+            "stage_id": 2,
+            "bar": 14,
+            "price": 48.0003662109375,
+            "pct_trimmed": 0.5,
+            "pct_move": 14.54339196485769
+          }
+        ],
+        "bars_to_full_exit": 14
+      },
+      {
+        "ticker": "DNLI",
+        "entry_date": "2024-11-11",
+        "mfe_pct": 68.2868313407178,
+        "mfe_adr": 17.614152969569936,
+        "effective_pct": 26.222625857534283,
+        "capture_eff": 0.3840070675808084,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 10,
+            "price": 24.5,
+            "pct_trimmed": 0.5,
+            "pct_move": 26.492653303209472
+          },
+          {
+            "stage_id": 2,
+            "bar": 11,
+            "price": 24.68000030517578,
+            "pct_trimmed": 0.5,
+            "pct_move": 25.952598411859096
+          }
+        ],
+        "bars_to_full_exit": 11
+      },
+      {
+        "ticker": "EBC",
+        "entry_date": "2025-02-06",
+        "mfe_pct": 29.030879262519193,
+        "mfe_adr": 11.93758764311662,
+        "effective_pct": 19.286410680316298,
+        "capture_eff": 0.6643412521513374,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 21,
+            "price": 14.934937477111816,
+            "pct_trimmed": 0.5,
+            "pct_move": 19.680389420860212
+          },
+          {
+            "stage_id": 2,
+            "bar": 22,
+            "price": 15.081453323364258,
+            "pct_trimmed": 0.5,
+            "pct_move": 18.892431939772383
+          }
+        ],
+        "bars_to_full_exit": 22
+      },
+      {
+        "ticker": "EME",
+        "entry_date": "2025-01-22",
+        "mfe_pct": 41.15240137860757,
+        "mfe_adr": 16.557213121445166,
+        "effective_pct": 15.290940470390819,
+        "capture_eff": 0.3715686073751111,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 10,
+            "price": 455.7054443359375,
+            "pct_trimmed": 0.5,
+            "pct_move": 16.255561184842126
+          },
+          {
+            "stage_id": 2,
+            "bar": 11,
+            "price": 466.2036437988281,
+            "pct_trimmed": 0.5,
+            "pct_move": 14.32631975593951
+          }
+        ],
+        "bars_to_full_exit": 11
+      },
+      {
+        "ticker": "FFIC",
+        "entry_date": "2024-11-25",
+        "mfe_pct": 40.983358311574044,
+        "mfe_adr": 12.475235400616077,
+        "effective_pct": 22.06976540291948,
+        "capture_eff": 0.538505537665682,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 19,
+            "price": 13.231818199157715,
+            "pct_trimmed": 0.5,
+            "pct_move": 23.132082701771644
+          },
+          {
+            "stage_id": 2,
+            "bar": 20,
+            "price": 13.597546577453613,
+            "pct_trimmed": 0.5,
+            "pct_move": 21.007448104067315
+          }
+        ],
+        "bars_to_full_exit": 20
+      },
+      {
+        "ticker": "FRT",
+        "entry_date": "2024-11-29",
+        "mfe_pct": 30.24247463603711,
+        "mfe_adr": 23.418599855287557,
+        "effective_pct": 10.578727314189841,
+        "capture_eff": 0.34979701368697413,
+        "events": [
+          {
+            "stage_id": 2,
+            "bar": 26,
+            "price": 99.91444396972656,
+            "pct_trimmed": 1.0,
+            "pct_move": 10.578727314189841
+          }
+        ],
+        "bars_to_full_exit": 26
+      },
+      {
+        "ticker": "FTAI",
+        "entry_date": "2025-01-10",
+        "mfe_pct": 58.67650801412496,
+        "mfe_adr": 14.999496158995605,
+        "effective_pct": 47.0160746502559,
+        "capture_eff": 0.801275949123249,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 8,
+            "price": 100.50676727294922,
+            "pct_trimmed": 0.5,
+            "pct_move": 44.1202375053011
+          },
+          {
+            "stage_id": 2,
+            "bar": 9,
+            "price": 90.08971405029297,
+            "pct_trimmed": 0.5,
+            "pct_move": 49.911911795210706
+          }
+        ],
+        "bars_to_full_exit": 9
+      },
+      {
+        "ticker": "FUBO",
+        "entry_date": "2025-09-23",
+        "mfe_pct": 73.94067640364146,
+        "mfe_adr": 13.46005378933151,
+        "effective_pct": 23.51694544972565,
+        "capture_eff": 0.3180515325738551,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 24,
+            "price": 3.5799999237060547,
+            "pct_trimmed": 0.5,
+            "pct_move": 24.152540617789036
+          },
+          {
+            "stage_id": 2,
+            "bar": 25,
+            "price": 3.640000104904175,
+            "pct_trimmed": 0.5,
+            "pct_move": 22.881350281662264
+          }
+        ],
+        "bars_to_full_exit": 25
+      },
+      {
+        "ticker": "GAP",
+        "entry_date": "2024-06-03",
+        "mfe_pct": 36.72846153620883,
+        "mfe_adr": 10.521290088111698,
+        "effective_pct": 30.542779489188575,
+        "capture_eff": 0.8315834154686254,
+        "events": [
+          {
+            "stage_id": 2,
+            "bar": 36,
+            "price": 20.19532012939453,
+            "pct_trimmed": 1.0,
+            "pct_move": 30.542779489188575
+          }
+        ],
+        "bars_to_full_exit": 36
+      },
+      {
+        "ticker": "GFS",
+        "entry_date": "2023-04-03",
+        "mfe_pct": 28.962280093543097,
+        "mfe_adr": 9.062949960260113,
+        "effective_pct": 19.3588525694676,
+        "capture_eff": 0.6684160399989881,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 15,
+            "price": 58.470001220703125,
+            "pct_trimmed": 0.5,
+            "pct_move": 19.206855048151
+          },
+          {
+            "stage_id": 2,
+            "bar": 16,
+            "price": 58.25,
+            "pct_trimmed": 0.5,
+            "pct_move": 19.510850090784203
+          }
+        ],
+        "bars_to_full_exit": 16
+      },
+      {
+        "ticker": "GH",
+        "entry_date": "2025-05-01",
+        "mfe_pct": 31.292513476146606,
+        "mfe_adr": 6.7102741227162195,
+        "effective_pct": 27.19198408956898,
+        "capture_eff": 0.8689613287311246,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 13,
+            "price": 39.970001220703125,
+            "pct_trimmed": 0.5,
+            "pct_move": 24.470894550864795
+          },
+          {
+            "stage_id": 2,
+            "bar": 14,
+            "price": 37.09000015258789,
+            "pct_trimmed": 0.5,
+            "pct_move": 29.913073628273164
+          }
+        ],
+        "bars_to_full_exit": 14
+      },
+      {
+        "ticker": "GRPN",
+        "entry_date": "2025-08-07",
+        "mfe_pct": 65.90065237696008,
+        "mfe_adr": 13.46865913874559,
+        "effective_pct": 35.84029905170951,
+        "capture_eff": 0.5438534788198827,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 8,
+            "price": 27.780000686645508,
+            "pct_trimmed": 0.5,
+            "pct_move": 35.515321481207565
+          },
+          {
+            "stage_id": 2,
+            "bar": 9,
+            "price": 27.5,
+            "pct_trimmed": 0.5,
+            "pct_move": 36.16527662221146
+          }
+        ],
+        "bars_to_full_exit": 9
+      },
+      {
+        "ticker": "GTM",
+        "entry_date": "2025-11-04",
+        "mfe_pct": 52.55889558475146,
+        "mfe_adr": 15.523560160648715,
+        "effective_pct": 24.086109273099545,
+        "capture_eff": 0.4582689382097191,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 10,
+            "price": 9.390000343322754,
+            "pct_trimmed": 0.5,
+            "pct_move": 23.720552207624266
+          },
+          {
+            "stage_id": 2,
+            "bar": 11,
+            "price": 9.300000190734863,
+            "pct_trimmed": 0.5,
+            "pct_move": 24.451666338574825
+          }
+        ],
+        "bars_to_full_exit": 11
+      },
+      {
+        "ticker": "HAL",
+        "entry_date": "2022-06-09",
+        "mfe_pct": 45.393235455448526,
+        "mfe_adr": 13.105380920198082,
+        "effective_pct": 28.816544391889813,
+        "capture_eff": 0.6348202348381179,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 9,
+            "price": 27.856374740600586,
+            "pct_trimmed": 0.5,
+            "pct_move": 29.878642134667693
+          },
+          {
+            "stage_id": 2,
+            "bar": 10,
+            "price": 28.700231552124023,
+            "pct_trimmed": 0.5,
+            "pct_move": 27.75444664911193
+          }
+        ],
+        "bars_to_full_exit": 10
+      },
+      {
+        "ticker": "HCC",
+        "entry_date": "2022-06-07",
+        "mfe_pct": 36.99324128787503,
+        "mfe_adr": 7.727092687678761,
+        "effective_pct": 32.347974181178984,
+        "capture_eff": 0.8744293026245692,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 19,
+            "price": 25.159526824951172,
+            "pct_trimmed": 0.5,
+            "pct_move": 34.38706384584606
+          },
+          {
+            "stage_id": 2,
+            "bar": 20,
+            "price": 26.72332000732422,
+            "pct_trimmed": 0.5,
+            "pct_move": 30.308884516511913
+          }
+        ],
+        "bars_to_full_exit": 20
+      },
+      {
+        "ticker": "HLIT",
+        "entry_date": "2024-10-28",
+        "mfe_pct": 48.83570615850918,
+        "mfe_adr": 23.806298930832646,
+        "effective_pct": 28.589909866673743,
+        "capture_eff": 0.5854304588916487,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 4,
+            "price": 10.960000038146973,
+            "pct_trimmed": 0.5,
+            "pct_move": 29.107373796225218
+          },
+          {
+            "stage_id": 2,
+            "bar": 5,
+            "price": 11.119999885559082,
+            "pct_trimmed": 0.5,
+            "pct_move": 28.072445937122264
+          }
+        ],
+        "bars_to_full_exit": 5
+      },
+      {
+        "ticker": "HNRG",
+        "entry_date": "2022-08-23",
+        "mfe_pct": 36.704400181426045,
+        "mfe_adr": 5.853560092549725,
+        "effective_pct": 27.16981005326301,
+        "capture_eff": 0.7402330488705838,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 17,
+            "price": 5.710000038146973,
+            "pct_trimmed": 0.5,
+            "pct_move": 28.17609842590952
+          },
+          {
+            "stage_id": 2,
+            "bar": 18,
+            "price": 5.869999885559082,
+            "pct_trimmed": 0.5,
+            "pct_move": 26.1635216806165
+          }
+        ],
+        "bars_to_full_exit": 18
+      },
+      {
+        "ticker": "INVA",
+        "entry_date": "2022-04-05",
+        "mfe_pct": 44.133267956062646,
+        "mfe_adr": 13.788793996454961,
+        "effective_pct": 17.40704368869269,
+        "capture_eff": 0.3944200032053475,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 15,
+            "price": 16.84000015258789,
+            "pct_trimmed": 0.5,
+            "pct_move": 18.686620487522383
+          },
+          {
+            "stage_id": 2,
+            "bar": 16,
+            "price": 17.3700008392334,
+            "pct_trimmed": 0.5,
+            "pct_move": 16.127466889862998
+          }
+        ],
+        "bars_to_full_exit": 16
+      },
+      {
+        "ticker": "IONQ",
+        "entry_date": "2025-10-14",
+        "mfe_pct": 63.01184127547514,
+        "mfe_adr": 8.074188601665288,
+        "effective_pct": 40.73137738044538,
+        "capture_eff": 0.6464083028835161,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 21,
+            "price": 50.709999084472656,
+            "pct_trimmed": 0.5,
+            "pct_move": 37.45683529936716
+          },
+          {
+            "stage_id": 2,
+            "bar": 22,
+            "price": 45.400001525878906,
+            "pct_trimmed": 0.5,
+            "pct_move": 44.0059194615236
+          }
+        ],
+        "bars_to_full_exit": 22
+      },
+      {
+        "ticker": "ISRG",
+        "entry_date": "2021-12-31",
+        "mfe_pct": 48.974462666828806,
+        "mfe_adr": 20.4486396475403,
+        "effective_pct": 17.625291475589727,
+        "capture_eff": 0.35988738856603364,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 10,
+            "price": 307.739990234375,
+            "pct_trimmed": 0.5,
+            "pct_move": 15.952479758506477
+          },
+          {
+            "stage_id": 2,
+            "bar": 11,
+            "price": 295.489990234375,
+            "pct_trimmed": 0.5,
+            "pct_move": 19.29810319267298
+          }
+        ],
+        "bars_to_full_exit": 11
+      },
+      {
+        "ticker": "LABU",
+        "entry_date": "2024-11-11",
+        "mfe_pct": 78.63858439671534,
+        "mfe_adr": 17.54742019328597,
+        "effective_pct": 24.085717641509316,
+        "capture_eff": 0.3062837133486771,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 9,
+            "price": 112.11219787597656,
+            "pct_trimmed": 0.5,
+            "pct_move": 25.665218623103065
+          },
+          {
+            "stage_id": 2,
+            "bar": 10,
+            "price": 116.87662506103516,
+            "pct_trimmed": 0.5,
+            "pct_move": 22.506216659915566
+          }
+        ],
+        "bars_to_full_exit": 10
+      },
+      {
+        "ticker": "LTH",
+        "entry_date": "2025-05-08",
+        "mfe_pct": 29.236927576029835,
+        "mfe_adr": 7.052741709274484,
+        "effective_pct": 17.490715916924422,
+        "capture_eff": 0.5982405596976731,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 10,
+            "price": 28.799999237060547,
+            "pct_trimmed": 0.5,
+            "pct_move": 17.69077491989845
+          },
+          {
+            "stage_id": 2,
+            "bar": 11,
+            "price": 28.940000534057617,
+            "pct_trimmed": 0.5,
+            "pct_move": 17.290656913950397
+          }
+        ],
+        "bars_to_full_exit": 11
+      },
+      {
+        "ticker": "MET",
+        "entry_date": "2022-04-21",
+        "mfe_pct": 20.964508303141578,
+        "mfe_adr": 11.443022722432138,
+        "effective_pct": 12.55296549118593,
+        "capture_eff": 0.598772234944563,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 16,
+            "price": 56.54349136352539,
+            "pct_trimmed": 0.5,
+            "pct_move": 12.690633861006868
+          },
+          {
+            "stage_id": 2,
+            "bar": 17,
+            "price": 56.721805572509766,
+            "pct_trimmed": 0.5,
+            "pct_move": 12.41529712136499
+          }
+        ],
+        "bars_to_full_exit": 17
+      },
+      {
+        "ticker": "MOD",
+        "entry_date": "2025-01-22",
+        "mfe_pct": 55.60504328376997,
+        "mfe_adr": 16.110324382353856,
+        "effective_pct": 33.19857472415197,
+        "capture_eff": 0.5970425120385076,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 8,
+            "price": 96.47000122070312,
+            "pct_trimmed": 0.5,
+            "pct_move": 33.89749238942554
+          },
+          {
+            "stage_id": 2,
+            "bar": 9,
+            "price": 98.51000213623047,
+            "pct_trimmed": 0.5,
+            "pct_move": 32.49965705887839
+          }
+        ],
+        "bars_to_full_exit": 9
+      },
+      {
+        "ticker": "MPC",
+        "entry_date": "2023-04-03",
+        "mfe_pct": 24.771313052518284,
+        "mfe_adr": 8.326878780049963,
+        "effective_pct": 13.768648584644179,
+        "capture_eff": 0.5558303895902862,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 19,
+            "price": 114.8124008178711,
+            "pct_trimmed": 0.5,
+            "pct_move": 11.791405512050671
+          },
+          {
+            "stage_id": 2,
+            "bar": 20,
+            "price": 109.66523742675781,
+            "pct_trimmed": 0.5,
+            "pct_move": 15.745891657237685
+          }
+        ],
+        "bars_to_full_exit": 20
+      },
+      {
+        "ticker": "MSFT",
+        "entry_date": "2025-10-28",
+        "mfe_pct": 29.01569603115948,
+        "mfe_adr": 21.23804898419888,
+        "effective_pct": 12.731575530566428,
+        "capture_eff": 0.43878235824135314,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 16,
+            "price": 486.2099914550781,
+            "pct_trimmed": 0.5,
+            "pct_move": 12.027739646700297
+          },
+          {
+            "stage_id": 2,
+            "bar": 17,
+            "price": 478.42999267578125,
+            "pct_trimmed": 0.5,
+            "pct_move": 13.43541141443256
+          }
+        ],
+        "bars_to_full_exit": 17
+      },
+      {
+        "ticker": "NEOV",
+        "entry_date": "2025-01-06",
+        "mfe_pct": 69.17808381359978,
+        "mfe_adr": 10.27616651221146,
+        "effective_pct": 35.53082384721354,
+        "capture_eff": 0.513613877235329,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 10,
+            "price": 3.8499999046325684,
+            "pct_trimmed": 0.5,
+            "pct_move": 34.07534582124094
+          },
+          {
+            "stage_id": 2,
+            "bar": 11,
+            "price": 3.680000066757202,
+            "pct_trimmed": 0.5,
+            "pct_move": 36.986301873186136
+          }
+        ],
+        "bars_to_full_exit": 11
+      },
+      {
+        "ticker": "NOW",
+        "entry_date": "2023-09-11",
+        "mfe_pct": 13.268632621503345,
+        "mfe_adr": 6.439553287195576,
+        "effective_pct": 10.356968809845847,
+        "capture_eff": 0.7805603716136649,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 16,
+            "price": 108.24800109863281,
+            "pct_trimmed": 0.5,
+            "pct_move": 10.965619782559122
+          },
+          {
+            "stage_id": 2,
+            "bar": 17,
+            "price": 109.72799682617188,
+            "pct_trimmed": 0.5,
+            "pct_move": 9.748317837132573
+          }
+        ],
+        "bars_to_full_exit": 17
+      },
+      {
+        "ticker": "NSP",
+        "entry_date": "2023-06-09",
+        "mfe_pct": 27.174003845928755,
+        "mfe_adr": 12.693492389928393,
+        "effective_pct": 26.01038957232791,
+        "capture_eff": 0.9571791378186921,
+        "events": [
+          {
+            "stage_id": 2,
+            "bar": 37,
+            "price": 87.9507827758789,
+            "pct_trimmed": 1.0,
+            "pct_move": 26.01038957232791
+          }
+        ],
+        "bars_to_full_exit": 37
+      },
+      {
+        "ticker": "NUE",
+        "entry_date": "2022-01-05",
+        "mfe_pct": 30.133417192512717,
+        "mfe_adr": 9.310326834822728,
+        "effective_pct": 25.19933900550233,
+        "capture_eff": 0.8362589229263928,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 12,
+            "price": 89.74475860595703,
+            "pct_trimmed": 0.5,
+            "pct_move": 24.757244781820336
+          },
+          {
+            "stage_id": 2,
+            "bar": 13,
+            "price": 88.69015502929688,
+            "pct_trimmed": 0.5,
+            "pct_move": 25.641433229184322
+          }
+        ],
+        "bars_to_full_exit": 13
+      },
+      {
+        "ticker": "PACB",
+        "entry_date": "2026-01-23",
+        "mfe_pct": 44.68864542441563,
+        "mfe_adr": 6.078291307679525,
+        "effective_pct": 34.981684125951375,
+        "capture_eff": 0.7827868532090064,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 14,
+            "price": 1.840000033378601,
+            "pct_trimmed": 0.5,
+            "pct_move": 32.60073184896663
+          },
+          {
+            "stage_id": 2,
+            "bar": 15,
+            "price": 1.7100000381469727,
+            "pct_trimmed": 0.5,
+            "pct_move": 37.362636402936126
+          }
+        ],
+        "bars_to_full_exit": 15
+      },
+      {
+        "ticker": "PDS",
+        "entry_date": "2024-07-31",
+        "mfe_pct": 30.02402675527455,
+        "mfe_adr": 9.196455604384516,
+        "effective_pct": 21.00670377445167,
+        "capture_eff": 0.6996631046753667,
+        "events": [
+          {
+            "stage_id": 2,
+            "bar": 29,
+            "price": 62.459999084472656,
+            "pct_trimmed": 1.0,
+            "pct_move": 21.00670377445167
+          }
+        ],
+        "bars_to_full_exit": 29
+      },
+      {
+        "ticker": "PNR",
+        "entry_date": "2024-05-15",
+        "mfe_pct": 15.389096989579915,
+        "mfe_adr": 8.75663458939603,
+        "effective_pct": 8.83037817945809,
+        "capture_eff": 0.5738074290802906,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 17,
+            "price": 77.21229553222656,
+            "pct_trimmed": 0.5,
+            "pct_move": 8.434289531226657
+          },
+          {
+            "stage_id": 2,
+            "bar": 18,
+            "price": 76.54429626464844,
+            "pct_trimmed": 0.5,
+            "pct_move": 9.226466827689526
+          }
+        ],
+        "bars_to_full_exit": 18
+      },
+      {
+        "ticker": "PR",
+        "entry_date": "2022-06-08",
+        "mfe_pct": 47.6288542199688,
+        "mfe_adr": 9.070253843190164,
+        "effective_pct": 32.525761005427185,
+        "capture_eff": 0.6829003455596563,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 13,
+            "price": 6.003652095794678,
+            "pct_trimmed": 0.5,
+            "pct_move": 29.79380439430529
+          },
+          {
+            "stage_id": 2,
+            "bar": 14,
+            "price": 5.536407947540283,
+            "pct_trimmed": 0.5,
+            "pct_move": 35.25771761654909
+          }
+        ],
+        "bars_to_full_exit": 14
+      },
+      {
+        "ticker": "PSIX",
+        "entry_date": "2025-09-24",
+        "mfe_pct": 63.09941579359919,
+        "mfe_adr": 11.53507245595204,
+        "effective_pct": 29.294064917289585,
+        "capture_eff": 0.4642525536704125,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 24,
+            "price": 81.22000122070312,
+            "pct_trimmed": 0.5,
+            "pct_move": 32.14703150258029
+          },
+          {
+            "stage_id": 2,
+            "bar": 25,
+            "price": 88.05000305175781,
+            "pct_trimmed": 0.5,
+            "pct_move": 26.44109833199888
+          }
+        ],
+        "bars_to_full_exit": 25
+      },
+      {
+        "ticker": "SERV",
+        "entry_date": "2025-01-06",
+        "mfe_pct": 80.86242392440226,
+        "mfe_adr": 6.92752333999985,
+        "effective_pct": 61.51950825968109,
+        "capture_eff": 0.7607922848960756,
+        "events": [
+          {
+            "stage_id": 2,
+            "bar": 34,
+            "price": 9.369999885559082,
+            "pct_trimmed": 1.0,
+            "pct_move": 61.51950825968109
+          }
+        ],
+        "bars_to_full_exit": 34
+      },
+      {
+        "ticker": "REPX",
+        "entry_date": "2025-01-21",
+        "mfe_pct": 40.847693776010196,
+        "mfe_adr": 13.599514131954832,
+        "effective_pct": 24.727480331635,
+        "capture_eff": 0.6053580519680997,
+        "events": [
+          {
+            "stage_id": 2,
+            "bar": 30,
+            "price": 26.39813995361328,
+            "pct_trimmed": 1.0,
+            "pct_move": 24.727480331635
+          }
+        ],
+        "bars_to_full_exit": 30
+      },
+      {
+        "ticker": "ROOT",
+        "entry_date": "2024-05-01",
+        "mfe_pct": 60.67921793285797,
+        "mfe_adr": 8.10023205412459,
+        "effective_pct": 43.59477868101983,
+        "capture_eff": 0.718446614279996,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 22,
+            "price": 48.04999923706055,
+            "pct_trimmed": 0.5,
+            "pct_move": 44.495784444442684
+          },
+          {
+            "stage_id": 2,
+            "bar": 23,
+            "price": 49.61000061035156,
+            "pct_trimmed": 0.5,
+            "pct_move": 42.69377291759699
+          }
+        ],
+        "bars_to_full_exit": 23
+      },
+      {
+        "ticker": "SFM",
+        "entry_date": "2025-06-03",
+        "mfe_pct": 58.37912087912088,
+        "mfe_adr": 19.47499220878849,
+        "effective_pct": 17.99999698177799,
+        "capture_eff": 0.30832936006433825,
+        "events": [
+          {
+            "stage_id": 2,
+            "bar": 43,
+            "price": 149.24000549316406,
+            "pct_trimmed": 1.0,
+            "pct_move": 17.99999698177799
+          }
+        ],
+        "bars_to_full_exit": 43
+      },
+      {
+        "ticker": "SOUN",
+        "entry_date": "2023-06-29",
+        "mfe_pct": 70.84148785506987,
+        "mfe_adr": 7.279516743886149,
+        "effective_pct": 53.62035336898508,
+        "capture_eff": 0.7569060869907698,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 20,
+            "price": 2.4100000858306885,
+            "pct_trimmed": 0.5,
+            "pct_move": 52.83757293812026
+          },
+          {
+            "stage_id": 2,
+            "bar": 21,
+            "price": 2.3299999237060547,
+            "pct_trimmed": 0.5,
+            "pct_move": 54.40313379984989
+          }
+        ],
+        "bars_to_full_exit": 21
+      },
+      {
+        "ticker": "SLS",
+        "entry_date": "2025-10-20",
+        "mfe_pct": 43.95161391110871,
+        "mfe_adr": 6.873873626670144,
+        "effective_pct": 40.52419304444564,
+        "capture_eff": 0.92201831601463,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 17,
+            "price": 1.4900000095367432,
+            "pct_trimmed": 0.5,
+            "pct_move": 39.91935491623913
+          },
+          {
+            "stage_id": 2,
+            "bar": 18,
+            "price": 1.4600000381469727,
+            "pct_trimmed": 0.5,
+            "pct_move": 41.129031172652155
+          }
+        ],
+        "bars_to_full_exit": 18
+      },
+      {
+        "ticker": "TJX",
+        "entry_date": "2022-01-05",
+        "mfe_pct": 29.945356188368343,
+        "mfe_adr": 17.308822632931225,
+        "effective_pct": 10.306494905423573,
+        "capture_eff": 0.34417673446899655,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 14,
+            "price": 64.93463897705078,
+            "pct_trimmed": 0.5,
+            "pct_move": 10.64271677401708
+          },
+          {
+            "stage_id": 2,
+            "bar": 15,
+            "price": 65.42329406738281,
+            "pct_trimmed": 0.5,
+            "pct_move": 9.970273036830065
+          }
+        ],
+        "bars_to_full_exit": 15
+      },
+      {
+        "ticker": "TRNS",
+        "entry_date": "2024-07-24",
+        "mfe_pct": 35.90945891452672,
+        "mfe_adr": 10.873559843158931,
+        "effective_pct": 20.918297126551707,
+        "capture_eff": 0.5825288867855782,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 11,
+            "price": 116.66999816894531,
+            "pct_trimmed": 0.5,
+            "pct_move": 20.697388498407328
+          },
+          {
+            "stage_id": 2,
+            "bar": 12,
+            "price": 116.0199966430664,
+            "pct_trimmed": 0.5,
+            "pct_move": 21.139205754696082
+          }
+        ],
+        "bars_to_full_exit": 12
+      },
+      {
+        "ticker": "UTSL",
+        "entry_date": "2024-11-27",
+        "mfe_pct": 40.48800754283601,
+        "mfe_adr": 11.305814514259385,
+        "effective_pct": 20.886227276742957,
+        "capture_eff": 0.5158620674194818,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 11,
+            "price": 33.33722686767578,
+            "pct_trimmed": 0.5,
+            "pct_move": 19.934185568049397
+          },
+          {
+            "stage_id": 2,
+            "bar": 12,
+            "price": 32.54441833496094,
+            "pct_trimmed": 0.5,
+            "pct_move": 21.838268985436514
+          }
+        ],
+        "bars_to_full_exit": 12
+      },
+      {
+        "ticker": "VCTR",
+        "entry_date": "2025-02-10",
+        "mfe_pct": 34.15656305260596,
+        "mfe_adr": 11.108195073460234,
+        "effective_pct": 18.529249679284888,
+        "capture_eff": 0.5424799225480389,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 17,
+            "price": 56.53787612915039,
+            "pct_trimmed": 0.5,
+            "pct_move": 18.998562440908668
+          },
+          {
+            "stage_id": 2,
+            "bar": 18,
+            "price": 57.193023681640625,
+            "pct_trimmed": 0.5,
+            "pct_move": 18.059936917661112
+          }
+        ],
+        "bars_to_full_exit": 18
+      },
+      {
+        "ticker": "WAL",
+        "entry_date": "2022-01-12",
+        "mfe_pct": 44.773718477767424,
+        "mfe_adr": 15.60273241708339,
+        "effective_pct": 22.368531196916514,
+        "capture_eff": 0.4995906517798762,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 15,
+            "price": 87.78392791748047,
+            "pct_trimmed": 0.5,
+            "pct_move": 23.108949084668314
+          },
+          {
+            "stage_id": 2,
+            "bar": 16,
+            "price": 89.47454833984375,
+            "pct_trimmed": 0.5,
+            "pct_move": 21.62811330916471
+          }
+        ],
+        "bars_to_full_exit": 16
+      },
+      {
+        "ticker": "VRTX",
+        "entry_date": "2024-11-11",
+        "mfe_pct": 27.10523316290353,
+        "mfe_adr": 11.402898091262259,
+        "effective_pct": 9.91993249218206,
+        "capture_eff": 0.36597849694053064,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 13,
+            "price": 468.1300048828125,
+            "pct_trimmed": 0.5,
+            "pct_move": 9.688429259856116
+          },
+          {
+            "stage_id": 2,
+            "bar": 14,
+            "price": 465.7300109863281,
+            "pct_trimmed": 0.5,
+            "pct_move": 10.151435724508003
+          }
+        ],
+        "bars_to_full_exit": 14
+      },
+      {
+        "ticker": "WGO",
+        "entry_date": "2024-04-01",
+        "mfe_pct": 32.20685771700335,
+        "mfe_adr": 11.74043455770138,
+        "effective_pct": 15.969384756328129,
+        "capture_eff": 0.49583802607036764,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 13,
+            "price": 57.844364166259766,
+            "pct_trimmed": 0.5,
+            "pct_move": 16.82448486496842
+          },
+          {
+            "stage_id": 2,
+            "bar": 14,
+            "price": 59.033721923828125,
+            "pct_trimmed": 0.5,
+            "pct_move": 15.114284647687839
+          }
+        ],
+        "bars_to_full_exit": 14
+      },
+      {
+        "ticker": "WHD",
+        "entry_date": "2024-11-25",
+        "mfe_pct": 51.488828245941,
+        "mfe_adr": 15.90560081015201,
+        "effective_pct": 18.300582220948066,
+        "capture_eff": 0.3554282131559432,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 19,
+            "price": 56.08771896362305,
+            "pct_trimmed": 0.5,
+            "pct_move": 18.70861325325974
+          },
+          {
+            "stage_id": 2,
+            "bar": 20,
+            "price": 56.6507682800293,
+            "pct_trimmed": 0.5,
+            "pct_move": 17.89255118863639
+          }
+        ],
+        "bars_to_full_exit": 20
+      },
+      {
+        "ticker": "WING",
+        "entry_date": "2024-09-24",
+        "mfe_pct": 52.51397304619704,
+        "mfe_adr": 19.319925026140048,
+        "effective_pct": 16.34629576383455,
+        "capture_eff": 0.311275167648324,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 21,
+            "price": 364.7209777832031,
+            "pct_trimmed": 0.5,
+            "pct_move": 15.500396627905452
+          },
+          {
+            "stage_id": 2,
+            "bar": 22,
+            "price": 357.41876220703125,
+            "pct_trimmed": 0.5,
+            "pct_move": 17.19219489976365
+          }
+        ],
+        "bars_to_full_exit": 22
+      },
+      {
+        "ticker": "ZIM",
+        "entry_date": "2024-07-02",
+        "mfe_pct": 30.529854354101833,
+        "mfe_adr": 7.646127519604002,
+        "effective_pct": 27.081582313454952,
+        "capture_eff": 0.8870524568950788,
+        "events": [
+          {
+            "stage_id": 1,
+            "bar": 12,
+            "price": 10.582467079162598,
+            "pct_trimmed": 0.5,
+            "pct_move": 28.805717046276897
+          },
+          {
+            "stage_id": 2,
+            "bar": 13,
+            "price": 11.095025062561035,
+            "pct_trimmed": 0.5,
+            "pct_move": 25.357447580633007
+          }
+        ],
+        "bars_to_full_exit": 13
+      },
+      {
+        "ticker": "ZVRA",
+        "entry_date": "2024-02-20",
+        "mfe_pct": 42.307696590358965,
+        "mfe_adr": 9.603565212847798,
+        "effective_pct": 20.32967000577117,
+        "capture_eff": 0.4805194242223027,
+        "events": [
+          {
+            "stage_id": 2,
+            "bar": 27,
+            "price": 5.800000190734863,
+            "pct_trimmed": 1.0,
+            "pct_move": 20.32967000577117
+          }
+        ],
+        "bars_to_full_exit": 27
+      }
+    ]
+  }
+}
