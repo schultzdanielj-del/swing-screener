@@ -8,9 +8,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from contextlib import contextmanager
 
+import io
 import numpy as np
 import pandas as pd
 import yfinance as yf
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request
 from fastapi.staticfiles import StaticFiles
@@ -239,6 +244,90 @@ def fetch_ohlcv_yf(ticker, chart_date_str):
     if raw.empty: return None
     if isinstance(raw.columns, pd.MultiIndex): raw.columns = raw.columns.get_level_values(0)
     return raw.reset_index().sort_values("Date").reset_index(drop=True)
+
+
+def add_indicators(df):
+    df = df.copy()
+    df["EMA8"] = df["Close"].ewm(span=8, adjust=False).mean()
+    df["EMA21"] = df["Close"].ewm(span=21, adjust=False).mean()
+    df["SMA50"] = df["Close"].rolling(50).mean()
+    df["SMA200"] = df["Close"].rolling(200).mean()
+    tr = pd.concat([df["High"]-df["Low"], (df["High"]-df["Close"].shift(1)).abs(), (df["Low"]-df["Close"].shift(1)).abs()], axis=1).max(axis=1)
+    df["ATR14"] = tr.rolling(14).mean()
+    df["VolAvg20"] = df["Volume"].rolling(20).mean()
+    return df
+
+
+def generate_chart_png(df, ticker, entry_date, at_entry=False, setup_type=None):
+    """Generate a chart PNG for AI review. Returns bytes or None."""
+    df = df.copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date").reset_index(drop=True)
+    df = add_indicators(df)
+    cfg = {"dtss": {"at_entry_before": 100, "default_before": 100, "default_after": 30, "min_total": 130}}.get(setup_type, {})
+    at_entry_before = cfg.get("at_entry_before", 50)
+    default_before = cfg.get("default_before", 30)
+    default_after = cfg.get("default_after", 30)
+    min_total = cfg.get("min_total", 60)
+    entry_dt = pd.Timestamp(entry_date)
+    entry_rows = df[df["Date"] == entry_dt]
+    if entry_rows.empty:
+        before = df[df["Date"] <= entry_dt]
+        if before.empty: return None
+        entry_idx = before.index[-1]
+    else:
+        entry_idx = entry_rows.index[0]
+    if at_entry:
+        want_before = min(at_entry_before, entry_idx)
+        start_idx = entry_idx - want_before
+        chart_df = df.iloc[start_idx:entry_idx + 1].copy().reset_index(drop=True)
+        entry_pos = want_before
+        n = len(chart_df)
+        total_width = n + max(int(n * 0.18), 5)
+    else:
+        avail_after = len(df) - entry_idx - 1
+        avail_before = entry_idx
+        want_after = min(default_after, avail_after)
+        want_before2 = min(default_before, avail_before)
+        total = want_before2 + 1 + want_after
+        if total < min_total:
+            extra = min_total - total
+            if want_before2 < default_before: want_after = min(want_after + extra, avail_after)
+            else: want_before2 = min(want_before2 + extra, avail_before)
+        chart_df = df.iloc[entry_idx - want_before2:entry_idx + want_after + 1].copy().reset_index(drop=True)
+        entry_pos = want_before2
+        total_width = len(chart_df)
+    if chart_df.empty: return None
+    fig, (ax, ax_vol) = plt.subplots(2, 1, figsize=(8, 4), dpi=120, gridspec_kw={"height_ratios": [3, 1]}, facecolor="#0a0e17")
+    ax.set_facecolor("#0a0e17"); ax_vol.set_facecolor("#0a0e17")
+    n = len(chart_df); w = 0.6
+    for i, row in chart_df.iterrows():
+        o, h, l, c = row["Open"], row["High"], row["Low"], row["Close"]
+        color = "#26A69A" if c >= o else "#EF5350"
+        ax.plot([i, i], [l, h], color=color, linewidth=0.8)
+        ax.add_patch(Rectangle((i - w/2, min(o, c)), w, max(abs(c - o), 0.001), facecolor=color, edgecolor=color, linewidth=0.5))
+        ax_vol.bar(i, row["Volume"], width=w, color=color, alpha=0.7)
+    for period, ma_type, color, lw in [(8, "ema", "#ADD8E6", 1.0), (21, "ema", "#D2B48C", 1.0), (50, "sma", "#FFD700", 1.2), (200, "sma", "#FF0000", 1.5)]:
+        if n >= period:
+            s = chart_df["Close"].ewm(span=period, adjust=False).mean() if ma_type == "ema" else chart_df["Close"].rolling(window=period).mean()
+            ax.plot(range(n), s.values, color=color, linewidth=lw, alpha=0.8)
+    entry_open = float(chart_df.iloc[entry_pos]["Open"])
+    ax.axvline(x=entry_pos, color="#3b82f6", linewidth=1, alpha=0.6, linestyle="--")
+    ax.axhline(y=entry_open, color="#3b82f6", linewidth=1, alpha=0.6, linestyle="--")
+    ax_vol.axvline(x=entry_pos, color="#3b82f6", linewidth=1, alpha=0.6, linestyle="--")
+    ax.set_title(f"{ticker}  •  {entry_date}", color="#e2e8f0", fontsize=11, fontweight="bold", pad=8)
+    ax.tick_params(colors="#64748b", labelsize=8); ax_vol.tick_params(colors="#64748b", labelsize=7)
+    for spine in ax.spines.values(): spine.set_color("#2a3550")
+    for spine in ax_vol.spines.values(): spine.set_color("#2a3550")
+    ax.set_xlim(-1, total_width); ax_vol.set_xlim(-1, total_width)
+    ax.set_xticks([]); ax_vol.set_xticks([]); ax_vol.yaxis.set_visible(False)
+    ax.grid(True, alpha=0.1, color="#64748b")
+    fig.tight_layout(pad=0.5)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor="#0a0e17", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.getvalue()
 
 
 def store_ohlcv(db, example_id, df):
@@ -530,6 +619,25 @@ async def delete_example(setup_type: str, example_id: int):
     with get_db() as db:
         db.execute("DELETE FROM examples WHERE id=? AND setup_type=?",(example_id,setup_type))
     return {"deleted":example_id}
+
+
+@app.get("/api/chart/{setup_type}/{ticker}/{entry_date}")
+async def get_chart_by_ticker(setup_type: str, ticker: str, entry_date: str):
+    """Generate chart PNG for any ticker+date (used by AI review)."""
+    # Try universe_ohlcv first, fall back to yfinance
+    with get_db() as db:
+        rows = db.execute("SELECT date as Date, open as Open, high as High, low as Low, close as Close, volume as Volume FROM universe_ohlcv WHERE ticker=? ORDER BY date", (ticker.upper(),)).fetchall()
+    if rows:
+        df = pd.DataFrame([dict(r) for r in rows])
+        df["Date"] = pd.to_datetime(df["Date"])
+    else:
+        df = fetch_ohlcv_yf(ticker, entry_date)
+    if df is None or df.empty:
+        raise HTTPException(404, f"No OHLCV data for {ticker}")
+    png = generate_chart_png(df, ticker, entry_date, at_entry=False, setup_type=setup_type)
+    if png is None:
+        raise HTTPException(500, "Chart generation failed")
+    return Response(content=png, media_type="image/png")
 
 
 # ============================================================

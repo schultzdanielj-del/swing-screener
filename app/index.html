@@ -116,6 +116,19 @@ select.sel:hover{border-color:var(--acc)}
 .ex-adr{font-size:10px;color:var(--acc);float:right}
 .ex-detail{border:1px solid var(--b1);background:var(--s2);margin-bottom:14px;min-height:300px;position:relative}
 
+/* ── PENDING ── */
+.pend-item{display:flex;align-items:center;gap:12px;background:var(--s2);border:1px solid var(--b1);padding:10px 12px;margin-bottom:6px;transition:border-color .15s}
+.pend-item:hover{border-color:var(--b2)}
+.pend-tk{font-size:12px;font-weight:600;color:var(--t1);min-width:60px}
+.pend-dt{font-size:10px;color:var(--t3);min-width:80px}
+.pend-ai{flex:1;font-size:10px;line-height:1.5}
+.pend-verdict{font-size:9px;font-weight:700;letter-spacing:.06em;padding:1px 5px;text-transform:uppercase}
+.pend-verdict.approve{background:var(--gbg);color:var(--grn);border:1px solid rgba(0,232,123,.25)}
+.pend-verdict.reject{background:var(--rbg);color:var(--red);border:1px solid rgba(255,59,59,.25)}
+.pend-verdict.pending{background:var(--obg);color:var(--org);border:1px solid rgba(255,138,0,.25)}
+.pend-reason{font-size:9px;color:var(--t2);margin-top:2px}
+.pend-acts{display:flex;gap:5px;flex-shrink:0}
+
 /* ── VETTING ── */
 .vw{display:flex;flex:1;overflow:hidden}
 .vl{width:240px;border-right:1px solid var(--b1);overflow-y:auto;flex-shrink:0;background:var(--s1)}
@@ -198,7 +211,15 @@ kbd{background:var(--s3);border:1px solid var(--b2);padding:0 3px;font:9px var(-
         <div class="pa"><button class="btn bn bs" onclick="loadExamples()">Refresh</button></div>
       </div>
       <div class="pb">
+        <!-- Pending Queue -->
+        <div class="sec" id="pendingSec" style="display:none">
+          <div class="sh"><span class="st">Pending AI Review</span><span class="st" style="color:var(--org);margin-left:8px" id="pendingCount"></span></div>
+          <div id="pendingList"></div>
+        </div>
+        <!-- Chart Preview -->
         <div class="ex-detail" id="exChart"><div class="cph"><div class="cphi">▦</div><div>Select an example</div></div></div>
+        <!-- Validated Grid -->
+        <div class="sec"><div class="sh"><span class="st">Validated Examples</span></div></div>
         <div class="ex-grid" id="exGrid"></div>
       </div>
     </div>
@@ -430,17 +451,75 @@ async function loadConds(){
 
 // ═══════ EXAMPLES ═══════
 async function loadExamples(){
-  const d=await api('/api/examples/'+S.setup);
-  const exs=d?.examples||[];
-  document.getElementById('exSub').textContent=`${exs.length} validated examples · ${S.setup.toUpperCase()}`;
-  const grid=document.getElementById('exGrid');
-  if(!exs.length){grid.innerHTML='<div style="color:var(--t3);font-size:10px;padding:20px">No examples yet.</div>';return}
-  grid.innerHTML=exs.map((e,i)=>`<div class="ex-card${S.exSel===i?' on':''}" onclick="pickEx(${i})">
-    <span class="ex-adr">${e.adrMove!=null?e.adrMove+' ADR':'—'}</span>
+  // Load both pending and validated in parallel
+  const [exData, pendData] = await Promise.all([
+    api('/api/examples/'+S.setup),
+    api('/api/pending/'+S.setup)
+  ]);
+
+  // Pending queue
+  const pending = pendData?.pending || [];
+  const pendSec = document.getElementById('pendingSec');
+  const pendList = document.getElementById('pendingList');
+  const pendCount = document.getElementById('pendingCount');
+  if (pending.length) {
+    pendSec.style.display = '';
+    pendCount.textContent = pending.length + ' pending';
+    pendList.innerHTML = pending.map(p => {
+      const vClass = p.ai_verdict === 'APPROVE' ? 'approve' : p.ai_verdict === 'REJECT' ? 'reject' : 'pending';
+      const vLabel = p.ai_verdict || 'AWAITING AI';
+      const reason = p.ai_reasoning || '';
+      const showBtns = p.ai_verdict; // only show approve/reject after AI has reviewed
+      return `<div class="pend-item">
+        <div class="pend-tk">${p.ticker}</div>
+        <div class="pend-dt">${p.entry_date}</div>
+        <div class="pend-ai">
+          <span class="pend-verdict ${vClass}">${vLabel}</span>
+          ${reason ? '<div class="pend-reason">'+esc(reason)+'</div>' : ''}
+        </div>
+        <div class="pend-acts">
+          <button class="btn bn bs" onclick="previewPend('${p.ticker}','${p.entry_date}')">Chart</button>
+          ${showBtns ? `<button class="btn bg bs" onclick="approvePend(${p.id})">Approve</button>
+          <button class="btn bd bs" onclick="rejectPend(${p.id})">Reject</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  } else {
+    pendSec.style.display = 'none';
+  }
+
+  // Validated examples
+  const exs = exData?.examples || [];
+  document.getElementById('exSub').textContent = exs.length + ' validated · ' + (pending.length ? pending.length + ' pending · ' : '') + S.setup.toUpperCase();
+  const grid = document.getElementById('exGrid');
+  if (!exs.length) { grid.innerHTML = '<div style="color:var(--t3);font-size:10px;padding:20px">No examples yet.</div>'; return; }
+  grid.innerHTML = exs.map((e, i) => `<div class="ex-card${S.exSel===i?' on':''}" onclick="pickEx(${i})">
+    <span class="ex-adr">${e.adrMove != null ? e.adrMove + ' ADR' : '—'}</span>
     <div class="ex-tk">${e.ticker}</div>
     <div class="ex-dt">${e.entryDate}</div>
   </div>`).join('');
-  S._exData=exs;
+  S._exData = exs;
+}
+
+function previewPend(ticker, entryDate) {
+  const area = document.getElementById('exChart');
+  area.innerHTML = '<div class="cph"><div class="cphi">⟳</div><div>Loading '+ticker+'...</div></div>';
+  fetch(API+'/api/vetting/'+S.setup+'/ohlcv/'+ticker+'?signal_date='+entryDate+'&lookback=120&forward=80')
+    .then(r=>r.ok?r.json():null).then(data=>{
+      const bars=data?.data||data?.ohlcv;
+      if(!bars?.length){area.innerHTML='<div class="cph"><div class="cphi">▦</div><div>No data</div></div>';return}
+      drawC(area,bars,entryDate,{});
+    }).catch(()=>{area.innerHTML='<div class="cph"><div class="cphi">▦</div><div>Unavailable</div></div>'});
+}
+
+async function approvePend(id) {
+  const r = await api('/api/pending/'+S.setup+'/'+id+'/approve', {method:'POST'});
+  if (r) loadExamples();
+}
+
+async function rejectPend(id) {
+  const r = await api('/api/pending/'+S.setup+'/'+id+'/reject', {method:'POST'});
+  if (r) loadExamples();
 }
 
 function pickEx(i){
