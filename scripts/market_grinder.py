@@ -326,6 +326,80 @@ def compute_all_correlations(wr_df, manifest):
 
 
 # ══════════════════════════════════════════════════════════════
+# STEP 3b — DEDUPLICATION
+# ══════════════════════════════════════════════════════════════
+
+def deduplicate_features(corr_df, manifest, wr_df, top_n, max_inter_corr=0.95):
+    """
+    Greedy deduplication: iterate candidates ranked by |corr|, select a
+    feature only if its time series correlates < max_inter_corr with all
+    already-selected features.  Stops when top_n independent features found
+    or candidates exhausted.
+
+    Returns a filtered DataFrame of up to top_n rows.
+    """
+    wr_dates_str = wr_df["date"].dt.strftime("%Y-%m-%d").values
+    n_days = len(wr_dates_str)
+
+    # Cache: feature_name → aligned time series (length n_days, NaN where missing)
+    series_cache = {}
+
+    def get_series(row):
+        fname = row["feature_name"]
+        if fname in series_cache:
+            return series_cache[fname]
+        dates_cache, data_cache = load_instrument_cache(row["instrument"])
+        if dates_cache is None:
+            series_cache[fname] = None
+            return None
+        date_to_idx = {d: idx for idx, d in enumerate(dates_cache)}
+        row_indices = np.array([date_to_idx.get(d, -1) for d in wr_dates_str])
+        valid_days = row_indices >= 0
+        expr_idx = manifest["expr_names"].index(row["expr_name"])
+        x = np.full(n_days, np.nan, dtype=np.float64)
+        x[valid_days] = data_cache[row_indices[valid_days], expr_idx]
+        series_cache[fname] = x
+        return x
+
+    selected_rows = []
+    selected_series = []
+
+    print(f"\n  Deduplicating features (max inter-corr: {max_inter_corr})...")
+    n_candidates_checked = 0
+
+    for _, row in corr_df.iterrows():
+        if len(selected_rows) >= top_n:
+            break
+
+        x = get_series(row)
+        if x is None:
+            continue
+
+        n_candidates_checked += 1
+        valid_x = ~np.isnan(x)
+
+        # Check against all already-selected series
+        is_dup = False
+        for sel_x in selected_series:
+            valid_both = valid_x & ~np.isnan(sel_x)
+            if valid_both.sum() < 10:
+                continue
+            r = np.corrcoef(x[valid_both], sel_x[valid_both])[0, 1]
+            if abs(r) >= max_inter_corr:
+                is_dup = True
+                break
+
+        if not is_dup:
+            selected_rows.append(row)
+            selected_series.append(x)
+
+    print(f"  Checked {n_candidates_checked} candidates → "
+          f"selected {len(selected_rows)} independent features")
+
+    return pd.DataFrame(selected_rows).reset_index(drop=True)
+
+
+# ══════════════════════════════════════════════════════════════
 # STEP 4 — QUARTILE WIN RATES
 # ══════════════════════════════════════════════════════════════
 
@@ -601,8 +675,8 @@ def run(cycle_id, setup_type, window=DEFAULT_WINDOW, top_n=DEFAULT_TOP_N, dry_ru
         print(f"  {row['feature_name']:<65} "
               f"{sign}{row['correlation']:>7.4f}  {row['n_valid']:>5}")
 
-    # ── 5. Select top N ──────────────────────────────────────
-    top_df = corr_df.head(top_n).copy().reset_index(drop=True)
+    # ── 5. Select top N (deduplicated) ───────────────────────
+    top_df = deduplicate_features(corr_df, manifest, wr_df, top_n)
 
     # ── 6. Quartile win rates ────────────────────────────────
     print(f"\n  Computing quartile win rates for top {top_n} features...")
