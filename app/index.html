@@ -1494,6 +1494,284 @@ function SetupHomePage({ setup }) {
 }
 
 // ═══════════════════════════════════════════════════════
+// CYCLE HEALTH PAGE
+// ═══════════════════════════════════════════════════════
+function CycleHealthPage({ setup }) {
+  const [cycles, setCycles]       = useState([]);
+  const [selCycle, setSelCycle]   = useState(null);  // cycle_id string
+  const [health, setHealth]       = useState(null);
+  const [loading, setLoading]     = useState(true);
+  const [reverting, setReverting] = useState(false);
+  const [revertMsg, setRevertMsg] = useState('');
+
+  // Load cycle list
+  useEffect(() => {
+    setLoading(true); setHealth(null); setRevertMsg('');
+    fetch(`${API}/api/v2/cycles/${setup}`)
+      .then(r=>r.json())
+      .then(d => {
+        const list = d.cycles || [];
+        setCycles(list);
+        // Default to current cycle
+        const cur = list.find(c=>c.is_current===1) || list[0] || null;
+        setSelCycle(cur ? cur.cycle_id : null);
+      })
+      .catch(()=>{ setCycles([]); setSelCycle(null); })
+      .finally(()=>setLoading(false));
+  }, [setup]);
+
+  // Load health for selected cycle
+  useEffect(() => {
+    if (!selCycle) { setHealth(null); return; }
+    fetch(`${API}/api/v2/health/${selCycle}`)
+      .then(r=>r.json())
+      .then(d=>setHealth(d.health || null))
+      .catch(()=>setHealth(null));
+  }, [selCycle]);
+
+  const handleRevert = async (cycleId) => {
+    if (!confirm(`Activate cycle ${cycleId} as current? This replaces the current active cycle.`)) return;
+    setReverting(true); setRevertMsg('');
+    try {
+      const r = await fetch(`${API}/api/v2/cycles/${cycleId}/activate`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+      const d = await r.json();
+      setRevertMsg(d.message || 'Activated');
+      // Refresh cycle list
+      const r2 = await fetch(`${API}/api/v2/cycles/${setup}`);
+      const d2 = await r2.json();
+      setCycles(d2.cycles || []);
+    } catch(e) {
+      setRevertMsg(`Error: ${e.message}`);
+    } finally {
+      setReverting(false);
+    }
+  };
+
+  // ── helpers ──
+  const fmt1 = v => v != null ? v.toFixed(1) : '—';
+  const fmt2 = v => v != null ? v.toFixed(2) : '—';
+  const fmtPct = v => v != null ? `${(v*100).toFixed(1)}%` : '—';
+  const fmtDelta = v => v == null ? '—' : (v > 0 ? `+${v}` : `${v}`);
+  const fmtDeltaF = (v, dec=1) => v == null ? '—' : (v > 0 ? `+${v.toFixed(dec)}` : `${v.toFixed(dec)}`);
+
+  const recColor = r => r==='promote' ? 'var(--green)' : r==='flag' ? 'var(--amber)' : r==='hard_reject' ? 'var(--red)' : 'var(--text-muted)';
+  const recLabel = r => r==='promote' ? '✓ PROMOTE' : r==='flag' ? '⚠ FLAG' : r==='hard_reject' ? '✗ HARD REJECT' : '—';
+
+  const metricRow = (label, val, color) => (
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+      padding:'5px 0',borderBottom:'1px solid var(--border)'}}>
+      <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)'}}>{label}</span>
+      <span style={{fontFamily:'var(--mono)',fontSize:11,fontWeight:600,color:color||'var(--text-dim)'}}>{val}</span>
+    </div>
+  );
+
+  const deltaColor = (v, goodPositive=true) => {
+    if (v == null) return 'var(--text-muted)';
+    if (v === 0) return 'var(--text-dim)';
+    return (v > 0) === goodPositive ? 'var(--green)' : 'var(--red)';
+  };
+
+  // Regrind needed indicator
+  const currentCycle = cycles.find(c=>c.is_current===1);
+  const examplesSinceGrind = health?.examples_since_last_grind ?? 0;
+  const regrindNeeded = examplesSinceGrind > 0;
+
+  if (loading) return (
+    <div className="empty-state"><div className="pulse-dot" style={{width:8,height:8,borderRadius:'50%',background:'var(--blue)'}}/>Loading cycles...</div>
+  );
+
+  if (cycles.length === 0) return (
+    <div className="empty-state">
+      <div className="icon">⚙</div>
+      No cycles yet for {setup.toUpperCase()}
+      <div style={{fontSize:10,color:'var(--text-muted)'}}>Run grind_upload.py to create the first cycle</div>
+    </div>
+  );
+
+  const selectedCycleMeta = cycles.find(c=>c.cycle_id===selCycle);
+
+  return (
+    <div>
+      {/* Regrind indicator */}
+      {regrindNeeded && (
+        <div style={{background:'rgba(251,191,36,0.08)',border:'1px solid rgba(251,191,36,0.3)',
+          borderRadius:6,padding:'10px 16px',marginBottom:12,display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:14}}>⚠</span>
+          <span style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--amber)'}}>
+            Regrind needed — {examplesSinceGrind} new example{examplesSinceGrind!==1?'s':''} added since this grind
+          </span>
+        </div>
+      )}
+
+      {/* Cycle selector + revert action */}
+      <div className="card" style={{marginBottom:12}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',flexShrink:0}}>CYCLE</span>
+          <select
+            value={selCycle||''}
+            onChange={e=>setSelCycle(e.target.value)}
+            style={{fontFamily:'var(--mono)',fontSize:11,background:'var(--surface-2)',
+              border:'1px solid var(--border)',borderRadius:4,color:'var(--text)',
+              padding:'5px 10px',flex:1,minWidth:0}}
+          >
+            {cycles.map(c=>(
+              <option key={c.cycle_id} value={c.cycle_id}>
+                {c.cycle_id}{c.is_current===1?' ← current':''}
+                {' '}({c.n_conditions} conds, {c.status})
+              </option>
+            ))}
+          </select>
+          {selCycle && selectedCycleMeta?.is_current !== 1 && (
+            <button className="btn btn-go" disabled={reverting} onClick={()=>handleRevert(selCycle)}
+              style={{flexShrink:0}}>
+              {reverting ? 'Activating...' : 'Restore as Current'}
+            </button>
+          )}
+          {selCycle && selectedCycleMeta?.is_current === 1 && (
+            <span className="badge b-done" style={{flexShrink:0}}>CURRENT</span>
+          )}
+        </div>
+        {revertMsg && (
+          <div style={{marginTop:8,fontFamily:'var(--mono)',fontSize:10,
+            color:revertMsg.startsWith('Error')?'var(--red)':'var(--green)'}}>
+            {revertMsg}
+          </div>
+        )}
+      </div>
+
+      {!health && (
+        <div className="empty-state" style={{height:200}}>
+          <div className="icon">📊</div>
+          No health data yet for this cycle
+          <div style={{fontSize:10,color:'var(--text-muted)'}}>Run cycle_health.py --setup {setup}</div>
+        </div>
+      )}
+
+      {health && (<>
+        {/* Recommendation banner */}
+        <div style={{
+          background: health.promote_recommendation==='promote' ? 'var(--green-bg)' :
+                      health.promote_recommendation==='flag'    ? 'var(--amber-bg)' : 'var(--red-bg)',
+          border:`1px solid ${recColor(health.promote_recommendation)}`,
+          borderRadius:6,padding:'12px 16px',marginBottom:12,
+          display:'flex',alignItems:'center',justifyContent:'space-between'
+        }}>
+          <span style={{fontFamily:'var(--mono)',fontSize:13,fontWeight:700,
+            color:recColor(health.promote_recommendation)}}>
+            {recLabel(health.promote_recommendation)}
+          </span>
+          {health.flag_reason && (
+            <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-dim)',maxWidth:'60%',textAlign:'right'}}>
+              {health.flag_reason}
+            </span>
+          )}
+        </div>
+
+        {/* Live-ready */}
+        <div style={{
+          background: health.live_ready ? 'var(--green-bg)' : 'var(--surface)',
+          border:`1px solid ${health.live_ready?'var(--green)':'var(--border)'}`,
+          borderRadius:6,padding:'10px 16px',marginBottom:12
+        }}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom: health.live_ready?0:8}}>
+            <span style={{fontFamily:'var(--mono)',fontSize:11,fontWeight:700,
+              color:health.live_ready?'var(--green)':'var(--text-muted)'}}>
+              {health.live_ready ? '✓ LIVE READY' : '✗ NOT LIVE READY'}
+            </span>
+          </div>
+          {!health.live_ready && health.live_ready_blockers && (() => {
+            try {
+              const blockers = JSON.parse(health.live_ready_blockers);
+              return blockers.map((b,i)=>(
+                <div key={i} style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--red)',
+                  padding:'2px 0',paddingLeft:16}}>✗ {b}</div>
+              ));
+            } catch { return null; }
+          })()}
+        </div>
+
+        {/* Stats row */}
+        <div className="stat-row" style={{marginBottom:12}}>
+          <div className="stat-box">
+            <div className="stat-label">Signals</div>
+            <div className="stat-val blue">{health.n_signals?.toLocaleString()??'—'}</div>
+            <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--text-muted)',marginTop:2}}>
+              pk {fmt1(health.peak_per_day)}/day · avg {fmt1(health.avg_per_day)}/day
+            </div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-label">Win Rate</div>
+            <div className="stat-val" style={{color:health.win_rate_auto>=0.4?'var(--green)':'var(--red)'}}>
+              {fmtPct(health.win_rate_auto)}
+            </div>
+            <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--text-muted)',marginTop:2}}>
+              auto-classified
+            </div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-label">EV Estimate</div>
+            <div className="stat-val" style={{color:health.ev_estimate>0?'var(--green)':'var(--red)'}}>
+              {fmt2(health.ev_estimate)}
+            </div>
+            <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--text-muted)',marginTop:2}}>
+              ADR per signal
+            </div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-label">Stability</div>
+            <div className="stat-val" style={{color:health.signal_stability_pct==null?'var(--text-muted)':health.signal_stability_pct>=80?'var(--green)':health.signal_stability_pct>=50?'var(--amber)':'var(--red)'}}>
+              {health.signal_stability_pct!=null ? `${health.signal_stability_pct.toFixed(0)}%` : 'n/a'}
+            </div>
+            <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--text-muted)',marginTop:2}}>
+              vs prev cycle
+            </div>
+          </div>
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+          {/* Classification quality */}
+          <div className="card" style={{margin:0}}>
+            <div className="card-title">Classification</div>
+            {metricRow('win_rate_auto', fmtPct(health.win_rate_auto), health.win_rate_auto>=0.4?'var(--green)':'var(--red)')}
+            {metricRow('win_rate_vetted', fmtPct(health.win_rate_vetted))}
+            {metricRow('pct_vetted', fmtPct(health.pct_manually_vetted))}
+          </div>
+
+          {/* EV */}
+          <div className="card" style={{margin:0}}>
+            <div className="card-title">EV Estimate</div>
+            {metricRow('median_winner', `${fmt2(health.median_winner_adr)} ADR`, 'var(--green)')}
+            {metricRow('median_loser', `${fmt2(health.median_loser_adr)} ADR`, health.median_loser_adr!=null&&health.median_loser_adr<1?'var(--green)':'var(--red)')}
+            {metricRow('ev_estimate', fmt2(health.ev_estimate), health.ev_estimate>0?'var(--green)':'var(--red)')}
+          </div>
+
+          {/* Example coverage */}
+          <div className="card" style={{margin:0}}>
+            <div className="card-title">Example Coverage</div>
+            {metricRow('examples_passing', `${health.examples_passing} / ${currentCycle?.n_examples_at_grind??'?'}`,
+              health.examples_passing===currentCycle?.n_examples_at_grind?'var(--green)':'var(--red)')}
+            {metricRow('added this cycle', health.examples_added_this_cycle??'—')}
+            {metricRow('since last grind', health.examples_since_last_grind??'—', regrindNeeded?'var(--amber)':undefined)}
+          </div>
+
+          {/* Cycle delta */}
+          <div className="card" style={{margin:0}}>
+            <div className="card-title">Cycle Delta{health.prev_cycle_id?<span style={{fontWeight:400,color:'var(--text-muted)'}}> vs {health.prev_cycle_id}</span>:' (first cycle)'}</div>
+            {metricRow('signals Δ', fmtDelta(health.signal_count_delta), deltaColor(health.signal_count_delta, false))}
+            {metricRow('conditions Δ', fmtDelta(health.condition_count_delta))}
+            {metricRow('win_rate Δ', health.win_rate_delta!=null?`${fmtDeltaF(health.win_rate_delta*100,1)}%`:'—', deltaColor(health.win_rate_delta, true))}
+          </div>
+        </div>
+
+        <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--text-muted)',textAlign:'right'}}>
+          computed {health.computed_at}
+        </div>
+      </>)}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
 // WATCHLIST PAGE (placeholder)
 // ═══════════════════════════════════════════════════════
 function WatchlistPage() {
@@ -1522,6 +1800,7 @@ function App() {
     { id:'sample_expansion', label:'Sample Expansion', num:'3' },
     { id:'setup_grinder_a', label:'Exit Grinder', num:'4a' },
     { id:'setup_grinder_b', label:'Setup Grinder', num:'4b' },
+    { id:'cycle_health', label:'Cycle Health', num:'V2' },
     { id:'market_grind', label:'Market Grinder', num:'5' },
   ];
 
@@ -1533,6 +1812,7 @@ function App() {
     sample_expansion: `${setup.toUpperCase()} — Sample Expansion`,
     setup_grinder_a: `${setup.toUpperCase()} — Exit Grinder`,
     setup_grinder_b: `${setup.toUpperCase()} — Setup Grinder`,
+    cycle_health: `${setup.toUpperCase()} — Cycle Health`,
     market_grind: `${setup.toUpperCase()} — Market Grinder`,
     watchlist: 'Daily Watchlist',
   };
@@ -1589,6 +1869,7 @@ function App() {
           {section === 'setup' && tab === 'sample_expansion' && <VettingPage setup={setup} />}
           {section === 'setup' && tab === 'setup_grinder_a' && <ExitGrinderPage setup={setup} />}
           {section === 'setup' && tab === 'setup_grinder_b' && <StepPage stepId="setup_grinder_b" setup={setup} />}
+          {section === 'setup' && tab === 'cycle_health' && <CycleHealthPage setup={setup} />}
           {section === 'setup' && tab === 'market_grind' && <div className="empty-state"><div className="icon">🌍</div>Market Grinder — coming soon</div>}
         </div>
       </div>
