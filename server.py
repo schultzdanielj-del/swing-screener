@@ -123,6 +123,133 @@ def init_db():
                 reviewed_at TEXT,
                 UNIQUE(setup_type, ticker, entry_date)
             );
+
+            -- ── V2 TABLES ────────────────────────────────────────────────────────────
+
+            CREATE TABLE IF NOT EXISTS grind_cycles (
+                cycle_id TEXT PRIMARY KEY,
+                setup_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error_msg TEXT,
+                is_current INTEGER NOT NULL DEFAULT 0,
+                n_examples_at_grind INTEGER,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                reverted_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS cycle_conditions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT NOT NULL,
+                tier TEXT NOT NULL,
+                expression_name TEXT NOT NULL,
+                low REAL,
+                high REAL,
+                filter_power REAL,
+                sort_order INTEGER,
+                FOREIGN KEY (cycle_id) REFERENCES grind_cycles(cycle_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cycle_conditions_cycle ON cycle_conditions(cycle_id);
+
+            CREATE TABLE IF NOT EXISTS cycle_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT NOT NULL,
+                setup_type TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                signal_date TEXT NOT NULL,
+                bar_idx INTEGER,
+                close REAL,
+                adr REAL,
+                is_example INTEGER NOT NULL DEFAULT 0,
+                classification TEXT,
+                classification_source TEXT,
+                exit_triggered INTEGER,
+                exit_date TEXT,
+                move_adr REAL,
+                mfe_adr REAL,
+                capture_eff REAL,
+                regime_score REAL,
+                vetted_at TEXT,
+                FOREIGN KEY (cycle_id) REFERENCES grind_cycles(cycle_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cycle_signals_cycle ON cycle_signals(cycle_id);
+            CREATE INDEX IF NOT EXISTS idx_cycle_signals_cycle_class ON cycle_signals(cycle_id, classification);
+            CREATE INDEX IF NOT EXISTS idx_cycle_signals_ticker_date ON cycle_signals(ticker, signal_date);
+
+            CREATE TABLE IF NOT EXISTS exit_conditions (
+                setup_type TEXT PRIMARY KEY,
+                expression_name TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                threshold REAL NOT NULL,
+                max_forward_bars INTEGER NOT NULL,
+                adr_threshold_multiplier REAL NOT NULL DEFAULT 1.0,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS cycle_health (
+                cycle_id TEXT PRIMARY KEY,
+                setup_type TEXT NOT NULL,
+                n_signals INTEGER,
+                peak_per_day REAL,
+                avg_per_day REAL,
+                signal_stability_pct REAL,
+                examples_passing INTEGER,
+                examples_added_this_cycle INTEGER,
+                examples_since_last_grind INTEGER,
+                win_rate_auto REAL,
+                win_rate_vetted REAL,
+                pct_manually_vetted REAL,
+                median_winner_adr REAL,
+                median_loser_adr REAL,
+                ev_estimate REAL,
+                prev_cycle_id TEXT,
+                signal_count_delta INTEGER,
+                condition_count_delta INTEGER,
+                win_rate_delta REAL,
+                promote_recommendation TEXT,
+                flag_reason TEXT,
+                live_ready INTEGER,
+                live_ready_blockers TEXT,
+                computed_at TEXT NOT NULL,
+                FOREIGN KEY (cycle_id) REFERENCES grind_cycles(cycle_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS regime_model (
+                setup_type TEXT PRIMARY KEY,
+                cycle_id TEXT NOT NULL,
+                n_signals_used INTEGER,
+                feature_weights TEXT,
+                top_features TEXT,
+                baseline_win_rate REAL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS signal_regime_scores (
+                cycle_signal_id INTEGER PRIMARY KEY,
+                cycle_id TEXT NOT NULL,
+                regime_score REAL,
+                expected_win_rate REAL,
+                FOREIGN KEY (cycle_signal_id) REFERENCES cycle_signals(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS nightly_watchlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_date TEXT NOT NULL,
+                setup_type TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                signal_date TEXT NOT NULL,
+                cycle_id TEXT NOT NULL,
+                regime_score REAL,
+                expected_win_rate REAL,
+                rank INTEGER,
+                expected_move_adr REAL,
+                ai_vet_status TEXT,
+                ai_vet_reason TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_watchlist_run_date ON nightly_watchlist(run_date);
+            CREATE INDEX IF NOT EXISTS idx_watchlist_run_date_setup ON nightly_watchlist(run_date, setup_type);
+
         """)
 
 init_db()
