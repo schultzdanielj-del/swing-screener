@@ -177,6 +177,28 @@ def init_db():
                 created_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_watchlist_run_date ON nightly_watchlist(run_date);
+            CREATE TABLE IF NOT EXISTS regime_model (
+                setup_type TEXT PRIMARY KEY,
+                cycle_id TEXT NOT NULL,
+                n_signals_used INTEGER,
+                n_features_tested INTEGER,
+                feature_weights TEXT,
+                top_features TEXT,
+                win_rate_by_decile TEXT,
+                baseline_win_rate REAL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (cycle_id) REFERENCES grind_cycles(cycle_id)
+            );
+            CREATE TABLE IF NOT EXISTS signal_regime_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_signal_id INTEGER NOT NULL,
+                cycle_id TEXT NOT NULL,
+                regime_score REAL,
+                expected_win_rate REAL,
+                FOREIGN KEY (cycle_id) REFERENCES grind_cycles(cycle_id)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_srs_signal ON signal_regime_scores(cycle_signal_id);
+            CREATE INDEX IF NOT EXISTS idx_srs_cycle ON signal_regime_scores(cycle_id);
         """)
 
 
@@ -903,6 +925,85 @@ async def v2_get_latest_health(setup_type: str):
         cycle_id=gc["cycle_id"]
         row=db.execute("SELECT * FROM cycle_health WHERE cycle_id=?",(cycle_id,)).fetchone()
     return {"setup_type":setup_type,"cycle_id":cycle_id,"health":dict(row) if row else None}
+
+
+# ── Regime Model ──────────────────────────────────────────────────────────────
+
+@app.post("/api/v2/regime/model")
+async def v2_upsert_regime_model(request: Request):
+    body = await request.json()
+    for k in ["setup_type","cycle_id","baseline_win_rate","updated_at"]:
+        if k not in body: raise HTTPException(400, f"Missing field: {k}")
+    with get_db() as db:
+        db.execute("""INSERT INTO regime_model
+            (setup_type,cycle_id,n_signals_used,n_features_tested,feature_weights,
+             top_features,win_rate_by_decile,baseline_win_rate,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(setup_type) DO UPDATE SET
+              cycle_id=excluded.cycle_id,
+              n_signals_used=excluded.n_signals_used,
+              n_features_tested=excluded.n_features_tested,
+              feature_weights=excluded.feature_weights,
+              top_features=excluded.top_features,
+              win_rate_by_decile=excluded.win_rate_by_decile,
+              baseline_win_rate=excluded.baseline_win_rate,
+              updated_at=excluded.updated_at""",
+            (body["setup_type"], body["cycle_id"],
+             body.get("n_signals_used"), body.get("n_features_tested"),
+             body.get("feature_weights"), body.get("top_features"),
+             body.get("win_rate_by_decile"), float(body["baseline_win_rate"]),
+             body["updated_at"]))
+    return {"setup_type": body["setup_type"], "upserted": True}
+
+
+@app.get("/api/v2/regime/model/{setup_type}")
+async def v2_get_regime_model(setup_type: str):
+    with get_db() as db:
+        row = db.execute("SELECT * FROM regime_model WHERE setup_type=?", (setup_type,)).fetchone()
+    if not row:
+        return {"setup_type": setup_type, "model": None}
+    m = dict(row)
+    # Parse JSON blobs for convenience
+    for field in ["feature_weights", "top_features", "win_rate_by_decile"]:
+        if m.get(field):
+            try: m[field] = json.loads(m[field])
+            except: pass
+    return {"setup_type": setup_type, "model": m}
+
+
+@app.post("/api/v2/regime/scores")
+async def v2_upsert_signal_scores(request: Request):
+    body = await request.json()
+    cycle_id = body.get("cycle_id")
+    scores   = body.get("scores", [])
+    if not cycle_id: raise HTTPException(400, "cycle_id required")
+    if not scores:   raise HTTPException(400, "scores array required")
+    with get_db() as db:
+        # Clear existing scores for this cycle first
+        db.execute("DELETE FROM signal_regime_scores WHERE cycle_id=?", (cycle_id,))
+        # Insert all scores
+        db.executemany("""INSERT INTO signal_regime_scores
+            (cycle_signal_id, cycle_id, regime_score, expected_win_rate)
+            VALUES (?,?,?,?)""",
+            [(r["cycle_signal_id"], cycle_id,
+              r.get("regime_score"), r.get("expected_win_rate"))
+             for r in scores])
+        # Denormalize regime_score back to cycle_signals
+        db.executemany("""UPDATE cycle_signals SET regime_score=?
+            WHERE id=? AND cycle_id=?""",
+            [(r.get("regime_score"), r["cycle_signal_id"], cycle_id)
+             for r in scores])
+    return {"cycle_id": cycle_id, "n_scores": len(scores), "upserted": True}
+
+
+@app.get("/api/v2/regime/scores/{cycle_id}")
+async def v2_get_signal_scores(cycle_id: str):
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT * FROM signal_regime_scores WHERE cycle_id=? ORDER BY regime_score DESC NULLS LAST",
+            (cycle_id,)
+        ).fetchall()
+    return {"cycle_id": cycle_id, "scores": [dict(r) for r in rows]}
 
 
 # Serve frontend — MUST be last
