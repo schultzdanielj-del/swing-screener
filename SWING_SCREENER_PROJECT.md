@@ -17,7 +17,7 @@
 7. **GitHub token for bash git push:** Stored in Claude project file. Use bash `git push`, NOT MCP push_files (payload limits).
 8. **Before ANY TA work — READ `ta_knowledge.md` FIRST.** Non-negotiable.
 9. **All OHLCV data from Railway SQLite DB or local caches.** Never yfinance in pipelines.
-10. **Break work into small tasks.** Update `TODO.md` and `ANALYSIS_SYSTEM.md` when finishing tasks.
+10. **Break work into small tasks.** Update `TODO.md` and `SWING_SCREENER_PROJECT.md` when finishing tasks.
 
 ---
 
@@ -33,7 +33,7 @@ Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds t
 
 ## CURRENT STATE (2026-03-07)
 
-### Architecture: V2
+### Architecture: V2 — fully deployed and running
 
 **Decision (2026-03-06):** V1 is archived. All work happens on the `v2` branch. V2 eliminates file-based handoffs — all state lives in Railway SQLite with cycle versioning.
 
@@ -41,7 +41,7 @@ Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds t
 
 ### What's built and working:
 
-**Backend (`server.py`) — ~910 lines, V2-only:**
+**Backend (`server.py`) — ~910 lines, V2-only, deployed to Railway:**
 - All DB tables (V1 + V2 combined schema in `init_db()`)
 - Pipeline/agent endpoints (steps, run, stop, logs, heartbeat)
 - Examples CRUD (`/api/examples/{setup}`)
@@ -55,9 +55,9 @@ Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds t
 - `VettingChart` — candlestick chart, EMA/SMA overlays, earnings overlay, scroll/zoom
 - `VettingPage` — full vetting UI: Step 2/Step 4 source toggle, YES/NO/MAYBE, keyboard shortcuts (↑↓/1/2/3), log streaming, agent status, RELOAD button
 - `ExamplesPage` — Optimal Samples gallery, Pending/AI tab (AI verdict display, approve-all, approve/reject per item), Rejected tab, mini charts
-- `CycleHealthPage` — V2 health panel (wired to `/api/v2/*`)
+- `CycleHealthPage` — fully wired to `/api/v2/*` — health panel, cycle selector, revert button, all metrics live
 - `NightlyPage` — pipeline step display + log streaming
-- `WatchlistPage` — placeholder
+- `WatchlistPage` — placeholder (blocked on Market Grinder)
 
 **V2 scripts (local, run on Dan's machine):**
 - `scripts/grind_upload.py` — uploads pyramid grinder output to Railway as versioned cycle
@@ -66,7 +66,7 @@ Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds t
 
 **Expression library — 15,805 total expressions:**
 - 4,017 daily + 80 LSP + 4,017 weekly + 4,017 monthly + 3,630 extension_structure
-- Cache: ~50 GB, 4,119 tickers — **stale, needs rebuild**
+- Cache: ~50 GB, 4,119 tickers — **rebuilt 2026-03-07, current**
 - `EXPR_CACHE_WORKERS=8` for builds
 
 ### DTSS current state:
@@ -74,13 +74,16 @@ Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds t
 - Grind #5: 94 conditions, 281 filtered signals over 5yr (~1/week forward)
 - Exit condition locked: `slope_xavgc21_off7_adr14 ≤ -1.128826`, floor 3.2 ADR, median 5.8 ADR, avg 38 bars
 - Grind output lives locally at `local_runner/cache/pyramid_results_dtss.json`
+- **Active V2 cycle: `dtss_20260306_170830`** — PROMOTE, 68/68 examples passing, 41% win rate, EV 1.479
+- Note: `n_examples_at_grind=68` (excludes BRK-B, SMMT, VUZI from the 71 total)
+
+### scan_signals.py — is_example matching note:
+Signals are matched to examples using proximity: for each example, the scanned signal
+for that ticker closest to `entry_date` within ±7 calendar days is tagged `is_example=1`.
+This handles the grinder's variable signal-to-entry offset correctly.
 
 ### What's next:
-1. Deploy V2 branch to Railway + verify endpoints
-2. Rebuild expr cache (stale)
-3. Seed exit condition + run grind_upload → scan_signals → cycle_health
-4. Wire CycleHealthPage to real data (currently stubbed)
-5. Market Grinder (Step 5, V2-native)
+1. **Market Grinder (Step 5)** — V2-native, operates on `cycle_signals` table, design TBD
 
 ---
 
@@ -117,7 +120,7 @@ archive/v1/            # V1 originals (read-only reference)
 ```
 
 ### Key docs (in repo):
-- **`TODO.md`** — task list and pre-run checklist. **Check this first.**
+- **`TODO.md`** — task list. **Check this first.**
 - **`ANALYSIS_SYSTEM.md`** — repeatable pipeline process for building any setup
 - **`DATA_CONTRACT.md`** — V2 DB schema and API contracts
 - **`PIPELINE_V2.md`** — V2 architecture design
@@ -130,7 +133,7 @@ archive/v1/            # V1 originals (read-only reference)
 
 | Setup | Status | Examples | Grind Result |
 |-------|--------|----------|-------------|
-| **DTSS** (Double Top Short Sell) | ✅ V2 pipeline ready | 71 validated | Grind #5: 94 conditions, 281 signals/5yr |
+| **DTSS** (Double Top Short Sell) | ✅ V2 pipeline live | 71 validated | Grind #5: 94 conditions, active cycle dtss_20260306_170830 |
 | **3-4DB** (3-4 Day Bounce, short) | Examples loaded | ~21 examples | Not yet ground |
 | **HTF** (High Tight Flag, long) | Scaffolded | None yet | — |
 
