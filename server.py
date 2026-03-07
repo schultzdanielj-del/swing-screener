@@ -3653,6 +3653,138 @@ async def v2_activate_cycle(cycle_id: str):
     }
 
 
+@app.get("/api/v2/cycles/{cycle_id}/signals")
+async def v2_get_signals(cycle_id: str):
+    """
+    Return all cycle_signals rows for a cycle.
+    Returns: { cycle_id, signals: [...] }
+    """
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT id, cycle_id, setup_type, ticker, signal_date, bar_idx,
+                      close, adr, is_example, classification, classification_source,
+                      exit_triggered, exit_date, move_adr, mfe_adr, capture_eff,
+                      regime_score, vetted_at
+               FROM cycle_signals WHERE cycle_id=? ORDER BY signal_date, ticker""",
+            (cycle_id,),
+        ).fetchall()
+    return {"cycle_id": cycle_id, "signals": [dict(r) for r in rows]}
+
+
+@app.post("/api/v2/health")
+async def v2_upsert_health(request: Request):
+    """
+    Upsert a cycle_health row.
+    Body: all cycle_health fields per DATA_CONTRACT.md.
+    Returns: { cycle_id, message }
+    """
+    body     = await request.json()
+    cycle_id = body.get("cycle_id")
+    if not cycle_id:
+        raise HTTPException(status_code=400, detail="cycle_id required")
+
+    with get_db() as db:
+        db.execute(
+            """INSERT INTO cycle_health (
+                cycle_id, setup_type,
+                n_signals, peak_per_day, avg_per_day, signal_stability_pct,
+                examples_passing, examples_added_this_cycle, examples_since_last_grind,
+                win_rate_auto, win_rate_vetted, pct_manually_vetted,
+                median_winner_adr, median_loser_adr, ev_estimate,
+                prev_cycle_id, signal_count_delta, condition_count_delta, win_rate_delta,
+                promote_recommendation, flag_reason, live_ready, live_ready_blockers,
+                computed_at
+               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(cycle_id) DO UPDATE SET
+                n_signals=excluded.n_signals,
+                peak_per_day=excluded.peak_per_day,
+                avg_per_day=excluded.avg_per_day,
+                signal_stability_pct=excluded.signal_stability_pct,
+                examples_passing=excluded.examples_passing,
+                examples_added_this_cycle=excluded.examples_added_this_cycle,
+                examples_since_last_grind=excluded.examples_since_last_grind,
+                win_rate_auto=excluded.win_rate_auto,
+                win_rate_vetted=excluded.win_rate_vetted,
+                pct_manually_vetted=excluded.pct_manually_vetted,
+                median_winner_adr=excluded.median_winner_adr,
+                median_loser_adr=excluded.median_loser_adr,
+                ev_estimate=excluded.ev_estimate,
+                prev_cycle_id=excluded.prev_cycle_id,
+                signal_count_delta=excluded.signal_count_delta,
+                condition_count_delta=excluded.condition_count_delta,
+                win_rate_delta=excluded.win_rate_delta,
+                promote_recommendation=excluded.promote_recommendation,
+                flag_reason=excluded.flag_reason,
+                live_ready=excluded.live_ready,
+                live_ready_blockers=excluded.live_ready_blockers,
+                computed_at=excluded.computed_at""",
+            (
+                cycle_id,
+                body.get("setup_type"),
+                body.get("n_signals"),
+                body.get("peak_per_day"),
+                body.get("avg_per_day"),
+                body.get("signal_stability_pct"),
+                body.get("examples_passing"),
+                body.get("examples_added_this_cycle"),
+                body.get("examples_since_last_grind"),
+                body.get("win_rate_auto"),
+                body.get("win_rate_vetted"),
+                body.get("pct_manually_vetted"),
+                body.get("median_winner_adr"),
+                body.get("median_loser_adr"),
+                body.get("ev_estimate"),
+                body.get("prev_cycle_id"),
+                body.get("signal_count_delta"),
+                body.get("condition_count_delta"),
+                body.get("win_rate_delta"),
+                body.get("promote_recommendation"),
+                body.get("flag_reason"),
+                body.get("live_ready"),
+                body.get("live_ready_blockers"),
+                body.get("computed_at"),
+            ),
+        )
+    return {"cycle_id": cycle_id, "message": f"Health metrics saved for {cycle_id}"}
+
+
+@app.get("/api/v2/health/{cycle_id}")
+async def v2_get_health(cycle_id: str):
+    """
+    Return the cycle_health row for a cycle.
+    Returns: { cycle_id, health: {...} | null }
+    """
+    with get_db() as db:
+        row = db.execute(
+            "SELECT * FROM cycle_health WHERE cycle_id=?", (cycle_id,)
+        ).fetchone()
+    return {"cycle_id": cycle_id, "health": dict(row) if row else None}
+
+
+@app.get("/api/v2/health/{setup_type}/latest")
+async def v2_get_latest_health(setup_type: str):
+    """
+    Return the cycle_health row for the current (is_current=1) cycle.
+    Returns: { setup_type, cycle_id, health: {...} | null }
+    """
+    with get_db() as db:
+        gc_row = db.execute(
+            "SELECT cycle_id FROM grind_cycles WHERE setup_type=? AND is_current=1",
+            (setup_type,),
+        ).fetchone()
+        if not gc_row:
+            return {"setup_type": setup_type, "cycle_id": None, "health": None}
+        cycle_id = gc_row["cycle_id"]
+        row = db.execute(
+            "SELECT * FROM cycle_health WHERE cycle_id=?", (cycle_id,)
+        ).fetchone()
+    return {
+        "setup_type": setup_type,
+        "cycle_id":   cycle_id,
+        "health":     dict(row) if row else None,
+    }
+
+
 @app.get("/api/v2/cycles/{cycle_id}/conditions")
 async def v2_get_conditions(cycle_id: str):
     """
