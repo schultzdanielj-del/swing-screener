@@ -1,4 +1,4 @@
-"""ScanPerfect V2 — FastAPI backend."""
+"""ScanPerfect V2 — FastAPI backend. Deploy: 2026-03-06."""
 
 import os
 import json as _json
