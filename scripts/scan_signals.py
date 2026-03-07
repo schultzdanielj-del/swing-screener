@@ -456,14 +456,15 @@ def classify_signals(signals, examples, exit_cond):
     via classify_signals.py (a separate future step). This script writes the
     initial auto-classification.
     """
-    # Build example lookup: (ticker, entry_date) for is_example
-    # signal_date for a signal matches the entry_date on the example
+    # Build example lookup: (ticker, chart_date) for is_example
+    # signal_date matches the chart_date (the bar the grinder was trained on),
+    # not the entry_date (which may be a different bar).
     example_dates = set()
     for ex in examples:
         ticker     = ex.get("ticker", "")
-        entry_date = ex.get("entry_date") or ex.get("entryDate", "")
-        if ticker and entry_date:
-            example_dates.add((ticker, entry_date))
+        chart_date = ex.get("chart_date") or ex.get("chartDate", "")
+        if ticker and chart_date:
+            example_dates.add((ticker, chart_date))
 
     # Derive ADR threshold from exit_cond
     adr_mult = float(exit_cond.get("adr_threshold_multiplier", 1.0))
