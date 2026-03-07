@@ -456,15 +456,35 @@ def classify_signals(signals, examples, exit_cond):
     via classify_signals.py (a separate future step). This script writes the
     initial auto-classification.
     """
-    # Build example lookup: (ticker, chart_date) for is_example
-    # signal_date matches the chart_date (the bar the grinder was trained on),
-    # not the entry_date (which may be a different bar).
-    example_dates = set()
+    # Build example lookup using proximity matching against scanned signals.
+    # The grinder fires the signal 1 bar before entry (scan_idx = entry_idx - 1),
+    # but the exact offset can vary. Strategy: for each example, find the scanned
+    # signal for that ticker whose date is closest to (and <=) entry_date within
+    # a 7-calendar-day window, then tag that signal date as is_example.
+    import datetime as _dt
+
+    ticker_signal_dates: dict = {}
+    for sig in signals:
+        t = sig["ticker"]
+        if t not in ticker_signal_dates:
+            ticker_signal_dates[t] = []
+        ticker_signal_dates[t].append(sig["date"])
+
+    example_dates: set = set()
     for ex in examples:
         ticker     = ex.get("ticker", "")
-        chart_date = ex.get("chart_date") or ex.get("chartDate", "")
-        if ticker and chart_date:
-            example_dates.add((ticker, chart_date))
+        entry_date = ex.get("entry_date") or ex.get("entryDate", "")
+        if not ticker or not entry_date:
+            continue
+        sig_dates = ticker_signal_dates.get(ticker, [])
+        if not sig_dates:
+            continue
+        entry_dt   = _dt.date.fromisoformat(entry_date)
+        candidates = [d for d in sig_dates if d <= entry_date] or sig_dates
+        best       = min(candidates,
+                         key=lambda d: abs((_dt.date.fromisoformat(d) - entry_dt).days))
+        if abs((_dt.date.fromisoformat(best) - entry_dt).days) <= 7:
+            example_dates.add((ticker, best))
 
     # Derive ADR threshold from exit_cond
     adr_mult = float(exit_cond.get("adr_threshold_multiplier", 1.0))
