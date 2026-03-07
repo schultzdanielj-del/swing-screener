@@ -1007,5 +1007,22 @@ async def v2_get_signal_scores(cycle_id: str):
     return {"cycle_id": cycle_id, "scores": [dict(r) for r in rows]}
 
 
+@app.get("/api/v2/watchlist/latest")
+async def v2_get_latest_watchlist():
+    with get_db() as db:
+        # Get most recent run_date
+        row = db.execute(
+            "SELECT run_date FROM nightly_watchlist ORDER BY run_date DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return {"entries": [], "run_date": None}
+        run_date = row["run_date"]
+        rows = db.execute(
+            "SELECT * FROM nightly_watchlist WHERE run_date=? ORDER BY rank ASC",
+            (run_date,)
+        ).fetchall()
+    return {"run_date": run_date, "entries": [dict(r) for r in rows]}
+
+
 # Serve frontend — MUST be last
 app.mount("/", StaticFiles(directory="app", html=True), name="frontend")

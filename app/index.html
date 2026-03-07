@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ScanPerfect V2</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>ScanPerfect</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -11,334 +11,296 @@
   <style>
     :root {
       --bg:#070809; --s1:#0c0d0f; --s2:#111315; --s3:#181a1d; --s4:#1e2023;
-      --border:#222428; --border2:#2e3136;
-      --text:#dde1e7; --dim:#8b909a; --muted:#505560;
-      --green:#3ecf8e; --green-d:#0d7f51; --green-bg:rgba(62,207,142,.07);
+      --bd:#222428; --bd2:#2e3136;
+      --tx:#dde1e7; --dim:#8b909a; --mut:#505560;
+      --grn:#3ecf8e; --grn-d:#0d7f51; --grn-bg:rgba(62,207,142,.07);
       --red:#f06b6b; --red-d:#b82828; --red-bg:rgba(240,107,107,.07);
-      --amber:#f5a623; --amber-bg:rgba(245,166,35,.07);
-      --blue:#5b9cf6; --blue-bg:rgba(91,156,246,.07);
-      --cyan:#22d3ee; --purple:#a78bfa;
-      --mono:'JetBrains Mono',monospace; --sans:'IBM Plex Sans',system-ui,sans-serif;
+      --amb:#f5a623; --amb-bg:rgba(245,166,35,.07);
+      --blu:#5b9cf6; --blu-bg:rgba(91,156,246,.07);
+      --cyn:#22d3ee; --pur:#a78bfa;
+      --mono:'JetBrains Mono',monospace;
+      --sans:'IBM Plex Sans',system-ui,sans-serif;
     }
     *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
     html,body,#root{height:100%;}
-    body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;}
+    body{background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;}
     ::-webkit-scrollbar{width:4px;height:4px;}
     ::-webkit-scrollbar-track{background:transparent;}
-    ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+    ::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px;}
     .app{display:flex;height:100vh;overflow:hidden;}
-    /* Rail */
-    .rail{width:48px;min-width:48px;background:var(--s1);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:2px;z-index:10;}
-    .rail-logo{font-family:var(--mono);font-size:8px;font-weight:700;color:var(--blue);letter-spacing:1.5px;margin-bottom:14px;writing-mode:vertical-rl;transform:rotate(180deg);user-select:none;}
-    .rail-btn{width:32px;height:32px;border-radius:5px;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;transition:all .1s;display:flex;align-items:center;justify-content:center;}
+    /* rail */
+    .rail{width:48px;min-width:48px;background:var(--s1);border-right:1px solid var(--bd);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:2px;}
+    .rail-logo{font-family:var(--mono);font-size:8px;font-weight:700;color:var(--blu);letter-spacing:1.5px;margin-bottom:14px;writing-mode:vertical-rl;transform:rotate(180deg);user-select:none;}
+    .rail-btn{width:32px;height:32px;border-radius:5px;border:none;background:transparent;color:var(--mut);cursor:pointer;font-size:15px;transition:all .1s;display:flex;align-items:center;justify-content:center;}
     .rail-btn:hover{background:var(--s3);color:var(--dim);}
-    .rail-btn.active{background:var(--blue-bg);color:var(--blue);}
+    .rail-btn.on{background:var(--blu-bg);color:var(--blu);}
     .rail-dot{margin-top:auto;width:7px;height:7px;border-radius:50%;background:var(--red-d);transition:background .4s;}
-    .rail-dot.online{background:var(--green);box-shadow:0 0 6px rgba(62,207,142,.5);}
-    /* Sidebar */
-    .sidebar{width:200px;min-width:200px;background:var(--s1);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
-    .sb-head{padding:12px 14px 8px;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);}
-    .sb-setup-row{display:flex;gap:4px;padding:8px 10px;}
-    .sb-setup-btn{flex:1;padding:5px 0;border:1px solid var(--border2);border-radius:3px;background:transparent;font-family:var(--mono);font-size:10px;font-weight:700;color:var(--muted);cursor:pointer;transition:all .1s;}
-    .sb-setup-btn:hover{border-color:var(--dim);color:var(--dim);}
-    .sb-setup-btn.active{background:var(--blue-bg);border-color:var(--blue);color:var(--blue);}
-    .sb-divider{height:1px;background:var(--border);margin:4px 0;}
-    .sb-item{padding:7px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;font-weight:500;color:var(--dim);transition:all .08s;border-left:2px solid transparent;display:flex;align-items:center;gap:8px;}
-    .sb-item:hover{background:var(--s2);color:var(--text);}
-    .sb-item.active{background:var(--s2);color:var(--blue);border-left-color:var(--blue);}
-    /* Main */
+    .rail-dot.online{background:var(--grn);box-shadow:0 0 6px rgba(62,207,142,.5);}
+    /* sidebar */
+    .sidebar{width:200px;min-width:200px;background:var(--s1);border-right:1px solid var(--bd);display:flex;flex-direction:column;}
+    .sb-head{padding:12px 14px 8px;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--mut);border-bottom:1px solid var(--bd);}
+    .sb-setups{display:flex;gap:4px;padding:8px 10px;}
+    .sb-setup{flex:1;padding:5px 0;border:1px solid var(--bd2);border-radius:3px;background:transparent;font-family:var(--mono);font-size:10px;font-weight:700;color:var(--mut);cursor:pointer;transition:all .1s;}
+    .sb-setup:hover{border-color:var(--dim);color:var(--dim);}
+    .sb-setup.on{background:var(--blu-bg);border-color:var(--blu);color:var(--blu);}
+    .sb-div{height:1px;background:var(--bd);margin:4px 0;}
+    .sb-item{padding:7px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;font-weight:500;color:var(--dim);transition:all .08s;border-left:2px solid transparent;}
+    .sb-item:hover{background:var(--s2);color:var(--tx);}
+    .sb-item.on{background:var(--s2);color:var(--blu);border-left-color:var(--blu);}
+    /* main */
     .main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;}
-    .main-hdr{padding:10px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:var(--s1);}
-    .main-title{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.3px;}
+    .main-hdr{padding:10px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:var(--s1);}
+    .main-title{font-family:var(--mono);font-size:12px;font-weight:700;}
     .main-body{flex:1;overflow-y:auto;padding:16px 20px;}
     .main-body.flush{padding:0;overflow:hidden;}
-    /* Cards / stats */
-    .card{background:var(--s1);border:1px solid var(--border);border-radius:6px;padding:14px 16px;margin-bottom:10px;}
-    .card-title{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:10px;}
-    .stat-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
-    .stat-box{background:var(--s2);border:1px solid var(--border);border-radius:5px;padding:10px 14px;flex:1;min-width:100px;}
-    .stat-lbl{font-family:var(--mono);font-size:8px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:3px;}
-    .stat-val{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--text);}
-    .stat-val.g{color:var(--green);} .stat-val.r{color:var(--red);} .stat-val.b{color:var(--blue);} .stat-val.a{color:var(--amber);}
-    .stat-sub{font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:2px;}
-    /* Badges */
-    .badge{font-family:var(--mono);font-size:8px;font-weight:700;padding:2px 6px;border-radius:2px;letter-spacing:.4px;text-transform:uppercase;}
-    .b-done{color:var(--green);background:var(--green-bg);}
-    .b-running{color:var(--amber);background:var(--amber-bg);animation:blink 1.4s infinite;}
-    .b-queued{color:var(--blue);background:var(--blue-bg);}
-    .b-pending{color:var(--muted);background:var(--s3);}
-    .b-error{color:var(--red);background:var(--red-bg);}
-    .b-stopped{color:var(--dim);background:var(--s3);}
-    @keyframes blink{0%,100%{opacity:1;}50%{opacity:.45;}}
-    /* Buttons */
-    .btn{font-family:var(--mono);font-size:10px;font-weight:700;padding:6px 14px;border-radius:4px;border:1px solid var(--border2);cursor:pointer;transition:all .1s;background:var(--s3);color:var(--dim);letter-spacing:.3px;}
-    .btn:hover:not(:disabled){background:var(--s4);color:var(--text);border-color:var(--dim);}
+    /* shared components */
+    .card{background:var(--s1);border:1px solid var(--bd);border-radius:6px;padding:14px 16px;margin-bottom:10px;}
+    .card-ttl{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--mut);margin-bottom:10px;}
+    .stats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+    .stat{background:var(--s2);border:1px solid var(--bd);border-radius:5px;padding:10px 14px;flex:1;min-width:90px;}
+    .stat-l{font-family:var(--mono);font-size:8px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--mut);margin-bottom:3px;}
+    .stat-v{font-family:var(--mono);font-size:20px;font-weight:700;}
+    .stat-v.g{color:var(--grn);}.stat-v.r{color:var(--red);}.stat-v.b{color:var(--blu);}.stat-v.a{color:var(--amb);}
+    .stat-s{font-family:var(--mono);font-size:9px;color:var(--mut);margin-top:2px;}
+    .bdg{font-family:var(--mono);font-size:8px;font-weight:700;padding:2px 6px;border-radius:2px;letter-spacing:.4px;text-transform:uppercase;}
+    .b-done{color:var(--grn);background:var(--grn-bg);}
+    .b-run{color:var(--amb);background:var(--amb-bg);animation:blink 1.4s infinite;}
+    .b-q{color:var(--blu);background:var(--blu-bg);}
+    .b-pend{color:var(--mut);background:var(--s3);}
+    .b-err{color:var(--red);background:var(--red-bg);}
+    .b-stop{color:var(--dim);background:var(--s3);}
+    @keyframes blink{0%,100%{opacity:1;}50%{opacity:.4;}}
+    .btn{font-family:var(--mono);font-size:10px;font-weight:700;padding:6px 14px;border-radius:4px;border:1px solid var(--bd2);cursor:pointer;transition:all .1s;background:var(--s3);color:var(--dim);}
+    .btn:hover:not(:disabled){background:var(--s4);color:var(--tx);border-color:var(--dim);}
     .btn:disabled{opacity:.3;cursor:not-allowed;}
-    .btn-go{background:var(--green-d);border-color:var(--green);color:#fff;}
-    .btn-go:hover:not(:disabled){background:var(--green);}
-    .btn-stop{background:var(--red-d);border-color:var(--red);color:#fff;}
-    .btn-stop:hover:not(:disabled){background:var(--red);}
-    /* Log */
-    .log-box{background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:10px 14px;font-family:var(--mono);font-size:10px;line-height:1.6;color:var(--dim);max-height:360px;overflow-y:auto;white-space:pre-wrap;}
-    .log-box .ok{color:var(--green);} .log-box .err{color:var(--red);}
-    /* Empty state */
-    .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:260px;gap:8px;font-family:var(--mono);font-size:11px;color:var(--muted);}
-    .empty .ico{font-size:28px;opacity:.25;}
-    /* Metric row */
-    .metric-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:10px;}
-    .metric-row .k{color:var(--muted);} .metric-row .v{font-weight:600;color:var(--dim);}
-    /* Pipeline */
-    .pipe-step-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:10px;}
-    .pipe-step-row:last-child{border-bottom:none;}
-    .pipe-step-name{flex:1;color:var(--dim);}
-    .pipe-step-meta{color:var(--muted);font-size:9px;}
-    /* Vetting */
-    .vet-layout{display:flex;height:100%;overflow:hidden;}
-    .vet-sidebar{width:240px;min-width:240px;background:var(--s1);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
-    .vet-filters{display:flex;gap:3px;padding:7px 10px;border-bottom:1px solid var(--border);flex-shrink:0;}
-    .vet-filter-btn{flex:1;padding:4px 0;font-family:var(--mono);font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border:1px solid var(--border);border-radius:3px;background:transparent;color:var(--muted);cursor:pointer;transition:all .08s;}
-    .vet-filter-btn.active{background:var(--blue);border-color:var(--blue);color:#fff;}
-    .vet-filter-btn:hover:not(.active){border-color:var(--dim);color:var(--dim);}
+    .btn-go{background:var(--grn-d);border-color:var(--grn);color:#fff;}
+    .btn-go:hover:not(:disabled){background:var(--grn);}
+    .btn-no{background:var(--red-d);border-color:var(--red);color:#fff;}
+    .btn-no:hover:not(:disabled){background:var(--red);}
+    .logbox{background:var(--bg);border:1px solid var(--bd);border-radius:5px;padding:10px 14px;font-family:var(--mono);font-size:10px;line-height:1.6;color:var(--dim);max-height:320px;overflow-y:auto;white-space:pre-wrap;}
+    .logbox .ok{color:var(--grn);}.logbox .er{color:var(--red);}
+    .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:240px;gap:8px;font-family:var(--mono);font-size:11px;color:var(--mut);}
+    .empty .ico{font-size:26px;opacity:.2;}
+    .mrow{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--bd);font-family:var(--mono);font-size:10px;}
+    .mrow .k{color:var(--mut);}.mrow .v{font-weight:600;color:var(--dim);}
+    .tabs{display:flex;gap:2px;margin-bottom:14px;border-bottom:1px solid var(--bd);}
+    .tab{font-family:var(--mono);font-size:10px;font-weight:700;padding:7px 14px;border:none;background:transparent;color:var(--mut);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .1s;}
+    .tab:hover{color:var(--dim);}
+    .tab.on{color:var(--blu);border-bottom-color:var(--blu);}
+    .tbl{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px;}
+    .tbl th{text-align:left;padding:5px 10px;color:var(--mut);font-size:8px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;border-bottom:1px solid var(--bd);}
+    .tbl td{padding:6px 10px;border-bottom:1px solid rgba(34,36,40,.5);color:var(--dim);}
+    .tbl tr:hover td{background:var(--s2);}
+    /* pipeline */
+    .prow{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--bd);font-family:var(--mono);font-size:10px;}
+    .prow:last-child{border-bottom:none;}
+    .prow-name{flex:1;color:var(--dim);}
+    .prow-meta{color:var(--mut);font-size:9px;}
+    .prow-desc{color:var(--mut);font-size:9px;max-width:300px;text-align:right;}
+    /* vet layout */
+    .vet-shell{display:flex;height:100%;overflow:hidden;}
+    .vet-left{width:260px;min-width:260px;background:var(--s1);border-right:1px solid var(--bd);display:flex;flex-direction:column;}
+    .vet-statusbar{padding:6px 10px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:6px;flex-shrink:0;font-family:var(--mono);font-size:9px;}
+    .regrind-banner{background:var(--amb-bg);border-bottom:1px solid rgba(245,166,35,.3);padding:5px 10px;font-family:var(--mono);font-size:9px;color:var(--amb);display:flex;align-items:center;gap:6px;flex-shrink:0;}
+    .vet-filters{display:flex;gap:3px;padding:6px 10px;border-bottom:1px solid var(--bd);flex-shrink:0;}
+    .vf{flex:1;padding:4px 0;font-family:var(--mono);font-size:8px;font-weight:700;text-transform:uppercase;border:1px solid var(--bd);border-radius:3px;background:transparent;color:var(--mut);cursor:pointer;transition:all .08s;}
+    .vf.on{background:var(--blu);border-color:var(--blu);color:#fff;}
+    .vf:hover:not(.on){border-color:var(--dim);color:var(--dim);}
     .vet-list{flex:1;overflow-y:auto;}
-    .vet-row{padding:8px 10px;cursor:pointer;border-bottom:1px solid rgba(34,36,40,.6);border-left:2px solid transparent;transition:background .07s;}
-    .vet-row:hover{background:var(--s2);}
-    .vet-row.active{background:var(--s2);border-left-color:var(--blue);}
-    .vet-row.v-yes{border-left-color:var(--green);}
-    .vet-row.v-no{border-left-color:var(--red);opacity:.55;}
-    .vet-ticker{font-family:var(--mono);font-size:12px;font-weight:700;}
-    .vet-meta{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:2px;}
-    .vet-adr{color:var(--green);font-weight:600;}
-    .vet-chart-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;}
-    .vet-chart-hdr{padding:8px 14px;background:var(--s1);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
-    .vet-chart-info{display:flex;align-items:baseline;gap:12px;}
-    .vet-ticker-big{font-family:var(--mono);font-size:18px;font-weight:700;}
-    .vet-chart-meta{font-family:var(--mono);font-size:9px;color:var(--dim);}
-    .vet-verdict-btns{display:flex;gap:6px;align-items:center;}
-    .vet-vbtn{padding:6px 16px;border:2px solid;border-radius:4px;font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;background:transparent;transition:all .1s;}
-    .vet-vbtn.yes{color:var(--green);border-color:var(--green);}
-    .vet-vbtn.yes:hover,.vet-vbtn.yes.sel{background:var(--green);color:#000;}
-    .vet-vbtn.no{color:var(--red);border-color:var(--red);}
-    .vet-vbtn.no:hover,.vet-vbtn.no.sel{background:var(--red);color:#fff;}
-    .vet-vbtn:disabled{opacity:.3;cursor:not-allowed;}
-    .vet-canvas-wrap{flex:1;position:relative;overflow:hidden;}
-    .kbd-hint{position:fixed;bottom:10px;right:12px;font-family:var(--mono);font-size:9px;color:var(--muted);background:var(--s1);padding:4px 10px;border-radius:3px;border:1px solid var(--border);z-index:50;}
-    kbd{background:var(--s3);border:1px solid var(--border2);border-radius:2px;padding:1px 4px;font-size:8px;}
-    /* Samples */
-    .ex-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;}
-    .ex-card{background:var(--s2);border:1px solid var(--border);border-radius:5px;padding:9px 11px;transition:border-color .1s;}
-    .ex-card:hover{border-color:var(--border2);}
-    .ex-card-ticker{font-family:var(--mono);font-size:12px;font-weight:700;}
-    .ex-card-date{font-family:var(--mono);font-size:9px;color:var(--muted);}
-    .ex-card-adr{font-family:var(--mono);font-size:10px;color:var(--green);font-weight:600;margin-top:3px;}
-    /* Tabs */
-    .tab-row{display:flex;gap:2px;margin-bottom:14px;border-bottom:1px solid var(--border);}
-    .tab-btn{font-family:var(--mono);font-size:10px;font-weight:700;padding:7px 14px;border:none;background:transparent;color:var(--muted);cursor:pointer;transition:all .1s;border-bottom:2px solid transparent;margin-bottom:-1px;}
-    .tab-btn:hover{color:var(--dim);}
-    .tab-btn.active{color:var(--blue);border-bottom-color:var(--blue);}
-    /* Tables */
-    .data-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px;}
-    .data-table th{text-align:left;padding:5px 10px;color:var(--muted);font-size:8px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;border-bottom:1px solid var(--border);}
-    .data-table td{padding:6px 10px;border-bottom:1px solid rgba(34,36,40,.5);color:var(--dim);}
-    .data-table tr:hover td{background:var(--s2);}
-    /* Health */
-    .health-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;}
-    /* Watchlist */
-    .decile-bar-wrap{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-family:var(--mono);font-size:9px;}
-    .decile-bar-bg{flex:1;height:12px;background:var(--s3);border-radius:2px;overflow:hidden;}
-    .decile-bar-fill{height:100%;border-radius:2px;transition:width .3s;}
+    .vrow{padding:8px 10px;cursor:pointer;border-bottom:1px solid rgba(34,36,40,.5);border-left:2px solid transparent;transition:background .07s;}
+    .vrow:hover{background:var(--s2);}
+    .vrow.on{background:var(--s2);border-left-color:var(--blu);}
+    .vrow.win{border-left-color:var(--grn);}
+    .vrow.loss{border-left-color:var(--red);opacity:.5;}
+    .vrow.aiq{border-left-color:var(--pur);}
+    .vticker{font-family:var(--mono);font-size:12px;font-weight:700;}
+    .vmeta{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--mut);margin-top:2px;}
+    .vet-right{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;}
+    .vet-hdr{padding:8px 14px;background:var(--s1);border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+    .vet-btns{display:flex;gap:6px;align-items:center;}
+    .vbtn{padding:6px 18px;border:2px solid;border-radius:4px;font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;background:transparent;transition:all .1s;}
+    .vbtn.yes{color:var(--grn);border-color:var(--grn);}
+    .vbtn.yes:hover,.vbtn.yes.on{background:var(--grn);color:#000;}
+    .vbtn.no{color:var(--red);border-color:var(--red);}
+    .vbtn.no:hover,.vbtn.no.on{background:var(--red);color:#fff;}
+    .vbtn.skip{color:var(--mut);border-color:var(--bd2);}
+    .vbtn.skip:hover{background:var(--s3);color:var(--dim);}
+    .vbtn:disabled{opacity:.3;cursor:not-allowed;}
+    .vet-canvas{flex:1;position:relative;overflow:hidden;}
+    .entry-lbl{font-family:var(--mono);font-size:9px;color:var(--cyn);margin-right:8px;}
+    .kbdhint{position:fixed;bottom:10px;right:12px;font-family:var(--mono);font-size:9px;color:var(--mut);background:var(--s1);padding:4px 10px;border-radius:3px;border:1px solid var(--bd);z-index:50;}
+    kbd{background:var(--s3);border:1px solid var(--bd2);border-radius:2px;padding:1px 4px;font-size:8px;}
+    /* health */
+    .hgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;}
+    /* watchlist */
     .regime-pill{display:inline-block;padding:2px 7px;border-radius:10px;font-size:8px;font-weight:700;font-family:var(--mono);}
-    /* Pulse */
-    .pulse{animation:pulse 1.4s ease-in-out infinite;}
-    @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.25;}}
+    .dbar-wrap{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-family:var(--mono);font-size:9px;}
+    .dbar-bg{flex:1;height:10px;background:var(--s3);border-radius:2px;overflow:hidden;}
+    .dbar-fill{height:100%;border-radius:2px;}
   </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback } = React;
-const API = '';
+const A = '';
 
-// ─── utils ───────────────────────────────────────────────────
-const fmt1   = v => v != null ? v.toFixed(1) : '—';
-const fmt2   = v => v != null ? v.toFixed(2) : '—';
-const fmtPct = v => v != null ? `${(v*100).toFixed(1)}%` : '—';
-const fmtDelta  = v => v == null ? '—' : v > 0 ? `+${v}` : `${v}`;
-const fmtDeltaF = (v,d=1) => v == null ? '—' : v > 0 ? `+${v.toFixed(d)}` : v.toFixed(d);
-const fmtDur = s => { if(!s) return ''; if(s<60) return `${Math.round(s)}s`; if(s<3600) return `${Math.floor(s/60)}m${Math.round(s%60)}s`; return `${Math.floor(s/3600)}h${Math.floor((s%3600)/60)}m`; };
-const deltaColor = (v, goodPos=true) => v==null?'var(--muted)':v===0?'var(--dim)':(v>0)===goodPos?'var(--green)':'var(--red)';
-const statusClass = s => ({'done':'b-done','running':'b-running','claimed':'b-running','queued':'b-queued','error':'b-error','stopped':'b-stopped'})[s]||'b-pending';
+const f1=v=>v!=null?v.toFixed(1):'—';
+const f2=v=>v!=null?v.toFixed(2):'—';
+const fpct=v=>v!=null?`${(v*100).toFixed(1)}%`:'—';
+const fD=v=>v==null?'—':v>0?`+${v}`:`${v}`;
+const fDf=(v,d=1)=>v==null?'—':v>0?`+${v.toFixed(d)}`:v.toFixed(d);
+const fdur=s=>{if(!s)return'';if(s<60)return`${Math.round(s)}s`;if(s<3600)return`${Math.floor(s/60)}m${Math.round(s%60)}s`;return`${Math.floor(s/3600)}h${Math.floor((s%3600)/60)}m`;};
+const dc=(v,gp=true)=>v==null?'var(--mut)':v===0?'var(--dim)':(v>0)===gp?'var(--grn)':'var(--red)';
+const sc=s=>({'done':'b-done','running':'b-run','claimed':'b-run','queued':'b-q','error':'b-err','stopped':'b-stop'})[s]||'b-pend';
+const rsc=s=>s>=.7?'var(--grn)':s>=.4?'var(--amb)':'var(--red)';
 
-function sma(data, period) {
-  const r = new Array(data.length).fill(null);
-  for (let i=period-1;i<data.length;i++) { let s=0,c=0; for(let j=i-period+1;j<=i;j++){if(data[j]!=null){s+=data[j];c++;}} if(c===period)r[i]=s/c; }
-  return r;
-}
-function ema(data, period) {
-  const k=2/(period+1),r=new Array(data.length).fill(null); let p=null;
-  for(let i=0;i<data.length;i++){if(data[i]==null)continue;if(p==null){p=data[i];r[i]=p;}else{p=data[i]*k+p*(1-k);r[i]=p;}}
-  return r;
-}
+function sma(d,p){const r=new Array(d.length).fill(null);for(let i=p-1;i<d.length;i++){let s=0,c=0;for(let j=i-p+1;j<=i;j++){if(d[j]!=null){s+=d[j];c++;}}if(c===p)r[i]=s/c;}return r;}
+function ema(d,p){const k=2/(p+1),r=new Array(d.length).fill(null);let v=null;for(let i=0;i<d.length;i++){if(d[i]==null)continue;v=v==null?d[i]:d[i]*k+v*(1-k);r[i]=v;}return r;}
 
-// ═══════════════════════════════════════════════════════════════
-// VETTING CHART
-// ═══════════════════════════════════════════════════════════════
-function VettingChart({ candles, signalDate, selectedDate, onSelectDate, exitDate, earningsDates }) {
-  const canvasRef = useRef(null), volRef = useRef(null), containerRef = useRef(null);
-  const [dims, setDims] = useState({w:0,h:0});
-  const [scrollOff, setScrollOff] = useState(0);
-  const [hoverIdx, setHoverIdx] = useState(null);
-  const VISIBLE = 90, LABEL_H = 22;
-
-  useEffect(() => {
-    const ro = new ResizeObserver(([e]) => setDims({w:e.contentRect.width,h:e.contentRect.height}));
-    if (containerRef.current) ro.observe(containerRef.current);
-    return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (candles.length) setScrollOff(Math.max(0, candles.length - VISIBLE));
-  }, [candles]);
-
-  const visible  = candles.slice(scrollOff, scrollOff + VISIBLE);
-  const maxOff   = Math.max(0, candles.length - VISIBLE);
-  const candleW  = dims.w / VISIBLE;
-  const candleX  = i => i * candleW + candleW / 2;
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !visible.length || !dims.w) return;
-    const W = dims.w, H = Math.max(1, dims.h - LABEL_H);
-    canvas.width = W; canvas.height = H;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#070809'; ctx.fillRect(0,0,W,H);
-    const mn = Math.min(...visible.map(c=>c.low))*0.997, mx = Math.max(...visible.map(c=>c.high))*1.003;
-    const py = p => H*(1-(p-mn)/(mx-mn));
-    const allCloses = candles.map(c=>c.close);
-    const e8  = ema(allCloses,8).slice(scrollOff,scrollOff+VISIBLE);
-    const e21 = ema(allCloses,21).slice(scrollOff,scrollOff+VISIBLE);
-    const s50 = sma(allCloses,50).slice(scrollOff,scrollOff+VISIBLE);
-    const s200= sma(allCloses,200).slice(scrollOff,scrollOff+VISIBLE);
-    const drawLine = (vals,color,lw) => {
-      ctx.beginPath(); ctx.strokeStyle=color; ctx.lineWidth=lw; let st=false;
-      vals.forEach((v,i)=>{if(v==null)return;const x=candleX(i),y=py(v);if(!st){ctx.moveTo(x,y);st=true;}else ctx.lineTo(x,y);});
-      ctx.stroke();
-    };
-    drawLine(s200,'rgba(167,139,250,.4)',1.2); drawLine(s50,'rgba(251,191,36,.5)',1.2);
-    drawLine(e21,'rgba(91,156,246,.65)',1); drawLine(e8,'rgba(62,207,142,.65)',1);
-    const earnSet = new Set(earningsDates||[]);
-    visible.forEach((c,i)=>{
-      if(!earnSet.has(c.date))return;
-      ctx.fillStyle='rgba(167,139,250,.08)'; ctx.fillRect(candleX(i)-candleW/2,0,candleW,H);
-      ctx.fillStyle='rgba(167,139,250,.7)'; ctx.font='8px JetBrains Mono'; ctx.fillText('E',candleX(i)-3,10);
+// ════════════════════════════════════════════════════════════════
+// OHLCV CHART  — 250-bar lookback, 80-bar forward, EMA8/21, SMA50/200, earnings markers
+// ════════════════════════════════════════════════════════════════
+function Chart({candles,signalDate,entryDate,onPickEntry,exitDate,earnings}){
+  const cref=useRef(),lref=useRef(),wrap=useRef();
+  const [dims,setDims]=useState({w:0,h:0});
+  const [off,setOff]=useState(0);
+  const [hover,setHover]=useState(null);
+  const VIS=120,LH=22;
+  useEffect(()=>{
+    const ro=new ResizeObserver(([e])=>setDims({w:e.contentRect.width,h:e.contentRect.height}));
+    if(wrap.current)ro.observe(wrap.current);
+    return()=>ro.disconnect();
+  },[]);
+  useEffect(()=>{if(candles.length)setOff(Math.max(0,candles.length-VIS));},[candles]);
+  const vis=candles.slice(off,off+VIS);
+  const maxOff=Math.max(0,candles.length-VIS);
+  const cw=dims.w/VIS;
+  const cx=i=>i*cw+cw/2;
+  useEffect(()=>{
+    const cv=cref.current;if(!cv||!vis.length||!dims.w)return;
+    const W=dims.w,H=Math.max(1,dims.h-LH);
+    cv.width=W;cv.height=H;
+    const ctx=cv.getContext('2d');
+    ctx.fillStyle='#070809';ctx.fillRect(0,0,W,H);
+    const mn=Math.min(...vis.map(c=>c.low))*.997,mx=Math.max(...vis.map(c=>c.high))*1.003;
+    const py=p=>H*(1-(p-mn)/(mx-mn));
+    const ac=candles.map(c=>c.close);
+    const e8=ema(ac,8).slice(off,off+VIS);
+    const e21=ema(ac,21).slice(off,off+VIS);
+    const s50=sma(ac,50).slice(off,off+VIS);
+    const s200=sma(ac,200).slice(off,off+VIS);
+    const ln=(vals,col,lw)=>{ctx.beginPath();ctx.strokeStyle=col;ctx.lineWidth=lw;let st=false;vals.forEach((p,i)=>{if(p==null)return;const x=cx(i),y=py(p);if(!st){ctx.moveTo(x,y);st=true;}else ctx.lineTo(x,y);});ctx.stroke();};
+    ln(s200,'rgba(167,139,250,.4)',1.2);ln(s50,'rgba(251,191,36,.5)',1.2);
+    ln(e21,'rgba(91,156,246,.65)',1);ln(e8,'rgba(62,207,142,.65)',1);
+    const eSet=new Set(earnings||[]);
+    vis.forEach((c,i)=>{
+      if(!eSet.has(c.date))return;
+      ctx.fillStyle='rgba(167,139,250,.07)';ctx.fillRect(cx(i)-cw/2,0,cw,H);
+      ctx.fillStyle='rgba(167,139,250,.8)';ctx.font='8px JetBrains Mono';ctx.fillText('E',cx(i)-3,10);
     });
-    let inExit=false;
-    visible.forEach((c,i)=>{
-      if(exitDate&&c.date>=exitDate)inExit=true;
-      if(inExit){ctx.fillStyle='rgba(240,107,107,.05)';ctx.fillRect(candleX(i)-candleW/2,0,candleW,H);}
+    let inX=false;
+    vis.forEach((c,i)=>{if(exitDate&&c.date>=exitDate)inX=true;if(inX){ctx.fillStyle='rgba(240,107,107,.05)';ctx.fillRect(cx(i)-cw/2,0,cw,H);}});
+    vis.forEach((c,i)=>{if(c.date===signalDate){ctx.fillStyle='rgba(91,156,246,.08)';ctx.fillRect(cx(i)-cw/2,0,cw,H);}});
+    const bw=Math.max(1,cw*.62);
+    vis.forEach((c,i)=>{
+      const x=cx(i),up=c.close>=c.open;
+      let col=up?'#3ecf8e':'#f06b6b';
+      if(c.date===signalDate)col='#5b9cf6';
+      if(c.date===entryDate)col='#22d3ee';
+      if(c.date===exitDate)col='#f5a623';
+      if(i===hover)col='#fff';
+      ctx.strokeStyle=col;ctx.lineWidth=.8;
+      ctx.beginPath();ctx.moveTo(x,py(c.high));ctx.lineTo(x,py(c.low));ctx.stroke();
+      const t=py(Math.max(c.open,c.close)),b=py(Math.min(c.open,c.close)),bh=Math.max(1,b-t);
+      if(up){ctx.strokeStyle=col;ctx.lineWidth=1;ctx.strokeRect(x-bw/2,t,bw,bh);}
+      else{ctx.fillStyle=col;ctx.fillRect(x-bw/2,t,bw,bh);}
     });
-    const bw = Math.max(1, candleW*0.62);
-    visible.forEach((c,i)=>{
-      const x=candleX(i), up=c.close>=c.open;
-      let color = up?'#3ecf8e':'#f06b6b';
-      if(c.date===signalDate)  color='#5b9cf6';
-      if(c.date===selectedDate)color='#22d3ee';
-      if(c.date===exitDate)    color='#f5a623';
-      if(i===hoverIdx)         color='#ffffff';
-      ctx.strokeStyle=color; ctx.lineWidth=0.8;
-      ctx.beginPath(); ctx.moveTo(x,py(c.high)); ctx.lineTo(x,py(c.low)); ctx.stroke();
-      const t=py(Math.max(c.open,c.close)), b=py(Math.min(c.open,c.close)), bh=Math.max(1,b-t);
-      if(up){ctx.strokeStyle=color;ctx.lineWidth=1;ctx.strokeRect(x-bw/2,t,bw,bh);}
-      else  {ctx.fillStyle=color;ctx.fillRect(x-bw/2,t,bw,bh);}
-    });
-    if(hoverIdx!=null&&visible[hoverIdx]){
-      const x=candleX(hoverIdx), c=visible[hoverIdx];
-      ctx.strokeStyle='rgba(255,255,255,.1)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
-      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); ctx.setLineDash([]);
-      ctx.fillStyle='rgba(255,255,255,.8)'; ctx.font='9px JetBrains Mono';
+    if(hover!=null&&vis[hover]){
+      const x=cx(hover),c=vis[hover];
+      ctx.strokeStyle='rgba(255,255,255,.1)';ctx.lineWidth=1;ctx.setLineDash([3,3]);
+      ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();ctx.setLineDash([]);
+      ctx.fillStyle='rgba(255,255,255,.8)';ctx.font='9px JetBrains Mono';
       ctx.fillText(`${c.date}  O:${c.open.toFixed(2)} H:${c.high.toFixed(2)} L:${c.low.toFixed(2)} C:${c.close.toFixed(2)}`,8,14);
     }
     ctx.font='8px JetBrains Mono';
     [['EMA8','rgba(62,207,142,.8)'],['EMA21','rgba(91,156,246,.8)'],['SMA50','rgba(251,191,36,.8)'],['SMA200','rgba(167,139,250,.8)']].forEach(([l,c],i)=>{
-      ctx.fillStyle=c; ctx.fillRect(W-200+i*50-2,H-12,6,6);
-      ctx.fillStyle='rgba(255,255,255,.35)'; ctx.fillText(l,W-200+i*50+8,H-6);
+      ctx.fillStyle=c;ctx.fillRect(W-200+i*50,H-12,6,6);
+      ctx.fillStyle='rgba(255,255,255,.35)';ctx.fillText(l,W-200+i*50+9,H-5);
     });
-  }, [visible, dims, hoverIdx, signalDate, selectedDate, exitDate, earningsDates]);
-
-  useEffect(() => {
-    const canvas=volRef.current;
-    if(!canvas||!visible.length||!dims.w)return;
-    canvas.width=dims.w; canvas.height=LABEL_H;
-    const ctx=canvas.getContext('2d');
-    ctx.fillStyle='#070809'; ctx.fillRect(0,0,dims.w,LABEL_H);
-    ctx.fillStyle='rgba(255,255,255,.2)'; ctx.font='8px JetBrains Mono';
-    const step=Math.max(1,Math.floor(VISIBLE/8));
-    visible.forEach((c,i)=>{if(i%step===0){const p=c.date.split('-');ctx.fillText(`${p[1]}/${p[2]}`,candleX(i)-10,LABEL_H-5);}});
-  }, [visible, dims]);
-
-  const getIdx = (e,canvas) => { const r=canvas.getBoundingClientRect(),idx=Math.floor((e.clientX-r.left)/candleW); return idx>=0&&idx<visible.length?idx:null; };
-
-  return (
-    <div ref={containerRef} style={{width:'100%',height:'100%',display:'flex',flexDirection:'column'}}>
-      <canvas ref={canvasRef} style={{display:'block',cursor:'crosshair',flex:1}}
-        onMouseMove={e=>setHoverIdx(getIdx(e,canvasRef.current))}
-        onMouseLeave={()=>setHoverIdx(null)}
-        onClick={e=>{const idx=getIdx(e,canvasRef.current);if(idx!=null&&visible[idx])onSelectDate(visible[idx].date);}}
-        onWheel={e=>{e.preventDefault();setScrollOff(p=>Math.min(Math.max(0,p+(e.deltaY>0?5:-5)),maxOff));}}
-      />
-      <canvas ref={volRef} style={{display:'block',height:LABEL_H,flexShrink:0}} />
+  },[vis,dims,hover,signalDate,entryDate,exitDate,earnings]);
+  useEffect(()=>{
+    const cv=lref.current;if(!cv||!vis.length||!dims.w)return;
+    cv.width=dims.w;cv.height=LH;
+    const ctx=cv.getContext('2d');
+    ctx.fillStyle='#070809';ctx.fillRect(0,0,dims.w,LH);
+    ctx.fillStyle='rgba(255,255,255,.18)';ctx.font='8px JetBrains Mono';
+    const step=Math.max(1,Math.floor(VIS/8));
+    vis.forEach((c,i)=>{if(i%step===0){const p=c.date.split('-');ctx.fillText(`${p[1]}/${p[2]}`,cx(i)-10,LH-5);}});
+  },[vis,dims]);
+  const gi=(e,cv)=>{const r=cv.getBoundingClientRect(),i=Math.floor((e.clientX-r.left)/cw);return i>=0&&i<vis.length?i:null;};
+  return(
+    <div ref={wrap} style={{width:'100%',height:'100%',display:'flex',flexDirection:'column'}}>
+      <canvas ref={cref} style={{display:'block',flex:1,cursor:'crosshair'}}
+        onMouseMove={e=>setHover(gi(e,cref.current))}
+        onMouseLeave={()=>setHover(null)}
+        onClick={e=>{const i=gi(e,cref.current);if(i!=null&&vis[i])onPickEntry(vis[i].date);}}
+        onWheel={e=>{e.preventDefault();setOff(p=>Math.min(Math.max(0,p+(e.deltaY>0?5:-5)),maxOff));}}/>
+      <canvas ref={lref} style={{display:'block',height:LH,flexShrink:0}}/>
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════
-// PIPELINE PAGE
-// ═══════════════════════════════════════════════════════════════
-function PipelinePage() {
-  const [pipe, setPipe] = useState(null);
-  const [logs, setLogs] = useState({});
-  const logRefs = useRef({}), logCounts = useRef({});
-  useEffect(() => {
-    const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
-    load(); const id=setInterval(load,3000); return ()=>clearInterval(id);
-  }, []);
-  const runningId = pipe?.running;
-  useEffect(() => {
-    if(!runningId)return;
-    const poll = () => fetch(`${API}/api/pipeline/logs/${runningId}?after=${logCounts.current[runningId]||0}`)
-      .then(r=>r.json()).then(d=>{if(d.lines?.length){logCounts.current[runningId]=(logCounts.current[runningId]||0)+d.lines.length;setLogs(p=>({...p,[runningId]:[...(p[runningId]||[]),...d.lines]}));}}).catch(()=>{});
-    poll(); const id=setInterval(poll,2000); return ()=>clearInterval(id);
-  }, [runningId]);
-  useEffect(()=>{if(runningId&&logRefs.current[runningId])logRefs.current[runningId].scrollTop=logRefs.current[runningId].scrollHeight;},[logs,runningId]);
-  const nightlyStatus = pipe?.steps?.find(s=>s.id==='nightly')?.state?.status||'pending';
-  return (
+// ════════════════════════════════════════════════════════════════
+// PIPELINE PAGE — The Loop
+// Shows V2 step IDs: nightly, grind, scan, exit_filter, exit_grind, classify, vet, regime, health
+// ════════════════════════════════════════════════════════════════
+function PipelinePage(){
+  const [data,setData]=useState(null);
+  const [logs,setLogs]=useState({});
+  const logRefs=useRef({}),logN=useRef({});
+  useEffect(()=>{
+    const load=()=>fetch(`${A}/api/pipeline/steps`).then(r=>r.json()).then(setData).catch(()=>{});
+    load();const id=setInterval(load,3000);return()=>clearInterval(id);
+  },[]);
+  const rid=data?.running;
+  useEffect(()=>{
+    if(!rid)return;
+    const poll=()=>fetch(`${A}/api/pipeline/logs/${rid}?after=${logN.current[rid]||0}`)
+      .then(r=>r.json()).then(d=>{if(d.lines?.length){logN.current[rid]=(logN.current[rid]||0)+d.lines.length;setLogs(p=>({...p,[rid]:[...(p[rid]||[]),...d.lines]}));}}).catch(()=>{});
+    poll();const id=setInterval(poll,2000);return()=>clearInterval(id);
+  },[rid]);
+  useEffect(()=>{if(rid&&logRefs.current[rid])logRefs.current[rid].scrollTop=logRefs.current[rid].scrollHeight;},[logs,rid]);
+  const ns=data?.steps?.find(s=>s.id==='nightly')?.state?.status||'pending';
+  return(
     <div>
-      <div className="stat-row">
-        <div className="stat-box"><div className="stat-lbl">Nightly</div><div className={`stat-val ${nightlyStatus==='done'?'g':['running','claimed','queued'].includes(nightlyStatus)?'a':''}`} style={{fontSize:16}}>{nightlyStatus.toUpperCase()}</div></div>
-        <div className="stat-box"><div className="stat-lbl">Agent</div><div className={`stat-val ${pipe?.agent_status==='online'?'g':'r'}`} style={{fontSize:16}}>{pipe?.agent_status?.toUpperCase()||'—'}</div></div>
-        <div className="stat-box"><div className="stat-lbl">Running</div><div className="stat-val b" style={{fontSize:13,marginTop:4}}>{pipe?.running||'—'}</div></div>
+      <div className="stats">
+        <div className="stat"><div className="stat-l">Nightly</div><div className={`stat-v ${ns==='done'?'g':['running','claimed','queued'].includes(ns)?'a':''}`} style={{fontSize:14}}>{ns.toUpperCase()}</div></div>
+        <div className="stat"><div className="stat-l">Agent</div><div className={`stat-v ${data?.agent_status==='online'?'g':'r'}`} style={{fontSize:14}}>{data?.agent_status?.toUpperCase()||'—'}</div></div>
+        <div className="stat"><div className="stat-l">Running</div><div className="stat-v b" style={{fontSize:12,marginTop:4}}>{data?.running||'—'}</div></div>
       </div>
       <div className="card">
-        <div className="card-title">Pipeline Steps</div>
-        {pipe?.steps?.map(s=>(
-          <div key={s.id} className="pipe-step-row">
-            <span className={`badge ${statusClass(s.state?.status||'pending')}`}>{s.state?.status||'pending'}</span>
-            <span className="pipe-step-name">{s.name}</span>
-            <span className="pipe-step-meta">{fmtDur(s.state?.duration_s)}</span>
-            <span className="pipe-step-meta" style={{maxWidth:280,textAlign:'right',color:'var(--muted)'}}>{s.state?.result_summary||''}</span>
+        <div className="card-ttl">The Loop — Cycle N</div>
+        {data?.steps?.map(s=>(
+          <div key={s.id} className="prow">
+            <span className={`bdg ${sc(s.state?.status||'pending')}`}>{s.state?.status||'pending'}</span>
+            <span className="prow-name">{s.name}</span>
+            <span className="prow-meta">{fdur(s.state?.duration_s)}</span>
+            <span className="prow-desc">{s.state?.result_summary||''}</span>
           </div>
         ))}
       </div>
-      {runningId&&logs[runningId]?.length>0&&(
-        <div className="log-box" ref={el=>{logRefs.current[runningId]=el;}}>
-          {logs[runningId].map((l,i)=><div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')||l.toLowerCase().includes('done')?'ok':''}>{l}</div>)}
+      {rid&&logs[rid]?.length>0&&(
+        <div className="logbox" ref={el=>{logRefs.current[rid]=el;}}>
+          {logs[rid].map((l,i)=><div key={i} className={l.toLowerCase().includes('error')?'er':l.includes('✓')||l.toLowerCase().includes('done')?'ok':''}>{l}</div>)}
         </div>
       )}
-      {pipe?.agent_status!=='online'&&(
+      {data?.agent_status!=='online'&&(
         <div className="card" style={{borderColor:'rgba(245,166,35,.2)',background:'rgba(245,166,35,.03)',marginTop:10}}>
-          <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--amber)',marginBottom:6}}>Agent offline — start to enable pipeline triggers:</div>
-          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
-            style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--cyan)',background:'var(--bg)',padding:'5px 10px',borderRadius:3,border:'1px solid var(--border)',cursor:'pointer'}}>
-            python local_runner/agent.py <span style={{fontSize:8,color:'var(--muted)',marginLeft:8}}>click to copy</span>
+          <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--amb)',marginBottom:6}}>Agent offline:</div>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--grn)';setTimeout(()=>e.target.style.color='var(--cyn)',900);}}
+            style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--cyn)',background:'var(--bg)',padding:'5px 10px',borderRadius:3,border:'1px solid var(--bd)',cursor:'pointer'}}>
+            python local_runner/agent.py <span style={{fontSize:8,color:'var(--mut)',marginLeft:8}}>click to copy</span>
           </div>
         </div>
       )}
@@ -346,448 +308,581 @@ function PipelinePage() {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════
-// SAMPLES PAGE
-// ═══════════════════════════════════════════════════════════════
-function SamplesPage({ setup }) {
-  const [examples,setExamples]=useState([]); const [rejected,setRejected]=useState([]); const [pending,setPending]=useState([]);
-  const [tab,setTab]=useState('examples'); const [loading,setLoading]=useState(true);
-  const reload = useCallback(()=>{
-    setLoading(true);
-    Promise.all([
-      fetch(`${API}/api/examples/${setup}`).then(r=>r.json()).then(d=>setExamples(d.examples||[])),
-      fetch(`${API}/api/vetting/${setup}/rejected`).then(r=>r.json()).then(d=>setRejected(d.rejected||[])),
-      fetch(`${API}/api/pending/${setup}`).then(r=>r.json()).then(d=>setPending(d.pending||[])),
-    ]).finally(()=>setLoading(false));
-  },[setup]);
-  useEffect(reload,[reload]);
-  const approve = id => fetch(`${API}/api/pending/${setup}/${id}/approve`,{method:'POST'}).then(reload);
-  const rejectP = id => fetch(`${API}/api/pending/${setup}/${id}/reject`,{method:'POST'}).then(reload);
-  const approveAll = () => fetch(`${API}/api/pending/${setup}/approve-all`,{method:'POST'}).then(reload);
-  return (
-    <div>
-      <div className="stat-row">
-        <div className="stat-box"><div className="stat-lbl">Optimal Samples</div><div className="stat-val g">{examples.length}</div></div>
-        <div className="stat-box"><div className="stat-lbl">Pending Review</div><div className="stat-val a">{pending.length}</div></div>
-        <div className="stat-box"><div className="stat-lbl">Rejected</div><div className="stat-val r">{rejected.length}</div></div>
-        <div className="stat-box">
-          <div className="stat-lbl">Date Range</div>
-          <div className="stat-val" style={{fontSize:11}}>{examples.length>0?`${examples.reduce((a,e)=>e.entryDate<a?e.entryDate:a,'9999').slice(0,7)} – ${examples.reduce((a,e)=>e.entryDate>a?e.entryDate:a,'0000').slice(0,7)}`:'—'}</div>
-        </div>
-      </div>
-      <div className="tab-row">
-        <button className={`tab-btn ${tab==='examples'?'active':''}`} onClick={()=>setTab('examples')}>Samples ({examples.length})</button>
-        <button className={`tab-btn ${tab==='pending'?'active':''}`} onClick={()=>setTab('pending')}>AI Queue ({pending.length})</button>
-        <button className={`tab-btn ${tab==='rejected'?'active':''}`} onClick={()=>setTab('rejected')}>Rejected ({rejected.length})</button>
-      </div>
-      {loading&&<div className="empty"><div className="ico">⏳</div>Loading...</div>}
-      {!loading&&tab==='examples'&&(examples.length===0?<div className="empty"><div className="ico">∅</div>No examples yet</div>:
-        <div className="ex-grid">{examples.map(ex=><div key={ex.id} className="ex-card"><div className="ex-card-ticker">{ex.ticker}</div><div className="ex-card-date">{ex.entryDate}</div>{ex.adrMove!=null&&<div className="ex-card-adr">+{ex.adrMove} ADR</div>}</div>)}</div>)}
-      {!loading&&tab==='pending'&&(
-        <div>
-          {pending.filter(p=>p.ai_verdict).length>0&&(
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-              <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--dim)'}}>{pending.filter(p=>p.ai_verdict==='APPROVE').length} APPROVE · {pending.filter(p=>p.ai_verdict==='REJECT').length} REJECT</span>
-              <button className="btn btn-go" onClick={approveAll}>Approve All AI-Approved</button>
-            </div>
-          )}
-          {pending.length===0?<div className="empty"><div className="ico">✓</div>No pending items</div>:
-            <table className="data-table"><thead><tr><th>Ticker</th><th>Entry Date</th><th>AI Verdict</th><th>Reasoning</th><th></th></tr></thead>
-              <tbody>{pending.map(p=><tr key={p.id}><td style={{fontWeight:700}}>{p.ticker}</td><td>{p.entry_date}</td>
-                <td>{p.ai_verdict?<span className={`badge ${p.ai_verdict==='APPROVE'?'b-done':'b-error'}`}>{p.ai_verdict}</span>:<span className="badge b-pending">PENDING</span>}</td>
-                <td style={{color:'var(--muted)',maxWidth:280}}>{p.ai_reasoning||'—'}</td>
-                <td><div style={{display:'flex',gap:4}}><button className="btn btn-go" style={{padding:'3px 8px'}} onClick={()=>approve(p.id)}>✓</button><button className="btn btn-stop" style={{padding:'3px 8px'}} onClick={()=>rejectP(p.id)}>✗</button></div></td>
-              </tr>)}</tbody>
-            </table>}
-        </div>
-      )}
-      {!loading&&tab==='rejected'&&(rejected.length===0?<div className="empty"><div className="ico">∅</div>No rejected signals</div>:
-        <table className="data-table"><thead><tr><th>Ticker</th><th>Signal Date</th><th>Rejected At</th></tr></thead>
-          <tbody>{rejected.map((r,i)=><tr key={i}><td style={{fontWeight:700}}>{r.ticker}</td><td>{r.signal_date}</td><td style={{color:'var(--muted)'}}>{r.created_at?.slice(0,10)}</td></tr>)}</tbody>
-        </table>)}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// VETTING PAGE  — source: cycle_signals (V2 DB)
-// ═══════════════════════════════════════════════════════════════
-function VettingPage({ setup }) {
-  const [currentCycle,setCurrentCycle]=useState(null);
-  const [signals,setSignals]=useState([]); const [loading,setLoading]=useState(true);
-  const [filter,setFilter]=useState('unvetted'); const [currentIdx,setCurrentIdx]=useState(0);
-  const [candles,setCandles]=useState([]); const [chartLoading,setChartLoading]=useState(false);
-  const [selectedEntry,setSelectedEntry]=useState(null); const [earningsDates,setEarningsDates]=useState([]);
+// ════════════════════════════════════════════════════════════════
+// LAYER 5: VET
+// Stage 1 — human review
+//   source: cycle_signals, exclude is_example=1, sort by move_adr DESC
+//   keys: 1=YES (→ pending_examples / AI queue), 2=NO (MANUAL_LOSS), 3=SKIP
+//   shows per signal: ticker, signal_date, move_adr, mfe_adr, capture_eff, exit_date
+//   shows: N remaining, N examples added this session
+//   chart: 250-bar lookback, 80-bar forward, EMA8/21, SMA50/200, earnings markers
+//   auto-advances after decision
+// Stage 2 — AI review queue
+//   source: pending_examples with ai_verdict set (GREEN_LIGHT / FLAG)
+//   shows ai_verdict + ai_reasoning per pick
+//   approve → example library; reject → LOSS
+// Persistent regrind banner: N examples added since last grind (from cycle_health latest)
+// ════════════════════════════════════════════════════════════════
+function VetPage({setup}){
+  const [cycle,setCycle]=useState(null);
+  const [sigs,setSigs]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [view,setView]=useState('stage1');
+  const [filter,setFilter]=useState('unvetted');
+  const [idx,setIdx]=useState(0);
+  const [candles,setCandles]=useState([]);
+  const [chartLoading,setChartLoading]=useState(false);
+  const [entry,setEntry]=useState(null);
+  const [earnings,setEarnings]=useState([]);
   const [saving,setSaving]=useState(false);
-  const ohlcvCache=useRef({});
+  const [addedSession,setAdded]=useState(0);
+  const [pending,setPending]=useState([]);
+  const [regrindN,setRegrindN]=useState(0);
+  const oCache=useRef({});
 
-  useEffect(()=>{
+  const loadAll=useCallback(()=>{
     setLoading(true);
-    fetch(`${API}/api/v2/cycles/${setup}`).then(r=>r.json()).then(d=>{
-      const list=d.cycles||[]; const cur=list.find(c=>c.is_current===1)||list[0]||null;
-      setCurrentCycle(cur);
-    }).catch(()=>{ setCurrentCycle(null); setLoading(false); });
+    fetch(`${A}/api/v2/cycles/${setup}`).then(r=>r.json()).then(d=>{
+      const list=d.cycles||[];
+      const cur=list.find(c=>c.is_current===1)||list[0]||null;
+      setCycle(cur);
+      const tasks=[
+        fetch(`${A}/api/pending/${setup}`).then(r=>r.json()).then(d=>setPending(d.pending||[])),
+        fetch(`${A}/api/v2/health/${setup}/latest`).then(r=>r.json()).then(d=>setRegrindN(d.health?.examples_since_last_grind||0)).catch(()=>{}),
+      ];
+      if(cur){
+        tasks.push(
+          fetch(`${A}/api/v2/cycles/${cur.cycle_id}/signals`).then(r=>r.json()).then(d=>{
+            const s=(d.signals||[]).filter(x=>!x.is_example);
+            s.sort((a,b)=>(b.move_adr||0)-(a.move_adr||0));
+            setSigs(s);setIdx(0);
+          })
+        );
+      }
+      Promise.all(tasks).finally(()=>setLoading(false));
+    }).catch(()=>setLoading(false));
   },[setup]);
 
-  useEffect(()=>{
-    if(!currentCycle){setSignals([]);setLoading(false);return;}
-    setLoading(true);
-    fetch(`${API}/api/v2/cycles/${currentCycle.cycle_id}/signals`).then(r=>r.json()).then(d=>{
-      const sigs=(d.signals||[]).filter(s=>!s.is_example);
-      setSignals(sigs); setCurrentIdx(0); setLoading(false);
-    }).catch(()=>{setSignals([]);setLoading(false);});
-  },[currentCycle]);
+  useEffect(()=>{loadAll();},[loadAll]);
 
-  const filtered = signals.filter(s=>{
-    if(filter==='all') return true;
-    if(filter==='unvetted') return !s.vetted_at;
-    if(filter==='yes') return s.classification==='MANUAL_WIN'||s.classification==='AI_WIN';
-    if(filter==='no')  return s.classification==='MANUAL_LOSS';
+  const isVetted=s=>s.vetted_at||s.classification==='MANUAL_WIN'||s.classification==='AI_WIN'||s.classification==='MANUAL_LOSS';
+  const filtered=sigs.filter(s=>{
+    if(filter==='all')return true;
+    if(filter==='unvetted')return!isVetted(s);
+    if(filter==='yes')return s.classification==='MANUAL_WIN'||s.classification==='AI_WIN';
+    if(filter==='no')return s.classification==='MANUAL_LOSS';
     if(filter==='auto')return s.classification==='AUTO_WIN'||s.classification==='AUTO_LOSS';
     return true;
   });
-  const current=filtered[currentIdx]||null;
-  const counts={all:signals.length,unvetted:0,yes:0,no:0,auto:0};
-  signals.forEach(s=>{
-    if(!s.vetted_at)counts.unvetted++;
-    else if(s.classification==='MANUAL_WIN'||s.classification==='AI_WIN')counts.yes++;
-    else if(s.classification==='MANUAL_LOSS')counts.no++;
-    if(s.classification==='AUTO_WIN'||s.classification==='AUTO_LOSS')counts.auto++;
-  });
+  const cur=filtered[idx]||null;
+  const counts={
+    all:sigs.length,
+    unvetted:sigs.filter(s=>!isVetted(s)).length,
+    yes:sigs.filter(s=>s.classification==='MANUAL_WIN'||s.classification==='AI_WIN').length,
+    no:sigs.filter(s=>s.classification==='MANUAL_LOSS').length,
+    auto:sigs.filter(s=>s.classification==='AUTO_WIN'||s.classification==='AUTO_LOSS').length,
+  };
 
-  function fetchOhlcv(ticker,date){
-    const key=`${ticker}_${date}`;
-    if(ohlcvCache.current[key])return Promise.resolve(ohlcvCache.current[key]);
-    return fetch(`${API}/api/vetting/${setup}/ohlcv/${ticker}?signal_date=${date}&lookback=250&forward=80`)
-      .then(r=>r.json()).then(d=>{ohlcvCache.current[key]=d.data||[];return ohlcvCache.current[key];});
+  function pf(ticker,date){
+    const k=`${ticker}_${date}`;if(oCache.current[k])return;
+    fetch(`${A}/api/vetting/${setup}/ohlcv/${ticker}?signal_date=${date}&lookback=250&forward=80`)
+      .then(r=>r.json()).then(d=>{oCache.current[k]=d.data||[];}).catch(()=>{});
   }
 
   useEffect(()=>{
-    if(!current){setCandles([]);setEarningsDates([]);return;}
-    setChartLoading(true); setSelectedEntry(null);
-    fetchOhlcv(current.ticker,current.signal_date).then(data=>{setCandles(data);setChartLoading(false);}).catch(()=>setChartLoading(false));
-    fetch(`${API}/api/vetting/earnings/${current.ticker}`).then(r=>r.json()).then(d=>setEarningsDates(d.earnings_dates||[])).catch(()=>{});
-    for(let i=1;i<=3;i++){const nxt=filtered[currentIdx+i];if(nxt)fetchOhlcv(nxt.ticker,nxt.signal_date).catch(()=>{});}
-  },[current?.ticker,current?.signal_date]);
+    if(!cur){setCandles([]);setEarnings([]);return;}
+    setChartLoading(true);setEntry(null);
+    const k=`${cur.ticker}_${cur.signal_date}`;
+    if(oCache.current[k]){setCandles(oCache.current[k]);setChartLoading(false);}
+    else{
+      fetch(`${A}/api/vetting/${setup}/ohlcv/${cur.ticker}?signal_date=${cur.signal_date}&lookback=250&forward=80`)
+        .then(r=>r.json()).then(d=>{oCache.current[k]=d.data||[];setCandles(oCache.current[k]);setChartLoading(false);}).catch(()=>setChartLoading(false));
+    }
+    fetch(`${A}/api/vetting/earnings/${cur.ticker}`).then(r=>r.json()).then(d=>setEarnings(d.earnings_dates||[])).catch(()=>{});
+    for(let i=1;i<=3;i++){const n=filtered[idx+i];if(n)pf(n.ticker,n.signal_date);}
+  },[cur?.ticker,cur?.signal_date]);
 
-  function saveVerdict(verdict){
-    if(!current)return;
-    if(verdict==='yes'&&!selectedEntry){alert('Click a candle to set entry date first');return;}
+  function decide(verdict){
+    if(!cur||saving)return;
+    if(verdict==='yes'&&!entry){alert('Click a candle to mark the entry bar first');return;}
     setSaving(true);
-    fetch(`${API}/api/vetting/${setup}/decide`,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ticker:current.ticker,signal_date:current.signal_date,verdict,entry_date:verdict==='yes'?selectedEntry:null})})
+    fetch(`${A}/api/vetting/${setup}/decide`,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ticker:cur.ticker,signal_date:cur.signal_date,verdict,entry_date:verdict==='yes'?entry:null})})
     .then(r=>r.json()).then(()=>{
-      const newClass=verdict==='yes'?'MANUAL_WIN':'MANUAL_LOSS';
-      setSignals(p=>p.map(s=>s.ticker===current.ticker&&s.signal_date===current.signal_date?{...s,classification:newClass,vetted_at:new Date().toISOString()}:s));
+      if(verdict==='yes'){
+        setSigs(p=>p.map(s=>s.ticker===cur.ticker&&s.signal_date===cur.signal_date?{...s,classification:'MANUAL_WIN',vetted_at:new Date().toISOString()}:s));
+        setAdded(n=>n+1);
+      }else if(verdict==='no'){
+        setSigs(p=>p.map(s=>s.ticker===cur.ticker&&s.signal_date===cur.signal_date?{...s,classification:'MANUAL_LOSS',vetted_at:new Date().toISOString()}:s));
+      }
       setSaving(false);
-      const nxt=filtered.findIndex((s,i)=>i>currentIdx&&!s.vetted_at);
-      if(nxt>=0)setCurrentIdx(nxt); else if(currentIdx<filtered.length-1)setCurrentIdx(currentIdx+1);
+      const nxt=filtered.findIndex((s,i)=>i>idx&&!isVetted(s));
+      if(nxt>=0)setIdx(nxt);else if(idx<filtered.length-1)setIdx(idx+1);
     }).catch(()=>setSaving(false));
   }
 
+  const approveAI=id=>fetch(`${A}/api/pending/${setup}/${id}/approve`,{method:'POST'}).then(loadAll);
+  const rejectAI=id=>fetch(`${A}/api/pending/${setup}/${id}/reject`,{method:'POST'}).then(loadAll);
+  const approveAllAI=()=>fetch(`${A}/api/pending/${setup}/approve-all`,{method:'POST'}).then(loadAll);
+
   useEffect(()=>{
     const h=e=>{
-      if(e.key==='ArrowDown'||e.key==='j'){e.preventDefault();setCurrentIdx(i=>Math.min(i+1,filtered.length-1));}
-      if(e.key==='ArrowUp'||e.key==='k'){e.preventDefault();setCurrentIdx(i=>Math.max(i-1,0));}
-      if(e.key==='1'||e.key==='y')saveVerdict('yes');
-      if(e.key==='3'||e.key==='n')saveVerdict('no');
+      if(['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName))return;
+      if(view==='stage1'){
+        if(e.key==='ArrowDown'||e.key==='j'){e.preventDefault();setIdx(i=>Math.min(i+1,filtered.length-1));}
+        if(e.key==='ArrowUp'  ||e.key==='k'){e.preventDefault();setIdx(i=>Math.max(i-1,0));}
+        if(e.key==='1')decide('yes');
+        if(e.key==='2')decide('no');
+        if(e.key==='3')decide('skip');
+      }
     };
-    window.addEventListener('keydown',h); return ()=>window.removeEventListener('keydown',h);
-  },[current,selectedEntry,currentIdx,filtered.length]);
-
-  if(loading) return <div className="empty"><div className="ico">⏳</div>Loading signals...</div>;
-  if(!currentCycle) return <div className="empty"><div className="ico">⚙</div>No grind cycle for {setup.toUpperCase()}<div style={{fontSize:9,color:'var(--muted)',marginTop:4}}>Run grind_upload.py to create the first cycle</div></div>;
-  if(signals.length===0) return <div className="empty"><div className="ico">∅</div>No signals in cycle {currentCycle.cycle_id}<div style={{fontSize:9,color:'var(--muted)',marginTop:4}}>Run scan_signals.py to populate cycle_signals</div></div>;
-
-  return (
-    <div className="vet-layout">
-      <div className="vet-sidebar">
-        <div className="vet-filters">
-          {[['all','All'],['unvetted','New'],['yes','Yes'],['no','No'],['auto','Auto']].map(([f,l])=>(
-            <button key={f} className={`vet-filter-btn ${filter===f?'active':''}`} onClick={()=>{setFilter(f);setCurrentIdx(0);}}>{l} {counts[f]??''}</button>
-          ))}
-        </div>
-        <div className="vet-list">
-          {filtered.map((sig,i)=>{
-            const cls=sig.classification||''; const isWin=cls.includes('WIN'); const isLoss=cls.includes('LOSS')&&!cls.includes('AUTO');
-            return (
-              <div key={`${sig.ticker}_${sig.signal_date}`}
-                className={`vet-row ${i===currentIdx?'active':''} ${isWin?'v-yes':isLoss?'v-no':''}`}
-                onClick={()=>setCurrentIdx(i)}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                  <span className="vet-ticker">{sig.ticker}</span>
-                  <span style={{display:'flex',alignItems:'center',gap:5}}>
-                    {sig.regime_score!=null&&<span style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--cyan)',fontWeight:700}}>{(sig.regime_score*100).toFixed(0)}%</span>}
-                    <span className="vet-adr">+{(sig.move_adr||0).toFixed(1)}</span>
-                  </span>
-                </div>
-                <div className="vet-meta">
-                  <span>{sig.signal_date}</span>
-                  <span>{sig.exit_date||''}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <div className="vet-chart-area">
-        {current?(
-          <>
-            <div className="vet-chart-hdr">
-              <div className="vet-chart-info">
-                <span className="vet-ticker-big">{current.ticker}</span>
-                <span className="vet-chart-meta">
-                  {current.signal_date}
-                  {current.exit_date&&` · exit ${current.exit_date}`}
-                  {current.move_adr!=null&&` · +${current.move_adr.toFixed(1)} ADR`}
-                  {current.capture_eff!=null&&` · ${(current.capture_eff*100).toFixed(0)}% cap`}
-                  {current.regime_score!=null&&` · regime ${(current.regime_score*100).toFixed(0)}%`}
-                  {current.classification&&` · ${current.classification}`}
-                </span>
-              </div>
-              <div className="vet-verdict-btns">
-                {selectedEntry&&<span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--cyan)',marginRight:8}}>entry: {selectedEntry}</span>}
-                <button className={`vet-vbtn yes ${current.classification==='MANUAL_WIN'?'sel':''}`} onClick={()=>saveVerdict('yes')} disabled={saving}>YES (1)</button>
-                <button className={`vet-vbtn no  ${current.classification==='MANUAL_LOSS'?'sel':''}`} onClick={()=>saveVerdict('no')}  disabled={saving}>NO (3)</button>
-              </div>
-            </div>
-            <div className="vet-canvas-wrap">
-              {chartLoading?<div className="empty">Loading chart...</div>:
-                <VettingChart candles={candles} signalDate={current.signal_date} selectedDate={selectedEntry}
-                  onSelectDate={setSelectedEntry} exitDate={current.exit_date} earningsDates={earningsDates}/>}
-            </div>
-          </>
-        ):<div className="empty"><div className="ico">↑↓</div>Select a signal</div>}
-      </div>
-      <div className="kbd-hint"><kbd>↑↓</kbd> nav · <kbd>1</kbd> yes · <kbd>3</kbd> no · click = entry bar</div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// CYCLE HEALTH PAGE
-// ═══════════════════════════════════════════════════════════════
-function CycleHealthPage({ setup }) {
-  const [cycles,setCycles]=useState([]); const [selCycle,setSelCycle]=useState(null);
-  const [health,setHealth]=useState(null); const [loading,setLoading]=useState(true);
-  const [reverting,setReverting]=useState(false); const [revertMsg,setRevertMsg]=useState('');
-  useEffect(()=>{
-    setLoading(true); setHealth(null); setRevertMsg('');
-    fetch(`${API}/api/v2/cycles/${setup}`).then(r=>r.json()).then(d=>{
-      const list=d.cycles||[]; setCycles(list);
-      const cur=list.find(c=>c.is_current===1)||list[0]||null; setSelCycle(cur?.cycle_id||null);
-    }).catch(()=>{setCycles([]);setSelCycle(null);}).finally(()=>setLoading(false));
-  },[setup]);
-  useEffect(()=>{
-    if(!selCycle){setHealth(null);return;}
-    fetch(`${API}/api/v2/health/${selCycle}`).then(r=>r.json()).then(d=>setHealth(d.health||null)).catch(()=>setHealth(null));
-  },[selCycle]);
-  const handleRevert = async cid=>{
-    if(!confirm(`Activate cycle ${cid} as current?`))return;
-    setReverting(true); setRevertMsg('');
-    try {
-      const r=await fetch(`${API}/api/v2/cycles/${cid}/activate`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-      const d=await r.json(); setRevertMsg(d.message||'Activated');
-      const r2=await fetch(`${API}/api/v2/cycles/${setup}`); const d2=await r2.json(); setCycles(d2.cycles||[]);
-    } catch(e){setRevertMsg(`Error: ${e.message}`);}
-    finally{setReverting(false);}
-  };
-  const recColor = r=>r==='promote'?'var(--green)':r==='flag'?'var(--amber)':'var(--red)';
-  const recLabel = r=>r==='promote'?'✓ PROMOTE':r==='flag'?'⚠ FLAG':'✗ HARD REJECT';
-  const selMeta  = cycles.find(c=>c.cycle_id===selCycle);
-  const regrindNeeded = (health?.examples_since_last_grind||0)>0;
-  if(loading)return <div className="empty"><div className="ico pulse" style={{width:8,height:8,borderRadius:'50%',background:'var(--blue)'}}/>Loading...</div>;
-  if(cycles.length===0)return <div className="empty"><div className="ico">⚙</div>No cycles yet for {setup.toUpperCase()}<div style={{fontSize:9,color:'var(--muted)',marginTop:4}}>Run grind_upload.py</div></div>;
-  return (
-    <div>
-      {regrindNeeded&&<div style={{background:'rgba(245,166,35,.07)',border:'1px solid rgba(245,166,35,.25)',borderRadius:5,padding:'9px 14px',marginBottom:10,display:'flex',gap:8,alignItems:'center'}}><span style={{fontSize:12}}>⚠</span><span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--amber)'}}>Regrind needed — {health.examples_since_last_grind} new example{health.examples_since_last_grind!==1?'s':''} added since this grind</span></div>}
-      <div className="card" style={{marginBottom:10}}>
-        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-          <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--muted)'}}>CYCLE</span>
-          <select value={selCycle||''} onChange={e=>setSelCycle(e.target.value)}
-            style={{fontFamily:'var(--mono)',fontSize:10,background:'var(--s2)',border:'1px solid var(--border)',borderRadius:3,color:'var(--text)',padding:'4px 8px',flex:1,minWidth:0}}>
-            {cycles.map(c=><option key={c.cycle_id} value={c.cycle_id}>{c.cycle_id}{c.is_current===1?' ← current':''} ({c.n_conditions} conds, {c.status})</option>)}
-          </select>
-          {selMeta?.is_current!==1&&selCycle&&<button className="btn btn-go" style={{flexShrink:0}} disabled={reverting} onClick={()=>handleRevert(selCycle)}>{reverting?'Activating...':'Restore as Current'}</button>}
-          {selMeta?.is_current===1&&<span className="badge b-done" style={{flexShrink:0}}>CURRENT</span>}
-        </div>
-        {revertMsg&&<div style={{marginTop:7,fontFamily:'var(--mono)',fontSize:10,color:revertMsg.startsWith('Error')?'var(--red)':'var(--green)'}}>{revertMsg}</div>}
-      </div>
-      {!health?<div className="empty" style={{height:160}}><div className="ico">📊</div>No health data for this cycle<div style={{fontSize:9,color:'var(--muted)'}}>Run cycle_health.py --setup {setup}</div></div>:(<>
-        <div style={{background:health.promote_recommendation==='promote'?'var(--green-bg)':health.promote_recommendation==='flag'?'var(--amber-bg)':'var(--red-bg)',border:`1px solid ${recColor(health.promote_recommendation)}`,borderRadius:5,padding:'10px 14px',marginBottom:10,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-          <span style={{fontFamily:'var(--mono)',fontSize:12,fontWeight:700,color:recColor(health.promote_recommendation)}}>{recLabel(health.promote_recommendation)}</span>
-          {health.flag_reason&&<span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--dim)',maxWidth:'55%',textAlign:'right'}}>{health.flag_reason}</span>}
-        </div>
-        <div style={{background:health.live_ready?'var(--green-bg)':'var(--s1)',border:`1px solid ${health.live_ready?'var(--green)':'var(--border)'}`,borderRadius:5,padding:'9px 14px',marginBottom:10}}>
-          <div style={{fontFamily:'var(--mono)',fontSize:11,fontWeight:700,color:health.live_ready?'var(--green)':'var(--muted)',marginBottom:health.live_ready?0:6}}>{health.live_ready?'✓ LIVE READY':'✗ NOT LIVE READY'}</div>
-          {!health.live_ready&&health.live_ready_blockers&&(()=>{try{return JSON.parse(health.live_ready_blockers).map((b,i)=><div key={i} style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--red)',paddingLeft:14}}>✗ {b}</div>);}catch{return null;}})()}
-        </div>
-        <div className="stat-row">
-          <div className="stat-box"><div className="stat-lbl">Signals</div><div className="stat-val b">{health.n_signals?.toLocaleString()||'—'}</div><div className="stat-sub">pk {fmt1(health.peak_per_day)}/d · avg {fmt1(health.avg_per_day)}/d</div></div>
-          <div className="stat-box"><div className="stat-lbl">Win Rate</div><div className={`stat-val ${health.win_rate_auto>=.4?'g':'r'}`}>{fmtPct(health.win_rate_auto)}</div><div className="stat-sub">auto-classified</div></div>
-          <div className="stat-box"><div className="stat-lbl">EV Estimate</div><div className={`stat-val ${health.ev_estimate>0?'g':'r'}`}>{fmt2(health.ev_estimate)}</div><div className="stat-sub">ADR / signal</div></div>
-          <div className="stat-box"><div className="stat-lbl">Stability</div><div className={`stat-val ${health.signal_stability_pct==null?'':health.signal_stability_pct>=80?'g':health.signal_stability_pct>=50?'a':'r'}`}>{health.signal_stability_pct!=null?`${health.signal_stability_pct.toFixed(0)}%`:'n/a'}</div><div className="stat-sub">vs prev cycle</div></div>
-        </div>
-        <div className="health-grid">
-          {[['Classification',[['win_rate_auto',fmtPct(health.win_rate_auto),health.win_rate_auto>=.4?'var(--green)':'var(--red)'],['win_rate_vetted',fmtPct(health.win_rate_vetted)],['pct_vetted',fmtPct(health.pct_manually_vetted)]]],
-            ['EV Estimate',[['median winner',`${fmt2(health.median_winner_adr)} ADR`,'var(--green)'],['median loser',`${fmt2(health.median_loser_adr)} ADR`,health.median_loser_adr!=null&&health.median_loser_adr<1?'var(--green)':'var(--red)'],['ev',fmt2(health.ev_estimate),health.ev_estimate>0?'var(--green)':'var(--red)']]],
-            ['Example Coverage',[['passing',`${health.examples_passing} / ${selMeta?.n_examples_at_grind??'?'}`,health.examples_passing===selMeta?.n_examples_at_grind?'var(--green)':'var(--red)'],['added this cycle',health.examples_added_this_cycle??'—'],['since last grind',health.examples_since_last_grind??'—',regrindNeeded?'var(--amber)':undefined]]],
-            [`Cycle Delta${health.prev_cycle_id?' vs '+health.prev_cycle_id:' (first)'}`,
-             [['signals Δ',fmtDelta(health.signal_count_delta),deltaColor(health.signal_count_delta,false)],['conditions Δ',fmtDelta(health.condition_count_delta),deltaColor(health.condition_count_delta)],['win_rate Δ',health.win_rate_delta!=null?`${fmtDeltaF(health.win_rate_delta*100,1)}%`:'—',deltaColor(health.win_rate_delta,true)]]]
-          ].map(([title,rows])=>(
-            <div key={title} className="card" style={{margin:0}}>
-              <div className="card-title">{title}</div>
-              {rows.map(([k,v,c])=><div key={k} className="metric-row"><span className="k">{k}</span><span className="v" style={c?{color:c}:{}}>{v}</span></div>)}
-            </div>
-          ))}
-        </div>
-        <div style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--muted)',textAlign:'right',marginTop:8}}>computed {health.computed_at}</div>
-      </>)}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// WATCHLIST PAGE  — regime model + scored signals
-// ═══════════════════════════════════════════════════════════════
-function WatchlistPage({ setup }) {
-  const [model,setModel]=useState(null); const [signals,setSignals]=useState([]);
-  const [loading,setLoading]=useState(true); const [tab,setTab]=useState('model');
-  useEffect(()=>{
-    setLoading(true);
-    Promise.all([
-      fetch(`${API}/api/v2/regime/model/${setup}`).then(r=>r.json()),
-      fetch(`${API}/api/v2/cycles/${setup}`).then(r=>r.json()),
-    ]).then(([md,cd])=>{
-      setModel(md.model||null);
-      const cur=(cd.cycles||[]).find(c=>c.is_current===1)||(cd.cycles||[])[0]||null;
-      if(cur)return fetch(`${API}/api/v2/cycles/${cur.cycle_id}/signals`).then(r=>r.json()).then(d=>{
-        const scored=(d.signals||[]).filter(s=>s.regime_score!=null);
-        scored.sort((a,b)=>b.regime_score-a.regime_score); setSignals(scored);
-      });
-    }).catch(()=>{}).finally(()=>setLoading(false));
-  },[setup]);
+    window.addEventListener('keydown',h);return()=>window.removeEventListener('keydown',h);
+  },[cur,entry,idx,filtered.length,view,saving]);
 
   if(loading)return <div className="empty"><div className="ico">⏳</div>Loading...</div>;
-  if(!model)return <div className="empty"><div className="ico">📡</div>No regime model for {setup.toUpperCase()} yet<div style={{fontSize:9,color:'var(--muted)',marginTop:4}}>Run market_grinder.py --setup {setup}</div></div>;
+  if(!cycle)return <div className="empty"><div className="ico">⚙</div>No grind cycle for {setup.toUpperCase()}<div style={{fontSize:9,color:'var(--mut)',marginTop:4}}>Run grind → scan → exit_filter → classify first</div></div>;
 
-  let decileData=null, topFeatures=null, featureWeights=null;
-  try{decileData=typeof model.win_rate_by_decile==='string'?JSON.parse(model.win_rate_by_decile):model.win_rate_by_decile;}catch{}
-  try{topFeatures=typeof model.top_features==='string'?JSON.parse(model.top_features):model.top_features;}catch{}
-  try{featureWeights=typeof model.feature_weights==='string'?JSON.parse(model.feature_weights):model.feature_weights;}catch{}
+  const greenlit=pending.filter(p=>p.ai_verdict==='GREEN_LIGHT');
+  const flagged=pending.filter(p=>p.ai_verdict==='FLAG');
+  const awaiting=pending.filter(p=>!p.ai_verdict);
 
-  const scoreColor = s=>s>=0.7?'var(--green)':s>=0.4?'var(--amber)':'var(--red)';
-  const buckets=[0,10,20,30,40,50,60,70,80,90].map(lo=>{
-    const inB=signals.filter(s=>s.regime_score*100>=lo&&s.regime_score*100<lo+10);
-    const wins=inB.filter(s=>s.classification&&s.classification.includes('WIN'));
-    return{lo,n:inB.length,wr:inB.length?wins.length/inB.length:null};
-  });
-
-  return (
-    <div>
-      <div className="stat-row">
-        <div className="stat-box"><div className="stat-lbl">Baseline Win Rate</div><div className={`stat-val ${model.baseline_win_rate>=.4?'g':'r'}`}>{fmtPct(model.baseline_win_rate)}</div></div>
-        <div className="stat-box"><div className="stat-lbl">Signals Used</div><div className="stat-val b">{model.n_signals_used?.toLocaleString()||'—'}</div></div>
-        <div className="stat-box"><div className="stat-lbl">Features Tested</div><div className="stat-val" style={{fontSize:16}}>{model.n_features_tested?.toLocaleString()||'—'}</div></div>
-        <div className="stat-box"><div className="stat-lbl">Scored Signals</div><div className="stat-val b">{signals.length}</div></div>
-      </div>
-      <div className="tab-row">
-        <button className={`tab-btn ${tab==='model'?'active':''}`} onClick={()=>setTab('model')}>Regime Model</button>
-        <button className={`tab-btn ${tab==='scores'?'active':''}`} onClick={()=>setTab('scores')}>Signal Scores ({signals.length})</button>
-      </div>
-      {tab==='model'&&(<>
-        {decileData&&<div className="card"><div className="card-title">Win Rate by Regime Decile (from model)</div>
-          {Object.entries(decileData).map(([d,wr])=>{const p=typeof wr==='number'?wr:0;const bc=p>=.6?'var(--green)':p>=.4?'var(--amber)':'var(--red)';return(
-            <div key={d} className="decile-bar-wrap">
-              <span style={{width:20,color:'var(--muted)',flexShrink:0}}>D{d}</span>
-              <div className="decile-bar-bg"><div className="decile-bar-fill" style={{width:`${p*100}%`,background:bc,opacity:.7}}/></div>
-              <span style={{width:36,textAlign:'right',color:bc,fontWeight:700,flexShrink:0}}>{(p*100).toFixed(0)}%</span>
-            </div>);})}
-        </div>}
-        <div className="card"><div className="card-title">Score Distribution — Actual Signals</div>
-          {buckets.map(b=>{const maxN=Math.max(...buckets.map(x=>x.n),1);return(
-            <div key={b.lo} className="decile-bar-wrap">
-              <span style={{width:44,color:'var(--muted)',flexShrink:0}}>{b.lo}–{b.lo+10}%</span>
-              <div className="decile-bar-bg"><div className="decile-bar-fill" style={{width:`${(b.n/maxN)*100}%`,background:'var(--blue)',opacity:.45}}/></div>
-              <span style={{width:24,textAlign:'right',color:'var(--dim)',flexShrink:0}}>{b.n}</span>
-              <span style={{width:36,textAlign:'right',flexShrink:0,color:b.wr!=null?(b.wr>=.5?'var(--green)':b.wr>=.35?'var(--amber)':'var(--red)'):'var(--muted)'}}>{b.wr!=null?`${(b.wr*100).toFixed(0)}%`:'—'}</span>
-            </div>);})}
+  return(
+    <div className="vet-shell">
+      <div className="vet-left">
+        {/* status: N remaining, N added this session */}
+        <div className="vet-statusbar">
+          <span style={{color:'var(--mut)'}}>remaining</span>
+          <span style={{color:'var(--amb)',fontWeight:700}}>{counts.unvetted}</span>
+          <span style={{color:'var(--mut)',marginLeft:6}}>added</span>
+          <span style={{color:'var(--grn)',fontWeight:700}}>{addedSession}</span>
+          <div style={{marginLeft:'auto',display:'flex',gap:3}}>
+            <button className={`tab ${view==='stage1'?'on':''}`} style={{padding:'2px 8px',fontSize:9,marginBottom:0,border:'none'}} onClick={()=>setView('stage1')}>Review</button>
+            <button className={`tab ${view==='stage2'?'on':''}`} style={{padding:'2px 8px',fontSize:9,marginBottom:0,border:'none'}} onClick={()=>setView('stage2')}>
+              AI Queue ({pending.length})
+            </button>
+          </div>
         </div>
-        {topFeatures&&<div className="card"><div className="card-title">Top Predictive Features</div>
-          {topFeatures.map((f,i)=>{const w=featureWeights?.[f];return(
-            <div key={f} className="metric-row">
-              <span className="k" style={{width:20,flexShrink:0}}>#{i+1}</span>
-              <span className="v" style={{flex:1,fontSize:9}}>{f}</span>
-              {w!=null&&<span style={{fontFamily:'var(--mono)',fontSize:9,fontWeight:700,width:52,textAlign:'right',color:w>0?'var(--red)':'var(--green)'}}>{w.toFixed(3)}</span>}
-            </div>);})}
-          <div style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--muted)',marginTop:8}}>Negative r = bearish market corr → better DTSS conditions historically</div>
-        </div>}
-        <div style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--muted)',textAlign:'right',marginTop:4}}>model updated {model.updated_at}</div>
-      </>)}
-      {tab==='scores'&&(signals.length===0?<div className="empty"><div className="ico">∅</div>No scored signals yet</div>:
-        <table className="data-table">
-          <thead><tr><th>#</th><th>Ticker</th><th>Signal Date</th><th>Regime</th><th>Move ADR</th><th>Classification</th><th>Exit Date</th></tr></thead>
-          <tbody>{signals.slice(0,50).map((s,i)=>{
-            const isWin=s.classification&&s.classification.includes('WIN');
-            return(<tr key={`${s.ticker}_${s.signal_date}`}>
-              <td style={{color:'var(--muted)'}}>{i+1}</td>
-              <td style={{fontWeight:700}}>{s.ticker}</td>
-              <td>{s.signal_date}</td>
-              <td><span className="regime-pill" style={{background:`rgba(${s.regime_score>=.7?'62,207,142':s.regime_score>=.4?'245,166,35':'240,107,107'},.15)`,color:scoreColor(s.regime_score)}}>{(s.regime_score*100).toFixed(0)}%</span></td>
-              <td style={{color:isWin?'var(--green)':'var(--red)'}}>{s.move_adr!=null?`+${s.move_adr.toFixed(1)}`:'—'}</td>
-              <td><span className={`badge ${isWin?'b-done':s.classification?'b-error':'b-pending'}`} style={{fontSize:7}}>{s.classification||'—'}</span></td>
-              <td style={{color:'var(--muted)',fontSize:9}}>{s.exit_date||'—'}</td>
-            </tr>);
-          })}</tbody>
+        {/* persistent regrind banner */}
+        {regrindN>0&&(
+          <div className="regrind-banner">
+            <span>⚠</span><span>regrind needed — {regrindN} example{regrindN!==1?'s':''} added since last grind</span>
+          </div>
+        )}
+        {/* stage 1: signal list */}
+        {view==='stage1'&&(<>
+          <div className="vet-filters">
+            {[['all','All'],['unvetted','New'],['yes','Yes'],['no','No'],['auto','Auto']].map(([f,l])=>(
+              <button key={f} className={`vf ${filter===f?'on':''}`} onClick={()=>{setFilter(f);setIdx(0);}}>{l}{filter===f?` ${counts[f]??''}`:''}</button>
+            ))}
+          </div>
+          <div className="vet-list">
+            {filtered.map((s,i)=>{
+              const cls=s.classification||'';
+              const isWin=cls==='MANUAL_WIN'||cls==='AI_WIN';
+              const isLoss=cls==='MANUAL_LOSS';
+              return(
+                <div key={`${s.ticker}_${s.signal_date}`}
+                  className={`vrow ${i===idx?'on':''} ${isWin?'win':isLoss?'loss':''}`}
+                  onClick={()=>setIdx(i)}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span className="vticker">{s.ticker}</span>
+                    <span style={{display:'flex',gap:5,alignItems:'center',fontFamily:'var(--mono)',fontSize:9}}>
+                      {s.mfe_adr!=null&&<span style={{color:'var(--cyn)'}}>mfe {s.mfe_adr.toFixed(1)}</span>}
+                      <span style={{color:'var(--grn)',fontWeight:600}}>+{(s.move_adr||0).toFixed(1)}</span>
+                    </span>
+                  </div>
+                  <div className="vmeta">
+                    <span>{s.signal_date}</span>
+                    <span style={{display:'flex',gap:5}}>
+                      {s.capture_eff!=null&&<span style={{color:'var(--cyn)'}}>{(s.capture_eff*100).toFixed(0)}%</span>}
+                      {s.exit_date&&<span>{s.exit_date}</span>}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+            {filtered.length===0&&<div className="empty" style={{height:160}}><div className="ico">✓</div>Nothing here</div>}
+          </div>
+        </>)}
+        {/* stage 2: AI queue */}
+        {view==='stage2'&&(
+          <div className="vet-list">
+            {pending.length===0&&<div className="empty" style={{height:200}}><div className="ico">🤖</div>AI queue empty</div>}
+            {greenlit.length>0&&(
+              <div style={{padding:'7px 10px',borderBottom:'1px solid var(--bd)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--dim)'}}>{greenlit.length} GREEN_LIGHT · {flagged.length} FLAG</span>
+                <button className="btn btn-go" style={{padding:'3px 10px'}} onClick={approveAllAI}>Approve All Green</button>
+              </div>
+            )}
+            {pending.map(p=>(
+              <div key={p.id} style={{padding:'9px 10px',borderBottom:'1px solid rgba(34,36,40,.5)'}}>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                  <span style={{fontFamily:'var(--mono)',fontSize:12,fontWeight:700}}>{p.ticker}</span>
+                  {p.ai_verdict
+                    ?<span className={`bdg ${p.ai_verdict==='GREEN_LIGHT'?'b-done':'b-err'}`}>{p.ai_verdict}</span>
+                    :<span className="bdg b-pend">PENDING</span>}
+                </div>
+                <div style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--mut)',marginBottom:5}}>{p.entry_date}</div>
+                {p.ai_reasoning&&<div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--dim)',marginBottom:7,lineHeight:1.5}}>{p.ai_reasoning}</div>}
+                <div style={{display:'flex',gap:4}}>
+                  <button className="btn btn-go" style={{padding:'3px 10px'}} onClick={()=>approveAI(p.id)}>Approve</button>
+                  <button className="btn btn-no" style={{padding:'3px 10px'}} onClick={()=>rejectAI(p.id)}>Reject</button>
+                </div>
+              </div>
+            ))}
+            {awaiting.length>0&&<div style={{padding:'6px 10px',fontFamily:'var(--mono)',fontSize:9,color:'var(--mut)'}}>{awaiting.length} awaiting AI review</div>}
+          </div>
+        )}
+      </div>
+      {/* chart area */}
+      <div className="vet-right">
+        {cur&&view==='stage1'?(
+          <>
+            <div className="vet-hdr">
+              <div>
+                <div style={{display:'flex',alignItems:'baseline',gap:12}}>
+                  <span style={{fontFamily:'var(--mono)',fontSize:18,fontWeight:700}}>{cur.ticker}</span>
+                  <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--dim)'}}>
+                    {cur.signal_date}
+                    {cur.exit_date&&` · exit ${cur.exit_date}`}
+                    {cur.move_adr!=null&&` · +${cur.move_adr.toFixed(1)} ADR`}
+                    {cur.mfe_adr!=null&&` · mfe ${cur.mfe_adr.toFixed(1)}`}
+                    {cur.capture_eff!=null&&` · ${(cur.capture_eff*100).toFixed(0)}% cap`}
+                    {cur.classification&&` · ${cur.classification}`}
+                  </span>
+                </div>
+              </div>
+              <div className="vet-btns">
+                {entry&&<span className="entry-lbl">entry: {entry}</span>}
+                <button className={`vbtn yes ${cur.classification==='MANUAL_WIN'?'on':''}`} onClick={()=>decide('yes')} disabled={saving}>YES (1)</button>
+                <button className={`vbtn no  ${cur.classification==='MANUAL_LOSS'?'on':''}`} onClick={()=>decide('no')}  disabled={saving}>NO (2)</button>
+                <button className="vbtn skip" onClick={()=>decide('skip')} disabled={saving}>SKIP (3)</button>
+              </div>
+            </div>
+            <div className="vet-canvas">
+              {chartLoading?<div className="empty">Loading chart...</div>
+                :<Chart candles={candles} signalDate={cur.signal_date} entryDate={entry}
+                    onPickEntry={setEntry} exitDate={cur.exit_date} earnings={earnings}/>}
+            </div>
+          </>
+        ):<div className="empty"><div className="ico">{view==='stage2'?'🤖':'↑↓'}</div>{view==='stage2'?'Review AI verdicts in the left panel':'Select a signal'}</div>}
+      </div>
+      {view==='stage1'&&<div className="kbdhint"><kbd>↑↓</kbd> nav · <kbd>1</kbd> yes · <kbd>2</kbd> no · <kbd>3</kbd> skip · click = entry bar</div>}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
+// OPTIMAL SAMPLES — examples table + rejected
+// ════════════════════════════════════════════════════════════════
+function SamplesPage({setup}){
+  const [ex,setEx]=useState([]);const [rej,setRej]=useState([]);const [tab,setTab]=useState('ex');const [loading,setLoading]=useState(true);
+  const reload=useCallback(()=>{
+    setLoading(true);
+    Promise.all([
+      fetch(`${A}/api/examples/${setup}`).then(r=>r.json()).then(d=>setEx(d.examples||[])),
+      fetch(`${A}/api/vetting/${setup}/rejected`).then(r=>r.json()).then(d=>setRej(d.rejected||[])),
+    ]).finally(()=>setLoading(false));
+  },[setup]);
+  useEffect(reload,[reload]);
+  return(
+    <div>
+      <div className="stats">
+        <div className="stat"><div className="stat-l">Optimal Samples</div><div className="stat-v g">{ex.length}</div></div>
+        <div className="stat"><div className="stat-l">Rejected</div><div className="stat-v r">{rej.length}</div></div>
+        <div className="stat"><div className="stat-l">Date Range</div><div className="stat-v" style={{fontSize:11}}>{ex.length>0?`${ex.reduce((a,e)=>e.entryDate<a?e.entryDate:a,'9999').slice(0,7)} – ${ex.reduce((a,e)=>e.entryDate>a?e.entryDate:a,'0000').slice(0,7)}`:'—'}</div></div>
+      </div>
+      <div className="tabs">
+        <button className={`tab ${tab==='ex'?'on':''}`} onClick={()=>setTab('ex')}>Samples ({ex.length})</button>
+        <button className={`tab ${tab==='rej'?'on':''}`} onClick={()=>setTab('rej')}>Rejected ({rej.length})</button>
+      </div>
+      {loading&&<div className="empty"><div className="ico">⏳</div>Loading...</div>}
+      {!loading&&tab==='ex'&&(ex.length===0?<div className="empty"><div className="ico">∅</div>No examples yet</div>:
+        <table className="tbl"><thead><tr><th>Ticker</th><th>Entry Date</th><th>Chart Date</th></tr></thead>
+          <tbody>{ex.map(e=><tr key={e.id}><td style={{fontWeight:700}}>{e.ticker}</td><td>{e.entryDate}</td><td>{e.chartDate}</td></tr>)}</tbody>
+        </table>)}
+      {!loading&&tab==='rej'&&(rej.length===0?<div className="empty"><div className="ico">∅</div>No rejected signals</div>:
+        <table className="tbl"><thead><tr><th>Ticker</th><th>Signal Date</th><th>Rejected At</th></tr></thead>
+          <tbody>{rej.map((r,i)=><tr key={i}><td style={{fontWeight:700}}>{r.ticker}</td><td>{r.signal_date}</td><td style={{color:'var(--mut)'}}>{r.created_at?.slice(0,10)}</td></tr>)}</tbody>
         </table>)}
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════
-// APP
-// ═══════════════════════════════════════════════════════════════
-function App() {
-  const [section,setSection]=useState('pipeline');
-  const [setup,setSetup]=useState('dtss');
-  const [tab,setTab]=useState('vetting');
-  const [agentOnline,setAgentOnline]=useState(false);
+// ════════════════════════════════════════════════════════════════
+// LAYER 7: HEALTH CHECK
+// All cycle_health metrics per spec: signal quality, example coverage,
+// classification quality, EV estimate, cycle delta
+// promote/flag/hard_reject banner, live-ready with blockers, revert button
+// ════════════════════════════════════════════════════════════════
+function HealthPage({setup}){
+  const [cycles,setCycles]=useState([]);const [sel,setSel]=useState(null);
+  const [health,setHealth]=useState(null);const [loading,setLoading]=useState(true);
+  const [reverting,setReverting]=useState(false);const [msg,setMsg]=useState('');
   useEffect(()=>{
-    const chk=()=>fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(d=>setAgentOnline(d.agent_status==='online')).catch(()=>setAgentOnline(false));
-    chk(); const id=setInterval(chk,5000); return ()=>clearInterval(id);
+    setLoading(true);setHealth(null);setMsg('');
+    fetch(`${A}/api/v2/cycles/${setup}`).then(r=>r.json()).then(d=>{
+      const list=d.cycles||[];setCycles(list);
+      const cur=list.find(c=>c.is_current===1)||list[0]||null;setSel(cur?.cycle_id||null);
+    }).catch(()=>{setCycles([]);setSel(null);}).finally(()=>setLoading(false));
+  },[setup]);
+  useEffect(()=>{
+    if(!sel){setHealth(null);return;}
+    fetch(`${A}/api/v2/health/${sel}`).then(r=>r.json()).then(d=>setHealth(d.health||null)).catch(()=>setHealth(null));
+  },[sel]);
+  const doRevert=async cid=>{
+    if(!confirm(`Restore cycle ${cid} as current?`))return;
+    setReverting(true);setMsg('');
+    try{
+      const d=await fetch(`${A}/api/v2/cycles/${cid}/activate`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json());
+      setMsg(d.message||'Activated');
+      const d2=await fetch(`${A}/api/v2/cycles/${setup}`).then(r=>r.json());setCycles(d2.cycles||[]);
+    }catch(e){setMsg(`Error: ${e.message}`);}finally{setReverting(false);}
+  };
+  const rc=r=>r==='promote'?'var(--grn)':r==='flag'?'var(--amb)':'var(--red)';
+  const rl=r=>r==='promote'?'✓ PROMOTE':r==='flag'?'⚠ FLAG':'✗ HARD REJECT';
+  const sm=cycles.find(c=>c.cycle_id===sel);
+  const regrindN=health?.examples_since_last_grind||0;
+  if(loading)return <div className="empty"><div className="ico">⏳</div>Loading...</div>;
+  if(cycles.length===0)return <div className="empty"><div className="ico">⚙</div>No cycles yet<div style={{fontSize:9,color:'var(--mut)',marginTop:4}}>Run grind to create the first cycle</div></div>;
+  return(
+    <div>
+      {regrindN>0&&<div style={{background:'var(--amb-bg)',border:'1px solid rgba(245,166,35,.25)',borderRadius:5,padding:'9px 14px',marginBottom:10,display:'flex',gap:8,alignItems:'center'}}><span>⚠</span><span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--amb)'}}>Regrind needed — {regrindN} example{regrindN!==1?'s':''} added since this grind</span></div>}
+      <div className="card" style={{marginBottom:10}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--mut)'}}>CYCLE</span>
+          <select value={sel||''} onChange={e=>setSel(e.target.value)}
+            style={{fontFamily:'var(--mono)',fontSize:10,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:3,color:'var(--tx)',padding:'4px 8px',flex:1,minWidth:0}}>
+            {cycles.map(c=><option key={c.cycle_id} value={c.cycle_id}>{c.cycle_id}{c.is_current===1?' ← current':''} ({c.n_conditions||'?'} conds)</option>)}
+          </select>
+          {sm?.is_current!==1&&sel&&<button className="btn btn-go" style={{flexShrink:0}} disabled={reverting} onClick={()=>doRevert(sel)}>{reverting?'Restoring...':'Restore as Current'}</button>}
+          {sm?.is_current===1&&<span className="bdg b-done" style={{flexShrink:0}}>CURRENT</span>}
+        </div>
+        {msg&&<div style={{marginTop:7,fontFamily:'var(--mono)',fontSize:10,color:msg.startsWith('Error')?'var(--red)':'var(--grn)'}}>{msg}</div>}
+      </div>
+      {!health
+        ?<div className="empty" style={{height:160}}><div className="ico">📊</div>No health data<div style={{fontSize:9,color:'var(--mut)'}}>Run health_check.py --setup {setup}</div></div>
+        :(<>
+          {/* promote/flag/hard_reject */}
+          <div style={{background:health.promote_recommendation==='promote'?'var(--grn-bg)':health.promote_recommendation==='flag'?'var(--amb-bg)':'var(--red-bg)',border:`1px solid ${rc(health.promote_recommendation)}`,borderRadius:5,padding:'10px 14px',marginBottom:10,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span style={{fontFamily:'var(--mono)',fontSize:13,fontWeight:700,color:rc(health.promote_recommendation)}}>{rl(health.promote_recommendation)}</span>
+            {health.flag_reason&&<span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--dim)',maxWidth:'55%',textAlign:'right'}}>{health.flag_reason}</span>}
+          </div>
+          {/* live ready */}
+          <div style={{background:health.live_ready?'var(--grn-bg)':'var(--s1)',border:`1px solid ${health.live_ready?'var(--grn)':'var(--bd)'}`,borderRadius:5,padding:'9px 14px',marginBottom:10}}>
+            <div style={{fontFamily:'var(--mono)',fontSize:11,fontWeight:700,color:health.live_ready?'var(--grn)':'var(--mut)',marginBottom:health.live_ready?0:6}}>{health.live_ready?'✓ LIVE READY':'✗ NOT LIVE READY'}</div>
+            {!health.live_ready&&health.live_ready_blockers&&(()=>{try{return JSON.parse(health.live_ready_blockers).map((b,i)=><div key={i} style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--red)',paddingLeft:14}}>✗ {b}</div>);}catch{return null;}})()}
+          </div>
+          {/* signal quality stats */}
+          <div className="stats">
+            <div className="stat"><div className="stat-l">Signals</div><div className="stat-v b">{health.n_signals?.toLocaleString()||'—'}</div><div className="stat-s">pk {f1(health.peak_per_day)}/d · avg {f1(health.avg_per_day)}/d</div></div>
+            <div className="stat"><div className="stat-l">Stability</div><div className={`stat-v ${health.signal_stability_pct==null?'':health.signal_stability_pct>=80?'g':health.signal_stability_pct>=50?'a':'r'}`}>{health.signal_stability_pct!=null?`${health.signal_stability_pct.toFixed(0)}%`:'n/a'}</div><div className="stat-s">vs prev cycle</div></div>
+            <div className="stat"><div className="stat-l">Win Rate</div><div className={`stat-v ${health.win_rate_auto>=.4?'g':'r'}`}>{fpct(health.win_rate_auto)}</div><div className="stat-s">auto-classified</div></div>
+            <div className="stat"><div className="stat-l">EV</div><div className={`stat-v ${health.ev_estimate>0?'g':'r'}`}>{f2(health.ev_estimate)}</div><div className="stat-s">ADR/signal</div></div>
+          </div>
+          {/* 4-card detail grid */}
+          <div className="hgrid">
+            <div className="card" style={{margin:0}}>
+              <div className="card-ttl">Classification Quality</div>
+              {[['win_rate_auto',fpct(health.win_rate_auto),health.win_rate_auto>=.4?'var(--grn)':'var(--red)'],
+                ['win_rate_vetted',fpct(health.win_rate_vetted)],
+                ['pct_manually_vetted',fpct(health.pct_manually_vetted)]
+              ].map(([k,v,c])=><div key={k} className="mrow"><span className="k">{k}</span><span className="v" style={c?{color:c}:{}}>{v}</span></div>)}
+            </div>
+            <div className="card" style={{margin:0}}>
+              <div className="card-ttl">EV Estimate</div>
+              {[['median winner ADR',f2(health.median_winner_adr),'var(--grn)'],
+                ['median loser ADR',f2(health.median_loser_adr),health.median_loser_adr!=null&&health.median_loser_adr<1?'var(--grn)':'var(--red)'],
+                ['ev_estimate',f2(health.ev_estimate),health.ev_estimate>0?'var(--grn)':'var(--red)']
+              ].map(([k,v,c])=><div key={k} className="mrow"><span className="k">{k}</span><span className="v" style={c?{color:c}:{}}>{v}</span></div>)}
+            </div>
+            <div className="card" style={{margin:0}}>
+              <div className="card-ttl">Example Coverage</div>
+              {[['examples_passing',`${health.examples_passing} / ${sm?.n_examples_at_grind??'?'}`,health.examples_passing===sm?.n_examples_at_grind?'var(--grn)':'var(--red)'],
+                ['added_this_cycle',health.examples_added_this_cycle??'—'],
+                ['since_last_grind',health.examples_since_last_grind??'—',regrindN>0?'var(--amb)':undefined]
+              ].map(([k,v,c])=><div key={k} className="mrow"><span className="k">{k}</span><span className="v" style={c?{color:c}:{}}>{v}</span></div>)}
+            </div>
+            <div className="card" style={{margin:0}}>
+              <div className="card-ttl">Cycle Delta {health.prev_cycle_id?<span style={{fontWeight:400,color:'var(--mut)'}}>vs {health.prev_cycle_id}</span>:'(first cycle)'}</div>
+              {[['signal_count_delta',fD(health.signal_count_delta),dc(health.signal_count_delta,false)],
+                ['condition_count_delta',fD(health.condition_count_delta),dc(health.condition_count_delta)],
+                ['win_rate_delta',health.win_rate_delta!=null?`${fDf(health.win_rate_delta*100,1)}%`:'—',dc(health.win_rate_delta)]
+              ].map(([k,v,c])=><div key={k} className="mrow"><span className="k">{k}</span><span className="v" style={{color:c}}>{v}</span></div>)}
+            </div>
+          </div>
+          <div style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--mut)',textAlign:'right',marginTop:8}}>computed {health.computed_at}</div>
+        </>)}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
+// WATCHLIST (Layer 6 Regime + Nightly Watchlist)
+// Tab 1: Nightly Watchlist — reads nightly_watchlist table (/api/v2/watchlist/latest)
+//   columns per spec: rank, ticker, setup_type, regime_score, expected_win_rate,
+//                     expected_move_adr, ai_vet_status + ai_vet_reason
+// Tab 2: Regime Model — feature weights, deciles, top features
+// Tab 3: Signal Scores — cycle_signals sorted by regime_score desc
+// ════════════════════════════════════════════════════════════════
+function WatchlistPage({setup}){
+  const [model,setModel]=useState(null);const [signals,setSignals]=useState([]);
+  const [watchlist,setWatchlist]=useState([]);const [loading,setLoading]=useState(true);
+  const [tab,setTab]=useState('watchlist');
+  useEffect(()=>{
+    setLoading(true);
+    Promise.all([
+      fetch(`${A}/api/v2/regime/model/${setup}`).then(r=>r.json()).then(d=>setModel(d.model||null)).catch(()=>{}),
+      fetch(`${A}/api/v2/watchlist/latest`).then(r=>r.json()).then(d=>setWatchlist(d.entries||[])).catch(()=>{}),
+      fetch(`${A}/api/v2/cycles/${setup}`).then(r=>r.json()).then(d=>{
+        const cur=(d.cycles||[]).find(c=>c.is_current===1)||(d.cycles||[])[0]||null;
+        if(!cur)return;
+        return fetch(`${A}/api/v2/cycles/${cur.cycle_id}/signals`).then(r=>r.json()).then(d=>{
+          const sc=(d.signals||[]).filter(s=>s.regime_score!=null);
+          sc.sort((a,b)=>b.regime_score-a.regime_score);setSignals(sc);
+        });
+      }).catch(()=>{}),
+    ]).finally(()=>setLoading(false));
+  },[setup]);
+  if(loading)return <div className="empty"><div className="ico">⏳</div>Loading...</div>;
+  let topF=null,fW=null,deciles=null;
+  try{topF=typeof model?.top_features==='string'?JSON.parse(model.top_features):model?.top_features;}catch{}
+  try{fW=typeof model?.feature_weights==='string'?JSON.parse(model.feature_weights):model?.feature_weights;}catch{}
+  try{deciles=typeof model?.win_rate_by_decile==='string'?JSON.parse(model.win_rate_by_decile):model?.win_rate_by_decile;}catch{}
+  return(
+    <div>
+      <div className="stats">
+        <div className="stat"><div className="stat-l">Tonight's Watchlist</div><div className={`stat-v ${watchlist.length>0?'g':'r'}`}>{watchlist.length}</div></div>
+        {model&&<><div className="stat"><div className="stat-l">Baseline Win Rate</div><div className={`stat-v ${model.baseline_win_rate>=.4?'g':'r'}`}>{fpct(model.baseline_win_rate)}</div></div>
+        <div className="stat"><div className="stat-l">Signals Used</div><div className="stat-v b">{model.n_signals_used?.toLocaleString()||'—'}</div></div></>}
+        <div className="stat"><div className="stat-l">Scored Signals</div><div className="stat-v" style={{fontSize:16}}>{signals.length}</div></div>
+      </div>
+      <div className="tabs">
+        <button className={`tab ${tab==='watchlist'?'on':''}`} onClick={()=>setTab('watchlist')}>Nightly Watchlist ({watchlist.length})</button>
+        <button className={`tab ${tab==='regime'?'on':''}`} onClick={()=>setTab('regime')}>Regime Model</button>
+        <button className={`tab ${tab==='scores'?'on':''}`} onClick={()=>setTab('scores')}>Signal Scores ({signals.length})</button>
+      </div>
+      {/* ── NIGHTLY WATCHLIST — per spec: ticker, setup_type, regime_score, expected_win_rate, expected_move_adr, ai_vet_status ── */}
+      {tab==='watchlist'&&(watchlist.length===0
+        ?<div className="empty"><div className="ico">📋</div>No watchlist entries yet<div style={{fontSize:9,color:'var(--mut)',marginTop:4}}>Watchlist populates when a setup type is live-ready and nightly run completes</div></div>
+        :<>
+          <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--mut)',marginBottom:8}}>{watchlist[0]?.run_date} · {watchlist.length} entries · ranked by regime × win rate</div>
+          <table className="tbl">
+            <thead><tr><th>#</th><th>Ticker</th><th>Setup</th><th>Regime Score</th><th>Win Rate</th><th>Exp Move</th><th>AI Vet</th></tr></thead>
+            <tbody>{watchlist.map(w=>(
+              <tr key={w.id}>
+                <td style={{fontWeight:700,color:'var(--mut)'}}>{w.rank}</td>
+                <td style={{fontWeight:700}}>{w.ticker}</td>
+                <td><span className="bdg b-q">{w.setup_type}</span></td>
+                <td><span className="regime-pill" style={{background:`rgba(${w.regime_score>=.7?'62,207,142':w.regime_score>=.4?'245,166,35':'240,107,107'},.15)`,color:rsc(w.regime_score)}}>{(w.regime_score*100).toFixed(0)}%</span></td>
+                <td style={{color:w.expected_win_rate>=.5?'var(--grn)':w.expected_win_rate>=.35?'var(--amb)':'var(--red)'}}>{fpct(w.expected_win_rate)}</td>
+                <td style={{color:'var(--grn)'}}>{w.expected_move_adr!=null?`+${w.expected_move_adr.toFixed(1)} ADR`:'—'}</td>
+                <td>
+                  <span className={`bdg ${w.ai_vet_status==='LOOKS_GOOD'?'b-done':'b-err'}`}>{w.ai_vet_status||'—'}</span>
+                  {w.ai_vet_reason&&<span style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--mut)',marginLeft:6}}>{w.ai_vet_reason}</span>}
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </>
+      )}
+      {/* ── REGIME MODEL ── */}
+      {tab==='regime'&&(!model
+        ?<div className="empty"><div className="ico">📡</div>No regime model yet<div style={{fontSize:9,color:'var(--mut)',marginTop:4}}>Run regime step (market_grinder.py --setup {setup})</div></div>
+        :<>
+          {deciles&&<div className="card"><div className="card-ttl">Win Rate by Decile</div>
+            {Object.entries(deciles).map(([d,wr])=>{const p=typeof wr==='number'?wr:0;const c=p>=.6?'var(--grn)':p>=.4?'var(--amb)':'var(--red)';return(
+              <div key={d} className="dbar-wrap">
+                <span style={{width:24,color:'var(--mut)',flexShrink:0}}>D{d}</span>
+                <div className="dbar-bg"><div className="dbar-fill" style={{width:`${p*100}%`,background:c,opacity:.7}}/></div>
+                <span style={{width:36,textAlign:'right',color:c,fontWeight:700,flexShrink:0}}>{(p*100).toFixed(0)}%</span>
+              </div>);})}
+          </div>}
+          {topF&&<div className="card"><div className="card-ttl">Top Predictive Features</div>
+            {topF.map((f,i)=>{const w=fW?.[f];return(
+              <div key={f} className="mrow">
+                <span className="k" style={{width:20,flexShrink:0}}>#{i+1}</span>
+                <span className="v" style={{flex:1,fontSize:9}}>{f}</span>
+                {w!=null&&<span style={{fontFamily:'var(--mono)',fontSize:9,fontWeight:700,width:52,textAlign:'right',color:w>0?'var(--red)':'var(--grn)'}}>{w.toFixed(3)}</span>}
+              </div>);})}
+            <div style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--mut)',marginTop:8}}>Negative r = bearish SPY conditions → historically better win rate for this setup</div>
+          </div>}
+          <div style={{fontFamily:'var(--mono)',fontSize:8,color:'var(--mut)',textAlign:'right'}}>model updated {model.updated_at}</div>
+        </>
+      )}
+      {/* ── SIGNAL SCORES ── */}
+      {tab==='scores'&&(signals.length===0
+        ?<div className="empty"><div className="ico">∅</div>No scored signals yet<div style={{fontSize:9,color:'var(--mut)',marginTop:4}}>Run regime step to score signals</div></div>
+        :<table className="tbl">
+          <thead><tr><th>#</th><th>Ticker</th><th>Signal Date</th><th>Regime</th><th>Move ADR</th><th>MFE ADR</th><th>Cap%</th><th>Classification</th></tr></thead>
+          <tbody>{signals.slice(0,100).map((s,i)=>{
+            const isW=s.classification&&s.classification.includes('WIN');
+            return(<tr key={`${s.ticker}_${s.signal_date}`}>
+              <td style={{color:'var(--mut)'}}>{i+1}</td>
+              <td style={{fontWeight:700}}>{s.ticker}</td>
+              <td>{s.signal_date}</td>
+              <td><span className="regime-pill" style={{background:`rgba(${s.regime_score>=.7?'62,207,142':s.regime_score>=.4?'245,166,35':'240,107,107'},.15)`,color:rsc(s.regime_score)}}>{(s.regime_score*100).toFixed(0)}%</span></td>
+              <td style={{color:isW?'var(--grn)':'var(--red)'}}>{s.move_adr!=null?`+${s.move_adr.toFixed(1)}`:'—'}</td>
+              <td style={{color:'var(--cyn)'}}>{s.mfe_adr!=null?s.mfe_adr.toFixed(1):'—'}</td>
+              <td style={{color:'var(--mut)'}}>{s.capture_eff!=null?`${(s.capture_eff*100).toFixed(0)}%`:'—'}</td>
+              <td><span className={`bdg ${isW?'b-done':s.classification?'b-err':'b-pend'}`} style={{fontSize:7}}>{s.classification||'—'}</span></td>
+            </tr>);
+          })}</tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
+// APP ROOT
+// ════════════════════════════════════════════════════════════════
+function App(){
+  const [sec,setSec]=useState('pipeline');
+  const [setup,setSetup]=useState('dtss');
+  const [tab,setTab]=useState('vet');
+  const [agentOnline,setAgent]=useState(false);
+  useEffect(()=>{
+    const chk=()=>fetch(`${A}/api/pipeline/steps`).then(r=>r.json()).then(d=>setAgent(d.agent_status==='online')).catch(()=>setAgent(false));
+    chk();const id=setInterval(chk,5000);return()=>clearInterval(id);
   },[]);
-  const setupTabs=[{id:'vetting',label:'Vetting'},{id:'samples',label:'Optimal Samples'},{id:'health',label:'Cycle Health'},{id:'watchlist',label:'Watchlist'}];
-  const isVetting = section==='setup'&&tab==='vetting';
-  const title = section==='pipeline'?'Pipeline':`${setup.toUpperCase()} — ${setupTabs.find(t=>t.id===tab)?.label||''}`;
-  return (
+  const tabs=[
+    {id:'vet',      label:'Layer 5: Vet'},
+    {id:'samples',  label:'Optimal Samples'},
+    {id:'health',   label:'Layer 7: Health'},
+    {id:'watchlist',label:'Watchlist'},
+  ];
+  const isVet=sec==='setup'&&tab==='vet';
+  const title=sec==='pipeline'?'The Loop — Pipeline':`${setup.toUpperCase()} — ${tabs.find(t=>t.id===tab)?.label||''}`;
+  return(
     <div className="app">
       <div className="rail">
         <div className="rail-logo">SP</div>
-        <button className={`rail-btn ${section==='pipeline'?'active':''}`} onClick={()=>setSection('pipeline')} title="Pipeline">🌙</button>
-        <button className={`rail-btn ${section==='setup'?'active':''}`}    onClick={()=>setSection('setup')}    title="Setup Analysis">⚡</button>
+        <button className={`rail-btn ${sec==='pipeline'?'on':''}`} onClick={()=>setSec('pipeline')} title="Pipeline / The Loop">🌙</button>
+        <button className={`rail-btn ${sec==='setup'?'on':''}`}    onClick={()=>setSec('setup')}    title="Setup Analysis">⚡</button>
         <div className={`rail-dot ${agentOnline?'online':''}`} title={agentOnline?'Agent online':'Agent offline'}/>
       </div>
-      {section==='setup'&&(
+      {sec==='setup'&&(
         <div className="sidebar">
           <div className="sb-head">Setup Analysis</div>
-          <div className="sb-setup-row">
-            {['dtss','3-4db'].map(s=><button key={s} className={`sb-setup-btn ${setup===s?'active':''}`} onClick={()=>{setSetup(s);setTab('vetting');}}>{s.toUpperCase()}</button>)}
+          <div className="sb-setups">
+            {['dtss','3-4db'].map(s=><button key={s} className={`sb-setup ${setup===s?'on':''}`} onClick={()=>{setSetup(s);setTab('vet');}}>{s.toUpperCase()}</button>)}
           </div>
-          <div className="sb-divider"/>
-          {setupTabs.map(t=><div key={t.id} className={`sb-item ${tab===t.id?'active':''}`} onClick={()=>setTab(t.id)}>{t.label}</div>)}
+          <div className="sb-div"/>
+          {tabs.map(t=><div key={t.id} className={`sb-item ${tab===t.id?'on':''}`} onClick={()=>setTab(t.id)}>{t.label}</div>)}
         </div>
       )}
       <div className="main">
         <div className="main-hdr">
           <div className="main-title">{title}</div>
-          <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--muted)'}}>{new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'})}</div>
+          <div style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--mut)'}}>{new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'})}</div>
         </div>
-        <div className={`main-body ${isVetting?'flush':''}`}>
-          {section==='pipeline' && <PipelinePage/>}
-          {section==='setup'&&tab==='vetting'   && <VettingPage setup={setup}/>}
-          {section==='setup'&&tab==='samples'   && <SamplesPage setup={setup}/>}
-          {section==='setup'&&tab==='health'    && <CycleHealthPage setup={setup}/>}
-          {section==='setup'&&tab==='watchlist' && <WatchlistPage setup={setup}/>}
+        <div className={`main-body${isVet?' flush':''}`}>
+          {sec==='pipeline'&&<PipelinePage/>}
+          {sec==='setup'&&tab==='vet'      &&<VetPage      setup={setup}/>}
+          {sec==='setup'&&tab==='samples'  &&<SamplesPage  setup={setup}/>}
+          {sec==='setup'&&tab==='health'   &&<HealthPage   setup={setup}/>}
+          {sec==='setup'&&tab==='watchlist'&&<WatchlistPage setup={setup}/>}
         </div>
       </div>
     </div>
