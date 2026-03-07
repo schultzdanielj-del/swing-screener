@@ -3653,6 +3653,133 @@ async def v2_activate_cycle(cycle_id: str):
     }
 
 
+@app.get("/api/v2/cycles/{cycle_id}/conditions")
+async def v2_get_conditions(cycle_id: str):
+    """
+    Return all cycle_conditions rows for a cycle, ordered by sort_order.
+    Returns: { cycle_id, conditions: [...] }
+    """
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT tier, expression_name, low, high, filter_power, sort_order
+               FROM cycle_conditions WHERE cycle_id=? ORDER BY sort_order""",
+            (cycle_id,),
+        ).fetchall()
+    return {"cycle_id": cycle_id, "conditions": [dict(r) for r in rows]}
+
+
+@app.post("/api/v2/cycles/{cycle_id}/signals")
+async def v2_upload_signals(cycle_id: str, request: Request):
+    """
+    Bulk-insert cycle_signals rows.
+    Body: { cycle_id, signals: [...], replace: bool }
+    If replace=true (first chunk), deletes existing rows for this cycle first.
+    Returns: { cycle_id, inserted: N }
+    """
+    body    = await request.json()
+    signals = body.get("signals", [])
+    replace = body.get("replace", False)
+
+    if not signals:
+        raise HTTPException(status_code=400, detail="signals list is empty")
+
+    with get_db() as db:
+        row = db.execute(
+            "SELECT cycle_id FROM grind_cycles WHERE cycle_id=?", (cycle_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"cycle_id {cycle_id!r} not found")
+
+        if replace:
+            db.execute("DELETE FROM cycle_signals WHERE cycle_id=?", (cycle_id,))
+
+        db.executemany(
+            """INSERT INTO cycle_signals
+               (cycle_id, setup_type, ticker, signal_date, bar_idx, close, adr,
+                is_example, classification, classification_source,
+                exit_triggered, exit_date, move_adr, mfe_adr, capture_eff)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            [
+                (
+                    cycle_id,
+                    s.get("setup_type", ""),
+                    s.get("ticker", ""),
+                    s.get("signal_date", ""),
+                    s.get("bar_idx"),
+                    s.get("close"),
+                    s.get("adr"),
+                    s.get("is_example", 0),
+                    s.get("classification"),
+                    s.get("classification_source"),
+                    s.get("exit_triggered", 0),
+                    s.get("exit_date"),
+                    s.get("move_adr"),
+                    s.get("mfe_adr"),
+                    s.get("capture_eff"),
+                )
+                for s in signals
+            ],
+        )
+    return {"cycle_id": cycle_id, "inserted": len(signals)}
+
+
+@app.get("/api/v2/exit_conditions/{setup_type}")
+async def v2_get_exit_condition(setup_type: str):
+    """
+    Return the exit_conditions row for a setup type.
+    Returns: { setup_type, exit_condition: {...} | null }
+    """
+    with get_db() as db:
+        row = db.execute(
+            "SELECT * FROM exit_conditions WHERE setup_type=?", (setup_type,)
+        ).fetchone()
+    return {
+        "setup_type":     setup_type,
+        "exit_condition": dict(row) if row else None,
+    }
+
+
+@app.post("/api/v2/exit_conditions")
+async def v2_upsert_exit_condition(request: Request):
+    """
+    Upsert exit_conditions row for a setup type.
+    Body: { setup_type, expression_name, direction, threshold,
+            max_forward_bars, adr_threshold_multiplier? }
+    Returns: { setup_type, upserted: true }
+    """
+    body = await request.json()
+    required = ["setup_type", "expression_name", "direction", "threshold", "max_forward_bars"]
+    for k in required:
+        if k not in body:
+            raise HTTPException(status_code=400, detail=f"Missing field: {k}")
+
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    with get_db() as db:
+        db.execute(
+            """INSERT INTO exit_conditions
+               (setup_type, expression_name, direction, threshold,
+                max_forward_bars, adr_threshold_multiplier, updated_at)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(setup_type) DO UPDATE SET
+                 expression_name=excluded.expression_name,
+                 direction=excluded.direction,
+                 threshold=excluded.threshold,
+                 max_forward_bars=excluded.max_forward_bars,
+                 adr_threshold_multiplier=excluded.adr_threshold_multiplier,
+                 updated_at=excluded.updated_at""",
+            (
+                body["setup_type"],
+                body["expression_name"],
+                body["direction"],
+                float(body["threshold"]),
+                int(body["max_forward_bars"]),
+                float(body.get("adr_threshold_multiplier", 1.0)),
+                now,
+            ),
+        )
+    return {"setup_type": body["setup_type"], "upserted": True}
+
+
 @app.get("/api/v2/cycles/{setup_type}")
 async def v2_list_cycles(setup_type: str):
     """
