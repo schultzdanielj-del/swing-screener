@@ -3537,5 +3537,146 @@ async def get_rejected_signals(setup_type: str):
     return {"setup_type": setup_type, "count": len(rows), "rejected": [dict(r) for r in rows]}
 
 
+# ══════════════════════════════════════════════════════════════
+# V2 — Cycle management endpoints
+# ══════════════════════════════════════════════════════════════
+
+@app.post("/api/v2/cycles")
+async def v2_create_cycle(request: Request):
+    """
+    Create a new grind_cycles row.
+    Body: { cycle_id, setup_type, status, n_examples_at_grind,
+            created_at, completed_at, error_msg? }
+    Returns: { cycle_id, created: true } or { cycle_id, already_exists: true }
+    """
+    body = await request.json()
+    cycle_id = body.get("cycle_id")
+    setup_type = body.get("setup_type")
+    if not cycle_id or not setup_type:
+        raise HTTPException(status_code=400, detail="cycle_id and setup_type required")
+
+    with get_db() as db:
+        existing = db.execute(
+            "SELECT cycle_id FROM grind_cycles WHERE cycle_id=?", (cycle_id,)
+        ).fetchone()
+        if existing:
+            return {"cycle_id": cycle_id, "already_exists": True}
+
+        db.execute(
+            """INSERT INTO grind_cycles
+               (cycle_id, setup_type, status, error_msg, is_current,
+                n_examples_at_grind, created_at, completed_at, reverted_at)
+               VALUES (?,?,?,?,0,?,?,?,NULL)""",
+            (
+                cycle_id,
+                setup_type,
+                body.get("status", "complete"),
+                body.get("error_msg"),
+                body.get("n_examples_at_grind"),
+                body.get("created_at"),
+                body.get("completed_at"),
+            ),
+        )
+    return {"cycle_id": cycle_id, "created": True}
+
+
+@app.post("/api/v2/cycles/{cycle_id}/conditions")
+async def v2_upload_conditions(cycle_id: str, request: Request):
+    """
+    Bulk-insert cycle_conditions rows for a cycle.
+    Body: { cycle_id, conditions: [ {tier, expression_name, low, high, filter_power, sort_order}, ... ] }
+    Idempotent: deletes existing rows for this cycle_id before inserting.
+    Returns: { cycle_id, inserted: N }
+    """
+    body = await request.json()
+    conditions = body.get("conditions", [])
+    if not conditions:
+        raise HTTPException(status_code=400, detail="conditions list is empty")
+
+    with get_db() as db:
+        # Verify cycle exists
+        row = db.execute(
+            "SELECT cycle_id FROM grind_cycles WHERE cycle_id=?", (cycle_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"cycle_id {cycle_id!r} not found")
+
+        # Idempotent: clear existing conditions for this cycle
+        db.execute("DELETE FROM cycle_conditions WHERE cycle_id=?", (cycle_id,))
+
+        db.executemany(
+            """INSERT INTO cycle_conditions
+               (cycle_id, tier, expression_name, low, high, filter_power, sort_order)
+               VALUES (?,?,?,?,?,?,?)""",
+            [
+                (
+                    cycle_id,
+                    c.get("tier", "D1"),
+                    c.get("expression_name", ""),
+                    c.get("low"),
+                    c.get("high"),
+                    c.get("filter_power"),
+                    c.get("sort_order", i),
+                )
+                for i, c in enumerate(conditions)
+            ],
+        )
+    return {"cycle_id": cycle_id, "inserted": len(conditions)}
+
+
+@app.post("/api/v2/cycles/{cycle_id}/activate")
+async def v2_activate_cycle(cycle_id: str):
+    """
+    Set this cycle as current (is_current=1) for its setup_type.
+    Atomically sets all other cycles for that setup_type to is_current=0.
+    Returns: { cycle_id, setup_type, message }
+    """
+    with get_db() as db:
+        row = db.execute(
+            "SELECT setup_type FROM grind_cycles WHERE cycle_id=?", (cycle_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"cycle_id {cycle_id!r} not found")
+        setup_type = row["setup_type"]
+
+        # Atomic swap — SQLite serialises writes so this is safe
+        db.execute(
+            "UPDATE grind_cycles SET is_current=0 WHERE setup_type=?", (setup_type,)
+        )
+        db.execute(
+            "UPDATE grind_cycles SET is_current=1 WHERE cycle_id=?", (cycle_id,)
+        )
+    return {
+        "cycle_id": cycle_id,
+        "setup_type": setup_type,
+        "message": f"Cycle {cycle_id} is now current for {setup_type}",
+    }
+
+
+@app.get("/api/v2/cycles/{setup_type}")
+async def v2_list_cycles(setup_type: str):
+    """
+    List all grind cycles for a setup type, newest first.
+    Returns: { setup_type, cycles: [ {cycle_id, status, is_current, n_examples_at_grind,
+                                      n_conditions, created_at, completed_at}, ... ] }
+    """
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT gc.cycle_id, gc.status, gc.is_current, gc.n_examples_at_grind,
+                      gc.created_at, gc.completed_at, gc.reverted_at,
+                      COUNT(cc.id) AS n_conditions
+               FROM grind_cycles gc
+               LEFT JOIN cycle_conditions cc ON cc.cycle_id = gc.cycle_id
+               WHERE gc.setup_type=?
+               GROUP BY gc.cycle_id
+               ORDER BY gc.created_at DESC""",
+            (setup_type,),
+        ).fetchall()
+    return {
+        "setup_type": setup_type,
+        "cycles": [dict(r) for r in rows],
+    }
+
+
 # Serve frontend (MUST be last - catches all routes)
 app.mount("/", StaticFiles(directory="app", html=True), name="frontend")
