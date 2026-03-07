@@ -1,20 +1,36 @@
 """
-Market Grinder — Correlate market conditions with DTSS win/loss outcomes.
+Market Grinder — Win Rate Time Series Correlation Engine.
 
-For each signal in cycle_signals, looks up market instrument expression values
-on that signal date, then computes point-biserial correlation between each
-(instrument, expression) feature and the win/loss outcome.
+Answers: which market conditions correlate with high DTSS win rate over time?
 
-Produces:
-  - regime_model: top features ranked by correlation, per-quartile win rates
-  - signal_regime_scores: composite regime score per signal
-  - Updates cycle_signals.regime_score (denormalized)
+Method:
+  1. Build win rate time series — for each trading day in the 5yr window,
+     compute win rate across all signals in a ±5 trading day rolling window.
+     Each day is weighted by signal count in its window (density weighting).
+
+  2. For each (instrument, expression): extract that instrument's expression
+     value on each day in the win rate series. This produces a feature time
+     series aligned to the same dates.
+
+  3. Compute weighted Pearson correlation between each feature time series
+     and the win rate series. Weight = signal count in that day's window.
+
+  4. Rank all features by |correlation|. Keep top N.
+
+  5. For each top feature: bucket into quartiles, compute win rate per quartile
+     (what win rate do we see when this indicator is in Q1/Q2/Q3/Q4?).
+
+  6. Compute composite regime score per signal date (0-1) — weighted dot
+     product of top features. Used by watchlist to rank incoming signals.
+
+Works for any setup type. Only requires: signal_date + classification.
+No dependency on exit dates, exit grinder, or setup-specific logic.
 
 Usage:
+    python scripts/market_grinder.py --setup dtss
     python scripts/market_grinder.py --cycle dtss_20260306_170830
-    python scripts/market_grinder.py --setup dtss          # uses current cycle
-
-Output uploaded to Railway via API.
+    python scripts/market_grinder.py --setup dtss --dry-run
+    python scripts/market_grinder.py --setup dtss --window 5 --top-n 50
 """
 
 import os
@@ -37,11 +53,10 @@ MANIFEST  = os.path.join(MKT_DIR, "_manifest.json")
 
 API_BASE  = os.environ.get("RAILWAY_API", "https://web-production-e3025.up.railway.app")
 
-# How many top features to keep in the model
-TOP_N_FEATURES = 50
-
-# Minimum number of non-NaN values required to compute correlation for a feature
-MIN_VALID = 30
+# Defaults
+DEFAULT_WINDOW  = 5    # ±N trading days for rolling win rate
+DEFAULT_TOP_N   = 50   # top features to keep in model
+MIN_WEIGHT      = 1    # min signal weight to include a day (always 1 — keep everything)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -49,7 +64,6 @@ MIN_VALID = 30
 # ══════════════════════════════════════════════════════════════
 
 def load_signals(cycle_id):
-    """Load cycle_signals from Railway API. Returns DataFrame."""
     import urllib.request
     url = f"{API_BASE}/api/v2/cycles/{cycle_id}/signals"
     req = urllib.request.Request(url, headers={"User-Agent": "market-grinder/1.0"})
@@ -63,6 +77,18 @@ def load_signals(cycle_id):
     return df
 
 
+def get_current_cycle(setup_type):
+    import urllib.request
+    url = f"{API_BASE}/api/v2/cycles/{setup_type}"
+    req = urllib.request.Request(url, headers={"User-Agent": "market-grinder/1.0"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        data = json.loads(r.read())
+    for c in data.get("cycles", []):
+        if c.get("is_current"):
+            return c["cycle_id"]
+    raise ValueError(f"No current cycle for: {setup_type}")
+
+
 def load_market_manifest():
     if not os.path.exists(MANIFEST):
         raise FileNotFoundError(
@@ -74,7 +100,6 @@ def load_market_manifest():
 
 
 def load_instrument_cache(instrument_id):
-    """Load .npz for one instrument. Returns (dates_array, data_array) or (None, None)."""
     from local_runner.market_cache_builder import instrument_filename
     path = os.path.join(MKT_DIR, instrument_filename(instrument_id))
     if not os.path.exists(path):
@@ -83,296 +108,421 @@ def load_instrument_cache(instrument_id):
         return f["dates"], f["data"]
 
 
-def get_current_cycle(setup_type):
-    import urllib.request
-    url = f"{API_BASE}/api/v2/cycles/{setup_type}"
-    req = urllib.request.Request(url, headers={"User-Agent": "market-grinder/1.0"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        data = json.loads(r.read())
-    for c in data.get("cycles", []):
-        if c.get("is_current"):
-            return c["cycle_id"]
-    raise ValueError(f"No current cycle for setup type: {setup_type}")
-
-
 # ══════════════════════════════════════════════════════════════
-# FEATURE MATRIX BUILDER
+# STEP 1 — WIN RATE TIME SERIES
 # ══════════════════════════════════════════════════════════════
 
-def build_feature_matrix(signals_df, manifest):
+WIN_CLASSES = {"AUTO_WIN", "AI_WIN", "MANUAL_WIN"}
+
+
+def build_win_rate_series(signals_df, window=DEFAULT_WINDOW):
     """
-    For each signal, look up every (instrument, expression) value on signal_date.
+    Build a daily win rate time series over the full signal date range.
 
-    Returns:
-        feature_matrix: np.ndarray (n_signals, n_features)
-        feature_names:  list of str, e.g. "SPY__rsi14"
-        signal_dates:   np.array of date strings
+    For each trading day T that has at least 1 signal within ±window days:
+      - win_rate[T]  = wins_in_window / total_in_window
+      - weight[T]    = total signals in window  (density weighting)
+
+    Returns DataFrame with columns:
+        date, win_rate, weight, n_wins, n_signals
+    Indexed by trading days that have sufficient signal coverage.
     """
-    expr_names  = manifest["expr_names"]       # list of expression names in order
-    instruments = manifest["instruments"]       # dict: inst_id -> info
+    # Classify each signal as win (1) or loss (0)
+    signals_df = signals_df.copy()
+    signals_df["is_win"] = signals_df["classification"].apply(
+        lambda c: 1 if str(c).upper() in WIN_CLASSES else 0
+    )
+    signals_df = signals_df.sort_values("signal_date").reset_index(drop=True)
 
-    signal_dates_str = signals_df["signal_date"].dt.strftime("%Y-%m-%d").values
-    n_signals = len(signals_df)
+    # Get all unique signal dates — these are the candidate days
+    signal_dates = signals_df["signal_date"].values  # numpy datetime64 array
+    is_win_arr   = signals_df["is_win"].values
 
-    # Build date → row-index map per instrument (built on demand)
-    feature_cols   = []   # list of np.array (n_signals,) per feature
-    feature_labels = []   # list of "INST__expr_name"
+    # Build all trading days in the range
+    date_min = signals_df["signal_date"].min()
+    date_max = signals_df["signal_date"].max()
+    all_trading_days = pd.bdate_range(start=date_min, end=date_max)
 
-    total_instruments = len(instruments)
-    print(f"\n  Building feature matrix: {n_signals} signals × {total_instruments} instruments")
+    rows = []
+    for day in all_trading_days:
+        day_np = np.datetime64(day, "ns")
 
-    for i, (inst_id, inst_info) in enumerate(instruments.items()):
-        if (i + 1) % 50 == 0 or (i + 1) == total_instruments:
-            print(f"    {i+1}/{total_instruments} instruments processed...")
+        # Window: ±window trading days around this day
+        window_start = day - pd.tseries.offsets.BDay(window)
+        window_end   = day + pd.tseries.offsets.BDay(window)
 
-        dates, data = load_instrument_cache(inst_id)
-        if dates is None:
+        mask = (
+            (signals_df["signal_date"] >= window_start) &
+            (signals_df["signal_date"] <= window_end)
+        )
+        n_signals = int(mask.sum())
+        if n_signals == 0:
             continue
 
-        # Build date → index map for this instrument
-        date_to_idx = {d: idx for idx, d in enumerate(dates)}
+        n_wins   = int(is_win_arr[mask.values].sum())
+        win_rate = n_wins / n_signals
 
-        # For each signal, look up the row index
-        row_indices = np.array([date_to_idx.get(d, -1) for d in signal_dates_str])
-        valid_mask  = row_indices >= 0
+        rows.append({
+            "date":      day,
+            "win_rate":  win_rate,
+            "weight":    n_signals,
+            "n_wins":    n_wins,
+            "n_signals": n_signals,
+        })
 
-        if not np.any(valid_mask):
-            continue  # no date overlap
-
-        # Extract all expression columns for valid signals
-        # data shape: (n_bars, n_exprs)
-        n_exprs = data.shape[1]
-        inst_prefix = _safe_inst_name(inst_id)
-
-        for j in range(n_exprs):
-            col = np.full(n_signals, np.nan, dtype=np.float32)
-            valid_rows = row_indices[valid_mask]
-            col[valid_mask] = data[valid_rows, j]
-
-            # Skip if all NaN or no variance
-            non_nan = col[~np.isnan(col)]
-            if len(non_nan) < MIN_VALID:
-                continue
-            if np.std(non_nan) == 0:
-                continue
-
-            feature_cols.append(col)
-            feature_labels.append(f"{inst_prefix}__{expr_names[j]}")
-
-    if not feature_cols:
-        raise ValueError("Feature matrix is empty — no instrument data overlaps with signal dates")
-
-    feature_matrix = np.column_stack(feature_cols)
-    print(f"\n  Feature matrix: {feature_matrix.shape[0]} signals × {feature_matrix.shape[1]} features")
-    return feature_matrix, feature_labels, signal_dates_str
-
-
-def _safe_inst_name(inst_id):
-    """Convert instrument ID to a safe label for feature names."""
-    return inst_id.replace("^", "").replace("=F", "_F").replace(
-        ":", "_").replace("$", "").replace("-", "_").replace(".", "_")
+    wr_df = pd.DataFrame(rows)
+    wr_df["date"] = pd.to_datetime(wr_df["date"])
+    return wr_df
 
 
 # ══════════════════════════════════════════════════════════════
-# CORRELATION ENGINE
+# STEP 2 — FEATURE ALIGNMENT
 # ══════════════════════════════════════════════════════════════
 
-def compute_correlations(feature_matrix, y_binary, feature_labels):
+def align_feature_to_win_rate(dates_cache, data_cache, wr_dates_str, expr_idx):
     """
-    Compute point-biserial correlation between each feature and win/loss outcome.
+    For one (instrument, expression): extract values on each win rate date.
+    Returns np.array of length len(wr_dates_str), NaN where date not in cache.
+    """
+    date_to_idx = {d: i for i, d in enumerate(dates_cache)}
+    n = len(wr_dates_str)
+    col = np.full(n, np.nan, dtype=np.float32)
+    for i, d in enumerate(wr_dates_str):
+        idx = date_to_idx.get(d)
+        if idx is not None:
+            col[i] = data_cache[idx, expr_idx]
+    return col
 
-    Point-biserial is equivalent to Pearson for a binary Y variable.
-    This is the right tool: interpretable, fast, no assumptions about feature distribution.
 
-    Returns DataFrame: [feature_name, correlation, abs_correlation, n_valid]
+# ══════════════════════════════════════════════════════════════
+# STEP 3 — WEIGHTED PEARSON CORRELATION
+# ══════════════════════════════════════════════════════════════
+
+def weighted_pearson(x, y, w):
+    """
+    Weighted Pearson correlation between x and y with weights w.
+    All arrays length N. NaN values in x are excluded (y and w too).
+    Returns (r, n_valid) or (nan, 0) if insufficient data.
+    """
+    valid = ~np.isnan(x) & ~np.isnan(y) & (w > 0)
+    n = int(valid.sum())
+    if n < 10:
+        return np.nan, n
+
+    xv = x[valid].astype(np.float64)
+    yv = y[valid].astype(np.float64)
+    wv = w[valid].astype(np.float64)
+    wv = wv / wv.sum()  # normalize weights to sum to 1
+
+    x_mean = np.dot(wv, xv)
+    y_mean = np.dot(wv, yv)
+
+    dx = xv - x_mean
+    dy = yv - y_mean
+
+    cov  = np.dot(wv, dx * dy)
+    var_x = np.dot(wv, dx ** 2)
+    var_y = np.dot(wv, dy ** 2)
+
+    if var_x <= 0 or var_y <= 0:
+        return np.nan, n
+
+    r = cov / np.sqrt(var_x * var_y)
+    return float(np.clip(r, -1.0, 1.0)), n
+
+
+# ══════════════════════════════════════════════════════════════
+# STEP 3 — COMPUTE ALL CORRELATIONS
+# ══════════════════════════════════════════════════════════════
+
+def compute_all_correlations(wr_df, manifest):
+    """
+    For every (instrument, expression) pair, compute weighted Pearson
+    correlation with the win rate series.
+
+    Returns DataFrame: [instrument, expr_name, feature_name, correlation,
+                        abs_correlation, n_valid]
     sorted by abs_correlation descending.
     """
-    from scipy import stats as scipy_stats
+    expr_names  = manifest["expr_names"]
+    instruments = manifest["instruments"]
+    n_exprs     = len(expr_names)
 
-    n_features = feature_matrix.shape[1]
+    wr_dates_str = wr_df["date"].dt.strftime("%Y-%m-%d").values
+    y  = wr_df["win_rate"].values.astype(np.float64)
+    w  = wr_df["weight"].values.astype(np.float64)
+    n_days = len(wr_dates_str)
+
+    total_instruments = len(instruments)
+    print(f"\n  Win rate series: {n_days} days  "
+          f"(mean win rate: {np.average(y, weights=w):.3f}  "
+          f"mean weight: {w.mean():.1f})")
+    print(f"\n  Computing correlations: {total_instruments} instruments × "
+          f"{n_exprs:,} expressions...")
+
     results = []
-
-    print(f"\n  Computing correlations for {n_features:,} features...")
     t0 = __import__("time").time()
 
-    for j in range(n_features):
-        col = feature_matrix[:, j]
-        valid = ~np.isnan(col)
-        n_valid = int(np.sum(valid))
-
-        if n_valid < MIN_VALID:
+    for i, (inst_id, inst_info) in enumerate(instruments.items()):
+        dates_cache, data_cache = load_instrument_cache(inst_id)
+        if dates_cache is None:
             continue
 
-        x = col[valid].astype(np.float64)
-        y = y_binary[valid].astype(np.float64)
+        # Build date→index map once per instrument
+        date_to_idx = {d: idx for idx, d in enumerate(dates_cache)}
 
-        # Skip if y has no variance in valid subset (all wins or all losses)
-        if np.std(y) == 0:
-            continue
+        # Get row indices for all win rate dates at once
+        row_indices = np.array([date_to_idx.get(d, -1) for d in wr_dates_str])
+        valid_days  = row_indices >= 0
 
-        try:
-            r, p = scipy_stats.pearsonr(x, y)
+        if valid_days.sum() < 10:
+            continue  # not enough date overlap
+
+        inst_label = (inst_id.replace("^", "").replace("=F", "_F")
+                      .replace(":", "_").replace("$", "").replace("-", "_"))
+
+        # Process all expressions for this instrument
+        for j in range(n_exprs):
+            # Extract feature values on win rate dates
+            x = np.full(n_days, np.nan, dtype=np.float64)
+            valid_rows = row_indices[valid_days]
+            x[valid_days] = data_cache[valid_rows, j]
+
+            # Skip if all NaN or zero variance
+            x_valid = x[~np.isnan(x)]
+            if len(x_valid) < 10 or np.std(x_valid) == 0:
+                continue
+
+            r, n_valid = weighted_pearson(x, y, w)
             if np.isnan(r):
                 continue
-            results.append({
-                "feature_name":    feature_labels[j],
-                "correlation":     float(r),
-                "abs_correlation": float(abs(r)),
-                "n_valid":         n_valid,
-                "p_value":         float(p),
-            })
-        except:
-            continue
 
-        if (j + 1) % 100000 == 0:
+            results.append({
+                "instrument":      inst_id,
+                "expr_name":       expr_names[j],
+                "feature_name":    f"{inst_label}__{expr_names[j]}",
+                "correlation":     r,
+                "abs_correlation": abs(r),
+                "n_valid":         n_valid,
+            })
+
+        if (i + 1) % 25 == 0 or (i + 1) == total_instruments:
             elapsed = __import__("time").time() - t0
-            print(f"    {j+1:,}/{n_features:,} ({elapsed:.0f}s)...")
+            rate    = (i + 1) / elapsed if elapsed > 0 else 1
+            eta     = (total_instruments - i - 1) / rate if rate > 0 else 0
+            print(f"    {i+1}/{total_instruments} instruments  "
+                  f"[{elapsed:.0f}s, ~{eta:.0f}s left]  "
+                  f"{len(results):,} features so far")
 
     elapsed = __import__("time").time() - t0
-    print(f"  Done. {len(results):,} valid features computed in {elapsed:.1f}s")
+    print(f"\n  Done. {len(results):,} valid features in {elapsed:.1f}s")
 
     df = pd.DataFrame(results).sort_values("abs_correlation", ascending=False)
     return df.reset_index(drop=True)
 
 
-def compute_quartile_win_rates(feature_matrix, feature_labels, y_binary, top_feature_names):
+# ══════════════════════════════════════════════════════════════
+# STEP 4 — QUARTILE WIN RATES
+# ══════════════════════════════════════════════════════════════
+
+def compute_quartile_win_rates(wr_df, manifest, top_features_df):
     """
-    For each top feature, bucket signals into quartiles and compute win rate per quartile.
-    Returns dict: {feature_name: {q1: wr, q2: wr, q3: wr, q4: wr, n_q1: n, ...}}
+    For each top feature, bucket win rate days into quartiles by feature value.
+    Computes weighted win rate per quartile.
+
+    Returns dict: {feature_name: {q1: wr, q2: wr, q3: wr, q4: wr, ...}}
     """
-    label_to_idx = {name: j for j, name in enumerate(feature_labels)}
+    wr_dates_str = wr_df["date"].dt.strftime("%Y-%m-%d").values
+    y = wr_df["win_rate"].values.astype(np.float64)
+    w = wr_df["weight"].values.astype(np.float64)
+
+    # Build instrument → (dates, data) cache — load each instrument once
+    inst_cache = {}
+
     quartile_stats = {}
 
-    for fname in top_feature_names:
-        j = label_to_idx.get(fname)
-        if j is None:
-            continue
-        col = feature_matrix[:, j]
-        valid = ~np.isnan(col)
-        if np.sum(valid) < MIN_VALID:
+    for _, row in top_features_df.iterrows():
+        inst_id   = row["instrument"]
+        expr_name = row["expr_name"]
+        fname     = row["feature_name"]
+
+        if inst_id not in inst_cache:
+            dates_c, data_c = load_instrument_cache(inst_id)
+            inst_cache[inst_id] = (dates_c, data_c)
+        dates_c, data_c = inst_cache[inst_id]
+        if dates_c is None:
             continue
 
-        x = col[valid]
-        y = y_binary[valid]
+        # Get expression column index from manifest
+        try:
+            j = manifest["expr_names"].index(expr_name)
+        except ValueError:
+            continue
 
-        q25, q50, q75 = np.percentile(x, [25, 50, 75])
+        date_to_idx = {d: idx for idx, d in enumerate(dates_c)}
+        n_days = len(wr_dates_str)
+        x = np.full(n_days, np.nan, dtype=np.float64)
+        for k, d in enumerate(wr_dates_str):
+            idx = date_to_idx.get(d)
+            if idx is not None:
+                x[k] = data_c[idx, j]
+
+        valid = ~np.isnan(x)
+        if valid.sum() < 10:
+            continue
+
+        xv = x[valid]
+        yv = y[valid]
+        wv = w[valid]
+
+        q25, q50, q75 = np.percentile(xv, [25, 50, 75])
+
         bands = {
-            "q1": x <= q25,
-            "q2": (x > q25) & (x <= q50),
-            "q3": (x > q50) & (x <= q75),
-            "q4": x > q75,
+            "q1": xv <= q25,
+            "q2": (xv > q25) & (xv <= q50),
+            "q3": (xv > q50) & (xv <= q75),
+            "q4": xv > q75,
         }
-        stats = {}
-        for band_name, mask in bands.items():
-            n = int(np.sum(mask))
+
+        stats = {"q25": float(q25), "q50": float(q50), "q75": float(q75)}
+        for band, mask in bands.items():
+            n = int(mask.sum())
             if n > 0:
-                stats[f"wr_{band_name}"]  = float(np.mean(y[mask]))
-                stats[f"n_{band_name}"]   = n
+                # Weighted win rate within band
+                wt = wv[mask]
+                wr = float(np.average(yv[mask], weights=wt))
+                stats[f"wr_{band}"] = wr
+                stats[f"n_{band}"]  = n
+                stats[f"w_{band}"]  = float(wt.sum())
             else:
-                stats[f"wr_{band_name}"]  = None
-                stats[f"n_{band_name}"]   = 0
-        stats["q25"] = float(q25)
-        stats["q50"] = float(q50)
-        stats["q75"] = float(q75)
+                stats[f"wr_{band}"] = None
+                stats[f"n_{band}"]  = 0
+                stats[f"w_{band}"]  = 0.0
+
         quartile_stats[fname] = stats
 
     return quartile_stats
 
 
 # ══════════════════════════════════════════════════════════════
-# REGIME SCORING
+# STEP 5 — REGIME SCORES PER SIGNAL DATE
 # ══════════════════════════════════════════════════════════════
 
-def compute_regime_scores(feature_matrix, feature_labels, top_features_df, y_binary):
+def compute_regime_scores(signals_df, manifest, top_features_df):
     """
-    Compute a composite regime score for each signal.
+    For each signal, compute a composite regime score (0-1).
 
-    Method: weighted dot product of top features × their correlations,
-    normalized to 0-1 range.
+    Method:
+      1. For each top feature, z-score its value on the signal date
+      2. Weighted dot product: score = sum(z_i × corr_i) / sum(|corr_i|)
+         (positive corr → high value = better; negative corr → high value = worse)
+      3. Normalize all scores to 0-1 across the signal population
 
-    A score near 1 means the market environment closely resembles historical winners.
-    A score near 0 means it resembles historical losers.
+    Returns np.array of length len(signals_df).
     """
-    top_names = top_features_df["feature_name"].tolist()
-    top_corrs = top_features_df["correlation"].values
-    label_to_idx = {name: j for j, name in enumerate(feature_labels)}
+    n_signals  = len(signals_df)
+    n_features = len(top_features_df)
+    dates_str  = signals_df["signal_date"].dt.strftime("%Y-%m-%d").values
+    corrs      = top_features_df["correlation"].values
 
-    n_signals = feature_matrix.shape[0]
-    score_matrix = np.full((n_signals, len(top_names)), np.nan, dtype=np.float64)
+    # score_matrix: (n_signals, n_features) — z-scored feature values
+    score_matrix = np.full((n_signals, n_features), np.nan, dtype=np.float64)
 
-    for k, fname in enumerate(top_names):
-        j = label_to_idx.get(fname)
-        if j is None:
+    # Load each instrument once, compute z-score across the full instrument history
+    inst_cache = {}
+
+    for k, (_, row) in enumerate(top_features_df.iterrows()):
+        inst_id   = row["instrument"]
+        expr_name = row["expr_name"]
+
+        if inst_id not in inst_cache:
+            dates_c, data_c = load_instrument_cache(inst_id)
+            inst_cache[inst_id] = (dates_c, data_c)
+        dates_c, data_c = inst_cache[inst_id]
+        if dates_c is None:
             continue
-        col = feature_matrix[:, j].astype(np.float64)
 
-        # Standardize: z-score
-        valid = ~np.isnan(col)
-        if np.sum(valid) < 2:
+        try:
+            j = manifest["expr_names"].index(expr_name)
+        except ValueError:
             continue
-        mu  = np.nanmean(col)
-        std = np.nanstd(col)
+
+        # Full series for z-score normalization
+        full_col = data_c[:, j].astype(np.float64)
+        valid    = ~np.isnan(full_col)
+        if valid.sum() < 2:
+            continue
+        mu  = np.nanmean(full_col)
+        std = np.nanstd(full_col)
         if std == 0:
             continue
-        score_matrix[:, k] = (col - mu) / std
 
-    # Weighted sum: correlation coefficient is the weight
-    # Sign matters: positive correlation → high value = more wins
-    # Multiply z-score by correlation sign so high score always = win-like
-    weights = top_corrs  # already signed
+        date_to_idx = {d: idx for idx, d in enumerate(dates_c)}
+        for i, d in enumerate(dates_str):
+            idx = date_to_idx.get(d)
+            if idx is not None:
+                val = data_c[idx, j]
+                if not np.isnan(val):
+                    score_matrix[i, k] = (val - mu) / std
 
-    # Compute weighted sum, ignoring NaN
-    raw_scores = np.full(n_signals, np.nan)
+    # Weighted dot product per signal
+    raw_scores = np.full(n_signals, np.nan, dtype=np.float64)
+    weight_sum = np.sum(np.abs(corrs))
+
     for i in range(n_signals):
-        row = score_matrix[i]
-        valid_mask = ~np.isnan(row)
-        if np.sum(valid_mask) < 5:
+        row    = score_matrix[i]
+        valid  = ~np.isnan(row)
+        if valid.sum() < 5:  # need at least 5 features to score
             continue
-        raw_scores[i] = np.dot(row[valid_mask], weights[valid_mask]) / np.sum(np.abs(weights[valid_mask]))
+        raw_scores[i] = np.dot(row[valid], corrs[valid]) / np.sum(np.abs(corrs[valid]))
 
     # Normalize to 0-1
-    valid = ~np.isnan(raw_scores)
-    if np.sum(valid) < 2:
-        return raw_scores  # can't normalize
+    valid_mask = ~np.isnan(raw_scores)
+    if valid_mask.sum() < 2:
+        return raw_scores
 
     mn  = np.nanmin(raw_scores)
     mx  = np.nanmax(raw_scores)
     rng = mx - mn
     if rng > 0:
-        raw_scores = (raw_scores - mn) / rng
+        raw_scores[valid_mask] = (raw_scores[valid_mask] - mn) / rng
 
     return raw_scores
 
 
-def compute_expected_win_rates(regime_scores, y_binary, n_buckets=10):
+def compute_expected_win_rates(regime_scores, signals_df, n_buckets=10):
     """
-    Bucket regime scores into deciles and compute win rate per bucket.
-    Returns dict: {bucket_label: {score_min, score_max, win_rate, n}}
+    Bucket signals by regime score into deciles.
+    Compute actual win rate per bucket.
+    Returns dict of decile stats.
     """
+    is_win = signals_df["classification"].apply(
+        lambda c: 1 if str(c).upper() in WIN_CLASSES else 0
+    ).values
+
     valid = ~np.isnan(regime_scores)
     scores = regime_scores[valid]
-    wins   = y_binary[valid]
+    wins   = is_win[valid]
 
-    percentiles = np.linspace(0, 100, n_buckets + 1)
-    thresholds  = np.percentile(scores, percentiles)
+    if len(scores) < n_buckets:
+        return {}
 
+    thresholds = np.percentile(scores, np.linspace(0, 100, n_buckets + 1))
     buckets = {}
+
     for b in range(n_buckets):
         lo = thresholds[b]
         hi = thresholds[b + 1]
-        if b == n_buckets - 1:
-            mask = (scores >= lo) & (scores <= hi)
-        else:
-            mask = (scores >= lo) & (scores < hi)
-        n = int(np.sum(mask))
+        mask = (scores >= lo) & (scores <= hi) if b == n_buckets - 1 else (scores >= lo) & (scores < hi)
+        n  = int(mask.sum())
         wr = float(np.mean(wins[mask])) if n > 0 else None
-        label = f"d{b+1}"
-        buckets[label] = {
+        buckets[f"d{b+1}"] = {
             "score_min": float(lo),
             "score_max": float(hi),
             "win_rate":  wr,
             "n":         n,
         }
+
     return buckets
 
 
@@ -380,26 +530,11 @@ def compute_expected_win_rates(regime_scores, y_binary, n_buckets=10):
 # UPLOAD
 # ══════════════════════════════════════════════════════════════
 
-def upload_regime_model(payload):
-    """POST regime model to Railway."""
+def _post(endpoint, payload):
     import urllib.request
-    url = f"{API_BASE}/api/v2/regime/model"
+    url  = f"{API_BASE}{endpoint}"
     data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        url, data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "market-grinder/1.0"},
-        method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read())
-
-
-def upload_signal_scores(payload):
-    """POST signal regime scores to Railway."""
-    import urllib.request
-    url = f"{API_BASE}/api/v2/regime/scores"
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
+    req  = urllib.request.Request(
         url, data=data,
         headers={"Content-Type": "application/json", "User-Agent": "market-grinder/1.0"},
         method="POST"
@@ -412,123 +547,127 @@ def upload_signal_scores(payload):
 # MAIN
 # ══════════════════════════════════════════════════════════════
 
-def run(cycle_id, setup_type, top_n=TOP_N_FEATURES, dry_run=False):
+def run(cycle_id, setup_type, window=DEFAULT_WINDOW, top_n=DEFAULT_TOP_N, dry_run=False):
     print("\n" + "=" * 70)
     print("  MARKET GRINDER")
     print("=" * 70)
     print(f"  Cycle:      {cycle_id}")
+    print(f"  Setup:      {setup_type}")
+    print(f"  Window:     ±{window} trading days")
     print(f"  Top N:      {top_n} features")
 
-    # 1. Load signals
-    print(f"\n  Loading signals from Railway...")
+    # ── 1. Load signals ──────────────────────────────────────
+    print(f"\n  Loading signals...")
     signals_df = load_signals(cycle_id)
-    print(f"  {len(signals_df)} signals loaded")
-
-    # 2. Determine win/loss
-    # Classification: AUTO_WIN, AI_WIN, MANUAL_WIN = win; everything else = loss
-    WIN_CLASSES = {"AUTO_WIN", "AI_WIN", "MANUAL_WIN"}
-    y_binary = np.array([
-        1 if str(row.get("classification", "")).upper() in WIN_CLASSES else 0
-        for _, row in signals_df.iterrows()
-    ], dtype=np.float32)
-
-    n_wins   = int(np.sum(y_binary))
-    n_losses = int(len(y_binary) - n_wins)
-    baseline_wr = float(np.mean(y_binary))
-    print(f"  Wins: {n_wins}  Losses: {n_losses}  Baseline win rate: {baseline_wr:.3f}")
+    n_wins   = int((signals_df["classification"].apply(
+        lambda c: str(c).upper() in WIN_CLASSES)).sum())
+    n_losses = len(signals_df) - n_wins
+    print(f"  {len(signals_df)} signals  |  {n_wins} wins  {n_losses} losses  "
+          f"|  baseline win rate: {n_wins/len(signals_df):.3f}")
 
     if n_wins < 10 or n_losses < 10:
-        raise ValueError(f"Insufficient labeled data: {n_wins} wins, {n_losses} losses. Need at least 10 of each.")
+        raise ValueError(f"Insufficient labeled signals: {n_wins} wins, {n_losses} losses")
 
-    # 3. Load market cache manifest
+    # ── 2. Build win rate time series ────────────────────────
+    print(f"\n  Building win rate time series (±{window} trading days)...")
+    wr_df = build_win_rate_series(signals_df, window=window)
+    print(f"  {len(wr_df)} days in series")
+    print(f"  Win rate range: {wr_df['win_rate'].min():.3f} – {wr_df['win_rate'].max():.3f}")
+    print(f"  Weight range:   {wr_df['weight'].min()} – {wr_df['weight'].max()} signals/window")
+    print(f"  Mean weighted win rate: "
+          f"{np.average(wr_df['win_rate'], weights=wr_df['weight']):.3f}")
+
+    # ── 3. Load market manifest ──────────────────────────────
     manifest = load_market_manifest()
-    print(f"  Market cache: {manifest['n_instruments']} instruments, "
-          f"{manifest['n_expressions']} expressions, "
-          f"built {manifest.get('built_at', 'unknown')[:10]}")
+    print(f"\n  Market cache: {manifest['n_instruments']} instruments  "
+          f"{manifest['n_expressions']:,} expressions  "
+          f"built {manifest.get('built_at','?')[:10]}")
 
-    # 4. Build feature matrix
-    feature_matrix, feature_labels, signal_dates = build_feature_matrix(signals_df, manifest)
+    # ── 4. Compute correlations ──────────────────────────────
+    corr_df = compute_all_correlations(wr_df, manifest)
 
-    # 5. Compute correlations
-    corr_df = compute_correlations(feature_matrix, y_binary, feature_labels)
+    if corr_df.empty:
+        raise ValueError("No correlations computed — check market cache coverage of signal dates")
 
-    print(f"\n  Top 20 features by |correlation|:")
-    print(f"  {'Feature':<60} {'Corr':>8}  {'N':>6}")
-    print(f"  {'-'*78}")
+    print(f"\n  Top 20 features by |weighted correlation|:")
+    print(f"  {'Feature':<65} {'Corr':>8}  {'N':>5}")
+    print(f"  {'-'*82}")
     for _, row in corr_df.head(20).iterrows():
-        print(f"  {row['feature_name']:<60} {row['correlation']:>+8.4f}  {row['n_valid']:>6}")
+        sign = "+" if row["correlation"] > 0 else ""
+        print(f"  {row['feature_name']:<65} "
+              f"{sign}{row['correlation']:>7.4f}  {row['n_valid']:>5}")
 
-    # 6. Select top N
-    top_df = corr_df.head(top_n).copy()
-    top_feature_names = top_df["feature_name"].tolist()
+    # ── 5. Select top N ──────────────────────────────────────
+    top_df = corr_df.head(top_n).copy().reset_index(drop=True)
 
-    # 7. Quartile win rates for top features
+    # ── 6. Quartile win rates ────────────────────────────────
     print(f"\n  Computing quartile win rates for top {top_n} features...")
-    quartile_stats = compute_quartile_win_rates(
-        feature_matrix, feature_labels, y_binary, top_feature_names
-    )
+    quartile_stats = compute_quartile_win_rates(wr_df, manifest, top_df)
 
-    # 8. Regime scores
-    print(f"\n  Computing regime scores...")
-    regime_scores = compute_regime_scores(feature_matrix, feature_labels, top_df, y_binary)
-    valid_scores = regime_scores[~np.isnan(regime_scores)]
-    print(f"  Scores computed: {len(valid_scores)}/{len(regime_scores)} signals")
+    # ── 7. Regime scores per signal ──────────────────────────
+    print(f"\n  Scoring {len(signals_df)} signals...")
+    regime_scores = compute_regime_scores(signals_df, manifest, top_df)
+    n_scored = int(np.sum(~np.isnan(regime_scores)))
+    print(f"  Scored: {n_scored}/{len(signals_df)}")
     print(f"  Score range: {np.nanmin(regime_scores):.3f} – {np.nanmax(regime_scores):.3f}")
     print(f"  Score mean:  {np.nanmean(regime_scores):.3f}")
 
-    # 9. Win rate by decile
-    wr_by_decile = compute_expected_win_rates(regime_scores, y_binary)
-    print(f"\n  Win rate by regime score decile:")
-    print(f"  {'Decile':<8} {'Score range':<20} {'Win rate':>10}  {'N':>6}")
-    for label, stats in wr_by_decile.items():
-        wr_str = f"{stats['win_rate']:.3f}" if stats['win_rate'] is not None else "  N/A"
-        print(f"  {label:<8} {stats['score_min']:.3f} – {stats['score_max']:.3f}   "
-              f"{wr_str:>10}  {stats['n']:>6}")
+    # ── 8. Win rate by decile ────────────────────────────────
+    wr_by_decile = compute_expected_win_rates(regime_scores, signals_df)
+    if wr_by_decile:
+        print(f"\n  Win rate by regime score decile (D1=worst, D10=best):")
+        print(f"  {'Decile':<8} {'Score range':<20} {'Win rate':>10}  {'N':>5}")
+        for label, stats in wr_by_decile.items():
+            wr_str = f"{stats['win_rate']:.3f}" if stats["win_rate"] is not None else "  N/A"
+            print(f"  {label:<8} "
+                  f"{stats['score_min']:.3f}–{stats['score_max']:.3f}   "
+                  f"{wr_str:>10}  {stats['n']:>5}")
 
-    # 10. Build upload payloads
+    # ── 9. Build payloads ────────────────────────────────────
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Feature weights: top N features with their correlation + quartile stats
     feature_weights = {}
     for _, row in top_df.iterrows():
         fname = row["feature_name"]
         feature_weights[fname] = {
-            "correlation": row["correlation"],
+            "instrument":      row["instrument"],
+            "expr_name":       row["expr_name"],
+            "correlation":     row["correlation"],
             "abs_correlation": row["abs_correlation"],
-            "n_valid": row["n_valid"],
-            "p_value": row.get("p_value"),
-            "quartiles": quartile_stats.get(fname),
+            "n_valid":         row["n_valid"],
+            "quartiles":       quartile_stats.get(fname),
         }
 
     regime_model_payload = {
-        "setup_type":        setup_type,
-        "cycle_id":          cycle_id,
-        "n_signals_used":    int(len(signals_df)),
-        "n_features_tested": int(len(corr_df)),
-        "feature_weights":   json.dumps(feature_weights),
-        "top_features":      json.dumps(top_feature_names[:5]),
+        "setup_type":         setup_type,
+        "cycle_id":           cycle_id,
+        "n_signals_used":     int(len(signals_df)),
+        "n_features_tested":  int(len(corr_df)),
+        "feature_weights":    json.dumps(feature_weights),
+        "top_features":       json.dumps(top_df["feature_name"].head(5).tolist()),
         "win_rate_by_decile": json.dumps(wr_by_decile),
-        "baseline_win_rate": baseline_wr,
-        "updated_at":        now,
+        "baseline_win_rate":  float(n_wins / len(signals_df)),
+        "win_rate_series_window": window,
+        "updated_at":         now,
     }
 
-    # Signal scores
+    # Per-signal scores
     signal_score_rows = []
     for i, (_, sig_row) in enumerate(signals_df.iterrows()):
         score = float(regime_scores[i]) if not np.isnan(regime_scores[i]) else None
 
-        # Map score to expected win rate via decile
+        # Map score to expected win rate
         expected_wr = None
-        if score is not None:
+        if score is not None and wr_by_decile:
             for stats in wr_by_decile.values():
                 if stats["score_min"] <= score <= stats["score_max"]:
                     expected_wr = stats["win_rate"]
                     break
 
         signal_score_rows.append({
-            "cycle_signal_id": sig_row.get("id"),
-            "cycle_id":        cycle_id,
-            "regime_score":    score,
+            "cycle_signal_id":   sig_row.get("id"),
+            "cycle_id":          cycle_id,
+            "regime_score":      score,
             "expected_win_rate": expected_wr,
         })
 
@@ -540,32 +679,43 @@ def run(cycle_id, setup_type, top_n=TOP_N_FEATURES, dry_run=False):
     if dry_run:
         print(f"\n  DRY RUN — not uploading.")
         print(f"  Would upload regime model + {len(signal_score_rows)} signal scores.")
+        d1 = wr_by_decile.get("d1", {}).get("win_rate")
+        d10 = wr_by_decile.get("d10", {}).get("win_rate")
+        if d1 is not None and d10 is not None:
+            print(f"  Win rate lift D10 vs D1: {d10:.3f} vs {d1:.3f} "
+                  f"(+{(d10-d1)*100:.1f}pp)")
         return
 
-    # 11. Upload
+    # ── 10. Upload ───────────────────────────────────────────
     print(f"\n  Uploading regime model...")
-    result = upload_regime_model(regime_model_payload)
+    result = _post("/api/v2/regime/model", regime_model_payload)
     print(f"  {result}")
 
     print(f"  Uploading {len(signal_score_rows)} signal scores...")
-    result = upload_signal_scores(signal_scores_payload)
+    result = _post("/api/v2/regime/scores", signal_scores_payload)
     print(f"  {result}")
 
     print(f"\n  ✓ Market grinder complete.")
-    print(f"  Top feature: {top_feature_names[0]}")
-    print(f"  Regime score spread: {np.nanmin(regime_scores):.3f} – {np.nanmax(regime_scores):.3f}")
-    print(f"  Win rate in top decile vs bottom: "
-          f"{wr_by_decile.get('d10', {}).get('win_rate', 'N/A')} vs "
-          f"{wr_by_decile.get('d1', {}).get('win_rate', 'N/A')}")
+    if wr_by_decile:
+        d1  = wr_by_decile.get("d1",  {}).get("win_rate")
+        d10 = wr_by_decile.get("d10", {}).get("win_rate")
+        if d1 is not None and d10 is not None:
+            print(f"  Win rate: D1 (worst regime) {d1:.3f}  →  "
+                  f"D10 (best regime) {d10:.3f}  "
+                  f"(+{(d10-d1)*100:.1f}pp lift)")
+    print(f"  Top feature: {top_df.iloc[0]['feature_name']}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Market Grinder — regime correlation engine")
-    parser.add_argument("--cycle",   help="Specific cycle_id to run on")
+    parser = argparse.ArgumentParser(description="Market Grinder — win rate time series correlation")
+    parser.add_argument("--cycle",   help="Specific cycle_id")
     parser.add_argument("--setup",   default="dtss", help="Setup type (uses current cycle)")
-    parser.add_argument("--top-n",   type=int, default=TOP_N_FEATURES,
-                        help=f"Number of top features to keep (default: {TOP_N_FEATURES})")
-    parser.add_argument("--dry-run", action="store_true", help="Compute but don't upload")
+    parser.add_argument("--window",  type=int, default=DEFAULT_WINDOW,
+                        help=f"Rolling window ±N trading days (default: {DEFAULT_WINDOW})")
+    parser.add_argument("--top-n",   type=int, default=DEFAULT_TOP_N,
+                        help=f"Top N features to keep (default: {DEFAULT_TOP_N})")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Compute but don't upload to Railway")
     args = parser.parse_args()
 
     if args.cycle:
@@ -577,4 +727,5 @@ if __name__ == "__main__":
         cycle_id = get_current_cycle(setup_type)
         print(f"  Current cycle: {cycle_id}")
 
-    run(cycle_id, setup_type, top_n=args.top_n, dry_run=args.dry_run)
+    run(cycle_id, setup_type,
+        window=args.window, top_n=args.top_n, dry_run=args.dry_run)
