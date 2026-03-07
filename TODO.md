@@ -35,12 +35,13 @@
 6. **V2 server.py rewrite** (2026-03-07) — V1 cruft removed, ~910 lines. All needed endpoints kept: pipeline/agent, examples CRUD, vetting, pending/AI review, universe OHLCV insert, all V2 cycle endpoints
 7. **V2 index.html rewrite** (2026-03-07) — fresh shell, new nav. V1 vetting UI copied verbatim: VettingChart, VettingPage (Step 2/4 toggle, keyboard shortcuts, log streaming), ExamplesPage (Pending/AI tab, approve-all, approve/reject). V1 originals archived at `archive/v1/`.
 
-### 🔲 Next: V2 UI completion
-- CycleHealthPage is stubbed — needs real data wired (health panel, cycle diff, revert button)
-- WatchlistPage is placeholder — needs market grinder results
+### ✅ V2 UI completion
+- CycleHealthPage fully wired — health panel, cycle diff, revert button, all live
+- WatchlistPage placeholder — blocked on Market Grinder
 
-### 🔲 Then: Market Grinder (Step 5)
+### 🔲 Next: Market Grinder (Step 5)
 - V2-native, built on `cycle_signals` table
+- Design TBD
 
 ---
 
