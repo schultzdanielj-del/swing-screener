@@ -59,8 +59,11 @@ python scripts/grind_upload.py --setup dtss
 ```
 - Reads `cache/pyramid_results_dtss.json` (local grinder output from last run)
 - Uploads grind_cycles + cycle_conditions rows, marks cycle current
-- NOTE: `data/pyramid_results_dtss.json` is grind #3 (39 conditions, old format).
-  You likely want to run pyramid_grinder.py fresh first (see below).
+- ⚠ WARNING: `data/pyramid_results_dtss.json` in repo = grind #3 (39 conditions, OLD).
+  Grind #5 (94 conditions, 71 examples) is LOCAL ONLY at
+  `local_runner/cache/pyramid_results_dtss.json`.
+  grind_upload.py reads from `cache/` by default — confirm that file exists
+  locally before running. Do NOT use the `data/` file.
 - Prerequisites: steps 1 and 2 (tables live; grinder output file present locally)
 
 **5. Run scan_signals.py**
