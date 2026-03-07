@@ -966,7 +966,7 @@ async def v2_get_regime_model(setup_type: str):
     # Parse JSON blobs for convenience
     for field in ["feature_weights", "top_features", "win_rate_by_decile"]:
         if m.get(field):
-            try: m[field] = json.loads(m[field])
+            try: m[field] = _json.loads(m[field])
             except: pass
     return {"setup_type": setup_type, "model": m}
 
