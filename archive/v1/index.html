@@ -3,22 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ScanPerfect V2</title>
+  <title>ScanPerfect</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg:#08090b; --surface:#0f1114; --surface-2:#151719; --surface-3:#1b1d21;
-      --border:#232529; --border-bright:#35373d;
-      --text:#e8eaed; --text-dim:#9ca0a8; --text-muted:#62656d;
-      --green:#34d399; --green-dark:#059669; --green-bg:rgba(52,211,153,0.07);
-      --red:#f87171; --red-dark:#dc2626; --red-bg:rgba(248,113,113,0.07);
-      --amber:#fbbf24; --amber-bg:rgba(251,191,36,0.07);
-      --blue:#60a5fa; --blue-bg:rgba(96,165,250,0.07);
-      --cyan:#22d3ee; --purple:#a78bfa;
-      --mono:'JetBrains Mono',monospace; --sans:'DM Sans',system-ui,sans-serif;
+      --bg: #08090b; --surface: #0f1114; --surface-2: #151719; --surface-3: #1b1d21;
+      --border: #232529; --border-bright: #35373d;
+      --text: #e8eaed; --text-dim: #9ca0a8; --text-muted: #62656d;
+      --green: #34d399; --green-dark: #059669; --green-bg: rgba(52,211,153,0.07);
+      --red: #f87171; --red-dark: #dc2626; --red-bg: rgba(248,113,113,0.07);
+      --amber: #fbbf24; --amber-bg: rgba(251,191,36,0.07);
+      --blue: #60a5fa; --blue-bg: rgba(96,165,250,0.07);
+      --cyan: #22d3ee; --purple: #a78bfa;
+      --mono: 'JetBrains Mono', monospace; --sans: 'DM Sans', system-ui, sans-serif;
     }
     * { margin:0; padding:0; box-sizing:border-box; }
     body { background:var(--bg); color:var(--text); font-family:var(--sans); }
@@ -26,6 +26,7 @@
     ::-webkit-scrollbar-thumb { background:var(--border-bright); border-radius:3px; }
     ::-webkit-scrollbar-track { background:transparent; }
 
+    /* ── Layout ─────────────────────── */
     .app { display:flex; height:100vh; }
     .rail {
       width:52px; min-width:52px; background:var(--surface);
@@ -75,7 +76,10 @@
       align-items:center; justify-content:center; flex-shrink:0;
     }
     .sb-item.on .num { background:var(--blue-bg); color:var(--blue); }
-    .sb-setup-sel { display:flex; gap:4px; padding:8px 16px; }
+
+    .sb-setup-sel {
+      display:flex; gap:4px; padding:8px 16px;
+    }
     .sb-setup-btn {
       flex:1; padding:6px; border:1px solid var(--border); border-radius:4px;
       background:transparent; color:var(--text-dim); font-family:var(--mono);
@@ -93,6 +97,7 @@
     .main-title span { color:var(--text-muted); font-weight:400; }
     .main-body { flex:1; overflow-y:auto; padding:20px 24px; }
 
+    /* ── Components ─────────────────── */
     .card {
       background:var(--surface); border:1px solid var(--border); border-radius:8px;
       padding:16px 20px; margin-bottom:12px;
@@ -111,7 +116,7 @@
     .b-error { color:var(--red); background:var(--red-bg); }
     @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.5;} }
     @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
-    .pulse-dot { animation:pulse 1.5s ease-in-out infinite; }
+    .pulse-dot { animation: pulse 1.5s ease-in-out infinite; }
 
     .btn {
       font-family:var(--mono); font-size:11px; font-weight:600;
@@ -146,10 +151,12 @@
 
     .empty-state {
       display:flex; flex-direction:column; align-items:center; justify-content:center;
-      height:300px; color:var(--text-muted); font-family:var(--mono); font-size:12px; gap:8px;
+      height:300px; color:var(--text-muted); font-family:var(--mono); font-size:12px;
+      gap:8px;
     }
     .empty-state .icon { font-size:32px; opacity:0.3; }
 
+    /* ── Examples grid ──────────────── */
     .ex-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:8px; }
     .ex-card {
       background:var(--surface-2); border:1px solid var(--border); border-radius:6px;
@@ -160,6 +167,7 @@
     .ex-date { font-family:var(--mono); font-size:10px; color:var(--text-muted); }
     .ex-card.rejected { border-left:3px solid var(--red-dark); opacity:0.6; }
 
+    /* ── Vetting ────────────────────── */
     .vet-layout { display:flex; height:calc(100vh - 110px); margin:-20px -24px; }
     .vet-list {
       width:260px; min-width:260px; border-right:1px solid var(--border);
@@ -177,6 +185,7 @@
     .vet-ticker { font-family:var(--mono); font-size:12px; font-weight:700; }
     .vet-meta { font-family:var(--mono); font-size:10px; color:var(--text-muted); display:flex; justify-content:space-between; }
     .vet-adr { color:var(--green); font-weight:600; }
+
     .vet-chart { flex:1; display:flex; flex-direction:column; overflow:hidden; }
     .vet-chart-hdr {
       padding:10px 16px; background:var(--surface); border-bottom:1px solid var(--border);
@@ -197,6 +206,7 @@
     .vet-btn.no { color:var(--red); border-color:var(--red); }
     .vet-btn.no:hover,.vet-btn.no.sel { background:var(--red); color:#fff; }
     .vet-canvas-area { flex:1; position:relative; }
+
     .vet-filter-bar {
       display:flex; gap:6px; padding:6px 14px; background:var(--surface-2);
       border-bottom:1px solid var(--border);
@@ -207,6 +217,7 @@
       font-family:var(--mono); font-size:9px; font-weight:600;
     }
     .vet-filter-btn.on { background:var(--blue); color:#fff; border-color:var(--blue); }
+
     .kbd-hint {
       position:fixed; bottom:10px; right:14px; font-family:var(--mono); font-size:9px;
       color:var(--text-muted); background:var(--surface); padding:5px 10px;
@@ -236,7 +247,463 @@ function sma(data, period) {
 function fmtDur(s) { if(s<60) return `${Math.round(s)}s`; if(s<3600) return `${Math.floor(s/60)}m ${Math.round(s%60)}s`; return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`; }
 
 // ═══════════════════════════════════════════════════════
-// MINI CHART
+// NIGHTLY REFRESH PAGE
+// ═══════════════════════════════════════════════════════
+function NightlyPage() {
+  const [pipe, setPipe] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const logRef = useRef(null);
+  const logCountRef = useRef(0);
+
+  useEffect(() => {
+    const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
+    load(); const id = setInterval(load, 5000); return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!pipe) return;
+    const step = pipe.steps.find(s => s.id === 'nightly');
+    if (!step || !['running','claimed','queued'].includes(step.state?.status)) { logCountRef.current = 0; return; }
+    const poll = () => fetch(`${API}/api/pipeline/logs/nightly?after=${logCountRef.current}`).then(r=>r.json())
+      .then(d => { if(d.lines?.length) { logCountRef.current += d.lines.length; setLogs(p=>[...p,...d.lines]); } }).catch(()=>{});
+    poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
+  }, [pipe?.steps?.find(s=>s.id==='nightly')?.state?.status]);
+
+  useEffect(() => { if(logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
+
+  const nightly = pipe?.steps?.find(s => s.id === 'nightly');
+  const st = nightly?.state?.status || 'pending';
+  const isRun = ['running','claimed','queued'].includes(st);
+
+  function doRun() {
+    fetch(`${API}/api/pipeline/run/nightly`, {method:'POST'}).then(r=>r.json()).then(d => {
+      if(d.error) alert(d.error); else { setLogs([]); }
+    });
+  }
+  function doReset() { fetch(`${API}/api/pipeline/reset/nightly`, {method:'POST'}); }
+
+  return (
+    <div>
+      <div className="stat-row" style={{marginBottom:16}}>
+        <div className="stat-box">
+          <div className="stat-label">Status</div>
+          <div className={`stat-val ${st==='done'?'green':st==='running'?'amber':''}`}>{st.toUpperCase()}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Last Run</div>
+          <div className="stat-val" style={{fontSize:13}}>{nightly?.state?.finished_at ? new Date(nightly.state.finished_at).toLocaleString() : '—'}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Duration</div>
+          <div className="stat-val" style={{fontSize:13}}>{nightly?.state?.duration_s ? fmtDur(nightly.state.duration_s) : '—'}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Agent</div>
+          <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
+            {pipe?.agent_status?.toUpperCase() || '?'}
+          </div>
+        </div>
+      </div>
+      <div style={{display:'flex',gap:8,marginBottom:16}}>
+        {isRun
+          ? <button className="btn btn-stop" onClick={()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'})}>■ STOP</button>
+          : <button className="btn btn-go" onClick={doRun} disabled={pipe?.agent_status!=='online'}>▶ RUN NIGHTLY</button>
+        }
+        <button className="btn" onClick={doReset}>↻ Reset</button>
+      </div>
+      {pipe?.agent_status !== 'online' && (
+        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
+          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--amber)',marginBottom:6}}>Agent is offline. Start it locally:</div>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--cyan)',background:'var(--bg)',
+            padding:'8px 12px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer',userSelect:'all'}}>
+            python local_runner/agent.py
+            <span style={{float:'right',fontSize:9,color:'var(--text-muted)'}}>click to copy</span>
+          </div>
+        </div>
+      )}
+      {nightly?.state?.result_summary && (
+        <div className="card" style={{borderColor:'rgba(52,211,153,0.15)',background:'rgba(52,211,153,0.03)'}}>
+          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--green)',whiteSpace:'pre-wrap'}}>{nightly.state.result_summary}</div>
+        </div>
+      )}
+      {logs.length > 0 && (
+        <div className="log-box" ref={logRef}>
+          {logs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')?'ok':''}>{l}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// PIPELINE STEP PAGE (reusable for steps 2-4, 6-7)
+// ═══════════════════════════════════════════════════════
+function StepPage({ stepId, setup }) {
+  const [pipe, setPipe] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const logRef = useRef(null);
+  const logCountRef = useRef(0);
+
+  const [grinderParams, setGrinderParams] = useState({beam: 10000, depth: 100, peak_target: 3});
+
+  useEffect(() => {
+    const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
+    load(); const id = setInterval(load, 5000); return () => clearInterval(id);
+  }, []);
+
+  const step = pipe?.steps?.find(s => s.id === stepId);
+  const st = step?.state?.status || 'pending';
+  const isRun = ['running','claimed','queued'].includes(st);
+
+  useEffect(() => {
+    if (!isRun) { logCountRef.current = 0; return; }
+    const poll = () => fetch(`${API}/api/pipeline/logs/${stepId}?after=${logCountRef.current}`).then(r=>r.json())
+      .then(d => { if(d.lines?.length) { logCountRef.current += d.lines.length; setLogs(p=>[...p,...d.lines]); } }).catch(()=>{});
+    poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
+  }, [isRun]);
+
+  useEffect(() => { if(logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
+
+  function doRun() {
+    const opts = {method:'POST', headers:{'Content-Type':'application/json'}};
+    if (stepId === 'signal_brute') opts.body = JSON.stringify({params: grinderParams});
+    fetch(`${API}/api/pipeline/run/${stepId}`, opts).then(r=>r.json()).then(d => {
+      if(d.error) alert(d.error); else { setLogs([]); logCountRef.current = 0; }
+    });
+  }
+
+  return (
+    <div>
+      <div className="stat-row" style={{marginBottom:16}}>
+        <div className="stat-box">
+          <div className="stat-label">Status</div>
+          <div className={`stat-val ${st==='done'?'green':isRun?'amber':''}`}>{st.toUpperCase()}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Duration</div>
+          <div className="stat-val" style={{fontSize:13}}>{step?.state?.duration_s ? fmtDur(step.state.duration_s) : '—'}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Agent</div>
+          <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
+            {pipe?.agent_status?.toUpperCase() || '?'}
+          </div>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--cyan)',marginTop:4,cursor:'pointer',userSelect:'all'}}>
+            python local_runner/agent.py <span style={{fontSize:8,color:'var(--text-muted)',marginLeft:4}}>copy</span>
+          </div>
+        </div>
+      </div>
+      {stepId === 'signal_brute' && !isRun && (
+        <div style={{display:'flex',gap:12,marginBottom:12,alignItems:'center'}}>
+          {[['beam','Beam'],['depth','Depth'],['peak_target','Peak']].map(([k,label])=>(
+            <div key={k} style={{display:'flex',alignItems:'center',gap:6}}>
+              <label style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-dim)'}}>{label}</label>
+              <input type="number" value={grinderParams[k]}
+                onChange={e=>setGrinderParams(p=>({...p,[k]:parseInt(e.target.value)||0}))}
+                style={{width:80,fontFamily:'var(--mono)',fontSize:12,color:'var(--text)',
+                  background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:4,
+                  padding:'4px 8px',outline:'none'}} />
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{display:'flex',gap:8,marginBottom:16}}>
+        {isRun
+          ? <button className="btn btn-stop" onClick={()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'})}>■ STOP</button>
+          : <button className="btn btn-go" onClick={doRun} disabled={pipe?.agent_status!=='online'}>▶ RUN</button>
+        }
+        <button className="btn" onClick={()=>fetch(`${API}/api/pipeline/reset/${stepId}`,{method:'POST'})}>↻ Reset</button>
+      </div>
+      {pipe?.agent_status !== 'online' && (
+        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--cyan)',background:'var(--bg)',
+            padding:'6px 10px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer'}}>
+            python local_runner/agent.py <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:8}}>click to copy</span>
+          </div>
+        </div>
+      )}
+      {step?.state?.result_summary && (
+        <div className="card" style={{borderColor:'rgba(52,211,153,0.15)',background:'rgba(52,211,153,0.03)'}}>
+          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--green)',whiteSpace:'pre-wrap'}}>{step.state.result_summary}</div>
+        </div>
+      )}
+      {step?.state?.error && (
+        <div className="card" style={{borderColor:'rgba(248,113,113,0.15)',background:'rgba(248,113,113,0.03)'}}>
+          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--red)',whiteSpace:'pre-wrap'}}>{step.state.error}</div>
+        </div>
+      )}
+      {logs.length > 0 && (
+        <div className="log-box" ref={logRef}>
+          {logs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')||l.includes('done')?'ok':''}>{l}</div>)}
+        </div>
+      )}
+      {logs.length === 0 && st === 'pending' && (
+        <div className="empty-state"><div className="icon">⚡</div>Ready to run</div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// EXIT GRINDER PAGE (Step 4a)
+// ═══════════════════════════════════════════════════════
+function ExitGrinderPage({ setup }) {
+  const [pipe, setPipe]     = useState(null);
+  const [results, setResults] = useState(null);
+  const [choosing, setChoosing] = useState(null); // 'single'|'multi'|null
+  const [logs, setLogs]     = useState([]);
+  const logRef  = useRef(null);
+  const logCountRef = useRef(0);
+
+  const stepId = 'setup_grinder_a';
+
+  // Poll pipeline state
+  useEffect(() => {
+    const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
+    load(); const id = setInterval(load, 5000); return () => clearInterval(id);
+  }, []);
+
+  // Poll exit grind results
+  useEffect(() => {
+    const load = () => fetch(`${API}/api/exit-grind/${setup}/results`)
+      .then(r=>r.ok ? r.json() : null).then(d=>{ if(d) setResults(d); }).catch(()=>{});
+    load(); const id = setInterval(load, 8000); return () => clearInterval(id);
+  }, [setup]);
+
+  const step = pipe?.steps?.find(s => s.id === stepId);
+  const st   = step?.state?.status || 'pending';
+  const isRun = ['running','claimed','queued'].includes(st);
+
+  // Log streaming
+  useEffect(() => {
+    if (!isRun) { logCountRef.current = 0; return; }
+    const poll = () => fetch(`${API}/api/pipeline/logs/${stepId}?after=${logCountRef.current}`)
+      .then(r=>r.json())
+      .then(d => { if(d.lines?.length) { logCountRef.current += d.lines.length; setLogs(p=>[...p,...d.lines]); } })
+      .catch(()=>{});
+    poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
+  }, [isRun]);
+
+  useEffect(() => { if(logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
+
+  function doRun() {
+    fetch(`${API}/api/pipeline/run/${stepId}`, {method:'POST'})
+      .then(r=>r.json()).then(d => { if(d.error) alert(d.error); else { setLogs([]); logCountRef.current = 0; } });
+  }
+
+  function doChoose(choice) {
+    setChoosing(choice);
+    fetch(`${API}/api/exit-grind/${setup}/choose`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({choice})
+    }).then(r=>r.json()).then(d => {
+      if(d.error) { alert(d.error); setChoosing(null); }
+      else setResults(r => r ? {...r, choice} : r);
+    }).catch(()=>setChoosing(null));
+  }
+
+  const pct = v => v != null ? `${(v*100).toFixed(1)}%` : '—';
+  const adr = v => v != null ? `${v.toFixed(2)} ADR` : '—';
+  const bars = v => v != null ? `${v.toFixed(1)} bars` : '—';
+
+  const choiceMade = results?.choice;
+  const s = results?.single;
+  const m = results?.multi;
+
+  return (
+    <div>
+      {/* Status row */}
+      <div className="stat-row" style={{marginBottom:16}}>
+        <div className="stat-box">
+          <div className="stat-label">Status</div>
+          <div className={`stat-val ${st==='done'?'green':isRun?'amber':''}`}>{st.toUpperCase()}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Duration</div>
+          <div className="stat-val" style={{fontSize:13}}>{step?.state?.duration_s ? fmtDur(step.state.duration_s) : '—'}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Agent</div>
+          <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
+            {pipe?.agent_status?.toUpperCase() || '?'}
+          </div>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--cyan)',marginTop:4,cursor:'pointer',userSelect:'all'}}>
+            python local_runner/agent.py <span style={{fontSize:8,color:'var(--text-muted)',marginLeft:4}}>copy</span>
+          </div>
+        </div>
+        {choiceMade && (
+          <div className="stat-box">
+            <div className="stat-label">Exit Choice</div>
+            <div className="stat-val green">{choiceMade.toUpperCase()}-STAGE</div>
+          </div>
+        )}
+      </div>
+
+      {/* Run/Stop */}
+      <div style={{display:'flex',gap:8,marginBottom:16}}>
+        {isRun
+          ? <button className="btn btn-stop" onClick={()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'})}>■ STOP</button>
+          : <button className="btn btn-go" onClick={doRun} disabled={pipe?.agent_status!=='online'}>▶ RUN</button>
+        }
+        <button className="btn" onClick={()=>fetch(`${API}/api/pipeline/reset/${stepId}`,{method:'POST'})}>↻ Reset</button>
+      </div>
+
+      {pipe?.agent_status !== 'online' && (
+        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
+          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
+            style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--cyan)',background:'var(--bg)',
+            padding:'6px 10px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer'}}>
+            python local_runner/agent.py <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:8}}>click to copy</span>
+          </div>
+        </div>
+      )}
+
+      {/* Results panel — single vs multi side by side */}
+      {(s || m) && (
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
+          {/* Single-stage */}
+          <div className="card" style={{
+            borderColor: choiceMade==='single' ? 'var(--green)' : 'var(--border)',
+            background: choiceMade==='single' ? 'rgba(52,211,153,0.05)' : undefined,
+            position:'relative'
+          }}>
+            <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-muted)',marginBottom:8,letterSpacing:'0.05em'}}>
+              SINGLE-STAGE EXIT
+            </div>
+            {s ? (
+              <>
+                <div style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--cyan)',marginBottom:10,wordBreak:'break-all'}}>
+                  {s.expression} {s.direction} {s.threshold?.toFixed(6)}
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:12}}>
+                  {[
+                    ['Floor Capture', pct(s.floor_capture_eff)],
+                    ['Median Capture', pct(s.median_capture_eff)],
+                    ['Floor ADR', adr(s.floor_adr)],
+                    ['Median ADR', adr(s.median_adr)],
+                    ['Avg Bars', bars(s.avg_bars_to_exit)],
+                    ['Examples', s.n_examples ?? '—'],
+                  ].map(([label,val])=>(
+                    <div key={label}>
+                      <div style={{fontSize:9,color:'var(--text-muted)',fontFamily:'var(--mono)',marginBottom:2}}>{label}</div>
+                      <div style={{fontSize:12,color:'var(--text)',fontFamily:'var(--mono)'}}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  className="btn btn-go"
+                  style={{width:'100%',opacity: choiceMade==='single'?0.5:1}}
+                  disabled={!!choiceMade || choosing==='single'}
+                  onClick={()=>doChoose('single')}
+                >
+                  {choiceMade==='single' ? '✓ SELECTED' : choosing==='single' ? 'Saving…' : 'Use Single-Stage'}
+                </button>
+              </>
+            ) : (
+              <div style={{color:'var(--text-muted)',fontSize:11,fontFamily:'var(--mono)'}}>Not yet run</div>
+            )}
+          </div>
+
+          {/* Multi-stage */}
+          <div className="card" style={{
+            borderColor: choiceMade==='multi' ? 'var(--green)' : 'var(--border)',
+            background: choiceMade==='multi' ? 'rgba(52,211,153,0.05)' : undefined,
+          }}>
+            <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-muted)',marginBottom:8,letterSpacing:'0.05em'}}>
+              MULTI-STAGE EXIT
+            </div>
+            {m ? (
+              <>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:10}}>
+                  {[
+                    ['Stages', m.n_stages ?? '—'],
+                    ['Floor Capture', pct(m.floor_capture_eff)],
+                    ['Median Capture', pct(m.median_capture_eff)],
+                    ['Avg Bars (full)', bars(m.avg_bars_to_full_exit)],
+                    ['Examples', m.n_examples ?? '—'],
+                  ].map(([label,val])=>(
+                    <div key={label}>
+                      <div style={{fontSize:9,color:'var(--text-muted)',fontFamily:'var(--mono)',marginBottom:2}}>{label}</div>
+                      <div style={{fontSize:12,color:'var(--text)',fontFamily:'var(--mono)'}}>{val}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* Stage breakdown */}
+                {m.stages?.length > 0 && (
+                  <div style={{marginBottom:12}}>
+                    {m.stages.map((stg, i) => (
+                      <div key={i} style={{
+                        fontFamily:'var(--mono)',fontSize:10,color:'var(--text-dim)',
+                        padding:'4px 6px',background:'var(--surface-2)',borderRadius:3,marginBottom:4,
+                        borderLeft:`2px solid var(--cyan)`
+                      }}>
+                        <span style={{color:'var(--cyan)'}}>S{i+1}</span>{' '}
+                        {stg.trim_pct != null ? `trim ${(stg.trim_pct*100).toFixed(0)}%` : ''}{' '}
+                        {stg.gate_type && stg.gate_value != null ? `· gate ${stg.gate_type} ${stg.gate_value}` : ''}{' '}
+                        · {stg.expr_name} {stg.direction} {stg.threshold?.toFixed(4)}
+                        {stg.max_window ? ` · max ${stg.max_window}b` : ''}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  className="btn btn-go"
+                  style={{width:'100%',opacity: choiceMade==='multi'?0.5:1}}
+                  disabled={!!choiceMade || choosing==='multi'}
+                  onClick={()=>doChoose('multi')}
+                >
+                  {choiceMade==='multi' ? '✓ SELECTED' : choosing==='multi' ? 'Saving…' : 'Use Multi-Stage'}
+                </button>
+              </>
+            ) : (
+              <div style={{color:'var(--text-muted)',fontSize:11,fontFamily:'var(--mono)'}}>Not yet run</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Change choice link */}
+      {choiceMade && (
+        <div style={{marginBottom:12,fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)'}}>
+          Choice locked. To change:{' '}
+          <span style={{color:'var(--cyan)',cursor:'pointer'}}
+            onClick={()=>{
+              if(!confirm('Clear exit choice? This will reset 4b.')) return;
+              fetch(`${API}/api/exit-grind/${setup}/clear-choice`,{method:'POST'})
+                .then(()=>{
+                  fetch(`${API}/api/pipeline/reset/setup_grinder_b`,{method:'POST'});
+                  setResults(r=>r?{...r,choice:null}:r);
+                });
+            }}>change choice</span>
+        </div>
+      )}
+
+      {/* Error */}
+      {step?.state?.error && (
+        <div className="card" style={{borderColor:'rgba(248,113,113,0.15)',background:'rgba(248,113,113,0.03)',marginBottom:12}}>
+          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--red)',whiteSpace:'pre-wrap'}}>{step.state.error}</div>
+        </div>
+      )}
+
+      {/* Logs */}
+      {logs.length > 0 && (
+        <div className="log-box" ref={logRef}>
+          {logs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')||l.includes('done')?'ok':''}>{l}</div>)}
+        </div>
+      )}
+      {logs.length === 0 && st === 'pending' && !s && !m && (
+        <div className="empty-state"><div className="icon">⚡</div>Ready to run</div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// MINI CHART (for examples gallery)
 // ═══════════════════════════════════════════════════════
 function MiniChart({ data, entryDate }) {
   const ref = useRef(null);
@@ -427,7 +894,7 @@ function ExamplesPage({ setup }) {
 }
 
 // ═══════════════════════════════════════════════════════
-// VETTING CHART + VETTING PAGE (copied verbatim from V1)
+// VETTING PAGE (ported from vetting.html)
 // ═══════════════════════════════════════════════════════
 function VettingChart({ candles, ticker, signalDate, selectedDate, onSelectDate, exitDate, earningsDates }) {
   const containerRef = useRef(null);
@@ -857,6 +1324,176 @@ function VettingPage({ setup }) {
 }
 
 // ═══════════════════════════════════════════════════════
+// SETUP HOME PAGE
+// ═══════════════════════════════════════════════════════
+function SetupHomePage({ setup }) {
+  const [examples, setExamples] = useState([]);
+  const [pipe, setPipe] = useState(null);
+  const [grindHistory, setGrindHistory] = useState([]);
+
+  useEffect(() => {
+    fetch(`${API}/api/examples/${setup}`).then(r=>r.json()).then(d=>setExamples(d.examples||[])).catch(()=>{});
+    fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
+    fetch(`${API}/api/grinder/history/${setup}`).then(r=>r.json()).then(d=>setGrindHistory(d.runs||[])).catch(()=>{});
+  }, [setup]);
+
+  const vetting = pipe?.steps?.find(s=>s.id==='sample_expansion');
+  const vs = vetting?.state?.vetting_stats;
+  const grind = pipe?.steps?.find(s=>s.id==='signal_brute');
+
+  // Dataset metrics
+  const n = examples.length;
+  const tickers = new Set(examples.map(e=>e.ticker)).size;
+  const adrs = examples.filter(e=>e.adrMove!=null).map(e=>e.adrMove).sort((a,b)=>a-b);
+  const medianAdr = adrs.length > 0 ? adrs[Math.floor(adrs.length/2)] : 0;
+  const minAdr = adrs.length > 0 ? adrs[0] : 0;
+  const dates = examples.map(e=>e.entryDate).sort();
+  const dateSpanYrs = dates.length >= 2 ? (new Date(dates[dates.length-1]) - new Date(dates[0])) / (365.25*86400000) : 0;
+  const tickerRatio = n > 0 ? tickers / n : 0;
+  const hasGrind = grind?.state?.status === 'done';
+
+  // Convergence metrics (from grind history)
+  const gh = grindHistory;
+  const nRuns = gh.length;
+  let condStability = 0, sigStability = 0, condOverlap = 0;
+  if (nRuns >= 2) {
+    const last = gh[nRuns-1], prev = gh[nRuns-2];
+    // Condition count change
+    const condDelta = Math.abs(last.n_conditions - prev.n_conditions);
+    const maxCond = Math.max(last.n_conditions, prev.n_conditions, 1);
+    condStability = Math.max(0, Math.round(100 - (condDelta / maxCond) * 200));
+    // Signal count change
+    const sigDelta = Math.abs(last.final_total - prev.final_total);
+    const maxSig = Math.max(last.final_total, prev.final_total, 1);
+    sigStability = Math.max(0, Math.round(100 - (sigDelta / maxSig) * 150));
+    // Condition overlap (how many expressions are shared)
+    const prevSet = new Set(prev.conditions || []);
+    const lastSet = new Set(last.conditions || []);
+    const shared = [...lastSet].filter(c => prevSet.has(c)).length;
+    const unionSize = new Set([...prevSet, ...lastSet]).size || 1;
+    condOverlap = Math.round((shared / unionSize) * 100);
+  }
+
+  // Vetting yield
+  const vettingYield = vs && vs.n_vetted > 0
+    ? Math.round((vs.n_no / vs.n_vetted) * 100)
+    : 0;
+
+  // Score components
+  const diversityScore = Math.min(100, Math.round(tickerRatio * 120));
+  const spreadScore = Math.min(100, Math.round(dateSpanYrs * 25));
+  const moveScore = Math.min(100, Math.round(minAdr * 20));
+  const convergenceScore = nRuns >= 2 ? Math.round((condStability + sigStability + condOverlap) / 3) : 0;
+  const yieldScore = vs && vs.n_vetted >= 10 ? vettingYield : 0;
+
+  const overall = nRuns >= 2
+    ? Math.round(diversityScore*0.10 + spreadScore*0.10 + moveScore*0.10 + convergenceScore*0.45 + yieldScore*0.15)
+    : Math.round(diversityScore*0.20 + spreadScore*0.20 + moveScore*0.20 + (hasGrind?20:0));
+  const grade = overall >= 85 ? 'A' : overall >= 70 ? 'B' : overall >= 55 ? 'C' : overall >= 40 ? 'D' : 'F';
+  const gradeColor = overall >= 70 ? 'var(--green)' : overall >= 50 ? 'var(--amber)' : 'var(--red)';
+  const readiness = overall >= 80 ? 'Ready for live' : overall >= 60 ? 'Getting close — keep cycling' : overall >= 40 ? 'Needs more vetting cycles' : 'Early stage — collect examples';
+
+  const scoreBar = (label, val, note) => (
+    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+      <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',width:90,flexShrink:0}}>{label}</span>
+      <div style={{flex:1,height:6,background:'var(--surface-3)',borderRadius:3,overflow:'hidden'}}>
+        <div style={{width:`${val}%`,height:'100%',borderRadius:3,
+          background:val>=70?'var(--green)':val>=50?'var(--amber)':'var(--red)',transition:'width 0.3s'}} />
+      </div>
+      <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-dim)',width:28,textAlign:'right'}}>{val}</span>
+      {note && <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--text-muted)',width:90,flexShrink:0}}>{note}</span>}
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="stat-row" style={{marginBottom:16}}>
+        <div className="stat-box">
+          <div className="stat-label">Quality</div>
+          <div className="stat-val" style={{color:gradeColor,fontSize:24}}>{grade}</div>
+          <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',marginTop:2}}>{overall}/100</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Samples</div>
+          <div className="stat-val green">{n}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Grinds</div>
+          <div className="stat-val blue">{nRuns}</div>
+        </div>
+        {nRuns >= 2 && (
+          <div className="stat-box">
+            <div className="stat-label">Convergence</div>
+            <div className="stat-val" style={{color:convergenceScore>=70?'var(--green)':convergenceScore>=40?'var(--amber)':'var(--red)'}}>{convergenceScore}%</div>
+          </div>
+        )}
+        {vs && vs.n_vetted > 0 && (
+          <div className="stat-box">
+            <div className="stat-label">Vetting NO%</div>
+            <div className="stat-val" style={{color:vettingYield>=80?'var(--green)':vettingYield>=50?'var(--amber)':'var(--red)'}}>{vettingYield}%</div>
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{marginBottom:12}}>
+        <div className="card-title" style={{marginBottom:8}}>Dataset Quality — <span style={{color:gradeColor,fontWeight:400}}>{readiness}</span></div>
+        {scoreBar('Diversity', diversityScore, `${tickers} tickers`)}
+        {scoreBar('Date Spread', spreadScore, `${dateSpanYrs.toFixed(1)}yr`)}
+        {scoreBar('Move Floor', moveScore, `${minAdr} ADR`)}
+        {nRuns >= 2 && scoreBar('Cond Stability', condStability, `Δ${Math.abs((gh[nRuns-1]?.n_conditions||0)-(gh[nRuns-2]?.n_conditions||0))} conds`)}
+        {nRuns >= 2 && scoreBar('Sig Stability', sigStability, `Δ${Math.abs((gh[nRuns-1]?.final_total||0)-(gh[nRuns-2]?.final_total||0))} sigs`)}
+        {nRuns >= 2 && scoreBar('Cond Overlap', condOverlap, `${Math.round(condOverlap)}% shared`)}
+        {vs && vs.n_vetted >= 10 && scoreBar('Vetting Yield', yieldScore, `${vs.n_no}/${vs.n_vetted} NO`)}
+        {nRuns < 2 && (
+          <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',marginTop:8,fontStyle:'italic'}}>
+            Need 2+ grind runs to show convergence metrics. Run grind → vet → add examples → re-grind.
+          </div>
+        )}
+      </div>
+
+      {nRuns > 0 && (
+        <div className="card" style={{marginBottom:12}}>
+          <div className="card-title">Grind History</div>
+          <div style={{fontFamily:'var(--mono)',fontSize:10,overflowX:'auto'}}>
+            <div style={{display:'grid',gridTemplateColumns:'auto repeat(4,1fr)',gap:'4px 12px',color:'var(--text-muted)',marginBottom:4}}>
+              <span>Run</span><span>Examples</span><span>Conditions</span><span>Signals</span><span>Peak</span>
+            </div>
+            {gh.map((r,i) => (
+              <div key={i} style={{display:'grid',gridTemplateColumns:'auto repeat(4,1fr)',gap:'4px 12px',color:'var(--text-dim)'}}>
+                <span style={{color:'var(--text-muted)'}}>#{i+1}</span>
+                <span>{r.n_examples}</span>
+                <span>{r.n_conditions}</span>
+                <span>{r.final_total}</span>
+                <span>{r.final_peak}/day</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="card-title">Pipeline Status</div>
+        {pipe?.steps?.filter(s=>s.id!=='nightly').map(s => (
+          <div key={s.id} style={{display:'flex',alignItems:'center',gap:10,padding:'5px 0',
+            fontFamily:'var(--mono)',fontSize:11,color:'var(--text-dim)'}}>
+            <span className={`badge b-${s.state?.status||'pending'}`}>{s.state?.status||'pending'}</span>
+            <span>{s.name}</span>
+            {s.state?.duration_s && <span style={{marginLeft:'auto',color:'var(--text-muted)',fontSize:10}}>{fmtDur(s.state.duration_s)}</span>}
+          </div>
+        ))}
+      </div>
+
+      <div className="card">
+        <div className="card-title">Optimal Samples ({examples.length})</div>
+        <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-dim)',lineHeight:1.8}}>
+          {examples.map(e => `${e.ticker} ${e.entryDate}`).join(' · ')}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
 // CYCLE HEALTH PAGE
 // ═══════════════════════════════════════════════════════
 function CycleHealthPage({ setup }) {
@@ -1135,63 +1772,7 @@ function CycleHealthPage({ setup }) {
 }
 
 // ═══════════════════════════════════════════════════════
-// NIGHTLY PAGE
-// ═══════════════════════════════════════════════════════
-function NightlyPage() {
-  const [pipe, setPipe] = useState(null);
-  const [logs, setLogs] = useState({});
-  const logCountRef = useRef({});
-
-  useEffect(() => {
-    const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
-    load(); const id = setInterval(load, 3000); return ()=>clearInterval(id);
-  }, []);
-
-  const nightlyStep = pipe?.steps?.find(s=>s.id==='nightly');
-  const status = nightlyStep?.state?.status || 'pending';
-  const isRunning = ['running','claimed','queued'].includes(status);
-
-  useEffect(() => {
-    if (!isRunning) return;
-    const poll = () => fetch(`${API}/api/pipeline/logs/nightly?after=${logCountRef.current['nightly']||0}`)
-      .then(r=>r.json()).then(d=>{if(d.lines?.length){logCountRef.current['nightly']=(logCountRef.current['nightly']||0)+d.lines.length;setLogs(p=>({...p,nightly:[...(p.nightly||[]),...d.lines]}));}}).catch(()=>{});
-    poll(); const id = setInterval(poll, 2000); return ()=>clearInterval(id);
-  }, [isRunning]);
-
-  return (
-    <div>
-      <div className="stat-row" style={{marginBottom:16}}>
-        <div className="stat-box">
-          <div className="stat-label">Nightly Status</div>
-          <div className={`stat-val ${status==='done'?'green':isRunning?'amber':''}`}>{status.toUpperCase()}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Agent</div>
-          <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`}>{pipe?.agent_status?.toUpperCase()||'—'}</div>
-        </div>
-      </div>
-      <div className="card">
-        <div className="card-title">Pipeline Steps</div>
-        {pipe?.steps?.map(s => (
-          <div key={s.id} style={{display:'flex',alignItems:'center',gap:10,padding:'5px 0',fontFamily:'var(--mono)',fontSize:11,color:'var(--text-dim)'}}>
-            <span className={`badge b-${s.state?.status||'pending'}`}>{s.state?.status||'pending'}</span>
-            <span>{s.name}</span>
-            {s.state?.duration_s && <span style={{marginLeft:'auto',color:'var(--text-muted)',fontSize:10}}>{fmtDur(s.state.duration_s)}</span>}
-            {s.state?.result_summary && <span style={{marginLeft:s.state?.duration_s?4:'auto',color:'var(--text-muted)',fontSize:10}}>{s.state.result_summary}</span>}
-          </div>
-        ))}
-      </div>
-      {logs.nightly?.length > 0 && (
-        <div className="log-box">
-          {logs.nightly.map((l,i)=><div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')||l.toLowerCase().includes('done')?'ok':''}>{l}</div>)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// WATCHLIST PAGE
+// WATCHLIST PAGE (placeholder)
 // ═══════════════════════════════════════════════════════
 function WatchlistPage() {
   return <div className="empty-state"><div className="icon">📋</div>Daily Watchlist — coming soon<div style={{fontSize:10,color:'var(--text-muted)'}}>Needs market grinder results for EV ranking</div></div>;
@@ -1201,9 +1782,9 @@ function WatchlistPage() {
 // APP
 // ═══════════════════════════════════════════════════════
 function App() {
-  const [section, setSection] = useState('pipeline'); // 'pipeline' | 'vetting' | 'cycles' | 'watchlist'
+  const [section, setSection] = useState('setup'); // 'nightly' | 'setup' | 'watchlist'
   const [setup, setSetup] = useState('dtss');
-  const [tab, setTab] = useState('samples');
+  const [tab, setTab] = useState('home');
   const [agentOnline, setAgentOnline] = useState(false);
 
   useEffect(() => {
@@ -1212,22 +1793,32 @@ function App() {
     check(); const id = setInterval(check, 5000); return ()=>clearInterval(id);
   }, []);
 
-  const setupTabs = [
-    { id:'samples',  label:'Optimal Samples', num:'1' },
-    { id:'vetting',  label:'Vetting',          num:'2-3' },
-    { id:'cycles',   label:'Cycle Health',     num:'V2' },
-    { id:'watchlist',label:'Watchlist',         num:'5' },
+  const setupSteps = [
+    { id:'home', label:'Home', icon:'◉' },
+    { id:'optimal_samples', label:'Optimal Samples', num:'1' },
+    { id:'signal_brute', label:'Signal Brute Forcing', num:'2' },
+    { id:'sample_expansion', label:'Sample Expansion', num:'3' },
+    { id:'setup_grinder_a', label:'Exit Grinder', num:'4a' },
+    { id:'setup_grinder_b', label:'Setup Grinder', num:'4b' },
+    { id:'cycle_health', label:'Cycle Health', num:'V2' },
+    { id:'market_grind', label:'Market Grinder', num:'5' },
   ];
 
   const titles = {
-    pipeline: 'Pipeline',
-    samples:  `${setup.toUpperCase()} — Optimal Samples`,
-    vetting:  `${setup.toUpperCase()} — Vetting`,
-    cycles:   `${setup.toUpperCase()} — Cycle Health`,
-    watchlist:'Daily Watchlist',
+    nightly: 'Nightly Refresh',
+    home: `${setup.toUpperCase()} — Overview`,
+    optimal_samples: `${setup.toUpperCase()} — Optimal Samples`,
+    signal_brute: `${setup.toUpperCase()} — Signal Brute Forcing`,
+    sample_expansion: `${setup.toUpperCase()} — Sample Expansion`,
+    setup_grinder_a: `${setup.toUpperCase()} — Exit Grinder`,
+    setup_grinder_b: `${setup.toUpperCase()} — Setup Grinder`,
+    cycle_health: `${setup.toUpperCase()} — Cycle Health`,
+    market_grind: `${setup.toUpperCase()} — Market Grinder`,
+    watchlist: 'Daily Watchlist',
   };
 
-  const currentTitle = section === 'pipeline' ? titles.pipeline
+  const currentTitle = section === 'nightly' ? titles.nightly
+    : section === 'watchlist' ? titles.watchlist
     : titles[tab] || '';
 
   return (
@@ -1235,23 +1826,25 @@ function App() {
       {/* Rail */}
       <div className="rail">
         <div className="rail-logo">SP</div>
-        <button className={`rail-btn ${section==='pipeline'?'on':''}`} onClick={()=>setSection('pipeline')} title="Pipeline">🌙</button>
+        <button className={`rail-btn ${section==='nightly'?'on':''}`} onClick={()=>setSection('nightly')} title="Nightly Refresh">🌙</button>
         <button className={`rail-btn ${section==='setup'?'on':''}`} onClick={()=>setSection('setup')} title="Setup Analysis">⚡</button>
+        <button className={`rail-btn ${section==='watchlist'?'on':''}`} onClick={()=>setSection('watchlist')} title="Daily Watchlist">📋</button>
         <div className={`rail-agent ${agentOnline?'online':''}`} title={agentOnline?'Agent online':'Agent offline'}></div>
       </div>
 
-      {/* Sidebar — setup analysis only */}
+      {/* Sidebar (only for setup analysis) */}
       {section === 'setup' && (
         <div className="sidebar">
           <div className="sb-hdr">SETUP ANALYSIS</div>
           <div className="sb-setup-sel">
-            <button className={`sb-setup-btn ${setup==='dtss'?'on':''}`} onClick={()=>{setSetup('dtss');setTab('samples');}}>DTSS</button>
-            <button className={`sb-setup-btn ${setup==='3-4db'?'on':''}`} onClick={()=>{setSetup('3-4db');setTab('samples');}}>3-4DB</button>
+            <button className={`sb-setup-btn ${setup==='dtss'?'on':''}`} onClick={()=>{setSetup('dtss');setTab('home');}}>DTSS</button>
+            <button className={`sb-setup-btn ${setup==='3-4db'?'on':''}`} onClick={()=>{setSetup('3-4db');setTab('home');}}>3-4DB</button>
           </div>
           <div className="sb-section">
-            {setupTabs.map(s => (
+            {setupSteps.map(s => (
               <div key={s.id} className={`sb-item ${tab===s.id?'on':''}`} onClick={()=>setTab(s.id)}>
-                {s.num && <span className="num">{s.num}</span>}
+                {s.num ? <span className="num">{s.num}</span> : null}
+                {s.icon && !s.num ? <span style={{fontSize:11}}>{s.icon}</span> : null}
                 <span>{s.label}</span>
               </div>
             ))}
@@ -1259,7 +1852,7 @@ function App() {
         </div>
       )}
 
-      {/* Main content */}
+      {/* Main */}
       <div className="main">
         <div className="main-hdr">
           <div className="main-title">{currentTitle}</div>
@@ -1268,11 +1861,16 @@ function App() {
           </div>
         </div>
         <div className="main-body">
-          {section === 'pipeline' && <NightlyPage />}
-          {section === 'setup' && tab === 'samples'  && <ExamplesPage setup={setup} />}
-          {section === 'setup' && tab === 'vetting'  && <VettingPage setup={setup} />}
-          {section === 'setup' && tab === 'cycles'   && <CycleHealthPage setup={setup} />}
-          {section === 'setup' && tab === 'watchlist'&& <WatchlistPage />}
+          {section === 'nightly' && <NightlyPage />}
+          {section === 'watchlist' && <WatchlistPage />}
+          {section === 'setup' && tab === 'home' && <SetupHomePage setup={setup} />}
+          {section === 'setup' && tab === 'optimal_samples' && <ExamplesPage setup={setup} />}
+          {section === 'setup' && tab === 'signal_brute' && <StepPage stepId="signal_brute" setup={setup} />}
+          {section === 'setup' && tab === 'sample_expansion' && <VettingPage setup={setup} />}
+          {section === 'setup' && tab === 'setup_grinder_a' && <ExitGrinderPage setup={setup} />}
+          {section === 'setup' && tab === 'setup_grinder_b' && <StepPage stepId="setup_grinder_b" setup={setup} />}
+          {section === 'setup' && tab === 'cycle_health' && <CycleHealthPage setup={setup} />}
+          {section === 'setup' && tab === 'market_grind' && <div className="empty-state"><div className="icon">🌍</div>Market Grinder — coming soon</div>}
         </div>
       </div>
     </div>
