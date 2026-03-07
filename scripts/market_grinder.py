@@ -54,9 +54,10 @@ MANIFEST  = os.path.join(MKT_DIR, "_manifest.json")
 API_BASE  = os.environ.get("RAILWAY_API", "https://web-production-e3025.up.railway.app")
 
 # Defaults
-DEFAULT_WINDOW  = 5    # ±N trading days for rolling win rate
-DEFAULT_TOP_N   = 50   # top features to keep in model
-MIN_WEIGHT      = 1    # min signal weight to include a day (always 1 — keep everything)
+DEFAULT_WINDOW    = 5    # ±N trading days for rolling win rate
+DEFAULT_TOP_N     = 50   # top features to keep in model
+MIN_WEIGHT        = 1    # min signal weight to include a day (always 1 — keep everything)
+MIN_COVERAGE_FRAC = 0.20 # feature must have valid values on ≥20% of win rate series days
 
 
 # ══════════════════════════════════════════════════════════════
@@ -259,6 +260,8 @@ def compute_all_correlations(wr_df, manifest):
           f"mean weight: {w.mean():.1f})")
     print(f"\n  Computing correlations: {total_instruments} instruments × "
           f"{n_exprs:,} expressions...")
+    min_days = max(10, int(len(wr_dates_str) * MIN_COVERAGE_FRAC))
+    print(f"  Min coverage: {min_days} days ({MIN_COVERAGE_FRAC*100:.0f}% of {len(wr_dates_str)} series days)")
 
     results = []
     t0 = __import__("time").time()
@@ -288,9 +291,10 @@ def compute_all_correlations(wr_df, manifest):
             valid_rows = row_indices[valid_days]
             x[valid_days] = data_cache[valid_rows, j]
 
-            # Skip if all NaN or zero variance
+            # Skip if insufficient coverage (filters sparse extension structure expressions)
             x_valid = x[~np.isnan(x)]
-            if len(x_valid) < 10 or np.std(x_valid) == 0:
+            min_days = max(10, int(n_days * MIN_COVERAGE_FRAC))
+            if len(x_valid) < min_days or np.std(x_valid) == 0:
                 continue
 
             r, n_valid = weighted_pearson(x, y, w)

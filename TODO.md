@@ -39,9 +39,23 @@
 - CycleHealthPage fully wired — health panel, cycle diff, revert button, all live
 - WatchlistPage placeholder — blocked on Market Grinder
 
-### 🔲 Next: Market Grinder (Step 5)
-- V2-native, built on `cycle_signals` table
-- Design TBD
+### 🔲 Next: Market Grinder (Step 5) — IN PROGRESS
+**Architecture locked. Code written. Needs first real run + validation.**
+
+- `local_runner/market_cache_builder.py` — two-phase fetch (threaded) + compute (parallel CPU)
+  - 245 instruments built, 3.96 GB, 6.5 min
+  - Run: `python local_runner/market_cache_builder.py --build`
+- `scripts/market_grinder.py` — win rate time series correlation engine
+  - Daily win rate series: rolling ±5 trading day window, density-weighted
+  - Weighted Pearson: each (instrument × expression) vs win rate series
+  - Min coverage filter: ≥20% of series days must have valid values (prevents sparse expr inflation)
+  - Quartile win rates, regime scores 0-1 per signal, decile lift table
+  - Run: `python scripts/market_grinder.py --setup dtss --dry-run`
+
+**Next actions:**
+1. Run dry-run — verify top features are sensible
+2. If results look real, run without --dry-run to upload
+3. Build WatchlistPage regime score display
 
 ---
 
