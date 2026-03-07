@@ -480,7 +480,7 @@ def classify_signals(signals, examples, exit_cond):
         if not sig_dates:
             continue
         entry_dt   = _dt.date.fromisoformat(entry_date)
-        candidates = [d for d in sig_dates if d <= entry_date] or sig_dates
+        candidates = sig_dates  # search both directions; window check below enforces ±7 days
         best       = min(candidates,
                          key=lambda d: abs((_dt.date.fromisoformat(d) - entry_dt).days))
         if abs((_dt.date.fromisoformat(best) - entry_dt).days) <= 7:
