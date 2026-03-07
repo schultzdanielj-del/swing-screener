@@ -1,0 +1,2047 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ScanPerfect V2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --surface2: #181818;
+    --surface3: #1e1e1e;
+    --border: #252525;
+    --border2: #2e2e2e;
+    --text: #e8e8e8;
+    --text2: #888;
+    --text3: #555;
+    --accent: #e8ff47;
+    --accent2: #b8cc30;
+    --red: #ff4545;
+    --green: #3dff8f;
+    --orange: #ff9040;
+    --blue: #4090ff;
+    --purple: #a855f7;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ─── TOP BAR ─── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    height: 44px;
+    flex-shrink: 0;
+    background: var(--surface);
+    padding: 0 16px;
+    gap: 12px;
+  }
+  .topbar-logo {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .topbar-sep { color: var(--border2); }
+  .topbar-tabs { display: flex; gap: 0; flex: 1; }
+  .topbar-tab {
+    padding: 0 14px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text3);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .topbar-tab:hover { color: var(--text2); }
+  .topbar-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-left: auto;
+  }
+  .agent-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--text3);
+    transition: background 0.3s;
+  }
+  .agent-dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .agent-label { font-size: 11px; color: var(--text3); letter-spacing: 0.05em; }
+  .setup-selector {
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 8px;
+    cursor: pointer;
+    appearance: none;
+    outline: none;
+  }
+  .setup-selector:hover { border-color: var(--accent); }
+
+  /* ─── MAIN LAYOUT ─── */
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ─── LEFT SIDEBAR (PIPELINE) ─── */
+  .sidebar {
+    width: 240px;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-section-label {
+    padding: 10px 14px 6px;
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text3);
+    font-weight: 600;
+  }
+  .pipeline-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 14px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+    transition: background 0.1s, border-color 0.1s;
+    position: relative;
+  }
+  .pipeline-step:hover { background: var(--surface2); }
+  .pipeline-step.active {
+    background: var(--surface2);
+    border-left-color: var(--accent);
+  }
+  .step-num-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    width: 18px;
+    flex-shrink: 0;
+    padding-top: 1px;
+  }
+  .step-num {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text3);
+    letter-spacing: 0.05em;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border2);
+    flex-shrink: 0;
+  }
+  .pipeline-step.active .step-num {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .pipeline-step.done .step-num {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+  }
+  .pipeline-step.running .step-num {
+    border-color: var(--orange);
+    color: var(--orange);
+    animation: pulse-border 1s ease-in-out infinite;
+  }
+  @keyframes pulse-border {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,144,64,0.4); }
+    50% { box-shadow: 0 0 0 3px rgba(255,144,64,0.1); }
+  }
+  .step-connector {
+    width: 1px;
+    height: 6px;
+    background: var(--border2);
+    margin: 2px auto 0;
+    flex-shrink: 0;
+  }
+  .step-info { flex: 1; min-width: 0; }
+  .step-name {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text2);
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .pipeline-step.active .step-name { color: var(--text); }
+  .step-meta {
+    font-size: 10px;
+    color: var(--text3);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .step-meta.green { color: var(--green); }
+  .step-meta.orange { color: var(--orange); }
+  .step-meta.red { color: var(--red); }
+  .sidebar-bottom {
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+    padding: 10px 14px;
+  }
+  .regrind-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--orange);
+    padding: 4px 8px;
+    border: 1px solid var(--orange);
+    background: rgba(255,144,64,0.05);
+  }
+  .regrind-badge.hidden { display: none; }
+
+  /* ─── CONTENT AREA ─── */
+  .content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ─── PANELS ─── */
+  .panel { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+  .panel.active { display: flex; }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--surface);
+  }
+  .panel-title { font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: 0.05em; }
+  .panel-subtitle { font-size: 11px; color: var(--text3); }
+  .panel-actions { display: flex; gap: 8px; margin-left: auto; }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 6px 14px;
+    cursor: pointer;
+    border: 1px solid;
+    background: transparent;
+    transition: all 0.15s;
+    outline: none;
+  }
+  .btn-primary { border-color: var(--accent); color: var(--accent); }
+  .btn-primary:hover { background: var(--accent); color: var(--bg); }
+  .btn-primary:disabled { border-color: var(--border2); color: var(--text3); cursor: not-allowed; }
+  .btn-danger { border-color: var(--red); color: var(--red); }
+  .btn-danger:hover { background: var(--red); color: var(--bg); }
+  .btn-neutral { border-color: var(--border2); color: var(--text2); }
+  .btn-neutral:hover { border-color: var(--text2); color: var(--text); }
+  .btn-sm { padding: 3px 8px; font-size: 10px; }
+
+  .panel-body {
+    flex: 1;
+    overflow: auto;
+    padding: 16px 20px;
+  }
+
+  /* ─── METRICS GRID ─── */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+  .metric-cell {
+    background: var(--surface2);
+    padding: 12px 14px;
+  }
+  .metric-label { font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text3); margin-bottom: 5px; }
+  .metric-value { font-size: 18px; font-weight: 500; color: var(--text); line-height: 1; }
+  .metric-value.green { color: var(--green); }
+  .metric-value.red { color: var(--red); }
+  .metric-value.orange { color: var(--orange); }
+  .metric-value.accent { color: var(--accent); }
+  .metric-sub { font-size: 10px; color: var(--text3); margin-top: 3px; }
+
+  /* ─── TABLES ─── */
+  .data-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .data-table th {
+    text-align: left;
+    padding: 6px 10px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text3);
+    border-bottom: 1px solid var(--border2);
+    white-space: nowrap;
+  }
+  .data-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text2);
+    white-space: nowrap;
+  }
+  .data-table tr:hover td { background: var(--surface2); }
+  .data-table tr.is-current td { color: var(--text); }
+  .data-table .ticker { font-weight: 600; color: var(--text); font-size: 12px; }
+  .data-table .mono { font-family: var(--mono); }
+  .tag {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    padding: 1px 5px;
+    text-transform: uppercase;
+  }
+  .tag-win { background: rgba(61,255,143,0.1); color: var(--green); border: 1px solid rgba(61,255,143,0.3); }
+  .tag-loss { background: rgba(255,69,69,0.1); color: var(--red); border: 1px solid rgba(255,69,69,0.3); }
+  .tag-example { background: rgba(232,255,71,0.1); color: var(--accent); border: 1px solid rgba(232,255,71,0.3); }
+  .tag-current { background: rgba(64,144,255,0.1); color: var(--blue); border: 1px solid rgba(64,144,255,0.3); }
+  .tag-unclass { background: rgba(136,136,136,0.1); color: var(--text3); border: 1px solid var(--border2); }
+
+  /* ─── SECTIONS ─── */
+  .section { margin-bottom: 20px; }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-title { font-size: 10px; font-weight: 600; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text3); }
+  .section-count { font-size: 10px; color: var(--accent); }
+
+  /* ─── HEALTH PANEL ─── */
+  .health-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .health-block {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    padding: 12px 14px;
+  }
+  .health-block-title { font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text3); margin-bottom: 10px; font-weight: 600; }
+  .health-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 3px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+  }
+  .health-row:last-child { border-bottom: none; }
+  .health-row-label { color: var(--text3); }
+  .health-row-val { color: var(--text); font-weight: 500; }
+  .health-row-val.green { color: var(--green); }
+  .health-row-val.red { color: var(--red); }
+  .health-row-val.orange { color: var(--orange); }
+
+  /* ─── CYCLE PICKER ─── */
+  .cycle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    margin-bottom: 4px;
+    background: var(--surface2);
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .cycle-row:hover { border-color: var(--border2); }
+  .cycle-row.current { border-color: var(--accent); }
+  .cycle-id { font-size: 11px; color: var(--text2); font-family: var(--mono); }
+  .cycle-row.current .cycle-id { color: var(--accent); }
+  .cycle-info { font-size: 10px; color: var(--text3); }
+  .cycle-actions { margin-left: auto; display: flex; gap: 6px; }
+
+  /* ─── LOG STREAM ─── */
+  .log-stream {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 10px 12px;
+    overflow-y: auto;
+    height: 200px;
+    flex-shrink: 0;
+  }
+  .log-line { padding: 1px 0; color: var(--text3); line-height: 1.5; }
+  .log-line.info { color: var(--text2); }
+  .log-line.ok { color: var(--green); }
+  .log-line.warn { color: var(--orange); }
+  .log-line.error { color: var(--red); }
+  .log-line .log-ts { color: var(--text3); margin-right: 8px; }
+
+  /* ─── PROGRESS BAR ─── */
+  .progress-bar-wrap {
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    height: 4px;
+    margin: 8px 0;
+    overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.4s ease;
+    width: 0%;
+  }
+
+  /* ─── VETTING ─── */
+  .vetting-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    gap: 0;
+  }
+  .vetting-list {
+    width: 260px;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    flex-shrink: 0;
+    background: var(--surface);
+  }
+  .vetting-signal-item {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .vetting-signal-item:hover { background: var(--surface2); }
+  .vetting-signal-item.active { background: var(--surface3); border-left: 2px solid var(--accent); }
+  .vetting-signal-item.vetted-yes { border-left: 2px solid var(--green); }
+  .vetting-signal-item.vetted-no { border-left: 2px solid var(--red); }
+  .vsig-ticker { font-size: 12px; font-weight: 600; color: var(--text); }
+  .vsig-date { font-size: 10px; color: var(--text3); }
+  .vsig-adr { font-size: 11px; color: var(--accent); float: right; }
+  .vetting-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .vetting-chart-area {
+    flex: 1;
+    background: var(--bg);
+    position: relative;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .chart-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text3);
+    font-size: 11px;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .chart-placeholder-icon { font-size: 32px; opacity: 0.2; }
+  .vetting-controls {
+    border-top: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .vetting-signal-info { display: flex; gap: 16px; font-size: 11px; }
+  .vsi-item { display: flex; flex-direction: column; }
+  .vsi-label { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text3); }
+  .vsi-val { color: var(--text); font-weight: 500; }
+  .vetting-btns { display: flex; gap: 8px; margin-left: auto; }
+  .btn-yes { border-color: var(--green); color: var(--green); }
+  .btn-yes:hover { background: var(--green); color: var(--bg); }
+  .btn-no { border-color: var(--red); color: var(--red); }
+  .btn-no:hover { background: var(--red); color: var(--bg); }
+  .btn-skip { border-color: var(--border2); color: var(--text3); }
+  .btn-skip:hover { border-color: var(--text3); }
+  .keyboard-hint { font-size: 10px; color: var(--text3); }
+  kbd {
+    background: var(--surface3);
+    border: 1px solid var(--border2);
+    padding: 1px 4px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text2);
+  }
+
+  /* ─── WATCHLIST ─── */
+  .watchlist-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    color: var(--text3);
+    font-size: 11px;
+    gap: 8px;
+  }
+  .watchlist-rank {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text3);
+    width: 24px;
+    text-align: right;
+  }
+
+  /* ─── CONDITIONS TABLE ─── */
+  .tier-badge {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 600;
+    padding: 1px 5px;
+    letter-spacing: 0.06em;
+  }
+  .tier-D1 { background: rgba(168,85,247,0.15); color: var(--purple); border: 1px solid rgba(168,85,247,0.3); }
+  .tier-1wk { background: rgba(64,144,255,0.12); color: var(--blue); border: 1px solid rgba(64,144,255,0.3); }
+  .tier-1mo { background: rgba(61,255,143,0.1); color: var(--green); border: 1px solid rgba(61,255,143,0.25); }
+  .tier-6mo { background: rgba(255,144,64,0.1); color: var(--orange); border: 1px solid rgba(255,144,64,0.25); }
+  .tier-1yr { background: rgba(255,69,69,0.1); color: var(--red); border: 1px solid rgba(255,69,69,0.25); }
+  .tier-5yr { background: rgba(232,255,71,0.1); color: var(--accent); border: 1px solid rgba(232,255,71,0.25); }
+
+  /* ─── LIVE INDICATORS ─── */
+  .live-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    display: inline-block;
+    background: var(--green);
+    box-shadow: 0 0 5px var(--green);
+    animation: blink 2s ease-in-out infinite;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ─── EMPTY / LOADING ─── */
+  .loading-text { color: var(--text3); font-size: 11px; padding: 20px; }
+  .empty-text { color: var(--text3); font-size: 11px; padding: 20px 0; text-align: center; }
+
+  /* ─── SCROLLBAR ─── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+
+  /* ─── INLINE BLOCK LAYOUTS ─── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .info-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    padding: 12px 14px;
+  }
+  .info-box-title { font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text3); margin-bottom: 8px; font-weight: 600; }
+  .info-box-val { font-size: 13px; color: var(--text); font-weight: 500; }
+  .info-box-sub { font-size: 10px; color: var(--text3); margin-top: 3px; }
+
+  /* ─── CONFIRM DIALOG ─── */
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .overlay.show { display: flex; }
+  .dialog {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    padding: 24px;
+    width: 380px;
+    font-size: 12px;
+  }
+  .dialog-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; color: var(--text); }
+  .dialog-body { color: var(--text2); line-height: 1.6; margin-bottom: 16px; }
+  .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+  .blockers-list { margin-top: 8px; }
+  .blocker-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 0;
+    font-size: 10px;
+    color: var(--text3);
+  }
+  .blocker-item::before { content: '✗'; color: var(--red); }
+  .blocker-item.met::before { content: '✓'; color: var(--green); }
+  .blocker-item.met { color: var(--text2); }
+
+  /* ─── CHART IFRAME ─── */
+  .chart-frame {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: var(--bg);
+  }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="topbar-logo">ScanPerfect V2</div>
+  <div class="topbar-sep">│</div>
+  <div class="topbar-tabs">
+    <div class="topbar-tab active" data-view="pipeline">Pipeline</div>
+    <div class="topbar-tab" data-view="cycles">Cycles</div>
+    <div class="topbar-tab" data-view="signals">Signals</div>
+    <div class="topbar-tab" data-view="vetting">Vetting</div>
+    <div class="topbar-tab" data-view="conditions">Conditions</div>
+    <div class="topbar-tab" data-view="watchlist">Watchlist</div>
+  </div>
+  <div class="topbar-right">
+    <select class="setup-selector" id="setupSelector">
+      <option value="dtss">DTSS</option>
+      <option value="3-4db">3-4DB</option>
+      <option value="htf">HTF</option>
+    </select>
+    <div class="agent-dot" id="agentDot"></div>
+    <div class="agent-label" id="agentLabel">agent offline</div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- SIDEBAR (shown only on pipeline view) -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-section-label">Pipeline Steps</div>
+
+    <div class="pipeline-step active" data-step="grind" id="step-grind">
+      <div class="step-num-col">
+        <div class="step-num">1</div>
+        <div class="step-connector"></div>
+      </div>
+      <div class="step-info">
+        <div class="step-name">Signal Grind</div>
+        <div class="step-meta" id="meta-grind">—</div>
+      </div>
+    </div>
+
+    <div class="pipeline-step" data-step="scan" id="step-scan">
+      <div class="step-num-col">
+        <div class="step-num">2</div>
+        <div class="step-connector"></div>
+      </div>
+      <div class="step-info">
+        <div class="step-name">Signal Scan</div>
+        <div class="step-meta" id="meta-scan">—</div>
+      </div>
+    </div>
+
+    <div class="pipeline-step" data-step="exit_filter" id="step-exit_filter">
+      <div class="step-num-col">
+        <div class="step-num">3</div>
+        <div class="step-connector"></div>
+      </div>
+      <div class="step-info">
+        <div class="step-name">Exit Filter</div>
+        <div class="step-meta" id="meta-exit_filter">—</div>
+      </div>
+    </div>
+
+    <div class="pipeline-step" data-step="classify" id="step-classify">
+      <div class="step-num-col">
+        <div class="step-num">4</div>
+        <div class="step-connector"></div>
+      </div>
+      <div class="step-info">
+        <div class="step-name">Classify</div>
+        <div class="step-meta" id="meta-classify">—</div>
+      </div>
+    </div>
+
+    <div class="pipeline-step" data-step="exit_grind" id="step-exit_grind">
+      <div class="step-num-col">
+        <div class="step-num">5</div>
+        <div class="step-connector"></div>
+      </div>
+      <div class="step-info">
+        <div class="step-name">Exit Grinder</div>
+        <div class="step-meta" id="meta-exit_grind">—</div>
+      </div>
+    </div>
+
+    <div class="pipeline-step" data-step="regime" id="step-regime">
+      <div class="step-num-col">
+        <div class="step-num">6</div>
+        <div class="step-connector"></div>
+      </div>
+      <div class="step-info">
+        <div class="step-name">Regime Model</div>
+        <div class="step-meta" id="meta-regime">—</div>
+      </div>
+    </div>
+
+    <div class="pipeline-step" data-step="health" id="step-health">
+      <div class="step-num-col">
+        <div class="step-num">7</div>
+      </div>
+      <div class="step-info">
+        <div class="step-name">Health Check</div>
+        <div class="step-meta" id="meta-health">—</div>
+      </div>
+    </div>
+
+    <div class="sidebar-bottom">
+      <div class="regrind-badge hidden" id="regrindBadge">
+        ⚡ <span id="regrindCount">0</span> new examples — regrind
+      </div>
+    </div>
+  </div>
+
+  <!-- CONTENT -->
+  <div class="content">
+
+    <!-- ══════════ PIPELINE VIEW ══════════ -->
+    <div class="panel active" id="view-pipeline">
+
+      <!-- Grind step -->
+      <div class="panel active" id="step-panel-grind">
+        <div class="panel-header">
+          <span class="step-num" style="color:var(--accent);border-color:var(--accent)">1</span>
+          <div>
+            <div class="panel-title">Signal Grind</div>
+            <div class="panel-subtitle">Pyramid brute-force: examples vs 4,167-ticker universe</div>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn-neutral btn-sm" onclick="stopStep('grind')">Stop</button>
+            <button class="btn btn-primary" id="btn-grind" onclick="runStep('grind')">Run Grind</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="metrics-grid" id="grind-metrics">
+            <div class="metric-cell">
+              <div class="metric-label">Examples</div>
+              <div class="metric-value" id="gm-examples">—</div>
+              <div class="metric-sub">in library</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Conditions</div>
+              <div class="metric-value accent" id="gm-conditions">—</div>
+              <div class="metric-sub">locked</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Peak / Day</div>
+              <div class="metric-value" id="gm-peak">—</div>
+              <div class="metric-sub">5yr history</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Last Run</div>
+              <div class="metric-value" style="font-size:12px" id="gm-lastrun">—</div>
+              <div class="metric-sub" id="gm-cycle-id">—</div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-header">
+              <span class="section-title">Run Log</span>
+              <button class="btn btn-neutral btn-sm" onclick="clearLog('grind')">Clear</button>
+            </div>
+            <div class="progress-bar-wrap"><div class="progress-bar-fill" id="prog-grind"></div></div>
+            <div class="log-stream" id="log-grind"><div class="log-line">Waiting for run...</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scan step -->
+      <div class="panel" id="step-panel-scan">
+        <div class="panel-header">
+          <span class="step-num" style="color:var(--accent);border-color:var(--accent)">2</span>
+          <div>
+            <div class="panel-title">Signal Scan</div>
+            <div class="panel-subtitle">Apply conditions to 5yr history, deduplicate</div>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn-neutral btn-sm" onclick="stopStep('scan')">Stop</button>
+            <button class="btn btn-primary" onclick="runStep('scan')">Run Scan</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="metrics-grid">
+            <div class="metric-cell">
+              <div class="metric-label">Raw Signals</div>
+              <div class="metric-value" id="sm-raw">—</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Deduped</div>
+              <div class="metric-value accent" id="sm-dedup">—</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Avg / Day</div>
+              <div class="metric-value" id="sm-avg">—</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Peak / Day</div>
+              <div class="metric-value" id="sm-peak">—</div>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-header"><span class="section-title">Run Log</span></div>
+            <div class="progress-bar-wrap"><div class="progress-bar-fill" id="prog-scan"></div></div>
+            <div class="log-stream" id="log-scan"><div class="log-line">Waiting for run...</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Exit filter step -->
+      <div class="panel" id="step-panel-exit_filter">
+        <div class="panel-header">
+          <span class="step-num" style="color:var(--accent);border-color:var(--accent)">3</span>
+          <div>
+            <div class="panel-title">Exit Filter</div>
+            <div class="panel-subtitle">Apply exit condition, measure signal moves</div>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn-neutral btn-sm" onclick="stopStep('exit_filter')">Stop</button>
+            <button class="btn btn-primary" onclick="runStep('exit_filter')">Run Filter</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="section">
+            <div class="info-box">
+              <div class="info-box-title">Exit Condition</div>
+              <div class="info-box-val" id="exit-condition-display">Loading...</div>
+              <div class="info-box-sub" id="exit-condition-sub"></div>
+            </div>
+          </div>
+          <div class="metrics-grid" style="margin-top:12px">
+            <div class="metric-cell">
+              <div class="metric-label">Exit Triggered</div>
+              <div class="metric-value green" id="ef-triggered">—</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">No Exit</div>
+              <div class="metric-value red" id="ef-no-exit">—</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Median Move</div>
+              <div class="metric-value" id="ef-median">—</div>
+              <div class="metric-sub">ADR</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">ADR Threshold</div>
+              <div class="metric-value" id="ef-threshold">—</div>
+            </div>
+          </div>
+          <div class="section" style="margin-top:12px">
+            <div class="section-header"><span class="section-title">Run Log</span></div>
+            <div class="progress-bar-wrap"><div class="progress-bar-fill" id="prog-exit_filter"></div></div>
+            <div class="log-stream" id="log-exit_filter"><div class="log-line">Waiting for run...</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Classify step -->
+      <div class="panel" id="step-panel-classify">
+        <div class="panel-header">
+          <span class="step-num" style="color:var(--accent);border-color:var(--accent)">4</span>
+          <div>
+            <div class="panel-title">Classify</div>
+            <div class="panel-subtitle">Label every signal WIN or LOSS with priority rules</div>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn-neutral btn-sm" onclick="stopStep('classify')">Stop</button>
+            <button class="btn btn-primary" onclick="runStep('classify')">Run Classify</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="metrics-grid">
+            <div class="metric-cell">
+              <div class="metric-label">Auto Win</div>
+              <div class="metric-value green" id="cl-auto-win">—</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Auto Loss</div>
+              <div class="metric-value red" id="cl-auto-loss">—</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Win Rate</div>
+              <div class="metric-value accent" id="cl-winrate">—</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Manually Vetted</div>
+              <div class="metric-value" id="cl-vetted">—</div>
+              <div class="metric-sub">of total</div>
+            </div>
+          </div>
+          <div class="section" style="margin-top:12px">
+            <div class="section-header"><span class="section-title">Run Log</span></div>
+            <div class="progress-bar-wrap"><div class="progress-bar-fill" id="prog-classify"></div></div>
+            <div class="log-stream" id="log-classify"><div class="log-line">Waiting for run...</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Exit grind step -->
+      <div class="panel" id="step-panel-exit_grind">
+        <div class="panel-header">
+          <span class="step-num" style="color:var(--accent);border-color:var(--accent)">5</span>
+          <div>
+            <div class="panel-title">Exit Grinder</div>
+            <div class="panel-subtitle">Brute-force optimal exit condition from example forward paths</div>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn-neutral btn-sm" onclick="stopStep('exit_grind')">Stop</button>
+            <button class="btn btn-primary" onclick="runStep('exit_grind')">Run Exit Grinder</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="section">
+            <div class="info-box">
+              <div class="info-box-title">Current Exit Condition</div>
+              <div class="info-box-val" id="exit-grind-expr">Loading...</div>
+              <div class="info-box-sub" id="exit-grind-stats"></div>
+            </div>
+          </div>
+          <div class="section" style="margin-top:12px">
+            <div class="section-header"><span class="section-title">Run Log</span></div>
+            <div class="progress-bar-wrap"><div class="progress-bar-fill" id="prog-exit_grind"></div></div>
+            <div class="log-stream" id="log-exit_grind"><div class="log-line">Waiting for run...</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Regime step -->
+      <div class="panel" id="step-panel-regime">
+        <div class="panel-header">
+          <span class="step-num" style="color:var(--accent);border-color:var(--accent)">6</span>
+          <div>
+            <div class="panel-title">Regime Model</div>
+            <div class="panel-subtitle">Correlate signal classifications with SPY conditions</div>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn-neutral btn-sm" onclick="stopStep('regime')">Stop</button>
+            <button class="btn btn-primary" onclick="runStep('regime')">Run Regime</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="metrics-grid">
+            <div class="metric-cell">
+              <div class="metric-label">Signals Used</div>
+              <div class="metric-value" id="reg-signals">—</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Baseline Win%</div>
+              <div class="metric-value" id="reg-baseline">—</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Top Feature</div>
+              <div class="metric-value" style="font-size:10px" id="reg-top-feat">—</div>
+            </div>
+            <div class="metric-cell">
+              <div class="metric-label">Tonight Score</div>
+              <div class="metric-value accent" id="reg-tonight">—</div>
+            </div>
+          </div>
+          <div class="section" style="margin-top:12px">
+            <div class="section-header"><span class="section-title">Top Features</span></div>
+            <div id="regime-features"></div>
+          </div>
+          <div class="section" style="margin-top:12px">
+            <div class="section-header"><span class="section-title">Run Log</span></div>
+            <div class="progress-bar-wrap"><div class="progress-bar-fill" id="prog-regime"></div></div>
+            <div class="log-stream" id="log-regime"><div class="log-line">Waiting for run...</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Health check step -->
+      <div class="panel" id="step-panel-health">
+        <div class="panel-header">
+          <span class="step-num" style="color:var(--accent);border-color:var(--accent)">7</span>
+          <div>
+            <div class="panel-title">Health Check</div>
+            <div class="panel-subtitle">Measure cycle quality, promote or flag</div>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn-neutral btn-sm" onclick="stopStep('health')">Stop</button>
+            <button class="btn btn-primary" onclick="runStep('health')">Run Health Check</button>
+          </div>
+        </div>
+        <div class="panel-body" id="health-panel-body">
+          <div class="loading-text">Loading health data...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ CYCLES VIEW ══════════ -->
+    <div class="panel" id="view-cycles">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Grind Cycles</div>
+          <div class="panel-subtitle">All cycles for current setup — restore any snapshot</div>
+        </div>
+        <div class="panel-actions">
+          <button class="btn btn-neutral" onclick="loadCycles()">Refresh</button>
+        </div>
+      </div>
+      <div class="panel-body" id="cycles-body">
+        <div class="loading-text">Loading cycles...</div>
+      </div>
+    </div>
+
+    <!-- ══════════ SIGNALS VIEW ══════════ -->
+    <div class="panel" id="view-signals">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Signal Set</div>
+          <div class="panel-subtitle" id="signals-subtitle">Current cycle signals</div>
+        </div>
+        <div class="panel-actions">
+          <select class="setup-selector" id="signals-class-filter">
+            <option value="">All</option>
+            <option value="AUTO_WIN">Auto Win</option>
+            <option value="AUTO_LOSS">Auto Loss</option>
+            <option value="MANUAL_WIN">Manual Win</option>
+            <option value="MANUAL_LOSS">Manual Loss</option>
+          </select>
+          <button class="btn btn-neutral" onclick="loadSignals()">Refresh</button>
+        </div>
+      </div>
+      <div class="panel-body" style="padding:0; overflow:auto;">
+        <table class="data-table" id="signals-table">
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Date</th>
+              <th>Classification</th>
+              <th>Move (ADR)</th>
+              <th>MFE (ADR)</th>
+              <th>Capture</th>
+              <th>Exit Date</th>
+              <th>Example</th>
+              <th>Regime</th>
+            </tr>
+          </thead>
+          <tbody id="signals-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ══════════ VETTING VIEW ══════════ -->
+    <div class="panel" id="view-vetting">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Chart Vetting</div>
+          <div class="panel-subtitle" id="vetting-subtitle">Loading signals...</div>
+        </div>
+        <div class="panel-actions">
+          <span class="keyboard-hint"><kbd>1</kbd> yes &nbsp;<kbd>2</kbd> no &nbsp;<kbd>3</kbd> skip &nbsp;<kbd>↑↓</kbd> nav</span>
+        </div>
+      </div>
+      <div class="vetting-layout">
+        <div class="vetting-list" id="vetting-list"></div>
+        <div class="vetting-main">
+          <div class="vetting-chart-area" id="vetting-chart-area">
+            <div class="chart-placeholder">
+              <div class="chart-placeholder-icon">▦</div>
+              <div>Select a signal to view chart</div>
+            </div>
+          </div>
+          <div class="vetting-controls">
+            <div class="vetting-signal-info" id="vetting-info">
+              <div class="vsi-item"><div class="vsi-label">Ticker</div><div class="vsi-val" id="vi-ticker">—</div></div>
+              <div class="vsi-item"><div class="vsi-label">Date</div><div class="vsi-val" id="vi-date">—</div></div>
+              <div class="vsi-item"><div class="vsi-label">Move</div><div class="vsi-val green" id="vi-move">—</div></div>
+              <div class="vsi-item"><div class="vsi-label">MFE</div><div class="vsi-val" id="vi-mfe">—</div></div>
+              <div class="vsi-item"><div class="vsi-label">Capture</div><div class="vsi-val" id="vi-cap">—</div></div>
+              <div class="vsi-item"><div class="vsi-label">Exit</div><div class="vsi-val" id="vi-exit">—</div></div>
+            </div>
+            <div class="vetting-btns">
+              <button class="btn btn-no btn-sm" onclick="vettingDecide('NO')">✗ No</button>
+              <button class="btn btn-skip btn-sm" onclick="vettingDecide('SKIP')">— Skip</button>
+              <button class="btn btn-yes btn-sm" onclick="vettingDecide('YES')">✓ Yes</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ CONDITIONS VIEW ══════════ -->
+    <div class="panel" id="view-conditions">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Conditions</div>
+          <div class="panel-subtitle" id="cond-subtitle">Current cycle condition set</div>
+        </div>
+        <div class="panel-actions">
+          <button class="btn btn-neutral" onclick="loadConditions()">Refresh</button>
+        </div>
+      </div>
+      <div class="panel-body" style="padding:0; overflow:auto;">
+        <table class="data-table" id="conditions-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Tier</th>
+              <th>Expression</th>
+              <th>Low</th>
+              <th>High</th>
+              <th>Filter Power</th>
+            </tr>
+          </thead>
+          <tbody id="conditions-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ══════════ WATCHLIST VIEW ══════════ -->
+    <div class="panel" id="view-watchlist">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Nightly Watchlist</div>
+          <div class="panel-subtitle" id="watchlist-date">Loading...</div>
+        </div>
+        <div class="panel-actions">
+          <button class="btn btn-neutral" onclick="loadWatchlist()">Refresh</button>
+        </div>
+      </div>
+      <div class="panel-body" id="watchlist-body">
+        <div class="loading-text">Loading watchlist...</div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+<!-- CONFIRM DIALOG -->
+<div class="overlay" id="confirmOverlay">
+  <div class="dialog">
+    <div class="dialog-title" id="dialog-title">Confirm Action</div>
+    <div class="dialog-body" id="dialog-body">Are you sure?</div>
+    <div class="dialog-actions">
+      <button class="btn btn-neutral" onclick="closeDialog()">Cancel</button>
+      <button class="btn btn-primary" id="dialog-confirm-btn">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════
+const API = 'https://web-production-e3025.up.railway.app';
+
+let state = {
+  setup: 'dtss',
+  currentView: 'pipeline',
+  currentStep: 'grind',
+  agentOnline: false,
+  cycles: [],
+  currentCycle: null,
+  health: null,
+  signals: [],
+  conditions: [],
+  vettingSignals: [],
+  vettingIdx: 0,
+  exitCondition: null,
+  regimeModel: null,
+  pollInterval: null,
+  stepStatuses: {},
+  logContents: {},
+};
+
+// ═══════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  setupTabs();
+  setupSetupSelector();
+  setupPipelineSidebar();
+  setupKeyboard();
+  initialLoad();
+  startPolling();
+});
+
+function setupTabs() {
+  document.querySelectorAll('.topbar-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const view = tab.dataset.view;
+      switchView(view);
+    });
+  });
+}
+
+function setupSetupSelector() {
+  document.getElementById('setupSelector').addEventListener('change', e => {
+    state.setup = e.target.value;
+    refreshCurrentView();
+  });
+  document.getElementById('signals-class-filter').addEventListener('change', () => loadSignals());
+}
+
+function setupPipelineSidebar() {
+  document.querySelectorAll('.pipeline-step').forEach(step => {
+    step.addEventListener('click', () => {
+      const stepId = step.dataset.step;
+      activatePipelineStep(stepId);
+    });
+  });
+}
+
+function setupKeyboard() {
+  document.addEventListener('keydown', e => {
+    if (state.currentView !== 'vetting') return;
+    if (e.key === '1') vettingDecide('YES');
+    if (e.key === '2') vettingDecide('NO');
+    if (e.key === '3') vettingDecide('SKIP');
+    if (e.key === 'ArrowDown') vettingNav(1);
+    if (e.key === 'ArrowUp') vettingNav(-1);
+  });
+}
+
+async function initialLoad() {
+  await Promise.all([
+    checkAgent(),
+    loadSetupData(),
+  ]);
+}
+
+function startPolling() {
+  state.pollInterval = setInterval(() => {
+    checkAgent();
+    if (state.currentStep) pollStepLogs(state.currentStep);
+  }, 4000);
+}
+
+// ═══════════════════════════════════════════════════════════
+// NAVIGATION
+// ═══════════════════════════════════════════════════════════
+function switchView(view) {
+  state.currentView = view;
+  document.querySelectorAll('.topbar-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.view === view);
+  });
+  document.querySelectorAll('.panel[id^="view-"]').forEach(p => {
+    p.classList.toggle('active', p.id === `view-${view}`);
+  });
+  document.getElementById('sidebar').style.display = view === 'pipeline' ? 'flex' : 'none';
+  refreshCurrentView();
+}
+
+function refreshCurrentView() {
+  switch (state.currentView) {
+    case 'pipeline': loadSetupData(); break;
+    case 'cycles': loadCycles(); break;
+    case 'signals': loadSignals(); break;
+    case 'vetting': loadVettingSignals(); break;
+    case 'conditions': loadConditions(); break;
+    case 'watchlist': loadWatchlist(); break;
+  }
+}
+
+function activatePipelineStep(stepId) {
+  state.currentStep = stepId;
+  document.querySelectorAll('.pipeline-step').forEach(s => {
+    s.classList.toggle('active', s.dataset.step === stepId);
+  });
+  document.querySelectorAll('[id^="step-panel-"]').forEach(p => {
+    p.classList.toggle('active', p.id === `step-panel-${stepId}`);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// API HELPERS
+// ═══════════════════════════════════════════════════════════
+async function api(path, opts = {}) {
+  try {
+    const r = await fetch(API + path, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { return null; }
+}
+
+// ═══════════════════════════════════════════════════════════
+// AGENT
+// ═══════════════════════════════════════════════════════════
+async function checkAgent() {
+  const d = await api('/api/grinder/agent/status');
+  const online = d?.status === 'online';
+  state.agentOnline = online;
+  const dot = document.getElementById('agentDot');
+  const label = document.getElementById('agentLabel');
+  dot.className = 'agent-dot' + (online ? ' online' : '');
+  label.textContent = online ? 'agent online' : 'agent offline';
+}
+
+// ═══════════════════════════════════════════════════════════
+// SETUP DATA LOAD
+// ═══════════════════════════════════════════════════════════
+async function loadSetupData() {
+  const [setups, cycles, exitCond, health] = await Promise.all([
+    api('/api/setups'),
+    api(`/api/v2/cycles/${state.setup}`),
+    api(`/api/v2/exit_conditions/${state.setup}`),
+    api(`/api/v2/health/${state.setup}/latest`),
+  ]);
+
+  // Update setup selector
+  if (setups) {
+    const sel = document.getElementById('setupSelector');
+    const val = sel.value;
+    sel.innerHTML = Object.entries(setups).map(([k, v]) =>
+      `<option value="${k}" ${k === state.setup ? 'selected' : ''}>${v.name} (${v.examples})</option>`
+    ).join('');
+    sel.value = val;
+  }
+
+  // Current cycle
+  if (cycles?.cycles?.length) {
+    const cur = cycles.cycles.find(c => c.is_current) || cycles.cycles[0];
+    state.currentCycle = cur;
+    updateGrindMetrics(cur);
+  }
+
+  // Health
+  if (health?.health) {
+    state.health = health.health;
+    updateHealthPanel(health.health);
+    updateScanMetrics(health.health);
+    updateClassifyMetrics(health.health);
+    updateSidebarMeta(health.health);
+    updateRegrindBadge(health.health);
+  }
+
+  // Exit condition
+  if (exitCond) {
+    state.exitCondition = exitCond;
+    updateExitConditionDisplay(exitCond);
+  }
+
+  // Regime model
+  const regime = await api(`/api/v2/regime/model/${state.setup}`);
+  if (regime) {
+    state.regimeModel = regime;
+    updateRegimePanel(regime);
+  }
+}
+
+function updateGrindMetrics(cycle) {
+  setText('gm-examples', cycle.n_examples_at_grind ?? '—');
+  setText('gm-conditions', cycle.n_conditions ?? '—');
+  setText('gm-peak', state.health?.peak_per_day?.toFixed(1) ?? '—');
+  const dt = cycle.completed_at ? new Date(cycle.completed_at) : null;
+  setText('gm-lastrun', dt ? dt.toLocaleDateString() : '—');
+  setText('gm-cycle-id', cycle.cycle_id ?? '—');
+}
+
+function updateScanMetrics(health) {
+  setText('sm-dedup', health.n_signals ?? '—');
+  setText('sm-avg', health.avg_per_day?.toFixed(2) ?? '—');
+  setText('sm-peak', health.peak_per_day?.toFixed(1) ?? '—');
+  setText('sm-raw', '—');
+}
+
+function updateClassifyMetrics(health) {
+  if (!health) return;
+  const total = health.n_signals || 0;
+  const winRate = health.win_rate_auto || 0;
+  const wins = Math.round(total * winRate);
+  const losses = total - wins;
+  setText('cl-auto-win', wins);
+  setText('cl-auto-loss', losses);
+  setText('cl-winrate', (winRate * 100).toFixed(1) + '%');
+  setText('cl-vetted', (health.pct_manually_vetted * 100 || 0).toFixed(0) + '%');
+}
+
+function updateExitConditionDisplay(ec) {
+  if (!ec?.exit_condition) return;
+  const expr = ec.exit_condition.expression_name || '—';
+  const dir = ec.exit_condition.direction || '';
+  const thr = ec.exit_condition.threshold?.toFixed(6) || '';
+  setText('exit-condition-display', `${expr} ${dir} ${thr}`);
+  setText('exit-condition-sub', `Max forward: ${ec.exit_condition.max_forward_bars ?? '—'} bars`);
+  setText('exit-grind-expr', `${expr} ${dir} ${thr}`);
+  setText('exit-grind-stats', `ADR threshold: ${ec.exit_condition.adr_threshold_multiplier ?? '—'}×`);
+  setText('ef-threshold', (ec.exit_condition.adr_threshold_multiplier ?? '—') + '×');
+  setText('meta-exit_grind', expr.substring(0, 20) + '...');
+}
+
+function updateRegimePanel(regime) {
+  if (!regime?.regime_model) return;
+  const rm = regime.regime_model;
+  setText('reg-signals', rm.n_signals_used ?? '—');
+  setText('reg-baseline', rm.baseline_win_rate ? (rm.baseline_win_rate * 100).toFixed(1) + '%' : '—');
+  const topFeats = rm.top_features ? JSON.parse(rm.top_features) : [];
+  setText('reg-top-feat', topFeats[0] || '—');
+  setText('meta-regime', topFeats[0] ? topFeats[0].substring(0, 18) : '—');
+
+  const featWeights = rm.feature_weights ? JSON.parse(rm.feature_weights) : {};
+  const sorted = Object.entries(featWeights).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 8);
+  const container = document.getElementById('regime-features');
+  if (sorted.length) {
+    container.innerHTML = sorted.map(([k, v]) => {
+      const pct = Math.abs(v * 100).toFixed(1);
+      const dir = v > 0 ? 'green' : 'red';
+      return `<div class="health-row"><span class="health-row-label">${k}</span><span class="health-row-val ${dir}">${v > 0 ? '+' : ''}${(v * 100).toFixed(2)}%</span></div>`;
+    }).join('');
+  } else {
+    container.innerHTML = '<div class="empty-text">No regime model yet</div>';
+  }
+}
+
+function updateSidebarMeta(health) {
+  const pct = health.win_rate_auto ? (health.win_rate_auto * 100).toFixed(1) + '%' : '—';
+  setText('meta-grind', health.n_conditions_current ? `${health.n_conditions_current} conds` : '—');
+  setText('meta-scan', health.n_signals ? `${health.n_signals} signals` : '—');
+  setText('meta-exit_filter', health.win_rate_auto ? `${pct} win rate` : '—');
+  setText('meta-classify', pct !== '—' ? `${pct} auto win` : '—');
+  const lready = health.live_ready ? 'live-ready' : 'not ready';
+  setText('meta-health', lready);
+
+  const healthStep = document.getElementById('step-health');
+  if (health.live_ready) {
+    healthStep.querySelector('.step-meta').className = 'step-meta green';
+  } else {
+    healthStep.querySelector('.step-meta').className = 'step-meta red';
+  }
+}
+
+function updateRegrindBadge(health) {
+  const badge = document.getElementById('regrindBadge');
+  const n = health.examples_since_last_grind || 0;
+  if (n > 0) {
+    badge.classList.remove('hidden');
+    document.getElementById('regrindCount').textContent = n;
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// HEALTH PANEL
+// ═══════════════════════════════════════════════════════════
+function updateHealthPanel(health) {
+  const body = document.getElementById('health-panel-body');
+  if (!health) { body.innerHTML = '<div class="loading-text">No health data available.</div>'; return; }
+
+  const liveBlockers = health.live_ready_blockers
+    ? JSON.parse(health.live_ready_blockers)
+    : [];
+
+  // Determine which metrics pass
+  const checks = [
+    ['signal_stability_pct >= 80', health.signal_stability_pct != null && health.signal_stability_pct >= 80],
+    ['avg_per_day 2–7', health.avg_per_day >= 2 && health.avg_per_day <= 7],
+    ['win_rate_auto >= 40%', health.win_rate_auto >= 0.4],
+    ['ev_estimate > 0', health.ev_estimate > 0],
+    ['median_loser_adr < 1.0', health.median_loser_adr < 1.0],
+    ['examples converging', health.examples_added_this_cycle <= 2],
+  ];
+
+  const promoColor = health.promote_recommendation === 'promote' ? 'green'
+    : health.promote_recommendation === 'flag' ? 'orange' : 'red';
+
+  body.innerHTML = `
+    <div class="metrics-grid">
+      <div class="metric-cell">
+        <div class="metric-label">Recommendation</div>
+        <div class="metric-value ${promoColor}">${(health.promote_recommendation || '—').toUpperCase()}</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Live Ready</div>
+        <div class="metric-value ${health.live_ready ? 'green' : 'red'}">${health.live_ready ? 'YES' : 'NO'}</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">EV Estimate</div>
+        <div class="metric-value ${health.ev_estimate > 0 ? 'green' : 'red'}">${health.ev_estimate?.toFixed(3) ?? '—'}</div>
+        <div class="metric-sub">ADR</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">Examples Passing</div>
+        <div class="metric-value ${health.examples_passing === health.n_examples_at_cycle ? 'green' : 'red'}">${health.examples_passing ?? '—'} / ${health.n_examples_at_cycle ?? '?'}</div>
+      </div>
+    </div>
+
+    <div class="health-grid">
+      <div class="health-block">
+        <div class="health-block-title">Signal Quality</div>
+        <div class="health-row"><span class="health-row-label">Total signals</span><span class="health-row-val">${health.n_signals ?? '—'}</span></div>
+        <div class="health-row"><span class="health-row-label">Peak / day</span><span class="health-row-val ${health.peak_per_day <= 7 ? '' : 'orange'}">${health.peak_per_day?.toFixed(1) ?? '—'}</span></div>
+        <div class="health-row"><span class="health-row-label">Avg / day</span><span class="health-row-val ${health.avg_per_day >= 2 && health.avg_per_day <= 7 ? 'green' : 'orange'}">${health.avg_per_day?.toFixed(2) ?? '—'}</span></div>
+        <div class="health-row"><span class="health-row-label">Stability %</span><span class="health-row-val ${health.signal_stability_pct >= 80 ? 'green' : health.signal_stability_pct == null ? '' : 'orange'}">${health.signal_stability_pct != null ? health.signal_stability_pct.toFixed(1) + '%' : '—'}</span></div>
+      </div>
+      <div class="health-block">
+        <div class="health-block-title">EV Breakdown</div>
+        <div class="health-row"><span class="health-row-label">Win rate (auto)</span><span class="health-row-val ${health.win_rate_auto >= 0.4 ? 'green' : 'orange'}">${health.win_rate_auto != null ? (health.win_rate_auto * 100).toFixed(1) + '%' : '—'}</span></div>
+        <div class="health-row"><span class="health-row-label">Win rate (vetted)</span><span class="health-row-val">${health.win_rate_vetted != null ? (health.win_rate_vetted * 100).toFixed(1) + '%' : '—'}</span></div>
+        <div class="health-row"><span class="health-row-label">Median winner</span><span class="health-row-val green">${health.median_winner_adr?.toFixed(2) ?? '—'} ADR</span></div>
+        <div class="health-row"><span class="health-row-label">Median loser</span><span class="health-row-val ${health.median_loser_adr < 1 ? 'green' : 'red'}">${health.median_loser_adr?.toFixed(2) ?? '—'} ADR</span></div>
+      </div>
+      <div class="health-block">
+        <div class="health-block-title">Example Coverage</div>
+        <div class="health-row"><span class="health-row-label">Examples passing</span><span class="health-row-val ${health.examples_passing === health.n_examples_at_cycle ? 'green' : 'red'}">${health.examples_passing ?? '—'}</span></div>
+        <div class="health-row"><span class="health-row-label">Added this cycle</span><span class="health-row-val">${health.examples_added_this_cycle ?? '—'}</span></div>
+        <div class="health-row"><span class="health-row-label">Since last grind</span><span class="health-row-val ${(health.examples_since_last_grind || 0) > 0 ? 'orange' : ''}">${health.examples_since_last_grind ?? 0}</span></div>
+        <div class="health-row"><span class="health-row-label">Manually vetted</span><span class="health-row-val">${health.pct_manually_vetted != null ? (health.pct_manually_vetted * 100).toFixed(0) + '%' : '—'}</span></div>
+      </div>
+      <div class="health-block">
+        <div class="health-block-title">Cycle Delta</div>
+        <div class="health-row"><span class="health-row-label">Signal count delta</span><span class="health-row-val">${health.signal_count_delta != null ? (health.signal_count_delta > 0 ? '+' : '') + health.signal_count_delta : '—'}</span></div>
+        <div class="health-row"><span class="health-row-label">Condition delta</span><span class="health-row-val">${health.condition_count_delta != null ? (health.condition_count_delta > 0 ? '+' : '') + health.condition_count_delta : '—'}</span></div>
+        <div class="health-row"><span class="health-row-label">Win rate delta</span><span class="health-row-val">${health.win_rate_delta != null ? (health.win_rate_delta > 0 ? '+' : '') + (health.win_rate_delta * 100).toFixed(1) + '%' : '—'}</span></div>
+        <div class="health-row"><span class="health-row-label">Prev cycle</span><span class="health-row-val" style="font-size:9px">${health.prev_cycle_id || '—'}</span></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header"><span class="section-title">Live Readiness</span></div>
+      <div class="blockers-list">
+        ${checks.map(([label, pass]) => `<div class="blocker-item ${pass ? 'met' : ''}">${label}</div>`).join('')}
+      </div>
+    </div>
+
+    ${health.flag_reason ? `<div class="info-box" style="border-color:var(--orange);margin-top:12px"><div class="info-box-title" style="color:var(--orange)">Flag Reason</div><div class="info-box-val">${health.flag_reason}</div></div>` : ''}
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════
+// CYCLES VIEW
+// ═══════════════════════════════════════════════════════════
+async function loadCycles() {
+  const body = document.getElementById('cycles-body');
+  body.innerHTML = '<div class="loading-text">Loading...</div>';
+  const data = await api(`/api/v2/cycles/${state.setup}`);
+  if (!data?.cycles?.length) { body.innerHTML = '<div class="empty-text">No cycles found.</div>'; return; }
+
+  state.cycles = data.cycles;
+  body.innerHTML = `
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">All Cycles</span>
+        <span class="section-count">${data.cycles.length}</span>
+      </div>
+      ${data.cycles.map(c => `
+        <div class="cycle-row ${c.is_current ? 'current' : ''}">
+          <div>
+            <div class="cycle-id">${c.cycle_id}</div>
+            <div class="cycle-info">${c.n_examples_at_grind} examples · ${c.n_conditions} conditions · ${c.status}</div>
+          </div>
+          <div class="cycle-actions">
+            ${c.is_current ? '<span class="tag tag-current">CURRENT</span>' : `<button class="btn btn-neutral btn-sm" onclick="activateCycle('${c.cycle_id}')">Restore</button>`}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+async function activateCycle(cycleId) {
+  showDialog(
+    'Restore Cycle',
+    `Restore <strong>${cycleId}</strong> as the active cycle? The current cycle will be replaced.`,
+    async () => {
+      await api(`/api/v2/cycles/${cycleId}/activate`, { method: 'POST' });
+      await loadCycles();
+      await loadSetupData();
+    }
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// SIGNALS VIEW
+// ═══════════════════════════════════════════════════════════
+async function loadSignals() {
+  const tbody = document.getElementById('signals-tbody');
+  tbody.innerHTML = '<tr><td colspan="9" class="loading-text">Loading...</td></tr>';
+
+  if (!state.currentCycle) {
+    const cycles = await api(`/api/v2/cycles/${state.setup}`);
+    if (cycles?.cycles?.length) state.currentCycle = cycles.cycles.find(c => c.is_current) || cycles.cycles[0];
+  }
+
+  if (!state.currentCycle) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-text">No cycle available.</td></tr>';
+    return;
+  }
+
+  const data = await api(`/api/v2/cycles/${state.currentCycle.cycle_id}/signals`);
+  if (!data?.signals) { tbody.innerHTML = '<tr><td colspan="9" class="empty-text">No signals.</td></tr>'; return; }
+
+  const filterClass = document.getElementById('signals-class-filter').value;
+  const sigs = filterClass ? data.signals.filter(s => s.classification === filterClass) : data.signals;
+  state.signals = sigs;
+
+  document.getElementById('signals-subtitle').textContent =
+    `${state.currentCycle.cycle_id} · ${sigs.length} signals shown`;
+
+  tbody.innerHTML = sigs.map(s => {
+    const cls = s.classification || 'UNCLASSIFIED';
+    const clsTag = cls.includes('WIN') ? 'tag-win' : cls.includes('LOSS') ? 'tag-loss' : 'tag-unclass';
+    const capStr = s.capture_eff != null ? (s.capture_eff * 100).toFixed(0) + '%' : '—';
+    const regStr = s.regime_score != null ? s.regime_score.toFixed(2) : '—';
+    return `<tr>
+      <td class="ticker">${s.ticker}</td>
+      <td>${s.signal_date}</td>
+      <td><span class="tag ${clsTag}">${cls}</span></td>
+      <td style="color:var(--${s.move_adr > 3 ? 'green' : 'text2'})">${s.move_adr?.toFixed(2) ?? '—'}</td>
+      <td>${s.mfe_adr?.toFixed(2) ?? '—'}</td>
+      <td>${capStr}</td>
+      <td>${s.exit_date ?? '—'}</td>
+      <td>${s.is_example ? '<span class="tag tag-example">EX</span>' : ''}</td>
+      <td>${regStr}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════
+// VETTING VIEW
+// ═══════════════════════════════════════════════════════════
+async function loadVettingSignals() {
+  const list = document.getElementById('vetting-list');
+  list.innerHTML = '<div class="loading-text">Loading signals...</div>';
+
+  const data = await api(`/api/vetting/${state.setup}/signals`);
+  if (!data?.signals) { list.innerHTML = '<div class="empty-text">No signals.</div>'; return; }
+
+  state.vettingSignals = data.signals;
+  document.getElementById('vetting-subtitle').textContent =
+    `${data.signals.length} signals · ${data.exit_condition || ''}`;
+
+  renderVettingList();
+  if (state.vettingSignals.length) selectVettingSignal(0);
+}
+
+function renderVettingList() {
+  const list = document.getElementById('vetting-list');
+  list.innerHTML = state.vettingSignals.map((s, i) => {
+    let cls = '';
+    if (s.verdict === 'YES') cls = 'vetted-yes';
+    else if (s.verdict === 'NO') cls = 'vetted-no';
+    if (i === state.vettingIdx) cls += ' active';
+    const adrStr = s.move_adr?.toFixed(1) ?? '?';
+    return `<div class="vetting-signal-item ${cls}" onclick="selectVettingSignal(${i})">
+      <span class="vsig-adr">${adrStr} ADR</span>
+      <div class="vsig-ticker">${s.ticker}</div>
+      <div class="vsig-date">${s.date || s.signal_date}</div>
+    </div>`;
+  }).join('');
+}
+
+function selectVettingSignal(idx) {
+  state.vettingIdx = idx;
+  const sig = state.vettingSignals[idx];
+  if (!sig) return;
+
+  // Update info strip
+  setText('vi-ticker', sig.ticker);
+  setText('vi-date', sig.date || sig.signal_date);
+  setText('vi-move', (sig.move_adr?.toFixed(2) ?? '—') + ' ADR');
+  setText('vi-mfe', (sig.mfe_adr?.toFixed(2) ?? '—') + ' ADR');
+  setText('vi-cap', sig.capture_eff != null ? (sig.capture_eff * 100).toFixed(0) + '%' : '—');
+  setText('vi-exit', sig.exit_date ?? '—');
+
+  // Load chart
+  loadVettingChart(sig);
+  renderVettingList();
+}
+
+function loadVettingChart(sig) {
+  const area = document.getElementById('vetting-chart-area');
+  const ticker = sig.ticker;
+  const date = sig.date || sig.signal_date;
+  // Use the existing chart endpoint
+  const chartUrl = `${API}/api/vetting/${state.setup}/ohlcv/${ticker}?signal_date=${date}`;
+  area.innerHTML = `<div class="chart-placeholder"><div class="chart-placeholder-icon">⟳</div><div>Loading chart for ${ticker}...</div></div>`;
+
+  // Build a lightweight chart using the OHLCV data
+  fetch(chartUrl)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (!data?.ohlcv?.length) {
+        area.innerHTML = `<div class="chart-placeholder"><div class="chart-placeholder-icon">▦</div><div>No chart data for ${ticker}</div></div>`;
+        return;
+      }
+      renderMiniChart(area, data.ohlcv, date, sig);
+    })
+    .catch(() => {
+      area.innerHTML = `<div class="chart-placeholder"><div class="chart-placeholder-icon">▦</div><div>Chart unavailable</div></div>`;
+    });
+}
+
+function renderMiniChart(container, ohlcv, signalDate, sig) {
+  const W = container.clientWidth || 800;
+  const H = container.clientHeight || 400;
+  const PAD = { top: 20, right: 60, bottom: 30, left: 10 };
+  const CW = W - PAD.left - PAD.right;
+  const CH = H - PAD.top - PAD.bottom;
+  const N = ohlcv.length;
+
+  // Find signal index
+  const sigIdx = ohlcv.findIndex(b => b.date === signalDate);
+
+  const lows = ohlcv.map(b => b.low);
+  const highs = ohlcv.map(b => b.high);
+  const minP = Math.min(...lows);
+  const maxP = Math.max(...highs);
+  const priceRange = maxP - minP || 1;
+
+  const xScale = i => PAD.left + (i / (N - 1)) * CW;
+  const yScale = p => PAD.top + (1 - (p - minP) / priceRange) * CH;
+
+  const barW = Math.max(1, (CW / N) * 0.7);
+
+  // EMA helper
+  function ema(closes, period) {
+    const k = 2 / (period + 1);
+    const out = new Array(closes.length).fill(null);
+    let prev = null;
+    for (let i = 0; i < closes.length; i++) {
+      if (closes[i] == null) continue;
+      if (prev === null) { prev = closes[i]; out[i] = prev; continue; }
+      prev = closes[i] * k + prev * (1 - k);
+      out[i] = prev;
+    }
+    return out;
+  }
+  function sma(closes, period) {
+    return closes.map((_, i) => {
+      if (i < period - 1) return null;
+      const slice = closes.slice(i - period + 1, i + 1).filter(v => v != null);
+      return slice.length ? slice.reduce((a, b) => a + b, 0) / slice.length : null;
+    });
+  }
+
+  const closes = ohlcv.map(b => b.close);
+  const ema8 = ema(closes, 8);
+  const ema21 = ema(closes, 21);
+  const sma50 = sma(closes, 50);
+  const sma200 = sma(closes, 200);
+
+  function pathFromSeries(series) {
+    let d = '';
+    series.forEach((v, i) => {
+      if (v == null) return;
+      const x = xScale(i);
+      const y = yScale(v);
+      d += d === '' ? `M ${x} ${y}` : ` L ${x} ${y}`;
+    });
+    return d;
+  }
+
+  const candleSVG = ohlcv.map((b, i) => {
+    const x = xScale(i);
+    const isUp = b.close >= b.open;
+    const color = isUp ? '#3dff8f' : '#ff4545';
+    const oY = yScale(b.open), cY = yScale(b.close);
+    const hY = yScale(b.high), lY = yScale(b.low);
+    const bodyTop = Math.min(oY, cY);
+    const bodyH = Math.max(1, Math.abs(oY - cY));
+    return `<line x1="${x}" y1="${hY}" x2="${x}" y2="${lY}" stroke="${color}" stroke-width="0.8" opacity="0.7"/>
+<rect x="${x - barW/2}" y="${bodyTop}" width="${barW}" height="${bodyH}" fill="${color}" opacity="0.85"/>`;
+  }).join('');
+
+  // Signal marker
+  const sigMarker = sigIdx >= 0 ? `
+    <line x1="${xScale(sigIdx)}" y1="${PAD.top}" x2="${xScale(sigIdx)}" y2="${PAD.top + CH}" stroke="#e8ff47" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>
+    <circle cx="${xScale(sigIdx)}" cy="${yScale(ohlcv[sigIdx].close)}" r="5" fill="#e8ff47" opacity="0.9"/>
+  ` : '';
+
+  // Exit marker
+  const exitIdx = sig.exit_date ? ohlcv.findIndex(b => b.date === sig.exit_date) : -1;
+  const exitMarker = exitIdx >= 0 ? `
+    <line x1="${xScale(exitIdx)}" y1="${PAD.top}" x2="${xScale(exitIdx)}" y2="${PAD.top + CH}" stroke="#4090ff" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>
+    <circle cx="${xScale(exitIdx)}" cy="${yScale(ohlcv[exitIdx].close)}" r="4" fill="#4090ff" opacity="0.8"/>
+  ` : '';
+
+  // Price labels on right
+  const priceLabels = [minP, (minP + maxP) / 2, maxP].map(p => `
+    <text x="${PAD.left + CW + 4}" y="${yScale(p) + 4}" fill="#555" font-size="9" font-family="IBM Plex Mono">${p.toFixed(1)}</text>
+  `).join('');
+
+  const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+    <rect width="${W}" height="${H}" fill="#0a0a0a"/>
+    ${candleSVG}
+    <path d="${pathFromSeries(ema8)}" stroke="#3dff8f" stroke-width="1" fill="none" opacity="0.6"/>
+    <path d="${pathFromSeries(ema21)}" stroke="#ff9040" stroke-width="1" fill="none" opacity="0.6"/>
+    <path d="${pathFromSeries(sma50)}" stroke="#4090ff" stroke-width="1" fill="none" opacity="0.5"/>
+    <path d="${pathFromSeries(sma200)}" stroke="#a855f7" stroke-width="1" fill="none" opacity="0.5"/>
+    ${sigMarker}
+    ${exitMarker}
+    ${priceLabels}
+    <text x="${W - 55}" y="${H - 5}" fill="#333" font-size="9" font-family="IBM Plex Mono">${ohlcv.at(-1)?.date || ''}</text>
+    <text x="12" y="14" fill="#555" font-size="9" font-family="IBM Plex Mono">EMA8 EMA21 SMA50 SMA200</text>
+  </svg>`;
+
+  container.innerHTML = svg;
+}
+
+async function vettingDecide(verdict) {
+  const sig = state.vettingSignals[state.vettingIdx];
+  if (!sig) return;
+
+  if (verdict !== 'SKIP') {
+    await api(`/api/vetting/${state.setup}/decide`, {
+      method: 'POST',
+      body: JSON.stringify({
+        ticker: sig.ticker,
+        signal_date: sig.date || sig.signal_date,
+        verdict: verdict,
+        entry_date: sig.entry_date || null,
+      })
+    });
+    sig.verdict = verdict;
+  }
+
+  vettingNav(1);
+}
+
+function vettingNav(delta) {
+  const next = state.vettingIdx + delta;
+  if (next >= 0 && next < state.vettingSignals.length) {
+    selectVettingSignal(next);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// CONDITIONS VIEW
+// ═══════════════════════════════════════════════════════════
+async function loadConditions() {
+  const tbody = document.getElementById('conditions-tbody');
+  tbody.innerHTML = '<tr><td colspan="6" class="loading-text">Loading...</td></tr>';
+
+  if (!state.currentCycle) await loadSetupData();
+  if (!state.currentCycle) { tbody.innerHTML = '<tr><td colspan="6" class="empty-text">No cycle.</td></tr>'; return; }
+
+  const data = await api(`/api/v2/cycles/${state.currentCycle.cycle_id}/conditions`);
+  if (!data?.conditions?.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty-text">No conditions.</td></tr>'; return; }
+
+  document.getElementById('cond-subtitle').textContent =
+    `${state.currentCycle.cycle_id} · ${data.conditions.length} conditions`;
+
+  tbody.innerHTML = data.conditions.map((c, i) => {
+    const tier = c.tier || '?';
+    const fp = c.filter_power != null ? (c.filter_power * 100).toFixed(1) + '%' : '—';
+    return `<tr>
+      <td style="color:var(--text3)">${i + 1}</td>
+      <td><span class="tier-badge tier-${tier}">${tier}</span></td>
+      <td class="mono" style="color:var(--text)">${c.expression_name}</td>
+      <td style="color:var(--text2)">${c.low?.toFixed(4) ?? '—'}</td>
+      <td style="color:var(--text2)">${c.high?.toFixed(4) ?? '—'}</td>
+      <td style="color:var(--text3)">${fp}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════
+// WATCHLIST VIEW
+// ═══════════════════════════════════════════════════════════
+async function loadWatchlist() {
+  const body = document.getElementById('watchlist-body');
+  body.innerHTML = '<div class="loading-text">Loading...</div>';
+  const data = await api('/api/v2/watchlist/latest');
+  document.getElementById('watchlist-date').textContent = data?.run_date ? `Run date: ${data.run_date}` : 'No watchlist data';
+
+  if (!data?.entries?.length) {
+    body.innerHTML = `
+      <div class="watchlist-empty">
+        <div style="font-size:32px;opacity:0.15">◈</div>
+        <div>No watchlist entries for tonight</div>
+        <div style="font-size:10px;color:var(--text3)">Watchlist populates after nightly scan in live mode</div>
+      </div>`;
+    return;
+  }
+
+  body.innerHTML = `
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Ticker</th>
+          <th>Setup</th>
+          <th>Regime Score</th>
+          <th>Expected Win%</th>
+          <th>Expected Move</th>
+          <th>AI Status</th>
+          <th>AI Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.entries.map((e, i) => `
+          <tr>
+            <td class="watchlist-rank">${i + 1}</td>
+            <td class="ticker">${e.ticker}</td>
+            <td>${e.setup_type?.toUpperCase()}</td>
+            <td><span style="color:${e.regime_score > 0.7 ? 'var(--green)' : e.regime_score > 0.4 ? 'var(--text)' : 'var(--text3)'}">${e.regime_score?.toFixed(2) ?? '—'}</span></td>
+            <td>${e.expected_win_rate != null ? (e.expected_win_rate * 100).toFixed(1) + '%' : '—'}</td>
+            <td style="color:var(--accent)">${e.expected_move_adr?.toFixed(2) ?? '—'} ADR</td>
+            <td><span class="tag ${e.ai_vet_status === 'LOOKS_GOOD' ? 'tag-win' : 'tag-loss'}">${e.ai_vet_status || '—'}</span></td>
+            <td style="color:var(--text3);font-size:10px">${e.ai_vet_reason || ''}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════
+// PIPELINE RUN / LOGS
+// ═══════════════════════════════════════════════════════════
+async function runStep(stepId) {
+  const btn = document.getElementById(`btn-${stepId}`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Queuing...'; }
+
+  appendLog(stepId, 'info', `Queuing step: ${stepId}...`);
+
+  const result = await api(`/api/pipeline/run/${stepId}`, {
+    method: 'POST',
+    body: JSON.stringify({ setup_type: state.setup })
+  });
+
+  if (result) {
+    appendLog(stepId, 'ok', `Job queued. Waiting for agent...`);
+    // Mark step as running
+    const stepEl = document.getElementById(`step-${stepId}`);
+    if (stepEl) stepEl.classList.add('running');
+  } else {
+    appendLog(stepId, 'error', 'Failed to queue job. Is the API reachable?');
+    if (btn) { btn.disabled = false; btn.textContent = 'Run'; }
+  }
+}
+
+async function stopStep(stepId) {
+  await api('/api/pipeline/stop', { method: 'POST', body: JSON.stringify({ setup_type: state.setup }) });
+  appendLog(stepId, 'warn', 'Stop signal sent to agent.');
+}
+
+async function pollStepLogs(stepId) {
+  const data = await api(`/api/pipeline/logs/${stepId}`);
+  if (!data?.logs?.length) return;
+
+  const logEl = document.getElementById(`log-${stepId}`);
+  if (!logEl) return;
+
+  // Only append new lines
+  const key = `log-${stepId}-len`;
+  const prevLen = state.logContents[key] || 0;
+  const newLogs = data.logs.slice(prevLen);
+  state.logContents[key] = data.logs.length;
+
+  newLogs.forEach(entry => {
+    const lvl = entry.level || 'info';
+    const ts = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '';
+    const el = document.createElement('div');
+    el.className = `log-line ${lvl}`;
+    el.innerHTML = `<span class="log-ts">${ts}</span>${escapeHtml(entry.message || '')}`;
+    logEl.appendChild(el);
+  });
+  logEl.scrollTop = logEl.scrollHeight;
+
+  // Update progress
+  if (data.progress != null) {
+    const prog = document.getElementById(`prog-${stepId}`);
+    if (prog) prog.style.width = (data.progress * 100) + '%';
+  }
+
+  // If complete, re-load data
+  if (data.status === 'complete') {
+    const stepEl = document.getElementById(`step-${stepId}`);
+    if (stepEl) { stepEl.classList.remove('running'); stepEl.classList.add('done'); }
+    const btn = document.getElementById(`btn-${stepId}`);
+    if (btn) { btn.disabled = false; btn.textContent = 'Run'; }
+    appendLog(stepId, 'ok', '✓ Step complete.');
+    if (data.progress != null) {
+      const prog = document.getElementById(`prog-${stepId}`);
+      if (prog) prog.style.width = '100%';
+    }
+    loadSetupData();
+  }
+  if (data.status === 'error') {
+    const btn = document.getElementById(`btn-${stepId}`);
+    if (btn) { btn.disabled = false; btn.textContent = 'Run'; }
+    appendLog(stepId, 'error', `Error: ${data.error_msg || 'Unknown error'}`);
+  }
+}
+
+function appendLog(stepId, level, msg) {
+  const logEl = document.getElementById(`log-${stepId}`);
+  if (!logEl) return;
+  const el = document.createElement('div');
+  el.className = `log-line ${level}`;
+  const ts = new Date().toLocaleTimeString();
+  el.innerHTML = `<span class="log-ts">${ts}</span>${escapeHtml(msg)}`;
+  logEl.appendChild(el);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function clearLog(stepId) {
+  const logEl = document.getElementById(`log-${stepId}`);
+  if (logEl) logEl.innerHTML = '';
+  state.logContents[`log-${stepId}-len`] = 0;
+}
+
+// ═══════════════════════════════════════════════════════════
+// DIALOG
+// ═══════════════════════════════════════════════════════════
+function showDialog(title, body, onConfirm) {
+  document.getElementById('dialog-title').textContent = title;
+  document.getElementById('dialog-body').innerHTML = body;
+  const btn = document.getElementById('dialog-confirm-btn');
+  btn.onclick = () => { closeDialog(); onConfirm(); };
+  document.getElementById('confirmOverlay').classList.add('show');
+}
+function closeDialog() { document.getElementById('confirmOverlay').classList.remove('show'); }
+
+// ═══════════════════════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════════════════════
+function setText(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+function escapeHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+</body>
+</html>
