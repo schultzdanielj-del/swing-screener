@@ -441,19 +441,27 @@ Find combinations of regime conditions (2-3 at most) that produce the highest wi
 - Output: expected win rate given current conditions
 - This feeds into the nightly watchlist — signals get a regime-adjusted win rate displayed alongside them
 
-### Script: `scripts/market_grinder.py` (NEW)
+### Script: `scripts/market_grinder.py` ✅ COMPLETE
 
-**Input:**
-- `data/setup_refiner/refined_{setup}.json` — deduped signals with exit status
-- `data/vetting/vetting_{setup}.json` — manual verdicts (optional, applied as overrides)
-- `local_runner/cache/universe_ohlcv_5yr.pkl` — SPY OHLCV (ticker = "SPY")
-- Railway DB examples table — setup examples (always winners)
+**Method (actual implementation):**
+- Fetches signals + classifications from Railway API for the current cycle
+- Builds a daily win rate time series: rolling ±5 trading day window, density-weighted by signal count per window
+- Loads market cache (245 instruments × 15,805 expressions, ~4 GB) built by `local_runner/market_cache_builder.py`
+- Computes weighted Pearson correlation of each (instrument × expression) time series vs win rate series — parallelized across all CPU cores via ProcessPoolExecutor
+- Min coverage filter: feature must have valid values on ≥20% of series days (prevents sparse extension_structure expressions from dominating)
+- Feature deduplication: greedy selection ranked by |corr|, skips any candidate with inter-corr ≥0.95 with already-selected features — ensures 50 genuinely independent signals
+- Computes quartile win rates per feature, composite regime score 0-1 per signal
+- Uploads regime model + per-signal scores to Railway
 
-**Output:**
-- `data/market_grind/market_{setup}.json` — regime model + per-signal classifications
-- Uploads to Railway via `POST /api/market-grind/{setup_type}/upload`
+**Run:**
+```bash
+python scripts/market_grinder.py --setup dtss --dry-run   # validate first
+python scripts/market_grinder.py --setup dtss              # upload live
+```
 
-**Agent step:** `market_grind` pipeline step, triggered from the Market Grinder UI page.
+**Output:** Regime model + 1111 signal scores uploaded to Railway via:
+- `POST /api/market-grind/{setup_type}/upload`
+- `POST /api/v2/cycles/{cycle_id}/signal-scores`
 
 ### UI (Market Grinder Page)
 

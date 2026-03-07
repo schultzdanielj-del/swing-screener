@@ -39,23 +39,28 @@
 - CycleHealthPage fully wired — health panel, cycle diff, revert button, all live
 - WatchlistPage placeholder — blocked on Market Grinder
 
-### 🔲 Next: Market Grinder (Step 5) — IN PROGRESS
-**Architecture locked. Code written. Needs first real run + validation.**
+### ✅ Market Grinder (Step 5) — COMPLETE (2026-03-07)
 
 - `local_runner/market_cache_builder.py` — two-phase fetch (threaded) + compute (parallel CPU)
   - 245 instruments built, 3.96 GB, 6.5 min
-  - Run: `python local_runner/market_cache_builder.py --build`
 - `scripts/market_grinder.py` — win rate time series correlation engine
   - Daily win rate series: rolling ±5 trading day window, density-weighted
   - Weighted Pearson: each (instrument × expression) vs win rate series
   - Min coverage filter: ≥20% of series days must have valid values (prevents sparse expr inflation)
+  - Feature deduplication: greedy selection, skips features with inter-corr ≥ 0.95 — ensures 50 independent features
+  - Parallelized per instrument via ProcessPoolExecutor (all CPU cores)
   - Quartile win rates, regime scores 0-1 per signal, decile lift table
-  - Run: `python scripts/market_grinder.py --setup dtss --dry-run`
 
-**Next actions:**
-1. Run dry-run — verify top features are sensible
-2. If results look real, run without --dry-run to upload
-3. Build WatchlistPage regime score display
+**DTSS result (2026-03-07):**
+- 1111 signals | 456 wins | baseline win rate: 41%
+- 3,103,619 valid features computed across 245 instruments × 15,805 expressions
+- 1843 candidates checked → 50 independent features selected
+- 426/1111 signals scored
+- Win rate lift: D1 (worst) 8.1% → D9 (best) 75% (+44pp vs baseline)
+- Top feature: `KMLM__w_slope_avgc200_off2_adr14` (weekly 200 SMA slope, r=-0.71)
+- Regime model + signal scores uploaded to Railway ✅
+
+### 🔲 Next: WatchlistPage regime score display
 
 ---
 
