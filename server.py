@@ -273,14 +273,15 @@ GRINDER_AGENT_FILE = DATA_DIR / "grinder_agent.json"
 VETTING_DATA_DIR   = DATA_DIR
 
 PIPELINE_STEPS = [
-    {"id":"nightly",        "name":"Nightly Refresh",       "category":"data",     "description":"Append new OHLCV bars, rebuild caches and matrix.",           "prerequisites":[],"result_files":[]},
-    {"id":"optimal_samples","name":"1. Optimal Samples",     "category":"pipeline", "description":"Current validated optimal samples for this setup.",            "prerequisites":[],"result_files":[],"is_manual":True},
-    {"id":"signal_brute",   "name":"2. Signal Brute Forcing","category":"pipeline", "description":"Pyramid grinder + signal exit grinder (runs back-to-back).",   "prerequisites":[],"result_files":[]},
-    {"id":"sample_expansion","name":"3. Sample Expansion",   "category":"pipeline", "description":"Signal filter + chart vetting.",                               "prerequisites":["signal_brute"],"result_files":[],"is_manual":True},
-    {"id":"sample_review",  "name":"3b. AI Sample Review",  "category":"pipeline", "description":"AI reviews pending YES picks via Claude CLI.",                  "prerequisites":["sample_expansion"],"result_files":[]},
-    {"id":"setup_grinder_a","name":"4a. Exit Grinder",       "category":"pipeline", "description":"Single-stage + multi-stage exit grinders.",                    "prerequisites":["sample_expansion"],"result_files":[]},
-    {"id":"setup_grinder_b","name":"4b. Setup Grinder",      "category":"pipeline", "description":"Blackout re-grind + condition prune + signal filter.",         "prerequisites":["setup_grinder_a"],"result_files":[]},
-    {"id":"market_grind",   "name":"5. Market Grinder",      "category":"pipeline", "description":"Cluster outcomes vs market regime.",                           "prerequisites":["setup_grinder_b"],"result_files":[]},
+    {"id":"nightly",     "name":"Nightly Refresh",       "category":"data",     "description":"Append new OHLCV bars, rebuild caches and expression matrix."},
+    {"id":"grind",       "name":"Layer 1: Grind",        "category":"pipeline", "description":"Pyramid grinder — examples vs universe → candidate conditions. Uploads cycle to Railway."},
+    {"id":"scan",        "name":"Layer 2: Scan",         "category":"pipeline", "description":"Apply conditions to full 5yr history → deduped raw signal set."},
+    {"id":"exit_filter", "name":"Layer 3: Exit Filter",  "category":"pipeline", "description":"Apply exit condition → identify which signals moved. Measures ADR, MFE, capture efficiency."},
+    {"id":"exit_grind",  "name":"Exit Grinder",          "category":"pipeline", "description":"Find optimal exit condition from example set. Re-run when example library grows materially."},
+    {"id":"classify",    "name":"Layer 4: Classify",     "category":"pipeline", "description":"Label every signal winner or loser (AUTO WIN / AUTO LOSS / MANUAL)."},
+    {"id":"vet",         "name":"Layer 5: Vet",          "category":"pipeline", "description":"Human review → AI queue → final approval → example library.", "is_manual":True},
+    {"id":"regime",      "name":"Layer 6: Regime",       "category":"pipeline", "description":"Correlate signal classifications vs market conditions → regime score model."},
+    {"id":"health",      "name":"Layer 7: Health Check", "category":"pipeline", "description":"Measure cycle quality vs previous cycle. Drives promote / revert / live-ready."},
 ]
 
 
