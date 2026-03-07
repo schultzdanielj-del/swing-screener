@@ -24,57 +24,87 @@
 
 ---
 
-## V2 Build Order
+## PRE-RUN CHECKLIST — Do these before first V2 run
 
-### ✅ Done
-1. `DATA_CONTRACT.md` — V2 schema defined and committed
+### ONE-TIME SETUP (in order)
 
-### 🔲 Next: Wire V2 tables into server.py `init_db`
+**1. Deploy V2 tables to Railway**
+- Push `v2` branch — Railway auto-deploys, `init_db()` creates 7 new tables on startup
+- Verify: `GET /api/v2/cycles/dtss` returns `{"cycles": []}` (empty, not 404)
 
-Add all 7 new V2 tables to `init_db()` in `server.py`:
-- `grind_cycles`
-- `cycle_conditions`
-- `cycle_signals`
-- `exit_conditions`
-- `cycle_health`
-- `regime_model`
-- `signal_regime_scores`
-- `nightly_watchlist`
+**2. Rebuild expr cache (stale)**
+```
+python local_runner/expr_cache_builder.py --build --force
+```
+- Required before `scan_signals.py` — 36/71 examples have stale cache data
+- Takes ~hours, run overnight. Set `EXPR_CACHE_WORKERS=8`.
 
-Schema is fully specified in `DATA_CONTRACT.md`. Railway auto-deploys on push — tables created on next startup.
+**3. Seed exit condition for DTSS**
+```
+POST /api/v2/exit_conditions
+{
+  "setup_type": "dtss",
+  "expression_name": "slope_xavgc21_off7_adr14",
+  "direction": "below",
+  "threshold": -1.128826,
+  "max_forward_bars": 120,
+  "adr_threshold_multiplier": 1.0
+}
+```
+- Required before `scan_signals.py`. No cache dependency — do this immediately.
 
-### 🔲 Then: grind_upload.py
-Script that runs after pyramid_grinder.py completes and uploads the result to Railway as a new `grind_cycle` row + `cycle_conditions` rows. Replaces the current zero-upload situation (BUG-003).
+**4. Run grind_upload.py**
+```
+python scripts/grind_upload.py --setup dtss
+```
+- Reads `cache/pyramid_results_dtss.json` (local grinder output from last run)
+- Uploads grind_cycles + cycle_conditions rows, marks cycle current
+- NOTE: `data/pyramid_results_dtss.json` is grind #3 (39 conditions, old format).
+  You likely want to run pyramid_grinder.py fresh first (see below).
+- Prerequisites: steps 1 and 2 (tables live; grinder output file present locally)
 
-### 🔲 Then: scan_signals.py (replaces signal_filter.py)
-Reads conditions from `cycle_conditions` (not a local JSON file). Writes signals to `cycle_signals`. No file handoffs.
+**5. Run scan_signals.py**
+```
+python scripts/scan_signals.py --setup dtss
+```
+- Reads conditions from Railway (needs step 4)
+- Reads exit condition from Railway (needs step 3)
+- Scans 5yr history via expr cache (needs step 2)
+- Writes cycle_signals rows to Railway (~10-15 min)
 
-### 🔲 Then: cycle_health.py
-Computes all `cycle_health` metrics from `cycle_signals` + `grind_cycles`. Uploads to Railway. Powers the health dashboard.
-
-### 🔲 Then: V2 UI
-- Health metrics panel
-- Cycle diff (conditions added/removed vs prev cycle)
-- Revert button (flip is_current in transaction)
-- Regrind indicator
-- Unified watchlist (reads nightly_watchlist table)
-
-### 🔲 Then: Market Grinder (V2-native)
-Built on `cycle_signals` table, not `refined_{setup}.json`. SPY regime indicators → win rate by bucket → live win rate estimator.
+**6. Run cycle_health.py**
+```
+python scripts/cycle_health.py --setup dtss
+```
+- Reads everything from Railway (needs steps 4 and 5)
+- Computes all health metrics, uploads cycle_health row
+- Auto-promotes if recommend=promote; warns on flag; hard-stops on hard_reject
+- Prints colored health report
 
 ---
 
-## Pipeline Steps (V1 reference — being replaced)
+### BEFORE NEXT GRIND (regrind with 71 examples)
 
-| # | Step | Status |
-|---|------|--------|
-| 0 | Nightly Refresh | Works |
-| 1 | Optimal Samples | 71 DTSS examples |
-| 2 | Signal Brute Forcing | Grind #5 done (94 conditions) |
-| 3 | Sample Expansion | signal_filter.py — being replaced by scan_signals.py |
-| 4a | Exit Grinder | Done — slope_xavgc21_off7_adr14 ≤ -1.128826 |
-| 4b | Setup Grinder | Replaced by cycle_health.py in V2 |
-| 5 | Market Grinder | V2-native — build after cycle_signals table exists |
+1. Confirm expr cache is fresh (step 2 above)
+2. Run pyramid_grinder.py as normal → output lands in `cache/pyramid_results_dtss.json`
+3. Run steps 4 → 5 → 6
+
+---
+
+## V2 Build Order
+
+### Done
+1. `DATA_CONTRACT.md` — V2 schema defined and committed
+2. V2 tables wired into `server.py init_db()` — all 7 tables, Railway deploys on push
+3. `scripts/grind_upload.py` — uploads grinder JSON to Railway as versioned cycle
+4. `scripts/scan_signals.py` — replaces signal_filter.py, reads/writes DB not files
+5. `scripts/cycle_health.py` — computes health metrics, uploads, auto-promotes
+
+### Next: V2 UI
+Health panel, cycle diff, revert button, regrind indicator.
+
+### Then: Market Grinder
+V2-native, built on `cycle_signals` table.
 
 ---
 
@@ -95,7 +125,7 @@ Built on `cycle_signals` table, not `refined_{setup}.json`. SPY regime indicator
 
 | Expression | Floor | Median | Avg Bars |
 |-----------|-------|--------|----------|
-| `slope_xavgc21_off7_adr14 ≤ -1.128826` | 3.2 ADR | 5.8 ADR | 38 bars |
+| `slope_xavgc21_off7_adr14 <= -1.128826` | 3.2 ADR | 5.8 ADR | 38 bars |
 
 ---
 
@@ -112,7 +142,7 @@ Built on `cycle_signals` table, not `refined_{setup}.json`. SPY regime indicator
 
 ## Data
 
-- Expression cache: 4,119 tickers × 12,421 expressions (~50 GB) — **stale, needs rebuild**
+- Expression cache: 4,119 tickers x 12,421 expressions (~50 GB) — **stale, needs rebuild**
 - Railway DB: 11M+ OHLCV rows, ~4,167 tickers
 - 71 DTSS examples (68 in cache, 3 excluded: BRK-B, SMMT, VUZI)
 
@@ -128,12 +158,10 @@ Built on `cycle_signals` table, not `refined_{setup}.json`. SPY regime indicator
 6. Read ta_knowledge.md before any TA work
 7. NEVER dump large data into context
 8. Expression cache = single computation path
-9. **V2 only — no V1 patching**
+9. V2 only — no V1 patching
 
 ---
 
 ## Expression Library — Future (post-V2)
 
-### Extension Structure Expressions
-
-~3,630 new expressions treating 50 SMA and 200 SMA extension series as standalone price charts with full indicator suite. Scope and implementation documented in previous TODO versions. Deferred until V2 pipeline is stable.
+~3,630 new expressions treating 50 SMA and 200 SMA extension series as standalone price charts with full indicator suite. Deferred until V2 pipeline is stable.
