@@ -41,6 +41,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 warnings.filterwarnings("ignore")
 
@@ -236,94 +237,140 @@ def weighted_pearson(x, y, w):
 # STEP 3 — COMPUTE ALL CORRELATIONS
 # ══════════════════════════════════════════════════════════════
 
+
+def _correlate_instrument(args):
+    """
+    Worker: compute weighted Pearson correlations for one instrument.
+    Runs in a subprocess. Returns list of result dicts (may be empty).
+    """
+    inst_id, wr_dates_str, y, w, n_days, min_coverage_days, mkt_dir = args
+
+    import os, sys, numpy as np
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from local_runner.market_cache_builder import instrument_filename
+
+    path = os.path.join(mkt_dir, instrument_filename(inst_id))
+    if not os.path.exists(path):
+        return []
+
+    with np.load(path, allow_pickle=True) as f:
+        dates_cache = f["dates"]
+        data_cache  = f["data"]
+        expr_names  = list(f["expr_names"]) if "expr_names" in f else None
+
+    if expr_names is None:
+        return []
+
+    date_to_idx = {d: idx for idx, d in enumerate(dates_cache)}
+    row_indices = np.array([date_to_idx.get(d, -1) for d in wr_dates_str])
+    valid_days  = row_indices >= 0
+
+    if valid_days.sum() < 10:
+        return []
+
+    inst_label = (inst_id.replace("^", "").replace("=F", "_F")
+                  .replace(":", "_").replace("$", "").replace("-", "_"))
+
+    valid_rows = row_indices[valid_days]
+    results = []
+
+    for j in range(data_cache.shape[1]):
+        x = np.full(n_days, np.nan, dtype=np.float64)
+        x[valid_days] = data_cache[valid_rows, j]
+
+        x_valid = x[~np.isnan(x)]
+        if len(x_valid) < min_coverage_days or np.std(x_valid) == 0:
+            continue
+
+        # Inline weighted Pearson
+        valid = ~np.isnan(x) & ~np.isnan(y) & (w > 0)
+        n_valid = int(valid.sum())
+        if n_valid < 10:
+            continue
+        xv = x[valid].astype(np.float64)
+        yv = y[valid].astype(np.float64)
+        wv = w[valid].astype(np.float64)
+        wv = wv / wv.sum()
+        x_mean = np.dot(wv, xv)
+        y_mean = np.dot(wv, yv)
+        dx = xv - x_mean
+        dy = yv - y_mean
+        cov   = np.dot(wv, dx * dy)
+        var_x = np.dot(wv, dx ** 2)
+        var_y = np.dot(wv, dy ** 2)
+        if var_x <= 0 or var_y <= 0:
+            continue
+        r = float(np.clip(cov / np.sqrt(var_x * var_y), -1.0, 1.0))
+
+        results.append({
+            "instrument":      inst_id,
+            "expr_name":       expr_names[j],
+            "feature_name":    f"{inst_label}__{expr_names[j]}",
+            "correlation":     r,
+            "abs_correlation": abs(r),
+            "n_valid":         n_valid,
+        })
+
+    return results
+
+
 def compute_all_correlations(wr_df, manifest):
     """
     For every (instrument, expression) pair, compute weighted Pearson
-    correlation with the win rate series.
+    correlation with the win rate series.  Parallelized per instrument.
 
     Returns DataFrame: [instrument, expr_name, feature_name, correlation,
                         abs_correlation, n_valid]
     sorted by abs_correlation descending.
     """
-    expr_names  = manifest["expr_names"]
+    import time
     instruments = manifest["instruments"]
-    n_exprs     = len(expr_names)
+    n_exprs     = len(manifest["expr_names"])
 
     wr_dates_str = wr_df["date"].dt.strftime("%Y-%m-%d").values
     y  = wr_df["win_rate"].values.astype(np.float64)
     w  = wr_df["weight"].values.astype(np.float64)
     n_days = len(wr_dates_str)
+    min_coverage_days = max(10, int(n_days * MIN_COVERAGE_FRAC))
 
     total_instruments = len(instruments)
+    n_workers = os.cpu_count() or 4
+
     print(f"\n  Win rate series: {n_days} days  "
           f"(mean win rate: {np.average(y, weights=w):.3f}  "
           f"mean weight: {w.mean():.1f})")
-    print(f"\n  Computing correlations: {total_instruments} instruments × "
-          f"{n_exprs:,} expressions...")
-    min_days = max(10, int(len(wr_dates_str) * MIN_COVERAGE_FRAC))
-    print(f"  Min coverage: {min_days} days ({MIN_COVERAGE_FRAC*100:.0f}% of {len(wr_dates_str)} series days)")
+    print(f"\n  Computing correlations: {total_instruments} instruments x "
+          f"{n_exprs:,} expressions  ({n_workers} workers)...")
+    print(f"  Min coverage: {min_coverage_days} days "
+          f"({MIN_COVERAGE_FRAC*100:.0f}% of {n_days} series days)")
 
-    results = []
-    t0 = __import__("time").time()
+    args_list = [
+        (inst_id, wr_dates_str, y, w, n_days, min_coverage_days, MKT_DIR)
+        for inst_id in instruments
+    ]
 
-    for i, (inst_id, inst_info) in enumerate(instruments.items()):
-        dates_cache, data_cache = load_instrument_cache(inst_id)
-        if dates_cache is None:
-            continue
+    all_results = []
+    t0 = time.time()
+    completed = 0
 
-        # Build date→index map once per instrument
-        date_to_idx = {d: idx for idx, d in enumerate(dates_cache)}
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(_correlate_instrument, a): a[0] for a in args_list}
+        for future in as_completed(futures):
+            all_results.extend(future.result())
+            completed += 1
+            if completed % 25 == 0 or completed == total_instruments:
+                elapsed = time.time() - t0
+                rate = completed / elapsed if elapsed > 0 else 1
+                eta  = (total_instruments - completed) / rate if rate > 0 else 0
+                print(f"    {completed}/{total_instruments} instruments  "
+                      f"[{elapsed:.0f}s, ~{eta:.0f}s left]  "
+                      f"{len(all_results):,} features so far")
 
-        # Get row indices for all win rate dates at once
-        row_indices = np.array([date_to_idx.get(d, -1) for d in wr_dates_str])
-        valid_days  = row_indices >= 0
+    elapsed = time.time() - t0
+    print(f"\n  Done. {len(all_results):,} valid features in {elapsed:.1f}s")
 
-        if valid_days.sum() < 10:
-            continue  # not enough date overlap
-
-        inst_label = (inst_id.replace("^", "").replace("=F", "_F")
-                      .replace(":", "_").replace("$", "").replace("-", "_"))
-
-        # Process all expressions for this instrument
-        for j in range(n_exprs):
-            # Extract feature values on win rate dates
-            x = np.full(n_days, np.nan, dtype=np.float64)
-            valid_rows = row_indices[valid_days]
-            x[valid_days] = data_cache[valid_rows, j]
-
-            # Skip if insufficient coverage (filters sparse extension structure expressions)
-            x_valid = x[~np.isnan(x)]
-            min_days = max(10, int(n_days * MIN_COVERAGE_FRAC))
-            if len(x_valid) < min_days or np.std(x_valid) == 0:
-                continue
-
-            r, n_valid = weighted_pearson(x, y, w)
-            if np.isnan(r):
-                continue
-
-            results.append({
-                "instrument":      inst_id,
-                "expr_name":       expr_names[j],
-                "feature_name":    f"{inst_label}__{expr_names[j]}",
-                "correlation":     r,
-                "abs_correlation": abs(r),
-                "n_valid":         n_valid,
-            })
-
-        if (i + 1) % 25 == 0 or (i + 1) == total_instruments:
-            elapsed = __import__("time").time() - t0
-            rate    = (i + 1) / elapsed if elapsed > 0 else 1
-            eta     = (total_instruments - i - 1) / rate if rate > 0 else 0
-            print(f"    {i+1}/{total_instruments} instruments  "
-                  f"[{elapsed:.0f}s, ~{eta:.0f}s left]  "
-                  f"{len(results):,} features so far")
-
-    elapsed = __import__("time").time() - t0
-    print(f"\n  Done. {len(results):,} valid features in {elapsed:.1f}s")
-
-    df = pd.DataFrame(results).sort_values("abs_correlation", ascending=False)
+    df = pd.DataFrame(all_results).sort_values("abs_correlation", ascending=False)
     return df.reset_index(drop=True)
-
 
 # ══════════════════════════════════════════════════════════════
 # STEP 3b — DEDUPLICATION
