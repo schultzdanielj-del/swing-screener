@@ -83,6 +83,16 @@ See `PIPELINE_V2.md` for full spec.
 - 16 tests covering all failure modes (tests/test_grind_uploader.py)
 
 ### 🔲 Not yet built
+- **Setup Dashboard** — per-setup "home" screen showing overall status at a glance:
+  - Convergence status, example count, final condition count
+  - Win rate, EV, median winner/loser ADR
+  - Full condition list (collapsible)
+  - Regime model summary: top predictive features, current regime score, win rate by decile
+  - Grind history table
+- **Regime Visual on SPY chart** — SPY chart with all 50 regime features clustered visually:
+  - Overlay winner/loser signal dates on SPY
+  - Show regime indicator values at each signal date
+  - Cluster/heatmap view of which regime features are active
 - Watchlist page (needs nightly scan output)
 - Nightly live scan (apply current conditions to today's bars)
 
