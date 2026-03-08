@@ -1507,40 +1507,11 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     os.makedirs(CACHE_DIR, exist_ok=True)
 
     # Timestamped archive — always unique, never overwrites anything
+    # This is the local backup. Railway is the permanent record.
     out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
-
-    # Latest pointer — blackout runs write to a SEPARATE file.
-    # Base pipeline: pyramid_results_{setup}.json
-    # Blackout re-grind: pyramid_results_{setup}_blackout.json
-    # These NEVER overwrite each other.
-    if blackout_map:
-        latest_path = os.path.join(CACHE_DIR, f"pyramid_results_{setup_type}_blackout.json")
-    else:
-        latest_path = os.path.join(CACHE_DIR, f"pyramid_results_{setup_type}.json")
-    with open(latest_path, "w") as f:
-        json.dump(result, f, indent=2)
-    print(f"  Saved as latest: {latest_path}")
-
-    # Compat format
-    compat_result = {
-        "setup_type": setup_type,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "total_time_s": round(total_time, 1),
-        "target_per_day": peak_target,
-        "phase1_conditions": [c for c in all_conditions if c.get("tier") == "D1"],
-        "phase2_additions": [c for c in all_conditions if c.get("tier") != "D1"],
-        "all_conditions": all_conditions,
-        "n_phase1": len([c for c in all_conditions if c.get("tier") == "D1"]),
-        "n_phase2": len([c for c in all_conditions if c.get("tier") != "D1"]),
-        "source": "pyramid_grinder",
-        "multi_pass": multi_pass,
-    }
-    compat_path = os.path.join(CACHE_DIR, f"historical_results_{setup_type}.json")
-    with open(compat_path, "w") as f:
-        json.dump(compat_result, f, indent=2)
 
     # ── Upload to Railway ──
     step_type = "refinement_grind" if blackout_map else "signal_grind"

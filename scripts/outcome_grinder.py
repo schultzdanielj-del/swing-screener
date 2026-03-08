@@ -515,25 +515,24 @@ def main():
     print()
 
     # ── 1. Load all data locally ──
-    # Resolve paths via GrindStorage if not explicitly provided
-    from local_runner.grind_storage import GrindStorage
-    gs = GrindStorage(args.setup)
+    # Resolve paths — load from local cache files directly
+    # (GrindStorage was removed in V2; outcome_grinder is a V1 legacy script)
 
     # Signal grind (pyramid)
     if args.pyramid:
         pyramid = load_pyramid(args.pyramid)
     else:
-        print("Loading signal grind from grinds storage...")
-        pyramid_data = gs.load("signal")
-        pyramid = _parse_pyramid(pyramid_data)
+        print("ERROR: --pyramid path required. GrindStorage was removed in V2.")
+        print("  Use: --pyramid local_runner/cache/pyramid_dtss_*.json")
+        sys.exit(1)
 
     # Exit grind
     if args.exit_grind:
         exit_cond = load_exit_grind(args.exit_grind, rank=args.exit_rank)
     else:
-        print("Loading exit grind from grinds storage...")
-        exit_data = gs.load("exit")
-        exit_cond = _parse_exit_grind(exit_data, rank=args.exit_rank)
+        print("ERROR: --exit-grind path required. GrindStorage was removed in V2.")
+        print("  Use: --exit-grind data/profit_grind/profit_dtss.json")
+        sys.exit(1)
 
     # OHLCV cache
     if args.cache:
@@ -880,8 +879,10 @@ def main():
         return
 
     # ── 7. Save results ──
-    from local_runner.grind_storage import GrindStorage
-    gs_save = GrindStorage(args.setup)
+    import hashlib
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = os.path.join(os.path.dirname(__file__), "..", "local_runner", "cache")
+    os.makedirs(out_dir, exist_ok=True)
 
     output = {
         "setup_type": args.setup,
@@ -911,7 +912,9 @@ def main():
         "errors": errors,
     }
 
-    outpath = gs_save.save("outcome", output)
+    outpath = os.path.join(out_dir, f"outcome_{args.setup}_{ts}.json")
+    with open(outpath, "w") as f:
+        json.dump(output, f, indent=2)
     print(f"\nResults saved to {outpath}")
 
     # Top outcomes by ADR
