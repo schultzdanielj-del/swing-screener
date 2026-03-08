@@ -71,14 +71,14 @@ The Vetting Loop (repeat until convergence):
   Step 1: Signal Grind      — examples vs universe → candidate conditions
   Step 2: Exit Grind        — optimal exit condition from example entry bar highs
   Step 3: Scan              — apply conditions to 5yr history → deduped signals
-  Step 4: Exit Filter       — apply exit condition → winners (exit triggered) vs losers (no exit)
-  Step 5: Refinement Grind  — (examples + exit-triggered) vs no-exit, blackout. Manual gate.
-  Step 6: Vet               — review winner pile (source toggle: step 4 or step 5)
+                               + exit filter → classified signal set (winners/losers)
+  Step 4: Refinement Grind  — (examples + exit-triggered) vs no-exit, blackout. Manual gate.
+  Step 5: Vet               — review winner pile (source toggle: step 3 or step 4)
                                YES → AI review → approve → examples → loop back to step 1
 
 After Convergence (run once):
-  Step 7: Regime Model      — winner/loser ratio vs market conditions (266 instruments)
-  Step 8: Health Check      — cycle quality, EV, promote / revert / live-ready
+  Step 6: Regime Model      — winner/loser ratio vs market conditions (266 instruments)
+  Step 7: Health Check      — cycle quality, EV, promote / revert / live-ready
 
 Live:
   Nightly scan + regime score → unified watchlist
@@ -490,20 +490,23 @@ to Railway on completion. The UI reads only from Railway. Local files are epheme
 ## Agent / Pipeline Agent
 
 The pipeline agent maps UI step triggers to local compute commands. The mapping must
-be exact — no step ID mismatch between UI and agent (BUG-002 in current system).
+be exact — no step ID mismatch between UI and agent.
 
-**Step ID → command mapping (V2):**
+**Step ID → command mapping (V2) — WIRED 2026-03-07:**
 
 ```
-nightly          → nightly.py (OHLCV append + cache rebuild)
-grind            → pyramid_grinder.py --setup {setup} --peak-target 3 --beam 10000 --depth 100
-scan             → signal_filter.py --setup {setup} (scan + dedup phase only)
-exit_filter      → signal_filter.py --setup {setup} (exit + classify phase)
+signal_grind     → pyramid_grinder.py --setup {setup} --beam 10000 --depth 100 --peak-target 3
 exit_grind       → exit_grinder.py --setup {setup}
-classify         → classify_signals.py --setup {setup} (apply classification rules)
+scan             → signal_filter.py --setup {setup}  (scan + exit filter in one pass)
+refinement_grind → pyramid_grinder.py --setup {setup} --blackout --beam 10000 --depth 100 --peak-target 3
+                   then setup_refiner.py --setup {setup}
+vet              → is_manual=True, no agent command (UI-only)
 regime           → market_grinder.py --setup {setup}
-health           → health_check.py --setup {setup}
+health           → cycle_health.py --setup {setup}
 ```
+
+Note: scan and exit_filter were collapsed into a single step (scan). signal_filter.py
+already runs both phases in one pass — separating them added an extra UI click with no benefit.
 
 Every command uploads its output to Railway on completion. No exceptions.
 The agent streams logs to Railway in real time. Status updates after every major step.
@@ -533,7 +536,7 @@ These need to be rebuilt or are new:
 
 | Component | Notes |
 |-----------|-------|
-| Pipeline agent step mapping | BUG-002 — remap to V2 step IDs |
+| Pipeline agent step mapping | ~~BUG-002~~ — **FIXED 2026-03-07** |
 | Grinder → Railway upload | BUG-003 — add upload on completion |
 | Cycle versioning / revert | New — data contract layer |
 | Health check script | New — `scripts/health_check.py` |
@@ -549,7 +552,7 @@ These need to be rebuilt or are new:
 Build in this order so each piece is useful immediately when complete:
 
 1. **Fix BUG-001** (D1 row floor constraint) — makes the grinder reliable again
-2. **Fix BUG-002** (agent step ID mapping) — makes the agent functional
+2. ~~**Fix BUG-002**~~ (agent step ID mapping) — **DONE 2026-03-07**
 3. **Fix BUG-003** (grinder → Railway upload) — closes the data flow gap
 4. **Cycle versioning** — data contract, promote/revert logic in Railway
 5. **Health check script** — measure cycle quality after every grind

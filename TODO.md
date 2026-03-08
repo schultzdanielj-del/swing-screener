@@ -9,14 +9,13 @@ See `PIPELINE_V2.md` for full spec.
 **The Vetting Loop (repeat until convergence):**
 1. Signal Grind — examples vs universe → conditions
 2. Exit Grind — optimal exit condition from example entry bar highs
-3. Scan — apply conditions to 5yr → deduped signals
-4. Exit Filter — apply exit condition → winners (exit triggered) vs losers (no exit)
-5. Refinement Grind — (examples + exit-triggered) vs no-exit, blackout. Manual gate.
-6. Vet — review winner pile (source toggle: step 4 or step 5). YES → AI review → approve → examples → loop.
+3. Scan — apply conditions to 5yr → deduped signals + exit filter → classified signal set
+4. Refinement Grind — (examples + exit-triggered) vs no-exit, blackout. Manual gate.
+5. Vet — review winner pile (source toggle: step 3 or step 4). YES → AI review → approve → examples → loop.
 
 **After Convergence (run once):**
-7. Regime Model — winner/loser ratio vs 266 market instruments
-8. Health Check — cycle quality, EV, promote/revert
+6. Regime Model — winner/loser ratio vs 266 market instruments
+7. Health Check — cycle quality, EV, promote/revert
 
 **Convergence:** Full vetting pass produces no new examples.
 
@@ -63,14 +62,14 @@ See `PIPELINE_V2.md` for full spec.
 - Cycle health + versioning system
 - DB tables: cycles, cycle_signals, cycle_conditions, health_metrics, regime models
 
-### 🔲 Not yet wired (scripts exist, need agent mapping)
-- `pyramid_grinder.py` → step signal_grind
-- `exit_grinder_single.py` → step exit_grind
-- `signal_filter.py` (scan phase) → step scan
-- `signal_filter.py` (exit phase) → step exit_filter
-- `setup_refiner.py` (blackout + refine) → step refinement_grind
+### ✅ Agent step mapping wired (2026-03-07)
+- `pyramid_grinder.py` → step signal_grind (beam=10000 depth=100 peak=3)
+- `exit_grinder.py` → step exit_grind
+- `signal_filter.py` → step scan (scan + exit filter in one pass; exit_filter step removed)
+- `pyramid_grinder.py --blackout` + `setup_refiner.py` → step refinement_grind
 - `market_grinder.py` → step regime
 - `cycle_health.py` → step health
+- vet → is_manual, no agent command (UI-only)
 
 ### 🔲 Not yet built
 - Watchlist page (needs nightly scan output)
