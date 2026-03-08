@@ -86,20 +86,29 @@ def check_for_jobs():
 # ── V2 Pipeline step handling ──────────────────────────────────────────
 
 PIPELINE_STEP_SCRIPTS = {
-    "signal_brute":    [
-        ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}"],
-        ["python", "scripts/signal_exit_grinder.py", "--setup", "{setup}"],
+    # V2 step IDs — must match server.py PIPELINE_STEPS exactly
+    "signal_grind": [
+        ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}",
+         "--beam", "10000", "--depth", "100", "--peak-target", "3"],
     ],
-    "sample_expansion": [["python", "scripts/signal_filter.py", "--setup", "{setup}"]],
-    "sample_review":    [["python", "scripts/review_samples.py", "--setup", "{setup}"]],
-    "setup_grinder_a": [
-        ["python", "scripts/profit_grinder.py", "--setup", "{setup}"],
-        ["python", "scripts/multistage_exit_grinder.py", "--setup", "{setup}"],
+    "exit_grind": [
+        ["python", "scripts/exit_grinder.py", "--setup", "{setup}"],
     ],
-    "setup_grinder_b": [
+    "scan": [
+        ["python", "scripts/signal_filter.py", "--setup", "{setup}"],
+    ],
+    # refinement_grind: re-grind with blackout masking, then prune conditions
+    "refinement_grind": [
         ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}",
          "--blackout", "--beam", "10000", "--depth", "100", "--peak-target", "3"],
         ["python", "scripts/setup_refiner.py", "--setup", "{setup}"],
+    ],
+    # vet is is_manual=True on the server — no agent command, UI-only
+    "regime": [
+        ["python", "scripts/market_grinder.py", "--setup", "{setup}"],
+    ],
+    "health": [
+        ["python", "scripts/cycle_health.py", "--setup", "{setup}"],
     ],
 }
 
@@ -158,8 +167,8 @@ def handle_pipeline_job(job):
 
     # Inject grinder params from job (beam, depth, peak_target) into pyramid_grinder command
     job_params = job.get('params', {})
-    if step_id == 'signal_brute' and job_params:
-        grinder_cmd = cmds[0]  # First command is pyramid_grinder
+    if step_id in ('signal_grind', 'refinement_grind') and job_params:
+        grinder_cmd = cmds[0]  # First command is always pyramid_grinder for these steps
         param_map = {'beam': '--beam', 'depth': '--depth', 'peak_target': '--peak-target'}
         for key, flag in param_map.items():
             val = job_params.get(key)
