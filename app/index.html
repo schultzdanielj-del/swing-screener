@@ -270,18 +270,18 @@ kbd{background:var(--s3);border:1px solid var(--b2);padding:0 3px;font:9px var(-
 <script>
 // ═══════ STEPS — from server's PIPELINE_STEPS ═══════
 const STEPS=[
-  {id:'nightly',     n:'N', name:'Nightly Refresh',    desc:'Append OHLCV, rebuild caches'},
-  {id:'grind',       n:1,   name:'Grind',              desc:'Pyramid brute-force → conditions'},
-  {id:'scan',        n:2,   name:'Scan',               desc:'Apply conditions → raw signal set'},
-  {id:'exit_filter', n:3,   name:'Exit Filter',        desc:'Exit condition → measure signal moves'},
-  {id:'exit_grind',  n:'E', name:'Exit Grinder',       desc:'Find optimal exit from examples'},
-  {id:'classify',    n:4,   name:'Classify',           desc:'Label all signals WIN / LOSS'},
-  {id:'regime',      n:6,   name:'Regime Model',       desc:'Signal outcomes vs market conditions'},
-  {id:'health',      n:7,   name:'Health Check',       desc:'Cycle quality → promote / revert'},
+  {id:'signal_grind',    n:1, name:'Signal Grind',      desc:'Pyramid brute-force: examples vs universe → conditions'},
+  {id:'exit_grind',      n:2, name:'Exit Grind',        desc:'Optimal exit condition from example entry bar highs'},
+  {id:'scan',            n:3, name:'Scan',              desc:'Apply conditions to 5yr history → deduped signal set'},
+  {id:'exit_filter',     n:4, name:'Exit Filter',       desc:'Apply exit condition → winners (exit triggered) vs losers (no exit)'},
+  {id:'refinement_grind',n:5, name:'Refinement Grind',  desc:'(Examples + exit-triggered) vs no-exit, blackout. Manual gate.'},
+  {id:'vet',             n:6, name:'Vet',               desc:'Review winner pile. Source toggle: step 4 or step 5.', isManual:true},
+  {id:'regime',          n:7, name:'Regime Model',      desc:'Winner/loser ratio vs market conditions. After convergence.'},
+  {id:'health',          n:8, name:'Health Check',      desc:'Cycle quality, EV, promote / revert.'},
 ];
 
 const API='';
-let S={setup:'dtss',view:'pipeline',step:'grind',agentOn:false,logN:{},vetSigs:[],vetI:0,exSel:null};
+let S={setup:'dtss',view:'pipeline',step:'signal_grind',agentOn:false,logN:{},vetSigs:[],vetI:0,exSel:null,vetSource:'exit_filter'};
 
 // ═══════ INIT ═══════
 document.addEventListener('DOMContentLoaded',()=>{
@@ -305,7 +305,46 @@ function buildSide(){
 }
 
 function buildPanels(){
-  document.getElementById('sp').innerHTML=STEPS.map(s=>`
+  document.getElementById('sp').innerHTML=STEPS.map(s=>{
+    // Vet step — manual with source toggle
+    if(s.isManual) return `
+    <div class="pnl${s.id===S.step?' on':''}" id="sp-${s.id}" style="flex:1;display:${s.id===S.step?'flex':'none'}">
+      <div class="ph">
+        <div class="sn" style="color:var(--acc);border-color:var(--acc)">${s.n}</div>
+        <div><div class="pt">${s.name}</div><div class="ps">${s.desc}</div></div>
+        <div class="pa">
+          <button class="btn ba" onclick="nav('vetting')">Open Vetting UI</button>
+        </div>
+      </div>
+      <div class="pb">
+        <div class="mg" id="mg-${s.id}"></div>
+        <div class="ibox">
+          <div class="ibt">Vetting Source</div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn bn bs" id="vet-src-4" onclick="setVetSource('exit_filter')" style="border-color:var(--acc);color:var(--acc)">Step 4 — Exit Filter</button>
+            <button class="btn bn bs" id="vet-src-5" onclick="setVetSource('refinement')">Step 5 — Refinement</button>
+          </div>
+          <div class="ibs" style="margin-top:6px">Before refinement grind is run, vet from step 4 (full exit filter output). After refinement, vet the refined pile.</div>
+        </div>
+        <div class="ibox" style="margin-top:8px">
+          <div class="ibt">How It Works</div>
+          <div class="ibs" style="line-height:1.7">
+            1. Open the <strong style="color:var(--t1)">Vetting</strong> tab<br>
+            2. Review each signal chart: <kbd>1</kbd>=YES <kbd>2</kbd>=NO <kbd>3</kbd>=SKIP<br>
+            3. YES picks go to AI review queue on the Examples tab<br>
+            4. After AI review, approve/reject on the Examples tab<br>
+            5. Approved picks become new examples → loop back to step 1
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+    // All other steps — runnable with log
+    const extras = s.id==='signal_grind'
+      ? '<div class="sec"><div class="sh"><span class="st">Conditions</span><button class="btn bn bs" style="margin-left:auto" onclick="loadConds()">Refresh</button></div><div id="condArea"><div style="color:var(--t3);font-size:10px">Click Refresh or run grind</div></div></div>'
+      : '';
+
+    return `
     <div class="pnl${s.id===S.step?' on':''}" id="sp-${s.id}" style="flex:1;display:${s.id===S.step?'flex':'none'}">
       <div class="ph">
         <div class="sn" style="color:var(--acc);border-color:var(--acc)">${s.n}</div>
@@ -317,14 +356,15 @@ function buildPanels(){
       </div>
       <div class="pb">
         <div class="mg" id="mg-${s.id}"></div>
-        ${s.id==='grind'?'<div class="sec"><div class="sh"><span class="st">Conditions</span><button class="btn bn bs" style="margin-left:auto" onclick="loadConds()">Refresh</button></div><div id="condArea"><div style="color:var(--t3);font-size:10px">Click Refresh or run grind</div></div></div>':''}
+        ${extras}
         <div class="sec">
           <div class="sh"><span class="st">Log</span><button class="btn bn bs" style="margin-left:auto" onclick="clrLog('${s.id}')">Clear</button></div>
           <div class="prog"><div class="pf" id="pf-${s.id}"></div></div>
           <div class="logs" id="log-${s.id}"><div class="ll">Waiting...</div></div>
         </div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 // ═══════ NAV ═══════
@@ -536,13 +576,29 @@ function pickEx(i){
 }
 
 // ═══════ VETTING ═══════
+// Vet source: 'exit_filter' (step 4) or 'refinement' (step 5)
+function setVetSource(src){
+  S.vetSource=src;
+  document.getElementById('vet-src-4').style.borderColor=src==='exit_filter'?'var(--acc)':'var(--b2)';
+  document.getElementById('vet-src-4').style.color=src==='exit_filter'?'var(--acc)':'var(--t2)';
+  document.getElementById('vet-src-5').style.borderColor=src==='refinement'?'var(--acc)':'var(--b2)';
+  document.getElementById('vet-src-5').style.color=src==='refinement'?'var(--acc)':'var(--t2)';
+  if(S.view==='vetting')loadVet();
+}
+
 async function loadVet(){
   const list=document.getElementById('vetList');
   list.innerHTML='<div style="padding:12px;color:var(--t3);font-size:10px">Loading...</div>';
-  const d=await api('/api/vetting/'+S.setup+'/signals');
-  if(!d?.signals?.length){list.innerHTML='<div style="padding:12px;color:var(--t3);font-size:10px">No signals to vet.</div>';document.getElementById('vetSub').textContent='No signals';return}
+  // Pick endpoint based on vet source
+  const src=S.vetSource||'exit_filter';
+  const endpoint=src==='refinement'
+    ? '/api/setup-grinder/'+S.setup+'/signals'
+    : '/api/vetting/'+S.setup+'/signals';
+  const d=await api(endpoint);
+  if(!d?.signals?.length){list.innerHTML='<div style="padding:12px;color:var(--t3);font-size:10px">No signals to vet. Run the pipeline first.</div>';document.getElementById('vetSub').textContent='No signals (source: '+(src==='refinement'?'step 5':'step 4')+')';return}
   S.vetSigs=d.signals;S.vetI=0;
-  document.getElementById('vetSub').textContent=d.n_signals+' signals · '+(d.exit_condition||S.setup.toUpperCase());
+  const srcLabel=src==='refinement'?'step 5 refined':'step 4 exit filter';
+  document.getElementById('vetSub').textContent=d.n_signals+' signals · '+srcLabel+' · '+(d.exit_condition||S.setup.toUpperCase());
   renderVL();selVet(0);
 }
 

@@ -362,15 +362,14 @@ GRINDER_AGENT_FILE = DATA_DIR / "grinder_agent.json"
 VETTING_DATA_DIR   = DATA_DIR
 
 PIPELINE_STEPS = [
-    {"id":"nightly",     "name":"Nightly Refresh",       "category":"data",     "description":"Append new OHLCV bars, rebuild caches and expression matrix."},
-    {"id":"grind",       "name":"Layer 1: Grind",        "category":"pipeline", "description":"Pyramid grinder — examples vs universe → candidate conditions. Uploads cycle to Railway."},
-    {"id":"scan",        "name":"Layer 2: Scan",         "category":"pipeline", "description":"Apply conditions to full 5yr history → deduped raw signal set."},
-    {"id":"exit_filter", "name":"Layer 3: Exit Filter",  "category":"pipeline", "description":"Apply exit condition → identify which signals moved. Measures ADR, MFE, capture efficiency."},
-    {"id":"exit_grind",  "name":"Exit Grinder",          "category":"pipeline", "description":"Find optimal exit condition from example set. Re-run when example library grows materially."},
-    {"id":"classify",    "name":"Layer 4: Classify",     "category":"pipeline", "description":"Label every signal winner or loser (AUTO WIN / AUTO LOSS / MANUAL)."},
-    {"id":"vet",         "name":"Layer 5: Vet",          "category":"pipeline", "description":"Human review → AI queue → final approval → example library.", "is_manual":True},
-    {"id":"regime",      "name":"Layer 6: Regime",       "category":"pipeline", "description":"Correlate signal classifications vs market conditions → regime score model."},
-    {"id":"health",      "name":"Layer 7: Health Check", "category":"pipeline", "description":"Measure cycle quality vs previous cycle. Drives promote / revert / live-ready."},
+    {"id":"signal_grind",    "name":"1. Signal Grind",      "category":"pipeline", "description":"Pyramid grinder — examples vs universe → candidate conditions."},
+    {"id":"exit_grind",      "name":"2. Exit Grind",        "category":"pipeline", "description":"Brute-force optimal exit condition from example entry bar highs."},
+    {"id":"scan",            "name":"3. Scan",              "category":"pipeline", "description":"Apply conditions to full 5yr history → deduped raw signal set."},
+    {"id":"exit_filter",     "name":"4. Exit Filter",       "category":"pipeline", "description":"Apply exit condition → split signals into exit-triggered (winners) vs no-exit (losers)."},
+    {"id":"refinement_grind","name":"5. Refinement Grind",  "category":"pipeline", "description":"Grind (examples + exit-triggered) vs no-exit with blackout. Eliminates losers, protects winners. Manual gate."},
+    {"id":"vet",             "name":"6. Vet",               "category":"pipeline", "description":"Review winner pile. YES → AI review → approve → examples. Source toggle: step 4 or step 5.", "is_manual":True},
+    {"id":"regime",          "name":"7. Regime Model",      "category":"pipeline", "description":"Winner/loser ratio vs market conditions (266 instruments). Run after convergence."},
+    {"id":"health",          "name":"8. Health Check",      "category":"pipeline", "description":"Cycle quality, EV, promote / revert / live-ready determination."},
 ]
 
 

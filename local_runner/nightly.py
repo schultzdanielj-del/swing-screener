@@ -11,6 +11,8 @@ What it does (in order):
     3. Refreshes local 5yr OHLCV cache (pulls from Railway)
     4. Appends expression series cache (new bars only)
     5. Rebuilds D1 universe matrix
+    6. Refreshes earnings dates
+    7. Appends market context cache (266 instruments for regime model)
 
 Run after market close (~4:30pm ET). Total time: ~15-20 min.
 After completion, grind iterations are fast (~2-3 min each).
@@ -47,7 +49,7 @@ def step_header(num, total, title):
 
 def step_1_railway_append():
     """Trigger Railway to append missing trading days."""
-    step_header(1, 6, "Railway — Append Missing Days")
+    step_header(1, 7, "Railway — Append Missing Days")
 
     print("  Calling POST /api/universe/append-daily ...")
     print("  (This fetches new bars from yfinance for all tradable tickers)")
@@ -93,7 +95,7 @@ def step_1_railway_append():
 
 def step_2_daily_cache():
     """Refresh local daily OHLCV cache (300 bars)."""
-    step_header(2, 6, "Local Daily OHLCV Cache")
+    step_header(2, 7, "Local Daily OHLCV Cache")
 
     from cache_builder import build_cache
     t0 = time.time()
@@ -104,7 +106,7 @@ def step_2_daily_cache():
 
 def step_3_5yr_cache():
     """Refresh local 5yr OHLCV cache."""
-    step_header(3, 6, "Local 5yr OHLCV Cache")
+    step_header(3, 7, "Local 5yr OHLCV Cache")
 
     from cache_builder import build_5yr_cache
     t0 = time.time()
@@ -115,7 +117,7 @@ def step_3_5yr_cache():
 
 def step_4_expr_cache():
     """Append new bars to expression series cache."""
-    step_header(4, 6, "Expression Series Cache — Append")
+    step_header(4, 7, "Expression Series Cache — Append")
 
     cache_dir = os.path.join(LOCAL_DIR, "cache", "expr_series")
     if not os.path.exists(cache_dir):
@@ -132,7 +134,7 @@ def step_4_expr_cache():
 
 def step_5_matrix():
     """Rebuild D1 universe matrix."""
-    step_header(5, 6, "Universe Matrix Rebuild")
+    step_header(5, 7, "Universe Matrix Rebuild")
 
     from matrix_builder import get_universe_matrix
 
@@ -147,7 +149,7 @@ def step_5_matrix():
 
 def step_6_earnings():
     """Refresh earnings dates for all tradable tickers."""
-    step_header(6, 6, "Earnings Dates Refresh")
+    step_header(6, 7, "Earnings Dates Refresh")
 
     print("  Calling POST /api/universe/refresh-earnings ...")
     print("  (Scrapes Yahoo Finance for all tradable tickers)")
@@ -186,6 +188,22 @@ def step_6_earnings():
         print("  (Non-fatal — vetting will work without earnings dates)")
 
 
+def step_7_market_cache():
+    """Append new bars to market context cache (266 instruments) and recompute."""
+    step_header(7, 7, "Market Context Cache — Append")
+
+    try:
+        from market_cache_builder import append_new_bars
+        append_new_bars(n_threads=16)
+        print("  ✓ Market cache updated")
+    except ImportError:
+        print("  ✗ market_cache_builder.py not found — skipping")
+        print("  (Market regime data will be stale until cache is built)")
+    except Exception as e:
+        print(f"  ✗ Market cache append failed: {e}")
+        print("  (Non-fatal — regime model will use stale data)")
+
+
 def main():
     print(f"\n{'═'*60}")
     print(f"  🌙 Nightly Update")
@@ -210,6 +228,7 @@ def main():
     step_4_expr_cache()
     step_5_matrix()
     step_6_earnings()
+    step_7_market_cache()
 
     total_elapsed = time.time() - total_start
     minutes = total_elapsed / 60

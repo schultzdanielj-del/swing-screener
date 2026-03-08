@@ -57,31 +57,47 @@ method. What changes is what the search is optimizing against.
 
 ---
 
-## The Loop
+## The Pipeline
 
-Each full cycle executes all layers in order, then feeds results back into the next cycle.
-One loop instance runs per setup type. The watchlist aggregates across all instances.
+Eight steps. Steps 1-6 are the vetting loop — repeat until convergence (no new
+examples found). Steps 7-8 run once after convergence.
+
+**Nightly auto-refresh (4:30pm ET, fully automated):**
+  OHLCV append → daily cache → 5yr cache → expr cache → matrix → earnings → market cache (266 instruments)
+  When you sit down, all data is current. No manual refresh needed.
 
 ```
-Cycle N (per setup type):
-  Layer 1: Grind          — examples vs universe → candidate conditions
-  Layer 2: Scan           — apply conditions to 5yr history → raw signals
-  Layer 3: Exit Filter    — apply exit condition → signals that moved
-  Layer 4: Classify       — label every signal winner or loser
-  Layer 5: Vet            — human review → AI queue → final approval → example library
-  Layer 6: Regime         — correlate signal classifications vs market conditions
-  Layer 7: Health Check   — measure cycle quality, compare to previous cycle
-  → if healthier: promote to current. if worse: revert.
-  → if live-ready: contribute tonight's signals to unified watchlist
-  → queue Cycle N+1
+The Vetting Loop (repeat until convergence):
+  Step 1: Signal Grind      — examples vs universe → candidate conditions
+  Step 2: Exit Grind        — optimal exit condition from example entry bar highs
+  Step 3: Scan              — apply conditions to 5yr history → deduped signals
+  Step 4: Exit Filter       — apply exit condition → winners (exit triggered) vs losers (no exit)
+  Step 5: Refinement Grind  — (examples + exit-triggered) vs no-exit, blackout. Manual gate.
+  Step 6: Vet               — review winner pile (source toggle: step 4 or step 5)
+                               YES → AI review → approve → examples → loop back to step 1
+
+After Convergence (run once):
+  Step 7: Regime Model      — winner/loser ratio vs market conditions (266 instruments)
+  Step 8: Health Check      — cycle quality, EV, promote / revert / live-ready
+
+Live:
+  Nightly scan + regime score → unified watchlist
 ```
+
+**Convergence:** When a full vetting pass on the refined winner pile produces no new
+examples. The example library is as complete as the data allows.
+
+**Refinement grind gate:** Manual decision. In early cycles with few examples, skip
+step 5 and vet the full exit filter output (step 4). Once enough examples exist that
+the refinement grind produces stable conditions (not overfitted to a small sample),
+enable step 5. The threshold is currently discretionary — will be data-derived after
+2-3 setup types have been built through the pipeline.
 
 **Regrind is manual, not automatic.**
 Vetting and adding examples does not trigger a regrind. Examples accumulate until you
 decide there are enough new ones to warrant a regrind. The UI shows a "regrind needed"
 indicator when examples have been added since the last grind. You trigger the regrind
-explicitly when ready — for example, after a vetting session that added 5-10 new examples,
-or after clearing the AI review queue.
+explicitly when ready.
 
 ---
 
