@@ -342,6 +342,22 @@ function buildPanels(){
     // All other steps — runnable with log
     const extras = s.id==='signal_grind'
       ? '<div class="sec"><div class="sh"><span class="st">Conditions</span><button class="btn bn bs" style="margin-left:auto" onclick="loadConds()">Refresh</button></div><div id="condArea"><div style="color:var(--t3);font-size:10px">Click Refresh or run grind</div></div></div>'
+      : s.id==='refinement_grind'
+      ? `<div class="sec">
+          <div class="sh"><span class="st">Pruning</span></div>
+          <div style="padding:8px 0;display:flex;flex-direction:column;gap:8px">
+            <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--t2);cursor:pointer">
+              <input type="checkbox" id="prune-toggle" checked onchange="updPrune()" style="accent-color:var(--acc)">
+              Enable condition pruning
+            </label>
+            <div id="prune-slider-row" style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:10px;color:var(--t3);white-space:nowrap">Min power</span>
+              <input type="range" id="prune-pct" min="1" max="50" value="10" oninput="updPrune()" style="flex:1;accent-color:var(--acc)">
+              <span id="prune-pct-lbl" style="font-size:11px;color:var(--t1);min-width:32px">10%</span>
+            </div>
+            <div style="font-size:10px;color:var(--t3)">Conditions with filter power below this threshold are dropped. Lower = keep more conditions. Disable to skip pruning entirely.</div>
+          </div>
+        </div>`
       : '';
 
     return `
@@ -429,11 +445,27 @@ async function loadPipe(){
 function mGrid(items){return items.map(m=>`<div class="mc"><div class="ml">${m.l}</div><div class="mv"${m.c?' style="'+m.c+'"':''}>${m.v}</div>${m.s?'<div class="ms">'+m.s+'</div>':''}</div>`).join('')}
 
 // ═══════ RUN / STOP / LOGS ═══════
+function updPrune(){
+  const on=document.getElementById('prune-toggle')?.checked;
+  const row=document.getElementById('prune-slider-row');
+  if(row)row.style.opacity=on?'1':'0.4';
+  const sl=document.getElementById('prune-pct');
+  const lbl=document.getElementById('prune-pct-lbl');
+  if(sl&&lbl)lbl.textContent=sl.value+'%';
+}
+
 async function runS(id){
   if(!S.agentOn){aLog(id,'error','Agent offline. Start it first.');return}
   const btn=document.getElementById('btn-'+id);if(btn){btn.disabled=true;btn.textContent='Queuing...'}
   aLog(id,'info','Queuing '+id+'...');
-  const r=await api('/api/pipeline/run/'+id,{method:'POST',body:JSON.stringify({setup_type:S.setup})});
+  // Build params for refinement_grind pruning controls
+  let params={};
+  if(id==='refinement_grind'){
+    const pruneOn=document.getElementById('prune-toggle')?.checked;
+    if(!pruneOn){params.skip_prune=true}
+    else{const v=document.getElementById('prune-pct')?.value;if(v)params.min_power=parseFloat(v)/100}
+  }
+  const r=await api('/api/pipeline/run/'+id,{method:'POST',body:JSON.stringify({setup_type:S.setup,params})});
   if(r){aLog(id,'ok','Queued. Waiting for agent...');const el=document.querySelector(`.ss[data-s="${id}"]`);if(el)el.classList.add('run')}
   else{aLog(id,'error','Queue failed.');if(btn){btn.disabled=false;btn.textContent='Run'}}
 }

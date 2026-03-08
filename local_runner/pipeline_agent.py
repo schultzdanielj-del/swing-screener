@@ -248,6 +248,7 @@ def run_step(job):
     """
     step_id = job["step_id"]
     job_id = job["job_id"]
+    params = job.get("params", {})
 
     cmd_entry = STEP_COMMANDS.get(step_id)
     if not cmd_entry:
@@ -257,9 +258,19 @@ def run_step(job):
 
     # Normalize to list of commands
     if cmd_entry and isinstance(cmd_entry[0], list):
-        commands = cmd_entry
+        commands = [list(c) for c in cmd_entry]  # deep copy so we can modify
     else:
-        commands = [cmd_entry]
+        commands = [list(cmd_entry)]
+
+    # ── Inject job params into commands ──
+    if step_id == "refinement_grind" and params:
+        # Find the setup_refiner.py command in the sequence
+        for cmd in commands:
+            if any("setup_refiner.py" in str(a) for a in cmd):
+                if params.get("skip_prune"):
+                    cmd.append("--skip-prune")
+                elif params.get("min_power") is not None:
+                    cmd.extend(["--min-power", str(params["min_power"])])
 
     n_cmds = len(commands)
     print(f"\n{'='*60}")
