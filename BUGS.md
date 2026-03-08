@@ -232,3 +232,35 @@ All reverted. Repo back to d9ea5e0.
 **Root cause:** Audit was conducted without reading PIPELINE_V2.md first.
 
 **Rule:** Always read PIPELINE_V2.md before touching any grinder or pipeline_agent.py.
+
+---
+
+## SESSION NOTE 2026-03-08 — Full Session Summary
+
+**Commits this session (5479019 → 19211fa):**
+
+### ✅ Done correctly
+
+**`30e6522` + `d9ea5e0` — Pipeline agent v2 step wiring**
+- `pipeline_agent.py`: Added missing v2 steps: `scan`, `refinement_grind`, `regime`, `health`
+- `refinement_grind` stored as list-of-lists (`[[blackout grind cmd], [setup_refiner cmd]]`)
+- `run_step()` updated to detect and execute multi-command steps sequentially, aborting on first failure
+- `server.py`: Added `"prerequisites": []` to all 7 PIPELINE_STEPS entries (fixes latent KeyError)
+- PIPELINE_V2.md + TODO.md updated to reflect 7-step pipeline and BUG-002 fixed status
+
+**`39de53b` — BUGS.md reversal note**
+**`19211fa` — Rule 10 added to TODO.md** (read PIPELINE_V2.md before touching grinders)
+
+### ❌ Wrong and reverted
+
+**`d0140ab` — Grinder audit (REVERTED by `32754a0`)**
+- Conducted audit against rules posted in chat without reading PIPELINE_V2.md first
+- `exit_grind` step rewired to `profit_grinder.py` — WRONG. V2 spec maps it to `exit_grinder.py`
+- `sys.exit` → `RuntimeError` across profit_grinder, signal_filter, cycle_health
+- Direction format normalization in profit_grinder + setup_refiner
+- Stale upload removal from signal_filter
+- All reverted. Root cause: read ANALYSIS_SYSTEM.md (v1 spec) instead of PIPELINE_V2.md.
+
+**Net code state:** `pipeline_agent.py` and `server.py` have the correct v2 step wiring. All other files unchanged from pre-session.
+
+**What's next for DTSS:** Refinement grind (step 4) — pull v2, restart agent, click Refinement Grind in UI.
