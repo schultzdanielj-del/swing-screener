@@ -214,3 +214,21 @@ same run. This should not be optional or a separate manual step. Specifically:
   and downstream steps always read current data
 
 ---
+
+---
+
+## SESSION NOTE 2026-03-08 — Audit Reversal
+
+Audit commit d0140ab was fully reverted (commit 32754a0).
+
+**What was wrongly changed:**
+- `exit_grind` pipeline step was rewired to `profit_grinder.py` — WRONG. PIPELINE_V2.md explicitly maps `exit_grind → exit_grinder.py` and marks it "Keep as-is"
+- `sys.exit` → `RuntimeError` changes across profit_grinder, signal_filter, cycle_health
+- Direction format normalization in profit_grinder + setup_refiner
+- Stale upload removal from signal_filter
+
+All reverted. Repo back to d9ea5e0.
+
+**Root cause:** Audit was conducted without reading PIPELINE_V2.md first.
+
+**Rule:** Always read PIPELINE_V2.md before touching any grinder or pipeline_agent.py.
