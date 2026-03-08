@@ -111,3 +111,4 @@ See `PIPELINE_V2.md` for full spec.
 7. NEVER dump large data into context
 8. Expression cache = single computation path
 9. V2 only — no V1 patching
+10. Read PIPELINE_V2.md before touching any grinder or pipeline_agent.py. No exceptions.
