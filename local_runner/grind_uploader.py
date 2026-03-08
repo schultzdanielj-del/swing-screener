@@ -78,7 +78,11 @@ def validate_result(result):
         for i, c in enumerate(conditions):
             if not isinstance(c, dict):
                 return False, f"Condition {i} is {type(c).__name__}, expected dict"
-            missing_c = REQUIRED_CONDITION_KEYS - set(c.keys())
+            # Accept "name" or "expr" as alternatives to "expression_name"
+            c_keys = set(c.keys())
+            if "expression_name" not in c_keys and ("name" in c_keys or "expr" in c_keys):
+                c_keys.add("expression_name")
+            missing_c = REQUIRED_CONDITION_KEYS - c_keys
             if missing_c:
                 return False, f"Condition {i} missing keys: {missing_c}"
 
