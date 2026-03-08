@@ -362,13 +362,13 @@ GRINDER_AGENT_FILE = DATA_DIR / "grinder_agent.json"
 VETTING_DATA_DIR   = DATA_DIR
 
 PIPELINE_STEPS = [
-    {"id":"signal_grind",    "name":"1. Signal Grind",      "category":"pipeline", "description":"Pyramid grinder — examples vs universe → candidate conditions."},
-    {"id":"exit_grind",      "name":"2. Exit Grind",        "category":"pipeline", "description":"Brute-force optimal exit condition from example entry bar highs."},
-    {"id":"scan",            "name":"3. Scan",              "category":"pipeline", "description":"Apply conditions to 5yr history → deduped signals → exit filter → classified signal set (winners/losers)."},
-    {"id":"refinement_grind","name":"4. Refinement Grind",  "category":"pipeline", "description":"Grind (examples + exit-triggered) vs no-exit with blackout. Eliminates losers, protects winners. Manual gate."},
-    {"id":"vet",             "name":"5. Vet",               "category":"pipeline", "description":"Review winner pile. YES → AI review → approve → examples. Source toggle: step 3 or step 4.", "is_manual":True},
-    {"id":"regime",          "name":"6. Regime Model",      "category":"pipeline", "description":"Winner/loser ratio vs market conditions (266 instruments). Run after convergence."},
-    {"id":"health",          "name":"7. Health Check",      "category":"pipeline", "description":"Cycle quality, EV, promote / revert / live-ready determination."},
+    {"id":"signal_grind",    "name":"1. Signal Grind",      "category":"pipeline", "prerequisites":[], "description":"Pyramid grinder — examples vs universe → candidate conditions."},
+    {"id":"exit_grind",      "name":"2. Exit Grind",        "category":"pipeline", "prerequisites":[], "description":"Brute-force optimal exit condition from example entry bar highs."},
+    {"id":"scan",            "name":"3. Scan",              "category":"pipeline", "prerequisites":[], "description":"Apply conditions to 5yr history → deduped signals → exit filter → classified signal set (winners/losers)."},
+    {"id":"refinement_grind","name":"4. Refinement Grind",  "category":"pipeline", "prerequisites":[], "description":"Grind (examples + exit-triggered) vs no-exit with blackout. Eliminates losers, protects winners. Manual gate."},
+    {"id":"vet",             "name":"5. Vet",               "category":"pipeline", "prerequisites":[], "description":"Review winner pile. YES → AI review → approve → examples. Source toggle: step 3 or step 4.", "is_manual":True},
+    {"id":"regime",          "name":"6. Regime Model",      "category":"pipeline", "prerequisites":[], "description":"Winner/loser ratio vs market conditions (266 instruments). Run after convergence."},
+    {"id":"health",          "name":"7. Health Check",      "category":"pipeline", "prerequisites":[], "description":"Cycle quality, EV, promote / revert / live-ready determination."},
 ]
 
 
