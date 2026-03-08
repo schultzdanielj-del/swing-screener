@@ -205,6 +205,16 @@ def init_db():
             CREATE UNIQUE INDEX IF NOT EXISTS idx_srs_signal ON signal_regime_scores(cycle_signal_id);
             CREATE INDEX IF NOT EXISTS idx_srs_cycle ON signal_regime_scores(cycle_id);
         """)
+        # ── Add new grind_cycles columns (safe — no-op if already exist) ──
+        for col, coltype in [
+            ("step_type", "TEXT"),
+            ("grind_params", "TEXT"),
+            ("source_hash", "TEXT"),
+        ]:
+            try:
+                db.execute(f"ALTER TABLE grind_cycles ADD COLUMN {col} {coltype}")
+            except Exception:
+                pass  # Column already exists
 
 
 init_db()
@@ -921,9 +931,25 @@ async def v2_create_cycle(request: Request):
     with get_db() as db:
         if db.execute("SELECT cycle_id FROM grind_cycles WHERE cycle_id=?",(cycle_id,)).fetchone():
             return {"cycle_id":cycle_id,"already_exists":True}
-        db.execute("INSERT INTO grind_cycles (cycle_id,setup_type,status,error_msg,is_current,n_examples_at_grind,created_at,completed_at) VALUES (?,?,?,?,0,?,?,?)",
-                   (cycle_id,setup_type,body.get("status","complete"),body.get("error_msg"),body.get("n_examples_at_grind"),body.get("created_at"),body.get("completed_at")))
+        db.execute("""INSERT INTO grind_cycles (cycle_id,setup_type,status,error_msg,is_current,n_examples_at_grind,created_at,completed_at,step_type,grind_params,source_hash)
+                      VALUES (?,?,?,?,0,?,?,?,?,?,?)""",
+                   (cycle_id,setup_type,body.get("status","complete"),body.get("error_msg"),body.get("n_examples_at_grind"),body.get("created_at"),body.get("completed_at"),
+                    body.get("step_type"),body.get("grind_params"),body.get("source_hash")))
     return {"cycle_id":cycle_id,"created":True}
+
+
+@app.patch("/api/v2/cycles/{cycle_id}")
+async def v2_patch_cycle(cycle_id: str, request: Request):
+    body=await request.json()
+    ALLOWED={"status","error_msg","step_type","grind_params","source_hash","completed_at","reverted_at"}
+    updates={k:v for k,v in body.items() if k in ALLOWED}
+    if not updates: raise HTTPException(400,"No valid fields to update")
+    with get_db() as db:
+        if not db.execute("SELECT cycle_id FROM grind_cycles WHERE cycle_id=?",(cycle_id,)).fetchone():
+            raise HTTPException(404,f"cycle_id {cycle_id!r} not found")
+        set_clause=", ".join(f"{k}=?" for k in updates)
+        db.execute(f"UPDATE grind_cycles SET {set_clause} WHERE cycle_id=?", list(updates.values())+[cycle_id])
+    return {"cycle_id":cycle_id,"updated":list(updates.keys())}
 
 
 @app.post("/api/v2/cycles/{cycle_id}/conditions")
@@ -951,11 +977,17 @@ async def v2_activate_cycle(cycle_id: str):
 
 
 @app.get("/api/v2/cycles/{setup_type}")
-async def v2_list_cycles(setup_type: str):
+async def v2_list_cycles(setup_type: str, step_type: str = None):
     with get_db() as db:
-        rows=db.execute("""SELECT gc.cycle_id,gc.status,gc.is_current,gc.n_examples_at_grind,gc.created_at,gc.completed_at,gc.reverted_at,COUNT(cc.id) AS n_conditions
+        sql="""SELECT gc.cycle_id,gc.status,gc.is_current,gc.n_examples_at_grind,gc.created_at,gc.completed_at,gc.reverted_at,gc.step_type,gc.grind_params,gc.source_hash,COUNT(cc.id) AS n_conditions
                FROM grind_cycles gc LEFT JOIN cycle_conditions cc ON cc.cycle_id=gc.cycle_id
-               WHERE gc.setup_type=? GROUP BY gc.cycle_id ORDER BY gc.created_at DESC""",(setup_type,)).fetchall()
+               WHERE gc.setup_type=?"""
+        params=[setup_type]
+        if step_type:
+            sql+=" AND gc.step_type=?"
+            params.append(step_type)
+        sql+=" GROUP BY gc.cycle_id ORDER BY gc.created_at DESC"
+        rows=db.execute(sql,params).fetchall()
     return {"setup_type":setup_type,"cycles":[dict(r) for r in rows]}
 
 

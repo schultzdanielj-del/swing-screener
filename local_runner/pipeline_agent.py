@@ -357,6 +357,13 @@ def main():
         "status": "online",
     })
 
+    # Retry any pending grind uploads from previous failed attempts
+    try:
+        from grind_uploader import retry_pending
+        retry_pending()
+    except Exception as e:
+        print(f"  [{ts()}] WARNING: Pending upload retry failed: {e}")
+
     print(f"\n  [{ts()}] Waiting for pipeline jobs...\n")
 
     last_heartbeat = time.time()

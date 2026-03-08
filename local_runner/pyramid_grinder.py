@@ -1542,6 +1542,21 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     with open(compat_path, "w") as f:
         json.dump(compat_result, f, indent=2)
 
+    # ── Upload to Railway ──
+    step_type = "refinement_grind" if blackout_map else "signal_grind"
+    try:
+        from grind_uploader import upload as railway_upload
+        railway_upload(
+            result=result,
+            result_path=out_path,
+            step_type=step_type,
+            setup_type=setup_type,
+            activate=True,
+        )
+    except Exception as e:
+        print(f"\n  [pyramid_grinder] WARNING: Railway upload failed: {e}")
+        print(f"  [pyramid_grinder] Local files are saved. Upload manually or retry later.")
+
     return result
 
 
