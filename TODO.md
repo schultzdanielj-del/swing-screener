@@ -1,4 +1,4 @@
-# TODO — Swing Screener (2026-03-07)
+# TODO — Swing Screener (2026-03-08)
 
 ## V2 Pipeline — The Correct Order
 
@@ -70,6 +70,17 @@ See `PIPELINE_V2.md` for full spec.
 - `market_grinder.py` → step regime
 - `cycle_health.py` → step health
 - vet → is_manual, no agent command (UI-only)
+
+### ✅ Grind storage V2 (2026-03-08) — BUG-003 fixed
+- `grind_uploader.py` — transactional upload built into pyramid_grinder.py
+- Every grind writes timestamped local JSON + uploads to Railway in same function call
+- 5-point defense: retry+pending queue, schema validation, partial upload protection, read-back verification, SHA-256 hash
+- `PATCH /api/v2/cycles/{id}` endpoint + step_type/grind_params/source_hash columns
+- `GET /api/v2/cycles/{setup}?step_type=` filter param
+- Pending uploads retried on agent startup and before each new upload
+- V1 cleanup: deleted grind_storage.py, migrate_grinds.py, latest pointer writes, compat file writes
+- Reference doc: `GRIND_STORAGE.md`
+- 16 tests covering all failure modes (tests/test_grind_uploader.py)
 
 ### 🔲 Not yet built
 - Watchlist page (needs nightly scan output)

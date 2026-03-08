@@ -537,7 +537,7 @@ These need to be rebuilt or are new:
 | Component | Notes |
 |-----------|-------|
 | Pipeline agent step mapping | ~~BUG-002~~ — **FIXED 2026-03-07** |
-| Grinder → Railway upload | BUG-003 — add upload on completion |
+| Grinder → Railway upload | ~~BUG-003~~ — **FIXED 2026-03-08** — `grind_uploader.py` |
 | Cycle versioning / revert | New — data contract layer |
 | Health check script | New — `scripts/health_check.py` |
 | AI review queue | New — server.py endpoint + UI queue view |
@@ -553,7 +553,7 @@ Build in this order so each piece is useful immediately when complete:
 
 1. **Fix BUG-001** (D1 row floor constraint) — makes the grinder reliable again
 2. ~~**Fix BUG-002**~~ (agent step ID mapping) — **DONE 2026-03-07**
-3. **Fix BUG-003** (grinder → Railway upload) — closes the data flow gap
+3. ~~**Fix BUG-003**~~ (grinder → Railway upload) — **DONE 2026-03-08** — `grind_uploader.py`, see `GRIND_STORAGE.md`
 4. **Cycle versioning** — data contract, promote/revert logic in Railway
 5. **Health check script** — measure cycle quality after every grind
 6. **UI: health metrics + diff + revert + regrind indicator** — control surface for the loop

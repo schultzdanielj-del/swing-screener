@@ -159,9 +159,10 @@ with each key mapping to the correct script and arguments:
 
 ## BUG-003: Grinder Results Are Never Uploaded to Railway
 
-**Status:** Confirmed
+**Status:** ✅ FIXED (2026-03-08)
 **Severity:** High — Railway has no accurate record of current grind state
 **Discovered:** 2026-03-06 during live system audit
+**Fixed:** 2026-03-08 — `grind_uploader.py` built into `pyramid_grinder.py`. Every grind writes local JSON + uploads to Railway in the same function call. Transactional upload with 5-point defense (retry, validation, partial upload protection, read-back verification, hash). V1 storage artifacts deleted. See `GRIND_STORAGE.md` for full reference.
 
 ### What Was Observed
 
