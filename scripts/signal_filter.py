@@ -842,9 +842,10 @@ def main():
     print(f"  Loading expression cache...")
     expr_cache = ExprSeriesCache()
     if not expr_cache.is_valid():
-        print("  ERROR: Expression cache not found or invalid.")
-        print("  Run: python local_runner/expr_cache_builder.py --build")
-        sys.exit(1)
+        raise RuntimeError(
+            "Expression cache not found or invalid. "
+            "Run: python local_runner/expr_cache_builder.py --build"
+        )
     print(f"  Expression cache: {expr_cache.n_expressions} expressions")
 
     # Phase 1: Deduplicate examples FIRST -- need their exit distances for the floor
@@ -894,9 +895,6 @@ def main():
         "n_deduped": len(deduped),
         "n_with_exit": len(with_exit),
     })
-
-    # Also upload exit grind to Railway (vetting UI needs it)
-    _upload_exit_grind_to_railway(setup)
 
     total_time = time.time() - t0
     print(f"\n{'='*60}")

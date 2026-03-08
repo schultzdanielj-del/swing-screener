@@ -44,8 +44,11 @@ STEP_COMMANDS = {
         sys.executable, os.path.join(LOCAL_DIR, "pyramid_grinder.py"),
         "--setup", "dtss", "--peak-target", "3", "--beam", "10000", "--depth", "100",
     ],
+    # exit_grind now runs profit_grinder.py (full 15,805-expr shared cache).
+    # exit_grinder.py (custom 446-expr ExitExprEngine) is retired — profit_grinder
+    # supersedes it with the same shared expression set as every other grinder.
     "exit_grind": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "exit_grinder.py"),
+        sys.executable, os.path.join(REPO_ROOT, "scripts", "profit_grinder.py"),
         "--setup", "dtss", "--max-forward", "120",
     ],
     "scan": [
