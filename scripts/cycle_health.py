@@ -44,16 +44,19 @@ def load_cycle(setup_type, cycle_id=None):
     data    = _get(f"/api/v2/cycles/{setup_type}")
     cycles  = data.get("cycles", [])
     if not cycles:
-        raise RuntimeError(f"No cycles found for {setup_type}")
+        print(f"  ERROR: No cycles found for {setup_type}")
+        sys.exit(1)
 
     if cycle_id:
         target = next((c for c in cycles if c["cycle_id"] == cycle_id), None)
         if not target:
-            raise RuntimeError(f"cycle_id {cycle_id!r} not found")
+            print(f"  ERROR: cycle_id {cycle_id!r} not found")
+            sys.exit(1)
     else:
         current = [c for c in cycles if c["is_current"] == 1]
         if not current:
-            raise RuntimeError(f"No is_current cycle for {setup_type}")
+            print(f"  ERROR: No is_current cycle for {setup_type}")
+            sys.exit(1)
         target = current[0]
 
     return target, cycles

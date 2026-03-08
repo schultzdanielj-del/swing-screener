@@ -848,18 +848,16 @@ def compute_example_floor(examples, cache, exit_cond, direction, expr_cache):
 
         exit_bar = None
         exit_close = None
-        is_above = exit_dir in (">=", "above")
-        is_below = exit_dir in ("<=", "below")
         for fwd in range(1, actual_forward + 1):
             idx = scan_idx + fwd
             val = exit_series[idx]
             if np.isnan(val):
                 continue
-            if is_above and val >= exit_thresh:
+            if exit_dir == ">=" and val >= exit_thresh:
                 exit_bar = fwd
                 exit_close = float(df["close"].values[idx])
                 break
-            elif is_below and val <= exit_thresh:
+            elif exit_dir == "<=" and val <= exit_thresh:
                 exit_bar = fwd
                 exit_close = float(df["close"].values[idx])
                 break

@@ -366,11 +366,9 @@ def _grind_chunk(args):
                 if ok.sum() < n_examples:
                     continue
 
-                # Normalize direction to >=/<= format (shared format across all grinders)
-                norm_dir = ">=" if dir_test == "above" else "<="
                 results.append({
                     "expr_name": expr_name,
-                    "direction": norm_dir,
+                    "direction": dir_test,
                     "threshold": round(float(thresh), 6),
                     "exit_bars": exit_bars.tolist(),
                     "adr_captured": adr_valid[ok].tolist(),
@@ -620,7 +618,8 @@ def main():
     from local_runner.expr_cache_builder import ExprSeriesCache
     expr_cache = ExprSeriesCache()
     if not expr_cache.is_valid():
-        raise RuntimeError("Expression cache not valid. Run expr_cache_builder.py --build first.")
+        print("ERROR: Expression cache not valid. Run expr_cache_builder.py --build first.")
+        sys.exit(1)
 
     all_expr_names = expr_cache.expr_names
 
@@ -653,7 +652,8 @@ def main():
     )
 
     if len(examples) < 3:
-        raise RuntimeError(f"Only {len(examples)} examples loaded — need at least 3. Check Railway connection.")
+        print(f"\nOnly {len(examples)} examples — need at least 3. Aborting.")
+        sys.exit(1)
 
     print_mfe_summary(examples)
 
