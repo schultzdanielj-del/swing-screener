@@ -1,155 +1,103 @@
 # TODO — Swing Screener (2026-03-07)
 
-## DIRECTION: V2 ONLY — No more V1 patching
+## V2 Pipeline — The Correct Order
 
-**Decision (2026-03-06):** Stop patching V1. Build V2 properly. All state lives in Railway SQLite with cycle versioning. No file-based handoffs.
+See `PIPELINE_V2.md` for full spec.
 
-**V2 design docs:**
-- `PIPELINE_V2.md` — full pipeline design
-- `DATA_CONTRACT.md` — V2 schema
+**Nightly auto-refresh (4:30pm ET):** OHLCV → caches → expr cache → matrix → earnings → market cache (266 instruments). Fully automated.
+
+**The Vetting Loop (repeat until convergence):**
+1. Signal Grind — examples vs universe → conditions
+2. Exit Grind — optimal exit condition from example entry bar highs
+3. Scan — apply conditions to 5yr → deduped signals
+4. Exit Filter — apply exit condition → winners (exit triggered) vs losers (no exit)
+5. Refinement Grind — (examples + exit-triggered) vs no-exit, blackout. Manual gate.
+6. Vet — review winner pile (source toggle: step 4 or step 5). YES → AI review → approve → examples → loop.
+
+**After Convergence (run once):**
+7. Regime Model — winner/loser ratio vs 266 market instruments
+8. Health Check — cycle quality, EV, promote/revert
+
+**Convergence:** Full vetting pass produces no new examples.
+
+**Refinement gate:** Discretionary — skip step 5 in early cycles with few examples. Enable once example library is large enough for stable refinement conditions. Threshold TBD after 2-3 setup types built.
 
 ---
 
-## Current State
+## Current State — DTSS
 
-**71 DTSS examples.** Signal density confirmed: 281 filtered signals over 5yr (~1/week forward cadence).
+**72 examples. Converged.** Last vetting pass produced near-zero new examples.
 
-**Signal density analysis (2026-03-06):**
-- 946 raw → 612 deduped → 496 with exit → 281 filtered (≥2.9 ADR)
-- Example floor: 3.2 ADR, median: 5.8 ADR — strong payoff profile
-- Exit triggers on 81% of deduped signals
-- ~1 actionable signal/week in forward scan
+**Proven math:**
+- 41% win rate, EV 1.479 (from cycle_health on 68/68 examples)
+- Winners: median 5.8 ADR, floor 3.2 ADR
+- Losers: under 1 ADR
+- Market regime model: win rate lift from 8% (worst decile) to 75% (best decile)
+- 1111 signals, 456 wins, 50 independent regime features
 
-**Expr cache stale:** Last full rebuild predates the 9 new examples added before grind #5. 35/71 examples verified in signal_filter. **Fix: rebuild expr cache before next grind.**
+**What's done:**
+- Grind #5: 71 examples, 94 conditions, 281 filtered signals
+- Exit condition: `slope_xavgc21_off7_adr14 <= -1.128826` (median 5.8 ADR capture)
+- Market grinder complete: 245 instruments, 50 features, regime scores uploaded
+- V2 server deployed on Railway (v2 branch)
+- V2 UI: 4 tabs (Pipeline, Examples, Vetting, Watchlist), 8-step sidebar
+
+**What's next for DTSS:**
+1. Refinement grind — (examples + exit-triggered) vs no-exit, blackout → cut losers
+2. Re-run regime model on refined signal set
+3. Health check → promote → live
+4. Nightly scan + watchlist
 
 ---
 
 ## V2 Build Status
 
 ### ✅ Done
-1. `DATA_CONTRACT.md` — V2 schema defined and committed
-2. V2 DB tables wired into `server.py init_db()` — all tables, deploys on push
-3. `scripts/grind_upload.py` — uploads grinder JSON to Railway as versioned cycle
-4. `scripts/scan_signals.py` — reads/writes DB only, replaces signal_filter.py
-5. `scripts/cycle_health.py` — computes health metrics, uploads, auto-promotes
-6. **V2 server.py rewrite** (2026-03-07) — V1 cruft removed, ~910 lines. All needed endpoints kept: pipeline/agent, examples CRUD, vetting, pending/AI review, universe OHLCV insert, all V2 cycle endpoints
-7. **V2 index.html rewrite** (2026-03-07) — fresh shell, new nav. V1 vetting UI copied verbatim: VettingChart, VettingPage (Step 2/4 toggle, keyboard shortcuts, log streaming), ExamplesPage (Pending/AI tab, approve-all, approve/reject). V1 originals archived at `archive/v1/`.
+- V2 server.py on v2 branch — all endpoints
+- V2 UI: Pipeline (8 steps), Examples (pending queue + validated), Vetting (source toggle step 4/5, keyboard shortcuts), Watchlist (placeholder)
+- Pipeline agent wiring — run/stop/logs from UI
+- AI vetting flow: YES → pending → review_samples.py (Claude CLI) → approve/reject in Examples tab
+- /api/chart/{setup}/{ticker}/{date} — chart PNG for AI review (universe_ohlcv first, yfinance fallback)
+- Nightly refresh includes market cache append (266 instruments)
+- Market grinder complete + uploaded
+- Cycle health + versioning system
+- DB tables: cycles, cycle_signals, cycle_conditions, health_metrics, regime models
 
-### ✅ V2 UI completion
-- CycleHealthPage fully wired — health panel, cycle diff, revert button, all live
-- WatchlistPage placeholder — blocked on Market Grinder
+### 🔲 Not yet wired (scripts exist, need agent mapping)
+- `pyramid_grinder.py` → step signal_grind
+- `exit_grinder_single.py` → step exit_grind
+- `signal_filter.py` (scan phase) → step scan
+- `signal_filter.py` (exit phase) → step exit_filter
+- `setup_refiner.py` (blackout + refine) → step refinement_grind
+- `market_grinder.py` → step regime
+- `cycle_health.py` → step health
 
-### ✅ Market Grinder (Step 5) — COMPLETE (2026-03-07)
-
-- `local_runner/market_cache_builder.py` — two-phase fetch (threaded) + compute (parallel CPU)
-  - 245 instruments built, 3.96 GB, 6.5 min
-- `scripts/market_grinder.py` — win rate time series correlation engine
-  - Daily win rate series: rolling ±5 trading day window, density-weighted
-  - Weighted Pearson: each (instrument × expression) vs win rate series
-  - Min coverage filter: ≥20% of series days must have valid values (prevents sparse expr inflation)
-  - Feature deduplication: greedy selection, skips features with inter-corr ≥ 0.95 — ensures 50 independent features
-  - Parallelized per instrument via ProcessPoolExecutor (all CPU cores)
-  - Quartile win rates, regime scores 0-1 per signal, decile lift table
-
-**DTSS result (2026-03-07):**
-- 1111 signals | 456 wins | baseline win rate: 41%
-- 3,103,619 valid features computed across 245 instruments × 15,805 expressions
-- 1843 candidates checked → 50 independent features selected
-- 426/1111 signals scored
-- Win rate lift: D1 (worst) 8.1% → D9 (best) 75% (+44pp vs baseline)
-- Top feature: `KMLM__w_slope_avgc200_off2_adr14` (weekly 200 SMA slope, r=-0.71)
-- Regime model + signal scores uploaded to Railway ✅
-
-### 🔲 Next: WatchlistPage regime score display
-
----
-
-## PRE-RUN CHECKLIST — Do these before first V2 run
-
-### ONE-TIME SETUP (in order)
-
-**1. Deploy V2 server to Railway**
-- Push `v2` branch → Railway auto-deploys
-- Verify: `GET /api/v2/cycles/dtss` returns `{"cycles": []}` (not 404)
-- Verify: `GET /api/pipeline/steps` returns steps array (not 500)
-
-**2. Rebuild expr cache (stale)**
-```
-python local_runner/expr_cache_builder.py --build --force
-```
-- Required before `scan_signals.py` — 36/71 examples have stale cache data
-- Run overnight. `EXPR_CACHE_WORKERS=8`
-
-**3. Seed exit condition for DTSS**
-```
-POST /api/v2/exit_conditions
-{
-  "setup_type": "dtss",
-  "expression_name": "slope_xavgc21_off7_adr14",
-  "direction": "below",
-  "threshold": -1.128826,
-  "max_forward_bars": 120,
-  "adr_threshold_multiplier": 1.0
-}
-```
-
-**4. Run grind_upload.py**
-```
-python scripts/grind_upload.py --setup dtss
-```
-- ⚠ Use `local_runner/cache/pyramid_results_dtss.json` (grind #5, 94 conditions, 71 examples)
-- Do NOT use `data/pyramid_results_dtss.json` (grind #3, stale)
-
-**5. Run scan_signals.py**
-```
-python scripts/scan_signals.py --setup dtss
-```
-~10-15 min, needs steps 2-4
-
-**6. Run cycle_health.py**
-```
-python scripts/cycle_health.py --setup dtss
-```
+### 🔲 Not yet built
+- Watchlist page (needs nightly scan output)
+- Nightly live scan (apply current conditions to today's bars)
 
 ---
 
 ## Grind History (DTSS)
 
-| Grind | Date | Examples | Conditions | Signals (5yr) | Notes |
-|-------|------|----------|------------|---------------|-------|
-| 1 | ~2026-02-24 | 20 | 41 | 264 | First production grind |
-| 2 | ~2026-03-01 | 35 | 53 | 91 | After first vetting pass |
-| 3 | ~2026-03-02 | 48 | ~76 | ~200 | After second vetting pass |
+| Grind | Date | Examples | Conditions | Signals | Notes |
+|-------|------|----------|------------|---------|-------|
+| 1 | ~2026-02-24 | 20 | 41 | 264 | First grind |
+| 2 | ~2026-03-01 | 35 | 53 | 91 | After first vet |
+| 3 | ~2026-03-02 | 48 | ~76 | ~200 | After second vet |
 | 4 | 2026-03-03 | 62 | 86 | 168 | After AI vetting |
-| 4b-blackout | 2026-03-05 | 62 | 87 | 164 | Blackout re-grind |
-| 5 | 2026-03-06 | 71 | 94 | 281 filtered | signal_filter confirmed |
-
----
-
-## Exit Grinder Results (locked)
-
-| Expression | Floor | Median | Avg Bars |
-|-----------|-------|--------|----------|
-| `slope_xavgc21_off7_adr14 <= -1.128826` | 3.2 ADR | 5.8 ADR | 38 bars |
-
----
-
-## The Math
-
-- Losers: solidly under 1 ADR
-- Winners: median 5.8 ADR, floor 3.2 ADR
-- Even 36% win rate → positive expectancy
-- 50% win rate (after market grinder) → massive profit factor
-- 10% position size, 25% net winner/month = 2.5% compounding
-- 20 years of 2.5%/month = mid 8 figures
+| 4b | 2026-03-05 | 62 | 87 | 164 | Blackout re-grind |
+| 5 | 2026-03-06 | 71 | 94 | 281 | Current |
 
 ---
 
 ## Data
 
-- Expression cache: 4,119 tickers × 15,805 expressions (~50 GB) — **stale, needs rebuild**
+- Expression library: 15,805 expressions
+- Expression cache: 4,119 tickers × 15,805 expr (~50 GB) — **stale, needs rebuild**
+- Market cache: 245/266 instruments × 15,805 expr (3.96 GB)
 - Railway DB: 11M+ OHLCV rows, ~4,167 tickers
-- 71 DTSS examples (68 in cache, 3 excluded: BRK-B, SMMT, VUZI)
+- 72 DTSS examples (69 in cache, 3 excluded: BRK-B, SMMT, VUZI)
 
 ---
 
@@ -157,20 +105,10 @@ python scripts/cycle_health.py --setup dtss
 
 1. NEVER proceed without explicit go-ahead
 2. All grinders: 100% example pass. No exceptions.
-3. Push all work to GitHub before ending chat
+3. Push all work to GitHub before ending chat (v2 branch)
 4. Break work into small tasks
 5. All OHLCV from Railway DB or local caches. Never yfinance in pipelines.
 6. Read ta_knowledge.md before any TA work
 7. NEVER dump large data into context
 8. Expression cache = single computation path
 9. V2 only — no V1 patching
-
----
-
-## Expression Library
-
-- **V2 complete:** 15,805 total expressions
-  - 4,017 daily + 80 LSP + 4,017 weekly + 4,017 monthly
-  - 3,630 extension_structure (50 SMA + 200 SMA extension series as standalone price charts)
-- Cache rebuild required after extension_structure addition (in progress)
-- `EXPR_CACHE_WORKERS=8` for builds
