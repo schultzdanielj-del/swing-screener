@@ -347,10 +347,10 @@ function buildPanels(){
           <div class="sh"><span class="st">Pruning</span></div>
           <div style="padding:8px 0;display:flex;flex-direction:column;gap:8px">
             <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--t2);cursor:pointer">
-              <input type="checkbox" id="prune-toggle" checked onchange="updPrune()" style="accent-color:var(--acc)">
+              <input type="checkbox" id="prune-toggle" onchange="updPrune()" style="accent-color:var(--acc)">
               Enable condition pruning
             </label>
-            <div id="prune-slider-row" style="display:flex;align-items:center;gap:8px">
+            <div id="prune-slider-row" style="display:flex;align-items:center;gap:8px;opacity:0.4">
               <span style="font-size:10px;color:var(--t3);white-space:nowrap">Min power</span>
               <input type="range" id="prune-pct" min="1" max="50" value="10" oninput="updPrune()" style="flex:1;accent-color:var(--acc)">
               <span id="prune-pct-lbl" style="font-size:11px;color:var(--t1);min-width:32px">10%</span>
