@@ -243,7 +243,7 @@ def _correlate_instrument(args):
     Worker: compute weighted Pearson correlations for one instrument.
     Runs in a subprocess. Returns list of result dicts (may be empty).
     """
-    inst_id, wr_dates_str, y, w, n_days, min_coverage_days, mkt_dir = args
+    inst_id, wr_dates_str, y, w, n_days, min_coverage_days, mkt_dir, expr_names = args
 
     import os, sys, numpy as np
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -256,10 +256,6 @@ def _correlate_instrument(args):
     with np.load(path, allow_pickle=True) as f:
         dates_cache = f["dates"]
         data_cache  = f["data"]
-        expr_names  = list(f["expr_names"]) if "expr_names" in f else None
-
-    if expr_names is None:
-        return []
 
     date_to_idx = {d: idx for idx, d in enumerate(dates_cache)}
     row_indices = np.array([date_to_idx.get(d, -1) for d in wr_dates_str])
@@ -345,7 +341,7 @@ def compute_all_correlations(wr_df, manifest):
           f"({MIN_COVERAGE_FRAC*100:.0f}% of {n_days} series days)")
 
     args_list = [
-        (inst_id, wr_dates_str, y, w, n_days, min_coverage_days, MKT_DIR)
+        (inst_id, wr_dates_str, y, w, n_days, min_coverage_days, MKT_DIR, manifest["expr_names"])
         for inst_id in instruments
     ]
 
@@ -368,6 +364,10 @@ def compute_all_correlations(wr_df, manifest):
 
     elapsed = time.time() - t0
     print(f"\n  Done. {len(all_results):,} valid features in {elapsed:.1f}s")
+
+    if not all_results:
+        print("  WARNING: No valid features found. Check market cache date alignment.")
+        return pd.DataFrame(columns=["instrument","expr_name","feature_name","correlation","abs_correlation","n_valid"])
 
     df = pd.DataFrame(all_results).sort_values("abs_correlation", ascending=False)
     return df.reset_index(drop=True)
