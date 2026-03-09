@@ -6,34 +6,36 @@ eliminate lose pile signals. Sacrificial signals (leftward duplicates from dedup
 provide analytical leverage — they're structurally similar to losers (early/premature
 fires) so conditions that kill sacrificial signals also kill losers.
 
-THREE PILES (all read from setup_refiner output — no re-scanning):
+THREE PILES:
   Win pile (100% must pass, untouchable):
-    - Deduped winner signals (exit triggered + move >= ADR threshold)
-    - The `signals` field in refined_{setup}.json
+    - Deduped winner signals from refinement grind (exit triggered + move >= ADR)
+    - These are the rightmost signal bar per consecutive cluster
 
   Sacrifice pile (OK to trim):
-    - Pre-dedup leftward duplicates from ALL clusters (winner + loser)
-    - The `sacrificial_signals` field in refined_{setup}.json
+    - Pre-dedup leftward duplicates from ALL clusters (winner and loser)
+    - These got deduped out (collapsed into the rightmost bar)
+    - Gives the grinder more foothold to find discriminating conditions
 
   Lose pile (target to trim):
-    - Deduped signals that didn't trigger exit or didn't move enough
-    - From `all_deduped_classified` where signal is not in win pile
+    - Deduped loser signals from refinement grind (no exit / move < ADR)
 
 DATA CONGRUENCE:
-  All classification comes from setup_refiner. This script does NOT re-classify
-  anything. Winner/loser labels, exit condition, ADR thresholds — all inherited
-  from the refinement grind output. Same data, same computation path.
+  All signal data comes from setup_refiner output (refined_{setup}.json).
+  No re-scanning, no re-classifying. The proximity grinder reads the exact
+  same signals and classifications the refiner produced. This ensures all
+  pipeline steps calculate data the same way.
+
+  The refined output must contain:
+    - signals: filtered winners (exit triggered + move >= ADR)
+    - all_deduped_classified: full deduped set (winners + losers)
+    - sacrificial_signals: leftward duplicate bars from dedup
+
+  If these are empty, re-run: python scripts/setup_refiner.py --setup {setup}
 
 Usage:
     python scripts/proximity_grinder.py --setup dtss
     python scripts/proximity_grinder.py --setup dtss --beam 5000 --depth 50
     python scripts/proximity_grinder.py --setup dtss --dry-run  # show piles only
-
-Requires:
-  - Refinement grind output: data/setup_refiner/refined_{setup}.json
-    (must include all_deduped_classified and sacrificial_signals fields —
-     re-run setup_refiner.py if these are missing)
-  - Expression series cache
 """
 
 import argparse
@@ -59,11 +61,15 @@ from expr_cache_builder import ExprSeriesCache
 
 
 # ══════════════════════════════════════════════════════════════
-# DATA LOADING — all from setup_refiner output
+# DATA LOADING — read from setup_refiner output, no re-computation
 # ══════════════════════════════════════════════════════════════
 
-def load_refined_data(setup_type):
-    """Load the refinement grind output with full signal sets."""
+def load_refined_result(setup_type):
+    """Load the refinement grind output with full signal data.
+
+    Requires all_deduped_classified and sacrificial_signals to be populated.
+    If empty, the setup_refiner needs to be re-run.
+    """
     path = os.path.join(REPO_ROOT, "data", "setup_refiner", f"refined_{setup_type}.json")
     if not os.path.exists(path):
         raise FileNotFoundError(
@@ -73,48 +79,45 @@ def load_refined_data(setup_type):
     with open(path) as f:
         data = json.load(f)
 
-    # Validate required fields exist
     winners = data.get("signals", [])
     all_deduped = data.get("all_deduped_classified", [])
     sacrificial = data.get("sacrificial_signals", [])
+    conditions = data.get("pruned_conditions", [])
 
-    if not all_deduped:
+    if not all_deduped or not sacrificial:
         raise RuntimeError(
-            "Refined output missing 'all_deduped_classified' field.\n"
-            "  Re-run: python scripts/setup_refiner.py --setup " + setup_type
+            f"Refined output missing full signal data.\n"
+            f"  all_deduped_classified: {len(all_deduped)}\n"
+            f"  sacrificial_signals: {len(sacrificial)}\n"
+            f"  Re-run: python scripts/setup_refiner.py --setup {setup_type}"
         )
 
-    conditions = data.get("pruned_conditions", [])
-    min_adr = data.get("min_adr_threshold", 0)
-
-    print(f"  Loaded refined output:")
-    print(f"    Conditions: {len(conditions)}")
-    print(f"    Winners (filtered): {len(winners)}")
+    print(f"  Loaded refined result: {len(conditions)} conditions")
+    print(f"    Winners (filtered):      {len(winners)}")
     print(f"    All deduped (classified): {len(all_deduped)}")
-    print(f"    Sacrificial (pre-dedup): {len(sacrificial)}")
-    print(f"    Min ADR threshold: {min_adr}")
+    print(f"    Sacrificial (pre-dedup):  {len(sacrificial)}")
 
-    return data
+    return winners, all_deduped, sacrificial, conditions, data
 
 
-def build_piles(refined_data):
-    """Build win/sacrifice/lose piles from refined output.
+# ══════════════════════════════════════════════════════════════
+# PILE BUILDER — construct win/sacrifice/lose from refiner data
+# ══════════════════════════════════════════════════════════════
 
-    Win pile: signals field (filtered winners — exit triggered + move >= ADR)
-    Lose pile: all_deduped_classified minus the winners
-    Sacrifice pile: sacrificial_signals (leftward dedup duplicates)
+def build_piles(winners, all_deduped, sacrificial):
+    """Build three piles from setup_refiner output.
+
+    Win pile: deduped winners (from filtered signals — exit triggered + move >= ADR)
+    Sacrifice pile: leftward duplicates from dedup (from sacrificial_signals)
+    Lose pile: deduped signals NOT in winner set (from all_deduped_classified minus winners)
     """
-    winners = refined_data.get("signals", [])
-    all_deduped = refined_data.get("all_deduped_classified", [])
-    sacrificial = refined_data.get("sacrificial_signals", [])
-
     # Build a set of winner keys for fast lookup
     winner_keys = set()
     for w in winners:
         key = f"{w['ticker']}|{w['bar_idx']}"
         winner_keys.add(key)
 
-    # Everything in all_deduped that's NOT in the winner set is a loser
+    # Losers = all deduped signals not in winner set
     losers = []
     for sig in all_deduped:
         key = f"{sig['ticker']}|{sig['bar_idx']}"
@@ -205,8 +208,10 @@ def run_beam_search(trim_matrix, win_ranges, expressions,
                     beam_width=5000, depth=50):
     """Beam search to minimize remaining trimmable signals.
 
-    Finds conditions (within win pile ranges) that eliminate the most
-    sacrifice + lose pile rows. Scored by remaining row count.
+    trim_matrix: (n_trim, n_expr) — sacrifice + lose pile values
+    win_ranges: {expr_name: (low, high)} — conditions must stay within these
+
+    Score = number of remaining rows (minimize).
     """
     n_rows, n_expr = trim_matrix.shape
     expr_names = [e["name"] for e in expressions]
@@ -227,13 +232,13 @@ def run_beam_search(trim_matrix, win_ranges, expressions,
         vals = trim_matrix[:, j]
         passes = ((vals >= lo) & (vals <= hi)) | np.isnan(vals)
         n_pass = int(np.sum(passes))
-        # Useful if filters out at least 1% of rows
+        # Useful if it filters out at least 1% of rows
         if n_pass < n_rows * 0.99:
             cand_indices.append(j)
             cand_passes.append(passes)
 
     n_useful = len(cand_indices)
-    print(f"  Useful candidates (filter >=1%): {n_useful}")
+    print(f"  Useful candidates (filter >= 1%): {n_useful}")
 
     if n_useful == 0:
         print("  No useful candidates. Cannot trim further.")
@@ -251,7 +256,7 @@ def run_beam_search(trim_matrix, win_ranges, expressions,
 
     scored.sort(key=lambda x: x[1])
 
-    # Beam search
+    # Build initial beam
     class Node:
         __slots__ = ['conditions', 'row_mask', 'remaining']
         def __init__(self, conditions, row_mask, remaining):
@@ -292,8 +297,7 @@ def run_beam_search(trim_matrix, win_ranges, expressions,
 
                 mask = node.row_mask & cand_passes_arr[ci]
                 remaining = int(np.sum(mask))
-                next_level.append(Node(conditions=combo, row_mask=mask,
-                                       remaining=remaining))
+                next_level.append(Node(conditions=combo, row_mask=mask, remaining=remaining))
 
                 if len(next_level) >= beam_width * 8:
                     break
@@ -312,8 +316,8 @@ def run_beam_search(trim_matrix, win_ranges, expressions,
 
         trimmed = n_rows - best.remaining
         print(f"  Level {lv}: {best.remaining:,} remaining "
-              f"(-{trimmed:,}, {trimmed/max(n_rows,1)*100:.1f}%)"
-              f"  [{len(best.conditions)} conds]")
+              f"(-{trimmed:,}, {trimmed/max(n_rows,1)*100:.1f}%) "
+              f"[{len(best.conditions)} conds]")
 
         if best.remaining == 0:
             break
@@ -342,7 +346,7 @@ def _extract_conditions(node, cand_indices, expressions, win_ranges):
 
 
 # ══════════════════════════════════════════════════════════════
-# VALIDATION
+# VALIDATION — confirm 100% win pile passes all conditions
 # ══════════════════════════════════════════════════════════════
 
 def validate_win_pile(win_matrix, proximity_conditions, expressions):
@@ -368,8 +372,8 @@ def validate_win_pile(win_matrix, proximity_conditions, expressions):
             print(f)
         return False
 
-    print(f"\n  Validation passed: {n_win} win pile signals pass "
-          f"all {len(proximity_conditions)} proximity conditions")
+    print(f"\n  Validation passed: {n_win} win pile signals x "
+          f"{len(proximity_conditions)} proximity conditions = 100% pass")
     return True
 
 
@@ -422,17 +426,19 @@ def run_proximity_grind(setup_type, beam_width=5000, depth=50, dry_run=False):
 
     t0 = time.time()
 
-    # ── 1. Load refined data ──
+    # ── 1. Load refined data (no re-computation) ──
     print("Phase 1: Loading refined data...")
-    refined_data = load_refined_data(setup_type)
-    conditions = refined_data.get("pruned_conditions", [])
+    winners, all_deduped, sacrificial, conditions, refined_data = \
+        load_refined_result(setup_type)
 
     # ── 2. Build piles ──
     print("\nPhase 2: Building piles...")
-    win_pile, sacrifice_pile, lose_pile = build_piles(refined_data)
+    win_pile, sacrifice_pile, lose_pile = build_piles(
+        winners, all_deduped, sacrificial
+    )
 
     if dry_run:
-        print(f"\n  DRY RUN — stopping here.  ({time.time()-t0:.1f}s)")
+        print(f"\n  DRY RUN — stopping here. ({time.time()-t0:.0f}s)")
         return
 
     if len(win_pile) == 0:
@@ -518,7 +524,7 @@ def run_proximity_grind(setup_type, beam_width=5000, depth=50, dry_run=False):
         "win_pile": n_winners,
         "sacrifice_before": n_sacrifice,
         "sacrifice_trimmed": sac_trimmed,
-        "lose_before": n_lose,
+        "lose_pile_before": n_lose,
         "losers_trimmed": losers_trimmed,
         "losers_remaining": losers_remaining,
         "old_total_deduped": old_total,
@@ -532,29 +538,29 @@ def run_proximity_grind(setup_type, beam_width=5000, depth=50, dry_run=False):
     print(f"\n{'='*70}")
     print(f"  PROXIMITY GRIND RESULTS — {setup_type.upper()}")
     print(f"{'='*70}")
-    print(f"  Conditions found: {len(proximity_conditions)}")
+    print(f"  Proximity conditions: {len(proximity_conditions)}")
     for c in proximity_conditions:
         print(f"    {c['name']:40s}  [{c['low']:.4f}, {c['high']:.4f}]  ({c['category']})")
-    print(f"\n  Win pile (untouched):  {n_winners:,}")
-    print(f"  Sacrifice pile:       {n_sacrifice:,} → {sac_remaining:,}  (-{sac_trimmed:,})")
-    print(f"  Lose pile:            {n_lose:,} → {losers_remaining:,}  (-{losers_trimmed:,})")
-    print(f"\n  Deduped signals:      {old_total:,} → {new_total:,}")
-    print(f"  Win rate:             {old_wr:.1f}% → {new_wr:.1f}%")
+    print(f"\n  Win pile (untouched):    {n_winners:,}")
+    print(f"  Sacrifice pile:         {n_sacrifice:,} -> {sac_remaining:,} (-{sac_trimmed:,})")
+    print(f"  Lose pile:              {n_lose:,} -> {losers_remaining:,} (-{losers_trimmed:,})")
+    print(f"\n  Deduped signals:        {old_total:,} -> {new_total:,}")
+    print(f"  Win rate:               {old_wr:.1f}% -> {new_wr:.1f}%")
     print(f"\n  Time: {time.time()-t0:.0f}s")
 
     # ── 10. Save ──
     save_results(setup_type, proximity_conditions, metrics, conditions)
 
+    return metrics
+
 
 def main():
     parser = argparse.ArgumentParser(description="Proximity Grinder")
     parser.add_argument("--setup", default="dtss", help="Setup type")
-    parser.add_argument("--beam", type=int, default=5000,
-                        help="Beam width (default: 5000)")
-    parser.add_argument("--depth", type=int, default=50,
-                        help="Search depth (default: 50)")
+    parser.add_argument("--beam", type=int, default=5000, help="Beam width")
+    parser.add_argument("--depth", type=int, default=50, help="Search depth")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Build piles and show stats only")
+                        help="Show pile stats only, don't grind")
     args = parser.parse_args()
 
     run_proximity_grind(
