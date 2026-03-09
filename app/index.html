@@ -140,6 +140,7 @@ select.sel:hover{border-color:var(--acc)}
 .vitk{font-size:11px;font-weight:600;color:var(--t1)}
 .vidt{font-size:9px;color:var(--t3)}
 .viadr{font-size:10px;color:var(--acc);float:right}
+.vicls{font-size:8px;font-weight:700;letter-spacing:.04em;padding:0 4px;text-transform:uppercase;float:right;margin-left:4px}
 .vm{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .vc{flex:1;background:var(--bg);position:relative;overflow:hidden;min-height:0}
 .cph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:10px;flex-direction:column;gap:6px}
@@ -170,6 +171,25 @@ kbd{background:var(--s3);border:1px solid var(--b2);padding:0 3px;font:9px var(-
 .ibt{font-size:8px;letter-spacing:.15em;text-transform:uppercase;color:var(--t3);margin-bottom:6px;font-weight:700}
 .ibv{font-size:12px;color:var(--t1);font-weight:500}
 .ibs{font-size:9px;color:var(--t3);margin-top:3px}
+
+/* ── VET SOURCE TOGGLE ── */
+.vet-toggle{display:flex;gap:0;border:1px solid var(--b2);margin-left:12px}
+.vet-toggle-btn{padding:3px 10px;font:9px var(--f);font-weight:600;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;background:transparent;color:var(--t3);border:none;transition:.15s}
+.vet-toggle-btn:hover{color:var(--t2)}
+.vet-toggle-btn.on{background:var(--acc);color:var(--bg)}
+
+/* ── VET FILTER ── */
+.vet-filter{display:flex;gap:0;border:1px solid var(--b2);margin-left:8px}
+.vet-filter-btn{padding:3px 8px;font:9px var(--f);font-weight:600;cursor:pointer;background:transparent;color:var(--t3);border:none;transition:.15s}
+.vet-filter-btn:hover{color:var(--t2)}
+.vet-filter-btn.on{background:var(--s3);color:var(--t1)}
+
+/* ── SESSION COUNTER ── */
+.vet-counter{font-size:10px;color:var(--t2);margin-left:12px;display:flex;gap:10px}
+.vet-counter span{display:flex;align-items:center;gap:3px}
+.vet-counter .cv{font-weight:600;color:var(--t1)}
+.vet-counter .cg{color:var(--grn)}
+.vet-counter .cr{color:var(--red)}
 
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:4px;height:4px}
@@ -228,6 +248,20 @@ kbd{background:var(--s3);border:1px solid var(--b2);padding:0 3px;font:9px var(-
     <div class="pnl" id="v-vetting">
       <div class="ph">
         <div><div class="pt">Chart Vetting</div><div class="ps" id="vetSub">Loading...</div></div>
+        <div class="vet-toggle" id="vetToggle">
+          <div class="vet-toggle-btn on" data-src="signal_grind" onclick="setVetSource('signal_grind')">Signal Grind</div>
+          <div class="vet-toggle-btn" data-src="refinement_grind" onclick="setVetSource('refinement_grind')">Refinement</div>
+        </div>
+        <div class="vet-filter" id="vetFilter">
+          <div class="vet-filter-btn on" data-f="unvetted" onclick="setVetFilter('unvetted')">Unvetted</div>
+          <div class="vet-filter-btn" data-f="all" onclick="setVetFilter('all')">All</div>
+          <div class="vet-filter-btn" data-f="yes" onclick="setVetFilter('yes')">Yes</div>
+          <div class="vet-filter-btn" data-f="no" onclick="setVetFilter('no')">No</div>
+        </div>
+        <div class="vet-counter" id="vetCounter">
+          <span><span class="cv" id="vetRemain">0</span> remaining</span>
+          <span>session: <span class="cv cg" id="vetSessYes">0</span>y <span class="cv cr" id="vetSessNo">0</span>n</span>
+        </div>
         <div class="pa"><span style="font-size:9px;color:var(--t3)"><kbd>1</kbd> yes <kbd>2</kbd> no <kbd>3</kbd> skip <kbd>↑↓</kbd> nav</span></div>
       </div>
       <div class="vw">
@@ -237,16 +271,18 @@ kbd{background:var(--s3);border:1px solid var(--b2);padding:0 3px;font:9px var(-
           <div class="vbar">
             <div class="vinf">
               <div class="vii"><div class="vil">Ticker</div><div class="viv" id="viTk">—</div></div>
-              <div class="vii"><div class="vil">Date</div><div class="viv" id="viDt">—</div></div>
+              <div class="vii"><div class="vil">Signal</div><div class="viv" id="viDt">—</div></div>
               <div class="vii"><div class="vil">Move</div><div class="viv" id="viMv" style="color:var(--grn)">—</div></div>
               <div class="vii"><div class="vil">MFE</div><div class="viv" id="viMfe">—</div></div>
               <div class="vii"><div class="vil">Capture</div><div class="viv" id="viCap">—</div></div>
               <div class="vii"><div class="vil">Exit</div><div class="viv" id="viEx">—</div></div>
+              <div class="vii"><div class="vil">Class</div><div class="viv" id="viCls">—</div></div>
+              <div class="vii"><div class="vil">Entry</div><div class="viv" id="viEntry" style="color:var(--blu)">click chart</div></div>
             </div>
             <div class="vbs">
-              <button class="btn bd bs" onclick="vetDo('no')">✗ No</button>
-              <button class="btn bn bs" onclick="vetDo('skip')">— Skip</button>
-              <button class="btn bg bs" onclick="vetDo('yes')">✓ Yes</button>
+              <button class="btn bd bs" onclick="vetDo('no')">✗ No (2)</button>
+              <button class="btn bn bs" onclick="vetDo('skip')">— Skip (3)</button>
+              <button class="btn bg bs" onclick="vetDo('yes')">✓ Yes (1)</button>
             </div>
           </div>
         </div>
@@ -273,27 +309,42 @@ const STEPS=[
   {id:'signal_grind',    n:1, name:'Signal Grind',      desc:'Pyramid brute-force: examples vs universe → conditions'},
   {id:'exit_grind',      n:2, name:'Exit Grind',        desc:'Optimal exit condition from example entry bar highs'},
   {id:'scan',            n:3, name:'Scan',              desc:'Apply conditions to 5yr history → deduped signal set'},
-  {id:'exit_filter',     n:4, name:'Exit Filter',       desc:'Apply exit condition → winners (exit triggered) vs losers (no exit)'},
-  {id:'refinement_grind',n:5, name:'Refinement Grind',  desc:'(Examples + exit-triggered) vs no-exit, blackout. Manual gate.'},
-  {id:'vet',             n:6, name:'Vet',               desc:'Review winner pile. Source toggle: step 4 or step 5.', isManual:true},
+  {id:'refinement_grind',n:4, name:'Refinement Grind',  desc:'(Examples + exit-triggered) vs no-exit, blackout. Manual gate.'},
+  {id:'vet',             n:5, name:'Vet',               desc:'Review winner pile. Source toggle: signal grind or refinement.', isManual:true},
+  {id:'proximity_grind', n:6, name:'Proximity Grind',   desc:'Post-convergence. Trim losers using leftward dedup signals.'},
   {id:'regime',          n:7, name:'Regime Model',      desc:'Winner/loser ratio vs market conditions. After convergence.'},
   {id:'health',          n:8, name:'Health Check',      desc:'Cycle quality, EV, promote / revert.'},
 ];
 
 const API='';
-let S={setup:'dtss',view:'pipeline',step:'signal_grind',agentOn:false,logN:{},vetSigs:[],vetI:0,exSel:null,vetSource:'exit_filter'};
+let S={
+  setup:'dtss',view:'pipeline',step:'signal_grind',agentOn:false,logN:{},
+  // Vetting state
+  vetSource:'signal_grind', vetFilter:'unvetted',
+  vetCycleId:null, vetAllSigs:[], vetSigs:[], vetI:0,
+  vetSelectedEntry:null, vetSessYes:0, vetSessNo:0,
+  vetRejected:new Set(), vetEarnings:[],
+  // Examples state
+  exSel:null, _exData:[]
+};
 
 // ═══════ INIT ═══════
 document.addEventListener('DOMContentLoaded',()=>{
   buildSide();buildPanels();loadSetups();chkAgent();loadPipe();
   setInterval(chkAgent,5000);
   setInterval(()=>{if(S.view==='pipeline'&&S.step)pollLog(S.step)},3000);
-  document.addEventListener('keydown',e=>{
-    if(S.view!=='vetting')return;
-    if(e.key==='1')vetDo('yes');if(e.key==='2')vetDo('no');if(e.key==='3')vetDo('skip');
-    if(e.key==='ArrowDown')vetNav(1);if(e.key==='ArrowUp')vetNav(-1);
-  });
+  document.addEventListener('keydown',onKey);
 });
+
+function onKey(e){
+  if(S.view==='vetting'){
+    if(e.key==='1'){e.preventDefault();vetDo('yes')}
+    if(e.key==='2'){e.preventDefault();vetDo('no')}
+    if(e.key==='3'){e.preventDefault();vetDo('skip')}
+    if(e.key==='ArrowDown'){e.preventDefault();vetNav(1)}
+    if(e.key==='ArrowUp'){e.preventDefault();vetNav(-1)}
+  }
+}
 
 // ═══════ BUILD ═══════
 function buildSide(){
@@ -319,21 +370,14 @@ function buildPanels(){
       <div class="pb">
         <div class="mg" id="mg-${s.id}"></div>
         <div class="ibox">
-          <div class="ibt">Vetting Source</div>
-          <div style="display:flex;gap:6px;margin-top:6px">
-            <button class="btn bn bs" id="vet-src-4" onclick="setVetSource('exit_filter')" style="border-color:var(--acc);color:var(--acc)">Step 4 — Exit Filter</button>
-            <button class="btn bn bs" id="vet-src-5" onclick="setVetSource('refinement')">Step 5 — Refinement</button>
-          </div>
-          <div class="ibs" style="margin-top:6px">Before refinement grind is run, vet from step 4 (full exit filter output). After refinement, vet the refined pile.</div>
-        </div>
-        <div class="ibox" style="margin-top:8px">
           <div class="ibt">How It Works</div>
           <div class="ibs" style="line-height:1.7">
             1. Open the <strong style="color:var(--t1)">Vetting</strong> tab<br>
-            2. Review each signal chart: <kbd>1</kbd>=YES <kbd>2</kbd>=NO <kbd>3</kbd>=SKIP<br>
-            3. YES picks go to AI review queue on the Examples tab<br>
-            4. After AI review, approve/reject on the Examples tab<br>
-            5. Approved picks become new examples → loop back to step 1
+            2. Toggle source: <strong style="color:var(--t1)">Signal Grind</strong> or <strong style="color:var(--t1)">Refinement</strong><br>
+            3. Review each signal chart: <kbd>1</kbd>=YES <kbd>2</kbd>=NO <kbd>3</kbd>=SKIP<br>
+            4. YES picks go to AI review queue on the Examples tab<br>
+            5. After AI review, approve/reject on the Examples tab<br>
+            6. Approved picks become new examples → loop back to step 1
           </div>
         </div>
       </div>
@@ -458,7 +502,6 @@ async function runS(id){
   if(!S.agentOn){aLog(id,'error','Agent offline. Start it first.');return}
   const btn=document.getElementById('btn-'+id);if(btn){btn.disabled=true;btn.textContent='Queuing...'}
   aLog(id,'info','Queuing '+id+'...');
-  // Build params for refinement_grind pruning controls
   let params={};
   if(id==='refinement_grind'){
     const pruneOn=document.getElementById('prune-toggle')?.checked;
@@ -482,7 +525,6 @@ async function pollLog(id){
   nl.forEach(e=>{const div=document.createElement('div');div.className='ll '+(e.level||'info');
     div.innerHTML='<span class="ts">'+(e.timestamp?new Date(e.timestamp).toLocaleTimeString():'')+'</span>'+esc(e.message||'');el.appendChild(div);el.scrollTop=el.scrollHeight});
   if(d.progress!=null){const pf=document.getElementById('pf-'+id);if(pf)pf.style.width=(d.progress*100)+'%'}
-  const st=d.status||d.logs?.at(-1)?.level;
   if(d.status==='complete'){
     const el2=document.querySelector(`.ss[data-s="${id}"]`);if(el2){el2.classList.remove('run');el2.classList.add('done')}
     const btn=document.getElementById('btn-'+id);if(btn){btn.disabled=false;btn.textContent='Run'}
@@ -502,8 +544,6 @@ function clrLog(id){const el=document.getElementById('log-'+id);if(el)el.innerHT
 async function loadConds(){
   const area=document.getElementById('condArea');if(!area)return;
   area.innerHTML='<div style="color:var(--t3);font-size:10px">Loading...</div>';
-
-  // Try v2 cycles first
   const cycles=await api('/api/v2/cycles/'+S.setup);
   if(cycles?.cycles?.length){
     const cur=cycles.cycles.find(c=>c.is_current)||cycles.cycles[0];
@@ -523,13 +563,11 @@ async function loadConds(){
 
 // ═══════ EXAMPLES ═══════
 async function loadExamples(){
-  // Load both pending and validated in parallel
   const [exData, pendData] = await Promise.all([
     api('/api/examples/'+S.setup),
     api('/api/pending/'+S.setup)
   ]);
 
-  // Pending queue
   const pending = pendData?.pending || [];
   const pendSec = document.getElementById('pendingSec');
   const pendList = document.getElementById('pendingList');
@@ -541,7 +579,7 @@ async function loadExamples(){
       const vClass = p.ai_verdict === 'APPROVE' ? 'approve' : p.ai_verdict === 'REJECT' ? 'reject' : 'pending';
       const vLabel = p.ai_verdict || 'AWAITING AI';
       const reason = p.ai_reasoning || '';
-      const showBtns = p.ai_verdict; // only show approve/reject after AI has reviewed
+      const showBtns = p.ai_verdict;
       return `<div class="pend-item">
         <div class="pend-tk">${p.ticker}</div>
         <div class="pend-dt">${p.entry_date}</div>
@@ -560,7 +598,6 @@ async function loadExamples(){
     pendSec.style.display = 'none';
   }
 
-  // Validated examples
   const exs = exData?.examples || [];
   document.getElementById('exSub').textContent = exs.length + ' validated · ' + (pending.length ? pending.length + ' pending · ' : '') + S.setup.toUpperCase();
   const grid = document.getElementById('exGrid');
@@ -578,7 +615,7 @@ function previewPend(ticker, entryDate) {
   area.innerHTML = '<div class="cph"><div class="cphi">⟳</div><div>Loading '+ticker+'...</div></div>';
   fetch(API+'/api/vetting/'+S.setup+'/ohlcv/'+ticker+'?signal_date='+entryDate+'&lookback=120&forward=80')
     .then(r=>r.ok?r.json():null).then(data=>{
-      const bars=data?.data||data?.ohlcv;
+      const bars=data?.data;
       if(!bars?.length){area.innerHTML='<div class="cph"><div class="cphi">▦</div><div>No data</div></div>';return}
       drawC(area,bars,entryDate,{});
     }).catch(()=>{area.innerHTML='<div class="cph"><div class="cphi">▦</div><div>Unavailable</div></div>'});
@@ -601,85 +638,345 @@ function pickEx(i){
   area.innerHTML='<div class="cph"><div class="cphi">⟳</div><div>Loading '+ex.ticker+'...</div></div>';
   fetch(API+'/api/vetting/'+S.setup+'/ohlcv/'+ex.ticker+'?signal_date='+ex.entryDate+'&lookback=120&forward=80')
     .then(r=>r.ok?r.json():null).then(data=>{
-      const bars=data?.data||data?.ohlcv;
+      const bars=data?.data;
       if(!bars?.length){area.innerHTML='<div class="cph"><div class="cphi">▦</div><div>No data</div></div>';return}
       drawC(area,bars,ex.entryDate,{});
     }).catch(()=>{area.innerHTML='<div class="cph"><div class="cphi">▦</div><div>Chart unavailable</div></div>'});
 }
 
-// ═══════ VETTING ═══════
-// Vet source: 'exit_filter' (step 4) or 'refinement' (step 5)
+// ═══════════════════════════════════════════════════════════
+// VETTING — reads from V2 cycle_signals
+// ═══════════════════════════════════════════════════════════
+
 function setVetSource(src){
   S.vetSource=src;
-  document.getElementById('vet-src-4').style.borderColor=src==='exit_filter'?'var(--acc)':'var(--b2)';
-  document.getElementById('vet-src-4').style.color=src==='exit_filter'?'var(--acc)':'var(--t2)';
-  document.getElementById('vet-src-5').style.borderColor=src==='refinement'?'var(--acc)':'var(--b2)';
-  document.getElementById('vet-src-5').style.color=src==='refinement'?'var(--acc)':'var(--t2)';
-  if(S.view==='vetting')loadVet();
+  document.querySelectorAll('#vetToggle .vet-toggle-btn').forEach(b=>b.classList.toggle('on',b.dataset.src===src));
+  loadVet();
+}
+
+function setVetFilter(f){
+  S.vetFilter=f;
+  document.querySelectorAll('#vetFilter .vet-filter-btn').forEach(b=>b.classList.toggle('on',b.dataset.f===f));
+  applyVetFilter();
+  renderVL();
+  if(S.vetSigs.length)selVet(0);
+  else{
+    document.getElementById('vetChart').innerHTML='<div class="cph"><div class="cphi">▦</div><div>No signals match filter</div></div>';
+    clearVetInfo();
+  }
 }
 
 async function loadVet(){
   const list=document.getElementById('vetList');
-  list.innerHTML='<div style="padding:12px;color:var(--t3);font-size:10px">Loading...</div>';
-  // Pick endpoint based on vet source
-  const src=S.vetSource||'exit_filter';
-  const endpoint=src==='refinement'
-    ? '/api/setup-grinder/'+S.setup+'/signals'
-    : '/api/vetting/'+S.setup+'/signals';
-  const d=await api(endpoint);
-  if(!d?.signals?.length){list.innerHTML='<div style="padding:12px;color:var(--t3);font-size:10px">No signals to vet. Run the pipeline first.</div>';document.getElementById('vetSub').textContent='No signals (source: '+(src==='refinement'?'step 5':'step 4')+')';return}
-  S.vetSigs=d.signals;S.vetI=0;
-  const srcLabel=src==='refinement'?'step 5 refined':'step 4 exit filter';
-  document.getElementById('vetSub').textContent=d.n_signals+' signals · '+srcLabel+' · '+(d.exit_condition||S.setup.toUpperCase());
-  renderVL();selVet(0);
+  list.innerHTML='<div style="padding:12px;color:var(--t3);font-size:10px">Loading V2 cycle data...</div>';
+
+  // 1. Load rejected signals to exclude
+  const rejData=await api('/api/vetting/'+S.setup+'/rejected');
+  S.vetRejected=new Set();
+  if(rejData?.rejected){
+    rejData.rejected.forEach(r=>S.vetRejected.add(r.ticker+'_'+r.signal_date));
+  }
+
+  // 2. Find cycles for this setup
+  const cyclesData=await api('/api/v2/cycles/'+S.setup);
+  if(!cyclesData?.cycles?.length){
+    list.innerHTML='<div style="padding:12px;color:var(--t3);font-size:10px">No cycles found. Run the pipeline first.</div>';
+    document.getElementById('vetSub').textContent='No cycles · '+S.setup.toUpperCase();
+    return;
+  }
+
+  // Find the right cycle: prefer one matching the selected step_type,
+  // fall back to is_current=1, fall back to most recent
+  const src=S.vetSource;
+  let cycle=null;
+
+  // First try: cycle with matching step_type
+  const typed=cyclesData.cycles.filter(c=>c.step_type===src && c.status==='complete');
+  if(typed.length) cycle=typed[0];
+
+  // Fallback: current cycle (step_type may be null for legacy cycles)
+  if(!cycle) cycle=cyclesData.cycles.find(c=>c.is_current);
+
+  // Last fallback: most recent complete
+  if(!cycle) cycle=cyclesData.cycles.find(c=>c.status==='complete');
+
+  if(!cycle){
+    list.innerHTML='<div style="padding:12px;color:var(--t3);font-size:10px">No complete cycles found.</div>';
+    return;
+  }
+
+  S.vetCycleId=cycle.cycle_id;
+
+  // 3. Load signals for this cycle
+  const sigData=await api('/api/v2/cycles/'+cycle.cycle_id+'/signals');
+  if(!sigData?.signals?.length){
+    list.innerHTML='<div style="padding:12px;color:var(--t3);font-size:10px">No signals in cycle '+cycle.cycle_id+'</div>';
+    return;
+  }
+
+  // 4. Build the vettable pile:
+  //    - exit_triggered=1 (the move happened)
+  //    - is_example=0 (not already a validated example)
+  //    - not in rejected_signals
+  //    Sort by move_adr descending (best candidates first)
+  S.vetAllSigs=sigData.signals
+    .filter(s=>s.exit_triggered===1 && s.is_example===0 && !S.vetRejected.has(s.ticker+'_'+s.signal_date))
+    .sort((a,b)=>(b.move_adr||0)-(a.move_adr||0));
+
+  // Load existing vetting decisions to tag already-vetted signals
+  const vetFileData=await api('/api/vetting/'+S.setup+'/signals').catch(()=>null);
+  const decisions={};
+  if(vetFileData?.signals){
+    vetFileData.signals.forEach(s=>{
+      if(s.verdict) decisions[s.ticker+'_'+(s.date||s.signal_date)]=s.verdict;
+    });
+  }
+  // Also check pending_examples for 'yes' verdicts
+  const pendData=await api('/api/pending/'+S.setup);
+  if(pendData?.pending){
+    pendData.pending.forEach(p=>{
+      decisions[p.ticker+'_'+p.signal_date]='yes';
+    });
+  }
+
+  // Tag each signal with its verdict if any
+  S.vetAllSigs.forEach(s=>{
+    const key=s.ticker+'_'+s.signal_date;
+    s._verdict=decisions[key]||null;
+  });
+
+  const srcLabel=cycle.step_type||'current cycle';
+  const nUnvetted=S.vetAllSigs.filter(s=>!s._verdict).length;
+  document.getElementById('vetSub').textContent=
+    S.vetAllSigs.length+' vettable · '+nUnvetted+' unvetted · cycle '+cycle.cycle_id+' · '+srcLabel;
+
+  applyVetFilter();
+  renderVL();
+  updateVetCounters();
+  if(S.vetSigs.length)selVet(0);
+  else{
+    document.getElementById('vetChart').innerHTML='<div class="cph"><div class="cphi">▦</div><div>No signals match filter</div></div>';
+    clearVetInfo();
+  }
+}
+
+function applyVetFilter(){
+  const f=S.vetFilter;
+  if(f==='all') S.vetSigs=S.vetAllSigs.slice();
+  else if(f==='unvetted') S.vetSigs=S.vetAllSigs.filter(s=>!s._verdict);
+  else if(f==='yes') S.vetSigs=S.vetAllSigs.filter(s=>s._verdict==='yes');
+  else if(f==='no') S.vetSigs=S.vetAllSigs.filter(s=>s._verdict==='no');
+  S.vetI=0;
+}
+
+function updateVetCounters(){
+  const remain=S.vetAllSigs.filter(s=>!s._verdict).length;
+  document.getElementById('vetRemain').textContent=remain;
+  document.getElementById('vetSessYes').textContent=S.vetSessYes;
+  document.getElementById('vetSessNo').textContent=S.vetSessNo;
+}
+
+function clearVetInfo(){
+  txt('viTk','—');txt('viDt','—');txt('viMv','—');txt('viMfe','—');
+  txt('viCap','—');txt('viEx','—');txt('viCls','—');txt('viEntry','click chart');
 }
 
 function renderVL(){
   document.getElementById('vetList').innerHTML=S.vetSigs.map((s,i)=>{
-    let c=s.verdict==='yes'?'yes':s.verdict==='no'?'no':'';if(i===S.vetI)c+=' on';
-    return`<div class="vi ${c}" onclick="selVet(${i})"><span class="viadr">${s.move_adr?.toFixed(1)??'?'} ADR</span><div class="vitk">${s.ticker}</div><div class="vidt">${s.date||s.signal_date}</div></div>`;
+    let c='';
+    if(s._verdict==='yes')c='yes';
+    else if(s._verdict==='no')c='no';
+    if(i===S.vetI)c+=' on';
+    const clsColor=s.classification==='AUTO_WIN'?'color:var(--grn)':s.classification==='AUTO_LOSS'?'color:var(--red)':'';
+    return`<div class="vi ${c}" onclick="selVet(${i})">
+      <span class="viadr">${s.move_adr!=null?s.move_adr.toFixed(1):'?'} ADR</span>
+      ${s.classification?'<span class="vicls" style="'+clsColor+'">'+s.classification.replace('AUTO_','')+'</span>':''}
+      <div class="vitk">${s.ticker}</div>
+      <div class="vidt">${s.signal_date}${s._verdict?' · <span style="color:'+(s._verdict==='yes'?'var(--grn)':'var(--red)')+'">'+s._verdict.toUpperCase()+'</span>':''}</div>
+    </div>`;
   }).join('');
 }
 
 function selVet(i){
-  S.vetI=i;const s=S.vetSigs[i];if(!s)return;
-  txt('viTk',s.ticker);txt('viDt',s.date||s.signal_date);
-  txt('viMv',(s.move_adr?.toFixed(2)??'—')+' ADR');txt('viMfe',(s.mfe_adr?.toFixed(2)??'—')+' ADR');
-  txt('viCap',s.capture_eff!=null?(s.capture_eff*100).toFixed(0)+'%':'—');txt('viEx',s.exit_date??'—');
+  S.vetI=i;
+  S.vetSelectedEntry=null;
+  const s=S.vetSigs[i];if(!s)return;
+  txt('viTk',s.ticker);
+  txt('viDt',s.signal_date);
+  txt('viMv',(s.move_adr!=null?s.move_adr.toFixed(2):'—')+' ADR');
+  txt('viMfe',(s.mfe_adr!=null?s.mfe_adr.toFixed(2):'—')+' ADR');
+  txt('viCap',s.capture_eff!=null?(s.capture_eff*100).toFixed(0)+'%':'—');
+  txt('viEx',s.exit_date||'—');
+  txt('viCls',s.classification||'—');
+  txt('viEntry','click chart');
   const area=document.getElementById('vetChart');
   area.innerHTML='<div class="cph"><div class="cphi">⟳</div><div>Loading '+s.ticker+'...</div></div>';
-  fetch(API+'/api/vetting/'+S.setup+'/ohlcv/'+s.ticker+'?signal_date='+(s.date||s.signal_date))
+
+  fetch(API+'/api/vetting/'+S.setup+'/ohlcv/'+s.ticker+'?signal_date='+s.signal_date+'&lookback=250&forward=80')
     .then(r=>r.ok?r.json():null).then(data=>{
-      const bars=data?.data||data?.ohlcv;
+      const bars=data?.data;
       if(!bars?.length){area.innerHTML='<div class="cph"><div class="cphi">▦</div><div>No data</div></div>';return}
-      drawC(area,bars,s.date||s.signal_date,s);
+      drawVetChart(area,bars,s);
     }).catch(()=>{area.innerHTML='<div class="cph"><div class="cphi">▦</div><div>Unavailable</div></div>'});
+
+  // Fetch earnings async
+  S.vetEarnings=[];
+  fetch(API+'/api/vetting/earnings/'+s.ticker)
+    .then(r=>r.ok?r.json():null).then(d=>{
+      S.vetEarnings=d?.earnings_dates||[];
+      if(S.vetSigs[S.vetI]===s){
+        const svgEl=document.getElementById('vetChart')?.querySelector('svg');
+        if(svgEl) addEarningsToChart(svgEl, S.vetEarnings);
+      }
+    }).catch(()=>{});
+
   renderVL();
 }
 
 async function vetDo(v){
   const s=S.vetSigs[S.vetI];if(!s)return;
-  if(v!=='skip'){
-    await api('/api/vetting/'+S.setup+'/decide',{method:'POST',body:JSON.stringify({
-      ticker:s.ticker,signal_date:s.date||s.signal_date,verdict:v,entry_date:s.entry_date||s.date||s.signal_date
-    })});
-    s.verdict=v;
+  if(v==='yes'&&!S.vetSelectedEntry){
+    S.vetSelectedEntry=s.signal_date;
   }
-  vetNav(1);
+  if(v!=='skip'){
+    const entryDate=v==='yes'?(S.vetSelectedEntry||s.signal_date):null;
+    await api('/api/vetting/'+S.setup+'/decide',{method:'POST',body:JSON.stringify({
+      ticker:s.ticker,signal_date:s.signal_date,verdict:v,entry_date:entryDate
+    })});
+    s._verdict=v;
+    if(v==='yes')S.vetSessYes++;
+    if(v==='no')S.vetSessNo++;
+    updateVetCounters();
+  }
+  if(S.vetFilter==='unvetted'){
+    applyVetFilter();
+    renderVL();
+    if(S.vetSigs.length){
+      selVet(Math.min(S.vetI,S.vetSigs.length-1));
+    }else{
+      document.getElementById('vetChart').innerHTML='<div class="cph"><div class="cphi">✓</div><div>All signals vetted!</div></div>';
+      clearVetInfo();
+    }
+  }else{
+    const next=Math.min(S.vetI+1,S.vetSigs.length-1);
+    renderVL();
+    selVet(next);
+  }
 }
+
 function vetNav(d){const n=S.vetI+d;if(n>=0&&n<S.vetSigs.length)selVet(n)}
 
-// ═══════ CHART ═══════
+// ═══════ CHART — SVG with click-to-set-entry + earnings ═══════
+function drawVetChart(el,ohlcv,sig){
+  const W=el.clientWidth||800,H=el.clientHeight||300;
+  const P={t:18,r:55,b:20,l:6},CW=W-P.l-P.r,CH=H-P.t-P.b,N=ohlcv.length;
+  const si=ohlcv.findIndex(b=>b.date===sig.signal_date);
+  const ei=sig.exit_date?ohlcv.findIndex(b=>b.date===sig.exit_date):-1;
+  const lo=Math.min(...ohlcv.map(b=>b.low)),hi=Math.max(...ohlcv.map(b=>b.high)),rng=hi-lo||1;
+  const x=i=>P.l+(i/(N-1||1))*CW,y=p=>P.t+(1-(p-lo)/rng)*CH,bw=Math.max(1,(CW/N)*.6);
+
+  const emaF=(c,p)=>{const k=2/(p+1);let v=null;return c.map(x=>{if(x==null)return null;v=v===null?x:x*k+v*(1-k);return v})};
+  const smaF=(c,p)=>c.map((_,i)=>i<p-1?null:c.slice(i-p+1,i+1).reduce((a,b)=>a+b,0)/p);
+  const cl=ohlcv.map(b=>b.close);
+  const lines=[[emaF(cl,8),'#00e87b',.5],[emaF(cl,21),'#ff8a00',.5],[smaF(cl,50),'#3b8aff',.4],[smaF(cl,200),'#9b5fff',.4]];
+  const mkP=s=>{let d='';s.forEach((v,i)=>{if(v==null)return;d+=(d===''?'M ':'L ')+x(i)+' '+y(v)+' '});return d};
+
+  let svg=`<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="cursor:crosshair">`;
+  svg+=`<rect width="${W}" height="${H}" fill="#08080a"/>`;
+  svg+=`<g class="earnings-markers"></g>`;
+
+  if(si>=0){
+    svg+=`<rect x="${x(si)-bw}" y="${P.t}" width="${bw*2}" height="${CH}" fill="rgba(212,255,0,.06)"/>`;
+    svg+=`<line x1="${x(si)}" y1="${P.t}" x2="${x(si)}" y2="${P.t+CH}" stroke="#d4ff00" stroke-width="1" stroke-dasharray="3,3" opacity=".5"/>`;
+    svg+=`<text x="${x(si)}" y="${P.t+CH-4}" fill="#d4ff00" font-size="7" font-family="JetBrains Mono" font-weight="700" text-anchor="middle">SIG</text>`;
+  }
+
+  if(ei>=0){
+    svg+=`<line x1="${x(ei)}" y1="${P.t}" x2="${x(ei)}" y2="${P.t+CH}" stroke="#3b8aff" stroke-width="1" stroke-dasharray="3,3" opacity=".4"/>`;
+    svg+=`<text x="${x(ei)}" y="${P.t+10}" fill="#3b8aff" font-size="7" font-family="JetBrains Mono" font-weight="700" text-anchor="middle">EXIT</text>`;
+  }
+
+  ohlcv.forEach((b,i)=>{
+    const px=x(i),up=b.close>=b.open,c=up?'#00e87b':'#ff3b3b';
+    svg+=`<line x1="${px}" y1="${y(b.high)}" x2="${px}" y2="${y(b.low)}" stroke="${c}" stroke-width=".7" opacity=".6"/>`;
+    svg+=`<rect x="${px-bw/2}" y="${Math.min(y(b.open),y(b.close))}" width="${bw}" height="${Math.max(1,Math.abs(y(b.open)-y(b.close)))}" fill="${c}" opacity=".8"/>`;
+  });
+
+  lines.forEach(([s,c,o])=>{
+    svg+=`<path d="${mkP(s)}" stroke="${c}" stroke-width="1" fill="none" opacity="${o}"/>`;
+  });
+
+  if(si>=0) svg+=`<circle cx="${x(si)}" cy="${y(ohlcv[si].close)}" r="4" fill="#d4ff00" opacity=".9"/>`;
+  if(ei>=0) svg+=`<circle cx="${x(ei)}" cy="${y(ohlcv[ei].close)}" r="3" fill="#3b8aff" opacity=".8"/>`;
+
+  [lo,(lo+hi)/2,hi].forEach(p=>{
+    svg+=`<text x="${P.l+CW+3}" y="${y(p)+3}" fill="#4e4e5a" font-size="8" font-family="JetBrains Mono">${p.toFixed(2)}</text>`;
+  });
+
+  svg+=`<text x="8" y="12" fill="#4e4e5a" font-size="7" font-family="JetBrains Mono">EMA8 EMA21 SMA50 SMA200</text>`;
+  svg+=`<text x="${W-P.r-8}" y="${P.t+40}" fill="rgba(255,255,255,.04)" font-size="36" font-family="JetBrains Mono" font-weight="700" text-anchor="end">${sig.ticker}</text>`;
+  svg+=`<g class="entry-marker"></g>`;
+
+  ohlcv.forEach((b,i)=>{
+    svg+=`<rect x="${x(i)-bw}" y="${P.t}" width="${bw*2}" height="${CH}" fill="transparent" data-idx="${i}" data-date="${b.date}" class="click-bar"/>`;
+  });
+
+  svg+=`</svg>`;
+  el.innerHTML=svg;
+
+  el.querySelectorAll('.click-bar').forEach(bar=>{
+    bar.addEventListener('click',function(){
+      const date=this.dataset.date;
+      const idx=parseInt(this.dataset.idx);
+      S.vetSelectedEntry=date;
+      txt('viEntry',date);
+      const markerG=el.querySelector('.entry-marker');
+      if(markerG){
+        markerG.innerHTML=`
+          <line x1="${x(idx)}" y1="${P.t}" x2="${x(idx)}" y2="${P.t+CH}" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="4,2" opacity=".7"/>
+          <text x="${x(idx)}" y="${P.t+CH+12}" fill="#3b82f6" font-size="7" font-family="JetBrains Mono" font-weight="700" text-anchor="middle">ENTRY</text>`;
+      }
+    });
+  });
+
+  if(S.vetEarnings.length){
+    const svgEl=el.querySelector('svg');
+    if(svgEl) addEarningsToChart(svgEl,S.vetEarnings);
+  }
+}
+
+function addEarningsToChart(svgEl,earningsDates){
+  const g=svgEl.querySelector('.earnings-markers');
+  if(!g)return;
+  const bars=svgEl.querySelectorAll('.click-bar');
+  const edSet=new Set(earningsDates);
+  let markup='';
+  bars.forEach(bar=>{
+    const date=bar.dataset.date;
+    if(edSet.has(date)){
+      const bx=parseFloat(bar.getAttribute('x'));
+      const bw=parseFloat(bar.getAttribute('width'));
+      const by=parseFloat(bar.getAttribute('y'));
+      const bh=parseFloat(bar.getAttribute('height'));
+      const cx=bx+bw/2;
+      markup+=`<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" fill="rgba(168,85,247,.08)"/>`;
+      markup+=`<text x="${cx}" y="${by+10}" fill="#a855f7" font-size="7" font-family="JetBrains Mono" font-weight="700" text-anchor="middle">E</text>`;
+    }
+  });
+  g.innerHTML=markup;
+}
+
+// ═══════ CHART (simple — for examples/pending) ═══════
 function drawC(el,ohlcv,sigDate,sig){
   const W=el.clientWidth||800,H=el.clientHeight||300;
   const P={t:18,r:55,b:20,l:6},CW=W-P.l-P.r,CH=H-P.t-P.b,N=ohlcv.length;
   const si=ohlcv.findIndex(b=>b.date===sigDate);
   const lo=Math.min(...ohlcv.map(b=>b.low)),hi=Math.max(...ohlcv.map(b=>b.high)),rng=hi-lo||1;
-  const x=i=>P.l+(i/(N-1))*CW,y=p=>P.t+(1-(p-lo)/rng)*CH,bw=Math.max(1,(CW/N)*.6);
-  const ema=(c,p)=>{const k=2/(p+1);let v=null;return c.map(x=>{if(x==null)return null;v=v===null?x:x*k+v*(1-k);return v})};
-  const sma=(c,p)=>c.map((_,i)=>i<p-1?null:c.slice(i-p+1,i+1).reduce((a,b)=>a+b,0)/p);
+  const x=i=>P.l+(i/(N-1||1))*CW,y=p=>P.t+(1-(p-lo)/rng)*CH,bw=Math.max(1,(CW/N)*.6);
+  const emaF=(c,p)=>{const k=2/(p+1);let v=null;return c.map(x=>{if(x==null)return null;v=v===null?x:x*k+v*(1-k);return v})};
+  const smaF=(c,p)=>c.map((_,i)=>i<p-1?null:c.slice(i-p+1,i+1).reduce((a,b)=>a+b,0)/p);
   const cl=ohlcv.map(b=>b.close);
-  const lines=[[ema(cl,8),'#00e87b',.5],[ema(cl,21),'#ff8a00',.5],[sma(cl,50),'#3b8aff',.4],[sma(cl,200),'#9b5fff',.4]];
+  const lines=[[emaF(cl,8),'#00e87b',.5],[emaF(cl,21),'#ff8a00',.5],[smaF(cl,50),'#3b8aff',.4],[smaF(cl,200),'#9b5fff',.4]];
   const mkP=s=>{let d='';s.forEach((v,i)=>{if(v==null)return;d+=(d===''?'M ':'L ')+x(i)+' '+y(v)+' '});return d};
   const cndl=ohlcv.map((b,i)=>{const px=x(i),up=b.close>=b.open,c=up?'#00e87b':'#ff3b3b';
     return`<line x1="${px}" y1="${y(b.high)}" x2="${px}" y2="${y(b.low)}" stroke="${c}" stroke-width=".7" opacity=".6"/><rect x="${px-bw/2}" y="${Math.min(y(b.open),y(b.close))}" width="${bw}" height="${Math.max(1,Math.abs(y(b.open)-y(b.close)))}" fill="${c}" opacity=".8"/>`}).join('');
