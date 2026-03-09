@@ -976,29 +976,142 @@ def save_results(setup_type, pruned_conditions, dropped_conditions, power_table,
     return latest_path
 
 
-def upload_to_railway(setup_type, filtered_signals, pruned_conditions,
-                       exit_cond, min_adr, n_raw, n_deduped, n_with_exit):
-    """Upload refined signals to Railway vetting UI."""
-    payload = {
-        "setup_type": setup_type,
-        "stage": "refined",
-        "timestamp": datetime.now().isoformat(),
-        "exit_condition": exit_cond,
-        "min_adr_threshold": min_adr,
-        "n_raw_signals": n_raw,
-        "n_deduped": n_deduped,
-        "n_with_exit": n_with_exit,
-        "n_filtered": len(filtered_signals),
-        "n_conditions": len(pruned_conditions),
-        "signals": filtered_signals,
-    }
-    url = f"{RAILWAY_URL}/api/setup-grinder/{setup_type}/upload-signals"
+def upload_to_railway(setup_type, deduped, with_exit, no_exit, examples):
+    """Upload FULL classified signal set to v2 cycle_signals table.
+
+    Finds the current refinement_grind cycle for this setup type and uploads
+    all deduped signals with proper classification per DATA_CONTRACT.md.
+    """
+    # Find current refinement_grind cycle
     try:
-        r = requests.post(url, json=payload, timeout=60)
+        r = requests.get(f"{RAILWAY_URL}/api/v2/cycles/{setup_type}", timeout=30)
         r.raise_for_status()
-        print(f"  Uploaded {len(filtered_signals)} signals to Railway")
+        cycles = r.json().get("cycles", [])
+        # Look for current refinement_grind cycle first, fall back to any current
+        current = [c for c in cycles if c.get("is_current") == 1]
+        if not current:
+            print(f"  ⚠ No current cycle found for {setup_type} — skipping v2 upload")
+            return
+        cycle_id = current[0]["cycle_id"]
     except Exception as e:
-        print(f"  WARNING: Railway upload failed: {e}")
+        print(f"  ⚠ Failed to find current cycle: {e}")
+        return
+
+    print(f"\n  ── V2 CYCLE SIGNALS UPLOAD ──")
+    print(f"  Cycle: {cycle_id}")
+
+    # Build example lookup: ticker -> set of bar indices (±5 proximity)
+    example_proximity = {}  # ticker -> set of bar_idx
+    for ex in examples:
+        ticker = ex.get("ticker")
+        entry_date = ex.get("entryDate", ex.get("entry_date"))
+        if not ticker or not entry_date:
+            continue
+        # Match examples to signal bars by scanning deduped for proximity
+        for sig in deduped:
+            if sig["ticker"] != ticker:
+                continue
+            # Signal date should be near entry_date (within ±7 calendar days)
+            try:
+                sig_dt = pd.to_datetime(sig["date"])
+                entry_dt = pd.to_datetime(entry_date)
+                delta = abs((entry_dt - sig_dt).days)
+                if delta <= 7:
+                    if ticker not in example_proximity:
+                        example_proximity[ticker] = set()
+                    example_proximity[ticker].add(sig["bar_idx"])
+            except Exception:
+                continue
+
+    # Build exit lookup: (ticker, bar_idx) -> exit record
+    exit_lookup = {}
+    for sig in with_exit:
+        exit_lookup[(sig["ticker"], sig["bar_idx"])] = sig
+
+    # ADR threshold for winner classification (sample median)
+    exit_adrs = [s["move_adr"] for s in with_exit if s.get("move_adr") is not None]
+    median_adr = sorted(exit_adrs)[len(exit_adrs) // 2] if exit_adrs else 5.0
+
+    # Build full signal list from deduped (all signals — winners + losers)
+    signals = []
+    for sig in deduped:
+        ticker = sig["ticker"]
+        bar_idx = sig["bar_idx"]
+
+        # Check if this is an example
+        is_example = 0
+        if ticker in example_proximity and bar_idx in example_proximity[ticker]:
+            is_example = 1
+
+        # Get exit data if available
+        exit_data = exit_lookup.get((ticker, bar_idx))
+
+        # Classify per DATA_CONTRACT priority:
+        # 1. Example match → AUTO_WIN / source=example
+        # 2. Exit triggered + move >= median ADR → AUTO_WIN / source=exit_filter
+        # 3. Exit triggered + move < median ADR → AUTO_LOSS / source=exit_filter
+        # 4. No exit triggered → AUTO_LOSS / source=exit_filter
+        if is_example:
+            classification = "AUTO_WIN"
+            classification_source = "example"
+        elif exit_data and exit_data.get("move_adr", 0) >= median_adr:
+            classification = "AUTO_WIN"
+            classification_source = "exit_filter"
+        elif exit_data:
+            classification = "AUTO_LOSS"
+            classification_source = "exit_filter"
+        else:
+            classification = "AUTO_LOSS"
+            classification_source = "exit_filter"
+
+        row = {
+            "ticker": ticker,
+            "signal_date": sig["date"],
+            "bar_idx": bar_idx,
+            "close": sig.get("close"),
+            "adr": exit_data.get("adr_at_signal") if exit_data else None,
+            "is_example": is_example,
+            "classification": classification,
+            "classification_source": classification_source,
+            "exit_triggered": 1 if exit_data else 0,
+            "exit_date": exit_data.get("exit_date") if exit_data else None,
+            "move_adr": exit_data.get("move_adr") if exit_data else None,
+            "mfe_adr": exit_data.get("mfe_adr") if exit_data else None,
+            "capture_eff": exit_data.get("capture_eff") if exit_data else None,
+        }
+        signals.append(row)
+
+    # Count classifications
+    n_win = sum(1 for s in signals if s["classification"] == "AUTO_WIN")
+    n_loss = sum(1 for s in signals if s["classification"] == "AUTO_LOSS")
+    n_ex = sum(1 for s in signals if s["is_example"])
+    n_exit = sum(1 for s in signals if s["exit_triggered"])
+
+    print(f"  Total signals: {len(signals)}")
+    print(f"  AUTO_WIN: {n_win} (examples: {n_ex}, exit_filter: {n_win - n_ex})")
+    print(f"  AUTO_LOSS: {n_loss}")
+    print(f"  Exit triggered: {n_exit}/{len(signals)}")
+    print(f"  Win rate: {n_win/len(signals)*100:.1f}%")
+    print(f"  Median ADR threshold: {median_adr:.1f}")
+
+    # Upload
+    try:
+        payload = {"signals": signals, "replace": True}
+        r = requests.post(f"{RAILWAY_URL}/api/v2/cycles/{cycle_id}/signals",
+                          json=payload, timeout=120)
+        r.raise_for_status()
+        print(f"  ✓ Uploaded {len(signals)} signals to v2 cycle {cycle_id}")
+
+        # Verify
+        r2 = requests.get(f"{RAILWAY_URL}/api/v2/cycles/{cycle_id}/signals", timeout=30)
+        r2.raise_for_status()
+        stored = r2.json().get("signals", [])
+        if len(stored) == len(signals):
+            print(f"  ✓ Verified: {len(stored)} signals in Railway")
+        else:
+            print(f"  ⚠ MISMATCH — uploaded {len(signals)}, Railway has {len(stored)}")
+    except Exception as e:
+        print(f"  ⚠ V2 cycle upload failed: {e}")
         print(f"  Signals saved locally — upload manually if needed.")
 
 
@@ -1110,8 +1223,7 @@ def run_refiner(setup_type, conditions_file=None, min_power=DEFAULT_MIN_POWER,
 
     # ── Upload ──
     upload_to_railway(
-        setup_type, filtered, pruned, exit_cond, min_adr,
-        n_raw, n_deduped, n_with_exit
+        setup_type, deduped, with_exit, no_exit, examples
     )
 
     print(f"\n  {'='*70}")
