@@ -59,8 +59,8 @@ method. What changes is what the search is optimizing against.
 
 ## The Pipeline
 
-Eight steps. Steps 1-6 are the vetting loop — repeat until convergence (no new
-examples found). Steps 7-8 run once after convergence.
+Nine steps. Steps 1-5 are the vetting loop — repeat until convergence (no new
+examples found). Steps 6-8 run once after convergence.
 
 **Nightly auto-refresh (4:30pm ET, fully automated):**
   OHLCV append → daily cache → 5yr cache → expr cache → matrix → earnings → market cache (266 instruments)
@@ -76,9 +76,10 @@ The Vetting Loop (repeat until convergence):
   Step 5: Vet               — review winner pile (source toggle: step 3 or step 4)
                                YES → AI review → approve → examples → loop back to step 1
 
-After Convergence (run once):
-  Step 6: Regime Model      — winner/loser ratio vs market conditions (266 instruments)
-  Step 7: Health Check      — cycle quality, EV, promote / revert / live-ready
+After Convergence (run once, in order):
+  Step 6: Proximity Grind   — trim leftward/early signal bars from lose pile
+  Step 7: Regime Model      — winner/loser ratio vs market conditions (266 instruments)
+  Step 8: Health Check      — cycle quality, EV, promote / revert / live-ready
 
 Live:
   Nightly scan + regime score → unified watchlist
@@ -298,7 +299,58 @@ addition and speed improvements.
 
 ---
 
-## Layer 6: Regime Model
+## Layer 6: Proximity Grind
+
+**What it solves:** Trims false/early signal bars from the lose pile without losing
+any real triggers. Every loser removed is pure EV gain — win rate goes up, profit
+factor goes up, regime model gets cleaner input.
+
+**When it runs:** Only after convergence. Pre-convergence, undiscovered winners may
+still be hiding in the losing pile — trimming losers at that stage risks killing future
+examples before they're ever seen. Post-convergence, the vetting loop has surfaced
+everything. Whatever's left in the losing pile is genuinely not a setup. Safe to trim.
+
+**Win pile (must ALL pass — hard constraint):**
+- All example signal bars (the signal bar closest to each example's entry date, ±5 days)
+- All winner signals from the refinement grind output (exit triggered + move ≥ ADR threshold)
+
+**Lose pile (try to trim):**
+- Leftward duplicate signal bars on examples: when an example has multiple signal bars
+  firing before entry, the rightmost (closest to entry) is in the win pile. All others
+  to the left are in the lose pile — they fired early, before the setup completed.
+- All loser signals from the refinement grind output (no exit triggered)
+
+**Hard constraints:**
+- 100% of win pile signals must pass. No exceptions.
+- 100% of example signal bars (rightmost per example) must pass. No exceptions.
+- Uses the same pyramid grinder engine with the same expr cache path.
+
+**What it finds:** Conditions visible on the signal bar that distinguish "setup
+completing" from "setup in progress." The bar right before entry has structural
+differences — momentum exhaustion, volume confirmation, resistance proximity — vs
+earlier duplicate bars where conditions happened to fire early. This isn't a time
+machine; it's detecting completion signatures.
+
+**Method:**
+- Build win pile and lose pile from current cycle's classified signal set
+- For each example, find all signal bars within ±7 calendar days of entry date
+- Rightmost signal bar → win pile. All leftward duplicates → lose pile.
+- Run pyramid grinder with win pile as examples, lose pile as universe to filter
+- Append resulting conditions to the existing condition set (signal + refinement + proximity)
+- Re-scan to produce final trimmed signal set
+
+**Math (from DTSS current state):**
+With 41% WR and 5.48/1.0 ADR winner/loser, trimming 5 losers without touching winners
+moves EV from ~1.66 to ~1.98 (realistic loser cap). Profit factor goes from 3.81 to 4.67.
+
+**Output:**
+- Additional condition set (proximity conditions only)
+- Trimmed signal set (winners unchanged, losers reduced)
+- Before/after metrics: signal count, win rate, EV delta
+
+---
+
+## Layer 7: Regime Model
 
 **What it solves:** Given tonight's market conditions, what is the expected win rate
 for this setup type? Weights signals up or down based on how favorable the current
@@ -363,7 +415,7 @@ deteriorate before the entry actually triggers.
 
 ---
 
-## Layer 7: Health Check
+## Layer 8: Health Check
 
 **What it solves:** Tells you whether the new cycle is better or worse than the
 previous one. Drives the revert decision. Drives the live-ready determination.
@@ -501,6 +553,7 @@ scan             → signal_filter.py --setup {setup}  (scan + exit filter in on
 refinement_grind → pyramid_grinder.py --setup {setup} --blackout --beam 10000 --depth 100 --peak-target 3
                    then setup_refiner.py --setup {setup}
 vet              → is_manual=True, no agent command (UI-only)
+proximity_grind  → proximity_grinder.py --setup {setup}
 regime           → market_grinder.py --setup {setup}
 health           → cycle_health.py --setup {setup}
 ```
@@ -558,8 +611,9 @@ Build in this order so each piece is useful immediately when complete:
 5. **Health check script** — measure cycle quality after every grind
 6. **UI: health metrics + diff + revert + regrind indicator** — control surface for the loop
 7. **AI review queue** — two-stage vetting gate, server endpoint + UI
-8. **Market regime model** — runs on existing classified signal set
-9. **UI: regime display + unified nightly watchlist** — the live product
+8. **Proximity grind** — trim losers post-convergence, `scripts/proximity_grinder.py`
+9. **Market regime model** — runs on proximity-trimmed classified signal set
+10. **UI: regime display + unified nightly watchlist** — the live product
 
 At step 5, the loop is runnable end-to-end with DTSS. Each additional setup type plugs
 into the same infrastructure. Steps 6-9 build toward the unified multi-setup watchlist.

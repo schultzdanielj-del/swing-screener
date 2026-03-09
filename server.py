@@ -377,8 +377,9 @@ PIPELINE_STEPS = [
     {"id":"scan",            "name":"3. Scan",              "category":"pipeline", "prerequisites":[], "description":"Apply conditions to 5yr history → deduped signals → exit filter → classified signal set (winners/losers)."},
     {"id":"refinement_grind","name":"4. Refinement Grind",  "category":"pipeline", "prerequisites":[], "description":"Grind (examples + exit-triggered) vs no-exit with blackout. Eliminates losers, protects winners. Manual gate."},
     {"id":"vet",             "name":"5. Vet",               "category":"pipeline", "prerequisites":[], "description":"Review winner pile. YES → AI review → approve → examples. Source toggle: step 3 or step 4.", "is_manual":True},
-    {"id":"regime",          "name":"6. Regime Model",      "category":"pipeline", "prerequisites":[], "description":"Winner/loser ratio vs market conditions (266 instruments). Run after convergence."},
-    {"id":"health",          "name":"7. Health Check",      "category":"pipeline", "prerequisites":[], "description":"Cycle quality, EV, promote / revert / live-ready determination."},
+    {"id":"proximity_grind", "name":"6. Proximity Grind",   "category":"pipeline", "prerequisites":[], "description":"Post-convergence. Trim losers using sacrificial (leftward dedup) signals as analytical fuel. Win pile untouched."},
+    {"id":"regime",          "name":"7. Regime Model",      "category":"pipeline", "prerequisites":[], "description":"Winner/loser ratio vs market conditions (266 instruments). Runs on proximity-trimmed signal set."},
+    {"id":"health",          "name":"8. Health Check",      "category":"pipeline", "prerequisites":[], "description":"Cycle quality, EV, promote / revert / live-ready determination."},
 ]
 
 

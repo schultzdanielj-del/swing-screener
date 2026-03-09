@@ -104,6 +104,9 @@ PIPELINE_STEP_SCRIPTS = {
         ["python", "scripts/setup_refiner.py", "--setup", "{setup}"],
     ],
     # vet is is_manual=True on the server — no agent command, UI-only
+    "proximity_grind": [
+        ["python", "scripts/proximity_grinder.py", "--setup", "{setup}"],
+    ],
     "regime": [
         ["python", "scripts/market_grinder.py", "--setup", "{setup}"],
     ],

@@ -13,9 +13,10 @@ See `PIPELINE_V2.md` for full spec.
 4. Refinement Grind — (examples + exit-triggered) vs no-exit, blackout. Manual gate.
 5. Vet — review winner pile (source toggle: step 3 or step 4). YES → AI review → approve → examples → loop.
 
-**After Convergence (run once):**
-6. Regime Model — winner/loser ratio vs 266 market instruments
-7. Health Check — cycle quality, EV, promote/revert
+**After Convergence (run once, in order):**
+6. Proximity Grind — trim leftward/early signal bars from lose pile. Only safe post-convergence.
+7. Regime Model — winner/loser ratio vs 266 market instruments (runs on proximity-trimmed set)
+8. Health Check — cycle quality, EV, promote/revert
 
 **Convergence:** Full vetting pass produces no new examples.
 
@@ -47,9 +48,11 @@ See `PIPELINE_V2.md` for full spec.
 - Health check: PROMOTE, EV 1.479, 41% win rate
 
 **What's next for DTSS:**
-1. Proximity grind (new step — see below)
-2. Cycle health redesign (see below)
-3. Nightly scan + watchlist → go live
+1. Build proximity grinder (`scripts/proximity_grinder.py`)
+2. Run proximity grind on current DTSS cycle
+3. Re-run regime model on proximity-trimmed signal set
+4. Cycle health redesign (see below)
+5. Nightly scan + watchlist → go live
 
 ### Proximity Grind (new pipeline step, post-refinement)
 
