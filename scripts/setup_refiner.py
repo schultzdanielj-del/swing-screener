@@ -78,9 +78,11 @@ def load_5yr_cache():
 def load_conditions(setup_type, conditions_file=None):
     """Load conditions from blackout pyramid result or explicit file.
 
-    Auto-discovery order:
-      1. Files matching *_blackout_* in local_runner/cache/ and data/
-      2. Any pyramid result file (latest by mtime)
+    Auto-discovery: finds pyramid_{setup}_*_blackout_*.json files in
+    local_runner/cache/ and data/, picks newest by mtime.
+
+    V1 "latest pointer" files (pyramid_results_{setup}_blackout.json) are
+    ignored — they are stale artifacts that can shadow newer timestamped files.
 
     Returns (conditions_list, source_path).
     """
@@ -98,23 +100,15 @@ def load_conditions(setup_type, conditions_file=None):
         os.path.join(REPO_ROOT, "data"),
     ]
 
-    # Resolution order (strict — never falls through to base pipeline results):
-    # 1. pyramid_results_{setup}_blackout.json  — latest pointer from --blackout run
-    # 2. pyramid_{setup}_*_blackout_*.json      — any timestamped blackout archive
-    # Refuses to load base pipeline results to prevent mixing stages.
-    blackout_latest = os.path.join(
-        os.path.join(REPO_ROOT, "local_runner", "cache"),
-        f"pyramid_results_{setup_type}_blackout.json"
-    )
+    # Find timestamped blackout archive files only — newest by mtime wins.
+    # Never loads V1 "latest pointer" files (pyramid_results_{setup}_blackout.json)
+    # which are stale and can shadow newer runs.
     blackout_archives = []
     for d in search_dirs:
         for p in glob.glob(os.path.join(d, f"pyramid_{setup_type}_*_blackout_*.json")):
             blackout_archives.append(p)
 
-    if os.path.exists(blackout_latest):
-        best = blackout_latest
-        print(f"  Found blackout latest: {os.path.basename(best)}")
-    elif blackout_archives:
+    if blackout_archives:
         blackout_archives.sort(key=os.path.getmtime, reverse=True)
         best = blackout_archives[0]
         print(f"  Found blackout archive: {os.path.basename(best)}")

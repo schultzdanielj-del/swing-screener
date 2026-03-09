@@ -95,13 +95,11 @@ def load_pyramid_conditions(setup_type, conditions_file=None):
         os.path.join(REPO_ROOT, "data"),
     ]
 
-    # Collect all matching files
+    # Collect timestamped archive files only.
+    # V1 "latest pointer" files (pyramid_results_{setup}.json) are ignored —
+    # they are stale artifacts that can shadow newer timestamped files.
     candidates = []
     for d in search_dirs:
-        # Exact name match
-        exact = os.path.join(d, f"pyramid_results_{setup_type}.json")
-        if os.path.exists(exact):
-            candidates.append(exact)
         # Timestamped files (e.g. pyramid_dtss_mp_sig264_pk3_20260228_163923.json)
         pattern = os.path.join(d, f"pyramid_{setup_type}_*.json")
         candidates.extend(glob.glob(pattern))
