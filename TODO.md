@@ -1,4 +1,4 @@
-# TODO — Swing Screener (2026-03-08)
+# TODO — Swing Screener (2026-03-09)
 
 ## V2 Pipeline — The Correct Order
 
@@ -8,69 +8,61 @@ See `PIPELINE_V2.md` for full spec.
 
 **The Vetting Loop (repeat until convergence):**
 1. Signal Grind — examples vs universe → conditions
-2. Exit Grind — optimal exit condition from example entry bar highs
-3. Scan — apply conditions to 5yr → deduped signals + exit filter → classified signal set
-4. Refinement Grind — (examples + exit-triggered) vs no-exit, blackout. Manual gate.
-5. Vet — review winner pile (source toggle: step 3 or step 4). YES → AI review → approve → examples → loop.
+2. Exit Grind — optimal exit condition from example signal bar close forward
+3. Scan — apply conditions to 5yr → deduped signals + exit filter → classified signal set (uploads to v2 cycle_signals)
+4. Refinement Grind — blackout pyramid_grinder.py then setup_refiner.py. Manual gate.
+5. Vet — review winner pile. YES → AI review → approve → examples → loop.
 
 **After Convergence (run once, in order):**
 6. Proximity Grind — trim leftward/early signal bars from lose pile. Only safe post-convergence.
-7. Regime Model — winner/loser ratio vs 266 market instruments (runs on proximity-trimmed set)
-8. Health Check — cycle quality, EV, promote/revert
+7. Trade Exit Grind — exit_grinder.py from entry bar high (real trade management exit). Runs on final signal set.
+8. Regime Model — winner/loser ratio vs 266 market instruments (runs on proximity-trimmed set)
+9. Health Check — cycle quality, EV, promote/revert
 
 **Convergence:** Full vetting pass produces no new examples.
 
-**Refinement gate:** Discretionary — skip step 5 in early cycles with few examples. Enable once example library is large enough for stable refinement conditions. Threshold TBD after 2-3 setup types built.
+**Refinement gate:** Discretionary — skip in early cycles with few examples. Enable once example library is large enough for stable refinement conditions.
 
 ---
 
 ## Current State — DTSS
 
-**72 examples. NOT converged.** Previous convergence claim was based on broken refiner that only showed 42 signals to vet (partial scan). Correct full-universe scan produces 588 deduped signals (386 winners, 202 losers). The 386 winners need vetting before convergence can be claimed.
+### Pipeline Audit In Progress (2026-03-09)
 
-**Correct numbers (2026-03-09, full universe scan with 87 refined conditions):**
-- 790 raw → 588 deduped → 386 winners, 202 losers
-- 65.6% win rate (pre-proximity), 76.3% (post-proximity, 31 conditions trimmed 82 losers)
-- Exit condition: `slope_xavgc21_off7_adr14 below -1.118574`
-- Winners: median 4.71 ADR
-- Regime model, health check, EV numbers from old 1111-signal cycle are INVALID — computed on partial scan
+Running every pipeline step from scratch, verifying data integrity at each handoff.
 
-**Previous numbers (INVALID — based on broken partial scan):**
-- ~~41% win rate, EV 1.479, 1111 signals, 456 wins~~ — wrong signal set
-- ~~Refinement grind 132 deduped → 42 final~~ — refiner was reading grinder's internal signal list, not scanning full universe
+**Completed steps:**
 
-**What's done:**
-- Grind #5: 71 examples, 94 conditions (signal grind)
-- Grind #5b: 87 conditions after blackout refinement + pruning
-- Setup refiner fixed: now does full universe scan + saves all_deduped_classified + sacrificial
-- Proximity grinder built and tested: 31 conditions, 82 losers trimmed, 386 winners untouched
-- V2 server deployed on Railway (v2 branch)
+| Step | Status | Key Output | Railway Verified |
+|------|--------|------------|-----------------|
+| 1. Signal Grind | ✅ | 89 conditions, 68 examples pass | Cycle `dtss_signal_grind_20260309_192357`, 89 conditions, is_current=1 |
+| 2. Exit Grind | ✅ | `slope_xavgc21_off7_adr14 <= -1.128826` (same as prev — stable) | Exit condition uploaded + verified |
+| 3. Scan | ✅ | 1,031 deduped signals (436 WIN / 595 LOSS, 42.3% WR) | 1,031 signals in v2 cycle_signals, verified |
+| 4. Refinement Grind | 🔲 NEXT | — | — |
+| 5. Proximity Grind | 🔲 | — | — |
+| 6. Regime Model | 🔲 | — | — |
+| 7. Health Check | 🔲 | — | — |
 
-**What's next for DTSS:**
-1. Vet the 386 winner signals from the correct full-universe scan
-2. Add new examples → re-grind if needed (back to step 1)
-3. Loop until real convergence (full vet pass adds near-zero examples)
-4. Re-run proximity grind on converged signal set
-5. Re-run regime model on proximity-trimmed set
-6. Health check → go live
+**Fixes made during audit:**
+- `signal_exit_grinder.py`: Added Railway upload (`POST /api/v2/exit_conditions`) with direction mapping and verification
+- `signal_filter.py`: Added v2 cycle_signals upload (full classified set with all 1,031 signals including no-exit losers)
+- `signal_filter.py`: Removed all v1 vetting endpoint uploads (`/api/vetting/upload-signals`, `/api/vetting/upload-exit`)
 
-### Proximity Grind — ✅ Built (2026-03-09)
+**Key numbers this cycle:**
+- 71 examples in Railway (68 usable — BRK-B, SMMT, VUZI excluded from cache)
+- 89 conditions (D1:24, 1wk:11, 1mo:22, 6mo:13, 1yr:8, 5yr:11)
+- Exit: `slope_xavgc21_off7_adr14 <= -1.128826`, median capture eff 0.64, floor 1.9 ADR, median 5.8 ADR
+- Scan: 1,395 raw → 1,031 deduped → 844 exit triggered → 436 AUTO_WIN / 595 AUTO_LOSS
+- Median ADR threshold for winner classification: 4.2
 
-`scripts/proximity_grinder.py` — reads from setup_refiner output, no re-classification.
+**Observations:**
+- 82 signals matched examples (68 examples × some with multiple signal bars in ±5 bar proximity)
+- 187 signals had no exit trigger within 120 bars → AUTO_LOSS
+- v1 vetting endpoints still exist in server.py but signal_filter no longer writes to them
 
-**First run result (on unvetted signal set):** 31 conditions, 82 losers trimmed (202→120), 386 winners untouched. Win rate 65.6%→76.3%. Needs re-run after vetting + convergence.
+### Previous cycle for comparison
 
-### Cycle Health Redesign
-
-**Current health check is wrong.** 100% example pass is a build rule not a health metric. Median loser ADR threshold is a model artifact (real losses are capped much lower by stop management). EV is a setup property, not a cycle metric.
-
-**New health check — four metrics:**
-1. **Convergence rate** — examples added last vetting pass as % of total examples. Near zero = scan is catching everything. Primary "reliable catch" metric.
-2. **Signal density** — avg/day and peak/day in practical range for human stalking during entry window.
-3. **Signal stability** — % overlap with previous cycle's signal set. High = robust conditions, low = regression.
-4. **Regime lift** — D1 vs D10 win rate spread. Strong lift = signals mean something. Flat = noise.
-
-**Live-ready = human judgment informed by these four numbers, not a mechanical threshold gate.**
+Cycle `dtss_20260306_170830`: 94 conditions, 68 examples at grind, 1,111 signals (456 win / 655 loss). Now is_current=0.
 
 ---
 
@@ -78,49 +70,22 @@ See `PIPELINE_V2.md` for full spec.
 
 ### ✅ Done
 - V2 server.py on v2 branch — all endpoints
-- V2 UI: Pipeline (8 steps), Examples (pending queue + validated), Vetting (source toggle step 4/5, keyboard shortcuts), Watchlist (placeholder)
+- V2 UI: Pipeline (8 steps), Examples, Vetting, Watchlist (placeholder)
 - Pipeline agent wiring — run/stop/logs from UI
-- AI vetting flow: YES → pending → review_samples.py (Claude CLI) → approve/reject in Examples tab
-- /api/chart/{setup}/{ticker}/{date} — chart PNG for AI review (universe_ohlcv first, yfinance fallback)
+- AI vetting flow: YES → pending → review_samples.py → approve/reject
 - Nightly refresh includes market cache append (266 instruments)
-- Market grinder complete + uploaded
-- Cycle health + versioning system
-- DB tables: cycles, cycle_signals, cycle_conditions, health_metrics, regime models
+- Cycle versioning + health system
+- DB tables: cycles, cycle_signals, cycle_conditions, exit_conditions, health_metrics, regime models
+- Grind storage V2 with transactional upload (GRIND_STORAGE.md)
+- signal_exit_grinder.py uploads to Railway
+- signal_filter.py uploads full classified signal set to v2 cycle_signals
 
-### ✅ Agent step mapping wired (2026-03-07)
-- `pyramid_grinder.py` → step signal_grind (beam=10000 depth=100 peak=3)
-- `exit_grinder.py` → step exit_grind
-- `signal_filter.py` → step scan (scan + exit filter in one pass; exit_filter step removed)
-- `pyramid_grinder.py --blackout` + `setup_refiner.py` → step refinement_grind
-- `market_grinder.py` → step regime
-- `cycle_health.py` → step health
-- vet → is_manual, no agent command (UI-only)
-
-### ✅ Grind storage V2 (2026-03-08) — BUG-003 fixed
-- `grind_uploader.py` — transactional upload built into pyramid_grinder.py
-- Every grind writes timestamped local JSON + uploads to Railway in same function call
-- 5-point defense: retry+pending queue, schema validation, partial upload protection, read-back verification, SHA-256 hash
-- `PATCH /api/v2/cycles/{id}` endpoint + step_type/grind_params/source_hash columns
-- `GET /api/v2/cycles/{setup}?step_type=` filter param
-- Pending uploads retried on agent startup and before each new upload
-- V1 cleanup: deleted grind_storage.py, migrate_grinds.py, latest pointer writes, compat file writes
-- Reference doc: `GRIND_STORAGE.md`
-- 16 tests covering all failure modes (tests/test_grind_uploader.py)
-
-### 🔲 Not yet built
-- **Pipeline Integrity Audit** — CRITICAL. Manual code review of the 6 critical path scripts. The code can produce plausible wrong numbers without erroring — the only defense is human eyes on the data flow. For each script: what does it read, what does it produce, does the scope match what PIPELINE_V2.md says it should be doing. Scripts to review: `pyramid_grinder.py`, `setup_refiner.py`, `signal_filter.py`, `profit_grinder.py`, `market_grinder.py`, `cycle_health.py`. Also add inline assertions at each junction: scan steps assert ticker count matches tradable universe, downstream steps assert signal counts match upstream output, classification labels are never re-derived.
-- **Setup Dashboard** — per-setup "home" screen showing overall status at a glance:
-  - Convergence status, example count, final condition count
-  - Win rate, EV, median winner/loser ADR
-  - Full condition list (collapsible)
-  - Regime model summary: top predictive features, current regime score, win rate by decile
-  - Grind history table
-- **Regime Visual on SPY chart** — SPY chart with all 50 regime features clustered visually:
-  - Overlay winner/loser signal dates on SPY
-  - Show regime indicator values at each signal date
-  - Cluster/heatmap view of which regime features are active
-- Watchlist page (needs nightly scan output)
-- Nightly live scan (apply current conditions to today's bars)
+### 🔲 Not yet built / needs work
+- **Pipeline audit steps 4-7** — refinement, proximity, regime, health
+- **setup_refiner.py** — still uploads to v1 vetting endpoint, needs v2 cycle upload (same fix as signal_filter)
+- **Trade exit grind step** — exit_grinder.py (from entry bar high) needs to be wired into pipeline between proximity and regime
+- **v1 endpoint cleanup** — old vetting endpoints in server.py can be removed once UI is updated
+- Setup Dashboard, Regime Visual, Watchlist page, Nightly live scan
 
 ---
 
@@ -133,19 +98,18 @@ See `PIPELINE_V2.md` for full spec.
 | 3 | ~2026-03-02 | 48 | ~76 | ~200 | After second vet |
 | 4 | 2026-03-03 | 62 | 86 | 168 | After AI vetting |
 | 4b | 2026-03-05 | 62 | 87 | 164 | Blackout re-grind |
-| 5 | 2026-03-06 | 71 | 94 | 281 | Current |
-| 5b | 2026-03-08 | 68 | 87 | 588 deduped (386 win, 202 lose) | Blackout refinement, full universe scan |
-| 5b-prox | 2026-03-09 | — | 87+31=118 | 506 deduped (386 win, 120 lose) | Proximity grind on unvetted set |
+| 5 | 2026-03-06 | 71 | 94 | 281 | Old cycle |
+| 6 | 2026-03-09 | 68 | 89 | 1,031 deduped (436 W / 595 L) | Pipeline audit — fresh from scratch |
 
 ---
 
 ## Data
 
 - Expression library: 15,805 expressions
-- Expression cache: 4,119 tickers × 16,051 expr (64.6 GB) — current as of 2026-03-06
+- Expression cache: 4,119 tickers × 16,051 expr (64.6 GB)
 - Market cache: 245/266 instruments × 15,805 expr (3.96 GB)
 - Railway DB: 11M+ OHLCV rows, ~4,167 tickers
-- 72 DTSS examples (69 in cache, 3 excluded: BRK-B, SMMT, VUZI)
+- 71 DTSS examples (68 in cache, 3 excluded: BRK-B, SMMT, VUZI)
 
 ---
 
