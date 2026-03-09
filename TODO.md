@@ -120,17 +120,7 @@ See `PIPELINE_V2.md` for full spec.
 - 16 tests covering all failure modes (tests/test_grind_uploader.py)
 
 ### 🔲 Not yet built
-- **Pipeline Integrity Audit** — CRITICAL. One bad handoff renders everything downstream unusable. Systematic check of every data handoff between pipeline steps:
-  - Every step that produces data: verify the output contains ALL fields downstream steps expect (not just the fields that step uses itself)
-  - Every step that reads data: verify it reads from the previous step's output, never re-computes or re-classifies
-  - Signal counts: raw → deduped → classified → filtered must be traceable end-to-end with zero unexplained deltas
-  - Classification congruence: winner/loser labels must be identical everywhere they appear (Railway, local JSON, regime model input, health check input). No step re-derives classifications.
-  - Expression values: every grinder that pulls expr cache values must use identical (ticker, bar_idx) → value resolution. No floating point divergence from different code paths.
-  - Exit filter: one code path, one set of parameters. No script has its own exit logic.
-  - Example matching: ±7 day proximity matching must work identically in every script that matches examples to signals.
-  - ADR threshold: derived once, passed through. No script re-derives it.
-  - File format: every JSON output must be loadable by every downstream consumer without missing keys, type mismatches, or silent defaults.
-  - Build as a runnable script (`scripts/pipeline_audit.py`) that loads all artifacts and checks every contract programmatically. Red/green output per check.
+- **Pipeline Integrity Audit** — CRITICAL. Manual code review of the 6 critical path scripts. The code can produce plausible wrong numbers without erroring — the only defense is human eyes on the data flow. For each script: what does it read, what does it produce, does the scope match what PIPELINE_V2.md says it should be doing. Scripts to review: `pyramid_grinder.py`, `setup_refiner.py`, `signal_filter.py`, `profit_grinder.py`, `market_grinder.py`, `cycle_health.py`. Also add inline assertions at each junction: scan steps assert ticker count matches tradable universe, downstream steps assert signal counts match upstream output, classification labels are never re-derived.
 - **Setup Dashboard** — per-setup "home" screen showing overall status at a glance:
   - Convergence status, example count, final condition count
   - Win rate, EV, median winner/loser ADR
