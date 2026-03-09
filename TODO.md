@@ -15,9 +15,8 @@ See `PIPELINE_V2.md` for full spec.
 
 **After Convergence (run once, in order):**
 6. Proximity Grind — trim leftward/early signal bars from lose pile. Only safe post-convergence.
-7. Trade Exit Grind — exit_grinder.py from entry bar high (real trade management exit). Runs on final signal set.
-8. Regime Model — winner/loser ratio vs 266 market instruments (runs on proximity-trimmed set)
-9. Health Check — cycle quality, EV, promote/revert
+7. Regime Model — winner/loser ratio vs 266 market instruments (runs on proximity-trimmed set)
+8. Health Check — cycle quality, EV, promote/revert
 
 **Convergence:** Full vetting pass produces no new examples.
 
@@ -81,10 +80,10 @@ Cycle `dtss_20260306_170830`: 94 conditions, 68 examples at grind, 1,111 signals
 - signal_filter.py uploads full classified signal set to v2 cycle_signals
 
 ### 🔲 Not yet built / needs work
-- **Pipeline audit steps 4-7** — refinement, proximity, regime, health
+- **Pipeline audit steps 4-8** — refinement, proximity, regime, health
 - **setup_refiner.py** — still uploads to v1 vetting endpoint, needs v2 cycle upload (same fix as signal_filter)
-- **Trade exit grind step** — exit_grinder.py (from entry bar high) needs to be wired into pipeline between proximity and regime
 - **v1 endpoint cleanup** — old vetting endpoints in server.py can be removed once UI is updated
+- **Trade exit grind** — profit_grinder.py (expr cache, from entry bar high) exists but not in current pipeline spec. Future addition.
 - Setup Dashboard, Regime Visual, Watchlist page, Nightly live scan
 
 ---
