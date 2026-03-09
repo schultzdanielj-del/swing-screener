@@ -1062,57 +1062,19 @@ def run_refiner(setup_type, conditions_file=None, min_power=DEFAULT_MIN_POWER,
         )
 
     # ── Scan signals ──
-    # If conditions were pruned, we must re-scan the universe with the pruned set
-    # because fewer conditions means MORE signals can pass (superset of original).
-    # If no pruning, load from pyramid JSON directly.
+    # Always scan the full universe with the condition set.
+    # Never load from pyramid tier_results — those are per-tier windows,
+    # not full 5yr scans. Using them gives partial signal sets.
     print(f"\n  {'─'*60}")
     print(f"  PHASE 2: SIGNAL SCAN")
     print(f"  {'─'*60}")
 
     if dropped:
-        print(f"  {len(dropped)} conditions pruned → re-scanning with {len(pruned)} conditions")
-        raw_signals = scan_signals(cache, pruned, expr_cache, workers)
-        n_raw = len(raw_signals)
+        print(f"  {len(dropped)} conditions pruned → scanning with {len(pruned)} conditions")
     else:
-        # No pruning — use pyramid signals directly
-        with open(source_path) as f:
-            pyramid_data = json.load(f)
-        tier_results = pyramid_data.get("tier_results", {})
-        raw_signal_list = []
-        for key in sorted(tier_results.keys(), reverse=True):
-            tr = tier_results[key]
-            fs = tr.get("final_signals", [])
-            if fs:
-                raw_signal_list = fs
-                print(f"  Using {len(fs)} signals from tier '{key}'")
-                break
-
-        if not raw_signal_list:
-            print(f"  WARNING: No final_signals in pyramid result. Falling back to scan.")
-            raw_signals = scan_signals(cache, pruned, expr_cache, workers)
-            n_raw = len(raw_signals)
-        else:
-            raw_signals = []
-            for sig in raw_signal_list:
-                ticker = sig["ticker"]
-                date_str = sig["date"]
-                df = cache.get(ticker)
-                if df is None:
-                    continue
-                if not pd.api.types.is_datetime64_any_dtype(df["date"]):
-                    df["date"] = pd.to_datetime(df["date"])
-                date_matches = df.index[df["date"].dt.strftime("%Y-%m-%d") == date_str].tolist()
-                if not date_matches:
-                    continue
-                bar_idx = date_matches[0]
-                raw_signals.append({
-                    "ticker": ticker,
-                    "date": date_str,
-                    "bar_idx": int(bar_idx),
-                    "close": float(df["close"].values[bar_idx]),
-                })
-            n_raw = len(raw_signals)
-            print(f"  Resolved {n_raw} signals with bar indices")
+        print(f"  No pruning → scanning with all {len(pruned)} conditions")
+    raw_signals = scan_signals(cache, pruned, expr_cache, workers)
+    n_raw = len(raw_signals)
 
     # ── Dedup ──
     deduped, sacrificial = deduplicate_signals(raw_signals)
