@@ -41,11 +41,45 @@ See `PIPELINE_V2.md` for full spec.
 - V2 server deployed on Railway (v2 branch)
 - V2 UI: 4 tabs (Pipeline, Examples, Vetting, Watchlist), 8-step sidebar
 
+**What's done (2026-03-08):**
+- Refinement grind (blackout): 89 conditions, 68/68 pass, 132 deduped → 42 final signals
+- Regime model re-run: 50 features, D1=8% → D9=75% win rate lift
+- Health check: PROMOTE, EV 1.479, 41% win rate
+
 **What's next for DTSS:**
-1. Refinement grind — (examples + exit-triggered) vs no-exit, blackout → cut losers
-2. Re-run regime model on refined signal set
-3. Health check → promote → live
-4. Nightly scan + watchlist
+1. Proximity grind (new step — see below)
+2. Cycle health redesign (see below)
+3. Nightly scan + watchlist → go live
+
+### Proximity Grind (new pipeline step, post-refinement)
+
+**Purpose:** Trim false/early signal bars without losing any real triggers. Massive win rate impact — every loser removed is pure EV gain.
+
+**Win pile (keep all):**
+- Deduped winner signals from refinement grind output
+- For each example: the signal bar closest to entry date (within ±5 days)
+
+**Lose pile (try to trim):**
+- Signal bars that are duplicates to the LEFT of the closest-to-entry signal bar on examples
+- Loser signals from refinement grind output (no exit triggered)
+
+**Hard constraint:** Cannot trim ANY rightmost win pile signals OR the signal bar closest to entry on any example.
+
+**What it finds:** Conditions visible on the signal bar that distinguish "setup completing" from "setup in progress." Not a time machine — the bar right before entry has structural differences (momentum exhaustion, volume confirmation, resistance proximity) vs earlier duplicate bars where conditions happened to fire early.
+
+**Math:** With 41% WR and 5.48/1.0 ADR winner/loser, trimming 5 losers without touching winners moves EV from ~1.66 to ~1.98 (realistic loser cap). Profit factor goes from 3.81 to 4.67.
+
+### Cycle Health Redesign
+
+**Current health check is wrong.** 100% example pass is a build rule not a health metric. Median loser ADR threshold is a model artifact (real losses are capped much lower by stop management). EV is a setup property, not a cycle metric.
+
+**New health check — four metrics:**
+1. **Convergence rate** — examples added last vetting pass as % of total examples. Near zero = scan is catching everything. Primary "reliable catch" metric.
+2. **Signal density** — avg/day and peak/day in practical range for human stalking during entry window.
+3. **Signal stability** — % overlap with previous cycle's signal set. High = robust conditions, low = regression.
+4. **Regime lift** — D1 vs D10 win rate spread. Strong lift = signals mean something. Flat = noise.
+
+**Live-ready = human judgment informed by these four numbers, not a mechanical threshold gate.**
 
 ---
 
@@ -108,13 +142,14 @@ See `PIPELINE_V2.md` for full spec.
 | 4 | 2026-03-03 | 62 | 86 | 168 | After AI vetting |
 | 4b | 2026-03-05 | 62 | 87 | 164 | Blackout re-grind |
 | 5 | 2026-03-06 | 71 | 94 | 281 | Current |
+| 5b | 2026-03-08 | 68 | 89 | 42 (refined) | Blackout refinement grind |
 
 ---
 
 ## Data
 
 - Expression library: 15,805 expressions
-- Expression cache: 4,119 tickers × 15,805 expr (~50 GB) — **stale, needs rebuild**
+- Expression cache: 4,119 tickers × 16,051 expr (64.6 GB) — current as of 2026-03-06
 - Market cache: 245/266 instruments × 15,805 expr (3.96 GB)
 - Railway DB: 11M+ OHLCV rows, ~4,167 tickers
 - 72 DTSS examples (69 in cache, 3 excluded: BRK-B, SMMT, VUZI)
