@@ -26,51 +26,39 @@ See `PIPELINE_V2.md` for full spec.
 
 ## Current State — DTSS
 
-**72 examples. Converged.** Last vetting pass produced near-zero new examples.
+**72 examples. NOT converged.** Previous convergence claim was based on broken refiner that only showed 42 signals to vet (partial scan). Correct full-universe scan produces 588 deduped signals (386 winners, 202 losers). The 386 winners need vetting before convergence can be claimed.
 
-**Proven math:**
-- 41% win rate, EV 1.479 (from cycle_health on 68/68 examples)
-- Winners: median 5.8 ADR, floor 3.2 ADR
-- Losers: under 1 ADR
-- Market regime model: win rate lift from 8% (worst decile) to 75% (best decile)
-- 1111 signals, 456 wins, 50 independent regime features
+**Correct numbers (2026-03-09, full universe scan with 87 refined conditions):**
+- 790 raw → 588 deduped → 386 winners, 202 losers
+- 65.6% win rate (pre-proximity), 76.3% (post-proximity, 31 conditions trimmed 82 losers)
+- Exit condition: `slope_xavgc21_off7_adr14 below -1.118574`
+- Winners: median 4.71 ADR
+- Regime model, health check, EV numbers from old 1111-signal cycle are INVALID — computed on partial scan
+
+**Previous numbers (INVALID — based on broken partial scan):**
+- ~~41% win rate, EV 1.479, 1111 signals, 456 wins~~ — wrong signal set
+- ~~Refinement grind 132 deduped → 42 final~~ — refiner was reading grinder's internal signal list, not scanning full universe
 
 **What's done:**
-- Grind #5: 71 examples, 94 conditions, 281 filtered signals
-- Exit condition: `slope_xavgc21_off7_adr14 <= -1.128826` (median 5.8 ADR capture)
-- Market grinder complete: 245 instruments, 50 features, regime scores uploaded
+- Grind #5: 71 examples, 94 conditions (signal grind)
+- Grind #5b: 87 conditions after blackout refinement + pruning
+- Setup refiner fixed: now does full universe scan + saves all_deduped_classified + sacrificial
+- Proximity grinder built and tested: 31 conditions, 82 losers trimmed, 386 winners untouched
 - V2 server deployed on Railway (v2 branch)
-- V2 UI: 4 tabs (Pipeline, Examples, Vetting, Watchlist), 8-step sidebar
-
-**What's done (2026-03-08):**
-- Refinement grind (blackout): 89 conditions, 68/68 pass, 132 deduped → 42 final signals
-- Regime model re-run: 50 features, D1=8% → D9=75% win rate lift
-- Health check: PROMOTE, EV 1.479, 41% win rate
 
 **What's next for DTSS:**
-1. Build proximity grinder (`scripts/proximity_grinder.py`)
-2. Run proximity grind on current DTSS cycle
-3. Re-run regime model on proximity-trimmed signal set
-4. Cycle health redesign (see below)
-5. Nightly scan + watchlist → go live
+1. Vet the 386 winner signals from the correct full-universe scan
+2. Add new examples → re-grind if needed (back to step 1)
+3. Loop until real convergence (full vet pass adds near-zero examples)
+4. Re-run proximity grind on converged signal set
+5. Re-run regime model on proximity-trimmed set
+6. Health check → go live
 
-### Proximity Grind (new pipeline step, post-refinement)
+### Proximity Grind — ✅ Built (2026-03-09)
 
-**Purpose:** Trim false/early signal bars without losing any real triggers. Massive win rate impact — every loser removed is pure EV gain.
+`scripts/proximity_grinder.py` — reads from setup_refiner output, no re-classification.
 
-**Win pile (keep all):**
-- Deduped winner signals from refinement grind output
-- For each example: the signal bar closest to entry date (within ±5 days)
-
-**Lose pile (try to trim):**
-- Signal bars that are duplicates to the LEFT of the closest-to-entry signal bar on examples
-- Loser signals from refinement grind output (no exit triggered)
-
-**Hard constraint:** Cannot trim ANY rightmost win pile signals OR the signal bar closest to entry on any example.
-
-**What it finds:** Conditions visible on the signal bar that distinguish "setup completing" from "setup in progress." Not a time machine — the bar right before entry has structural differences (momentum exhaustion, volume confirmation, resistance proximity) vs earlier duplicate bars where conditions happened to fire early.
-
-**Math:** With 41% WR and 5.48/1.0 ADR winner/loser, trimming 5 losers without touching winners moves EV from ~1.66 to ~1.98 (realistic loser cap). Profit factor goes from 3.81 to 4.67.
+**First run result (on unvetted signal set):** 31 conditions, 82 losers trimmed (202→120), 386 winners untouched. Win rate 65.6%→76.3%. Needs re-run after vetting + convergence.
 
 ### Cycle Health Redesign
 
@@ -146,7 +134,8 @@ See `PIPELINE_V2.md` for full spec.
 | 4 | 2026-03-03 | 62 | 86 | 168 | After AI vetting |
 | 4b | 2026-03-05 | 62 | 87 | 164 | Blackout re-grind |
 | 5 | 2026-03-06 | 71 | 94 | 281 | Current |
-| 5b | 2026-03-08 | 68 | 89 | 42 (refined) | Blackout refinement grind |
+| 5b | 2026-03-08 | 68 | 87 | 588 deduped (386 win, 202 lose) | Blackout refinement, full universe scan |
+| 5b-prox | 2026-03-09 | — | 87+31=118 | 506 deduped (386 win, 120 lose) | Proximity grind on unvetted set |
 
 ---
 
