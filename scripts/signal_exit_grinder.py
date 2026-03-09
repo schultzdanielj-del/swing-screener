@@ -536,7 +536,53 @@ def save_results(candidates, example_signals, setup_type, meta):
         json.dump(output, f, indent=2, default=str)
     print(f"  Saved: {latest_path}")
 
+    # Upload to Railway
+    if best:
+        _upload_exit_to_railway(setup_type, best, args_max_forward=meta.get("max_forward", MAX_FORWARD_DEFAULT))
+
     return latest_path
+
+
+def _upload_exit_to_railway(setup_type, best_candidate, args_max_forward=MAX_FORWARD_DEFAULT):
+    """Upload best exit condition to Railway exit_conditions table."""
+    import requests
+
+    # Map direction format: ">=" -> "above", "<=" -> "below"
+    dir_map = {">=": "above", "<=": "below"}
+    railway_dir = dir_map.get(best_candidate.direction, best_candidate.direction)
+
+    payload = {
+        "setup_type": setup_type,
+        "expression_name": best_candidate.expression,
+        "direction": railway_dir,
+        "threshold": best_candidate.threshold,
+        "max_forward_bars": args_max_forward,
+        "adr_threshold_multiplier": 1.0,
+    }
+
+    print(f"\n  ── EXIT UPLOAD TO RAILWAY ──")
+    print(f"  {payload['expression_name']} {railway_dir} {payload['threshold']}")
+    print(f"  max_forward_bars: {args_max_forward}")
+
+    try:
+        r = requests.post(f"{RAILWAY_URL}/api/v2/exit_conditions", json=payload, timeout=30)
+        r.raise_for_status()
+        print(f"  ✓ Railway exit condition updated")
+
+        # Verify
+        r2 = requests.get(f"{RAILWAY_URL}/api/v2/exit_conditions/{setup_type}", timeout=30)
+        r2.raise_for_status()
+        stored = r2.json().get("exit_condition", {})
+        if stored.get("expression_name") == payload["expression_name"] and \
+           stored.get("direction") == railway_dir and \
+           abs(stored.get("threshold", 0) - payload["threshold"]) < 1e-4:
+            print(f"  ✓ Verified: Railway matches local")
+        else:
+            print(f"  ⚠ MISMATCH — Railway: {stored}")
+            print(f"           Local:   {payload}")
+    except Exception as e:
+        print(f"  ⚠ Railway upload failed: {e}")
+        print(f"  Local file saved — manual upload needed")
 
 
 # ============================================================
@@ -609,6 +655,7 @@ def main():
     # Save
     save_results(candidates, example_signals, setup, {
         "n_expressions": n_expressions,
+        "max_forward": args.max_forward,
     })
 
     # Summary
