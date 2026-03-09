@@ -688,9 +688,15 @@ def scan_signals(cache, conditions, expr_cache, workers):
 
 
 def deduplicate_signals(signals):
-    """Consecutive signal bars per ticker → keep rightmost."""
+    """Consecutive signal bars per ticker → keep rightmost.
+
+    Returns (deduped, sacrificial) where:
+      deduped: rightmost bar per cluster
+      sacrificial: all leftward bars that got collapsed
+    """
     signals.sort(key=lambda s: (s["ticker"], s["bar_idx"]))
     deduped = []
+    sacrificial = []
     i = 0
     while i < len(signals):
         j = i + 1
@@ -705,12 +711,19 @@ def deduplicate_signals(signals):
         rightmost["cluster_size"] = j - i
         rightmost["cluster_start_date"] = signals[i]["date"]
         deduped.append(rightmost)
+        for k in range(i, j - 1):
+            sacrificial.append(signals[k])
         i = j
-    print(f"  Deduped: {len(signals):,} → {len(deduped):,}")
-    return deduped
+    print(f"  Deduped: {len(signals):,} → {len(deduped):,} + {len(sacrificial):,} sacrificial")
+    return deduped, sacrificial
 
 
 def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache):
+    """Apply exit condition to signals. Returns (with_exit, no_exit_signals).
+
+    with_exit: signals where exit triggered (have move_adr, exit_bar, etc.)
+    no_exit_signals: signals where exit never triggered (losers)
+    """
     expr_name = exit_cond["expression"]
     exit_thresh = exit_cond["threshold"]
     exit_dir = exit_cond["direction"]
@@ -724,7 +737,7 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache):
           f"(direction={direction}, max_forward={MAX_FORWARD})")
 
     results = []
-    no_exit = 0
+    no_exit_list = []
     _ticker_cache = {}
 
     for sig in signals:
@@ -732,12 +745,14 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache):
         bar_idx = sig["bar_idx"]
         df = cache.get(ticker)
         if df is None or bar_idx >= len(df) - 1:
+            no_exit_list.append({**sig, "exit_triggered": False, "no_exit_reason": "no_data"})
             continue
         try:
             if ticker not in _ticker_cache:
                 _ticker_cache[ticker] = expr_cache.get_ticker(ticker)
             cached_dates, cached_data = _ticker_cache[ticker]
             if cached_dates is None or len(cached_dates) != len(df):
+                no_exit_list.append({**sig, "exit_triggered": False, "no_exit_reason": "cache_mismatch"})
                 continue
 
             adr = (float(cached_data[bar_idx, adr_col_idx])
@@ -748,11 +763,13 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache):
                 s = max(0, bar_idx - 13)
                 adr = float(np.mean(h[s:bar_idx+1] - l[s:bar_idx+1]))
             if adr <= 0:
+                no_exit_list.append({**sig, "exit_triggered": False, "no_exit_reason": "zero_adr"})
                 continue
 
             signal_close = float(df["close"].values[bar_idx])
             actual_forward = min(MAX_FORWARD, len(df) - bar_idx - 1)
             if actual_forward < 5:
+                no_exit_list.append({**sig, "exit_triggered": False, "no_exit_reason": "insufficient_forward"})
                 continue
 
             exit_series = cached_data[:, exit_col_idx]
@@ -776,7 +793,13 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache):
                     break
 
             if exit_bar is None:
-                no_exit += 1
+                no_exit_list.append({
+                    **sig,
+                    "exit_triggered": False,
+                    "no_exit_reason": "no_exit_trigger",
+                    "signal_close": round(signal_close, 2),
+                    "adr_at_signal": round(adr, 2),
+                })
                 continue
 
             if direction == "short":
@@ -790,6 +813,7 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache):
 
             results.append({
                 **sig,
+                "exit_triggered": True,
                 "signal_close": round(signal_close, 2),
                 "adr_at_signal": round(adr, 2),
                 "exit_bar": exit_bar,
@@ -800,10 +824,11 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache):
                 "capture_eff": round(move_adr / mfe_adr, 3) if mfe_adr > 0 else 0,
             })
         except Exception:
+            no_exit_list.append({**sig, "exit_triggered": False, "no_exit_reason": "exception"})
             continue
 
-    print(f"  Exit applied: {len(results)} triggered, {no_exit} no exit")
-    return results
+    print(f"  Exit applied: {len(results)} triggered, {len(no_exit_list)} no exit")
+    return results, no_exit_list
 
 
 def compute_example_floor(examples, cache, exit_cond, direction, expr_cache):
@@ -897,8 +922,13 @@ def filter_and_rank(results, min_adr):
 
 def save_results(setup_type, pruned_conditions, dropped_conditions, power_table,
                  filtered_signals, source_path, exit_cond, min_adr,
-                 n_raw, n_deduped, n_with_exit, skip_prune):
-    """Save all outputs to data/setup_refiner/ — never touches other pipeline dirs."""
+                 n_raw, n_deduped, n_with_exit, skip_prune,
+                 all_deduped_classified=None, sacrificial_signals=None):
+    """Save all outputs to data/setup_refiner/ — never touches other pipeline dirs.
+
+    all_deduped_classified: full deduped set with exit classification (winners + losers)
+    sacrificial_signals: leftward duplicate bars from dedup (for proximity grinder)
+    """
     out_dir = os.path.join(REPO_ROOT, "data", "setup_refiner")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -926,6 +956,9 @@ def save_results(setup_type, pruned_conditions, dropped_conditions, power_table,
         "dropped_conditions": dropped_conditions,
         "filter_power_table": power_table,
         "signals": filtered_signals,
+        # Full signal set for downstream steps (proximity grinder)
+        "all_deduped_classified": all_deduped_classified or [],
+        "sacrificial_signals": sacrificial_signals or [],
     }
 
     # Timestamped archive
@@ -1082,12 +1115,15 @@ def run_refiner(setup_type, conditions_file=None, min_power=DEFAULT_MIN_POWER,
             print(f"  Resolved {n_raw} signals with bar indices")
 
     # ── Dedup ──
-    deduped = deduplicate_signals(raw_signals)
+    deduped, sacrificial = deduplicate_signals(raw_signals)
     n_deduped = len(deduped)
 
     # ── Exit ──
-    with_exit = apply_exit_and_measure(deduped, cache, exit_cond, direction, expr_cache)
+    with_exit, no_exit = apply_exit_and_measure(deduped, cache, exit_cond, direction, expr_cache)
     n_with_exit = len(with_exit)
+
+    # Build full classified deduped set for downstream (proximity grinder)
+    all_deduped_classified = with_exit + no_exit
 
     # ── ADR floor ──
     if min_adr is None:
@@ -1105,7 +1141,9 @@ def run_refiner(setup_type, conditions_file=None, min_power=DEFAULT_MIN_POWER,
     latest_path = save_results(
         setup_type, pruned, dropped, power_table,
         filtered, source_path, exit_cond, min_adr,
-        n_raw, n_deduped, n_with_exit, skip_prune
+        n_raw, n_deduped, n_with_exit, skip_prune,
+        all_deduped_classified=all_deduped_classified,
+        sacrificial_signals=sacrificial,
     )
 
     # ── Upload ──
