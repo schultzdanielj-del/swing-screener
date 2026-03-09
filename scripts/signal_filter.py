@@ -1,20 +1,17 @@
 """
-Signal Filter -- Deduplicate, apply exit, rank for vetting.
+Signal Filter -- Deduplicate, apply exit, classify, upload to v2 cycle.
 
 Scans all 5yr history for signal conditions, then:
   1. Deduplicates: consecutive signal bars for same ticker -> keep rightmost
   2. Applies exit condition: run each signal forward, check if exit fires
   3. Measures exit distance: signal close -> exit close (in ADR)
-  4. Filters: keep only signals where exit distance >= example floor
-  5. Ranks: sort by exit distance descending
-  6. Outputs: ranked JSON for chart vetting + uploads to Railway
-
-Also deduplicates examples the same way (one signal bar per example).
+  4. Classifies: examples -> AUTO_WIN, exit+move >= median -> AUTO_WIN, else AUTO_LOSS
+  5. Uploads full classified signal set to v2 cycle_signals
+  6. Saves filtered subset (>= ADR floor) locally for chart vetting
 
 Usage:
     python scripts/signal_filter.py --setup dtss
     python scripts/signal_filter.py --setup dtss --min-adr 2.0
-    python scripts/signal_filter.py --setup dtss --charts  # also generate charts
 """
 
 import argparse
@@ -649,24 +646,7 @@ def save_results(filtered, example_signals, setup_type, args):
         json.dump(output, f, indent=2, default=str)
     print(f"  Saved: {latest_path}")
 
-    # Upload to Railway so vetting UI can read it
-    _upload_to_railway(output, setup_type)
-
     return latest_path
-
-
-def _upload_to_railway(output, setup_type):
-    """Upload filtered signals to Railway for vetting UI."""
-    url = f"{RAILWAY_URL}/api/vetting/{setup_type}/upload-signals"
-    try:
-        print(f"  Uploading to Railway (vetting UI)...")
-        r = requests.post(url, json=output, timeout=120)
-        r.raise_for_status()
-        result = r.json()
-        n = result.get("n_signals", "?")
-        print(f"  ✓ Uploaded {n} signals to vetting endpoint")
-    except Exception as e:
-        print(f"  ⚠ Vetting upload failed: {e}")
 
 
 def _upload_v2_cycle_signals(setup_type, deduped, with_exit, example_signals,
@@ -797,25 +777,6 @@ def _upload_v2_cycle_signals(setup_type, deduped, with_exit, example_signals,
             print(f"  ⚠ MISMATCH — uploaded {len(signals)}, Railway has {len(stored)}")
     except Exception as e:
         print(f"  ⚠ V2 cycle upload failed: {e}")
-
-
-def _upload_exit_grind_to_railway(setup_type):
-    """Upload exit grind JSON to Railway so vetting UI has exit data."""
-    exit_path = os.path.join(REPO_ROOT, "data", "signal_exit_grind",
-                             f"signal_exit_{setup_type}.json")
-    if not os.path.exists(exit_path):
-        print(f"  ⚠ No exit grind file to upload: {exit_path}")
-        return
-    url = f"{RAILWAY_URL}/api/vetting/{setup_type}/upload-exit"
-    try:
-        with open(exit_path) as f:
-            data = json.load(f)
-        print(f"  Uploading exit grind to Railway...")
-        r = requests.post(url, json=data, timeout=60)
-        r.raise_for_status()
-        print(f"  ✓ Exit grind uploaded to Railway")
-    except Exception as e:
-        print(f"  ⚠ Exit grind upload failed: {e}")
 
 
 def measure_example_exit_distances(example_signals, cache, exit_cond, direction, expr_cache, max_forward=MAX_FORWARD):
@@ -1027,9 +988,6 @@ def main():
     # Upload full classified signal set to v2 cycle
     _upload_v2_cycle_signals(setup, deduped, with_exit, example_signals,
                               exit_cond, example_floor)
-
-    # Also upload exit grind to Railway (vetting UI needs it)
-    _upload_exit_grind_to_railway(setup)
 
     total_time = time.time() - t0
     print(f"\n{'='*60}")
