@@ -530,6 +530,10 @@ def run_pruner(setup_type, conditions_file=None, min_power=DEFAULT_MIN_POWER,
         json.dump(output, f, indent=2)
     print(f"  Saved as latest: {latest_path}")
 
+    from file_mirror import mirror_file
+    mirror_file(ts_path)
+    mirror_file(latest_path)
+
     print(f"\n  {'='*70}")
     print(f"  DONE in {total_time:.0f}s")
     print(f"  {n_conds} → {len(kept)} conditions ({len(dropped)} pruned)")

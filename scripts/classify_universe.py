@@ -346,6 +346,9 @@ def main():
         json.dump(results, f, indent=2)
     print(f"Saved local backup: {results_file}")
 
+    from file_mirror import mirror_file
+    mirror_file(results_file)
+
     # Print summary
     print(f"\n{'='*60}")
     print(f"  CLASSIFICATION SUMMARY")

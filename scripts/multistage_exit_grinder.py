@@ -754,6 +754,10 @@ def save_results(results, metas, setup_type):
     print(f"\n  Saved: {ts_path}")
     print(f"  Saved: {latest}")
 
+    from file_mirror import mirror_file
+    mirror_file(ts_path)
+    mirror_file(latest)
+
     try:
         r = requests.post(
             f"{RAILWAY_URL}/api/exit-grind/{setup_type}/upload-multistage",

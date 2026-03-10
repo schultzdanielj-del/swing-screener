@@ -579,6 +579,10 @@ def save_results(candidates, examples, setup_type, args, expr_names):
         json.dump(data, f, indent=2, default=nan_fix)
     print(f"  Saved as latest: {latest_path}")
 
+    from file_mirror import mirror_file
+    mirror_file(ts_path)
+    mirror_file(latest_path)
+
     # Upload to Railway
     try:
         r = requests.post(

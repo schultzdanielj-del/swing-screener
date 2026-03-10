@@ -1513,6 +1513,10 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
 
+    # ── Mirror to Railway ──
+    from file_mirror import mirror_file
+    mirror_file(out_path)
+
     # ── Upload to Railway ──
     step_type = "refinement_grind" if blackout_map else "signal_grind"
     try:

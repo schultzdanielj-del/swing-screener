@@ -967,6 +967,10 @@ def save_results(setup_type, pruned_conditions, dropped_conditions, power_table,
         json.dump(output, f, indent=2, default=str)
     print(f"  Saved as latest: {latest_path}")
 
+    from file_mirror import mirror_file
+    mirror_file(ts_path)
+    mirror_file(latest_path)
+
     return latest_path
 
 

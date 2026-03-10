@@ -559,6 +559,10 @@ def save_results(setup_type, proximity_conditions, metrics):
         json.dump(output, f, indent=2)
     print(f"  Latest: {latest}")
 
+    from file_mirror import mirror_file
+    mirror_file(path)
+    mirror_file(latest)
+
     return output, path
 
 

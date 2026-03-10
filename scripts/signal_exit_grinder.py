@@ -536,6 +536,10 @@ def save_results(candidates, example_signals, setup_type, meta):
         json.dump(output, f, indent=2, default=str)
     print(f"  Saved: {latest_path}")
 
+    from file_mirror import mirror_file
+    mirror_file(ts_path)
+    mirror_file(latest_path)
+
     # Upload to Railway
     if best:
         _upload_exit_to_railway(setup_type, best, args_max_forward=meta.get("max_forward", MAX_FORWARD_DEFAULT))

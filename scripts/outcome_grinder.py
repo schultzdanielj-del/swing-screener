@@ -917,6 +917,9 @@ def main():
         json.dump(output, f, indent=2)
     print(f"\nResults saved to {outpath}")
 
+    from file_mirror import mirror_file
+    mirror_file(outpath)
+
     # Top outcomes by ADR
     if outcomes:
         top = sorted(outcomes, key=lambda r: r["adr_move"], reverse=True)

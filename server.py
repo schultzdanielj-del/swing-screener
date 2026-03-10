@@ -215,6 +215,12 @@ def init_db():
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_srs_signal ON signal_regime_scores(cycle_signal_id);
             CREATE INDEX IF NOT EXISTS idx_srs_cycle ON signal_regime_scores(cycle_id);
+            CREATE TABLE IF NOT EXISTS file_mirror (
+                path TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                size_bytes INTEGER,
+                created_at TEXT NOT NULL
+            );
         """)
         # ── Add new grind_cycles columns (safe — no-op if already exist) ──
         for col, coltype in [
@@ -1192,6 +1198,52 @@ async def v2_get_latest_watchlist():
             (run_date,)
         ).fetchall()
     return {"run_date": run_date, "entries": [dict(r) for r in rows]}
+
+
+# ════════════════════════════════════════════════════════════════
+# FILE MIRROR — exact copies of local grinder JSON files
+# ════════════════════════════════════════════════════════════════
+
+@app.post("/api/v2/files")
+async def v2_upload_file(request: Request):
+    body = await request.json()
+    path = body.get("path")
+    data = body.get("data")
+    if not path or data is None:
+        raise HTTPException(400, "path and data are required")
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as db:
+        db.execute(
+            "INSERT OR REPLACE INTO file_mirror (path, data, size_bytes, created_at) VALUES (?,?,?,?)",
+            (path, data, len(data), now)
+        )
+    return {"path": path, "size_bytes": len(data), "created": True}
+
+
+@app.get("/api/v2/files")
+async def v2_list_files(prefix: str = None):
+    with get_db() as db:
+        if prefix:
+            rows = db.execute(
+                "SELECT path, size_bytes, created_at FROM file_mirror WHERE path LIKE ? ORDER BY created_at DESC",
+                (prefix + "%",)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT path, size_bytes, created_at FROM file_mirror ORDER BY created_at DESC"
+            ).fetchall()
+    return {"files": [dict(r) for r in rows]}
+
+
+@app.get("/api/v2/files/{path:path}")
+async def v2_get_file(path: str):
+    with get_db() as db:
+        row = db.execute("SELECT data, created_at FROM file_mirror WHERE path=?", (path,)).fetchone()
+    if not row:
+        raise HTTPException(404, f"File not found: {path}")
+    return Response(content=row["data"], media_type="application/json",
+                    headers={"X-Created-At": row["created_at"]})
 
 
 # Serve frontend — MUST be last

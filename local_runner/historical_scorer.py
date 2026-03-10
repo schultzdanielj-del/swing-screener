@@ -628,6 +628,9 @@ def main():
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
+
+    from file_mirror import mirror_file
+    mirror_file(out_path)
     
     print(f"\n  All conditions:")
     for i, c in enumerate(all_conditions, 1):

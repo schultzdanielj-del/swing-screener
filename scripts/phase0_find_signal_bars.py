@@ -373,6 +373,9 @@ def main():
         json.dump(output, f, indent=2)
     print(f"\nResults saved to {outpath}")
 
+    from file_mirror import mirror_file
+    mirror_file(outpath)
+
 
 if __name__ == "__main__":
     main()

@@ -817,3 +817,6 @@ if __name__ == "__main__":
     with open(output_path, "w") as f:
         json.dump(output, f, indent=2)
     print(f"\nPlaybook entry saved to {output_path}")
+
+    from file_mirror import mirror_file
+    mirror_file(output_path)
