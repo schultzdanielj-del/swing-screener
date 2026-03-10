@@ -651,39 +651,17 @@ def save_results(filtered, example_signals, setup_type, args):
     return latest_path
 
 
-def _upload_v2_cycle_signals(setup_type, deduped, with_exit, example_signals,
-                              exit_cond, example_floor):
-    """Upload FULL classified signal set to v2 cycle_signals table.
+def _build_classified_signals(deduped, with_exit, example_signals):
+    """Build full classified signal set from deduped signals + exit results + examples.
 
-    This is the authoritative signal set for the regime model and health check.
-    Includes ALL deduped signals — examples, winners, losers, no-exit.
+    Returns list of dicts with classification labels. Used by both local save
+    and Railway upload.
     """
-    import requests
-
-    # Find current cycle_id
-    try:
-        r = requests.get(f"{RAILWAY_URL}/api/v2/cycles/{setup_type}", timeout=30)
-        r.raise_for_status()
-        cycles = r.json().get("cycles", [])
-        current = [c for c in cycles if c.get("is_current") == 1]
-        if not current:
-            print(f"  ⚠ No current cycle found for {setup_type} — skipping v2 upload")
-            return
-        cycle_id = current[0]["cycle_id"]
-    except Exception as e:
-        print(f"  ⚠ Failed to find current cycle: {e}")
-        return
-
-    print(f"\n  ── V2 CYCLE SIGNALS UPLOAD ──")
-    print(f"  Cycle: {cycle_id}")
-
     # Build example lookup: ticker -> set of signal_bar_idx (±5 bar proximity)
-    example_lookup = {}  # (ticker, bar_idx) -> example record
-    example_proximity = {}  # ticker -> set of bar indices
+    example_proximity = {}
     for ex in example_signals:
         ticker = ex["ticker"]
         bar_idx = ex["signal_bar_idx"]
-        example_lookup[(ticker, bar_idx)] = ex
         if ticker not in example_proximity:
             example_proximity[ticker] = set()
         for offset in range(-5, 6):
@@ -698,25 +676,17 @@ def _upload_v2_cycle_signals(setup_type, deduped, with_exit, example_signals,
     exit_adrs = [s["move_adr"] for s in with_exit if s.get("move_adr") is not None]
     median_adr = sorted(exit_adrs)[len(exit_adrs) // 2] if exit_adrs else 5.0
 
-    # Build full signal list from deduped (all 1,031)
     signals = []
     for sig in deduped:
         ticker = sig["ticker"]
         bar_idx = sig["bar_idx"]
 
-        # Check if this is an example
         is_example = 0
         if ticker in example_proximity and bar_idx in example_proximity[ticker]:
             is_example = 1
 
-        # Get exit data if available
         exit_data = exit_lookup.get((ticker, bar_idx))
 
-        # Classify per DATA_CONTRACT priority:
-        # 1. Example match → AUTO_WIN / source=example
-        # 2. Exit triggered + move >= median ADR → AUTO_WIN / source=exit_filter
-        # 3. Exit triggered + move < median ADR → AUTO_LOSS / source=exit_filter
-        # 4. No exit triggered → AUTO_LOSS / source=exit_filter
         if is_example:
             classification = "AUTO_WIN"
             classification_source = "example"
@@ -747,7 +717,6 @@ def _upload_v2_cycle_signals(setup_type, deduped, with_exit, example_signals,
         }
         signals.append(row)
 
-    # Count classifications
     n_win = sum(1 for s in signals if s["classification"] == "AUTO_WIN")
     n_loss = sum(1 for s in signals if s["classification"] == "AUTO_LOSS")
     n_ex = sum(1 for s in signals if s["is_example"])
@@ -760,23 +729,82 @@ def _upload_v2_cycle_signals(setup_type, deduped, with_exit, example_signals,
     print(f"  Win rate: {n_win/len(signals)*100:.1f}%")
     print(f"  Median ADR threshold: {median_adr:.1f}")
 
+    return signals, median_adr
+
+
+def _save_classified_signals(setup_type, classified_signals, median_adr):
+    """Save full classified signal set locally for downstream pipeline steps."""
+    out_dir = os.path.join(REPO_ROOT, "data", "signal_filter")
+    os.makedirs(out_dir, exist_ok=True)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    n_win = sum(1 for s in classified_signals if s["classification"] == "AUTO_WIN")
+    n_loss = sum(1 for s in classified_signals if s["classification"] == "AUTO_LOSS")
+
+    output = {
+        "setup_type": setup_type,
+        "timestamp": datetime.now().isoformat(),
+        "n_signals": len(classified_signals),
+        "n_win": n_win,
+        "n_loss": n_loss,
+        "median_adr_threshold": median_adr,
+        "signals": classified_signals,
+    }
+
+    # Timestamped
+    ts_path = os.path.join(out_dir, f"classified_{setup_type}_{len(classified_signals)}sig_{ts}.json")
+    with open(ts_path, "w") as f:
+        json.dump(output, f, indent=2, default=str)
+    print(f"  Saved classified: {ts_path}")
+
+    # Latest pointer
+    latest_path = os.path.join(out_dir, f"classified_{setup_type}.json")
+    with open(latest_path, "w") as f:
+        json.dump(output, f, indent=2, default=str)
+    print(f"  Saved classified: {latest_path}")
+
+    from file_mirror import mirror_file
+    mirror_file(ts_path)
+    mirror_file(latest_path)
+
+
+def _upload_v2_cycle_signals(setup_type, classified_signals):
+    """Upload full classified signal set to v2 cycle_signals table."""
+    import requests
+
+    # Find current cycle_id
+    try:
+        r = requests.get(f"{RAILWAY_URL}/api/v2/cycles/{setup_type}", timeout=30)
+        r.raise_for_status()
+        cycles = r.json().get("cycles", [])
+        current = [c for c in cycles if c.get("is_current") == 1]
+        if not current:
+            print(f"  ⚠ No current cycle found for {setup_type} — skipping v2 upload")
+            return
+        cycle_id = current[0]["cycle_id"]
+    except Exception as e:
+        print(f"  ⚠ Failed to find current cycle: {e}")
+        return
+
+    print(f"\n  ── V2 CYCLE SIGNALS UPLOAD ──")
+    print(f"  Cycle: {cycle_id}")
+
     # Upload
     try:
-        payload = {"signals": signals, "replace": True}
+        payload = {"signals": classified_signals, "replace": True}
         r = requests.post(f"{RAILWAY_URL}/api/v2/cycles/{cycle_id}/signals",
                           json=payload, timeout=120)
         r.raise_for_status()
-        result = r.json()
-        print(f"  ✓ Uploaded {len(signals)} signals to v2 cycle {cycle_id}")
+        print(f"  ✓ Uploaded {len(classified_signals)} signals to v2 cycle {cycle_id}")
 
         # Verify
         r2 = requests.get(f"{RAILWAY_URL}/api/v2/cycles/{cycle_id}/signals", timeout=30)
         r2.raise_for_status()
         stored = r2.json().get("signals", [])
-        if len(stored) == len(signals):
+        if len(stored) == len(classified_signals):
             print(f"  ✓ Verified: {len(stored)} signals in Railway")
         else:
-            print(f"  ⚠ MISMATCH — uploaded {len(signals)}, Railway has {len(stored)}")
+            print(f"  ⚠ MISMATCH — uploaded {len(classified_signals)}, Railway has {len(stored)}")
     except Exception as e:
         print(f"  ⚠ V2 cycle upload failed: {e}")
 
@@ -976,7 +1004,7 @@ def main():
     print(f"\n  PHASE 7: Filter + rank (>= {min_adr:.1f} ADR)")
     filtered = filter_and_rank(new_signals, min_adr, direction)
 
-    # Save
+    # Save filtered results for chart vetting
     print(f"\n  SAVING RESULTS")
     save_results(filtered, example_signals, setup, {
         "exit_expr": f"{exit_cond['expression']} {exit_cond['direction']} {exit_cond['threshold']}",
@@ -987,9 +1015,16 @@ def main():
         "n_with_exit": len(with_exit),
     })
 
-    # Upload full classified signal set to v2 cycle
-    _upload_v2_cycle_signals(setup, deduped, with_exit, example_signals,
-                              exit_cond, example_floor)
+    # Build full classified signal set (winners + losers)
+    print(f"\n  CLASSIFYING ALL SIGNALS")
+    classified_signals, median_adr = _build_classified_signals(
+        deduped, with_exit, example_signals)
+
+    # Save classified set locally (for refinement grinder)
+    _save_classified_signals(setup, classified_signals, median_adr)
+
+    # Upload to Railway
+    _upload_v2_cycle_signals(setup, classified_signals)
 
     total_time = time.time() - t0
     print(f"\n{'='*60}")

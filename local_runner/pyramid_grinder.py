@@ -1666,44 +1666,35 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 # ══════════════════════════════════════════════════════════════
 
 def _load_refinement_piles(setup_type):
-    """Load cycle signals from Railway and split into win/lose piles.
+    """Load classified signals from step 3 local output and split into win/lose piles.
 
-    Win pile (must-pass): examples + AUTO_WIN signals → returned as example_dfs format
+    Reads data/signal_filter/classified_{setup}.json (saved by signal_filter.py).
+
+    Win pile (must-pass): AUTO_WIN signals → returned as example_dfs format
     Lose pile (count signals in): AUTO_LOSS signals → returned as whitelist_map
 
     Returns:
-        (win_example_dfs, whitelist_map) or (None, None) if no cycle signals found.
+        (win_example_dfs, whitelist_map) or (None, None) if file not found.
     """
-    import requests
-
-    # Find current cycle
-    try:
-        r = requests.get(f"{API_BASE}/api/v2/cycles/{setup_type}", timeout=30)
-        r.raise_for_status()
-        cycles = r.json().get("cycles", [])
-        current = [c for c in cycles if c.get("is_current") == 1]
-        if not current:
-            print(f"  ERROR: No current cycle found for {setup_type}")
-            return None, None
-        cycle_id = current[0]["cycle_id"]
-    except Exception as e:
-        print(f"  ERROR: Failed to find current cycle: {e}")
+    classified_path = os.path.join(
+        REPO_ROOT, "data", "signal_filter", f"classified_{setup_type}.json"
+    )
+    if not os.path.exists(classified_path):
+        print(f"  ERROR: No classified signal file found:")
+        print(f"    {classified_path}")
+        print(f"  Run step 3 first: python scripts/signal_filter.py --setup {setup_type}")
         return None, None
 
-    # Load cycle signals
-    try:
-        r = requests.get(f"{API_BASE}/api/v2/cycles/{cycle_id}/signals", timeout=60)
-        r.raise_for_status()
-        signals = r.json().get("signals", [])
-    except Exception as e:
-        print(f"  ERROR: Failed to load cycle signals: {e}")
-        return None, None
+    with open(classified_path) as f:
+        data = json.load(f)
 
+    signals = data.get("signals", [])
     if not signals:
-        print(f"  ERROR: No signals in cycle {cycle_id}")
+        print(f"  ERROR: No signals in {classified_path}")
         return None, None
 
-    print(f"\n  ── REFINEMENT GRIND: Loading piles from cycle {cycle_id} ──")
+    print(f"\n  ── REFINEMENT GRIND: Loading piles from {os.path.basename(classified_path)} ──")
+    print(f"  Timestamp: {data.get('timestamp')}")
     print(f"  Total signals: {len(signals)}")
 
     # Split into winners and losers
@@ -1713,10 +1704,10 @@ def _load_refinement_piles(setup_type):
     print(f"  Lose pile: {len(losers)}")
 
     if not winners:
-        print(f"  ERROR: No winners in cycle — nothing to use as must-pass set")
+        print(f"  ERROR: No winners — nothing to use as must-pass set")
         return None, None
     if not losers:
-        print(f"  WARNING: No losers in cycle — nothing to filter. Refinement is a no-op.")
+        print(f"  WARNING: No losers — nothing to filter. Refinement is a no-op.")
         return None, None
 
     # Load 5yr cache to build example_dfs format for winners
