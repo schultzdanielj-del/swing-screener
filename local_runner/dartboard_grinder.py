@@ -234,8 +234,9 @@ def compute_expression_weights(profile, universe_cache, expr_cache, top_n=500):
     all_expressions = generate_all()
     name_to_expr = {e["name"]: e for e in all_expressions}
 
-    # Compute universe stats from expr cache (last bar per ticker)
-    # We sample across all tickers at their last bar
+    # Compute universe stats from expr cache — full 5yr history, not just D1.
+    # Streaming: load one ticker at a time, accumulate sum/sum_sq per expression.
+    # This captures the historical distribution that we're actually scoring against.
     tickers = list(universe_cache.keys())
     cached_tickers = expr_cache.get_available_tickers()
     tickers = [t for t in tickers if t in cached_tickers]
@@ -243,10 +244,8 @@ def compute_expression_weights(profile, universe_cache, expr_cache, top_n=500):
     n_expr = len(expr_names)
     n_tickers = len(tickers)
 
-    print(f"  Computing universe stats from {n_tickers} tickers (last bar)...")
+    print(f"  Computing universe stats from {n_tickers} tickers (full 5yr history, streaming)...")
 
-    # Collect last-bar values for all tickers
-    # To keep memory manageable, accumulate running stats (Welford's algorithm)
     uni_sum = np.zeros(n_expr, dtype=np.float64)
     uni_sum_sq = np.zeros(n_expr, dtype=np.float64)
     uni_count = np.zeros(n_expr, dtype=np.float64)
@@ -256,14 +255,23 @@ def compute_expression_weights(profile, universe_cache, expr_cache, top_n=500):
         if dates is None or data is None or len(data) < 50:
             continue
 
-        last_row = data[-1, :].astype(np.float64)
-        valid = ~np.isnan(last_row)
-        uni_sum[valid] += last_row[valid]
-        uni_sum_sq[valid] += last_row[valid] ** 2
-        uni_count[valid] += 1
+        # Skip warmup bars (first 50, same as scoring pass)
+        hist = data[50:].astype(np.float64)
+        nan_valid = ~np.isnan(hist)
+        data_clean = np.where(nan_valid, hist, 0.0)
 
-        if (i + 1) % 1000 == 0:
-            print(f"    {i+1}/{n_tickers} tickers processed...")
+        uni_count += nan_valid.sum(axis=0)
+        uni_sum += data_clean.sum(axis=0)
+        uni_sum_sq += (data_clean ** 2).sum(axis=0)
+
+        if (i + 1) % 500 == 0:
+            elapsed = time.time() - t0
+            print(f"    {i+1}/{n_tickers} tickers processed ({elapsed:.0f}s)...")
+
+    elapsed = time.time() - t0
+    avg_bars = int(uni_count.mean()) if uni_count.mean() > 0 else 0
+    print(f"  Universe profiling complete: {n_tickers} tickers, "
+          f"~{avg_bars:,} bars/expression ({elapsed:.0f}s)")
 
     # Compute universe mean and std
     uni_centers = np.full(n_expr, np.nan, dtype=np.float64)
@@ -766,11 +774,27 @@ def build_output(setup_type, weights, signals, threshold, stats,
         spread = float(weights["spreads"][i])
         power = float(weights["powers"][i])
 
-        # Compute "low" and "high" as mean ± 2*std for display compatibility
-        # The actual scoring uses continuous distance, not these bounds
-        margin = max(spread * 2, abs(center) * 0.01)
-        low = center - margin
-        high = center + margin
+        # Compute "low" and "high" from example min/max + 5% margin
+        # This guarantees 100% example pass rate (same logic as pyramid_grinder).
+        # The actual scoring uses continuous distance, not these bounds — they
+        # exist for pipeline compatibility with signal_filter.py.
+        ex_matrix = profile.get("example_matrix")
+        expr_idx = weights["indices"][i]
+        if ex_matrix is not None:
+            vals = ex_matrix[:, expr_idx]
+            valid = vals[~np.isnan(vals)]
+            if len(valid) > 0:
+                ex_min = float(np.min(valid))
+                ex_max = float(np.max(valid))
+                margin = (ex_max - ex_min) * 0.05
+                low = ex_min - margin
+                high = ex_max + margin
+            else:
+                low = center - max(spread * 3, 0.01)
+                high = center + max(spread * 3, 0.01)
+        else:
+            low = center - max(spread * 3, 0.01)
+            high = center + max(spread * 3, 0.01)
 
         expr = name_to_expr.get(name, {})
 
