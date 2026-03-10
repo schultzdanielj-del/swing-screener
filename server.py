@@ -235,6 +235,23 @@ def init_db():
                 result_path TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_task_queue_status ON task_queue(status);
+            CREATE TABLE IF NOT EXISTS research_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                branch TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                claimed_at TEXT,
+                completed_at TEXT,
+                summary TEXT,
+                diff TEXT,
+                signal_before INTEGER,
+                signal_after INTEGER,
+                examples_benched TEXT,
+                error TEXT,
+                log TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_research_jobs_status ON research_jobs(status);
         """)
         # ── Add new grind_cycles columns (safe — no-op if already exist) ──
         for col, coltype in [
@@ -1319,6 +1336,82 @@ async def list_tasks(status: str = None, limit: int = 20):
                 "SELECT * FROM task_queue ORDER BY created_at DESC LIMIT ?", (limit,)
             ).fetchall()
     return {"tasks": [dict(r) for r in rows]}
+
+
+# ============================================================
+# RESEARCH JOBS — Open-ended Claude Code research sessions
+# ============================================================
+
+@app.post("/api/v2/research")
+async def create_research_job(request: Request):
+    body = await request.json()
+    prompt = body.get("prompt")
+    if not prompt:
+        raise HTTPException(400, "prompt is required")
+    with get_db() as db:
+        cur = db.execute("INSERT INTO research_jobs (prompt, status) VALUES (?,?)", (prompt, "pending"))
+        job_id = cur.lastrowid
+    return {"id": job_id, "prompt": prompt, "status": "pending"}
+
+
+@app.get("/api/v2/research/pending")
+async def get_pending_research():
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT * FROM research_jobs WHERE status='pending' ORDER BY created_at ASC LIMIT 1"
+        ).fetchall()
+        tasks = []
+        for r in rows:
+            db.execute("UPDATE research_jobs SET status='claimed', claimed_at=datetime('now') WHERE id=?", (r["id"],))
+            tasks.append(dict(r))
+    return {"jobs": tasks}
+
+
+@app.patch("/api/v2/research/{job_id}")
+async def update_research_job(job_id: int, request: Request):
+    body = await request.json()
+    with get_db() as db:
+        row = db.execute("SELECT id FROM research_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Research job not found: {job_id}")
+        updates = []
+        params = []
+        for field in ("status", "branch", "summary", "diff", "signal_before", "signal_after",
+                       "examples_benched", "error", "log"):
+            if field in body:
+                updates.append(f"{field}=?")
+                params.append(body[field])
+        if "status" in body and body["status"] in ("completed", "failed"):
+            updates.append("completed_at=datetime('now')")
+        if updates:
+            params.append(job_id)
+            db.execute(f"UPDATE research_jobs SET {','.join(updates)} WHERE id=?", params)
+    return {"id": job_id, "updated": True}
+
+
+@app.get("/api/v2/research/{job_id}")
+async def get_research_job(job_id: int):
+    with get_db() as db:
+        row = db.execute("SELECT * FROM research_jobs WHERE id=?", (job_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, f"Research job not found: {job_id}")
+    return dict(row)
+
+
+@app.get("/api/v2/research")
+async def list_research_jobs(status: str = None, limit: int = 20):
+    with get_db() as db:
+        if status:
+            rows = db.execute(
+                "SELECT id, prompt, status, branch, created_at, completed_at, summary, signal_before, signal_after FROM research_jobs WHERE status=? ORDER BY created_at DESC LIMIT ?",
+                (status, limit)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT id, prompt, status, branch, created_at, completed_at, summary, signal_before, signal_after FROM research_jobs ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+    return {"jobs": [dict(r) for r in rows]}
 
 
 @app.post("/api/v2/files")
