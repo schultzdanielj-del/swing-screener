@@ -146,6 +146,17 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_cycle_signals_cycle ON cycle_signals(cycle_id);
             CREATE INDEX IF NOT EXISTS idx_cycle_signals_ticker_date ON cycle_signals(ticker, signal_date);
+            CREATE TABLE IF NOT EXISTS cycle_sacrificial_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT NOT NULL,
+                setup_type TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                signal_date TEXT NOT NULL,
+                bar_idx INTEGER,
+                close REAL,
+                FOREIGN KEY (cycle_id) REFERENCES grind_cycles(cycle_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cycle_sacrificial_cycle ON cycle_sacrificial_signals(cycle_id);
             CREATE TABLE IF NOT EXISTS exit_conditions (
                 setup_type TEXT PRIMARY KEY,
                 expression_name TEXT NOT NULL,
@@ -1016,6 +1027,26 @@ async def v2_upload_signals(cycle_id: str, request: Request):
 async def v2_get_signals(cycle_id: str):
     with get_db() as db:
         rows=db.execute("SELECT * FROM cycle_signals WHERE cycle_id=? ORDER BY signal_date,ticker",(cycle_id,)).fetchall()
+    return {"cycle_id":cycle_id,"signals":[dict(r) for r in rows]}
+
+
+@app.post("/api/v2/cycles/{cycle_id}/sacrificial_signals")
+async def v2_upload_sacrificial(cycle_id: str, request: Request):
+    body=await request.json(); signals=body.get("signals",[]); replace=body.get("replace",False)
+    if not signals: raise HTTPException(400,"signals list is empty")
+    with get_db() as db:
+        if not db.execute("SELECT cycle_id FROM grind_cycles WHERE cycle_id=?",(cycle_id,)).fetchone():
+            raise HTTPException(404,f"cycle_id {cycle_id!r} not found")
+        if replace: db.execute("DELETE FROM cycle_sacrificial_signals WHERE cycle_id=?",(cycle_id,))
+        db.executemany("INSERT INTO cycle_sacrificial_signals (cycle_id,setup_type,ticker,signal_date,bar_idx,close) VALUES (?,?,?,?,?,?)",
+                       [(cycle_id,s.get("setup_type",""),s.get("ticker",""),s.get("signal_date",""),s.get("bar_idx"),s.get("close")) for s in signals])
+    return {"cycle_id":cycle_id,"inserted":len(signals)}
+
+
+@app.get("/api/v2/cycles/{cycle_id}/sacrificial_signals")
+async def v2_get_sacrificial(cycle_id: str):
+    with get_db() as db:
+        rows=db.execute("SELECT * FROM cycle_sacrificial_signals WHERE cycle_id=? ORDER BY signal_date,ticker",(cycle_id,)).fetchall()
     return {"cycle_id":cycle_id,"signals":[dict(r) for r in rows]}
 
 

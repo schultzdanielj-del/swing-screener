@@ -1,10 +1,16 @@
 """
 Proximity Grinder — Trim losers by finding conditions that separate
-win pile (winners) from trim pile (sacrificial leftward duplicates + losers).
+win pile from trim pile (sacrificial + losers).
 
 Post-convergence step (Step 6). Finds conditions that ALL win pile signals
-pass but that eliminate trim pile signals. Sacrificial signals (leftward
-dedup duplicates) give analytical leverage — structurally similar to losers.
+pass but that eliminate trim pile signals. Pure EV gain — every loser removed
+raises win rate and profit factor.
+
+DATA SOURCE:
+  Railway is the authoritative store. All piles read from Railway:
+    - Win pile: AUTO_WIN + AI_WIN + MANUAL_WIN from cycle_signals
+    - Lose pile: AUTO_LOSS + MANUAL_LOSS from cycle_signals
+    - Sacrifice pile: leftward dedup duplicates from cycle_sacrificial_signals
 
 COMPUTATION PATH:
   Uses expr cache as single computation path — same as pyramid_grinder.py
@@ -16,22 +22,6 @@ COMPUTATION PATH:
     - Validation: NaN = FAIL
 
   Parallelized matrix extraction via ProcessPoolExecutor (full CPU usage).
-
-THREE PILES:
-  Win pile (100% must pass, untouchable):
-    - Deduped winner signals from refinement grind (exit triggered + move >= ADR)
-
-  Sacrifice pile (OK to trim):
-    - Pre-dedup leftward duplicates from ALL clusters
-    - These got deduped out (collapsed into the rightmost bar)
-
-  Lose pile (target to trim):
-    - Deduped loser signals from refinement grind (no exit / move < ADR)
-
-DATA SOURCE:
-  Reads from data/setup_refiner/refined_{setup}.json
-  Requires all_deduped_classified and sacrificial_signals to be populated.
-  If empty, re-run: python scripts/setup_refiner.py --setup {setup}
 
 RAILWAY UPLOAD:
   Appends proximity conditions to the current cycle's cycle_conditions.
@@ -70,76 +60,69 @@ from expr_cache_builder import ExprSeriesCache
 
 API_BASE = "https://web-production-e3025.up.railway.app"
 
+WIN_CLASSES = {"AUTO_WIN", "AI_WIN", "MANUAL_WIN"}
+LOSE_CLASSES = {"AUTO_LOSS", "MANUAL_LOSS"}
+
 
 # ══════════════════════════════════════════════════════════════
-# DATA LOADING
+# DATA LOADING — Railway is the authoritative store
 # ══════════════════════════════════════════════════════════════
 
-def load_refined_result(setup_type):
-    """Load the refinement grind output with full signal data.
+def get_current_cycle(setup_type):
+    """Get current cycle_id for this setup type from Railway."""
+    r = requests.get(f"{API_BASE}/api/v2/cycles/{setup_type}", timeout=30)
+    r.raise_for_status()
+    cycles = r.json().get("cycles", [])
+    current = [c for c in cycles if c.get("is_current") == 1]
+    if not current:
+        raise RuntimeError(f"No current cycle for {setup_type}")
+    return current[0]["cycle_id"]
 
-    Requires all_deduped_classified and sacrificial_signals to be populated.
-    If empty, the setup_refiner needs to be re-run.
+
+def load_piles_from_railway(cycle_id):
+    """Load all three piles from Railway.
+
+    Win pile: AUTO_WIN + AI_WIN + MANUAL_WIN from cycle_signals
+    Lose pile: AUTO_LOSS + MANUAL_LOSS from cycle_signals
+    Sacrifice pile: leftward dedup duplicates from cycle_sacrificial_signals
+
+    Returns (win_pile, lose_pile, sacrifice_pile).
     """
-    path = os.path.join(REPO_ROOT, "data", "setup_refiner", f"refined_{setup_type}.json")
-    if not os.path.exists(path):
-        raise FileNotFoundError(
-            f"No refinement grind output found: {path}\n"
-            f"  Run: python scripts/setup_refiner.py --setup {setup_type}"
-        )
-    with open(path) as f:
-        data = json.load(f)
+    # Load classified signals
+    r = requests.get(f"{API_BASE}/api/v2/cycles/{cycle_id}/signals", timeout=60)
+    r.raise_for_status()
+    signals = r.json().get("signals", [])
 
-    winners = data.get("signals", [])
-    all_deduped = data.get("all_deduped_classified", [])
-    sacrificial = data.get("sacrificial_signals", [])
-    conditions = data.get("pruned_conditions", [])
+    if not signals:
+        raise RuntimeError(f"No signals found for cycle {cycle_id}")
 
-    if not all_deduped:
-        raise RuntimeError(
-            f"Refined output missing all_deduped_classified ({len(all_deduped)}).\n"
-            f"  Re-run: python scripts/setup_refiner.py --setup {setup_type}"
-        )
-    if not sacrificial:
-        print(f"  WARNING: No sacrificial signals. Proximity grind will only trim losers.")
+    win_pile = []
+    lose_pile = []
+    for sig in signals:
+        cls = sig.get("classification", "")
+        if cls in WIN_CLASSES:
+            win_pile.append(sig)
+        elif cls in LOSE_CLASSES:
+            lose_pile.append(sig)
 
-    print(f"  Loaded refined result: {len(conditions)} conditions")
-    print(f"    Winners (filtered):      {len(winners)}")
-    print(f"    All deduped (classified): {len(all_deduped)}")
-    print(f"    Sacrificial (pre-dedup):  {len(sacrificial)}")
+    # Load sacrificial signals
+    sacrifice_pile = []
+    try:
+        r = requests.get(f"{API_BASE}/api/v2/cycles/{cycle_id}/sacrificial_signals",
+                         timeout=30)
+        r.raise_for_status()
+        sacrifice_pile = r.json().get("signals", [])
+    except Exception as e:
+        print(f"  WARNING: Could not load sacrificial signals: {e}")
+        print(f"  Proximity grind will use losers only.")
 
-    return winners, all_deduped, sacrificial, conditions, data
+    print(f"  Loaded from Railway (cycle {cycle_id}):")
+    print(f"    Total signals: {len(signals):,}")
+    print(f"    Win pile:      {len(win_pile):,}")
+    print(f"    Lose pile:     {len(lose_pile):,}")
+    print(f"    Sacrifice pile: {len(sacrifice_pile):,}")
 
-
-# ══════════════════════════════════════════════════════════════
-# PILE BUILDER
-# ══════════════════════════════════════════════════════════════
-
-def build_piles(winners, all_deduped, sacrificial):
-    """Build three piles from setup_refiner output.
-
-    Win pile: deduped winners (exit triggered + move >= ADR)
-    Sacrifice pile: leftward duplicates from dedup
-    Lose pile: deduped signals NOT in winner set
-    """
-    winner_keys = set()
-    for w in winners:
-        key = f"{w['ticker']}|{w['bar_idx']}"
-        winner_keys.add(key)
-
-    losers = []
-    for sig in all_deduped:
-        key = f"{sig['ticker']}|{sig['bar_idx']}"
-        if key not in winner_keys:
-            losers.append(sig)
-
-    print(f"\n  Pile Summary:")
-    print(f"    Win pile:       {len(winners):,} deduped winners (untouchable)")
-    print(f"    Sacrifice pile: {len(sacrificial):,} leftward duplicates")
-    print(f"    Lose pile:      {len(losers):,} deduped losers (target)")
-    print(f"    Total trimmable: {len(sacrificial) + len(losers):,}")
-
-    return winners, sacrificial, losers
+    return win_pile, lose_pile, sacrifice_pile
 
 
 # ══════════════════════════════════════════════════════════════
@@ -169,7 +152,7 @@ def _extract_batch(sig_indices):
     from expr_cache_builder import load_ticker_cache
 
     results = []
-    ticker_cache = {}  # local per-batch cache
+    ticker_cache = {}
 
     for si in sig_indices:
         sig = _w_signals[si]
@@ -270,7 +253,6 @@ def compute_win_ranges(win_matrix, expressions):
         vals = win_matrix[:, j]
         valid = vals[~np.isnan(vals)]
         if len(valid) < n_win:
-            # At least one win signal has NaN — cannot use this expression
             continue
         lo, hi = float(np.min(valid)), float(np.max(valid))
         margin = (hi - lo) * 0.05
@@ -361,7 +343,6 @@ def run_beam_search(trim_matrix, win_ranges, expressions,
     current_level = current_level[:beam_width]
 
     best = current_level[0]
-    prev_best_remaining = n_rows
     trimmed = n_rows - best.remaining
     print(f"    Level  1: {best.remaining:,} remaining "
           f"(-{trimmed:,}, {trimmed / max(n_rows, 1) * 100:.1f}%)")
@@ -509,16 +490,19 @@ def compute_metrics(win_pile, sacrifice_pile, lose_pile,
     losers_trimmed = n_lose - losers_remaining
 
     # How many sacrificial trimmed?
-    sac_matrix = trim_matrix[:n_sacrifice, :]
-    sac_mask = np.ones(n_sacrifice, dtype=bool)
-    for cond in proximity_conditions:
-        j = expr_name_to_idx[cond["name"]]
-        vals = sac_matrix[:, j]
-        in_range = (vals >= cond["low"]) & (vals <= cond["high"])
-        in_range[np.isnan(vals)] = False
-        sac_mask &= in_range
-    sac_remaining = int(np.sum(sac_mask))
-    sac_trimmed = n_sacrifice - sac_remaining
+    sac_remaining = 0
+    sac_trimmed = n_sacrifice
+    if n_sacrifice > 0:
+        sac_matrix = trim_matrix[:n_sacrifice, :]
+        sac_mask = np.ones(n_sacrifice, dtype=bool)
+        for cond in proximity_conditions:
+            j = expr_name_to_idx[cond["name"]]
+            vals = sac_matrix[:, j]
+            in_range = (vals >= cond["low"]) & (vals <= cond["high"])
+            in_range[np.isnan(vals)] = False
+            sac_mask &= in_range
+        sac_remaining = int(np.sum(sac_mask))
+        sac_trimmed = n_sacrifice - sac_remaining
 
     # Win rate before/after
     n_winners = len(win_pile)
@@ -547,7 +531,7 @@ def compute_metrics(win_pile, sacrifice_pile, lose_pile,
 # SAVE + RAILWAY UPLOAD
 # ══════════════════════════════════════════════════════════════
 
-def save_results(setup_type, proximity_conditions, metrics, refined_conditions):
+def save_results(setup_type, proximity_conditions, metrics):
     """Save proximity grind results locally."""
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     n_conds = len(proximity_conditions)
@@ -557,11 +541,7 @@ def save_results(setup_type, proximity_conditions, metrics, refined_conditions):
         "timestamp": ts,
         "step": "proximity_grind",
         "n_proximity_conditions": n_conds,
-        "n_refined_conditions": len(refined_conditions),
-        "n_total_conditions": len(refined_conditions) + n_conds,
-        "n_conditions": len(refined_conditions) + n_conds,
         "proximity_conditions": proximity_conditions,
-        "all_conditions": refined_conditions + proximity_conditions,
         "metrics": metrics,
     }
 
@@ -583,11 +563,10 @@ def save_results(setup_type, proximity_conditions, metrics, refined_conditions):
 
 
 def upload_to_railway(setup_type, proximity_conditions, metrics):
-    """Append proximity conditions to the current cycle's cycle_conditions.
+    """Upload proximity conditions to the current cycle's cycle_conditions.
 
-    Does NOT create a new cycle — appends to the existing current cycle.
-    The signal set is unchanged — proximity trimming is informational for
-    this upload. The conditions are stored for use by the nightly scan.
+    Replaces any existing proximity conditions (idempotent on re-run).
+    Keeps all non-proximity conditions intact.
     """
     print(f"\n  Railway Upload:")
 
@@ -607,17 +586,20 @@ def upload_to_railway(setup_type, proximity_conditions, metrics):
 
     print(f"  Cycle: {cycle_id}")
 
-    # Read existing conditions to get sort_order offset
+    # Read existing conditions
     try:
         r = requests.get(f"{API_BASE}/api/v2/cycles/{cycle_id}/conditions", timeout=30)
         r.raise_for_status()
         existing = r.json().get("conditions", [])
-        max_sort = max((c.get("sort_order", 0) for c in existing), default=0)
     except Exception as e:
         print(f"  Warning: could not read existing conditions: {e}")
-        max_sort = 100
+        existing = []
 
-    # Build full condition set: existing + proximity
+    # Strip old proximity conditions, keep everything else
+    kept = [c for c in existing if c.get("tier") != "proximity"]
+    max_sort = max((c.get("sort_order", 0) for c in kept), default=0)
+
+    # Append new proximity conditions
     new_conds = [
         {
             "tier": "proximity",
@@ -630,14 +612,7 @@ def upload_to_railway(setup_type, proximity_conditions, metrics):
         for i, c in enumerate(proximity_conditions)
     ]
 
-    # Upload full condition set (existing + proximity) as replace
-    # This is safer than append — avoids duplicate proximity conditions on re-run
-    all_conds = []
-    for c in existing:
-        # Keep non-proximity conditions as-is
-        if c.get("tier") != "proximity":
-            all_conds.append(c)
-    all_conds.extend(new_conds)
+    all_conds = kept + new_conds
 
     try:
         payload = {"conditions": all_conds}
@@ -646,8 +621,7 @@ def upload_to_railway(setup_type, proximity_conditions, metrics):
             json=payload, timeout=30
         )
         r.raise_for_status()
-        n_existing = len(all_conds) - len(new_conds)
-        print(f"  Uploaded {n_existing} existing + {len(new_conds)} proximity "
+        print(f"  Uploaded {len(kept)} existing + {len(new_conds)} proximity "
               f"= {len(all_conds)} total conditions")
     except Exception as e:
         print(f"  FAILED: {e}")
@@ -676,16 +650,13 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
 
     t0 = time.time()
 
-    # ── 1. Load refined data ──
-    print("Phase 1: Loading refined data...")
-    winners, all_deduped, sacrificial, conditions, refined_data = \
-        load_refined_result(setup_type)
+    # ── 1. Get current cycle from Railway ──
+    print("Phase 1: Loading data from Railway...")
+    cycle_id = get_current_cycle(setup_type)
+    print(f"  Current cycle: {cycle_id}")
 
-    # ── 2. Build piles ──
-    print("\nPhase 2: Building piles...")
-    win_pile, sacrifice_pile, lose_pile = build_piles(
-        winners, all_deduped, sacrificial
-    )
+    # ── 2. Load piles from Railway ──
+    win_pile, lose_pile, sacrifice_pile = load_piles_from_railway(cycle_id)
 
     if dry_run:
         print(f"\n  DRY RUN — stopping here. ({time.time() - t0:.0f}s)")
@@ -699,7 +670,7 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
         return
 
     # ── 3. Load expr cache + expressions ──
-    print("\nPhase 3: Loading expression cache...")
+    print("\nPhase 2: Loading expression cache...")
     expr_cache = ExprSeriesCache()
     if not expr_cache.is_valid():
         raise RuntimeError("Expression cache not found. "
@@ -710,16 +681,16 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
     print(f"  Expr cache: {expr_cache.n_expressions:,} expressions")
 
     # ── 4. Extract values (parallelized) ──
-    print("\nPhase 4a: Extracting win pile expression values...")
+    print("\nPhase 3a: Extracting win pile expression values...")
     win_matrix = extract_signal_values_parallel(win_pile, expressions, expr_cache)
 
-    print("\nPhase 4b: Extracting trim pile expression values...")
+    print("\nPhase 3b: Extracting trim pile expression values...")
     trim_signals = sacrifice_pile + lose_pile
     trim_matrix = extract_signal_values_parallel(trim_signals, expressions, expr_cache)
     n_sacrifice = len(sacrifice_pile)
 
     # ── 5. Compute win ranges (pyramid_grinder-compatible) ──
-    print("\nPhase 5: Computing win pile ranges...")
+    print("\nPhase 4: Computing win pile ranges...")
     win_ranges = compute_win_ranges(win_matrix, expressions)
 
     if not win_ranges:
@@ -727,7 +698,7 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
         return
 
     # ── 6. Beam search ──
-    print("\nPhase 6: Beam search...")
+    print("\nPhase 5: Beam search...")
     proximity_conditions, remaining = run_beam_search(
         trim_matrix, win_ranges, expressions,
         beam_width=beam_width, depth=depth,
@@ -738,7 +709,7 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
         return
 
     # ── 7. Validate (NaN = FAIL, hard abort on failure) ──
-    print("\nPhase 7: Validating win pile (NaN = FAIL)...")
+    print("\nPhase 6: Validating win pile (NaN = FAIL)...")
     if not validate_win_pile(win_matrix, proximity_conditions, expressions):
         print("\n  CRITICAL: Validation failed. Aborting — grinder has a bug.")
         return
@@ -769,9 +740,7 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
     print(f"\n  Time: {time.time() - t0:.0f}s")
 
     # ── 10. Save locally ──
-    output, local_path = save_results(
-        setup_type, proximity_conditions, metrics, conditions
-    )
+    save_results(setup_type, proximity_conditions, metrics)
 
     # ── 11. Upload to Railway ──
     upload_to_railway(setup_type, proximity_conditions, metrics)

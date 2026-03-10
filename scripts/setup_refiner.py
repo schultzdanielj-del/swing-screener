@@ -1109,6 +1109,64 @@ def upload_to_railway(setup_type, deduped, with_exit, no_exit, examples):
         print(f"  Signals saved locally — upload manually if needed.")
 
 
+def upload_sacrificial_to_railway(setup_type, sacrificial):
+    """Upload sacrificial signals (leftward dedup duplicates) to Railway.
+
+    These are used by the proximity grinder to build the trim pile.
+    Stored in cycle_sacrificial_signals table, keyed by current cycle.
+    """
+    if not sacrificial:
+        print(f"\n  No sacrificial signals to upload.")
+        return
+
+    # Find current cycle
+    try:
+        r = requests.get(f"{RAILWAY_URL}/api/v2/cycles/{setup_type}", timeout=30)
+        r.raise_for_status()
+        cycles = r.json().get("cycles", [])
+        current = [c for c in cycles if c.get("is_current") == 1]
+        if not current:
+            print(f"  ⚠ No current cycle for {setup_type} — skipping sacrificial upload")
+            return
+        cycle_id = current[0]["cycle_id"]
+    except Exception as e:
+        print(f"  ⚠ Failed to find current cycle: {e}")
+        return
+
+    print(f"\n  ── SACRIFICIAL SIGNALS UPLOAD ──")
+    print(f"  Cycle: {cycle_id}")
+    print(f"  Sacrificial signals: {len(sacrificial)}")
+
+    signals = []
+    for sig in sacrificial:
+        signals.append({
+            "setup_type": setup_type,
+            "ticker": sig["ticker"],
+            "signal_date": sig["date"],
+            "bar_idx": sig["bar_idx"],
+            "close": sig.get("close"),
+        })
+
+    try:
+        payload = {"signals": signals, "replace": True}
+        r = requests.post(f"{RAILWAY_URL}/api/v2/cycles/{cycle_id}/sacrificial_signals",
+                          json=payload, timeout=60)
+        r.raise_for_status()
+        print(f"  ✓ Uploaded {len(signals)} sacrificial signals to v2 cycle {cycle_id}")
+
+        # Verify
+        r2 = requests.get(f"{RAILWAY_URL}/api/v2/cycles/{cycle_id}/sacrificial_signals", timeout=30)
+        r2.raise_for_status()
+        stored = r2.json().get("signals", [])
+        if len(stored) == len(signals):
+            print(f"  ✓ Verified: {len(stored)} sacrificial signals in Railway")
+        else:
+            print(f"  ⚠ MISMATCH — uploaded {len(signals)}, Railway has {len(stored)}")
+    except Exception as e:
+        print(f"  ⚠ Sacrificial upload failed: {e}")
+        print(f"  Proximity grinder will work without them (losers only).")
+
+
 # ══════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════
@@ -1219,6 +1277,9 @@ def run_refiner(setup_type, conditions_file=None, min_power=DEFAULT_MIN_POWER,
     upload_to_railway(
         setup_type, deduped, with_exit, no_exit, examples
     )
+
+    # Upload sacrificial signals (leftward dedup duplicates) for proximity grinder
+    upload_sacrificial_to_railway(setup_type, sacrificial)
 
     print(f"\n  {'='*70}")
     print(f"  DONE in {total_time:.0f}s")
