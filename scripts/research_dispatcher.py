@@ -42,7 +42,7 @@ API_BASE = "https://web-production-e3025.up.railway.app"
 POLL_INTERVAL = 15       # seconds between job polls
 GRIND_POLL = 30          # seconds between grind completion polls
 MAX_PHASES = 8           # max Claude Code invocations per job
-MAX_TOTAL_TIME = 7200    # 2 hours total per job
+MAX_TOTAL_TIME = 14400   # 4 hours total per job
 MODEL = "sonnet"         # lighter on usage than opus
 
 # Force UTF-8 on Windows
