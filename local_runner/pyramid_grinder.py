@@ -1224,6 +1224,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                       from universe matrix. Pass None to disable (default).
     """
     d1_depth = d1_depth or depth
+    d1_depth = min(d1_depth, 15)  # Cap D1 — more than 15 overfits to today's snapshot
     d1_beam = d1_beam or beam_width
 
     print("\n" + "=" * 70)
