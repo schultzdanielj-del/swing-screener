@@ -199,3 +199,78 @@ square counts. More examples = bigger square = more random darts count.
 New system: drew a bullseye with rings. Anything that hits gets a score.
 Center scores high, edges score low. More examples = tighter, more precise
 bullseye = better separation between real setups and noise.
+
+---
+
+## Test Results (2026-03-10) — Pure Dartboard Doesn't Discriminate
+
+Two runs completed with 69 DTSS examples, 500 expressions:
+
+| Run | Threshold | Signals | Peak/day | Examples passing |
+|-----|-----------|---------|----------|-----------------|
+| 1 | 0.9158 (target_peak=5) | 304 | 5 | 1/66 |
+| 2 | 0.5948 (min example score) | 53,447 | 518 | 66/66 |
+
+**The problem:** Example scores range 0.59–0.92. The universe also has
+millions of bars scoring 0.59+. Averaging 500 expression scores washes
+out discrimination — weak signals average together, everything scores
+similarly. There's no clean gap between examples and noise.
+
+Run 1: Binary search for peak=5 forced the threshold to 0.9158, which is
+above all but 1 example. The late-2021 signal cluster (a regime where DTSS
+signals were everywhere) drove this — the search had to go absurdly high
+to tame those few days.
+
+Run 2: Threshold = min example score (GRPN at 0.5948). Every example passes
+but so does everything else. 53K signals.
+
+**Root causes:**
+1. Additive scoring: a bar can be mediocre on most expressions and still
+   average out to a passable score. Unlike the pyramid where one failed
+   condition kills the bar.
+2. 500 expressions is too many weak contributors. Most have marginal
+   discriminating power, and they dilute the strong ones.
+3. Threshold tuning has no sweet spot — the example distribution and
+   universe distribution overlap too much.
+
+## Proposed Fix: Hybrid Approach
+
+Use the dartboard for **expression selection** and the pyramid for **signal filtering**.
+
+**The insight:** The dartboard's Cohen's d weighting is a clean, deterministic
+way to identify which expressions separate examples from the universe. No
+beam search, no random walk, no instability. But combining them additively
+(average score) is the wrong aggregation — it should be multiplicative
+(all conditions must pass).
+
+**How it works:**
+
+1. **Dartboard step:** Build example profile, compute Cohen's d for every
+   expression against the universe. Rank by discriminating power. This is
+   stable and deterministic — same examples always produce the same ranking.
+
+2. **Selection step:** Take the top N expressions by Cohen's d. For each,
+   compute min/max across examples (like the pyramid's bounding box).
+   N could be adaptive — e.g., all expressions with Cohen's d > some threshold,
+   or a fixed count. The key question is what N to use.
+
+3. **Filtering step:** Apply them as binary conditions, pyramid-style.
+   A bar must be within [min, max] on ALL selected expressions. One failure
+   kills the signal.
+
+**What this gives us:**
+- Stable expression selection (dartboard's strength)
+- Tight multiplicative filtering (pyramid's strength)
+- Setup-agnostic: Cohen's d adapts per setup
+- Deterministic: same examples → same conditions → same signals
+- More examples still help: sharper Cohen's d estimates
+
+**What this replaces:**
+- The beam search (replaced by Cohen's d ranking)
+- The tier cascade (replaced by single-pass selection)
+- The pure dartboard scoring (replaced by binary filtering)
+
+**Open questions:**
+- How many expressions to select? Fixed N, or adaptive d threshold?
+- Should min/max ranges include a margin (e.g., p5/p95 instead of absolute min/max)?
+- Do we still need the D1 cap (15 conditions) or is that a pyramid artifact?

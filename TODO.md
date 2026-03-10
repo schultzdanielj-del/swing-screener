@@ -23,17 +23,32 @@ See `PIPELINE_V2.md` for full spec.
 
 ## Current State — DTSS
 
-### Dartboard Grinder — FIRST TEST RUN IN PROGRESS (2026-03-10)
+### Dartboard Grinder — TESTED, NEEDS HYBRID APPROACH (2026-03-10)
 
-Task #3 running on Dan's machine. Waiting for results.
+**Background:** Pyramid beam search unstable at 69 examples (9.4% Jaccard). Built dartboard grinder — density scoring via Gaussian kernel + Cohen's d weighting. See `DARTBOARD_DESIGN.md`.
 
-**Background:** Signal count bloat investigation showed the pyramid grinder's beam search is fundamentally unstable at 69 examples (9.4% Jaccard between runs, random-walking not converging). Built dartboard grinder as replacement — density-based scoring using Gaussian kernel + Cohen's d weighting. See `DARTBOARD_DESIGN.md` and `scripts/diagnose_bloat.py`.
+**Two test runs completed:**
 
-**Next steps after results come in:**
-1. Evaluate dartboard output vs pyramid (signal count, example scores, overlap)
-2. If good: re-run pipeline steps 2-9 with dartboard output
-3. Tune top_n and threshold
-4. Complete pipeline audit (profit grind → regime → health check)
+| Run | Threshold | Signals | Peak/day | Examples passing |
+|-----|-----------|---------|----------|-----------------|
+| 1 | 0.9158 (target_peak=5) | 304 | 5 | 1/66 (threshold too high) |
+| 2 | 0.5948 (min example score) | 53,447 | 518 | 66/66 |
+
+**Root cause:** The dartboard scores examples 0.59–0.92 but the universe also scores heavily in that range. Averaging 500 expression scores washes out discrimination — weak signals average together and everything scores similarly. No clean gap between examples and noise.
+
+**Diagnosis:**
+- Binary search on peak target (run 1): late-2021 signal cluster forced threshold so high only 1 example passed
+- Threshold = min example score (run 2): lets everything through — 53K signals
+- Fewer expressions (top 50 instead of 500): might help but the right N is arbitrary and setup-dependent
+- Multiplicative scoring: everything dies (0.9^500 ≈ 0)
+
+**Next step: HYBRID APPROACH**
+Use the dartboard's Cohen's d weighting to **select** which expressions matter (deterministic, no beam search instability), then apply them as binary filters like the pyramid does. Dartboard picks the conditions, pyramid-style filtering combines them.
+
+This gives:
+- Stable expression selection (dartboard strength — no beam search random walk)
+- Tight multiplicative filtering (pyramid strength — a bar must pass ALL conditions)
+- Setup-agnostic: Cohen's d threshold adapts to each setup's expression landscape
 
 ### Pipeline Audit (2026-03-09) — paused for signal count investigation
 
@@ -51,7 +66,8 @@ Steps 1-6 verified with pyramid grinder. Steps 7-9 remain.
 | 4 | 2026-03-04 | 59 | pyramid | 803 | Inflection point |
 | 5 | 2026-03-10 | 68 | pyramid (D1 cap) | 1,218 | |
 | 6 | 2026-03-10 | 69 | pyramid | 1,292 | Outlier removal made it worse |
-| 7 | 2026-03-10 | 69 | dartboard | ? | FIRST TEST — running |
+| 7 | 2026-03-10 | 69 | dartboard (target_peak=5) | 304 | Threshold 0.9158, only 1 example passed |
+| 8 | 2026-03-10 | 69 | dartboard (min example) | 53,447 | Threshold 0.5948, no discrimination |
 
 ---
 
@@ -77,4 +93,4 @@ Steps 1-6 verified with pyramid grinder. Steps 7-9 remain.
 8. V2 only — no V1 patching
 9. Read PIPELINE_V2.md before touching any grinder or pipeline agent
 10. Pyramid grinder: 100% example pass rate, non-negotiable
-11. Dartboard grinder: low-scoring examples are outlier warnings, not hard gates
+11. Dartboard grinder: pure scoring doesn't discriminate. Hybrid approach (dartboard selection + pyramid filtering) is next.
