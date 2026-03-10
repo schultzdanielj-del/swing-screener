@@ -71,7 +71,7 @@ class SpiderwebSearch:
             masks.append(passes)
 
             pass_rate = np.sum(passes) / self.n_universe
-            if pass_rate < 0.95:
+            if pass_rate < 0.85:
                 self.valid_exprs.append(i)
 
         self.universe_passes = np.array(masks)

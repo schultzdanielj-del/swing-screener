@@ -229,6 +229,77 @@ def compute_example_ranges(example_dfs, expressions, expr_cache=None):
     return ranges, example_matrix
 
 
+def prefilter_candidates(expressions, example_ranges, threshold=0.85):
+    """Remove expressions whose example range passes too much of the universe.
+
+    Only filters the ranges dict — expressions without a range are naturally
+    excluded from being candidates. Does NOT modify the expression list
+    (to keep example_matrix columns in sync).
+
+    Args:
+        expressions: list of expression dicts (returned unchanged)
+        example_ranges: {name: (low, high)} from compute_example_ranges
+        threshold: drop expressions with pass rate >= this (default 0.85)
+
+    Returns:
+        expressions: same list (unchanged)
+        filtered_ranges: dict {name: (low, high)} (subset of input)
+        stats: dict with counts
+    """
+    from matrix_builder import get_universe_matrix
+
+    uni_data = get_universe_matrix()
+    uni_matrix = uni_data["universe_matrix"]
+    uni_expr_names = uni_data["expr_names"]
+    n_universe = uni_matrix.shape[0]
+
+    name_to_col = {name: i for i, name in enumerate(uni_expr_names)}
+
+    dropped = 0
+    dropped_by_cat = defaultdict(int)
+    filtered_ranges = {}
+
+    # Build name → category lookup
+    name_to_cat = {e["name"]: e.get("category", "unknown") for e in expressions}
+
+    for name, (low, high) in example_ranges.items():
+        cat = name_to_cat.get(name, "unknown")
+        col = name_to_col.get(name)
+
+        if col is None:
+            # Not in D1 universe matrix (HTF etc) — keep, will be
+            # evaluated at proper tier using expr cache
+            filtered_ranges[name] = (low, high)
+            continue
+
+        vals = uni_matrix[:, col]
+        passes = ((vals >= low) & (vals <= high)) | np.isnan(vals)
+        pass_rate = float(np.sum(passes)) / n_universe
+
+        if pass_rate >= threshold:
+            dropped += 1
+            dropped_by_cat[cat] += 1
+        else:
+            filtered_ranges[name] = (low, high)
+
+    stats = {
+        "threshold": threshold,
+        "before": len(example_ranges),
+        "after": len(filtered_ranges),
+        "dropped": dropped,
+        "dropped_by_category": dict(dropped_by_cat),
+    }
+
+    print(f"  Pre-filter ({threshold:.0%} threshold): "
+          f"{len(example_ranges)} → {len(filtered_ranges)} candidates "
+          f"(dropped {dropped})")
+    if dropped_by_cat:
+        top_dropped = sorted(dropped_by_cat.items(), key=lambda x: -x[1])[:5]
+        print(f"  Top dropped: {', '.join(f'{c}={n}' for c, n in top_dropped)}")
+
+    return expressions, filtered_ranges, stats
+
+
 # ══════════════════════════════════════════════════════════════
 # TIER MATRIX BUILDER (multiprocessing)
 # ══════════════════════════════════════════════════════════════
@@ -1027,6 +1098,11 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
         example_dfs, pass_expressions, expr_cache=expr_cache)
     print(f"  {len(pass_ranges)} expressions have valid ranges for this pass")
 
+    # Pre-filter: remove expressions whose example range passes ≥85% of the universe.
+    # These can't meaningfully filter signals and flood the beam search with noise.
+    pass_expressions, pass_ranges, prefilter_stats = prefilter_candidates(
+        pass_expressions, pass_ranges, threshold=0.85)
+
     new_conditions = []
     tier_results = {}
 
@@ -1294,6 +1370,10 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         example_ranges, example_matrix = compute_example_ranges(
             example_dfs, expressions, expr_cache=expr_cache)
         print(f"  {len(example_ranges)} expressions have valid ranges ({time.time()-t0:.0f}s)")
+
+        # Pre-filter: remove expressions whose example range passes ≥85% of the universe.
+        expressions, example_ranges, prefilter_stats = prefilter_candidates(
+            expressions, example_ranges, threshold=0.85)
 
         all_conditions = []
         tier_results = {}
