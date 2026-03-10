@@ -1907,14 +1907,18 @@ def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
                 break
         if expr_spec is None:
             continue
+        low, high = candidate_ranges[name]
         all_conditions.append({
             "name": name,
             "expr": name,
             "category": cond.get("category", "unknown"),
             "compute": expr_spec["compute"],
-            "low": cond["low"],
-            "high": cond["high"],
+            "low": low,
+            "high": high,
             "tier": "refinement",
+            "filter_power": cond.get("filter_power"),
+            "signals_with_all": cond.get("signals_with_all"),
+            "signals_without": cond.get("signals_without"),
         })
 
     # ── Stats ──
