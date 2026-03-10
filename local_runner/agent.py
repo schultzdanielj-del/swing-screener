@@ -91,6 +91,10 @@ PIPELINE_STEP_SCRIPTS = {
         ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}",
          "--beam", "10000", "--depth", "100", "--peak-target", "3"],
     ],
+    "signal_grind_dartboard": [
+        ["python", "-m", "local_runner.dartboard_grinder", "--setup", "{setup}",
+         "--top-n", "500", "--target-peak", "5"],
+    ],
     "exit_grind": [
         ["python", "scripts/exit_grinder.py", "--setup", "{setup}"],
     ],
@@ -173,6 +177,16 @@ def handle_pipeline_job(job):
     if step_id in ('signal_grind', 'refinement_grind') and job_params:
         grinder_cmd = cmds[0]  # First command is always pyramid_grinder for these steps
         param_map = {'beam': '--beam', 'depth': '--depth', 'peak_target': '--peak-target'}
+        for key, flag in param_map.items():
+            val = job_params.get(key)
+            if val is not None:
+                grinder_cmd.extend([flag, str(val)])
+
+    # Inject dartboard params
+    if step_id == 'signal_grind_dartboard' and job_params:
+        grinder_cmd = cmds[0]
+        param_map = {'top_n': '--top-n', 'target_peak': '--target-peak',
+                     'threshold': '--threshold', 'target_avg': '--target-avg'}
         for key, flag in param_map.items():
             val = job_params.get(key)
             if val is not None:

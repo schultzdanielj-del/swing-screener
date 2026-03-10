@@ -1252,6 +1252,7 @@ async def v2_get_latest_watchlist():
 
 ALLOWED_TASK_COMMANDS = {
     "signal_grind": "python local_runner/pyramid_grinder.py --setup {setup} --beam {beam} --depth {depth} --peak-target {peak_target}",
+    "signal_grind_dartboard": "python local_runner/dartboard_grinder.py --setup {setup} --top-n {top_n} --target-peak {target_peak}",
     "signal_grind_blackout": "python local_runner/pyramid_grinder.py --setup {setup} --blackout --beam {beam} --depth {depth} --peak-target {peak_target}",
     "exit_grind": "python scripts/exit_grinder.py --setup {setup}",
     "scan": "python scripts/signal_filter.py --setup {setup}",
