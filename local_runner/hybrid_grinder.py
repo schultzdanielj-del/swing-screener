@@ -254,12 +254,12 @@ _w_cond_highs = None
 _w_ohlcv_cache = None
 
 
-def _init_filter_worker(expr_cache_dir, cond_cache_cols, cond_lows, cond_highs,
+def _init_filter_worker(cond_cache_cols, cond_lows, cond_highs,
                         ohlcv_cache):
     """Initialize worker with condition arrays and OHLCV cache."""
     global _w_expr_cache, _w_cond_cache_cols, _w_cond_lows, _w_cond_highs
     global _w_ohlcv_cache
-    _w_expr_cache = ExprSeriesCache(expr_cache_dir)
+    _w_expr_cache = ExprSeriesCache()
     _w_cond_cache_cols = cond_cache_cols
     _w_cond_lows = cond_lows
     _w_cond_highs = cond_highs
@@ -390,7 +390,7 @@ def filter_universe(universe_cache, expr_cache, conditions):
     with ProcessPoolExecutor(
         max_workers=n_workers,
         initializer=_init_filter_worker,
-        initargs=(expr_cache._cache_dir, cond_cache_cols, cond_lows, cond_highs,
+        initargs=(cond_cache_cols, cond_lows, cond_highs,
                   universe_cache),
     ) as pool:
         futures = {pool.submit(_filter_ticker_batch, batch): batch
@@ -728,7 +728,7 @@ def run_hybrid(setup_type, min_d=0.5, max_conditions=200, top_n_weight=500,
         return None
 
     try:
-        expr_cache = ExprSeriesCache(os.path.join(CACHE_DIR, "expr_series"))
+        expr_cache = ExprSeriesCache()
         if not expr_cache.is_valid():
             print("  FATAL: Expression series cache not found or invalid")
             return None
