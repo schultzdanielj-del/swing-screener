@@ -791,8 +791,9 @@ def rank_and_threshold(all_ticker_scores, example_dfs, threshold=None,
     avg = sum(date_counts.values()) / n_dates if n_dates > 0 else 0
 
     elapsed = time.time() - t0
+    avg_per_td = total / 1258 if total else 0
     print(f"\n  Threshold: {threshold:.4f}")
-    print(f"  Signals: {total:,} total, peak {peak}/day, avg {avg:.1f}/day")
+    print(f"  Signals: {total:,} total, peak {peak}/day, avg {avg_per_td:.2f}/trading day")
     print(f"  Unique tickers: {len(set(t for t, _, _ in deduped))}")
     print(f"  ({elapsed:.1f}s)")
 
@@ -853,12 +854,17 @@ def _find_threshold_for_peak(all_bars, target_peak):
     """Binary search for score threshold that produces ≤ target_peak signals/day."""
     lo, hi = 0.3, 1.0
 
-    for _ in range(30):  # Binary search converges in ~30 iterations
+    print(f"  Binary search for peak≤{target_peak}:")
+    for i in range(30):  # Binary search converges in ~30 iterations
         mid = (lo + hi) / 2
         signals = [(t, d, s) for t, d, s in all_bars if s >= mid]
         deduped = _deduplicate_signals(signals)
         date_counts = Counter(d for _, d, _ in deduped)
         peak = max(date_counts.values()) if date_counts else 0
+        total = len(deduped)
+
+        if i < 8 or i % 5 == 0:
+            print(f"    [{i:2d}] thresh={mid:.4f}  signals={total:,}  peak={peak}")
 
         if peak > target_peak:
             lo = mid
@@ -1001,12 +1007,17 @@ def build_output(setup_type, weights, signals, threshold, stats,
     peak = stats["peak"]
     avg = stats["avg"]
 
+    # Avg per trading day (approx 252/yr * 5yr)
+    n_signal_days = stats.get("n_dates_with_signals", 0)
+    avg_per_signal_day = avg
+    avg_per_trading_day = round(total_signals / 1258, 2) if total_signals else 0
+
     result = {
         "setup_type": setup_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "total_time_s": round(total_time, 1),
         "grinder_type": "dartboard",
-        "peak_target": peak,
+        "peak_target": None,  # Set by caller if target_peak was used
         "multi_pass": False,
         "blackout": blackout,
         "n_conditions": len(all_conditions),
@@ -1024,8 +1035,11 @@ def build_output(setup_type, weights, signals, threshold, stats,
         "summary": {
             "final_total": total_signals,
             "final_peak": peak,
-            "final_avg": avg,
+            "final_avg_per_signal_day": avg_per_signal_day,
+            "final_avg_per_trading_day": avg_per_trading_day,
+            "n_signal_days": n_signal_days,
         },
+        "final_signals": signals,
         "example_signals": example_signals,
         "example_scores": stats.get("example_scores", []),
         "examples_passing": len([ex for ex in example_dfs if ex["scan_idx"] is not None]),
@@ -1130,6 +1144,7 @@ def run_dartboard(setup_type, top_n=500, threshold=None, target_peak=None,
         setup_type, weights, signals, threshold_used, signal_stats,
         example_dfs, profile, total_time, blackout=bool(blackout_map))
     result["examples_failing"] = len(failures)
+    result["peak_target"] = target_peak
 
     # ── Save ──
     os.makedirs(CACHE_DIR, exist_ok=True)
@@ -1166,13 +1181,18 @@ def run_dartboard(setup_type, top_n=500, threshold=None, target_peak=None,
         print(f"  Local file saved. Upload manually or retry later.")
 
     # ── Final summary ──
+    n_passing = result["examples_passing"]
+    n_failing = result["examples_failing"]
+    n_total_ex = n_passing + n_failing
+    avg_per_td = total_signals / 1258 if total_signals else 0
     print(f"\n{'='*70}")
     print(f"  DARTBOARD COMPLETE")
     print(f"{'='*70}")
     print(f"  Expressions used: {weights['top_n']}")
     print(f"  Threshold: {threshold_used:.4f}")
     print(f"  Signals: {total_signals:,} total, peak {peak}/day, "
-          f"avg {signal_stats['avg']:.1f}/day")
+          f"avg {avg_per_td:.2f}/trading day")
+    print(f"  Examples: {n_passing}/{n_total_ex} passing")
     print(f"  Time: {total_time:.0f}s ({total_time/60:.1f} min)")
 
     return result
