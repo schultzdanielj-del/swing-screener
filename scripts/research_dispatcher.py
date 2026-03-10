@@ -142,17 +142,25 @@ def run_claude_code(prompt, system_prompt, phase_name=""):
     if not claude_cmd:
         return "ERROR: Claude Code CLI not found", 1
 
+    # Write system prompt and user prompt to files (avoids shell escaping issues on Windows)
+    sys_file = os.path.join(REPO_ROOT, ".research_system_prompt.txt")
+    prompt_file = os.path.join(REPO_ROOT, ".research_prompt.txt")
+    with open(sys_file, "w", encoding="utf-8") as f:
+        f.write(system_prompt)
+    with open(prompt_file, "w", encoding="utf-8") as f:
+        f.write(prompt)
+
     if claude_cmd == "npx":
         cli_args = ["npx", "@anthropic-ai/claude-code",
                      "-p", prompt,
                      "--model", MODEL,
-                     "--system-prompt", system_prompt,
+                     "--append-system-prompt-file", sys_file,
                      "--dangerously-skip-permissions"]
     else:
         cli_args = [claude_cmd,
                      "-p", prompt,
                      "--model", MODEL,
-                     "--system-prompt", system_prompt,
+                     "--append-system-prompt-file", sys_file,
                      "--dangerously-skip-permissions"]
 
     log(f"  Claude Code ({phase_name})...")
