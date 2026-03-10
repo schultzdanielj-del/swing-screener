@@ -101,9 +101,11 @@ PIPELINE_STEP_SCRIPTS = {
     "scan": [
         ["python", "scripts/signal_filter.py", "--setup", "{setup}"],
     ],
-    # refinement_grind: winners vs losers beam search (standalone script)
+    # refinement_grind: re-grind with blackout masking, then prune conditions
     "refinement_grind": [
-        ["python", "scripts/refinement_grinder.py", "--setup", "{setup}"],
+        ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}",
+         "--blackout", "--beam", "10000", "--depth", "100", "--peak-target", "3"],
+        ["python", "scripts/setup_refiner.py", "--setup", "{setup}"],
     ],
     # vet is is_manual=True on the server — no agent command, UI-only
     "proximity_grind": [

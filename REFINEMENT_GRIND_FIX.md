@@ -1,9 +1,5 @@
 # Fix: Refinement Grinder (Step 4)
 
-**STATUS: FIXED 2026-03-10** — New standalone `scripts/refinement_grinder.py` replaces
-the broken `pyramid_grinder.py --blackout` approach. Agent wiring updated. Old blackout
-mode in pyramid_grinder.py is no longer used by the pipeline.
-
 ## The Bug
 
 `pyramid_grinder.py --blackout` currently runs the SAME examples-vs-universe grind as step 1, just with post-entry bars masked out. It does NOT grind winners vs losers.

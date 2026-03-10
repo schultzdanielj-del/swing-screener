@@ -583,7 +583,8 @@ be exact — no step ID mismatch between UI and agent.
 signal_grind     → pyramid_grinder.py --setup {setup} --beam 10000 --depth 100 --peak-target 3
 exit_grind       → exit_grinder.py --setup {setup}
 scan             → signal_filter.py --setup {setup}  (scan + exit filter in one pass)
-refinement_grind → refinement_grinder.py --setup {setup}
+refinement_grind → pyramid_grinder.py --setup {setup} --blackout --beam 10000 --depth 100 --peak-target 3
+                   then setup_refiner.py --setup {setup}
 vet              → is_manual=True, no agent command (UI-only)
 proximity_grind  → proximity_grinder.py --setup {setup}
 profit_grind     → profit_grinder.py --setup {setup}
