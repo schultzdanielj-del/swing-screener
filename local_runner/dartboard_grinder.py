@@ -35,6 +35,12 @@ import time
 import json
 import pickle
 import argparse
+
+# Force UTF-8 output on Windows (cp1252 can't handle ≤, ✓, etc.)
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
@@ -200,6 +206,40 @@ def build_example_profile(example_dfs, expr_cache):
 # STEP 2: COMPUTE EXPRESSION WEIGHTS
 # ══════════════════════════════════════════════════════════════
 
+# Worker globals for universe stats parallelization
+_w_uni_n_expr = None
+
+
+def _init_uni_stats_worker(n_expr):
+    global _w_uni_n_expr
+    _w_uni_n_expr = n_expr
+
+
+def _compute_uni_stats_batch(tickers):
+    """Compute partial sum/sum_sq/count for a batch of tickers."""
+    from expr_cache_builder import load_ticker_cache
+    n = _w_uni_n_expr
+    partial_sum = np.zeros(n, dtype=np.float64)
+    partial_sq = np.zeros(n, dtype=np.float64)
+    partial_count = np.zeros(n, dtype=np.float64)
+
+    for ticker in tickers:
+        dates, data = load_ticker_cache(ticker)
+        if dates is None or data is None or len(data) < 50:
+            continue
+
+        # Skip warmup bars (first 50, same as scoring pass)
+        hist = data[50:].astype(np.float64)
+        nan_valid = ~np.isnan(hist)
+        data_clean = np.where(nan_valid, hist, 0.0)
+
+        partial_count += nan_valid.sum(axis=0)
+        partial_sum += data_clean.sum(axis=0)
+        partial_sq += (data_clean ** 2).sum(axis=0)
+
+    return partial_sum, partial_sq, partial_count
+
+
 def compute_expression_weights(profile, universe_cache, expr_cache, top_n=500):
     """Weight expressions by how well they separate examples from the universe.
 
@@ -235,7 +275,7 @@ def compute_expression_weights(profile, universe_cache, expr_cache, top_n=500):
     name_to_expr = {e["name"]: e for e in all_expressions}
 
     # Compute universe stats from expr cache — full 5yr history, not just D1.
-    # Streaming: load one ticker at a time, accumulate sum/sum_sq per expression.
+    # Parallel: each worker processes a batch of tickers, returns partial sums.
     # This captures the historical distribution that we're actually scoring against.
     tickers = list(universe_cache.keys())
     cached_tickers = expr_cache.get_available_tickers()
@@ -244,29 +284,34 @@ def compute_expression_weights(profile, universe_cache, expr_cache, top_n=500):
     n_expr = len(expr_names)
     n_tickers = len(tickers)
 
-    print(f"  Computing universe stats from {n_tickers} tickers (full 5yr history, streaming)...")
+    print(f"  Computing universe stats from {n_tickers} tickers (full 5yr, parallel)...")
+
+    n_workers = max(cpu_count() - 1, 1)
+    batch_size = max(len(tickers) // (n_workers * 4), 25)
+    batches = [tickers[i:i+batch_size] for i in range(0, len(tickers), batch_size)]
+    print(f"  {n_workers} workers, {len(batches)} batches of ~{batch_size}")
 
     uni_sum = np.zeros(n_expr, dtype=np.float64)
     uni_sum_sq = np.zeros(n_expr, dtype=np.float64)
     uni_count = np.zeros(n_expr, dtype=np.float64)
+    completed = 0
 
-    for i, ticker in enumerate(tickers):
-        dates, data = expr_cache.get_ticker(ticker)
-        if dates is None or data is None or len(data) < 50:
-            continue
-
-        # Skip warmup bars (first 50, same as scoring pass)
-        hist = data[50:].astype(np.float64)
-        nan_valid = ~np.isnan(hist)
-        data_clean = np.where(nan_valid, hist, 0.0)
-
-        uni_count += nan_valid.sum(axis=0)
-        uni_sum += data_clean.sum(axis=0)
-        uni_sum_sq += (data_clean ** 2).sum(axis=0)
-
-        if (i + 1) % 500 == 0:
-            elapsed = time.time() - t0
-            print(f"    {i+1}/{n_tickers} tickers processed ({elapsed:.0f}s)...")
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_init_uni_stats_worker,
+        initargs=(n_expr,)
+    ) as pool:
+        futures = {pool.submit(_compute_uni_stats_batch, batch): batch
+                   for batch in batches}
+        for future in as_completed(futures):
+            partial_sum, partial_sq, partial_count = future.result()
+            uni_sum += partial_sum
+            uni_sum_sq += partial_sq
+            uni_count += partial_count
+            completed += 1
+            if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
+                elapsed = time.time() - t0
+                print(f"    {completed}/{len(batches)} batches ({elapsed:.0f}s)")
 
     elapsed = time.time() - t0
     avg_bars = int(uni_count.mean()) if uni_count.mean() > 0 else 0
