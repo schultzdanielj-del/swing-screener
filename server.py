@@ -1300,6 +1300,8 @@ async def get_pending_tasks():
             args.setdefault("beam", "10000")
             args.setdefault("depth", "100")
             args.setdefault("peak_target", "3")
+            args.setdefault("top_n", "500")
+            args.setdefault("target_peak", "5")
             task["resolved_command"] = template.format(**{k: str(v) for k, v in args.items()})
             tasks.append(task)
     return {"tasks": tasks}
