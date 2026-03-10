@@ -1252,7 +1252,7 @@ async def v2_get_latest_watchlist():
 
 ALLOWED_TASK_COMMANDS = {
     "signal_grind": "python local_runner/pyramid_grinder.py --setup {setup} --beam {beam} --depth {depth} --peak-target {peak_target}",
-    "signal_grind_dartboard": "python local_runner/dartboard_grinder.py --setup {setup} --top-n {top_n} --target-peak {target_peak}",
+    "signal_grind_dartboard": "python local_runner/dartboard_grinder.py --setup {setup} --top-n {top_n}",
     "signal_grind_blackout": "python local_runner/pyramid_grinder.py --setup {setup} --blackout --beam {beam} --depth {depth} --peak-target {peak_target}",
     "exit_grind": "python scripts/exit_grinder.py --setup {setup}",
     "scan": "python scripts/signal_filter.py --setup {setup}",
@@ -1301,7 +1301,6 @@ async def get_pending_tasks():
             args.setdefault("depth", "100")
             args.setdefault("peak_target", "3")
             args.setdefault("top_n", "500")
-            args.setdefault("target_peak", "5")
             task["resolved_command"] = template.format(**{k: str(v) for k, v in args.items()})
             tasks.append(task)
     return {"tasks": tasks}

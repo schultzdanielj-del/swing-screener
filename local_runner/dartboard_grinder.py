@@ -764,7 +764,7 @@ def rank_and_threshold(all_ticker_scores, example_dfs, threshold=None,
         # Default: use the minimum example score minus a small margin
         if example_scores:
             min_ex = min(x["score"] for x in example_scores)
-            threshold = max(0.3, min_ex - 0.05)
+            threshold = max(0.3, min_ex)
             print(f"  Auto-threshold from min example score: {threshold:.4f}")
         else:
             threshold = 0.5
