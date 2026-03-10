@@ -240,6 +240,8 @@ def init_db():
                 prompt TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 branch TEXT,
+                max_time_s INTEGER DEFAULT 14400,
+                max_phases INTEGER DEFAULT 8,
                 created_at TEXT DEFAULT (datetime('now')),
                 claimed_at TEXT,
                 completed_at TEXT,
@@ -263,6 +265,15 @@ def init_db():
                 db.execute(f"ALTER TABLE grind_cycles ADD COLUMN {col} {coltype}")
             except Exception:
                 pass  # Column already exists
+        # ── Add research_jobs config columns ──
+        for col, coltype in [
+            ("max_time_s", "INTEGER DEFAULT 14400"),
+            ("max_phases", "INTEGER DEFAULT 8"),
+        ]:
+            try:
+                db.execute(f"ALTER TABLE research_jobs ADD COLUMN {col} {coltype}")
+            except Exception:
+                pass
 
 
 init_db()
@@ -1348,10 +1359,15 @@ async def create_research_job(request: Request):
     prompt = body.get("prompt")
     if not prompt:
         raise HTTPException(400, "prompt is required")
+    max_time = body.get("max_time_s", 14400)
+    max_phases = body.get("max_phases", 8)
     with get_db() as db:
-        cur = db.execute("INSERT INTO research_jobs (prompt, status) VALUES (?,?)", (prompt, "pending"))
+        cur = db.execute(
+            "INSERT INTO research_jobs (prompt, status, max_time_s, max_phases) VALUES (?,?,?,?)",
+            (prompt, "pending", max_time, max_phases)
+        )
         job_id = cur.lastrowid
-    return {"id": job_id, "prompt": prompt, "status": "pending"}
+    return {"id": job_id, "prompt": prompt, "status": "pending", "max_time_s": max_time, "max_phases": max_phases}
 
 
 @app.get("/api/v2/research/pending")

@@ -41,8 +41,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_BASE = "https://web-production-e3025.up.railway.app"
 POLL_INTERVAL = 15       # seconds between job polls
 GRIND_POLL = 30          # seconds between grind completion polls
-MAX_PHASES = 8           # max Claude Code invocations per job
-MAX_TOTAL_TIME = 14400   # 4 hours total per job
+MAX_PHASES = 8           # default, overridden per job from server
+MAX_TOTAL_TIME = 14400   # default, overridden per job from server
 MODEL = "sonnet"         # lighter on usage than opus
 
 # Force UTF-8 on Windows
@@ -306,12 +306,15 @@ def run_research_job(job):
     """Execute a research job in phases."""
     job_id = job["id"]
     prompt = job["prompt"]
+    max_time = job.get("max_time_s") or MAX_TOTAL_TIME
+    max_phases = job.get("max_phases") or MAX_PHASES
     job_start = time.time()
     all_logs = []
 
     log(f"{'='*60}")
     log(f"Research Job #{job_id}")
     log(f"Prompt: {prompt}")
+    log(f"Max time: {max_time}s, Max phases: {max_phases}")
     log(f"{'='*60}")
 
     # Setup
@@ -366,11 +369,11 @@ Read the key files first, then plan."""
         for step in steps:
             # Time check
             elapsed = time.time() - job_start
-            if elapsed > MAX_TOTAL_TIME:
-                log(f"Max time ({MAX_TOTAL_TIME}s) exceeded — stopping")
+            if elapsed > max_time:
+                log(f"Max time ({max_time}s) exceeded — stopping")
                 break
-            if phase_num > MAX_PHASES:
-                log(f"Max phases ({MAX_PHASES}) reached — stopping")
+            if phase_num > max_phases:
+                log(f"Max phases ({max_phases}) reached — stopping")
                 break
 
             step_id = step["id"]
@@ -393,7 +396,7 @@ Read the key files first, then plan."""
                     # Wait for grind completion — NO TOKENS CONSUMED
                     while True:
                         elapsed = time.time() - job_start
-                        if elapsed > MAX_TOTAL_TIME:
+                        if elapsed > max_time:
                             log("  Max time hit while waiting for grind")
                             break
                         try:
@@ -466,7 +469,7 @@ Commit your changes."""
                             log(f"  Step queued task #{queued_id} — waiting (zero tokens)...")
                             while True:
                                 elapsed = time.time() - job_start
-                                if elapsed > MAX_TOTAL_TIME:
+                                if elapsed > max_time:
                                     break
                                 try:
                                     r = requests.get(f"{API_BASE}/api/v2/tasks/{queued_id}", timeout=10)
