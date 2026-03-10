@@ -312,14 +312,15 @@ _w_candidate_indices = None
 _w_n_bars_window = None
 _w_expr_name_to_idx = None
 _w_blackout = None  # {ticker: [(entry_idx, exit_idx), ...]} — bars to exclude
+_w_whitelist = None  # {ticker: set(bar_idx)} — if set, ONLY these bars count
 
 
 def _init_tier_worker(cache, locked_conditions, expressions, ranges,
                       candidate_indices, n_bars_window, expr_name_to_idx=None,
-                      blackout_map=None):
+                      blackout_map=None, whitelist_map=None):
     """Initializer: serialize cache + config once per worker."""
     global _w_cache, _w_locked, _w_exprs, _w_ranges, _w_candidate_indices
-    global _w_n_bars_window, _w_expr_name_to_idx, _w_blackout
+    global _w_n_bars_window, _w_expr_name_to_idx, _w_blackout, _w_whitelist
     _w_cache = cache
     _w_locked = locked_conditions
     _w_exprs = expressions
@@ -328,6 +329,7 @@ def _init_tier_worker(cache, locked_conditions, expressions, ranges,
     _w_n_bars_window = n_bars_window
     _w_expr_name_to_idx = expr_name_to_idx or {}
     _w_blackout = blackout_map or {}
+    _w_whitelist = whitelist_map
 
 
 def _build_tier_batch(tickers):
@@ -394,6 +396,19 @@ def _build_tier_batch(tickers):
                     blackout_end = min(n_bars, exit_idx + 1)
                     if blackout_start < blackout_end:
                         pass_mask[blackout_start:blackout_end] = False
+
+            # Step 1c: Apply whitelist — if set, ONLY whitelisted bars count
+            # Used by refinement grind: only loser signal bars are eligible
+            if _w_whitelist is not None:
+                if ticker in _w_whitelist:
+                    wl_mask = np.zeros(n_bars, dtype=bool)
+                    for idx in _w_whitelist[ticker]:
+                        if 0 <= idx < n_bars:
+                            wl_mask[idx] = True
+                    pass_mask &= wl_mask
+                else:
+                    # Ticker has no loser bars — nothing to count
+                    pass_mask[:] = False
 
             surviving_indices = np.where(pass_mask)[0]
             if len(surviving_indices) == 0:
@@ -827,7 +842,7 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
 def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
                         example_ranges, locked_conditions,
                         beam_width=50, depth=10, peak_target=15,
-                        expr_cache=None, blackout_map=None):
+                        expr_cache=None, blackout_map=None, whitelist_map=None):
     """Run a historical tier: build matrix of surviving ticker-day rows, then spiderweb.
 
     Args:
@@ -841,6 +856,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
         peak_target: stop when peak/day ≤ this
         expr_cache: ExprSeriesCache instance (or None to compute from scratch)
         blackout_map: {ticker: [(entry_idx, exit_idx), ...]} — post-entry bars to exclude
+        whitelist_map: {ticker: set(bar_idx)} — if set, only these bars count
 
     Returns:
         new_conditions: list of condition dicts added by this tier
@@ -890,7 +906,7 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
         initializer=_init_tier_worker,
         initargs=(universe_cache, locked_conditions, expressions,
                   example_ranges, candidate_indices, n_bars_window,
-                  expr_name_to_idx, blackout_map)
+                  expr_name_to_idx, blackout_map, whitelist_map)
     ) as pool:
         futures = {pool.submit(_build_tier_batch, batch): batch for batch in batches}
         completed = 0
@@ -1062,7 +1078,7 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
                      example_ranges_full, example_matrix_full,
                      locked_conditions, expr_cache,
                      beam_width, depth, peak_target,
-                     d1_beam, d1_depth, blackout_map=None):
+                     d1_beam, d1_depth, blackout_map=None, whitelist_map=None):
     """Run one pass of the multi-pass pyramid.
 
     Args:
@@ -1079,6 +1095,7 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
         beam_width, depth, peak_target: search params
         d1_beam, d1_depth: D1-specific params
         blackout_map: {ticker: [(entry_idx, exit_idx), ...]} — post-entry bars to exclude
+        whitelist_map: {ticker: set(bar_idx)} — if set, only these bars count
 
     Returns:
         new_conditions: list of conditions added by this pass
@@ -1159,6 +1176,7 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
             peak_target=peak_target,
             expr_cache=expr_cache,
             blackout_map=blackout_map,
+            whitelist_map=whitelist_map,
         )
 
         new_conditions.extend(tier_new_conds)
@@ -1208,7 +1226,8 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
 
 def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 d1_depth=None, d1_beam=None, multi_pass=True,
-                blackout_map=None):
+                blackout_map=None, whitelist_map=None,
+                override_example_dfs=None):
     """Run the full pyramid grinder.
 
     Args:
@@ -1222,6 +1241,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                     if False, run single-pass with all expressions (legacy mode).
         blackout_map: {ticker: [(entry_idx, exit_idx), ...]} — post-entry bars to exclude
                       from universe matrix. Pass None to disable (default).
+        whitelist_map: {ticker: set(bar_idx)} — if set, only these bars count as signals.
+        override_example_dfs: if set, use these instead of load_example_data.
     """
     d1_depth = d1_depth or depth
     d1_depth = min(d1_depth, 15)  # Cap D1 — more than 15 overfits to today's snapshot
@@ -1245,8 +1266,12 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     print(f"  {len(universe_cache)} tickers loaded")
 
     print(f"\n  Loading examples...")
-    example_dfs = load_example_data(setup_type, universe_cache)
-    print(f"  {len(example_dfs)} examples loaded")
+    if override_example_dfs is not None:
+        example_dfs = override_example_dfs
+        print(f"  {len(example_dfs)} examples (override — win pile)")
+    else:
+        example_dfs = load_example_data(setup_type, universe_cache)
+        print(f"  {len(example_dfs)} examples loaded")
 
     print(f"\n  Loading expressions...")
     # Signal expressions for grinding (what the grinder actually uses)
@@ -1324,6 +1349,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 d1_beam=d1_beam,
                 d1_depth=d1_depth,
                 blackout_map=blackout_map,
+                whitelist_map=whitelist_map,
             )
 
             if new_conds is None:
@@ -1413,6 +1439,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 peak_target=peak_target,
                 expr_cache=expr_cache,
                 blackout_map=blackout_map,
+                whitelist_map=whitelist_map,
             )
 
             all_conditions.extend(new_conds)
@@ -1564,8 +1591,9 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     mode_tag = "mp" if multi_pass else "sp"
-    blackout_tag = "_blackout" if blackout_map else ""
-    desc_name = f"pyramid_{setup_type}_{mode_tag}{blackout_tag}_sig{final_total}_pk{final_peak}_{ts}"
+    is_refinement = whitelist_map is not None
+    refinement_tag = "_refinement" if is_refinement else ""
+    desc_name = f"pyramid_{setup_type}_{mode_tag}{refinement_tag}_sig{final_total}_pk{final_peak}_{ts}"
 
     result = {
         "setup_type": setup_type,
@@ -1573,7 +1601,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         "total_time_s": round(total_time, 1),
         "peak_target": peak_target,
         "multi_pass": multi_pass,
-        "blackout": bool(blackout_map),
+        "refinement": is_refinement,
         "n_conditions": len(all_conditions),
         "all_conditions": all_conditions,
         "tier_results": tier_results,
@@ -1585,7 +1613,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "d1_depth": d1_depth,
             "peak_target": peak_target,
             "multi_pass": multi_pass,
-            "blackout": bool(blackout_map),
+            "refinement": is_refinement,
             "source": "pyramid_grinder",
         },
         "summary": {
@@ -1612,7 +1640,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     mirror_file(out_path)
 
     # ── Upload to Railway ──
-    step_type = "refinement_grind" if blackout_map else "signal_grind"
+    step_type = "refinement_grind" if is_refinement else "signal_grind"
     try:
         from grind_uploader import upload as railway_upload
         railway_upload(
@@ -1637,129 +1665,119 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 # BLACKOUT MAP LOADER
 # ══════════════════════════════════════════════════════════════
 
-def _load_blackout_map(setup_type):
-    """Load profit grinder output and build blackout map for the re-grind.
+def _load_refinement_piles(setup_type):
+    """Load cycle signals from Railway and split into win/lose piles.
 
-    Reads data/profit_grind/profit_{setup}.json (rank-1 condition).
-    For each example, maps entry_bar_idx → exit_bar_idx in absolute bar space.
-    The OHLCV 5yr cache is used to resolve entry dates to bar indices,
-    matching exactly how pyramid_grinder resolves example scan_idx.
+    Win pile (must-pass): examples + AUTO_WIN signals → returned as example_dfs format
+    Lose pile (count signals in): AUTO_LOSS signals → returned as whitelist_map
 
     Returns:
-        {ticker: [(entry_idx, exit_idx), ...]}
-        or {} if file not found (blackout disabled — warns but does not abort).
+        (win_example_dfs, whitelist_map) or (None, None) if no cycle signals found.
     """
-    profit_path = os.path.join(
-        REPO_ROOT, "data", "profit_grind", f"profit_{setup_type}.json"
-    )
-    if not os.path.exists(profit_path):
-        print(f"\n  WARNING: --blackout specified but no profit grind file found:")
-        print(f"    {profit_path}")
-        print(f"  Run: python scripts/profit_grinder.py --setup {setup_type}")
-        print(f"  Continuing WITHOUT blackout masking.\n")
-        return {}
+    import requests
 
-    with open(profit_path) as f:
-        data = json.load(f)
+    # Find current cycle
+    try:
+        r = requests.get(f"{API_BASE}/api/v2/cycles/{setup_type}", timeout=30)
+        r.raise_for_status()
+        cycles = r.json().get("cycles", [])
+        current = [c for c in cycles if c.get("is_current") == 1]
+        if not current:
+            print(f"  ERROR: No current cycle found for {setup_type}")
+            return None, None
+        cycle_id = current[0]["cycle_id"]
+    except Exception as e:
+        print(f"  ERROR: Failed to find current cycle: {e}")
+        return None, None
 
-    # New format: exit_dates is a dict of "ticker|entry_date" -> exit_date string
-    exit_dates = data.get("exit_dates", {})
-    examples = data.get("examples", [])
+    # Load cycle signals
+    try:
+        r = requests.get(f"{API_BASE}/api/v2/cycles/{cycle_id}/signals", timeout=60)
+        r.raise_for_status()
+        signals = r.json().get("signals", [])
+    except Exception as e:
+        print(f"  ERROR: Failed to load cycle signals: {e}")
+        return None, None
 
-    # Fallback: old format used top_conditions[0]["per_example_exit_bars"]
-    if not exit_dates:
-        top_conditions = data.get("top_conditions", [])
-        results = data.get("results", [])
-        best = (top_conditions[0] if top_conditions else
-                results[0] if results else None)
-        if not best or not examples:
-            print(f"\n  WARNING: profit grind file missing exit data. Skipping blackout.\n")
-            return {}
-        per_example_exit_bars = (best.get("per_example_exit_bars") or
-                                  best.get("exit_bars") or [])
-        if not per_example_exit_bars:
-            print(f"\n  WARNING: profit grind file missing exit bars. Skipping blackout.\n")
-            return {}
-        # Convert bar offsets to dates using 5yr cache
-        universe_cache = load_5yr_cache()
-        for i, ex in enumerate(examples):
-            ticker = ex.get("ticker")
-            entry_date = ex.get("entry_date")
-            offset = per_example_exit_bars[i] if i < len(per_example_exit_bars) else None
-            if not ticker or not entry_date or offset is None or offset < 0:
-                continue
-            df = universe_cache.get(ticker)
-            if df is None:
-                continue
-            if not pd.api.types.is_datetime64_any_dtype(df["date"]):
-                df = df.copy()
-                df["date"] = pd.to_datetime(df["date"])
-            dates_str = [str(d)[:10] for d in df["date"].values]
-            if entry_date not in dates_str:
-                continue
-            entry_idx = dates_str.index(entry_date)
-            exit_idx = min(entry_idx + int(offset), len(df) - 1)
-            exit_dates[f"{ticker}|{entry_date}"] = dates_str[exit_idx]
+    if not signals:
+        print(f"  ERROR: No signals in cycle {cycle_id}")
+        return None, None
 
-    if not exit_dates:
-        print(f"\n  WARNING: Could not build exit dates for blackout. Skipping.\n")
-        return {}
+    print(f"\n  ── REFINEMENT GRIND: Loading piles from cycle {cycle_id} ──")
+    print(f"  Total signals: {len(signals)}")
 
-    results = data.get("results", [])
-    best = results[0] if results else {}
-    print(f"\n  Loading blackout map from profit grind (rank-1: "
-          f"{best.get('expr_name')} {best.get('direction')} {best.get('threshold')}) ...")
+    # Split into winners and losers
+    winners = [s for s in signals if s.get("classification") == "AUTO_WIN"]
+    losers = [s for s in signals if s.get("classification") == "AUTO_LOSS"]
+    print(f"  Win pile: {len(winners)} (examples + exit-triggered winners)")
+    print(f"  Lose pile: {len(losers)}")
 
-    # Load 5yr cache to resolve dates to bar indices
+    if not winners:
+        print(f"  ERROR: No winners in cycle — nothing to use as must-pass set")
+        return None, None
+    if not losers:
+        print(f"  WARNING: No losers in cycle — nothing to filter. Refinement is a no-op.")
+        return None, None
+
+    # Load 5yr cache to build example_dfs format for winners
     universe_cache = load_5yr_cache()
 
-    blackout_map = {}
-    n_mapped = 0
-    n_skipped = 0
-
-    for ex in examples:
-        ticker = ex.get("ticker")
-        entry_date = ex.get("entry_date")
-        key = f"{ticker}|{entry_date}"
-        exit_date = exit_dates.get(key)
-
-        if not ticker or not entry_date or not exit_date:
-            n_skipped += 1
+    win_example_dfs = []
+    skipped_win = []
+    for sig in winners:
+        ticker = sig["ticker"]
+        bar_idx = sig.get("bar_idx")
+        if bar_idx is None:
+            skipped_win.append(f"{ticker} (no bar_idx)")
             continue
 
         df = universe_cache.get(ticker)
         if df is None:
-            n_skipped += 1
+            skipped_win.append(f"{ticker} (not in 5yr cache)")
             continue
 
+        df = df.copy()
         if not pd.api.types.is_datetime64_any_dtype(df["date"]):
-            df = df.copy()
             df["date"] = pd.to_datetime(df["date"])
-        dates_str = [str(d)[:10] for d in df["date"].values]
+        df = df.sort_values("date").reset_index(drop=True)
 
-        if entry_date not in dates_str or exit_date not in dates_str:
-            n_skipped += 1
+        if bar_idx >= len(df):
+            skipped_win.append(f"{ticker} (bar_idx {bar_idx} >= {len(df)} bars)")
             continue
 
-        entry_idx = dates_str.index(entry_date)
-        exit_idx = dates_str.index(exit_date)
-        exit_idx = min(exit_idx, len(df) - 1)
+        win_example_dfs.append({
+            "ticker": ticker,
+            "entry_date": sig.get("signal_date"),
+            "scan_idx": bar_idx,
+            "df": df,
+        })
 
-        if ticker not in blackout_map:
-            blackout_map[ticker] = []
-        blackout_map[ticker].append((entry_idx, exit_idx))
-        n_mapped += 1
+    if skipped_win:
+        print(f"  ⚠ Skipped {len(skipped_win)} winners: {', '.join(skipped_win[:10])}")
+    print(f"  Win pile loaded: {len(win_example_dfs)} example_dfs")
 
-    total_bars_blacked = sum(
-        exit_idx - entry_idx
-        for intervals in blackout_map.values()
-        for entry_idx, exit_idx in intervals
-    )
-    print(f"  Blackout map: {n_mapped} examples mapped, {n_skipped} skipped")
-    print(f"  Tickers with blackout: {len(blackout_map)}")
-    print(f"  Total bars blacked out: {total_bars_blacked:,}\n")
+    # Build whitelist_map from losers: {ticker: set(bar_idx)}
+    whitelist_map = {}
+    skipped_lose = 0
+    for sig in losers:
+        ticker = sig["ticker"]
+        bar_idx = sig.get("bar_idx")
+        if bar_idx is None:
+            skipped_lose += 1
+            continue
+        if ticker not in universe_cache:
+            skipped_lose += 1
+            continue
+        if ticker not in whitelist_map:
+            whitelist_map[ticker] = set()
+        whitelist_map[ticker].add(bar_idx)
 
-    return blackout_map
+    total_loser_bars = sum(len(v) for v in whitelist_map.values())
+    print(f"  Lose pile whitelist: {total_loser_bars} bars across {len(whitelist_map)} tickers")
+    if skipped_lose:
+        print(f"  ⚠ Skipped {skipped_lose} losers (no bar_idx or not in cache)")
+
+    return win_example_dfs, whitelist_map
 
 
 def main():
@@ -1780,16 +1798,23 @@ def main():
     parser.add_argument("--single-pass", action="store_true",
                         help="Legacy single-pass mode (all 12K expressions in one pass)")
     parser.add_argument("--blackout", action="store_true",
-                        help="Load profit grinder output and mask post-entry bars "
-                             "from universe before grinding (Step 4 Setup Grinder re-grind)")
+                        help="Refinement grind: winners as must-pass, losers as universe "
+                             "(Step 4 — loads cycle signals from Railway)")
     args = parser.parse_args()
 
     multi_pass = not args.single_pass
 
-    # ── Blackout map loading ──
+    # ── Refinement grind: load win/lose piles from cycle signals ──
     blackout_map = None
+    whitelist_map = None
+    override_example_dfs = None
     if args.blackout:
-        blackout_map = _load_blackout_map(args.setup)
+        win_dfs, wl_map = _load_refinement_piles(args.setup)
+        if win_dfs is None:
+            print("  ABORT: Could not load refinement piles.")
+            sys.exit(1)
+        override_example_dfs = win_dfs
+        whitelist_map = wl_map
 
     n_runs = max(1, args.runs)
     results = []
@@ -1809,6 +1834,8 @@ def main():
             d1_beam=args.d1_beam,
             multi_pass=multi_pass,
             blackout_map=blackout_map,
+            whitelist_map=whitelist_map,
+            override_example_dfs=override_example_dfs,
         )
         results.append(result)
 
