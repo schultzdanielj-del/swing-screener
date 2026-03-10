@@ -1,25 +1,32 @@
 """
-Research Dispatcher — Autonomous Claude Code research sessions.
+Research Dispatcher — Phase-based autonomous research sessions.
 
-Polls Railway for research jobs. For each job:
-  1. Creates a sandbox git branch (research/job-NNN)
-  2. Launches Claude Code with the prompt + full repo context
-  3. Claude Code can modify code, run grinds via task queue, analyze results
-  4. On completion, posts summary + diff + results to Railway
-  5. v2 branch is never touched
+TOKEN-EFFICIENT DESIGN:
+  Claude Code only runs when there's thinking to do. During grind waits
+  (15-20 min each), zero tokens are consumed. The dispatcher handles all
+  polling and orchestration in plain Python.
+
+FLOW:
+  Phase 1: PLAN — Claude Code reads the repo, forms a research plan, writes it to a JSON file
+  Phase 2+: EXECUTE — For each step in the plan, Claude Code runs, does the work, exits
+  Between phases: Dispatcher waits for any queued grinds to complete (zero tokens)
+  Final phase: SUMMARIZE — Claude Code writes RESEARCH_FINDINGS.md
+
+MODEL: Sonnet (--model sonnet) — good enough for research, much lighter on usage budget
 
 Usage:
     python scripts/research_dispatcher.py
 
-Leave running alongside the agent. Post jobs from anywhere:
+Post jobs from anywhere:
     POST https://web-production-e3025.up.railway.app/api/v2/research
     {"prompt": "Find a way to reduce signal count without losing edge"}
 
 Hard rails:
     - All work on sandbox branch (v2 untouched)
-    - Examples are benched, not deleted (reversible)
-    - Max runtime per job: 2 hours
-    - Claude Code has full repo read/write access on the sandbox branch
+    - Examples benched, not deleted (reversible)
+    - Max 8 phases per job (prevents runaway)
+    - Max 2 hours total per job
+    - Sonnet model (not Opus) to conserve usage
 """
 
 import os
@@ -32,8 +39,11 @@ from datetime import datetime, timezone
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_BASE = "https://web-production-e3025.up.railway.app"
-POLL_INTERVAL = 15  # seconds
-MAX_RUNTIME = 7200  # 2 hours per job
+POLL_INTERVAL = 15       # seconds between job polls
+GRIND_POLL = 30          # seconds between grind completion polls
+MAX_PHASES = 8           # max Claude Code invocations per job
+MAX_TOTAL_TIME = 7200    # 2 hours total per job
+MODEL = "sonnet"         # lighter on usage than opus
 
 # Force UTF-8 on Windows
 if sys.platform == 'win32':
@@ -65,23 +75,23 @@ def poll_for_job():
 
 
 def create_sandbox_branch(job_id):
-    """Create a sandbox branch from v2 for this research job."""
+    """Create a sandbox branch from v2."""
     branch = f"research/job-{job_id:03d}"
-    # Make sure we're on v2 and up to date
     subprocess.run(["git", "checkout", "v2"], cwd=REPO_ROOT, capture_output=True)
     subprocess.run(["git", "pull"], cwd=REPO_ROOT, capture_output=True)
-    # Create and switch to sandbox branch
+    # Delete branch if it exists from a previous failed run
+    subprocess.run(["git", "branch", "-D", branch], cwd=REPO_ROOT, capture_output=True)
     subprocess.run(["git", "checkout", "-b", branch], cwd=REPO_ROOT, capture_output=True)
     return branch
 
 
 def cleanup_sandbox(branch):
-    """Switch back to v2 after research. Don't delete branch — keep for review."""
+    """Switch back to v2. Keep branch for review."""
     subprocess.run(["git", "checkout", "v2"], cwd=REPO_ROOT, capture_output=True)
 
 
 def get_diff(branch):
-    """Get the diff between v2 and the research branch."""
+    """Get diff between v2 and research branch."""
     result = subprocess.run(
         ["git", "diff", "v2", branch, "--stat"],
         cwd=REPO_ROOT, capture_output=True, text=True
@@ -92,143 +102,14 @@ def get_diff(branch):
         cwd=REPO_ROOT, capture_output=True, text=True
     )
     full_diff = result2.stdout.strip()
-    # Truncate if huge
     if len(full_diff) > 50000:
-        full_diff = full_diff[:50000] + "\n\n... (truncated, full diff on branch)"
+        full_diff = full_diff[:50000] + "\n\n... (truncated)"
     return f"{stat}\n\n{full_diff}"
 
 
-SYSTEM_PROMPT = """You are a senior quant researcher with full access to a swing trading screener codebase.
-You're working on a sandbox branch — the production code (v2) is untouched. Go wild.
-
-YOU ARE NOT A CAUTIOUS ASSISTANT. You are a researcher who ships experiments.
-Don't just analyze — build things, try things, break things. Write new scripts.
-Rewrite existing ones. Change algorithms. Invent new approaches. If you have an
-idea, implement it and test it. If it doesn't work, try something else.
-
-Think like a hacker, not a consultant. The goal isn't a report — it's results.
-
-YOUR ENVIRONMENT:
-- Full repo access at {repo_root}, on a sandbox git branch
-- The grinder agent is running and will execute tasks you post
-- All results are on Railway at {api_base}
-- Expression cache + OHLCV cache are local (don't rebuild — too slow)
-- You can write new Python scripts, modify existing ones, create tools
-- You can change grinder logic, scoring, thresholds, condition selection
-- You can write analysis scripts and run them directly
-
-TASK QUEUE (for running grinds — agent executes these on the local machine):
-  Post: curl -s -X POST "{api_base}/api/v2/tasks" -H "Content-Type: application/json" -d '{{"command":"signal_grind","args":{{"setup":"dtss"}}}}'
-  Poll: curl -s "{api_base}/api/v2/tasks/{{id}}"  (poll every 30s until status != running)
-  Commands: signal_grind, signal_grind_blackout, exit_grind, scan, outlier_analysis, regime_model, health_check
-
-GRIND RESULTS:
-  List: curl -s "{api_base}/api/v2/files?prefix=local_runner/cache/pyramid_dtss"
-  Get:  curl -s "{api_base}/api/v2/files/{{path}}"
-
-EXAMPLES:
-  List: curl -s "{api_base}/api/examples/dtss"
-  To test without an example, BENCH it (don't permanently delete):
-    1. GET the example data, save to data/research_bench_job_NNN.json
-    2. DELETE /api/examples/dtss/{{id}} to remove from active set
-    3. Record in RESEARCH_FINDINGS.md so Dan can restore it
-
-THE SYSTEM — HOW IT WORKS:
-  The pyramid grinder takes example trades and finds mathematical conditions that
-  separate them from the full 4,167-ticker universe. It builds nested tiers (D1 → 5yr)
-  adding conditions at each level. The constraint: 100% of examples must pass all
-  conditions (zero false negatives). More examples = wider ranges = more signals.
-  
-  The problem: with 67+ examples, signal count is too high (~1,200+). The scan is
-  too loose. We need it under 500 ideally.
-
-KEY CONCEPTS TO UNDERSTAND:
-  - Conditions are range filters: expression value must be between [low, high]
-  - Ranges are set by the min/max of example values + 5% margin
-  - One outlier example can blow out a range and let thousands of extra signals through
-  - The grinder picks conditions greedily by peak signals/day reduction
-  - D1 tier is capped at 15 conditions to prevent overfitting to today's snapshot
-  - Expression categories: extension, ma_spread, volume, momentum, etc.
-
-READ THESE FIRST:
-  - PIPELINE_V2.md (pipeline spec, how everything connects)
-  - ta_knowledge.md (TA concepts — extensions, AVWAP, channels)
-  - local_runner/pyramid_grinder.py (the grinder — understand this deeply)
-  - local_runner/spiderweb.py (beam search that each tier uses)
-  - scripts/example_outlier_analysis.py (leave-one-out analysis)
-
-IDEAS TO CONSIDER (but don't limit yourself to these):
-  - Condition selection: is greedy peak-reduction optimal? What about information gain?
-  - Tier allocation: should D1 get fewer/more conditions? Should weekly/monthly get more?
-  - Scoring: peak/day vs median/day vs something else entirely
-  - Range computation: 5% margin — is that right? Adaptive margins?
-  - Expression weighting: not all expressions are equal — some are noise
-  - Condition interaction: do some conditions make others redundant?
-  - Post-grind pruning: remove conditions that aren't actually filtering much
-  - Multi-objective: minimize signals while maximizing separation from random
-  - Clustering examples: are there subgroups that need different conditions?
-  - Synthetic conditions: AND/OR combinations of existing expressions
-  - The junk expression problem: 58% of expressions have >95% universe pass rate
-  - Novel approaches the codebase hasn't tried yet
-
-HARD RAILS:
-  - Don't checkout or modify the v2 branch
-  - Don't rebuild expression cache (hours, 21 GB)
-  - Don't rebuild OHLCV cache
-  - Bench examples instead of permanently deleting them
-  - Commit to the sandbox branch as you go (so Dan can see the progression)
-  - Max ~5 grind runs per session (each takes ~15-20 min)
-
-WHEN YOU'RE DONE:
-Write RESEARCH_FINDINGS.md in repo root:
-  1. Executive summary — what you found, bottom line
-  2. Each experiment — what you tried, why, the result (signal count, condition count)
-  3. Code changes — what you wrote/modified and why
-  4. Recommendations — what Dan should merge to v2, what to discard
-  5. Benched examples — list with reasoning, how to restore
-  6. Next steps — what to try next based on what you learned
-Commit it to the sandbox branch.
-
-Remember: Dan is sleeping. He'll read your findings in the morning. Make them worth waking up to.
-"""
-
-
-def build_prompt(job):
-    """Build the full prompt for Claude Code."""
-    prompt = job["prompt"]
-    job_id = job["id"]
-
-    return f"""RESEARCH JOB #{job_id}
-
-PROMPT FROM DAN:
-{prompt}
-
-Read the key files listed in your system prompt first, then form a plan, then execute.
-When done, write RESEARCH_FINDINGS.md and commit to this branch.
-"""
-
-
-def run_research_job(job):
-    """Execute a research job via Claude Code."""
-    job_id = job["id"]
-    prompt = job["prompt"]
-
-    log(f"Starting research job #{job_id}")
-    log(f"Prompt: {prompt[:100]}...")
-
-    # Create sandbox branch
-    branch = create_sandbox_branch(job_id)
-    log(f"Sandbox branch: {branch}")
-    update_job(job_id, status="running", branch=branch)
-
-    # Build Claude Code command
-    system = SYSTEM_PROMPT.format(api_base=API_BASE, repo_root=REPO_ROOT)
-    user_prompt = build_prompt(job)
-
+def find_claude_cmd():
+    """Find working Claude Code CLI command."""
     is_win = sys.platform == "win32"
-
-    # Find claude command
-    claude_cmd = None
     for cmd in ["claude", "claude.exe", "npx"]:
         try:
             if cmd == "npx":
@@ -242,104 +123,404 @@ def run_research_job(job):
                     capture_output=True, text=True, timeout=10, shell=is_win
                 )
             if test.returncode == 0:
-                claude_cmd = cmd
-                break
+                return cmd
         except (FileNotFoundError, subprocess.TimeoutExpired):
             continue
+    return None
 
+
+def run_claude_code(prompt, system_prompt, phase_name=""):
+    """Run a single Claude Code invocation. Returns (output, exit_code)."""
+    is_win = sys.platform == "win32"
+    claude_cmd = find_claude_cmd()
     if not claude_cmd:
-        error = "Claude Code CLI not found (tried claude, claude.exe, npx)"
-        log(error)
-        update_job(job_id, status="failed", error=error)
-        cleanup_sandbox(branch)
-        return
+        return "ERROR: Claude Code CLI not found", 1
 
-    # Build CLI args
     if claude_cmd == "npx":
         cli_args = ["npx", "@anthropic-ai/claude-code",
-                     "-p", user_prompt,
-                     "--system-prompt", system]
+                     "-p", prompt,
+                     "--model", MODEL,
+                     "--system-prompt", system_prompt,
+                     "--permission-mode", "auto"]
     else:
         cli_args = [claude_cmd,
-                     "-p", user_prompt,
-                     "--system-prompt", system]
+                     "-p", prompt,
+                     "--model", MODEL,
+                     "--system-prompt", system_prompt,
+                     "--permission-mode", "auto"]
 
-    log(f"Launching Claude Code...")
+    log(f"  Claude Code ({phase_name})...")
+
+    proc = subprocess.Popen(
+        cli_args, cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+        encoding='utf-8', errors='replace',
+        shell=is_win,
+    )
+
+    output_lines = []
+    for line in proc.stdout:
+        line = line.rstrip()
+        print(f"      {line}")
+        output_lines.append(line)
+
+    proc.wait()
+    output = "\n".join(output_lines)
+    log(f"  Claude Code ({phase_name}) exit={proc.returncode}")
+    return output, proc.returncode
+
+
+def read_file_safe(path):
+    """Read a file, return empty string if not found."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+
+
+# ── System prompts per phase ─────────────────────────────────────────
+
+PLAN_SYSTEM = """You are a senior quant researcher working on a swing trading screener.
+You're on a sandbox git branch. Production code (v2) is untouched.
+
+YOUR JOB: Read the codebase, understand the problem, and create a research plan.
+
+OUTPUT: Write a JSON file at data/research_plan.json with this structure:
+{
+  "summary": "One paragraph describing your overall approach",
+  "steps": [
+    {
+      "id": 1,
+      "action": "what to do",
+      "type": "code_change" | "run_grind" | "run_script" | "analyze",
+      "grind_command": "signal_grind" (only if type=run_grind),
+      "grind_args": {},
+      "description": "why this step matters",
+      "depends_on_grind": false
+    }
+  ]
+}
+
+IMPORTANT RULES:
+- Each step should be a discrete unit of work
+- If a step needs grind results, set type="run_grind" — the dispatcher will queue it and wait
+- Steps after a grind should reference the grind result
+- Max """ + str(MAX_PHASES) + """ steps total (including plan and summarize phases, so ~6 work steps)
+- Don't execute anything yet — just plan
+- Read these files first: PIPELINE_V2.md, ta_knowledge.md, local_runner/pyramid_grinder.py, local_runner/spiderweb.py
+
+THE SYSTEM:
+  The pyramid grinder takes example trades and finds math conditions separating them from
+  the full 4,167-ticker universe. Tiers: D1->5yr, adding conditions at each level.
+  Constraint: 100% examples pass all conditions. More examples = wider ranges = more signals.
+  Current problem: ~69 examples, signal count ~1,200+. Need it under 500.
+
+GRIND RESULTS are on Railway:
+  List: curl -s \"""" + API_BASE + """/api/v2/files?prefix=local_runner/cache/pyramid_dtss"
+  Get:  curl -s \"""" + API_BASE + """/api/v2/files/{path}"
+
+EXAMPLES:
+  List: curl -s \"""" + API_BASE + """/api/examples/dtss"
+
+KEY FILES: PIPELINE_V2.md, ta_knowledge.md, local_runner/pyramid_grinder.py,
+  local_runner/spiderweb.py, scripts/example_outlier_analysis.py
+
+IDEAS TO CONSIDER (but don't limit yourself):
+  - Condition selection: is greedy peak-reduction optimal? Information gain?
+  - Tier allocation: D1 fewer/more conditions? Weekly/monthly more?
+  - Scoring: peak/day vs median/day vs something else
+  - Range computation: 5% margin — adaptive margins?
+  - Expression weighting: some are noise
+  - Condition interaction: redundant conditions?
+  - Post-grind pruning: remove conditions not filtering much
+  - Multi-objective: minimize signals while maximizing separation
+  - Example clustering: subgroups needing different conditions?
+  - The junk expression problem: 58% have >95% universe pass rate
+
+Commit the plan file when done.
+"""
+
+
+EXECUTE_SYSTEM_TEMPLATE = """You are a senior quant researcher. You're on a sandbox git branch.
+
+You are executing ONE STEP of a research plan. Do the work described, commit changes,
+and write your results to data/research_step_{step_id}_result.json with:
+{{
+  "step_id": {step_id},
+  "status": "done" | "failed",
+  "result": "what happened",
+  "signal_count": null or integer,
+  "files_changed": ["list of files"],
+  "queued_task_id": null or integer (if you queued a grind via task queue)
+}}
+
+ENVIRONMENT:
+- Repo root: """ + REPO_ROOT + """
+- All grind results on Railway: """ + API_BASE + """
+- Task queue for grinds: POST """ + API_BASE + """/api/v2/tasks with {{"command":"signal_grind","args":{{"setup":"dtss"}}}}
+- Poll task: GET """ + API_BASE + """/api/v2/tasks/{{id}}
+- DO NOT poll/wait for grind results. Queue the grind and exit. The dispatcher waits.
+
+EXAMPLES (bench, don't delete):
+  To bench: GET example data, save to data/research_bench.json, then DELETE /api/examples/dtss/{{id}}
+  
+RULES:
+- Do the work for THIS step only
+- Commit to the sandbox branch
+- Don't touch v2 branch
+- Don't rebuild expression cache or OHLCV cache
+- If you need to queue a grind, do it and exit immediately — don't wait
+"""
+
+
+SUMMARIZE_SYSTEM = """You are a senior quant researcher. You've completed a research session.
+
+Read all step result files (data/research_step_*_result.json) and the plan (data/research_plan.json).
+Check git log for what changed.
+
+Write RESEARCH_FINDINGS.md in the repo root with:
+1. Executive summary — bottom line, what worked and what didn't
+2. Each experiment — what was tried, why, the result (signal counts, condition counts)  
+3. Code changes — what was written/modified and why
+4. Recommendations — what Dan should merge to v2, what to discard
+5. Benched examples — list with reasoning, how to restore
+6. Next steps — what to try next based on what was learned
+
+Check data/research_bench.json for benched examples and include restoration instructions.
+
+Commit RESEARCH_FINDINGS.md to the sandbox branch.
+
+Dan is sleeping. He'll read this in the morning. Make it worth waking up to.
+
+ENVIRONMENT:
+- Grind results on Railway: """ + API_BASE + """
+- Repo root: """ + REPO_ROOT + """
+"""
+
+
+# ── Main job runner ──────────────────────────────────────────────────
+
+def run_research_job(job):
+    """Execute a research job in phases."""
+    job_id = job["id"]
+    prompt = job["prompt"]
+    job_start = time.time()
+    all_logs = []
+
+    log(f"{'='*60}")
+    log(f"Research Job #{job_id}")
+    log(f"Prompt: {prompt}")
+    log(f"{'='*60}")
+
+    # Setup
+    branch = create_sandbox_branch(job_id)
+    log(f"Branch: {branch}")
+    update_job(job_id, status="running", branch=branch)
 
     try:
-        proc = subprocess.Popen(
-            cli_args, cwd=REPO_ROOT,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
-            encoding='utf-8', errors='replace',
-            shell=is_win,
-        )
+        # ── Phase 1: PLAN ──
+        log("Phase 1: PLAN")
+        plan_prompt = f"""RESEARCH JOB #{job_id}
 
-        output_lines = []
-        start = time.time()
+DAN'S PROMPT:
+{prompt}
 
-        for line in proc.stdout:
-            line = line.rstrip()
-            print(f"    {line}")
-            output_lines.append(line)
+Create a research plan. Write it to data/research_plan.json.
+Read the key files first, then plan."""
 
-            # Enforce max runtime
-            if time.time() - start > MAX_RUNTIME:
-                log(f"Max runtime ({MAX_RUNTIME}s) exceeded — killing")
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+        output, code = run_claude_code(plan_prompt, PLAN_SYSTEM, "PLAN")
+        all_logs.append(f"=== PHASE 1: PLAN (exit={code}) ===\n{output}\n")
+
+        if code != 0:
+            update_job(job_id, status="failed", error=f"Plan phase failed (exit {code})",
+                       log="\n".join(all_logs)[:100000])
+            cleanup_sandbox(branch)
+            return
+
+        # Read the plan
+        plan_path = os.path.join(REPO_ROOT, "data", "research_plan.json")
+        plan_text = read_file_safe(plan_path)
+        if not plan_text:
+            update_job(job_id, status="failed", error="No research_plan.json created",
+                       log="\n".join(all_logs)[:100000])
+            cleanup_sandbox(branch)
+            return
+
+        try:
+            plan = json.loads(plan_text)
+            steps = plan.get("steps", [])
+        except json.JSONDecodeError as e:
+            update_job(job_id, status="failed", error=f"Invalid plan JSON: {e}",
+                       log="\n".join(all_logs)[:100000])
+            cleanup_sandbox(branch)
+            return
+
+        log(f"Plan: {len(steps)} steps")
+        for s in steps:
+            log(f"  Step {s['id']}: [{s.get('type','')}] {s.get('action','')[:60]}")
+
+        # ── Phase 2+: EXECUTE steps ──
+        phase_num = 2
+        for step in steps:
+            # Time check
+            elapsed = time.time() - job_start
+            if elapsed > MAX_TOTAL_TIME:
+                log(f"Max time ({MAX_TOTAL_TIME}s) exceeded — stopping")
+                break
+            if phase_num > MAX_PHASES:
+                log(f"Max phases ({MAX_PHASES}) reached — stopping")
                 break
 
-        proc.wait()
-        duration = time.time() - start
-        log(f"Claude Code finished in {duration:.0f}s (exit {proc.returncode})")
+            step_id = step["id"]
+            step_type = step.get("type", "code_change")
+            log(f"Phase {phase_num}: Step {step_id} [{step_type}] — {step.get('action', '')[:60]}")
 
-        # Capture output
-        full_log = "\n".join(output_lines)
-        # Truncate log if huge
-        if len(full_log) > 100000:
-            full_log = full_log[:50000] + "\n\n...(truncated)...\n\n" + full_log[-50000:]
+            # If this is a grind step, queue it via API and wait (zero tokens)
+            if step_type == "run_grind":
+                grind_cmd = step.get("grind_command", "signal_grind")
+                grind_args = step.get("grind_args", {"setup": "dtss"})
+                log(f"  Queuing grind: {grind_cmd} {grind_args}")
 
-        # Get diff
+                try:
+                    r = requests.post(f"{API_BASE}/api/v2/tasks",
+                                      json={"command": grind_cmd, "args": grind_args}, timeout=15)
+                    task_data = r.json()
+                    task_id = task_data.get("id")
+                    log(f"  Task #{task_id} queued — waiting (zero tokens)...")
+
+                    # Wait for grind completion — NO TOKENS CONSUMED
+                    while True:
+                        elapsed = time.time() - job_start
+                        if elapsed > MAX_TOTAL_TIME:
+                            log("  Max time hit while waiting for grind")
+                            break
+                        try:
+                            r2 = requests.get(f"{API_BASE}/api/v2/tasks/{task_id}", timeout=10)
+                            status = r2.json().get("status", "")
+                            if status in ("completed", "failed"):
+                                log(f"  Task #{task_id}: {status}")
+                                # Write result file for next phase
+                                result_file = os.path.join(REPO_ROOT, "data", f"research_step_{step_id}_result.json")
+                                os.makedirs(os.path.dirname(result_file), exist_ok=True)
+                                with open(result_file, "w") as f:
+                                    json.dump({
+                                        "step_id": step_id,
+                                        "status": "done" if status == "completed" else "failed",
+                                        "result": f"Grind task #{task_id} {status}",
+                                        "task_id": task_id,
+                                    }, f, indent=2)
+                                break
+                            else:
+                                log(f"  Task #{task_id}: {status}...")
+                        except:
+                            pass
+                        time.sleep(GRIND_POLL)
+
+                    all_logs.append(f"=== PHASE {phase_num}: GRIND {grind_cmd} (task #{task_id}) ===\n")
+
+                except Exception as e:
+                    log(f"  Failed to queue grind: {e}")
+                    all_logs.append(f"=== PHASE {phase_num}: GRIND FAILED: {e} ===\n")
+
+            else:
+                # Code change / analysis / script — run Claude Code
+                prev_results = []
+                for prev_step in steps:
+                    if prev_step["id"] >= step_id:
+                        break
+                    result_path = os.path.join(REPO_ROOT, "data", f"research_step_{prev_step['id']}_result.json")
+                    prev_text = read_file_safe(result_path)
+                    if prev_text:
+                        prev_results.append(f"Step {prev_step['id']} result: {prev_text[:500]}")
+
+                prev_context = "\n".join(prev_results) if prev_results else "No previous results yet."
+
+                step_prompt = f"""RESEARCH JOB #{job_id}, STEP {step_id}
+
+ORIGINAL PROMPT FROM DAN:
+{prompt}
+
+YOUR PLAN (from earlier):
+{json.dumps(step, indent=2)}
+
+PREVIOUS STEP RESULTS:
+{prev_context}
+
+Execute this step. Write results to data/research_step_{step_id}_result.json.
+Commit your changes."""
+
+                system = EXECUTE_SYSTEM_TEMPLATE.replace("{step_id}", str(step_id))
+                output, code = run_claude_code(step_prompt, system, f"STEP-{step_id}")
+                all_logs.append(f"=== PHASE {phase_num}: STEP {step_id} (exit={code}) ===\n{output}\n")
+
+                # Check if this step queued a grind
+                result_path = os.path.join(REPO_ROOT, "data", f"research_step_{step_id}_result.json")
+                result_text = read_file_safe(result_path)
+                if result_text:
+                    try:
+                        result_data = json.loads(result_text)
+                        queued_id = result_data.get("queued_task_id")
+                        if queued_id:
+                            log(f"  Step queued task #{queued_id} — waiting (zero tokens)...")
+                            while True:
+                                elapsed = time.time() - job_start
+                                if elapsed > MAX_TOTAL_TIME:
+                                    break
+                                try:
+                                    r = requests.get(f"{API_BASE}/api/v2/tasks/{queued_id}", timeout=10)
+                                    status = r.json().get("status", "")
+                                    if status in ("completed", "failed"):
+                                        log(f"  Task #{queued_id}: {status}")
+                                        break
+                                    log(f"  Task #{queued_id}: {status}...")
+                                except:
+                                    pass
+                                time.sleep(GRIND_POLL)
+                    except json.JSONDecodeError:
+                        pass
+
+            phase_num += 1
+
+        # ── Final phase: SUMMARIZE ──
+        log(f"Final phase: SUMMARIZE")
+        summary_prompt = f"""RESEARCH JOB #{job_id}
+
+DAN'S ORIGINAL PROMPT:
+{prompt}
+
+You've completed a research session. Read all step results and write RESEARCH_FINDINGS.md.
+Commit it to this branch."""
+
+        output, code = run_claude_code(summary_prompt, SUMMARIZE_SYSTEM, "SUMMARIZE")
+        all_logs.append(f"=== FINAL: SUMMARIZE (exit={code}) ===\n{output}\n")
+
+        # ── Collect results ──
+        findings = read_file_safe(os.path.join(REPO_ROOT, "RESEARCH_FINDINGS.md"))
         diff = get_diff(branch)
+        bench = read_file_safe(os.path.join(REPO_ROOT, "data", "research_bench.json"))
+        full_log = "\n".join(all_logs)
 
-        # Try to read RESEARCH_FINDINGS.md if it was created
-        findings_path = os.path.join(REPO_ROOT, "RESEARCH_FINDINGS.md")
-        summary = ""
-        if os.path.exists(findings_path):
-            with open(findings_path, "r", encoding="utf-8", errors="replace") as f:
-                summary = f.read()
+        duration = time.time() - job_start
+        log(f"Job #{job_id} complete in {duration:.0f}s ({phase_num - 1} phases)")
 
-        # Check for benched examples
-        bench_path = os.path.join(REPO_ROOT, "data", f"research_bench_job_{job_id:03d}.json")
-        benched = ""
-        if os.path.exists(bench_path):
-            with open(bench_path, "r") as f:
-                benched = f.read()
-
-        # Update job
-        status = "completed" if proc.returncode == 0 else "failed"
         update_job(
             job_id,
-            status=status,
-            summary=summary[:10000] if summary else f"Completed in {duration:.0f}s. Check branch {branch}.",
+            status="completed",
+            summary=findings[:10000] if findings else f"Completed in {duration:.0f}s. Check branch {branch}.",
             diff=diff[:50000],
-            examples_benched=benched[:5000] if benched else None,
+            examples_benched=bench[:5000] if bench else None,
             log=full_log[:100000],
-            error=f"Exit code {proc.returncode}" if proc.returncode != 0 else None,
         )
-
-        log(f"Job #{job_id} {status}. Branch: {branch}")
 
     except Exception as e:
         import traceback
         error_msg = f"{type(e).__name__}: {e}"
         log(f"Job #{job_id} error: {error_msg}")
         traceback.print_exc()
-        update_job(job_id, status="failed", error=error_msg)
+        update_job(job_id, status="failed", error=error_msg,
+                   log="\n".join(all_logs)[:100000])
 
     finally:
         cleanup_sandbox(branch)
@@ -347,12 +528,14 @@ def run_research_job(job):
 
 def main():
     print("\n" + "=" * 60)
-    print("  RESEARCH DISPATCHER")
+    print("  RESEARCH DISPATCHER (phase-based, token-efficient)")
     print("=" * 60)
-    print(f"  API:      {API_BASE}")
-    print(f"  Poll:     every {POLL_INTERVAL}s")
-    print(f"  Max time: {MAX_RUNTIME}s per job")
-    print(f"  Repo:     {REPO_ROOT}")
+    print(f"  API:        {API_BASE}")
+    print(f"  Model:      {MODEL}")
+    print(f"  Max phases: {MAX_PHASES} per job")
+    print(f"  Max time:   {MAX_TOTAL_TIME}s per job")
+    print(f"  Poll:       every {POLL_INTERVAL}s")
+    print(f"  Repo:       {REPO_ROOT}")
     print(f"\n  Waiting for research jobs...\n")
 
     while True:
