@@ -43,7 +43,7 @@ POLL_INTERVAL = 15       # seconds between job polls
 GRIND_POLL = 30          # seconds between grind completion polls
 MAX_PHASES = 8           # default, overridden per job from server
 MAX_TOTAL_TIME = 14400   # default, overridden per job from server
-MODEL = "sonnet"         # lighter on usage than opus
+MODEL = "opus"            # opus follows complex instructions reliably
 
 # Force UTF-8 on Windows
 if sys.platform == 'win32':
