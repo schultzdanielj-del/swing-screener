@@ -1,45 +1,37 @@
 """
-Hybrid Grinder — Dartboard expression selection + pyramid binary filtering.
+Hybrid Grinder — Greedy iterative condition selection + binary filtering.
 
-The dartboard's Cohen's d ranking is deterministic and stable — it always
-picks the same expressions given the same examples. The pyramid's binary
-filtering is sharp — one failed condition kills the bar. This grinder
-combines both strengths.
+Cohen's d ranks expressions by individual discriminating power. But correlated
+expressions pass the same bars — stacking 200 correlated conditions doesn't
+filter harder. The fix: select conditions one at a time, each chosen for its
+MARGINAL filtering power on the surviving bar set.
 
 How it works:
-  1. Profile: compute mean/std per expression across all examples (reuse dartboard)
-  2. Weight: rank expressions by Cohen's d discriminating power (reuse dartboard)
-  3. Select: take expressions above a d threshold. For each, compute the example
-     [min, max] range with margin. These become binary conditions.
-  4. Filter: apply conditions as binary pass/fail across full 5yr history.
-     A bar must pass ALL conditions. One failure kills it.
-  5. Dedup: consecutive signals within 5 calendar days per ticker → keep rightmost.
-  6. Validate: 100% example pass rate (guaranteed by construction — impossible to fail).
+  1. Profile + Weight: compute Cohen's d for all expressions (reuse dartboard)
+  2. Build candidate pool: top N expressions by Cohen's d, with [min, max] ranges
+  3. Build pass/fail matrix: for every (ticker, bar) in 5yr history, precompute
+     which candidates each bar passes. One big boolean matrix in RAM.
+  4. Greedy select: start with all bars surviving. At each step, pick the unused
+     candidate that kills the most surviving bars. Lock it. Repeat until signal
+     count is below target or no candidate helps.
+  5. Dedup + validate + save.
 
-Validation cannot fail because:
-  - Ranges are computed from example values read from the expr cache (float32)
-  - Ranges are stored as float32 low/high (same dtype as cache data)
-  - Filtering compares float32 cache data against float32 low/high
-  - No rounding, no dtype conversion anywhere in the chain
-  - Conditions where ANY example has NaN are excluded during profiling
-  - Therefore every example value is inside [min-margin, max+margin] by construction
+Key properties:
+  - Deterministic: same examples → same conditions → same signals
+  - Each condition is chosen for marginal value, not individual ranking
+  - Correlated conditions are naturally skipped (second one kills zero new bars)
+  - Signal count decreases monotonically — you can watch it converge
+  - 100% example pass rate guaranteed (min/max ranges from float32 cache values)
 
 Zero-abort design:
   - Every function that can fail is wrapped in try/except
   - Errors produce warnings + degraded results, never crashes
-  - Railway upload failure never blocks local save
   - The run ALWAYS produces output, even if degraded
-
-Pipeline compatibility:
-  - Output format matches pyramid_grinder (all_conditions, final_signals, etc.)
-  - final_signals includes ticker, date, bar_idx, close (same as signal_filter)
-  - Condition dicts include name, expr, expression_name, low, high, tier, filter_power
-  - signal_filter.py can load via --conditions-file flag
 
 Usage:
     python local_runner/hybrid_grinder.py --setup dtss
-    python local_runner/hybrid_grinder.py --setup dtss --min-d 0.5
-    python local_runner/hybrid_grinder.py --setup dtss --min-d 0.3 --max-conditions 150
+    python local_runner/hybrid_grinder.py --setup dtss --target 500
+    python local_runner/hybrid_grinder.py --setup dtss --min-d 0.3 --pool-size 1000
 
 Requires:
   - 5-year OHLCV cache (local_runner/cache/universe_ohlcv_5yr.pkl)
@@ -75,7 +67,6 @@ sys.path.insert(0, LOCAL_DIR)
 from brute_expressions import generate_all
 from expr_cache_builder import ExprSeriesCache
 
-# Reuse data loading and profiling from dartboard_grinder
 from dartboard_grinder import (
     load_5yr_cache,
     load_example_data,
@@ -87,87 +78,60 @@ API_BASE = "https://web-production-e3025.up.railway.app"
 
 
 # ══════════════════════════════════════════════════════════════
-# STEP 3: SELECT CONDITIONS (binary ranges from Cohen's d ranking)
+# STEP 3: BUILD CANDIDATE POOL (expressions + float32 ranges)
 # ══════════════════════════════════════════════════════════════
 
-def select_conditions(weights, profile, expr_cache, example_dfs,
-                      min_d=0.5, max_conditions=200):
-    """Select top expressions by Cohen's d and compute binary [min, max] ranges.
+def build_candidate_pool(weights, expr_cache, example_dfs, min_d=0.3):
+    """Build pool of candidate expressions with float32 [min, max] ranges.
 
-    Ranges are computed from ACTUAL float32 values read from the expr cache —
-    the same values the filter step will compare against. No dtype conversion,
-    no rounding. This makes validation failure structurally impossible.
-
-    Only expressions where ALL examples (with scan_idx) have non-NaN values
-    are eligible. This is enforced by build_example_profile's valid_mask AND
-    verified here by re-reading from the expr cache.
-
-    Args:
-        weights: dict from compute_expression_weights()
-        profile: dict from build_example_profile()
-        expr_cache: ExprSeriesCache instance
-        example_dfs: list of example dicts (for re-reading from cache)
-        min_d: minimum Cohen's d threshold
-        max_conditions: hard cap on number of conditions
-
-    Returns:
-        conditions: list of dicts with float32-safe low/high
-        n_dropped_by_d: count dropped below d threshold
+    Returns candidates with exact float32 low/high and cache column indices.
+    No max_conditions cap here — the greedy selector decides how many to use.
     """
-    print(f"\n  Selecting conditions: min_d={min_d}, max_conditions={max_conditions}")
+    print(f"\n  Building candidate pool: min_d={min_d}")
 
     all_expressions = generate_all()
     name_to_expr = {e["name"]: e for e in all_expressions}
     cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
 
-    # Pre-load all example scan bar rows from expr cache (float32).
-    # These are the EXACT values the filter will compare against.
-    example_rows = []  # list of (ticker, scan_idx, float32 row)
+    # Pre-load example scan bar rows from expr cache (float32)
+    example_rows = []
     for ex in example_dfs:
         if ex["scan_idx"] is None:
             continue
         ticker = ex["ticker"]
         scan_idx = ex["scan_idx"]
         dates, data = expr_cache.get_ticker(ticker)
-        if dates is None or data is None:
+        if dates is None or data is None or scan_idx >= len(data):
             continue
-        if scan_idx >= len(data):
-            continue
-        # data[scan_idx, :] is float32 — keep it that way
-        example_rows.append((ticker, scan_idx, data[scan_idx, :]))
+        example_rows.append(data[scan_idx, :])  # float32 row
 
     if not example_rows:
-        print("  WARNING: No example rows could be loaded from expr cache")
-        return [], 0
+        print("  WARNING: No example rows loaded")
+        return []
 
     n_examples = len(example_rows)
-    print(f"  Loaded {n_examples} example scan bar rows from expr cache (float32)")
+    print(f"  {n_examples} example scan bars loaded")
 
-    conditions = []
-    n_dropped_by_d = 0
+    candidates = []
+    n_dropped_d = 0
     n_dropped_nan = 0
 
     for i in range(weights["top_n"]):
         d = float(weights["powers"][i])
-
         if d < min_d:
-            n_dropped_by_d += 1
+            n_dropped_d += 1
             continue
 
         name = weights["names"][i]
-        cat = weights["categories"][i]
-        expr_idx = weights["indices"][i]
-
-        # Get the expr cache column index for this expression
         cache_col = cache_name_to_idx.get(name)
         if cache_col is None:
             continue
 
-        # Extract float32 values from each example's scan bar
+        # Extract float32 values from each example
         vals = []
         has_nan = False
-        for _, _, row in example_rows:
-            v = row[cache_col]  # float32
+        for row in example_rows:
+            v = row[cache_col]
             if np.isnan(v):
                 has_nan = True
                 break
@@ -177,101 +141,83 @@ def select_conditions(weights, profile, expr_cache, example_dfs,
             n_dropped_nan += 1
             continue
 
-        # Compute range from actual float32 values.
-        # np.float32 arithmetic stays in float32.
         vals_arr = np.array(vals, dtype=np.float32)
-        ex_min = np.min(vals_arr)  # float32
-        ex_max = np.max(vals_arr)  # float32
-
-        spread = ex_max - ex_min  # float32
+        ex_min = np.min(vals_arr)
+        ex_max = np.max(vals_arr)
+        spread = ex_max - ex_min
         margin = spread * np.float32(0.05)
+        low = ex_min - margin
+        high = ex_max + margin
 
-        low = ex_min - margin   # float32
-        high = ex_max + margin  # float32
-
-        # Handle zero-spread case (all examples identical)
         if ex_min == ex_max:
             abs_margin = np.float32(max(abs(float(ex_min)) * 0.01, 0.001))
             low = ex_min - abs_margin
             high = ex_max + abs_margin
 
-        # Store as Python floats for JSON serialization, but keep
-        # the float32 values for the filter arrays (built separately).
         expr_info = name_to_expr.get(name, {})
-
-        conditions.append({
+        candidates.append({
             "name": name,
             "expr": name,
             "expression_name": name,
-            "category": cat,
+            "category": expr_info.get("category", weights["categories"][i]),
             "compute": expr_info.get("compute"),
-            "low": float(low),    # float32 → float64 (exact representation)
-            "high": float(high),  # float32 → float64 (exact representation)
+            "low": float(low),
+            "high": float(high),
             "tier": "hybrid",
             "cohens_d": round(d, 4),
             "center": round(float(weights["centers"][i]), 6),
             "spread": round(float(weights["spreads"][i]), 6),
             "uni_center": round(float(weights["uni_centers"][i]), 6),
             "uni_spread": round(float(weights["uni_spreads"][i]), 6),
-            "filter_power": round(d, 4),
-            # Store exact float32 bits for the filter step
-            "_low_f32": low,   # np.float32
-            "_high_f32": high,  # np.float32
+            "filter_power": 0.0,  # Will be set during greedy selection
+            "_low_f32": low,
+            "_high_f32": high,
             "_cache_col": cache_col,
         })
 
-        if len(conditions) >= max_conditions:
-            break
+    print(f"  Pool: {len(candidates)} candidates "
+          f"(dropped {n_dropped_d} below d={min_d}, {n_dropped_nan} had NaN)")
 
-    # Sort by Cohen's d descending
-    conditions.sort(key=lambda c: -c["cohens_d"])
+    if candidates:
+        d_vals = [c["cohens_d"] for c in candidates]
+        print(f"  Cohen's d: min={min(d_vals):.3f}  max={max(d_vals):.3f}  "
+              f"mean={sum(d_vals)/len(d_vals):.3f}")
 
-    print(f"  Selected {len(conditions)} conditions "
-          f"(dropped {n_dropped_by_d} below d={min_d}, {n_dropped_nan} had NaN)")
-
-    if conditions:
-        d_vals = [c["cohens_d"] for c in conditions]
-        print(f"  Cohen's d: min={min(d_vals):.3f}  med={np.median(d_vals):.3f}  "
-              f"max={max(d_vals):.3f}  mean={np.mean(d_vals):.3f}")
-
-        cat_counts = Counter(c["category"] for c in conditions)
-        print(f"\n  Categories ({len(conditions)} conditions):")
-        for cat, count in cat_counts.most_common(15):
-            print(f"    {cat:<30} {count}")
-
-    return conditions, n_dropped_by_d
+    return candidates
 
 
 # ══════════════════════════════════════════════════════════════
-# STEP 4: FILTER UNIVERSE (binary pass/fail)
+# STEP 4: BUILD PASS/FAIL MATRIX (full 5yr, all candidates)
 # ══════════════════════════════════════════════════════════════
 
-# Worker globals for multiprocessing
+# Worker globals
 _w_expr_cache = None
-_w_cond_cache_cols = None
-_w_cond_lows = None
-_w_cond_highs = None
+_w_candidate_cols = None
+_w_candidate_lows = None
+_w_candidate_highs = None
 _w_ohlcv_cache = None
 
 
-def _init_filter_worker(cond_cache_cols, cond_lows, cond_highs,
+def _init_matrix_worker(candidate_cols, candidate_lows, candidate_highs,
                         ohlcv_cache):
-    """Initialize worker with condition arrays and OHLCV cache."""
-    global _w_expr_cache, _w_cond_cache_cols, _w_cond_lows, _w_cond_highs
+    """Initialize worker for matrix building."""
+    global _w_expr_cache, _w_candidate_cols, _w_candidate_lows, _w_candidate_highs
     global _w_ohlcv_cache
     _w_expr_cache = ExprSeriesCache()
-    _w_cond_cache_cols = cond_cache_cols
-    _w_cond_lows = cond_lows
-    _w_cond_highs = cond_highs
+    _w_candidate_cols = candidate_cols
+    _w_candidate_lows = candidate_lows
+    _w_candidate_highs = candidate_highs
     _w_ohlcv_cache = ohlcv_cache
 
 
-def _filter_ticker_batch(tickers):
-    """Apply binary conditions to a batch of tickers.
+def _build_matrix_batch(tickers):
+    """For a batch of tickers, compute pass/fail for each bar × each candidate.
 
-    Returns list of (ticker, date_str, bar_idx, close) for pipeline compat.
+    Returns list of (ticker, dates_list, bar_indices, closes, pass_matrix) where
+    pass_matrix is (n_bars, n_candidates) bool, and only bars with idx >= 50 are
+    included (warmup skipped).
     """
-    signals = []
+    results = []
     for ticker in tickers:
         try:
             dates, data = _w_expr_cache.get_ticker(ticker)
@@ -279,126 +225,99 @@ def _filter_ticker_batch(tickers):
                 continue
 
             n_bars = len(data)
-            if n_bars < 50:
+            if n_bars < 51:
                 continue
 
-            # Extract columns for all conditions: (n_bars, n_conditions) float32
-            cond_data = data[:, _w_cond_cache_cols]
+            # Extract candidate columns: (n_bars, n_candidates) float32
+            cond_data = data[:, _w_candidate_cols]
 
-            # Binary pass/fail: low <= val <= high for ALL conditions
-            # NaN comparisons return False → correctly fails the bar
-            above_low = cond_data >= _w_cond_lows    # (n_bars, n_cond) bool
-            below_high = cond_data <= _w_cond_highs  # (n_bars, n_cond) bool
-            all_pass = np.all(above_low & below_high, axis=1)  # (n_bars,) bool
+            # Pass/fail: low <= val <= high. NaN → False.
+            passes = (cond_data >= _w_candidate_lows) & (cond_data <= _w_candidate_highs)
 
-            # Skip warmup bars
-            all_pass[:50] = False
+            # Skip warmup bars (first 50)
+            passes = passes[50:]
+            bar_dates = dates[50:]
+            bar_indices = np.arange(50, n_bars, dtype=np.int32)
 
-            passing_indices = np.where(all_pass)[0]
-            if len(passing_indices) == 0:
-                continue
-
-            # Get close prices from OHLCV cache for pipeline compat
+            # Get close prices
             ohlcv_df = _w_ohlcv_cache.get(ticker) if _w_ohlcv_cache else None
-            closes = None
+            closes = np.zeros(len(bar_indices), dtype=np.float32)
             if ohlcv_df is not None and "close" in ohlcv_df.columns:
-                closes = ohlcv_df["close"].values
+                close_vals = ohlcv_df["close"].values
+                for i, idx in enumerate(bar_indices):
+                    if idx < len(close_vals):
+                        closes[i] = float(close_vals[idx])
 
-            for idx in passing_indices:
-                # Format date
-                date_val = dates[idx]
-                if hasattr(date_val, 'strftime'):
-                    date_str = date_val.strftime('%Y-%m-%d')
+            # Format dates
+            date_strs = []
+            for d in bar_dates:
+                if hasattr(d, 'strftime'):
+                    date_strs.append(d.strftime('%Y-%m-%d'))
                 else:
-                    date_str = str(date_val)[:10]
+                    date_strs.append(str(d)[:10])
 
-                # Get close price
-                close_val = 0.0
-                if closes is not None and idx < len(closes):
-                    close_val = float(closes[idx])
-
-                signals.append((ticker, date_str, int(idx), close_val))
+            results.append((ticker, date_strs, bar_indices, closes, passes))
 
         except Exception:
-            # Never crash a worker — skip ticker on error
             continue
 
-    return signals
+    return results
 
 
-def filter_universe(universe_cache, expr_cache, conditions):
-    """Apply binary conditions across full 5yr history. Returns raw signal list.
-
-    Uses float32 low/high arrays built directly from the condition objects
-    (which were computed in float32 from the same expr cache). No precision
-    loss anywhere in the chain.
+def build_pass_matrix(universe_cache, expr_cache, candidates):
+    """Build the full pass/fail matrix for greedy selection.
 
     Returns:
-        raw_signals: list of (ticker, date_str, bar_idx, close) — before dedup
+        tickers: list of str — one per row
+        dates: list of str — one per row
+        bar_indices: np.array int32 — one per row
+        closes: np.array float32 — one per row
+        pass_matrix: np.array bool (n_total_bars, n_candidates)
     """
-    print(f"\n  Filtering universe: {len(conditions)} conditions x "
-          f"{len(universe_cache)} tickers")
+    n_cands = len(candidates)
+    cand_cols = np.array([c["_cache_col"] for c in candidates], dtype=np.int32)
+    cand_lows = np.array([c["_low_f32"] for c in candidates], dtype=np.float32)
+    cand_highs = np.array([c["_high_f32"] for c in candidates], dtype=np.float32)
+
+    cached_tickers = expr_cache.get_available_tickers()
+    tickers_to_scan = [t for t in universe_cache.keys() if t in cached_tickers]
+
+    print(f"\n  Building pass/fail matrix: {len(tickers_to_scan)} tickers x "
+          f"{n_cands} candidates")
     t0 = time.time()
 
-    # Build condition arrays from the _cache_col and _low_f32/_high_f32 fields
-    # that select_conditions stored. These are the exact float32 values.
-    cond_cache_cols = []
-    cond_lows = []
-    cond_highs = []
-
-    for c in conditions:
-        cache_col = c.get("_cache_col")
-        if cache_col is None:
-            # Fallback: look up by name (should not happen)
-            cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
-            cache_col = cache_name_to_idx.get(c["name"])
-            if cache_col is None:
-                continue
-
-        cond_cache_cols.append(cache_col)
-
-        # Use stored float32 values if available, else cast from float64
-        if "_low_f32" in c:
-            cond_lows.append(c["_low_f32"])
-            cond_highs.append(c["_high_f32"])
-        else:
-            cond_lows.append(np.float32(c["low"]))
-            cond_highs.append(np.float32(c["high"]))
-
-    cond_cache_cols = np.array(cond_cache_cols, dtype=np.int32)
-    cond_lows = np.array(cond_lows, dtype=np.float32)
-    cond_highs = np.array(cond_highs, dtype=np.float32)
-
-    n_conditions = len(cond_cache_cols)
-    print(f"  {n_conditions} conditions mapped to expr cache columns")
-
-    # Get tickers in both universe and expr cache
-    cached_tickers = expr_cache.get_available_tickers()
-    tickers = [t for t in universe_cache.keys() if t in cached_tickers]
-    print(f"  Scanning {len(tickers)} tickers")
-
-    # Parallel filtering
     n_workers = max(cpu_count() - 1, 1)
-    batch_size = max(len(tickers) // (n_workers * 4), 25)
-    batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
-    print(f"  {n_workers} workers, {len(batches)} batches of ~{batch_size}")
+    batch_size = max(len(tickers_to_scan) // (n_workers * 4), 25)
+    batches = [tickers_to_scan[i:i + batch_size]
+               for i in range(0, len(tickers_to_scan), batch_size)]
+    print(f"  {n_workers} workers, {len(batches)} batches")
 
-    all_signals = []
+    # Collect all results
+    all_tickers = []
+    all_dates = []
+    all_bar_indices = []
+    all_closes = []
+    all_passes = []
     completed = 0
     errors = 0
 
     with ProcessPoolExecutor(
         max_workers=n_workers,
-        initializer=_init_filter_worker,
-        initargs=(cond_cache_cols, cond_lows, cond_highs,
-                  universe_cache),
+        initializer=_init_matrix_worker,
+        initargs=(cand_cols, cand_lows, cand_highs, universe_cache),
     ) as pool:
-        futures = {pool.submit(_filter_ticker_batch, batch): batch
+        futures = {pool.submit(_build_matrix_batch, batch): batch
                    for batch in batches}
         for future in as_completed(futures):
             try:
-                batch_signals = future.result()
-                all_signals.extend(batch_signals)
+                batch_results = future.result()
+                for ticker, date_strs, bar_idxs, closes, passes in batch_results:
+                    n_bars = len(date_strs)
+                    all_tickers.extend([ticker] * n_bars)
+                    all_dates.extend(date_strs)
+                    all_bar_indices.append(bar_idxs)
+                    all_closes.append(closes)
+                    all_passes.append(passes)
             except Exception as e:
                 errors += 1
                 if errors <= 3:
@@ -406,15 +325,170 @@ def filter_universe(universe_cache, expr_cache, conditions):
             completed += 1
             if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
                 elapsed = time.time() - t0
+                n_rows = sum(p.shape[0] for p in all_passes)
                 print(f"    {completed}/{len(batches)} batches, "
-                      f"{len(all_signals):,} signals so far ({elapsed:.0f}s)")
+                      f"{n_rows:,} rows ({elapsed:.0f}s)")
+
+    if not all_passes:
+        print("  ERROR: No data loaded")
+        return [], [], np.array([]), np.array([]), np.empty((0, n_cands), dtype=bool)
+
+    # Concatenate into single arrays
+    bar_indices = np.concatenate(all_bar_indices)
+    closes = np.concatenate(all_closes)
+    pass_matrix = np.vstack(all_passes)  # (n_total_bars, n_candidates) bool
 
     elapsed = time.time() - t0
+    n_rows = pass_matrix.shape[0]
+    mem_mb = pass_matrix.nbytes / 1024 / 1024
+    print(f"  Matrix built: {n_rows:,} rows x {n_cands} candidates "
+          f"({mem_mb:.0f} MB, {elapsed:.1f}s)")
     if errors:
         print(f"  WARNING: {errors} batch(es) had errors")
-    print(f"  Filtering complete: {len(all_signals):,} raw signals ({elapsed:.1f}s)")
 
-    return all_signals
+    return all_tickers, all_dates, bar_indices, closes, pass_matrix
+
+
+# ══════════════════════════════════════════════════════════════
+# STEP 5: GREEDY CONDITION SELECTION
+# ══════════════════════════════════════════════════════════════
+
+def greedy_select(candidates, pass_matrix, all_tickers, all_dates,
+                  target_signals=500, max_conditions=100):
+    """Iteratively select conditions by marginal filtering power.
+
+    At each step, pick the unused candidate that kills the most surviving
+    bars. Lock it. Update the surviving mask. Stop when:
+      - Signal count (after dedup) drops below target, OR
+      - No candidate kills any bars, OR
+      - max_conditions reached.
+
+    Args:
+        candidates: list of candidate dicts (with _cache_col, _low_f32 etc)
+        pass_matrix: (n_rows, n_candidates) bool — True = bar passes condition
+        all_tickers: list of ticker strings, one per row
+        all_dates: list of date strings, one per row
+        target_signals: stop when deduped signal count drops below this
+        max_conditions: hard cap
+
+    Returns:
+        selected: list of candidate dicts (with filter_power set to marginal kill count)
+        selection_log: list of dicts documenting each step
+    """
+    n_rows, n_cands = pass_matrix.shape
+    surviving = np.ones(n_rows, dtype=bool)  # All bars start alive
+    used = np.zeros(n_cands, dtype=bool)     # No candidates used yet
+    selected = []
+    selection_log = []
+
+    # Pre-convert tickers and dates to arrays for fast dedup counting
+    ticker_arr = np.array(all_tickers)
+    date_arr = np.array(all_dates)
+
+    def count_deduped_signals(mask):
+        """Count signals after 5-day dedup on a boolean mask. Fast path."""
+        if not np.any(mask):
+            return 0, 0
+
+        # Group by ticker, count unique dates per cluster
+        active_idx = np.where(mask)[0]
+        active_tickers = ticker_arr[active_idx]
+        active_dates = date_arr[active_idx]
+
+        # Fast unique (ticker, date) count — that's the raw deduped count
+        # (within-cluster dedup needs date math, but unique ticker+date is
+        # a good fast proxy since same ticker+date can't appear twice)
+        pairs = set(zip(active_tickers.tolist(), active_dates.tolist()))
+        n_unique = len(pairs)
+
+        # Peak: count per date
+        date_counts = Counter(active_dates.tolist())
+        peak = max(date_counts.values()) if date_counts else 0
+
+        return n_unique, peak
+
+    # Initial stats
+    init_signals, init_peak = count_deduped_signals(surviving)
+    print(f"\n  Greedy selection: {n_rows:,} bars, {n_cands} candidates, "
+          f"target < {target_signals}")
+    print(f"  Initial: {init_signals:,} raw signals, peak {init_peak}/day")
+    print(f"\n  {'Step':>4} {'Expression':<42} {'d':>6} {'Killed':>8} "
+          f"{'Alive':>10} {'Signals':>8} {'Peak':>5}")
+    print(f"  {'─'*4} {'─'*42} {'─'*6} {'─'*8} {'─'*10} {'─'*8} {'─'*5}")
+
+    for step in range(max_conditions):
+        best_idx = -1
+        best_kills = 0
+
+        # Find the candidate that kills the most surviving bars
+        for j in range(n_cands):
+            if used[j]:
+                continue
+
+            # How many currently surviving bars would FAIL this condition?
+            would_fail = surviving & ~pass_matrix[:, j]
+            kills = int(np.sum(would_fail))
+
+            if kills > best_kills:
+                best_kills = kills
+                best_idx = j
+
+        if best_idx == -1 or best_kills == 0:
+            print(f"\n  Stopped: no candidate kills any surviving bars")
+            break
+
+        # Lock this condition
+        used[best_idx] = True
+        surviving &= pass_matrix[:, best_idx]
+
+        n_alive = int(np.sum(surviving))
+        sig_count, sig_peak = count_deduped_signals(surviving)
+
+        cand = candidates[best_idx]
+        cand_copy = dict(cand)
+        cand_copy["filter_power"] = best_kills  # Marginal kill count
+        selected.append(cand_copy)
+
+        selection_log.append({
+            "step": step + 1,
+            "name": cand["name"],
+            "cohens_d": cand["cohens_d"],
+            "kills": best_kills,
+            "alive": n_alive,
+            "signals": sig_count,
+            "peak": sig_peak,
+        })
+
+        print(f"  {step+1:>4} {cand['name']:<42} {cand['cohens_d']:>6.3f} "
+              f"{best_kills:>8,} {n_alive:>10,} {sig_count:>8,} {sig_peak:>5}")
+
+        if sig_count <= target_signals:
+            print(f"\n  Reached target: {sig_count} signals <= {target_signals}")
+            break
+
+    print(f"\n  Selected {len(selected)} conditions")
+    return selected, selection_log
+
+
+# ══════════════════════════════════════════════════════════════
+# EXTRACT FINAL SIGNALS FROM SURVIVING MASK
+# ══════════════════════════════════════════════════════════════
+
+def extract_signals(surviving, all_tickers, all_dates, bar_indices, closes):
+    """Extract signal list from the surviving mask after greedy selection."""
+    active_idx = np.where(surviving)[0]
+    if len(active_idx) == 0:
+        return []
+
+    signals_raw = []
+    for i in active_idx:
+        signals_raw.append((
+            all_tickers[i],
+            all_dates[i],
+            int(bar_indices[i]),
+            float(closes[i]),
+        ))
+    return signals_raw
 
 
 # ══════════════════════════════════════════════════════════════
@@ -423,22 +497,17 @@ def filter_universe(universe_cache, expr_cache, conditions):
 
 def deduplicate_signals(signals_raw):
     """Remove consecutive signals for same ticker within 5 calendar days.
-
-    Keeps the rightmost (latest) bar in each cluster — same as the pyramid
-    convention. The rightmost bar is closest to entry.
+    Keeps the rightmost (latest) bar in each cluster.
     """
     if not signals_raw:
         return []
 
-    # Group by ticker: store (date_str, bar_idx, close) per ticker
     by_ticker = defaultdict(list)
-    for item in signals_raw:
-        ticker, date_str, bar_idx, close = item
+    for ticker, date_str, bar_idx, close in signals_raw:
         by_ticker[ticker].append((date_str, bar_idx, close))
 
     deduped = []
     for ticker, bars in by_ticker.items():
-        # Sort by date, deduplicate
         seen_dates = set()
         unique_bars = []
         for date_str, bar_idx, close in sorted(bars, key=lambda x: x[0]):
@@ -449,20 +518,15 @@ def deduplicate_signals(signals_raw):
         if not unique_bars:
             continue
 
-        # Cluster consecutive dates within 5 calendar days
         clusters = [[unique_bars[0]]]
-
         for i in range(1, len(unique_bars)):
             prev_date = pd.to_datetime(clusters[-1][-1][0])
             curr_date = pd.to_datetime(unique_bars[i][0])
-            gap_days = (curr_date - prev_date).days
-
-            if gap_days <= 5:
+            if (curr_date - prev_date).days <= 5:
                 clusters[-1].append(unique_bars[i])
             else:
                 clusters.append([unique_bars[i]])
 
-        # Keep rightmost (latest) from each cluster
         for cluster in clusters:
             rightmost = max(cluster, key=lambda x: x[0])
             deduped.append({
@@ -480,61 +544,41 @@ def deduplicate_signals(signals_raw):
 # ══════════════════════════════════════════════════════════════
 
 def compute_signal_stats(deduped_signals):
-    """Compute signal statistics: total, peak/day, avg/day.
-
-    Uses pd.bdate_range for accurate trading day count.
-    """
+    """Compute signal statistics using pd.bdate_range for accuracy."""
     if not deduped_signals:
-        return {
-            "total": 0, "peak": 0, "avg_per_trading_day": 0.0,
-            "n_trading_days": 0, "n_signal_days": 0,
-        }
+        return {"total": 0, "peak": 0, "avg_per_trading_day": 0.0,
+                "n_trading_days": 0, "n_signal_days": 0}
 
-    # Count signals per date
     date_counts = Counter(s["date"] for s in deduped_signals)
-
     total = len(deduped_signals)
     peak = max(date_counts.values())
     n_signal_days = len(date_counts)
 
-    # Compute trading days from actual date range
     all_dates = sorted(date_counts.keys())
     first = pd.to_datetime(all_dates[0])
     last = pd.to_datetime(all_dates[-1])
 
-    # Use business day count for accurate trading day estimate
     try:
-        bdays = pd.bdate_range(first, last)
-        n_trading_days = len(bdays)
+        n_trading_days = len(pd.bdate_range(first, last))
     except Exception:
-        calendar_days = (last - first).days + 1
-        n_trading_days = max(int(calendar_days * 252 / 365), 1)
+        n_trading_days = max(int(((last - first).days + 1) * 252 / 365), 1)
 
-    avg_per_trading_day = total / max(n_trading_days, 1)
+    avg = total / max(n_trading_days, 1)
 
     return {
-        "total": total,
-        "peak": peak,
-        "avg_per_trading_day": round(avg_per_trading_day, 2),
+        "total": total, "peak": peak,
+        "avg_per_trading_day": round(avg, 2),
         "n_trading_days": n_trading_days,
         "n_signal_days": n_signal_days,
     }
 
 
 # ══════════════════════════════════════════════════════════════
-# EXAMPLE VALIDATION (structural guarantee — cannot fail)
+# EXAMPLE VALIDATION
 # ══════════════════════════════════════════════════════════════
 
 def validate_examples(example_dfs, conditions, expr_cache):
-    """Verify 100% example pass rate.
-
-    This is a defensive check only. By construction, validation cannot fail:
-    - Ranges are computed from the same float32 cache values
-    - Same dtype, same columns, same comparison operators
-    - Conditions with NaN examples were excluded during selection
-
-    Returns (n_passing, n_failing, details).
-    """
+    """Verify 100% example pass rate. Structurally cannot fail."""
     cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
 
     cond_list = []
@@ -543,13 +587,8 @@ def validate_examples(example_dfs, conditions, expr_cache):
         if col is None:
             col = cache_name_to_idx.get(c["name"])
         if col is not None:
-            # Use the exact float32 boundaries
-            if "_low_f32" in c:
-                low = c["_low_f32"]
-                high = c["_high_f32"]
-            else:
-                low = np.float32(c["low"])
-                high = np.float32(c["high"])
+            low = c["_low_f32"] if "_low_f32" in c else np.float32(c["low"])
+            high = c["_high_f32"] if "_high_f32" in c else np.float32(c["high"])
             cond_list.append((c["name"], col, low, high))
 
     n_passing = 0
@@ -559,42 +598,27 @@ def validate_examples(example_dfs, conditions, expr_cache):
     for ex in example_dfs:
         if ex["scan_idx"] is None:
             continue
-
-        ticker = ex["ticker"]
-        scan_idx = ex["scan_idx"]
-
         try:
-            dates, data = expr_cache.get_ticker(ticker)
-            if dates is None or data is None:
+            dates, data = expr_cache.get_ticker(ex["ticker"])
+            if dates is None or data is None or ex["scan_idx"] >= len(data):
                 n_failing += 1
-                failures.append(f"{ticker}: not in expr cache")
+                failures.append(f"{ex['ticker']}: cache issue")
                 continue
 
-            if scan_idx >= len(data):
-                n_failing += 1
-                failures.append(f"{ticker}: scan_idx {scan_idx} >= bars {len(data)}")
-                continue
-
-            row = data[scan_idx, :]  # float32
-            failed_conds = []
-
-            for name, col_idx, low, high in cond_list:
-                val = row[col_idx]  # float32
+            row = data[ex["scan_idx"], :]
+            failed = []
+            for name, col, low, high in cond_list:
+                val = row[col]
                 if np.isnan(val) or val < low or val > high:
-                    failed_conds.append(
-                        f"{name}: {val} not in [{low}, {high}]"
-                    )
-
-            if failed_conds:
+                    failed.append(f"{name}: {val} not in [{low}, {high}]")
+            if failed:
                 n_failing += 1
-                failures.append(f"{ticker}: {len(failed_conds)} conditions failed: "
-                                f"{failed_conds[0]}")
+                failures.append(f"{ex['ticker']}: {failed[0]}")
             else:
                 n_passing += 1
-
         except Exception as e:
             n_failing += 1
-            failures.append(f"{ticker}: exception: {e}")
+            failures.append(f"{ex['ticker']}: {e}")
 
     return n_passing, n_failing, failures
 
@@ -604,22 +628,14 @@ def validate_examples(example_dfs, conditions, expr_cache):
 # ══════════════════════════════════════════════════════════════
 
 def build_output(setup_type, conditions, deduped_signals, stats,
-                 example_dfs, weights, total_time,
-                 min_d, max_conditions, n_passing, n_failing,
+                 example_dfs, weights, total_time, selection_log,
+                 target_signals, pool_size, n_passing, n_failing,
                  blackout=False):
-    """Build output JSON in pipeline-compatible format.
+    """Build output JSON in pipeline-compatible format."""
 
-    Strips internal fields (_low_f32, _high_f32, _cache_col) from conditions
-    before serialization — those are numpy types that can't be JSON-encoded.
-    """
-    # Clean conditions for JSON serialization
-    clean_conditions = []
-    for c in conditions:
-        clean = {k: v for k, v in c.items()
-                 if not k.startswith("_")}
-        clean_conditions.append(clean)
+    clean_conditions = [{k: v for k, v in c.items() if not k.startswith("_")}
+                        for c in conditions]
 
-    # Example signals
     example_signals = []
     for ex in example_dfs:
         if ex["scan_idx"] is not None:
@@ -629,20 +645,18 @@ def build_output(setup_type, conditions, deduped_signals, stats,
                 date_str = (str(scan_date)[:10] if not hasattr(scan_date, "date")
                             else str(scan_date.date()))
                 example_signals.append({
-                    "ticker": ex["ticker"],
-                    "date": date_str,
-                    "entry_date": ex["entry_date"],
-                    "is_example": True,
+                    "ticker": ex["ticker"], "date": date_str,
+                    "entry_date": ex["entry_date"], "is_example": True,
                 })
             except Exception:
                 continue
 
-    result = {
+    return {
         "setup_type": setup_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "total_time_s": round(total_time, 1),
         "grinder_type": "hybrid",
-        "peak_target": None,
+        "peak_target": target_signals,
         "multi_pass": False,
         "blackout": blackout,
         "n_conditions": len(clean_conditions),
@@ -651,8 +665,9 @@ def build_output(setup_type, conditions, deduped_signals, stats,
         "pass_summaries": None,
         "params": {
             "grinder_type": "hybrid",
-            "min_cohens_d": min_d,
-            "max_conditions": max_conditions,
+            "selection": "greedy_marginal",
+            "target_signals": target_signals,
+            "pool_size": pool_size,
             "top_n_weighted": weights["top_n"],
             "source": "hybrid_grinder",
         },
@@ -664,50 +679,44 @@ def build_output(setup_type, conditions, deduped_signals, stats,
             "n_trading_days": stats["n_trading_days"],
             "n_signal_days": stats["n_signal_days"],
         },
-        "final_signals": deduped_signals,  # list of dicts: ticker, date, bar_idx, close
+        "selection_log": selection_log,
+        "final_signals": deduped_signals,
         "example_signals": example_signals,
         "examples_passing": n_passing,
         "examples_failing": n_failing,
     }
-
-    return result
 
 
 # ══════════════════════════════════════════════════════════════
 # MAIN ORCHESTRATOR
 # ══════════════════════════════════════════════════════════════
 
-def run_hybrid(setup_type, min_d=0.5, max_conditions=200, top_n_weight=500,
-               blackout=False):
+def run_hybrid(setup_type, target_signals=500, pool_size=500, min_d=0.3,
+               max_conditions=100, top_n_weight=1000, blackout=False):
     """Run the hybrid grinder end-to-end.
-
-    Zero-abort design: wraps every phase in try/except. Errors produce
-    warnings and degraded results, never crashes. Always produces output.
 
     Args:
         setup_type: e.g. "dtss"
-        min_d: minimum Cohen's d threshold for expression selection
-        max_conditions: hard cap on number of conditions
-        top_n_weight: how many expressions to weight before d filtering
-        blackout: if True, refinement grind mode (not yet implemented)
-
-    Returns:
-        result: dict — pipeline-compatible output, or None only if data loading fails
+        target_signals: stop greedy selection when deduped signals drop below this
+        pool_size: how many candidate expressions to consider (top by Cohen's d)
+        min_d: minimum Cohen's d for candidate pool
+        max_conditions: hard cap on conditions selected
+        top_n_weight: top N expressions to weight (passed to dartboard)
+        blackout: if True, refinement grind (not yet implemented)
     """
     t0 = time.time()
     print("=" * 60)
     print(f"  HYBRID GRINDER — {setup_type.upper()}")
-    print(f"  min_d={min_d}, max_conditions={max_conditions}, "
-          f"top_n_weight={top_n_weight}, blackout={blackout}")
+    print(f"  target={target_signals}, pool={pool_size}, min_d={min_d}, "
+          f"max_cond={max_conditions}")
     print("=" * 60)
 
     if blackout:
-        print("\n  WARNING: blackout mode not yet implemented for hybrid grinder.")
-        print("  Running in standard (non-blackout) mode.")
+        print("\n  WARNING: blackout not implemented. Running standard mode.")
         blackout = False
 
     # ── Step 1: Load data ──
-    print("\n[1/6] Loading data...")
+    print("\n[1/7] Loading data...")
     try:
         universe_cache = load_5yr_cache()
         print(f"  5yr cache: {len(universe_cache)} tickers")
@@ -724,63 +733,97 @@ def run_hybrid(setup_type, min_d=0.5, max_conditions=200, top_n_weight=500,
         return None
 
     if n_with_scan == 0:
-        print(f"  FATAL: No examples with valid scan bars")
+        print("  FATAL: No examples with valid scan bars")
         return None
 
     try:
         expr_cache = ExprSeriesCache()
         if not expr_cache.is_valid():
-            print("  FATAL: Expression series cache not found or invalid")
+            print("  FATAL: Expr cache invalid")
             return None
         print(f"  Expr cache: {expr_cache.n_expressions} expressions")
     except Exception as e:
         print(f"  FATAL: Cannot load expr cache: {e}")
         return None
 
-    # ── Step 2: Profile + Weight (reuse dartboard) ──
-    print("\n[2/6] Building example profile and weighting expressions...")
+    # ── Step 2: Profile + Weight ──
+    print("\n[2/7] Profiling and weighting expressions...")
     try:
         profile = build_example_profile(example_dfs, expr_cache)
         weights = compute_expression_weights(profile, universe_cache, expr_cache,
                                               top_n=top_n_weight)
     except Exception as e:
-        print(f"  FATAL: Profiling/weighting failed: {e}")
+        print(f"  FATAL: Profiling failed: {e}")
         traceback.print_exc()
         return None
 
-    # ── Step 3: Select conditions ──
-    print("\n[3/6] Selecting conditions...")
+    # ── Step 3: Build candidate pool ──
+    print("\n[3/7] Building candidate pool...")
     try:
-        conditions, n_dropped = select_conditions(
-            weights, profile, expr_cache, example_dfs,
-            min_d=min_d, max_conditions=max_conditions,
+        candidates = build_candidate_pool(weights, expr_cache, example_dfs,
+                                           min_d=min_d)
+    except Exception as e:
+        print(f"  FATAL: Candidate pool failed: {e}")
+        traceback.print_exc()
+        return None
+
+    if not candidates:
+        print("  FATAL: No candidates")
+        return None
+
+    # Cap pool size
+    if len(candidates) > pool_size:
+        candidates = candidates[:pool_size]
+        print(f"  Capped to {pool_size} candidates")
+
+    # ── Step 4: Build pass/fail matrix ──
+    print("\n[4/7] Building pass/fail matrix...")
+    try:
+        all_tickers, all_dates, bar_indices, closes, pass_matrix = \
+            build_pass_matrix(universe_cache, expr_cache, candidates)
+    except Exception as e:
+        print(f"  FATAL: Matrix build failed: {e}")
+        traceback.print_exc()
+        return None
+
+    if pass_matrix.shape[0] == 0:
+        print("  FATAL: Empty matrix")
+        return None
+
+    # ── Step 5: Greedy selection ──
+    print("\n[5/7] Greedy condition selection...")
+    try:
+        selected, selection_log = greedy_select(
+            candidates, pass_matrix, all_tickers, all_dates,
+            target_signals=target_signals,
+            max_conditions=max_conditions,
         )
     except Exception as e:
-        print(f"  FATAL: Condition selection failed: {e}")
+        print(f"  FATAL: Greedy selection failed: {e}")
         traceback.print_exc()
         return None
 
-    if len(conditions) == 0:
-        print(f"\n  FATAL: No conditions selected (all below d={min_d}). "
-              f"Try lowering --min-d.")
+    if not selected:
+        print("  FATAL: No conditions selected")
         return None
 
-    # ── Step 4: Filter universe ──
-    print("\n[4/6] Filtering universe...")
-    try:
-        raw_signals = filter_universe(universe_cache, expr_cache, conditions)
-    except Exception as e:
-        print(f"  ERROR: Filter universe failed: {e}")
-        traceback.print_exc()
-        raw_signals = []
+    # ── Extract final signals from surviving mask ──
+    # Rebuild surviving mask from selected conditions
+    surviving = np.ones(pass_matrix.shape[0], dtype=bool)
+    for cand in selected:
+        j = next(i for i, c in enumerate(candidates) if c["name"] == cand["name"])
+        surviving &= pass_matrix[:, j]
 
-    # ── Step 5: Deduplicate ──
-    print("\n[5/6] Deduplicating signals...")
+    raw_signals = extract_signals(surviving, all_tickers, all_dates,
+                                   bar_indices, closes)
+
+    # ── Step 6: Deduplicate ──
+    print("\n[6/7] Deduplicating signals...")
     try:
         deduped = deduplicate_signals(raw_signals)
         stats = compute_signal_stats(deduped)
     except Exception as e:
-        print(f"  ERROR: Dedup/stats failed: {e}")
+        print(f"  ERROR: Dedup failed: {e}")
         deduped = []
         stats = {"total": 0, "peak": 0, "avg_per_trading_day": 0.0,
                  "n_trading_days": 0, "n_signal_days": 0}
@@ -788,50 +831,46 @@ def run_hybrid(setup_type, min_d=0.5, max_conditions=200, top_n_weight=500,
     print(f"\n  {'=' * 50}")
     print(f"  RESULTS: {stats['total']} signals, peak {stats['peak']}/day, "
           f"avg {stats['avg_per_trading_day']:.1f}/day")
-    print(f"  Conditions: {len(conditions)}, Signal days: {stats['n_signal_days']}")
+    print(f"  Conditions: {len(selected)}")
     print(f"  {'=' * 50}")
 
-    # ── Step 6: Validate examples ──
-    print("\n[6/6] Validating example pass rate...")
+    # ── Step 7: Validate ──
+    print("\n[7/7] Validating examples...")
     try:
-        n_pass, n_fail, failures = validate_examples(
-            example_dfs, conditions, expr_cache
-        )
+        n_pass, n_fail, failures = validate_examples(example_dfs, selected, expr_cache)
     except Exception as e:
-        print(f"  ERROR: Validation failed with exception: {e}")
-        n_pass = n_with_scan
-        n_fail = 0
-        failures = []
+        print(f"  ERROR: Validation exception: {e}")
+        n_pass, n_fail, failures = n_with_scan, 0, []
 
     print(f"  Examples: {n_pass}/{n_pass + n_fail} passing")
     if n_fail > 0:
-        print(f"  *** WARNING: {n_fail} example(s) not passing ***")
+        print(f"  *** WARNING: {n_fail} failing (should be impossible) ***")
         for f_msg in failures[:10]:
             print(f"    {f_msg}")
-        print(f"  (This should be structurally impossible — investigate)")
 
     # ── Build output ──
     total_time = time.time() - t0
     result = build_output(
         setup_type=setup_type,
-        conditions=conditions,
+        conditions=selected,
         deduped_signals=deduped,
         stats=stats,
         example_dfs=example_dfs,
         weights=weights,
         total_time=total_time,
-        min_d=min_d,
-        max_conditions=max_conditions,
+        selection_log=selection_log,
+        target_signals=target_signals,
+        pool_size=len(candidates),
         n_passing=n_pass,
         n_failing=n_fail,
         blackout=blackout,
     )
 
-    # ── Save locally ──
+    # ── Save ──
     os.makedirs(CACHE_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    desc_name = (f"hybrid_{setup_type}_d{str(min_d).replace('.', '')}"
-                 f"_c{len(conditions)}_sig{stats['total']}_pk{stats['peak']}_{ts}")
+    desc_name = (f"hybrid_{setup_type}_c{len(selected)}"
+                 f"_sig{stats['total']}_pk{stats['peak']}_{ts}")
     out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
 
     try:
@@ -839,37 +878,30 @@ def run_hybrid(setup_type, min_d=0.5, max_conditions=200, top_n_weight=500,
             json.dump(result, f, indent=2)
         print(f"\n  Saved: {out_path}")
     except Exception as e:
-        print(f"\n  ERROR: Failed to save local file: {e}")
+        print(f"\n  ERROR: Save failed: {e}")
         try:
             fallback = os.path.join(CACHE_DIR, f"hybrid_{setup_type}_{ts}.json")
             with open(fallback, "w") as f:
                 json.dump(result, f, indent=2)
             out_path = fallback
-            print(f"  Saved to fallback: {out_path}")
+            print(f"  Saved fallback: {out_path}")
         except Exception:
-            print(f"  CRITICAL: Cannot save any local file")
+            print("  CRITICAL: Cannot save")
 
-    # ── Mirror to Railway ──
+    # ── Mirror + Upload ──
     try:
         from file_mirror import mirror_file
         mirror_file(out_path)
     except Exception as e:
-        print(f"  WARNING: File mirror failed: {e}")
+        print(f"  WARNING: Mirror failed: {e}")
 
-    # ── Upload to Railway ──
-    step_type = "signal_grind"
     try:
         from grind_uploader import upload as railway_upload
-        railway_upload(
-            result=result,
-            result_path=out_path,
-            step_type=step_type,
-            setup_type=setup_type,
-            activate=True,
-        )
+        railway_upload(result=result, result_path=out_path,
+                       step_type="signal_grind", setup_type=setup_type,
+                       activate=True)
     except Exception as e:
         print(f"  WARNING: Railway upload failed: {e}")
-        print(f"  Local file is saved. Upload manually or retry later.")
 
     print(f"\n  Total time: {total_time:.1f}s")
     return result
@@ -881,22 +913,27 @@ def run_hybrid(setup_type, min_d=0.5, max_conditions=200, top_n_weight=500,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Hybrid Grinder — dartboard selection + pyramid filtering"
+        description="Hybrid Grinder — greedy marginal selection + binary filtering"
     )
-    parser.add_argument("--setup", required=True,
-                        help="Setup type (e.g. dtss)")
-    parser.add_argument("--min-d", type=float, default=0.5,
-                        help="Minimum Cohen's d threshold (default: 0.5)")
-    parser.add_argument("--max-conditions", type=int, default=200,
-                        help="Maximum number of conditions (default: 200)")
-    parser.add_argument("--top-n", type=int, default=500,
-                        help="Top N expressions to weight before d filtering (default: 500)")
+    parser.add_argument("--setup", required=True, help="Setup type (e.g. dtss)")
+    parser.add_argument("--target", type=int, default=500,
+                        help="Target signal count to stop at (default: 500)")
+    parser.add_argument("--pool-size", type=int, default=500,
+                        help="Candidate pool size (default: 500)")
+    parser.add_argument("--min-d", type=float, default=0.3,
+                        help="Min Cohen's d for candidate pool (default: 0.3)")
+    parser.add_argument("--max-conditions", type=int, default=100,
+                        help="Max conditions to select (default: 100)")
+    parser.add_argument("--top-n", type=int, default=1000,
+                        help="Top N to weight before pool filtering (default: 1000)")
 
     args = parser.parse_args()
 
     try:
         result = run_hybrid(
             setup_type=args.setup,
+            target_signals=args.target,
+            pool_size=args.pool_size,
             min_d=args.min_d,
             max_conditions=args.max_conditions,
             top_n_weight=args.top_n,
@@ -910,7 +947,7 @@ def main():
         print(f"\n  Done. {result['summary']['final_total']} signals, "
               f"peak {result['summary']['final_peak']}/day")
     else:
-        print("\n  Grinder produced no output. Check errors above.")
+        print("\n  Grinder produced no output.")
         sys.exit(1)
 
 
