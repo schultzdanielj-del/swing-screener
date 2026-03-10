@@ -401,6 +401,79 @@ def handle_job(job):
         post_status(job_id, "error", error_msg)
 
 
+# ── Task Queue handling ────────────────────────────────────────────────
+
+def check_for_tasks():
+    """Poll Railway for pending ad-hoc tasks."""
+    try:
+        r = requests.get(f"{API_BASE}/api/v2/tasks/pending", timeout=10)
+        if r.status_code == 200:
+            return r.json().get("tasks", [])
+    except:
+        pass
+    return []
+
+
+def task_update(task_id, **kwargs):
+    """Update task status on Railway."""
+    try:
+        requests.patch(f"{API_BASE}/api/v2/tasks/{task_id}", json=kwargs, timeout=15)
+    except:
+        pass
+
+
+def handle_task(task):
+    """Execute an ad-hoc task from the queue."""
+    task_id = task["id"]
+    command = task["command"]
+    resolved = task.get("resolved_command", "")
+
+    print(f"\n{'='*60}")
+    print(f"  TASK #{task_id}: {command}")
+    print(f"  Command: {resolved}")
+    print(f"{'='*60}")
+
+    task_update(task_id, status="running")
+
+    try:
+        cmd_parts = resolved.split()
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+
+        proc = subprocess.Popen(
+            cmd_parts, cwd=REPO_ROOT,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, encoding='utf-8', errors='replace',
+            env=env,
+        )
+
+        log_lines = []
+        for line in proc.stdout:
+            line = line.rstrip()
+            print(f"    {line}")
+            log_lines.append(line)
+
+        proc.wait()
+
+        # Keep last 200 lines for log_tail
+        log_tail = "\n".join(log_lines[-200:])
+
+        if proc.returncode == 0:
+            print(f"\n  ✓ Task #{task_id} complete")
+            task_update(task_id, status="completed", exit_code=0, log_tail=log_tail)
+        else:
+            print(f"\n  ✗ Task #{task_id} failed (exit {proc.returncode})")
+            task_update(task_id, status="failed", exit_code=proc.returncode,
+                       error=f"Exit code {proc.returncode}", log_tail=log_tail)
+
+    except Exception as e:
+        import traceback
+        error_msg = f"{type(e).__name__}: {e}"
+        print(f"\n  ✗ Task #{task_id} error: {error_msg}")
+        traceback.print_exc()
+        task_update(task_id, status="failed", error=error_msg)
+
+
 # ── Auto AI Review for pending samples ─────────────────────────────────
 
 REVIEW_PROMPTS = {
@@ -644,6 +717,11 @@ def main():
             pipe_jobs = check_for_pipeline_jobs()
             for pj in pipe_jobs:
                 handle_pipeline_job(pj)
+
+            # Poll for ad-hoc tasks
+            tasks = check_for_tasks()
+            for task in tasks:
+                handle_task(task)
 
             # Auto-review pending samples every 15s
             if time.time() - last_review_check > 15:

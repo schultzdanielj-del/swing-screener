@@ -221,6 +221,20 @@ def init_db():
                 size_bytes INTEGER,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS task_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT NOT NULL,
+                args TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT DEFAULT (datetime('now')),
+                claimed_at TEXT,
+                completed_at TEXT,
+                exit_code INTEGER,
+                error TEXT,
+                log_tail TEXT,
+                result_path TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_task_queue_status ON task_queue(status);
         """)
         # ── Add new grind_cycles columns (safe — no-op if already exist) ──
         for col, coltype in [
@@ -1203,6 +1217,109 @@ async def v2_get_latest_watchlist():
 # ════════════════════════════════════════════════════════════════
 # FILE MIRROR — exact copies of local grinder JSON files
 # ════════════════════════════════════════════════════════════════
+
+# ============================================================
+# TASK QUEUE — Remote command execution via agent
+# ============================================================
+
+ALLOWED_TASK_COMMANDS = {
+    "signal_grind": "python local_runner/pyramid_grinder.py --setup {setup} --beam {beam} --depth {depth} --peak-target {peak_target}",
+    "signal_grind_blackout": "python local_runner/pyramid_grinder.py --setup {setup} --blackout --beam {beam} --depth {depth} --peak-target {peak_target}",
+    "exit_grind": "python scripts/exit_grinder.py --setup {setup}",
+    "scan": "python scripts/signal_filter.py --setup {setup}",
+    "refinement_grind": "python scripts/setup_refiner.py --setup {setup}",
+    "proximity_grind": "python scripts/proximity_grinder.py --setup {setup}",
+    "profit_grind": "python scripts/profit_grinder.py --setup {setup}",
+    "regime_model": "python scripts/market_grinder.py --setup {setup}",
+    "health_check": "python scripts/cycle_health.py --setup {setup}",
+    "outlier_analysis": "python scripts/example_outlier_analysis.py --setup {setup}",
+    "nightly": "python local_runner/nightly.py",
+}
+
+@app.post("/api/v2/tasks")
+async def create_task(request: Request):
+    body = await request.json()
+    command = body.get("command")
+    args = body.get("args", {})
+    if command not in ALLOWED_TASK_COMMANDS:
+        raise HTTPException(400, f"Unknown command: {command}. Allowed: {list(ALLOWED_TASK_COMMANDS.keys())}")
+    with get_db() as db:
+        cur = db.execute(
+            "INSERT INTO task_queue (command, args, status) VALUES (?,?,?)",
+            (command, _json.dumps(args), "pending")
+        )
+        task_id = cur.lastrowid
+    return {"id": task_id, "command": command, "args": args, "status": "pending"}
+
+
+@app.get("/api/v2/tasks/pending")
+async def get_pending_tasks():
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT * FROM task_queue WHERE status='pending' ORDER BY created_at ASC"
+        ).fetchall()
+        tasks = []
+        for r in rows:
+            db.execute("UPDATE task_queue SET status='claimed', claimed_at=datetime('now') WHERE id=?", (r["id"],))
+            task = dict(r)
+            task["status"] = "claimed"
+            # Resolve the command template
+            args = _json.loads(task["args"]) if task["args"] else {}
+            template = ALLOWED_TASK_COMMANDS[task["command"]]
+            # Fill defaults
+            args.setdefault("setup", "dtss")
+            args.setdefault("beam", "10000")
+            args.setdefault("depth", "100")
+            args.setdefault("peak_target", "3")
+            task["resolved_command"] = template.format(**{k: str(v) for k, v in args.items()})
+            tasks.append(task)
+    return {"tasks": tasks}
+
+
+@app.patch("/api/v2/tasks/{task_id}")
+async def update_task(task_id: int, request: Request):
+    body = await request.json()
+    with get_db() as db:
+        row = db.execute("SELECT id FROM task_queue WHERE id=?", (task_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Task not found: {task_id}")
+        updates = []
+        params = []
+        for field in ("status", "exit_code", "error", "log_tail", "result_path"):
+            if field in body:
+                updates.append(f"{field}=?")
+                params.append(body[field])
+        if "status" in body and body["status"] in ("completed", "failed"):
+            updates.append("completed_at=datetime('now')")
+        if updates:
+            params.append(task_id)
+            db.execute(f"UPDATE task_queue SET {','.join(updates)} WHERE id=?", params)
+    return {"id": task_id, "updated": True}
+
+
+@app.get("/api/v2/tasks/{task_id}")
+async def get_task(task_id: int):
+    with get_db() as db:
+        row = db.execute("SELECT * FROM task_queue WHERE id=?", (task_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, f"Task not found: {task_id}")
+    return dict(row)
+
+
+@app.get("/api/v2/tasks")
+async def list_tasks(status: str = None, limit: int = 20):
+    with get_db() as db:
+        if status:
+            rows = db.execute(
+                "SELECT * FROM task_queue WHERE status=? ORDER BY created_at DESC LIMIT ?",
+                (status, limit)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT * FROM task_queue ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+    return {"tasks": [dict(r) for r in rows]}
+
 
 @app.post("/api/v2/files")
 async def v2_upload_file(request: Request):
