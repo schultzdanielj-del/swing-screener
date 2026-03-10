@@ -328,11 +328,43 @@ def run_research_job(job):
         log("Phase 1: PLAN")
         plan_prompt = f"""RESEARCH JOB #{job_id}
 
-DAN'S PROMPT:
+DO NOT ASK QUESTIONS. DO NOT REQUEST CLARIFICATION. EXECUTE IMMEDIATELY.
+
+DAN'S RESEARCH PROMPT:
 {prompt}
 
-Create a research plan. Write it to data/research_plan.json.
-Read the key files first, then plan."""
+YOUR TASK RIGHT NOW:
+1. Read these files in the repo: PIPELINE_V2.md, local_runner/pyramid_grinder.py, local_runner/spiderweb.py, ta_knowledge.md
+2. Based on what you learn and Dan's prompt above, create a research plan
+3. Write the plan to data/research_plan.json (create the data/ directory if needed)
+4. git add and git commit the plan file
+
+The plan JSON format:
+{{
+  "summary": "One paragraph describing your approach",
+  "steps": [
+    {{
+      "id": 1,
+      "action": "description of what to do",
+      "type": "code_change",
+      "description": "why this matters"
+    }}
+  ]
+}}
+
+Step types: "code_change" (modify grinder code), "run_grind" (with "grind_command": "signal_grind", "grind_args": {{"setup": "dtss"}}), "run_script", "analyze"
+
+CONTEXT (so you don't need network access):
+- 69 DTSS examples in the database
+- Latest grind: 1292 signals, 16 peak/day, 82 conditions
+- Tier breakdown: D1=15, 1wk=15, 1mo=20, 6mo=8, 1yr=2, 5yr=6, weekly=12, monthly=4
+- D1 is capped at 15 conditions
+- Expressions: 15,805 total, 58% have >95% universe pass rate (junk)
+- Condition ranges set by min/max of example values + 5% margin
+- Grinder uses greedy peak-reduction scoring in beam search
+- 100% example pass rate is non-negotiable constraint
+
+DO NOT ASK WHAT TO DO. THE PROMPT ABOVE IS YOUR ASSIGNMENT. START READING FILES NOW."""
 
         output, code = run_claude_code(plan_prompt, PLAN_SYSTEM, "PLAN")
         all_logs.append(f"=== PHASE 1: PLAN (exit={code}) ===\n{output}\n")
@@ -441,19 +473,26 @@ Read the key files first, then plan."""
 
                 prev_context = "\n".join(prev_results) if prev_results else "No previous results yet."
 
-                step_prompt = f"""RESEARCH JOB #{job_id}, STEP {step_id}
+                step_prompt = f"""DO NOT ASK QUESTIONS. EXECUTE IMMEDIATELY.
+
+RESEARCH JOB #{job_id}, STEP {step_id}
 
 ORIGINAL PROMPT FROM DAN:
 {prompt}
 
-YOUR PLAN (from earlier):
+THE STEP TO EXECUTE NOW:
 {json.dumps(step, indent=2)}
 
 PREVIOUS STEP RESULTS:
 {prev_context}
 
-Execute this step. Write results to data/research_step_{step_id}_result.json.
-Commit your changes."""
+INSTRUCTIONS:
+1. Do the work described in the step above
+2. Write results to data/research_step_{step_id}_result.json
+3. git add and git commit your changes
+4. If you need a grind, POST to {API_BASE}/api/v2/tasks and record the task ID in queued_task_id field
+
+DO NOT ask for clarification. DO NOT explain what you would do. JUST DO IT."""
 
                 system = EXECUTE_SYSTEM_TEMPLATE.replace("{step_id}", str(step_id))
                 output, code = run_claude_code(step_prompt, system, f"STEP-{step_id}")
