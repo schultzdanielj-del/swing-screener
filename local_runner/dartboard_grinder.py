@@ -203,6 +203,102 @@ def build_example_profile(example_dfs, expr_cache):
 
 
 # ══════════════════════════════════════════════════════════════
+# UNIVERSE STATS CACHE
+# ══════════════════════════════════════════════════════════════
+
+UNI_STATS_PATH = os.path.join(CACHE_DIR, "dartboard_universe_stats.npz")
+
+
+def build_universe_stats_cache(expr_cache=None, universe_cache=None):
+    """Pre-compute universe sum/sum_sq/count across all tickers × all bars.
+
+    Saves to dartboard_universe_stats.npz. Run during nightly refresh.
+    Takes ~2-5 min parallelized, saves ~2-5 min on every dartboard grind.
+    """
+    print(f"\n  Building universe stats cache...")
+    t0 = time.time()
+
+    if expr_cache is None:
+        expr_cache = ExprSeriesCache()
+    if not expr_cache.is_valid():
+        raise RuntimeError("Expression series cache not found or invalid.")
+
+    if universe_cache is None:
+        universe_cache = load_5yr_cache()
+
+    n_expr = expr_cache.n_expressions
+    tickers = [t for t in universe_cache.keys()
+               if t in expr_cache.get_available_tickers()]
+    n_tickers = len(tickers)
+
+    n_workers = max(cpu_count() - 1, 1)
+    batch_size = max(n_tickers // (n_workers * 4), 25)
+    batches = [tickers[i:i+batch_size] for i in range(0, n_tickers, batch_size)]
+
+    print(f"  {n_tickers} tickers, {n_expr} expressions, "
+          f"{n_workers} workers, {len(batches)} batches")
+
+    uni_sum = np.zeros(n_expr, dtype=np.float64)
+    uni_sum_sq = np.zeros(n_expr, dtype=np.float64)
+    uni_count = np.zeros(n_expr, dtype=np.float64)
+    completed = 0
+
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_init_uni_stats_worker,
+        initargs=(n_expr,)
+    ) as pool:
+        futures = {pool.submit(_compute_uni_stats_batch, batch): batch
+                   for batch in batches}
+        for future in as_completed(futures):
+            partial_sum, partial_sq, partial_count = future.result()
+            uni_sum += partial_sum
+            uni_sum_sq += partial_sq
+            uni_count += partial_count
+            completed += 1
+            if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
+                elapsed = time.time() - t0
+                print(f"    {completed}/{len(batches)} batches ({elapsed:.0f}s)")
+
+    # Save
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    np.savez_compressed(UNI_STATS_PATH,
+                        uni_sum=uni_sum,
+                        uni_sum_sq=uni_sum_sq,
+                        uni_count=uni_count,
+                        n_tickers=np.array([n_tickers]),
+                        n_expr=np.array([n_expr]))
+
+    elapsed = time.time() - t0
+    avg_bars = int(uni_count.mean()) if uni_count.mean() > 0 else 0
+    size_kb = os.path.getsize(UNI_STATS_PATH) / 1024
+    print(f"  Universe stats cache built: {n_tickers} tickers, "
+          f"~{avg_bars:,} bars/expr, {size_kb:.0f}KB ({elapsed:.0f}s)")
+    print(f"  Saved: {UNI_STATS_PATH}")
+
+    return uni_sum, uni_sum_sq, uni_count
+
+
+def load_universe_stats_cache(n_expr_expected):
+    """Load pre-computed universe stats. Returns (sum, sum_sq, count) or None."""
+    if not os.path.exists(UNI_STATS_PATH):
+        return None
+
+    data = np.load(UNI_STATS_PATH)
+    n_expr = int(data["n_expr"][0])
+    if n_expr != n_expr_expected:
+        print(f"  ⚠ Universe stats cache has {n_expr} expressions, "
+              f"expected {n_expr_expected} — rebuilding")
+        return None
+
+    n_tickers = int(data["n_tickers"][0])
+    print(f"  Loaded universe stats cache: {n_tickers} tickers, "
+          f"{n_expr} expressions")
+
+    return data["uni_sum"], data["uni_sum_sq"], data["uni_count"]
+
+
+# ══════════════════════════════════════════════════════════════
 # STEP 2: COMPUTE EXPRESSION WEIGHTS
 # ══════════════════════════════════════════════════════════════
 
@@ -274,49 +370,65 @@ def compute_expression_weights(profile, universe_cache, expr_cache, top_n=500):
     all_expressions = generate_all()
     name_to_expr = {e["name"]: e for e in all_expressions}
 
-    # Compute universe stats from expr cache — full 5yr history, not just D1.
-    # Parallel: each worker processes a batch of tickers, returns partial sums.
-    # This captures the historical distribution that we're actually scoring against.
-    tickers = list(universe_cache.keys())
-    cached_tickers = expr_cache.get_available_tickers()
-    tickers = [t for t in tickers if t in cached_tickers]
-
+    # Compute universe stats from expr cache — full 5yr history.
+    # Try loading pre-computed cache first (built during nightly refresh).
+    # Falls back to parallel computation if cache is missing/stale.
     n_expr = len(expr_names)
-    n_tickers = len(tickers)
 
-    print(f"  Computing universe stats from {n_tickers} tickers (full 5yr, parallel)...")
+    cached = load_universe_stats_cache(n_expr)
+    if cached is not None:
+        uni_sum, uni_sum_sq, uni_count = cached
+    else:
+        print(f"  Universe stats cache not found — computing from scratch...")
+        tickers = list(universe_cache.keys())
+        cached_tickers = expr_cache.get_available_tickers()
+        tickers = [t for t in tickers if t in cached_tickers]
+        n_tickers = len(tickers)
 
-    n_workers = max(cpu_count() - 1, 1)
-    batch_size = max(len(tickers) // (n_workers * 4), 25)
-    batches = [tickers[i:i+batch_size] for i in range(0, len(tickers), batch_size)]
-    print(f"  {n_workers} workers, {len(batches)} batches of ~{batch_size}")
+        print(f"  Computing universe stats from {n_tickers} tickers (full 5yr, parallel)...")
 
-    uni_sum = np.zeros(n_expr, dtype=np.float64)
-    uni_sum_sq = np.zeros(n_expr, dtype=np.float64)
-    uni_count = np.zeros(n_expr, dtype=np.float64)
-    completed = 0
+        n_workers = max(cpu_count() - 1, 1)
+        batch_size = max(len(tickers) // (n_workers * 4), 25)
+        batches = [tickers[i:i+batch_size] for i in range(0, len(tickers), batch_size)]
+        print(f"  {n_workers} workers, {len(batches)} batches of ~{batch_size}")
 
-    with ProcessPoolExecutor(
-        max_workers=n_workers,
-        initializer=_init_uni_stats_worker,
-        initargs=(n_expr,)
-    ) as pool:
-        futures = {pool.submit(_compute_uni_stats_batch, batch): batch
-                   for batch in batches}
-        for future in as_completed(futures):
-            partial_sum, partial_sq, partial_count = future.result()
-            uni_sum += partial_sum
-            uni_sum_sq += partial_sq
-            uni_count += partial_count
-            completed += 1
-            if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
-                elapsed = time.time() - t0
-                print(f"    {completed}/{len(batches)} batches ({elapsed:.0f}s)")
+        uni_sum = np.zeros(n_expr, dtype=np.float64)
+        uni_sum_sq = np.zeros(n_expr, dtype=np.float64)
+        uni_count = np.zeros(n_expr, dtype=np.float64)
+        completed = 0
 
-    elapsed = time.time() - t0
-    avg_bars = int(uni_count.mean()) if uni_count.mean() > 0 else 0
-    print(f"  Universe profiling complete: {n_tickers} tickers, "
-          f"~{avg_bars:,} bars/expression ({elapsed:.0f}s)")
+        with ProcessPoolExecutor(
+            max_workers=n_workers,
+            initializer=_init_uni_stats_worker,
+            initargs=(n_expr,)
+        ) as pool:
+            futures = {pool.submit(_compute_uni_stats_batch, batch): batch
+                       for batch in batches}
+            for future in as_completed(futures):
+                partial_sum, partial_sq, partial_count = future.result()
+                uni_sum += partial_sum
+                uni_sum_sq += partial_sq
+                uni_count += partial_count
+                completed += 1
+                if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
+                    elapsed = time.time() - t0
+                    print(f"    {completed}/{len(batches)} batches ({elapsed:.0f}s)")
+
+        elapsed = time.time() - t0
+        avg_bars = int(uni_count.mean()) if uni_count.mean() > 0 else 0
+        print(f"  Universe profiling complete: {n_tickers} tickers, "
+              f"~{avg_bars:,} bars/expression ({elapsed:.0f}s)")
+
+        # Auto-save for next run
+        try:
+            np.savez_compressed(UNI_STATS_PATH,
+                                uni_sum=uni_sum, uni_sum_sq=uni_sum_sq,
+                                uni_count=uni_count,
+                                n_tickers=np.array([n_tickers]),
+                                n_expr=np.array([n_expr]))
+            print(f"  Saved universe stats cache for next run")
+        except Exception as e:
+            print(f"  ⚠ Could not save universe stats cache: {e}")
 
     # Compute universe mean and std
     uni_centers = np.full(n_expr, np.nan, dtype=np.float64)
@@ -1069,7 +1181,13 @@ def main():
                         help="Auto-find threshold for this avg signals/day")
     parser.add_argument("--blackout", action="store_true",
                         help="Reserved for refinement grind compatibility")
+    parser.add_argument("--build-cache", action="store_true",
+                        help="Build universe stats cache only (no grind)")
     args = parser.parse_args()
+
+    if args.build_cache:
+        build_universe_stats_cache()
+        return
 
     run_dartboard(
         setup_type=args.setup,
