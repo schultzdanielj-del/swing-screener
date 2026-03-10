@@ -747,12 +747,18 @@ def rank_and_threshold(all_ticker_scores, example_dfs, threshold=None,
 
     print(f"  Bars with score > 0.3: {len(all_bars):,}")
 
+    # Compute actual trading days from universe data
+    all_trading_dates = set()
+    for ticker, dates, scores in all_ticker_scores:
+        all_trading_dates.update(dates)
+    n_trading_days = len(all_trading_dates)
+
     # If target_peak specified, binary search for threshold
     if threshold is None and target_peak is not None:
         threshold = _find_threshold_for_peak(all_bars, target_peak)
         print(f"  Auto-threshold for peak≤{target_peak}: {threshold:.4f}")
     elif threshold is None and target_avg is not None:
-        threshold = _find_threshold_for_avg(all_bars, target_avg)
+        threshold = _find_threshold_for_avg(all_bars, target_avg, n_trading_days)
         print(f"  Auto-threshold for avg≤{target_avg}: {threshold:.4f}")
     elif threshold is None:
         # Default: use the minimum example score minus a small margin
@@ -785,15 +791,15 @@ def rank_and_threshold(all_ticker_scores, example_dfs, threshold=None,
 
     # Compute daily stats
     date_counts = Counter(d for _, d, _ in deduped)
-    n_dates = len(date_counts)
+    n_signal_days = len(date_counts)
     total = len(deduped)
     peak = max(date_counts.values()) if date_counts else 0
-    avg = sum(date_counts.values()) / n_dates if n_dates > 0 else 0
+    avg_per_trading_day = round(total / n_trading_days, 2) if n_trading_days else 0
 
     elapsed = time.time() - t0
-    avg_per_td = total / 1258 if total else 0
     print(f"\n  Threshold: {threshold:.4f}")
-    print(f"  Signals: {total:,} total, peak {peak}/day, avg {avg_per_td:.2f}/trading day")
+    print(f"  Signals: {total:,} total, peak {peak}/day, avg {avg_per_trading_day}/trading day")
+    print(f"  ({n_trading_days} trading days, {n_signal_days} with signals)")
     print(f"  Unique tickers: {len(set(t for t, _, _ in deduped))}")
     print(f"  ({elapsed:.1f}s)")
 
@@ -802,8 +808,9 @@ def rank_and_threshold(all_ticker_scores, example_dfs, threshold=None,
     return signals, threshold, {
         "total": total,
         "peak": peak,
-        "avg": round(avg, 1),
-        "n_dates_with_signals": n_dates,
+        "avg_per_trading_day": avg_per_trading_day,
+        "n_trading_days": n_trading_days,
+        "n_signal_days": n_signal_days,
         "example_scores": example_scores,
     }
 
@@ -874,17 +881,15 @@ def _find_threshold_for_peak(all_bars, target_peak):
     return hi  # Use the tighter threshold
 
 
-def _find_threshold_for_avg(all_bars, target_avg):
-    """Binary search for score threshold that produces ≤ target_avg signals/day."""
+def _find_threshold_for_avg(all_bars, target_avg, n_trading_days):
+    """Binary search for score threshold that produces ≤ target_avg signals/trading day."""
     lo, hi = 0.3, 1.0
 
     for _ in range(30):
         mid = (lo + hi) / 2
         signals = [(t, d, s) for t, d, s in all_bars if s >= mid]
         deduped = _deduplicate_signals(signals)
-        date_counts = Counter(d for _, d, _ in deduped)
-        n_dates = len(date_counts)
-        avg = sum(date_counts.values()) / n_dates if n_dates > 0 else 0
+        avg = len(deduped) / n_trading_days if n_trading_days > 0 else 0
 
         if avg > target_avg:
             lo = mid
@@ -1005,12 +1010,15 @@ def build_output(setup_type, weights, signals, threshold, stats,
     # Signal stats
     total_signals = stats["total"]
     peak = stats["peak"]
-    avg = stats["avg"]
+    avg_per_trading_day = stats["avg_per_trading_day"]
+    n_trading_days = stats["n_trading_days"]
+    n_signal_days = stats["n_signal_days"]
 
-    # Avg per trading day (approx 252/yr * 5yr)
-    n_signal_days = stats.get("n_dates_with_signals", 0)
-    avg_per_signal_day = avg
-    avg_per_trading_day = round(total_signals / 1258, 2) if total_signals else 0
+    # Example pass/fail based on score threshold
+    example_scores = stats.get("example_scores", [])
+    n_examples_scored = len(example_scores)
+    n_examples_above = len([ex for ex in example_scores if ex["score"] >= threshold])
+    n_examples_below = n_examples_scored - n_examples_above
 
     result = {
         "setup_type": setup_type,
@@ -1035,15 +1043,16 @@ def build_output(setup_type, weights, signals, threshold, stats,
         "summary": {
             "final_total": total_signals,
             "final_peak": peak,
-            "final_avg_per_signal_day": avg_per_signal_day,
             "final_avg_per_trading_day": avg_per_trading_day,
+            "n_trading_days": n_trading_days,
             "n_signal_days": n_signal_days,
         },
         "final_signals": signals,
         "example_signals": example_signals,
-        "example_scores": stats.get("example_scores", []),
-        "examples_passing": len([ex for ex in example_dfs if ex["scan_idx"] is not None]),
-        "examples_failing": 0,
+        "example_scores": example_scores,
+        "examples_total": n_examples_scored,
+        "examples_passing": n_examples_above,
+        "examples_failing": n_examples_below,
         "dartboard_threshold": round(threshold, 6),
     }
 
@@ -1143,7 +1152,6 @@ def run_dartboard(setup_type, top_n=500, threshold=None, target_peak=None,
     result = build_output(
         setup_type, weights, signals, threshold_used, signal_stats,
         example_dfs, profile, total_time, blackout=bool(blackout_map))
-    result["examples_failing"] = len(failures)
     result["peak_target"] = target_peak
 
     # ── Save ──
@@ -1183,16 +1191,17 @@ def run_dartboard(setup_type, top_n=500, threshold=None, target_peak=None,
     # ── Final summary ──
     n_passing = result["examples_passing"]
     n_failing = result["examples_failing"]
-    n_total_ex = n_passing + n_failing
-    avg_per_td = total_signals / 1258 if total_signals else 0
+    n_total_ex = result["examples_total"]
+    avg_per_td = result["summary"]["final_avg_per_trading_day"]
+    n_trading_days = result["summary"]["n_trading_days"]
     print(f"\n{'='*70}")
     print(f"  DARTBOARD COMPLETE")
     print(f"{'='*70}")
     print(f"  Expressions used: {weights['top_n']}")
     print(f"  Threshold: {threshold_used:.4f}")
     print(f"  Signals: {total_signals:,} total, peak {peak}/day, "
-          f"avg {avg_per_td:.2f}/trading day")
-    print(f"  Examples: {n_passing}/{n_total_ex} passing")
+          f"avg {avg_per_td}/trading day ({n_trading_days} days)")
+    print(f"  Examples: {n_passing}/{n_total_ex} passing ({n_failing} below threshold)")
     print(f"  Time: {total_time:.0f}s ({total_time/60:.1f} min)")
 
     return result
