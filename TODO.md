@@ -15,8 +15,9 @@ See `PIPELINE_V2.md` for full spec.
 
 **After Convergence (run once, in order):**
 6. Proximity Grind — trim leftward/early signal bars from lose pile. Only safe post-convergence.
-7. Regime Model — winner/loser ratio vs 266 market instruments (runs on proximity-trimmed set)
-8. Health Check — cycle quality, EV, promote/revert
+7. Profit Grind — trade exit from entry bar high forward (bespoke exit expr set, maximizes MFE capture). Script: profit_grinder.py
+8. Regime Model — winner/loser ratio vs 266 market instruments
+9. Health Check — cycle quality, EV, promote/revert
 
 **Convergence:** Full vetting pass produces no new examples.
 
@@ -34,18 +35,24 @@ Running every pipeline step from scratch, verifying data integrity at each hando
 
 | Step | Status | Key Output | Railway Verified |
 |------|--------|------------|-----------------|
-| 1. Signal Grind | ✅ | 89 conditions, 68 examples pass | Cycle `dtss_signal_grind_20260309_192357`, 89 conditions, is_current=1 |
-| 2. Exit Grind | ✅ | `slope_xavgc21_off7_adr14 <= -1.128826` (same as prev — stable) | Exit condition uploaded + verified |
-| 3. Scan | ✅ | 1,031 deduped signals (436 WIN / 595 LOSS, 42.3% WR) | 1,031 signals in v2 cycle_signals, verified |
-| 4. Refinement Grind | 🔲 NEXT | — | — |
-| 5. Proximity Grind | 🔲 | — | — |
-| 6. Regime Model | 🔲 | — | — |
-| 7. Health Check | 🔲 | — | — |
+| 1. Signal Grind | ✅ | 89 conditions, 68 examples pass | Cycle `dtss_signal_grind_20260309_192357`, 89 conditions |
+| 2. Exit Grind | ✅ | `slope_xavgc21_off7_adr14 <= -1.128826` (stable) | Exit condition uploaded + verified |
+| 3. Scan | ✅ | 1,031 deduped signals (436 WIN / 595 LOSS, 42.3% WR) | 1,031 signals in v2 cycle_signals |
+| 4. Refinement Grind | ✅ | 89 conditions, 1,031 signals, 364 sacrificial | Cycle `dtss_refinement_grind_20260309_205428`, is_current=1. Sacrificial uploaded. |
+| 5. Vet | ⏭️ SKIP | Manual — skipping for audit | — |
+| 6. Proximity Grind | ✅ | 12 proximity conditions, 92 losers trimmed, WR 42.3%→46.4% | 101 total conditions (89+12) verified |
+| 7. Profit Grind | 🔲 NEXT | — | — |
+| 8. Regime Model | 🔲 | — | — |
+| 9. Health Check | 🔲 | — | — |
 
 **Fixes made during audit:**
 - `signal_exit_grinder.py`: Added Railway upload (`POST /api/v2/exit_conditions`) with direction mapping and verification
 - `signal_filter.py`: Added v2 cycle_signals upload (full classified set with all 1,031 signals including no-exit losers)
 - `signal_filter.py`: Removed all v1 vetting endpoint uploads (`/api/vetting/upload-signals`, `/api/vetting/upload-exit`)
+- `setup_refiner.py`: Replaced v1 upload with v2 cycle_signals upload + added sacrificial signal upload
+- `setup_refiner.py` + `signal_filter.py`: Fixed V1 stale pointer bug in load_conditions
+- `proximity_grinder.py`: Ground-up rewrite — reads from Railway, parallelized, NaN=FAIL, uploads conditions
+- `server.py`: Added `cycle_sacrificial_signals` table + endpoints
 
 **Key numbers this cycle:**
 - 71 examples in Railway (68 usable — BRK-B, SMMT, VUZI excluded from cache)
@@ -80,10 +87,9 @@ Cycle `dtss_20260306_170830`: 94 conditions, 68 examples at grind, 1,111 signals
 - signal_filter.py uploads full classified signal set to v2 cycle_signals
 
 ### 🔲 Not yet built / needs work
-- **Pipeline audit steps 4-8** — refinement, proximity, regime, health
-- **setup_refiner.py** — still uploads to v1 vetting endpoint, needs v2 cycle upload (same fix as signal_filter)
+- **Pipeline audit steps 7-9** — profit grind, regime, health
+- **profit_grinder.py** — exists but needs audit: Railway upload, correct data sources, computation path alignment
 - **v1 endpoint cleanup** — old vetting endpoints in server.py can be removed once UI is updated
-- **Trade exit grind** — profit_grinder.py (expr cache, from entry bar high) exists but not in current pipeline spec. Future addition.
 - Setup Dashboard, Regime Visual, Watchlist page, Nightly live scan
 
 ---

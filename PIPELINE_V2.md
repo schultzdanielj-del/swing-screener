@@ -60,7 +60,7 @@ method. What changes is what the search is optimizing against.
 ## The Pipeline
 
 Nine steps. Steps 1-5 are the vetting loop — repeat until convergence (no new
-examples found). Steps 6-8 run once after convergence.
+examples found). Steps 6-9 run once after convergence.
 
 **Nightly auto-refresh (4:30pm ET, fully automated):**
   OHLCV append → daily cache → 5yr cache → expr cache → matrix → earnings → market cache (266 instruments)
@@ -78,8 +78,9 @@ The Vetting Loop (repeat until convergence):
 
 After Convergence (run once, in order):
   Step 6: Proximity Grind   — trim leftward/early signal bars from lose pile
-  Step 7: Regime Model      — winner/loser ratio vs market conditions (266 instruments)
-  Step 8: Health Check      — cycle quality, EV, promote / revert / live-ready
+  Step 7: Profit Grind      — trade exit from entry bar high forward (bespoke exit expr set, maximizes MFE capture)
+  Step 8: Regime Model      — winner/loser ratio vs market conditions (266 instruments)
+  Step 9: Health Check      — cycle quality, EV, promote / revert / live-ready
 
 Live:
   Nightly scan + regime score → unified watchlist
@@ -350,7 +351,39 @@ moves EV from ~1.66 to ~1.98 (realistic loser cap). Profit factor goes from 3.81
 
 ---
 
-## Layer 7: Regime Model
+## Layer 7: Profit Grind
+
+**What it solves:** Finds the optimal trade exit condition — when to close the
+position to maximize captured move from the entry bar high. Uses a bespoke exit
+expression library (exit_expressions.py) specifically designed to evaluate the
+traded range (entry bar forward to exit bar).
+
+**When it runs:** After proximity grind (step 6). Requires classified signals
+with entry bars and forward price paths.
+
+**Distinction from Step 2 (Exit Grind / signal_exit_grinder.py):**
+Step 2 finds a signal-level exit condition using the main expression cache —
+it answers "did the setup work?" for classification purposes. The profit grind
+answers "given the setup worked, when should you close the trade?" using a
+dedicated expression set built for post-entry price action analysis.
+
+**Expression set:** ~4,500 bespoke exit expressions (exit_expressions.py):
+- Move captured (close, low, ADR, ATR, % normalized)
+- MFE, capture efficiency
+- Extension structure dynamics in the traded range
+- MA reclaim sequences, volume character
+- Boolean aggregations across 7 forward windows (5-60 bars)
+
+**Script:** `scripts/profit_grinder.py --setup {setup}`
+
+**Output:**
+- Optimal exit condition (expression, direction, threshold)
+- Per-example capture stats (median, mean, distribution)
+- Uploads to Railway
+
+---
+
+## Layer 8: Regime Model
 
 **What it solves:** Given tonight's market conditions, what is the expected win rate
 for this setup type? Weights signals up or down based on how favorable the current
@@ -415,7 +448,7 @@ deteriorate before the entry actually triggers.
 
 ---
 
-## Layer 8: Health Check
+## Layer 9: Health Check
 
 **What it solves:** Tells you whether the new cycle is better or worse than the
 previous one. Drives the revert decision. Drives the live-ready determination.
@@ -554,6 +587,7 @@ refinement_grind → pyramid_grinder.py --setup {setup} --blackout --beam 10000 
                    then setup_refiner.py --setup {setup}
 vet              → is_manual=True, no agent command (UI-only)
 proximity_grind  → proximity_grinder.py --setup {setup}
+profit_grind     → profit_grinder.py --setup {setup}
 regime           → market_grinder.py --setup {setup}
 health           → cycle_health.py --setup {setup}
 ```
@@ -612,8 +646,9 @@ Build in this order so each piece is useful immediately when complete:
 6. **UI: health metrics + diff + revert + regrind indicator** — control surface for the loop
 7. **AI review queue** — two-stage vetting gate, server endpoint + UI
 8. **Proximity grind** — trim losers post-convergence, `scripts/proximity_grinder.py`
-9. **Market regime model** — runs on proximity-trimmed classified signal set
-10. **UI: regime display + unified nightly watchlist** — the live product
+9. **Profit grind** — trade exit optimization from entry bar high, `scripts/profit_grinder.py`
+10. **Market regime model** — runs on proximity-trimmed classified signal set
+11. **UI: regime display + unified nightly watchlist** — the live product
 
 At step 5, the loop is runnable end-to-end with DTSS. Each additional setup type plugs
-into the same infrastructure. Steps 6-9 build toward the unified multi-setup watchlist.
+into the same infrastructure. Steps 6-11 build toward the unified multi-setup watchlist.
