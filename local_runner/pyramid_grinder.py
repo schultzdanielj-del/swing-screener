@@ -1098,11 +1098,6 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
         example_dfs, pass_expressions, expr_cache=expr_cache)
     print(f"  {len(pass_ranges)} expressions have valid ranges for this pass")
 
-    # Pre-filter: remove expressions whose example range passes ≥85% of the universe.
-    # These can't meaningfully filter signals and flood the beam search with noise.
-    pass_expressions, pass_ranges, prefilter_stats = prefilter_candidates(
-        pass_expressions, pass_ranges, threshold=0.85)
-
     new_conditions = []
     tier_results = {}
 
@@ -1370,10 +1365,6 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         example_ranges, example_matrix = compute_example_ranges(
             example_dfs, expressions, expr_cache=expr_cache)
         print(f"  {len(example_ranges)} expressions have valid ranges ({time.time()-t0:.0f}s)")
-
-        # Pre-filter: remove expressions whose example range passes ≥85% of the universe.
-        expressions, example_ranges, prefilter_stats = prefilter_candidates(
-            expressions, example_ranges, threshold=0.85)
 
         all_conditions = []
         tier_results = {}
