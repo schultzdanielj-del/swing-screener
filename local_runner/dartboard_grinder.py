@@ -764,6 +764,17 @@ def rank_and_threshold(all_ticker_scores, example_dfs, threshold=None,
             threshold = 0.5
             print(f"  Default threshold: {threshold:.4f}")
 
+    # HARD RULE: threshold can NEVER exceed the minimum example score.
+    # All examples must pass. No exceptions. Same rule as pyramid grinder.
+    if example_scores:
+        min_example_score = min(x["score"] for x in example_scores)
+        if threshold > min_example_score:
+            print(f"\n  ⚠ Threshold {threshold:.4f} would drop examples "
+                  f"(min example score: {min_example_score:.4f})")
+            threshold = min_example_score - 0.001
+            print(f"  → Clamped threshold to {threshold:.4f} "
+                  f"(100% example pass rate is non-negotiable)")
+
     # Filter by threshold
     signals_raw = [(t, d, s) for t, d, s in all_bars if s >= threshold]
     signals_raw.sort(key=lambda x: (x[0], x[1]))  # Sort by ticker, date
@@ -881,30 +892,28 @@ def _find_threshold_for_avg(all_bars, target_avg):
 # STEP 5: VALIDATE EXAMPLES
 # ══════════════════════════════════════════════════════════════
 
-def validate_example_scores(signals, example_dfs, threshold):
-    """Verify all examples are above the threshold.
-
-    In the dartboard system, examples should by construction score high
-    (they define the bullseye). But numerical edge cases or expressions
-    with zero spread could push an example's score down.
+def validate_example_scores(example_scores, threshold):
+    """Verify all examples score above the threshold.
 
     Returns (all_pass: bool, failures: list of dicts)
     """
-    signal_set = set((s["ticker"], s["date"]) for s in signals)
-    example_signals_set = set()
+    failures = []
+    for ex in example_scores:
+        if ex["score"] < threshold:
+            failures.append(ex)
 
-    for ex in example_dfs:
-        if ex["scan_idx"] is not None:
-            df = ex["df"]
-            scan_date = df["date"].iloc[ex["scan_idx"]]
-            date_str = str(scan_date)[:10]
-            example_signals_set.add((ex["ticker"], date_str))
+    all_pass = len(failures) == 0
 
-    # Check which examples appear in the signal set
-    # (Note: deduplication might have removed a lower-scoring signal bar
-    # if a higher-scoring bar was nearby, which is fine)
-    # We just need to verify example scores are above threshold
-    return True, []  # Validated via example_scores in rank_and_threshold
+    if all_pass:
+        print(f"  ✓ All {len(example_scores)} examples pass threshold {threshold:.4f}")
+    else:
+        print(f"\n{'!'*80}")
+        print(f"  VALIDATION FAILED: {len(failures)} examples below threshold {threshold:.4f}")
+        for ex in failures:
+            print(f"    ✗ {ex['ticker']} {ex['entry_date']} score={ex['score']:.4f}")
+        print(f"{'!'*80}")
+
+    return all_pass, failures
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1111,23 +1120,40 @@ def run_dartboard(setup_type, top_n=500, threshold=None, target_peak=None,
         all_ticker_scores, example_dfs,
         threshold=threshold, target_peak=target_peak, target_avg=target_avg)
 
+    # ── Validate: all examples must pass ──
+    example_scores = signal_stats.get("example_scores", [])
+    all_pass, failures = validate_example_scores(example_scores, threshold_used)
+
+    if not all_pass:
+        print(f"\n{'!'*80}")
+        print(f"  VALIDATION FAILED — {len(failures)} examples below threshold.")
+        print(f"  Results will be saved locally for diagnostics but NOT uploaded.")
+        print(f"  100% example pass rate is non-negotiable.")
+        print(f"{'!'*80}")
+
     # ── Build output ──
     total_time = time.time() - t_total
     result = build_output(
         setup_type, weights, signals, threshold_used, signal_stats,
         example_dfs, profile, total_time, blackout=bool(blackout_map))
+    result["examples_failing"] = len(failures)
 
-    # ── Save ──
+    # ── Save (always — even on failure, for diagnostics) ──
     os.makedirs(CACHE_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     total_signals = signal_stats["total"]
     peak = signal_stats["peak"]
-    desc_name = f"dartboard_{setup_type}_sig{total_signals}_pk{peak}_{ts}"
+    fail_tag = "_FAIL" if not all_pass else ""
+    desc_name = f"dartboard_{setup_type}{fail_tag}_sig{total_signals}_pk{peak}_{ts}"
 
     out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
+
+    if not all_pass:
+        print(f"  ⚠ NOT uploading to Railway (validation failed)")
+        return result
 
     # ── Mirror to Railway ──
     try:
