@@ -502,8 +502,8 @@ class PeakSpiderweb:
             passes = ((vals >= low) & (vals <= high)) | np.isnan(vals)
             self.cand_passes[ci, :] = passes
 
-            # "Useful" = filters out at least 5% of rows
-            if np.sum(passes) < self.n_rows * 0.95:
+            # Any expression that filters at least 1 row is useful
+            if np.sum(passes) < self.n_rows:
                 self.valid_cands.append(ci)
 
         print(f"    PeakSpiderweb: {self.n_rows:,} rows, {self.n_dates:,} dates, "
