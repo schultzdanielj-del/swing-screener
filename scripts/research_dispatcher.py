@@ -67,10 +67,15 @@ def poll_for_job():
     try:
         r = requests.get(f"{API_BASE}/api/v2/research/pending", timeout=10)
         if r.status_code == 200:
-            jobs = r.json().get("jobs", [])
+            data = r.json()
+            jobs = data.get("jobs", [])
+            if jobs:
+                log(f"Found job: #{jobs[0].get('id')} status={jobs[0].get('status')}")
             return jobs[0] if jobs else None
-    except:
-        pass
+        else:
+            log(f"Pending endpoint returned {r.status_code}")
+    except Exception as e:
+        log(f"Poll error: {e}")
     return None
 
 
