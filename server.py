@@ -1246,5 +1246,15 @@ async def v2_get_file(path: str):
                     headers={"X-Created-At": row["created_at"]})
 
 
+@app.delete("/api/v2/files/{path:path}")
+async def v2_delete_file(path: str):
+    with get_db() as db:
+        row = db.execute("SELECT path FROM file_mirror WHERE path=?", (path,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"File not found: {path}")
+        db.execute("DELETE FROM file_mirror WHERE path=?", (path,))
+    return {"path": path, "deleted": True}
+
+
 # Serve frontend — MUST be last
 app.mount("/", StaticFiles(directory="app", html=True), name="frontend")
