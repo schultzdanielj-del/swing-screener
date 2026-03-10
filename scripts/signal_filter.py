@@ -657,15 +657,15 @@ def _build_classified_signals(deduped, with_exit, example_signals):
     Returns list of dicts with classification labels. Used by both local save
     and Railway upload.
     """
-    # Build example lookup: ticker -> set of signal_bar_idx (±5 bar proximity)
-    example_proximity = {}
+    # Build example lookup: ticker -> set of exact signal_bar_idx
+    # Signals are deduped — one signal bar per example, exact match only
+    example_bars = {}
     for ex in example_signals:
         ticker = ex["ticker"]
         bar_idx = ex["signal_bar_idx"]
-        if ticker not in example_proximity:
-            example_proximity[ticker] = set()
-        for offset in range(-5, 6):
-            example_proximity[ticker].add(bar_idx + offset)
+        if ticker not in example_bars:
+            example_bars[ticker] = set()
+        example_bars[ticker].add(bar_idx)
 
     # Build exit lookup: (ticker, bar_idx) -> exit record
     exit_lookup = {}
@@ -682,7 +682,7 @@ def _build_classified_signals(deduped, with_exit, example_signals):
         bar_idx = sig["bar_idx"]
 
         is_example = 0
-        if ticker in example_proximity and bar_idx in example_proximity[ticker]:
+        if ticker in example_bars and bar_idx in example_bars[ticker]:
             is_example = 1
 
         exit_data = exit_lookup.get((ticker, bar_idx))
