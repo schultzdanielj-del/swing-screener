@@ -1122,14 +1122,6 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
 
         # D1 tier uses special spiderweb path
         if tier_name == "D1":
-            # Skip D1 in refinement mode — D1 uses full universe matrix,
-            # not the whitelist. It can't compare winners vs losers.
-            if whitelist_map is not None:
-                print(f"\n{'─'*70}")
-                print(f"  TIER: D1 — SKIPPED (refinement mode)")
-                print(f"{'─'*70}")
-                continue
-
             print(f"\n{'─'*70}")
             print(f"  TIER: D1 — Today (last bar) [{pass_name}]")
             print(f"  Locked: {len(locked_conditions)} conditions from prior passes/tiers")
