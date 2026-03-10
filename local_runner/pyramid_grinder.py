@@ -1779,6 +1779,222 @@ def _load_refinement_piles(setup_type):
     return win_example_dfs, whitelist_map
 
 
+def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
+    """Refinement grind: flat beam search, winners must-pass, minimize losers.
+
+    Loads classified signals from step 3 output. Builds winner example ranges
+    and loser matrix from expr cache at historical bar indices. One pass,
+    all expressions, no tiers, no windowing.
+    """
+    print("\n" + "=" * 70)
+    print("  REFINEMENT GRINDER")
+    print("=" * 70)
+    print(f"  Setup: {setup_type.upper()}")
+    print(f"  Beam: {beam_width}, Depth: {depth}, Peak target: {peak_target}")
+
+    t_total = time.time()
+
+    # ── Load classified signals ──
+    win_dfs, loser_whitelist = _load_refinement_piles(setup_type)
+    if win_dfs is None:
+        print("  ABORT: Could not load refinement piles.")
+        return None
+
+    # ── Load expression cache ──
+    print(f"\n  Loading expression cache...")
+    expr_cache = ExprSeriesCache()
+    if not expr_cache.is_valid():
+        raise RuntimeError("Expression series cache not found or invalid.")
+    print(f"  Expression cache: {expr_cache.n_expressions} expressions")
+
+    # Filter winners to those in expr cache
+    cached_tickers = expr_cache.get_available_tickers()
+    filtered_win = []
+    for ex in win_dfs:
+        if ex["ticker"] in cached_tickers:
+            n_bars = expr_cache.get_ticker_bar_count(ex["ticker"])
+            if ex["scan_idx"] < n_bars:
+                filtered_win.append(ex)
+    print(f"  Winners in expr cache: {len(filtered_win)}/{len(win_dfs)}")
+    win_dfs = filtered_win
+
+    if not win_dfs:
+        print("  ABORT: No winners in expr cache.")
+        return None
+
+    # ── Load expressions ──
+    print(f"\n  Loading expressions...")
+    all_expressions = generate_all()
+    print(f"  {len(all_expressions)} expressions")
+
+    # ── Compute winner ranges (must-pass bounding box) ──
+    print(f"\n  Computing winner ranges...")
+    example_ranges, example_matrix = compute_example_ranges(
+        win_dfs, all_expressions, expr_cache=expr_cache)
+    print(f"  {len(example_ranges)} expressions with valid ranges across all {len(win_dfs)} winners")
+
+    # ── Build loser matrix from expr cache ──
+    print(f"\n  Building loser matrix...")
+    cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
+    expr_names = [e["name"] for e in all_expressions]
+    expr_col_map = [cache_name_to_idx.get(n) for n in expr_names]
+
+    loser_rows = []
+    loser_dates = []
+    loser_tickers = []
+    skipped = 0
+
+    for ticker, bar_indices in loser_whitelist.items():
+        dates, data = expr_cache.get_ticker(ticker)
+        if dates is None:
+            skipped += len(bar_indices)
+            continue
+        for bar_idx in bar_indices:
+            if bar_idx >= len(data):
+                skipped += 1
+                continue
+            row = np.full(len(all_expressions), np.nan, dtype=np.float32)
+            for j, cache_col in enumerate(expr_col_map):
+                if cache_col is not None and cache_col < data.shape[1]:
+                    row[j] = data[bar_idx, cache_col]
+            loser_rows.append(row)
+            loser_dates.append(str(dates[bar_idx])[:10])
+            loser_tickers.append(ticker)
+
+    if not loser_rows:
+        print("  ABORT: No loser bars loaded from expr cache.")
+        return None
+
+    loser_matrix = np.array(loser_rows, dtype=np.float32)
+    print(f"  Loser matrix: {loser_matrix.shape[0]} bars x {loser_matrix.shape[1]} expressions")
+    if skipped:
+        print(f"  Skipped {skipped} loser bars (not in cache)")
+
+    # ── Filter to candidate expressions (have valid winner ranges) ──
+    candidate_indices = []
+    for i, name in enumerate(expr_names):
+        if name in example_ranges:
+            candidate_indices.append(i)
+
+    candidate_names = [expr_names[i] for i in candidate_indices]
+    candidate_categories = [all_expressions[i].get("category", "unknown") for i in candidate_indices]
+    candidate_values = loser_matrix[:, candidate_indices]
+    candidate_ranges = {name: example_ranges[name] for name in candidate_names if name in example_ranges}
+
+    print(f"  Candidates: {len(candidate_indices)} expressions with valid winner ranges")
+
+    # ── Run beam search ──
+    print(f"\n  Running beam search (losers as rows, winner ranges as bounds)...")
+    search = PeakSpiderweb(
+        candidate_values=candidate_values,
+        row_dates=loser_dates,
+        row_tickers=loser_tickers,
+        example_ranges=candidate_ranges,
+        candidate_names=candidate_names,
+        candidate_categories=candidate_categories,
+    )
+
+    result = search.run(depth=depth, beam_width=beam_width, peak_target=peak_target)
+
+    # ── Extract conditions ──
+    all_conditions = []
+    for cond in result.get("conditions", []):
+        name = cond["name"]
+        expr_spec = None
+        for e in all_expressions:
+            if e["name"] == name:
+                expr_spec = e
+                break
+        if expr_spec is None:
+            continue
+        all_conditions.append({
+            "name": name,
+            "expr": name,
+            "category": cond.get("category", "unknown"),
+            "compute": expr_spec["compute"],
+            "low": cond["low"],
+            "high": cond["high"],
+            "tier": "refinement",
+        })
+
+    # ── Stats ──
+    final_total = result.get("final_total", 0)
+    final_peak = result.get("final_peak", 0)
+    final_avg = result.get("final_avg", 0.0)
+
+    total_time = time.time() - t_total
+
+    print(f"\n  -- REFINEMENT RESULTS --")
+    print(f"  Conditions found: {len(all_conditions)}")
+    print(f"  Losers remaining: {final_total}/{len(loser_rows)}")
+    print(f"  Losers eliminated: {len(loser_rows) - final_total}")
+    print(f"  Peak losers/day: {final_peak}")
+    print(f"  Time: {total_time:.0f}s")
+
+    # ── Validate winners still pass ──
+    print(f"\n  Validating all {len(win_dfs)} winners pass...")
+    if not validate_examples(win_dfs, all_conditions, expr_cache=expr_cache):
+        print(f"\n{'!'*80}")
+        print(f"VALIDATION FAILED — winners don't all pass. Results NOT saved.")
+        print(f"{'!'*80}")
+        return None
+    print(f"  All {len(win_dfs)} winners pass all {len(all_conditions)} refinement conditions")
+
+    # ── Save ──
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    desc_name = f"refinement_{setup_type}_sig{final_total}_pk{final_peak}_{ts}"
+
+    result_data = {
+        "setup_type": setup_type,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "total_time_s": round(total_time, 1),
+        "refinement": True,
+        "n_conditions": len(all_conditions),
+        "all_conditions": all_conditions,
+        "params": {
+            "beam_width": beam_width,
+            "depth": depth,
+            "peak_target": peak_target,
+            "source": "refinement_grinder",
+        },
+        "summary": {
+            "final_total": final_total,
+            "final_peak": final_peak,
+            "final_avg": round(final_avg, 1) if final_avg else 0,
+            "losers_input": len(loser_rows),
+            "losers_eliminated": len(loser_rows) - final_total,
+            "winners_input": len(win_dfs),
+            "winners_passing": len(win_dfs),
+        },
+    }
+
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
+    with open(out_path, "w") as f:
+        json.dump(result_data, f, indent=2)
+    print(f"\n  Saved: {out_path}")
+
+    # Mirror to Railway
+    from file_mirror import mirror_file
+    mirror_file(out_path)
+
+    # Upload to Railway cycle
+    try:
+        from grind_uploader import upload as railway_upload
+        railway_upload(
+            result=result_data,
+            result_path=out_path,
+            step_type="refinement_grind",
+            setup_type=setup_type,
+            activate=True,
+        )
+    except Exception as e:
+        print(f"\n  WARNING: Railway upload failed: {e}")
+        print(f"  Local file saved. Upload manually or retry later.")
+
+    return result_data
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pyramidal Grinder")
     parser.add_argument("--setup", default="dtss", help="Setup type")
@@ -1798,22 +2014,22 @@ def main():
                         help="Legacy single-pass mode (all 12K expressions in one pass)")
     parser.add_argument("--blackout", action="store_true",
                         help="Refinement grind: winners as must-pass, losers as universe "
-                             "(Step 4 — loads cycle signals from Railway)")
+                             "(Step 4 — loads classified signals from step 3)")
     args = parser.parse_args()
 
-    multi_pass = not args.single_pass
-
-    # ── Refinement grind: load win/lose piles from cycle signals ──
-    blackout_map = None
-    whitelist_map = None
-    override_example_dfs = None
+    # ── Refinement grind: separate path ──
     if args.blackout:
-        win_dfs, wl_map = _load_refinement_piles(args.setup)
-        if win_dfs is None:
-            print("  ABORT: Could not load refinement piles.")
+        result = run_refinement(
+            setup_type=args.setup,
+            beam_width=args.beam,
+            depth=args.depth,
+            peak_target=args.peak_target,
+        )
+        if result is None:
             sys.exit(1)
-        override_example_dfs = win_dfs
-        whitelist_map = wl_map
+        sys.exit(0)
+
+    multi_pass = not args.single_pass
 
     n_runs = max(1, args.runs)
     results = []
@@ -1832,9 +2048,6 @@ def main():
             d1_depth=args.d1_depth,
             d1_beam=args.d1_beam,
             multi_pass=multi_pass,
-            blackout_map=blackout_map,
-            whitelist_map=whitelist_map,
-            override_example_dfs=override_example_dfs,
         )
         results.append(result)
 
