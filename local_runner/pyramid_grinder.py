@@ -1509,18 +1509,40 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         print(f"    {i:2d}. [{tier:>4}] [{cat:>18}] {c['name']:35s} "
               f"[{c['low']:.4f} — {c['high']:.4f}]")
 
-    # ── Get final signal count from last tier with data ──
+    # ── Get real signal count from last 5yr tier (full history, all conditions) ──
+    # In multi-pass: monthly_5yr > weekly_5yr > daily_5yr (last pass has all conditions)
+    # In single-pass: just "5yr"
     final_total = 0
     final_peak = 0
     final_avg = 0.0
-    # Check all tier results (both modes)
-    for key in sorted(tier_results.keys(), reverse=True):
-        tr = tier_results[key]
-        if tr.get("final_total") is not None and tr["final_total"] > 0:
-            final_total = tr["final_total"]
-            final_peak = tr.get("final_peak", 0)
-            final_avg = tr.get("final_avg", 0.0)
-            break
+    final_deduped_signals = []
+    for pass_prefix in ["monthly_5yr", "weekly_5yr", "daily_5yr", "5yr"]:
+        if pass_prefix in tier_results:
+            tr = tier_results[pass_prefix]
+            sigs = tr.get("final_signals", [])
+            if sigs:
+                # Dedupe by (ticker, date)
+                seen = set()
+                for s in sigs:
+                    key = (s["ticker"], s["date"])
+                    if key not in seen:
+                        seen.add(key)
+                        final_deduped_signals.append(s)
+                final_total = len(final_deduped_signals)
+                final_peak = tr.get("final_peak", 0)
+                final_avg = tr.get("final_avg", 0.0)
+                # Compute real peak from deduped signals
+                from collections import Counter as _Counter
+                date_counts = _Counter(s["date"] for s in final_deduped_signals)
+                if date_counts:
+                    final_peak = max(date_counts.values())
+                    final_avg = round(sum(date_counts.values()) / len(date_counts), 1)
+                print(f"\n  Signal count (from {pass_prefix}): "
+                      f"{len(sigs)} raw → {final_total} deduped, peak {final_peak}/day")
+                break
+
+    if final_total == 0:
+        print("\n  WARNING: No 5yr tier data — signal count unavailable")
 
     # ── Build example signal bars ──
     example_signals = []
