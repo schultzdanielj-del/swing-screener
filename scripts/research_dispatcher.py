@@ -76,7 +76,8 @@ def poll_for_job():
 
 def create_sandbox_branch(job_id):
     """Create a sandbox branch from v2."""
-    branch = f"research/job-{job_id:03d}"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    branch = f"research/{ts}_job{job_id}"
     subprocess.run(["git", "checkout", "v2"], cwd=REPO_ROOT, capture_output=True)
     subprocess.run(["git", "pull"], cwd=REPO_ROOT, capture_output=True)
     # Delete branch if it exists from a previous failed run
@@ -141,13 +142,13 @@ def run_claude_code(prompt, system_prompt, phase_name=""):
                      "-p", prompt,
                      "--model", MODEL,
                      "--system-prompt", system_prompt,
-                     "--permission-mode", "auto"]
+                     "--dangerously-skip-permissions"]
     else:
         cli_args = [claude_cmd,
                      "-p", prompt,
                      "--model", MODEL,
                      "--system-prompt", system_prompt,
-                     "--permission-mode", "auto"]
+                     "--dangerously-skip-permissions"]
 
     log(f"  Claude Code ({phase_name})...")
 

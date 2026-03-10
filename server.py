@@ -1430,6 +1430,20 @@ async def list_research_jobs(status: str = None, limit: int = 20):
     return {"jobs": [dict(r) for r in rows]}
 
 
+@app.post("/api/v2/research/{job_id}/reset")
+async def reset_research_job(job_id: int):
+    with get_db() as db:
+        row = db.execute("SELECT id FROM research_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Research job not found: {job_id}")
+        db.execute(
+            "UPDATE research_jobs SET status='pending', claimed_at=NULL, completed_at=NULL, "
+            "summary=NULL, diff=NULL, error=NULL, log=NULL, branch=NULL WHERE id=?",
+            (job_id,)
+        )
+    return {"id": job_id, "status": "pending", "reset": True}
+
+
 @app.post("/api/v2/files")
 async def v2_upload_file(request: Request):
     body = await request.json()
