@@ -2074,14 +2074,22 @@ def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
         # Free winner DataFrames (copies of universe_cache data) and old signal lists
         del win_dfs
         del surviving_losers, eliminated_losers
+
+        # Import scan function from signal_filter
+        sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+        from signal_filter import scan_all_signals as _scan_all, _build_slim_cache
+
+        # Build slim cache, free full cache, then scan
+        _slim = _build_slim_cache(universe_cache)
+        del universe_cache
         import gc; gc.collect()
 
-        # Import scan function from signal_filter (uses NPZ workers, no memory issue)
-        sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
-        from signal_filter import scan_all_signals as _scan_all, DEFAULT_WORKERS
+        n_workers = max(cpu_count() - 1, 1)
+        raw_signals = _scan_all(_slim, combined_conditions, n_workers, expr_cache)
+        del _slim; gc.collect()
 
-        n_workers = min(4, max(cpu_count() - 1, 1))  # cap at 4 — main process already holds 5yr cache
-        raw_signals = _scan_all(universe_cache, combined_conditions, n_workers, expr_cache)
+        # Reload full cache for exit/classify
+        universe_cache = load_5yr_cache()
 
         # Dedup with sacrificial tracking
         raw_signals.sort(key=lambda s: (s["ticker"], s["bar_idx"]))

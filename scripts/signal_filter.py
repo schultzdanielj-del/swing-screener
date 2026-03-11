@@ -251,9 +251,29 @@ def _scan_batch(tickers):
     return signals, skipped
 
 
-def scan_all_signals(cache, conditions, workers, expr_cache):
-    """Scan full universe for signal conditions using expression cache."""
-    tickers = list(cache.keys())
+def _build_slim_cache(cache):
+    """Build lightweight cache for scan workers: {ticker: (n_bars, dates_strs, closes)}.
+
+    Workers only need bar count, date strings, and close prices.
+    Full DataFrames with open/high/low/volume/dvol are not needed for scanning.
+    """
+    slim = {}
+    for ticker, df in cache.items():
+        if df is not None and len(df) >= 100:
+            slim[ticker] = (
+                len(df),
+                np.array([str(d)[:10] for d in df["date"].values]),
+                df["close"].values.astype(np.float64),
+            )
+    return slim
+
+
+def scan_all_signals(slim_cache, conditions, workers, expr_cache):
+    """Scan full universe for signal conditions using expression cache.
+
+    slim_cache: {ticker: (n_bars, dates_strs, closes)} — lightweight, no DataFrames.
+    """
+    tickers = list(slim_cache.keys())
     batch_size = max(1, len(tickers) // (workers * 4))
     batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
 
@@ -266,17 +286,6 @@ def scan_all_signals(cache, conditions, workers, expr_cache):
         cond_col_indices.append(col_idx)
 
     expr_cache_dir = os.path.join(REPO_ROOT, "local_runner", "cache", "expr_series")
-
-    # Build slim cache: workers only need bar count, dates, and closes
-    # This avoids serializing full DataFrames (with open, high, low, volume, dvol, etc.)
-    slim_cache = {}
-    for ticker, df in cache.items():
-        if df is not None and len(df) >= 100:
-            slim_cache[ticker] = (
-                len(df),
-                np.array([str(d)[:10] for d in df["date"].values]),
-                df["close"].values.astype(np.float64),
-            )
 
     print(f"\n  Scanning {len(tickers):,} tickers x {len(conditions)} conditions...")
     print(f"  {workers} workers, {len(batches)} batches (using expression cache)")
@@ -997,12 +1006,21 @@ def main():
     print(f"  Using filter threshold: {min_adr:.1f} ADR (90% of floor)")
 
     # Phase 3: Scan all backtest signals
+    # Build slim cache (bar count + dates + closes only), then free full cache
+    # to make room for worker processes. Each worker gets a copy of the slim cache.
     print(f"\n  PHASE 3: Scan all signals")
-    raw_signals = scan_all_signals(cache, conditions, args.workers, expr_cache)
+    slim_cache = _build_slim_cache(cache)
+    del cache
+    import gc; gc.collect()
+    raw_signals = scan_all_signals(slim_cache, conditions, args.workers, expr_cache)
+    del slim_cache; gc.collect()
 
     # Phase 4: Deduplicate backtest signals
     print(f"\n  PHASE 4: Deduplicate (consecutive -> rightmost)")
     deduped = deduplicate_signals(raw_signals)
+
+    # Reload full cache — needed for exit close prices, ADR, MFE
+    cache = load_5yr_cache()
 
     # Phase 5: Apply exit + measure
     print(f"\n  PHASE 5: Apply exit condition + measure distance")

@@ -740,11 +740,20 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
         print(f"  Loaded {len(_universe):,} tickers")
 
         sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
-        from signal_filter import scan_all_signals as _scan_all, DEFAULT_WORKERS
+        from signal_filter import scan_all_signals as _scan_all, _build_slim_cache
         from multiprocessing import cpu_count as _cpu_count
 
-        _workers = min(4, max(_cpu_count() - 1, 1))  # cap at 4 — already holding matrices in main
-        _raw = _scan_all(_universe, combined_conditions, _workers, expr_cache)
+        # Build slim cache, free full cache, then scan
+        _slim = _build_slim_cache(_universe)
+        del _universe; gc.collect()
+
+        _workers = max(_cpu_count() - 1, 1)
+        _raw = _scan_all(_slim, combined_conditions, _workers, expr_cache)
+        del _slim; gc.collect()
+
+        # Reload full cache for exit/classify
+        with open(_5yr_path, "rb") as _f:
+            _universe = pickle.load(_f)
 
         # Dedup with sacrificial
         _raw.sort(key=lambda s: (s["ticker"], s["bar_idx"]))
