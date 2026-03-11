@@ -2062,11 +2062,18 @@ def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
     rescan_losers = None
     rescan_sacrificial = None
     if combined_conditions and exit_cond:
+        # Free beam search data before spawning scan workers
+        del loser_matrix, loser_rows, loser_dates, loser_tickers
+        del candidate_values, candidate_indices, candidate_names, candidate_categories
+        del example_ranges, example_matrix, all_expressions
+        del loser_whitelist
+        import gc; gc.collect()
+
         # Import scan function from signal_filter (uses NPZ workers, no memory issue)
         sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
         from signal_filter import scan_all_signals as _scan_all, DEFAULT_WORKERS
 
-        n_workers = min(DEFAULT_WORKERS, max(cpu_count() - 1, 1))
+        n_workers = min(4, max(cpu_count() - 1, 1))  # cap at 4 — main process already holds 5yr cache
         raw_signals = _scan_all(universe_cache, combined_conditions, n_workers, expr_cache)
 
         # Dedup with sacrificial tracking

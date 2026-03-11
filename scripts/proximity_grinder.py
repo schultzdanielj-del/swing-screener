@@ -725,7 +725,11 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
         print(f"  Combined: {len(pre_conditions)} pre + {len(proximity_conditions)} proximity "
               f"({len(overlap)} overlap) = {len(combined_conditions)} total")
 
-        # Re-scan using signal_filter's scan function (NPZ-based workers)
+        # Re-scan using signal_filter's scan function
+        # Free beam search data first to reduce memory pressure
+        del win_matrix, trim_matrix
+        import gc; gc.collect()
+
         import pickle
         _5yr_path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
         if not os.path.exists(_5yr_path):
@@ -739,7 +743,7 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
         from signal_filter import scan_all_signals as _scan_all, DEFAULT_WORKERS
         from multiprocessing import cpu_count as _cpu_count
 
-        _workers = min(DEFAULT_WORKERS, max(_cpu_count() - 1, 1))
+        _workers = min(4, max(_cpu_count() - 1, 1))  # cap at 4 — already holding matrices in main
         _raw = _scan_all(_universe, combined_conditions, _workers, expr_cache)
 
         # Dedup with sacrificial
