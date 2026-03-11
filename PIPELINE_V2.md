@@ -72,12 +72,14 @@ The Vetting Loop (repeat until convergence):
   Step 2: Exit Grind        — optimal exit condition from example entry bar highs
   Step 3: Scan              — apply conditions to 5yr history → deduped signals
                                + exit filter → classified signal set (winners/losers)
-  Step 4: Refinement Grind  — (examples + exit-triggered) vs no-exit, blackout. Manual gate.
+  Step 4: Refinement Grind  — winners vs losers beam search → combine signal+refinement
+                               conditions → re-scan universe → re-classify. Manual gate.
   Step 5: Vet               — review winner pile (source toggle: step 3 or step 4)
                                YES → AI review → approve → examples → loop back to step 1
 
 After Convergence (run once, in order):
-  Step 6: Proximity Grind   — trim leftward/early signal bars from lose pile
+  Step 6: Proximity Grind   — trim losers via beam search → combine all conditions
+                               → re-scan universe → re-classify
   Step 7: Profit Grind      — trade exit from entry bar high forward (bespoke exit expr set, maximizes MFE capture)
   Step 8: Regime Model      — winner/loser ratio vs market conditions (266 instruments)
   Step 9: Health Check      — cycle quality, EV, promote / revert / live-ready
@@ -311,20 +313,21 @@ still be hiding in the losing pile — trimming losers at that stage risks killi
 examples before they're ever seen. Post-convergence, the vetting loop has surfaced
 everything. Whatever's left in the losing pile is genuinely not a setup. Safe to trim.
 
+**Data source:** Reads the refinement grinder's local output file
+(`local_runner/cache/refinement_{setup}_*.json`) which contains:
+- `all_conditions`: combined signal + refinement conditions
+- `winner_signals` / `loser_signals`: classified signal lists
+- `exit_condition`: exit condition used for classification
+
 **Win pile (must ALL pass — hard constraint):**
-- All example signal bars (the signal bar closest to each example's entry date, ±5 days)
-- All winner signals from the refinement grind output (exit triggered + move ≥ ADR threshold)
+- All winner signals from the refinement grind output (examples + exit-triggered winners)
 
 **Lose pile (try to trim):**
-- Leftward duplicate signal bars on examples: when an example has multiple signal bars
-  firing before entry, the rightmost (closest to entry) is in the win pile. All others
-  to the left are in the lose pile — they fired early, before the setup completed.
-- All loser signals from the refinement grind output (no exit triggered)
+- All loser signals from the refinement grind output (surviving losers after refinement)
 
 **Hard constraints:**
 - 100% of win pile signals must pass. No exceptions.
-- 100% of example signal bars (rightmost per example) must pass. No exceptions.
-- Uses the same pyramid grinder engine with the same expr cache path.
+- Uses the same expr cache path as all other grinders.
 
 **What it finds:** Conditions visible on the signal bar that distinguish "setup
 completing" from "setup in progress." The bar right before entry has structural
@@ -333,21 +336,24 @@ earlier duplicate bars where conditions happened to fire early. This isn't a tim
 machine; it's detecting completion signatures.
 
 **Method:**
-- Build win pile and lose pile from current cycle's classified signal set
-- For each example, find all signal bars within ±7 calendar days of entry date
-- Rightmost signal bar → win pile. All leftward duplicates → lose pile.
-- Run pyramid grinder with win pile as examples, lose pile as universe to filter
-- Append resulting conditions to the existing condition set (signal + refinement + proximity)
-- Re-scan to produce final trimmed signal set
+1. Load win pile and lose pile from refinement grinder output (local)
+2. Beam search: find conditions all winners pass but that eliminate losers
+3. Combine signal + refinement + proximity conditions into full set
+4. Re-scan full universe with combined conditions (parallel, ~50s)
+5. Re-deduplicate → new deduped + sacrificial signal sets
+6. Apply exit + re-classify → new winner/loser piles
+7. Save locally + upload via file_mirror + grind_uploader
 
 **Math (from DTSS current state):**
 With 41% WR and 5.48/1.0 ADR winner/loser, trimming 5 losers without touching winners
 moves EV from ~1.66 to ~1.98 (realistic loser cap). Profit factor goes from 3.81 to 4.67.
 
 **Output:**
-- Additional condition set (proximity conditions only)
-- Trimmed signal set (winners unchanged, losers reduced)
-- Before/after metrics: signal count, win rate, EV delta
+- `all_conditions`: combined signal + refinement + proximity (full condition set)
+- `proximity_conditions_only`: just the new proximity conditions
+- `winner_signals` / `loser_signals`: freshly classified from re-scan
+- `sacrificial_signals`: leftward dedup duplicates from re-scan
+- `exit_condition`, metrics (before/after win rate, signal counts)
 
 ---
 
@@ -582,11 +588,12 @@ be exact — no step ID mismatch between UI and agent.
 ```
 signal_grind     → pyramid_grinder.py --setup {setup} --beam 10000 --depth 100 --peak-target 3
 exit_grind       → exit_grinder.py --setup {setup}
-scan             → signal_filter.py --setup {setup}  (scan + exit filter in one pass)
-refinement_grind → pyramid_grinder.py --setup {setup} --blackout --beam 10000 --depth 100 --peak-target 3
-                   then setup_refiner.py --setup {setup}
+scan             → signal_filter.py --setup {setup}  (scan + exit filter + classify in one pass)
+refinement_grind → pyramid_grinder.py --setup {setup} --blackout
+                   (beam search + combine conditions + re-scan + re-classify, all in one)
 vet              → is_manual=True, no agent command (UI-only)
 proximity_grind  → proximity_grinder.py --setup {setup}
+                   (beam search + combine conditions + re-scan + re-classify, all in one)
 profit_grind     → profit_grinder.py --setup {setup}
 regime           → market_grinder.py --setup {setup}
 health           → cycle_health.py --setup {setup}

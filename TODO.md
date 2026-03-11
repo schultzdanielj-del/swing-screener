@@ -1,4 +1,4 @@
-# TODO — Swing Screener (2026-03-10)
+# TODO — Swing Screener (2026-03-11)
 
 ## V2 Pipeline — The Correct Order
 
@@ -10,11 +10,11 @@ See `PIPELINE_V2.md` for full spec.
 1. Signal Grind — examples vs universe → conditions (**pyramid grinder is the official engine**)
 2. Exit Grind — optimal exit condition from example signal bar close forward
 3. Scan — apply conditions to 5yr → deduped signals + exit filter → classified signal set
-4. Refinement Grind — **(examples + exit-triggered winners) vs (no-exit losers)**, blackout masking. Manual gate. **⚠ BROKEN — see below**
+4. Refinement Grind — winners vs losers beam search → combine conditions → re-scan → re-classify. Manual gate.
 5. Vet — review winner pile. YES → AI review → approve → examples → loop.
 
 **After Convergence (run once, in order):**
-6. Proximity Grind — trim leftward/early signal bars + losers using sacrificial signals.
+6. Proximity Grind — beam search to trim losers → combine all conditions → re-scan → re-classify.
 7. Profit Grind — trade exit from entry bar high forward.
 8. Regime Model — winner/loser ratio vs 266 market instruments
 9. Health Check — cycle quality, EV, promote/revert
@@ -41,28 +41,31 @@ See `PIPELINE_V2.md` for full spec.
 - **Median ADR threshold: 4.4**
 - Exit condition: `slope_xavgc21_off7_adr14 <= -1.128826`
 
-### Step 4 (Refinement Grind): ⚠ BROKEN
+### Step 4 (Refinement Grind): ✅ FIXED (2026-03-11)
 
-**The bug:** `pyramid_grinder.py --blackout` runs the SAME examples-vs-universe grind as step 1, just with post-entry bars masked out. It does NOT grind winners vs losers as PIPELINE_V2.md specifies.
+**What it does:**
+1. Loads classified signals from step 3 (`classified_{setup}.json`) → winners/losers
+2. Loads signal grind conditions from pyramid result + exit condition (all local)
+3. Beam search: winners as must-pass, losers as universe to filter
+4. Combines signal + refinement conditions
+5. Re-scans full universe with combined conditions (parallel)
+6. Re-deduplicates → new deduped + sacrificial sets
+7. Applies exit + classifies → new winner/loser piles
+8. Saves locally + uploads via file_mirror + grind_uploader
 
-**What it should do (from spec):**
-- Win pile: examples + exit-triggered winners from step 3
-- Lose pile: no-exit losers from step 3
-- Grind win pile vs lose pile to find conditions that separate "setups that work" from "setups that don't"
-- Blackout masking on entry-to-exit bars (so grinder can't see the move)
-- Output: refinement conditions that APPEND to step 1 conditions
+**Output:** `local_runner/cache/refinement_{setup}_*.json` with `all_conditions`, `winner_signals`, `loser_signals`, `sacrificial_signals`, `exit_condition`
 
-**What it actually does:**
-- Same examples-vs-universe grind as step 1
-- Blackout just masks post-entry bars in the universe
-- Produces a completely new condition set (doesn't append)
-- Result: ~1,338 signals (basically same as step 1's 1,218 — adds nothing)
+### Proximity Grind (Step 6): ✅ FIXED (2026-03-11)
 
-**Fix needed:** Ground-up rewrite of the blackout/refinement mode in pyramid_grinder.py, or a new dedicated refinement_grinder.py. See `REFINEMENT_GRIND_FIX.md` for detailed prompt.
+Same pattern as refinement grinder:
+1. Reads refinement grinder local output (all_conditions, signals, exit_condition)
+2. Beam search: finds proximity conditions trimming losers
+3. Combines signal + refinement + proximity conditions
+4. Re-scans full universe with combined conditions
+5. Re-deduplicates + classifies → final signal set
+6. Saves locally + uploads via file_mirror + grind_uploader
 
-### Proximity Grind (Step 6): Not yet reached
-
-Requires refinement grind to work first. Proximity grind APPENDS conditions on top of signal + refinement conditions. Uses sacrificial signals (leftward duplicates) in the lose pile.
+**Output:** `data/proximity_grind/proximity_{setup}_*.json` with `all_conditions`, `winner_signals`, `loser_signals`, `sacrificial_signals`
 
 ### Experimental Grinders — SHELVED
 
@@ -85,9 +88,9 @@ Three alternative grinder approaches were tested and all failed to improve on th
 | 1. Signal Grind | `pyramid_grinder.py` | ✅ Working | D1 cap=15 produces best results |
 | 2. Exit Grind | `signal_exit_grinder.py` | ✅ Working | One issue: picks pyramid file by mtime (revert problem) |
 | 3. Scan | `signal_filter.py` | ✅ Working | Minor: classification uses signal median not example median |
-| 4. Refinement Grind | `pyramid_grinder.py --blackout` | ❌ BROKEN | Runs examples-vs-universe, not winners-vs-losers |
-| 5. Vet | UI + manual | ⏸ Waiting | Needs working refinement or skip to step 6 |
-| 6. Proximity Grind | `proximity_grinder.py` | ⏸ Not reached | Depends on step 4 |
+| 4. Refinement Grind | `pyramid_grinder.py --blackout` | ✅ FIXED | Winners-vs-losers beam search + re-scan + re-classify |
+| 5. Vet | UI + manual | ⏸ Waiting | |
+| 6. Proximity Grind | `proximity_grinder.py` | ✅ FIXED | Reads refinement output, beam search + re-scan + re-classify |
 | 7. Profit Grind | `profit_grinder.py` | ✅ Built | Has been run (68ex, 4.0 ADR) |
 | 8. Regime Model | `market_grinder.py` | ⏸ Not built | |
 | 9. Health Check | `cycle_health.py` | ⏸ Not built | |
@@ -131,9 +134,9 @@ Spec says AUTO_WIN threshold = "derived from sample median" (example exit distan
 
 ## Immediate Next
 
-1. **Fix refinement grinder** — see `REFINEMENT_GRIND_FIX.md`
-2. Run fixed refinement through pipeline
-3. Continue to step 5 (vet) or step 6 (proximity grind)
+1. Run refinement grinder on DTSS (step 4)
+2. Run proximity grinder on DTSS (step 6)
+3. Continue to step 7 (profit grind) and step 8 (regime model)
 
 ---
 
