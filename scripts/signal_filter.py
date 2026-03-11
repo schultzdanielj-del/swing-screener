@@ -358,17 +358,147 @@ def deduplicate_signals(signals):
 
 
 # ============================================================
-# Phase 3: Apply exit condition, measure distance
+# Phase 3: Apply exit condition, measure distance (parallel)
 # ============================================================
+
+# Worker globals for exit/measure
+_exit_slim_ohlcv = None  # {ticker: (n_bars, dates, closes, highs, lows)}
+_exit_signals_by_ticker = None  # {ticker: [signal_dicts]}
+_exit_expr_name = None
+_exit_thresh = None
+_exit_dir = None
+_exit_col_idx = None
+_exit_adr_col_idx = None
+_exit_direction = None
+_exit_max_forward = None
+
+
+def _init_exit_worker(slim_ohlcv, exit_expr_name, exit_threshold, exit_direction,
+                      exit_col, adr_col, trade_direction, max_fwd):
+    global _exit_slim_ohlcv, _exit_expr_name, _exit_thresh, _exit_dir
+    global _exit_col_idx, _exit_adr_col_idx, _exit_direction, _exit_max_forward
+    _exit_slim_ohlcv = slim_ohlcv
+    _exit_expr_name = exit_expr_name
+    _exit_thresh = exit_threshold
+    _exit_dir = exit_direction
+    _exit_col_idx = exit_col
+    _exit_adr_col_idx = adr_col
+    _exit_direction = trade_direction
+    _exit_max_forward = max_fwd
+
+
+def _exit_batch(ticker_signals_list):
+    """Process exit/measure for a batch of (ticker, signals) pairs.
+
+    Each worker loads its own NPZ files from disk. OHLCV comes from slim dict.
+    """
+    from expr_cache_builder import load_ticker_cache
+
+    results = []
+    no_exit = 0
+    errors = 0
+
+    for ticker, sigs in ticker_signals_list:
+        ohlcv = _exit_slim_ohlcv.get(ticker)
+        if ohlcv is None:
+            errors += len(sigs)
+            continue
+
+        n_bars, dates, closes, highs, lows = ohlcv
+
+        # Load NPZ for this ticker
+        cached_dates, cached_data = load_ticker_cache(ticker)
+        if cached_dates is None or len(cached_dates) != n_bars:
+            errors += len(sigs)
+            continue
+
+        for sig in sigs:
+            bar_idx = sig["bar_idx"]
+            if bar_idx >= n_bars - 1:
+                errors += 1
+                continue
+
+            try:
+                # ADR
+                if _exit_adr_col_idx is not None:
+                    adr = float(cached_data[bar_idx, _exit_adr_col_idx])
+                else:
+                    start = max(0, bar_idx - 13)
+                    adr = float(np.mean(highs[start:bar_idx+1] - lows[start:bar_idx+1]))
+
+                if adr <= 0 or np.isnan(adr):
+                    errors += 1
+                    continue
+
+                signal_close = float(closes[bar_idx])
+                actual_forward = min(_exit_max_forward, n_bars - bar_idx - 1)
+                if actual_forward < 5:
+                    errors += 1
+                    continue
+
+                # Find exit
+                exit_series = cached_data[:, _exit_col_idx]
+                exit_bar = None
+                exit_close = None
+                for fwd in range(1, actual_forward + 1):
+                    check_idx = bar_idx + fwd
+                    val = exit_series[check_idx]
+                    if np.isnan(val):
+                        continue
+                    if _exit_dir == ">=" and val >= _exit_thresh:
+                        exit_bar = fwd
+                        exit_close = float(closes[check_idx])
+                        break
+                    elif _exit_dir == "<=" and val <= _exit_thresh:
+                        exit_bar = fwd
+                        exit_close = float(closes[check_idx])
+                        break
+
+                if exit_bar is None:
+                    no_exit += 1
+                    continue
+
+                # Measure
+                if _exit_direction == "short":
+                    move_pct = (signal_close - exit_close) / signal_close * 100
+                    move_adr = (signal_close - exit_close) / adr
+                    mfe_price = float(lows[bar_idx+1:bar_idx+exit_bar+1].min())
+                    mfe_adr = (signal_close - mfe_price) / adr
+                else:
+                    move_pct = (exit_close - signal_close) / signal_close * 100
+                    move_adr = (exit_close - signal_close) / adr
+                    mfe_price = float(highs[bar_idx+1:bar_idx+exit_bar+1].max())
+                    mfe_adr = (mfe_price - signal_close) / adr
+
+                exit_date = dates[bar_idx + exit_bar]
+
+                results.append({
+                    **sig,
+                    "signal_close": round(signal_close, 2),
+                    "adr_at_signal": round(adr, 2),
+                    "exit_bar": exit_bar,
+                    "exit_date": exit_date,
+                    "exit_close": round(exit_close, 2),
+                    "move_pct": round(move_pct, 2),
+                    "move_adr": round(move_adr, 2),
+                    "mfe_adr": round(mfe_adr, 2),
+                    "capture_eff": round(move_adr / mfe_adr, 3) if mfe_adr > 0 else 0,
+                })
+            except Exception:
+                errors += 1
+
+    return results, no_exit, errors
+
+
 def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache, max_forward=MAX_FORWARD):
     """
     For each signal, run forward and check if exit condition fires.
     Measure signal close -> exit close in ADR units.
-    Uses expression cache for exit condition (same computation path).
+    Parallelized: workers load NPZ from disk, get slim OHLCV via initargs.
     """
     expr_name = exit_cond["expression"]
     exit_thresh = exit_cond["threshold"]
-    exit_dir = exit_cond["direction"]  # ">=" or "<="
+    exit_dir = exit_cond["direction"]
 
     exit_col_idx = expr_cache.expr_index(expr_name)
     if exit_col_idx is None:
@@ -376,131 +506,73 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache, max
         print(f"  Rebuild cache: python local_runner/expr_cache_builder.py --build --force")
         return []
 
-    # Also need ADR -- check if it's in the cache
     adr_col_idx = expr_cache.expr_index("adr14")
 
     print(f"\n  Applying exit: {expr_name} {exit_dir} {exit_thresh}")
     print(f"  Direction: {direction}, max forward: {max_forward} bars")
 
-    results = []
-    no_exit = 0
-    errors = 0
+    # Build slim OHLCV: {ticker: (n_bars, dates_strs, closes, highs, lows)}
+    slim_ohlcv = {}
+    for ticker, df in cache.items():
+        if df is not None and len(df) >= 50:
+            slim_ohlcv[ticker] = (
+                len(df),
+                np.array([str(d)[:10] for d in df["date"].values]),
+                df["close"].values.astype(np.float64),
+                df["high"].values.astype(np.float64),
+                df["low"].values.astype(np.float64),
+            )
 
-    # Load expression cache one ticker at a time — signals are sorted by ticker
-    # from dedup, so we only ever need one ticker's NPZ data in memory.
-    _ticker_cache = {}
-    _prev_ticker = None
+    # Group signals by ticker (they're already sorted by ticker from dedup)
+    from collections import OrderedDict
+    ticker_groups = OrderedDict()
+    for sig in signals:
+        t = sig["ticker"]
+        if t not in ticker_groups:
+            ticker_groups[t] = []
+        ticker_groups[t].append(sig)
 
-    for i, sig in enumerate(signals):
-        ticker = sig["ticker"]
-        bar_idx = sig["bar_idx"]
-        df = cache.get(ticker)
+    # Batch tickers for workers
+    ticker_list = list(ticker_groups.items())  # [(ticker, [signals]), ...]
+    n_workers = max(cpu_count() - 1, 1)
+    batch_size = max(1, len(ticker_list) // (n_workers * 4))
+    batches = [ticker_list[i:i + batch_size]
+               for i in range(0, len(ticker_list), batch_size)]
 
-        if df is None or bar_idx >= len(df) - 1:
-            errors += 1
-            continue
+    # Free full cache — slim OHLCV has what workers need
+    del cache
+    import gc; gc.collect()
 
-        try:
-            # Load expression cache for this ticker, evict previous
-            if ticker not in _ticker_cache:
-                if _prev_ticker and _prev_ticker != ticker and _prev_ticker in _ticker_cache:
-                    del _ticker_cache[_prev_ticker]
-                dates, data = expr_cache.get_ticker(ticker)
-                _ticker_cache[ticker] = (dates, data)
-            _prev_ticker = ticker
-            cached_dates, cached_data = _ticker_cache[ticker]
+    print(f"  {n_workers} workers, {len(batches)} batches, {len(ticker_groups)} tickers")
+    t0 = time.time()
 
-            if cached_dates is None or len(cached_dates) != len(df):
-                errors += 1
-                continue
+    all_results = []
+    total_no_exit = 0
+    total_errors = 0
 
-            # ADR at signal bar
-            if adr_col_idx is not None:
-                adr_at_signal = float(cached_data[bar_idx, adr_col_idx])
-            else:
-                # Fallback: compute ADR manually from OHLCV
-                h = df["high"].values
-                l = df["low"].values
-                start = max(0, bar_idx - 13)
-                adr_at_signal = float(np.mean(h[start:bar_idx+1] - l[start:bar_idx+1]))
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_init_exit_worker,
+        initargs=(slim_ohlcv, expr_name, exit_thresh, exit_dir,
+                  exit_col_idx, adr_col_idx, direction, max_forward)
+    ) as pool:
+        futures = [pool.submit(_exit_batch, batch) for batch in batches]
+        done = 0
+        for future in as_completed(futures):
+            batch_results, batch_no_exit, batch_errors = future.result()
+            all_results.extend(batch_results)
+            total_no_exit += batch_no_exit
+            total_errors += batch_errors
+            done += 1
+            if done % max(len(batches) // 5, 1) == 0 or done == len(batches):
+                elapsed = time.time() - t0
+                pct = done / len(batches) * 100
+                print(f"    {pct:.0f}% [{elapsed:.0f}s] {len(all_results):,} with exit")
 
-            if adr_at_signal <= 0 or np.isnan(adr_at_signal):
-                errors += 1
-                continue
-
-            signal_close = float(df["close"].values[bar_idx])
-            n_available = len(df) - bar_idx - 1
-            actual_forward = min(max_forward, n_available)
-
-            if actual_forward < 5:
-                errors += 1
-                continue
-
-            # Get exit expression series from cache
-            exit_series = cached_data[:, exit_col_idx]
-
-            # Find first bar after signal where exit fires
-            exit_bar = None
-            exit_close = None
-            for fwd in range(1, actual_forward + 1):
-                check_idx = bar_idx + fwd
-                val = exit_series[check_idx]
-                if np.isnan(val):
-                    continue
-                if exit_dir == ">=" and val >= exit_thresh:
-                    exit_bar = fwd
-                    exit_close = float(df["close"].values[check_idx])
-                    break
-                elif exit_dir == "<=" and val <= exit_thresh:
-                    exit_bar = fwd
-                    exit_close = float(df["close"].values[check_idx])
-                    break
-
-            if exit_bar is None:
-                no_exit += 1
-                continue
-
-            # Measure distance: signal close -> exit close in ADR
-            if direction == "short":
-                move_pct = (signal_close - exit_close) / signal_close * 100
-                move_adr = (signal_close - exit_close) / adr_at_signal
-            else:
-                move_pct = (exit_close - signal_close) / signal_close * 100
-                move_adr = (exit_close - signal_close) / adr_at_signal
-
-            # Also compute MFE for reference
-            fwd_slice = slice(bar_idx + 1, bar_idx + exit_bar + 1)
-            if direction == "short":
-                mfe_price = float(df["low"].values[fwd_slice].min())
-                mfe_adr = (signal_close - mfe_price) / adr_at_signal
-            else:
-                mfe_price = float(df["high"].values[fwd_slice].max())
-                mfe_adr = (mfe_price - signal_close) / adr_at_signal
-
-            exit_date = str(df["date"].values[bar_idx + exit_bar])[:10]
-
-            results.append({
-                **sig,
-                "signal_close": round(signal_close, 2),
-                "adr_at_signal": round(adr_at_signal, 2),
-                "exit_bar": exit_bar,
-                "exit_date": exit_date,
-                "exit_close": round(exit_close, 2),
-                "move_pct": round(move_pct, 2),
-                "move_adr": round(move_adr, 2),
-                "mfe_adr": round(mfe_adr, 2),
-                "capture_eff": round(move_adr / mfe_adr, 3) if mfe_adr > 0 else 0,
-            })
-
-        except Exception as e:
-            errors += 1
-            continue
-
-        if (i + 1) % 50 == 0:
-            print(f"    {i + 1}/{len(signals)} processed, {len(results)} with exit")
-
-    print(f"\n  OK: Exit applied: {len(results)} triggered, {no_exit} no exit, {errors} errors")
-    return results
+    elapsed = time.time() - t0
+    print(f"\n  OK: Exit applied: {len(all_results)} triggered, "
+          f"{total_no_exit} no exit, {total_errors} errors ({elapsed:.0f}s)")
+    return all_results
 
 
 # ============================================================
