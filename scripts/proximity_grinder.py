@@ -1,6 +1,6 @@
 """
 Proximity Grinder — Trim losers by finding conditions that separate
-win pile from lose pile, then re-scan with full combined condition set.
+win pile from lose pile.
 
 Post-convergence step (Step 6). Finds conditions that ALL win pile signals
 pass but that eliminate lose pile signals. Pure EV gain — every loser removed
@@ -9,11 +9,8 @@ raises win rate and profit factor.
 DATA SOURCE:
   Reads from the refinement grinder's local output file:
     local_runner/cache/refinement_{setup}_*.json
-  The refinement grinder outputs:
-    - all_conditions: combined signal + refinement conditions
-    - winner_signals / loser_signals: classified signal lists
-    - sacrificial_signals: leftward dedup duplicates
-    - exit_condition: exit condition used for classification
+  The refinement grinder outputs winner_signals and loser_signals
+  (losers that survived refinement conditions).
 
 COMPUTATION PATH:
   Uses expr cache as single computation path — same as pyramid_grinder.py
@@ -26,14 +23,10 @@ COMPUTATION PATH:
 
   Parallelized matrix extraction via ProcessPoolExecutor (full CPU usage).
 
-OUTPUT:
-  Local JSON with:
-    - all_conditions: combined signal + refinement + proximity
-    - proximity_conditions_only: just the new proximity conditions
-    - winner_signals / loser_signals: freshly classified from re-scan
-    - sacrificial_signals: leftward dedup duplicates from re-scan
-    - exit_condition, metrics
-  Uploaded to Railway via file_mirror + grind_uploader.
+RAILWAY UPLOAD:
+  Appends proximity conditions to the current cycle's cycle_conditions.
+  Does NOT re-upload signals — the existing classified signal set is unchanged.
+  Downstream steps (regime model, health check) work from the same signal set.
 
 Usage:
     python scripts/proximity_grinder.py --setup dtss
@@ -42,15 +35,12 @@ Usage:
 """
 
 import argparse
-import glob
 import os
 import sys
 import time
 import json
-import pickle
 import numpy as np
-import pandas as pd
-from collections import Counter
+import requests
 from datetime import datetime, timezone
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
@@ -68,27 +58,26 @@ sys.path.insert(0, LOCAL_DIR)
 from brute_expressions import generate_all
 from expr_cache_builder import ExprSeriesCache
 
-MAX_FORWARD = 120
-
-SETUP_CONFIGS = {
-    "dtss": {"direction": "short"},
-}
+API_BASE = "https://web-production-e3025.up.railway.app"
 
 
 # ══════════════════════════════════════════════════════════════
 # DATA LOADING — reads from refinement grinder local output
 # ══════════════════════════════════════════════════════════════
 
-def load_refinement_output(setup_type):
-    """Load the refinement grinder's output file.
+def load_piles_from_refinement(setup_type):
+    """Load winner/loser piles from the refinement grinder's output file.
 
     Reads the latest refinement_*.json from local_runner/cache/.
+    The refinement grinder outputs winner_signals and loser_signals
+    (losers that survived refinement conditions).
 
-    Returns the full data dict containing:
-      all_conditions, winner_signals, loser_signals,
-      sacrificial_signals, exit_condition, etc.
+    Returns (win_pile, lose_pile).
     """
-    pattern = os.path.join(CACHE_DIR, f"refinement_{setup_type}_*.json")
+    import glob
+
+    cache_dir = os.path.join(LOCAL_DIR, "cache")
+    pattern = os.path.join(cache_dir, f"refinement_{setup_type}_*.json")
     files = sorted(glob.glob(pattern))
 
     if not files:
@@ -97,6 +86,7 @@ def load_refinement_output(setup_type):
             f"Run step 4 first: python local_runner/pyramid_grinder.py --setup {setup_type} --blackout"
         )
 
+    # Latest by filename (timestamp-sorted)
     latest = files[-1]
     print(f"  Loading: {os.path.basename(latest)}")
 
@@ -105,56 +95,37 @@ def load_refinement_output(setup_type):
 
     win_pile = data.get("winner_signals", [])
     lose_pile = data.get("loser_signals", [])
-    conditions = data.get("all_conditions", [])
-    exit_cond = data.get("exit_condition", {})
 
     if not win_pile:
         raise RuntimeError(
             f"No winner_signals in {latest}.\n"
-            f"Re-run the refinement grinder to get updated output."
-        )
-    if not conditions:
-        raise RuntimeError(
-            f"No all_conditions in {latest}.\n"
-            f"Re-run the refinement grinder to get updated output."
-        )
-    if not exit_cond:
-        raise RuntimeError(
-            f"No exit_condition in {latest}.\n"
-            f"Re-run the refinement grinder to get updated output."
+            f"Re-run the refinement grinder to get updated output with signal lists."
         )
 
-    print(f"  Pre-proximity conditions: {len(conditions)}")
     print(f"  Win pile:  {len(win_pile):,} (winners — untouchable)")
     print(f"  Lose pile: {len(lose_pile):,} (surviving losers — target to trim)")
-    print(f"  Exit: {exit_cond.get('expression')} {exit_cond.get('direction')} {exit_cond.get('threshold')}")
 
-    return data
+    pre_conditions = data.get("all_conditions", [])
+    exit_cond = data.get("exit_condition")
+    print(f"  Pre-proximity conditions: {len(pre_conditions)}")
+    if exit_cond:
+        print(f"  Exit: {exit_cond.get('expression')} {exit_cond.get('direction')} {exit_cond.get('threshold')}")
 
-
-def load_5yr_cache():
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
-    if not os.path.exists(path):
-        path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
-    if not os.path.exists(path):
-        raise FileNotFoundError("No OHLCV cache found. Run cache_builder.py first.")
-    print(f"  Loading 5yr cache...")
-    with open(path, "rb") as f:
-        cache = pickle.load(f)
-    print(f"  Loaded {len(cache):,} tickers")
-    return cache
+    return win_pile, lose_pile, pre_conditions, exit_cond
 
 
 # ══════════════════════════════════════════════════════════════
 # PARALLEL MATRIX EXTRACTION — matches pyramid_grinder pattern
 # ══════════════════════════════════════════════════════════════
 
+# Worker globals (set by initializer, shared across calls within a worker)
 _w_signals = None
 _w_expr_to_cache_col = None
 _w_n_expr = None
 
 
 def _init_extract_worker(signals, expr_to_cache_col, n_expr):
+    """Initializer: serialize shared data once per worker process."""
     global _w_signals, _w_expr_to_cache_col, _w_n_expr
     _w_signals = signals
     _w_expr_to_cache_col = expr_to_cache_col
@@ -162,7 +133,11 @@ def _init_extract_worker(signals, expr_to_cache_col, n_expr):
 
 
 def _extract_batch(sig_indices):
-    """Worker: extract expression values for a batch of signal indices."""
+    """Worker: extract expression values for a batch of signal indices.
+
+    Reads from expr cache .npz files directly (same path as pyramid_grinder).
+    Returns list of (sig_index, values_array) tuples.
+    """
     from expr_cache_builder import load_ticker_cache
 
     results = []
@@ -196,7 +171,7 @@ def _extract_batch(sig_indices):
 def extract_signal_values_parallel(signals, expressions, expr_cache):
     """Pull expression values from expr cache for each signal bar.
 
-    Parallelized across CPU cores.
+    Parallelized across CPU cores — matches pyramid_grinder's worker pattern.
     Returns np.array (n_signals, n_expressions) float32.
     """
     n_sig = len(signals)
@@ -206,11 +181,13 @@ def extract_signal_values_parallel(signals, expressions, expr_cache):
     if n_sig == 0:
         return matrix
 
+    # Build expression -> cache column mapping
     cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
     expr_to_cache_col = []
     for e in expressions:
         expr_to_cache_col.append(cache_name_to_idx.get(e["name"]))
 
+    # Batch signals across workers
     n_workers = max(cpu_count() - 1, 1)
     batch_size = max(n_sig // (n_workers * 4), 10)
     all_indices = list(range(n_sig))
@@ -252,8 +229,11 @@ def extract_signal_values_parallel(signals, expressions, expr_cache):
 def compute_win_ranges(win_matrix, expressions):
     """Compute [min, max] range with 5% margin for each expression across win pile.
 
-    Require ALL win pile signals to have valid (non-NaN) values.
-    5% margin on each side, same as pyramid_grinder.
+    CRITICAL: Matches pyramid_grinder exactly —
+      - Require ALL win pile signals to have valid (non-NaN) values.
+      - If any win signal has NaN for an expression, that expression cannot be
+        used as a condition (it would fail validation for that signal).
+      - 5% margin on each side, same as pyramid_grinder.
     """
     n_win = win_matrix.shape[0]
     ranges = {}
@@ -280,7 +260,13 @@ def run_beam_search(trim_matrix, win_ranges, expressions,
                     beam_width=10000, depth=100):
     """Beam search to minimize remaining trimmable signals.
 
-    NaN handling: NaN = FAIL (does not pass). Matches pyramid_grinder.
+    trim_matrix: (n_lose, n_expr) — lose pile values
+    win_ranges: {expr_name: (low, high)} — conditions must stay within these
+
+    NaN handling: NaN = FAIL (does not pass). Matches pyramid_grinder behavior.
+    A trim signal with NaN for a condition will be filtered OUT (trimmed),
+    which is correct — if a signal can't be evaluated, it doesn't survive.
+
     Score = number of remaining rows (minimize).
     """
     n_rows, n_expr = trim_matrix.shape
@@ -291,7 +277,8 @@ def run_beam_search(trim_matrix, win_ranges, expressions,
     print(f"    Candidate expressions: {len(win_ranges):,}")
     print(f"    Beam: {beam_width:,}, Depth: {depth}")
 
-    # Precompute: for each candidate, which trim rows pass?
+    # Precompute: for each candidate, which trim rows pass (within win range)?
+    # NaN = FAIL — matches pyramid_grinder line 312
     cand_indices = []
     cand_passes = []
 
@@ -300,9 +287,11 @@ def run_beam_search(trim_matrix, win_ranges, expressions,
             continue
         lo, hi = win_ranges[name]
         vals = trim_matrix[:, j]
+        # NaN = FAIL (does not pass the condition)
         passes = (vals >= lo) & (vals <= hi)
         passes[np.isnan(vals)] = False
         n_pass = int(np.sum(passes))
+        # Useful if it filters out at least 1% of rows
         if n_pass < n_rows * 0.99:
             cand_indices.append(j)
             cand_passes.append(passes)
@@ -314,7 +303,7 @@ def run_beam_search(trim_matrix, win_ranges, expressions,
         print("    No useful candidates. Cannot trim further.")
         return [], n_rows
 
-    cand_passes_arr = np.array(cand_passes, dtype=bool)
+    cand_passes_arr = np.array(cand_passes, dtype=bool)  # (n_cands, n_rows)
 
     # Score each candidate individually
     base_mask = np.ones(n_rows, dtype=bool)
@@ -397,6 +386,7 @@ def run_beam_search(trim_matrix, win_ranges, expressions,
         if best.remaining == 0:
             break
 
+        # Ceiling: if no improvement in 2 consecutive levels, stop
         if stall_count >= 2:
             print(f"    Ceiling at level {lv} (no improvement in 2 levels)")
             break
@@ -432,7 +422,10 @@ def _extract_conditions(node, cand_indices, expressions, win_ranges):
 def validate_win_pile(win_matrix, proximity_conditions, expressions):
     """Verify every win pile signal passes all proximity conditions.
 
-    NaN = FAIL. This MUST pass 100%. If it fails, the grinder has a bug.
+    NaN = FAIL — matches pyramid_grinder's locked condition application
+    (line 312: in_range[np.isnan(series)] = False).
+
+    This MUST pass 100%. If it fails, the grinder has a bug.
     """
     expr_name_to_idx = {e["name"]: i for i, e in enumerate(expressions)}
     n_win = win_matrix.shape[0]
@@ -444,6 +437,7 @@ def validate_win_pile(win_matrix, proximity_conditions, expressions):
             failures.append(f"  {cond['name']}: not in expression list")
             continue
         vals = win_matrix[:, j]
+        # NaN = FAIL
         in_range = (vals >= cond["low"]) & (vals <= cond["high"])
         in_range[np.isnan(vals)] = False
         n_fail = int(np.sum(~in_range))
@@ -462,306 +456,160 @@ def validate_win_pile(win_matrix, proximity_conditions, expressions):
 
 
 # ══════════════════════════════════════════════════════════════
-# RE-SCAN — full universe with combined conditions (parallel)
+# METRICS
 # ══════════════════════════════════════════════════════════════
 
-_rscan_cache = None
-_rscan_conditions = None
-_rscan_expr_cache_dir = None
-_rscan_cond_col_indices = None
+def compute_metrics(win_pile, lose_pile, trim_matrix,
+                    proximity_conditions, expressions):
+    """Compute trim metrics with NaN = FAIL."""
+    expr_name_to_idx = {e["name"]: i for i, e in enumerate(expressions)}
+    n_lose = len(lose_pile)
+
+    # How many losers trimmed?
+    lose_mask = np.ones(n_lose, dtype=bool)
+    for cond in proximity_conditions:
+        j = expr_name_to_idx[cond["name"]]
+        vals = trim_matrix[:, j]
+        in_range = (vals >= cond["low"]) & (vals <= cond["high"])
+        in_range[np.isnan(vals)] = False
+        lose_mask &= in_range
+    losers_remaining = int(np.sum(lose_mask))
+    losers_trimmed = n_lose - losers_remaining
+
+    # Win rate before/after
+    n_winners = len(win_pile)
+    old_total = n_winners + n_lose
+    new_total = n_winners + losers_remaining
+    old_wr = n_winners / max(old_total, 1) * 100
+    new_wr = n_winners / max(new_total, 1) * 100
+
+    return {
+        "win_pile": n_winners,
+        "lose_pile_before": n_lose,
+        "losers_trimmed": losers_trimmed,
+        "losers_remaining": losers_remaining,
+        "old_total": old_total,
+        "new_total": new_total,
+        "old_win_rate_pct": round(old_wr, 1),
+        "new_win_rate_pct": round(new_wr, 1),
+        "n_proximity_conditions": len(proximity_conditions),
+    }
 
 
-def _init_rscan_worker(cache, conditions, expr_cache_dir, cond_col_indices):
-    global _rscan_cache, _rscan_conditions, _rscan_expr_cache_dir, _rscan_cond_col_indices
-    _rscan_cache = cache
-    _rscan_conditions = conditions
-    _rscan_expr_cache_dir = expr_cache_dir
-    _rscan_cond_col_indices = cond_col_indices
+# ══════════════════════════════════════════════════════════════
+# SAVE + RAILWAY UPLOAD
+# ══════════════════════════════════════════════════════════════
+
+def save_results(setup_type, proximity_conditions, metrics):
+    """Save proximity grind results locally."""
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    n_conds = len(proximity_conditions)
+
+    output = {
+        "setup_type": setup_type,
+        "timestamp": ts,
+        "step": "proximity_grind",
+        "n_proximity_conditions": n_conds,
+        "proximity_conditions": proximity_conditions,
+        "metrics": metrics,
+    }
+
+    out_dir = os.path.join(REPO_ROOT, "data", "proximity_grind")
+    os.makedirs(out_dir, exist_ok=True)
+
+    fname = f"proximity_{setup_type}_{n_conds}cond_{ts}.json"
+    path = os.path.join(out_dir, fname)
+    with open(path, "w") as f:
+        json.dump(output, f, indent=2)
+    print(f"\n  Saved: {path}")
+
+    latest = os.path.join(out_dir, f"proximity_{setup_type}.json")
+    with open(latest, "w") as f:
+        json.dump(output, f, indent=2)
+    print(f"  Latest: {latest}")
+
+    from file_mirror import mirror_file
+    mirror_file(path)
+    mirror_file(latest)
+
+    return output, path
 
 
-def _rscan_load_npz(ticker):
-    safe = ticker.replace("/", "_").replace("\\", "_")
-    path = os.path.join(_rscan_expr_cache_dir, f"{safe}.npz")
-    if not os.path.exists(path):
-        return None, None
+def upload_to_railway(setup_type, proximity_conditions, metrics):
+    """Upload proximity conditions to the current cycle's cycle_conditions.
+
+    Replaces any existing proximity conditions (idempotent on re-run).
+    Keeps all non-proximity conditions intact.
+    """
+    print(f"\n  Railway Upload:")
+
+    # Find current cycle
     try:
-        loaded = np.load(path, allow_pickle=True)
-        return loaded["dates"], loaded["data"]
-    except Exception:
-        return None, None
+        r = requests.get(f"{API_BASE}/api/v2/cycles/{setup_type}", timeout=30)
+        r.raise_for_status()
+        cycles = r.json().get("cycles", [])
+        current = [c for c in cycles if c.get("is_current") == 1]
+        if not current:
+            print(f"  No current cycle for {setup_type} — skipping upload")
+            return
+        cycle_id = current[0]["cycle_id"]
+    except Exception as e:
+        print(f"  Failed to find current cycle: {e}")
+        return
 
+    print(f"  Cycle: {cycle_id}")
 
-def _rscan_batch(tickers):
-    signals = []
-    for ticker in tickers:
-        df = _rscan_cache.get(ticker)
-        if df is None or len(df) < 100:
-            continue
-        try:
-            dates_cache, data_cache = _rscan_load_npz(ticker)
-            if dates_cache is None or len(dates_cache) != len(df):
-                continue
-            n_bars = len(df)
-            mask = np.ones(n_bars, dtype=bool)
-            mask[:50] = False
-            for i, cond in enumerate(_rscan_conditions):
-                col_idx = _rscan_cond_col_indices[i]
-                if col_idx is None:
-                    mask[:] = False
-                    break
-                series = data_cache[:, col_idx]
-                in_range = (series >= cond["low"]) & (series <= cond["high"])
-                in_range[np.isnan(series)] = False
-                mask &= in_range
-            for idx in np.where(mask)[0]:
-                signals.append({
-                    "ticker": ticker,
-                    "date": str(df["date"].values[idx])[:10],
-                    "bar_idx": int(idx),
-                    "close": float(df["close"].values[idx]),
-                })
-        except Exception:
-            pass
-    return signals
+    # Read existing conditions
+    try:
+        r = requests.get(f"{API_BASE}/api/v2/cycles/{cycle_id}/conditions", timeout=30)
+        r.raise_for_status()
+        existing = r.json().get("conditions", [])
+    except Exception as e:
+        print(f"  Warning: could not read existing conditions: {e}")
+        existing = []
 
+    # Strip old proximity conditions, keep everything else
+    kept = [c for c in existing if c.get("tier") != "proximity"]
+    max_sort = max((c.get("sort_order", 0) for c in kept), default=0)
 
-def rescan_universe(cache, conditions, expr_cache, workers):
-    """Scan full universe with combined conditions. Returns raw signal list."""
-    tickers = list(cache.keys())
-    batch_size = max(1, len(tickers) // (workers * 4))
-    batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
-
-    cond_col_indices = [expr_cache.expr_index(c["name"]) for c in conditions]
-    expr_cache_dir = os.path.join(CACHE_DIR, "expr_series")
-
-    print(f"\n  Re-scanning {len(tickers):,} tickers x {len(conditions)} conditions "
-          f"({workers} workers)...")
-    t0 = time.time()
-    all_signals = []
-
-    with ProcessPoolExecutor(
-        max_workers=workers,
-        initializer=_init_rscan_worker,
-        initargs=(cache, conditions, expr_cache_dir, cond_col_indices)
-    ) as pool:
-        futures = [pool.submit(_rscan_batch, b) for b in batches]
-        done = 0
-        for f in as_completed(futures):
-            all_signals.extend(f.result())
-            done += 1
-            if done % max(len(batches) // 5, 1) == 0 or done == len(batches):
-                pct = done / len(batches) * 100
-                print(f"    {pct:.0f}%  {len(all_signals):,} signals  [{time.time()-t0:.0f}s]")
-
-    print(f"  Raw signals: {len(all_signals):,}  ({time.time()-t0:.0f}s)")
-    return all_signals
-
-
-# ══════════════════════════════════════════════════════════════
-# DEDUP + EXIT + CLASSIFY
-# ══════════════════════════════════════════════════════════════
-
-def dedup_with_sacrificial(signals):
-    """Consecutive signal bars per ticker → keep rightmost.
-
-    Returns (deduped, sacrificial).
-    """
-    signals.sort(key=lambda s: (s["ticker"], s["bar_idx"]))
-    deduped = []
-    sacrificial = []
-    i = 0
-    while i < len(signals):
-        j = i + 1
-        ticker = signals[i]["ticker"]
-        while j < len(signals):
-            if signals[j]["ticker"] != ticker:
-                break
-            if signals[j]["bar_idx"] != signals[j-1]["bar_idx"] + 1:
-                break
-            j += 1
-        rightmost = signals[j-1]
-        rightmost["cluster_size"] = j - i
-        rightmost["cluster_start_date"] = signals[i]["date"]
-        deduped.append(rightmost)
-        for k in range(i, j - 1):
-            sacrificial.append(signals[k])
-        i = j
-    print(f"  Deduped: {len(signals):,} → {len(deduped):,} + "
-          f"{len(sacrificial):,} sacrificial")
-    return deduped, sacrificial
-
-
-def apply_exit(signals, cache, exit_cond, direction, expr_cache):
-    """Apply exit condition to signals. Returns (with_exit, no_exit)."""
-    expr_name = exit_cond["expression"]
-    exit_thresh = exit_cond["threshold"]
-    exit_dir = exit_cond["direction"]
-
-    exit_col_idx = expr_cache.expr_index(expr_name)
-    if exit_col_idx is None:
-        raise RuntimeError(f"Exit expression '{expr_name}' not in expression cache")
-    adr_col_idx = expr_cache.expr_index("adr14")
-
-    print(f"\n  Applying exit: {expr_name} {exit_dir} {exit_thresh}  "
-          f"(direction={direction}, max_forward={MAX_FORWARD})")
-
-    with_exit = []
-    no_exit = []
-    _ticker_cache = {}
-
-    for sig in signals:
-        ticker = sig["ticker"]
-        bar_idx = sig["bar_idx"]
-        df = cache.get(ticker)
-        if df is None or bar_idx >= len(df) - 1:
-            no_exit.append({**sig, "exit_triggered": False})
-            continue
-        try:
-            if ticker not in _ticker_cache:
-                _ticker_cache[ticker] = expr_cache.get_ticker(ticker)
-            cached_dates, cached_data = _ticker_cache[ticker]
-            if cached_dates is None or len(cached_dates) != len(df):
-                no_exit.append({**sig, "exit_triggered": False})
-                continue
-
-            adr = (float(cached_data[bar_idx, adr_col_idx])
-                   if adr_col_idx is not None else None)
-            if adr is None or adr <= 0 or np.isnan(adr):
-                h = df["high"].values
-                l = df["low"].values
-                s = max(0, bar_idx - 13)
-                adr = float(np.mean(h[s:bar_idx+1] - l[s:bar_idx+1]))
-            if adr <= 0:
-                no_exit.append({**sig, "exit_triggered": False})
-                continue
-
-            signal_close = float(df["close"].values[bar_idx])
-            actual_forward = min(MAX_FORWARD, len(df) - bar_idx - 1)
-            if actual_forward < 5:
-                no_exit.append({**sig, "exit_triggered": False})
-                continue
-
-            exit_series = cached_data[:, exit_col_idx]
-            exit_bar = None
-            exit_close = None
-            for fwd in range(1, actual_forward + 1):
-                idx = bar_idx + fwd
-                val = exit_series[idx]
-                if np.isnan(val):
-                    continue
-                is_below = exit_dir in ("<=", "below")
-                is_above = exit_dir in (">=", "above")
-                if is_above and val >= exit_thresh:
-                    exit_bar = fwd
-                    exit_close = float(df["close"].values[idx])
-                    break
-                elif is_below and val <= exit_thresh:
-                    exit_bar = fwd
-                    exit_close = float(df["close"].values[idx])
-                    break
-
-            if exit_bar is None:
-                no_exit.append({**sig, "exit_triggered": False,
-                                "signal_close": round(signal_close, 2),
-                                "adr_at_signal": round(adr, 2)})
-                continue
-
-            if direction == "short":
-                move_adr = (signal_close - exit_close) / adr
-                mfe_price = float(df["low"].values[bar_idx+1:bar_idx+exit_bar+1].min())
-                mfe_adr = (signal_close - mfe_price) / adr
-            else:
-                move_adr = (exit_close - signal_close) / adr
-                mfe_price = float(df["high"].values[bar_idx+1:bar_idx+exit_bar+1].max())
-                mfe_adr = (mfe_price - signal_close) / adr
-
-            with_exit.append({
-                **sig,
-                "exit_triggered": True,
-                "signal_close": round(signal_close, 2),
-                "adr_at_signal": round(adr, 2),
-                "exit_bar": exit_bar,
-                "exit_date": str(df["date"].values[bar_idx + exit_bar])[:10],
-                "exit_close": round(exit_close, 2),
-                "move_adr": round(move_adr, 2),
-                "mfe_adr": round(mfe_adr, 2),
-                "capture_eff": round(move_adr / mfe_adr, 3) if mfe_adr > 0 else 0,
-            })
-        except Exception:
-            no_exit.append({**sig, "exit_triggered": False})
-
-    print(f"  Exit applied: {len(with_exit)} triggered, {len(no_exit)} no exit")
-    return with_exit, no_exit
-
-
-def classify_signals(deduped, with_exit, example_bar_lookup):
-    """Classify all deduped signals into AUTO_WIN / AUTO_LOSS.
-
-    example_bar_lookup: {ticker: set(bar_idx)} — example markers from
-    the refinement grinder's input (step 3 classified signals).
-    """
-    exit_lookup = {}
-    for sig in with_exit:
-        exit_lookup[(sig["ticker"], sig["bar_idx"])] = sig
-
-    exit_adrs = [s["move_adr"] for s in with_exit if s.get("move_adr") is not None]
-    median_adr = sorted(exit_adrs)[len(exit_adrs) // 2] if exit_adrs else 5.0
-
-    classified = []
-    for sig in deduped:
-        ticker = sig["ticker"]
-        bar_idx = sig["bar_idx"]
-
-        is_example = 0
-        if ticker in example_bar_lookup and bar_idx in example_bar_lookup[ticker]:
-            is_example = 1
-
-        exit_data = exit_lookup.get((ticker, bar_idx))
-
-        if is_example:
-            classification = "AUTO_WIN"
-            classification_source = "example"
-        elif exit_data and exit_data.get("move_adr", 0) >= median_adr:
-            classification = "AUTO_WIN"
-            classification_source = "exit_filter"
-        elif exit_data:
-            classification = "AUTO_LOSS"
-            classification_source = "exit_filter"
-        else:
-            classification = "AUTO_LOSS"
-            classification_source = "exit_filter"
-
-        row = {
-            "ticker": ticker,
-            "signal_date": sig["date"],
-            "bar_idx": bar_idx,
-            "close": sig.get("close"),
-            "adr": exit_data.get("adr_at_signal") if exit_data else None,
-            "is_example": is_example,
-            "classification": classification,
-            "classification_source": classification_source,
-            "exit_triggered": 1 if exit_data else 0,
-            "exit_date": exit_data.get("exit_date") if exit_data else None,
-            "move_adr": exit_data.get("move_adr") if exit_data else None,
-            "mfe_adr": exit_data.get("mfe_adr") if exit_data else None,
-            "capture_eff": exit_data.get("capture_eff") if exit_data else None,
+    # Append new proximity conditions
+    new_conds = [
+        {
+            "tier": "proximity",
+            "expression_name": c.get("expression_name", c.get("name", "")),
+            "low": c["low"],
+            "high": c["high"],
+            "filter_power": c.get("filter_power"),
+            "sort_order": max_sort + 1 + i,
         }
-        classified.append(row)
+        for i, c in enumerate(proximity_conditions)
+    ]
 
-    n_win = sum(1 for s in classified if s["classification"] == "AUTO_WIN")
-    n_loss = sum(1 for s in classified if s["classification"] == "AUTO_LOSS")
-    n_ex = sum(1 for s in classified if s["is_example"])
-    n_exit = sum(1 for s in classified if s["exit_triggered"])
+    all_conds = kept + new_conds
 
-    print(f"\n  Classification:")
-    print(f"    Total: {len(classified)}")
-    print(f"    AUTO_WIN: {n_win} (examples: {n_ex}, exit_filter: {n_win - n_ex})")
-    print(f"    AUTO_LOSS: {n_loss}")
-    print(f"    Exit triggered: {n_exit}/{len(classified)}")
-    print(f"    Win rate: {n_win/len(classified)*100:.1f}%")
-    print(f"    Median ADR threshold: {median_adr:.1f}")
+    try:
+        payload = {"conditions": all_conds}
+        r = requests.post(
+            f"{API_BASE}/api/v2/cycles/{cycle_id}/conditions",
+            json=payload, timeout=30
+        )
+        r.raise_for_status()
+        print(f"  Uploaded {len(kept)} existing + {len(new_conds)} proximity "
+              f"= {len(all_conds)} total conditions")
+    except Exception as e:
+        print(f"  FAILED: {e}")
+        print(f"  Conditions saved locally. Upload manually.")
+        return
 
-    return classified, median_adr
+    # Verify
+    try:
+        r = requests.get(f"{API_BASE}/api/v2/cycles/{cycle_id}/conditions", timeout=30)
+        r.raise_for_status()
+        stored = r.json().get("conditions", [])
+        n_prox = sum(1 for c in stored if c.get("tier") == "proximity")
+        print(f"  Verified: {len(stored)} total conditions ({n_prox} proximity)")
+    except Exception as e:
+        print(f"  Verification failed: {e}")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -769,42 +617,15 @@ def classify_signals(deduped, with_exit, example_bar_lookup):
 # ══════════════════════════════════════════════════════════════
 
 def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
-    """Proximity grind: find conditions that trim losers without touching winners,
-    then re-scan full universe with all conditions combined.
-
-    Full output for downstream (profit grind, regime model):
-      - all_conditions: combined signal + refinement + proximity
-      - proximity_conditions_only: just the new proximity conditions
-      - winner_signals / loser_signals: re-classified from fresh scan
-      - sacrificial_signals: leftward dedup duplicates from fresh scan
-    """
     print(f"\n{'=' * 70}")
     print(f"  PROXIMITY GRINDER — {setup_type.upper()}")
     print(f"{'=' * 70}\n")
 
-    direction = SETUP_CONFIGS.get(setup_type, {}).get("direction", "short")
-    workers = max(cpu_count() - 1, 1)
     t0 = time.time()
 
-    # ── 1. Load refinement grinder output (all local) ──
-    print("Phase 1: Loading refinement grinder output...")
-    ref_data = load_refinement_output(setup_type)
-
-    win_pile = ref_data["winner_signals"]
-    lose_pile = ref_data["loser_signals"]
-    pre_conditions = ref_data["all_conditions"]
-    exit_cond = ref_data["exit_condition"]
-
-    # Extract example bar lookup from winner signals
-    example_bar_lookup = {}
-    for sig in win_pile:
-        if sig.get("is_example"):
-            ticker = sig["ticker"]
-            bar_idx = sig.get("bar_idx")
-            if bar_idx is not None:
-                if ticker not in example_bar_lookup:
-                    example_bar_lookup[ticker] = set()
-                example_bar_lookup[ticker].add(bar_idx)
+    # ── 1. Load piles from refinement grinder output ──
+    print("Phase 1: Loading data from refinement grinder output...")
+    win_pile, lose_pile, pre_conditions, exit_cond = load_piles_from_refinement(setup_type)
 
     if dry_run:
         print(f"\n  DRY RUN — stopping here. ({time.time() - t0:.0f}s)")
@@ -817,7 +638,7 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
         print("\n  Nothing to trim — lose pile is empty.")
         return
 
-    # ── 2. Load expr cache + expressions ──
+    # ── 3. Load expr cache + expressions ──
     print("\nPhase 2: Loading expression cache...")
     expr_cache = ExprSeriesCache()
     if not expr_cache.is_valid():
@@ -828,14 +649,14 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
     print(f"  Expressions: {len(expressions):,}")
     print(f"  Expr cache: {expr_cache.n_expressions:,} expressions")
 
-    # ── 3. Extract values (parallelized) ──
+    # ── 4. Extract values (parallelized) ──
     print("\nPhase 3a: Extracting win pile expression values...")
     win_matrix = extract_signal_values_parallel(win_pile, expressions, expr_cache)
 
     print("\nPhase 3b: Extracting lose pile expression values...")
     trim_matrix = extract_signal_values_parallel(lose_pile, expressions, expr_cache)
 
-    # ── 4. Compute win ranges ──
+    # ── 5. Compute win ranges (pyramid_grinder-compatible) ──
     print("\nPhase 4: Computing win pile ranges...")
     win_ranges = compute_win_ranges(win_matrix, expressions)
 
@@ -843,7 +664,7 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
         print("  ERROR: No expressions with full win pile coverage.")
         return
 
-    # ── 5. Beam search ──
+    # ── 6. Beam search ──
     print("\nPhase 5: Beam search...")
     proximity_conditions, remaining = run_beam_search(
         trim_matrix, win_ranges, expressions,
@@ -854,159 +675,256 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
         print("\n  No conditions found. Cannot trim further.")
         return
 
-    # ── 6. Validate (NaN = FAIL, hard abort on failure) ──
+    # ── 7. Validate (NaN = FAIL, hard abort on failure) ──
     print("\nPhase 6: Validating win pile (NaN = FAIL)...")
     if not validate_win_pile(win_matrix, proximity_conditions, expressions):
         print("\n  CRITICAL: Validation failed. Aborting — grinder has a bug.")
         return
 
-    # ── 7. Combine conditions ──
-    print(f"\nPhase 7: Combining conditions...")
+    # ── 8. Compute metrics ──
+    metrics = compute_metrics(
+        win_pile, lose_pile, trim_matrix,
+        proximity_conditions, expressions
+    )
 
-    pre_names = {c["name"] for c in pre_conditions}
-    prox_names = {c["name"] for c in proximity_conditions}
-    overlap = pre_names & prox_names
-
-    combined_conditions = list(pre_conditions)
-    for pc in proximity_conditions:
-        if pc["name"] in overlap:
-            combined_conditions = [c for c in combined_conditions if c["name"] != pc["name"]]
-        combined_conditions.append(pc)
-
-    n_pre = len(pre_conditions)
-    n_prox = len(proximity_conditions)
-    n_overlap = len(overlap)
-    print(f"  Pre-proximity conditions:  {n_pre}")
-    print(f"  Proximity conditions:      {n_prox}")
-    print(f"  Overlap (replaced):        {n_overlap}")
-    print(f"  Combined total:            {len(combined_conditions)}")
-
-    # ── 8. Re-scan full universe with combined conditions ──
-    print(f"\nPhase 8: Re-scanning universe with {len(combined_conditions)} combined conditions...")
-    universe_cache = load_5yr_cache()
-    raw_signals = rescan_universe(universe_cache, combined_conditions, expr_cache, workers)
-
-    # ── 9. Re-dedup + classify ──
-    print(f"\nPhase 9: Dedup + classify...")
-    deduped, sacrificial = dedup_with_sacrificial(raw_signals)
-    with_exit, no_exit = apply_exit(deduped, universe_cache, exit_cond, direction, expr_cache)
-    classified, median_adr = classify_signals(deduped, with_exit, example_bar_lookup)
-
-    winner_signals = [s for s in classified if s["classification"] == "AUTO_WIN"]
-    loser_signals = [s for s in classified if s["classification"] == "AUTO_LOSS"]
-
-    # ── 10. Metrics ──
-    old_win = len(win_pile)
-    old_lose = len(lose_pile)
-    old_total = old_win + old_lose
-    new_total = len(winner_signals) + len(loser_signals)
-    old_wr = old_win / max(old_total, 1) * 100
-    new_wr = len(winner_signals) / max(new_total, 1) * 100
-
-    n_deduped = len(deduped)
-    final_peak = 0
-    if deduped:
-        date_counts = Counter(s["date"] for s in deduped)
-        final_peak = max(date_counts.values()) if date_counts else 0
-
-    metrics = {
-        "win_pile_before": old_win,
-        "lose_pile_before": old_lose,
-        "winner_signals": len(winner_signals),
-        "loser_signals": len(loser_signals),
-        "old_total": old_total,
-        "new_total": new_total,
-        "old_win_rate_pct": round(old_wr, 1),
-        "new_win_rate_pct": round(new_wr, 1),
-        "n_proximity_conditions": n_prox,
-        "n_raw": len(raw_signals),
-        "n_deduped": n_deduped,
-        "n_sacrificial": len(sacrificial),
-        "final_peak": final_peak,
-        "median_adr_threshold": median_adr,
-    }
-
-    total_time = time.time() - t0
-
-    # ── 11. Print results ──
+    # ── 9. Print beam search results ──
     print(f"\n{'=' * 70}")
     print(f"  PROXIMITY GRIND RESULTS — {setup_type.upper()}")
     print(f"{'=' * 70}")
-    print(f"  Proximity conditions: {n_prox}")
+    print(f"  Proximity conditions: {len(proximity_conditions)}")
     for c in proximity_conditions:
         print(f"    {c['name']:40s}  [{c['low']:.4f}, {c['high']:.4f}]  ({c['category']})")
-    print(f"\n  Conditions: {n_pre} pre + {n_prox} proximity = {len(combined_conditions)} combined")
-    print(f"  Signals: {len(raw_signals):,} raw → {n_deduped:,} deduped → "
-          f"{len(winner_signals):,} winners / {len(loser_signals):,} losers")
-    print(f"  Sacrificial: {len(sacrificial):,}")
-    print(f"  Win rate: {old_wr:.1f}% → {new_wr:.1f}%")
-    print(f"  Time: {total_time:.0f}s")
+    print(f"\n  Win pile (untouched):    {metrics['win_pile']:,}")
+    print(f"  Lose pile:              {metrics['lose_pile_before']:,} -> "
+          f"{metrics['losers_remaining']:,} (-{metrics['losers_trimmed']:,})")
+    print(f"\n  Total signals:          {metrics['old_total']:,} -> "
+          f"{metrics['new_total']:,}")
+    print(f"  Win rate:               {metrics['old_win_rate_pct']:.1f}% -> "
+          f"{metrics['new_win_rate_pct']:.1f}%")
 
-    # ── 12. Save locally ──
-    print(f"\nPhase 10: Save + upload...")
+    # ── 10. Combine conditions + re-scan ──
+    print(f"\n  ── COMBINE + RE-SCAN ──")
 
+    combined_conditions = None
+    rescan_winners = None
+    rescan_losers = None
+    rescan_sacrificial = None
+
+    if pre_conditions and exit_cond:
+        # Combine pre-proximity conditions + proximity conditions
+        pre_names = {c["name"] for c in pre_conditions}
+        prox_names = {c["name"] for c in proximity_conditions}
+        overlap = pre_names & prox_names
+
+        combined_conditions = list(pre_conditions)
+        for pc in proximity_conditions:
+            if pc["name"] in overlap:
+                combined_conditions = [c for c in combined_conditions if c["name"] != pc["name"]]
+            combined_conditions.append(pc)
+
+        print(f"  Combined: {len(pre_conditions)} pre + {len(proximity_conditions)} proximity "
+              f"({len(overlap)} overlap) = {len(combined_conditions)} total")
+
+        # Re-scan using signal_filter's scan function (NPZ-based workers)
+        import pickle
+        _5yr_path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+        if not os.path.exists(_5yr_path):
+            _5yr_path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
+        print(f"  Loading 5yr cache...")
+        with open(_5yr_path, "rb") as _f:
+            _universe = pickle.load(_f)
+        print(f"  Loaded {len(_universe):,} tickers")
+
+        sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+        from signal_filter import scan_all_signals as _scan_all, DEFAULT_WORKERS
+        from multiprocessing import cpu_count as _cpu_count
+
+        _workers = min(DEFAULT_WORKERS, max(_cpu_count() - 1, 1))
+        _raw = _scan_all(_universe, combined_conditions, _workers, expr_cache)
+
+        # Dedup with sacrificial
+        _raw.sort(key=lambda s: (s["ticker"], s["bar_idx"]))
+        _deduped = []
+        rescan_sacrificial = []
+        _i = 0
+        while _i < len(_raw):
+            _j = _i + 1
+            _tk = _raw[_i]["ticker"]
+            while _j < len(_raw):
+                if _raw[_j]["ticker"] != _tk:
+                    break
+                if _raw[_j]["bar_idx"] != _raw[_j-1]["bar_idx"] + 1:
+                    break
+                _j += 1
+            _rm = _raw[_j-1]
+            _rm["cluster_size"] = _j - _i
+            _rm["cluster_start_date"] = _raw[_i]["date"]
+            _deduped.append(_rm)
+            for _k in range(_i, _j - 1):
+                rescan_sacrificial.append(_raw[_k])
+            _i = _j
+
+        print(f"  Re-scan: {len(_raw):,} raw → {len(_deduped):,} deduped + "
+              f"{len(rescan_sacrificial):,} sacrificial")
+
+        # Classify: example bars from win pile
+        _example_bars = {}
+        for _sig in win_pile:
+            if _sig.get("is_example"):
+                _t = _sig["ticker"]
+                _b = _sig.get("bar_idx")
+                if _b is not None:
+                    if _t not in _example_bars:
+                        _example_bars[_t] = set()
+                    _example_bars[_t].add(_b)
+
+        # Apply exit + classify
+        _exit_expr = exit_cond["expression"]
+        _exit_thresh = exit_cond["threshold"]
+        _exit_dir = exit_cond["direction"]
+        _exit_col = expr_cache.expr_index(_exit_expr)
+        _adr_col = expr_cache.expr_index("adr14")
+        _MAX_FWD = 120
+
+        _with_exit = []
+        _tcache = {}
+        for _sig in _deduped:
+            _ticker = _sig["ticker"]
+            _bar_idx = _sig["bar_idx"]
+            _df = _universe.get(_ticker)
+            if _df is None or _bar_idx >= len(_df) - 1:
+                continue
+            try:
+                if _ticker not in _tcache:
+                    _tcache[_ticker] = expr_cache.get_ticker(_ticker)
+                _cd, _cdata = _tcache[_ticker]
+                if _cd is None or len(_cd) != len(_df):
+                    continue
+                _adr = float(_cdata[_bar_idx, _adr_col]) if _adr_col is not None else 0
+                if _adr <= 0 or np.isnan(_adr):
+                    continue
+                _sc = float(_df["close"].values[_bar_idx])
+                _fwd = min(_MAX_FWD, len(_df) - _bar_idx - 1)
+                if _fwd < 5:
+                    continue
+                _es = _cdata[:, _exit_col]
+                _eb = None
+                for _f in range(1, _fwd + 1):
+                    _v = _es[_bar_idx + _f]
+                    if np.isnan(_v):
+                        continue
+                    if _exit_dir in (">=", "above") and _v >= _exit_thresh:
+                        _eb = _f; break
+                    elif _exit_dir in ("<=", "below") and _v <= _exit_thresh:
+                        _eb = _f; break
+                if _eb is None:
+                    continue
+                _ec = float(_df["close"].values[_bar_idx + _eb])
+                _move = (_sc - _ec) / _adr  # short direction
+                _with_exit.append({**_sig, "move_adr": round(_move, 2),
+                                   "exit_triggered": True})
+            except Exception:
+                continue
+
+        _exit_lk = {(_s["ticker"], _s["bar_idx"]): _s for _s in _with_exit}
+        _exit_adrs = [_s["move_adr"] for _s in _with_exit if _s.get("move_adr") is not None]
+        _med_adr = sorted(_exit_adrs)[len(_exit_adrs) // 2] if _exit_adrs else 5.0
+
+        rescan_winners = []
+        rescan_losers = []
+        for _sig in _deduped:
+            _t = _sig["ticker"]
+            _b = _sig["bar_idx"]
+            _is_ex = 1 if (_t in _example_bars and _b in _example_bars[_t]) else 0
+            _ed = _exit_lk.get((_t, _b))
+            if _is_ex:
+                _cls = "AUTO_WIN"
+            elif _ed and _ed.get("move_adr", 0) >= _med_adr:
+                _cls = "AUTO_WIN"
+            else:
+                _cls = "AUTO_LOSS"
+            _row = {
+                "ticker": _t, "signal_date": _sig["date"], "bar_idx": _b,
+                "close": _sig.get("close"), "is_example": _is_ex,
+                "classification": _cls,
+                "exit_triggered": 1 if _ed else 0,
+                "move_adr": _ed.get("move_adr") if _ed else None,
+            }
+            if _cls == "AUTO_WIN":
+                rescan_winners.append(_row)
+            else:
+                rescan_losers.append(_row)
+
+        _nw = len(rescan_winners)
+        _nl = len(rescan_losers)
+        print(f"  Re-classified: {_nw} winners / {_nl} losers "
+              f"({_nw/max(_nw+_nl,1)*100:.1f}% WR)")
+
+        del _universe  # free memory
+    else:
+        print(f"  WARNING: No pre-conditions or exit condition — skipping re-scan.")
+
+    total_time = time.time() - t0
+
+    # ── 11. Save locally ──
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    n_prox = len(proximity_conditions)
 
-    result_data = {
+    output = {
         "setup_type": setup_type,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": ts,
         "total_time_s": round(total_time, 1),
         "step": "proximity_grind",
-        "n_conditions": len(combined_conditions),
-        "n_pre_conditions": n_pre,
+        "n_conditions": len(combined_conditions) if combined_conditions else len(pre_conditions),
+        "n_pre_conditions": len(pre_conditions) if pre_conditions else 0,
         "n_proximity_conditions": n_prox,
-        "all_conditions": combined_conditions,
+        "all_conditions": combined_conditions if combined_conditions else pre_conditions,
         "proximity_conditions_only": proximity_conditions,
         "exit_condition": exit_cond,
-        "params": {
-            "beam_width": beam_width,
-            "depth": depth,
-            "source": "proximity_grinder",
-        },
+        "params": {"beam_width": beam_width, "depth": depth},
         "summary": metrics,
-        "winner_signals": winner_signals,
-        "loser_signals": loser_signals,
-        "sacrificial_signals": sacrificial,
+        "winner_signals": rescan_winners if rescan_winners is not None else [],
+        "loser_signals": rescan_losers if rescan_losers is not None else [],
+        "sacrificial_signals": rescan_sacrificial if rescan_sacrificial is not None else [],
     }
 
     out_dir = os.path.join(REPO_ROOT, "data", "proximity_grind")
     os.makedirs(out_dir, exist_ok=True)
 
     fname = f"proximity_{setup_type}_{n_prox}cond_{ts}.json"
-    out_path = os.path.join(out_dir, fname)
-    with open(out_path, "w") as f:
-        json.dump(result_data, f, indent=2, default=str)
-    print(f"\n  Saved: {out_path}")
+    path = os.path.join(out_dir, fname)
+    with open(path, "w") as f:
+        json.dump(output, f, indent=2, default=str)
+    print(f"\n  Saved: {path}")
 
     latest = os.path.join(out_dir, f"proximity_{setup_type}.json")
     with open(latest, "w") as f:
-        json.dump(result_data, f, indent=2, default=str)
+        json.dump(output, f, indent=2, default=str)
     print(f"  Latest: {latest}")
 
-    # Mirror to Railway
     from file_mirror import mirror_file
-    mirror_file(out_path)
+    mirror_file(path)
     mirror_file(latest)
 
     # Upload to Railway cycle
     try:
         from grind_uploader import upload as railway_upload
         railway_upload(
-            result=result_data,
-            result_path=out_path,
+            result=output,
+            result_path=path,
             step_type="proximity_grind",
             setup_type=setup_type,
             activate=True,
         )
     except Exception as e:
         print(f"\n  WARNING: Railway upload failed: {e}")
-        print(f"  Local file saved. Upload manually or retry later.")
+        print(f"  Local file saved.")
 
     print(f"\n  {'='*70}")
     print(f"  DONE in {total_time:.0f}s")
     print(f"  {'='*70}\n")
 
-    return result_data
+    return output
 
 
 def main():
