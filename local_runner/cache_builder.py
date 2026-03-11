@@ -42,6 +42,16 @@ def get_tradable_tickers():
     return [row["ticker"] for row in r.json()["results"]]
 
 
+def compute_dvol_20d(df):
+    """Add 20-day average dollar volume column to an OHLCV DataFrame.
+    
+    dvol_20d = rolling 20-bar mean of (close * volume).
+    First 19 bars will be NaN. Computed in-place.
+    """
+    df["dvol_20d"] = (df["close"] * df["volume"]).rolling(20).mean()
+    return df
+
+
 def fetch_one_ticker(ticker):
     """Fetch OHLCV for a single ticker."""
     try:
@@ -65,6 +75,7 @@ def fetch_one_ticker(ticker):
             df[col] = pd.to_numeric(df[col], errors="coerce")
         df["date"] = pd.to_datetime(df["date"])
         df = df.sort_values("date").reset_index(drop=True)
+        compute_dvol_20d(df)
         return ticker, df
     except Exception as e:
         return ticker, None
@@ -190,6 +201,7 @@ def fetch_one_ticker_5yr(ticker):
             df[col] = pd.to_numeric(df[col], errors="coerce")
         df["date"] = pd.to_datetime(df["date"])
         df = df.sort_values("date").reset_index(drop=True)
+        compute_dvol_20d(df)
         return ticker, df
     except Exception as e:
         return ticker, None
