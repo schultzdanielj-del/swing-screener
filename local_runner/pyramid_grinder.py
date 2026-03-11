@@ -345,13 +345,12 @@ def _build_tier_batch(tickers):
     """
     results = []
     for ticker in tickers:
-        df = _w_cache.get(ticker)
-        if df is None or len(df) < 50:
+        n_bars = _w_cache.get(ticker)
+        if n_bars is None or n_bars < 50:
             results.append((ticker, [], None))
             continue
 
         try:
-            n_bars = len(df)
 
             # Determine window
             if _w_n_bars_window == 0:
@@ -901,10 +900,15 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     all_row_tickers = []
     all_row_values = []
 
+    # Build slim cache: workers only need bar count per ticker
+    # Avoids serializing full DataFrames to each worker process
+    slim_cache = {ticker: len(df) for ticker, df in universe_cache.items()
+                  if df is not None and len(df) >= 50}
+
     with ProcessPoolExecutor(
         max_workers=n_workers,
         initializer=_init_tier_worker,
-        initargs=(universe_cache, locked_conditions, expressions,
+        initargs=(slim_cache, locked_conditions, expressions,
                   example_ranges, candidate_indices, n_bars_window,
                   expr_name_to_idx, blackout_map, whitelist_map)
     ) as pool:
@@ -2067,6 +2071,9 @@ def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
         del candidate_values, candidate_indices, candidate_names, candidate_categories
         del example_ranges, example_matrix, all_expressions
         del loser_whitelist
+        # Free winner DataFrames (copies of universe_cache data) and old signal lists
+        del win_dfs
+        del surviving_losers, eliminated_losers
         import gc; gc.collect()
 
         # Import scan function from signal_filter (uses NPZ workers, no memory issue)

@@ -200,21 +200,24 @@ def _load_ticker_npz(ticker):
 
 
 def _scan_batch(tickers):
-    """Scan a batch of tickers using expression cache. Returns list of signals."""
+    """Scan a batch of tickers using expression cache. Returns list of signals.
+
+    _worker_cache is a slim dict: {ticker: (n_bars, dates_array, closes_array)}
+    """
     signals = []
     skipped = 0
     for ticker in tickers:
-        df = _worker_cache.get(ticker)
-        if df is None or len(df) < 100:
+        entry = _worker_cache.get(ticker)
+        if entry is None:
             skipped += 1
             continue
+        n_bars, dates, closes = entry
         try:
             dates_cache, data_cache = _load_ticker_npz(ticker)
             if dates_cache is None:
                 skipped += 1
                 continue
 
-            n_bars = len(df)
             # Verify bar count matches
             if len(dates_cache) != n_bars:
                 skipped += 1
@@ -236,12 +239,10 @@ def _scan_batch(tickers):
 
             signal_indices = np.where(pass_mask)[0]
             if len(signal_indices) > 0:
-                dates = df["date"].values
-                closes = df["close"].values
                 for idx in signal_indices:
                     signals.append({
                         "ticker": ticker,
-                        "date": str(dates[idx])[:10],
+                        "date": dates[idx],
                         "bar_idx": int(idx),
                         "close": float(closes[idx]),
                     })
@@ -266,6 +267,17 @@ def scan_all_signals(cache, conditions, workers, expr_cache):
 
     expr_cache_dir = os.path.join(REPO_ROOT, "local_runner", "cache", "expr_series")
 
+    # Build slim cache: workers only need bar count, dates, and closes
+    # This avoids serializing full DataFrames (with open, high, low, volume, dvol, etc.)
+    slim_cache = {}
+    for ticker, df in cache.items():
+        if df is not None and len(df) >= 100:
+            slim_cache[ticker] = (
+                len(df),
+                np.array([str(d)[:10] for d in df["date"].values]),
+                df["close"].values.astype(np.float64),
+            )
+
     print(f"\n  Scanning {len(tickers):,} tickers x {len(conditions)} conditions...")
     print(f"  {workers} workers, {len(batches)} batches (using expression cache)")
     t0 = time.time()
@@ -274,7 +286,7 @@ def scan_all_signals(cache, conditions, workers, expr_cache):
     with ProcessPoolExecutor(
         max_workers=workers,
         initializer=_init_scan_worker,
-        initargs=(cache, conditions, expr_cache_dir, cond_col_indices)
+        initargs=(slim_cache, conditions, expr_cache_dir, cond_col_indices)
     ) as pool:
         futures = [pool.submit(_scan_batch, batch) for batch in batches]
         done = 0
