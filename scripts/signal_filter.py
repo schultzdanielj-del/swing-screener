@@ -386,8 +386,10 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache, max
     no_exit = 0
     errors = 0
 
-    # Pre-load expression cache per ticker (avoid repeated file loads)
+    # Load expression cache one ticker at a time — signals are sorted by ticker
+    # from dedup, so we only ever need one ticker's NPZ data in memory.
     _ticker_cache = {}
+    _prev_ticker = None
 
     for i, sig in enumerate(signals):
         ticker = sig["ticker"]
@@ -399,10 +401,13 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache, max
             continue
 
         try:
-            # Load expression cache for this ticker (cached per ticker)
+            # Load expression cache for this ticker, evict previous
             if ticker not in _ticker_cache:
+                if _prev_ticker and _prev_ticker != ticker and _prev_ticker in _ticker_cache:
+                    del _ticker_cache[_prev_ticker]
                 dates, data = expr_cache.get_ticker(ticker)
                 _ticker_cache[ticker] = (dates, data)
+            _prev_ticker = ticker
             cached_dates, cached_data = _ticker_cache[ticker]
 
             if cached_dates is None or len(cached_dates) != len(df):
