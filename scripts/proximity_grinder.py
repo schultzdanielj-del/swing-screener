@@ -1,16 +1,16 @@
 """
 Proximity Grinder — Trim losers by finding conditions that separate
-win pile from trim pile (sacrificial + losers).
+win pile from lose pile.
 
 Post-convergence step (Step 6). Finds conditions that ALL win pile signals
-pass but that eliminate trim pile signals. Pure EV gain — every loser removed
+pass but that eliminate lose pile signals. Pure EV gain — every loser removed
 raises win rate and profit factor.
 
 DATA SOURCE:
-  Railway is the authoritative store. All piles read from Railway:
-    - Win pile: AUTO_WIN + AI_WIN + MANUAL_WIN from cycle_signals
-    - Lose pile: AUTO_LOSS + MANUAL_LOSS from cycle_signals
-    - Sacrifice pile: leftward dedup duplicates from cycle_sacrificial_signals
+  Reads from the refinement grinder's local output file:
+    local_runner/cache/refinement_{setup}_*.json
+  The refinement grinder outputs winner_signals and loser_signals
+  (losers that survived refinement conditions).
 
 COMPUTATION PATH:
   Uses expr cache as single computation path — same as pyramid_grinder.py
@@ -18,7 +18,7 @@ COMPUTATION PATH:
 
   NaN handling matches pyramid_grinder exactly:
     - Win pile range computation: require ALL win signals non-NaN per expression
-    - Trim pile filtering: NaN = FAIL (does not pass the condition)
+    - Lose pile filtering: NaN = FAIL (does not pass the condition)
     - Validation: NaN = FAIL
 
   Parallelized matrix extraction via ProcessPoolExecutor (full CPU usage).
@@ -60,69 +60,52 @@ from expr_cache_builder import ExprSeriesCache
 
 API_BASE = "https://web-production-e3025.up.railway.app"
 
-WIN_CLASSES = {"AUTO_WIN", "AI_WIN", "MANUAL_WIN"}
-LOSE_CLASSES = {"AUTO_LOSS", "MANUAL_LOSS"}
-
 
 # ══════════════════════════════════════════════════════════════
-# DATA LOADING — Railway is the authoritative store
+# DATA LOADING — reads from refinement grinder local output
 # ══════════════════════════════════════════════════════════════
 
-def get_current_cycle(setup_type):
-    """Get current cycle_id for this setup type from Railway."""
-    r = requests.get(f"{API_BASE}/api/v2/cycles/{setup_type}", timeout=30)
-    r.raise_for_status()
-    cycles = r.json().get("cycles", [])
-    current = [c for c in cycles if c.get("is_current") == 1]
-    if not current:
-        raise RuntimeError(f"No current cycle for {setup_type}")
-    return current[0]["cycle_id"]
+def load_piles_from_refinement(setup_type):
+    """Load winner/loser piles from the refinement grinder's output file.
 
+    Reads the latest refinement_*.json from local_runner/cache/.
+    The refinement grinder outputs winner_signals and loser_signals
+    (losers that survived refinement conditions).
 
-def load_piles_from_railway(cycle_id):
-    """Load all three piles from Railway.
-
-    Win pile: AUTO_WIN + AI_WIN + MANUAL_WIN from cycle_signals
-    Lose pile: AUTO_LOSS + MANUAL_LOSS from cycle_signals
-    Sacrifice pile: leftward dedup duplicates from cycle_sacrificial_signals
-
-    Returns (win_pile, lose_pile, sacrifice_pile).
+    Returns (win_pile, lose_pile).
     """
-    # Load classified signals
-    r = requests.get(f"{API_BASE}/api/v2/cycles/{cycle_id}/signals", timeout=60)
-    r.raise_for_status()
-    signals = r.json().get("signals", [])
+    import glob
 
-    if not signals:
-        raise RuntimeError(f"No signals found for cycle {cycle_id}")
+    cache_dir = os.path.join(LOCAL_DIR, "cache")
+    pattern = os.path.join(cache_dir, f"refinement_{setup_type}_*.json")
+    files = sorted(glob.glob(pattern))
 
-    win_pile = []
-    lose_pile = []
-    for sig in signals:
-        cls = sig.get("classification", "")
-        if cls in WIN_CLASSES:
-            win_pile.append(sig)
-        elif cls in LOSE_CLASSES:
-            lose_pile.append(sig)
+    if not files:
+        raise RuntimeError(
+            f"No refinement grinder output found: {pattern}\n"
+            f"Run step 4 first: python local_runner/pyramid_grinder.py --setup {setup_type} --blackout"
+        )
 
-    # Load sacrificial signals
-    sacrifice_pile = []
-    try:
-        r = requests.get(f"{API_BASE}/api/v2/cycles/{cycle_id}/sacrificial_signals",
-                         timeout=30)
-        r.raise_for_status()
-        sacrifice_pile = r.json().get("signals", [])
-    except Exception as e:
-        print(f"  WARNING: Could not load sacrificial signals: {e}")
-        print(f"  Proximity grind will use losers only.")
+    # Latest by filename (timestamp-sorted)
+    latest = files[-1]
+    print(f"  Loading: {os.path.basename(latest)}")
 
-    print(f"  Loaded from Railway (cycle {cycle_id}):")
-    print(f"    Total signals: {len(signals):,}")
-    print(f"    Win pile:      {len(win_pile):,}")
-    print(f"    Lose pile:     {len(lose_pile):,}")
-    print(f"    Sacrifice pile: {len(sacrifice_pile):,}")
+    with open(latest) as f:
+        data = json.load(f)
 
-    return win_pile, lose_pile, sacrifice_pile
+    win_pile = data.get("winner_signals", [])
+    lose_pile = data.get("loser_signals", [])
+
+    if not win_pile:
+        raise RuntimeError(
+            f"No winner_signals in {latest}.\n"
+            f"Re-run the refinement grinder to get updated output with signal lists."
+        )
+
+    print(f"  Win pile:  {len(win_pile):,} (winners — untouchable)")
+    print(f"  Lose pile: {len(lose_pile):,} (surviving losers — target to trim)")
+
+    return win_pile, lose_pile
 
 
 # ══════════════════════════════════════════════════════════════
@@ -271,7 +254,7 @@ def run_beam_search(trim_matrix, win_ranges, expressions,
                     beam_width=10000, depth=100):
     """Beam search to minimize remaining trimmable signals.
 
-    trim_matrix: (n_trim, n_expr) — sacrifice + lose pile values
+    trim_matrix: (n_lose, n_expr) — lose pile values
     win_ranges: {expr_name: (low, high)} — conditions must stay within these
 
     NaN handling: NaN = FAIL (does not pass). Matches pyramid_grinder behavior.
@@ -470,39 +453,22 @@ def validate_win_pile(win_matrix, proximity_conditions, expressions):
 # METRICS
 # ══════════════════════════════════════════════════════════════
 
-def compute_metrics(win_pile, sacrifice_pile, lose_pile,
-                    trim_matrix, proximity_conditions, expressions,
-                    n_sacrifice):
+def compute_metrics(win_pile, lose_pile, trim_matrix,
+                    proximity_conditions, expressions):
     """Compute trim metrics with NaN = FAIL."""
     expr_name_to_idx = {e["name"]: i for i, e in enumerate(expressions)}
     n_lose = len(lose_pile)
 
     # How many losers trimmed?
-    lose_matrix = trim_matrix[n_sacrifice:, :]
     lose_mask = np.ones(n_lose, dtype=bool)
     for cond in proximity_conditions:
         j = expr_name_to_idx[cond["name"]]
-        vals = lose_matrix[:, j]
+        vals = trim_matrix[:, j]
         in_range = (vals >= cond["low"]) & (vals <= cond["high"])
         in_range[np.isnan(vals)] = False
         lose_mask &= in_range
     losers_remaining = int(np.sum(lose_mask))
     losers_trimmed = n_lose - losers_remaining
-
-    # How many sacrificial trimmed?
-    sac_remaining = 0
-    sac_trimmed = n_sacrifice
-    if n_sacrifice > 0:
-        sac_matrix = trim_matrix[:n_sacrifice, :]
-        sac_mask = np.ones(n_sacrifice, dtype=bool)
-        for cond in proximity_conditions:
-            j = expr_name_to_idx[cond["name"]]
-            vals = sac_matrix[:, j]
-            in_range = (vals >= cond["low"]) & (vals <= cond["high"])
-            in_range[np.isnan(vals)] = False
-            sac_mask &= in_range
-        sac_remaining = int(np.sum(sac_mask))
-        sac_trimmed = n_sacrifice - sac_remaining
 
     # Win rate before/after
     n_winners = len(win_pile)
@@ -513,14 +479,11 @@ def compute_metrics(win_pile, sacrifice_pile, lose_pile,
 
     return {
         "win_pile": n_winners,
-        "sacrifice_before": n_sacrifice,
-        "sacrifice_trimmed": sac_trimmed,
-        "sacrifice_remaining": sac_remaining,
         "lose_pile_before": n_lose,
         "losers_trimmed": losers_trimmed,
         "losers_remaining": losers_remaining,
-        "old_total_deduped": old_total,
-        "new_total_deduped": new_total,
+        "old_total": old_total,
+        "new_total": new_total,
         "old_win_rate_pct": round(old_wr, 1),
         "new_win_rate_pct": round(new_wr, 1),
         "n_proximity_conditions": len(proximity_conditions),
@@ -654,13 +617,9 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
 
     t0 = time.time()
 
-    # ── 1. Get current cycle from Railway ──
-    print("Phase 1: Loading data from Railway...")
-    cycle_id = get_current_cycle(setup_type)
-    print(f"  Current cycle: {cycle_id}")
-
-    # ── 2. Load piles from Railway ──
-    win_pile, lose_pile, sacrifice_pile = load_piles_from_railway(cycle_id)
+    # ── 1. Load piles from refinement grinder output ──
+    print("Phase 1: Loading data from refinement grinder output...")
+    win_pile, lose_pile = load_piles_from_refinement(setup_type)
 
     if dry_run:
         print(f"\n  DRY RUN — stopping here. ({time.time() - t0:.0f}s)")
@@ -669,8 +628,8 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
     if len(win_pile) == 0:
         print("\n  ERROR: Win pile is empty. Cannot grind.")
         return
-    if len(lose_pile) == 0 and len(sacrifice_pile) == 0:
-        print("\n  Nothing to trim — both lose and sacrifice piles are empty.")
+    if len(lose_pile) == 0:
+        print("\n  Nothing to trim — lose pile is empty.")
         return
 
     # ── 3. Load expr cache + expressions ──
@@ -688,10 +647,8 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
     print("\nPhase 3a: Extracting win pile expression values...")
     win_matrix = extract_signal_values_parallel(win_pile, expressions, expr_cache)
 
-    print("\nPhase 3b: Extracting trim pile expression values...")
-    trim_signals = sacrifice_pile + lose_pile
-    trim_matrix = extract_signal_values_parallel(trim_signals, expressions, expr_cache)
-    n_sacrifice = len(sacrifice_pile)
+    print("\nPhase 3b: Extracting lose pile expression values...")
+    trim_matrix = extract_signal_values_parallel(lose_pile, expressions, expr_cache)
 
     # ── 5. Compute win ranges (pyramid_grinder-compatible) ──
     print("\nPhase 4: Computing win pile ranges...")
@@ -720,9 +677,8 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
 
     # ── 8. Compute metrics ──
     metrics = compute_metrics(
-        win_pile, sacrifice_pile, lose_pile,
-        trim_matrix, proximity_conditions, expressions,
-        n_sacrifice
+        win_pile, lose_pile, trim_matrix,
+        proximity_conditions, expressions
     )
 
     # ── 9. Print results ──
@@ -733,12 +689,10 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
     for c in proximity_conditions:
         print(f"    {c['name']:40s}  [{c['low']:.4f}, {c['high']:.4f}]  ({c['category']})")
     print(f"\n  Win pile (untouched):    {metrics['win_pile']:,}")
-    print(f"  Sacrifice pile:         {metrics['sacrifice_before']:,} -> "
-          f"{metrics['sacrifice_remaining']:,} (-{metrics['sacrifice_trimmed']:,})")
     print(f"  Lose pile:              {metrics['lose_pile_before']:,} -> "
           f"{metrics['losers_remaining']:,} (-{metrics['losers_trimmed']:,})")
-    print(f"\n  Deduped signals:        {metrics['old_total_deduped']:,} -> "
-          f"{metrics['new_total_deduped']:,}")
+    print(f"\n  Total signals:          {metrics['old_total']:,} -> "
+          f"{metrics['new_total']:,}")
     print(f"  Win rate:               {metrics['old_win_rate_pct']:.1f}% -> "
           f"{metrics['new_win_rate_pct']:.1f}%")
     print(f"\n  Time: {time.time() - t0:.0f}s")

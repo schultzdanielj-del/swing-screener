@@ -1691,7 +1691,7 @@ def _load_refinement_piles(setup_type):
         print(f"  ERROR: No classified signal file found:")
         print(f"    {classified_path}")
         print(f"  Run step 3 first: python scripts/signal_filter.py --setup {setup_type}")
-        return None, None
+        return None, None, None, None
 
     with open(classified_path) as f:
         data = json.load(f)
@@ -1699,7 +1699,7 @@ def _load_refinement_piles(setup_type):
     signals = data.get("signals", [])
     if not signals:
         print(f"  ERROR: No signals in {classified_path}")
-        return None, None
+        return None, None, None, None
 
     print(f"\n  ── REFINEMENT GRIND: Loading piles from {os.path.basename(classified_path)} ──")
     print(f"  Timestamp: {data.get('timestamp')}")
@@ -1713,10 +1713,10 @@ def _load_refinement_piles(setup_type):
 
     if not winners:
         print(f"  ERROR: No winners — nothing to use as must-pass set")
-        return None, None
+        return None, None, None, None
     if not losers:
         print(f"  WARNING: No losers — nothing to filter. Refinement is a no-op.")
-        return None, None
+        return None, None, None, None
 
     # Load 5yr cache to build example_dfs format for winners
     universe_cache = load_5yr_cache()
@@ -1776,7 +1776,7 @@ def _load_refinement_piles(setup_type):
     if skipped_lose:
         print(f"  ⚠ Skipped {skipped_lose} losers (no bar_idx or not in cache)")
 
-    return win_example_dfs, whitelist_map
+    return win_example_dfs, whitelist_map, winners, losers
 
 
 def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
@@ -1795,7 +1795,7 @@ def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
     t_total = time.time()
 
     # ── Load classified signals ──
-    win_dfs, loser_whitelist = _load_refinement_piles(setup_type)
+    win_dfs, loser_whitelist, raw_winners, raw_losers = _load_refinement_piles(setup_type)
     if win_dfs is None:
         print("  ABORT: Could not load refinement piles.")
         return None
@@ -1944,6 +1944,58 @@ def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
         return None
     print(f"  All {len(win_dfs)} winners pass all {len(all_conditions)} refinement conditions")
 
+    # ── Determine which losers survived the refinement conditions ──
+    # Apply all refinement conditions to loser_matrix, NaN = FAIL
+    surviving_loser_mask = np.ones(loser_matrix.shape[0], dtype=bool)
+    for cond in all_conditions:
+        name = cond["name"]
+        col_idx = None
+        for i, e in enumerate(all_expressions):
+            if e["name"] == name:
+                col_idx = i
+                break
+        if col_idx is None:
+            continue
+        ci = candidate_indices.index(col_idx) if col_idx in candidate_indices else None
+        if ci is None:
+            continue
+        vals = candidate_values[:, ci]
+        lo, hi = cond["low"], cond["high"]
+        in_range = (vals >= lo) & (vals <= hi)
+        in_range[np.isnan(vals)] = False
+        surviving_loser_mask &= in_range
+
+    # Build surviving loser keys: {(ticker, bar_idx)}
+    surviving_loser_keys = set()
+    for i in range(len(loser_tickers)):
+        if surviving_loser_mask[i]:
+            surviving_loser_keys.add((loser_tickers[i], int(loser_dates[i]) if loser_dates[i].isdigit() else loser_dates[i]))
+
+    # Map back to raw signal dicts — match by ticker + bar_idx
+    # loser_tickers/loser_dates were built from whitelist iteration, keyed by bar_idx
+    # Rebuild the key set using ticker + bar_idx from the matrix build order
+    surviving_loser_keys_idx = set()
+    idx = 0
+    for ticker, bar_indices in loser_whitelist.items():
+        for bar_idx in bar_indices:
+            if idx < loser_matrix.shape[0] and surviving_loser_mask[idx]:
+                surviving_loser_keys_idx.add((ticker, bar_idx))
+            idx += 1
+
+    surviving_losers = []
+    eliminated_losers = []
+    for sig in raw_losers:
+        key = (sig["ticker"], sig.get("bar_idx"))
+        if key in surviving_loser_keys_idx:
+            surviving_losers.append(sig)
+        else:
+            eliminated_losers.append(sig)
+
+    print(f"\n  Signal lists:")
+    print(f"    Winners (unchanged): {len(raw_winners)}")
+    print(f"    Losers surviving:    {len(surviving_losers)}")
+    print(f"    Losers eliminated:   {len(eliminated_losers)}")
+
     # ── Save ──
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     desc_name = f"refinement_{setup_type}_sig{final_total}_pk{final_peak}_{ts}"
@@ -1970,6 +2022,9 @@ def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
             "winners_input": len(win_dfs),
             "winners_passing": len(win_dfs),
         },
+        "winner_signals": raw_winners,
+        "loser_signals": surviving_losers,
+        "eliminated_signals": eliminated_losers,
     }
 
     os.makedirs(CACHE_DIR, exist_ok=True)
