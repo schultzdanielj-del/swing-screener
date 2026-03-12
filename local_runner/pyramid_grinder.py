@@ -2147,14 +2147,15 @@ def _gather_raw_signal_clusters(setup_type):
     exit_dir = exit_cond["direction"]
     exit_col = expr_cache.expr_index(exit_expr)
     direction = "short"  # DTSS — parameterize when other setups added
-    MAX_FWD = 120
+    MAX_FWD = 120  # Initial ceiling for example exit search; overwritten below
 
     if exit_col is None:
         print(f"  ERROR: Exit expression '{exit_expr}' not in expr cache")
         return None
 
-    # Measure example exit distances to get adr_threshold (same as signal_filter)
+    # Measure example exit distances to get adr_threshold and max trade duration
     example_adrs = []
+    example_exit_bars = []
     for c in clusters:
         ticker = c["ticker"]
         bar_idx = c["rightmost"]["bar_idx"]
@@ -2196,6 +2197,7 @@ def _gather_raw_signal_clusters(setup_type):
                     else:
                         move = (ec - sc) / adr
                     example_adrs.append(move)
+                    example_exit_bars.append(f_i)
                     exit_found = True
                     break
                 elif exit_dir in ("<=", "below") and v <= exit_thresh:
@@ -2205,6 +2207,7 @@ def _gather_raw_signal_clusters(setup_type):
                     else:
                         move = (ec - sc) / adr
                     example_adrs.append(move)
+                    example_exit_bars.append(f_i)
                     exit_found = True
                     break
             if not exit_found:
@@ -2213,14 +2216,17 @@ def _gather_raw_signal_clusters(setup_type):
             print(f"  DEBUG adr: {ticker} EXCEPTION: {_e}")
             continue
 
-    if example_adrs:
-        example_floor = min(example_adrs)
-        adr_threshold = round(example_floor * 0.9, 1)
-        print(f"  Example floor: {example_floor:.1f} ADR, threshold: {adr_threshold:.1f} (90% of floor)")
-    else:
+    if not example_adrs:
         print(f"  ERROR: No example exit distances computed — cannot determine adr_threshold")
         print(f"  Check example bar lookup and exit condition.")
         return None
+
+    example_floor = min(example_adrs)
+    adr_threshold = round(example_floor * 0.9, 1)
+    max_example_bars = max(example_exit_bars)
+    MAX_FWD = round(max_example_bars * 1.1)
+    print(f"  Example floor: {example_floor:.1f} ADR, threshold: {adr_threshold:.1f} (90% of floor)")
+    print(f"  Example max exit: {max_example_bars} bars, classification cutoff: {MAX_FWD} bars (110%)")
 
     # Classify each cluster
     tcache = {}
