@@ -2005,19 +2005,34 @@ def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
 
     # Load signal grind conditions from local pyramid result
     import glob as _glob
+    import re as _re
     _search_dirs = [
         os.path.join(REPO_ROOT, "local_runner", "cache"),
         os.path.join(REPO_ROOT, "data"),
     ]
     _candidates = []
     for _d in _search_dirs:
-        _candidates.extend(_glob.glob(os.path.join(_d, f"pyramid_{setup_type}_*.json")))
+        for _p in _glob.glob(os.path.join(_d, f"pyramid_{setup_type}_*.json")):
+            _bn = os.path.basename(_p)
+            if "blackout" in _bn or "refinement" in _bn:
+                continue
+            _candidates.append(_p)
+
+    def _extract_ts(_path):
+        _bn = os.path.basename(_path).replace(".json", "")
+        _parts = _bn.split("_")
+        if len(_parts) >= 2:
+            _ts = _parts[-2] + _parts[-1]
+            if len(_ts) == 14 and _ts.isdigit():
+                return _ts
+        return "0"
+
     if not _candidates:
         print(f"  WARNING: No pyramid result found — skipping re-scan.")
         print(f"  Output will have refinement conditions only (no combined set).")
         signal_conditions = []
     else:
-        _candidates.sort(key=os.path.getmtime, reverse=True)
+        _candidates.sort(key=_extract_ts, reverse=True)
         with open(_candidates[0]) as _f:
             _pdata = json.load(_f)
         signal_conditions = _pdata.get("all_conditions", [])

@@ -95,20 +95,37 @@ def load_pyramid_conditions(setup_type, conditions_file=None):
         os.path.join(REPO_ROOT, "data"),
     ]
 
-    # Collect timestamped archive files only.
-    # V1 "latest pointer" files (pyramid_results_{setup}.json) are ignored —
-    # they are stale artifacts that can shadow newer timestamped files.
+    # Collect timestamped signal grind files only.
+    # Exclude blackout/refinement files — those are step 4, not step 1.
     candidates = []
     for d in search_dirs:
-        # Timestamped files (e.g. pyramid_dtss_mp_sig264_pk3_20260228_163923.json)
         pattern = os.path.join(d, f"pyramid_{setup_type}_*.json")
-        candidates.extend(glob.glob(pattern))
+        for p in glob.glob(pattern):
+            bn = os.path.basename(p)
+            # Skip refinement/blackout files
+            if "blackout" in bn or "refinement" in bn:
+                continue
+            candidates.append(p)
 
     if not candidates:
         raise FileNotFoundError(f"No pyramid results found for {setup_type}")
 
-    # Pick the most recently modified file
-    candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    # Sort by timestamp in filename (YYYYMMDD_HHMMSS), not mtime.
+    # Filename format: pyramid_dtss_mp_sig1218_pk14_20260310_003848.json
+    # Extract last two underscore-separated segments before .json as the timestamp.
+    import re
+
+    def _extract_ts(path):
+        bn = os.path.basename(path).replace(".json", "")
+        parts = bn.split("_")
+        # Last two parts should be YYYYMMDD and HHMMSS
+        if len(parts) >= 2:
+            ts_str = parts[-2] + parts[-1]
+            if len(ts_str) == 14 and ts_str.isdigit():
+                return ts_str
+        return "0"
+
+    candidates.sort(key=_extract_ts, reverse=True)
     best = candidates[0]
 
     with open(best) as f:
