@@ -733,6 +733,261 @@ class PeakSpiderweb:
               f"total={total:>7,}  |  {len(nodes)} paths  {nodes_explored:,} nodes  {elapsed:.1f}s")
 
 
+class RefinementSearch:
+    """Beam search that scores by total losers remaining (not peak/day).
+
+    Used by run_refinement() (step 4) only. Optimizes for maximum loser
+    elimination while maintaining 100% winner pass rate via bounding box.
+
+    Same data layout and output format as PeakSpiderweb so run_refinement()
+    needs no structural changes.
+    """
+
+    def __init__(self, candidate_values, row_dates, example_ranges,
+                 candidate_names, candidate_categories, row_tickers=None):
+        self.n_rows, self.n_cands = candidate_values.shape
+        self.candidate_names = candidate_names
+        self.candidate_categories = candidate_categories
+        self.row_dates_list = row_dates
+        self.row_tickers_list = row_tickers or (["?"] * self.n_rows)
+
+        # Date mapping still needed for output stats (peak/avg reporting)
+        self.unique_dates = sorted(set(row_dates))
+        self.n_dates = len(self.unique_dates)
+        date_to_idx = {d: i for i, d in enumerate(self.unique_dates)}
+        self.row_date_indices = np.array([date_to_idx[d] for d in row_dates], dtype=np.int32)
+
+        # Precompute pass/fail per candidate — identical to PeakSpiderweb
+        self.cand_passes = np.zeros((self.n_cands, self.n_rows), dtype=bool)
+        self.valid_cands = []
+
+        for ci in range(self.n_cands):
+            name = candidate_names[ci]
+            if name not in example_ranges:
+                self.cand_passes[ci, :] = True
+                continue
+            low, high = example_ranges[name]
+            vals = candidate_values[:, ci]
+            passes = ((vals >= low) & (vals <= high)) | np.isnan(vals)
+            self.cand_passes[ci, :] = passes
+
+            if np.sum(passes) < self.n_rows:
+                self.valid_cands.append(ci)
+
+        print(f"    RefinementSearch: {self.n_rows:,} rows, "
+              f"{len(self.valid_cands)} useful candidates out of {self.n_cands}")
+
+    def _total_score(self, row_mask):
+        """Score = total losers remaining. Lower is better."""
+        return int(np.sum(row_mask))
+
+    def _daily_stats(self, row_mask):
+        """Return (peak, avg, total) for reporting."""
+        if not np.any(row_mask):
+            return 0, 0.0, 0
+        active_dates = self.row_date_indices[row_mask]
+        counts = np.bincount(active_dates, minlength=self.n_dates)
+        nonzero = counts[counts > 0]
+        total = int(np.sum(row_mask))
+        peak = int(np.max(counts))
+        avg = float(np.mean(nonzero)) if len(nonzero) > 0 else 0.0
+        return peak, avg, total
+
+    def run(self, depth=100, beam_width=10000, peak_target=3):
+        """Run beam search minimizing total losers remaining.
+
+        peak_target is accepted for interface compatibility but not used
+        for termination — search continues until no more losers can be cut.
+        """
+        t0 = time.time()
+        nodes_explored = 0
+
+        if not self.valid_cands:
+            return {"error": "No useful candidates", "conditions": [], "levels": []}
+
+        base_mask = np.ones(self.n_rows, dtype=bool)
+        base_total = self._total_score(base_mask)
+        base_peak, base_avg, _ = self._daily_stats(base_mask)
+        print(f"\n    RefinementSearch: depth={depth}, beam={beam_width}")
+        print(f"    Baseline: {base_total:,} losers, peak={base_peak}/day, avg={base_avg:.1f}/day")
+
+        if base_total == 0:
+            print(f"    No losers to eliminate.")
+            return {
+                "conditions": [], "levels": [],
+                "stats": {"baseline_peak": base_peak, "baseline_avg": base_avg,
+                          "baseline_total": base_total, "final_peak": base_peak},
+            }
+
+        # Seed: score each candidate by total losers remaining
+        from dataclasses import dataclass
+        from typing import Tuple
+
+        @dataclass
+        class Node:
+            conditions: Tuple[int, ...]
+            row_mask: np.ndarray
+            total: int
+
+        scored = []
+        for ci in self.valid_cands:
+            mask = base_mask & self.cand_passes[ci]
+            total = self._total_score(mask)
+            scored.append((ci, total, mask))
+            nodes_explored += 1
+
+        scored.sort(key=lambda x: x[1])
+
+        n_seeds = min(beam_width * 2, len(scored))
+        current_level = []
+        for ci, total, mask in scored[:n_seeds]:
+            current_level.append(Node(conditions=(ci,), row_mask=mask, total=total))
+
+        current_level.sort(key=lambda n: n.total)
+        current_level = current_level[:beam_width]
+
+        best = current_level[0]
+        levels = [self._level_summary(1, current_level, time.time() - t0)]
+        self._print_level(1, current_level, base_total, nodes_explored, time.time() - t0)
+
+        if best.total == 0:
+            return self._build_result(best, levels, nodes_explored, t0, base_peak, base_total)
+
+        # Deepen
+        for lv in range(2, depth + 1):
+            next_level = []
+            seen = set()
+
+            for node in current_level:
+                used = set(node.conditions)
+                if not np.any(node.row_mask):
+                    continue
+
+                for ci in self.valid_cands:
+                    if ci in used:
+                        continue
+                    combo = tuple(sorted(node.conditions + (ci,)))
+                    if combo in seen:
+                        continue
+                    seen.add(combo)
+
+                    mask = node.row_mask & self.cand_passes[ci]
+                    total = self._total_score(mask)
+                    nodes_explored += 1
+
+                    next_level.append(Node(conditions=combo, row_mask=mask, total=total))
+
+                if len(next_level) >= beam_width * 8:
+                    break
+
+            if not next_level:
+                print(f"\n    ▓ Ceiling at level {lv}")
+                break
+
+            next_level.sort(key=lambda n: n.total)
+            current_level = next_level[:beam_width]
+
+            if current_level[0].total < best.total:
+                best = current_level[0]
+
+            levels.append(self._level_summary(lv, current_level, time.time() - t0))
+            self._print_level(lv, current_level, base_total, nodes_explored, time.time() - t0)
+
+            if best.total == 0:
+                print(f"\n    ✓ All losers eliminated")
+                break
+
+            # Ceiling: if total didn't improve this level, stop
+            if len(levels) >= 2 and levels[-1]["best_total"] == levels[-2]["best_total"]:
+                print(f"\n    ▓ Ceiling at level {lv} ({best.total} losers remaining)")
+                break
+
+        return self._build_result(best, levels, nodes_explored, t0, base_peak, base_total)
+
+    def _build_result(self, best, levels, nodes_explored, t0, baseline_peak, baseline_total):
+        peak, avg, total = self._daily_stats(best.row_mask)
+        elapsed = time.time() - t0
+
+        cond_list = list(best.conditions)
+        loo_totals = []
+        for drop_i, ci in enumerate(cond_list):
+            without_mask = np.ones(self.n_rows, dtype=bool)
+            for j, cj in enumerate(cond_list):
+                if j != drop_i:
+                    without_mask &= self.cand_passes[cj]
+            loo_totals.append(int(np.sum(without_mask)))
+
+        conditions = []
+        for drop_i, ci in enumerate(cond_list):
+            name = self.candidate_names[ci]
+            cat = self.candidate_categories[ci]
+            without = loo_totals[drop_i]
+            fp = (without - total) / total if total > 0 else 0.0
+            conditions.append({
+                "expr": name,
+                "name": name,
+                "category": cat,
+                "cand_index": int(ci),
+                "signals_with_all": total,
+                "signals_without": without,
+                "filter_power": round(fp, 4),
+            })
+
+        surviving_indices = np.where(best.row_mask)[0]
+        final_signals = []
+        final_tickers_set = set()
+        for idx in surviving_indices:
+            date = self.row_dates_list[idx]
+            ticker = self.row_tickers_list[idx]
+            final_signals.append({"date": str(date)[:10], "ticker": ticker})
+            final_tickers_set.add(ticker)
+        final_signals.sort(key=lambda s: (s["date"], s["ticker"]))
+
+        eliminated = baseline_total - total
+        print(f"\n    Eliminated {eliminated}/{baseline_total} losers "
+              f"({eliminated/max(baseline_total,1)*100:.1f}%)")
+
+        return {
+            "conditions": conditions,
+            "final_peak": peak,
+            "final_avg": round(avg, 1),
+            "final_total": total,
+            "baseline_peak": baseline_peak,
+            "baseline_total": baseline_total,
+            "losers_eliminated": eliminated,
+            "levels": levels,
+            "stats": {
+                "nodes_explored": nodes_explored,
+                "elapsed_s": round(elapsed, 1),
+                "depth_reached": len(levels),
+            },
+            "final_signals": final_signals,
+            "final_tickers": sorted(final_tickers_set),
+            "n_unique_tickers": len(final_tickers_set),
+        }
+
+    def _level_summary(self, level, nodes, elapsed):
+        best = nodes[0]
+        peak, avg, total = self._daily_stats(best.row_mask)
+        return {
+            "level": level,
+            "best_peak": peak,
+            "best_avg": round(avg, 1),
+            "best_total": total,
+            "n_conditions": len(best.conditions),
+            "paths_explored": len(nodes),
+            "elapsed_s": round(elapsed, 1),
+        }
+
+    def _print_level(self, level, nodes, baseline_total, nodes_explored, elapsed):
+        best = nodes[0]
+        total = best.total
+        eliminated = baseline_total - total
+        print(f"    Level {level:2d}: {total:>5} remaining  "
+              f"(-{eliminated})  |  {len(nodes)} paths  "
+              f"{nodes_explored:,} nodes  {elapsed:.1f}s")
+
+
 # ══════════════════════════════════════════════════════════════
 # D1 TIER (uses existing SpiderwebSearch for last-bar matrix)
 # ══════════════════════════════════════════════════════════════
@@ -1902,7 +2157,7 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
 
     # ── Run beam search ──
     print(f"\n  Running beam search (losers as rows, winner ranges as bounds)...")
-    search = PeakSpiderweb(
+    search = RefinementSearch(
         candidate_values=candidate_values,
         row_dates=loser_dates,
         row_tickers=loser_tickers,
