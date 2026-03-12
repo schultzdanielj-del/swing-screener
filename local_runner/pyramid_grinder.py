@@ -1783,7 +1783,7 @@ def _load_refinement_piles(setup_type):
     return win_example_dfs, whitelist_map, winners, losers, universe_cache
 
 
-def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
+def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
     """Refinement grind: flat beam search, winners must-pass, minimize losers.
 
     Loads classified signals from step 3 output. Builds winner example ranges
@@ -2339,11 +2339,15 @@ def main():
 
     # ── Refinement grind: separate path ──
     if args.blackout:
+        # Use aggressive defaults for refinement unless explicitly overridden
+        ref_beam = args.beam if args.beam != 50 else 10000
+        ref_depth = args.depth if args.depth != 10 else 100
+        ref_peak = args.peak_target if args.peak_target != 15 else 3
         result = run_refinement(
             setup_type=args.setup,
-            beam_width=args.beam,
-            depth=args.depth,
-            peak_target=args.peak_target,
+            beam_width=ref_beam,
+            depth=ref_depth,
+            peak_target=ref_peak,
         )
         if result is None:
             sys.exit(1)
