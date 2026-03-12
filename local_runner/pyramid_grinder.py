@@ -1142,15 +1142,16 @@ class ClusterAwareRefinementSearch:
                 for ci in self.valid_cands:
                     if ci in used:
                         continue
-                    combo = tuple(sorted(node.conditions + (ci,)))
-                    if combo in seen:
+                    combo_key = frozenset(node.conditions + (ci,))
+                    if combo_key in seen:
                         continue
-                    seen.add(combo)
+                    seen.add(combo_key)
 
                     mask = node.row_mask & self.cand_passes[ci]
                     cs = self._cluster_score(mask)
                     nodes_explored += 1
 
+                    combo = tuple(sorted(node.conditions + (ci,)))
                     next_level.append(Node(conditions=combo, row_mask=mask, cluster_score=cs))
 
                 if len(next_level) >= beam_width * 8:
