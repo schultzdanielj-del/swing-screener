@@ -44,7 +44,7 @@ See `PIPELINE_V2.md` for full spec.
 ### Step 4 (Refinement Grind): ✅ FIXED (2026-03-11)
 
 **What it does:**
-1. Loads classified signals from step 3 (`classified_{setup}.json`) → winners/losers
+1. Gathers raw signal clusters (`raw_signal_clusters_{setup}.json`) → classifies via ceiling+exit race → winners/losers
 2. Loads signal grind conditions from pyramid result + exit condition (all local)
 3. Beam search: winners as must-pass, losers as universe to filter
 4. Combines signal + refinement conditions

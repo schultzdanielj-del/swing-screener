@@ -1142,17 +1142,6 @@ def main():
         "n_with_exit": len(with_exit),
     })
 
-    # Build full classified signal set (winners + losers)
-    print(f"\n  CLASSIFYING ALL SIGNALS")
-    classified_signals, adr_threshold = _build_classified_signals(
-        deduped, with_exit, example_signals, min_adr)
-
-    # Save classified set locally (for refinement grinder)
-    _save_classified_signals(setup, classified_signals, adr_threshold)
-
-    # Upload to Railway
-    _upload_v2_cycle_signals(setup, classified_signals)
-
     total_time = time.time() - t0
     print(f"\n{'='*60}")
     print(f"  DONE in {total_time:.0f}s")
