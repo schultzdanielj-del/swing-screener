@@ -59,8 +59,8 @@ method. What changes is what the search is optimizing against.
 
 ## The Pipeline
 
-Nine steps. Steps 1-5 are the vetting loop — repeat until convergence (no new
-examples found). Steps 6-9 run once after convergence.
+Eight steps. Steps 1-4 are the vetting loop — repeat until convergence (no new
+examples found). Steps 5-8 run once after convergence.
 
 **Nightly auto-refresh (4:30pm ET, fully automated):**
   OHLCV append → daily cache → 5yr cache → expr cache → matrix → earnings → market cache (266 instruments)
@@ -70,19 +70,18 @@ examples found). Steps 6-9 run once after convergence.
 The Vetting Loop (repeat until convergence):
   Step 1: Signal Grind      — examples vs universe → candidate conditions
   Step 2: Exit Grind        — optimal exit condition from example entry bar highs
-  Step 3: Scan              — apply conditions to 5yr history → deduped signals
-                               + exit filter → classified signal set (winners/losers)
-  Step 4: Refinement Grind  — winners vs losers beam search → combine signal+refinement
-                               conditions → re-scan universe → re-classify. Manual gate.
-  Step 5: Vet               — review winner pile (source toggle: step 3 or step 4)
+  Step 3: Refinement Grind  — scans universe with step 1 conditions, clusters consecutive
+                               bars, classifies via ceiling+exit race, then grinds
+                               winners vs losers (cluster-aware). Manual gate.
+  Step 4: Vet               — review winner pile
                                YES → AI review → approve → examples → loop back to step 1
 
 After Convergence (run once, in order):
-  Step 6: Proximity Grind   — trim losers via beam search → combine all conditions
+  Step 5: Proximity Grind   — trim losers via beam search → combine all conditions
                                → re-scan universe → re-classify
-  Step 7: Profit Grind      — trade exit from entry bar high forward (bespoke exit expr set, maximizes MFE capture)
-  Step 8: Regime Model      — winner/loser ratio vs market conditions (266 instruments)
-  Step 9: Health Check      — cycle quality, EV, promote / revert / live-ready
+  Step 6: Profit Grind      — trade exit from entry bar high forward (bespoke exit expr set, maximizes MFE capture)
+  Step 7: Regime Model      — winner/loser ratio vs market conditions (266 instruments)
+  Step 8: Health Check      — cycle quality, EV, promote / revert / live-ready
 
 Live:
   Nightly scan + regime score → unified watchlist
@@ -92,9 +91,9 @@ Live:
 examples. The example library is as complete as the data allows.
 
 **Refinement grind gate:** Manual decision. In early cycles with few examples, skip
-step 5 and vet the full exit filter output (step 4). Once enough examples exist that
+step 4 and vet the full refinement output (step 3). Once enough examples exist that
 the refinement grind produces stable conditions (not overfitted to a small sample),
-enable step 5. The threshold is currently discretionary — will be data-derived after
+enable step 4. The threshold is currently discretionary — will be data-derived after
 2-3 setup types have been built through the pipeline.
 
 **Regrind is manual, not automatic.**
@@ -137,104 +136,80 @@ universe. More examples → tighter discrimination → fewer false positives.
 
 ---
 
-## Layer 2: Scan
+## Layer 2: Refinement Grind
 
-**What it solves:** Materialize the full historical signal set from the grind conditions.
-
-**Inputs:**
-- Condition set from Layer 1
-- Expression series cache
-
-**Method:**
-- Scan all 4,119 tickers across full 5yr history
-- Apply all conditions
-- Deduplicate: consecutive signal bars for same ticker → keep rightmost
-- Output: every (ticker, date) pair where conditions fire
-
-**Output:**
-- Deduped signal set: list of (ticker, date, bar_idx, close, adr)
-
-**Reuse from V1:** `signal_filter.py` scan phase — works correctly.
-
----
-
-## Layer 3: Exit Filter
-
-**What it solves:** Identify which signals actually moved. Provides the primary
-auto-classification signal and makes the vetting pile tractable.
+**What it solves:** Scan the universe, cluster consecutive signal bars, classify
+winners/losers using a ceiling+exit race, then grind winners vs losers to find
+conditions that eliminate losing clusters. This replaces the old separate Scan
+(signal_filter.py) and Exit Filter steps — the refinement grinder handles
+everything internally.
 
 **Inputs:**
-- Signal set from Layer 2
-- Exit condition (from exit grinder — see below)
-- ADR threshold (minimum move to count as meaningful)
+- Signal conditions from Layer 1 (step 1 pyramid result)
+- Exit condition from exit grinder (step 2)
+- Example library (from Railway API)
+- Expression series cache (for scan + beam search)
+- 5yr OHLCV cache (for price data)
 
-**Method:**
-- For each signal, scan forward up to max_forward bars
-- Check if exit condition fires
-- If exit fires AND move >= ADR threshold: candidate winner
-- If exit never fires OR move < ADR threshold: candidate loser
-- Measure: signal close → exit close in ADR, MFE, capture efficiency
+**Phase 1: Gather raw signal clusters**
 
-**Exit condition source:**
-The exit grinder runs against the example set using the same expression library and
-expr cache. It finds the expression condition that best describes "the move is over"
-across all examples. This runs once per setup type and re-runs whenever the example
-library grows materially. It is NOT re-run every cycle — only when examples change
-enough to warrant it.
+Scans the full universe with step 1 conditions, groups consecutive signal bars
+into clusters (tracking rightmost + leftward bars), then classifies each cluster.
 
-**ADR target:**
-The ADR target for winner classification is derived from the example floor — the
-smallest signal-close-to-exit-close ADR move across all validated examples, with 10%
-wiggle room below (e.g., if the worst example moved 1.7 ADR, threshold = 1.5 ADR).
-This is a fixed threshold that only changes when examples change. Signals that trigger
-the exit but fall short of this floor are not sample-quality moves. Small winners that
-don't reach the example floor are treated as losers for EV purposes — that capital
-should work elsewhere.
+Cluster structure:
+- Rightmost bar: the deduped signal bar (what you'd trade from in live scanning)
+- Leftward bars: earlier consecutive bars where conditions also fired (sacrificial)
+
+Classification uses a ceiling + exit race:
+1. Forward window derived from examples: max distance (in bars) from leftmost
+   signal bar in cluster to entry bar (scan bar + 1) across all examples, +10%.
+   This accounts for the gap between signal firing and actual trade entry.
+2. Ceiling = max(highest high across all signal bars in cluster, highest high
+   in forward_window bars after rightmost bar). This captures the entry area
+   including potential gap reversals.
+3. After rightmost + forward_window, scan forward bar by bar:
+   - Close above ceiling (for shorts) → AUTO_LOSS (setup broke)
+   - Exit condition fires → AUTO_WIN (setup resolved)
+   - End of available data → AUTO_WIN (setup held, never stopped out)
+4. Example clusters (any bar matches a validated example) → AUTO_WIN regardless
+
+No ADR floor for pile separation. A scratch or tiny win is not a loser — the
+setup held. The profit side (how much winners win) gets handled by later steps.
+
+**Phase 2: Cluster-aware beam search** (Step 2 of rebuild — not yet built)
+
+Must-pass set: Expression values at rightmost bars of winning clusters. These
+define the bounding boxes — every winning signal must still pass.
+
+Expendable set: ALL bars from losing clusters (rightmost + leftward) + leftward
+bars from winning clusters. The beam search tries to eliminate these.
+
+Scoring is cluster-aware: a losing cluster only counts as eliminated when ALL
+its bars are dead. Killing 3 of 4 bars in a losing cluster is useless — the
+4th still fires in live scanning.
+
+**Phase 3: Combine + output**
+
+Signal + refinement conditions combined. The output is the deduped signal set
+(rightmost bars) minus signals whose entire losing cluster was eliminated.
+No re-scan, no re-classify — the phase 1 classification is the truth.
 
 **Output:**
-- Each signal labeled: exit_triggered (bool), move_adr, mfe_adr, capture_eff
-- Signals split into: moved (candidate winner) / didn't move (candidate loser)
+- `all_conditions`: combined signal + refinement conditions
+- `refinement_conditions_only`: just the new refinement conditions
+- `winner_signals` / `loser_signals`: classified deduped signals
+- `forward_window`: bars used for ceiling calculation
+- Saved to `local_runner/cache/raw_signal_clusters_{setup}.json` (phase 1)
+  and `local_runner/cache/refinement_{setup}_*.json` (full output)
 
-**Reuse from V1:** `signal_filter.py` exit phase + `exit_grinder.py` — both work.
+**Script:** `pyramid_grinder.py --blackout`
+
+**Reuse:** `scan_all_signals()` from signal_filter.py for the universe scan.
+Beam search engine from pyramid_grinder.py (to be upgraded to cluster-aware).
 
 ---
 
-## Layer 4: Classify
-
-**What it solves:** Assign every signal a winner/loser label for use by the regime
-model. More vetting = more accurate labels, but the model runs at any completeness level.
-
-**Classification rules (in priority order):**
-
-1. **Example → AUTO WIN.** Every signal bar that matches a validated example is a winner.
-   Examples are the ground truth. They never get reclassified.
-
-2. **Manual YES (AI-approved) → WIN.** Human reviewed, AI confirmed, human gave final
-   approval. Signal is labeled WIN and added to example library.
-
-3. **Exit triggered + move >= ADR threshold → AUTO WIN.** Mechanical confirmation
-   that the setup resolved correctly.
-
-4. **Manual NO → LOSS.** Human reviewed and rejected. Overrides auto-win. This is
-   how you clean up signals that triggered the exit but were untradeable (chop,
-   earnings gap, extended trend, etc.).
-
-5. **Exit never triggered OR move < ADR threshold → AUTO LOSS.**
-
-**Key property:** Every signal gets a label. No unclassified signals. The model runs
-on all of them. Manual vetting improves label accuracy but is never a prerequisite.
-
-**Output:**
-- Full signal set with winner/loser labels and label source (auto/manual/ai-approved)
-- Win rate on current signal set
-- Ratio of manually vetted vs auto-classified signals
-
-**Reuse from V1:** Classification logic already implemented in signal_filter.py +
-vetting endpoints — transplant rules, rewire storage to cycle-versioned schema.
-
----
-
-## Layer 5: Vet
+## Layer 3: Vet
 
 **What it solves:** Improve label accuracy and grow the example library through a
 two-stage human + AI gate. Neither stage alone is sufficient — human identifies
@@ -303,7 +278,7 @@ addition and speed improvements.
 
 ---
 
-## Layer 6: Proximity Grind
+## Layer 4: Proximity Grind
 
 **What it solves:** Trims false/early signal bars from the lose pile without losing
 any real triggers. Every loser removed is pure EV gain — win rate goes up, profit
@@ -358,7 +333,7 @@ moves EV from ~1.66 to ~1.98 (realistic loser cap). Profit factor goes from 3.81
 
 ---
 
-## Layer 7: Profit Grind
+## Layer 5: Profit Grind
 
 **What it solves:** Finds the optimal trade exit condition — when to close the
 position to maximize captured move from the entry bar high. Uses a bespoke exit
@@ -390,7 +365,7 @@ dedicated expression set built for post-entry price action analysis.
 
 ---
 
-## Layer 8: Regime Model
+## Layer 6: Regime Model
 
 **What it solves:** Given tonight's market conditions, what is the expected win rate
 for this setup type? Weights signals up or down based on how favorable the current
@@ -455,7 +430,7 @@ deteriorate before the entry actually triggers.
 
 ---
 
-## Layer 9: Health Check
+## Layer 7: Health Check
 
 **What it solves:** Tells you whether the new cycle is better or worse than the
 previous one. Drives the revert decision. Drives the live-ready determination.
@@ -588,10 +563,10 @@ be exact — no step ID mismatch between UI and agent.
 
 ```
 signal_grind     → pyramid_grinder.py --setup {setup} --beam 10000 --depth 100 --peak-target 3
-exit_grind       → exit_grinder.py --setup {setup}
-scan             → signal_filter.py --setup {setup}  (scan + exit filter + classify in one pass)
+exit_grind       → signal_exit_grinder.py --setup {setup}
 refinement_grind → pyramid_grinder.py --setup {setup} --blackout
-                   (beam search + combine conditions + re-scan + re-classify, all in one)
+                   (gathers raw signal clusters + ceiling/exit classification
+                    + cluster-aware beam search + combine conditions, all in one)
 vet              → is_manual=True, no agent command (UI-only)
 proximity_grind  → proximity_grinder.py --setup {setup}
                    (beam search + combine conditions + re-scan + re-classify, all in one)
@@ -600,8 +575,9 @@ regime           → market_grinder.py --setup {setup}
 health           → cycle_health.py --setup {setup}
 ```
 
-Note: scan and exit_filter were collapsed into a single step (scan). signal_filter.py
-already runs both phases in one pass — separating them added an extra UI click with no benefit.
+Note: The old scan step (signal_filter.py) is no longer a pipeline dependency.
+The refinement grinder handles scanning, clustering, and classification internally.
+signal_filter.py is retained for standalone signal analysis and chart vetting.
 
 Every command uploads its output to Railway on completion. No exceptions.
 The agent streams logs to Railway in real time. Status updates after every major step.
@@ -624,7 +600,7 @@ These components are correct and reusable:
 | Exit grinder | `scripts/exit_grinder.py` | ✅ Keep as-is |
 | Classification logic | `server.py` vetting endpoints | ✅ Keep rules, rewire storage |
 | Chart vetting UI | `app/index.html` vetting page | ✅ Keep, add AI queue |
-| Example library | Railway DB `examples` table | ✅ Keep — 71 DTSS examples |
+| Example library | Railway DB `examples` table | ✅ Keep — 65 DTSS examples |
 | OHLCV data | Railway SQLite | ✅ Keep |
 
 These need to be rebuilt or are new:

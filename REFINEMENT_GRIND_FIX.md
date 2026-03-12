@@ -1,5 +1,23 @@
 # Fix: Refinement Grinder (Step 4)
 
+## ⚠️ OBSOLETE — 2026-03-12
+
+This document described the old refinement grinder bug and fix approach. The refinement
+grinder has been redesigned. The new architecture is documented in PIPELINE_V2.md (Layer 2).
+
+Key changes:
+- Old: Read classified_dtss.json from signal_filter → grind deduped winners vs deduped losers
+- New: Refinement grinder scans universe internally, clusters consecutive bars, classifies
+  via ceiling+exit race (no ADR floor), grinds with cluster-aware engine
+- signal_filter.py is no longer a pipeline dependency between signal grind and refinement grind
+- Classification: close above ceiling before exit = LOSS, exit fires first = WIN, held to end = WIN
+
+See PIPELINE_V2.md for the current spec.
+
+---
+
+## Historical Context (below is the original document, kept for reference)
+
 ## The Bug
 
 `pyramid_grinder.py --blackout` currently runs the SAME examples-vs-universe grind as step 1, just with post-entry bars masked out. It does NOT grind winners vs losers.
