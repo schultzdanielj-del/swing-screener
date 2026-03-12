@@ -2146,7 +2146,6 @@ def _gather_raw_signal_clusters(setup_type):
     exit_thresh = exit_cond["threshold"]
     exit_dir = exit_cond["direction"]
     exit_col = expr_cache.expr_index(exit_expr)
-    adr_col = expr_cache.expr_index("adr14")
     direction = "short"  # DTSS — parameterize when other setups added
     MAX_FWD = 120
 
@@ -2175,7 +2174,7 @@ def _gather_raw_signal_clusters(setup_type):
             if cached_dates is None or len(cached_dates) != len(df):
                 print(f"  DEBUG adr: {ticker} SKIP cache mismatch (cache={len(cached_dates) if cached_dates is not None else 'None'} df={len(df)})")
                 continue
-            adr = float(cached_data[bar_idx, adr_col]) if adr_col is not None else 0
+            adr = float(np.mean(df["high"].values[max(0, bar_idx-13):bar_idx+1] - df["low"].values[max(0, bar_idx-13):bar_idx+1]))
             if adr <= 0 or np.isnan(adr):
                 print(f"  DEBUG adr: {ticker} SKIP bad adr={adr}")
                 continue
@@ -2265,7 +2264,7 @@ def _gather_raw_signal_clusters(setup_type):
                 n_loss += 1
                 continue
 
-            adr = float(cdata[bar_idx, adr_col]) if adr_col is not None else 0
+            adr = float(np.mean(df["high"].values[max(0, bar_idx-13):bar_idx+1] - df["low"].values[max(0, bar_idx-13):bar_idx+1]))
             if adr <= 0 or np.isnan(adr):
                 n_loss += 1
                 continue
