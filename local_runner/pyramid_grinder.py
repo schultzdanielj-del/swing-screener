@@ -2149,20 +2149,14 @@ def _gather_raw_signal_clusters(setup_type):
     example_adrs = []
     for c in clusters:
         ticker = c["ticker"]
-        if ticker not in example_bar_lookup:
-            continue
-        # Find the actual example bar within this cluster
-        all_bar_idxs = [c["rightmost"]["bar_idx"]] + [b["bar_idx"] for b in c["leftward"]]
-        ex_bar = None
-        for bi in all_bar_idxs:
-            if bi in example_bar_lookup[ticker]:
-                ex_bar = bi
-                break
-        if ex_bar is None:
+        bar_idx = c["rightmost"]["bar_idx"]
+        # Check if ANY bar in this cluster is an example (not just rightmost)
+        all_bar_idxs = [bar_idx] + [b["bar_idx"] for b in c["leftward"]]
+        is_ex = (ticker in example_bar_lookup
+                 and any(bi in example_bar_lookup[ticker] for bi in all_bar_idxs))
+        if not is_ex:
             continue
 
-        # Measure from the example's actual scan bar, not the cluster rightmost
-        bar_idx = ex_bar
         df = universe_cache.get(ticker)
         if df is None or bar_idx >= len(df) - 1:
             continue
