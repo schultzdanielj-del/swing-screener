@@ -20,11 +20,14 @@ Phase 2 — Causative Filtering
 Phase 3 — Correlative Filtering
   a) Market Regime + Setup-Specific Correlations (combined, not sequential)
 
-Phase 4 — Live Watchlist
+Phase 4 — Profit Optimization
+  a) Profit Grinder — maximize compounded equity growth, not raw MFE capture
+
+Phase 5 — Live Watchlist
   a) Dynamic EV Scoring
   b) Live Nightly Workflow
 
-Phase 5 — Reverse Engineering (future)
+Phase 6 — Reverse Engineering (future)
   a) Monster Mover Discovery
   b) Setup Type Emergence
 ```
@@ -117,11 +120,29 @@ Output is a multi-dimensional bucketing of win rate and ADR move size across bot
 
 ---
 
-## Phase 4 — Live Watchlist
+## Phase 4 — Profit Optimization
+
+### a) Profit Grinder
+
+Runs on the final filtered winner set — the trades you'd actually take after correlative filtering. No point optimizing exits on signals the regime would have excluded.
+
+Tests multiple exit strategies (trim and trail, fixed targets, volatility-based stops, etc.) and evaluates them by compounded equity growth over N trades, not average MFE capture per trade. A strategy that captures 60% MFE consistently may outcompound one that captures 90% with high variance, because drawdowns from volatile strategies kill position sizing.
+
+The objective function is compound growth rate, not raw MFE. Consistency IS the edge when compounding.
+
+Output: optimal exit strategy with compounded equity curve, drawdown profile, and MFE capture stats.
+
+- Input: Post-correlative winner pile with entry bars and price data
+- Output: Exit strategy parameters + compounded equity simulation
+- Script: `profit_grinder.py` (exists, needs rewiring to new pipeline and new objective function)
+
+---
+
+## Phase 5 — Live Watchlist
 
 ### a) Dynamic EV Scoring
 
-Combines regime buckets + setup-specific correlation buckets into a single EV score per signal. Each night's scan produces signals, and each signal gets scored based on where it falls in the correlation buckets.
+Combines correlation buckets into a single EV score per signal. Each night's scan produces signals, and each signal gets scored based on where it falls in the correlation buckets.
 
 Higher score = better regime + better setup characteristics = higher expected value.
 
@@ -129,7 +150,7 @@ Higher score = better regime + better setup characteristics = higher expected va
 
 After market close:
 1. Run tonight's bars against final conditions → signals that fired today
-2. Score each signal using regime + setup-specific buckets → EV estimate
+2. Score each signal using correlation buckets → EV estimate
 3. Rank order by EV, highest to lowest
 4. You focus on the top of the list
 
@@ -137,7 +158,7 @@ The watchlist is the end product. Every cycle of the loop makes it more accurate
 
 ---
 
-## Phase 5 — Reverse Engineering (future)
+## Phase 6 — Reverse Engineering (future)
 
 ### a) Monster Mover Discovery
 
@@ -162,7 +183,8 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
 | Phase 3: Correlative Filtering | ⏸ Not wired | Regime exists, setup-specific not built, need combined analysis |
-| Phase 4: Live Watchlist | ⏸ Not built | |
+| Phase 4: Profit Optimization | ⏸ Needs rewire | Script exists, needs new objective function (compound growth) |
+| Phase 5: Live Watchlist | ⏸ Not built | |
 
 ### Refinement Grind Result (2026-03-12)
 - 893 clusters: 365 WIN, 528 LOSS
