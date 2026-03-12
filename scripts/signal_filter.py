@@ -23,7 +23,8 @@ import pickle
 import numpy as np
 import pandas as pd
 import requests
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import cpu_count
 from datetime import datetime
 
 # Force UTF-8 output on Windows (cp1252 can't handle ✓, ⚠, etc.)
