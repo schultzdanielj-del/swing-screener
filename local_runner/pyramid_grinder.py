@@ -2081,6 +2081,11 @@ def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
     rescan_losers = None
     rescan_sacrificial = None
     if combined_conditions and exit_cond:
+        # Save counts/refs before freeing memory (used in summary dict later)
+        _n_loser_rows = len(loser_rows)
+        _n_win_dfs = len(win_dfs)
+        _eliminated_losers_saved = eliminated_losers
+
         # Free beam search data before spawning scan workers
         del loser_matrix, loser_rows, loser_dates, loser_tickers
         del candidate_values, candidate_indices, candidate_names, candidate_categories
@@ -2272,15 +2277,15 @@ def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
             "final_total": final_total,
             "final_peak": final_peak,
             "final_avg": round(final_avg, 1) if final_avg else 0,
-            "losers_input": len(loser_rows),
-            "losers_eliminated": len(loser_rows) - final_total,
-            "winners_input": len(win_dfs),
-            "winners_passing": len(win_dfs),
+            "losers_input": _n_loser_rows if rescan_winners is not None else len(loser_rows),
+            "losers_eliminated": (_n_loser_rows if rescan_winners is not None else len(loser_rows)) - final_total,
+            "winners_input": _n_win_dfs if rescan_winners is not None else len(win_dfs),
+            "winners_passing": _n_win_dfs if rescan_winners is not None else len(win_dfs),
         },
         "winner_signals": rescan_winners if rescan_winners is not None else raw_winners,
         "loser_signals": rescan_losers if rescan_losers is not None else surviving_losers,
         "sacrificial_signals": rescan_sacrificial if rescan_sacrificial is not None else [],
-        "eliminated_signals": eliminated_losers,
+        "eliminated_signals": _eliminated_losers_saved if rescan_winners is not None else eliminated_losers,
     }
 
     os.makedirs(CACHE_DIR, exist_ok=True)
