@@ -1,103 +1,192 @@
-# TODO — Swing Screener (2026-03-12)
+# ScanPerfect Pipeline (2026-03-12)
 
-## Pipeline (6 steps)
+## The Goal
+
+Always be in the highest probability positions the market is offering right now. Compound at 2.5%/month for 20 years.
+
+---
+
+## Pipeline Overview
 
 ```
-Vetting Loop (repeat until convergence):
-  Step 1: Signal Grind         → examples vs universe → candidate conditions
-  Step 2: Exit Grind           → optimal exit condition from example entry bars
-  Step 3: Refinement Grind     → scan universe, cluster, classify, beam search winners vs losers
-  Step 4: Vet                  → review winner pile, add examples, loop back to step 1
+Phase 1 — Sample Gathering
+  a) Vetting System
 
-After Convergence:
-  Step 5: Regime Model         → winner/loser ratio vs 266 market instruments
-  Step 6: Health Check         → cycle quality, EV, promote / revert / live-ready
+Phase 2 — Causative Filtering
+  a) Signal Grind
+  b) Exit Signal Grind
+  c) Refinement Grind
+
+Phase 3 — Correlative Filtering
+  a) Market Regime
+  b) Setup-Specific Correlations
+
+Phase 4 — Live Watchlist
+  a) Dynamic EV Scoring
+  b) Live Nightly Workflow
+
+Phase 5 — Reverse Engineering (future)
+  a) Monster Mover Discovery
+  b) Setup Type Emergence
 ```
 
-Nightly auto-refresh (4:30pm ET): OHLCV → caches → expr cache → matrix → earnings → market cache. Fully automated.
+---
+
+## The Core Insight
+
+Examples are the currency of the entire system. Every filter costs examples. Phase 1 banks as many as possible. Phase 2 burns some to separate signal from noise. Phase 3 burns more to find when setups pay and how much. The more you bank in Phase 1, the more you can afford to spend in Phases 2 and 3.
+
+In Phase 2, examples fight curve fitting — more examples means tighter bounding boxes and less overfitting risk from stacking conditions.
+
+In Phase 3, examples fuel EV improvement — more examples means the correlative filters have richer data to find real market patterns vs noise.
+
+---
+
+## Phase 1 — Sample Gathering
+
+### a) Vetting System
+
+The vetting system is where setup examples are defined and collected. You start with a setup description and a baseline set of example trades. The more you vet, the better the entire system gets.
+
+Early on, the system works from signal bars (the bar where conditions fired). As more charts get vetted, you get real entry bars, real exit bars, actual trade data. This tightens everything downstream — exit grind gets better targets, ADR moves become more accurate, correlative filters have cleaner data.
+
+Vetting is not a one-time gate. It's a quality layer that improves continuously. Even after going live, vetting more historical signals keeps making the model better.
+
+The vetting loop runs through Phase 2: signal grind → exit grind → rank output by biggest signal-to-exit ADR moves → vet top charts → add examples → repeat. When the good setups become buried in the output, you run the refinement grind and vet the winning pile rank-ordered the same way. Keep going until you've squeezed the sample set dry.
+
+The goal: enter Phase 3 with as many examples as you can get.
+
+---
+
+## Phase 2 — Causative Filtering
+
+These steps find the mathematical conditions that separate setup bars from the universe. They are "causative" — they describe what the chart looks like when the setup is present.
+
+### a) Signal Grind
+
+Examples vs full universe. The pyramid grinder beam-searches 16,000+ expressions across 4,167 tickers to find conditions where 100% of examples pass but most of the universe fails.
+
+- Engine: Pyramid grinder, D1 cap=15
+- Input: Example library + expression cache + 5yr OHLCV
+- Output: Condition set + raw signal list across 5yr history
+- Script: `pyramid_grinder.py`
+
+### b) Exit Signal Grind
+
+Finds the optimal exit condition — the expression threshold that best captures when the setup resolves (move is over).
+
+- Input: Example entry bars + expression cache
+- Output: Exit expression + direction + threshold
+- Script: `signal_exit_grinder.py`
+
+### c) Refinement Grind
+
+Scans the full universe with signal grind conditions, clusters consecutive signal bars, classifies winners/losers via a ceiling+exit race, then beam-searches winners vs losers to find additional conditions that eliminate losing clusters.
+
+Cluster-aware scoring: a losing cluster is only eliminated when ALL its bars are dead. No overcounting partial kills.
+
+No re-scan, no re-classify after the beam search. Phase 1 classification (ceiling+exit race) is truth. The beam search filters the signal list by whole-cluster elimination.
+
+- Input: Signal conditions + exit condition + example library + expression cache + 5yr OHLCV
+- Output: Combined conditions (signal + refinement) + filtered winner/loser signal lists
+- Script: `pyramid_grinder.py --blackout`
+- Overfitting risk: More refinement depth = more conditions = higher curve fit risk. Depth progression output (TODO) will allow post-hoc threshold tuning.
+
+---
+
+## Phase 3 — Correlative Filtering
+
+These steps find when and how much setups pay. They are "correlative" — they describe market and ticker conditions that increase or decrease win rate and ADR move size. They don't describe the setup itself.
+
+Both regime and setup-specific correlations find buckets of variables that affect win rate and move size. But they also cost examples — every bucket that filters out losers also filters out some winners.
+
+### a) Market Regime
+
+Broad market conditions: SPY trend, VIX level, sector rotation, breadth, interest rates, etc. Uses the 266-instrument market cache.
+
+Finds buckets where win rate and ADR moves are significantly better or worse than baseline. Signals that fire during unfavorable regimes get downweighted or excluded.
+
+- Input: Pre-refinement signal piles (need full loser set, not post-refinement)
+- Output: Regime buckets with win rate and ADR move multipliers
+- Script: `market_grinder.py` (exists, needs wiring to new pipeline)
+
+### b) Setup-Specific Correlations
+
+Ticker and setup characteristics: price level, market cap, dollar volume, sector, float, etc. Things specific to the individual stock and setup instance, not the broad market.
+
+Same approach as regime — find buckets that move win rate and ADR capture.
+
+- Input: Pre-refinement signal piles
+- Output: Setup-specific correlation buckets
+- Script: Not built
+
+---
+
+## Phase 4 — Live Watchlist
+
+### a) Dynamic EV Scoring
+
+Combines regime buckets + setup-specific correlation buckets into a single EV score per signal. Each night's scan produces signals, and each signal gets scored based on where it falls in the correlation buckets.
+
+Higher score = better regime + better setup characteristics = higher expected value.
+
+### b) Live Nightly Workflow
+
+After market close:
+1. Run tonight's bars against final conditions → signals that fired today
+2. Score each signal using regime + setup-specific buckets → EV estimate
+3. Rank order by EV, highest to lowest
+4. You focus on the top of the list
+
+The watchlist is the end product. Every cycle of the loop makes it more accurate.
+
+---
+
+## Phase 5 — Reverse Engineering (future)
+
+### a) Monster Mover Discovery
+
+Flip the pipeline. Instead of starting with a setup pattern, start with the biggest movers in history — stocks that went 100%+, 200%+, 500%+. Scan the expression library for what conditions were true on the bars before these moves started.
+
+Same infrastructure: same 16,000 expressions, same grinder engine, same 5yr data. Different starting set.
+
+### b) Setup Type Emergence
+
+Different monster movers will cluster naturally into setup types based on which expression conditions they share. The setup types emerge from the data instead of being defined upfront.
+
+This is the ultimate use of the system — find the optimal entry and exit conditions to maximize capture of the biggest moves the market has ever produced.
 
 ---
 
 ## DTSS — Current State
 
-### Step 1 (Signal Grind): ✅ Done
-- Pyramid grinder, D1 cap=15, beam=10000, depth=100
-- 68 examples (66 with valid scan bars)
-- 87 conditions → 1,218 raw → 893 deduped signals
-- File: `pyramid_dtss_mp_sig1218_pk14_20260310_003848.json`
+| Step | Status | Key Numbers |
+|------|--------|-------------|
+| Phase 1: Vetting | ✅ 68 examples | 66 with valid scan bars |
+| Phase 2a: Signal Grind | ✅ Done | 87 conditions, 1,218 raw → 893 deduped |
+| Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
+| Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
+| Phase 3a: Market Regime | ⏸ Not wired | |
+| Phase 3b: Setup Correlations | ⏸ Not built | |
+| Phase 4: Live Watchlist | ⏸ Not built | |
 
-### Step 2 (Exit Grind): ✅ Done
-- Exit condition: `slope_xavgc21_off7_adr14 <= -1.128826`
-- File: `signal_exit_grind/exit_grind_dtss_*.json`
-
-### Step 3 (Refinement Grind): ✅ Done (2026-03-12)
-- Cluster-aware beam search engine (new as of today)
-- 893 clusters: 365 WIN, 528 LOSS, 325 leftward bars
-- 100 refinement conditions, depth capped at 100
+### Refinement Grind Result (2026-03-12)
+- 893 clusters: 365 WIN, 528 LOSS
+- 100 refinement conditions (depth capped at 100)
 - 426/528 losing clusters eliminated (80.7%)
 - All 365 winners pass all conditions
 - 182 combined conditions (87 signal + 100 refinement, 5 overlap)
-- **Pre-regime win rate: 78%** (365 winners / 467 total signals)
+- Pre-regime win rate: 78% (365 / 467)
 - File: `refinement_dtss_cl102_pk5_20260312_150704.json`
-
-### Step 4 (Vet): ⏳ Next
-- Review the 365 winner pile for new examples
-
-### Step 5 (Regime Model): Not built
-- Run on pre-refinement piles (full 893 clusters, 365 WIN / 528 LOSS)
-- Needs enough losers to find patterns — don't use post-refinement data
-- Script: `scripts/market_grinder.py` (exists but needs wiring to new pipeline)
-
-### Step 6 (Health Check): Not built
-- Script: `scripts/cycle_health.py` (exists but needs update)
 
 ---
 
 ## Immediate Tasks
 
-1. **Depth progression output** — save level-by-level best path and cluster survival count in refinement JSON. Allows post-hoc condition threshold tuning without re-running the grinder.
-2. **Update PIPELINE_V2.md** — refinement grinder spec says "not yet built" for cluster-aware engine. Now built and working. Remove proximity grind and profit grind.
-3. **Vet the winner pile** (Step 4) — review 365 winners, add new examples, decide if another loop is needed.
-
----
-
-## Pipeline Status
-
-| Step | Script | Status |
-|------|--------|--------|
-| 1. Signal Grind | `pyramid_grinder.py` | ✅ Working |
-| 2. Exit Grind | `signal_exit_grinder.py` | ✅ Working |
-| 3. Refinement Grind | `pyramid_grinder.py --blackout` | ✅ Working (cluster-aware) |
-| 4. Vet | UI + manual | ⏳ Next |
-| 5. Regime Model | `market_grinder.py` | ⏸ Not wired |
-| 6. Health Check | `cycle_health.py` | ⏸ Not wired |
-
----
-
-## Key Design Decisions
-
-- **Pyramid with D1 cap=15 is the official step 1 engine.** Experimental grinders (dartboard, hybrid) all tested and failed. Files preserved but shelved.
-- **Beam search instability is accepted.** ~9.4% Jaccard similarity between runs, but individual runs produce usable signal sets.
-- **Proximity grinder is obsolete.** Its job (trim losers via beam search) is now handled by the refinement grinder's cluster-aware engine.
-- **Profit grinder removed from pipeline.** Trade exit optimization deferred.
-- **Regime model should run on pre-refinement data.** Post-refinement has too few losers (102) for the model to learn from. Pre-refinement has the full 528 losers.
-- **Refinement depth is an overfitting risk.** 100 conditions on 365 winners is aggressive. Depth progression output will allow post-hoc threshold tuning. The regime model is the real overfitting filter.
-- **No re-scan, no re-classify in refinement.** Phase 1 classification (ceiling+exit race) is truth. The beam search filters signals by whole-cluster elimination only.
-- **All grinders must produce 100% example pass rate.** Any result where an example fails is invalid.
-- **Silent pipeline failures are dangerous.** The system produces plausible-looking wrong numbers with no errors. Verify everything empirically.
-
----
-
-## Nightly Auto-Refresh (4:30pm ET)
-
-7 steps, fully automated via agent:
-1. Railway OHLCV append
-2. Daily cache rebuild
-3. 5yr cache rebuild
-4. Expression cache append
-5. Matrix rebuild
-6. Earnings dates update
-7. Market cache append (266 instruments)
+1. **Depth progression output** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running.
+2. **Update PIPELINE_V2.md** — remove proximity grind, profit grind. Update refinement spec (cluster-aware engine is built).
+3. **Vet winner pile** — review 365 winners, add examples, loop if needed.
+4. **Wire regime model** — point `market_grinder.py` at pre-refinement cluster data (full 893 clusters).
 
 ---
 
@@ -105,10 +194,22 @@ Nightly auto-refresh (4:30pm ET): OHLCV → caches → expr cache → matrix →
 
 - **Repo:** `schultzdanielj-del/swing-screener`, branch `v2`
 - **Railway:** `https://web-production-e3025.up.railway.app`
-- **Expression cache:** 16,051 expressions, ~21 GB, `EXPR_CACHE_WORKERS=8`
+- **Expression cache:** 16,051 expressions, ~21 GB
 - **5yr OHLCV cache:** ~4,167 tickers
-- **File mirror:** All grind results uploaded to Railway via `file_mirror.py`
-- **Tickers not in cache:** BRK-B, SMMT, VUZI (not in 5yr). SERV, SOUN (<50 bars, not in expr cache).
+- **File mirror:** All grind results → Railway via `file_mirror.py`
+- **Nightly refresh:** 4:30pm ET, 7 steps, fully automated
+
+---
+
+## Key Design Decisions
+
+- **Pyramid with D1 cap=15 is the official signal grind engine.** Experimental grinders (dartboard, hybrid) failed. Shelved.
+- **Beam search instability accepted.** Individual runs produce usable signal sets despite low run-to-run overlap.
+- **Cluster-aware refinement scoring.** A losing cluster only counts as eliminated when ALL its bars are dead.
+- **No re-scan/re-classify in refinement.** Phase 1 classification is truth.
+- **Regime runs on pre-refinement data.** Post-refinement has too few losers for the model to learn from.
+- **100% example pass rate required.** Any grinder result where an example fails is invalid.
+- **Silent failures are dangerous.** The system produces plausible wrong numbers. Verify empirically.
 
 ---
 
