@@ -1020,11 +1020,17 @@ class ClusterAwareRefinementSearch:
         date_to_idx = {d: i for i, d in enumerate(self.unique_dates)}
         self.row_date_indices = np.array([date_to_idx[d] for d in row_dates], dtype=np.int32)
 
-        # Precompute: for each losing cluster, which row indices belong to it
-        self.cluster_row_indices = []
+        # Precompute: boolean matrix (n_rows x n_losing_clusters) for vectorized scoring
+        # cluster_membership[row, cluster] = True if row belongs to that cluster
+        self.cluster_membership = np.zeros((self.n_rows, n_losing_clusters), dtype=bool)
         for ci in range(n_losing_clusters):
             indices = np.where(self.row_cluster_ids == ci)[0]
-            self.cluster_row_indices.append(indices)
+            self.cluster_membership[indices, ci] = True
+
+        # Also keep index lists for _build_result
+        self.cluster_row_indices = []
+        for ci in range(n_losing_clusters):
+            self.cluster_row_indices.append(np.where(self.row_cluster_ids == ci)[0])
 
         # Precompute pass/fail per candidate
         self.cand_passes = np.zeros((self.n_cands, self.n_rows), dtype=bool)
@@ -1049,11 +1055,9 @@ class ClusterAwareRefinementSearch:
 
     def _cluster_score(self, row_mask):
         """Score = number of losing clusters with at least one surviving row. Lower is better."""
-        surviving = 0
-        for indices in self.cluster_row_indices:
-            if np.any(row_mask[indices]):
-                surviving += 1
-        return surviving
+        # row_mask is bool array (n_rows,). For each cluster, check if ANY member row survives.
+        # cluster_membership is (n_rows, n_clusters). Mask out dead rows, check columns.
+        return int(np.any(self.cluster_membership[row_mask], axis=0).sum())
 
     def _daily_stats(self, row_mask):
         """Return (peak, avg, total) for reporting."""
