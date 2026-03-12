@@ -2140,6 +2140,7 @@ def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
         _with_exit = []
         _no_exit = []
         _tcache = {}
+        _prev_tk = None
 
         for _sig in _deduped:
             _ticker = _sig["ticker"]
@@ -2150,7 +2151,10 @@ def run_refinement(setup_type, beam_width=50, depth=10, peak_target=3):
                 continue
             try:
                 if _ticker not in _tcache:
+                    if _prev_tk and _prev_tk != _ticker and _prev_tk in _tcache:
+                        del _tcache[_prev_tk]
                     _tcache[_ticker] = expr_cache.get_ticker(_ticker)
+                _prev_tk = _ticker
                 _cd, _cdata = _tcache[_ticker]
                 if _cd is None or len(_cd) != len(_df):
                     _no_exit.append(_sig)

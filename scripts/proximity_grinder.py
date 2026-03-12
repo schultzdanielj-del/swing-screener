@@ -801,6 +801,7 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
 
         _with_exit = []
         _tcache = {}
+        _prev_tk = None
         for _sig in _deduped:
             _ticker = _sig["ticker"]
             _bar_idx = _sig["bar_idx"]
@@ -809,7 +810,10 @@ def run_proximity_grind(setup_type, beam_width=10000, depth=100, dry_run=False):
                 continue
             try:
                 if _ticker not in _tcache:
+                    if _prev_tk and _prev_tk != _ticker and _prev_tk in _tcache:
+                        del _tcache[_prev_tk]
                     _tcache[_ticker] = expr_cache.get_ticker(_ticker)
+                _prev_tk = _ticker
                 _cd, _cdata = _tcache[_ticker]
                 if _cd is None or len(_cd) != len(_df):
                     continue
