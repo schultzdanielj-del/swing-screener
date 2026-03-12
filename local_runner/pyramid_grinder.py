@@ -2166,6 +2166,13 @@ def _gather_raw_signal_clusters(setup_type):
         if not is_ex:
             continue
 
+        # Find the actual example scan bar within this cluster
+        ex_scan_bar = None
+        for bi in all_bar_idxs:
+            if ticker in example_bar_lookup and bi in example_bar_lookup[ticker]:
+                ex_scan_bar = bi
+                break
+
         df = universe_cache.get(ticker)
         if df is None or bar_idx >= len(df) - 1:
             print(f"  DEBUG adr: {ticker} bar_idx={bar_idx} SKIP no df or past end")
@@ -2175,6 +2182,7 @@ def _gather_raw_signal_clusters(setup_type):
             if cached_dates is None or len(cached_dates) != len(df):
                 print(f"  DEBUG adr: {ticker} SKIP cache mismatch (cache={len(cached_dates) if cached_dates is not None else 'None'} df={len(df)})")
                 continue
+            # ADR floor measured from rightmost bar (matches classification)
             adr = float(np.mean(df["high"].values[max(0, bar_idx-13):bar_idx+1] - df["low"].values[max(0, bar_idx-13):bar_idx+1]))
             if adr <= 0 or np.isnan(adr):
                 print(f"  DEBUG adr: {ticker} SKIP bad adr={adr}")
@@ -2197,7 +2205,8 @@ def _gather_raw_signal_clusters(setup_type):
                     else:
                         move = (ec - sc) / adr
                     example_adrs.append(move)
-                    example_exit_bars.append(f_i)
+                    # Trade duration measured from example scan bar, not rightmost
+                    example_exit_bars.append(f_i + (bar_idx - ex_scan_bar))
                     exit_found = True
                     break
                 elif exit_dir in ("<=", "below") and v <= exit_thresh:
@@ -2207,7 +2216,8 @@ def _gather_raw_signal_clusters(setup_type):
                     else:
                         move = (ec - sc) / adr
                     example_adrs.append(move)
-                    example_exit_bars.append(f_i)
+                    # Trade duration measured from example scan bar, not rightmost
+                    example_exit_bars.append(f_i + (bar_idx - ex_scan_bar))
                     exit_found = True
                     break
             if not exit_found:
