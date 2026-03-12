@@ -1925,8 +1925,436 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 
 
 # ══════════════════════════════════════════════════════════════
-# CLI
+# REFINEMENT HELPERS
 # ══════════════════════════════════════════════════════════════
+
+def _load_signal_conditions(setup_type):
+    """Load step 1 signal conditions from latest pyramid result (local).
+
+    Returns (conditions_list, source_filename) or ([], None) if not found.
+    """
+    import glob as _glob
+
+    search_dirs = [
+        os.path.join(REPO_ROOT, "local_runner", "cache"),
+        os.path.join(REPO_ROOT, "data"),
+    ]
+    candidates = []
+    for d in search_dirs:
+        for p in _glob.glob(os.path.join(d, f"pyramid_{setup_type}_*.json")):
+            bn = os.path.basename(p)
+            if "blackout" in bn or "refinement" in bn:
+                continue
+            candidates.append(p)
+
+    def _extract_ts(path):
+        bn = os.path.basename(path).replace(".json", "")
+        parts = bn.split("_")
+        if len(parts) >= 2:
+            ts = parts[-2] + parts[-1]
+            if len(ts) == 14 and ts.isdigit():
+                return ts
+        return "0"
+
+    if not candidates:
+        return [], None
+
+    candidates.sort(key=_extract_ts, reverse=True)
+    with open(candidates[0]) as f:
+        data = json.load(f)
+    conditions = data.get("all_conditions", [])
+    return conditions, os.path.basename(candidates[0])
+
+
+def _load_exit_cond(setup_type):
+    """Load step 2 exit condition from local signal_exit_grind output.
+
+    Returns exit_cond dict or None if not found.
+    """
+    exit_path = os.path.join(
+        REPO_ROOT, "data", "signal_exit_grind", f"signal_exit_{setup_type}.json"
+    )
+    if not os.path.exists(exit_path):
+        return None
+    with open(exit_path) as f:
+        data = json.load(f)
+    if data.get("grinder_type") == "signal_exit" and data.get("top_conditions"):
+        return data["top_conditions"][0]
+    return None
+
+
+def _gather_raw_signal_clusters(setup_type):
+    """Gather raw pre-dedup signal clusters for the refinement grinder.
+
+    Scans the full universe with step 1 signal conditions, groups consecutive
+    bars into clusters, applies exit condition on rightmost bars, classifies
+    each cluster as AUTO_WIN or AUTO_LOSS.
+
+    Output saved to local_runner/cache/raw_signal_clusters_{setup}.json.
+    The existing refinement grinder does NOT use this yet — it's gathered
+    here for later steps to wire in.
+
+    Returns path to saved file, or None on error.
+    """
+    import gc
+
+    print(f"\n  ── GATHERING RAW SIGNAL CLUSTERS ──")
+
+    # ── Load signal conditions ──
+    signal_conditions, cond_source = _load_signal_conditions(setup_type)
+    if not signal_conditions:
+        print(f"  ERROR: No signal conditions found for {setup_type}")
+        print(f"  Run step 1 first: python local_runner/pyramid_grinder.py --setup {setup_type}")
+        return None
+    print(f"  Signal conditions: {len(signal_conditions)} from {cond_source}")
+
+    # ── Load exit condition ──
+    exit_cond = _load_exit_cond(setup_type)
+    if exit_cond is None:
+        print(f"  ERROR: No exit condition found for {setup_type}")
+        print(f"  Run step 2 first: python scripts/signal_exit_grinder.py --setup {setup_type}")
+        return None
+    print(f"  Exit condition: {exit_cond['expression']} {exit_cond['direction']} {exit_cond['threshold']}")
+
+    # ── Load examples from Railway API ──
+    print(f"  Loading examples...")
+    import requests
+    try:
+        resp = requests.get(f"{API_BASE}/api/examples/{setup_type}", timeout=30)
+        resp.raise_for_status()
+        examples_raw = resp.json().get("examples", [])
+    except Exception as e:
+        print(f"  ERROR: Could not load examples: {e}")
+        return None
+    print(f"  {len(examples_raw)} examples loaded")
+
+    # ── Load expression cache ──
+    print(f"  Loading expression cache...")
+    expr_cache = ExprSeriesCache()
+    if not expr_cache.is_valid():
+        print(f"  ERROR: Expression cache not found or invalid.")
+        return None
+    print(f"  Expression cache: {expr_cache.n_expressions} expressions")
+
+    # ── Load 5yr cache → build slim → free full cache → scan ──
+    print(f"  Loading 5yr cache...")
+    universe_cache = load_5yr_cache()
+
+    # Build example lookup: {ticker: set(scan_idx)} for tagging
+    # scan_idx = bar before entry_date (same logic as signal_filter.deduplicate_examples)
+    example_bar_lookup = {}
+    for ex in examples_raw:
+        ticker = ex.get("ticker")
+        entry_date = ex.get("entryDate", ex.get("entry_date"))
+        df = universe_cache.get(ticker)
+        if df is None or entry_date is None:
+            continue
+        dates_str = [str(d)[:10] for d in df["date"].values]
+        if entry_date not in dates_str:
+            continue
+        entry_idx = dates_str.index(entry_date)
+        scan_idx = entry_idx - 1
+        if scan_idx < 0:
+            continue
+        if ticker not in example_bar_lookup:
+            example_bar_lookup[ticker] = set()
+        example_bar_lookup[ticker].add(scan_idx)
+    print(f"  Example bar lookup: {sum(len(v) for v in example_bar_lookup.values())} bars across {len(example_bar_lookup)} tickers")
+
+    # Build slim cache for scan workers
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    from signal_filter import scan_all_signals as _scan_all, _build_slim_cache
+
+    slim = _build_slim_cache(universe_cache)
+    del universe_cache
+    gc.collect()
+
+    # ── Scan ──
+    n_workers = max(cpu_count() - 1, 1)
+    raw_signals = _scan_all(slim, signal_conditions, n_workers, expr_cache)
+    del slim
+    gc.collect()
+
+    if not raw_signals:
+        print(f"  ERROR: Scan produced 0 raw signals")
+        return None
+
+    # ── Cluster consecutive bars ──
+    print(f"\n  Clustering {len(raw_signals):,} raw signals...")
+    raw_signals.sort(key=lambda s: (s["ticker"], s["bar_idx"]))
+
+    clusters = []
+    cluster_id = 0
+    i = 0
+    while i < len(raw_signals):
+        j = i + 1
+        ticker = raw_signals[i]["ticker"]
+        while j < len(raw_signals):
+            if raw_signals[j]["ticker"] != ticker:
+                break
+            if raw_signals[j]["bar_idx"] != raw_signals[j - 1]["bar_idx"] + 1:
+                break
+            j += 1
+
+        # raw_signals[i:j] is one cluster
+        rightmost = raw_signals[j - 1]
+        leftward = [raw_signals[k] for k in range(i, j - 1)]
+
+        clusters.append({
+            "cluster_id": cluster_id,
+            "ticker": ticker,
+            "rightmost": {
+                "bar_idx": rightmost["bar_idx"],
+                "date": rightmost["date"],
+                "close": rightmost.get("close"),
+            },
+            "leftward": [
+                {
+                    "bar_idx": s["bar_idx"],
+                    "date": s["date"],
+                    "close": s.get("close"),
+                }
+                for s in leftward
+            ],
+            "size": j - i,
+        })
+        cluster_id += 1
+        i = j
+
+    n_single = sum(1 for c in clusters if c["size"] == 1)
+    n_multi = sum(1 for c in clusters if c["size"] > 1)
+    total_leftward = sum(len(c["leftward"]) for c in clusters)
+    print(f"  {len(clusters):,} clusters ({n_single:,} single-bar, {n_multi:,} multi-bar)")
+    print(f"  {total_leftward:,} leftward (sacrificial) bars")
+
+    # ── Exit + classify on rightmost bars ──
+    print(f"\n  Applying exit condition on rightmost bars...")
+
+    # Reload 5yr cache for exit evaluation
+    universe_cache = load_5yr_cache()
+
+    exit_expr = exit_cond["expression"]
+    exit_thresh = exit_cond["threshold"]
+    exit_dir = exit_cond["direction"]
+    exit_col = expr_cache.expr_index(exit_expr)
+    adr_col = expr_cache.expr_index("adr14")
+    direction = "short"  # DTSS — parameterize when other setups added
+    MAX_FWD = 120
+
+    if exit_col is None:
+        print(f"  ERROR: Exit expression '{exit_expr}' not in expr cache")
+        return None
+
+    # Measure example exit distances to get adr_threshold (same as signal_filter)
+    example_adrs = []
+    for c in clusters:
+        ticker = c["ticker"]
+        bar_idx = c["rightmost"]["bar_idx"]
+        is_ex = (ticker in example_bar_lookup and bar_idx in example_bar_lookup[ticker])
+        if not is_ex:
+            continue
+
+        df = universe_cache.get(ticker)
+        if df is None or bar_idx >= len(df) - 1:
+            continue
+        try:
+            cached_dates, cached_data = expr_cache.get_ticker(ticker)
+            if cached_dates is None or len(cached_dates) != len(df):
+                continue
+            adr = float(cached_data[bar_idx, adr_col]) if adr_col is not None else 0
+            if adr <= 0 or np.isnan(adr):
+                continue
+            sc = float(df["close"].values[bar_idx])
+            fwd = min(MAX_FWD, len(df) - bar_idx - 1)
+            if fwd < 5:
+                continue
+            es = cached_data[:, exit_col]
+            for f_i in range(1, fwd + 1):
+                v = es[bar_idx + f_i]
+                if np.isnan(v):
+                    continue
+                if exit_dir in (">=", "above") and v >= exit_thresh:
+                    ec = float(df["close"].values[bar_idx + f_i])
+                    if direction == "short":
+                        move = (sc - ec) / adr
+                    else:
+                        move = (ec - sc) / adr
+                    example_adrs.append(move)
+                    break
+                elif exit_dir in ("<=", "below") and v <= exit_thresh:
+                    ec = float(df["close"].values[bar_idx + f_i])
+                    if direction == "short":
+                        move = (sc - ec) / adr
+                    else:
+                        move = (ec - sc) / adr
+                    example_adrs.append(move)
+                    break
+        except Exception:
+            continue
+
+    if example_adrs:
+        example_floor = min(example_adrs)
+        adr_threshold = round(example_floor * 0.9, 1)
+        print(f"  Example floor: {example_floor:.1f} ADR, threshold: {adr_threshold:.1f} (90% of floor)")
+    else:
+        adr_threshold = 5.0
+        print(f"  WARNING: No example exit distances computed, using default threshold {adr_threshold}")
+
+    # Classify each cluster
+    tcache = {}
+    prev_tk = None
+    n_win = 0
+    n_loss = 0
+
+    for c in clusters:
+        ticker = c["ticker"]
+        bar_idx = c["rightmost"]["bar_idx"]
+        is_ex = (ticker in example_bar_lookup and bar_idx in example_bar_lookup[ticker])
+
+        # Default to AUTO_LOSS
+        c["classification"] = "AUTO_LOSS"
+        c["is_example"] = 1 if is_ex else 0
+        c["exit_triggered"] = 0
+        c["move_adr"] = None
+
+        if is_ex:
+            c["classification"] = "AUTO_WIN"
+            n_win += 1
+            continue
+
+        # Evaluate exit on rightmost bar
+        df = universe_cache.get(ticker)
+        if df is None or bar_idx >= len(df) - 1:
+            n_loss += 1
+            continue
+
+        try:
+            if ticker not in tcache:
+                if prev_tk and prev_tk != ticker and prev_tk in tcache:
+                    del tcache[prev_tk]
+                tcache[ticker] = expr_cache.get_ticker(ticker)
+            prev_tk = ticker
+            cd, cdata = tcache[ticker]
+            if cd is None or len(cd) != len(df):
+                n_loss += 1
+                continue
+
+            adr = float(cdata[bar_idx, adr_col]) if adr_col is not None else 0
+            if adr <= 0 or np.isnan(adr):
+                n_loss += 1
+                continue
+
+            sc = float(df["close"].values[bar_idx])
+            fwd = min(MAX_FWD, len(df) - bar_idx - 1)
+            if fwd < 5:
+                n_loss += 1
+                continue
+
+            es = cdata[:, exit_col]
+            exit_found = False
+            for f_i in range(1, fwd + 1):
+                v = es[bar_idx + f_i]
+                if np.isnan(v):
+                    continue
+                if exit_dir in (">=", "above") and v >= exit_thresh:
+                    ec = float(df["close"].values[bar_idx + f_i])
+                    if direction == "short":
+                        move = (sc - ec) / adr
+                    else:
+                        move = (ec - sc) / adr
+                    c["exit_triggered"] = 1
+                    c["move_adr"] = round(move, 2)
+                    c["exit_bar"] = f_i
+                    if move >= adr_threshold:
+                        c["classification"] = "AUTO_WIN"
+                        n_win += 1
+                    else:
+                        n_loss += 1
+                    exit_found = True
+                    break
+                elif exit_dir in ("<=", "below") and v <= exit_thresh:
+                    ec = float(df["close"].values[bar_idx + f_i])
+                    if direction == "short":
+                        move = (sc - ec) / adr
+                    else:
+                        move = (ec - sc) / adr
+                    c["exit_triggered"] = 1
+                    c["move_adr"] = round(move, 2)
+                    c["exit_bar"] = f_i
+                    if move >= adr_threshold:
+                        c["classification"] = "AUTO_WIN"
+                        n_win += 1
+                    else:
+                        n_loss += 1
+                    exit_found = True
+                    break
+
+            if not exit_found:
+                n_loss += 1
+
+        except Exception:
+            n_loss += 1
+
+    # Free caches
+    del universe_cache, tcache
+    gc.collect()
+
+    wr = n_win / max(n_win + n_loss, 1) * 100
+    print(f"\n  Cluster classification:")
+    print(f"    AUTO_WIN:  {n_win}")
+    print(f"    AUTO_LOSS: {n_loss}")
+    print(f"    Win rate:  {wr:.1f}%")
+
+    # ── Save ──
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output = {
+        "setup_type": setup_type,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "signal_conditions_file": cond_source,
+        "exit_condition": {
+            "expression": exit_cond["expression"],
+            "threshold": exit_cond["threshold"],
+            "direction": exit_cond["direction"],
+        },
+        "adr_threshold": adr_threshold,
+        "direction": direction,
+        "n_raw": len(raw_signals),
+        "n_clusters": len(clusters),
+        "n_winning_clusters": n_win,
+        "n_losing_clusters": n_loss,
+        "n_leftward_bars": total_leftward,
+        "clusters": clusters,
+    }
+
+    # Timestamped file
+    ts_path = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}_{ts}.json")
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(ts_path, "w") as f:
+        json.dump(output, f, indent=2)
+    print(f"\n  Saved: {ts_path}")
+
+    # Latest pointer
+    latest_path = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
+    with open(latest_path, "w") as f:
+        json.dump(output, f, indent=2)
+    print(f"  Saved: {latest_path}")
+
+    # Mirror to Railway
+    try:
+        from file_mirror import mirror_file
+        mirror_file(ts_path)
+        mirror_file(latest_path)
+        print(f"  Mirrored to Railway")
+    except Exception as e:
+        print(f"  WARNING: Mirror failed: {e}")
+
+    # Free remaining memory
+    del raw_signals, clusters, output
+    gc.collect()
+
+    print(f"  ── RAW SIGNAL CLUSTERS COMPLETE ──\n")
+    return latest_path
+
 
 # ══════════════════════════════════════════════════════════════
 # BLACKOUT MAP LOADER
@@ -2065,6 +2493,16 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
     print(f"  Beam: {beam_width}, Depth: {depth}, Peak target: {peak_target}")
 
     t_total = time.time()
+
+    # ── Step 1: Gather raw signal clusters (pre-dedup) ──
+    # This scans the universe, groups consecutive bars into clusters,
+    # applies exit + classifies. Output saved for future steps.
+    # The existing refinement grinder below does NOT use this yet.
+    cluster_path = _gather_raw_signal_clusters(setup_type)
+    if cluster_path:
+        print(f"  Raw signal clusters saved: {os.path.basename(cluster_path)}")
+    else:
+        print(f"  WARNING: Raw signal cluster gathering failed — continuing with existing flow")
 
     # ── Load classified signals ──
     win_dfs, loser_whitelist, raw_winners, raw_losers, universe_cache, adr_threshold = _load_refinement_piles(setup_type)
@@ -2285,52 +2723,18 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
     print(f"\n  ── PHASE 2: COMBINE + RE-SCAN ──")
 
     # Load signal grind conditions from local pyramid result
-    import glob as _glob
-    import re as _re
-    _search_dirs = [
-        os.path.join(REPO_ROOT, "local_runner", "cache"),
-        os.path.join(REPO_ROOT, "data"),
-    ]
-    _candidates = []
-    for _d in _search_dirs:
-        for _p in _glob.glob(os.path.join(_d, f"pyramid_{setup_type}_*.json")):
-            _bn = os.path.basename(_p)
-            if "blackout" in _bn or "refinement" in _bn:
-                continue
-            _candidates.append(_p)
-
-    def _extract_ts(_path):
-        _bn = os.path.basename(_path).replace(".json", "")
-        _parts = _bn.split("_")
-        if len(_parts) >= 2:
-            _ts = _parts[-2] + _parts[-1]
-            if len(_ts) == 14 and _ts.isdigit():
-                return _ts
-        return "0"
-
-    if not _candidates:
+    signal_conditions, _cond_src = _load_signal_conditions(setup_type)
+    if signal_conditions:
+        print(f"  Signal conditions: {len(signal_conditions)} from {_cond_src}")
+    else:
         print(f"  WARNING: No pyramid result found — skipping re-scan.")
         print(f"  Output will have refinement conditions only (no combined set).")
-        signal_conditions = []
-    else:
-        _candidates.sort(key=_extract_ts, reverse=True)
-        with open(_candidates[0]) as _f:
-            _pdata = json.load(_f)
-        signal_conditions = _pdata.get("all_conditions", [])
-        print(f"  Signal conditions: {len(signal_conditions)} from {os.path.basename(_candidates[0])}")
 
     # Load exit condition from local signal_exit_grind output
-    _exit_path = os.path.join(
-        REPO_ROOT, "data", "signal_exit_grind", f"signal_exit_{setup_type}.json"
-    )
-    exit_cond = None
-    if os.path.exists(_exit_path):
-        with open(_exit_path) as _f:
-            _edata = json.load(_f)
-        if _edata.get("grinder_type") == "signal_exit" and _edata.get("top_conditions"):
-            exit_cond = _edata["top_conditions"][0]
-            print(f"  Exit condition: {exit_cond['expression']} {exit_cond['direction']} {exit_cond['threshold']}")
-    if exit_cond is None:
+    exit_cond = _load_exit_cond(setup_type)
+    if exit_cond:
+        print(f"  Exit condition: {exit_cond['expression']} {exit_cond['direction']} {exit_cond['threshold']}")
+    else:
         print(f"  WARNING: No exit condition found — skipping re-scan.")
 
     # Combine signal + refinement conditions
