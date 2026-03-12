@@ -988,6 +988,291 @@ class RefinementSearch:
               f"{nodes_explored:,} nodes  {elapsed:.1f}s")
 
 
+class ClusterAwareRefinementSearch:
+    """Cluster-aware beam search for refinement grind (step 4).
+
+    Scores by surviving losing CLUSTERS, not individual rows.
+    A losing cluster is only eliminated when ALL its bars are dead.
+
+    Must-pass set: winning cluster rightmost bars (bounding boxes).
+    Expendable set: all bars from losing clusters + leftward bars from winning clusters.
+    """
+
+    def __init__(self, candidate_values, row_dates, example_ranges,
+                 candidate_names, candidate_categories, row_tickers=None,
+                 row_cluster_ids=None, n_losing_clusters=0):
+        """
+        row_cluster_ids: int array, one per row. >=0 means losing cluster index,
+                         -1 means winning leftward bar (sacrificial, no cluster).
+        n_losing_clusters: total number of losing clusters.
+        """
+        self.n_rows, self.n_cands = candidate_values.shape
+        self.candidate_names = candidate_names
+        self.candidate_categories = candidate_categories
+        self.row_dates_list = row_dates
+        self.row_tickers_list = row_tickers or (["?"] * self.n_rows)
+        self.n_losing_clusters = n_losing_clusters
+        self.row_cluster_ids = np.array(row_cluster_ids, dtype=np.int32)
+
+        # Date mapping for output stats
+        self.unique_dates = sorted(set(row_dates))
+        self.n_dates = len(self.unique_dates)
+        date_to_idx = {d: i for i, d in enumerate(self.unique_dates)}
+        self.row_date_indices = np.array([date_to_idx[d] for d in row_dates], dtype=np.int32)
+
+        # Precompute: for each losing cluster, which row indices belong to it
+        self.cluster_row_indices = []
+        for ci in range(n_losing_clusters):
+            indices = np.where(self.row_cluster_ids == ci)[0]
+            self.cluster_row_indices.append(indices)
+
+        # Precompute pass/fail per candidate
+        self.cand_passes = np.zeros((self.n_cands, self.n_rows), dtype=bool)
+        self.valid_cands = []
+
+        for ci in range(self.n_cands):
+            name = candidate_names[ci]
+            if name not in example_ranges:
+                self.cand_passes[ci, :] = True
+                continue
+            low, high = example_ranges[name]
+            vals = candidate_values[:, ci]
+            passes = ((vals >= low) & (vals <= high)) | np.isnan(vals)
+            self.cand_passes[ci, :] = passes
+
+            if np.sum(passes) < self.n_rows:
+                self.valid_cands.append(ci)
+
+        print(f"    ClusterAwareRefinementSearch: {self.n_rows:,} rows, "
+              f"{n_losing_clusters} losing clusters, "
+              f"{len(self.valid_cands)} useful candidates out of {self.n_cands}")
+
+    def _cluster_score(self, row_mask):
+        """Score = number of losing clusters with at least one surviving row. Lower is better."""
+        surviving = 0
+        for indices in self.cluster_row_indices:
+            if np.any(row_mask[indices]):
+                surviving += 1
+        return surviving
+
+    def _daily_stats(self, row_mask):
+        """Return (peak, avg, total) for reporting."""
+        if not np.any(row_mask):
+            return 0, 0.0, 0
+        active_dates = self.row_date_indices[row_mask]
+        counts = np.bincount(active_dates, minlength=self.n_dates)
+        nonzero = counts[counts > 0]
+        total = int(np.sum(row_mask))
+        peak = int(np.max(counts))
+        avg = float(np.mean(nonzero)) if len(nonzero) > 0 else 0.0
+        return peak, avg, total
+
+    def run(self, depth=100, beam_width=10000, peak_target=3):
+        """Run beam search minimizing surviving losing clusters."""
+        t0 = time.time()
+        nodes_explored = 0
+
+        if not self.valid_cands:
+            return {"error": "No useful candidates", "conditions": [], "levels": []}
+
+        base_mask = np.ones(self.n_rows, dtype=bool)
+        base_cluster_score = self._cluster_score(base_mask)
+        base_peak, base_avg, base_row_total = self._daily_stats(base_mask)
+        print(f"\n    ClusterAwareRefinementSearch: depth={depth}, beam={beam_width}")
+        print(f"    Baseline: {base_cluster_score} surviving clusters, "
+              f"{base_row_total:,} expendable rows")
+
+        if base_cluster_score == 0:
+            print(f"    No losing clusters to eliminate.")
+            return {
+                "conditions": [], "levels": [],
+                "stats": {"baseline_peak": base_peak, "baseline_avg": base_avg,
+                          "baseline_total": base_cluster_score, "final_peak": base_peak},
+            }
+
+        from dataclasses import dataclass
+        from typing import Tuple
+
+        @dataclass
+        class Node:
+            conditions: Tuple[int, ...]
+            row_mask: np.ndarray
+            cluster_score: int
+
+        # Seed: score each candidate by surviving clusters
+        scored = []
+        for ci in self.valid_cands:
+            mask = base_mask & self.cand_passes[ci]
+            cs = self._cluster_score(mask)
+            scored.append((ci, cs, mask))
+            nodes_explored += 1
+
+        scored.sort(key=lambda x: x[1])
+
+        n_seeds = min(beam_width * 2, len(scored))
+        current_level = []
+        for ci, cs, mask in scored[:n_seeds]:
+            current_level.append(Node(conditions=(ci,), row_mask=mask, cluster_score=cs))
+
+        current_level.sort(key=lambda n: n.cluster_score)
+        current_level = current_level[:beam_width]
+
+        best = current_level[0]
+        levels = [self._level_summary(1, current_level, time.time() - t0)]
+        self._print_level(1, current_level, base_cluster_score, nodes_explored, time.time() - t0)
+
+        if best.cluster_score == 0:
+            return self._build_result(best, levels, nodes_explored, t0,
+                                      base_peak, base_cluster_score)
+
+        # Deepen
+        for lv in range(2, depth + 1):
+            next_level = []
+            seen = set()
+
+            for node in current_level:
+                used = set(node.conditions)
+                if node.cluster_score == 0:
+                    continue
+
+                for ci in self.valid_cands:
+                    if ci in used:
+                        continue
+                    combo = tuple(sorted(node.conditions + (ci,)))
+                    if combo in seen:
+                        continue
+                    seen.add(combo)
+
+                    mask = node.row_mask & self.cand_passes[ci]
+                    cs = self._cluster_score(mask)
+                    nodes_explored += 1
+
+                    next_level.append(Node(conditions=combo, row_mask=mask, cluster_score=cs))
+
+                if len(next_level) >= beam_width * 8:
+                    break
+
+            if not next_level:
+                print(f"\n    ▓ Ceiling at level {lv}")
+                break
+
+            next_level.sort(key=lambda n: n.cluster_score)
+            current_level = next_level[:beam_width]
+
+            if current_level[0].cluster_score < best.cluster_score:
+                best = current_level[0]
+
+            levels.append(self._level_summary(lv, current_level, time.time() - t0))
+            self._print_level(lv, current_level, base_cluster_score, nodes_explored, time.time() - t0)
+
+            if best.cluster_score == 0:
+                print(f"\n    ✓ All losing clusters eliminated")
+                break
+
+            # Ceiling: if score didn't improve this level, stop
+            if len(levels) >= 2 and levels[-1]["best_cluster_score"] == levels[-2]["best_cluster_score"]:
+                print(f"\n    ▓ Ceiling at level {lv} ({best.cluster_score} clusters remaining)")
+                break
+
+        return self._build_result(best, levels, nodes_explored, t0,
+                                  base_peak, base_cluster_score)
+
+    def _build_result(self, best, levels, nodes_explored, t0, baseline_peak, baseline_clusters):
+        peak, avg, row_total = self._daily_stats(best.row_mask)
+        elapsed = time.time() - t0
+
+        cond_list = list(best.conditions)
+
+        # Leave-one-out: how many clusters survive without each condition
+        loo_scores = []
+        for drop_i, ci in enumerate(cond_list):
+            without_mask = np.ones(self.n_rows, dtype=bool)
+            for j, cj in enumerate(cond_list):
+                if j != drop_i:
+                    without_mask &= self.cand_passes[cj]
+            loo_scores.append(self._cluster_score(without_mask))
+
+        conditions = []
+        for drop_i, ci in enumerate(cond_list):
+            name = self.candidate_names[ci]
+            cat = self.candidate_categories[ci]
+            without = loo_scores[drop_i]
+            fp = (without - best.cluster_score) / best.cluster_score if best.cluster_score > 0 else 0.0
+            conditions.append({
+                "expr": name,
+                "name": name,
+                "category": cat,
+                "cand_index": int(ci),
+                "clusters_with_all": best.cluster_score,
+                "clusters_without": without,
+                "filter_power": round(fp, 4),
+            })
+
+        # Determine which losing clusters survived vs were eliminated
+        surviving_cluster_indices = set()
+        eliminated_cluster_indices = set()
+        for ci, indices in enumerate(self.cluster_row_indices):
+            if np.any(best.row_mask[indices]):
+                surviving_cluster_indices.add(ci)
+            else:
+                eliminated_cluster_indices.add(ci)
+
+        # Build surviving row info for reporting
+        surviving_indices = np.where(best.row_mask)[0]
+        final_signals = []
+        final_tickers_set = set()
+        for idx in surviving_indices:
+            date = self.row_dates_list[idx]
+            ticker = self.row_tickers_list[idx]
+            final_signals.append({"date": str(date)[:10], "ticker": ticker})
+            final_tickers_set.add(ticker)
+        final_signals.sort(key=lambda s: (s["date"], s["ticker"]))
+
+        eliminated = baseline_clusters - best.cluster_score
+        print(f"\n    Eliminated {eliminated}/{baseline_clusters} losing clusters "
+              f"({eliminated/max(baseline_clusters,1)*100:.1f}%)")
+        print(f"    Surviving clusters: {best.cluster_score}")
+        print(f"    Surviving expendable rows: {row_total}")
+
+        return {
+            "conditions": conditions,
+            "final_peak": peak,
+            "final_avg": round(avg, 1),
+            "final_total": best.cluster_score,
+            "baseline_peak": baseline_peak,
+            "baseline_total": baseline_clusters,
+            "losers_eliminated": eliminated,
+            "surviving_cluster_indices": surviving_cluster_indices,
+            "eliminated_cluster_indices": eliminated_cluster_indices,
+            "levels": levels,
+            "stats": {
+                "nodes_explored": nodes_explored,
+                "elapsed_s": round(elapsed, 1),
+                "depth_reached": len(levels),
+            },
+            "final_signals": final_signals,
+            "final_tickers": sorted(final_tickers_set),
+            "n_unique_tickers": len(final_tickers_set),
+        }
+
+    def _level_summary(self, level, nodes, elapsed):
+        best = nodes[0]
+        return {
+            "level": level,
+            "best_cluster_score": best.cluster_score,
+            "n_conditions": len(best.conditions),
+            "paths_explored": len(nodes),
+            "elapsed_s": round(elapsed, 1),
+        }
+
+    def _print_level(self, level, nodes, baseline_clusters, nodes_explored, elapsed):
+        best = nodes[0]
+        eliminated = baseline_clusters - best.cluster_score
+        print(f"    Level {level:2d}: {best.cluster_score:>5} clusters remaining  "
+              f"(-{eliminated})  |  {len(nodes)} paths  "
+              f"{nodes_explored:,} nodes  {elapsed:.1f}s")
+
+
 # ══════════════════════════════════════════════════════════════
 # D1 TIER (uses existing SpiderwebSearch for last-bar matrix)
 # ══════════════════════════════════════════════════════════════
