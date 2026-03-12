@@ -2168,19 +2168,24 @@ def _gather_raw_signal_clusters(setup_type):
 
         df = universe_cache.get(ticker)
         if df is None or bar_idx >= len(df) - 1:
+            print(f"  DEBUG adr: {ticker} bar_idx={bar_idx} SKIP no df or past end")
             continue
         try:
             cached_dates, cached_data = expr_cache.get_ticker(ticker)
             if cached_dates is None or len(cached_dates) != len(df):
+                print(f"  DEBUG adr: {ticker} SKIP cache mismatch (cache={len(cached_dates) if cached_dates is not None else 'None'} df={len(df)})")
                 continue
             adr = float(cached_data[bar_idx, adr_col]) if adr_col is not None else 0
             if adr <= 0 or np.isnan(adr):
+                print(f"  DEBUG adr: {ticker} SKIP bad adr={adr}")
                 continue
             sc = float(df["close"].values[bar_idx])
             fwd = min(MAX_FWD, len(df) - bar_idx - 1)
             if fwd < 5:
+                print(f"  DEBUG adr: {ticker} SKIP fwd={fwd} too short")
                 continue
             es = cached_data[:, exit_col]
+            exit_found = False
             for f_i in range(1, fwd + 1):
                 v = es[bar_idx + f_i]
                 if np.isnan(v):
@@ -2192,6 +2197,7 @@ def _gather_raw_signal_clusters(setup_type):
                     else:
                         move = (ec - sc) / adr
                     example_adrs.append(move)
+                    exit_found = True
                     break
                 elif exit_dir in ("<=", "below") and v <= exit_thresh:
                     ec = float(df["close"].values[bar_idx + f_i])
@@ -2200,8 +2206,12 @@ def _gather_raw_signal_clusters(setup_type):
                     else:
                         move = (ec - sc) / adr
                     example_adrs.append(move)
+                    exit_found = True
                     break
-        except Exception:
+            if not exit_found:
+                print(f"  DEBUG adr: {ticker} bar_idx={bar_idx} no exit in {fwd} bars")
+        except Exception as _e:
+            print(f"  DEBUG adr: {ticker} EXCEPTION: {_e}")
             continue
 
     if example_adrs:
