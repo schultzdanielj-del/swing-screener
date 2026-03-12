@@ -176,7 +176,7 @@ Classification uses a ceiling + exit race:
 No ADR floor for pile separation. A scratch or tiny win is not a loser — the
 setup held. The profit side (how much winners win) gets handled by later steps.
 
-**Phase 2: Cluster-aware beam search** (Step 2 of rebuild — not yet built)
+**Phase 2: Cluster-aware beam search** (not yet built — current engine uses rightmost bars only)
 
 Must-pass set: Expression values at rightmost bars of winning clusters. These
 define the bounding boxes — every winning signal must still pass.
@@ -578,6 +578,8 @@ health           → cycle_health.py --setup {setup}
 Note: The old scan step (signal_filter.py) is no longer a pipeline dependency.
 The refinement grinder handles scanning, clustering, and classification internally.
 signal_filter.py is retained for standalone signal analysis and chart vetting.
+It no longer produces `classified_{setup}.json` — that file has been replaced by
+`raw_signal_clusters_{setup}.json` produced by the refinement grinder itself.
 
 Every command uploads its output to Railway on completion. No exceptions.
 The agent streams logs to Railway in real time. Status updates after every major step.
