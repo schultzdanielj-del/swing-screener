@@ -183,11 +183,12 @@ library grows materially. It is NOT re-run every cycle — only when examples ch
 enough to warrant it.
 
 **ADR target:**
-The ADR target for winner classification is derived from the sample median, not a
-fixed threshold. Signals that trigger the exit but fall well short of sample-median
-ADR are worth manual review — they may be technically valid but not sample-quality
-moves. The goal is sample-type exits, not scratching tiny winners. Small winners that
-don't reach sample-median ADR are treated as losers for EV purposes — that capital
+The ADR target for winner classification is derived from the example floor — the
+smallest signal-close-to-exit-close ADR move across all validated examples, with 10%
+wiggle room below (e.g., if the worst example moved 1.7 ADR, threshold = 1.5 ADR).
+This is a fixed threshold that only changes when examples change. Signals that trigger
+the exit but fall short of this floor are not sample-quality moves. Small winners that
+don't reach the example floor are treated as losers for EV purposes — that capital
 should work elsewhere.
 
 **Output:**

@@ -767,8 +767,14 @@ def save_results(filtered, example_signals, setup_type, args):
     return latest_path
 
 
-def _build_classified_signals(deduped, with_exit, example_signals):
+def _build_classified_signals(deduped, with_exit, example_signals, adr_threshold):
     """Build full classified signal set from deduped signals + exit results + examples.
+
+    Args:
+        deduped: all deduped signals from scan
+        with_exit: signals that triggered the exit condition
+        example_signals: deduplicated example signal bars
+        adr_threshold: example floor ADR with 10% wiggle (from measure_example_exit_distances)
 
     Returns list of dicts with classification labels. Used by both local save
     and Railway upload.
@@ -788,10 +794,6 @@ def _build_classified_signals(deduped, with_exit, example_signals):
     for sig in with_exit:
         exit_lookup[(sig["ticker"], sig["bar_idx"])] = sig
 
-    # ADR threshold for winner classification (sample median)
-    exit_adrs = [s["move_adr"] for s in with_exit if s.get("move_adr") is not None]
-    median_adr = sorted(exit_adrs)[len(exit_adrs) // 2] if exit_adrs else 5.0
-
     signals = []
     for sig in deduped:
         ticker = sig["ticker"]
@@ -806,7 +808,7 @@ def _build_classified_signals(deduped, with_exit, example_signals):
         if is_example:
             classification = "AUTO_WIN"
             classification_source = "example"
-        elif exit_data and exit_data.get("move_adr", 0) >= median_adr:
+        elif exit_data and exit_data.get("move_adr", 0) >= adr_threshold:
             classification = "AUTO_WIN"
             classification_source = "exit_filter"
         elif exit_data:
@@ -843,12 +845,12 @@ def _build_classified_signals(deduped, with_exit, example_signals):
     print(f"  AUTO_LOSS: {n_loss}")
     print(f"  Exit triggered: {n_exit}/{len(signals)}")
     print(f"  Win rate: {n_win/len(signals)*100:.1f}%")
-    print(f"  Median ADR threshold: {median_adr:.1f}")
+    print(f"  ADR threshold (example floor): {adr_threshold:.1f}")
 
-    return signals, median_adr
+    return signals, adr_threshold
 
 
-def _save_classified_signals(setup_type, classified_signals, median_adr):
+def _save_classified_signals(setup_type, classified_signals, adr_threshold):
     """Save full classified signal set locally for downstream pipeline steps."""
     out_dir = os.path.join(REPO_ROOT, "data", "signal_filter")
     os.makedirs(out_dir, exist_ok=True)
@@ -863,7 +865,7 @@ def _save_classified_signals(setup_type, classified_signals, median_adr):
         "n_signals": len(classified_signals),
         "n_win": n_win,
         "n_loss": n_loss,
-        "median_adr_threshold": median_adr,
+        "adr_threshold": adr_threshold,
         "signals": classified_signals,
     }
 
@@ -1142,11 +1144,11 @@ def main():
 
     # Build full classified signal set (winners + losers)
     print(f"\n  CLASSIFYING ALL SIGNALS")
-    classified_signals, median_adr = _build_classified_signals(
-        deduped, with_exit, example_signals)
+    classified_signals, adr_threshold = _build_classified_signals(
+        deduped, with_exit, example_signals, min_adr)
 
     # Save classified set locally (for refinement grinder)
-    _save_classified_signals(setup, classified_signals, median_adr)
+    _save_classified_signals(setup, classified_signals, adr_threshold)
 
     # Upload to Railway
     _upload_v2_cycle_signals(setup, classified_signals)

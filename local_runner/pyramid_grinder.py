@@ -1950,7 +1950,7 @@ def _load_refinement_piles(setup_type):
         print(f"  ERROR: No classified signal file found:")
         print(f"    {classified_path}")
         print(f"  Run step 3 first: python scripts/signal_filter.py --setup {setup_type}")
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
     with open(classified_path) as f:
         data = json.load(f)
@@ -1958,11 +1958,24 @@ def _load_refinement_piles(setup_type):
     signals = data.get("signals", [])
     if not signals:
         print(f"  ERROR: No signals in {classified_path}")
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
     print(f"\n  ── REFINEMENT GRIND: Loading piles from {os.path.basename(classified_path)} ──")
     print(f"  Timestamp: {data.get('timestamp')}")
     print(f"  Total signals: {len(signals)}")
+
+    # Load ADR threshold from classified file (example floor with 10% wiggle)
+    adr_threshold = data.get("adr_threshold")
+    if adr_threshold is None:
+        # Fallback for old files that used median_adr_threshold
+        adr_threshold = data.get("median_adr_threshold")
+        if adr_threshold is not None:
+            print(f"  ⚠ WARNING: classified file uses old median_adr_threshold ({adr_threshold:.1f})")
+            print(f"    Re-run step 3 to use example floor threshold.")
+        else:
+            adr_threshold = 5.0
+            print(f"  ⚠ WARNING: No ADR threshold in classified file, using default {adr_threshold}")
+    print(f"  ADR threshold: {adr_threshold:.1f}")
 
     # Split into winners and losers
     winners = [s for s in signals if s.get("classification") == "AUTO_WIN"]
@@ -1972,10 +1985,10 @@ def _load_refinement_piles(setup_type):
 
     if not winners:
         print(f"  ERROR: No winners — nothing to use as must-pass set")
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     if not losers:
         print(f"  WARNING: No losers — nothing to filter. Refinement is a no-op.")
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
     # Load 5yr cache to build example_dfs format for winners
     universe_cache = load_5yr_cache()
@@ -2035,7 +2048,7 @@ def _load_refinement_piles(setup_type):
     if skipped_lose:
         print(f"  ⚠ Skipped {skipped_lose} losers (no bar_idx or not in cache)")
 
-    return win_example_dfs, whitelist_map, winners, losers, universe_cache
+    return win_example_dfs, whitelist_map, winners, losers, universe_cache, adr_threshold
 
 
 def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
@@ -2054,7 +2067,7 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
     t_total = time.time()
 
     # ── Load classified signals ──
-    win_dfs, loser_whitelist, raw_winners, raw_losers, universe_cache = _load_refinement_piles(setup_type)
+    win_dfs, loser_whitelist, raw_winners, raw_losers, universe_cache, adr_threshold = _load_refinement_piles(setup_type)
     if win_dfs is None:
         print("  ABORT: Could not load refinement piles.")
         return None
@@ -2480,10 +2493,8 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
             except Exception:
                 _no_exit.append(_sig)
 
-        # Classify
+        # Classify using adr_threshold from step 3 (example floor with 10% wiggle)
         _exit_lk = {(_s["ticker"], _s["bar_idx"]): _s for _s in _with_exit}
-        _exit_adrs = [_s["move_adr"] for _s in _with_exit if _s.get("move_adr") is not None]
-        _med_adr = sorted(_exit_adrs)[len(_exit_adrs) // 2] if _exit_adrs else 5.0
 
         rescan_winners = []
         rescan_losers = []
@@ -2495,7 +2506,7 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
 
             if _is_ex:
                 _cls = "AUTO_WIN"
-            elif _ed and _ed.get("move_adr", 0) >= _med_adr:
+            elif _ed and _ed.get("move_adr", 0) >= adr_threshold:
                 _cls = "AUTO_WIN"
             else:
                 _cls = "AUTO_LOSS"
