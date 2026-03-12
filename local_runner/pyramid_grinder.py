@@ -1835,7 +1835,20 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
     print(f"\n  Computing winner ranges...")
     example_ranges, example_matrix = compute_example_ranges(
         win_dfs, all_expressions, expr_cache=expr_cache)
-    print(f"  {len(example_ranges)} expressions with valid ranges across all {len(win_dfs)} winners")
+
+    # Tighten to exact min/max — no 5% margin for refinement.
+    # The winner set is fixed from step 3, no new winners will be added.
+    expr_name_list = [e["name"] for e in all_expressions]
+    for j, name in enumerate(expr_name_list):
+        if name not in example_ranges:
+            continue
+        vals = example_matrix[:, j]
+        valid = vals[~np.isnan(vals)]
+        if len(valid) == 0:
+            continue
+        example_ranges[name] = (float(np.min(valid)), float(np.max(valid)))
+
+    print(f"  {len(example_ranges)} expressions with valid ranges across all {len(win_dfs)} winners (exact min/max, no margin)")
 
     # ── Build loser matrix from expr cache ──
     print(f"\n  Building loser matrix...")
