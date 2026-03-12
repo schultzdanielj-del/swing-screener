@@ -18,8 +18,7 @@ Phase 2 — Causative Filtering
   c) Refinement Grind
 
 Phase 3 — Correlative Filtering
-  a) Market Regime
-  b) Setup-Specific Correlations
+  a) Market Regime + Setup-Specific Correlations (combined, not sequential)
 
 Phase 4 — Live Watchlist
   a) Dynamic EV Scoring
@@ -96,29 +95,25 @@ No re-scan, no re-classify after the beam search. Phase 1 classification (ceilin
 
 ## Phase 3 — Correlative Filtering
 
-These steps find when and how much setups pay. They are "correlative" — they describe market and ticker conditions that increase or decrease win rate and ADR move size. They don't describe the setup itself.
+These filters find when and how much setups pay. They are "correlative" — they describe market and ticker conditions that increase or decrease win rate and ADR move size. They don't describe the setup itself.
 
-Both regime and setup-specific correlations find buckets of variables that affect win rate and move size. But they also cost examples — every bucket that filters out losers also filters out some winners.
+Every correlative bucket that filters out losers also filters out some winners. More examples going in means you can afford tighter buckets.
 
-### a) Market Regime
+### Combined Analysis: Market Regime + Setup-Specific Correlations
 
-Broad market conditions: SPY trend, VIX level, sector rotation, breadth, interest rates, etc. Uses the 266-instrument market cache.
+These are not sequential steps — they run together as two dimensions of the same analysis. Every signal gets evaluated simultaneously on both:
 
-Finds buckets where win rate and ADR moves are significantly better or worse than baseline. Signals that fire during unfavorable regimes get downweighted or excluded.
+**Market regime** — broad market conditions: SPY trend, VIX level, sector rotation, breadth, interest rates, etc. Uses the 266-instrument market cache.
+
+**Setup-specific** — ticker and setup characteristics: price level, market cap, dollar volume, sector, float, etc. Things specific to the individual stock and setup instance.
+
+The buckets interact. A setup firing during a strong market on a mid-cap with high dollar volume has a different win rate than the same setup during a choppy market on a low-float micro-cap. Running them separately would mask those interactions — you need the combined effect.
+
+Output is a multi-dimensional bucketing of win rate and ADR move size across both market conditions and ticker characteristics. This feeds directly into Phase 4's EV scoring.
 
 - Input: Pre-refinement signal piles (need full loser set, not post-refinement)
-- Output: Regime buckets with win rate and ADR move multipliers
-- Script: `market_grinder.py` (exists, needs wiring to new pipeline)
-
-### b) Setup-Specific Correlations
-
-Ticker and setup characteristics: price level, market cap, dollar volume, sector, float, etc. Things specific to the individual stock and setup instance, not the broad market.
-
-Same approach as regime — find buckets that move win rate and ADR capture.
-
-- Input: Pre-refinement signal piles
-- Output: Setup-specific correlation buckets
-- Script: Not built
+- Output: Combined correlation buckets with win rate and ADR move multipliers
+- Script: `market_grinder.py` (exists for regime, needs expansion to include setup-specific + combined analysis)
 
 ---
 
@@ -166,8 +161,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 2a: Signal Grind | ✅ Done | 87 conditions, 1,218 raw → 893 deduped |
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
-| Phase 3a: Market Regime | ⏸ Not wired | |
-| Phase 3b: Setup Correlations | ⏸ Not built | |
+| Phase 3: Correlative Filtering | ⏸ Not wired | Regime exists, setup-specific not built, need combined analysis |
 | Phase 4: Live Watchlist | ⏸ Not built | |
 
 ### Refinement Grind Result (2026-03-12)
