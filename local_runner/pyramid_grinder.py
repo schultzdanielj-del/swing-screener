@@ -2147,15 +2147,16 @@ def _gather_raw_signal_clusters(setup_type):
     exit_dir = exit_cond["direction"]
     exit_col = expr_cache.expr_index(exit_expr)
     direction = "short"  # DTSS — parameterize when other setups added
-    MAX_FWD = 120  # Initial ceiling for example exit search; overwritten below
+    MAX_FWD = 120  # Ceiling for example exit search (informational only)
 
     if exit_col is None:
         print(f"  ERROR: Exit expression '{exit_expr}' not in expr cache")
         return None
 
-    # Measure example exit distances to get adr_threshold and max trade duration
+    # Measure example metrics: exit distances (informational) + forward window
     example_adrs = []
     example_exit_bars = []
+    example_fwd_windows = []  # leftmost signal bar to entry bar distance
     for c in clusters:
         ticker = c["ticker"]
         bar_idx = c["rightmost"]["bar_idx"]
@@ -2173,72 +2174,72 @@ def _gather_raw_signal_clusters(setup_type):
                 ex_scan_bar = bi
                 break
 
+        # Forward window: leftmost signal bar to entry bar (scan bar + 1)
+        leftmost_bar = min(all_bar_idxs)
+        entry_bar_idx = ex_scan_bar + 1  # entry = day after scan
+        fwd_window_bars = entry_bar_idx - leftmost_bar
+        example_fwd_windows.append(fwd_window_bars)
+
         df = universe_cache.get(ticker)
-        if df is None or bar_idx >= len(df) - 1:
-            print(f"  DEBUG adr: {ticker} bar_idx={bar_idx} SKIP no df or past end")
+        if df is None or ex_scan_bar >= len(df) - 1:
             continue
         try:
             cached_dates, cached_data = expr_cache.get_ticker(ticker)
             if cached_dates is None or len(cached_dates) != len(df):
-                print(f"  DEBUG adr: {ticker} SKIP cache mismatch (cache={len(cached_dates) if cached_dates is not None else 'None'} df={len(df)})")
                 continue
-            # Examples: everything measured from scan bar
+            # Informational: measure exit distance from scan bar
             adr = float(np.mean(df["high"].values[max(0, ex_scan_bar-13):ex_scan_bar+1] - df["low"].values[max(0, ex_scan_bar-13):ex_scan_bar+1]))
             if adr <= 0 or np.isnan(adr):
-                print(f"  DEBUG adr: {ticker} SKIP bad adr={adr}")
                 continue
             sc = float(df["close"].values[ex_scan_bar])
-            fwd = min(MAX_FWD, len(df) - ex_scan_bar - 1)
+            fwd = min(120, len(df) - ex_scan_bar - 1)
             if fwd < 5:
-                print(f"  DEBUG adr: {ticker} SKIP fwd={fwd} too short")
                 continue
             es = cached_data[:, exit_col]
-            exit_found = False
             for f_i in range(1, fwd + 1):
                 v = es[ex_scan_bar + f_i]
                 if np.isnan(v):
                     continue
                 if exit_dir in (">=", "above") and v >= exit_thresh:
                     ec = float(df["close"].values[ex_scan_bar + f_i])
-                    if direction == "short":
-                        move = (sc - ec) / adr
-                    else:
-                        move = (ec - sc) / adr
+                    move = (sc - ec) / adr if direction == "short" else (ec - sc) / adr
                     example_adrs.append(move)
                     example_exit_bars.append(f_i)
-                    print(f"    {ticker}: {f_i} bars, {move:.1f} ADR")
-                    exit_found = True
+                    print(f"    {ticker}: {f_i} bars, {move:.1f} ADR, fwd_window={fwd_window_bars}")
                     break
                 elif exit_dir in ("<=", "below") and v <= exit_thresh:
                     ec = float(df["close"].values[ex_scan_bar + f_i])
-                    if direction == "short":
-                        move = (sc - ec) / adr
-                    else:
-                        move = (ec - sc) / adr
+                    move = (sc - ec) / adr if direction == "short" else (ec - sc) / adr
                     example_adrs.append(move)
                     example_exit_bars.append(f_i)
-                    print(f"    {ticker}: {f_i} bars, {move:.1f} ADR")
-                    exit_found = True
+                    print(f"    {ticker}: {f_i} bars, {move:.1f} ADR, fwd_window={fwd_window_bars}")
                     break
-            if not exit_found:
-                print(f"  DEBUG adr: {ticker} scan_bar={ex_scan_bar} no exit in {fwd} bars")
-        except Exception as _e:
-            print(f"  DEBUG adr: {ticker} EXCEPTION: {_e}")
+        except Exception:
             continue
 
-    if not example_adrs:
-        print(f"  ERROR: No example exit distances computed — cannot determine adr_threshold")
-        print(f"  Check example bar lookup and exit condition.")
+    if not example_fwd_windows:
+        print(f"  ERROR: No example forward windows computed")
         return None
 
-    example_floor = min(example_adrs)
-    adr_threshold = round(example_floor * 0.9, 1)
-    max_example_bars = max(example_exit_bars)
-    MAX_FWD = round(max_example_bars * 1.1)
-    print(f"  Example floor: {example_floor:.1f} ADR, threshold: {adr_threshold:.1f} (90% of floor)")
-    print(f"  Example max exit: {max_example_bars} bars, classification cutoff: {MAX_FWD} bars (110%)")
+    # Forward window: max leftmost-to-entry distance + 10%
+    max_fwd_window = max(example_fwd_windows)
+    forward_window = round(max_fwd_window * 1.1)
+    if forward_window < 1:
+        forward_window = 1
+    print(f"\n  Forward window: max={max_fwd_window} bars, using {forward_window} bars (110%)")
+    if example_adrs:
+        print(f"  Example floor (informational): {min(example_adrs):.1f} ADR")
 
-    # Classify each cluster
+    # ── Classify each cluster ──
+    # For each cluster:
+    #   1. Find highest high across all signal bars in cluster
+    #   2. From rightmost bar, look forward by forward_window → find max high → ceiling
+    #   3. After rightmost + forward_window, scan forward:
+    #      - close > ceiling → AUTO_LOSS
+    #      - exit condition fires → AUTO_WIN
+    #      - end of data → AUTO_WIN
+    #   4. Example clusters → AUTO_WIN
+    print(f"\n  Classifying clusters (ceiling + exit race)...")
     tcache = {}
     prev_tk = None
     n_win = 0
@@ -2247,25 +2248,22 @@ def _gather_raw_signal_clusters(setup_type):
     for c in clusters:
         ticker = c["ticker"]
         bar_idx = c["rightmost"]["bar_idx"]
-        # Check if ANY bar in this cluster is an example (not just rightmost)
         all_bar_idxs = [bar_idx] + [b["bar_idx"] for b in c["leftward"]]
         is_ex = (ticker in example_bar_lookup
                  and any(bi in example_bar_lookup[ticker] for bi in all_bar_idxs))
 
-        # Default to AUTO_LOSS
-        c["classification"] = "AUTO_LOSS"
         c["is_example"] = 1 if is_ex else 0
-        c["exit_triggered"] = 0
-        c["move_adr"] = None
 
         if is_ex:
             c["classification"] = "AUTO_WIN"
+            c["classification_reason"] = "example"
             n_win += 1
             continue
 
-        # Evaluate exit on rightmost bar
         df = universe_cache.get(ticker)
         if df is None or bar_idx >= len(df) - 1:
+            c["classification"] = "AUTO_LOSS"
+            c["classification_reason"] = "no_data"
             n_loss += 1
             continue
 
@@ -2277,63 +2275,83 @@ def _gather_raw_signal_clusters(setup_type):
             prev_tk = ticker
             cd, cdata = tcache[ticker]
             if cd is None or len(cd) != len(df):
+                c["classification"] = "AUTO_LOSS"
+                c["classification_reason"] = "cache_mismatch"
                 n_loss += 1
                 continue
 
-            adr = float(np.mean(df["high"].values[max(0, bar_idx-13):bar_idx+1] - df["low"].values[max(0, bar_idx-13):bar_idx+1]))
-            if adr <= 0 or np.isnan(adr):
-                n_loss += 1
-                continue
+            highs = df["high"].values
+            closes = df["close"].values
 
-            sc = float(df["close"].values[bar_idx])
-            fwd = min(MAX_FWD, len(df) - bar_idx - 1)
-            if fwd < 5:
-                n_loss += 1
+            # Step 1: highest high across all signal bars in cluster
+            cluster_high = max(float(highs[bi]) for bi in all_bar_idxs if bi < len(highs))
+
+            # Step 2: from rightmost bar, look forward by forward_window, find max high → ceiling
+            fw_end = min(bar_idx + forward_window, len(df) - 1)
+            if fw_end > bar_idx:
+                entry_window_high = float(np.max(highs[bar_idx + 1:fw_end + 1]))
+                ceiling = max(cluster_high, entry_window_high)
+            else:
+                ceiling = cluster_high
+
+            c["ceiling"] = round(ceiling, 4)
+
+            # Step 3: after forward window, race exit vs ceiling breach
+            scan_start = fw_end + 1
+            remaining = len(df) - scan_start
+            if remaining < 1:
+                # Not enough data after forward window — setup held, count as win
+                c["classification"] = "AUTO_WIN"
+                c["classification_reason"] = "no_data_after_window"
+                n_win += 1
                 continue
 
             es = cdata[:, exit_col]
-            exit_found = False
-            for f_i in range(1, fwd + 1):
-                v = es[bar_idx + f_i]
-                if np.isnan(v):
-                    continue
-                if exit_dir in (">=", "above") and v >= exit_thresh:
-                    ec = float(df["close"].values[bar_idx + f_i])
-                    if direction == "short":
-                        move = (sc - ec) / adr
-                    else:
-                        move = (ec - sc) / adr
-                    c["exit_triggered"] = 1
-                    c["move_adr"] = round(move, 2)
-                    c["exit_bar"] = f_i
-                    if move >= adr_threshold:
-                        c["classification"] = "AUTO_WIN"
-                        n_win += 1
-                    else:
-                        n_loss += 1
-                    exit_found = True
+            classified = False
+            for f_i in range(scan_start, len(df)):
+                # Check ceiling breach (close above ceiling for shorts)
+                if direction == "short" and float(closes[f_i]) > ceiling:
+                    c["classification"] = "AUTO_LOSS"
+                    c["classification_reason"] = "ceiling_breach"
+                    c["breach_bar"] = f_i - bar_idx
+                    n_loss += 1
+                    classified = True
                     break
-                elif exit_dir in ("<=", "below") and v <= exit_thresh:
-                    ec = float(df["close"].values[bar_idx + f_i])
-                    if direction == "short":
-                        move = (sc - ec) / adr
-                    else:
-                        move = (ec - sc) / adr
-                    c["exit_triggered"] = 1
-                    c["move_adr"] = round(move, 2)
-                    c["exit_bar"] = f_i
-                    if move >= adr_threshold:
-                        c["classification"] = "AUTO_WIN"
-                        n_win += 1
-                    else:
-                        n_loss += 1
-                    exit_found = True
+                elif direction == "long" and float(closes[f_i]) < ceiling:
+                    c["classification"] = "AUTO_LOSS"
+                    c["classification_reason"] = "ceiling_breach"
+                    c["breach_bar"] = f_i - bar_idx
+                    n_loss += 1
+                    classified = True
                     break
 
-            if not exit_found:
-                n_loss += 1
+                # Check exit condition
+                v = es[f_i]
+                if not np.isnan(v):
+                    if exit_dir in (">=", "above") and v >= exit_thresh:
+                        c["classification"] = "AUTO_WIN"
+                        c["classification_reason"] = "exit_fired"
+                        c["exit_bar"] = f_i - bar_idx
+                        n_win += 1
+                        classified = True
+                        break
+                    elif exit_dir in ("<=", "below") and v <= exit_thresh:
+                        c["classification"] = "AUTO_WIN"
+                        c["classification_reason"] = "exit_fired"
+                        c["exit_bar"] = f_i - bar_idx
+                        n_win += 1
+                        classified = True
+                        break
+
+            if not classified:
+                # Never breached ceiling, exit never fired — setup held
+                c["classification"] = "AUTO_WIN"
+                c["classification_reason"] = "held_to_end"
+                n_win += 1
 
         except Exception:
+            c["classification"] = "AUTO_LOSS"
+            c["classification_reason"] = "error"
             n_loss += 1
 
     # Free caches
@@ -2357,7 +2375,7 @@ def _gather_raw_signal_clusters(setup_type):
             "threshold": exit_cond["threshold"],
             "direction": exit_cond["direction"],
         },
-        "adr_threshold": adr_threshold,
+        "forward_window": forward_window,
         "direction": direction,
         "n_raw": len(raw_signals),
         "n_clusters": len(clusters),
