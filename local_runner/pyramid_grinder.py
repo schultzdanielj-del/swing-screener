@@ -2060,6 +2060,9 @@ def _gather_raw_signal_clusters(setup_type):
             example_bar_lookup[ticker] = set()
         example_bar_lookup[ticker].add(scan_idx)
     print(f"  Example bar lookup: {sum(len(v) for v in example_bar_lookup.values())} bars across {len(example_bar_lookup)} tickers")
+    # DEBUG — remove after diagnosis
+    for _dbg_tk, _dbg_idxs in list(example_bar_lookup.items())[:3]:
+        print(f"  DEBUG ex: {_dbg_tk} scan_idx={_dbg_idxs}")
 
     # Build slim cache for scan workers
     sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
@@ -2128,6 +2131,12 @@ def _gather_raw_signal_clusters(setup_type):
     print(f"  {total_leftward:,} leftward (sacrificial) bars")
 
     # ── Exit + classify on rightmost bars ──
+    # DEBUG — remove after diagnosis
+    _debug_tks = set(list(example_bar_lookup.keys())[:3])
+    for c in clusters:
+        if c["ticker"] in _debug_tks:
+            print(f"  DEBUG cl: {c['ticker']} rightmost={c['rightmost']['bar_idx']} leftward={[b['bar_idx'] for b in c['leftward']]}")
+
     print(f"\n  Applying exit condition on rightmost bars...")
 
     # Reload 5yr cache for exit evaluation
