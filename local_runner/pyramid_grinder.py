@@ -2182,46 +2182,44 @@ def _gather_raw_signal_clusters(setup_type):
             if cached_dates is None or len(cached_dates) != len(df):
                 print(f"  DEBUG adr: {ticker} SKIP cache mismatch (cache={len(cached_dates) if cached_dates is not None else 'None'} df={len(df)})")
                 continue
-            # ADR floor measured from rightmost bar (matches classification)
-            adr = float(np.mean(df["high"].values[max(0, bar_idx-13):bar_idx+1] - df["low"].values[max(0, bar_idx-13):bar_idx+1]))
+            # Examples: everything measured from scan bar
+            adr = float(np.mean(df["high"].values[max(0, ex_scan_bar-13):ex_scan_bar+1] - df["low"].values[max(0, ex_scan_bar-13):ex_scan_bar+1]))
             if adr <= 0 or np.isnan(adr):
                 print(f"  DEBUG adr: {ticker} SKIP bad adr={adr}")
                 continue
-            sc = float(df["close"].values[bar_idx])
-            fwd = min(MAX_FWD, len(df) - bar_idx - 1)
+            sc = float(df["close"].values[ex_scan_bar])
+            fwd = min(MAX_FWD, len(df) - ex_scan_bar - 1)
             if fwd < 5:
                 print(f"  DEBUG adr: {ticker} SKIP fwd={fwd} too short")
                 continue
             es = cached_data[:, exit_col]
             exit_found = False
             for f_i in range(1, fwd + 1):
-                v = es[bar_idx + f_i]
+                v = es[ex_scan_bar + f_i]
                 if np.isnan(v):
                     continue
                 if exit_dir in (">=", "above") and v >= exit_thresh:
-                    ec = float(df["close"].values[bar_idx + f_i])
+                    ec = float(df["close"].values[ex_scan_bar + f_i])
                     if direction == "short":
                         move = (sc - ec) / adr
                     else:
                         move = (ec - sc) / adr
                     example_adrs.append(move)
-                    # Trade duration measured from example scan bar, not rightmost
-                    example_exit_bars.append(f_i + (bar_idx - ex_scan_bar))
+                    example_exit_bars.append(f_i)
                     exit_found = True
                     break
                 elif exit_dir in ("<=", "below") and v <= exit_thresh:
-                    ec = float(df["close"].values[bar_idx + f_i])
+                    ec = float(df["close"].values[ex_scan_bar + f_i])
                     if direction == "short":
                         move = (sc - ec) / adr
                     else:
                         move = (ec - sc) / adr
                     example_adrs.append(move)
-                    # Trade duration measured from example scan bar, not rightmost
-                    example_exit_bars.append(f_i + (bar_idx - ex_scan_bar))
+                    example_exit_bars.append(f_i)
                     exit_found = True
                     break
             if not exit_found:
-                print(f"  DEBUG adr: {ticker} bar_idx={bar_idx} no exit in {fwd} bars")
+                print(f"  DEBUG adr: {ticker} scan_bar={ex_scan_bar} no exit in {fwd} bars")
         except Exception as _e:
             print(f"  DEBUG adr: {ticker} EXCEPTION: {_e}")
             continue
