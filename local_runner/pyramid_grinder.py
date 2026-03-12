@@ -2200,8 +2200,9 @@ def _gather_raw_signal_clusters(setup_type):
         adr_threshold = round(example_floor * 0.9, 1)
         print(f"  Example floor: {example_floor:.1f} ADR, threshold: {adr_threshold:.1f} (90% of floor)")
     else:
-        adr_threshold = 5.0
-        print(f"  WARNING: No example exit distances computed, using default threshold {adr_threshold}")
+        print(f"  ERROR: No example exit distances computed — cannot determine adr_threshold")
+        print(f"  Check example bar lookup and exit condition.")
+        return None
 
     # Classify each cluster
     tcache = {}
@@ -2407,8 +2408,9 @@ def _load_refinement_piles(setup_type):
             print(f"  ⚠ WARNING: classified file uses old median_adr_threshold ({adr_threshold:.1f})")
             print(f"    Re-run step 3 to use example floor threshold.")
         else:
-            adr_threshold = 5.0
-            print(f"  ⚠ WARNING: No ADR threshold in classified file, using default {adr_threshold}")
+            print(f"  ERROR: No ADR threshold in classified file — cannot proceed")
+            print(f"  Re-run step 3: python scripts/signal_filter.py --setup {setup_type}")
+            return None, None, None, None, None, None
     print(f"  ADR threshold: {adr_threshold:.1f}")
 
     # Split into winners and losers
