@@ -2420,75 +2420,56 @@ def _gather_raw_signal_clusters(setup_type):
 # ══════════════════════════════════════════════════════════════
 
 def _load_refinement_piles(setup_type):
-    """Load classified signals from step 3 local output and split into win/lose piles.
+    """Load win/lose piles from raw_signal_clusters file (produced by _gather_raw_signal_clusters).
 
-    Reads data/signal_filter/classified_{setup}.json (saved by signal_filter.py).
-
-    Win pile (must-pass): AUTO_WIN signals → returned as example_dfs format
-    Lose pile (count signals in): AUTO_LOSS signals → returned as whitelist_map
+    Reads local_runner/cache/raw_signal_clusters_{setup}.json.
+    Win pile (must-pass): rightmost bars of AUTO_WIN clusters → example_dfs format
+    Lose pile (expendable): rightmost bars of AUTO_LOSS clusters → whitelist_map
 
     Returns:
-        (win_example_dfs, whitelist_map) or (None, None) if file not found.
+        (win_example_dfs, whitelist_map, raw_winners, raw_losers, universe_cache, adr_threshold)
     """
-    classified_path = os.path.join(
-        REPO_ROOT, "data", "signal_filter", f"classified_{setup_type}.json"
-    )
-    if not os.path.exists(classified_path):
-        print(f"  ERROR: No classified signal file found:")
-        print(f"    {classified_path}")
-        print(f"  Run step 3 first: python scripts/signal_filter.py --setup {setup_type}")
+    cluster_path = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
+    if not os.path.exists(cluster_path):
+        print(f"  ERROR: No cluster file found:")
+        print(f"    {cluster_path}")
+        print(f"  Run refinement grind first (it gathers clusters at the top).")
         return None, None, None, None, None, None
 
-    with open(classified_path) as f:
+    with open(cluster_path) as f:
         data = json.load(f)
 
-    signals = data.get("signals", [])
-    if not signals:
-        print(f"  ERROR: No signals in {classified_path}")
+    clusters = data.get("clusters", [])
+    if not clusters:
+        print(f"  ERROR: No clusters in {cluster_path}")
         return None, None, None, None, None, None
 
-    print(f"\n  ── REFINEMENT GRIND: Loading piles from {os.path.basename(classified_path)} ──")
+    print(f"\n  ── REFINEMENT GRIND: Loading piles from {os.path.basename(cluster_path)} ──")
     print(f"  Timestamp: {data.get('timestamp')}")
-    print(f"  Total signals: {len(signals)}")
+    print(f"  Total clusters: {len(clusters)}")
 
-    # Load ADR threshold from classified file (example floor with 10% wiggle)
-    adr_threshold = data.get("adr_threshold")
-    if adr_threshold is None:
-        # Fallback for old files that used median_adr_threshold
-        adr_threshold = data.get("median_adr_threshold")
-        if adr_threshold is not None:
-            print(f"  ⚠ WARNING: classified file uses old median_adr_threshold ({adr_threshold:.1f})")
-            print(f"    Re-run step 3 to use example floor threshold.")
-        else:
-            print(f"  ERROR: No ADR threshold in classified file — cannot proceed")
-            print(f"  Re-run step 3: python scripts/signal_filter.py --setup {setup_type}")
-            return None, None, None, None, None, None
-    print(f"  ADR threshold: {adr_threshold:.1f}")
+    # Split by classification
+    win_clusters = [c for c in clusters if c.get("classification") == "AUTO_WIN"]
+    lose_clusters = [c for c in clusters if c.get("classification") == "AUTO_LOSS"]
+    print(f"  Win clusters: {len(win_clusters)}")
+    print(f"  Lose clusters: {len(lose_clusters)}")
 
-    # Split into winners and losers
-    winners = [s for s in signals if s.get("classification") == "AUTO_WIN"]
-    losers = [s for s in signals if s.get("classification") == "AUTO_LOSS"]
-    print(f"  Win pile: {len(winners)} (examples + exit-triggered winners)")
-    print(f"  Lose pile: {len(losers)}")
-
-    if not winners:
-        print(f"  ERROR: No winners — nothing to use as must-pass set")
+    if not win_clusters:
+        print(f"  ERROR: No winning clusters — nothing to use as must-pass set")
         return None, None, None, None, None, None
-    if not losers:
-        print(f"  WARNING: No losers — nothing to filter. Refinement is a no-op.")
+    if not lose_clusters:
+        print(f"  WARNING: No losing clusters — nothing to filter. Refinement is a no-op.")
         return None, None, None, None, None, None
 
-    # Load 5yr cache to build example_dfs format for winners
+    # Load 5yr cache
     universe_cache = load_5yr_cache()
 
+    # Build win_example_dfs from winning cluster rightmost bars
     win_example_dfs = []
     skipped_win = []
-    for sig in winners:
-        ticker = sig["ticker"]
-        bar_idx = sig.get("bar_idx")
-        if bar_idx is None:
-            skipped_win.append(f"{ticker} (no bar_idx)")
-            continue
+    for c in win_clusters:
+        ticker = c["ticker"]
+        bar_idx = c["rightmost"]["bar_idx"]
 
         df = universe_cache.get(ticker)
         if df is None:
@@ -2506,7 +2487,7 @@ def _load_refinement_piles(setup_type):
 
         win_example_dfs.append({
             "ticker": ticker,
-            "entry_date": sig.get("signal_date"),
+            "entry_date": c["rightmost"].get("date"),
             "scan_idx": bar_idx,
             "df": df,
         })
@@ -2515,15 +2496,12 @@ def _load_refinement_piles(setup_type):
         print(f"  ⚠ Skipped {len(skipped_win)} winners: {', '.join(skipped_win[:10])}")
     print(f"  Win pile loaded: {len(win_example_dfs)} example_dfs")
 
-    # Build whitelist_map from losers: {ticker: set(bar_idx)}
+    # Build whitelist_map from losing cluster rightmost bars
     whitelist_map = {}
     skipped_lose = 0
-    for sig in losers:
-        ticker = sig["ticker"]
-        bar_idx = sig.get("bar_idx")
-        if bar_idx is None:
-            skipped_lose += 1
-            continue
+    for c in lose_clusters:
+        ticker = c["ticker"]
+        bar_idx = c["rightmost"]["bar_idx"]
         if ticker not in universe_cache:
             skipped_lose += 1
             continue
@@ -2534,9 +2512,36 @@ def _load_refinement_piles(setup_type):
     total_loser_bars = sum(len(v) for v in whitelist_map.values())
     print(f"  Lose pile whitelist: {total_loser_bars} bars across {len(whitelist_map)} tickers")
     if skipped_lose:
-        print(f"  ⚠ Skipped {skipped_lose} losers (no bar_idx or not in cache)")
+        print(f"  ⚠ Skipped {skipped_lose} losers (not in cache)")
 
-    return win_example_dfs, whitelist_map, winners, losers, universe_cache, adr_threshold
+    # Build raw_winners / raw_losers as flat signal dicts (used by save phase)
+    raw_winners = []
+    for c in win_clusters:
+        raw_winners.append({
+            "ticker": c["ticker"],
+            "signal_date": c["rightmost"].get("date"),
+            "bar_idx": c["rightmost"]["bar_idx"],
+            "close": c["rightmost"].get("close"),
+            "is_example": c.get("is_example", 0),
+            "classification": "AUTO_WIN",
+        })
+
+    raw_losers = []
+    for c in lose_clusters:
+        raw_losers.append({
+            "ticker": c["ticker"],
+            "signal_date": c["rightmost"].get("date"),
+            "bar_idx": c["rightmost"]["bar_idx"],
+            "close": c["rightmost"].get("close"),
+            "is_example": c.get("is_example", 0),
+            "classification": "AUTO_LOSS",
+        })
+
+    # adr_threshold = 0.0 — classification handled by ceiling+exit race in clusters,
+    # not ADR floor. 0.0 means any positive move counts in re-scan classify phase.
+    adr_threshold = 0.0
+
+    return win_example_dfs, whitelist_map, raw_winners, raw_losers, universe_cache, adr_threshold
 
 
 def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
