@@ -183,11 +183,28 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ## Immediate Tasks
 
+### Grinder Improvements
 1. **Depth progression output (refinement grinder)** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running.
 2. **Margin progression output (signal grinder)** — save tier-by-tier signal counts at different bounding box margins (5%, 3%, 1%, 0%). More examples = tighter margins viable. Allows post-hoc margin tuning without re-running.
-3. **Update PIPELINE_V2.md** — remove proximity grind, profit grind. Update refinement spec (cluster-aware engine is built).
-4. **Vet winner pile** — review 365 winners, add examples, loop if needed.
-5. **Wire regime model** — point `market_grinder.py` at pre-refinement cluster data (full 893 clusters).
+3. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
+
+### Regime Model
+4. **Wire regime model to new pipeline** — `market_grinder.py` already exists. Needs to accept refinement grinder cluster file (`raw_signal_clusters_{setup}.json`) as input. Run on pre-refinement piles (full 893 clusters, not post-refinement 467).
+
+### Vetting UI
+5. **Read from signal grind and refinement grind outputs** — vetting UI currently reads signal_filter output. Needs to read from cluster files instead. Sort results by signal-to-exit ADR move (biggest movers first).
+6. **AI vet queue** — signals go to AI review, then one-click "yes" adds them to the example library. This flow needs to work end-to-end.
+7. **Workflow and ease-of-use improvements** — many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
+
+### Pipeline UI
+8. **Full pipeline control from UI** — every grinder step runnable from the UI with all parameters and tweaks selectable at each level. Fully wired to the pipeline agent.
+9. **Update PIPELINE_V2.md** — remove proximity grind, profit grind. Update refinement spec (cluster-aware engine is built).
+
+### Code Cleanup (future)
+10. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.
+
+### Vetting
+11. **Vet winner pile** — review 365 winners, add examples, loop if needed.
 
 ---
 
