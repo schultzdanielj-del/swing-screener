@@ -2150,7 +2150,10 @@ def _gather_raw_signal_clusters(setup_type):
     for c in clusters:
         ticker = c["ticker"]
         bar_idx = c["rightmost"]["bar_idx"]
-        is_ex = (ticker in example_bar_lookup and bar_idx in example_bar_lookup[ticker])
+        # Check if ANY bar in this cluster is an example (not just rightmost)
+        all_bar_idxs = [bar_idx] + [b["bar_idx"] for b in c["leftward"]]
+        is_ex = (ticker in example_bar_lookup
+                 and any(bi in example_bar_lookup[ticker] for bi in all_bar_idxs))
         if not is_ex:
             continue
 
@@ -2209,7 +2212,10 @@ def _gather_raw_signal_clusters(setup_type):
     for c in clusters:
         ticker = c["ticker"]
         bar_idx = c["rightmost"]["bar_idx"]
-        is_ex = (ticker in example_bar_lookup and bar_idx in example_bar_lookup[ticker])
+        # Check if ANY bar in this cluster is an example (not just rightmost)
+        all_bar_idxs = [bar_idx] + [b["bar_idx"] for b in c["leftward"]]
+        is_ex = (ticker in example_bar_lookup
+                 and any(bi in example_bar_lookup[ticker] for bi in all_bar_idxs))
 
         # Default to AUTO_LOSS
         c["classification"] = "AUTO_LOSS"
