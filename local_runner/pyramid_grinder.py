@@ -2424,17 +2424,19 @@ def _load_refinement_piles(setup_type):
 
     Reads local_runner/cache/raw_signal_clusters_{setup}.json.
     Win pile (must-pass): rightmost bars of AUTO_WIN clusters → example_dfs format
-    Lose pile (expendable): rightmost bars of AUTO_LOSS clusters → whitelist_map
+    Lose pile (expendable): ALL bars from losing clusters + leftward bars from winning clusters → whitelist_map
+    Cluster map: list of lists, each inner list = all bar indices for one losing cluster
 
     Returns:
-        (win_example_dfs, whitelist_map, raw_winners, raw_losers, universe_cache, adr_threshold)
+        (win_example_dfs, whitelist_map, raw_winners, raw_losers, universe_cache, adr_threshold,
+         losing_cluster_bars, win_leftward_bars)
     """
     cluster_path = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
     if not os.path.exists(cluster_path):
         print(f"  ERROR: No cluster file found:")
         print(f"    {cluster_path}")
         print(f"  Run refinement grind first (it gathers clusters at the top).")
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
 
     with open(cluster_path) as f:
         data = json.load(f)
@@ -2442,7 +2444,7 @@ def _load_refinement_piles(setup_type):
     clusters = data.get("clusters", [])
     if not clusters:
         print(f"  ERROR: No clusters in {cluster_path}")
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
 
     print(f"\n  ── REFINEMENT GRIND: Loading piles from {os.path.basename(cluster_path)} ──")
     print(f"  Timestamp: {data.get('timestamp')}")
@@ -2456,10 +2458,10 @@ def _load_refinement_piles(setup_type):
 
     if not win_clusters:
         print(f"  ERROR: No winning clusters — nothing to use as must-pass set")
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
     if not lose_clusters:
         print(f"  WARNING: No losing clusters — nothing to filter. Refinement is a no-op.")
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
 
     # Load 5yr cache
     universe_cache = load_5yr_cache()
@@ -2496,23 +2498,57 @@ def _load_refinement_piles(setup_type):
         print(f"  ⚠ Skipped {len(skipped_win)} winners: {', '.join(skipped_win[:10])}")
     print(f"  Win pile loaded: {len(win_example_dfs)} example_dfs")
 
-    # Build whitelist_map from losing cluster rightmost bars
+    # Build whitelist_map: ALL bars from losing clusters + leftward bars from winning clusters
+    # This is the full expendable set the engine loads into its matrix.
     whitelist_map = {}
     skipped_lose = 0
+
+    # Losing clusters: rightmost + all leftward bars
     for c in lose_clusters:
         ticker = c["ticker"]
-        bar_idx = c["rightmost"]["bar_idx"]
         if ticker not in universe_cache:
             skipped_lose += 1
             continue
         if ticker not in whitelist_map:
             whitelist_map[ticker] = set()
-        whitelist_map[ticker].add(bar_idx)
+        whitelist_map[ticker].add(c["rightmost"]["bar_idx"])
+        for lw in c.get("leftward", []):
+            whitelist_map[ticker].add(lw["bar_idx"])
 
-    total_loser_bars = sum(len(v) for v in whitelist_map.values())
-    print(f"  Lose pile whitelist: {total_loser_bars} bars across {len(whitelist_map)} tickers")
+    # Winning clusters: leftward bars only (rightmost are must-pass, not expendable)
+    win_leftward_bars = {}
+    for c in win_clusters:
+        ticker = c["ticker"]
+        if ticker not in universe_cache:
+            continue
+        for lw in c.get("leftward", []):
+            if ticker not in whitelist_map:
+                whitelist_map[ticker] = set()
+            whitelist_map[ticker].add(lw["bar_idx"])
+            if ticker not in win_leftward_bars:
+                win_leftward_bars[ticker] = set()
+            win_leftward_bars[ticker].add(lw["bar_idx"])
+
+    total_expendable_bars = sum(len(v) for v in whitelist_map.values())
+    total_win_leftward = sum(len(v) for v in win_leftward_bars.values())
+    print(f"  Expendable set: {total_expendable_bars} bars across {len(whitelist_map)} tickers")
+    print(f"    (losing cluster bars + {total_win_leftward} winning leftward bars)")
     if skipped_lose:
         print(f"  ⚠ Skipped {skipped_lose} losers (not in cache)")
+
+    # Build losing_cluster_bars: list of lists, each = [(ticker, bar_idx), ...] for one losing cluster
+    # Engine uses this to check whole-cluster elimination
+    losing_cluster_bars = []
+    for c in lose_clusters:
+        ticker = c["ticker"]
+        if ticker not in universe_cache:
+            continue
+        bars = [(ticker, c["rightmost"]["bar_idx"])]
+        for lw in c.get("leftward", []):
+            bars.append((ticker, lw["bar_idx"]))
+        losing_cluster_bars.append(bars)
+
+    print(f"  Losing cluster map: {len(losing_cluster_bars)} clusters")
 
     # Build raw_winners / raw_losers as flat signal dicts (used by save phase)
     raw_winners = []
@@ -2541,7 +2577,7 @@ def _load_refinement_piles(setup_type):
     # not ADR floor. 0.0 means any positive move counts in re-scan classify phase.
     adr_threshold = 0.0
 
-    return win_example_dfs, whitelist_map, raw_winners, raw_losers, universe_cache, adr_threshold
+    return win_example_dfs, whitelist_map, raw_winners, raw_losers, universe_cache, adr_threshold, losing_cluster_bars, win_leftward_bars
 
 
 def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
@@ -2570,7 +2606,7 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
         print(f"  WARNING: Raw signal cluster gathering failed — continuing with existing flow")
 
     # ── Load classified signals ──
-    win_dfs, loser_whitelist, raw_winners, raw_losers, universe_cache, adr_threshold = _load_refinement_piles(setup_type)
+    win_dfs, loser_whitelist, raw_winners, raw_losers, universe_cache, adr_threshold, losing_cluster_bars, win_leftward_bars = _load_refinement_piles(setup_type)
     if win_dfs is None:
         print("  ABORT: Could not load refinement piles.")
         return None
