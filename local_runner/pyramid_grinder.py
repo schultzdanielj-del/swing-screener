@@ -2206,6 +2206,7 @@ def _gather_raw_signal_clusters(setup_type):
                         move = (ec - sc) / adr
                     example_adrs.append(move)
                     example_exit_bars.append(f_i)
+                    print(f"    {ticker}: {f_i} bars, {move:.1f} ADR")
                     exit_found = True
                     break
                 elif exit_dir in ("<=", "below") and v <= exit_thresh:
@@ -2216,6 +2217,7 @@ def _gather_raw_signal_clusters(setup_type):
                         move = (ec - sc) / adr
                     example_adrs.append(move)
                     example_exit_bars.append(f_i)
+                    print(f"    {ticker}: {f_i} bars, {move:.1f} ADR")
                     exit_found = True
                     break
             if not exit_found:
