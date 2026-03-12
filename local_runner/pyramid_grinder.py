@@ -2866,11 +2866,12 @@ def _load_refinement_piles(setup_type):
 
 
 def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
-    """Refinement grind: flat beam search, winners must-pass, minimize losers.
+    """Refinement grind: cluster-aware beam search, winners must-pass, minimize losing clusters.
 
-    Loads classified signals from step 3 output. Builds winner example ranges
-    and loser matrix from expr cache at historical bar indices. One pass,
-    all expressions, no tiers, no windowing.
+    Gathers raw signal clusters (Phase 1), loads full expendable set,
+    runs cluster-aware beam search (Phase 2), combines conditions and
+    filters signal lists by whole-cluster elimination (Phase 3).
+    No re-scan, no re-classify — Phase 1 classification is truth.
     """
     print("\n" + "=" * 70)
     print("  REFINEMENT GRINDER")
@@ -2880,15 +2881,15 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
 
     t_total = time.time()
 
-    # ── Step 1: Gather raw signal clusters (pre-dedup) ──
-    # This scans the universe, groups consecutive bars into clusters,
-    # applies exit + classifies. Output saved for future steps.
-    # The existing refinement grinder below does NOT use this yet.
+    # ── Phase 1: Gather raw signal clusters (pre-dedup) ──
+    # Scans the universe, groups consecutive bars into clusters,
+    # applies exit + classifies. Output saved and used by Phase 2 below.
     cluster_path = _gather_raw_signal_clusters(setup_type)
     if cluster_path:
         print(f"  Raw signal clusters saved: {os.path.basename(cluster_path)}")
     else:
-        print(f"  WARNING: Raw signal cluster gathering failed — continuing with existing flow")
+        print(f"  WARNING: Raw signal cluster gathering failed")
+        return None
 
     # ── Load classified signals ──
     win_dfs, loser_whitelist, raw_winners, raw_losers, universe_cache, adr_threshold, losing_cluster_bars, win_leftward_bars = _load_refinement_piles(setup_type)
@@ -2951,7 +2952,14 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
     loser_rows = []
     loser_dates = []
     loser_tickers = []
+    row_cluster_ids = []  # >=0 = losing cluster index, -1 = winning leftward bar
     skipped = 0
+
+    # Build reverse lookup: (ticker, bar_idx) → losing cluster index
+    _bar_to_cluster = {}
+    for ci, cluster_bars in enumerate(losing_cluster_bars):
+        for (tk, bi) in cluster_bars:
+            _bar_to_cluster[(tk, bi)] = ci
 
     for ticker, bar_indices in loser_whitelist.items():
         dates, data = expr_cache.get_ticker(ticker)
@@ -2969,6 +2977,7 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
             loser_rows.append(row)
             loser_dates.append(str(dates[bar_idx])[:10])
             loser_tickers.append(ticker)
+            row_cluster_ids.append(_bar_to_cluster.get((ticker, bar_idx), -1))
 
     if not loser_rows:
         print("  ABORT: No loser bars loaded from expr cache.")
@@ -2992,15 +3001,17 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
 
     print(f"  Candidates: {len(candidate_indices)} expressions with valid winner ranges")
 
-    # ── Run beam search ──
-    print(f"\n  Running beam search (losers as rows, winner ranges as bounds)...")
-    search = RefinementSearch(
+    # ── Run cluster-aware beam search ──
+    print(f"\n  Running cluster-aware beam search...")
+    search = ClusterAwareRefinementSearch(
         candidate_values=candidate_values,
         row_dates=loser_dates,
         row_tickers=loser_tickers,
         example_ranges=candidate_ranges,
         candidate_names=candidate_names,
         candidate_categories=candidate_categories,
+        row_cluster_ids=row_cluster_ids,
+        n_losing_clusters=len(losing_cluster_bars),
     )
 
     result = search.run(depth=depth, beam_width=beam_width, peak_target=peak_target)
@@ -3031,17 +3042,19 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
         })
 
     # ── Stats ──
-    final_total = result.get("final_total", 0)
+    final_clusters = result.get("final_total", 0)  # surviving losing clusters
     final_peak = result.get("final_peak", 0)
     final_avg = result.get("final_avg", 0.0)
+    eliminated_cluster_indices = result.get("eliminated_cluster_indices", set())
+    surviving_cluster_indices = result.get("surviving_cluster_indices", set())
 
     total_time = time.time() - t_total
 
     print(f"\n  -- REFINEMENT RESULTS --")
     print(f"  Conditions found: {len(all_conditions)}")
-    print(f"  Losers remaining: {final_total}/{len(loser_rows)}")
-    print(f"  Losers eliminated: {len(loser_rows) - final_total}")
-    print(f"  Peak losers/day: {final_peak}")
+    print(f"  Losing clusters remaining: {final_clusters}/{len(losing_cluster_bars)}")
+    print(f"  Losing clusters eliminated: {len(eliminated_cluster_indices)}")
+    print(f"  Peak/day: {final_peak}")
     print(f"  Time: {total_time:.0f}s")
 
     # ── Validate winners still pass ──
@@ -3053,79 +3066,53 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
         return None
     print(f"  All {len(win_dfs)} winners pass all {len(all_conditions)} refinement conditions")
 
-    # ── Determine which losers survived the refinement conditions ──
-    # Apply all refinement conditions to loser_matrix, NaN = FAIL
-    surviving_loser_mask = np.ones(loser_matrix.shape[0], dtype=bool)
-    for cond in all_conditions:
-        name = cond["name"]
-        col_idx = None
-        for i, e in enumerate(all_expressions):
-            if e["name"] == name:
-                col_idx = i
+    # ── Build signal lists from cluster-level elimination ──
+    # Phase 1 classification is truth. No re-scan, no re-classify.
+    # Eliminated cluster → its rightmost bar removed from loser list.
+    # Surviving cluster → its rightmost bar stays in loser list.
+    # Winner signals unchanged.
+
+    # Build lookup: cluster index → raw_losers entry (rightmost bar signal dict)
+    # losing_cluster_bars[i][0] is always (ticker, rightmost_bar_idx) — first entry
+    _cluster_to_raw_loser = {}
+    for i, cluster_bars in enumerate(losing_cluster_bars):
+        tk, bi = cluster_bars[0]  # rightmost bar is first in list
+        for sig in raw_losers:
+            if sig["ticker"] == tk and sig.get("bar_idx") == bi:
+                _cluster_to_raw_loser[i] = sig
                 break
-        if col_idx is None:
-            continue
-        ci = candidate_indices.index(col_idx) if col_idx in candidate_indices else None
-        if ci is None:
-            continue
-        vals = candidate_values[:, ci]
-        lo, hi = cond["low"], cond["high"]
-        in_range = (vals >= lo) & (vals <= hi)
-        in_range[np.isnan(vals)] = False
-        surviving_loser_mask &= in_range
-
-    # Build surviving loser keys: {(ticker, bar_idx)}
-    surviving_loser_keys = set()
-    for i in range(len(loser_tickers)):
-        if surviving_loser_mask[i]:
-            surviving_loser_keys.add((loser_tickers[i], int(loser_dates[i]) if loser_dates[i].isdigit() else loser_dates[i]))
-
-    # Map back to raw signal dicts — match by ticker + bar_idx
-    # loser_tickers/loser_dates were built from whitelist iteration, keyed by bar_idx
-    # Rebuild the key set using ticker + bar_idx from the matrix build order
-    surviving_loser_keys_idx = set()
-    idx = 0
-    for ticker, bar_indices in loser_whitelist.items():
-        for bar_idx in bar_indices:
-            if idx < loser_matrix.shape[0] and surviving_loser_mask[idx]:
-                surviving_loser_keys_idx.add((ticker, bar_idx))
-            idx += 1
 
     surviving_losers = []
     eliminated_losers = []
-    for sig in raw_losers:
-        key = (sig["ticker"], sig.get("bar_idx"))
-        if key in surviving_loser_keys_idx:
-            surviving_losers.append(sig)
-        else:
+    for i in range(len(losing_cluster_bars)):
+        sig = _cluster_to_raw_loser.get(i)
+        if sig is None:
+            continue
+        if i in eliminated_cluster_indices:
             eliminated_losers.append(sig)
+        else:
+            surviving_losers.append(sig)
 
     print(f"\n  Signal lists:")
     print(f"    Winners (unchanged): {len(raw_winners)}")
     print(f"    Losers surviving:    {len(surviving_losers)}")
     print(f"    Losers eliminated:   {len(eliminated_losers)}")
 
-    # ── Load signal conditions + exit condition, combine, re-scan ──
-    print(f"\n  ── PHASE 2: COMBINE + RE-SCAN ──")
-
-    # Load signal grind conditions from local pyramid result
+    # ── Combine signal + refinement conditions ──
     signal_conditions, _cond_src = _load_signal_conditions(setup_type)
     if signal_conditions:
-        print(f"  Signal conditions: {len(signal_conditions)} from {_cond_src}")
+        print(f"\n  Signal conditions: {len(signal_conditions)} from {_cond_src}")
     else:
-        print(f"  WARNING: No pyramid result found — skipping re-scan.")
-        print(f"  Output will have refinement conditions only (no combined set).")
+        print(f"\n  WARNING: No pyramid result found.")
 
-    # Load exit condition from local signal_exit_grind output
     exit_cond = _load_exit_cond(setup_type)
     if exit_cond:
         print(f"  Exit condition: {exit_cond['expression']} {exit_cond['direction']} {exit_cond['threshold']}")
     else:
-        print(f"  WARNING: No exit condition found — skipping re-scan.")
+        print(f"  WARNING: No exit condition found.")
 
-    # Combine signal + refinement conditions
     combined_conditions = None
-    if signal_conditions and exit_cond:
+    if signal_conditions:
         sig_names = {c["name"] for c in signal_conditions}
         ref_names = {c["name"] for c in all_conditions}
         overlap = sig_names & ref_names
@@ -3142,185 +3129,14 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
         # Validate winners pass combined set
         print(f"  Validating winners pass combined conditions...")
         if not validate_examples(win_dfs, combined_conditions, expr_cache=expr_cache):
-            print(f"  WARNING: Winners fail combined set — skipping re-scan.")
+            print(f"  WARNING: Winners fail combined set — falling back to refinement only.")
             combined_conditions = None
         else:
             print(f"  ✓ All winners pass combined conditions")
 
-    # Re-scan, re-dedup, re-classify
-    rescan_winners = None
-    rescan_losers = None
-    rescan_sacrificial = None
-    if combined_conditions and exit_cond:
-        # Save counts/refs before freeing memory (used in summary dict later)
-        _n_loser_rows = len(loser_rows)
-        _n_win_dfs = len(win_dfs)
-        _eliminated_losers_saved = eliminated_losers
-
-        # Free beam search data before spawning scan workers
-        del loser_matrix, loser_rows, loser_dates, loser_tickers
-        del candidate_values, candidate_indices, candidate_names, candidate_categories
-        del example_ranges, example_matrix, all_expressions
-        del loser_whitelist
-        # Free winner DataFrames (copies of universe_cache data) and old signal lists
-        del win_dfs
-        del surviving_losers, eliminated_losers
-
-        # Import scan function from signal_filter
-        sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
-        from signal_filter import scan_all_signals as _scan_all, _build_slim_cache
-
-        # Build slim cache, free full cache, then scan
-        _slim = _build_slim_cache(universe_cache)
-        del universe_cache
-        import gc; gc.collect()
-
-        n_workers = max(cpu_count() - 1, 1)
-        raw_signals = _scan_all(_slim, combined_conditions, n_workers, expr_cache)
-        del _slim; gc.collect()
-
-        # Reload full cache for exit/classify
-        universe_cache = load_5yr_cache()
-
-        # Dedup with sacrificial tracking
-        raw_signals.sort(key=lambda s: (s["ticker"], s["bar_idx"]))
-        _deduped = []
-        rescan_sacrificial = []
-        _i = 0
-        while _i < len(raw_signals):
-            _j = _i + 1
-            _ticker = raw_signals[_i]["ticker"]
-            while _j < len(raw_signals):
-                if raw_signals[_j]["ticker"] != _ticker:
-                    break
-                if raw_signals[_j]["bar_idx"] != raw_signals[_j-1]["bar_idx"] + 1:
-                    break
-                _j += 1
-            _rightmost = raw_signals[_j-1]
-            _rightmost["cluster_size"] = _j - _i
-            _rightmost["cluster_start_date"] = raw_signals[_i]["date"]
-            _deduped.append(_rightmost)
-            for _k in range(_i, _j - 1):
-                rescan_sacrificial.append(raw_signals[_k])
-            _i = _j
-
-        print(f"  Re-scan: {len(raw_signals):,} raw → {len(_deduped):,} deduped + "
-              f"{len(rescan_sacrificial):,} sacrificial")
-
-        # Classify using exit condition
-        # Build example bar lookup from classified signals
-        _example_bars = {}
-        for _sig in (raw_winners + raw_losers):
-            if _sig.get("is_example"):
-                _t = _sig["ticker"]
-                _b = _sig.get("bar_idx")
-                if _b is not None:
-                    if _t not in _example_bars:
-                        _example_bars[_t] = set()
-                    _example_bars[_t].add(_b)
-
-        # Apply exit + classify (single-threaded, same logic as signal_filter)
-        _exit_expr = exit_cond["expression"]
-        _exit_thresh = exit_cond["threshold"]
-        _exit_dir = exit_cond["direction"]
-        _exit_col = expr_cache.expr_index(_exit_expr)
-        _adr_col = expr_cache.expr_index("adr14")
-        _direction = "short"  # DTSS
-        _MAX_FWD = 120
-
-        _with_exit = []
-        _no_exit = []
-        _tcache = {}
-        _prev_tk = None
-
-        for _sig in _deduped:
-            _ticker = _sig["ticker"]
-            _bar_idx = _sig["bar_idx"]
-            _df = universe_cache.get(_ticker)
-            if _df is None or _bar_idx >= len(_df) - 1:
-                _no_exit.append(_sig)
-                continue
-            try:
-                if _ticker not in _tcache:
-                    if _prev_tk and _prev_tk != _ticker and _prev_tk in _tcache:
-                        del _tcache[_prev_tk]
-                    _tcache[_ticker] = expr_cache.get_ticker(_ticker)
-                _prev_tk = _ticker
-                _cd, _cdata = _tcache[_ticker]
-                if _cd is None or len(_cd) != len(_df):
-                    _no_exit.append(_sig)
-                    continue
-                _adr = float(_cdata[_bar_idx, _adr_col]) if _adr_col is not None else 0
-                if _adr <= 0 or np.isnan(_adr):
-                    _no_exit.append(_sig)
-                    continue
-                _sc = float(_df["close"].values[_bar_idx])
-                _fwd = min(_MAX_FWD, len(_df) - _bar_idx - 1)
-                if _fwd < 5:
-                    _no_exit.append(_sig)
-                    continue
-                _es = _cdata[:, _exit_col]
-                _eb = None
-                _ec = None
-                for _f in range(1, _fwd + 1):
-                    _v = _es[_bar_idx + _f]
-                    if np.isnan(_v):
-                        continue
-                    if _exit_dir in (">=", "above") and _v >= _exit_thresh:
-                        _eb = _f; _ec = float(_df["close"].values[_bar_idx + _f]); break
-                    elif _exit_dir in ("<=", "below") and _v <= _exit_thresh:
-                        _eb = _f; _ec = float(_df["close"].values[_bar_idx + _f]); break
-                if _eb is None:
-                    _no_exit.append(_sig)
-                    continue
-                if _direction == "short":
-                    _move = (_sc - _ec) / _adr
-                else:
-                    _move = (_ec - _sc) / _adr
-                _with_exit.append({**_sig, "move_adr": round(_move, 2),
-                                   "adr_at_signal": round(_adr, 2),
-                                   "exit_bar": _eb, "exit_triggered": True})
-            except Exception:
-                _no_exit.append(_sig)
-
-        # Classify using adr_threshold from step 3 (example floor with 10% wiggle)
-        _exit_lk = {(_s["ticker"], _s["bar_idx"]): _s for _s in _with_exit}
-
-        rescan_winners = []
-        rescan_losers = []
-        for _sig in _deduped:
-            _t = _sig["ticker"]
-            _b = _sig["bar_idx"]
-            _is_ex = 1 if (_t in _example_bars and _b in _example_bars[_t]) else 0
-            _ed = _exit_lk.get((_t, _b))
-
-            if _is_ex:
-                _cls = "AUTO_WIN"
-            elif _ed and _ed.get("move_adr", 0) >= adr_threshold:
-                _cls = "AUTO_WIN"
-            else:
-                _cls = "AUTO_LOSS"
-
-            _row = {
-                "ticker": _t, "signal_date": _sig["date"], "bar_idx": _b,
-                "close": _sig.get("close"), "is_example": _is_ex,
-                "classification": _cls,
-                "exit_triggered": 1 if _ed else 0,
-                "move_adr": _ed.get("move_adr") if _ed else None,
-            }
-            if _cls == "AUTO_WIN":
-                rescan_winners.append(_row)
-            else:
-                rescan_losers.append(_row)
-
-        _nw = len(rescan_winners)
-        _nl = len(rescan_losers)
-        print(f"  Re-classified: {_nw} winners / {_nl} losers "
-              f"({_nw/max(_nw+_nl,1)*100:.1f}% WR)")
-
     # ── Save ──
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    desc_name = f"refinement_{setup_type}_sig{final_total}_pk{final_peak}_{ts}"
+    desc_name = f"refinement_{setup_type}_cl{final_clusters}_pk{final_peak}_{ts}"
 
     result_data = {
         "setup_type": setup_type,
@@ -3340,21 +3156,20 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
             "beam_width": beam_width,
             "depth": depth,
             "peak_target": peak_target,
-            "source": "refinement_grinder",
+            "source": "cluster_aware_refinement_grinder",
         },
         "summary": {
-            "final_total": final_total,
+            "losing_clusters_input": len(losing_cluster_bars),
+            "losing_clusters_eliminated": len(eliminated_cluster_indices),
+            "losing_clusters_surviving": final_clusters,
             "final_peak": final_peak,
             "final_avg": round(final_avg, 1) if final_avg else 0,
-            "losers_input": _n_loser_rows if rescan_winners is not None else len(loser_rows),
-            "losers_eliminated": (_n_loser_rows if rescan_winners is not None else len(loser_rows)) - final_total,
-            "winners_input": _n_win_dfs if rescan_winners is not None else len(win_dfs),
-            "winners_passing": _n_win_dfs if rescan_winners is not None else len(win_dfs),
+            "winners_input": len(win_dfs),
+            "winners_passing": len(win_dfs),
         },
-        "winner_signals": rescan_winners if rescan_winners is not None else raw_winners,
-        "loser_signals": rescan_losers if rescan_losers is not None else surviving_losers,
-        "sacrificial_signals": rescan_sacrificial if rescan_sacrificial is not None else [],
-        "eliminated_signals": _eliminated_losers_saved if rescan_winners is not None else eliminated_losers,
+        "winner_signals": raw_winners,
+        "loser_signals": surviving_losers,
+        "eliminated_signals": eliminated_losers,
     }
 
     os.makedirs(CACHE_DIR, exist_ok=True)
