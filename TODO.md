@@ -183,10 +183,11 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ## Immediate Tasks
 
-1. **Depth progression output** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running.
-2. **Update PIPELINE_V2.md** — remove proximity grind, profit grind. Update refinement spec (cluster-aware engine is built).
-3. **Vet winner pile** — review 365 winners, add examples, loop if needed.
-4. **Wire regime model** — point `market_grinder.py` at pre-refinement cluster data (full 893 clusters).
+1. **Depth progression output (refinement grinder)** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running.
+2. **Margin progression output (signal grinder)** — save tier-by-tier signal counts at different bounding box margins (5%, 3%, 1%, 0%). More examples = tighter margins viable. Allows post-hoc margin tuning without re-running.
+3. **Update PIPELINE_V2.md** — remove proximity grind, profit grind. Update refinement spec (cluster-aware engine is built).
+4. **Vet winner pile** — review 365 winners, add examples, loop if needed.
+5. **Wire regime model** — point `market_grinder.py` at pre-refinement cluster data (full 893 clusters).
 
 ---
 
