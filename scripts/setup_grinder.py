@@ -43,10 +43,10 @@ sys.path.insert(0, REPO_ROOT)
 
 CACHE_DIR = os.path.join(REPO_ROOT, "local_runner", "cache")
 
-# RS vs SPY lookback windows (trading days)
-RS_WINDOWS = [10, 20, 50, 63]
-
 WIN_CLASSES = {"AUTO_WIN", "AI_WIN", "MANUAL_WIN"}
+
+ALL_FEATURES = ["feat_price", "feat_adr", "feat_dollar_volume_20d",
+                "feat_days_since_ipo", "feat_rs_d1", "feat_rs_w1"]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -123,6 +123,158 @@ def load_5yr_ohlcv():
 
 
 # ══════════════════════════════════════════════════════════════
+# RELATIVE STRENGTH FORMULA
+# ══════════════════════════════════════════════════════════════
+#
+# TC2000 PCF formula (for one ticker):
+#   ((((C4/O4)-1)*100) + (((C3/O3)-1)*100) + (((C2/O2)-1)*100)
+#    + (((C1/O1)-1)*100) + (((C/O)-1)*100)) / 5
+#   * (((C+C50)/2) / ATR50)
+#
+# Part 1: 5-day average intraday % move (open to close)
+# Part 2: price-to-volatility scaling factor
+#   ((current close + close 50 bars ago) / 2) / 50-period ATR
+#
+# RS vs SPY = stock's value - SPY's value on same date.
+# Positive = stock has stronger vol-adjusted momentum than SPY.
+
+
+def _compute_atr(highs, lows, closes, period):
+    """Compute Average True Range (SMA-smoothed, matching TC2000).
+
+    Returns array of length len(closes), NaN where insufficient data.
+    """
+    n = len(closes)
+    tr = np.full(n, np.nan)
+    for i in range(1, n):
+        hl = highs[i] - lows[i]
+        hc = abs(highs[i] - closes[i - 1])
+        lc = abs(lows[i] - closes[i - 1])
+        tr[i] = max(hl, hc, lc)
+    # SMA of true range
+    atr = np.full(n, np.nan)
+    for i in range(period, n):
+        atr[i] = np.nanmean(tr[i - period + 1:i + 1])
+    return atr
+
+
+def _compute_rs_value(opens, highs, lows, closes, bar_idx):
+    """Compute the RS formula value for one ticker at one bar.
+
+    Requires at least 51 bars of history before bar_idx (for C50 and ATR50).
+    Returns float or None if insufficient data.
+    """
+    # Need 5 bars for the rolling avg (bar_idx and 4 prior)
+    if bar_idx < 4:
+        return None
+    # Need 50 bars back for C50 and ATR50
+    if bar_idx < 50:
+        return None
+
+    # Part 1: 5-day average intraday % move
+    intraday_pcts = []
+    for offset in range(5):  # 0=current, 1=1 bar ago, ... 4=4 bars ago
+        idx = bar_idx - offset
+        o = opens[idx]
+        c = closes[idx]
+        if o <= 0 or np.isnan(o) or np.isnan(c):
+            return None
+        intraday_pcts.append(((c / o) - 1.0) * 100.0)
+    avg_pct = sum(intraday_pcts) / 5.0
+
+    # Part 2: price-to-volatility scaling
+    c_now = closes[bar_idx]
+    c_50 = closes[bar_idx - 50]
+    if np.isnan(c_now) or np.isnan(c_50):
+        return None
+    avg_price = (c_now + c_50) / 2.0
+
+    # ATR50 at bar_idx
+    atr_arr = _compute_atr(highs, lows, closes, 50)
+    atr50 = atr_arr[bar_idx]
+    if np.isnan(atr50) or atr50 <= 0:
+        return None
+
+    return float(avg_pct * (avg_price / atr50))
+
+
+def _resample_to_weekly(df):
+    """Resample daily OHLCV to weekly. Returns DataFrame or None."""
+    if len(df) < 10:
+        return None
+    tmp = df.copy()
+    tmp["date"] = pd.to_datetime(tmp["date"])
+    tmp = tmp.set_index("date")
+    weekly = tmp.resample("W").agg({
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+        "volume": "sum",
+    }).dropna(subset=["close"])
+    if len(weekly) < 55:  # need 50+ weekly bars for C50 + ATR50
+        return None
+    weekly = weekly.reset_index()
+    weekly.columns = ["date", "open", "high", "low", "close", "volume"]
+    return weekly
+
+
+def build_rs_series(df, weekly_df=None):
+    """Pre-compute RS formula values for every bar of a ticker.
+
+    Returns:
+        d1_values: dict of date_str -> RS value (daily)
+        w1_values: dict of date_str -> RS value (weekly, keyed by daily date
+                   = last trading day in that week)
+    """
+    opens = df["open"].values.astype(np.float64)
+    highs = df["high"].values.astype(np.float64)
+    lows = df["low"].values.astype(np.float64)
+    closes = df["close"].values.astype(np.float64)
+    dates = [str(d)[:10] for d in df["date"].values]
+
+    # Daily RS values
+    d1_values = {}
+    for i in range(50, len(df)):
+        val = _compute_rs_value(opens, highs, lows, closes, i)
+        if val is not None:
+            d1_values[dates[i]] = val
+
+    # Weekly RS values
+    w1_values = {}
+    if weekly_df is not None and len(weekly_df) >= 55:
+        w_opens = weekly_df["open"].values.astype(np.float64)
+        w_highs = weekly_df["high"].values.astype(np.float64)
+        w_lows = weekly_df["low"].values.astype(np.float64)
+        w_closes = weekly_df["close"].values.astype(np.float64)
+        w_dates = [str(d)[:10] for d in weekly_df["date"].values]
+
+        # Build weekly date -> RS value
+        weekly_rs = {}
+        for i in range(50, len(weekly_df)):
+            val = _compute_rs_value(w_opens, w_highs, w_lows, w_closes, i)
+            if val is not None:
+                weekly_rs[w_dates[i]] = val
+
+        # Map weekly values to daily dates: each daily date gets the RS value
+        # of the most recent weekly bar that ended on or before that date
+        if weekly_rs:
+            sorted_w_dates = sorted(weekly_rs.keys())
+            for daily_date in dates:
+                # Find the most recent weekly date <= daily_date
+                best_w = None
+                for wd in sorted_w_dates:
+                    if wd <= daily_date:
+                        best_w = wd
+                    else:
+                        break
+                if best_w is not None:
+                    w1_values[daily_date] = weekly_rs[best_w]
+
+    return d1_values, w1_values
+
+
+# ══════════════════════════════════════════════════════════════
 # FEATURE COMPUTATION
 # ══════════════════════════════════════════════════════════════
 
@@ -131,7 +283,6 @@ def _find_bar_idx(dates, signal_date_str):
 
     Returns index or -1 if not found.
     """
-    # dates could be a pandas Series of datetime, or strings
     for i, d in enumerate(dates):
         d_str = str(d)[:10]
         if d_str == signal_date_str:
@@ -149,29 +300,6 @@ def compute_dollar_volume_20d(df, bar_idx):
     return float(np.nanmean(dv))
 
 
-def compute_rs_vs_spy(df, bar_idx, spy_df, spy_date_idx, window):
-    """Stock's % change over N days minus SPY's % change over same N days.
-
-    Positive = stock outperforming SPY. Negative = underperforming.
-    """
-    if bar_idx < window or spy_date_idx < window:
-        return None
-
-    stock_now = df.iloc[bar_idx]["close"]
-    stock_then = df.iloc[bar_idx - window]["close"]
-    if stock_then <= 0 or np.isnan(stock_then) or np.isnan(stock_now):
-        return None
-    stock_roc = (stock_now - stock_then) / stock_then
-
-    spy_now = spy_df.iloc[spy_date_idx]["close"]
-    spy_then = spy_df.iloc[spy_date_idx - window]["close"]
-    if spy_then <= 0 or np.isnan(spy_then) or np.isnan(spy_now):
-        return None
-    spy_roc = (spy_now - spy_then) / spy_then
-
-    return float(stock_roc - spy_roc)
-
-
 def compute_days_since_ipo(df, bar_idx):
     """Trading days from first bar in OHLCV to signal bar.
 
@@ -180,40 +308,29 @@ def compute_days_since_ipo(df, bar_idx):
     return bar_idx  # first bar in cache = index 0, so bar_idx IS the count
 
 
-def compute_features_for_signals(signals, ohlcv_cache, spy_df):
+def compute_features_for_signals(signals, ohlcv_cache, spy_d1_rs, spy_w1_rs):
     """Compute setup-specific features for every signal.
 
     Augments each signal dict in place with new feature fields.
     Returns a stats dict with coverage and summary info.
     """
-    # Build SPY date lookup: date_str -> index
-    spy_dates = [str(d)[:10] for d in spy_df["date"].values]
-    spy_date_to_idx = {d: i for i, d in enumerate(spy_dates)}
-
     # Track coverage
     n_total = len(signals)
     n_ohlcv_found = 0
     n_bar_found = 0
-    feature_counts = {
-        "price": 0,
-        "adr": 0,
-        "dollar_volume_20d": 0,
-        "days_since_ipo": 0,
-    }
-    for w in RS_WINDOWS:
-        feature_counts[f"rs_vs_spy_{w}d"] = 0
+    feature_counts = {f.replace("feat_", ""): 0 for f in ALL_FEATURES}
+
+    # Cache: ticker -> (d1_rs_dict, w1_rs_dict)
+    # Computed lazily per ticker
+    ticker_rs_cache = {}
 
     for sig in signals:
         ticker = sig.get("ticker", "")
         signal_date = str(sig.get("signal_date", ""))[:10]
 
         # Initialize all feature fields to None
-        sig["feat_price"] = None
-        sig["feat_adr"] = None
-        sig["feat_dollar_volume_20d"] = None
-        sig["feat_days_since_ipo"] = None
-        for w in RS_WINDOWS:
-            sig[f"feat_rs_vs_spy_{w}d"] = None
+        for f in ALL_FEATURES:
+            sig[f] = None
 
         # Look up ticker OHLCV
         df = ohlcv_cache.get(ticker)
@@ -221,7 +338,7 @@ def compute_features_for_signals(signals, ohlcv_cache, spy_df):
             continue
         n_ohlcv_found += 1
 
-        # Ensure date column is string for matching
+        # Find the signal bar
         dates = [str(d)[:10] for d in df["date"].values]
         bar_idx = _find_bar_idx(dates, signal_date)
         if bar_idx < 0:
@@ -234,7 +351,7 @@ def compute_features_for_signals(signals, ohlcv_cache, spy_df):
             sig["feat_price"] = price
             feature_counts["price"] += 1
 
-        # 2. ADR (carry from signal if available, otherwise skip)
+        # 2. ADR (carry from signal if available)
         adr = sig.get("adr_at_signal")
         if adr is not None and not np.isnan(adr):
             sig["feat_adr"] = float(adr)
@@ -246,25 +363,36 @@ def compute_features_for_signals(signals, ohlcv_cache, spy_df):
             sig["feat_dollar_volume_20d"] = dv
             feature_counts["dollar_volume_20d"] += 1
 
-        # 4. RS vs SPY (multiple windows)
-        spy_idx = spy_date_to_idx.get(signal_date, -1)
-        if spy_idx >= 0:
-            for w in RS_WINDOWS:
-                rs = compute_rs_vs_spy(df, bar_idx, spy_df, spy_idx, w)
-                if rs is not None:
-                    sig[f"feat_rs_vs_spy_{w}d"] = rs
-                    feature_counts[f"rs_vs_spy_{w}d"] += 1
-
-        # 5. Days since IPO
+        # 4. Days since IPO
         sig["feat_days_since_ipo"] = compute_days_since_ipo(df, bar_idx)
         feature_counts["days_since_ipo"] += 1
 
+        # 5. RS vs SPY (D1 and W1)
+        # Lazily compute RS series for this ticker
+        if ticker not in ticker_rs_cache:
+            weekly_df = _resample_to_weekly(df)
+            d1_rs, w1_rs = build_rs_series(df, weekly_df)
+            ticker_rs_cache[ticker] = (d1_rs, w1_rs)
+        else:
+            d1_rs, w1_rs = ticker_rs_cache[ticker]
+
+        # D1: stock RS - SPY RS
+        stock_d1 = d1_rs.get(signal_date)
+        spy_d1 = spy_d1_rs.get(signal_date)
+        if stock_d1 is not None and spy_d1 is not None:
+            sig["feat_rs_d1"] = stock_d1 - spy_d1
+            feature_counts["rs_d1"] += 1
+
+        # W1: stock RS - SPY RS
+        stock_w1 = w1_rs.get(signal_date)
+        spy_w1 = spy_w1_rs.get(signal_date)
+        if stock_w1 is not None and spy_w1 is not None:
+            sig["feat_rs_w1"] = stock_w1 - spy_w1
+            feature_counts["rs_w1"] += 1
+
     # Compute summary stats for each feature
     feature_stats = {}
-    feature_keys = ["feat_price", "feat_adr", "feat_dollar_volume_20d", "feat_days_since_ipo"]
-    feature_keys += [f"feat_rs_vs_spy_{w}d" for w in RS_WINDOWS]
-
-    for fk in feature_keys:
+    for fk in ALL_FEATURES:
         vals = [s[fk] for s in signals if s[fk] is not None]
         if vals:
             arr = np.array(vals, dtype=np.float64)
@@ -323,9 +451,15 @@ def run(setup_type, refinement_path, dry_run=False):
         raise ValueError("SPY not found in OHLCV cache — needed for RS computation")
     print(f"  SPY: {len(spy_df)} bars ({str(spy_df['date'].iloc[0])[:10]} to {str(spy_df['date'].iloc[-1])[:10]})")
 
-    # ── 3. Compute features (pre-refinement) ─────────────────
+    # ── 3. Pre-compute SPY RS values (once) ──────────────────
+    print(f"\n  Pre-computing SPY RS values (D1 + W1)...")
+    spy_weekly = _resample_to_weekly(spy_df)
+    spy_d1_rs, spy_w1_rs = build_rs_series(spy_df, spy_weekly)
+    print(f"  SPY D1: {len(spy_d1_rs)} dates  |  SPY W1: {len(spy_w1_rs)} dates")
+
+    # ── 4. Compute features (pre-refinement) ─────────────────
     print(f"\n  Computing features (pre-refinement, {len(pre_signals)} signals)...")
-    pre_stats = compute_features_for_signals(pre_signals, ohlcv_cache, spy_df)
+    pre_stats = compute_features_for_signals(pre_signals, ohlcv_cache, spy_d1_rs, spy_w1_rs)
 
     print(f"\n  PRE-REFINEMENT coverage:")
     print(f"    OHLCV found:  {pre_stats['n_ohlcv_found']}/{pre_stats['n_total']}")
@@ -339,9 +473,9 @@ def run(setup_type, refinement_path, dry_run=False):
         else:
             print(f"  {label:<30} {fs['count']:>6}  {fs['min']:>12.2f}  {fs['median']:>12.2f}  {fs['max']:>12.2f}")
 
-    # ── 4. Compute features (post-refinement) ────────────────
+    # ── 5. Compute features (post-refinement) ────────────────
     print(f"\n  Computing features (post-refinement, {len(post_signals)} signals)...")
-    post_stats = compute_features_for_signals(post_signals, ohlcv_cache, spy_df)
+    post_stats = compute_features_for_signals(post_signals, ohlcv_cache, spy_d1_rs, spy_w1_rs)
 
     print(f"\n  POST-REFINEMENT coverage:")
     print(f"    OHLCV found:  {post_stats['n_ohlcv_found']}/{post_stats['n_total']}")
@@ -355,15 +489,12 @@ def run(setup_type, refinement_path, dry_run=False):
         else:
             print(f"  {label:<30} {fs['count']:>6}  {fs['min']:>12.2f}  {fs['median']:>12.2f}  {fs['max']:>12.2f}")
 
-    # ── 5. Win rate by quartile (quick sanity check) ─────────
+    # ── 6. Win rate by quartile (quick sanity check) ─────────
     print(f"\n  {'='*60}")
     print(f"  QUICK WIN RATE BY QUARTILE (pre-refinement)")
     print(f"  {'='*60}")
 
-    feature_keys = ["feat_price", "feat_adr", "feat_dollar_volume_20d", "feat_days_since_ipo"]
-    feature_keys += [f"feat_rs_vs_spy_{w}d" for w in RS_WINDOWS]
-
-    for fk in feature_keys:
+    for fk in ALL_FEATURES:
         vals = [(s[fk], 1 if str(s.get("classification", "")).upper() in WIN_CLASSES else 0)
                 for s in pre_signals if s[fk] is not None]
         if len(vals) < 20:
