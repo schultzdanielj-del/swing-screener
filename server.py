@@ -962,6 +962,22 @@ async def approve_all_pending(setup_type: str):
 # UNIVERSE OHLCV
 # ============================================================
 
+@app.post("/api/query/bulk")
+async def query_bulk(request: Request):
+    body=await request.json(); sql=body.get("sql",""); limit=body.get("limit",1000)
+    if not sql: raise HTTPException(400,"sql required")
+    sql_upper=sql.strip().upper()
+    if not sql_upper.startswith("SELECT"): raise HTTPException(400,"Only SELECT queries allowed")
+    for forbidden in ["DROP","DELETE","UPDATE","INSERT","ALTER","CREATE"]:
+        if forbidden in sql_upper: raise HTTPException(400,f"{forbidden} not allowed")
+    try:
+        with get_db() as db:
+            rows=db.execute(sql).fetchall()
+            results=[dict(r) for r in rows[:limit]]
+        return {"results":results,"count":len(results)}
+    except Exception as e: raise HTTPException(500,str(e))
+
+
 @app.post("/api/universe/insert-ohlcv")
 async def insert_ohlcv(request: Request):
     body=await request.json(); ticker=body.get("ticker","").strip().upper(); rows=body.get("rows",[])
