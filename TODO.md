@@ -89,10 +89,30 @@ Cluster-aware scoring: a losing cluster is only eliminated when ALL its bars are
 
 No re-scan, no re-classify after the beam search. Phase 1 classification (ceiling+exit race) is truth. The beam search filters the signal list by whole-cluster elimination.
 
+Examples run through the full classification race (ceiling calc, exit condition scan) like every other cluster. They get their exit_bar, ceiling, and move data. Classification is overridden to AUTO_WIN regardless of race outcome since they are validated examples.
+
 - Input: Signal conditions + exit condition + example library + expression cache + 5yr OHLCV
-- Output: Combined conditions (signal + refinement) + filtered winner/loser signal lists
+- Output: Combined conditions (signal + refinement) + filtered winner/loser signal lists with move_adr data
 - Script: `pyramid_grinder.py --blackout`
 - Overfitting risk: More refinement depth = more conditions = higher curve fit risk. Depth progression output (TODO) will allow post-hoc threshold tuning.
+
+### move_adr measurement
+
+Every cluster with an exit_bar gets `move_adr` (entry_high to exit_close, in ADR units), `adr_at_signal` (14-bar ADR at rightmost bar), and `entry_high`.
+
+Entry high is determined by two cases:
+- **Examples** (have a real entry candle): entry_high = high of the entry candle.
+- **Non-examples** (no defined entry candle): entry_high = max high in the forward window used during classification. This is the worst-case entry price — conservative, so the numbers understate real performance.
+
+Exit price = close of the bar where the exit condition fired.
+
+`move_adr = (entry_high - exit_close) / adr_at_signal` for shorts.
+
+This is not true MFE (lowest low before exit). It’s the actual captured move to the exit condition close — a consistent, tradeable measurement. The exit condition is a placeholder good enough for reliable filtering data. The profit grinder (Phase 4) later optimizes the actual exit strategy.
+
+Winners without an exit_bar (held_to_end, no_data_after_window) get null — excluded from stats.
+
+This data flows through to the refinement JSON (`winner_signals`, `loser_signals`, `eliminated_signals`) so all Phase 3 grinders can compute move stats per bucket alongside win rate.
 
 ---
 
@@ -126,7 +146,7 @@ The final correlative filter is three independent filtering dimensions, all comp
 2. **Market regime buckets** — already built, pre+post redundancy scored
 3. **Setup-specific buckets** — same approach as market regime, but on ticker characteristics
 
-The combined filter optimizer searches across all three knobs simultaneously to maximize win rate × median MFE without killing sample size. This produces the final "take this signal or don't" decision.
+The combined filter optimizer searches across all three knobs simultaneously to maximize win rate × median move_adr without killing sample size. The full distribution shape matters — median, mean, floor, ceiling — because a bucket with high median but terrible floor blows up the equity curve. This produces the final "take this signal or don't" decision.
 
 ---
 
@@ -188,7 +208,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 | Step | Status | Key Numbers |
 |------|--------|-------------|
-| Phase 1: Vetting | ✅ 68 examples | 66 with valid scan bars |
+| Phase 1: Vetting | ✅ 68 examples | 65 with valid scan bars in clusters |
 | Phase 2a: Signal Grind | ✅ Done | 87 conditions, 1,218 raw → 893 deduped |
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
@@ -196,14 +216,16 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 4: Profit Optimization | ⏸ Needs rewire | Script exists, needs new objective function (compound growth) |
 | Phase 5: Live Watchlist | ⏸ Not built | |
 
-### Refinement Grind Result (2026-03-12)
+### Refinement Grind Result (2026-03-13)
 - 893 clusters: 365 WIN, 528 LOSS
 - 100 refinement conditions (depth capped at 100)
 - 426/528 losing clusters eliminated (80.7%)
 - All 365 winners pass all conditions
 - 182 combined conditions (87 signal + 100 refinement, 5 overlap)
 - Pre-regime win rate: 78% (365 / 467)
-- File: `refinement_dtss_cl102_pk5_20260312_150704.json`
+- **Winner move_adr: median 6.4, mean 6.7, floor 2.9, ceiling 13.1 ADR (364/365 with data)**
+- All examples now run through full classification race (exit_bar, ceiling, move_adr)
+- File: `refinement_dtss_cl102_pk5_20260313_122818.json`
 
 ### Regime Model Result (2026-03-13)
 - 256 instruments × 15,805 expressions → 3M+ features tested → 50 selected (deduplicated)
@@ -229,9 +251,9 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 4. ~~**Wire regime model to new pipeline**~~ — **DONE 2026-03-13**. `market_grinder.py` rewritten to all-local. Reads refinement JSON, runs pre+post, computes redundancy scores, saves+mirrors. Market cache extended to 8y for full signal coverage. `fetch_missing_market.py` added for incremental fetches.
 
 ### Phase 3 — Correlative Filtering
-5. **Add MFE to cluster/refinement output** — cluster builder and refinement JSON currently lack MFE data. Compute MFE (max favorable excursion in ADR) for each signal/cluster from OHLCV and store it on every signal. All downstream steps (setup-specific correlations, combined optimizer, profit grinder) need this.
+5. ~~**Add move_adr to cluster/refinement output**~~ — **DONE 2026-03-13**. `move_adr` (entry_high to exit_close in ADR), `adr_at_signal`, `entry_high` computed on every cluster. Examples use entry candle high, non-examples use forward window max high (conservative worst-case entry). Flows through to refinement JSON on all signal lists. 364/365 winners with data. Winner stats: median 6.4, mean 6.7, floor 2.9, ceiling 13.1 ADR. Also fixed bug where examples skipped the classification race entirely — they now get exit_bar, ceiling, and move data like every other cluster.
 6. **Build setup-specific correlation analysis** — same architecture as `market_grinder.py` but on ticker/setup characteristics: price level, market cap, dollar volume, sector, float, ADR, etc. from expression cache at signal bar. Pre+post refinement, redundancy scoring. Script: `setup_grinder.py`.
-7. **Combined filter optimizer** — search across refinement condition depth threshold × regime score buckets × setup-specific buckets to maximize win rate × median MFE. Three independent filtering knobs turned together. Produces the final "take this signal or don't" decision.
+7. **Combined filter optimizer** — search across refinement condition depth threshold × regime score buckets × setup-specific buckets to maximize win rate × median move_adr. Three independent filtering knobs turned together. Evaluates full distribution shape (median, mean, floor, ceiling) for profit curve optimization. Produces the final "take this signal or don't" decision.
 
 ### Vetting UI
 8. **Read from signal grind and refinement grind outputs** — vetting UI currently reads signal_filter output. Needs to read from cluster files instead. Sort results by signal-to-exit ADR move (biggest movers first).
@@ -268,6 +290,8 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - **Cluster-aware refinement scoring.** A losing cluster only counts as eliminated when ALL its bars are dead.
 - **No re-scan/re-classify in refinement.** Phase 1 classification is truth.
 - **Regime runs on pre-refinement data.** Post-refinement has too few losers for the model to learn from.
+- **Examples run through full classification race.** Not skipped — they get exit_bar, ceiling, move_adr like every other cluster. Classification overridden to AUTO_WIN.
+- **move_adr uses conservative entry price for non-examples.** Forward window max high = worst-case fill. Real entries will be better.
 - **100% example pass rate required.** Any grinder result where an example fails is invalid.
 - **Silent failures are dangerous.** The system produces plausible wrong numbers. Verify empirically.
 
