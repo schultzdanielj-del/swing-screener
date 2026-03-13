@@ -108,7 +108,7 @@ Exit price = close of the bar where the exit condition fired.
 
 `move_adr = (entry_high - exit_close) / adr_at_signal` for shorts.
 
-This is not true MFE (lowest low before exit). It’s the actual captured move to the exit condition close — a consistent, tradeable measurement. The exit condition is a placeholder good enough for reliable filtering data. The profit grinder (Phase 4) later optimizes the actual exit strategy.
+This is not true MFE (lowest low before exit). It's the actual captured move to the exit condition close — a consistent, tradeable measurement. The exit condition is a placeholder good enough for reliable filtering data. The profit grinder (Phase 4) later optimizes the actual exit strategy.
 
 Winners without an exit_bar (held_to_end, no_data_after_window) get null — excluded from stats.
 
@@ -246,29 +246,30 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 1. **Depth progression output (refinement grinder)** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running.
 2. **Margin progression output (signal grinder)** — save tier-by-tier signal counts at different bounding box margins (5%, 3%, 1%, 0%). More examples = tighter margins viable. Allows post-hoc margin tuning without re-running.
 3. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
+4. **Market grinder: cluster-level win rate series** — currently builds the win rate time series from individual signal bars, so a 5-bar cluster counts as 5 data points with the same outcome. Should use one data point per cluster (rightmost bar date or average of cluster bars' market features). Avoids inflating weight of longer clusters.
 
 ### Regime Model
-4. ~~**Wire regime model to new pipeline**~~ — **DONE 2026-03-13**. `market_grinder.py` rewritten to all-local. Reads refinement JSON, runs pre+post, computes redundancy scores, saves+mirrors. Market cache extended to 8y for full signal coverage. `fetch_missing_market.py` added for incremental fetches.
+5. ~~**Wire regime model to new pipeline**~~ — **DONE 2026-03-13**. `market_grinder.py` rewritten to all-local. Reads refinement JSON, runs pre+post, computes redundancy scores, saves+mirrors. Market cache extended to 8y for full signal coverage. `fetch_missing_market.py` added for incremental fetches.
 
 ### Phase 3 — Correlative Filtering
-5. ~~**Add move_adr to cluster/refinement output**~~ — **DONE 2026-03-13**. `move_adr` (entry_high to exit_close in ADR), `adr_at_signal`, `entry_high` computed on every cluster. Examples use entry candle high, non-examples use forward window max high (conservative worst-case entry). Flows through to refinement JSON on all signal lists. 364/365 winners with data. Winner stats: median 6.4, mean 6.7, floor 2.9, ceiling 13.1 ADR. Also fixed bug where examples skipped the classification race entirely — they now get exit_bar, ceiling, and move data like every other cluster.
-6. **Build setup-specific correlation analysis** — same architecture as `market_grinder.py` but on ticker/setup characteristics: price level, market cap, dollar volume, sector, float, ADR, etc. from expression cache at signal bar. Pre+post refinement, redundancy scoring. Script: `setup_grinder.py`.
-7. **Combined filter optimizer** — search across refinement condition depth threshold × regime score buckets × setup-specific buckets to maximize win rate × median move_adr. Three independent filtering knobs turned together. Evaluates full distribution shape (median, mean, floor, ceiling) for profit curve optimization. Produces the final "take this signal or don't" decision.
+6. ~~**Add move_adr to cluster/refinement output**~~ — **DONE 2026-03-13**. `move_adr` (entry_high to exit_close in ADR), `adr_at_signal`, `entry_high` computed on every cluster. Examples use entry candle high, non-examples use forward window max high (conservative worst-case entry). Flows through to refinement JSON on all signal lists. 364/365 winners with data. Winner stats: median 6.4, mean 6.7, floor 2.9, ceiling 13.1 ADR. Also fixed bug where examples skipped the classification race entirely — they now get exit_bar, ceiling, and move data like every other cluster.
+7. **Build setup-specific correlation analysis** — same architecture as `market_grinder.py` but on ticker/setup characteristics: price level, market cap, dollar volume, sector, float, ADR, etc. from expression cache at signal bar. Pre+post refinement, redundancy scoring. Script: `setup_grinder.py`.
+8. **Combined filter optimizer** — search across refinement condition depth threshold × regime score buckets × setup-specific buckets to maximize win rate × median move_adr. Three independent filtering knobs turned together. Evaluates full distribution shape (median, mean, floor, ceiling) for profit curve optimization. Produces the final "take this signal or don't" decision.
 
 ### Vetting UI
-8. **Read from signal grind and refinement grind outputs** — vetting UI currently reads signal_filter output. Needs to read from cluster files instead. Sort results by signal-to-exit ADR move (biggest movers first).
-9. **AI vet queue** — signals go to AI review, then one-click "yes" adds them to the example library. This flow needs to work end-to-end.
-10. **Workflow and ease-of-use improvements** — many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
+9. **Read from signal grind and refinement grind outputs** — vetting UI currently reads signal_filter output. Needs to read from cluster files instead. Sort results by signal-to-exit ADR move (biggest movers first).
+10. **AI vet queue** — signals go to AI review, then one-click "yes" adds them to the example library. This flow needs to work end-to-end.
+11. **Workflow and ease-of-use improvements** — many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
 
 ### Pipeline UI
-11. **Full pipeline control from UI** — every grinder step runnable from the UI with all parameters and tweaks selectable at each level. Fully wired to the pipeline agent.
-12. **Update PIPELINE_V2.md** — remove proximity grind, profit grind. Update Phase 3 to reflect the three-knob architecture (refinement depth + regime + setup-specific). Update refinement spec (cluster-aware engine is built).
+12. **Full pipeline control from UI** — every grinder step runnable from the UI with all parameters and tweaks selectable at each level. Fully wired to the pipeline agent.
+13. **Update PIPELINE_V2.md** — remove proximity grind, profit grind. Update Phase 3 to reflect the three-knob architecture (refinement depth + regime + setup-specific). Update refinement spec (cluster-aware engine is built).
 
 ### Code Cleanup (future)
-13. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.
+14. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.
 
 ### Vetting
-14. **Vet winner pile** — review 365 winners, add examples, loop if needed.
+15. **Vet winner pile** — review 365 winners, add examples, loop if needed.
 
 ---
 
