@@ -21,11 +21,11 @@ out trash before it reaches you.
 
 **It's a loop, not a pipeline.**
 There is no "done." Every cycle produces tighter conditions, more examples, better
-classifications, and a stronger regime model. You run live when the metrics say you're
+classifications, and a stronger EV model. You run live when the metrics say you're
 ready. The loop keeps running and improving the live system indefinitely.
 
 **Every layer runs as soon as it has minimum viable data.**
-Don't wait for the loop to converge before running the regime model. Run everything
+Don't wait for the loop to converge before running the EV model. Run everything
 you can with what you have. Each layer strengthens every other layer on each cycle.
 
 **Convergence means live-ready, not finished.**
@@ -40,11 +40,11 @@ Revert = restore previous cycle's result data and delete the current bad one. On
 
 **The system is setup-type agnostic.**
 DTSS is the guinea pig. The target is ~10 setup types running simultaneously. Each
-setup type has its own example library, grind cycle, and regime model — but they all
+setup type has its own example library, grind cycle, and EV model — but they all
 run on the same expression cache, grinder engine, and infrastructure. The watchlist
 unifies them. More setup types means more candidates competing for the same slots —
 only the highest EV opportunities make the cut regardless of setup type. A market that
-is excellent for DTSS and poor for HTF longs will surface DTSS picks. The regime model
+is excellent for DTSS and poor for HTF longs will surface DTSS picks. The EV model
 per setup type handles this automatically.
 
 **The expression library is the substrate.**
@@ -60,10 +60,10 @@ method. What changes is what the search is optimizing against.
 ## The Pipeline
 
 Eight steps. Steps 1-4 are the vetting loop — repeat until convergence (no new
-examples found). Steps 5-8 run once after convergence.
+examples found). Steps 5-7 run once after convergence.
 
 **Nightly auto-refresh (4:30pm ET, fully automated):**
-  OHLCV append → daily cache → 5yr cache → expr cache → matrix → earnings → market cache (266 instruments)
+  OHLCV append → daily cache → 5yr cache → expr cache → matrix → earnings → market cache (256 instruments)
   When you sit down, all data is current. No manual refresh needed.
 
 ```
@@ -77,14 +77,13 @@ The Vetting Loop (repeat until convergence):
                                YES → AI review → approve → examples → loop back to step 1
 
 After Convergence (run once, in order):
-  Step 5: Proximity Grind   — trim losers via beam search → combine all conditions
-                               → re-scan universe → re-classify
-  Step 6: Profit Grind      — trade exit from entry bar high forward (bespoke exit expr set, maximizes MFE capture)
-  Step 7: Regime Model      — winner/loser ratio vs market conditions (266 instruments)
-  Step 8: Health Check      — cycle quality, EV, promote / revert / live-ready
+  Step 5: EV Grinder        — unified correlative scoring: all ~4M market features +
+                               setup-specific features → per-signal estimated WR, MFE, EV
+  Step 6: Profit Grind      — optimal exit strategy, maximizes compounded equity growth
+  Step 7: Health Check      — cycle quality, EV, promote / revert / live-ready
 
 Live:
-  Nightly scan + regime score → unified watchlist
+  Nightly scan + EV scoring → unified watchlist (rank ordered, no filtering)
 ```
 
 **Convergence:** When a full vetting pass on the refined winner pile produces no new
@@ -125,7 +124,7 @@ universe. More examples → tighter discrimination → fewer false positives.
   1wk rows would drop below a minimum threshold (e.g. 500 rows). This prevents D1
   from over-locking and destroying downstream tiers (BUG-001).
 - After every grind, compute and store: n_conditions, n_signals, peak/day, signal
-  stability vs previous cycle. These feed Layer 7.
+  stability vs previous cycle. These feed Layer 6.
 - Results upload to Railway automatically as part of the grind run — no separate step.
 
 **Output:**
@@ -216,7 +215,7 @@ two-stage human + AI gate. Neither stage alone is sufficient — human identifie
 candidates, AI checks them against the example library, human makes the final call.
 
 **When to vet:**
-- When the health check (Layer 7) says label accuracy is limiting regime model quality
+- When the health check (Layer 6) says label accuracy is limiting EV model quality
 - When a new grind cycle produces new signals that haven't been seen before
 - NOT as a default "always do this next" step — driven by metrics
 
@@ -263,7 +262,7 @@ decide when you have enough new examples to warrant a regrind → trigger it man
 **Convergence signal:**
 Track examples added per cycle. When two consecutive cycles add near-zero new examples
 from a full vetting pass, the example library has converged. Stop driving vetting as
-the primary activity and focus on regime model quality instead.
+the primary activity and focus on EV model quality instead.
 
 **UI requirements:**
 - Stage 1: one key per decision, instant chart load, no gaps
@@ -278,76 +277,112 @@ addition and speed improvements.
 
 ---
 
-## Layer 4: Proximity Grind
+## Layer 4: EV Grinder
 
-**What it solves:** Trims false/early signal bars from the lose pile without losing
-any real triggers. Every loser removed is pure EV gain — win rate goes up, profit
-factor goes up, regime model gets cleaner input.
+**What it solves:** Given a signal that fired tonight, what is its expected win rate,
+expected move size, and expected value? This is the "dynamic contextual risk/reward
+calculation" — the same thing a discretionary trader does naturally, but with flawless
+accuracy against every historical signal, weighted precisely, no recency bias.
 
-**When it runs:** Only after convergence. Pre-convergence, undiscovered winners may
-still be hiding in the losing pile — trimming losers at that stage risks killing future
-examples before they're ever seen. Post-convergence, the vetting loop has surfaced
-everything. Whatever's left in the losing pile is genuinely not a setup. Safe to trim.
+**Critical design principle: scoring, not filtering.** Every signal that passes the
+causative filters (Phase 2) makes the watchlist. The EV grinder does not eliminate
+signals. It scores them so the watchlist can rank them. The bottom of the list simply
+doesn't get traded because better signals exist above them.
 
-**Data source:** Reads the refinement grinder's local output file
-(`local_runner/cache/refinement_{setup}_*.json`) which contains:
-- `all_conditions`: combined signal + refinement conditions
-- `winner_signals` / `loser_signals`: classified signal lists
-- `exit_condition`: exit condition used for classification
+**Per setup type:** Each setup type gets its own EV model. Features that matter for
+DTSS (e.g., "shorts win more when VIX is rising") may be irrelevant for long setups.
 
-**Win pile (must ALL pass — hard constraint):**
-- All winner signals from the refinement grind output (examples + exit-triggered winners)
+**When it runs:** After convergence — needs a stable classified signal set. Re-runs
+whenever the refinement grind produces a new signal set.
 
-**Lose pile (try to trim):**
-- All loser signals from the refinement grind output (surviving losers after refinement)
+**Feature universe (~4M+ features):**
 
-**Hard constraints:**
-- 100% of win pile signals must pass. No exceptions.
-- Uses the same expr cache path as all other grinders.
+Market regime features: 256 instruments × 15,805 expressions from the market cache.
+Each instrument's expression value on the signal date. Covers broad market conditions:
+SPY trend, VIX level, sector rotation, breadth, interest rates, credit spreads, bond
+market, commodities, international markets, and more. Both directions — features that
+boost WR/MFE AND features that tank WR/MFE.
 
-**What it finds:** Conditions visible on the signal bar that distinguish "setup
-completing" from "setup in progress." The bar right before entry has structural
-differences — momentum exhaustion, volume confirmation, resistance proximity — vs
-earlier duplicate bars where conditions happened to fire early. This isn't a time
-machine; it's detecting completion signatures.
+Setup-specific features (OHLCV-derived, 6):
+- Price level, ADR, dollar volume (20d), days since IPO
+- RS vs SPY daily, RS vs SPY weekly
+
+Setup-specific features (from Yahoo Finance fundamentals cache, 4):
+- Market cap (shares outstanding × close at signal date)
+- Volume/float ratio (daily volume / float shares)
+- RS vs sector (ticker RS − avg RS of same-sector tickers)
+- Sector RS vs SPY (avg sector RS − SPY RS)
+
+All features are included for every setup type. The screening step determines which
+matter per setup.
 
 **Method:**
-1. Load win pile and lose pile from refinement grinder output (local)
-2. Beam search: find conditions all winners pass but that eliminate losers
-3. Combine signal + refinement + proximity conditions into full set
-4. Re-scan full universe with combined conditions (parallel, ~50s)
-5. Re-deduplicate → new deduped + sacrificial signal sets
-6. Apply exit + re-classify → new winner/loser piles
-7. Save locally + upload via file_mirror + grind_uploader
 
-**Math (from DTSS current state):**
-With 41% WR and 5.48/1.0 ADR winner/loser, trimming 5 losers without touching winners
-moves EV from ~1.66 to ~1.98 (realistic loser cap). Profit factor goes from 3.81 to 4.67.
+1. Build feature matrix: for each signal, look up every feature value on that date.
+   893 rows × ~4M columns. Parallelized per instrument (~5-20 min).
+
+2. Univariate WR screening: for each feature, bucket signals into quartiles by value,
+   compute win rate per quartile. Keep features where Q4-Q1 spread exceeds threshold
+   (default 10pp). Catches both directions.
+
+3. Univariate MFE screening: same, but for winner move_adr (median per quartile).
+   Keep features where spread exceeds threshold (default 1.0 ADR).
+
+4. Union survivors: feature passes if it cleared either WR or MFE screen. Tagged as
+   "WR only", "MFE only", or "both."
+
+5. Deduplication: greedy dedup by inter-feature correlation (< 0.95). Each survivor
+   adds genuinely new information.
+
+6. Scoring curves: for each survivor, store quartile boundaries + WR/MFE per quartile.
+   This is the lookup table for live scoring.
+
+7. Score every historical signal: look up quartile for each feature, weighted average
+   of WR and MFE contributions (weighted by feature spread strength). Output: estimated
+   WR, estimated MFE, EV = (WR × MFE) − ((1−WR) × 1.0 ADR assumed stop).
+
+8. Validation: bucket signals by predicted WR into deciles. Does actual WR match
+   predicted? Same for MFE. If predicted 85% WR decile wins 85%, the model is calibrated.
+
+**Additive model:** Each feature contributes independently. Well-supported by ~893
+data points. Interaction terms (e.g., "UVXY matters more on high-priced stocks") are
+not captured, but features that matter in combination will both independently predict
+WR/MFE, so the additive model ranks those signals highly anyway. Interaction terms
+can be layered in as more examples accumulate.
 
 **Output:**
-- `all_conditions`: combined signal + refinement + proximity (full condition set)
-- `proximity_conditions_only`: just the new proximity conditions
-- `winner_signals` / `loser_signals`: freshly classified from re-scan
-- `sacrificial_signals`: leftward dedup duplicates from re-scan
-- `exit_condition`, metrics (before/after win rate, signal counts)
+- Scoring equation: surviving features + quartile boundaries + weights
+- Per-signal scores: ticker, date, estimated WR, estimated MFE, EV
+- Validation stats: predicted vs actual WR/MFE by decile
+- Feature importance ranking
+
+**Script:** `scripts/ev_grinder.py --setup {setup}`
+
+**Replaces:** `market_grinder.py` + `setup_grinder.py` + the planned combined optimizer.
+Those scripts are preserved for reference but are no longer pipeline dependencies.
 
 ---
 
 ## Layer 5: Profit Grind
 
 **What it solves:** Finds the optimal trade exit condition — when to close the
-position to maximize captured move from the entry bar high. Uses a bespoke exit
-expression library (exit_expressions.py) specifically designed to evaluate the
-traded range (entry bar forward to exit bar).
+position to maximize compounded equity growth. Uses a bespoke exit expression
+library (exit_expressions.py) specifically designed to evaluate the traded range
+(entry bar forward to exit bar).
 
-**When it runs:** After proximity grind (step 6). Requires classified signals
-with entry bars and forward price paths.
+**When it runs:** After EV grinder (step 5). Runs on the EV-scored signal set —
+the profit grind optimizes exit strategy for the signals you'd actually take
+(highest EV), not the entire signal set.
 
 **Distinction from Step 2 (Exit Grind / signal_exit_grinder.py):**
 Step 2 finds a signal-level exit condition using the main expression cache —
 it answers "did the setup work?" for classification purposes. The profit grind
 answers "given the setup worked, when should you close the trade?" using a
 dedicated expression set built for post-entry price action analysis.
+
+**Objective function:** Compound growth rate, not raw MFE capture. A strategy
+that captures 60% MFE consistently may outcompound one that captures 90% with
+high variance, because drawdowns from volatile strategies kill position sizing.
 
 **Expression set:** ~4,500 bespoke exit expressions (exit_expressions.py):
 - Move captured (close, low, ADR, ATR, % normalized)
@@ -359,78 +394,14 @@ dedicated expression set built for post-entry price action analysis.
 **Script:** `scripts/profit_grinder.py --setup {setup}`
 
 **Output:**
-- Optimal exit condition (expression, direction, threshold)
+- Optimal exit strategy parameters
+- Compounded equity curve + drawdown profile
 - Per-example capture stats (median, mean, distribution)
 - Uploads to Railway
 
 ---
 
-## Layer 6: Regime Model
-
-**What it solves:** Given tonight's market conditions, what is the expected win rate
-for this setup type? Weights signals up or down based on how favorable the current
-environment is historically for this specific setup.
-
-**Per setup type:** Each setup type has its own regime model. A market environment
-that is excellent for DTSS (extended breadth, deteriorating internals, rising VIX) may
-be poor for HTF longs. The models are independent — each reflects the historical
-win rate correlation for its own setup type.
-
-**When it runs:** Every cycle, as soon as there are enough classified signals to
-produce meaningful correlations. Minimum viable: ~50 classified signals across at
-least 6 months of history. Improves continuously as more signals get classified.
-
-**Inputs:**
-- Full classified signal set (winners + losers with dates)
-- SPY OHLCV from expr cache (same 5yr data)
-- Market internal indicators (see below)
-
-**Market conditions computed at each signal date:**
-
-Price and trend:
-- SPY close vs SMA50, SMA200
-- SPY EMA8/21/SMA50 stack state
-- SPY extension from SMA50 and SMA200 in ATR units
-- SPY SMA50 slope, SMA200 slope
-
-Momentum:
-- SPY RSI(14)
-- SPY ROC(20)
-- SPY % from 52-week high
-- SPY % from 52-week low
-
-Volatility:
-- SPY ATR14 relative to its 50-day average
-- SPY 20-day realized volatility
-
-**Method:**
-- Compute all indicators at each signal date using the expr cache
-- Correlate each indicator with winner/loser classification
-- Not hard buckets — weighted correlations across all indicators simultaneously
-- Output: a continuous regime score for any given market fingerprint
-- The score is: how similar is tonight's market to the historical fingerprint of
-  winning signal environments for this setup?
-
-**No hardcoded thresholds.** The correlations are data-derived and update every cycle
-as more classified signals are added. The model gets sharper over time automatically.
-
-**Rolling score for entry window:**
-The signal fires on day X but the entry bar may not come until X+1 or X+2. The regime
-score is computed as a rolling average across the signal-to-entry window, not just the
-signal day. This prevents a signal from getting a high score on day X when conditions
-deteriorate before the entry actually triggers.
-
-**Output:**
-- Regime score for tonight (0.0 to 1.0, where 1.0 = historically best conditions)
-- Which indicators are most predictive for this setup
-- Per-signal regime score for the historical record
-- Expected win rate given tonight's regime score
-
-**Reuse from V1:** Nothing built yet — new script `scripts/market_grinder.py`.
-
----
-
-## Layer 7: Health Check
+## Layer 6: Health Check
 
 **What it solves:** Tells you whether the new cycle is better or worse than the
 previous one. Drives the revert decision. Drives the live-ready determination.
@@ -475,8 +446,8 @@ Cycle delta (comparison to previous cycle):
 **Live readiness thresholds (all must be true):**
 - signal_stability >= 80% across two consecutive cycles
 - n_signals produces 2-7/day average over 5yr history
-- win_rate_auto >= 40% (regime model will improve this further)
-- ev_estimate > 0 (positive expectancy even without regime filtering)
+- win_rate_auto >= 40% (EV grinder scoring will surface the best signals)
+- ev_estimate > 0 (positive expectancy across the full signal set)
 - median_loser_adr < 1.0 (losers capped under 1 ADR)
 - examples_added_last_two_cycles < 5 (example library approaching convergence)
 
@@ -491,32 +462,33 @@ Cycle delta (comparison to previous cycle):
 
 **Purpose:** Always be in the highest probability positions the market is offering
 right now. The watchlist is the answer to that question every night — unified across
-all setup types, ranked by regime-adjusted EV, trimmed to what a human can manage.
+all setup types, ranked by EV.
 
 More setup types means more candidates competing for the same watchlist slots. Only
-the highest EV opportunities make the cut regardless of setup type. The regime model
+the highest EV opportunities make the cut regardless of setup type. The EV model
 per setup type surfaces the right setup for tonight's market automatically.
 
 Once a setup type is live-ready, it contributes to the unified nightly watchlist.
 After each market close:
 
-1. For each live setup type: run tonight's bars against current conditions
-2. For each signal that fires: compute rolling regime score across the entry window
+1. For each live setup type: run tonight's bars against signal + refinement conditions
+2. For each signal that fires: compute EV score using the EV grinder's equation
+   (look up market regime features + setup-specific features, run through scoring curves)
 3. Run AI chart vet on each signal — chart shape check only, flags but doesn't remove
 4. Pool all signals across all setup types into one list
-5. Rank by regime score × estimated win rate, highest to lowest
-6. Trim the bottom — you decide how many to carry tonight based on your capacity
+5. Rank by EV, highest to lowest
+6. You take the top N you have capital for — bottom doesn't get traded
 
 **Watchlist entry contains:**
 - Ticker, signal bar date, setup type
-- Regime score (rolling across entry window, 0.0–1.0)
-- Historical win rate at this regime score
-- Expected move in ADR (from sample median)
+- Estimated win rate (from EV model)
+- Estimated median move in ADR (from EV model)
+- EV = (WR × move) − ((1−WR) × 1.0 ADR)
 - AI vet status: LOOKS GOOD / FLAGGED + one-line reason if flagged
 
-**Fundamental context (future addon):**
-Earnings recency, sector theme, catalyst notes. No other part of the core pipeline
-depends on this. Not in scope for initial build.
+**Scoring is milliseconds per signal.** Feature lookups from the market cache +
+OHLCV + fundamentals cache, then quartile-based weighted average. No heavy compute
+at scan time.
 
 The watchlist is the end product. Every cycle of the loop, on every setup type, makes
 it more accurate.
@@ -537,7 +509,7 @@ status            — running / complete / reverted
 conditions        — full condition set with tier, expression, low, high, filter_power
 signals           — deduped signal set with classification labels
 exit_condition    — expression, direction, threshold used for exit filter
-health_metrics    — all Layer 7 metrics for this cycle
+health_metrics    — all Layer 6 metrics for this cycle
 promoted_at       — timestamp when promoted to current
 reverted_at       — timestamp if reverted
 ```
@@ -568,10 +540,9 @@ refinement_grind → pyramid_grinder.py --setup {setup} --blackout
                    (gathers raw signal clusters + ceiling/exit classification
                     + cluster-aware beam search + combine conditions, all in one)
 vet              → is_manual=True, no agent command (UI-only)
-proximity_grind  → proximity_grinder.py --setup {setup}
-                   (beam search + combine conditions + re-scan + re-classify, all in one)
+ev_grind         → ev_grinder.py --setup {setup}
+                   (unified correlative scoring: market + setup features → WR, MFE, EV)
 profit_grind     → profit_grinder.py --setup {setup}
-regime           → market_grinder.py --setup {setup}
 health           → cycle_health.py --setup {setup}
 ```
 
@@ -614,8 +585,10 @@ These need to be rebuilt or are new:
 | Cycle versioning / revert | New — data contract layer |
 | Health check script | New — `scripts/health_check.py` |
 | AI review queue | New — server.py endpoint + UI queue view |
-| Market regime model | New — `scripts/market_grinder.py` per setup type |
+| EV grinder | New — `scripts/ev_grinder.py` per setup type (replaces market_grinder + setup_grinder) |
+| Fundamentals cache | New — `scripts/fetch_fundamentals.py` (Yahoo Finance sector/float/shares) |
 | Nightly watchlist | New — unified ranked list across all setup types |
+| UI: EV display + watchlist | New — EV scores, WR, MFE per signal |
 | UI cycle management | New — health metrics, diff, revert button, regrind indicator |
 
 ---
@@ -631,10 +604,10 @@ Build in this order so each piece is useful immediately when complete:
 5. **Health check script** — measure cycle quality after every grind
 6. **UI: health metrics + diff + revert + regrind indicator** — control surface for the loop
 7. **AI review queue** — two-stage vetting gate, server endpoint + UI
-8. **Proximity grind** — trim losers post-convergence, `scripts/proximity_grinder.py`
-9. **Profit grind** — trade exit optimization from entry bar high, `scripts/profit_grinder.py`
-10. **Market regime model** — runs on proximity-trimmed classified signal set
-11. **UI: regime display + unified nightly watchlist** — the live product
+8. **Fundamentals cache** — `fetch_fundamentals.py` pulls sector/float/shares from Yahoo Finance
+9. **EV grinder** — unified correlative scoring, `scripts/ev_grinder.py`
+10. **Profit grind** — trade exit optimization, `scripts/profit_grinder.py`
+11. **UI: EV display + unified nightly watchlist** — the live product
 
 At step 5, the loop is runnable end-to-end with DTSS. Each additional setup type plugs
-into the same infrastructure. Steps 6-11 build toward the unified multi-setup watchlist.
+into the same infrastructure. Steps 8-11 build toward the unified multi-setup watchlist.
