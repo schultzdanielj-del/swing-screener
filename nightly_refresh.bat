@@ -30,6 +30,9 @@ REM ═════════════════════════�
 
 cd /d "%~dp0"
 
+REM Force Python to use UTF-8 output (Windows cmd defaults to cp1252 which chokes on unicode)
+set PYTHONIOENCODING=utf-8
+
 REM Check if it's a weekend (0=Sunday, 6=Saturday in Python)
 python -c "import datetime; d=datetime.datetime.now().weekday(); exit(0 if d<5 else 1)"
 if errorlevel 1 (
