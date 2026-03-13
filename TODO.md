@@ -1,4 +1,4 @@
-# ScanPerfect Pipeline (2026-03-12)
+# ScanPerfect Pipeline (2026-03-13)
 
 ## The Goal
 
@@ -217,6 +217,11 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ### Regime Model
 4. ~~**Wire regime model to new pipeline**~~ — **DONE 2026-03-13**. `market_grinder.py` rewritten to all-local. Reads refinement JSON, runs pre+post, computes redundancy scores, saves+mirrors. Market cache extended to 8y for full signal coverage. `fetch_missing_market.py` added for incremental fetches.
+
+### Correlative Filtering (Phase 3)
+12. **Add MFE to cluster/refinement output** — cluster builder and refinement JSON currently have classification but no MFE. Need to compute MFE (in ADR) for each signal using 5yr OHLCV cache: for shorts, max drop from signal close to lowest low within the exit window. Store `mfe_adr` on each signal in cluster + refinement output. Required by combined filter optimizer (#15) to score buckets by win rate × median MFE.
+13. **Build setup-specific correlation analysis** — same engine as `market_grinder.py` but on ticker-level features from the expression cache at the signal bar (price, ADR, dollar volume, relative volume, extension from moving averages, etc.). Pre+post refinement, redundancy scoring. Same architecture: weighted Pearson correlation → deduplication → quartile win rates → scores. Script: `setup_specific_grinder.py` or extend `market_grinder.py`.
+14. **Combined filter optimizer** — search across three independent filtering dimensions: (a) refinement condition depth threshold (use 50/70/100 of 100 conditions), (b) market regime buckets (which deciles to include/exclude), (c) setup-specific buckets (which deciles to include/exclude). Objective: maximize win rate × median MFE without killing sample size. This is the Phase 3 endgame — produces the final "take this signal or don't" decision.
 
 ### Vetting UI
 5. **Read from signal grind and refinement grind outputs** — vetting UI currently reads signal_filter output. Needs to read from cluster files instead. Sort results by signal-to-exit ADR move (biggest movers first).
