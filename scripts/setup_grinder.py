@@ -152,12 +152,10 @@ def compute_rs_series_vectorized(opens, highs, lows, closes):
         return rs
 
     # Part 1: intraday % move per bar = ((C/O) - 1) * 100
-    # Guard against zero/nan opens
     with np.errstate(divide='ignore', invalid='ignore'):
         intraday_pct = np.where(opens > 0, ((closes / opens) - 1.0) * 100.0, np.nan)
 
     # 5-bar rolling average of intraday_pct
-    # Use cumsum trick for fast rolling mean
     cumsum = np.nancumsum(intraday_pct)
     avg_pct = np.full(n, np.nan)
     for i in range(4, n):
@@ -175,7 +173,6 @@ def compute_rs_series_vectorized(opens, highs, lows, closes):
             np.abs(lows[1:] - closes[:-1])
         )
     )
-    # Rolling SMA of true range over 50 bars
     tr_cumsum = np.nancumsum(tr)
     atr50 = np.full(n, np.nan)
     for i in range(50, n):
@@ -190,10 +187,7 @@ def compute_rs_series_vectorized(opens, highs, lows, closes):
         avg_price = (closes + c50) / 2.0
         scaling = np.where(atr50 > 0, avg_price / atr50, np.nan)
 
-    # Full formula: avg_pct * scaling
-    # Valid where both parts are valid (bar_idx >= 50 covers both requirements)
     rs[50:] = avg_pct[50:] * scaling[50:]
-
     return rs
 
 
@@ -205,13 +199,10 @@ def _resample_to_weekly(df):
     tmp["date"] = pd.to_datetime(tmp["date"])
     tmp = tmp.set_index("date")
     weekly = tmp.resample("W").agg({
-        "open": "first",
-        "high": "max",
-        "low": "min",
-        "close": "last",
-        "volume": "sum",
+        "open": "first", "high": "max", "low": "min",
+        "close": "last", "volume": "sum",
     }).dropna(subset=["close"])
-    if len(weekly) < 55:  # need 50+ weekly bars for C50 + ATR50
+    if len(weekly) < 55:
         return None
     weekly = weekly.reset_index()
     weekly.columns = ["date", "open", "high", "low", "close", "volume"]
@@ -231,14 +222,12 @@ def build_rs_lookup(df, weekly_df=None):
     closes = df["close"].values.astype(np.float64)
     dates = [str(d)[:10] for d in df["date"].values]
 
-    # Daily RS: one vectorized pass
     d1_arr = compute_rs_series_vectorized(opens, highs, lows, closes)
     d1_values = {}
     for i in range(len(dates)):
         if not np.isnan(d1_arr[i]):
             d1_values[dates[i]] = float(d1_arr[i])
 
-    # Weekly RS
     w1_values = {}
     if weekly_df is not None and len(weekly_df) >= 55:
         w_opens = weekly_df["open"].values.astype(np.float64)
@@ -248,19 +237,15 @@ def build_rs_lookup(df, weekly_df=None):
         w_dates = [str(d)[:10] for d in weekly_df["date"].values]
 
         w1_arr = compute_rs_series_vectorized(w_opens, w_highs, w_lows, w_closes)
-
-        # Build weekly date -> RS value
         weekly_rs = {}
         for i in range(len(w_dates)):
             if not np.isnan(w1_arr[i]):
                 weekly_rs[w_dates[i]] = float(w1_arr[i])
 
-        # Map weekly values to daily dates using searchsorted
         if weekly_rs:
             sorted_w_dates = sorted(weekly_rs.keys())
             sorted_w_vals = [weekly_rs[d] for d in sorted_w_dates]
             for daily_date in dates:
-                # Binary search: find rightmost weekly date <= daily_date
                 idx = _bisect_right_str(sorted_w_dates, daily_date) - 1
                 if idx >= 0:
                     w1_values[daily_date] = sorted_w_vals[idx]
@@ -314,29 +299,19 @@ def _compute_ticker_rs(args):
 
 
 def precompute_all_rs(ohlcv_cache, tickers_needed):
-    """Compute RS lookups for all needed tickers + SPY in parallel.
-
-    Returns:
-        dict: ticker -> (d1_rs_dict, w1_rs_dict)
-    """
+    """Compute RS lookups for all needed tickers + SPY in parallel."""
     import time
 
-    # Always include SPY
     all_tickers = set(tickers_needed) | {"SPY"}
-
-    # Build work items (convert DataFrames to dicts for serialization)
     work_items = []
     for ticker in all_tickers:
         df = ohlcv_cache.get(ticker)
         if df is None or len(df) < 55:
             continue
         df_dict = {
-            "date": df["date"].values,
-            "open": df["open"].values,
-            "high": df["high"].values,
-            "low": df["low"].values,
-            "close": df["close"].values,
-            "volume": df["volume"].values,
+            "date": df["date"].values, "open": df["open"].values,
+            "high": df["high"].values, "low": df["low"].values,
+            "close": df["close"].values, "volume": df["volume"].values,
         }
         work_items.append((ticker, df_dict))
 
@@ -368,10 +343,7 @@ def precompute_all_rs(ohlcv_cache, tickers_needed):
 # ══════════════════════════════════════════════════════════════
 
 def _find_bar_idx(dates, signal_date_str):
-    """Find the index of signal_date in a date array/series.
-
-    Returns index or -1 if not found.
-    """
+    """Find the index of signal_date in a date array/series."""
     for i, d in enumerate(dates):
         d_str = str(d)[:10]
         if d_str == signal_date_str:
@@ -383,7 +355,7 @@ def compute_adr_14(df, bar_idx):
     """14-bar Average Daily Range at bar_idx. Computed from OHLCV directly."""
     start = max(0, bar_idx - 13)
     window = df.iloc[start:bar_idx + 1]
-    if len(window) < 5:  # need at least 5 bars
+    if len(window) < 5:
         return None
     ranges = window["high"].values - window["low"].values
     adr = float(np.nanmean(ranges))
@@ -396,18 +368,15 @@ def compute_dollar_volume_20d(df, bar_idx):
     """Average daily dollar volume over 20 bars ending at bar_idx."""
     start = max(0, bar_idx - 19)
     window = df.iloc[start:bar_idx + 1]
-    if len(window) < 5:  # need at least 5 bars
+    if len(window) < 5:
         return None
     dv = window["close"].values * window["volume"].values
     return float(np.nanmean(dv))
 
 
 def compute_days_since_ipo(df, bar_idx):
-    """Trading days from first bar in OHLCV to signal bar.
-
-    This is a rough proxy — capped at whatever the cache holds (5yr = ~1260 bars).
-    """
-    return bar_idx  # first bar in cache = index 0, so bar_idx IS the count
+    """Trading days from first bar in OHLCV to signal bar."""
+    return bar_idx
 
 
 def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
@@ -418,28 +387,31 @@ def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
     """
     spy_d1_rs, spy_w1_rs = rs_cache.get("SPY", ({}, {}))
 
-    # Track coverage
     n_total = len(signals)
     n_ohlcv_found = 0
     n_bar_found = 0
     feature_counts = {f.replace("feat_", ""): 0 for f in ALL_FEATURES}
 
+    # Cache: ticker -> (dates_list, df) to avoid repeated string conversion
+    ticker_date_cache = {}
+
     for sig in signals:
         ticker = sig.get("ticker", "")
         signal_date = str(sig.get("signal_date", ""))[:10]
 
-        # Initialize all feature fields to None
         for f in ALL_FEATURES:
             sig[f] = None
 
-        # Look up ticker OHLCV
         df = ohlcv_cache.get(ticker)
         if df is None or len(df) < 20:
             continue
         n_ohlcv_found += 1
 
-        # Find the signal bar
-        dates = [str(d)[:10] for d in df["date"].values]
+        # Cache date string conversion per ticker
+        if ticker not in ticker_date_cache:
+            ticker_date_cache[ticker] = [str(d)[:10] for d in df["date"].values]
+        dates = ticker_date_cache[ticker]
+
         bar_idx = _find_bar_idx(dates, signal_date)
         if bar_idx < 0:
             continue
@@ -467,7 +439,7 @@ def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
         sig["feat_days_since_ipo"] = compute_days_since_ipo(df, bar_idx)
         feature_counts["days_since_ipo"] += 1
 
-        # 5. RS vs SPY (D1 and W1) from pre-computed cache
+        # 5. RS vs SPY (D1 and W1)
         d1_rs, w1_rs = rs_cache.get(ticker, ({}, {}))
 
         stock_d1 = d1_rs.get(signal_date)
@@ -482,7 +454,7 @@ def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
             sig["feat_rs_w1"] = stock_w1 - spy_w1
             feature_counts["rs_w1"] += 1
 
-    # Compute summary stats for each feature
+    # Summary stats
     feature_stats = {}
     for fk in ALL_FEATURES:
         vals = [s[fk] for s in signals if s[fk] is not None]
@@ -498,14 +470,56 @@ def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
         else:
             feature_stats[fk] = {"count": 0}
 
-    stats = {
+    return {
         "n_total": n_total,
         "n_ohlcv_found": n_ohlcv_found,
         "n_bar_found": n_bar_found,
         "feature_counts": feature_counts,
         "feature_stats": feature_stats,
     }
-    return stats
+
+
+# ══════════════════════════════════════════════════════════════
+# QUARTILE ANALYSIS + REDUNDANCY
+# ══════════════════════════════════════════════════════════════
+
+def compute_quartile_win_rates(signals, feature_key):
+    """Compute win rate per quartile for one feature on a signal set.
+
+    Returns dict with q1-q4 win rates and Q4-Q1 spread, or None if
+    insufficient data.
+    """
+    vals = [(s[feature_key], 1 if str(s.get("classification", "")).upper() in WIN_CLASSES else 0)
+            for s in signals if s[feature_key] is not None]
+    if len(vals) < 20:
+        return None
+
+    arr = np.array([v[0] for v in vals])
+    wins = np.array([v[1] for v in vals])
+
+    q25, q50, q75 = np.percentile(arr, [25, 50, 75])
+
+    bands = {
+        "Q1": arr <= q25,
+        "Q2": (arr > q25) & (arr <= q50),
+        "Q3": (arr > q50) & (arr <= q75),
+        "Q4": arr > q75,
+    }
+
+    result = {"n": len(vals), "q25": float(q25), "q50": float(q50), "q75": float(q75)}
+    for band_name, mask in bands.items():
+        n = int(mask.sum())
+        wr = float(np.mean(wins[mask])) if n > 0 else None
+        result[f"wr_{band_name.lower()}"] = wr
+        result[f"n_{band_name.lower()}"] = n
+
+    # Q4-Q1 spread
+    if result["wr_q1"] is not None and result["wr_q4"] is not None:
+        result["spread"] = result["wr_q4"] - result["wr_q1"]
+    else:
+        result["spread"] = None
+
+    return result
 
 
 # ══════════════════════════════════════════════════════════════
@@ -514,7 +528,7 @@ def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
 
 def run(setup_type, refinement_path, dry_run=False):
     print("\n" + "=" * 70)
-    print("  SETUP GRINDER — Feature Extraction")
+    print("  SETUP GRINDER — Feature Extraction + Redundancy Analysis")
     print("=" * 70)
     print(f"  Setup:      {setup_type}")
     print(f"  Source:     {os.path.basename(refinement_path)}")
@@ -524,13 +538,15 @@ def run(setup_type, refinement_path, dry_run=False):
     pre_signals = load_signals_from_refinement(refinement_path, mode="pre")
     pre_wins = sum(1 for s in pre_signals if str(s.get("classification", "")).upper() in WIN_CLASSES)
     pre_losses = len(pre_signals) - pre_wins
-    print(f"  PRE:  {len(pre_signals)} signals  |  {pre_wins} wins  {pre_losses} losses")
+    print(f"  PRE:  {len(pre_signals)} signals  |  {pre_wins} wins  {pre_losses} losses  "
+          f"|  baseline WR: {pre_wins/len(pre_signals):.3f}")
 
     print(f"\n  Loading signals (post-refinement)...")
     post_signals = load_signals_from_refinement(refinement_path, mode="post")
     post_wins = sum(1 for s in post_signals if str(s.get("classification", "")).upper() in WIN_CLASSES)
     post_losses = len(post_signals) - post_wins
-    print(f"  POST: {len(post_signals)} signals  |  {post_wins} wins  {post_losses} losses")
+    print(f"  POST: {len(post_signals)} signals  |  {post_wins} wins  {post_losses} losses  "
+          f"|  baseline WR: {post_wins/len(post_signals):.3f}")
 
     # ── 2. Load OHLCV ────────────────────────────────────────
     print(f"\n  Loading 5yr OHLCV cache...")
@@ -542,7 +558,7 @@ def run(setup_type, refinement_path, dry_run=False):
         raise ValueError("SPY not found in OHLCV cache — needed for RS computation")
     print(f"  SPY: {len(spy_df)} bars ({str(spy_df['date'].iloc[0])[:10]} to {str(spy_df['date'].iloc[-1])[:10]})")
 
-    # ── 3. Pre-compute RS for all tickers that appear in signals ──
+    # ── 3. Pre-compute RS ────────────────────────────────────
     all_tickers = set()
     for s in pre_signals:
         all_tickers.add(s.get("ticker", ""))
@@ -585,49 +601,88 @@ def run(setup_type, refinement_path, dry_run=False):
         else:
             print(f"  {label:<30} {fs['count']:>6}  {fs['min']:>12.2f}  {fs['median']:>12.2f}  {fs['max']:>12.2f}")
 
-    # ── 6. Win rate by quartile (quick sanity check) ─────────
-    print(f"\n  {'='*60}")
-    print(f"  QUICK WIN RATE BY QUARTILE (pre-refinement)")
-    print(f"  {'='*60}")
+    # ── 6. Quartile win rates: pre and post ──────────────────
+    print(f"\n  {'='*70}")
+    print(f"  QUARTILE WIN RATES")
+    print(f"  {'='*70}")
+
+    pre_quartiles = {}
+    post_quartiles = {}
 
     for fk in ALL_FEATURES:
-        vals = [(s[fk], 1 if str(s.get("classification", "")).upper() in WIN_CLASSES else 0)
-                for s in pre_signals if s[fk] is not None]
-        if len(vals) < 20:
+        label = fk.replace("feat_", "")
+        pre_q = compute_quartile_win_rates(pre_signals, fk)
+        post_q = compute_quartile_win_rates(post_signals, fk)
+        pre_quartiles[fk] = pre_q
+        post_quartiles[fk] = post_q
+
+        if pre_q is None:
             continue
 
-        arr = np.array([v[0] for v in vals])
-        wins = np.array([v[1] for v in vals])
-
-        q25, q50, q75 = np.percentile(arr, [25, 50, 75])
-        label = fk.replace("feat_", "")
-
-        bands = {
-            "Q1": arr <= q25,
-            "Q2": (arr > q25) & (arr <= q50),
-            "Q3": (arr > q50) & (arr <= q75),
-            "Q4": arr > q75,
-        }
-
-        parts = []
-        for band_name, mask in bands.items():
-            n = int(mask.sum())
-            wr = float(np.mean(wins[mask])) if n > 0 else 0
-            parts.append(f"{band_name}={wr:.1%}({n})")
-
-        spread = None
-        n_q1 = int((arr <= q25).sum())
-        n_q4 = int((arr > q75).sum())
-        if n_q1 > 0 and n_q4 > 0:
-            wr_q1 = float(np.mean(wins[arr <= q25]))
-            wr_q4 = float(np.mean(wins[arr > q75]))
-            spread = wr_q4 - wr_q1
-
-        spread_str = f"  spread={spread:+.1%}" if spread is not None else ""
         print(f"\n  {label}:")
-        print(f"    {' | '.join(parts)}{spread_str}")
 
-    print(f"\n  ✓ Feature extraction complete.")
+        # Pre-refinement line
+        parts = []
+        for qname in ["q1", "q2", "q3", "q4"]:
+            wr = pre_q[f"wr_{qname}"]
+            n = pre_q[f"n_{qname}"]
+            wr_str = f"{wr:.1%}" if wr is not None else "N/A"
+            parts.append(f"{qname.upper()}={wr_str}({n})")
+        spread_str = f"  spread={pre_q['spread']:+.1%}" if pre_q["spread"] is not None else ""
+        print(f"    PRE:  {' | '.join(parts)}{spread_str}")
+
+        # Post-refinement line
+        if post_q is not None:
+            parts = []
+            for qname in ["q1", "q2", "q3", "q4"]:
+                wr = post_q[f"wr_{qname}"]
+                n = post_q[f"n_{qname}"]
+                wr_str = f"{wr:.1%}" if wr is not None else "N/A"
+                parts.append(f"{qname.upper()}={wr_str}({n})")
+            spread_str = f"  spread={post_q['spread']:+.1%}" if post_q["spread"] is not None else ""
+            print(f"    POST: {' | '.join(parts)}{spread_str}")
+        else:
+            print(f"    POST: insufficient data")
+
+    # ── 7. Redundancy analysis ───────────────────────────────
+    print(f"\n  {'='*70}")
+    print(f"  REDUNDANCY ANALYSIS (post spread / pre spread)")
+    print(f"  {'='*70}")
+    print(f"  ratio >= 0.5 = genuine (feature has signal beyond refinement)")
+    print(f"  ratio < 0.5  = redundant (refinement already captures it)")
+    print(f"\n  {'Feature':<25} {'Pre spread':>11} {'Post spread':>12} {'Ratio':>7}  {'Verdict'}")
+    print(f"  {'-'*70}")
+
+    n_genuine = 0
+    n_redundant = 0
+
+    for fk in ALL_FEATURES:
+        label = fk.replace("feat_", "")
+        pre_q = pre_quartiles.get(fk)
+        post_q = post_quartiles.get(fk)
+
+        pre_spread = pre_q["spread"] if pre_q and pre_q.get("spread") is not None else None
+        post_spread = post_q["spread"] if post_q and post_q.get("spread") is not None else None
+
+        ratio = None
+        if pre_spread is not None and abs(pre_spread) > 0.01 and post_spread is not None:
+            ratio = post_spread / pre_spread
+
+        if ratio is not None:
+            verdict = "GENUINE" if ratio >= 0.5 else "redundant"
+            if ratio >= 0.5:
+                n_genuine += 1
+            else:
+                n_redundant += 1
+            print(f"  {label:<25} {pre_spread:>+10.1%} {post_spread:>+11.1%} {ratio:>7.2f}  {verdict}")
+        elif pre_spread is not None:
+            print(f"  {label:<25} {pre_spread:>+10.1%} {'—':>11} {'—':>7}  no post data")
+        else:
+            print(f"  {label:<25} {'—':>10} {'—':>11} {'—':>7}  no pre data")
+
+    print(f"\n  Genuine: {n_genuine}  |  Redundant: {n_redundant}")
+
+    print(f"\n  ✓ Setup grinder complete.")
     print(f"  Pre:  {pre_stats['n_bar_found']}/{pre_stats['n_total']} signals with features")
     print(f"  Post: {post_stats['n_bar_found']}/{post_stats['n_total']} signals with features")
 
