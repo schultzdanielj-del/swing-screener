@@ -12,11 +12,6 @@ These are NOT price-action/volume patterns (the signal grind already captured
 those). These are "what kind of stock is this" traits that the causative
 filters can't see.
 
-Phase 1 (this file): Feature extraction — compute setup-specific traits
-for every signal in the refinement output. Runs on both pre-refinement
-(full signal set) and post-refinement (surviving signals only) for
-redundancy analysis.
-
 All data is local. Reads refinement grind output from local_runner/cache/.
 Reads 5yr OHLCV cache from local_runner/cache/.
 
@@ -82,16 +77,7 @@ def find_latest_refinement(setup_type):
 
 
 def load_signals_from_refinement(refinement_path, mode="pre"):
-    """Load signals from a local refinement grind JSON file.
-
-    Args:
-        refinement_path: Path to refinement_*.json in local_runner/cache/
-        mode: "pre" = all clusters (winners + losers + eliminated)
-              "post" = surviving only (winners + losers, no eliminated)
-
-    Returns:
-        list of signal dicts (not a DataFrame — we'll augment them in place)
-    """
+    """Load signals from a local refinement grind JSON file."""
     with open(refinement_path) as f:
         data = json.load(f)
 
@@ -132,30 +118,21 @@ def load_5yr_ohlcv():
 #    + (((C1/O1)-1)*100) + (((C/O)-1)*100)) / 5
 #   * (((C+C50)/2) / ATR50)
 #
-# Part 1: 5-day average intraday % move (open to close)
-# Part 2: price-to-volatility scaling factor
-#   ((current close + close 50 bars ago) / 2) / 50-period ATR
-#
 # RS vs SPY = stock's value - SPY's value on same date.
 # Positive = stock has stronger vol-adjusted momentum than SPY.
 
 
 def compute_rs_series_vectorized(opens, highs, lows, closes):
-    """Compute the RS formula value for every bar using numpy vectorization.
-
-    Returns np.array of length n, NaN where insufficient data.
-    """
+    """Compute the RS formula value for every bar using numpy vectorization."""
     n = len(closes)
     rs = np.full(n, np.nan)
 
-    if n < 55:  # need at least 50 bars + 5 bar rolling window
+    if n < 55:
         return rs
 
-    # Part 1: intraday % move per bar = ((C/O) - 1) * 100
     with np.errstate(divide='ignore', invalid='ignore'):
         intraday_pct = np.where(opens > 0, ((closes / opens) - 1.0) * 100.0, np.nan)
 
-    # 5-bar rolling average of intraday_pct
     cumsum = np.nancumsum(intraday_pct)
     avg_pct = np.full(n, np.nan)
     for i in range(4, n):
@@ -164,7 +141,6 @@ def compute_rs_series_vectorized(opens, highs, lows, closes):
         else:
             avg_pct[i] = (cumsum[i] - cumsum[i - 5]) / 5.0
 
-    # Part 2: ATR50 (SMA of true range, matching TC2000)
     tr = np.full(n, np.nan)
     tr[1:] = np.maximum(
         highs[1:] - lows[1:],
@@ -178,11 +154,9 @@ def compute_rs_series_vectorized(opens, highs, lows, closes):
     for i in range(50, n):
         atr50[i] = (tr_cumsum[i] - tr_cumsum[i - 50]) / 50.0
 
-    # C50 = close from 50 bars ago
     c50 = np.full(n, np.nan)
     c50[50:] = closes[:-50]
 
-    # Price-vol scaling: ((C + C50) / 2) / ATR50
     with np.errstate(divide='ignore', invalid='ignore'):
         avg_price = (closes + c50) / 2.0
         scaling = np.where(atr50 > 0, avg_price / atr50, np.nan)
@@ -210,12 +184,7 @@ def _resample_to_weekly(df):
 
 
 def build_rs_lookup(df, weekly_df=None):
-    """Pre-compute RS formula values for every bar of a ticker (vectorized).
-
-    Returns:
-        d1_values: dict of date_str -> RS value (daily)
-        w1_values: dict of date_str -> RS value (weekly, keyed by daily date)
-    """
+    """Pre-compute RS formula values for every bar of a ticker (vectorized)."""
     opens = df["open"].values.astype(np.float64)
     highs = df["high"].values.astype(np.float64)
     lows = df["low"].values.astype(np.float64)
@@ -254,7 +223,6 @@ def build_rs_lookup(df, weekly_df=None):
 
 
 def _bisect_right_str(sorted_list, target):
-    """Binary search for rightmost insertion point in sorted string list."""
     lo, hi = 0, len(sorted_list)
     while lo < hi:
         mid = (lo + hi) // 2
@@ -343,7 +311,6 @@ def precompute_all_rs(ohlcv_cache, tickers_needed):
 # ══════════════════════════════════════════════════════════════
 
 def _find_bar_idx(dates, signal_date_str):
-    """Find the index of signal_date in a date array/series."""
     for i, d in enumerate(dates):
         d_str = str(d)[:10]
         if d_str == signal_date_str:
@@ -375,7 +342,6 @@ def compute_dollar_volume_20d(df, bar_idx):
 
 
 def compute_days_since_ipo(df, bar_idx):
-    """Trading days from first bar in OHLCV to signal bar."""
     return bar_idx
 
 
@@ -392,7 +358,6 @@ def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
     n_bar_found = 0
     feature_counts = {f.replace("feat_", ""): 0 for f in ALL_FEATURES}
 
-    # Cache: ticker -> (dates_list, df) to avoid repeated string conversion
     ticker_date_cache = {}
 
     for sig in signals:
@@ -407,7 +372,6 @@ def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
             continue
         n_ohlcv_found += 1
 
-        # Cache date string conversion per ticker
         if ticker not in ticker_date_cache:
             ticker_date_cache[ticker] = [str(d)[:10] for d in df["date"].values]
         dates = ticker_date_cache[ticker]
@@ -417,29 +381,24 @@ def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
             continue
         n_bar_found += 1
 
-        # 1. Price
         price = float(df.iloc[bar_idx]["close"])
         if not np.isnan(price):
             sig["feat_price"] = price
             feature_counts["price"] += 1
 
-        # 2. ADR (14-bar average daily range, computed from OHLCV)
         adr = compute_adr_14(df, bar_idx)
         if adr is not None:
             sig["feat_adr"] = adr
             feature_counts["adr"] += 1
 
-        # 3. Dollar volume (20-day avg)
         dv = compute_dollar_volume_20d(df, bar_idx)
         if dv is not None:
             sig["feat_dollar_volume_20d"] = dv
             feature_counts["dollar_volume_20d"] += 1
 
-        # 4. Days since IPO
         sig["feat_days_since_ipo"] = compute_days_since_ipo(df, bar_idx)
         feature_counts["days_since_ipo"] += 1
 
-        # 5. RS vs SPY (D1 and W1)
         d1_rs, w1_rs = rs_cache.get(ticker, ({}, {}))
 
         stock_d1 = d1_rs.get(signal_date)
@@ -454,7 +413,6 @@ def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
             sig["feat_rs_w1"] = stock_w1 - spy_w1
             feature_counts["rs_w1"] += 1
 
-    # Summary stats
     feature_stats = {}
     for fk in ALL_FEATURES:
         vals = [s[fk] for s in signals if s[fk] is not None]
@@ -484,11 +442,7 @@ def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
 # ══════════════════════════════════════════════════════════════
 
 def compute_quartile_win_rates(signals, feature_key):
-    """Compute win rate per quartile for one feature on a signal set.
-
-    Returns dict with q1-q4 win rates and Q4-Q1 spread, or None if
-    insufficient data.
-    """
+    """Compute win rate per quartile for one feature on a signal set."""
     vals = [(s[feature_key], 1 if str(s.get("classification", "")).upper() in WIN_CLASSES else 0)
             for s in signals if s[feature_key] is not None]
     if len(vals) < 20:
@@ -513,7 +467,6 @@ def compute_quartile_win_rates(signals, feature_key):
         result[f"wr_{band_name.lower()}"] = wr
         result[f"n_{band_name.lower()}"] = n
 
-    # Q4-Q1 spread
     if result["wr_q1"] is not None and result["wr_q4"] is not None:
         result["spread"] = result["wr_q4"] - result["wr_q1"]
     else:
@@ -620,8 +573,6 @@ def run(setup_type, refinement_path, dry_run=False):
             continue
 
         print(f"\n  {label}:")
-
-        # Pre-refinement line
         parts = []
         for qname in ["q1", "q2", "q3", "q4"]:
             wr = pre_q[f"wr_{qname}"]
@@ -631,7 +582,6 @@ def run(setup_type, refinement_path, dry_run=False):
         spread_str = f"  spread={pre_q['spread']:+.1%}" if pre_q["spread"] is not None else ""
         print(f"    PRE:  {' | '.join(parts)}{spread_str}")
 
-        # Post-refinement line
         if post_q is not None:
             parts = []
             for qname in ["q1", "q2", "q3", "q4"]:
@@ -655,6 +605,7 @@ def run(setup_type, refinement_path, dry_run=False):
 
     n_genuine = 0
     n_redundant = 0
+    redundancy = {}
 
     for fk in ALL_FEATURES:
         label = fk.replace("feat_", "")
@@ -667,6 +618,12 @@ def run(setup_type, refinement_path, dry_run=False):
         ratio = None
         if pre_spread is not None and abs(pre_spread) > 0.01 and post_spread is not None:
             ratio = post_spread / pre_spread
+
+        redundancy[fk] = {
+            "pre_spread": round(pre_spread, 4) if pre_spread is not None else None,
+            "post_spread": round(post_spread, 4) if post_spread is not None else None,
+            "ratio": round(ratio, 3) if ratio is not None else None,
+        }
 
         if ratio is not None:
             verdict = "GENUINE" if ratio >= 0.5 else "redundant"
@@ -682,11 +639,77 @@ def run(setup_type, refinement_path, dry_run=False):
 
     print(f"\n  Genuine: {n_genuine}  |  Redundant: {n_redundant}")
 
+    # ── 8. Build per-signal feature records ──────────────────
+    # Extract the feat_ fields from pre-refinement signals for saving
+    signal_features = []
+    for s in pre_signals:
+        rec = {
+            "ticker": s.get("ticker"),
+            "signal_date": str(s.get("signal_date", ""))[:10],
+            "classification": s.get("classification"),
+        }
+        for fk in ALL_FEATURES:
+            rec[fk.replace("feat_", "")] = s.get(fk)
+        signal_features.append(rec)
+
+    # ── 9. Save results ──────────────────────────────────────
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    result_data = {
+        "setup_type": setup_type,
+        "refinement_source": os.path.basename(refinement_path),
+        "timestamp": now,
+        "features_computed": [fk.replace("feat_", "") for fk in ALL_FEATURES],
+        "pre": {
+            "n_signals": int(len(pre_signals)),
+            "n_wins": pre_wins,
+            "n_losses": pre_losses,
+            "baseline_win_rate": float(pre_wins / len(pre_signals)),
+            "coverage": pre_stats,
+            "quartiles": {fk.replace("feat_", ""): pre_quartiles[fk]
+                          for fk in ALL_FEATURES if pre_quartiles.get(fk) is not None},
+        },
+        "post": {
+            "n_signals": int(len(post_signals)),
+            "n_wins": post_wins,
+            "n_losses": post_losses,
+            "baseline_win_rate": float(post_wins / len(post_signals)),
+            "coverage": post_stats,
+            "quartiles": {fk.replace("feat_", ""): post_quartiles[fk]
+                          for fk in ALL_FEATURES if post_quartiles.get(fk) is not None},
+        },
+        "redundancy": {fk.replace("feat_", ""): redundancy[fk] for fk in ALL_FEATURES},
+        "redundancy_summary": {
+            "n_genuine": n_genuine,
+            "n_redundant": n_redundant,
+        },
+        "signal_features": signal_features,
+    }
+
+    if dry_run:
+        print(f"\n  DRY RUN — not saving.")
+    else:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"setup_{setup_type}_{ts}.json"
+        out_path = os.path.join(CACHE_DIR, filename)
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(out_path, "w") as f:
+            json.dump(result_data, f, indent=2)
+        print(f"\n  Saved: {out_path}")
+
+        try:
+            from file_mirror import mirror_file
+            mirror_file(out_path)
+            print(f"  Mirrored to Railway.")
+        except Exception as e:
+            print(f"  WARNING: Mirror failed: {e}")
+
     print(f"\n  ✓ Setup grinder complete.")
     print(f"  Pre:  {pre_stats['n_bar_found']}/{pre_stats['n_total']} signals with features")
     print(f"  Post: {post_stats['n_bar_found']}/{post_stats['n_total']} signals with features")
+    print(f"  Genuine features: {n_genuine}/{n_genuine + n_redundant}")
 
-    return pre_signals, post_signals, pre_stats, post_stats
+    return result_data
 
 
 if __name__ == "__main__":
