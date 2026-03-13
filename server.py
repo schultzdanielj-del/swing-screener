@@ -977,7 +977,12 @@ async def insert_ohlcv(request: Request):
 
 @app.post("/api/universe/append-daily")
 async def append_daily_data():
-    return {"status":"queued"}
+    try:
+        from scripts.fetch_universe import append_daily
+        result = append_daily()
+        return result
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 # ============================================================

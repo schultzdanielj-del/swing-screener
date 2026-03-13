@@ -54,6 +54,7 @@ def step_1_railway_append():
 
     print("  Calling POST /api/universe/append-daily ...")
     print("  (This fetches new bars from yfinance for all tradable tickers)")
+    print("  (May take 5-15 minutes for a full trading day)")
     print()
 
     try:
@@ -61,10 +62,12 @@ def step_1_railway_append():
         r.raise_for_status()
         result = r.json()
     except requests.exceptions.Timeout:
-        print("  ✗ Request timed out after 30 minutes.")
-        return False
+        print("  X Request timed out after 30 minutes.")
+        print("  The append may still be running on Railway.")
+        print("  Continuing with cache refreshes using existing data...")
+        return True  # Continue anyway — caches may still benefit from refresh
     except Exception as e:
-        print(f"  ✗ Failed to reach Railway: {e}")
+        print(f"  X Failed to reach Railway: {e}")
         return False
 
     status = result.get("status")
@@ -72,13 +75,13 @@ def step_1_railway_append():
     if status == "up_to_date":
         db_date = result.get("db_last_date", "?")
         yf_date = result.get("yf_latest", "?")
-        print(f"  ✓ Already up to date (DB: {db_date}, yfinance: {yf_date})")
+        print(f"  OK Already up to date (DB: {db_date}, yfinance: {yf_date})")
         print()
         print("  Nothing to do — all data is current.")
         return False  # Signal to stop: no new data
 
     elif status == "complete":
-        print(f"  ✓ Append complete!")
+        print(f"  OK Append complete!")
         print(f"    DB was at:       {result.get('db_last_date_was', '?')}")
         print(f"    Now current to:  {result.get('yf_latest', '?')}")
         print(f"    Tickers updated: {result.get('tickers_processed', '?')}")
@@ -89,9 +92,14 @@ def step_1_railway_append():
             print(f"    Tradable count:  {result.get('tradable_count', '?')}")
         return True  # New data — continue with cache refreshes
 
-    else:
-        print(f"  ✗ Unexpected response: {result}")
+    elif status == "error":
+        print(f"  X Railway append error: {result.get('error', '?')}")
         return False
+
+    else:
+        print(f"  WARNING: Unexpected response: {result}")
+        print("  Continuing with cache refreshes in case data was updated...")
+        return True  # Continue anyway — don't block the whole pipeline
 
 
 def step_2_daily_cache():
