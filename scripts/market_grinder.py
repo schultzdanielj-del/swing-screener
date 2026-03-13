@@ -1,7 +1,7 @@
 """
 Market Grinder — Win Rate Time Series Correlation Engine.
 
-Answers: which market conditions correlate with high DTSS win rate over time?
+Answers: which market conditions correlate with high win rate over time?
 
 Method:
   1. Build win rate time series — for each trading day in the 5yr window,
@@ -23,14 +23,14 @@ Method:
   6. Compute composite regime score per signal date (0-1) — weighted dot
      product of top features. Used by watchlist to rank incoming signals.
 
-Works for any setup type. Only requires: signal_date + classification.
-No dependency on exit dates, exit grinder, or setup-specific logic.
+All data is local. Reads refinement grind output from local_runner/cache/.
+Saves results to local_runner/cache/ and mirrors to Railway via file_mirror.
 
 Usage:
     python scripts/market_grinder.py --setup dtss
-    python scripts/market_grinder.py --cycle dtss_20260306_170830
-    python scripts/market_grinder.py --setup dtss --dry-run
-    python scripts/market_grinder.py --setup dtss --window 5 --top-n 50
+    python scripts/market_grinder.py --setup dtss --mode post
+    python scripts/market_grinder.py --refinement local_runner/cache/refinement_dtss_cl102_pk5_20260312_150704.json
+    python scripts/market_grinder.py --setup dtss --window 5 --top-n 50 --dry-run
 """
 
 import os
@@ -52,8 +52,6 @@ CACHE_DIR = os.path.join(REPO_ROOT, "local_runner", "cache")
 MKT_DIR   = os.path.join(CACHE_DIR, "market_series")
 MANIFEST  = os.path.join(MKT_DIR, "_manifest.json")
 
-API_BASE  = os.environ.get("RAILWAY_API", "https://web-production-e3025.up.railway.app")
-
 # Defaults
 DEFAULT_WINDOW    = 5    # ±N trading days for rolling win rate
 DEFAULT_TOP_N     = 50   # top features to keep in model
@@ -62,21 +60,21 @@ MIN_COVERAGE_FRAC = 0.20 # feature must have valid values on ≥20% of win rate 
 
 
 # ══════════════════════════════════════════════════════════════
-# DATA LOADING
+# DATA LOADING (all local)
 # ══════════════════════════════════════════════════════════════
 
-def load_signals(cycle_id):
-    import urllib.request
-    url = f"{API_BASE}/api/v2/cycles/{cycle_id}/signals"
-    req = urllib.request.Request(url, headers={"User-Agent": "market-grinder/1.0"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = json.loads(r.read())
-    signals = data.get("signals", [])
-    if not signals:
-        raise ValueError(f"No signals found for cycle {cycle_id}")
-    df = pd.DataFrame(signals)
-    df["signal_date"] = pd.to_datetime(df["signal_date"])
-    return df
+def find_latest_refinement(setup_type):
+    """Find the most recent refinement_*.json for a setup type in local cache."""
+    import glob
+    pattern = os.path.join(CACHE_DIR, f"refinement_{setup_type}_*.json")
+    matches = sorted(glob.glob(pattern))
+    if not matches:
+        raise FileNotFoundError(
+            f"No refinement files found for {setup_type} in {CACHE_DIR}\n"
+            f"Pattern: {pattern}\n"
+            "Run the refinement grind first: python -m local_runner.pyramid_grinder --setup {setup_type} --blackout"
+        )
+    return matches[-1]  # sorted by name, timestamp in filename = latest is last
 
 
 def load_signals_from_refinement(refinement_path, mode="pre"):
@@ -89,7 +87,6 @@ def load_signals_from_refinement(refinement_path, mode="pre"):
 
     Returns:
         DataFrame with columns: signal_date, classification, ticker
-        Same shape as load_signals() output (plus ticker).
     """
     with open(refinement_path) as f:
         data = json.load(f)
@@ -111,18 +108,6 @@ def load_signals_from_refinement(refinement_path, mode="pre"):
     df = pd.DataFrame(all_signals)
     df["signal_date"] = pd.to_datetime(df["signal_date"])
     return df
-
-
-def get_current_cycle(setup_type):
-    import urllib.request
-    url = f"{API_BASE}/api/v2/cycles/{setup_type}"
-    req = urllib.request.Request(url, headers={"User-Agent": "market-grinder/1.0"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        data = json.loads(r.read())
-    for c in data.get("cycles", []):
-        if c.get("is_current"):
-            return c["cycle_id"]
-    raise ValueError(f"No current cycle for: {setup_type}")
 
 
 def load_market_manifest():
@@ -686,38 +671,22 @@ def compute_expected_win_rates(regime_scores, signals_df, n_buckets=10):
 
 
 # ══════════════════════════════════════════════════════════════
-# UPLOAD
-# ══════════════════════════════════════════════════════════════
-
-def _post(endpoint, payload):
-    import urllib.request
-    url  = f"{API_BASE}{endpoint}"
-    data = json.dumps(payload).encode()
-    req  = urllib.request.Request(
-        url, data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "market-grinder/1.0"},
-        method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.loads(r.read())
-
-
-# ══════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════
 
-def run(cycle_id, setup_type, window=DEFAULT_WINDOW, top_n=DEFAULT_TOP_N, dry_run=False):
+def run(setup_type, refinement_path, mode="pre", window=DEFAULT_WINDOW, top_n=DEFAULT_TOP_N, dry_run=False):
     print("\n" + "=" * 70)
     print("  MARKET GRINDER")
     print("=" * 70)
-    print(f"  Cycle:      {cycle_id}")
     print(f"  Setup:      {setup_type}")
+    print(f"  Source:     {os.path.basename(refinement_path)}")
+    print(f"  Mode:       {mode} ({'all clusters' if mode == 'pre' else 'post-refinement survivors'})")
     print(f"  Window:     ±{window} trading days")
     print(f"  Top N:      {top_n} features")
 
     # ── 1. Load signals ──────────────────────────────────────
     print(f"\n  Loading signals...")
-    signals_df = load_signals(cycle_id)
+    signals_df = load_signals_from_refinement(refinement_path, mode=mode)
     n_wins   = int((signals_df["classification"].apply(
         lambda c: str(c).upper() in WIN_CLASSES)).sum())
     n_losses = len(signals_df) - n_wins
@@ -782,7 +751,7 @@ def run(cycle_id, setup_type, window=DEFAULT_WINDOW, top_n=DEFAULT_TOP_N, dry_ru
                   f"{stats['score_min']:.3f}–{stats['score_max']:.3f}   "
                   f"{wr_str:>10}  {stats['n']:>5}")
 
-    # ── 9. Build payloads ────────────────────────────────────
+    # ── 9. Build result ──────────────────────────────────────
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     feature_weights = {}
@@ -793,25 +762,12 @@ def run(cycle_id, setup_type, window=DEFAULT_WINDOW, top_n=DEFAULT_TOP_N, dry_ru
             "expr_name":       row["expr_name"],
             "correlation":     row["correlation"],
             "abs_correlation": row["abs_correlation"],
-            "n_valid":         row["n_valid"],
+            "n_valid":         int(row["n_valid"]),
             "quartiles":       quartile_stats.get(fname),
         }
 
-    regime_model_payload = {
-        "setup_type":         setup_type,
-        "cycle_id":           cycle_id,
-        "n_signals_used":     int(len(signals_df)),
-        "n_features_tested":  int(len(corr_df)),
-        "feature_weights":    json.dumps(feature_weights),
-        "top_features":       json.dumps(top_df["feature_name"].head(5).tolist()),
-        "win_rate_by_decile": json.dumps(wr_by_decile),
-        "baseline_win_rate":  float(n_wins / len(signals_df)),
-        "win_rate_series_window": window,
-        "updated_at":         now,
-    }
-
     # Per-signal scores
-    signal_score_rows = []
+    signal_scores = []
     for i, (_, sig_row) in enumerate(signals_df.iterrows()):
         score = float(regime_scores[i]) if not np.isnan(regime_scores[i]) else None
 
@@ -823,36 +779,57 @@ def run(cycle_id, setup_type, window=DEFAULT_WINDOW, top_n=DEFAULT_TOP_N, dry_ru
                     expected_wr = stats["win_rate"]
                     break
 
-        signal_score_rows.append({
-            "cycle_signal_id":   sig_row.get("id"),
-            "cycle_id":          cycle_id,
-            "regime_score":      score,
+        signal_scores.append({
+            "ticker":           sig_row.get("ticker"),
+            "signal_date":      str(sig_row["signal_date"])[:10],
+            "classification":   sig_row["classification"],
+            "regime_score":     score,
             "expected_win_rate": expected_wr,
         })
 
-    signal_scores_payload = {
-        "cycle_id": cycle_id,
-        "scores":   signal_score_rows,
+    result_data = {
+        "setup_type":         setup_type,
+        "mode":               mode,
+        "refinement_source":  os.path.basename(refinement_path),
+        "timestamp":          now,
+        "n_signals":          int(len(signals_df)),
+        "n_wins":             n_wins,
+        "n_losses":           n_losses,
+        "baseline_win_rate":  float(n_wins / len(signals_df)),
+        "n_features_tested":  int(len(corr_df)),
+        "n_features_selected": int(len(top_df)),
+        "window":             window,
+        "top_n":              top_n,
+        "feature_weights":    feature_weights,
+        "top_features":       top_df["feature_name"].head(5).tolist(),
+        "win_rate_by_decile": wr_by_decile,
+        "signal_scores":      signal_scores,
     }
 
     if dry_run:
-        print(f"\n  DRY RUN — not uploading.")
-        print(f"  Would upload regime model + {len(signal_score_rows)} signal scores.")
+        print(f"\n  DRY RUN — not saving.")
         d1 = wr_by_decile.get("d1", {}).get("win_rate")
         d10 = wr_by_decile.get("d10", {}).get("win_rate")
         if d1 is not None and d10 is not None:
             print(f"  Win rate lift D10 vs D1: {d10:.3f} vs {d1:.3f} "
                   f"(+{(d10-d1)*100:.1f}pp)")
-        return
+        return result_data
 
-    # ── 10. Upload ───────────────────────────────────────────
-    print(f"\n  Uploading regime model...")
-    result = _post("/api/v2/regime/model", regime_model_payload)
-    print(f"  {result}")
+    # ── 10. Save locally + mirror to Railway ─────────────────
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"regime_{setup_type}_{mode}_{ts}.json"
+    out_path = os.path.join(CACHE_DIR, filename)
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(out_path, "w") as f:
+        json.dump(result_data, f, indent=2)
+    print(f"\n  Saved: {out_path}")
 
-    print(f"  Uploading {len(signal_score_rows)} signal scores...")
-    result = _post("/api/v2/regime/scores", signal_scores_payload)
-    print(f"  {result}")
+    try:
+        from file_mirror import mirror_file
+        mirror_file(out_path)
+        print(f"  Mirrored to Railway.")
+    except Exception as e:
+        print(f"  WARNING: Mirror failed: {e}")
 
     print(f"\n  ✓ Market grinder complete.")
     if wr_by_decile:
@@ -864,27 +841,36 @@ def run(cycle_id, setup_type, window=DEFAULT_WINDOW, top_n=DEFAULT_TOP_N, dry_ru
                   f"(+{(d10-d1)*100:.1f}pp lift)")
     print(f"  Top feature: {top_df.iloc[0]['feature_name']}")
 
+    return result_data
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Market Grinder — win rate time series correlation")
-    parser.add_argument("--cycle",   help="Specific cycle_id")
-    parser.add_argument("--setup",   default="dtss", help="Setup type (uses current cycle)")
-    parser.add_argument("--window",  type=int, default=DEFAULT_WINDOW,
+    parser.add_argument("--setup",       default="dtss", help="Setup type (finds latest refinement file)")
+    parser.add_argument("--refinement",  help="Path to specific refinement JSON file")
+    parser.add_argument("--mode",        default="pre", choices=["pre", "post"],
+                        help="'pre' = all clusters, 'post' = post-refinement survivors (default: pre)")
+    parser.add_argument("--window",      type=int, default=DEFAULT_WINDOW,
                         help=f"Rolling window ±N trading days (default: {DEFAULT_WINDOW})")
-    parser.add_argument("--top-n",   type=int, default=DEFAULT_TOP_N,
+    parser.add_argument("--top-n",       type=int, default=DEFAULT_TOP_N,
                         help=f"Top N features to keep (default: {DEFAULT_TOP_N})")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Compute but don't upload to Railway")
+    parser.add_argument("--dry-run",     action="store_true",
+                        help="Compute but don't save results")
     args = parser.parse_args()
 
-    if args.cycle:
-        cycle_id   = args.cycle
-        setup_type = cycle_id.split("_")[0]
-    else:
-        setup_type = args.setup
-        print(f"  Fetching current cycle for {setup_type}...")
-        cycle_id = get_current_cycle(setup_type)
-        print(f"  Current cycle: {cycle_id}")
+    setup_type = args.setup
 
-    run(cycle_id, setup_type,
-        window=args.window, top_n=args.top_n, dry_run=args.dry_run)
+    if args.refinement:
+        refinement_path = args.refinement
+        # Infer setup type from filename if not explicitly set
+        basename = os.path.basename(refinement_path)
+        if basename.startswith("refinement_") and args.setup == "dtss":
+            parts = basename.split("_")
+            if len(parts) >= 2:
+                setup_type = parts[1]
+    else:
+        refinement_path = find_latest_refinement(setup_type)
+        print(f"  Latest refinement: {os.path.basename(refinement_path)}")
+
+    run(setup_type, refinement_path,
+        mode=args.mode, window=args.window, top_n=args.top_n, dry_run=args.dry_run)
