@@ -126,17 +126,31 @@ Every correlative bucket that filters out losers also filters out some winners. 
 
 These are not sequential steps — they run together as two dimensions of the same analysis. Every signal gets evaluated simultaneously on both:
 
-**Market regime** — broad market conditions: SPY trend, VIX level, sector rotation, breadth, interest rates, etc. Uses the 266-instrument market cache.
+**Market regime** — broad market conditions: SPY trend, VIX level, sector rotation, breadth, interest rates, etc. Uses the 266-instrument market cache. Script: `market_grinder.py`.
 
-**Setup-specific** — ticker and setup characteristics: price level, market cap, dollar volume, sector, float, etc. Things specific to the individual stock and setup instance.
+**Setup-specific** — ticker characteristics that are NOT price-action/volume patterns (the signal grind already captured those). These are "what kind of stock is this" traits the causative filters can't see. Script: `setup_grinder.py`.
+
+Currently computed setup-specific features (from OHLCV):
+- Price level (close at signal bar)
+- ADR (14-bar average daily range)
+- Dollar volume (20-day average close × volume)
+- Days since IPO (first bar in 5yr cache to signal bar — rough proxy)
+- RS vs SPY daily (5-day rolling vol-adjusted intraday momentum, stock minus SPY)
+- RS vs SPY weekly (same formula on weekly bars)
+
+Future setup-specific features (need external data sourcing):
+- Market cap
+- Float (absolute level + volume/float ratio)
+- RS vs sector (needs sector mapping)
+- Sector RS vs SPY (needs sector mapping)
+- EPS growth
+- Revenue growth
+
+Both grinders run on pre-refinement (full signal set) and post-refinement (surviving signals only) to compute redundancy: does refinement already capture what this feature measures, or is it genuine additional signal?
 
 The buckets interact. A setup firing during a strong market on a mid-cap with high dollar volume has a different win rate than the same setup during a choppy market on a low-float micro-cap. Running them separately would mask those interactions — you need the combined effect.
 
 Output is a multi-dimensional bucketing of win rate and ADR move size across both market conditions and ticker characteristics. This feeds directly into Phase 4's EV scoring.
-
-- Input: Pre-refinement signal piles (full loser set, not post-refinement)
-- Output: Combined correlation buckets with win rate and ADR move multipliers
-- Script: `market_grinder.py` (regime done, setup-specific + combined analysis not built)
 
 ### Three-Knob Architecture
 
@@ -144,7 +158,7 @@ The final correlative filter is three independent filtering dimensions, all comp
 
 1. **Refinement conditions** — with tunable depth threshold (use 50 of 100 conditions? 70? all 100?)
 2. **Market regime buckets** — already built, pre+post redundancy scored
-3. **Setup-specific buckets** — same approach as market regime, but on ticker characteristics
+3. **Setup-specific buckets** — already built, pre+post redundancy scored
 
 The combined filter optimizer searches across all three knobs simultaneously to maximize win rate × median move_adr without killing sample size. The full distribution shape matters — median, mean, floor, ceiling — because a bucket with high median but terrible floor blows up the equity curve. This produces the final "take this signal or don't" decision.
 
@@ -212,7 +226,9 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 2a: Signal Grind | ✅ Done | 87 conditions, 1,218 raw → 893 deduped |
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
-| Phase 3: Correlative Filtering | ✅ Regime done | 50 features, D1→D10: 6.1%→65.7% pre, 42.2%→93.8% post. Setup-specific not built. |
+| Phase 3: Regime | ✅ Done | 50 features, D1→D10: 6.1%→65.7% pre, 42.2%→93.8% post |
+| Phase 3: Setup-specific | ✅ Done | 6 features, 3 genuine (price, ADR, RS W1), 3 redundant |
+| Phase 3: Combined optimizer | ⏸ Not built | |
 | Phase 4: Profit Optimization | ⏸ Needs rewire | Script exists, needs new objective function (compound growth) |
 | Phase 5: Live Watchlist | ⏸ Not built | |
 
@@ -238,6 +254,23 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - All local: reads refinement JSON, saves to local_runner/cache/, mirrors to Railway
 - File: `regime_dtss_20260313_095056.json`
 
+### Setup-Specific Correlation Result (2026-03-13)
+- 6 features tested: price, ADR, dollar volume (20d avg), days since IPO, RS vs SPY (D1), RS vs SPY (W1)
+- RS formula: 5-day rolling vol-adjusted intraday momentum ((C/O-1)*100 avg × (avg_price / ATR50)), stock minus SPY
+- Verified manually against MSFT 2025-10-27: script output -13.1340 vs manual calc -13.1341 (PASS)
+- 893/893 signals with features (100% coverage on OHLCV-derivable features, 813/893 for W1 RS)
+- Pre-refinement baseline WR: 40.9% (365/893). Post-refinement: 78.2% (365/467)
+- **Genuine features (ratio >= 0.5):**
+  - price: pre spread +5.1%, post +8.5%, ratio 1.67 — higher priced stocks win more, refinement didn't capture this
+  - ADR: pre spread +10.9%, post +9.4%, ratio 0.86 — higher ADR stocks win more
+  - RS W1: pre spread +14.0%, post +11.0%, ratio 0.79 — stocks with stronger weekly RS vs SPY win more (counterintuitive for shorts — topping stocks, not freefall)
+- **Redundant features (ratio < 0.5):**
+  - dollar volume: pre +10.0%, post +4.3%, ratio 0.43 — refinement already captures liquidity signal
+  - days since IPO: pre -2.7%, post +8.1%, ratio -3.04 — nonlinear U-shape, not useful
+  - RS D1: pre -8.3%, post +0.9%, ratio -0.10 — daily RS had no signal after refinement
+- All local: reads refinement JSON + 5yr OHLCV cache, saves to local_runner/cache/, mirrors to Railway
+- File: `setup_dtss_20260313_135931.json`
+
 ---
 
 ## Immediate Tasks
@@ -253,23 +286,24 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ### Phase 3 — Correlative Filtering
 6. ~~**Add move_adr to cluster/refinement output**~~ — **DONE 2026-03-13**. `move_adr` (entry_high to exit_close in ADR), `adr_at_signal`, `entry_high` computed on every cluster. Examples use entry candle high, non-examples use forward window max high (conservative worst-case entry). Flows through to refinement JSON on all signal lists. 364/365 winners with data. Winner stats: median 6.4, mean 6.7, floor 2.9, ceiling 13.1 ADR. Also fixed bug where examples skipped the classification race entirely — they now get exit_bar, ceiling, and move data like every other cluster.
-7. **Build setup-specific correlation analysis** — same architecture as `market_grinder.py` but on ticker/setup characteristics: price level, market cap, dollar volume, sector, float, ADR, etc. from expression cache at signal bar. Pre+post refinement, redundancy scoring. Script: `setup_grinder.py`.
+7. ~~**Build setup-specific correlation analysis**~~ — **DONE 2026-03-13**. `setup_grinder.py` computes 6 stock-characteristic features per signal (price, ADR, dollar volume 20d, days since IPO, RS vs SPY D1+W1). RS uses TC2000 PCF formula: 5-day rolling vol-adjusted intraday momentum, stock minus SPY. Vectorized numpy + parallel across tickers (629 tickers in 1.7s). Pre+post redundancy analysis. 3 genuine features (price, ADR, RS W1), 3 redundant. Saves JSON + mirrors to Railway.
 8. **Combined filter optimizer** — search across refinement condition depth threshold × regime score buckets × setup-specific buckets to maximize win rate × median move_adr. Three independent filtering knobs turned together. Evaluates full distribution shape (median, mean, floor, ceiling) for profit curve optimization. Produces the final "take this signal or don't" decision.
+9. **Source external data for additional setup-specific features** — market cap, float, sector mapping, EPS growth, revenue growth. Needed for RS vs sector, sector RS vs SPY, and fundamental features. Separate data sourcing project.
 
 ### Vetting UI
-9. **Read from signal grind and refinement grind outputs** — vetting UI currently reads signal_filter output. Needs to read from cluster files instead. Sort results by signal-to-exit ADR move (biggest movers first).
-10. **AI vet queue** — signals go to AI review, then one-click "yes" adds them to the example library. This flow needs to work end-to-end.
-11. **Workflow and ease-of-use improvements** — many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
+10. **Read from signal grind and refinement grind outputs** — vetting UI currently reads signal_filter output. Needs to read from cluster files instead. Sort results by signal-to-exit ADR move (biggest movers first).
+11. **AI vet queue** — signals go to AI review, then one-click "yes" adds them to the example library. This flow needs to work end-to-end.
+12. **Workflow and ease-of-use improvements** — many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
 
 ### Pipeline UI
-12. **Full pipeline control from UI** — every grinder step runnable from the UI with all parameters and tweaks selectable at each level. Fully wired to the pipeline agent.
-13. **Update PIPELINE_V2.md** — remove proximity grind, profit grind. Update Phase 3 to reflect the three-knob architecture (refinement depth + regime + setup-specific). Update refinement spec (cluster-aware engine is built).
+13. **Full pipeline control from UI** — every grinder step runnable from the UI with all parameters and tweaks selectable at each level. Fully wired to the pipeline agent.
+14. **Update PIPELINE_V2.md** — remove proximity grind, profit grind. Update Phase 3 to reflect the three-knob architecture (refinement depth + regime + setup-specific). Update refinement spec (cluster-aware engine is built).
 
 ### Code Cleanup (future)
-14. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.
+15. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.
 
 ### Vetting
-15. **Vet winner pile** — review 365 winners, add examples, loop if needed.
+16. **Vet winner pile** — review 365 winners, add examples, loop if needed.
 
 ---
 
@@ -293,6 +327,8 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - **Regime runs on pre-refinement data.** Post-refinement has too few losers for the model to learn from.
 - **Examples run through full classification race.** Not skipped — they get exit_bar, ceiling, move_adr like every other cluster. Classification overridden to AUTO_WIN.
 - **move_adr uses conservative entry price for non-examples.** Forward window max high = worst-case fill. Real entries will be better.
+- **Setup-specific features are NOT from the expression cache.** The signal grind already mined all 16K expressions — anything in the cache that separates winners from losers would already be a signal/refinement condition. Setup-specific features must come from outside the cache (stock characteristics, cross-instrument RS, fundamentals).
+- **RS formula is TC2000 PCF-based.** 5-day rolling average intraday % move × (avg_price / ATR50). Stock value minus SPY value = relative strength. Computed on both D1 and W1 timeframes.
 - **100% example pass rate required.** Any grinder result where an example fails is invalid.
 - **Silent failures are dangerous.** The system produces plausible wrong numbers. Verify empirically.
 
