@@ -209,7 +209,7 @@ def all_instruments():
 # PHASE 1 — FETCHERS  (called from threads)
 # ══════════════════════════════════════════════════════════════
 
-def _fetch_yfinance(symbol, period="8y"):
+def _fetch_yfinance(symbol, period="10y"):
     import yfinance as yf
     df = yf.download(symbol, period=period, progress=False, auto_adjust=True)
     if df is None or len(df) == 0:
@@ -229,7 +229,8 @@ def _fetch_yfinance(symbol, period="8y"):
         df["volume"] = 0.0
     df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
     df = df[["date", "open", "high", "low", "close", "volume"]].dropna(subset=["close"])
-    df = df[df["close"] > 0].sort_values("date").reset_index(drop=True)
+    cutoff = pd.Timestamp.now() - pd.DateOffset(years=8)
+    df = df[(df["close"] > 0) & (df["date"] >= cutoff)].sort_values("date").reset_index(drop=True)
     return df if len(df) >= 50 else None
 
 
