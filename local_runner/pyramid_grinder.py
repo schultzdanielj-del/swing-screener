@@ -2544,17 +2544,16 @@ def _gather_raw_signal_clusters(setup_type):
 
         c["is_example"] = 1 if is_ex else 0
 
-        if is_ex:
-            c["classification"] = "AUTO_WIN"
-            c["classification_reason"] = "example"
-            n_win += 1
-            continue
-
         df = universe_cache.get(ticker)
         if df is None or bar_idx >= len(df) - 1:
-            c["classification"] = "AUTO_LOSS"
-            c["classification_reason"] = "no_data"
-            n_loss += 1
+            if is_ex:
+                c["classification"] = "AUTO_WIN"
+                c["classification_reason"] = "example_no_data"
+                n_win += 1
+            else:
+                c["classification"] = "AUTO_LOSS"
+                c["classification_reason"] = "no_data"
+                n_loss += 1
             continue
 
         try:
@@ -2565,9 +2564,14 @@ def _gather_raw_signal_clusters(setup_type):
             prev_tk = ticker
             cd, cdata = tcache[ticker]
             if cd is None or len(cd) != len(df):
-                c["classification"] = "AUTO_LOSS"
-                c["classification_reason"] = "cache_mismatch"
-                n_loss += 1
+                if is_ex:
+                    c["classification"] = "AUTO_WIN"
+                    c["classification_reason"] = "example_cache_mismatch"
+                    n_win += 1
+                else:
+                    c["classification"] = "AUTO_LOSS"
+                    c["classification_reason"] = "cache_mismatch"
+                    n_loss += 1
                 continue
 
             highs = df["high"].values
@@ -2643,6 +2647,14 @@ def _gather_raw_signal_clusters(setup_type):
             c["classification"] = "AUTO_LOSS"
             c["classification_reason"] = "error"
             n_loss += 1
+
+        # Examples are always winners regardless of race outcome.
+        # The race still runs so they get ceiling, exit_bar, etc.
+        if is_ex and c.get("classification") != "AUTO_WIN":
+            c["classification"] = "AUTO_WIN"
+            c["classification_reason"] = "example"
+            n_loss -= 1
+            n_win += 1
 
     # ── Compute MFE + ADR for each cluster ──
     # MFE = Maximum Favorable Excursion in ADR units
