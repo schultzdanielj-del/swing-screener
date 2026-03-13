@@ -67,14 +67,28 @@ def find_latest_refinement(setup_type):
     """Find the most recent refinement_*.json for a setup type in local cache."""
     import glob
     pattern = os.path.join(CACHE_DIR, f"refinement_{setup_type}_*.json")
-    matches = sorted(glob.glob(pattern))
+    matches = glob.glob(pattern)
     if not matches:
         raise FileNotFoundError(
             f"No refinement files found for {setup_type} in {CACHE_DIR}\n"
             f"Pattern: {pattern}\n"
-            "Run the refinement grind first: python -m local_runner.pyramid_grinder --setup {setup_type} --blackout"
+            f"Run the refinement grind first: python -m local_runner.pyramid_grinder --setup {setup_type} --blackout"
         )
-    return matches[-1]  # sorted by name, timestamp in filename = latest is last
+
+    def extract_timestamp(path):
+        """Extract YYYYMMDD_HHMMSS from end of filename."""
+        name = os.path.basename(path).replace(".json", "")
+        parts = name.split("_")
+        if len(parts) >= 2:
+            try:
+                ts_str = parts[-2] + "_" + parts[-1]  # e.g. "20260312_150704"
+                return datetime.strptime(ts_str, "%Y%m%d_%H%M%S")
+            except ValueError:
+                pass
+        return datetime.min  # fallback: sort to beginning
+
+    matches.sort(key=extract_timestamp)
+    return matches[-1]
 
 
 def load_signals_from_refinement(refinement_path, mode="pre"):
