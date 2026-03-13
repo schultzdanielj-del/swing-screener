@@ -2656,6 +2656,114 @@ def _gather_raw_signal_clusters(setup_type):
             n_loss -= 1
             n_win += 1
 
+    # ── Compute move_adr for each cluster ──
+    # entry_high → exit_close, measured in ADR at signal bar.
+    # Examples: entry_high = high of entry candle (scan_bar + 1)
+    # Non-examples: entry_high = max high in forward window after rightmost bar
+    # Only clusters with exit_bar get a value; others get null.
+    print(f"\n  Computing move_adr for each cluster...")
+    adr_col = expr_cache.expr_index("adr14")
+    n_move_ok = 0
+    n_move_skip = 0
+
+    for c in clusters:
+        ticker = c["ticker"]
+        bar_idx = c["rightmost"]["bar_idx"]
+
+        if c.get("exit_bar") is None:
+            c["move_adr"] = None
+            c["adr_at_signal"] = None
+            c["entry_high"] = None
+            n_move_skip += 1
+            continue
+
+        df = universe_cache.get(ticker)
+        if df is None or bar_idx >= len(df) - 1:
+            c["move_adr"] = None
+            c["adr_at_signal"] = None
+            c["entry_high"] = None
+            n_move_skip += 1
+            continue
+
+        try:
+            highs = df["high"].values
+            closes = df["close"].values
+
+            # ADR at signal bar (prefer expr cache, fallback to manual)
+            adr = None
+            if adr_col is not None:
+                cd_t, cdata_t = expr_cache.get_ticker(ticker)
+                if cd_t is not None and bar_idx < len(cdata_t):
+                    adr = float(cdata_t[bar_idx, adr_col])
+            if adr is None or adr <= 0 or np.isnan(adr):
+                start = max(0, bar_idx - 13)
+                lows = df["low"].values
+                adr = float(np.mean(highs[start:bar_idx+1] - lows[start:bar_idx+1]))
+            if adr <= 0 or np.isnan(adr):
+                c["move_adr"] = None
+                c["adr_at_signal"] = None
+                c["entry_high"] = None
+                n_move_skip += 1
+                continue
+
+            c["adr_at_signal"] = round(adr, 4)
+
+            # Entry high: examples use entry candle, non-examples use forward window max high
+            if c.get("is_example") == 1:
+                # Find the example scan bar within this cluster
+                all_bar_idxs = [bar_idx] + [b["bar_idx"] for b in c.get("leftward", [])]
+                ex_scan_bar = None
+                for bi in all_bar_idxs:
+                    if ticker in example_bar_lookup and bi in example_bar_lookup[ticker]:
+                        ex_scan_bar = bi
+                        break
+                if ex_scan_bar is not None and ex_scan_bar + 1 < len(highs):
+                    entry_high = float(highs[ex_scan_bar + 1])
+                else:
+                    # Fallback: forward window max high
+                    fw_end = min(bar_idx + forward_window, len(df) - 1)
+                    entry_high = float(np.max(highs[bar_idx + 1:fw_end + 1])) if fw_end > bar_idx else float(highs[bar_idx])
+            else:
+                # Non-example: max high in forward window
+                fw_end = min(bar_idx + forward_window, len(df) - 1)
+                entry_high = float(np.max(highs[bar_idx + 1:fw_end + 1])) if fw_end > bar_idx else float(highs[bar_idx])
+
+            c["entry_high"] = round(entry_high, 4)
+
+            # Exit close
+            exit_idx = bar_idx + c["exit_bar"]
+            if exit_idx >= len(closes):
+                c["move_adr"] = None
+                n_move_skip += 1
+                continue
+            exit_close = float(closes[exit_idx])
+
+            # move_adr: entry_high to exit_close in ADR
+            if direction == "short":
+                move_adr = (entry_high - exit_close) / adr
+            else:
+                move_adr = (exit_close - entry_high) / adr
+
+            c["move_adr"] = round(move_adr, 4)
+            n_move_ok += 1
+
+        except Exception:
+            c["move_adr"] = None
+            c["adr_at_signal"] = None
+            c["entry_high"] = None
+            n_move_skip += 1
+
+    print(f"  move_adr computed: {n_move_ok} ok, {n_move_skip} skipped")
+    win_moves = [c["move_adr"] for c in clusters
+                 if "WIN" in c.get("classification", "") and c.get("move_adr") is not None]
+    if win_moves:
+        win_moves_sorted = sorted(win_moves)
+        print(f"  Winner move_adr: median {win_moves_sorted[len(win_moves_sorted)//2]:.1f}, "
+              f"mean {sum(win_moves)/len(win_moves):.1f}, "
+              f"floor {win_moves_sorted[0]:.1f}, "
+              f"ceiling {win_moves_sorted[-1]:.1f} "
+              f"({len(win_moves)} winners with data)")
+
     # Free caches
     del universe_cache, tcache
     gc.collect()
@@ -2862,6 +2970,9 @@ def _load_refinement_piles(setup_type):
             "close": c["rightmost"].get("close"),
             "is_example": c.get("is_example", 0),
             "classification": "AUTO_WIN",
+            "move_adr": c.get("move_adr"),
+            "adr_at_signal": c.get("adr_at_signal"),
+            "entry_high": c.get("entry_high"),
         })
 
     raw_losers = []
@@ -2873,6 +2984,9 @@ def _load_refinement_piles(setup_type):
             "close": c["rightmost"].get("close"),
             "is_example": c.get("is_example", 0),
             "classification": "AUTO_LOSS",
+            "move_adr": c.get("move_adr"),
+            "adr_at_signal": c.get("adr_at_signal"),
+            "entry_high": c.get("entry_high"),
         })
 
     # adr_threshold = 0.0 — classification handled by ceiling+exit race in clusters,
