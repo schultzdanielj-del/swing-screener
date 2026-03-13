@@ -79,6 +79,40 @@ def load_signals(cycle_id):
     return df
 
 
+def load_signals_from_refinement(refinement_path, mode="pre"):
+    """Load signals from a local refinement grind JSON file.
+
+    Args:
+        refinement_path: Path to refinement_*.json in local_runner/cache/
+        mode: "pre" = all clusters (winners + losers + eliminated)
+              "post" = surviving only (winners + losers, no eliminated)
+
+    Returns:
+        DataFrame with columns: signal_date, classification, ticker
+        Same shape as load_signals() output (plus ticker).
+    """
+    with open(refinement_path) as f:
+        data = json.load(f)
+
+    winners = data.get("winner_signals", [])
+    losers = data.get("loser_signals", [])
+    eliminated = data.get("eliminated_signals", [])
+
+    if mode == "pre":
+        all_signals = winners + losers + eliminated
+    elif mode == "post":
+        all_signals = winners + losers
+    else:
+        raise ValueError(f"Unknown mode: {mode!r} (expected 'pre' or 'post')")
+
+    if not all_signals:
+        raise ValueError(f"No signals found in {refinement_path} (mode={mode})")
+
+    df = pd.DataFrame(all_signals)
+    df["signal_date"] = pd.to_datetime(df["signal_date"])
+    return df
+
+
 def get_current_cycle(setup_type):
     import urllib.request
     url = f"{API_BASE}/api/v2/cycles/{setup_type}"
