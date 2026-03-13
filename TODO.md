@@ -118,6 +118,16 @@ Output is a multi-dimensional bucketing of win rate and ADR move size across bot
 - Output: Combined correlation buckets with win rate and ADR move multipliers
 - Script: `market_grinder.py` (regime done, setup-specific + combined analysis not built)
 
+### Three-Knob Architecture
+
+The final correlative filter is three independent filtering dimensions, all computed pre+post refinement:
+
+1. **Refinement conditions** — with tunable depth threshold (use 50 of 100 conditions? 70? all 100?)
+2. **Market regime buckets** — already built, pre+post redundancy scored
+3. **Setup-specific buckets** — same approach as market regime, but on ticker characteristics
+
+The combined filter optimizer searches across all three knobs simultaneously to maximize win rate × median MFE without killing sample size. This produces the final "take this signal or don't" decision.
+
 ---
 
 ## Phase 4 — Profit Optimization
@@ -218,25 +228,25 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 ### Regime Model
 4. ~~**Wire regime model to new pipeline**~~ — **DONE 2026-03-13**. `market_grinder.py` rewritten to all-local. Reads refinement JSON, runs pre+post, computes redundancy scores, saves+mirrors. Market cache extended to 8y for full signal coverage. `fetch_missing_market.py` added for incremental fetches.
 
-### Correlative Filtering (Phase 3)
-12. **Add MFE to cluster/refinement output** — cluster builder and refinement JSON currently have classification but no MFE. Need to compute MFE (in ADR) for each signal using 5yr OHLCV cache: for shorts, max drop from signal close to lowest low within the exit window. Store `mfe_adr` on each signal in cluster + refinement output. Required by combined filter optimizer (#15) to score buckets by win rate × median MFE.
-13. **Build setup-specific correlation analysis** — same engine as `market_grinder.py` but on ticker-level features from the expression cache at the signal bar (price, ADR, dollar volume, relative volume, extension from moving averages, etc.). Pre+post refinement, redundancy scoring. Same architecture: weighted Pearson correlation → deduplication → quartile win rates → scores. Script: `setup_specific_grinder.py` or extend `market_grinder.py`.
-14. **Combined filter optimizer** — search across three independent filtering dimensions: (a) refinement condition depth threshold (use 50/70/100 of 100 conditions), (b) market regime buckets (which deciles to include/exclude), (c) setup-specific buckets (which deciles to include/exclude). Objective: maximize win rate × median MFE without killing sample size. This is the Phase 3 endgame — produces the final "take this signal or don't" decision.
+### Phase 3 — Correlative Filtering
+5. **Add MFE to cluster/refinement output** — cluster builder and refinement JSON currently lack MFE data. Compute MFE (max favorable excursion in ADR) for each signal/cluster from OHLCV and store it on every signal. All downstream steps (setup-specific correlations, combined optimizer, profit grinder) need this.
+6. **Build setup-specific correlation analysis** — same architecture as `market_grinder.py` but on ticker/setup characteristics: price level, market cap, dollar volume, sector, float, ADR, etc. from expression cache at signal bar. Pre+post refinement, redundancy scoring. Script: `setup_grinder.py`.
+7. **Combined filter optimizer** — search across refinement condition depth threshold × regime score buckets × setup-specific buckets to maximize win rate × median MFE. Three independent filtering knobs turned together. Produces the final "take this signal or don't" decision.
 
 ### Vetting UI
-5. **Read from signal grind and refinement grind outputs** — vetting UI currently reads signal_filter output. Needs to read from cluster files instead. Sort results by signal-to-exit ADR move (biggest movers first).
-6. **AI vet queue** — signals go to AI review, then one-click "yes" adds them to the example library. This flow needs to work end-to-end.
-7. **Workflow and ease-of-use improvements** — many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
+8. **Read from signal grind and refinement grind outputs** — vetting UI currently reads signal_filter output. Needs to read from cluster files instead. Sort results by signal-to-exit ADR move (biggest movers first).
+9. **AI vet queue** — signals go to AI review, then one-click "yes" adds them to the example library. This flow needs to work end-to-end.
+10. **Workflow and ease-of-use improvements** — many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
 
 ### Pipeline UI
-8. **Full pipeline control from UI** — every grinder step runnable from the UI with all parameters and tweaks selectable at each level. Fully wired to the pipeline agent.
-9. **Update PIPELINE_V2.md** — remove proximity grind, profit grind. Update refinement spec (cluster-aware engine is built).
+11. **Full pipeline control from UI** — every grinder step runnable from the UI with all parameters and tweaks selectable at each level. Fully wired to the pipeline agent.
+12. **Update PIPELINE_V2.md** — remove proximity grind, profit grind. Update Phase 3 to reflect the three-knob architecture (refinement depth + regime + setup-specific). Update refinement spec (cluster-aware engine is built).
 
 ### Code Cleanup (future)
-10. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.
+13. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.
 
 ### Vetting
-11. **Vet winner pile** — review 365 winners, add examples, loop if needed.
+14. **Vet winner pile** — review 365 winners, add examples, loop if needed.
 
 ---
 
