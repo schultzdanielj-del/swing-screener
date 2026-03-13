@@ -114,9 +114,9 @@ The buckets interact. A setup firing during a strong market on a mid-cap with hi
 
 Output is a multi-dimensional bucketing of win rate and ADR move size across both market conditions and ticker characteristics. This feeds directly into Phase 4's EV scoring.
 
-- Input: Pre-refinement signal piles (need full loser set, not post-refinement)
+- Input: Pre-refinement signal piles (full loser set, not post-refinement)
 - Output: Combined correlation buckets with win rate and ADR move multipliers
-- Script: `market_grinder.py` (exists for regime, needs expansion to include setup-specific + combined analysis)
+- Script: `market_grinder.py` (regime done, setup-specific + combined analysis not built)
 
 ---
 
@@ -182,7 +182,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 2a: Signal Grind | ✅ Done | 87 conditions, 1,218 raw → 893 deduped |
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
-| Phase 3: Correlative Filtering | ⏸ Not wired | Regime exists, setup-specific not built, need combined analysis |
+| Phase 3: Correlative Filtering | ✅ Regime done | 50 features, D1→D10: 6.1%→65.7% pre, 42.2%→93.8% post. Setup-specific not built. |
 | Phase 4: Profit Optimization | ⏸ Needs rewire | Script exists, needs new objective function (compound growth) |
 | Phase 5: Live Watchlist | ⏸ Not built | |
 
@@ -195,6 +195,17 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - Pre-regime win rate: 78% (365 / 467)
 - File: `refinement_dtss_cl102_pk5_20260312_150704.json`
 
+### Regime Model Result (2026-03-13)
+- 256 instruments × 15,805 expressions → 3M+ features tested → 50 selected (deduplicated)
+- Runs on both pre-refinement (893 clusters) and post-refinement (467 clusters)
+- Pre-refinement decile lift: D1=6.1% → D10=65.7% (+59.6pp)
+- Post-refinement decile lift: D1=42.2% → D10=93.8% (+51.6pp)
+- Redundancy analysis: 31 genuine features, 18 redundant (already captured by refinement)
+- 100% signal coverage across all years (2021-2026) after 8y market cache extension
+- Top genuine feature: UVXY OBV slope 30 (ratio 1.13 — stronger post-refinement)
+- All local: reads refinement JSON, saves to local_runner/cache/, mirrors to Railway
+- File: `regime_dtss_20260313_095056.json`
+
 ---
 
 ## Immediate Tasks
@@ -205,7 +216,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 3. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
 
 ### Regime Model
-4. **Wire regime model to new pipeline** — `market_grinder.py` already exists. Needs to accept refinement grinder cluster file (`raw_signal_clusters_{setup}.json`) as input. Run on pre-refinement piles (full 893 clusters, not post-refinement 467).
+4. ~~**Wire regime model to new pipeline**~~ — **DONE 2026-03-13**. `market_grinder.py` rewritten to all-local. Reads refinement JSON, runs pre+post, computes redundancy scores, saves+mirrors. Market cache extended to 8y for full signal coverage. `fetch_missing_market.py` added for incremental fetches.
 
 ### Vetting UI
 5. **Read from signal grind and refinement grind outputs** — vetting UI currently reads signal_filter output. Needs to read from cluster files instead. Sort results by signal-to-exit ADR move (biggest movers first).
