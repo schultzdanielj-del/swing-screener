@@ -9,11 +9,11 @@ What it does (in order):
        - If DB is already up to date → stops here, prints "up to date"
     2. Refreshes local daily OHLCV cache (pulls from Railway)
     3. Refreshes local 5yr OHLCV cache (pulls from Railway)
-    4. Appends expression series cache (new bars only)
+    4. Appends expression series cache (new bars + new tickers)
     5. Rebuilds D1 universe matrix
     6. Refreshes earnings dates
-    7. Appends market context cache (266 instruments for regime model)
-    8. Rebuilds dartboard universe stats cache
+    7. Appends market context cache (256 instruments OHLCV + recomputes expressions)
+    8. Refreshes fundamentals cache (new tickers daily, full re-fetch Mondays)
 
 Run after market close (~4:30pm ET). Total time: ~15-20 min.
 After completion, grind iterations are fast (~2-3 min each).
@@ -205,17 +205,96 @@ def step_7_market_cache():
         print("  (Non-fatal — regime model will use stale data)")
 
 
-def step_8_dartboard_cache():
-    """Rebuild dartboard universe stats cache."""
-    step_header(8, 8, "Dartboard — Universe Stats Cache")
+def step_8_fundamentals():
+    """Refresh fundamentals cache — fetch new tickers, periodic full re-fetch."""
+    step_header(8, 8, "Fundamentals Cache — Incremental")
 
     try:
-        from dartboard_grinder import build_universe_stats_cache
-        build_universe_stats_cache()
-        print("\n  ✓ Dartboard universe stats cache rebuilt")
+        from scripts.fetch_fundamentals import (
+            load_universe_tickers, load_existing_cache,
+            create_yahoo_session, fetch_ticker_data, save_cache,
+            DEFAULT_DELAY
+        )
+    except ImportError:
+        # Try alternative import path
+        try:
+            sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
+            from fetch_fundamentals import (
+                load_universe_tickers, load_existing_cache,
+                create_yahoo_session, fetch_ticker_data, save_cache,
+                DEFAULT_DELAY
+            )
+        except ImportError:
+            print("  ✗ fetch_fundamentals.py not found — skipping")
+            return
+
+    try:
+        all_tickers = load_universe_tickers()
+        existing = load_existing_cache()
+
+        # Find new tickers not in cache
+        new_tickers = [t for t in all_tickers if t not in existing]
+
+        # Weekly full re-fetch on Mondays (shares outstanding / float change)
+        from datetime import datetime as _dt
+        is_monday = _dt.now().weekday() == 0
+        if is_monday:
+            # Re-fetch everything — shares outstanding and float drift over time
+            to_fetch = all_tickers
+            print(f"  Monday — full re-fetch of {len(to_fetch)} tickers")
+        elif new_tickers:
+            to_fetch = new_tickers
+            print(f"  {len(new_tickers)} new tickers to fetch")
+        else:
+            print(f"  ✓ Fundamentals cache current ({len(existing)} tickers, no new)")
+            return
+
+        opener, crumb = create_yahoo_session()
+        results = dict(existing)
+        n_ok = 0
+        n_err = 0
+
+        for i, ticker in enumerate(to_fetch):
+            data = fetch_ticker_data(opener, crumb, ticker)
+            if data and "error" not in data:
+                results[ticker] = data
+                n_ok += 1
+            elif data and data.get("error") == "rate_limited":
+                print(f"  ⚠ Rate limited at {ticker}. Sleeping 30s...")
+                time.sleep(30)
+                try:
+                    opener, crumb = create_yahoo_session()
+                except Exception:
+                    pass
+                data = fetch_ticker_data(opener, crumb, ticker)
+                if data and "error" not in data:
+                    results[ticker] = data
+                    n_ok += 1
+                else:
+                    results[ticker] = data or {"error": "rate_limit_retry_failed"}
+                    n_err += 1
+            else:
+                results[ticker] = data or {"error": "unknown"}
+                n_err += 1
+
+            if (i + 1) % 100 == 0:
+                print(f"    {i + 1}/{len(to_fetch)} ok={n_ok} err={n_err}")
+
+            time.sleep(DEFAULT_DELAY)
+
+        save_cache(results)
+        print(f"  ✓ Fundamentals: {n_ok} fetched, {n_err} errors, {len(results)} total")
+
+        try:
+            from file_mirror import mirror_file
+            from scripts.fetch_fundamentals import OUTPUT_FILE
+            mirror_file(OUTPUT_FILE)
+        except Exception:
+            pass
+
     except Exception as e:
-        print(f"  ⚠ Dartboard cache rebuild failed: {e}")
-        print("  (Non-fatal — dartboard grinder will compute stats on the fly)")
+        print(f"  ✗ Fundamentals refresh failed: {e}")
+        print("  (Non-fatal — EV grinder will use existing cache)")
 
 
 def main():
@@ -243,7 +322,7 @@ def main():
     step_5_matrix()
     step_6_earnings()
     step_7_market_cache()
-    step_8_dartboard_cache()
+    step_8_fundamentals()
 
     total_elapsed = time.time() - total_start
     minutes = total_elapsed / 60
