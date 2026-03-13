@@ -2644,6 +2644,99 @@ def _gather_raw_signal_clusters(setup_type):
             c["classification_reason"] = "error"
             n_loss += 1
 
+    # ── Compute MFE + ADR for each cluster ──
+    # MFE = Maximum Favorable Excursion in ADR units
+    # For shorts: (signal_close - lowest_low_in_window) / ADR
+    # Window: rightmost bar to exit_bar (winners) or breach_bar (losers)
+    # For examples/held_to_end with no exit_bar: use forward_window
+    print(f"\n  Computing MFE and ADR for each cluster...")
+    n_mfe_ok = 0
+    n_mfe_skip = 0
+    adr_col = expr_cache.expr_index("adr14")
+
+    for c in clusters:
+        ticker = c["ticker"]
+        bar_idx = c["rightmost"]["bar_idx"]
+        df = universe_cache.get(ticker)
+        if df is None or bar_idx >= len(df) - 1:
+            c["mfe_adr"] = None
+            c["move_adr"] = None
+            c["adr_at_signal"] = None
+            n_mfe_skip += 1
+            continue
+
+        try:
+            highs = df["high"].values
+            lows = df["low"].values
+            closes = df["close"].values
+            signal_close = float(closes[bar_idx])
+
+            # ADR at signal bar (prefer expr cache, fallback to manual calc)
+            if adr_col is not None:
+                cd_t, cdata_t = expr_cache.get_ticker(ticker)
+                if cd_t is not None and bar_idx < len(cdata_t):
+                    adr = float(cdata_t[bar_idx, adr_col])
+                else:
+                    start = max(0, bar_idx - 13)
+                    adr = float(np.mean(highs[start:bar_idx+1] - lows[start:bar_idx+1]))
+            else:
+                start = max(0, bar_idx - 13)
+                adr = float(np.mean(highs[start:bar_idx+1] - lows[start:bar_idx+1]))
+
+            if adr <= 0 or np.isnan(adr):
+                c["mfe_adr"] = None
+                c["move_adr"] = None
+                c["adr_at_signal"] = None
+                n_mfe_skip += 1
+                continue
+
+            c["adr_at_signal"] = round(adr, 4)
+
+            # Determine forward window for MFE measurement
+            if c.get("exit_bar") is not None:
+                fwd = c["exit_bar"]
+            elif c.get("breach_bar") is not None:
+                fwd = c["breach_bar"]
+            else:
+                fwd = forward_window  # fallback for examples/held_to_end
+
+            end_idx = min(bar_idx + fwd, len(df) - 1)
+            if end_idx <= bar_idx:
+                c["mfe_adr"] = None
+                c["move_adr"] = None
+                n_mfe_skip += 1
+                continue
+
+            if direction == "short":
+                # MFE: lowest low from bar after signal to end
+                mfe_price = float(np.min(lows[bar_idx + 1:end_idx + 1]))
+                mfe_adr = (signal_close - mfe_price) / adr
+                # Move: signal close to close at exit/breach bar
+                exit_close = float(closes[end_idx])
+                move_adr = (signal_close - exit_close) / adr
+            else:
+                # MFE: highest high from bar after signal to end
+                mfe_price = float(np.max(highs[bar_idx + 1:end_idx + 1]))
+                mfe_adr = (mfe_price - signal_close) / adr
+                exit_close = float(closes[end_idx])
+                move_adr = (exit_close - signal_close) / adr
+
+            c["mfe_adr"] = round(mfe_adr, 4)
+            c["move_adr"] = round(move_adr, 4)
+            n_mfe_ok += 1
+        except Exception:
+            c["mfe_adr"] = None
+            c["move_adr"] = None
+            c["adr_at_signal"] = None
+            n_mfe_skip += 1
+
+    print(f"  MFE computed: {n_mfe_ok} ok, {n_mfe_skip} skipped")
+    win_mfes = [c["mfe_adr"] for c in clusters
+                if "WIN" in c.get("classification", "") and c.get("mfe_adr") is not None]
+    if win_mfes:
+        print(f"  Winner MFE: median {sorted(win_mfes)[len(win_mfes)//2]:.1f} ADR, "
+              f"mean {sum(win_mfes)/len(win_mfes):.1f} ADR")
+
     # Free caches
     del universe_cache, tcache
     gc.collect()
@@ -2850,6 +2943,9 @@ def _load_refinement_piles(setup_type):
             "close": c["rightmost"].get("close"),
             "is_example": c.get("is_example", 0),
             "classification": "AUTO_WIN",
+            "mfe_adr": c.get("mfe_adr"),
+            "move_adr": c.get("move_adr"),
+            "adr_at_signal": c.get("adr_at_signal"),
         })
 
     raw_losers = []
@@ -2861,6 +2957,9 @@ def _load_refinement_piles(setup_type):
             "close": c["rightmost"].get("close"),
             "is_example": c.get("is_example", 0),
             "classification": "AUTO_LOSS",
+            "mfe_adr": c.get("mfe_adr"),
+            "move_adr": c.get("move_adr"),
+            "adr_at_signal": c.get("adr_at_signal"),
         })
 
     # adr_threshold = 0.0 — classification handled by ceiling+exit race in clusters,
