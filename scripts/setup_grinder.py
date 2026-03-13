@@ -379,6 +379,19 @@ def _find_bar_idx(dates, signal_date_str):
     return -1
 
 
+def compute_adr_14(df, bar_idx):
+    """14-bar Average Daily Range at bar_idx. Computed from OHLCV directly."""
+    start = max(0, bar_idx - 13)
+    window = df.iloc[start:bar_idx + 1]
+    if len(window) < 5:  # need at least 5 bars
+        return None
+    ranges = window["high"].values - window["low"].values
+    adr = float(np.nanmean(ranges))
+    if adr <= 0 or np.isnan(adr):
+        return None
+    return adr
+
+
 def compute_dollar_volume_20d(df, bar_idx):
     """Average daily dollar volume over 20 bars ending at bar_idx."""
     start = max(0, bar_idx - 19)
@@ -438,10 +451,10 @@ def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
             sig["feat_price"] = price
             feature_counts["price"] += 1
 
-        # 2. ADR (carry from signal if available)
-        adr = sig.get("adr_at_signal")
-        if adr is not None and not np.isnan(adr):
-            sig["feat_adr"] = float(adr)
+        # 2. ADR (14-bar average daily range, computed from OHLCV)
+        adr = compute_adr_14(df, bar_idx)
+        if adr is not None:
+            sig["feat_adr"] = adr
             feature_counts["adr"] += 1
 
         # 3. Dollar volume (20-day avg)
