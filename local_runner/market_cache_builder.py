@@ -209,7 +209,7 @@ def all_instruments():
 # PHASE 1 — FETCHERS  (called from threads)
 # ══════════════════════════════════════════════════════════════
 
-def _fetch_yfinance(symbol, period="5y"):
+def _fetch_yfinance(symbol, period="8y"):
     import yfinance as yf
     df = yf.download(symbol, period=period, progress=False, auto_adjust=True)
     if df is None or len(df) == 0:
@@ -257,7 +257,7 @@ def _fetch_stooq(symbol):
             df[col] = pd.to_numeric(df[col], errors="coerce")
         df["volume"] = 0.0
         df = df[["date", "open", "high", "low", "close", "volume"]].dropna(subset=["close"])
-        cutoff = pd.Timestamp.now() - pd.DateOffset(years=5)
+        cutoff = pd.Timestamp.now() - pd.DateOffset(years=8)
         df = df[df["date"] >= cutoff].sort_values("date").reset_index(drop=True)
         return df if len(df) >= 50 else None
     except Exception:
@@ -281,7 +281,7 @@ def _fetch_fred(series_id):
         df["open"] = df["high"] = df["low"] = df["close"] = df["value"]
         df["volume"] = 0.0
         df = df[["date", "open", "high", "low", "close", "volume"]]
-        cutoff = pd.Timestamp.now() - pd.DateOffset(years=5)
+        cutoff = pd.Timestamp.now() - pd.DateOffset(years=8)
         df = df[df["date"] >= cutoff].sort_values("date").reset_index(drop=True)
         return df if len(df) >= 50 else None
     except Exception:
