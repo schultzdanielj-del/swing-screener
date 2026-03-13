@@ -688,36 +688,42 @@ def compute_expected_win_rates(regime_scores, signals_df, n_buckets=10):
 # MAIN
 # ══════════════════════════════════════════════════════════════
 
-def run(setup_type, refinement_path, mode="pre", window=DEFAULT_WINDOW, top_n=DEFAULT_TOP_N, dry_run=False):
+def run(setup_type, refinement_path, window=DEFAULT_WINDOW, top_n=DEFAULT_TOP_N, dry_run=False):
     print("\n" + "=" * 70)
     print("  MARKET GRINDER")
     print("=" * 70)
     print(f"  Setup:      {setup_type}")
     print(f"  Source:     {os.path.basename(refinement_path)}")
-    print(f"  Mode:       {mode} ({'all clusters' if mode == 'pre' else 'post-refinement survivors'})")
     print(f"  Window:     ±{window} trading days")
     print(f"  Top N:      {top_n} features")
 
-    # ── 1. Load signals ──────────────────────────────────────
-    print(f"\n  Loading signals...")
-    signals_df = load_signals_from_refinement(refinement_path, mode=mode)
-    n_wins   = int((signals_df["classification"].apply(
+    # ── 1. Load both signal sets ─────────────────────────────
+    print(f"\n  Loading signals (pre-refinement)...")
+    pre_df = load_signals_from_refinement(refinement_path, mode="pre")
+    pre_wins   = int((pre_df["classification"].apply(
         lambda c: str(c).upper() in WIN_CLASSES)).sum())
-    n_losses = len(signals_df) - n_wins
-    print(f"  {len(signals_df)} signals  |  {n_wins} wins  {n_losses} losses  "
-          f"|  baseline win rate: {n_wins/len(signals_df):.3f}")
+    pre_losses = len(pre_df) - pre_wins
+    print(f"  PRE:  {len(pre_df)} signals  |  {pre_wins} wins  {pre_losses} losses  "
+          f"|  baseline WR: {pre_wins/len(pre_df):.3f}")
 
-    if n_wins < 10 or n_losses < 10:
-        raise ValueError(f"Insufficient labeled signals: {n_wins} wins, {n_losses} losses")
+    print(f"\n  Loading signals (post-refinement)...")
+    post_df = load_signals_from_refinement(refinement_path, mode="post")
+    post_wins   = int((post_df["classification"].apply(
+        lambda c: str(c).upper() in WIN_CLASSES)).sum())
+    post_losses = len(post_df) - post_wins
+    print(f"  POST: {len(post_df)} signals  |  {post_wins} wins  {post_losses} losses  "
+          f"|  baseline WR: {post_wins/len(post_df):.3f}")
 
-    # ── 2. Build win rate time series ────────────────────────
-    print(f"\n  Building win rate time series (±{window} trading days)...")
-    wr_df = build_win_rate_series(signals_df, window=window)
-    print(f"  {len(wr_df)} days in series")
-    print(f"  Win rate range: {wr_df['win_rate'].min():.3f} – {wr_df['win_rate'].max():.3f}")
-    print(f"  Weight range:   {wr_df['weight'].min()} – {wr_df['weight'].max()} signals/window")
+    if pre_wins < 10 or pre_losses < 10:
+        raise ValueError(f"Insufficient pre-refinement signals: {pre_wins} wins, {pre_losses} losses")
+
+    # ── 2. Build win rate time series (pre-refinement) ───────
+    print(f"\n  Building win rate time series (±{window} trading days, pre-refinement)...")
+    pre_wr_df = build_win_rate_series(pre_df, window=window)
+    print(f"  {len(pre_wr_df)} days in series")
+    print(f"  Win rate range: {pre_wr_df['win_rate'].min():.3f} – {pre_wr_df['win_rate'].max():.3f}")
     print(f"  Mean weighted win rate: "
-          f"{np.average(wr_df['win_rate'], weights=wr_df['weight']):.3f}")
+          f"{np.average(pre_wr_df['win_rate'], weights=pre_wr_df['weight']):.3f}")
 
     # ── 3. Load market manifest ──────────────────────────────
     manifest = load_market_manifest()
@@ -725,8 +731,8 @@ def run(setup_type, refinement_path, mode="pre", window=DEFAULT_WINDOW, top_n=DE
           f"{manifest['n_expressions']:,} expressions  "
           f"built {manifest.get('built_at','?')[:10]}")
 
-    # ── 4. Compute correlations ──────────────────────────────
-    corr_df = compute_all_correlations(wr_df, manifest)
+    # ── 4. Compute correlations (pre-refinement) ─────────────
+    corr_df = compute_all_correlations(pre_wr_df, manifest)
 
     if corr_df.empty:
         raise ValueError("No correlations computed — check market cache coverage of signal dates")
@@ -740,32 +746,101 @@ def run(setup_type, refinement_path, mode="pre", window=DEFAULT_WINDOW, top_n=DE
               f"{sign}{row['correlation']:>7.4f}  {row['n_valid']:>5}")
 
     # ── 5. Select top N (deduplicated) ───────────────────────
-    top_df = deduplicate_features(corr_df, manifest, wr_df, top_n)
+    top_df = deduplicate_features(corr_df, manifest, pre_wr_df, top_n)
 
-    # ── 6. Quartile win rates ────────────────────────────────
-    print(f"\n  Computing quartile win rates for top {top_n} features...")
-    quartile_stats = compute_quartile_win_rates(wr_df, manifest, top_df)
+    # ── 6. Quartile win rates (pre-refinement) ──────────────
+    print(f"\n  Computing quartile win rates (pre-refinement)...")
+    pre_quartiles = compute_quartile_win_rates(pre_wr_df, manifest, top_df)
 
-    # ── 7. Regime scores per signal ──────────────────────────
-    print(f"\n  Scoring {len(signals_df)} signals...")
-    regime_scores = compute_regime_scores(signals_df, manifest, top_df)
-    n_scored = int(np.sum(~np.isnan(regime_scores)))
-    print(f"  Scored: {n_scored}/{len(signals_df)}")
-    print(f"  Score range: {np.nanmin(regime_scores):.3f} – {np.nanmax(regime_scores):.3f}")
-    print(f"  Score mean:  {np.nanmean(regime_scores):.3f}")
+    # ── 7. Regime scores + deciles (pre-refinement) ──────────
+    print(f"\n  Scoring {len(pre_df)} signals (pre-refinement)...")
+    pre_scores = compute_regime_scores(pre_df, manifest, top_df)
+    pre_n_scored = int(np.sum(~np.isnan(pre_scores)))
+    print(f"  Scored: {pre_n_scored}/{len(pre_df)}")
+    print(f"  Score range: {np.nanmin(pre_scores):.3f} – {np.nanmax(pre_scores):.3f}")
 
-    # ── 8. Win rate by decile ────────────────────────────────
-    wr_by_decile = compute_expected_win_rates(regime_scores, signals_df)
-    if wr_by_decile:
-        print(f"\n  Win rate by regime score decile (D1=worst, D10=best):")
+    pre_deciles = compute_expected_win_rates(pre_scores, pre_df)
+    if pre_deciles:
+        print(f"\n  PRE-REFINEMENT win rate by regime score decile:")
         print(f"  {'Decile':<8} {'Score range':<20} {'Win rate':>10}  {'N':>5}")
-        for label, stats in wr_by_decile.items():
+        for label, stats in pre_deciles.items():
             wr_str = f"{stats['win_rate']:.3f}" if stats["win_rate"] is not None else "  N/A"
             print(f"  {label:<8} "
                   f"{stats['score_min']:.3f}–{stats['score_max']:.3f}   "
                   f"{wr_str:>10}  {stats['n']:>5}")
 
-    # ── 9. Build result ──────────────────────────────────────
+    # ── 8. Post-refinement pass (same features) ──────────────
+    print(f"\n  {'='*60}")
+    print(f"  POST-REFINEMENT COMPARISON")
+    print(f"  {'='*60}")
+
+    print(f"\n  Building win rate time series (post-refinement)...")
+    post_wr_df = build_win_rate_series(post_df, window=window)
+    print(f"  {len(post_wr_df)} days in series")
+    print(f"  Mean weighted win rate: "
+          f"{np.average(post_wr_df['win_rate'], weights=post_wr_df['weight']):.3f}")
+
+    print(f"\n  Computing quartile win rates (post-refinement, same {len(top_df)} features)...")
+    post_quartiles = compute_quartile_win_rates(post_wr_df, manifest, top_df)
+
+    print(f"\n  Scoring {len(post_df)} signals (post-refinement)...")
+    post_scores = compute_regime_scores(post_df, manifest, top_df)
+    post_n_scored = int(np.sum(~np.isnan(post_scores)))
+    print(f"  Scored: {post_n_scored}/{len(post_df)}")
+
+    post_deciles = compute_expected_win_rates(post_scores, post_df)
+    if post_deciles:
+        print(f"\n  POST-REFINEMENT win rate by regime score decile:")
+        print(f"  {'Decile':<8} {'Score range':<20} {'Win rate':>10}  {'N':>5}")
+        for label, stats in post_deciles.items():
+            wr_str = f"{stats['win_rate']:.3f}" if stats["win_rate"] is not None else "  N/A"
+            print(f"  {label:<8} "
+                  f"{stats['score_min']:.3f}–{stats['score_max']:.3f}   "
+                  f"{wr_str:>10}  {stats['n']:>5}")
+
+    # ── 9. Redundancy scores ─────────────────────────────────
+    print(f"\n  {'='*60}")
+    print(f"  REDUNDANCY ANALYSIS")
+    print(f"  {'='*60}")
+
+    redundancy = {}
+    for fname in pre_quartiles:
+        pre_q = pre_quartiles[fname]
+        post_q = post_quartiles.get(fname)
+
+        pre_spread = None
+        post_spread = None
+
+        if pre_q and pre_q.get("wr_q4") is not None and pre_q.get("wr_q1") is not None:
+            pre_spread = pre_q["wr_q4"] - pre_q["wr_q1"]
+
+        if post_q and post_q.get("wr_q4") is not None and post_q.get("wr_q1") is not None:
+            post_spread = post_q["wr_q4"] - post_q["wr_q1"]
+
+        ratio = None
+        if pre_spread and abs(pre_spread) > 0.01 and post_spread is not None:
+            ratio = post_spread / pre_spread
+
+        redundancy[fname] = {
+            "pre_spread":  round(pre_spread, 4) if pre_spread is not None else None,
+            "post_spread": round(post_spread, 4) if post_spread is not None else None,
+            "ratio":       round(ratio, 3) if ratio is not None else None,
+        }
+
+    # Print sorted by ratio descending (strongest regime signals first)
+    scored_features = [(f, r) for f, r in redundancy.items() if r["ratio"] is not None]
+    scored_features.sort(key=lambda x: x[1]["ratio"], reverse=True)
+
+    print(f"\n  {'Feature':<55} {'Pre Q4-Q1':>10} {'Post Q4-Q1':>11} {'Ratio':>7}")
+    print(f"  {'-'*87}")
+    for fname, r in scored_features[:30]:
+        print(f"  {fname:<55} {r['pre_spread']:>+10.3f} {r['post_spread']:>+11.3f} {r['ratio']:>7.2f}")
+
+    n_genuine = sum(1 for _, r in scored_features if r["ratio"] and r["ratio"] >= 0.5)
+    n_redundant = sum(1 for _, r in scored_features if r["ratio"] is not None and r["ratio"] < 0.5)
+    print(f"\n  Genuine (ratio >= 0.5): {n_genuine}  |  Redundant (ratio < 0.5): {n_redundant}")
+
+    # ── 10. Build result ─────────────────────────────────────
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     feature_weights = {}
@@ -777,18 +852,19 @@ def run(setup_type, refinement_path, mode="pre", window=DEFAULT_WINDOW, top_n=DE
             "correlation":     row["correlation"],
             "abs_correlation": row["abs_correlation"],
             "n_valid":         int(row["n_valid"]),
-            "quartiles":       quartile_stats.get(fname),
+            "pre_quartiles":   pre_quartiles.get(fname),
+            "post_quartiles":  post_quartiles.get(fname),
+            "redundancy":      redundancy.get(fname),
         }
 
-    # Per-signal scores
+    # Per-signal scores (pre-refinement — the full set)
     signal_scores = []
-    for i, (_, sig_row) in enumerate(signals_df.iterrows()):
-        score = float(regime_scores[i]) if not np.isnan(regime_scores[i]) else None
+    for i, (_, sig_row) in enumerate(pre_df.iterrows()):
+        score = float(pre_scores[i]) if not np.isnan(pre_scores[i]) else None
 
-        # Map score to expected win rate
         expected_wr = None
-        if score is not None and wr_by_decile:
-            for stats in wr_by_decile.values():
+        if score is not None and pre_deciles:
+            for stats in pre_deciles.values():
                 if stats["score_min"] <= score <= stats["score_max"]:
                     expected_wr = stats["win_rate"]
                     break
@@ -802,36 +878,48 @@ def run(setup_type, refinement_path, mode="pre", window=DEFAULT_WINDOW, top_n=DE
         })
 
     result_data = {
-        "setup_type":         setup_type,
-        "mode":               mode,
-        "refinement_source":  os.path.basename(refinement_path),
-        "timestamp":          now,
-        "n_signals":          int(len(signals_df)),
-        "n_wins":             n_wins,
-        "n_losses":           n_losses,
-        "baseline_win_rate":  float(n_wins / len(signals_df)),
-        "n_features_tested":  int(len(corr_df)),
+        "setup_type":          setup_type,
+        "refinement_source":   os.path.basename(refinement_path),
+        "timestamp":           now,
+        "window":              window,
+        "top_n":               top_n,
+        "pre": {
+            "n_signals":       int(len(pre_df)),
+            "n_wins":          pre_wins,
+            "n_losses":        pre_losses,
+            "baseline_win_rate": float(pre_wins / len(pre_df)),
+            "win_rate_by_decile": pre_deciles,
+        },
+        "post": {
+            "n_signals":       int(len(post_df)),
+            "n_wins":          post_wins,
+            "n_losses":        post_losses,
+            "baseline_win_rate": float(post_wins / len(post_df)),
+            "win_rate_by_decile": post_deciles,
+        },
+        "n_features_tested":   int(len(corr_df)),
         "n_features_selected": int(len(top_df)),
-        "window":             window,
-        "top_n":              top_n,
-        "feature_weights":    feature_weights,
-        "top_features":       top_df["feature_name"].head(5).tolist(),
-        "win_rate_by_decile": wr_by_decile,
-        "signal_scores":      signal_scores,
+        "feature_weights":     feature_weights,
+        "top_features":        top_df["feature_name"].head(5).tolist(),
+        "redundancy_summary": {
+            "n_genuine":   n_genuine,
+            "n_redundant": n_redundant,
+        },
+        "signal_scores":       signal_scores,
     }
 
     if dry_run:
         print(f"\n  DRY RUN — not saving.")
-        d1 = wr_by_decile.get("d1", {}).get("win_rate")
-        d10 = wr_by_decile.get("d10", {}).get("win_rate")
+        d1 = pre_deciles.get("d1", {}).get("win_rate")
+        d10 = pre_deciles.get("d10", {}).get("win_rate")
         if d1 is not None and d10 is not None:
-            print(f"  Win rate lift D10 vs D1: {d10:.3f} vs {d1:.3f} "
+            print(f"  Pre-refinement lift D10 vs D1: {d10:.3f} vs {d1:.3f} "
                   f"(+{(d10-d1)*100:.1f}pp)")
         return result_data
 
-    # ── 10. Save locally + mirror to Railway ─────────────────
+    # ── 11. Save locally + mirror to Railway ─────────────────
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"regime_{setup_type}_{mode}_{ts}.json"
+    filename = f"regime_{setup_type}_{ts}.json"
     out_path = os.path.join(CACHE_DIR, filename)
     os.makedirs(CACHE_DIR, exist_ok=True)
     with open(out_path, "w") as f:
@@ -846,13 +934,20 @@ def run(setup_type, refinement_path, mode="pre", window=DEFAULT_WINDOW, top_n=DE
         print(f"  WARNING: Mirror failed: {e}")
 
     print(f"\n  ✓ Market grinder complete.")
-    if wr_by_decile:
-        d1  = wr_by_decile.get("d1",  {}).get("win_rate")
-        d10 = wr_by_decile.get("d10", {}).get("win_rate")
+    if pre_deciles:
+        d1  = pre_deciles.get("d1",  {}).get("win_rate")
+        d10 = pre_deciles.get("d10", {}).get("win_rate")
         if d1 is not None and d10 is not None:
-            print(f"  Win rate: D1 (worst regime) {d1:.3f}  →  "
-                  f"D10 (best regime) {d10:.3f}  "
-                  f"(+{(d10-d1)*100:.1f}pp lift)")
+            print(f"  Pre-refinement:  D1 {d1:.3f} → D10 {d10:.3f} "
+                  f"(+{(d10-d1)*100:.1f}pp)")
+    if post_deciles:
+        d1  = post_deciles.get("d1",  {}).get("win_rate")
+        d10 = post_deciles.get("d10", {}).get("win_rate")
+        if d1 is not None and d10 is not None:
+            print(f"  Post-refinement: D1 {d1:.3f} → D10 {d10:.3f} "
+                  f"(+{(d10-d1)*100:.1f}pp)")
+    print(f"  Genuine features: {n_genuine}/{len(scored_features)}  "
+          f"Redundant: {n_redundant}/{len(scored_features)}")
     print(f"  Top feature: {top_df.iloc[0]['feature_name']}")
 
     return result_data
@@ -862,8 +957,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Market Grinder — win rate time series correlation")
     parser.add_argument("--setup",       default="dtss", help="Setup type (finds latest refinement file)")
     parser.add_argument("--refinement",  help="Path to specific refinement JSON file")
-    parser.add_argument("--mode",        default="pre", choices=["pre", "post"],
-                        help="'pre' = all clusters, 'post' = post-refinement survivors (default: pre)")
     parser.add_argument("--window",      type=int, default=DEFAULT_WINDOW,
                         help=f"Rolling window ±N trading days (default: {DEFAULT_WINDOW})")
     parser.add_argument("--top-n",       type=int, default=DEFAULT_TOP_N,
@@ -876,7 +969,6 @@ if __name__ == "__main__":
 
     if args.refinement:
         refinement_path = args.refinement
-        # Infer setup type from filename if not explicitly set
         basename = os.path.basename(refinement_path)
         if basename.startswith("refinement_") and args.setup == "dtss":
             parts = basename.split("_")
@@ -887,4 +979,4 @@ if __name__ == "__main__":
         print(f"  Latest refinement: {os.path.basename(refinement_path)}")
 
     run(setup_type, refinement_path,
-        mode=args.mode, window=args.window, top_n=args.top_n, dry_run=args.dry_run)
+        window=args.window, top_n=args.top_n, dry_run=args.dry_run)
