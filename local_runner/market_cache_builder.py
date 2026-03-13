@@ -211,27 +211,35 @@ def all_instruments():
 
 def _fetch_yfinance(symbol, period="10y"):
     import yfinance as yf
-    df = yf.download(symbol, period=period, progress=False, auto_adjust=True)
-    if df is None or len(df) == 0:
-        return None
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [col[0].lower() for col in df.columns]
-    else:
-        df.columns = [c.lower() for c in df.columns]
-    df = df.reset_index()
-    df = df.rename(columns={"Date": "date"})
-    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
-    for col in ["open", "high", "low", "close"]:
-        if col not in df.columns:
+
+    def _try_download(p):
+        df = yf.download(symbol, period=p, progress=False, auto_adjust=True)
+        if df is None or len(df) == 0:
             return None
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    if "volume" not in df.columns:
-        df["volume"] = 0.0
-    df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
-    df = df[["date", "open", "high", "low", "close", "volume"]].dropna(subset=["close"])
-    cutoff = pd.Timestamp.now() - pd.DateOffset(years=8)
-    df = df[(df["close"] > 0) & (df["date"] >= cutoff)].sort_values("date").reset_index(drop=True)
-    return df if len(df) >= 50 else None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [col[0].lower() for col in df.columns]
+        else:
+            df.columns = [c.lower() for c in df.columns]
+        df = df.reset_index()
+        df = df.rename(columns={"Date": "date"})
+        df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+        for col in ["open", "high", "low", "close"]:
+            if col not in df.columns:
+                return None
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "volume" not in df.columns:
+            df["volume"] = 0.0
+        df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
+        df = df[["date", "open", "high", "low", "close", "volume"]].dropna(subset=["close"])
+        cutoff = pd.Timestamp.now() - pd.DateOffset(years=8)
+        df = df[(df["close"] > 0) & (df["date"] >= cutoff)].sort_values("date").reset_index(drop=True)
+        return df if len(df) >= 50 else None
+
+    # Try 10y first for maximum history, fall back to 5y
+    result = _try_download("10y")
+    if result is not None:
+        return result
+    return _try_download("5y")
 
 
 def _fetch_stooq(symbol):
