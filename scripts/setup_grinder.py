@@ -35,6 +35,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 warnings.filterwarnings("ignore")
 
@@ -123,7 +124,7 @@ def load_5yr_ohlcv():
 
 
 # ══════════════════════════════════════════════════════════════
-# RELATIVE STRENGTH FORMULA
+# RELATIVE STRENGTH FORMULA (vectorized)
 # ══════════════════════════════════════════════════════════════
 #
 # TC2000 PCF formula (for one ticker):
@@ -139,63 +140,61 @@ def load_5yr_ohlcv():
 # Positive = stock has stronger vol-adjusted momentum than SPY.
 
 
-def _compute_atr(highs, lows, closes, period):
-    """Compute Average True Range (SMA-smoothed, matching TC2000).
+def compute_rs_series_vectorized(opens, highs, lows, closes):
+    """Compute the RS formula value for every bar using numpy vectorization.
 
-    Returns array of length len(closes), NaN where insufficient data.
+    Returns np.array of length n, NaN where insufficient data.
     """
     n = len(closes)
+    rs = np.full(n, np.nan)
+
+    if n < 55:  # need at least 50 bars + 5 bar rolling window
+        return rs
+
+    # Part 1: intraday % move per bar = ((C/O) - 1) * 100
+    # Guard against zero/nan opens
+    with np.errstate(divide='ignore', invalid='ignore'):
+        intraday_pct = np.where(opens > 0, ((closes / opens) - 1.0) * 100.0, np.nan)
+
+    # 5-bar rolling average of intraday_pct
+    # Use cumsum trick for fast rolling mean
+    cumsum = np.nancumsum(intraday_pct)
+    avg_pct = np.full(n, np.nan)
+    for i in range(4, n):
+        if i == 4:
+            avg_pct[i] = cumsum[i] / 5.0
+        else:
+            avg_pct[i] = (cumsum[i] - cumsum[i - 5]) / 5.0
+
+    # Part 2: ATR50 (SMA of true range, matching TC2000)
     tr = np.full(n, np.nan)
-    for i in range(1, n):
-        hl = highs[i] - lows[i]
-        hc = abs(highs[i] - closes[i - 1])
-        lc = abs(lows[i] - closes[i - 1])
-        tr[i] = max(hl, hc, lc)
-    # SMA of true range
-    atr = np.full(n, np.nan)
-    for i in range(period, n):
-        atr[i] = np.nanmean(tr[i - period + 1:i + 1])
-    return atr
+    tr[1:] = np.maximum(
+        highs[1:] - lows[1:],
+        np.maximum(
+            np.abs(highs[1:] - closes[:-1]),
+            np.abs(lows[1:] - closes[:-1])
+        )
+    )
+    # Rolling SMA of true range over 50 bars
+    tr_cumsum = np.nancumsum(tr)
+    atr50 = np.full(n, np.nan)
+    for i in range(50, n):
+        atr50[i] = (tr_cumsum[i] - tr_cumsum[i - 50]) / 50.0
 
+    # C50 = close from 50 bars ago
+    c50 = np.full(n, np.nan)
+    c50[50:] = closes[:-50]
 
-def _compute_rs_value(opens, highs, lows, closes, bar_idx):
-    """Compute the RS formula value for one ticker at one bar.
+    # Price-vol scaling: ((C + C50) / 2) / ATR50
+    with np.errstate(divide='ignore', invalid='ignore'):
+        avg_price = (closes + c50) / 2.0
+        scaling = np.where(atr50 > 0, avg_price / atr50, np.nan)
 
-    Requires at least 51 bars of history before bar_idx (for C50 and ATR50).
-    Returns float or None if insufficient data.
-    """
-    # Need 5 bars for the rolling avg (bar_idx and 4 prior)
-    if bar_idx < 4:
-        return None
-    # Need 50 bars back for C50 and ATR50
-    if bar_idx < 50:
-        return None
+    # Full formula: avg_pct * scaling
+    # Valid where both parts are valid (bar_idx >= 50 covers both requirements)
+    rs[50:] = avg_pct[50:] * scaling[50:]
 
-    # Part 1: 5-day average intraday % move
-    intraday_pcts = []
-    for offset in range(5):  # 0=current, 1=1 bar ago, ... 4=4 bars ago
-        idx = bar_idx - offset
-        o = opens[idx]
-        c = closes[idx]
-        if o <= 0 or np.isnan(o) or np.isnan(c):
-            return None
-        intraday_pcts.append(((c / o) - 1.0) * 100.0)
-    avg_pct = sum(intraday_pcts) / 5.0
-
-    # Part 2: price-to-volatility scaling
-    c_now = closes[bar_idx]
-    c_50 = closes[bar_idx - 50]
-    if np.isnan(c_now) or np.isnan(c_50):
-        return None
-    avg_price = (c_now + c_50) / 2.0
-
-    # ATR50 at bar_idx
-    atr_arr = _compute_atr(highs, lows, closes, 50)
-    atr50 = atr_arr[bar_idx]
-    if np.isnan(atr50) or atr50 <= 0:
-        return None
-
-    return float(avg_pct * (avg_price / atr50))
+    return rs
 
 
 def _resample_to_weekly(df):
@@ -219,13 +218,12 @@ def _resample_to_weekly(df):
     return weekly
 
 
-def build_rs_series(df, weekly_df=None):
-    """Pre-compute RS formula values for every bar of a ticker.
+def build_rs_lookup(df, weekly_df=None):
+    """Pre-compute RS formula values for every bar of a ticker (vectorized).
 
     Returns:
         d1_values: dict of date_str -> RS value (daily)
-        w1_values: dict of date_str -> RS value (weekly, keyed by daily date
-                   = last trading day in that week)
+        w1_values: dict of date_str -> RS value (weekly, keyed by daily date)
     """
     opens = df["open"].values.astype(np.float64)
     highs = df["high"].values.astype(np.float64)
@@ -233,14 +231,14 @@ def build_rs_series(df, weekly_df=None):
     closes = df["close"].values.astype(np.float64)
     dates = [str(d)[:10] for d in df["date"].values]
 
-    # Daily RS values
+    # Daily RS: one vectorized pass
+    d1_arr = compute_rs_series_vectorized(opens, highs, lows, closes)
     d1_values = {}
-    for i in range(50, len(df)):
-        val = _compute_rs_value(opens, highs, lows, closes, i)
-        if val is not None:
-            d1_values[dates[i]] = val
+    for i in range(len(dates)):
+        if not np.isnan(d1_arr[i]):
+            d1_values[dates[i]] = float(d1_arr[i])
 
-    # Weekly RS values
+    # Weekly RS
     w1_values = {}
     if weekly_df is not None and len(weekly_df) >= 55:
         w_opens = weekly_df["open"].values.astype(np.float64)
@@ -249,29 +247,120 @@ def build_rs_series(df, weekly_df=None):
         w_closes = weekly_df["close"].values.astype(np.float64)
         w_dates = [str(d)[:10] for d in weekly_df["date"].values]
 
+        w1_arr = compute_rs_series_vectorized(w_opens, w_highs, w_lows, w_closes)
+
         # Build weekly date -> RS value
         weekly_rs = {}
-        for i in range(50, len(weekly_df)):
-            val = _compute_rs_value(w_opens, w_highs, w_lows, w_closes, i)
-            if val is not None:
-                weekly_rs[w_dates[i]] = val
+        for i in range(len(w_dates)):
+            if not np.isnan(w1_arr[i]):
+                weekly_rs[w_dates[i]] = float(w1_arr[i])
 
-        # Map weekly values to daily dates: each daily date gets the RS value
-        # of the most recent weekly bar that ended on or before that date
+        # Map weekly values to daily dates using searchsorted
         if weekly_rs:
             sorted_w_dates = sorted(weekly_rs.keys())
+            sorted_w_vals = [weekly_rs[d] for d in sorted_w_dates]
             for daily_date in dates:
-                # Find the most recent weekly date <= daily_date
-                best_w = None
-                for wd in sorted_w_dates:
-                    if wd <= daily_date:
-                        best_w = wd
-                    else:
-                        break
-                if best_w is not None:
-                    w1_values[daily_date] = weekly_rs[best_w]
+                # Binary search: find rightmost weekly date <= daily_date
+                idx = _bisect_right_str(sorted_w_dates, daily_date) - 1
+                if idx >= 0:
+                    w1_values[daily_date] = sorted_w_vals[idx]
 
     return d1_values, w1_values
+
+
+def _bisect_right_str(sorted_list, target):
+    """Binary search for rightmost insertion point in sorted string list."""
+    lo, hi = 0, len(sorted_list)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if sorted_list[mid] <= target:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
+# ══════════════════════════════════════════════════════════════
+# PARALLEL RS PRE-COMPUTATION
+# ══════════════════════════════════════════════════════════════
+
+def _compute_ticker_rs(args):
+    """Worker: compute RS lookup for one ticker. Runs in subprocess."""
+    ticker, df_dict = args
+    try:
+        df = pd.DataFrame(df_dict)
+        df["date"] = pd.to_datetime(df["date"])
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        if len(df) < 55:
+            return (ticker, {}, {})
+
+        weekly_df = None
+        if len(df) >= 10:
+            tmp = df.copy().set_index("date")
+            weekly = tmp.resample("W").agg({
+                "open": "first", "high": "max",
+                "low": "min", "close": "last", "volume": "sum",
+            }).dropna(subset=["close"])
+            if len(weekly) >= 55:
+                weekly_df = weekly.reset_index()
+                weekly_df.columns = ["date", "open", "high", "low", "close", "volume"]
+
+        d1, w1 = build_rs_lookup(df, weekly_df)
+        return (ticker, d1, w1)
+    except Exception:
+        return (ticker, {}, {})
+
+
+def precompute_all_rs(ohlcv_cache, tickers_needed):
+    """Compute RS lookups for all needed tickers + SPY in parallel.
+
+    Returns:
+        dict: ticker -> (d1_rs_dict, w1_rs_dict)
+    """
+    import time
+
+    # Always include SPY
+    all_tickers = set(tickers_needed) | {"SPY"}
+
+    # Build work items (convert DataFrames to dicts for serialization)
+    work_items = []
+    for ticker in all_tickers:
+        df = ohlcv_cache.get(ticker)
+        if df is None or len(df) < 55:
+            continue
+        df_dict = {
+            "date": df["date"].values,
+            "open": df["open"].values,
+            "high": df["high"].values,
+            "low": df["low"].values,
+            "close": df["close"].values,
+            "volume": df["volume"].values,
+        }
+        work_items.append((ticker, df_dict))
+
+    n_workers = min(os.cpu_count() or 4, len(work_items))
+    print(f"  Computing RS for {len(work_items)} tickers ({n_workers} workers)...")
+
+    t0 = time.time()
+    rs_cache = {}
+    completed = 0
+
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(_compute_ticker_rs, item): item[0]
+                   for item in work_items}
+        for future in as_completed(futures):
+            ticker, d1, w1 = future.result()
+            rs_cache[ticker] = (d1, w1)
+            completed += 1
+            if completed % 50 == 0 or completed == len(work_items):
+                elapsed = time.time() - t0
+                print(f"    {completed}/{len(work_items)} tickers [{elapsed:.1f}s]")
+
+    elapsed = time.time() - t0
+    print(f"  RS pre-computation done: {len(rs_cache)} tickers in {elapsed:.1f}s")
+    return rs_cache
 
 
 # ══════════════════════════════════════════════════════════════
@@ -308,21 +397,19 @@ def compute_days_since_ipo(df, bar_idx):
     return bar_idx  # first bar in cache = index 0, so bar_idx IS the count
 
 
-def compute_features_for_signals(signals, ohlcv_cache, spy_d1_rs, spy_w1_rs):
+def compute_features_for_signals(signals, ohlcv_cache, rs_cache):
     """Compute setup-specific features for every signal.
 
     Augments each signal dict in place with new feature fields.
     Returns a stats dict with coverage and summary info.
     """
+    spy_d1_rs, spy_w1_rs = rs_cache.get("SPY", ({}, {}))
+
     # Track coverage
     n_total = len(signals)
     n_ohlcv_found = 0
     n_bar_found = 0
     feature_counts = {f.replace("feat_", ""): 0 for f in ALL_FEATURES}
-
-    # Cache: ticker -> (d1_rs_dict, w1_rs_dict)
-    # Computed lazily per ticker
-    ticker_rs_cache = {}
 
     for sig in signals:
         ticker = sig.get("ticker", "")
@@ -367,23 +454,15 @@ def compute_features_for_signals(signals, ohlcv_cache, spy_d1_rs, spy_w1_rs):
         sig["feat_days_since_ipo"] = compute_days_since_ipo(df, bar_idx)
         feature_counts["days_since_ipo"] += 1
 
-        # 5. RS vs SPY (D1 and W1)
-        # Lazily compute RS series for this ticker
-        if ticker not in ticker_rs_cache:
-            weekly_df = _resample_to_weekly(df)
-            d1_rs, w1_rs = build_rs_series(df, weekly_df)
-            ticker_rs_cache[ticker] = (d1_rs, w1_rs)
-        else:
-            d1_rs, w1_rs = ticker_rs_cache[ticker]
+        # 5. RS vs SPY (D1 and W1) from pre-computed cache
+        d1_rs, w1_rs = rs_cache.get(ticker, ({}, {}))
 
-        # D1: stock RS - SPY RS
         stock_d1 = d1_rs.get(signal_date)
         spy_d1 = spy_d1_rs.get(signal_date)
         if stock_d1 is not None and spy_d1 is not None:
             sig["feat_rs_d1"] = stock_d1 - spy_d1
             feature_counts["rs_d1"] += 1
 
-        # W1: stock RS - SPY RS
         stock_w1 = w1_rs.get(signal_date)
         spy_w1 = spy_w1_rs.get(signal_date)
         if stock_w1 is not None and spy_w1 is not None:
@@ -445,21 +524,25 @@ def run(setup_type, refinement_path, dry_run=False):
     ohlcv_cache = load_5yr_ohlcv()
     print(f"  {len(ohlcv_cache)} tickers loaded")
 
-    # Extract SPY
     spy_df = ohlcv_cache.get("SPY")
     if spy_df is None:
         raise ValueError("SPY not found in OHLCV cache — needed for RS computation")
     print(f"  SPY: {len(spy_df)} bars ({str(spy_df['date'].iloc[0])[:10]} to {str(spy_df['date'].iloc[-1])[:10]})")
 
-    # ── 3. Pre-compute SPY RS values (once) ──────────────────
-    print(f"\n  Pre-computing SPY RS values (D1 + W1)...")
-    spy_weekly = _resample_to_weekly(spy_df)
-    spy_d1_rs, spy_w1_rs = build_rs_series(spy_df, spy_weekly)
-    print(f"  SPY D1: {len(spy_d1_rs)} dates  |  SPY W1: {len(spy_w1_rs)} dates")
+    # ── 3. Pre-compute RS for all tickers that appear in signals ──
+    all_tickers = set()
+    for s in pre_signals:
+        all_tickers.add(s.get("ticker", ""))
+    for s in post_signals:
+        all_tickers.add(s.get("ticker", ""))
+    all_tickers.discard("")
+
+    print(f"\n  {len(all_tickers)} unique tickers in signal set")
+    rs_cache = precompute_all_rs(ohlcv_cache, all_tickers)
 
     # ── 4. Compute features (pre-refinement) ─────────────────
     print(f"\n  Computing features (pre-refinement, {len(pre_signals)} signals)...")
-    pre_stats = compute_features_for_signals(pre_signals, ohlcv_cache, spy_d1_rs, spy_w1_rs)
+    pre_stats = compute_features_for_signals(pre_signals, ohlcv_cache, rs_cache)
 
     print(f"\n  PRE-REFINEMENT coverage:")
     print(f"    OHLCV found:  {pre_stats['n_ohlcv_found']}/{pre_stats['n_total']}")
@@ -475,7 +558,7 @@ def run(setup_type, refinement_path, dry_run=False):
 
     # ── 5. Compute features (post-refinement) ────────────────
     print(f"\n  Computing features (post-refinement, {len(post_signals)} signals)...")
-    post_stats = compute_features_for_signals(post_signals, ohlcv_cache, spy_d1_rs, spy_w1_rs)
+    post_stats = compute_features_for_signals(post_signals, ohlcv_cache, rs_cache)
 
     print(f"\n  POST-REFINEMENT coverage:")
     print(f"    OHLCV found:  {post_stats['n_ohlcv_found']}/{post_stats['n_total']}")
