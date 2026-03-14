@@ -49,9 +49,31 @@ Phase 5 — Live Watchlist
 
 The vetting system is where setup examples are defined and collected. You start with a setup description and a baseline set of example trades. The more you vet, the better the entire system gets.
 
-The vetting loop runs through Phase 2: signal grind → exit grind → rank output by biggest signal-to-exit ADR moves → vet top charts → add examples → repeat. When the good setups become buried in the output, you run the refinement grind and vet the winning pile rank-ordered the same way. Keep going until you've squeezed the sample set dry.
+Vetting is a standalone workbench outside the pipeline loop. You open it when you want to vet, do your work, and the pipeline just sees a bigger example library next time you trigger a regrind.
 
-The goal: enter Phase 3 with as many examples as you can get.
+**Two vetting modes:**
+
+**Signal Grind vet** -- after signal grind, before refinement. Raw signals sorted by move_adr only.
+
+**Post-Refinement vet** -- after refinement grind produces the winner pile. The entry candle scorer produces a combined_score per signal (entry candle similarity x move_adr, both as percentile ranks). Signals with both a big move and a tradable entry candle float to the top.
+
+**Entry Candle Scorer** (scripts/entry_candle_scorer.py):
+- Builds centroid from example entry candle expression vectors (16,051 dims)
+- Computes per-expression discrimination weights (entry candle stdev vs forward window bar stdev, capped at 95th percentile)
+- For each winner cluster: scans leftmost bar through rightmost bar + forward_window
+- Scores each bar via weighted cosine similarity to centroid, keeps best match
+- Combined score = percentile_rank(entry_candle_score) x percentile_rank(move_adr)
+- Output: entry_scores_{setup}.json, mirrored to Railway
+- Self-improving: more examples = tighter centroid = better scoring next session
+
+**Vetting flow:**
+1. Click Update Scores (entry candle scorer runs, ~10 seconds)
+2. UI shows winners sorted by combined_score
+3. Vet top-down: 1=YES, 2=NO, 3=SKIP
+4. YES picks go to AI second-pass (pending_examples)
+5. AI reviews against example library, GREEN_LIGHT or FLAG
+6. One-click approve adds to examples table
+7. When enough examples banked, trigger regrind
 
 ### CRITICAL: Scan Timing — The #1 Rule
 
@@ -201,17 +223,19 @@ The watchlist is the end product. Every cycle of the loop makes it more accurate
 
 ---
 
-## Data Flow — Input/Output Per Step
+## Data Flow -- Input/Output Per Step
 
 | Step | Script | Input | Output |
 |------|--------|-------|--------|
-| Signal Grind | `pyramid_grinder.py` | Examples (Railway API) + expr cache + 5yr OHLCV | `pyramid_{setup}_*.json` |
-| Exit Grind | `signal_exit_grinder.py` | Examples + expr cache | Exit condition in local cache |
-| Refinement Grind | `pyramid_grinder.py --blackout` | Pyramid result + exit cond + expr cache + 5yr OHLCV | `raw_signal_clusters_{setup}.json` + `refinement_{setup}_*.json` |
-| EV Grinder | `ev_grinder.py` (not yet built) | Refinement result + market cache + 5yr OHLCV + external data | `ev_{setup}_*.json` |
-| Profit Grind | `profit_grinder.py` (needs rewire) | EV-scored signals + price data | Exit strategy + equity curve |
+| Signal Grind | pyramid_grinder.py | Examples (Railway API) + expr cache + 5yr OHLCV | pyramid_{setup}_*.json |
+| Exit Grind | signal_exit_grinder.py | Examples + expr cache | Exit condition in local cache |
+| Refinement Grind | pyramid_grinder.py --blackout | Pyramid result + exit cond + expr cache + 5yr OHLCV | raw_signal_clusters_{setup}.json + refinement_{setup}_*.json |
+| Entry Candle Scorer | entry_candle_scorer.py | Examples (Railway API) + refinement output + raw_signal_clusters + expr cache | entry_scores_{setup}.json |
+| EV Grinder | ev_grinder.py (not yet built) | Refinement result + market cache + 5yr OHLCV + external data | ev_{setup}_*.json |
+| Profit Grind | profit_grinder.py (needs rewire) | EV-scored signals + price data | Exit strategy + equity curve |
 
-All grinder outputs are also mirrored to Railway via `file_mirror.py` and uploaded via `grind_uploader.py`.
+All grinder outputs are also mirrored to Railway via file_mirror.py and uploaded via grind_uploader.py.
+The entry candle scorer is not a pipeline step -- it is a standalone vetting utility that mirrors its output to Railway for the vetting UI.
 
 ---
 

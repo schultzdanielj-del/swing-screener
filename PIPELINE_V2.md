@@ -210,70 +210,66 @@ Beam search engine from pyramid_grinder.py (to be upgraded to cluster-aware).
 
 ## Layer 3: Vet
 
-**What it solves:** Improve label accuracy and grow the example library through a
-two-stage human + AI gate. Neither stage alone is sufficient — human identifies
-candidates, AI checks them against the example library, human makes the final call.
+**What it solves:** Improve label accuracy and grow the example library. The vetting
+system is a standalone workbench outside the pipeline -- you use it when you want,
+and the pipeline just sees a bigger example library next regrind.
+
+**Two vetting modes:**
+
+Signal Grind vet -- after signal grind, before refinement. Raw signals sorted by
+move_adr (biggest movers first). No entry candle scoring available yet.
+
+Post-Refinement vet -- after refinement grind produces the winner pile. The entry
+candle scorer runs and produces a combined_score per signal, putting signals with
+both a big ADR move AND a tradable entry candle at the top of the list.
+
+**Entry Candle Scorer** (scripts/entry_candle_scorer.py):
+
+A standalone vetting utility, not a pipeline step. Run on demand.
+
+How it works:
+1. Builds a centroid from all example entry candle expression vectors (16,051 dims)
+2. Computes per-expression discrimination weights: for each expression, measures how
+   tightly the entry candles cluster (entry_stdev) vs how spread out the winner pile
+   forward window bars are (fw_stdev). Weight = fw_stdev / entry_stdev. Capped at
+   95th percentile to prevent extreme outliers from dominating.
+3. For each winner cluster: identifies scan range (leftmost bar through rightmost
+   bar + forward_window -- same bars the refinement grinder used for classification).
+4. Scores every bar in the scan range via weighted cosine similarity to the centroid.
+   Keeps the single best-matching bar per cluster.
+5. Computes combined_score = percentile_rank(entry_candle_score) x percentile_rank(move_adr).
+6. Outputs entry_scores_{setup}.json, mirrored to Railway for the vetting UI.
+
+Self-improving: more examples = tighter centroid = better entry candle scoring =
+faster vetting = more examples per session. The flywheel accelerates.
+
+DTSS validation (65 examples, 365 winners): examples average rank 127/365 with
++0.143 combined score separation vs non-examples. 46/65 examples in top half,
+28/65 in top quarter.
+
+**Vetting flow:**
+1. Click "Update Scores" in vetting UI (runs entry candle scorer, ~10 seconds)
+2. UI shows all winners sorted by combined_score
+3. Vet top-down: 1=YES, 2=NO, 3=SKIP (keyboard-driven)
+4. YES picks go to AI second-pass (pending_examples table, status=pending)
+5. AI receives chart + full example library, checks pattern match
+6. AI outputs GREEN_LIGHT or FLAG with reasoning
+7. You review AI verdict, one-click approve -> added to examples table
+8. "Regrind needed" indicator shows how many examples added since last grind
 
 **When to vet:**
-- When the health check (Layer 6) says label accuracy is limiting EV model quality
-- When a new grind cycle produces new signals that haven't been seen before
-- NOT as a default "always do this next" step — driven by metrics
-
-**What gets surfaced for vetting:**
-- Unvetted signals that passed the exit filter (candidate winners not yet confirmed)
-- Ordered by move_adr descending — best candidates first
-- Existing examples are excluded from the vetting pile
-
-**Stage 1 — Human review:**
-- One key per decision: 1=YES, 2=NO, 3=SKIP
-- YES → goes to AI review queue (not yet in example library)
-- NO → immediately labeled LOSS
-- SKIP → stays in unvetted pile
-
-**Stage 2 — AI review queue:**
-- AI receives the chart (same format as the existing vetting UI) + the full example
-  library as context
-- AI checks: does this chart genuinely match the shape and setup pattern of the
-  existing examples? Is it the same setup or something superficially similar but wrong?
-- AI outputs: GREEN LIGHT or FLAG with specific reasoning (e.g. "double top not formed",
-  "no volume confirmation", "trend not extended enough")
-- You review the AI verdict and make the final call: approve or reject
-- Approved → added to example library + labeled WIN
-- Rejected → labeled LOSS
-
-**Why two stages:**
-Human vetting at speed catches obvious candidates but can drift during long sessions.
-The AI is checking against the full example library simultaneously — it doesn't get
-fatigued or loosen criteria. It catches discretion drift. The human has final authority
-but the AI acts as a quality control gate.
-
-**AI vet scope — chart shape only:**
-The AI vet is purely about chart pattern matching. It is looking at the shape of the
-chart and comparing it to the example library. It is not doing fundamental analysis,
-earnings checks, or anything else. Those are addons that may be layered in later but
-no other part of the core pipeline depends on them.
-
-**Regrind trigger:**
-Adding examples does NOT trigger an automatic regrind. The UI shows a persistent
-"regrind needed" indicator whenever examples have been added since the last grind.
-The workflow is: vet a batch → clear the AI review queue → check the indicator →
-decide when you have enough new examples to warrant a regrind → trigger it manually.
+- After any refinement grind produces new signals
+- When the health check says label accuracy is limiting EV model quality
+- NOT as a default "always do this next" step -- driven by quality needs
 
 **Convergence signal:**
-Track examples added per cycle. When two consecutive cycles add near-zero new examples
-from a full vetting pass, the example library has converged. Stop driving vetting as
-the primary activity and focus on EV model quality instead.
+When two consecutive full vetting passes add near-zero new examples, the example
+library has converged. Stop driving vetting and focus on EV model quality.
 
-**UI requirements:**
-- Stage 1: one key per decision, instant chart load, no gaps
-- Shows: ticker, date, move_adr, mfe_adr, capture_eff, exit_date
-- 250-bar lookback, 80-bar forward, EMA 8/21, SMA 50/200, earnings markers
-- Auto-advances after decision, shows N remaining and examples added this session
-- Stage 2: AI review queue visible in UI, shows AI verdict + reasoning per pick
-- Persistent "regrind needed" indicator showing N examples added since last grind
-
-**Reuse from V1:** Existing chart vetting UI is good enough — transplant with AI queue
-addition and speed improvements.
+**Output files:**
+- entry_scores_{setup}_{timestamp}.json (archive)
+- entry_scores_{setup}.json (latest pointer)
+- Both mirrored to Railway
 
 ---
 

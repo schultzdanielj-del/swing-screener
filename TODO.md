@@ -1,4 +1,4 @@
-# ScanPerfect Pipeline (2026-03-13, updated Phase 3 → EV Grinder)
+# ScanPerfect Pipeline (2026-03-14, updated Entry Candle Scorer + Phase 3 → EV Grinder)
 
 ## The Goal
 
@@ -51,11 +51,26 @@ In Phase 3, examples fuel EV accuracy — more examples means the scoring model 
 
 The vetting system is where setup examples are defined and collected. You start with a setup description and a baseline set of example trades. The more you vet, the better the entire system gets.
 
-Early on, the system works from signal bars (the bar where conditions fired). As more charts get vetted, you get real entry bars, real exit bars, actual trade data. This tightens everything downstream — exit grind gets better targets, ADR moves become more accurate, correlative filters have cleaner data.
+Vetting is not a one-time gate. It is a quality layer that improves continuously. Even after going live, vetting more historical signals keeps making the model better. It is a standalone workbench that sits outside the pipeline loop -- you open it when you want to vet, do your work, close it, and the pipeline does not know or care. It just sees a bigger example library next time you trigger a regrind.
 
-Vetting is not a one-time gate. It’s a quality layer that improves continuously. Even after going live, vetting more historical signals keeps making the model better.
+**Two vetting modes:**
 
-The vetting loop runs through Phase 2: signal grind → exit grind → rank output by biggest signal-to-exit ADR moves → vet top charts → add examples → repeat. When the good setups become buried in the output, you run the refinement grind and vet the winning pile rank-ordered the same way. Keep going until you’ve squeezed the sample set dry.
+**Signal Grind vet** -- after signal grind, before refinement. Raw signals sorted by move_adr (biggest movers first). No entry candle scoring available yet because there is no winner/loser split.
+
+**Post-Refinement vet** -- after refinement grind produces the winner pile. The entry candle scorer runs on the winner pile and produces a combined_score per signal. Signals with both a high-ADR move AND a bar in the forward window that looks like a real entry candle float to the top. You vet top-down and stop when quality drops off.
+
+**Entry Candle Scorer** (scripts/entry_candle_scorer.py) -- standalone vetting utility, not a pipeline step. Builds a centroid from all example entry candle expression vectors (16,051 dimensions), computes per-expression discrimination weights (how tightly entry candles cluster vs how spread out winner forward window bars are, capped at 95th percentile), then scores each winner forward window bar against the centroid using weighted cosine similarity. Scan range per cluster: leftmost bar through rightmost bar + forward_window. Best-matching bar per cluster is the entry candle score. Combined score = percentile rank of entry_candle_score x percentile rank of move_adr. Output: entry_scores_{setup}.json mirrored to Railway.
+
+**Vetting flow:**
+1. Click Update Scores -- entry candle scorer runs (~10 seconds)
+2. UI shows all winners sorted by combined_score
+3. Vet top-down: 1=YES, 2=NO, 3=SKIP
+4. YES picks go to AI second-pass (pending_examples, status=pending)
+5. AI reviews each YES against the example library -- GREEN_LIGHT or FLAG
+6. You see AI verdicts, one-click approve -- added to examples table
+7. When enough examples have banked, trigger regrind from pipeline tab
+
+**Self-improving:** More examples -- tighter centroid -- better entry candle scoring -- faster vetting -- more examples per session. The scorer gets better every time you use it.
 
 The goal: enter Phase 3 with as many examples as you can get.
 
@@ -322,9 +337,9 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 5. **Build the EV Grinder** — `scripts/ev_grinder.py`. Unified scoring engine replacing `market_grinder.py` + `setup_grinder.py` + the planned combined optimizer. Tests all ~4M market features + 16 setup-specific features for their effect on WR and MFE independently. Univariate quartile screening → dedup → additive weighted scoring model. Output: per-signal estimated WR, MFE, EV + the scoring equation for live use. ~5-20 min runtime.
 
 ### Vetting UI
-6. **Read from signal grind and refinement grind outputs** — vetting UI currently reads signal_filter output. Needs to read from cluster files instead. Sort results by signal-to-exit ADR move (biggest movers first).
-7. **AI vet queue** — signals go to AI review, then one-click “yes” adds them to the example library. This flow needs to work end-to-end.
-8. **Workflow and ease-of-use improvements** — many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
+6. **Wire vetting UI to entry candle scorer output** -- vetting UI reads entry_scores_{setup}.json from Railway file mirror. Two modes: signal grind vet (sort by move_adr only) and post-refinement vet (sort by combined_score from entry candle scorer). Mode toggle in UI.
+7. **AI vet queue** -- YES picks go to pending_examples (AI second-pass), then one-click approve adds to examples. Flow needs to work end-to-end.
+8. **Workflow and ease-of-use improvements** -- many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
 
 ### Pipeline UI
 9. **Full pipeline control from UI** — every grinder step runnable from the UI with all parameters and tweaks selectable at each level. Fully wired to the pipeline agent.
