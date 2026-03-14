@@ -402,8 +402,28 @@ def score_winner_pile(setup_type, expr_cache, centroid, weights):
 
     print(f"  Scored: {len(scored)}, Skipped: {skipped}")
 
-    # ── Sort by score descending ──
-    scored.sort(key=lambda s: s.get("entry_candle_score") or -999, reverse=True)
+    # ── Compute combined score: percentile rank of entry_candle_score × percentile rank of move_adr ──
+    # Normalize both to 0-1 via percentile rank, then multiply
+    ec_scores = np.array([s.get("entry_candle_score") or -999 for s in scored])
+    adr_scores = np.array([s.get("move_adr") or 0 for s in scored])
+
+    # Percentile rank: fraction of values that are <= this value
+    def percentile_ranks(arr):
+        from scipy.stats import rankdata
+        ranks = rankdata(arr, method='average')
+        return (ranks - 1) / max(len(ranks) - 1, 1)  # 0 to 1
+
+    ec_pct = percentile_ranks(ec_scores)
+    adr_pct = percentile_ranks(adr_scores)
+    combined = ec_pct * adr_pct
+
+    for i, s in enumerate(scored):
+        s["entry_candle_pct"] = round(float(ec_pct[i]), 4)
+        s["move_adr_pct"] = round(float(adr_pct[i]), 4)
+        s["combined_score"] = round(float(combined[i]), 4)
+
+    # ── Sort by combined score descending ──
+    scored.sort(key=lambda s: s.get("combined_score") or -999, reverse=True)
 
     # ── Summary stats ──
     valid_scores = [s["entry_candle_score"] for s in scored if s.get("entry_candle_score") is not None]
@@ -416,15 +436,16 @@ def score_winner_pile(setup_type, expr_cache, centroid, weights):
         print(f"    Max:    {max(valid_scores):.4f}")
 
         # Top 10
-        print(f"\n  Top 10 by entry candle score:")
-        print(f"    {'Ticker':<8} {'Score':>8} {'Offset':>7} {'Date':<12} {'move_adr':>9} {'Shared':>7}")
-        print(f"    {'-'*55}")
+        print(f"\n  Top 10 by combined score (entry candle × move_adr):")
+        print(f"    {'Ticker':<8} {'Combined':>8} {'EC_pct':>7} {'ADR_pct':>8} {'EC_score':>9} {'move_adr':>9} {'Offset':>7}")
+        print(f"    {'-'*62}")
         for s in scored[:10]:
-            print(f"    {s['ticker']:<8} {s.get('entry_candle_score', 0):>8.4f} "
-                  f"{s.get('entry_candle_bar_offset', '?'):>7} "
-                  f"{s.get('entry_candle_date', '?'):<12} "
+            print(f"    {s['ticker']:<8} {s.get('combined_score', 0):>8.4f} "
+                  f"{s.get('entry_candle_pct', 0):>7.3f} "
+                  f"{s.get('move_adr_pct', 0):>8.3f} "
+                  f"{s.get('entry_candle_score', 0):>9.4f} "
                   f"{s.get('move_adr', 0):>9.3f} "
-                  f"{s.get('entry_candle_shared_exprs', 0):>7}")
+                  f"{s.get('entry_candle_bar_offset', '?'):>7}")
 
     return scored
 
