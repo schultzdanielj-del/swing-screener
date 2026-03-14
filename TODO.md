@@ -66,9 +66,9 @@ Vetting is not a one-time gate. It is a quality layer that improves continuously
 2. UI shows all winners sorted by combined_score
 3. Vet top-down: 1=YES, 2=NO, 3=SKIP
 4. YES picks go to AI second-pass (pending_examples, status=pending)
-5. AI reviews each YES against the example library -- GREEN_LIGHT or FLAG
-6. You see AI verdicts, one-click approve -- added to examples table
-7. When enough examples have banked, trigger regrind from pipeline tab
+4. AI reviews each YES against the example library -- GREEN_LIGHT or FLAG
+5. You see AI verdicts, one-click approve -- added to examples table
+6. When enough examples have banked, trigger regrind from pipeline tab
 
 **Self-improving:** More examples -- tighter centroid -- better entry candle scoring -- faster vetting -- more examples per session. The scorer gets better every time you use it.
 
@@ -331,25 +331,24 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 1. **Depth progression output (refinement grinder)** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running.
 2. **Margin progression output (signal grinder)** — save tier-by-tier signal counts at different bounding box margins (5%, 3%, 1%, 0%). More examples = tighter margins viable. Allows post-hoc margin tuning without re-running.
 3. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
-4. **Market grinder: cluster-level win rate series** — currently builds the win rate time series from individual signal bars, so a 5-bar cluster counts as 5 data points with the same outcome. Should use one data point per cluster (rightmost bar date or average of cluster bars’ market features). Avoids inflating weight of longer clusters.
 
 ### Phase 3 — EV Grinder
-5. **Build the EV Grinder** — `scripts/ev_grinder.py`. Unified scoring engine replacing `market_grinder.py` + `setup_grinder.py` + the planned combined optimizer. Tests all ~4M market features + 16 setup-specific features for their effect on WR and MFE independently. Univariate quartile screening → dedup → additive weighted scoring model. Output: per-signal estimated WR, MFE, EV + the scoring equation for live use. ~5-20 min runtime.
+4. **Build the EV Grinder** — `scripts/ev_grinder.py`. Unified scoring engine replacing `market_grinder.py` + `setup_grinder.py` + the planned combined optimizer. Tests all ~4M market features + 16 setup-specific features for their effect on WR and MFE independently. Univariate quartile screening → dedup → additive weighted scoring model. Output: per-signal estimated WR, MFE, EV + the scoring equation for live use. ~5-20 min runtime.
 
 ### Vetting UI
-6. **Wire vetting UI to entry candle scorer output** -- vetting UI reads entry_scores_{setup}.json from Railway file mirror. Two modes: signal grind vet (sort by move_adr only) and post-refinement vet (sort by combined_score from entry candle scorer). Mode toggle in UI.
-7. **AI vet queue** -- YES picks go to pending_examples (AI second-pass), then one-click approve adds to examples. Flow needs to work end-to-end.
-8. **Workflow and ease-of-use improvements** -- many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
+5. **Wire vetting UI to entry candle scorer output** -- vetting UI reads entry_scores_{setup}.json from Railway file mirror. Two modes: signal grind vet (sort by move_adr only) and post-refinement vet (sort by combined_score from entry candle scorer). Mode toggle in UI.
+6. **AI vet queue** -- YES picks go to pending_examples (AI second-pass), then one-click approve adds to examples. Flow needs to work end-to-end.
+7. **Workflow and ease-of-use improvements** -- many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
 
 ### Pipeline UI
-9. **Full pipeline control from UI** — every grinder step runnable from the UI with all parameters and tweaks selectable at each level. Fully wired to the pipeline agent.
-10. **Update PIPELINE_V2.md** — replace proximity grind, profit grind, regime model sections with EV Grinder architecture. Update pipeline diagram. Update watchlist section.
+8. **Full pipeline control from UI** — every grinder step runnable from the UI with all parameters and tweaks selectable at each level. Fully wired to the pipeline agent.
+9. **Update PIPELINE_V2.md** — replace proximity grind, profit grind, regime model sections with EV Grinder architecture. Update pipeline diagram. Update watchlist section.
 
 ### Code Cleanup (future)
-11. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.
+10. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.
 
 ### Vetting
-12. **Vet winner pile** — review 365 winners, add examples, loop if needed.
+11. **Vet winner pile** — review 365 winners, add examples, loop if needed.
 
 ---
 
