@@ -52,22 +52,15 @@ STEP_COMMANDS = {
         sys.executable, os.path.join(REPO_ROOT, "scripts", "signal_filter.py"),
         "--setup", "dtss",
     ],
-    # refinement_grind is a two-command sequence:
-    #   1. Blackout re-grind — re-runs pyramid grinder with post-entry bars masked out
-    #   2. Setup refiner — prunes weak conditions + rescans + applies exit filter
+    # refinement_grind: single command — pyramid_grinder --blackout handles
+    # scanning, clustering, classification, and cluster-aware beam search internally
     "refinement_grind": [
-        [
-            sys.executable, os.path.join(LOCAL_DIR, "pyramid_grinder.py"),
-            "--setup", "dtss", "--blackout",
-            "--peak-target", "3", "--beam", "10000", "--depth", "100",
-        ],
-        [
-            sys.executable, os.path.join(REPO_ROOT, "scripts", "setup_refiner.py"),
-            "--setup", "dtss",
-        ],
+        sys.executable, os.path.join(LOCAL_DIR, "pyramid_grinder.py"),
+        "--setup", "dtss", "--blackout",
     ],
-    "regime": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "market_grinder.py"),
+    # ev_grind: unified correlative scoring (replaces market_grinder + setup_grinder)
+    "ev_grind": [
+        sys.executable, os.path.join(REPO_ROOT, "scripts", "ev_grinder.py"),
         "--setup", "dtss",
     ],
     "health": [
@@ -263,14 +256,7 @@ def run_step(job):
         commands = [list(cmd_entry)]
 
     # ── Inject job params into commands ──
-    if step_id == "refinement_grind" and params:
-        # Find the setup_refiner.py command in the sequence
-        for cmd in commands:
-            if any("setup_refiner.py" in str(a) for a in cmd):
-                if params.get("skip_prune"):
-                    cmd.append("--skip-prune")
-                elif params.get("min_power") is not None:
-                    cmd.extend(["--min-power", str(params["min_power"])])
+    # (reserved for future per-step param injection)
 
     n_cmds = len(commands)
     print(f"\n{'='*60}")
