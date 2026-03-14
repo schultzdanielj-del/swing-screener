@@ -306,24 +306,33 @@ def step_8_fundamentals():
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Nightly data refresh")
+    parser.add_argument("--force", action="store_true",
+                        help="Skip Railway append check, run steps 2-8 regardless")
+    args = parser.parse_args()
+
     print(f"\n{'═'*60}")
-    print(f"  🌙 Nightly Update")
+    print(f"  Nightly Update")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S ET')}")
     print(f"{'═'*60}")
 
     total_start = time.time()
 
-    # Step 1: Railway append (gate — stops if already current)
-    has_new_data = step_1_railway_append()
+    if args.force:
+        print("\n  --force: skipping Railway append, running steps 2-8")
+    else:
+        # Step 1: Railway append (gate — stops if already current)
+        has_new_data = step_1_railway_append()
 
-    if not has_new_data:
-        print(f"\n{'═'*60}")
-        print(f"  🌙 Done — no updates needed")
-        print(f"  {ts()}")
-        print(f"{'═'*60}\n")
-        return
+        if not has_new_data:
+            print(f"\n{'═'*60}")
+            print(f"  Done — no updates needed")
+            print(f"  {ts()}")
+            print(f"{'═'*60}\n")
+            return
 
-    # Steps 2-5: refresh all local data
+    # Steps 2-8: refresh all local data
     step_2_daily_cache()
     step_3_5yr_cache()
     step_4_expr_cache()
@@ -336,7 +345,7 @@ def main():
     minutes = total_elapsed / 60
 
     print(f"\n{'═'*60}")
-    print(f"  🌙 Nightly Update Complete")
+    print(f"  Nightly Update Complete")
     print(f"  Total time: {minutes:.1f} min")
     print(f"  {ts()}")
     print(f"  Ready to grind!")
