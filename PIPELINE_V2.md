@@ -565,7 +565,7 @@ These components are correct and reusable:
 |-----------|------|--------|
 | Expression library | `local_runner/brute_expressions.py` | ✅ Keep as-is |
 | Expression cache | `local_runner/expr_cache_builder.py` | ✅ Keep as-is |
-| Pyramid grinder engine | `local_runner/pyramid_grinder.py` | ✅ Keep, fix D1 constraint |
+| Pyramid grinder engine | `local_runner/pyramid_grinder.py` | ✅ Keep — D1 cap=15 implemented |
 | OHLCV cache builder | `local_runner/cache_builder.py` | ✅ Keep as-is |
 | Nightly pipeline | `local_runner/nightly.py` | ✅ Keep as-is |
 | Signal scan (expr cache path) | `scripts/signal_filter.py` scan phase | ✅ Keep |
@@ -573,7 +573,7 @@ These components are correct and reusable:
 | Exit grinder | `scripts/exit_grinder.py` | ✅ Keep as-is |
 | Classification logic | `server.py` vetting endpoints | ✅ Keep rules, rewire storage |
 | Chart vetting UI | `app/index.html` vetting page | ✅ Keep, add AI queue |
-| Example library | Railway DB `examples` table | ✅ Keep — 65 DTSS examples |
+| Example library | Railway DB `examples` table | ✅ Keep — 68 DTSS examples (65 valid scan bars) |
 | OHLCV data | Railway SQLite | ✅ Keep |
 
 These need to be rebuilt or are new:
@@ -597,7 +597,7 @@ These need to be rebuilt or are new:
 
 Build in this order so each piece is useful immediately when complete:
 
-1. **Fix BUG-001** (D1 row floor constraint) — makes the grinder reliable again
+1. ~~**Fix BUG-001**~~ (D1 row floor constraint) — **DONE** — D1 cap=15
 2. ~~**Fix BUG-002**~~ (agent step ID mapping) — **DONE 2026-03-07**
 3. ~~**Fix BUG-003**~~ (grinder → Railway upload) — **DONE 2026-03-08** — `grind_uploader.py`, see `GRIND_STORAGE.md`
 4. **Cycle versioning** — data contract, promote/revert logic in Railway
@@ -605,9 +605,10 @@ Build in this order so each piece is useful immediately when complete:
 6. **UI: health metrics + diff + revert + regrind indicator** — control surface for the loop
 7. **AI review queue** — two-stage vetting gate, server endpoint + UI
 8. **Fundamentals cache** — `fetch_fundamentals.py` pulls sector/float/shares from Yahoo Finance
-9. **EV grinder** — unified correlative scoring, `scripts/ev_grinder.py`
+9. **EV grinder** — unified correlative scoring, `scripts/ev_grinder.py` ← **NEXT**
 10. **Profit grind** — trade exit optimization, `scripts/profit_grinder.py`
 11. **UI: EV display + unified nightly watchlist** — the live product
 
-At step 5, the loop is runnable end-to-end with DTSS. Each additional setup type plugs
-into the same infrastructure. Steps 8-11 build toward the unified multi-setup watchlist.
+**Current status (2026-03-14):** DTSS Phase 2 complete (signal grind + exit grind +
+refinement grind all done). Regime model and setup correlation analysis completed and
+shelved — replaced by EV grinder. Next: build EV grinder (step 9), then vet winner pile.
