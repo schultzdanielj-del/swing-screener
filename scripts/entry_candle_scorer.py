@@ -225,19 +225,22 @@ def build_expression_weights(entry_matrix, setup_type, expr_cache):
         weights[j] = fw_stdev[j] / entry_stdev[j]
         usable += 1
 
-    # ── Cap at 95th percentile ──
-    nonzero = weights[weights > 0]
-    if len(nonzero) == 0:
-        print("  ERROR: No expressions with positive weight")
+    # ── Cap at 95th percentile of real ratios (exclude 1e6 placeholders) ──
+    real_weights = weights[(weights > 0) & (weights < 1e6)]
+    if len(real_weights) == 0:
+        print("  ERROR: No expressions with real positive weight")
         return weights
 
-    cap = float(np.percentile(nonzero, 95))
+    cap = float(np.percentile(real_weights, 95))
+
+    # Apply cap to everything including the 1e6 placeholders
     n_capped = int(np.sum(weights > cap))
     weights = np.minimum(weights, cap)
 
     print(f"  Usable expressions: {usable}/{n_exprs}")
     print(f"  95th percentile cap: {cap:.3f}")
     print(f"  Expressions capped: {n_capped}")
+    nonzero = weights[weights > 0]
     print(f"  Weight range after cap: {np.min(nonzero):.4f} — {cap:.3f}")
 
     return weights
