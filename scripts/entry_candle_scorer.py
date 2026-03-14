@@ -113,29 +113,167 @@ def build_entry_candle_centroid(setup_type, expr_cache):
         count = int(np.sum(pct_coverage >= threshold))
         print(f"    Expressions with >= {threshold}% coverage: {count}")
 
-    return centroid, n_used
+    return centroid, n_used, matrix
 
 
-def cosine_similarity(vec, centroid, valid_mask):
-    """Cosine similarity between vec and centroid using only valid_mask positions.
+def build_expression_weights(entry_matrix, setup_type, expr_cache):
+    """Compute per-expression discrimination weights.
 
-    valid_mask: boolean array — True where both vec and centroid are non-NaN.
+    For each expression, compares how tightly the entry candles cluster
+    (entry_stdev) vs how spread out the winner pile forward window bars are
+    (fw_stdev). Weight = fw_stdev / entry_stdev, capped at the 95th percentile
+    to prevent extreme outliers from dominating the similarity score.
+
+    Returns:
+        weights: numpy array shape (n_expressions,) — 0 for unusable expressions
+    """
+    n_entry = entry_matrix.shape[0]
+    n_exprs = entry_matrix.shape[1]
+
+    # ── Collect forward window bar vectors from non-example winners ──
+    print("\n  Building expression weights...")
+    print("  Collecting forward window bars for weight computation...")
+
+    ref_files = glob.glob(os.path.join(CACHE_DIR, f"refinement_{setup_type}_*.json"))
+    ref_files.sort(key=os.path.getmtime, reverse=True)
+    with open(ref_files[0]) as f:
+        ref_data = json.load(f)
+    winners = ref_data.get("winner_signals", [])
+
+    cluster_path = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
+    with open(cluster_path) as f:
+        cluster_data = json.load(f)
+    forward_window = cluster_data.get("forward_window")
+    clusters = cluster_data.get("clusters", [])
+
+    cluster_lookup = {}
+    for c in clusters:
+        key = (c["ticker"], c["rightmost"]["bar_idx"])
+        cluster_lookup[key] = c
+
+    fw_vectors = []
+    prev_ticker = None
+    cached_data = None
+
+    for w in winners:
+        if w.get("is_example") == 1:
+            continue
+
+        ticker = w["ticker"]
+        bar_idx = w["bar_idx"]
+        key = (ticker, bar_idx)
+        c = cluster_lookup.get(key)
+        if c is None:
+            continue
+
+        leftward = c.get("leftward", [])
+        all_bars = [bar_idx] + [lw["bar_idx"] for lw in leftward]
+        leftmost = min(all_bars)
+        scan_start = leftmost
+        scan_end = bar_idx + forward_window
+
+        if ticker != prev_ticker:
+            dates, data = expr_cache.get_ticker(ticker)
+            cached_data = (dates, data)
+            prev_ticker = ticker
+        else:
+            dates, data = cached_data
+
+        if dates is None:
+            continue
+
+        scan_end = min(scan_end, len(data) - 1)
+        if scan_start > scan_end:
+            continue
+
+        for bi in range(scan_start, scan_end + 1):
+            fw_vectors.append(data[bi, :].astype(np.float64))
+
+    print(f"  Forward window bars (non-example): {len(fw_vectors)}")
+    fw_matrix = np.array(fw_vectors)
+
+    # ── Compute discrimination ratio per expression ──
+    min_entry = int(n_entry * MIN_VALID_FRACTION)
+    min_fw = int(len(fw_vectors) * 0.1)
+
+    entry_valid_counts = np.sum(~np.isnan(entry_matrix), axis=0)
+    fw_valid_counts = np.sum(~np.isnan(fw_matrix), axis=0)
+
+    with np.errstate(all='ignore'):
+        entry_stdev = np.nanstd(entry_matrix, axis=0)
+        fw_stdev = np.nanstd(fw_matrix, axis=0)
+
+    weights = np.full(n_exprs, 0.0)
+    usable = 0
+
+    for j in range(n_exprs):
+        if entry_valid_counts[j] < min_entry:
+            continue
+        if fw_valid_counts[j] < min_fw:
+            continue
+        if np.isnan(entry_stdev[j]) or np.isnan(fw_stdev[j]):
+            continue
+        if entry_stdev[j] < 1e-10:
+            # Entry candles identical on this expression — maximally diagnostic
+            # but capped later by percentile, so use a placeholder high value
+            weights[j] = 1e6
+            usable += 1
+            continue
+        if fw_stdev[j] < 1e-10:
+            continue
+
+        weights[j] = fw_stdev[j] / entry_stdev[j]
+        usable += 1
+
+    # ── Cap at 95th percentile ──
+    nonzero = weights[weights > 0]
+    if len(nonzero) == 0:
+        print("  ERROR: No expressions with positive weight")
+        return weights
+
+    cap = float(np.percentile(nonzero, 95))
+    n_capped = int(np.sum(weights > cap))
+    weights = np.minimum(weights, cap)
+
+    print(f"  Usable expressions: {usable}/{n_exprs}")
+    print(f"  95th percentile cap: {cap:.3f}")
+    print(f"  Expressions capped: {n_capped}")
+    print(f"  Weight range after cap: {np.min(nonzero):.4f} — {cap:.3f}")
+
+    return weights
+
+
+def weighted_cosine_similarity(vec, centroid, valid_mask, weights):
+    """Weighted cosine similarity between vec and centroid.
+
+    Multiplies each expression dimension by its weight before computing
+    the dot product. Expressions with higher weights contribute more to
+    the similarity score.
+
+    valid_mask: boolean array — True where centroid is non-NaN.
+    weights: array shape (n_expressions,) — per-expression importance weights.
     Returns similarity in [-1, 1], or -999 if insufficient shared values.
     """
     a = vec[valid_mask]
     b = centroid[valid_mask]
+    w = weights[valid_mask]
 
     # Need shared non-NaN values in both
     both_valid = ~np.isnan(a) & ~np.isnan(b)
     a = a[both_valid]
     b = b[both_valid]
+    w = w[both_valid]
 
     if len(a) < 100:
         return -999.0, 0
 
-    dot = np.dot(a, b)
-    norm_a = np.linalg.norm(a)
-    norm_b = np.linalg.norm(b)
+    # Apply weights
+    aw = a * w
+    bw = b * w
+
+    dot = np.dot(aw, bw)
+    norm_a = np.linalg.norm(aw)
+    norm_b = np.linalg.norm(bw)
 
     if norm_a == 0 or norm_b == 0:
         return -999.0, len(a)
@@ -143,7 +281,7 @@ def cosine_similarity(vec, centroid, valid_mask):
     return float(dot / (norm_a * norm_b)), len(a)
 
 
-def score_winner_pile(setup_type, expr_cache, centroid):
+def score_winner_pile(setup_type, expr_cache, centroid, weights):
     """Score each winner signal's forward window bars against the centroid.
 
     For each winner cluster:
@@ -241,7 +379,7 @@ def score_winner_pile(setup_type, expr_cache, centroid):
 
         for bi in range(scan_start, scan_end + 1):
             vec = data[bi, :].astype(np.float64)
-            sim, n_shared = cosine_similarity(vec, centroid, centroid_valid)
+            sim, n_shared = weighted_cosine_similarity(vec, centroid, centroid_valid, weights)
             if sim > best_score:
                 best_score = sim
                 best_offset = bi - bar_idx  # negative = before rightmost, positive = after
@@ -342,12 +480,15 @@ def main():
     print(f"  {expr_cache.n_expressions} expressions")
 
     # ── Build centroid ──
-    centroid, n_used = build_entry_candle_centroid(args.setup, expr_cache)
+    centroid, n_used, entry_matrix = build_entry_candle_centroid(args.setup, expr_cache)
     if centroid is None:
         return
 
+    # ── Build expression weights ──
+    weights = build_expression_weights(entry_matrix, args.setup, expr_cache)
+
     # ── Score winner pile ──
-    scored = score_winner_pile(args.setup, expr_cache, centroid)
+    scored = score_winner_pile(args.setup, expr_cache, centroid, weights)
     if scored is None:
         return
 
