@@ -41,8 +41,7 @@ serve that goal directly, it doesn't get built.
 
 ## BUG-001: D1 Tier Over-Locking Destroys Downstream Tiers
 
-**Status:** Confirmed
-**Severity:** Critical — makes grinder results unreliable as example count grows
+**Status:** ✅ FIXED — D1 cap=15 implemented in pyramid_grinder.py
 **Discovered:** 2026-03-06 during audit
 
 ### What Was Observed
@@ -108,8 +107,7 @@ Do not change the example range computation as a workaround for this specific bu
 
 ## BUG-002: Pipeline Agent Step IDs Don't Match UI Step IDs
 
-**Status:** Confirmed
-**Severity:** Critical — the agent cannot run any current UI pipeline steps except nightly
+**Status:** ✅ FIXED (2026-03-07) — step IDs remapped, updated again 2026-03-14 to remove dead setup_refiner/market_grinder references
 **Discovered:** 2026-03-06 during live system audit
 
 ### What Was Observed
