@@ -1,4 +1,4 @@
-# ScanPerfect Pipeline (2026-03-15, EV Grinder inc 1-3 complete)
+# ScanPerfect Pipeline (2026-03-15, EV Grinder inc 1-4 complete)
 
 ## The Goal
 
@@ -78,7 +78,7 @@ The goal: enter Phase 3 with as many examples as you can get.
 
 ## Phase 2 — Causative Filtering
 
-These steps find the mathematical conditions that separate setup bars from the universe. They are “causative” — they describe what the chart looks like when the setup is present.
+These steps find the mathematical conditions that separate setup bars from the universe. They are "causative" — they describe what the chart looks like when the setup is present.
 
 ### a) Signal Grind
 
@@ -124,7 +124,7 @@ Exit price = close of the bar where the exit condition fired.
 
 `move_adr = (entry_high - exit_close) / adr_at_signal` for shorts.
 
-This is not true MFE (lowest low before exit). It’s the actual captured move to the exit condition close — a consistent, tradeable measurement. The exit condition is a placeholder good enough for reliable filtering data. The profit grinder (Phase 4) later optimizes the actual exit strategy.
+This is not true MFE (lowest low before exit). It's the actual captured move to the exit condition close — a consistent, tradeable measurement. The exit condition is a placeholder good enough for reliable filtering data. The profit grinder (Phase 4) later optimizes the actual exit strategy.
 
 Winners without an exit_bar (held_to_end, no_data_after_window) get null — excluded from stats.
 
@@ -136,7 +136,7 @@ This data flows through to the refinement JSON (`winner_signals`, `loser_signals
 
 Phase 3 does not filter signals. Every signal that passes Phase 2 makes the watchlist. Phase 3 scores each signal with an accurate historical EV estimate so the watchlist can rank them.
 
-This is what a discretionary trader does naturally — look at a setup and unconsciously weigh dozens of market and stock-specific factors to get a feel for “this one’s A+ quality” vs “this one’s marginal.” The EV grinder does this with flawless accuracy against every historical signal that ever fired, weighted precisely, no recency bias, no forgetting, no emotional tilt.
+This is what a discretionary trader does naturally — look at a setup and unconsciously weigh dozens of market and stock-specific factors to get a feel for "this one's A+ quality" vs "this one's marginal." The EV grinder does this with flawless accuracy against every historical signal that ever fired, weighted precisely, no recency bias, no forgetting, no emotional tilt.
 
 ### What the EV Grinder produces
 
@@ -149,7 +149,7 @@ Three numbers per signal:
 
 The grinder tests every correlative feature available — both market conditions and stock characteristics — for their effect on win rate AND move size. Features that increase WR/MFE score positively. Features that decrease WR/MFE score negatively. Both directions matter.
 
-**Market regime features** (~4M): 256 instruments × 15,805 expressions. Each instrument’s expression value on the signal date. Covers SPY trend, VIX level, sector rotation, breadth, interest rates, credit spreads, bond market, commodities, international markets, and more.
+**Market regime features** (~4M): 256 instruments × 15,805 expressions. Each instrument's expression value on the signal date. Covers SPY trend, VIX level, sector rotation, breadth, interest rates, credit spreads, bond market, commodities, international markets, and more.
 
 **Setup-specific features (OHLCV-derived, available now — 6):**
 - Price level (close at signal bar)
@@ -171,43 +171,43 @@ The grinder tests every correlative feature available — both market conditions
 - Revenue growth QoQ
 - Revenue growth trailing 4Q
 
-All features are included for every setup type. The grinder’s screening step determines which ones matter for each setup — something redundant for DTSS might be the strongest predictor for another setup.
+All features are included for every setup type. The grinder's screening step determines which ones matter for each setup — something redundant for DTSS might be the strongest predictor for another setup.
 
 ### Architecture
 
-**Step 1 — Feature matrix.** For each signal in the refinement output, look up the value of every candidate feature on that signal’s date. Market features from the instrument caches. Setup features from OHLCV + external data. Result: 893 rows × ~4M columns.
+**Step 1 — Feature matrix.** For each signal in the refinement output, look up the value of every candidate feature on that signal's date. Market features from the instrument caches. Setup features from OHLCV + external data. Result: 893 rows × ~4M columns.
 
 **Step 2 — Univariate WR screening.** For each feature independently: bucket signals into deciles by feature value, compute win rate per decile. Keep features where the D10-D1 spread (top 10% vs bottom 10%) exceeds 10 percentage points. Deciles are far more discriminating than quartiles — random noise rarely produces a large D10-D1 spread because the extreme buckets are purer.
 
 **Step 3 — Univariate MFE screening.** Same but for winner move_adr. Bucket into deciles, compute median move_adr per decile (winners only). Keep features where the D10-D1 spread exceeds 1.0 ADR.
 
-**Step 4 — Per-instrument cap + Union survivors.** Each instrument's survivors are capped at top 200 by screening strength (max of WR spread and normalized MFE spread). This prevents correlated expression variants (SMA20, SMA21, SMA22) from flooding the results. A feature survives if it passed either the WR screen or the MFE screen. Tagged as “WR only”, “MFE only”, or “both.”
+**Step 4 — Per-instrument cap + Union survivors.** Each instrument's survivors are capped at top 200 by screening strength (max of WR spread and normalized MFE spread). This prevents correlated expression variants (SMA20, SMA21, SMA22) from flooding the results. A feature survives if it passed either the WR screen or the MFE screen. Tagged as "WR only", "MFE only", or "both."
 
-**Step 5 — Deduplication.** Greedy dedup by inter-feature correlation (same as current regime model). Ensures each survivor adds genuinely new information.
+**Step 5 — Deduplication.** Three-pass greedy dedup: (1) within-instrument correlation dedup (parallel, catches SMA20≈SMA21 on same instrument), (2) same-expression dedup (instant, keeps strongest instrument per expression — catches SPY_SMA20≈QQQ_SMA20), (3) cross-instrument correlation dedup (exact vectorized Pearson, catches remaining correlated pairs). Threshold: |r| ≥ 0.95. All CPU cores used.
 
 **Step 6 — Scoring curves.** For each survivor, store the quartile boundaries and the WR/MFE value per quartile. This is the lookup table — given a feature value, which quartile, what WR/MFE contribution.
 
-**Step 7 — Score every signal.** For each signal: look up its quartile for each surviving feature, collect WR and MFE contributions, compute weighted average (weighted by each feature’s spread strength). Output: estimated WR, estimated MFE, EV.
+**Step 7 — Score every signal.** For each signal: look up its quartile for each surviving feature, collect WR and MFE contributions, compute weighted average (weighted by each feature's spread strength). Output: estimated WR, estimated MFE, EV.
 
 **Step 8 — Validation.** Bucket signals by predicted WR into deciles. Does actual WR match predicted WR per decile? Same for MFE. If predicted 85% WR signals actually win 85%, the model is calibrated.
 
 ### What this replaces
 
-The EV grinder replaces both `market_grinder.py` and `setup_grinder.py`. Those were built as separate analyses — market conditions in one, stock characteristics in another, with a planned “combined optimizer” to merge them. The EV grinder does everything in one unified pass where all features compete on equal footing.
+The EV grinder replaces both `market_grinder.py` and `setup_grinder.py`. Those were built as separate analyses — market conditions in one, stock characteristics in another, with a planned "combined optimizer" to merge them. The EV grinder does everything in one unified pass where all features compete on equal footing.
 
 The old regime model correlated features with a win-rate time series (temporal correlation). The EV grinder evaluates features at the individual signal level and predicts both WR and MFE. It also captures nonlinear effects through quartile bucketing — features that only matter at extremes are visible.
 
 ### Additive model (current design)
 
-Each feature contributes independently. The scoring equation is a weighted sum of per-feature contributions. This is well-supported by 893 data points — each feature’s effect is measured across all signals.
+Each feature contributes independently. The scoring equation is a weighted sum of per-feature contributions. This is well-supported by 893 data points — each feature's effect is measured across all signals.
 
-True feature interactions (e.g., “UVXY OBV matters more on high-priced stocks”) are not captured. However, features that matter in combination will both independently predict WR/MFE, so the additive model ranks those signals highly anyway. The main risk is missing pairs that are individually weak but combined are strong — rare in practice, and undetectable with 893 signals.
+True feature interactions (e.g., "UVXY OBV matters more on high-priced stocks") are not captured. However, features that matter in combination will both independently predict WR/MFE, so the additive model ranks those signals highly anyway. The main risk is missing pairs that are individually weak but combined are strong — rare in practice, and undetectable with 893 signals.
 
 Interaction terms can be layered in later as more examples accumulate across setup types.
 
 ### Runtime and compute
 
-~5-20 minutes on local desktop. Same order of magnitude as the current regime model. The heavy part is disk I/O (loading 256 instrument caches, ~80MB each). Parallelizes across cores. All local data, no API calls.
+~5 minutes on local desktop (16 cores). Screening ~172s (I/O bound, 256 .npz files ~80MB each), dedup ~30s (three-pass), setup features ~30s. Parallelizes across all CPU cores. All local data, no API calls.
 
 - Input: Refinement output + market cache + 5yr OHLCV cache + external data cache
 - Output: Scoring equation (surviving features + quartile boundaries + weights) + per-signal scores (WR, MFE, EV) + validation stats
@@ -224,7 +224,7 @@ A new signal fires tonight. Compute its feature values (market cache lookup + OH
 
 ### a) Profit Grinder
 
-Runs on the full signal set with EV scores attached. The profit grinder optimizes exit strategy across the signals you’d actually take — the ones the EV scoring ranks highest.
+Runs on the full signal set with EV scores attached. The profit grinder optimizes exit strategy across the signals you'd actually take — the ones the EV scoring ranks highest.
 
 Tests multiple exit strategies (trim and trail, fixed targets, volatility-based stops, etc.) and evaluates them by compounded equity growth over N trades, not average MFE capture per trade. A strategy that captures 60% MFE consistently may outcompound one that captures 90% with high variance, because drawdowns from volatile strategies kill position sizing.
 
@@ -242,15 +242,15 @@ Output: optimal exit strategy with compounded equity curve, drawdown profile, an
 
 ### a) EV Scoring
 
-Each signal that fires tonight gets scored by the EV grinder’s equation. Look up its market regime features and setup-specific features, run through the scoring curves, output estimated WR, estimated MFE, and EV. Milliseconds per signal.
+Each signal that fires tonight gets scored by the EV grinder's equation. Look up its market regime features and setup-specific features, run through the scoring curves, output estimated WR, estimated MFE, and EV. Milliseconds per signal.
 
 ### b) Live Nightly Workflow
 
 After market close:
-1. Run tonight’s bars against signal + refinement conditions → signals that fired today
+1. Run tonight's bars against signal + refinement conditions → signals that fired today
 2. Score each signal using the EV equation → estimated WR, MFE, EV
 3. Rank order by EV, highest to lowest
-4. You take the top N that you have capital for — the bottom ones don’t get traded, not because they’re filtered out, but because better signals exist above them
+4. You take the top N that you have capital for — the bottom ones don't get traded, not because they're filtered out, but because better signals exist above them
 
 The watchlist is the end product. Every cycle of the loop makes it more accurate.
 
@@ -280,7 +280,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 2a: Signal Grind | ✅ Done | 87 conditions, 1,218 raw → 893 deduped |
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
-| Phase 3: EV Grinder | 🔄 Inc 1-3 done | Inc 1: depth replay ✅, Inc 2: setup features ✅, Inc 3: market screening ✅ (51K survivors). Next: Inc 4 cross-instrument dedup |
+| Phase 3: EV Grinder | 🔄 Inc 1-4 done | Inc 1-3: depth replay + setup features + market screening (51K survivors) ✅. Inc 4: three-pass dedup (51K → 1,816 pre / 1,940 post, 0 violations) ✅. Next: Inc 5 scoring curves + signal scoring |
 | Phase 4: Profit Optimization | ⏸ Needs rewire | Script exists, needs new objective function (compound growth) |
 | Phase 5: Live Watchlist | ⏸ Not built | |
 
@@ -294,6 +294,18 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - **Winner move_adr: median 6.4, mean 6.7, floor 2.9, ceiling 13.1 ADR (364/365 with data)**
 - All examples now run through full classification race (exit_bar, ceiling, move_adr)
 - File: `refinement_dtss_cl102_pk5_20260313_122818.json`
+
+### EV Grinder Dedup Result (2026-03-15)
+- 256 instruments × 15,805 expressions + 10 setup features → ~4M features tested
+- Screening: 51,204 pre / 51,201 post (decile D10-D1 ≥ 10pp WR or ≥ 1.0 ADR MFE, top-200 cap/instrument)
+- Three-pass dedup (corr threshold 0.95):
+  - Pass 1 (within-instrument, parallel): 51K → 24K (9s)
+  - Pass 1.5 (same-expression, instant): 24K → 1,950 (22K expr dupes removed)
+  - Pass 2 (cross-instrument, exact Pearson batched): 1,950 → 1,816 pre / 2,076 → 1,940 post (20s/12s)
+- Verification: 0 violations pre, 0 violations post
+- 3 setup + 1,813 market features pre (54 instruments), 1 setup + 1,939 market features post (51 instruments)
+- Total time: 308s (~5 min)
+- File: `ev_dtss_inc4_20260315_005210.json`
 
 ### Regime Model Result (2026-03-13)
 - 256 instruments × 15,805 expressions → 3M+ features tested → 50 selected (deduplicated)
@@ -313,7 +325,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - 893/893 signals with features (100% coverage on OHLCV-derivable features, 813/893 for W1 RS)
 - Pre-refinement baseline WR: 40.9% (365/893). Post-refinement: 78.2% (365/467)
 - **Genuine features (ratio >= 0.5):**
-  - price: pre spread +5.1%, post +8.5%, ratio 1.67 — higher priced stocks win more, refinement didn’t capture this
+  - price: pre spread +5.1%, post +8.5%, ratio 1.67 — higher priced stocks win more, refinement didn't capture this
   - ADR: pre spread +10.9%, post +9.4%, ratio 0.86 — higher ADR stocks win more
   - RS W1: pre spread +14.0%, post +11.0%, ratio 0.79 — stocks with stronger weekly RS vs SPY win more (counterintuitive for shorts — topping stocks, not freefall)
 - **Redundant features (ratio < 0.5):**
@@ -333,7 +345,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 3. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
 
 ### Phase 3 — EV Grinder
-4. **EV Grinder increments 4-6** — `scripts/ev_grinder.py`. Inc 1-3 done (depth replay, setup features, market screening with decile D10-D1 + top-200 cap → 51K survivors). Next: Inc 4 (cross-instrument correlation dedup, ~51K → hundreds), Inc 5 (scoring curves + signal scoring), Inc 6 (validation + final output + Railway mirror). Only final output mirrors to Railway — intermediates stay local.
+4. **EV Grinder increments 5-6** — `scripts/ev_grinder.py`. Inc 1-4 done (depth replay, setup features, market screening, three-pass dedup → 1,816 pre / 1,940 post survivors). Next: Inc 5 (scoring curves + quartile assignment + signal scoring), Inc 6 (validation + final output). All outputs mirror to Railway.
 
 ### Vetting UI
 5. **Wire vetting UI to entry candle scorer output** -- vetting UI reads entry_scores_{setup}.json from Railway file mirror. Two modes: signal grind vet (sort by move_adr only) and post-refinement vet (sort by combined_score from entry candle scorer). Mode toggle in UI.
@@ -374,12 +386,13 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - **move_adr uses conservative entry price for non-examples.** Forward window max high = worst-case fill. Real entries will be better.
 - **Setup-specific features are NOT from the expression cache.** The signal grind already mined all 16K expressions — anything in the cache that separates winners from losers would already be a signal/refinement condition. Setup-specific features must come from outside the cache (stock characteristics, cross-instrument RS, fundamentals).
 - **RS formula is TC2000 PCF-based.** 5-day rolling average intraday % move × (avg_price / ATR50). Stock value minus SPY value = relative strength. Computed on both D1 and W1 timeframes.
-- **Phase 3 scores, it does not filter.** Every signal that passes Phase 2 makes the watchlist. The EV grinder predicts WR and MFE per signal. The watchlist rank-orders by EV. You take the top N — the bottom ones don’t get traded because better signals exist above them.
+- **Phase 3 scores, it does not filter.** Every signal that passes Phase 2 makes the watchlist. The EV grinder predicts WR and MFE per signal. The watchlist rank-orders by EV. You take the top N — the bottom ones don't get traded because better signals exist above them.
 - **EV grinder replaces market_grinder + setup_grinder + combined optimizer.** One unified engine tests all ~4M market features + all setup-specific features in a single pass. Features compete on equal footing. Both directions captured (features that help AND features that hurt).
 - **EV grinder uses signal-level scoring, not time-series correlation.** The old regime model correlated features with a rolling win-rate time series. The EV grinder evaluates features at the individual signal level, predicting both WR and MFE through quartile bucketing (captures nonlinear effects).
 - **Additive scoring model is appropriate for 893 signals.** Interaction terms require splitting data into cells (e.g., 16 cells for two 4-bucket features = ~56 signals per cell). Too thin to be reliable. Additive model measures each feature across all 893 signals. Interactions that matter will show up as multiple features independently predicting WR/MFE. True interaction terms can be layered in as more examples accumulate.
-- **Assumed stop of 1.0 ADR for EV calculation.** Losers don’t have move_adr (the setup broke — no meaningful “loser move” to measure). The loss side of EV uses a fixed 1 ADR stop assumption. This is a parameter, not a constant — adjustable without re-running the grinder.
-- **All setup-specific features included for every setup type.** What’s redundant for DTSS might be the strongest predictor for another setup. The grinder’s screening step decides what matters per setup.
+- **Assumed stop of 1.0 ADR for EV calculation.** Losers don't have move_adr (the setup broke — no meaningful "loser move" to measure). The loss side of EV uses a fixed 1 ADR stop assumption. This is a parameter, not a constant — adjustable without re-running the grinder.
+- **All setup-specific features included for every setup type.** What's redundant for DTSS might be the strongest predictor for another setup. The grinder's screening step decides what matters per setup.
+- **Three-pass dedup catches all redundancy levels.** Pass 1 (within-instrument) catches expression variants. Pass 1.5 (same-expression) keeps only the strongest instrument per expression. Pass 2 (cross-instrument exact Pearson) catches remaining correlated pairs. All use np.isfinite to handle inf values from market caches.
 - **100% example pass rate required.** Any grinder result where an example fails is invalid.
 - **Silent failures are dangerous.** The system produces plausible wrong numbers. Verify empirically.
 
@@ -388,7 +401,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 ## Shelved / Legacy
 
 - `dartboard_grinder.py` — additive scoring washes out discrimination
-- `hybrid_grinder.py` — correlated booleans don’t filter
+- `hybrid_grinder.py` — correlated booleans don't filter
 - `proximity_grinder.py` — replaced by refinement grinder
 - `profit_grinder.py` — removed from pipeline
 - `setup_refiner.py` — legacy, unused
