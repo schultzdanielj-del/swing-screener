@@ -620,8 +620,8 @@ def screen_features(values, is_winner, move_adrs, feature_names,
     for fi in range(n_features):
         col = values[:, fi]
 
-        # Skip if >50% NaN
-        valid_mask = ~np.isnan(col)
+        # Skip if >50% non-finite
+        valid_mask = np.isfinite(col)
         n_valid = int(np.sum(valid_mask))
         if n_valid < n_signals * 0.5:
             continue
@@ -664,7 +664,7 @@ def screen_features(values, is_winner, move_adrs, feature_names,
         for b in range(1, N_BUCKETS + 1):
             mask = (bucket_idx == b) & valid_winners
             winner_moves = valid_moves[mask]
-            winner_moves = winner_moves[~np.isnan(winner_moves)]
+            winner_moves = winner_moves[np.isfinite(winner_moves)]
             if len(winner_moves) >= 3:
                 b_mfe.append(float(np.median(winner_moves)))
             else:
@@ -1112,11 +1112,11 @@ def _dedup_one_instrument_pass1(args):
     for idx in order:
         idx = int(idx)
         candidate = values[idx]
-        cand_valid = ~np.isnan(candidate)
+        cand_valid = np.isfinite(candidate)
 
         dominated = False
         for kr in kept_rows:
-            both = cand_valid & ~np.isnan(kr)
+            both = cand_valid & np.isfinite(kr)
             nv = int(both.sum())
             if nv < min_overlap:
                 continue
@@ -1155,9 +1155,9 @@ def _greedy_dedup_batched(values_matrix, strengths, corr_threshold=0.95, min_ove
 
     order = np.argsort(-np.array(strengths))
 
-    # Replace NaN with 0 for dot products, track valid masks separately
-    filled = np.where(np.isnan(values_matrix), 0.0, values_matrix)
-    valid_masks = ~np.isnan(values_matrix)
+    # Replace non-finite values with 0 for dot products, track valid masks separately
+    valid_masks = np.isfinite(values_matrix)
+    filled = np.where(valid_masks, values_matrix, 0.0)
     row_valid_counts = valid_masks.sum(axis=1)
 
     kept_idx = []
@@ -1588,7 +1588,7 @@ def run(setup_type):
                 vj = deduped[j].get("values")
                 if vj is None:
                     continue
-                both = ~np.isnan(vi) & ~np.isnan(vj)
+                both = np.isfinite(vi) & np.isfinite(vj)
                 nv = int(both.sum())
                 if nv < 50:
                     continue
