@@ -1,24 +1,10 @@
 """
 EV Grinder — Phase 3 Correlative Scoring Engine.
 
-Scores every signal from Phase 2 with predicted win rate, predicted MFE,
-and expected value. Also replays refinement conditions to build the
-refinement depth slider data.
-
 See EV_GRINDER.md for full spec.
 
 Usage:
     python scripts/ev_grinder.py --setup dtss
-
-Inputs:
-    - raw_signal_clusters_{setup}.json  (pre-refinement, 893 clusters)
-    - refinement_{setup}_*.json         (post-refinement, 467 signals)
-    - Expression series cache           (local_runner/cache/expr_series/)
-    - 5yr OHLCV cache                   (local_runner/cache/universe_ohlcv_5yr.pkl)
-    - Fundamentals cache                (local_runner/cache/fundamentals_cache.json)
-
-Output:
-    - ev_{setup}_{timestamp}.json       (local + Railway mirror)
 
 Increment 1: Data loaders + refinement depth replay.
 Increment 2: Setup feature computation (6 OHLCV + 4 fundamentals).
@@ -49,12 +35,10 @@ sys.path.insert(0, LOCAL_DIR)
 # ══════════════════════════════════════════════════════════════
 
 def find_latest_refinement(setup_type):
-    """Find the most recent refinement JSON for a setup type."""
     pattern = os.path.join(CACHE_DIR, f"refinement_{setup_type}_*.json")
     candidates = glob.glob(pattern)
     if not candidates:
         return None, None
-
     def _extract_ts(path):
         bn = os.path.basename(path).replace(".json", "")
         parts = bn.split("_")
@@ -63,26 +47,20 @@ def find_latest_refinement(setup_type):
             if len(ts) == 14 and ts.isdigit():
                 return ts
         return "0"
-
     candidates.sort(key=_extract_ts, reverse=True)
-    path = candidates[0]
-    return path, os.path.basename(path)
+    return candidates[0], os.path.basename(candidates[0])
 
 
 def find_raw_clusters(setup_type):
-    """Find the raw signal clusters file for a setup type."""
     latest = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
     if os.path.exists(latest):
         return latest, os.path.basename(latest)
-
     pattern = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}_*.json")
     candidates = glob.glob(pattern)
     if not candidates:
         return None, None
-
     candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    path = candidates[0]
-    return path, os.path.basename(path)
+    return candidates[0], os.path.basename(candidates[0])
 
 
 # ══════════════════════════════════════════════════════════════
@@ -90,16 +68,12 @@ def find_raw_clusters(setup_type):
 # ══════════════════════════════════════════════════════════════
 
 def load_clusters(path):
-    """Load raw signal clusters and normalize to common signal format."""
     with open(path) as f:
         data = json.load(f)
-
     clusters = data.get("clusters", [])
     signals = []
-
     for c in clusters:
         leftward_idxs = [b["bar_idx"] for b in c.get("leftward", [])]
-
         signals.append({
             "ticker": c["ticker"],
             "date": c["rightmost"]["date"],
@@ -113,26 +87,21 @@ def load_clusters(path):
             "cluster_id": c["cluster_id"],
             "leftward_bar_idxs": leftward_idxs,
         })
-
     return signals, data
 
 
 def load_refinement(path):
-    """Load refinement output."""
     with open(path) as f:
         data = json.load(f)
-
     refinement_conditions = data.get("refinement_conditions_only", [])
     winners = data.get("winner_signals", [])
     losers = data.get("loser_signals", [])
     eliminated = data.get("eliminated_signals", [])
     post_signals = winners + losers
-
     return refinement_conditions, post_signals, eliminated, data
 
 
 def load_5yr_cache():
-    """Load 5yr OHLCV cache."""
     for name in ("universe_ohlcv_5yr.pkl", "universe_ohlcv.pkl"):
         path = os.path.join(CACHE_DIR, name)
         if os.path.exists(path):
@@ -142,10 +111,9 @@ def load_5yr_cache():
 
 
 def load_fundamentals_cache():
-    """Load fundamentals cache. Returns dict of tickers or empty dict."""
     path = os.path.join(CACHE_DIR, "fundamentals_cache.json")
     if not os.path.exists(path):
-        print("  WARNING: fundamentals_cache.json not found — fundamentals features will be NaN")
+        print("  WARNING: fundamentals_cache.json not found")
         return {}
     with open(path) as f:
         data = json.load(f)
@@ -157,60 +125,55 @@ def load_fundamentals_cache():
 # ══════════════════════════════════════════════════════════════
 
 def compute_signal_stats(signals):
-    """Compute summary stats for a set of signals."""
     total = len(signals)
     if total == 0:
-        return {
-            "total": 0, "winners": 0, "losers": 0, "wr": 0.0,
-            "peak_day": 0, "avg_day": 0.0, "avg_week": 0.0,
-            "avg_month": 0.0, "avg_year": 0.0,
-        }
-
+        return {"total": 0, "winners": 0, "losers": 0, "wr": 0.0,
+                "peak_day": 0, "avg_day": 0.0, "avg_week": 0.0,
+                "avg_month": 0.0, "avg_year": 0.0}
     winners = sum(1 for s in signals if "WIN" in s.get("classification", ""))
     losers = total - winners
-    wr = winners / total if total > 0 else 0.0
-
+    wr = winners / total
     dates = [s["date"] for s in signals]
     date_counts = Counter(dates)
     peak_day = max(date_counts.values()) if date_counts else 0
-    n_active_days = len(date_counts)
-    avg_day = total / n_active_days if n_active_days > 0 else 0.0
-
+    avg_day = total / len(date_counts) if date_counts else 0.0
     if dates:
-        sorted_dates = sorted(dates)
         from datetime import date as dt_date
+        sorted_dates = sorted(dates)
         d_first = dt_date.fromisoformat(sorted_dates[0])
         d_last = dt_date.fromisoformat(sorted_dates[-1])
         span_days = (d_last - d_first).days + 1
-
-        n_weeks = max(span_days / 7, 1)
-        n_months = max(span_days / 30.44, 1)
-        n_years = max(span_days / 365.25, 1)
-        avg_week = total / n_weeks
-        avg_month = total / n_months
-        avg_year = total / n_years
+        avg_week = total / max(span_days / 7, 1)
+        avg_month = total / max(span_days / 30.44, 1)
+        avg_year = total / max(span_days / 365.25, 1)
     else:
         avg_week = avg_month = avg_year = 0.0
-
-    return {
-        "total": total, "winners": winners, "losers": losers,
-        "wr": round(wr, 4), "peak_day": peak_day,
-        "avg_day": round(avg_day, 2), "avg_week": round(avg_week, 2),
-        "avg_month": round(avg_month, 2), "avg_year": round(avg_year, 2),
-    }
+    return {"total": total, "winners": winners, "losers": losers,
+            "wr": round(wr, 4), "peak_day": peak_day,
+            "avg_day": round(avg_day, 2), "avg_week": round(avg_week, 2),
+            "avg_month": round(avg_month, 2), "avg_year": round(avg_year, 2)}
 
 
 # ══════════════════════════════════════════════════════════════
 # SETUP FEATURE COMPUTATION (INCREMENT 2)
 # ══════════════════════════════════════════════════════════════
 
+def _build_date_index(df):
+    """Build a dict mapping date string -> row index for fast O(1) lookup."""
+    dates = df["date"].values
+    index = {}
+    for i in range(len(dates)):
+        d = str(dates[i])[:10]
+        index[d] = i
+    return index
+
+
 def _compute_rs_series(df):
-    """Compute the RS raw value series for a single ticker's OHLCV DataFrame.
+    """Compute RS raw value series for a ticker.
 
     RS formula: 5-day rolling average of ((close/open - 1) * 100),
     multiplied by (avg_price / ATR50).
-
-    Returns a dict: {date_string: rs_value} for all bars with enough history.
+    Returns dict: {date_string: rs_value}.
     """
     closes = df["close"].values.astype(np.float64)
     opens = df["open"].values.astype(np.float64)
@@ -218,21 +181,17 @@ def _compute_rs_series(df):
     lows = df["low"].values.astype(np.float64)
     dates = df["date"].values
     n = len(df)
-
     if n < 55:
         return {}
 
-    # Intraday % move per bar
     with np.errstate(divide='ignore', invalid='ignore'):
         intraday_pct = (closes / opens - 1.0) * 100.0
     intraday_pct = np.where(np.isfinite(intraday_pct), intraday_pct, 0.0)
 
-    # 5-day rolling average of intraday %
     avg_intraday = np.full(n, np.nan)
     for i in range(4, n):
         avg_intraday[i] = np.mean(intraday_pct[i-4:i+1])
 
-    # ATR50: 50-bar average true range
     tr = np.maximum(highs - lows,
                     np.maximum(np.abs(highs - np.roll(closes, 1)),
                                np.abs(lows - np.roll(closes, 1))))
@@ -241,30 +200,22 @@ def _compute_rs_series(df):
     for i in range(49, n):
         atr50[i] = np.mean(tr[i-49:i+1])
 
-    # Average price (simple: (high + low + close) / 3)
     avg_price = (highs + lows + closes) / 3.0
-
-    # RS = avg_intraday * (avg_price / atr50)
     with np.errstate(divide='ignore', invalid='ignore'):
         rs = avg_intraday * (avg_price / atr50)
     rs = np.where(np.isfinite(rs), rs, np.nan)
 
-    # Build date lookup
     result = {}
     for i in range(n):
         if not np.isnan(rs[i]):
-            d = str(dates[i])[:10]
-            result[d] = float(rs[i])
-
+            result[str(dates[i])[:10]] = float(rs[i])
     return result
 
 
 def _resample_to_weekly(df):
-    """Resample daily OHLCV to weekly. Returns DataFrame or None."""
     if len(df) < 10:
         return None
-    wdf = df.copy()
-    wdf = wdf.set_index("date")
+    wdf = df.copy().set_index("date")
     resampled = wdf.resample("W").agg({
         "open": "first", "high": "max", "low": "min",
         "close": "last", "volume": "sum"
@@ -277,21 +228,14 @@ def _resample_to_weekly(df):
 
 
 def _compute_rs_weekly_series(df):
-    """Compute weekly RS series. Returns {date_string: rs_value}.
-
-    Weekly RS is computed on weekly bars, then mapped back to daily dates.
-    Each daily bar gets the RS value of the weekly bar it belongs to.
-    """
+    """Compute weekly RS series mapped back to daily dates."""
     wdf = _resample_to_weekly(df)
     if wdf is None:
         return {}
-
     weekly_rs = _compute_rs_series(wdf)
     if not weekly_rs:
         return {}
 
-    # Map daily dates to their weekly period's RS
-    # Each daily bar gets the RS of the most recent completed week
     daily_dates = df["date"].values
     weekly_dates_sorted = sorted(weekly_rs.keys())
     if not weekly_dates_sorted:
@@ -301,119 +245,124 @@ def _compute_rs_weekly_series(df):
     wi = 0
     for i in range(len(daily_dates)):
         d = str(daily_dates[i])[:10]
-        # Advance weekly pointer to most recent week <= daily date
         while wi < len(weekly_dates_sorted) - 1 and weekly_dates_sorted[wi + 1] <= d:
             wi += 1
         if weekly_dates_sorted[wi] <= d:
             result[d] = weekly_rs[weekly_dates_sorted[wi]]
-
     return result
 
 
 def compute_setup_features(all_signals):
     """Compute 6 OHLCV + 4 fundamentals features for all signals.
 
-    Modifies each signal dict in-place, adding feature keys.
-    Returns coverage stats dict.
+    Uses DATE-BASED lookup into the OHLCV cache (not bar_idx) because the
+    5yr cache is rebuilt nightly and bar indices shift.
     """
     print("\n  ── SETUP FEATURE COMPUTATION ──")
     t0 = time.time()
 
-    # ── Load OHLCV cache ──
     print("  Loading 5yr OHLCV cache...")
     ohlcv_cache = load_5yr_cache()
     print(f"  {len(ohlcv_cache)} tickers in cache")
 
-    # ── Load fundamentals cache ──
     print("  Loading fundamentals cache...")
     fund_cache = load_fundamentals_cache()
     n_fund = sum(1 for v in fund_cache.values() if "error" not in v)
     print(f"  {n_fund} tickers with fundamentals data")
 
-    # ── Precompute SPY RS (needed for all signals) ──
+    # Ensure all DataFrames have datetime dates
+    for tk, df in ohlcv_cache.items():
+        if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+            ohlcv_cache[tk] = df.copy()
+            ohlcv_cache[tk]["date"] = pd.to_datetime(df["date"])
+
+    # Build date->row index per ticker for O(1) lookups
+    print("  Building date indexes...")
+    ticker_date_idx = {}  # ticker -> {date_str: row_idx}
+    signal_tickers = set(s["ticker"] for s in all_signals)
+    for tk in signal_tickers:
+        df = ohlcv_cache.get(tk)
+        if df is not None:
+            ticker_date_idx[tk] = _build_date_index(df)
+
+    # Precompute SPY RS
     print("  Computing SPY RS series...")
     spy_df = ohlcv_cache.get("SPY")
     if spy_df is None:
         raise RuntimeError("SPY not in OHLCV cache")
-    if not pd.api.types.is_datetime64_any_dtype(spy_df["date"]):
-        spy_df = spy_df.copy()
-        spy_df["date"] = pd.to_datetime(spy_df["date"])
     spy_rs_d1 = _compute_rs_series(spy_df)
     spy_rs_w1 = _compute_rs_weekly_series(spy_df)
     print(f"  SPY RS: {len(spy_rs_d1)} daily, {len(spy_rs_w1)} weekly dates")
 
-    # ── Collect unique tickers from signals ──
-    signal_tickers = set(s["ticker"] for s in all_signals)
-    print(f"  Unique signal tickers: {len(signal_tickers)}")
-
-    # ── Precompute RS series for all signal tickers (bulk) ──
+    # Precompute RS for all signal tickers
     print("  Computing RS series for all signal tickers...")
-    ticker_rs_d1 = {}  # ticker → {date: rs_value}
+    ticker_rs_d1 = {}
     ticker_rs_w1 = {}
     rs_skipped = 0
-
     for tk in signal_tickers:
         df = ohlcv_cache.get(tk)
         if df is None:
             rs_skipped += 1
             continue
-        if not pd.api.types.is_datetime64_any_dtype(df["date"]):
-            df = df.copy()
-            df["date"] = pd.to_datetime(df["date"])
-            ohlcv_cache[tk] = df
         ticker_rs_d1[tk] = _compute_rs_series(df)
         ticker_rs_w1[tk] = _compute_rs_weekly_series(df)
-
     print(f"  RS computed for {len(ticker_rs_d1)} tickers ({rs_skipped} skipped)")
 
-    # ── Compute per-signal OHLCV features ──
+    # ── Per-signal features ──
     print("  Computing per-signal features...")
     coverage = defaultdict(int)
+    n_date_miss = 0
 
     for sig in all_signals:
         tk = sig["ticker"]
-        bar_idx = sig["bar_idx"]
         sig_date = sig["date"]
         df = ohlcv_cache.get(tk)
+        date_idx = ticker_date_idx.get(tk, {})
 
-        # ── Feature 1: price ──
-        if df is not None and bar_idx < len(df):
-            sig["feat_price"] = float(df.iloc[bar_idx]["close"])
-            coverage["price"] += 1
-        else:
-            sig["feat_price"] = None
+        # Find the bar by DATE, not by bar_idx
+        row_idx = date_idx.get(sig_date)
+        if row_idx is None:
+            # Signal date not in current OHLCV cache — all features NaN
+            n_date_miss += 1
+            for feat in ["feat_price", "feat_adr", "feat_dollar_volume_20d",
+                         "feat_days_since_ipo", "feat_rs_d1", "feat_rs_w1",
+                         "feat_market_cap", "feat_volume_float_ratio",
+                         "feat_rs_vs_sector", "feat_sector_rs_vs_spy"]:
+                sig[feat] = None
+            sig["_sector"] = None
+            continue
 
-        # ── Feature 2: adr (14-bar average daily range) ──
-        if df is not None and bar_idx < len(df) and bar_idx >= 13:
-            h = df["high"].values[bar_idx-13:bar_idx+1].astype(np.float64)
-            l = df["low"].values[bar_idx-13:bar_idx+1].astype(np.float64)
+        # Feature 1: price
+        sig["feat_price"] = float(df.iloc[row_idx]["close"])
+        coverage["price"] += 1
+
+        # Feature 2: adr (14-bar average daily range)
+        if row_idx >= 13:
+            h = df["high"].values[row_idx-13:row_idx+1].astype(np.float64)
+            l = df["low"].values[row_idx-13:row_idx+1].astype(np.float64)
             adr = float(np.mean(h - l))
-            if adr > 0 and np.isfinite(adr):
-                sig["feat_adr"] = adr
-                coverage["adr"] += 1
-            else:
-                sig["feat_adr"] = None
+            sig["feat_adr"] = adr if (adr > 0 and np.isfinite(adr)) else None
         else:
             sig["feat_adr"] = None
+        if sig["feat_adr"] is not None:
+            coverage["adr"] += 1
 
-        # ── Feature 3: dollar_volume_20d ──
-        if df is not None and bar_idx < len(df) and bar_idx >= 19:
-            c = df["close"].values[bar_idx-19:bar_idx+1].astype(np.float64)
-            v = df["volume"].values[bar_idx-19:bar_idx+1].astype(np.float64)
+        # Feature 3: dollar_volume_20d
+        if row_idx >= 19:
+            c = df["close"].values[row_idx-19:row_idx+1].astype(np.float64)
+            v = df["volume"].values[row_idx-19:row_idx+1].astype(np.float64)
             dv = float(np.mean(c * v))
-            if np.isfinite(dv):
-                sig["feat_dollar_volume_20d"] = dv
-                coverage["dollar_volume_20d"] += 1
-            else:
-                sig["feat_dollar_volume_20d"] = None
+            sig["feat_dollar_volume_20d"] = dv if np.isfinite(dv) else None
         else:
             sig["feat_dollar_volume_20d"] = None
+        if sig["feat_dollar_volume_20d"] is not None:
+            coverage["dollar_volume_20d"] += 1
 
-        # ── Feature 4: days_since_ipo ──
-        sig["feat_days_since_ipo"] = bar_idx
+        # Feature 4: days_since_ipo (row index in current cache = days of history)
+        sig["feat_days_since_ipo"] = row_idx
         coverage["days_since_ipo"] += 1
 
-        # ── Feature 5: rs_d1 (daily RS vs SPY) ──
+        # Feature 5: rs_d1
         tk_rs = ticker_rs_d1.get(tk, {}).get(sig_date)
         spy_rs = spy_rs_d1.get(sig_date)
         if tk_rs is not None and spy_rs is not None:
@@ -422,7 +371,7 @@ def compute_setup_features(all_signals):
         else:
             sig["feat_rs_d1"] = None
 
-        # ── Feature 6: rs_w1 (weekly RS vs SPY) ──
+        # Feature 6: rs_w1
         tk_rsw = ticker_rs_w1.get(tk, {}).get(sig_date)
         spy_rsw = spy_rs_w1.get(sig_date)
         if tk_rsw is not None and spy_rsw is not None:
@@ -431,7 +380,7 @@ def compute_setup_features(all_signals):
         else:
             sig["feat_rs_w1"] = None
 
-        # ── Feature 7: market_cap ──
+        # Feature 7: market_cap
         fund = fund_cache.get(tk, {})
         shares = fund.get("shares_outstanding")
         if shares is not None and sig["feat_price"] is not None:
@@ -440,10 +389,10 @@ def compute_setup_features(all_signals):
         else:
             sig["feat_market_cap"] = None
 
-        # ── Feature 8: volume_float_ratio ──
+        # Feature 8: volume_float_ratio
         float_shares = fund.get("float_shares")
-        if float_shares is not None and float_shares > 0 and df is not None and bar_idx < len(df):
-            vol = float(df.iloc[bar_idx]["volume"])
+        if float_shares is not None and float_shares > 0:
+            vol = float(df.iloc[row_idx]["volume"])
             if vol > 0 and np.isfinite(vol):
                 sig["feat_volume_float_ratio"] = vol / float_shares
                 coverage["volume_float_ratio"] += 1
@@ -452,85 +401,60 @@ def compute_setup_features(all_signals):
         else:
             sig["feat_volume_float_ratio"] = None
 
-        # ── Feature 9 & 10: sector RS features (need all signals computed first) ──
-        # Store sector for later aggregation
+        # Store sector for aggregation pass
         sig["_sector"] = fund.get("sector")
 
-    # ── Compute sector-level RS features (requires all individual RS first) ──
-    print("  Computing sector RS features...")
+    if n_date_miss:
+        print(f"  WARNING: {n_date_miss} signals had dates not found in current OHLCV cache")
 
-    # Group signals by (date, sector) for sector RS averaging
-    date_sector_rs = defaultdict(list)  # (date, sector) → list of rs_d1 values
+    # ── Sector RS features (second pass) ──
+    print("  Computing sector RS features...")
+    date_sector_rs = defaultdict(list)
     for sig in all_signals:
         sector = sig.get("_sector")
         if sector and sig["feat_rs_d1"] is not None:
             date_sector_rs[(sig["date"], sector)].append(sig["feat_rs_d1"])
 
-    # Compute sector average RS per (date, sector)
-    sector_avg_rs = {}  # (date, sector) → avg rs_d1
+    sector_avg_rs = {}
     for (d, s), values in date_sector_rs.items():
         sector_avg_rs[(d, s)] = float(np.mean(values))
 
-    # Apply to each signal
     for sig in all_signals:
         sector = sig.get("_sector")
         sig_date = sig["date"]
 
-        # Feature 9: rs_vs_sector = ticker RS - sector avg RS
         if sector and sig["feat_rs_d1"] is not None and (sig_date, sector) in sector_avg_rs:
             sig["feat_rs_vs_sector"] = sig["feat_rs_d1"] - sector_avg_rs[(sig_date, sector)]
             coverage["rs_vs_sector"] += 1
         else:
             sig["feat_rs_vs_sector"] = None
 
-        # Feature 10: sector_rs_vs_spy = sector avg RS - SPY RS
-        # (SPY RS here is SPY's own raw RS value, not the vs-SPY difference)
-        spy_raw = spy_rs_d1.get(sig_date)
-        if sector and (sig_date, sector) in sector_avg_rs and spy_raw is not None:
-            # sector_avg_rs already contains (ticker_rs - spy_rs) values averaged
-            # So sector avg RS relative to SPY = sector_avg_rs directly
-            # (since each ticker's feat_rs_d1 = ticker_raw - spy_raw,
-            #  the average of those IS the sector's relative performance vs SPY)
+        if sector and (sig_date, sector) in sector_avg_rs:
             sig["feat_sector_rs_vs_spy"] = sector_avg_rs[(sig_date, sector)]
             coverage["sector_rs_vs_spy"] += 1
         else:
             sig["feat_sector_rs_vs_spy"] = None
 
-        # Clean up temp field
         del sig["_sector"]
 
     elapsed = time.time() - t0
-
-    # ── Coverage summary ──
     n_signals = len(all_signals)
     print(f"\n  Feature coverage ({n_signals} signals):")
-    feature_names = [
-        "price", "adr", "dollar_volume_20d", "days_since_ipo",
-        "rs_d1", "rs_w1", "market_cap", "volume_float_ratio",
-        "rs_vs_sector", "sector_rs_vs_spy",
-    ]
-    for feat in feature_names:
+    for feat in ["price", "adr", "dollar_volume_20d", "days_since_ipo",
+                  "rs_d1", "rs_w1", "market_cap", "volume_float_ratio",
+                  "rs_vs_sector", "sector_rs_vs_spy"]:
         n = coverage[feat]
-        pct = n / n_signals * 100
-        print(f"    {feat:25s} {n:>5}/{n_signals} ({pct:.1f}%)")
-
+        print(f"    {feat:25s} {n:>5}/{n_signals} ({n/n_signals*100:.1f}%)")
     print(f"\n  Setup features complete ({elapsed:.1f}s)")
 
-    # Free large caches
     del ohlcv_cache
-
     return dict(coverage)
 
 
 def validate_setup_features(all_signals):
-    """Validate OHLCV features against preserved setup_grinder output.
-
-    Loads the setup_grinder result from Railway and compares feature values.
-    Returns (ok, comparison_results).
-    """
+    """Validate OHLCV features against preserved setup_grinder output."""
     print("\n  ── VALIDATING SETUP FEATURES ──")
 
-    # Load preserved setup_grinder output
     import requests
     url = "https://web-production-e3025.up.railway.app/api/v2/files/local_runner/cache/setup_dtss_20260313_135931.json"
     try:
@@ -547,47 +471,34 @@ def validate_setup_features(all_signals):
     if not ref_signals:
         print("  WARNING: No signal_features in setup_grinder output")
         return True, {}
-
     print(f"  Reference: {len(ref_signals)} signals from setup_grinder")
 
-    # Build lookup: (ticker, date) → reference features
     ref_lookup = {}
     for s in ref_signals:
-        key = (s["ticker"], s["signal_date"])
-        ref_lookup[key] = s
+        ref_lookup[(s["ticker"], s["signal_date"])] = s
 
-    # Compare
     feature_map = {
-        "price": "feat_price",
-        "adr": "feat_adr",
+        "price": "feat_price", "adr": "feat_adr",
         "dollar_volume_20d": "feat_dollar_volume_20d",
         "days_since_ipo": "feat_days_since_ipo",
-        "rs_d1": "feat_rs_d1",
-        "rs_w1": "feat_rs_w1",
+        "rs_d1": "feat_rs_d1", "rs_w1": "feat_rs_w1",
     }
 
     diffs = {f: [] for f in feature_map}
     matched = 0
-    unmatched = 0
 
     for sig in all_signals:
-        key = (sig["ticker"], sig["date"])
-        ref = ref_lookup.get(key)
+        ref = ref_lookup.get((sig["ticker"], sig["date"]))
         if ref is None:
-            unmatched += 1
             continue
         matched += 1
-
         for ref_name, sig_name in feature_map.items():
             ref_val = ref.get(ref_name)
             sig_val = sig.get(sig_name)
             if ref_val is not None and sig_val is not None:
-                diff = abs(float(ref_val) - float(sig_val))
-                diffs[ref_name].append(diff)
+                diffs[ref_name].append(abs(float(ref_val) - float(sig_val)))
 
     print(f"  Matched: {matched}/{len(all_signals)} signals")
-    if unmatched:
-        print(f"  Unmatched: {unmatched} (not in reference)")
 
     ok = True
     comparison = {}
@@ -595,58 +506,46 @@ def validate_setup_features(all_signals):
         if not diff_list:
             comparison[feat] = {"n": 0, "max_diff": None, "status": "no_data"}
             continue
-
         max_diff = max(diff_list)
         mean_diff = sum(diff_list) / len(diff_list)
-
-        # Thresholds: tight for price/adr/dv/ipo, loose for RS
         if feat in ("rs_d1", "rs_w1"):
-            threshold = 1.0  # RS can have small float diffs from averaging
+            threshold = 1.0
         elif feat == "dollar_volume_20d":
-            threshold = 1.0  # dollar volume in millions, small float diffs OK
+            threshold = 1.0
         elif feat == "days_since_ipo":
-            threshold = 0.5  # should be exact integers
+            threshold = 0.5
         else:
             threshold = 0.01
-
         passed = max_diff <= threshold
-        status = "PASS" if passed else "FAIL"
         if not passed:
             ok = False
-
         comparison[feat] = {
-            "n": len(diff_list),
-            "max_diff": round(max_diff, 6),
-            "mean_diff": round(mean_diff, 6),
-            "threshold": threshold,
-            "status": status,
+            "n": len(diff_list), "max_diff": round(max_diff, 6),
+            "mean_diff": round(mean_diff, 6), "threshold": threshold,
+            "status": "PASS" if passed else "FAIL",
         }
-        print(f"    {feat:25s} max_diff={max_diff:.6f}  mean={mean_diff:.6f}  [{status}]")
+        print(f"    {feat:25s} max_diff={max_diff:.6f}  mean={mean_diff:.6f}  [{'PASS' if passed else 'FAIL'}]")
 
     if ok:
         print(f"\n  ✓ All feature validations passed")
     else:
         print(f"\n  ✗ Feature validation FAILED")
-
     return ok, comparison
 
 
 # ══════════════════════════════════════════════════════════════
-# REFINEMENT DEPTH REPLAY
+# REFINEMENT DEPTH REPLAY (INCREMENT 1)
 # ══════════════════════════════════════════════════════════════
 
 def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
-    """Replay refinement conditions against all clusters using greedy peeling."""
+    """Replay refinement conditions using greedy peeling."""
     print("\n  ── REFINEMENT DEPTH REPLAY ──")
     t0 = time.time()
-
     n_conditions = len(refinement_conditions)
     if n_conditions == 0:
-        print("  No refinement conditions — nothing to replay.")
         stats = compute_signal_stats(all_signals)
         return {}, [stats], []
 
-    # Step 1: Identify losing clusters and their bars
     losing_clusters = {}
     for sig in all_signals:
         if "LOSS" in sig.get("classification", ""):
@@ -660,33 +559,27 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
     print(f"  Losing clusters: {n_losing}")
     print(f"  Refinement conditions: {n_conditions}")
 
-    # Step 2: Map condition names to expr cache column indices
     cond_col_indices = []
     for cond in refinement_conditions:
         col_idx = expr_cache.expr_index(cond["name"])
         if col_idx is None:
-            raise RuntimeError(
-                f"Refinement condition '{cond['name']}' not found in expression cache."
-            )
+            raise RuntimeError(f"Refinement condition '{cond['name']}' not in expression cache.")
         cond_col_indices.append(col_idx)
 
-    # Step 3: Load expression data and build pass matrices
     print(f"  Loading expression data for losing cluster bars...")
     ticker_cache = {}
     tickers_needed = set()
     for bars in losing_clusters.values():
         for (tk, _) in bars:
             tickers_needed.add(tk)
-
     for tk in tickers_needed:
         dates, data = expr_cache.get_ticker(tk)
-        if dates is None or data is None:
-            raise RuntimeError(f"Ticker '{tk}' not in expression cache but has a losing cluster.")
+        if dates is None:
+            raise RuntimeError(f"Ticker '{tk}' not in expression cache.")
         ticker_cache[tk] = data
+    print(f"  Loaded {len(ticker_cache)} tickers")
 
-    print(f"  Loaded {len(ticker_cache)} tickers from expression cache")
     print(f"  Computing per-bar condition pass/fail...")
-
     cluster_bar_cond_passes = {}
     for cid, bars in losing_clusters.items():
         n_bars = len(bars)
@@ -694,7 +587,7 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
         for bi, (tk, bar_idx) in enumerate(bars):
             data = ticker_cache[tk]
             if bar_idx >= data.shape[0]:
-                raise RuntimeError(f"bar_idx {bar_idx} >= cached bars {data.shape[0]} for {tk}.")
+                raise RuntimeError(f"bar_idx {bar_idx} >= {data.shape[0]} for {tk}.")
             for ci, (cond, col_idx) in enumerate(zip(refinement_conditions, cond_col_indices)):
                 val = float(data[bar_idx, col_idx])
                 if np.isnan(val):
@@ -702,105 +595,74 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
                 else:
                     passes[bi, ci] = (val >= cond["low"] and val <= cond["high"])
         cluster_bar_cond_passes[cid] = passes
-
     del ticker_cache
 
-    # Step 4: Verify full-depth elimination
     print(f"\n  Verifying full-depth elimination...")
-
-    def count_alive_clusters(active_condition_mask):
+    def count_alive_clusters(mask):
         alive = 0
         for cid, passes in cluster_bar_cond_passes.items():
-            active_passes = passes[:, active_condition_mask]
-            bar_alive = np.all(active_passes, axis=1)
-            if np.any(bar_alive):
+            if np.any(np.all(passes[:, mask], axis=1)):
                 alive += 1
         return alive
 
     all_active = np.ones(n_conditions, dtype=bool)
-    surviving_at_full_depth = count_alive_clusters(all_active)
-    eliminated_at_full_depth = n_losing - surviving_at_full_depth
-    print(f"  Full depth: {surviving_at_full_depth} surviving, {eliminated_at_full_depth} eliminated")
+    surviving = count_alive_clusters(all_active)
+    print(f"  Full depth: {surviving} surviving, {n_losing - surviving} eliminated")
 
-    # Step 5: Greedy peel
     print(f"\n  Running greedy peel...")
     active_mask = np.ones(n_conditions, dtype=bool)
     peel_order = []
-
     for peel_step in range(n_conditions):
-        best_cond_idx = None
-        best_alive_after = -1
+        best_ci = None
+        best_alive = -1
         current_alive = count_alive_clusters(active_mask)
-
         for ci in range(n_conditions):
             if not active_mask[ci]:
                 continue
-            test_mask = active_mask.copy()
-            test_mask[ci] = False
-            alive_after = count_alive_clusters(test_mask)
-            if best_cond_idx is None or alive_after < best_alive_after:
-                best_alive_after = alive_after
-                best_cond_idx = ci
-
-        active_mask[best_cond_idx] = False
-        clusters_came_back = best_alive_after - current_alive
-        peel_order.append(best_cond_idx)
-
+            test = active_mask.copy()
+            test[ci] = False
+            alive = count_alive_clusters(test)
+            if best_ci is None or alive < best_alive:
+                best_alive = alive
+                best_ci = ci
+        active_mask[best_ci] = False
+        peel_order.append(best_ci)
         if (peel_step + 1) % 20 == 0 or peel_step == 0 or peel_step == n_conditions - 1:
-            depth_remaining = n_conditions - (peel_step + 1)
-            print(f"    Peel {peel_step + 1:3d}: removed {refinement_conditions[best_cond_idx]['name']:40s} "
-                  f"+{clusters_came_back:3d} clusters back  "
-                  f"({best_alive_after} losers alive, depth={depth_remaining})")
+            print(f"    Peel {peel_step+1:3d}: removed {refinement_conditions[best_ci]['name']:40s} "
+                  f"+{best_alive - current_alive:3d} back  ({best_alive} alive, depth={n_conditions - peel_step - 1})")
 
-    # Step 6: Build depth mapping
     application_order = list(reversed(peel_order))
-
-    print(f"\n  Computing killed_at_depth per cluster...")
+    print(f"\n  Computing killed_at_depth...")
     killed_at_depth = {}
     for cid, passes in cluster_bar_cond_passes.items():
         bar_alive = np.ones(passes.shape[0], dtype=bool)
-        for depth_idx, cond_idx in enumerate(application_order):
-            depth = depth_idx + 1
-            bar_alive = bar_alive & passes[:, cond_idx]
+        for di, ci in enumerate(application_order):
+            bar_alive = bar_alive & passes[:, ci]
             if not np.any(bar_alive):
-                killed_at_depth[cid] = depth
+                killed_at_depth[cid] = di + 1
                 break
+    print(f"  Killed: {len(killed_at_depth)}, Surviving: {n_losing - len(killed_at_depth)}")
 
-    n_killed = len(killed_at_depth)
-    print(f"  Clusters killed: {n_killed}")
-    print(f"  Clusters surviving: {n_losing - n_killed}")
-
-    # Step 7: Build depth_stats
     print(f"\n  Building depth_stats...")
-    cluster_to_signal = {}
-    for sig in all_signals:
-        if "LOSS" in sig.get("classification", ""):
-            cluster_to_signal[sig["cluster_id"]] = sig
-
+    cluster_to_signal = {sig["cluster_id"]: sig for sig in all_signals if "LOSS" in sig.get("classification", "")}
     winner_signals = [s for s in all_signals if "WIN" in s.get("classification", "")]
 
     depth_stats = []
     for depth in range(n_conditions + 1):
-        alive_loser_signals = []
-        for cid, sig in cluster_to_signal.items():
-            kill_depth = killed_at_depth.get(cid)
-            if kill_depth is None or depth < kill_depth:
-                alive_loser_signals.append(sig)
-        alive_signals = winner_signals + alive_loser_signals
-        stats = compute_signal_stats(alive_signals)
+        alive_losers = [sig for cid, sig in cluster_to_signal.items()
+                        if killed_at_depth.get(cid) is None or depth < killed_at_depth[cid]]
+        stats = compute_signal_stats(winner_signals + alive_losers)
         stats["depth"] = depth
         depth_stats.append(stats)
 
-    # Step 8: Build refinement_depth_map
     conditions_in_order = []
-    for depth_idx, cond_idx in enumerate(application_order):
-        depth = depth_idx + 1
-        cond = refinement_conditions[cond_idx]
-        clusters_killed_here = [cid for cid, kd in killed_at_depth.items() if kd == depth]
+    for di, ci in enumerate(application_order):
+        depth = di + 1
+        cond = refinement_conditions[ci]
         conditions_in_order.append({
-            "idx": depth_idx, "depth": depth,
-            "name": cond["name"], "low": cond["low"], "high": cond["high"],
-            "clusters_killed": clusters_killed_here,
+            "idx": di, "depth": depth, "name": cond["name"],
+            "low": cond["low"], "high": cond["high"],
+            "clusters_killed": [cid for cid, kd in killed_at_depth.items() if kd == depth],
             "cumulative_losers_remaining": depth_stats[depth]["losers"],
             "cumulative_winners": depth_stats[depth]["winners"],
             "cumulative_total": depth_stats[depth]["total"],
@@ -809,8 +671,7 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
             "cumulative_avg": depth_stats[depth]["avg_day"],
         })
 
-    elapsed = time.time() - t0
-    print(f"\n  Refinement replay complete ({elapsed:.1f}s)")
+    print(f"\n  Refinement replay complete ({time.time() - t0:.1f}s)")
     return killed_at_depth, depth_stats, conditions_in_order
 
 
@@ -819,119 +680,89 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
 # ══════════════════════════════════════════════════════════════
 
 def run(setup_type):
-    """Run the EV grinder for a setup type."""
     print("\n" + "=" * 70)
     print("  EV GRINDER — Phase 3 Correlative Scoring")
     print("=" * 70)
     print(f"  Setup: {setup_type.upper()}")
     print(f"  Time:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
     t_total = time.time()
 
-    # ── Load raw clusters (pre-refinement) ──
+    # Load data
     clusters_path, clusters_file = find_raw_clusters(setup_type)
-    if clusters_path is None:
-        print(f"\n  ERROR: No raw signal clusters file found for {setup_type}")
+    if not clusters_path:
+        print(f"\n  ERROR: No raw clusters for {setup_type}")
         return None
     print(f"\n  Raw clusters: {clusters_file}")
-
-    all_signals, clusters_raw = load_clusters(clusters_path)
+    all_signals, _ = load_clusters(clusters_path)
     n_pre_win = sum(1 for s in all_signals if "WIN" in s["classification"])
     n_pre_loss = sum(1 for s in all_signals if "LOSS" in s["classification"])
     n_examples = sum(1 for s in all_signals if s["is_example"])
-    print(f"  Pre-refinement: {len(all_signals)} signals ({n_pre_win} WIN, {n_pre_loss} LOSS, {n_examples} examples)")
+    print(f"  Pre-refinement: {len(all_signals)} ({n_pre_win}W + {n_pre_loss}L, {n_examples} examples)")
 
-    # ── Load refinement output ──
     ref_path, ref_file = find_latest_refinement(setup_type)
-    if ref_path is None:
-        print(f"\n  ERROR: No refinement file found for {setup_type}")
+    if not ref_path:
+        print(f"\n  ERROR: No refinement for {setup_type}")
         return None
     print(f"\n  Refinement: {ref_file}")
-
-    ref_conditions, post_signals, eliminated_signals, ref_raw = load_refinement(ref_path)
+    ref_conditions, post_signals, _, _ = load_refinement(ref_path)
     n_post_win = sum(1 for s in post_signals if "WIN" in s.get("classification", ""))
     n_post_loss = sum(1 for s in post_signals if "LOSS" in s.get("classification", ""))
-    print(f"  Post-refinement: {len(post_signals)} signals ({n_post_win} WIN, {n_post_loss} LOSS)")
+    print(f"  Post-refinement: {len(post_signals)} ({n_post_win}W + {n_post_loss}L)")
     print(f"  Refinement conditions: {len(ref_conditions)}")
 
-    # ── Load expression cache ──
     print(f"\n  Loading expression cache...")
     from expr_cache_builder import ExprSeriesCache
     expr_cache = ExprSeriesCache()
     if not expr_cache.is_valid():
-        print(f"  ERROR: Expression cache not found or invalid.")
+        print(f"  ERROR: Expression cache invalid.")
         return None
     print(f"  Expression cache: {expr_cache.n_expressions} expressions")
 
-    # ── Increment 1: Refinement depth replay ──
+    # Increment 1
     killed_at_depth, depth_stats, peel_sequence = replay_refinement_depth(
-        all_signals, ref_conditions, expr_cache
-    )
+        all_signals, ref_conditions, expr_cache)
 
-    # ── Increment 1 verification ──
     print(f"\n  ── DEPTH REPLAY VERIFICATION ──")
-    d0 = depth_stats[0]
-    max_depth = len(ref_conditions)
-    d_max = depth_stats[max_depth]
-
-    checks = []
-    checks.append(("Depth 0 total", d0["total"], len(all_signals)))
-    checks.append(("Depth 0 winners", d0["winners"], n_pre_win))
-    checks.append(("Depth 0 losers", d0["losers"], n_pre_loss))
-    checks.append((f"Depth {max_depth} total", d_max["total"], len(post_signals)))
-    checks.append((f"Depth {max_depth} winners", d_max["winners"], n_post_win))
-    checks.append((f"Depth {max_depth} losers", d_max["losers"], n_post_loss))
-
-    monotonic_ok = all(depth_stats[i]["total"] <= depth_stats[i-1]["total"] for i in range(1, len(depth_stats)))
-    checks.append(("Monotonic total", monotonic_ok, True))
-    winners_constant = all(d["winners"] == n_pre_win for d in depth_stats)
-    checks.append(("Winners constant", winners_constant, True))
-    total_killed_in_peel = sum(len(c["clusters_killed"]) for c in peel_sequence)
-    checks.append(("Clusters killed sum", total_killed_in_peel, len(killed_at_depth)))
-
-    depth_ok = all(actual == expected for _, actual, expected in checks)
+    d0, d_max = depth_stats[0], depth_stats[len(ref_conditions)]
+    checks = [
+        ("Depth 0 total", d0["total"], len(all_signals)),
+        ("Depth 0 winners", d0["winners"], n_pre_win),
+        (f"Depth {len(ref_conditions)} total", d_max["total"], len(post_signals)),
+        (f"Depth {len(ref_conditions)} losers", d_max["losers"], n_post_loss),
+        ("Monotonic", all(depth_stats[i]["total"] <= depth_stats[i-1]["total"] for i in range(1, len(depth_stats))), True),
+        ("Winners constant", all(d["winners"] == n_pre_win for d in depth_stats), True),
+        ("Killed sum", sum(len(c["clusters_killed"]) for c in peel_sequence), len(killed_at_depth)),
+    ]
+    depth_ok = all(a == e for _, a, e in checks)
     for label, actual, expected in checks:
         if actual != expected:
-            print(f"  ✗ FAIL: {label}: got {actual}, expected {expected}")
+            print(f"  ✗ {label}: {actual} != {expected}")
     if depth_ok:
-        print(f"  ✓ All {len(checks)} depth replay checks passed")
+        print(f"  ✓ All {len(checks)} depth checks passed")
 
-    # ── Increment 2: Setup feature computation ──
+    # Increment 2
     feature_coverage = compute_setup_features(all_signals)
-
-    # ── Increment 2 validation ──
     features_ok, feature_comparison = validate_setup_features(all_signals)
 
-    # ── Save output ──
+    # Save
     total_time = time.time() - t_total
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Spot-check: first 5 signals with all features
     spot_check = []
     for sig in all_signals[:5]:
-        spot_check.append({
-            "ticker": sig["ticker"],
-            "date": sig["date"],
-            "classification": sig["classification"],
-            "feat_price": sig.get("feat_price"),
-            "feat_adr": sig.get("feat_adr"),
-            "feat_dollar_volume_20d": sig.get("feat_dollar_volume_20d"),
-            "feat_days_since_ipo": sig.get("feat_days_since_ipo"),
-            "feat_rs_d1": sig.get("feat_rs_d1"),
-            "feat_rs_w1": sig.get("feat_rs_w1"),
-            "feat_market_cap": sig.get("feat_market_cap"),
-            "feat_volume_float_ratio": sig.get("feat_volume_float_ratio"),
-            "feat_rs_vs_sector": sig.get("feat_rs_vs_sector"),
-            "feat_sector_rs_vs_spy": sig.get("feat_sector_rs_vs_spy"),
-        })
+        spot_check.append({k: sig.get(k) for k in [
+            "ticker", "date", "classification",
+            "feat_price", "feat_adr", "feat_dollar_volume_20d",
+            "feat_days_since_ipo", "feat_rs_d1", "feat_rs_w1",
+            "feat_market_cap", "feat_volume_float_ratio",
+            "feat_rs_vs_sector", "feat_sector_rs_vs_spy",
+        ]})
 
     output = {
-        "setup": setup_type,
-        "increment": 2,
+        "setup": setup_type, "increment": 2,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "total_time_s": round(total_time, 1),
-        "clusters_file": clusters_file,
-        "refinement_file": ref_file,
+        "clusters_file": clusters_file, "refinement_file": ref_file,
         "verification": {
             "depth_replay_passed": depth_ok,
             "features_passed": features_ok,
@@ -965,7 +796,6 @@ def run(setup_type):
     print(f"\n  {'=' * 50}")
     print(f"  INCREMENT 2 COMPLETE ({total_time:.1f}s)")
     print(f"  {'=' * 50}")
-
     return output
 
 
@@ -973,7 +803,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="EV Grinder — Phase 3")
     parser.add_argument("--setup", default="dtss", help="Setup type (default: dtss)")
     args = parser.parse_args()
-
     result = run(args.setup)
     if result is None:
         sys.exit(1)
