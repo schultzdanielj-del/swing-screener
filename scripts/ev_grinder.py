@@ -8,6 +8,7 @@ Usage:
 
 Increment 1: Data loaders + refinement depth replay.
 Increment 2: Setup feature computation (6 OHLCV + 4 fundamentals).
+Increment 3: Market feature screening (parallel) + setup feature screening.
 """
 
 import os
@@ -21,10 +22,13 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
 from collections import Counter, defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
+MKT_DIR = os.path.join(CACHE_DIR, "market_series")
+MKT_MANIFEST = os.path.join(MKT_DIR, "_manifest.json")
 
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
@@ -582,6 +586,426 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
 
 
 # ══════════════════════════════════════════════════════════════
+# FEATURE SCREENING (INCREMENT 3)
+# ══════════════════════════════════════════════════════════════
+
+def screen_features(values, is_winner, move_adrs, feature_names,
+                    min_per_q=20, wr_pp_threshold=10, mfe_adr_threshold=1.0):
+    """Screen a set of features for WR and MFE predictive power.
+
+    Args:
+        values: np.ndarray shape (n_signals, n_features), float. NaN = missing.
+        is_winner: np.ndarray shape (n_signals,), bool.
+        move_adrs: np.ndarray shape (n_signals,), float. NaN for losers is ok.
+        feature_names: list of str, length n_features.
+        min_per_q: minimum signals per quartile (skip feature if any Q < this).
+        wr_pp_threshold: minimum WR spread in percentage points (e.g. 10 = 10pp).
+        mfe_adr_threshold: minimum MFE spread in ADR units.
+
+    Returns:
+        list of dicts, one per surviving feature, with keys:
+            name, col_idx, screen_type (wr_only/mfe_only/both),
+            wr_spread, mfe_spread, direction,
+            quartile_boundaries [q25, q50, q75],
+            quartile_wr [q1, q2, q3, q4],
+            quartile_mfe [q1, q2, q3, q4],
+            n_per_quartile [q1, q2, q3, q4],
+            values (the raw values array for this feature, for dedup later)
+    """
+    n_signals, n_features = values.shape
+    survivors = []
+    wr_threshold = wr_pp_threshold / 100.0  # convert pp to fraction
+
+    for fi in range(n_features):
+        col = values[:, fi]
+
+        # Skip if >50% NaN
+        valid_mask = ~np.isnan(col)
+        n_valid = int(np.sum(valid_mask))
+        if n_valid < n_signals * 0.5:
+            continue
+
+        # Get valid subset
+        valid_vals = col[valid_mask]
+        valid_winners = is_winner[valid_mask]
+        valid_moves = move_adrs[valid_mask]
+
+        # Compute quartile boundaries on valid values
+        q25, q50, q75 = np.percentile(valid_vals, [25, 50, 75])
+
+        # If all values identical (no spread), skip
+        if q25 == q75:
+            continue
+
+        # Assign quartiles (1-4)
+        quartiles = np.ones(n_valid, dtype=np.int32)
+        quartiles[valid_vals > q25] = 2
+        quartiles[valid_vals > q50] = 3
+        quartiles[valid_vals > q75] = 4
+
+        # Check min per quartile
+        q_counts = [int(np.sum(quartiles == q)) for q in range(1, 5)]
+        if any(c < min_per_q for c in q_counts):
+            continue
+
+        # WR per quartile
+        q_wr = []
+        for q in range(1, 5):
+            mask = quartiles == q
+            q_wr.append(float(np.mean(valid_winners[mask])))
+
+        wr_spread = max(q_wr) - min(q_wr)
+        wr_pass = wr_spread >= wr_threshold
+
+        # MFE per quartile (median move_adr among winners only)
+        q_mfe = []
+        for q in range(1, 5):
+            mask = (quartiles == q) & valid_winners
+            winner_moves = valid_moves[mask]
+            # Filter NaN from move_adrs
+            winner_moves = winner_moves[~np.isnan(winner_moves)]
+            if len(winner_moves) >= 3:
+                q_mfe.append(float(np.median(winner_moves)))
+            else:
+                q_mfe.append(np.nan)
+
+        # MFE spread: only if we have at least 2 non-NaN quartiles
+        non_nan_mfe = [m for m in q_mfe if not np.isnan(m)]
+        if len(non_nan_mfe) >= 2:
+            mfe_spread = max(non_nan_mfe) - min(non_nan_mfe)
+        else:
+            mfe_spread = 0.0
+        mfe_pass = mfe_spread >= mfe_adr_threshold
+
+        if not wr_pass and not mfe_pass:
+            continue
+
+        # Determine direction: ascending (Q4 best) or descending (Q1 best)
+        if wr_pass:
+            direction = "ascending" if q_wr[3] > q_wr[0] else "descending"
+        else:
+            # Use MFE direction
+            non_nan_idx = [i for i in range(4) if not np.isnan(q_mfe[i])]
+            direction = "ascending" if q_mfe[non_nan_idx[-1]] > q_mfe[non_nan_idx[0]] else "descending"
+
+        screen_type = "both" if (wr_pass and mfe_pass) else ("wr_only" if wr_pass else "mfe_only")
+
+        survivors.append({
+            "name": feature_names[fi],
+            "col_idx": fi,
+            "screen_type": screen_type,
+            "wr_spread": round(wr_spread, 4),
+            "mfe_spread": round(mfe_spread, 4),
+            "direction": direction,
+            "quartile_boundaries": [round(float(q25), 6), round(float(q50), 6), round(float(q75), 6)],
+            "quartile_wr": [round(w, 4) for w in q_wr],
+            "quartile_mfe": [round(m, 4) if not np.isnan(m) else None for m in q_mfe],
+            "n_per_quartile": q_counts,
+            "values": col.copy(),  # full array including NaN, for dedup correlation later
+        })
+
+    return survivors
+
+
+def _instrument_filename(instrument_id):
+    """Convert instrument ID to .npz filename. Must match market_cache_builder.py."""
+    safe = (instrument_id
+            .replace("^", "caret_")
+            .replace("=", "eq_")
+            .replace(":", "col_")
+            .replace("$", "dol_")
+            .replace("-", "dash_"))
+    return f"{safe}.npz"
+
+
+def _screen_one_instrument(args):
+    """Worker: load one instrument's .npz and screen all expressions.
+
+    Args tuple:
+        (instrument_id, npz_path, signal_dates_pre, signal_dates_post,
+         is_winner_pre, is_winner_post, move_adrs_pre, move_adrs_post,
+         n_exprs, expr_names, wr_pp, mfe_adr, min_per_q)
+
+    Returns:
+        (instrument_id, survivors_pre, survivors_post, n_tested, elapsed_s)
+        or on error:
+        (instrument_id, [], [], 0, elapsed_s, error_str)
+    """
+    (inst_id, npz_path, sig_dates_pre, sig_dates_post,
+     is_win_pre, is_win_post, moves_pre, moves_post,
+     n_exprs, expr_names, wr_pp, mfe_adr, min_per_q) = args
+
+    t0 = time.time()
+    try:
+        loaded = np.load(npz_path, allow_pickle=True)
+        data = loaded["data"]    # shape (n_bars, n_exprs)
+        dates = loaded["dates"]  # string array
+
+        # Build date → row index
+        date_to_row = {}
+        for i, d in enumerate(dates):
+            date_to_row[str(d)] = i
+
+        n_pre = len(sig_dates_pre)
+        n_post = len(sig_dates_post)
+
+        # Look up values for pre-refinement signals
+        vals_pre = np.full((n_pre, n_exprs), np.nan, dtype=np.float32)
+        for si, sd in enumerate(sig_dates_pre):
+            ri = date_to_row.get(sd)
+            if ri is None:
+                # Try most recent prior date (holiday/calendar mismatch)
+                from datetime import date as dt_date, timedelta
+                for offset in range(1, 6):
+                    try:
+                        d = dt_date.fromisoformat(sd) - timedelta(days=offset)
+                        ri = date_to_row.get(d.isoformat())
+                        if ri is not None:
+                            break
+                    except (ValueError, TypeError):
+                        break
+            if ri is not None and ri < data.shape[0]:
+                vals_pre[si, :] = data[ri, :]
+
+        # Look up values for post-refinement signals
+        vals_post = np.full((n_post, n_exprs), np.nan, dtype=np.float32)
+        for si, sd in enumerate(sig_dates_post):
+            ri = date_to_row.get(sd)
+            if ri is None:
+                from datetime import date as dt_date, timedelta
+                for offset in range(1, 6):
+                    try:
+                        d = dt_date.fromisoformat(sd) - timedelta(days=offset)
+                        ri = date_to_row.get(d.isoformat())
+                        if ri is not None:
+                            break
+                    except (ValueError, TypeError):
+                        break
+            if ri is not None and ri < data.shape[0]:
+                vals_post[si, :] = data[ri, :]
+
+        # Free the big array
+        del data, loaded
+
+        # Build feature names for this instrument
+        feat_names = [f"{inst_id}__{expr_names[j]}" for j in range(n_exprs)]
+
+        # Screen pre-refinement
+        surv_pre = screen_features(
+            vals_pre, is_win_pre, moves_pre, feat_names,
+            min_per_q=min_per_q, wr_pp_threshold=wr_pp, mfe_adr_threshold=mfe_adr)
+
+        # Screen post-refinement
+        surv_post = screen_features(
+            vals_post, is_win_post, moves_post, feat_names,
+            min_per_q=min_per_q, wr_pp_threshold=wr_pp, mfe_adr_threshold=mfe_adr)
+
+        elapsed = time.time() - t0
+        return (inst_id, surv_pre, surv_post, n_exprs, elapsed)
+
+    except Exception as e:
+        return (inst_id, [], [], 0, time.time() - t0, str(e))
+
+
+def run_market_screening(all_signals, post_signals, n_workers=8,
+                         wr_pp=10, mfe_adr=1.0, min_per_q=20):
+    """Screen all market instruments in parallel.
+
+    Returns:
+        (all_survivors_pre, all_survivors_post, screening_stats)
+    """
+    print("\n  ── MARKET FEATURE SCREENING ──")
+    t0 = time.time()
+
+    # Load manifest
+    if not os.path.exists(MKT_MANIFEST):
+        print("  ERROR: Market series manifest not found")
+        return [], [], {}
+    with open(MKT_MANIFEST) as f:
+        manifest = json.load(f)
+
+    instruments = manifest.get("instruments", {})
+    expr_names = manifest.get("expr_names", [])
+    n_exprs = len(expr_names)
+    print(f"  {len(instruments)} instruments × {n_exprs} expressions = "
+          f"{len(instruments) * n_exprs:,} features to test")
+    print(f"  Thresholds: WR ≥ {wr_pp}pp, MFE ≥ {mfe_adr} ADR, min/Q ≥ {min_per_q}")
+    print(f"  Workers: {n_workers}")
+
+    # Build signal arrays (serializable for multiprocessing)
+    sig_dates_pre = [s["date"] for s in all_signals]
+    is_win_pre = np.array(["WIN" in s.get("classification", "") for s in all_signals])
+    moves_pre = np.array([s.get("move_adr") or np.nan for s in all_signals], dtype=np.float64)
+
+    # Post-refinement: need to identify which of all_signals survived refinement
+    post_dates_set = set((s.get("ticker"), s.get("signal_date", s.get("date")))
+                         for s in post_signals)
+    post_mask = []
+    for s in all_signals:
+        key = (s["ticker"], s["date"])
+        post_mask.append(key in post_dates_set)
+    post_mask = np.array(post_mask)
+
+    # Extract post-refinement arrays from all_signals (preserving order)
+    post_indices = np.where(post_mask)[0]
+    sig_dates_post = [all_signals[i]["date"] for i in post_indices]
+    is_win_post = is_win_pre[post_indices]
+    moves_post = moves_pre[post_indices]
+
+    print(f"  Pre-refinement: {len(sig_dates_pre)} signals ({int(is_win_pre.sum())}W)")
+    print(f"  Post-refinement: {len(sig_dates_post)} signals ({int(is_win_post.sum())}W)")
+
+    # Build work items
+    work = []
+    skipped = 0
+    for inst_id, info in instruments.items():
+        npz_path = os.path.join(MKT_DIR, _instrument_filename(inst_id))
+        if not os.path.exists(npz_path):
+            skipped += 1
+            continue
+        work.append((
+            inst_id, npz_path,
+            sig_dates_pre, sig_dates_post,
+            is_win_pre, is_win_post,
+            moves_pre, moves_post,
+            n_exprs, expr_names,
+            wr_pp, mfe_adr, min_per_q
+        ))
+    if skipped:
+        print(f"  WARNING: {skipped} instruments missing .npz files")
+    print(f"  Queued: {len(work)} instruments\n")
+
+    # Run in parallel
+    all_surv_pre = []
+    all_surv_post = []
+    completed = 0
+    total_features = 0
+    errors = []
+
+    with ProcessPoolExecutor(max_workers=n_workers) as pool:
+        futures = {pool.submit(_screen_one_instrument, item): item[0] for item in work}
+
+        for future in as_completed(futures):
+            inst_id = futures[future]
+            try:
+                result = future.result()
+                if len(result) == 6:
+                    # Error case
+                    _, sp, spo, nt, el, err = result
+                    errors.append(f"{inst_id}: {err}")
+                else:
+                    _, sp, spo, nt, el = result
+                    all_surv_pre.extend(sp)
+                    all_surv_post.extend(spo)
+                    total_features += nt
+            except Exception as e:
+                errors.append(f"{inst_id}: {e}")
+
+            completed += 1
+            if completed % 20 == 0 or completed == len(work):
+                elapsed = time.time() - t0
+                rate = completed / elapsed if elapsed > 0 else 1
+                eta = (len(work) - completed) / rate if rate > 0 else 0
+                print(f"    {completed:3d}/{len(work)} instruments  "
+                      f"[{elapsed:.0f}s, ~{eta:.0f}s left]  "
+                      f"surv: {len(all_surv_pre)} pre / {len(all_surv_post)} post")
+
+    elapsed = time.time() - t0
+
+    if errors:
+        print(f"\n  {len(errors)} errors (first 5):")
+        for e in errors[:5]:
+            print(f"    ✗ {e}")
+
+    stats = {
+        "n_instruments": len(work),
+        "n_expressions_per_instrument": n_exprs,
+        "n_features_tested": total_features * len(work),
+        "n_survivors_pre": len(all_surv_pre),
+        "n_survivors_post": len(all_surv_post),
+        "thresholds": {"wr_pp": wr_pp, "mfe_adr": mfe_adr, "min_per_q": min_per_q},
+        "elapsed_s": round(elapsed, 1),
+        "n_errors": len(errors),
+    }
+
+    print(f"\n  Market screening complete ({elapsed:.1f}s)")
+    print(f"  Features tested: ~{total_features * len(work):,}")
+    print(f"  Survivors: {len(all_surv_pre)} pre-refinement, {len(all_surv_post)} post-refinement")
+    return all_surv_pre, all_surv_post, stats
+
+
+def screen_setup_features(all_signals, post_signals):
+    """Screen the 10 setup features through the same WR/MFE logic.
+
+    Returns:
+        (survivors_pre, survivors_post, stats)
+    """
+    print("\n  ── SETUP FEATURE SCREENING ──")
+
+    feat_keys = ["feat_price", "feat_adr", "feat_dollar_volume_20d",
+                 "feat_days_since_ipo", "feat_rs_d1", "feat_rs_w1",
+                 "feat_market_cap", "feat_volume_float_ratio",
+                 "feat_rs_vs_sector", "feat_sector_rs_vs_spy"]
+    feat_names = [k.replace("feat_", "") for k in feat_keys]
+
+    n_pre = len(all_signals)
+
+    # Build pre-refinement matrix
+    vals_pre = np.full((n_pre, len(feat_keys)), np.nan, dtype=np.float64)
+    is_win_pre = np.array(["WIN" in s.get("classification", "") for s in all_signals])
+    moves_pre = np.array([s.get("move_adr") or np.nan for s in all_signals], dtype=np.float64)
+
+    for si, s in enumerate(all_signals):
+        for fi, fk in enumerate(feat_keys):
+            v = s.get(fk)
+            if v is not None:
+                vals_pre[si, fi] = float(v)
+
+    surv_pre = screen_features(vals_pre, is_win_pre, moves_pre, feat_names,
+                               min_per_q=20, wr_pp_threshold=10, mfe_adr_threshold=1.0)
+    # Tag source
+    for s in surv_pre:
+        fk = s["name"]
+        s["source"] = "setup_fundamentals" if fk in (
+            "market_cap", "volume_float_ratio", "rs_vs_sector", "sector_rs_vs_spy"
+        ) else "setup_ohlcv"
+
+    # Build post-refinement matrix
+    post_dates_set = set((s.get("ticker"), s.get("signal_date", s.get("date")))
+                         for s in post_signals)
+    post_mask = np.array([
+        (s["ticker"], s["date"]) in post_dates_set for s in all_signals
+    ])
+    post_indices = np.where(post_mask)[0]
+
+    vals_post = vals_pre[post_indices, :]
+    is_win_post = is_win_pre[post_indices]
+    moves_post = moves_pre[post_indices]
+
+    surv_post = screen_features(vals_post, is_win_post, moves_post, feat_names,
+                                min_per_q=20, wr_pp_threshold=10, mfe_adr_threshold=1.0)
+    for s in surv_post:
+        fk = s["name"]
+        s["source"] = "setup_fundamentals" if fk in (
+            "market_cap", "volume_float_ratio", "rs_vs_sector", "sector_rs_vs_spy"
+        ) else "setup_ohlcv"
+
+    print(f"  Setup features: {len(surv_pre)} pre-refinement survivors, "
+          f"{len(surv_post)} post-refinement survivors")
+    for s in surv_pre:
+        tag = s["screen_type"]
+        print(f"    {s['name']:30s} {tag:10s} WR={s['wr_spread']:.1%}  "
+              f"MFE={s['mfe_spread']:.1f}  dir={s['direction']}")
+
+    stats = {
+        "n_features": len(feat_keys),
+        "n_survivors_pre": len(surv_pre),
+        "n_survivors_post": len(surv_post),
+    }
+    return surv_pre, surv_post, stats
+
+
+# ══════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════
 
@@ -619,7 +1043,7 @@ def run(setup_type):
         print("  ERROR: Expression cache invalid"); return None
     print(f"  Expr cache: {ec.n_expressions} expressions")
 
-    # Inc 1
+    # Inc 1: Refinement depth replay
     kad, ds, peel = replay_refinement_depth(all_signals, rc, ec)
     print(f"\n  ── DEPTH VERIFICATION ──")
     d0, dm = ds[0], ds[len(rc)]
@@ -637,38 +1061,95 @@ def run(setup_type):
         if a != e: print(f"  ✗ {l}: {a} != {e}")
     if dok: print(f"  ✓ All {len(checks)} depth checks passed")
 
-    # Inc 2
+    # Inc 2: Setup features
     fcov = compute_setup_features(all_signals)
     fok, fcomp = validate_setup_features(all_signals)
 
-    # Save
+    # Inc 3: Feature screening
+    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 8))
+
+    # Setup feature screening
+    setup_surv_pre, setup_surv_post, setup_stats = screen_setup_features(all_signals, ps)
+
+    # Market feature screening (parallel)
+    mkt_surv_pre, mkt_surv_post, mkt_stats = run_market_screening(
+        all_signals, ps, n_workers=n_workers)
+
+    # Tag market survivors with source
+    for s in mkt_surv_pre + mkt_surv_post:
+        s["source"] = "market"
+        # Parse instrument from name: "SPY__ext_avgc50_adr14" → instrument="SPY", expression="ext_avgc50_adr14"
+        parts = s["name"].split("__", 1)
+        s["instrument"] = parts[0] if len(parts) == 2 else None
+        s["expression"] = parts[1] if len(parts) == 2 else s["name"]
+
+    # Combined counts
+    total_pre = len(setup_surv_pre) + len(mkt_surv_pre)
+    total_post = len(setup_surv_post) + len(mkt_surv_post)
+    print(f"\n  ── SCREENING SUMMARY ──")
+    print(f"  Setup features:  {len(setup_surv_pre)} pre / {len(setup_surv_post)} post")
+    print(f"  Market features: {len(mkt_surv_pre)} pre / {len(mkt_surv_post)} post")
+    print(f"  Total survivors: {total_pre} pre / {total_post} post")
+
+    # Verify all examples have values
+    example_sigs = [s for s in all_signals if s["is_example"]]
+    ex_ok = len(example_sigs) == ne
+    print(f"  Examples: {len(example_sigs)}/{ne} {'✓' if ex_ok else '✗'}")
+
+    # Save intermediate output
     tt = time.time() - t_total
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    sc = [{k: s.get(k) for k in ["ticker", "date", "classification",
-           "feat_price", "feat_adr", "feat_dollar_volume_20d",
-           "feat_days_since_ipo", "feat_rs_d1", "feat_rs_w1",
-           "feat_market_cap", "feat_volume_float_ratio",
-           "feat_rs_vs_sector", "feat_sector_rs_vs_spy"]}
-          for s in all_signals[:5]]
+
+    # Strip 'values' arrays from survivors for JSON (they're numpy arrays)
+    def _clean_survivor(s):
+        r = {k: v for k, v in s.items() if k != "values"}
+        return r
 
     out = {
-        "setup": setup_type, "increment": 2,
+        "setup": setup_type, "increment": 3,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "total_time_s": round(tt, 1),
         "clusters_file": cf, "refinement_file": rf,
-        "verification": {"depth_replay_passed": dok, "features_passed": fok,
-                         "feature_comparison": fcomp},
-        "feature_coverage": fcov, "spot_check": sc,
+        "verification": {
+            "depth_replay_passed": dok,
+            "features_passed": fok,
+            "feature_comparison": fcomp,
+        },
+        "feature_coverage": fcov,
         "depth_stats": ds,
         "refinement_depth_map": {"conditions_in_order": peel},
-        "summary": {"pre_refinement_signals": len(all_signals),
-                    "post_refinement_signals": len(ps),
-                    "refinement_conditions": len(rc),
-                    "clusters_killed": len(kad), "examples": ne},
+        "screening": {
+            "setup": setup_stats,
+            "market": {k: v for k, v in mkt_stats.items()},
+            "pre_refinement": {
+                "n_signals": len(all_signals),
+                "n_setup_survivors": len(setup_surv_pre),
+                "n_market_survivors": len(mkt_surv_pre),
+                "n_total_survivors": total_pre,
+            },
+            "post_refinement": {
+                "n_signals": len(ps),
+                "n_setup_survivors": len(setup_surv_post),
+                "n_market_survivors": len(mkt_surv_post),
+                "n_total_survivors": total_post,
+            },
+        },
+        "survivors_pre": [_clean_survivor(s) for s in setup_surv_pre + mkt_surv_pre],
+        "survivors_post": [_clean_survivor(s) for s in setup_surv_post + mkt_surv_post],
+        "summary": {
+            "pre_refinement_signals": len(all_signals),
+            "post_refinement_signals": len(ps),
+            "refinement_conditions": len(rc),
+            "clusters_killed": len(kad),
+            "examples": ne,
+            "total_features_tested": mkt_stats.get("n_features_tested", 0) + setup_stats.get("n_features", 0),
+            "survivors_pre": total_pre,
+            "survivors_post": total_post,
+        },
     }
 
     os.makedirs(CACHE_DIR, exist_ok=True)
-    op = os.path.join(CACHE_DIR, f"ev_{setup_type}_inc2_{ts}.json")
+    op = os.path.join(CACHE_DIR, f"ev_{setup_type}_inc3_{ts}.json")
     with open(op, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\n  Saved: {op}")
@@ -679,7 +1160,7 @@ def run(setup_type):
         print(f"  WARNING: Mirror failed: {e}")
 
     print(f"\n  {'=' * 50}")
-    print(f"  INCREMENT 2 COMPLETE ({tt:.1f}s)")
+    print(f"  INCREMENT 3 COMPLETE ({tt:.1f}s)")
     print(f"  {'=' * 50}")
     return out
 
