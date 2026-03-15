@@ -1403,20 +1403,50 @@ def run_cross_dedup(survivors, signal_dates, label, n_workers=None, corr_thresho
     n_after_p1 = len(pass1_kept_global)
     print(f"  Pass 1: {n_total} → {n_after_p1} ({pass1_time:.1f}s)")
 
+    # ── PASS 1.5: SAME-EXPRESSION DEDUP (instant) ──
+    # If the same expression survived on multiple instruments (e.g.,
+    # m_slope_ratio_xavgc8_xavgc50_off10 on VYM and NOBL), keep only
+    # the strongest one. These are almost always correlated >0.95 because
+    # correlated instruments produce near-identical expression values.
+    # This is O(n) grouping — instant — and crushes 24K down to ~2-3K.
+    print(f"\n  Pass 1.5: Same-expression dedup...")
+    t_p15 = time.time()
+
+    expr_groups = defaultdict(list)  # expression_name → list of (global_idx, strength)
+    for gi in pass1_kept_global:
+        s = survivors[gi]
+        # Setup features don't have an expression field — keep them all
+        if s.get("source") != "market":
+            expr_groups[f"__setup__{s['name']}"].append((gi, all_strengths[gi]))
+        else:
+            expr_name = s.get("expression", s["name"])
+            expr_groups[expr_name].append((gi, all_strengths[gi]))
+
+    pass15_kept_global = []
+    for expr_name, candidates in expr_groups.items():
+        # Keep only the strongest per expression
+        best_gi, best_str = max(candidates, key=lambda x: x[1])
+        pass15_kept_global.append(best_gi)
+
+    pass15_time = time.time() - t_p15
+    n_after_p15 = len(pass15_kept_global)
+    n_expr_dupes = n_after_p1 - n_after_p15
+    print(f"  Pass 1.5: {n_after_p1} → {n_after_p15} ({n_expr_dupes} same-expression dupes, {pass15_time:.1f}s)")
+
     # ── PASS 2: CROSS-INSTRUMENT DEDUP (batched) ──
     print(f"\n  Pass 2: Cross-instrument dedup (batched)...")
     t_p2 = time.time()
 
-    cross_vals = np.array([all_values[gi] for gi in pass1_kept_global], dtype=np.float64)
-    cross_strs = np.array([all_strengths[gi] for gi in pass1_kept_global])
+    cross_vals = np.array([all_values[gi] for gi in pass15_kept_global], dtype=np.float64)
+    cross_strs = np.array([all_strengths[gi] for gi in pass15_kept_global])
 
     kept_cross_local = _greedy_dedup_batched(cross_vals, cross_strs, corr_threshold, 50)
 
     # Map back to global indices
-    final_global = [pass1_kept_global[i] for i in kept_cross_local]
+    final_global = [pass15_kept_global[i] for i in kept_cross_local]
 
     pass2_time = time.time() - t_p2
-    print(f"  Pass 2: {n_after_p1} → {len(final_global)} ({pass2_time:.1f}s)")
+    print(f"  Pass 2: {n_after_p15} → {len(final_global)} ({pass2_time:.1f}s)")
 
     # Build deduped survivor list with values attached
     deduped = []
@@ -1445,6 +1475,7 @@ def run_cross_dedup(survivors, signal_dates, label, n_workers=None, corr_thresho
     stats = {
         "input": n_total,
         "after_pass1": n_after_p1,
+        "after_pass15": n_after_p15,
         "output": len(deduped),
         "dropped": n_dropped,
         "drop_pct": round(n_dropped / max(n_total, 1) * 100, 1),
@@ -1453,8 +1484,10 @@ def run_cross_dedup(survivors, signal_dates, label, n_workers=None, corr_thresho
         "n_market_kept": n_kept_market,
         "n_instruments_kept": len(set(s.get("instrument") for s in deduped if s.get("source") == "market")),
         "pass1_time_s": round(pass1_time, 1),
+        "pass15_time_s": round(pass15_time, 1),
+        "pass15_expr_dupes_removed": n_expr_dupes,
         "pass2_time_s": round(pass2_time, 1),
-        "reload_time_s": round(elapsed - pass1_time - pass2_time, 1),
+        "reload_time_s": round(elapsed - pass1_time - pass15_time - pass2_time, 1),
         "total_time_s": round(elapsed, 1),
     }
     return deduped, stats
