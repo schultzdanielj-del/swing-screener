@@ -283,13 +283,12 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
         cond_col_indices.append(col_idx)
 
     # ── Step 3: For each bar in each losing cluster, check all conditions ──
-    # Build a boolean matrix: per_bar_passes[cluster_id][(ticker, bar_idx)][cond_idx] = True/False
     # A bar "passes" a condition if its value is within [low, high] OR is NaN.
     # A cluster is "alive" if ANY of its bars passes ALL applied conditions.
 
     # Load expression data per ticker (cache ticker loads to avoid repeated I/O)
     print(f"  Loading expression data for losing cluster bars...")
-    ticker_cache = {}  # ticker → (dates, data)
+    ticker_cache = {}  # ticker → data array
 
     # Collect all unique tickers needed
     tickers_needed = set()
@@ -308,9 +307,7 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
 
     print(f"  Loaded {len(ticker_cache)} tickers from expression cache")
 
-    # Build pass matrix: for each (cluster_id, bar), does each condition pass?
-    # cluster_bar_passes[cluster_id] = list of boolean arrays, one per bar
-    # Each boolean array has shape (n_conditions,) — True if bar passes that condition
+    # Build pass matrix: for each cluster, does each bar pass each condition?
     print(f"  Computing per-bar condition pass/fail...")
 
     cluster_bar_cond_passes = {}  # cluster_id → np.array (n_bars_in_cluster, n_conditions)
@@ -339,22 +336,14 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
     del ticker_cache
 
     # ── Step 4: Verify full-depth elimination matches refinement output ──
-    # With all 100 conditions applied, a bar is alive if it passes ALL conditions.
-    # A cluster is alive if ANY bar is alive.
     print(f"\n  Verifying full-depth elimination...")
 
     def count_alive_clusters(active_condition_mask):
-        """Count how many losing clusters have at least one bar alive.
-
-        active_condition_mask: boolean array (n_conditions,) — True for applied conditions.
-        """
+        """Count how many losing clusters have at least one bar alive."""
         alive = 0
         for cid, passes in cluster_bar_cond_passes.items():
-            # passes shape: (n_bars, n_conditions)
-            # A bar is alive if it passes ALL active conditions
-            # passes[:, active_condition_mask] gives (n_bars, n_active) — all must be True
             active_passes = passes[:, active_condition_mask]
-            bar_alive = np.all(active_passes, axis=1)  # shape: (n_bars,)
+            bar_alive = np.all(active_passes, axis=1)
             if np.any(bar_alive):
                 alive += 1
         return alive
@@ -368,54 +357,34 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
     print(f"    Eliminated losers: {eliminated_at_full_depth}")
 
     # ── Step 5: Greedy peel ──
-    # Start with all conditions applied. At each step, find the condition
-    # whose removal causes the fewest clusters to come back alive. Remove it.
-    # Record the peel order.
     print(f"\n  Running greedy peel...")
 
     active_mask = np.ones(n_conditions, dtype=bool)
     peel_order = []  # list of condition indices, in order of removal
-    peel_details = []  # per-peel stats
 
     for peel_step in range(n_conditions):
-        # Find which condition to remove: the one that causes least damage
         best_cond_idx = None
-        best_alive_after = -1  # we want the minimum alive increase
+        best_alive_after = -1
 
-        # Current alive count
         current_alive = count_alive_clusters(active_mask)
 
         for ci in range(n_conditions):
             if not active_mask[ci]:
-                continue  # already removed
+                continue
 
-            # Try removing this condition
             test_mask = active_mask.copy()
             test_mask[ci] = False
             alive_after = count_alive_clusters(test_mask)
 
-            # We want to remove the condition that causes the smallest increase
-            # in alive clusters (least damage from removal)
             if best_cond_idx is None or alive_after < best_alive_after:
                 best_alive_after = alive_after
                 best_cond_idx = ci
-            elif alive_after == best_alive_after:
-                # Tie-break: prefer removing the condition with lower filter_power
-                # (i.e., the weaker condition)
-                pass  # first found wins, which is fine
 
         # Remove the best condition
         active_mask[best_cond_idx] = False
         clusters_came_back = best_alive_after - current_alive
 
         peel_order.append(best_cond_idx)
-        peel_details.append({
-            "peel_step": peel_step + 1,
-            "condition_removed_idx": best_cond_idx,
-            "condition_removed_name": refinement_conditions[best_cond_idx]["name"],
-            "clusters_came_back": clusters_came_back,
-            "losers_alive_after": best_alive_after,
-        })
 
         if (peel_step + 1) % 20 == 0 or peel_step == 0 or peel_step == n_conditions - 1:
             depth_remaining = n_conditions - (peel_step + 1)
@@ -424,39 +393,23 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
                   f"({best_alive_after} losers alive, depth={depth_remaining})")
 
     # ── Step 6: Build depth mapping ──
-    # depth 0 = no conditions applied (all losers alive)
-    # depth N = N conditions applied (in REVERSE peel order — last peeled = first applied)
-    # The peel order tells us: peel_order[0] was removed first (= weakest = applied last)
-    # So the application order is reversed: peel_order[-1] is applied first (depth 1),
-    # peel_order[0] is applied last (depth 100).
+    # Peel order: [0]=weakest (removed first, applied last), [-1]=strongest (removed last, applied first)
+    # Application order is reversed: strongest first
+    application_order = list(reversed(peel_order))
 
-    application_order = list(reversed(peel_order))  # condition indices in order of application
-
-    # For each losing cluster, find the depth at which it dies
     print(f"\n  Computing killed_at_depth per cluster...")
-    killed_at_depth = {}  # cluster_id → depth (1-100) or None
+    killed_at_depth = {}  # cluster_id → depth (1-100) or absent = survives all
 
     for cid, passes in cluster_bar_cond_passes.items():
-        # Walk through conditions in application order
-        # At each depth, check if the cluster is still alive
-        # A bar is alive if it passes all conditions applied so far
-        bar_alive = np.ones(passes.shape[0], dtype=bool)  # all bars start alive
+        bar_alive = np.ones(passes.shape[0], dtype=bool)
 
-        cluster_killed = False
         for depth_idx, cond_idx in enumerate(application_order):
-            depth = depth_idx + 1  # depth is 1-indexed
-            # Apply this condition: bar stays alive only if it also passes this one
+            depth = depth_idx + 1
             bar_alive = bar_alive & passes[:, cond_idx]
 
             if not np.any(bar_alive):
-                # All bars dead — cluster killed at this depth
                 killed_at_depth[cid] = depth
-                cluster_killed = True
                 break
-
-        if not cluster_killed:
-            # Cluster survives all conditions — killed_at_depth is None
-            pass  # not added to dict = None
 
     n_killed = len(killed_at_depth)
     n_survive = n_losing - n_killed
@@ -466,23 +419,19 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
     # ── Step 7: Build depth_stats array ──
     print(f"\n  Building depth_stats...")
 
-    # Map cluster_id → signal for quick lookup
     cluster_to_signal = {}
     for sig in all_signals:
         if "LOSS" in sig.get("classification", ""):
             cluster_to_signal[sig["cluster_id"]] = sig
 
-    # Winners are always alive
     winner_signals = [s for s in all_signals if "WIN" in s.get("classification", "")]
 
     depth_stats = []
     for depth in range(n_conditions + 1):
-        # At this depth, which losers are alive?
         alive_loser_signals = []
         for cid, sig in cluster_to_signal.items():
             kill_depth = killed_at_depth.get(cid)
             if kill_depth is None or depth < kill_depth:
-                # Alive: either survives all conditions, or not yet killed
                 alive_loser_signals.append(sig)
 
         alive_signals = winner_signals + alive_loser_signals
@@ -490,14 +439,12 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
         stats["depth"] = depth
         depth_stats.append(stats)
 
-    # ── Step 8: Build refinement_depth_map (conditions in application order) ──
+    # ── Step 8: Build refinement_depth_map ──
     conditions_in_order = []
     for depth_idx, cond_idx in enumerate(application_order):
         depth = depth_idx + 1
         cond = refinement_conditions[cond_idx]
 
-        # Which clusters does this condition kill?
-        # (clusters whose killed_at_depth == this depth)
         clusters_killed_here = [
             cid for cid, kd in killed_at_depth.items() if kd == depth
         ]
@@ -584,7 +531,8 @@ def run(setup_type):
     # ── Verification ──
     print(f"\n  ── VERIFICATION ──")
     d0 = depth_stats[0]
-    d100 = depth_stats[-1] if len(depth_stats) > 100 else depth_stats[len(ref_conditions)]
+    max_depth = len(ref_conditions)
+    d_max = depth_stats[max_depth]
 
     print(f"  Depth  0: {d0['total']:>5} signals ({d0['winners']}W + {d0['losers']}L) "
           f"WR={d0['wr']:.1%}  peak={d0['peak_day']}/day  avg={d0['avg_day']:.1f}/day")
@@ -595,59 +543,103 @@ def run(setup_type):
             print(f"  Depth {check_depth:2d}: {d['total']:>5} signals ({d['winners']}W + {d['losers']}L) "
                   f"WR={d['wr']:.1%}  peak={d['peak_day']}/day  avg={d['avg_day']:.1f}/day")
 
-    max_depth = len(ref_conditions)
-    d_max = depth_stats[max_depth]
     print(f"  Depth{max_depth:3d}: {d_max['total']:>5} signals ({d_max['winners']}W + {d_max['losers']}L) "
           f"WR={d_max['wr']:.1%}  peak={d_max['peak_day']}/day  avg={d_max['avg_day']:.1f}/day")
 
     # Cross-check against known values
+    checks = []
+    checks.append(("Depth 0 total", d0["total"], len(all_signals)))
+    checks.append(("Depth 0 winners", d0["winners"], n_pre_win))
+    checks.append(("Depth 0 losers", d0["losers"], n_pre_loss))
+    checks.append((f"Depth {max_depth} total", d_max["total"], len(post_signals)))
+    checks.append((f"Depth {max_depth} winners", d_max["winners"], n_post_win))
+    checks.append((f"Depth {max_depth} losers", d_max["losers"], n_post_loss))
+
+    # Check monotonicity
+    monotonic_ok = True
+    for i in range(1, len(depth_stats)):
+        if depth_stats[i]["total"] > depth_stats[i-1]["total"]:
+            monotonic_ok = False
+            break
+    checks.append(("Monotonic total (decreasing)", monotonic_ok, True))
+
+    # Check winners constant
+    winners_constant = all(d["winners"] == n_pre_win for d in depth_stats)
+    checks.append(("Winners constant at all depths", winners_constant, True))
+
+    # Check total clusters killed sums correctly
+    total_killed_in_peel = sum(
+        len(c["clusters_killed"]) for c in peel_sequence
+    )
+    checks.append(("Total clusters killed in peel", total_killed_in_peel, len(killed_at_depth)))
+
     ok = True
-    if d0["total"] != len(all_signals):
-        print(f"\n  ✗ FAIL: Depth 0 total {d0['total']} != expected {len(all_signals)}")
-        ok = False
-    if d0["winners"] != n_pre_win:
-        print(f"  ✗ FAIL: Depth 0 winners {d0['winners']} != expected {n_pre_win}")
-        ok = False
-    if d0["losers"] != n_pre_loss:
-        print(f"  ✗ FAIL: Depth 0 losers {d0['losers']} != expected {n_pre_loss}")
-        ok = False
-    if d_max["total"] != len(post_signals):
-        print(f"\n  ✗ FAIL: Depth {max_depth} total {d_max['total']} != expected {len(post_signals)}")
-        ok = False
-    if d_max["winners"] != n_post_win:
-        print(f"  ✗ FAIL: Depth {max_depth} winners {d_max['winners']} != expected {n_post_win}")
-        ok = False
-    if d_max["losers"] != n_post_loss:
-        print(f"  ✗ FAIL: Depth {max_depth} losers {d_max['losers']} != expected {n_post_loss}")
-        ok = False
+    for label, actual, expected in checks:
+        if actual != expected:
+            print(f"\n  ✗ FAIL: {label}: got {actual}, expected {expected}")
+            ok = False
 
     if ok:
-        print(f"\n  ✓ All verification checks passed")
+        print(f"\n  ✓ All {len(checks)} verification checks passed")
     else:
         print(f"\n  ✗ Verification FAILED — see errors above")
 
-    # ── Summary ──
+    # ── Save increment 1 output for verification ──
     total_time = time.time() - t_total
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output = {
+        "setup": setup_type,
+        "increment": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "total_time_s": round(total_time, 1),
+        "clusters_file": clusters_file,
+        "refinement_file": ref_file,
+        "verification": {
+            "all_passed": ok,
+            "checks": [
+                {"label": label, "actual": actual, "expected": expected,
+                 "passed": actual == expected}
+                for label, actual, expected in checks
+            ],
+        },
+        "depth_stats": depth_stats,
+        "refinement_depth_map": {
+            "conditions_in_order": peel_sequence,
+        },
+        "summary": {
+            "pre_refinement_signals": len(all_signals),
+            "pre_refinement_winners": n_pre_win,
+            "pre_refinement_losers": n_pre_loss,
+            "post_refinement_signals": len(post_signals),
+            "post_refinement_winners": n_post_win,
+            "post_refinement_losers": n_post_loss,
+            "refinement_conditions": len(ref_conditions),
+            "clusters_killed": len(killed_at_depth),
+            "clusters_surviving": n_pre_loss - len(killed_at_depth),
+            "examples": n_examples,
+        },
+    }
+
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    out_path = os.path.join(CACHE_DIR, f"ev_{setup_type}_inc1_{ts}.json")
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2)
+    print(f"\n  Saved: {out_path}")
+
+    # Mirror to Railway
+    try:
+        from file_mirror import mirror_file
+        mirror_file(out_path)
+    except Exception as e:
+        print(f"  WARNING: Mirror failed: {e}")
+
+    # ── Summary ──
     print(f"\n  {'=' * 50}")
     print(f"  INCREMENT 1 COMPLETE ({total_time:.1f}s)")
     print(f"  {'=' * 50}")
-    print(f"  Pre-refinement signals: {len(all_signals)}")
-    print(f"  Post-refinement signals: {len(post_signals)}")
-    print(f"  Refinement conditions: {len(ref_conditions)}")
-    print(f"  Clusters killed: {len(killed_at_depth)}")
-    print(f"  Depth stats entries: {len(depth_stats)}")
-    print(f"  Peel sequence entries: {len(peel_sequence)}")
 
-    return {
-        "all_signals": all_signals,
-        "post_signals": post_signals,
-        "ref_conditions": ref_conditions,
-        "killed_at_depth": killed_at_depth,
-        "depth_stats": depth_stats,
-        "peel_sequence": peel_sequence,
-        "clusters_file": clusters_file,
-        "refinement_file": ref_file,
-    }
+    return output
 
 
 if __name__ == "__main__":
