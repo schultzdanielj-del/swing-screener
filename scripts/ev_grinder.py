@@ -177,17 +177,14 @@ def _compute_rs_series(df):
     if n < 55:
         return {}
 
-    # Intraday % move: ((C/O) - 1) * 100
     with np.errstate(divide='ignore', invalid='ignore'):
         intraday_pct = (closes / opens - 1.0) * 100.0
     intraday_pct = np.where(np.isfinite(intraday_pct), intraday_pct, 0.0)
 
-    # 5-day rolling average
     avg_intraday = np.full(n, np.nan)
     for i in range(4, n):
         avg_intraday[i] = np.mean(intraday_pct[i-4:i+1])
 
-    # ATR50: 50-bar simple moving average of true range
     tr = np.maximum(highs - lows,
                     np.maximum(np.abs(highs - np.roll(closes, 1)),
                                np.abs(lows - np.roll(closes, 1))))
@@ -196,13 +193,10 @@ def _compute_rs_series(df):
     for i in range(49, n):
         atr50[i] = np.mean(tr[i-49:i+1])
 
-    # Price component: (C + C50) / 2 — average of current close and close 50 bars ago
-    # This matches the TC2000 PCF: (((C+C50)/2)/ATR50)
     c50 = np.full(n, np.nan)
     c50[50:] = closes[:-50]
     avg_price = (closes + c50) / 2.0
 
-    # RS = avg_intraday * (avg_price / atr50)
     with np.errstate(divide='ignore', invalid='ignore'):
         rs = avg_intraday * (avg_price / atr50)
     rs = np.where(np.isfinite(rs), rs, np.nan)
@@ -365,7 +359,6 @@ def compute_setup_features(all_signals):
     if n_miss:
         print(f"  WARNING: {n_miss} signals had dates not in cache")
 
-    # Sector RS
     print("  Computing sector RS...")
     dsr = defaultdict(list)
     for s in all_signals:
@@ -448,9 +441,6 @@ def validate_setup_features(all_signals):
             comp[feat] = {"n": 0, "status": "no_data"}
             continue
         mx, mn = max(dl), sum(dl) / len(dl)
-        # Thresholds: tight for exact values, loose for derived values
-        # days_since_ipo drifts as cache grows (expected ~13 bars per day of nightly rebuilds)
-        # RS can have small formula-level float diffs
         th = {"price": 0.01, "adr": 0.01, "dollar_volume_20d": 1.0,
               "days_since_ipo": 20.0, "rs_d1": 1.0, "rs_w1": 1.0}[feat]
         passed = mx <= th
@@ -590,31 +580,31 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
 # ══════════════════════════════════════════════════════════════
 
 def screen_features(values, is_winner, move_adrs, feature_names,
-                    min_per_q=20, wr_pp_threshold=10, mfe_adr_threshold=1.0):
-    """Screen a set of features for WR and MFE predictive power.
+                    min_per_bucket=8, wr_pp_threshold=10, mfe_adr_threshold=1.0):
+    """Screen features for WR and MFE predictive power using DECILES.
+
+    Spread is measured D10 minus D1 (top 10% vs bottom 10%). This is far
+    more discriminating than quartiles — random noise rarely produces a
+    large D10-D1 spread, while genuinely predictive features show bigger
+    spreads because the extreme buckets are purer.
 
     Args:
         values: np.ndarray shape (n_signals, n_features), float. NaN = missing.
         is_winner: np.ndarray shape (n_signals,), bool.
         move_adrs: np.ndarray shape (n_signals,), float. NaN for losers is ok.
         feature_names: list of str, length n_features.
-        min_per_q: minimum signals per quartile (skip feature if any Q < this).
-        wr_pp_threshold: minimum WR spread in percentage points (e.g. 10 = 10pp).
-        mfe_adr_threshold: minimum MFE spread in ADR units.
+        min_per_bucket: minimum signals per decile (skip feature if any D < this).
+        wr_pp_threshold: minimum D10-D1 WR spread in percentage points.
+        mfe_adr_threshold: minimum D10-D1 MFE spread in ADR units.
 
     Returns:
-        list of dicts, one per surviving feature, with keys:
-            name, col_idx, screen_type (wr_only/mfe_only/both),
-            wr_spread, mfe_spread, direction,
-            quartile_boundaries [q25, q50, q75],
-            quartile_wr [q1, q2, q3, q4],
-            quartile_mfe [q1, q2, q3, q4],
-            n_per_quartile [q1, q2, q3, q4],
-            values (the raw values array for this feature, for dedup later)
+        list of dicts, one per surviving feature.
     """
     n_signals, n_features = values.shape
     survivors = []
     wr_threshold = wr_pp_threshold / 100.0  # convert pp to fraction
+    N_BUCKETS = 10
+    pct_boundaries = np.linspace(0, 100, N_BUCKETS + 1)  # [0, 10, 20, ..., 100]
 
     for fi in range(n_features):
         col = values[:, fi]
@@ -630,49 +620,50 @@ def screen_features(values, is_winner, move_adrs, feature_names,
         valid_winners = is_winner[valid_mask]
         valid_moves = move_adrs[valid_mask]
 
-        # Compute quartile boundaries on valid values
-        q25, q50, q75 = np.percentile(valid_vals, [25, 50, 75])
+        # Compute decile boundaries (9 cutpoints: 10th, 20th, ..., 90th percentile)
+        boundaries = np.percentile(valid_vals, pct_boundaries[1:-1])
 
-        # If all values identical (no spread), skip
-        if q25 == q75:
+        # If min == max (no spread), skip
+        if boundaries[0] == boundaries[-1]:
             continue
 
-        # Assign quartiles (1-4)
-        quartiles = np.ones(n_valid, dtype=np.int32)
-        quartiles[valid_vals > q25] = 2
-        quartiles[valid_vals > q50] = 3
-        quartiles[valid_vals > q75] = 4
+        # Assign deciles (1-10) using digitize
+        # digitize returns bucket index: values <= boundaries[0] → 0, etc.
+        # We clip to 0..9 then add 1 to get 1..10
+        bucket_idx = np.digitize(valid_vals, boundaries, right=False)
+        bucket_idx = np.clip(bucket_idx, 0, N_BUCKETS - 1) + 1  # 1..10
 
-        # Check min per quartile
-        q_counts = [int(np.sum(quartiles == q)) for q in range(1, 5)]
-        if any(c < min_per_q for c in q_counts):
+        # Check min per bucket
+        b_counts = [int(np.sum(bucket_idx == b)) for b in range(1, N_BUCKETS + 1)]
+        if any(c < min_per_bucket for c in b_counts):
             continue
 
-        # WR per quartile
-        q_wr = []
-        for q in range(1, 5):
-            mask = quartiles == q
-            q_wr.append(float(np.mean(valid_winners[mask])))
+        # WR per decile
+        b_wr = []
+        for b in range(1, N_BUCKETS + 1):
+            mask = bucket_idx == b
+            b_wr.append(float(np.mean(valid_winners[mask])))
 
-        wr_spread = max(q_wr) - min(q_wr)
+        # Spread: D10 minus D1
+        wr_spread = abs(b_wr[N_BUCKETS - 1] - b_wr[0])
         wr_pass = wr_spread >= wr_threshold
 
-        # MFE per quartile (median move_adr among winners only)
-        q_mfe = []
-        for q in range(1, 5):
-            mask = (quartiles == q) & valid_winners
+        # MFE per decile (median move_adr among winners only)
+        b_mfe = []
+        for b in range(1, N_BUCKETS + 1):
+            mask = (bucket_idx == b) & valid_winners
             winner_moves = valid_moves[mask]
-            # Filter NaN from move_adrs
             winner_moves = winner_moves[~np.isnan(winner_moves)]
             if len(winner_moves) >= 3:
-                q_mfe.append(float(np.median(winner_moves)))
+                b_mfe.append(float(np.median(winner_moves)))
             else:
-                q_mfe.append(np.nan)
+                b_mfe.append(np.nan)
 
-        # MFE spread: only if we have at least 2 non-NaN quartiles
-        non_nan_mfe = [m for m in q_mfe if not np.isnan(m)]
-        if len(non_nan_mfe) >= 2:
-            mfe_spread = max(non_nan_mfe) - min(non_nan_mfe)
+        # MFE spread: D10 vs D1 (only if both non-NaN)
+        d1_mfe = b_mfe[0]
+        d10_mfe = b_mfe[N_BUCKETS - 1]
+        if not np.isnan(d1_mfe) and not np.isnan(d10_mfe):
+            mfe_spread = abs(d10_mfe - d1_mfe)
         else:
             mfe_spread = 0.0
         mfe_pass = mfe_spread >= mfe_adr_threshold
@@ -680,13 +671,11 @@ def screen_features(values, is_winner, move_adrs, feature_names,
         if not wr_pass and not mfe_pass:
             continue
 
-        # Determine direction: ascending (Q4 best) or descending (Q1 best)
+        # Determine direction: ascending (D10 best) or descending (D1 best)
         if wr_pass:
-            direction = "ascending" if q_wr[3] > q_wr[0] else "descending"
+            direction = "ascending" if b_wr[N_BUCKETS - 1] > b_wr[0] else "descending"
         else:
-            # Use MFE direction
-            non_nan_idx = [i for i in range(4) if not np.isnan(q_mfe[i])]
-            direction = "ascending" if q_mfe[non_nan_idx[-1]] > q_mfe[non_nan_idx[0]] else "descending"
+            direction = "ascending" if d10_mfe > d1_mfe else "descending"
 
         screen_type = "both" if (wr_pass and mfe_pass) else ("wr_only" if wr_pass else "mfe_only")
 
@@ -697,10 +686,10 @@ def screen_features(values, is_winner, move_adrs, feature_names,
             "wr_spread": round(wr_spread, 4),
             "mfe_spread": round(mfe_spread, 4),
             "direction": direction,
-            "quartile_boundaries": [round(float(q25), 6), round(float(q50), 6), round(float(q75), 6)],
-            "quartile_wr": [round(w, 4) for w in q_wr],
-            "quartile_mfe": [round(m, 4) if not np.isnan(m) else None for m in q_mfe],
-            "n_per_quartile": q_counts,
+            "decile_boundaries": [round(float(b), 6) for b in boundaries],
+            "decile_wr": [round(w, 4) for w in b_wr],
+            "decile_mfe": [round(m, 4) if not np.isnan(m) else None for m in b_mfe],
+            "n_per_decile": b_counts,
             "values": col.copy(),  # full array including NaN, for dedup correlation later
         })
 
@@ -724,7 +713,7 @@ def _screen_one_instrument(args):
     Args tuple:
         (instrument_id, npz_path, signal_dates_pre, signal_dates_post,
          is_winner_pre, is_winner_post, move_adrs_pre, move_adrs_post,
-         n_exprs, expr_names, wr_pp, mfe_adr, min_per_q)
+         n_exprs, expr_names, wr_pp, mfe_adr, min_per_bucket)
 
     Returns:
         (instrument_id, survivors_pre, survivors_post, n_tested, elapsed_s)
@@ -733,7 +722,7 @@ def _screen_one_instrument(args):
     """
     (inst_id, npz_path, sig_dates_pre, sig_dates_post,
      is_win_pre, is_win_post, moves_pre, moves_post,
-     n_exprs, expr_names, wr_pp, mfe_adr, min_per_q) = args
+     n_exprs, expr_names, wr_pp, mfe_adr, min_per_bucket) = args
 
     t0 = time.time()
     try:
@@ -754,7 +743,6 @@ def _screen_one_instrument(args):
         for si, sd in enumerate(sig_dates_pre):
             ri = date_to_row.get(sd)
             if ri is None:
-                # Try most recent prior date (holiday/calendar mismatch)
                 from datetime import date as dt_date, timedelta
                 for offset in range(1, 6):
                     try:
@@ -793,12 +781,12 @@ def _screen_one_instrument(args):
         # Screen pre-refinement
         surv_pre = screen_features(
             vals_pre, is_win_pre, moves_pre, feat_names,
-            min_per_q=min_per_q, wr_pp_threshold=wr_pp, mfe_adr_threshold=mfe_adr)
+            min_per_bucket=min_per_bucket, wr_pp_threshold=wr_pp, mfe_adr_threshold=mfe_adr)
 
         # Screen post-refinement
         surv_post = screen_features(
             vals_post, is_win_post, moves_post, feat_names,
-            min_per_q=min_per_q, wr_pp_threshold=wr_pp, mfe_adr_threshold=mfe_adr)
+            min_per_bucket=min_per_bucket, wr_pp_threshold=wr_pp, mfe_adr_threshold=mfe_adr)
 
         elapsed = time.time() - t0
         return (inst_id, surv_pre, surv_post, n_exprs, elapsed)
@@ -808,7 +796,7 @@ def _screen_one_instrument(args):
 
 
 def run_market_screening(all_signals, post_signals, n_workers=8,
-                         wr_pp=10, mfe_adr=1.0, min_per_q=20):
+                         wr_pp=10, mfe_adr=1.0, min_per_bucket=8):
     """Screen all market instruments in parallel.
 
     Returns:
@@ -829,7 +817,7 @@ def run_market_screening(all_signals, post_signals, n_workers=8,
     n_exprs = len(expr_names)
     print(f"  {len(instruments)} instruments × {n_exprs} expressions = "
           f"{len(instruments) * n_exprs:,} features to test")
-    print(f"  Thresholds: WR ≥ {wr_pp}pp, MFE ≥ {mfe_adr} ADR, min/Q ≥ {min_per_q}")
+    print(f"  Thresholds: WR ≥ {wr_pp}pp, MFE ≥ {mfe_adr} ADR, min/decile ≥ {min_per_bucket}")
     print(f"  Workers: {n_workers}")
 
     # Build signal arrays (serializable for multiprocessing)
@@ -869,7 +857,7 @@ def run_market_screening(all_signals, post_signals, n_workers=8,
             is_win_pre, is_win_post,
             moves_pre, moves_post,
             n_exprs, expr_names,
-            wr_pp, mfe_adr, min_per_q
+            wr_pp, mfe_adr, min_per_bucket
         ))
     if skipped:
         print(f"  WARNING: {skipped} instruments missing .npz files")
@@ -923,7 +911,7 @@ def run_market_screening(all_signals, post_signals, n_workers=8,
         "n_features_tested": total_features * len(work),
         "n_survivors_pre": len(all_surv_pre),
         "n_survivors_post": len(all_surv_post),
-        "thresholds": {"wr_pp": wr_pp, "mfe_adr": mfe_adr, "min_per_q": min_per_q},
+        "thresholds": {"wr_pp": wr_pp, "mfe_adr": mfe_adr, "min_per_bucket": min_per_bucket},
         "elapsed_s": round(elapsed, 1),
         "n_errors": len(errors),
     }
@@ -962,7 +950,7 @@ def screen_setup_features(all_signals, post_signals):
                 vals_pre[si, fi] = float(v)
 
     surv_pre = screen_features(vals_pre, is_win_pre, moves_pre, feat_names,
-                               min_per_q=20, wr_pp_threshold=10, mfe_adr_threshold=1.0)
+                               min_per_bucket=8, wr_pp_threshold=10, mfe_adr_threshold=1.0)
     # Tag source
     for s in surv_pre:
         fk = s["name"]
@@ -983,7 +971,7 @@ def screen_setup_features(all_signals, post_signals):
     moves_post = moves_pre[post_indices]
 
     surv_post = screen_features(vals_post, is_win_post, moves_post, feat_names,
-                                min_per_q=20, wr_pp_threshold=10, mfe_adr_threshold=1.0)
+                                min_per_bucket=8, wr_pp_threshold=10, mfe_adr_threshold=1.0)
     for s in surv_post:
         fk = s["name"]
         s["source"] = "setup_fundamentals" if fk in (
@@ -1078,7 +1066,6 @@ def run(setup_type):
     # Tag market survivors with source
     for s in mkt_surv_pre + mkt_surv_post:
         s["source"] = "market"
-        # Parse instrument from name: "SPY__ext_avgc50_adr14" → instrument="SPY", expression="ext_avgc50_adr14"
         parts = s["name"].split("__", 1)
         s["instrument"] = parts[0] if len(parts) == 2 else None
         s["expression"] = parts[1] if len(parts) == 2 else s["name"]
