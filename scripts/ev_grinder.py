@@ -160,14 +160,6 @@ def _build_date_index(df):
 
 
 def _compute_rs_series(df):
-    """Compute RS raw value series for a ticker.
-
-    TC2000 PCF formula:
-    ((((C4/O4)-1)*100) + ... + (((C/O)-1)*100)) / 5 * (((C+C50)/2) / ATR50)
-
-    5-day rolling average of intraday % move, multiplied by
-    (average of current close and close 50 bars ago) divided by ATR50.
-    """
     closes = df["close"].values.astype(np.float64)
     opens = df["open"].values.astype(np.float64)
     highs = df["high"].values.astype(np.float64)
@@ -176,15 +168,12 @@ def _compute_rs_series(df):
     n = len(df)
     if n < 55:
         return {}
-
     with np.errstate(divide='ignore', invalid='ignore'):
         intraday_pct = (closes / opens - 1.0) * 100.0
     intraday_pct = np.where(np.isfinite(intraday_pct), intraday_pct, 0.0)
-
     avg_intraday = np.full(n, np.nan)
     for i in range(4, n):
         avg_intraday[i] = np.mean(intraday_pct[i-4:i+1])
-
     tr = np.maximum(highs - lows,
                     np.maximum(np.abs(highs - np.roll(closes, 1)),
                                np.abs(lows - np.roll(closes, 1))))
@@ -192,15 +181,12 @@ def _compute_rs_series(df):
     atr50 = np.full(n, np.nan)
     for i in range(49, n):
         atr50[i] = np.mean(tr[i-49:i+1])
-
     c50 = np.full(n, np.nan)
     c50[50:] = closes[:-50]
     avg_price = (closes + c50) / 2.0
-
     with np.errstate(divide='ignore', invalid='ignore'):
         rs = avg_intraday * (avg_price / atr50)
     rs = np.where(np.isfinite(rs), rs, np.nan)
-
     return {str(dates[i])[:10]: float(rs[i]) for i in range(n) if not np.isnan(rs[i])}
 
 
@@ -243,24 +229,19 @@ def compute_setup_features(all_signals):
     """Compute 6 OHLCV + 4 fundamentals features using DATE-BASED lookups."""
     print("\n  ── SETUP FEATURE COMPUTATION ──")
     t0 = time.time()
-
     print("  Loading 5yr OHLCV cache...")
     ohlcv = load_5yr_cache()
     print(f"  {len(ohlcv)} tickers")
-
     print("  Loading fundamentals cache...")
     fund = load_fundamentals_cache()
     print(f"  {sum(1 for v in fund.values() if 'error' not in v)} tickers with data")
-
     for tk, df in ohlcv.items():
         if not pd.api.types.is_datetime64_any_dtype(df["date"]):
             ohlcv[tk] = df.copy()
             ohlcv[tk]["date"] = pd.to_datetime(df["date"])
-
     print("  Building date indexes...")
     tickers = set(s["ticker"] for s in all_signals)
     date_idx = {tk: _build_date_index(ohlcv[tk]) for tk in tickers if tk in ohlcv}
-
     print("  Computing SPY RS...")
     spy_df = ohlcv.get("SPY")
     if spy_df is None:
@@ -268,7 +249,6 @@ def compute_setup_features(all_signals):
     spy_d1 = _compute_rs_series(spy_df)
     spy_w1 = _compute_rs_weekly_series(spy_df)
     print(f"  SPY RS: {len(spy_d1)} daily, {len(spy_w1)} weekly")
-
     print("  Computing RS for signal tickers...")
     tk_d1 = {}
     tk_w1 = {}
@@ -279,18 +259,15 @@ def compute_setup_features(all_signals):
         tk_d1[tk] = _compute_rs_series(df)
         tk_w1[tk] = _compute_rs_weekly_series(df)
     print(f"  RS done for {len(tk_d1)} tickers")
-
     print("  Computing per-signal features...")
     cov = defaultdict(int)
     n_miss = 0
-
     for sig in all_signals:
         tk = sig["ticker"]
         sd = sig["date"]
         df = ohlcv.get(tk)
         di = date_idx.get(tk, {})
         ri = di.get(sd)
-
         if ri is None:
             n_miss += 1
             for f in ["feat_price", "feat_adr", "feat_dollar_volume_20d",
@@ -300,10 +277,8 @@ def compute_setup_features(all_signals):
                 sig[f] = None
             sig["_sector"] = None
             continue
-
         sig["feat_price"] = float(df.iloc[ri]["close"])
         cov["price"] += 1
-
         if ri >= 13:
             h = df["high"].values[ri-13:ri+1].astype(np.float64)
             l = df["low"].values[ri-13:ri+1].astype(np.float64)
@@ -313,7 +288,6 @@ def compute_setup_features(all_signals):
             sig["feat_adr"] = None
         if sig["feat_adr"] is not None:
             cov["adr"] += 1
-
         if ri >= 19:
             c = df["close"].values[ri-19:ri+1].astype(np.float64)
             v = df["volume"].values[ri-19:ri+1].astype(np.float64)
@@ -323,28 +297,23 @@ def compute_setup_features(all_signals):
             sig["feat_dollar_volume_20d"] = None
         if sig["feat_dollar_volume_20d"] is not None:
             cov["dollar_volume_20d"] += 1
-
         sig["feat_days_since_ipo"] = ri
         cov["days_since_ipo"] += 1
-
         tr = tk_d1.get(tk, {}).get(sd)
         sr = spy_d1.get(sd)
         sig["feat_rs_d1"] = (tr - sr) if (tr is not None and sr is not None) else None
         if sig["feat_rs_d1"] is not None:
             cov["rs_d1"] += 1
-
         tw = tk_w1.get(tk, {}).get(sd)
         sw = spy_w1.get(sd)
         sig["feat_rs_w1"] = (tw - sw) if (tw is not None and sw is not None) else None
         if sig["feat_rs_w1"] is not None:
             cov["rs_w1"] += 1
-
         fi = fund.get(tk, {})
         sh = fi.get("shares_outstanding")
         sig["feat_market_cap"] = (sh * sig["feat_price"]) if (sh and sig["feat_price"]) else None
         if sig["feat_market_cap"] is not None:
             cov["market_cap"] += 1
-
         fl = fi.get("float_shares")
         if fl and fl > 0:
             vol = float(df.iloc[ri]["volume"])
@@ -353,12 +322,9 @@ def compute_setup_features(all_signals):
             sig["feat_volume_float_ratio"] = None
         if sig["feat_volume_float_ratio"] is not None:
             cov["volume_float_ratio"] += 1
-
         sig["_sector"] = fi.get("sector")
-
     if n_miss:
         print(f"  WARNING: {n_miss} signals had dates not in cache")
-
     print("  Computing sector RS...")
     dsr = defaultdict(list)
     for s in all_signals:
@@ -366,7 +332,6 @@ def compute_setup_features(all_signals):
         if sec and s["feat_rs_d1"] is not None:
             dsr[(s["date"], sec)].append(s["feat_rs_d1"])
     savg = {k: float(np.mean(v)) for k, v in dsr.items()}
-
     for s in all_signals:
         sec = s.get("_sector")
         sd = s["date"]
@@ -381,7 +346,6 @@ def compute_setup_features(all_signals):
         else:
             s["feat_sector_rs_vs_spy"] = None
         del s["_sector"]
-
     elapsed = time.time() - t0
     n = len(all_signals)
     print(f"\n  Coverage ({n} signals):")
@@ -408,18 +372,15 @@ def validate_setup_features(all_signals):
     except Exception as e:
         print(f"  WARNING: Could not load reference: {e}")
         return True, {}
-
     ref_sigs = ref_data.get("signal_features", [])
     if not ref_sigs:
         return True, {}
     print(f"  Reference: {len(ref_sigs)} signals")
-
     ref_lk = {(s["ticker"], s["signal_date"]): s for s in ref_sigs}
     fmap = {"price": "feat_price", "adr": "feat_adr",
             "dollar_volume_20d": "feat_dollar_volume_20d",
             "days_since_ipo": "feat_days_since_ipo",
             "rs_d1": "feat_rs_d1", "rs_w1": "feat_rs_w1"}
-
     diffs = {f: [] for f in fmap}
     matched = 0
     for s in all_signals:
@@ -431,9 +392,7 @@ def validate_setup_features(all_signals):
             rv, sv = ref.get(rn), s.get(sn)
             if rv is not None and sv is not None:
                 diffs[rn].append(abs(float(rv) - float(sv)))
-
     print(f"  Matched: {matched}/{len(all_signals)}")
-
     ok = True
     comp = {}
     for feat, dl in diffs.items():
@@ -450,7 +409,6 @@ def validate_setup_features(all_signals):
                       "mean_diff": round(mn, 6), "threshold": th,
                       "status": "PASS" if passed else "FAIL"}
         print(f"    {feat:25s} max={mx:.6f}  mean={mn:.6f}  [{'PASS' if passed else 'FAIL'}]")
-
     print(f"\n  {'✓ All passed' if ok else '✗ FAILED'}")
     return ok, comp
 
@@ -465,7 +423,6 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
     n_cond = len(refinement_conditions)
     if n_cond == 0:
         return {}, [compute_signal_stats(all_signals)], []
-
     losing = {}
     for s in all_signals:
         if "LOSS" in s.get("classification", ""):
@@ -475,14 +432,12 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
             losing[s["cluster_id"]] = bars
     n_los = len(losing)
     print(f"  Losing clusters: {n_los}, Conditions: {n_cond}")
-
     cols = []
     for c in refinement_conditions:
         ci = expr_cache.expr_index(c["name"])
         if ci is None:
             raise RuntimeError(f"'{c['name']}' not in expr cache")
         cols.append(ci)
-
     print(f"  Loading expr data...")
     tc = {}
     for bars in losing.values():
@@ -493,7 +448,6 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
                     raise RuntimeError(f"'{tk}' not in expr cache")
                 tc[tk] = d
     print(f"  Loaded {len(tc)} tickers")
-
     print(f"  Computing pass/fail...")
     cbp = {}
     for cid, bars in losing.items():
@@ -507,15 +461,12 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
                 p[bi, ci] = True if np.isnan(v) else (v >= cond["low"] and v <= cond["high"])
         cbp[cid] = p
     del tc
-
     def alive(mask):
         return sum(1 for p in cbp.values() if np.any(np.all(p[:, mask], axis=1)))
-
     print(f"\n  Verifying full depth...")
     aa = np.ones(n_cond, dtype=bool)
     surv = alive(aa)
     print(f"  Full: {surv} surviving, {n_los - surv} eliminated")
-
     print(f"\n  Greedy peel...")
     am = np.ones(n_cond, dtype=bool)
     po = []
@@ -534,7 +485,6 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
         if (ps+1) % 20 == 0 or ps == 0 or ps == n_cond - 1:
             print(f"    Peel {ps+1:3d}: {refinement_conditions[bc]['name']:40s} "
                   f"+{ba-ca:3d} ({ba} alive, depth={n_cond-ps-1})")
-
     ao = list(reversed(po))
     print(f"\n  Computing killed_at_depth...")
     kad = {}
@@ -546,7 +496,6 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
                 kad[cid] = di + 1
                 break
     print(f"  Killed: {len(kad)}, Surviving: {n_los - len(kad)}")
-
     print(f"\n  Building depth_stats...")
     c2s = {s["cluster_id"]: s for s in all_signals if "LOSS" in s.get("classification", "")}
     ws = [s for s in all_signals if "WIN" in s.get("classification", "")]
@@ -556,7 +505,6 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
         st = compute_signal_stats(ws + al)
         st["depth"] = d
         ds.append(st)
-
     cio = []
     for di, ci in enumerate(ao):
         d = di + 1
@@ -570,7 +518,6 @@ def replay_refinement_depth(all_signals, refinement_conditions, expr_cache):
                      "cumulative_wr": ds[d]["wr"],
                      "cumulative_peak": ds[d]["peak_day"],
                      "cumulative_avg": ds[d]["avg_day"]})
-
     print(f"\n  Replay complete ({time.time()-t0:.1f}s)")
     return kad, ds, cio
 
@@ -602,53 +549,33 @@ def screen_features(values, is_winner, move_adrs, feature_names,
     """
     n_signals, n_features = values.shape
     survivors = []
-    wr_threshold = wr_pp_threshold / 100.0  # convert pp to fraction
+    wr_threshold = wr_pp_threshold / 100.0
     N_BUCKETS = 10
-    pct_boundaries = np.linspace(0, 100, N_BUCKETS + 1)  # [0, 10, 20, ..., 100]
+    pct_boundaries = np.linspace(0, 100, N_BUCKETS + 1)
 
     for fi in range(n_features):
         col = values[:, fi]
-
-        # Skip if >50% NaN
         valid_mask = ~np.isnan(col)
         n_valid = int(np.sum(valid_mask))
         if n_valid < n_signals * 0.5:
             continue
-
-        # Get valid subset
         valid_vals = col[valid_mask]
         valid_winners = is_winner[valid_mask]
         valid_moves = move_adrs[valid_mask]
-
-        # Compute decile boundaries (9 cutpoints: 10th, 20th, ..., 90th percentile)
         boundaries = np.percentile(valid_vals, pct_boundaries[1:-1])
-
-        # If min == max (no spread), skip
         if boundaries[0] == boundaries[-1]:
             continue
-
-        # Assign deciles (1-10) using digitize
-        # digitize returns bucket index: values <= boundaries[0] → 0, etc.
-        # We clip to 0..9 then add 1 to get 1..10
         bucket_idx = np.digitize(valid_vals, boundaries, right=False)
-        bucket_idx = np.clip(bucket_idx, 0, N_BUCKETS - 1) + 1  # 1..10
-
-        # Check min per bucket
+        bucket_idx = np.clip(bucket_idx, 0, N_BUCKETS - 1) + 1
         b_counts = [int(np.sum(bucket_idx == b)) for b in range(1, N_BUCKETS + 1)]
         if any(c < min_per_bucket for c in b_counts):
             continue
-
-        # WR per decile
         b_wr = []
         for b in range(1, N_BUCKETS + 1):
             mask = bucket_idx == b
             b_wr.append(float(np.mean(valid_winners[mask])))
-
-        # Spread: D10 minus D1
         wr_spread = abs(b_wr[N_BUCKETS - 1] - b_wr[0])
         wr_pass = wr_spread >= wr_threshold
-
-        # MFE per decile (median move_adr among winners only)
         b_mfe = []
         for b in range(1, N_BUCKETS + 1):
             mask = (bucket_idx == b) & valid_winners
@@ -658,8 +585,6 @@ def screen_features(values, is_winner, move_adrs, feature_names,
                 b_mfe.append(float(np.median(winner_moves)))
             else:
                 b_mfe.append(np.nan)
-
-        # MFE spread: D10 vs D1 (only if both non-NaN)
         d1_mfe = b_mfe[0]
         d10_mfe = b_mfe[N_BUCKETS - 1]
         if not np.isnan(d1_mfe) and not np.isnan(d10_mfe):
@@ -667,18 +592,13 @@ def screen_features(values, is_winner, move_adrs, feature_names,
         else:
             mfe_spread = 0.0
         mfe_pass = mfe_spread >= mfe_adr_threshold
-
         if not wr_pass and not mfe_pass:
             continue
-
-        # Determine direction: ascending (D10 best) or descending (D1 best)
         if wr_pass:
             direction = "ascending" if b_wr[N_BUCKETS - 1] > b_wr[0] else "descending"
         else:
             direction = "ascending" if d10_mfe > d1_mfe else "descending"
-
         screen_type = "both" if (wr_pass and mfe_pass) else ("wr_only" if wr_pass else "mfe_only")
-
         survivors.append({
             "name": feature_names[fi],
             "col_idx": fi,
@@ -690,10 +610,66 @@ def screen_features(values, is_winner, move_adrs, feature_names,
             "decile_wr": [round(w, 4) for w in b_wr],
             "decile_mfe": [round(m, 4) if not np.isnan(m) else None for m in b_mfe],
             "n_per_decile": b_counts,
-            "values": col.copy(),  # full array including NaN, for dedup correlation later
+            "values": col.copy(),
         })
 
     return survivors
+
+
+def _dedup_survivors(survivors, corr_threshold=0.95):
+    """Greedy dedup: rank by screening strength, drop correlated features.
+
+    Within a single instrument's survivors, many expressions are minor
+    variants of each other (SMA20 vs SMA21 vs SMA22). This collapses
+    them to the single best representative per correlated cluster.
+
+    Args:
+        survivors: list of dicts from screen_features(), each has 'values' array.
+        corr_threshold: drop feature if abs(correlation) > this with a kept feature.
+
+    Returns:
+        Subset of survivors (references to same dicts, not copies).
+    """
+    if len(survivors) <= 1:
+        return survivors
+
+    # Rank by screening strength: max of WR spread and MFE spread (normalized)
+    # Normalize MFE to comparable scale: 1.0 ADR spread ~ 10pp WR spread
+    for s in survivors:
+        s["_strength"] = max(s["wr_spread"], s["mfe_spread"] / 10.0)
+    ranked = sorted(survivors, key=lambda s: s["_strength"], reverse=True)
+
+    kept = []
+    kept_vals = []
+
+    for s in ranked:
+        v = s["values"].astype(np.float64)
+        drop = False
+        for kv in kept_vals:
+            both_valid = ~np.isnan(v) & ~np.isnan(kv)
+            n_both = int(np.sum(both_valid))
+            if n_both < 20:
+                continue
+            a = v[both_valid]
+            b = kv[both_valid]
+            a_m = a - np.mean(a)
+            b_m = b - np.mean(b)
+            denom = np.sqrt(np.sum(a_m * a_m) * np.sum(b_m * b_m))
+            if denom < 1e-12:
+                corr = 0.0
+            else:
+                corr = float(np.sum(a_m * b_m) / denom)
+            if abs(corr) > corr_threshold:
+                drop = True
+                break
+        if not drop:
+            kept.append(s)
+            kept_vals.append(v)
+
+    for s in survivors:
+        del s["_strength"]
+
+    return kept
 
 
 def _instrument_filename(instrument_id):
@@ -708,18 +684,7 @@ def _instrument_filename(instrument_id):
 
 
 def _screen_one_instrument(args):
-    """Worker: load one instrument's .npz and screen all expressions.
-
-    Args tuple:
-        (instrument_id, npz_path, signal_dates_pre, signal_dates_post,
-         is_winner_pre, is_winner_post, move_adrs_pre, move_adrs_post,
-         n_exprs, expr_names, wr_pp, mfe_adr, min_per_bucket)
-
-    Returns:
-        (instrument_id, survivors_pre, survivors_post, n_tested, elapsed_s)
-        or on error:
-        (instrument_id, [], [], 0, elapsed_s, error_str)
-    """
+    """Worker: load one .npz, screen all expressions, dedup within instrument."""
     (inst_id, npz_path, sig_dates_pre, sig_dates_post,
      is_win_pre, is_win_post, moves_pre, moves_post,
      n_exprs, expr_names, wr_pp, mfe_adr, min_per_bucket) = args
@@ -727,10 +692,9 @@ def _screen_one_instrument(args):
     t0 = time.time()
     try:
         loaded = np.load(npz_path, allow_pickle=True)
-        data = loaded["data"]    # shape (n_bars, n_exprs)
-        dates = loaded["dates"]  # string array
+        data = loaded["data"]
+        dates = loaded["dates"]
 
-        # Build date → row index
         date_to_row = {}
         for i, d in enumerate(dates):
             date_to_row[str(d)] = i
@@ -738,7 +702,6 @@ def _screen_one_instrument(args):
         n_pre = len(sig_dates_pre)
         n_post = len(sig_dates_post)
 
-        # Look up values for pre-refinement signals
         vals_pre = np.full((n_pre, n_exprs), np.nan, dtype=np.float32)
         for si, sd in enumerate(sig_dates_pre):
             ri = date_to_row.get(sd)
@@ -755,7 +718,6 @@ def _screen_one_instrument(args):
             if ri is not None and ri < data.shape[0]:
                 vals_pre[si, :] = data[ri, :]
 
-        # Look up values for post-refinement signals
         vals_post = np.full((n_post, n_exprs), np.nan, dtype=np.float32)
         for si, sd in enumerate(sig_dates_post):
             ri = date_to_row.get(sd)
@@ -772,21 +734,21 @@ def _screen_one_instrument(args):
             if ri is not None and ri < data.shape[0]:
                 vals_post[si, :] = data[ri, :]
 
-        # Free the big array
         del data, loaded
 
-        # Build feature names for this instrument
         feat_names = [f"{inst_id}__{expr_names[j]}" for j in range(n_exprs)]
 
-        # Screen pre-refinement
         surv_pre = screen_features(
             vals_pre, is_win_pre, moves_pre, feat_names,
             min_per_bucket=min_per_bucket, wr_pp_threshold=wr_pp, mfe_adr_threshold=mfe_adr)
 
-        # Screen post-refinement
         surv_post = screen_features(
             vals_post, is_win_post, moves_post, feat_names,
             min_per_bucket=min_per_bucket, wr_pp_threshold=wr_pp, mfe_adr_threshold=mfe_adr)
+
+        # Per-instrument dedup: collapse correlated expressions to best representative
+        surv_pre = _dedup_survivors(surv_pre)
+        surv_post = _dedup_survivors(surv_post)
 
         elapsed = time.time() - t0
         return (inst_id, surv_pre, surv_post, n_exprs, elapsed)
@@ -797,15 +759,10 @@ def _screen_one_instrument(args):
 
 def run_market_screening(all_signals, post_signals, n_workers=8,
                          wr_pp=10, mfe_adr=1.0, min_per_bucket=8):
-    """Screen all market instruments in parallel.
-
-    Returns:
-        (all_survivors_pre, all_survivors_post, screening_stats)
-    """
+    """Screen all market instruments in parallel."""
     print("\n  ── MARKET FEATURE SCREENING ──")
     t0 = time.time()
 
-    # Load manifest
     if not os.path.exists(MKT_MANIFEST):
         print("  ERROR: Market series manifest not found")
         return [], [], {}
@@ -818,14 +775,13 @@ def run_market_screening(all_signals, post_signals, n_workers=8,
     print(f"  {len(instruments)} instruments × {n_exprs} expressions = "
           f"{len(instruments) * n_exprs:,} features to test")
     print(f"  Thresholds: WR ≥ {wr_pp}pp, MFE ≥ {mfe_adr} ADR, min/decile ≥ {min_per_bucket}")
+    print(f"  Dedup: corr > 0.95 within each instrument")
     print(f"  Workers: {n_workers}")
 
-    # Build signal arrays (serializable for multiprocessing)
     sig_dates_pre = [s["date"] for s in all_signals]
     is_win_pre = np.array(["WIN" in s.get("classification", "") for s in all_signals])
     moves_pre = np.array([s.get("move_adr") or np.nan for s in all_signals], dtype=np.float64)
 
-    # Post-refinement: need to identify which of all_signals survived refinement
     post_dates_set = set((s.get("ticker"), s.get("signal_date", s.get("date")))
                          for s in post_signals)
     post_mask = []
@@ -834,7 +790,6 @@ def run_market_screening(all_signals, post_signals, n_workers=8,
         post_mask.append(key in post_dates_set)
     post_mask = np.array(post_mask)
 
-    # Extract post-refinement arrays from all_signals (preserving order)
     post_indices = np.where(post_mask)[0]
     sig_dates_post = [all_signals[i]["date"] for i in post_indices]
     is_win_post = is_win_pre[post_indices]
@@ -843,7 +798,6 @@ def run_market_screening(all_signals, post_signals, n_workers=8,
     print(f"  Pre-refinement: {len(sig_dates_pre)} signals ({int(is_win_pre.sum())}W)")
     print(f"  Post-refinement: {len(sig_dates_post)} signals ({int(is_win_post.sum())}W)")
 
-    # Build work items
     work = []
     skipped = 0
     for inst_id, info in instruments.items():
@@ -863,7 +817,6 @@ def run_market_screening(all_signals, post_signals, n_workers=8,
         print(f"  WARNING: {skipped} instruments missing .npz files")
     print(f"  Queued: {len(work)} instruments\n")
 
-    # Run in parallel
     all_surv_pre = []
     all_surv_post = []
     completed = 0
@@ -878,7 +831,6 @@ def run_market_screening(all_signals, post_signals, n_workers=8,
             try:
                 result = future.result()
                 if len(result) == 6:
-                    # Error case
                     _, sp, spo, nt, el, err = result
                     errors.append(f"{inst_id}: {err}")
                 else:
@@ -923,11 +875,7 @@ def run_market_screening(all_signals, post_signals, n_workers=8,
 
 
 def screen_setup_features(all_signals, post_signals):
-    """Screen the 10 setup features through the same WR/MFE logic.
-
-    Returns:
-        (survivors_pre, survivors_post, stats)
-    """
+    """Screen the 10 setup features through the same WR/MFE logic."""
     print("\n  ── SETUP FEATURE SCREENING ──")
 
     feat_keys = ["feat_price", "feat_adr", "feat_dollar_volume_20d",
@@ -937,8 +885,6 @@ def screen_setup_features(all_signals, post_signals):
     feat_names = [k.replace("feat_", "") for k in feat_keys]
 
     n_pre = len(all_signals)
-
-    # Build pre-refinement matrix
     vals_pre = np.full((n_pre, len(feat_keys)), np.nan, dtype=np.float64)
     is_win_pre = np.array(["WIN" in s.get("classification", "") for s in all_signals])
     moves_pre = np.array([s.get("move_adr") or np.nan for s in all_signals], dtype=np.float64)
@@ -951,21 +897,18 @@ def screen_setup_features(all_signals, post_signals):
 
     surv_pre = screen_features(vals_pre, is_win_pre, moves_pre, feat_names,
                                min_per_bucket=8, wr_pp_threshold=10, mfe_adr_threshold=1.0)
-    # Tag source
     for s in surv_pre:
         fk = s["name"]
         s["source"] = "setup_fundamentals" if fk in (
             "market_cap", "volume_float_ratio", "rs_vs_sector", "sector_rs_vs_spy"
         ) else "setup_ohlcv"
 
-    # Build post-refinement matrix
     post_dates_set = set((s.get("ticker"), s.get("signal_date", s.get("date")))
                          for s in post_signals)
     post_mask = np.array([
         (s["ticker"], s["date"]) in post_dates_set for s in all_signals
     ])
     post_indices = np.where(post_mask)[0]
-
     vals_post = vals_pre[post_indices, :]
     is_win_post = is_win_pre[post_indices]
     moves_post = moves_pre[post_indices]
@@ -1031,7 +974,7 @@ def run(setup_type):
         print("  ERROR: Expression cache invalid"); return None
     print(f"  Expr cache: {ec.n_expressions} expressions")
 
-    # Inc 1: Refinement depth replay
+    # Inc 1
     kad, ds, peel = replay_refinement_depth(all_signals, rc, ec)
     print(f"\n  ── DEPTH VERIFICATION ──")
     d0, dm = ds[0], ds[len(rc)]
@@ -1049,28 +992,22 @@ def run(setup_type):
         if a != e: print(f"  ✗ {l}: {a} != {e}")
     if dok: print(f"  ✓ All {len(checks)} depth checks passed")
 
-    # Inc 2: Setup features
+    # Inc 2
     fcov = compute_setup_features(all_signals)
     fok, fcomp = validate_setup_features(all_signals)
 
-    # Inc 3: Feature screening
+    # Inc 3
     n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 8))
-
-    # Setup feature screening
     setup_surv_pre, setup_surv_post, setup_stats = screen_setup_features(all_signals, ps)
-
-    # Market feature screening (parallel)
     mkt_surv_pre, mkt_surv_post, mkt_stats = run_market_screening(
         all_signals, ps, n_workers=n_workers)
 
-    # Tag market survivors with source
     for s in mkt_surv_pre + mkt_surv_post:
         s["source"] = "market"
         parts = s["name"].split("__", 1)
         s["instrument"] = parts[0] if len(parts) == 2 else None
         s["expression"] = parts[1] if len(parts) == 2 else s["name"]
 
-    # Combined counts
     total_pre = len(setup_surv_pre) + len(mkt_surv_pre)
     total_post = len(setup_surv_post) + len(mkt_surv_post)
     print(f"\n  ── SCREENING SUMMARY ──")
@@ -1078,16 +1015,13 @@ def run(setup_type):
     print(f"  Market features: {len(mkt_surv_pre)} pre / {len(mkt_surv_post)} post")
     print(f"  Total survivors: {total_pre} pre / {total_post} post")
 
-    # Verify all examples have values
     example_sigs = [s for s in all_signals if s["is_example"]]
     ex_ok = len(example_sigs) == ne
     print(f"  Examples: {len(example_sigs)}/{ne} {'✓' if ex_ok else '✗'}")
 
-    # Save intermediate output
     tt = time.time() - t_total
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Strip 'values' arrays from survivors for JSON (they're numpy arrays)
     def _clean_survivor(s):
         r = {k: v for k, v in s.items() if k != "values"}
         return r
