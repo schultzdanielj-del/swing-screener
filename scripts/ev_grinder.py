@@ -183,19 +183,19 @@ def _compute_rs_series(df):
         intraday_pct = (closes / opens - 1.0) * 100.0
     intraday_pct = np.where(np.isfinite(intraday_pct), intraday_pct, 0.0)
 
-    # 5-day rolling average
+    # 5-day rolling average (vectorized via cumsum)
+    cs_intra = np.cumsum(intraday_pct)
     avg_intraday = np.full(n, np.nan)
-    for i in range(4, n):
-        avg_intraday[i] = np.mean(intraday_pct[i-4:i+1])
+    avg_intraday[4:] = (cs_intra[4:] - np.concatenate([[0], cs_intra[:-5]])) / 5.0
 
-    # ATR50: 50-bar simple moving average of true range
+    # ATR50: 50-bar simple moving average of true range (vectorized via cumsum)
     tr = np.maximum(highs - lows,
                     np.maximum(np.abs(highs - np.roll(closes, 1)),
                                np.abs(lows - np.roll(closes, 1))))
     tr[0] = highs[0] - lows[0]
+    cs_tr = np.cumsum(tr)
     atr50 = np.full(n, np.nan)
-    for i in range(49, n):
-        atr50[i] = np.mean(tr[i-49:i+1])
+    atr50[49:] = (cs_tr[49:] - np.concatenate([[0], cs_tr[:-50]])) / 50.0
 
     # Price component: (C + C50) / 2 — average of current close and close 50 bars ago
     # This matches the TC2000 PCF: (((C+C50)/2)/ATR50)
@@ -308,7 +308,7 @@ def compute_setup_features(all_signals):
             sig["_sector"] = None
             continue
 
-        sig["feat_price"] = float(df.iloc[ri]["close"])
+        sig["feat_price"] = float(df["close"].values[ri])
         cov["price"] += 1
 
         if ri >= 13:
@@ -354,7 +354,7 @@ def compute_setup_features(all_signals):
 
         fl = fi.get("float_shares")
         if fl and fl > 0:
-            vol = float(df.iloc[ri]["volume"])
+            vol = float(df["volume"].values[ri])
             sig["feat_volume_float_ratio"] = (vol / fl) if (vol > 0 and np.isfinite(vol)) else None
         else:
             sig["feat_volume_float_ratio"] = None
@@ -752,6 +752,7 @@ def _screen_one_instrument(args):
      is_win_pre, is_win_post, moves_pre, moves_post,
      n_exprs, expr_names, wr_pp, mfe_adr, min_per_bucket) = args
 
+    from datetime import date as dt_date, timedelta
     t0 = time.time()
     try:
         loaded = np.load(npz_path, allow_pickle=True)
@@ -774,7 +775,6 @@ def _screen_one_instrument(args):
                 # Try most recent prior date (holiday/calendar mismatch)
                 # Binary search: find largest date <= sd
                 for offset in range(1, 6):
-                    from datetime import date as dt_date, timedelta
                     try:
                         d = dt_date.fromisoformat(sd) - timedelta(days=offset)
                         ri = date_to_row.get(d.isoformat())
@@ -791,7 +791,6 @@ def _screen_one_instrument(args):
             ri = date_to_row.get(sd)
             if ri is None:
                 for offset in range(1, 6):
-                    from datetime import date as dt_date, timedelta
                     try:
                         d = dt_date.fromisoformat(sd) - timedelta(days=offset)
                         ri = date_to_row.get(d.isoformat())
@@ -829,13 +828,15 @@ def _screen_one_instrument(args):
         return (inst_id, [], [], 0, time.time() - t0, str(e))
 
 
-def run_market_screening(all_signals, post_signals, n_workers=8,
+def run_market_screening(all_signals, post_signals, n_workers=None,
                          wr_pp=10, mfe_adr=1.0, min_per_bucket=8):
     """Screen all market instruments in parallel.
 
     Returns:
         (all_survivors_pre, all_survivors_post, screening_stats)
     """
+    if n_workers is None:
+        n_workers = os.cpu_count() or 8
     print("\n  ── MARKET FEATURE SCREENING ──")
     t0 = time.time()
 
@@ -1047,6 +1048,7 @@ def _reload_instrument_values(args):
         or (instrument_id, [], elapsed_s, error_str) on failure.
     """
     inst_id, npz_path, expr_col_indices, signal_dates = args
+    from datetime import date as dt_date, timedelta
     t0 = time.time()
     try:
         loaded = np.load(npz_path, allow_pickle=True)
@@ -1059,13 +1061,13 @@ def _reload_instrument_values(args):
             date_to_row[str(d)] = i
 
         n_signals = len(signal_dates)
+        n_bars = data.shape[0]
 
         # Pre-compute row indices for all signal dates (reused per expression)
-        row_indices = []
-        for sd in signal_dates:
+        row_indices = np.full(n_signals, -1, dtype=np.int64)
+        for si, sd in enumerate(signal_dates):
             ri = date_to_row.get(sd)
             if ri is None:
-                from datetime import date as dt_date, timedelta
                 for offset in range(1, 6):
                     try:
                         d = dt_date.fromisoformat(sd) - timedelta(days=offset)
@@ -1074,14 +1076,17 @@ def _reload_instrument_values(args):
                             break
                     except (ValueError, TypeError):
                         break
-            row_indices.append(ri)
+            if ri is not None and ri < n_bars:
+                row_indices[si] = ri
+
+        # Vectorized extraction: gather all valid rows at once per column
+        valid_mask = row_indices >= 0
+        valid_rows = row_indices[valid_mask]
 
         results = []
         for global_idx, col_idx in expr_col_indices:
             vals = np.full(n_signals, np.nan, dtype=np.float64)
-            for si, ri in enumerate(row_indices):
-                if ri is not None and ri < data.shape[0]:
-                    vals[si] = float(data[ri, col_idx])
+            vals[valid_mask] = data[valid_rows, col_idx].astype(np.float64)
             results.append((global_idx, vals))
 
         del data, loaded
@@ -1140,6 +1145,8 @@ def _greedy_dedup_batched(values_matrix, strengths, corr_threshold=0.95, min_ove
     Z-scores each feature row, fills NaN with 0, then uses dot product
     against all kept features for O(1)-per-kept correlation estimation.
     Falls back to exact computation for borderline cases.
+
+    Uses pre-allocated arrays to avoid rebuilding np.array every iteration.
     """
     n, n_sig = values_matrix.shape
     if n <= 1:
@@ -1167,8 +1174,13 @@ def _greedy_dedup_batched(values_matrix, strengths, corr_threshold=0.95, min_ove
         zscored[i, mask] = (values_matrix[i, mask] - m) / s
 
     kept_idx = []
-    kept_z = []        # list of z-scored arrays (for batch dot product)
-    kept_valid = []    # list of valid masks
+
+    # Pre-allocate 2D arrays for kept z-scores and valid masks
+    # Start with capacity 512, double when full
+    cap = min(512, n)
+    kept_z_arr = np.zeros((cap, n_sig), dtype=np.float64)
+    kept_v_arr = np.zeros((cap, n_sig), dtype=bool)
+    n_kept = 0
 
     for rank, oi in enumerate(order):
         oi = int(oi)
@@ -1177,29 +1189,29 @@ def _greedy_dedup_batched(values_matrix, strengths, corr_threshold=0.95, min_ove
         # Can't correlate if mostly NaN or constant — keep it
         if n_cand_valid < min_overlap or row_stds[oi] < 1e-10:
             kept_idx.append(oi)
-            kept_z.append(zscored[oi])
-            kept_valid.append(valid_masks[oi])
+            if n_kept >= cap:
+                cap *= 2
+                kept_z_arr = np.vstack([kept_z_arr, np.zeros((cap // 2, n_sig), dtype=np.float64)])
+                kept_v_arr = np.vstack([kept_v_arr, np.zeros((cap // 2, n_sig), dtype=bool)])
+            kept_z_arr[n_kept] = zscored[oi]
+            kept_v_arr[n_kept] = valid_masks[oi]
+            n_kept += 1
             continue
 
-        if not kept_z:
+        if n_kept == 0:
             kept_idx.append(oi)
-            kept_z.append(zscored[oi])
-            kept_valid.append(valid_masks[oi])
+            kept_z_arr[0] = zscored[oi]
+            kept_v_arr[0] = valid_masks[oi]
+            n_kept = 1
             continue
 
         cand_z = zscored[oi]
         cand_v = valid_masks[oi]
 
         # Batch correlation: dot product of candidate z-score with all kept z-scores
-        # Since NaN positions are 0 in z-scored data, dot product gives
-        # sum(z_cand * z_kept) over the overlap.
-        # True correlation = dot / n_overlap for z-scored data.
-        kept_z_arr = np.array(kept_z)          # (k, n_sig)
-        dots = kept_z_arr @ cand_z             # (k,)
-
-        # Compute overlap counts
-        kept_v_arr = np.array(kept_valid)       # (k, n_sig)
-        overlaps = (kept_v_arr & cand_v).sum(axis=1)  # (k,)
+        # Uses pre-allocated slices — no array rebuild
+        dots = kept_z_arr[:n_kept] @ cand_z             # (k,)
+        overlaps = (kept_v_arr[:n_kept] & cand_v).sum(axis=1)  # (k,)
 
         # Approximate correlation = |dot / overlap|
         with np.errstate(divide='ignore', invalid='ignore'):
@@ -1228,11 +1240,16 @@ def _greedy_dedup_batched(values_matrix, strengths, corr_threshold=0.95, min_ove
 
         # Not dominated — keep
         kept_idx.append(oi)
-        kept_z.append(cand_z)
-        kept_valid.append(cand_v)
+        if n_kept >= cap:
+            cap *= 2
+            kept_z_arr = np.vstack([kept_z_arr, np.zeros((cap // 2, n_sig), dtype=np.float64)])
+            kept_v_arr = np.vstack([kept_v_arr, np.zeros((cap // 2, n_sig), dtype=bool)])
+        kept_z_arr[n_kept] = zscored[oi]
+        kept_v_arr[n_kept] = valid_masks[oi]
+        n_kept += 1
 
         if (rank + 1) % 500 == 0:
-            print(f"      Pass 2: {rank+1}/{n} checked, {len(kept_idx)} kept")
+            print(f"      Pass 2: {rank+1}/{n} checked, {n_kept} kept")
 
     return kept_idx
 
