@@ -1,4 +1,4 @@
-# ScanPerfect Pipeline (2026-03-14, updated Entry Candle Scorer + Phase 3 → EV Grinder)
+# ScanPerfect Pipeline (2026-03-15, EV Grinder inc 1-3 complete)
 
 ## The Goal
 
@@ -177,11 +177,11 @@ All features are included for every setup type. The grinder’s screening step d
 
 **Step 1 — Feature matrix.** For each signal in the refinement output, look up the value of every candidate feature on that signal’s date. Market features from the instrument caches. Setup features from OHLCV + external data. Result: 893 rows × ~4M columns.
 
-**Step 2 — Univariate WR screening.** For each feature independently: bucket signals into quartiles by feature value, compute win rate per quartile. Keep features where the spread between best and worst quartile exceeds a minimum threshold (configurable, default 10pp). This catches features in both directions — features that boost WR and features that tank WR.
+**Step 2 — Univariate WR screening.** For each feature independently: bucket signals into deciles by feature value, compute win rate per decile. Keep features where the D10-D1 spread (top 10% vs bottom 10%) exceeds 10 percentage points. Deciles are far more discriminating than quartiles — random noise rarely produces a large D10-D1 spread because the extreme buckets are purer.
 
-**Step 3 — Univariate MFE screening.** Same but for winner move_adr. Bucket into quartiles, compute median move_adr per quartile (winners only). Keep features where the spread exceeds a minimum (configurable, default 1.0 ADR). A feature might not predict WR but strongly predicts move size, or vice versa.
+**Step 3 — Univariate MFE screening.** Same but for winner move_adr. Bucket into deciles, compute median move_adr per decile (winners only). Keep features where the D10-D1 spread exceeds 1.0 ADR.
 
-**Step 4 — Union survivors.** A feature survives if it passed either the WR screen or the MFE screen. Tagged as “WR only”, “MFE only”, or “both.”
+**Step 4 — Per-instrument cap + Union survivors.** Each instrument's survivors are capped at top 200 by screening strength (max of WR spread and normalized MFE spread). This prevents correlated expression variants (SMA20, SMA21, SMA22) from flooding the results. A feature survives if it passed either the WR screen or the MFE screen. Tagged as “WR only”, “MFE only”, or “both.”
 
 **Step 5 — Deduplication.** Greedy dedup by inter-feature correlation (same as current regime model). Ensures each survivor adds genuinely new information.
 
@@ -280,7 +280,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 2a: Signal Grind | ✅ Done | 87 conditions, 1,218 raw → 893 deduped |
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
-| Phase 3: EV Grinder | ⏸ Not built | Replaces market_grinder + setup_grinder + combined optimizer |
+| Phase 3: EV Grinder | 🔄 Inc 1-3 done | Inc 1: depth replay ✅, Inc 2: setup features ✅, Inc 3: market screening ✅ (51K survivors). Next: Inc 4 cross-instrument dedup |
 | Phase 4: Profit Optimization | ⏸ Needs rewire | Script exists, needs new objective function (compound growth) |
 | Phase 5: Live Watchlist | ⏸ Not built | |
 
@@ -333,7 +333,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 3. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
 
 ### Phase 3 — EV Grinder
-4. **Build the EV Grinder** — `scripts/ev_grinder.py`. Unified scoring engine replacing `market_grinder.py` + `setup_grinder.py` + the planned combined optimizer. Tests all ~4M market features + 16 setup-specific features for their effect on WR and MFE independently. Univariate quartile screening → dedup → additive weighted scoring model. Output: per-signal estimated WR, MFE, EV + the scoring equation for live use. ~5-20 min runtime.
+4. **EV Grinder increments 4-6** — `scripts/ev_grinder.py`. Inc 1-3 done (depth replay, setup features, market screening with decile D10-D1 + top-200 cap → 51K survivors). Next: Inc 4 (cross-instrument correlation dedup, ~51K → hundreds), Inc 5 (scoring curves + signal scoring), Inc 6 (validation + final output + Railway mirror). Only final output mirrors to Railway — intermediates stay local.
 
 ### Vetting UI
 5. **Wire vetting UI to entry candle scorer output** -- vetting UI reads entry_scores_{setup}.json from Railway file mirror. Two modes: signal grind vet (sort by move_adr only) and post-refinement vet (sort by combined_score from entry candle scorer). Mode toggle in UI.

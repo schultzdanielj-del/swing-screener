@@ -158,11 +158,11 @@ Three numbers per signal:
 ### Architecture
 
 1. Feature matrix: for each signal, look up every feature value on that date
-2. Univariate WR screening: quartile bucketing, keep features with spread > 10pp
-3. Univariate MFE screening: same for winner move_adr, keep features with spread > 1.0 ADR
-4. Union survivors: feature passes if it cleared either screen
-5. Deduplication: greedy dedup by inter-feature correlation (< 0.95)
-6. Scoring curves: quartile boundaries + WR/MFE per quartile stored as lookup table
+2. Univariate WR screening: decile bucketing, keep features with D10-D1 spread > 10pp
+3. Univariate MFE screening: same for winner move_adr, keep features with D10-D1 spread > 1.0 ADR
+4. Per-instrument cap (top 200 by strength) + Union survivors
+5. Cross-instrument deduplication: greedy dedup by inter-feature correlation (< 0.95)
+6. Scoring curves: decile boundaries + WR/MFE per decile stored as lookup table
 7. Score every signal: weighted average of WR and MFE contributions
 8. Validation: bucket by predicted WR into deciles, check actual vs predicted
 
@@ -231,7 +231,7 @@ The watchlist is the end product. Every cycle of the loop makes it more accurate
 | Exit Grind | signal_exit_grinder.py | Examples + expr cache | Exit condition in local cache |
 | Refinement Grind | pyramid_grinder.py --blackout | Pyramid result + exit cond + expr cache + 5yr OHLCV | raw_signal_clusters_{setup}.json + refinement_{setup}_*.json |
 | Entry Candle Scorer | entry_candle_scorer.py | Examples (Railway API) + refinement output + raw_signal_clusters + expr cache | entry_scores_{setup}.json |
-| EV Grinder | ev_grinder.py (not yet built) | Refinement result + market cache + 5yr OHLCV + external data | ev_{setup}_*.json |
+| EV Grinder | ev_grinder.py (inc 1-3 done) | Refinement result + raw clusters + market cache + 5yr OHLCV + fundamentals cache | ev_{setup}_inc3_*.json (intermediate), ev_{setup}_*.json (final) |
 | Profit Grind | profit_grinder.py (needs rewire) | EV-scored signals + price data | Exit strategy + equity curve |
 
 All grinder outputs are also mirrored to Railway via file_mirror.py and uploaded via grind_uploader.py.
