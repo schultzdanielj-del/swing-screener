@@ -706,64 +706,20 @@ def screen_features(values, is_winner, move_adrs, feature_names,
     return survivors
 
 
-def _dedup_survivors(survivors, corr_threshold=0.95):
-    """Greedy dedup using vectorized correlation matrix.
+def _cap_survivors(survivors, max_per_instrument=200):
+    """Keep only the top N survivors per instrument, ranked by screening strength.
 
-    Ranks survivors by screening strength, precomputes the full pairwise
-    correlation matrix via numpy matrix multiply (BLAS-optimized), then
-    walks the greedy dedup using instant lookups instead of recomputing
-    each pair.
-
-    For ~3K survivors x 893 signals, this takes <1s vs minutes with the
-    naive pairwise loop.
+    Full correlation-based dedup happens in increment 4 across all instruments.
+    This just caps the output so no single instrument floods the results.
     """
-    if len(survivors) <= 1:
+    if len(survivors) <= max_per_instrument:
         return survivors
 
-    n_surv = len(survivors)
-    n_signals = len(survivors[0]["values"])
-
-    # Rank by screening strength
-    strengths = np.array([max(s["wr_spread"], s["mfe_spread"] / 10.0) for s in survivors])
-    rank_order = np.argsort(-strengths)  # descending
-
-    # Stack all value arrays into matrix (n_signals x n_survivors)
-    mat = np.column_stack([s["values"].astype(np.float64) for s in survivors])
-
-    # Replace NaN with column mean for correlation computation
-    col_means = np.nanmean(mat, axis=0)
-    nan_mask = np.isnan(mat)
-    for j in range(n_surv):
-        mat[nan_mask[:, j], j] = col_means[j]
-
-    # Standardize columns: subtract mean, divide by std
-    means = np.mean(mat, axis=0)
-    stds = np.std(mat, axis=0)
-    stds[stds < 1e-12] = 1.0
-    Z = (mat - means) / stds
-
-    # Full correlation matrix via matrix multiply: corr = (Z^T @ Z) / n
-    corr_mat = (Z.T @ Z) / n_signals
-    np.clip(corr_mat, -1.0, 1.0, out=corr_mat)
-
-    # Greedy walk in strength order
-    kept_indices = []
-    eliminated = set()
-
-    for idx in rank_order:
-        if idx in eliminated:
-            continue
-        kept_indices.append(idx)
-        # Eliminate all remaining features correlated > threshold with this one
-        for other_idx in rank_order:
-            if other_idx in eliminated or other_idx == idx:
-                continue
-            if other_idx in set(kept_indices):
-                continue
-            if abs(corr_mat[idx, other_idx]) > corr_threshold:
-                eliminated.add(other_idx)
-
-    return [survivors[i] for i in kept_indices]
+    # Rank by screening strength: max of WR spread and normalized MFE spread
+    scored = sorted(survivors,
+                    key=lambda s: max(s["wr_spread"], s["mfe_spread"] / 10.0),
+                    reverse=True)
+    return scored[:max_per_instrument]
 
 
 def _instrument_filename(instrument_id):
@@ -861,10 +817,9 @@ def _screen_one_instrument(args):
             vals_post, is_win_post, moves_post, feat_names,
             min_per_bucket=min_per_bucket, wr_pp_threshold=wr_pp, mfe_adr_threshold=mfe_adr)
 
-        # Per-instrument dedup: collapse correlated expressions to best representative
-        n_pre_raw, n_post_raw = len(surv_pre), len(surv_post)
-        surv_pre = _dedup_survivors(surv_pre)
-        surv_post = _dedup_survivors(surv_post)
+        # Per-instrument cap: keep top 200 by strength, full dedup in increment 4
+        surv_pre = _cap_survivors(surv_pre)
+        surv_post = _cap_survivors(surv_post)
 
         elapsed = time.time() - t0
         return (inst_id, surv_pre, surv_post, n_exprs, elapsed)
