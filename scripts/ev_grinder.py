@@ -1140,13 +1140,14 @@ def _dedup_one_instrument_pass1(args):
 
 
 def _greedy_dedup_batched(values_matrix, strengths, corr_threshold=0.95, min_overlap=50):
-    """Pass 2: greedy dedup with batched correlation via matrix multiply.
+    """Pass 2: greedy dedup with exact vectorized Pearson correlation.
 
-    Z-scores each feature row, fills NaN with 0, then uses dot product
-    against all kept features for O(1)-per-kept correlation estimation.
-    Falls back to exact computation for borderline cases.
+    For each candidate, computes exact correlation against all kept features
+    using pre-allocated arrays and vectorized math. No approximation.
 
-    Uses pre-allocated arrays to avoid rebuilding np.array every iteration.
+    Key insight: with ~2-5K features after pass 1 and ~893 signal values,
+    the exact approach is fast enough (each correlation is a dot product
+    on ~893 floats). Pre-allocated arrays avoid per-iteration allocation.
     """
     n, n_sig = values_matrix.shape
     if n <= 1:
@@ -1154,98 +1155,99 @@ def _greedy_dedup_batched(values_matrix, strengths, corr_threshold=0.95, min_ove
 
     order = np.argsort(-np.array(strengths))
 
-    # Pre-compute z-scored rows: (val - mean) / std over valid values, NaN → 0
+    # Replace NaN with 0 for dot products, track valid masks separately
+    filled = np.where(np.isnan(values_matrix), 0.0, values_matrix)
     valid_masks = ~np.isnan(values_matrix)
-    zscored = np.zeros((n, n_sig), dtype=np.float64)
     row_valid_counts = valid_masks.sum(axis=1)
-    row_stds = np.zeros(n)
-
-    for i in range(n):
-        mask = valid_masks[i]
-        nv = int(mask.sum())
-        if nv < min_overlap:
-            continue
-        vals = values_matrix[i, mask]
-        m = vals.mean()
-        s = vals.std()
-        if s < 1e-10:
-            continue
-        row_stds[i] = s
-        zscored[i, mask] = (values_matrix[i, mask] - m) / s
 
     kept_idx = []
 
-    # Pre-allocate 2D arrays for kept z-scores and valid masks
-    # Start with capacity 512, double when full
+    # Pre-allocate arrays for kept features
     cap = min(512, n)
-    kept_z_arr = np.zeros((cap, n_sig), dtype=np.float64)
-    kept_v_arr = np.zeros((cap, n_sig), dtype=bool)
+    kept_filled = np.zeros((cap, n_sig), dtype=np.float64)
+    kept_valid = np.zeros((cap, n_sig), dtype=bool)
     n_kept = 0
+
+    def _grow():
+        nonlocal cap, kept_filled, kept_valid
+        old_cap = cap
+        cap *= 2
+        kept_filled = np.vstack([kept_filled, np.zeros((old_cap, n_sig), dtype=np.float64)])
+        kept_valid = np.vstack([kept_valid, np.zeros((old_cap, n_sig), dtype=bool)])
 
     for rank, oi in enumerate(order):
         oi = int(oi)
-        n_cand_valid = int(row_valid_counts[oi])
-
-        # Can't correlate if mostly NaN or constant — keep it
-        if n_cand_valid < min_overlap or row_stds[oi] < 1e-10:
-            kept_idx.append(oi)
-            if n_kept >= cap:
-                cap *= 2
-                kept_z_arr = np.vstack([kept_z_arr, np.zeros((cap // 2, n_sig), dtype=np.float64)])
-                kept_v_arr = np.vstack([kept_v_arr, np.zeros((cap // 2, n_sig), dtype=bool)])
-            kept_z_arr[n_kept] = zscored[oi]
-            kept_v_arr[n_kept] = valid_masks[oi]
-            n_kept += 1
-            continue
 
         if n_kept == 0:
             kept_idx.append(oi)
-            kept_z_arr[0] = zscored[oi]
-            kept_v_arr[0] = valid_masks[oi]
+            kept_filled[0] = filled[oi]
+            kept_valid[0] = valid_masks[oi]
             n_kept = 1
             continue
 
-        cand_z = zscored[oi]
-        cand_v = valid_masks[oi]
+        cand_f = filled[oi]       # (n_sig,) with 0 where NaN
+        cand_v = valid_masks[oi]  # (n_sig,) bool
+        n_cand = int(row_valid_counts[oi])
 
-        # Batch correlation: dot product of candidate z-score with all kept z-scores
-        # Uses pre-allocated slices — no array rebuild
-        dots = kept_z_arr[:n_kept] @ cand_z             # (k,)
-        overlaps = (kept_v_arr[:n_kept] & cand_v).sum(axis=1)  # (k,)
+        if n_cand < min_overlap:
+            # Too few valid values to correlate — keep it
+            kept_idx.append(oi)
+            if n_kept >= cap:
+                _grow()
+            kept_filled[n_kept] = cand_f
+            kept_valid[n_kept] = cand_v
+            n_kept += 1
+            continue
 
-        # Approximate correlation = |dot / overlap|
+        # Compute exact Pearson correlation against all kept features
+        # For each kept feature k:
+        #   overlap = cand_valid & kept_valid[k]
+        #   n_overlap = sum(overlap)
+        #   sum_x = sum(cand[overlap]), sum_y = sum(kept[overlap])
+        #   sum_xy = sum(cand[overlap] * kept[overlap])
+        #   sum_x2 = sum(cand[overlap]^2), sum_y2 = sum(kept[overlap]^2)
+        #   r = (n*sum_xy - sum_x*sum_y) / sqrt((n*sum_x2 - sum_x^2)(n*sum_y2 - sum_y^2))
+        #
+        # Vectorized: use element-wise multiply with valid masks
+
+        kv = kept_valid[:n_kept]   # (k, n_sig) bool
+        kf = kept_filled[:n_kept]  # (k, n_sig) float
+
+        # Overlap mask: both valid
+        overlap = kv & cand_v  # (k, n_sig)
+        n_overlap = overlap.sum(axis=1).astype(np.float64)  # (k,)
+
+        # Masked values: zero where not overlapping
+        cx = np.where(overlap, cand_f, 0.0)  # (k, n_sig) — candidate broadcast
+        kx = np.where(overlap, kf, 0.0)      # (k, n_sig)
+
+        sum_x = cx.sum(axis=1)       # (k,)
+        sum_y = kx.sum(axis=1)       # (k,)
+        sum_xy = (cx * kx).sum(axis=1)  # (k,)
+        sum_x2 = (cx * cx).sum(axis=1)  # (k,)
+        sum_y2 = (kx * kx).sum(axis=1)  # (k,)
+
+        # Pearson formula
         with np.errstate(divide='ignore', invalid='ignore'):
-            approx_corr = np.abs(dots / overlaps)
-        approx_corr = np.where(np.isfinite(approx_corr) & (overlaps >= min_overlap),
-                                approx_corr, 0.0)
+            numerator = n_overlap * sum_xy - sum_x * sum_y
+            denom_x = n_overlap * sum_x2 - sum_x * sum_x
+            denom_y = n_overlap * sum_y2 - sum_y * sum_y
+            denom = np.sqrt(denom_x * denom_y)
+            corr = np.abs(numerator / denom)
 
-        max_approx = float(approx_corr.max()) if len(approx_corr) > 0 else 0.0
+        # Mask out invalid: insufficient overlap or zero denominator
+        corr = np.where((n_overlap >= min_overlap) & np.isfinite(corr), corr, 0.0)
 
-        if max_approx >= corr_threshold:
-            # Verify with exact Pearson on the top match (z-score approximation can drift)
-            top_ki = int(np.argmax(approx_corr))
-            top_global = kept_idx[top_ki]
-            both = cand_v & valid_masks[top_global]
-            nv = int(both.sum())
-            if nv >= min_overlap:
-                cv = values_matrix[oi, both]
-                kv = values_matrix[top_global, both]
-                cs, ks = np.std(cv), np.std(kv)
-                if cs > 1e-10 and ks > 1e-10:
-                    cm = cv - cv.mean()
-                    km = kv - kv.mean()
-                    exact_r = abs(float(np.dot(cm, km) / (cs * ks * nv)))
-                    if exact_r >= corr_threshold:
-                        continue  # truly dominated, skip
+        max_corr = float(corr.max())
+        if max_corr >= corr_threshold:
+            continue  # dominated — skip
 
         # Not dominated — keep
         kept_idx.append(oi)
         if n_kept >= cap:
-            cap *= 2
-            kept_z_arr = np.vstack([kept_z_arr, np.zeros((cap // 2, n_sig), dtype=np.float64)])
-            kept_v_arr = np.vstack([kept_v_arr, np.zeros((cap // 2, n_sig), dtype=bool)])
-        kept_z_arr[n_kept] = zscored[oi]
-        kept_v_arr[n_kept] = valid_masks[oi]
+            _grow()
+        kept_filled[n_kept] = cand_f
+        kept_valid[n_kept] = cand_v
         n_kept += 1
 
         if (rank + 1) % 500 == 0:
@@ -1673,7 +1675,12 @@ def run(setup_type):
     with open(op, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\n  Saved: {op}")
-    print(f"  (Intermediate — not mirrored to Railway)")
+    try:
+        from file_mirror import mirror_file
+        mirror_file(op)
+        print(f"  Mirrored to Railway")
+    except Exception as e:
+        print(f"  WARNING: Mirror failed: {e}")
 
     print(f"\n  {'=' * 50}")
     print(f"  INCREMENT 4 COMPLETE ({tt:.1f}s)")
