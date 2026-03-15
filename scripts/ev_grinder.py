@@ -1027,6 +1027,8 @@ def screen_setup_features(all_signals, post_signals):
     return surv_pre, surv_post, stats
 
 
+
+
 # ══════════════════════════════════════════════════════════════
 # CROSS-INSTRUMENT DEDUP (INCREMENT 4)
 # ══════════════════════════════════════════════════════════════
@@ -1057,14 +1059,12 @@ def _reload_instrument_values(args):
             date_to_row[str(d)] = i
 
         n_signals = len(signal_dates)
-        results = []
 
         # Pre-compute row indices for all signal dates (reused per expression)
         row_indices = []
         for sd in signal_dates:
             ri = date_to_row.get(sd)
             if ri is None:
-                # Try most recent prior date (same logic as screening)
                 from datetime import date as dt_date, timedelta
                 for offset in range(1, 6):
                     try:
@@ -1076,6 +1076,7 @@ def _reload_instrument_values(args):
                         break
             row_indices.append(ri)
 
+        results = []
         for global_idx, col_idx in expr_col_indices:
             vals = np.full(n_signals, np.nan, dtype=np.float64)
             for si, ri in enumerate(row_indices):
@@ -1089,215 +1090,342 @@ def _reload_instrument_values(args):
         return (inst_id, [], time.time() - t0, str(e))
 
 
-def _greedy_dedup(values_list, strengths, names, corr_threshold=0.95, min_overlap=50):
-    """Greedy correlation-based dedup.
+def _dedup_one_instrument_pass1(args):
+    """Pass 1 worker: greedy dedup within one instrument's survivors.
 
-    Args:
-        values_list: list of 1D np.ndarray (one per survivor), length n_signals.
-        strengths: list of float — screening strength per survivor.
-        names: list of str — feature names.
-        corr_threshold: drop features with |correlation| >= this vs any kept feature.
-        min_overlap: minimum non-NaN overlapping signals to compute correlation.
-
-    Returns:
-        list of int — indices into original lists that survived dedup.
+    Returns (inst_id, kept_local_indices).
     """
-    n = len(names)
-    if n == 0:
-        return []
+    inst_id, values, strengths, corr_threshold, min_overlap = args
+    n = values.shape[0]
+    if n <= 1:
+        return (inst_id, list(range(n)))
 
-    # Sort by strength descending
-    order = np.argsort(-np.array(strengths))
+    order = np.argsort(-strengths)
+    kept_idx = []
+    kept_rows = []
 
-    kept_indices = []
-    kept_values = []
-
-    for rank, idx in enumerate(order):
+    for idx in order:
         idx = int(idx)
-        candidate = values_list[idx]
+        candidate = values[idx]
+        cand_valid = ~np.isnan(candidate)
 
         dominated = False
-        for kv in kept_values:
-            # Find overlapping non-NaN positions
-            both_valid = ~np.isnan(candidate) & ~np.isnan(kv)
-            n_valid = int(both_valid.sum())
-            if n_valid < min_overlap:
+        for kr in kept_rows:
+            both = cand_valid & ~np.isnan(kr)
+            nv = int(both.sum())
+            if nv < min_overlap:
                 continue
-
-            c_vals = candidate[both_valid]
-            k_vals = kv[both_valid]
-
-            c_std = np.std(c_vals)
-            k_std = np.std(k_vals)
-            if c_std < 1e-10 or k_std < 1e-10:
+            cv = candidate[both]
+            kv = kr[both]
+            cs, ks = np.std(cv), np.std(kv)
+            if cs < 1e-10 or ks < 1e-10:
                 continue
-
-            corr = np.corrcoef(c_vals, k_vals)[0, 1]
-            if abs(corr) >= corr_threshold:
+            cm = cv - cv.mean()
+            km = kv - kv.mean()
+            r = np.dot(cm, km) / (cs * ks * nv)
+            if abs(r) >= corr_threshold:
                 dominated = True
                 break
 
         if not dominated:
-            kept_indices.append(idx)
-            kept_values.append(candidate)
+            kept_idx.append(idx)
+            kept_rows.append(candidate)
 
-        # Progress for large sets
-        if (rank + 1) % 5000 == 0:
-            print(f"      Dedup progress: {rank+1}/{n} checked, {len(kept_indices)} kept")
-
-    return kept_indices
+    return (inst_id, kept_idx)
 
 
-def run_cross_dedup(survivors, signal_dates, label, n_workers=8, corr_threshold=0.95):
-    """Reload values for all survivors and run greedy dedup.
+def _greedy_dedup_batched(values_matrix, strengths, corr_threshold=0.95, min_overlap=50):
+    """Pass 2: greedy dedup with batched correlation via matrix multiply.
+
+    Z-scores each feature row, fills NaN with 0, then uses dot product
+    against all kept features for O(1)-per-kept correlation estimation.
+    Falls back to exact computation for borderline cases.
+    """
+    n, n_sig = values_matrix.shape
+    if n <= 1:
+        return list(range(n))
+
+    order = np.argsort(-np.array(strengths))
+
+    # Pre-compute z-scored rows: (val - mean) / std over valid values, NaN → 0
+    valid_masks = ~np.isnan(values_matrix)
+    zscored = np.zeros((n, n_sig), dtype=np.float64)
+    row_valid_counts = valid_masks.sum(axis=1)
+    row_stds = np.zeros(n)
+
+    for i in range(n):
+        mask = valid_masks[i]
+        nv = int(mask.sum())
+        if nv < min_overlap:
+            continue
+        vals = values_matrix[i, mask]
+        m = vals.mean()
+        s = vals.std()
+        if s < 1e-10:
+            continue
+        row_stds[i] = s
+        zscored[i, mask] = (values_matrix[i, mask] - m) / s
+
+    kept_idx = []
+    kept_z = []        # list of z-scored arrays (for batch dot product)
+    kept_valid = []    # list of valid masks
+
+    for rank, oi in enumerate(order):
+        oi = int(oi)
+        n_cand_valid = int(row_valid_counts[oi])
+
+        # Can't correlate if mostly NaN or constant — keep it
+        if n_cand_valid < min_overlap or row_stds[oi] < 1e-10:
+            kept_idx.append(oi)
+            kept_z.append(zscored[oi])
+            kept_valid.append(valid_masks[oi])
+            continue
+
+        if not kept_z:
+            kept_idx.append(oi)
+            kept_z.append(zscored[oi])
+            kept_valid.append(valid_masks[oi])
+            continue
+
+        cand_z = zscored[oi]
+        cand_v = valid_masks[oi]
+
+        # Batch correlation: dot product of candidate z-score with all kept z-scores
+        # Since NaN positions are 0 in z-scored data, dot product gives
+        # sum(z_cand * z_kept) over the overlap.
+        # True correlation = dot / n_overlap for z-scored data.
+        kept_z_arr = np.array(kept_z)          # (k, n_sig)
+        dots = kept_z_arr @ cand_z             # (k,)
+
+        # Compute overlap counts
+        kept_v_arr = np.array(kept_valid)       # (k, n_sig)
+        overlaps = (kept_v_arr & cand_v).sum(axis=1)  # (k,)
+
+        # Approximate correlation = |dot / overlap|
+        with np.errstate(divide='ignore', invalid='ignore'):
+            approx_corr = np.abs(dots / overlaps)
+        approx_corr = np.where(np.isfinite(approx_corr) & (overlaps >= min_overlap),
+                                approx_corr, 0.0)
+
+        max_approx = float(approx_corr.max()) if len(approx_corr) > 0 else 0.0
+
+        if max_approx >= corr_threshold:
+            # Verify with exact Pearson on the top match (z-score approximation can drift)
+            top_ki = int(np.argmax(approx_corr))
+            top_global = kept_idx[top_ki]
+            both = cand_v & valid_masks[top_global]
+            nv = int(both.sum())
+            if nv >= min_overlap:
+                cv = values_matrix[oi, both]
+                kv = values_matrix[top_global, both]
+                cs, ks = np.std(cv), np.std(kv)
+                if cs > 1e-10 and ks > 1e-10:
+                    cm = cv - cv.mean()
+                    km = kv - kv.mean()
+                    exact_r = abs(float(np.dot(cm, km) / (cs * ks * nv)))
+                    if exact_r >= corr_threshold:
+                        continue  # truly dominated, skip
+
+        # Not dominated — keep
+        kept_idx.append(oi)
+        kept_z.append(cand_z)
+        kept_valid.append(cand_v)
+
+        if (rank + 1) % 500 == 0:
+            print(f"      Pass 2: {rank+1}/{n} checked, {len(kept_idx)} kept")
+
+    return kept_idx
+
+
+def run_cross_dedup(survivors, signal_dates, label, n_workers=None, corr_threshold=0.95):
+    """Two-pass dedup: within-instrument (parallel) then cross-instrument (batched).
+
+    Pass 1: For each instrument, dedup its survivors against each other.
+             Catches SMA20/SMA21/EMA20 overlaps. Embarrassingly parallel.
+             Reduces ~51K to ~2-5K.
+
+    Pass 2: Dedup across all instruments using batched matrix-multiply correlation.
+             Catches SPY_SMA20 ≈ QQQ_SMA20. Fast on the reduced set.
 
     Args:
-        survivors: list of dicts from screening (with 'values' stripped).
-            Each has 'name', 'source', 'instrument', 'expression', 'col_idx',
-            'wr_spread', 'mfe_spread', etc.
+        survivors: list of dicts from screening (setup + market combined).
         signal_dates: list of str (dates for the signal set).
         label: str for logging ("pre" or "post").
-        n_workers: int, parallelism for loading .npz files.
+        n_workers: int or None (default: all CPU cores).
         corr_threshold: float, dedup threshold.
 
     Returns:
         (deduped_survivors, dedup_stats)
     """
+    import os as _os
+    if n_workers is None:
+        n_workers = _os.cpu_count() or 8
     print(f"\n  ── CROSS-INSTRUMENT DEDUP ({label.upper()}) ──")
     t0 = time.time()
     n_total = len(survivors)
-    print(f"  Input: {n_total} survivors")
+    n_signals = len(signal_dates)
+    print(f"  Input: {n_total} survivors, {n_signals} signals, {n_workers} cores")
     if n_total == 0:
         return [], {"input": 0, "output": 0, "dropped": 0}
 
     # Separate setup vs market survivors
-    setup_survivors = [s for s in survivors if s.get("source") != "market"]
-    market_survivors = [s for s in survivors if s.get("source") == "market"]
-    print(f"  Setup: {len(setup_survivors)}, Market: {len(market_survivors)}")
+    setup_indices = [i for i, s in enumerate(survivors) if s.get("source") != "market"]
+    market_indices = [i for i, s in enumerate(survivors) if s.get("source") == "market"]
+    print(f"  Setup: {len(setup_indices)}, Market: {len(market_indices)}")
 
-    # Build global index for all survivors
-    # We need values arrays for all of them
-    n_signals = len(signal_dates)
-    all_values = [None] * n_total  # will be filled with np.ndarray
+    # ── RELOAD VALUES ──
+    # Setup survivors: values already in memory from screen_features
+    all_values = [None] * n_total
+    for gi in setup_indices:
+        v = survivors[gi].get("values")
+        if v is not None:
+            all_values[gi] = np.array(v, dtype=np.float64) if not isinstance(v, np.ndarray) else v.astype(np.float64)
+        else:
+            print(f"    WARNING: setup survivor '{survivors[gi]['name']}' missing values")
+            all_values[gi] = np.full(n_signals, np.nan, dtype=np.float64)
 
-    # --- Setup survivors: values come from signal dicts ---
-    # Setup survivors still have 'values' if they came from screen_features with values attached.
-    # But in our flow, screen_setup_features returns survivors with 'values' from screen_features.
-    # If 'values' was stripped, we need to recompute from signal feat_* fields.
-    # In the current flow, setup survivors go through screen_features which attaches 'values',
-    # and those are preserved in memory (only stripped when saving to JSON).
-    for gi, s in enumerate(survivors):
-        if s.get("source") != "market":
-            v = s.get("values")
-            if v is not None:
-                all_values[gi] = np.array(v, dtype=np.float64) if not isinstance(v, np.ndarray) else v.astype(np.float64)
-            else:
-                # Shouldn't happen in normal flow, but handle gracefully
-                print(f"    WARNING: setup survivor '{s['name']}' missing values, filling NaN")
-                all_values[gi] = np.full(n_signals, np.nan, dtype=np.float64)
-
-    # --- Market survivors: reload from .npz files ---
-    # Group by instrument to minimize .npz loads
+    # Market survivors: reload from .npz files in parallel
     inst_groups = defaultdict(list)
-    for gi, s in enumerate(survivors):
-        if s.get("source") == "market":
-            inst = s.get("instrument")
-            col = s.get("col_idx")
-            if inst is not None and col is not None:
-                inst_groups[inst].append((gi, col))
+    for gi in market_indices:
+        s = survivors[gi]
+        inst = s.get("instrument")
+        col = s.get("col_idx")
+        if inst is not None and col is not None:
+            inst_groups[inst].append((gi, col))
 
     n_instruments = len(inst_groups)
-    print(f"  Loading values from {n_instruments} instruments...")
+    if n_instruments > 0:
+        print(f"  Reloading values from {n_instruments} instruments...")
+        t_reload = time.time()
+        work = []
+        for inst_id, idx_cols in inst_groups.items():
+            npz_path = os.path.join(MKT_DIR, _instrument_filename(inst_id))
+            if not os.path.exists(npz_path):
+                for gi, _ in idx_cols:
+                    all_values[gi] = np.full(n_signals, np.nan, dtype=np.float64)
+                continue
+            work.append((inst_id, npz_path, idx_cols, signal_dates))
 
-    # Build work items for parallel loading
-    work = []
-    for inst_id, idx_cols in inst_groups.items():
-        npz_path = os.path.join(MKT_DIR, _instrument_filename(inst_id))
-        if not os.path.exists(npz_path):
-            print(f"    WARNING: missing {npz_path}")
-            for gi, _ in idx_cols:
-                all_values[gi] = np.full(n_signals, np.nan, dtype=np.float64)
-            continue
-        work.append((inst_id, npz_path, idx_cols, signal_dates))
-
-    # Parallel load
-    loaded = 0
-    errors = []
-    with ProcessPoolExecutor(max_workers=n_workers) as pool:
-        futures = {pool.submit(_reload_instrument_values, item): item[0] for item in work}
-        for future in as_completed(futures):
-            inst_id = futures[future]
-            try:
-                result = future.result()
-                if len(result) == 4:
-                    # Error
-                    _, _, _, err = result
-                    errors.append(f"{inst_id}: {err}")
-                    # Fill NaN for this instrument's survivors
+        errors = []
+        loaded = 0
+        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+            futures = {pool.submit(_reload_instrument_values, item): item[0] for item in work}
+            for future in as_completed(futures):
+                inst_id = futures[future]
+                try:
+                    result = future.result()
+                    if len(result) == 4:
+                        _, _, _, err = result
+                        errors.append(f"{inst_id}: {err}")
+                        for gi, _ in inst_groups[inst_id]:
+                            all_values[gi] = np.full(n_signals, np.nan, dtype=np.float64)
+                    else:
+                        _, pairs, _ = result
+                        for gi, vals in pairs:
+                            all_values[gi] = vals
+                except Exception as e:
+                    errors.append(f"{inst_id}: {e}")
                     for gi, _ in inst_groups[inst_id]:
                         all_values[gi] = np.full(n_signals, np.nan, dtype=np.float64)
-                else:
-                    _, pairs, _ = result
-                    for gi, vals in pairs:
-                        all_values[gi] = vals
-            except Exception as e:
-                errors.append(f"{inst_id}: {e}")
-                for gi, _ in inst_groups[inst_id]:
-                    all_values[gi] = np.full(n_signals, np.nan, dtype=np.float64)
+                loaded += 1
+                if loaded % 50 == 0 or loaded == len(work):
+                    print(f"    Loaded {loaded}/{len(work)} instruments")
 
-            loaded += 1
-            if loaded % 50 == 0 or loaded == len(work):
-                print(f"    Loaded {loaded}/{len(work)} instruments")
+        if errors:
+            print(f"  {len(errors)} load errors (first 3):")
+            for e in errors[:3]:
+                print(f"    ✗ {e}")
+        print(f"  Reload: {time.time() - t_reload:.1f}s")
 
-    if errors:
-        print(f"  {len(errors)} load errors (first 3):")
-        for e in errors[:3]:
-            print(f"    ✗ {e}")
+    # Fill any remaining Nones
+    for gi in range(n_total):
+        if all_values[gi] is None:
+            all_values[gi] = np.full(n_signals, np.nan, dtype=np.float64)
 
-    # Verify all values populated
-    missing = sum(1 for v in all_values if v is None)
-    if missing:
-        print(f"  WARNING: {missing} survivors still missing values, filling NaN")
-        for gi in range(n_total):
-            if all_values[gi] is None:
-                all_values[gi] = np.full(n_signals, np.nan, dtype=np.float64)
+    # Compute strengths for all survivors
+    all_strengths = [max(s["wr_spread"], s["mfe_spread"] / 10.0) for s in survivors]
 
-    # Compute strength scores
-    strengths = [max(s["wr_spread"], s["mfe_spread"] / 10.0) for s in survivors]
-    names = [s["name"] for s in survivors]
+    # ── PASS 1: WITHIN-INSTRUMENT DEDUP (parallel) ──
+    print(f"\n  Pass 1: Within-instrument dedup...")
+    t_p1 = time.time()
 
-    print(f"  Running greedy dedup (threshold={corr_threshold})...")
-    t_dedup = time.time()
-    kept_indices = _greedy_dedup(all_values, strengths, names,
-                                 corr_threshold=corr_threshold, min_overlap=50)
-    dedup_time = time.time() - t_dedup
+    # Group survivors by instrument (setup features = instrument "setup")
+    inst_survivor_map = defaultdict(list)  # inst_id → list of global indices
+    for gi in setup_indices:
+        inst_survivor_map["__setup__"].append(gi)
+    for gi in market_indices:
+        inst = survivors[gi].get("instrument", "__unknown__")
+        inst_survivor_map[inst].append(gi)
 
-    deduped = [survivors[i] for i in kept_indices]
+    # Build work items for parallel pass 1
+    pass1_work = []
+    for inst_id, global_indices in inst_survivor_map.items():
+        if len(global_indices) <= 1:
+            continue  # nothing to dedup
+        vals = np.array([all_values[gi] for gi in global_indices], dtype=np.float64)
+        strs = np.array([all_strengths[gi] for gi in global_indices])
+        pass1_work.append((inst_id, vals, strs, corr_threshold, 50))
 
-    # Attach values to deduped survivors (needed for inc 5 scoring)
-    for i, gi in enumerate(kept_indices):
-        deduped[i]["values"] = all_values[gi]
+    # Instruments with only 1 survivor pass through directly
+    pass1_kept_global = []
+    for inst_id, global_indices in inst_survivor_map.items():
+        if len(global_indices) <= 1:
+            pass1_kept_global.extend(global_indices)
+
+    # Run pass 1 in parallel
+    with ProcessPoolExecutor(max_workers=n_workers) as pool:
+        for result in pool.map(_dedup_one_instrument_pass1, pass1_work):
+            inst_id, local_kept = result
+            global_indices = inst_survivor_map[inst_id]
+            for ki in local_kept:
+                pass1_kept_global.append(global_indices[ki])
+
+    pass1_time = time.time() - t_p1
+    n_after_p1 = len(pass1_kept_global)
+    print(f"  Pass 1: {n_total} → {n_after_p1} ({pass1_time:.1f}s)")
+
+    # ── PASS 2: CROSS-INSTRUMENT DEDUP (batched) ──
+    print(f"\n  Pass 2: Cross-instrument dedup (batched)...")
+    t_p2 = time.time()
+
+    cross_vals = np.array([all_values[gi] for gi in pass1_kept_global], dtype=np.float64)
+    cross_strs = np.array([all_strengths[gi] for gi in pass1_kept_global])
+
+    kept_cross_local = _greedy_dedup_batched(cross_vals, cross_strs, corr_threshold, 50)
+
+    # Map back to global indices
+    final_global = [pass1_kept_global[i] for i in kept_cross_local]
+
+    pass2_time = time.time() - t_p2
+    print(f"  Pass 2: {n_after_p1} → {len(final_global)} ({pass2_time:.1f}s)")
+
+    # Build deduped survivor list with values attached
+    deduped = []
+    for gi in final_global:
+        s = survivors[gi].copy()
+        s["values"] = all_values[gi]
+        deduped.append(s)
 
     # Stats
     n_kept_setup = sum(1 for s in deduped if s.get("source") != "market")
     n_kept_market = sum(1 for s in deduped if s.get("source") == "market")
     n_dropped = n_total - len(deduped)
-
     elapsed = time.time() - t0
-    print(f"\n  Dedup complete ({elapsed:.1f}s total, {dedup_time:.1f}s dedup)")
-    print(f"  {n_total} → {len(deduped)} ({n_dropped} dropped, {n_dropped/n_total*100:.1f}%)")
+
+    print(f"\n  Dedup complete ({elapsed:.1f}s)")
+    print(f"  {n_total} → {len(deduped)} ({n_dropped} dropped, {n_dropped/max(n_total,1)*100:.1f}%)")
     print(f"  Kept: {n_kept_setup} setup + {n_kept_market} market")
 
-    # Count unique instruments in kept market features
     if n_kept_market:
         kept_insts = Counter(s.get("instrument") for s in deduped if s.get("source") == "market")
-        print(f"  Unique instruments in kept: {len(kept_insts)}")
-        print(f"  Top 10 instruments:")
+        print(f"  Unique instruments: {len(kept_insts)}")
+        print(f"  Top 10 by count:")
         for inst, cnt in kept_insts.most_common(10):
             print(f"    {inst}: {cnt}")
 
     stats = {
         "input": n_total,
+        "after_pass1": n_after_p1,
         "output": len(deduped),
         "dropped": n_dropped,
         "drop_pct": round(n_dropped / max(n_total, 1) * 100, 1),
@@ -1305,10 +1433,10 @@ def run_cross_dedup(survivors, signal_dates, label, n_workers=8, corr_threshold=
         "n_setup_kept": n_kept_setup,
         "n_market_kept": n_kept_market,
         "n_instruments_kept": len(set(s.get("instrument") for s in deduped if s.get("source") == "market")),
-        "reload_time_s": round(elapsed - dedup_time, 1),
-        "dedup_time_s": round(dedup_time, 1),
+        "pass1_time_s": round(pass1_time, 1),
+        "pass2_time_s": round(pass2_time, 1),
+        "reload_time_s": round(elapsed - pass1_time - pass2_time, 1),
         "total_time_s": round(elapsed, 1),
-        "n_load_errors": len(errors),
     }
     return deduped, stats
 
@@ -1323,6 +1451,7 @@ def run(setup_type):
     print("=" * 70)
     print(f"  Setup: {setup_type.upper()}")
     print(f"  Time:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"  CPUs:  {os.cpu_count()}")
     t_total = time.time()
 
     cp, cf = find_raw_clusters(setup_type)
@@ -1374,12 +1503,12 @@ def run(setup_type):
     fok, fcomp = validate_setup_features(all_signals)
 
     # Inc 3: Feature screening
-    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 8))
+    n_workers = os.cpu_count() or 8
 
     # Setup feature screening
     setup_surv_pre, setup_surv_post, setup_stats = screen_setup_features(all_signals, ps)
 
-    # Market feature screening (parallel)
+    # Market feature screening (parallel, all cores)
     mkt_surv_pre, mkt_surv_post, mkt_stats = run_market_screening(
         all_signals, ps, n_workers=n_workers)
 
@@ -1403,13 +1532,11 @@ def run(setup_type):
     ex_ok = len(example_sigs) == ne
     print(f"  Examples: {len(example_sigs)}/{ne} {'✓' if ex_ok else '✗'}")
 
-    # ── Inc 4: Cross-instrument dedup ──
+    # ── Inc 4: Cross-instrument dedup (two-pass, optimized) ──
 
-    # Combine setup + market survivors (setup survivors still have 'values' in memory)
     combined_pre = setup_surv_pre + mkt_surv_pre
     combined_post = setup_surv_post + mkt_surv_post
 
-    # Build signal date lists for value reload
     sig_dates_pre = [s["date"] for s in all_signals]
 
     post_dates_set = set((s.get("ticker"), s.get("signal_date", s.get("date")))
@@ -1425,7 +1552,6 @@ def run(setup_type):
 
     # ── Verification ──
     print(f"\n  ── DEDUP VERIFICATION ──")
-    # Check no high correlations remain in deduped set
     def _verify_no_high_corr(deduped, label, threshold=0.95):
         n = len(deduped)
         if n < 2:
@@ -1434,7 +1560,6 @@ def run(setup_type):
         max_corr = 0.0
         max_pair = ("", "")
         violations = 0
-        # Only check a sample if very large
         check_limit = min(n, 500)
         for i in range(check_limit):
             vi = deduped[i].get("values")
@@ -1531,8 +1656,6 @@ def run(setup_type):
     with open(op, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\n  Saved: {op}")
-
-    # Don't mirror intermediates — only final ev_*.json goes to Railway
     print(f"  (Intermediate — not mirrored to Railway)")
 
     print(f"\n  {'=' * 50}")
