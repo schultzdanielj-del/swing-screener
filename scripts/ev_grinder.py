@@ -1584,44 +1584,64 @@ def _build_feature_dict(surv, col_idx):
     }
 
 
-def _interpolate_decile(percentile, decile_values):
-    """Interpolate a value from a 10-point decile curve given a percentile (0-100).
+def _vectorized_interp_decile(pct_array, decile_values):
+    """Vectorized interpolation of a decile curve for an array of percentiles.
 
-    decile_values: list of 10 values (D1 through D10).
-    Decile midpoints are at 5, 15, 25, 35, 45, 55, 65, 75, 85, 95.
+    pct_array: np.ndarray shape (n_signals,) of percentiles 0-100
+    decile_values: list of 10 values (D1..D10), may contain None
 
-    Returns interpolated value, or None if decile_values has None/NaN at the relevant points.
+    Returns: np.ndarray shape (n_signals,) with interpolated values. NaN where
+             the decile curve has None/NaN at the relevant points.
     """
     if decile_values is None or len(decile_values) != 10:
-        return None
+        return np.full(len(pct_array), np.nan, dtype=np.float64)
 
-    midpoints = [5, 15, 25, 35, 45, 55, 65, 75, 85, 95]
+    # Convert decile values to numpy, None -> NaN
+    dv = np.array([float(v) if v is not None else np.nan for v in decile_values], dtype=np.float64)
 
-    # Clamp to 5..95 (no extrapolation beyond decile centers)
-    p = max(5.0, min(95.0, float(percentile)))
+    # Midpoints: D1=5, D2=15, ..., D10=95
+    midpoints = np.array([5.0, 15.0, 25.0, 35.0, 45.0, 55.0, 65.0, 75.0, 85.0, 95.0])
 
-    for i in range(9):
-        if p <= midpoints[i + 1]:
-            lo_val = decile_values[i]
-            hi_val = decile_values[i + 1]
-            if lo_val is None or hi_val is None:
-                return None
-            if not np.isfinite(lo_val) or not np.isfinite(hi_val):
-                return None
-            frac = (p - midpoints[i]) / (midpoints[i + 1] - midpoints[i])
-            return lo_val + frac * (hi_val - lo_val)
+    # Clamp percentiles to 5..95
+    p = np.clip(pct_array, 5.0, 95.0)
 
-    return None
+    # Find which interval each percentile falls in: searchsorted gives index of
+    # first midpoint > p, so the interval is (idx-1, idx). Clamp to valid range.
+    idx = np.searchsorted(midpoints, p, side='right')  # idx in 1..10
+    idx = np.clip(idx, 1, 9)  # interval indices 1..9 -> pairs (0,1)..(8,9)
+
+    lo_idx = idx - 1
+    hi_idx = idx
+
+    lo_val = dv[lo_idx]
+    hi_val = dv[hi_idx]
+    lo_mid = midpoints[lo_idx]
+    hi_mid = midpoints[hi_idx]
+
+    # Interpolation fraction
+    with np.errstate(divide='ignore', invalid='ignore'):
+        frac = (p - lo_mid) / (hi_mid - lo_mid)
+
+    result = lo_val + frac * (hi_val - lo_val)
+
+    # NaN where either endpoint is NaN
+    bad = ~(np.isfinite(lo_val) & np.isfinite(hi_val))
+    result[bad] = np.nan
+
+    return result
 
 
 def score_signals(percentile_matrix, features, all_signals, label):
-    """Score every signal using percentile-based continuous scoring.
+    """Score every signal using percentile-based continuous scoring (fully vectorized).
 
     For each signal:
       1. quality_score = weighted average of its feature percentiles (0-100)
       2. predicted_wr = weighted interpolation of decile WR curves
       3. predicted_mfe = weighted interpolation of decile MFE curves
       4. ev = (predicted_wr * predicted_mfe) - ((1 - predicted_wr) * 1.0)
+
+    All computation is vectorized — no Python loops over signals.
+    Loop over ~1800 features does vectorized ops on all 893 signals at once.
     """
     print(f"\n  ── SIGNAL SCORING ({label.upper()}) ──")
     t0 = time.time()
@@ -1638,77 +1658,89 @@ def score_signals(percentile_matrix, features, all_signals, label):
     if total_weight < 1e-10:
         total_weight = 1.0
 
-    directions = [f.get("direction", "ascending") for f in features]
-    decile_wr_curves = [f.get("decile_wr") for f in features]
-    decile_mfe_curves = [f.get("decile_mfe") for f in features]
+    # 1. Quality score: matrix-vector multiply (already vectorized)
+    quality_scores = percentile_matrix @ weights / total_weight  # (n_signals,)
 
-    results = []
+    # 2 & 3. Predicted WR and MFE: vectorized decile interpolation
+    # For each feature, un-flip percentiles to raw distribution position,
+    # then interpolate all signals at once via _vectorized_interp_decile.
+    # Accumulate weighted sums using numpy arrays, not Python floats.
 
-    for si in range(n_signals):
-        pcts = percentile_matrix[si, :]  # direction-flipped (higher = better)
+    wr_numer = np.zeros(n_signals, dtype=np.float64)
+    wr_denom = np.zeros(n_signals, dtype=np.float64)
+    mfe_numer = np.zeros(n_signals, dtype=np.float64)
+    mfe_denom = np.zeros(n_signals, dtype=np.float64)
 
-        # 1. Quality score
-        quality_score = float(np.dot(pcts, weights) / total_weight)
+    for fi, feat in enumerate(features):
+        w = weights[fi]
+        if w < 1e-10:
+            continue
 
-        # 2. Predicted WR and MFE via decile interpolation
-        # Un-flip percentile to get position in original value distribution
-        wr_sum = 0.0
-        wr_weight_sum = 0.0
-        mfe_sum = 0.0
-        mfe_weight_sum = 0.0
+        # Un-flip: percentile_matrix is direction-flipped (higher=better).
+        # For decile lookup we need raw distribution position.
+        direction = feat.get("direction", "ascending")
+        if direction == "descending":
+            raw_pct = 100.0 - percentile_matrix[:, fi]
+        else:
+            raw_pct = percentile_matrix[:, fi]
 
-        for fi in range(n_features):
-            orig_pct = pcts[fi] if directions[fi] == "ascending" else (100.0 - pcts[fi])
+        # WR interpolation — all signals at once
+        decile_wr = feat.get("decile_wr")
+        if decile_wr and len(decile_wr) == 10:
+            wr_vals = _vectorized_interp_decile(raw_pct, decile_wr)
+            valid = np.isfinite(wr_vals)
+            wr_numer[valid] += wr_vals[valid] * w
+            wr_denom[valid] += w
 
-            wr_val = _interpolate_decile(orig_pct, decile_wr_curves[fi])
-            if wr_val is not None:
-                wr_sum += wr_val * weights[fi]
-                wr_weight_sum += weights[fi]
+        # MFE interpolation — all signals at once
+        decile_mfe = feat.get("decile_mfe")
+        if decile_mfe and len(decile_mfe) == 10:
+            mfe_vals = _vectorized_interp_decile(raw_pct, decile_mfe)
+            valid = np.isfinite(mfe_vals)
+            mfe_numer[valid] += mfe_vals[valid] * w
+            mfe_denom[valid] += w
 
-            mfe_val = _interpolate_decile(orig_pct, decile_mfe_curves[fi])
-            if mfe_val is not None:
-                mfe_sum += mfe_val * weights[fi]
-                mfe_weight_sum += weights[fi]
+    # Compute final WR and MFE arrays
+    with np.errstate(divide='ignore', invalid='ignore'):
+        predicted_wr = np.where(wr_denom > 0, wr_numer / wr_denom, 0.5)
+    predicted_wr = np.clip(predicted_wr, 0.01, 0.99)
 
-        predicted_wr = (wr_sum / wr_weight_sum) if wr_weight_sum > 0 else 0.5
-        predicted_wr = max(0.01, min(0.99, predicted_wr))
+    with np.errstate(divide='ignore', invalid='ignore'):
+        predicted_mfe = np.where(mfe_denom > 0, mfe_numer / mfe_denom, 0.0)
+    predicted_mfe = np.maximum(predicted_mfe, 0.0)
 
-        predicted_mfe = (mfe_sum / mfe_weight_sum) if mfe_weight_sum > 0 else 0.0
-        predicted_mfe = max(0.0, predicted_mfe)
+    # 4. EV = (WR * MFE) - ((1 - WR) * 1.0 ADR assumed stop)
+    ev = predicted_wr * predicted_mfe - (1.0 - predicted_wr) * 1.0
 
-        # 3. EV
-        ev = (predicted_wr * predicted_mfe) - ((1.0 - predicted_wr) * 1.0)
-
-        results.append({
-            "quality_score": round(quality_score, 2),
-            "predicted_wr": round(predicted_wr, 4),
-            "predicted_mfe": round(predicted_mfe, 3),
-            "ev": round(ev, 3),
-            "feature_percentiles": [round(float(pcts[fi]), 1) for fi in range(n_features)],
-        })
+    # Build feature_percentiles matrix for output (round once, vectorized)
+    pct_rounded = np.round(percentile_matrix, 1)
 
     elapsed = time.time() - t0
 
-    # Verification
-    qs = [r["quality_score"] for r in results]
-    wrs = [r["predicted_wr"] for r in results]
-    mfes = [r["predicted_mfe"] for r in results]
-    evs = [r["ev"] for r in results]
+    # Build results list
+    results = []
+    for si in range(n_signals):
+        results.append({
+            "quality_score": round(float(quality_scores[si]), 2),
+            "predicted_wr": round(float(predicted_wr[si]), 4),
+            "predicted_mfe": round(float(predicted_mfe[si]), 3),
+            "ev": round(float(ev[si]), 3),
+            "feature_percentiles": pct_rounded[si].tolist(),
+        })
 
+    # Verification
     print(f"\n  Score distributions:")
-    print(f"    quality_score: min={min(qs):.1f} med={sorted(qs)[len(qs)//2]:.1f} max={max(qs):.1f}")
-    print(f"    predicted_wr:  min={min(wrs):.4f} med={sorted(wrs)[len(wrs)//2]:.4f} max={max(wrs):.4f}")
-    print(f"    predicted_mfe: min={min(mfes):.2f} med={sorted(mfes)[len(mfes)//2]:.2f} max={max(mfes):.2f}")
-    print(f"    ev:            min={min(evs):.3f} med={sorted(evs)[len(evs)//2]:.3f} max={max(evs):.3f}")
+    print(f"    quality_score: min={quality_scores.min():.1f} med={np.median(quality_scores):.1f} max={quality_scores.max():.1f}")
+    print(f"    predicted_wr:  min={predicted_wr.min():.4f} med={np.median(predicted_wr):.4f} max={predicted_wr.max():.4f}")
+    print(f"    predicted_mfe: min={predicted_mfe.min():.2f} med={np.median(predicted_mfe):.2f} max={predicted_mfe.max():.2f}")
+    print(f"    ev:            min={ev.min():.3f} med={np.median(ev):.3f} max={ev.max():.3f}")
 
     # Sanity: top decile by quality_score should have higher actual WR
+    is_winner = np.array(["WIN" in s.get("classification", "") for s in all_signals])
     n_dec = max(n_signals // 10, 1)
-    sorted_by_qs = sorted(range(n_signals), key=lambda i: results[i]["quality_score"])
-    bot_indices = sorted_by_qs[:n_dec]
-    top_indices = sorted_by_qs[-n_dec:]
-
-    bot_wr = sum(1 for i in bot_indices if "WIN" in all_signals[i].get("classification", "")) / max(len(bot_indices), 1)
-    top_wr = sum(1 for i in top_indices if "WIN" in all_signals[i].get("classification", "")) / max(len(top_indices), 1)
+    order = np.argsort(quality_scores)
+    bot_wr = float(is_winner[order[:n_dec]].mean())
+    top_wr = float(is_winner[order[-n_dec:]].mean())
     print(f"\n  Calibration check:")
     print(f"    Bottom 10% by quality_score: actual WR = {bot_wr:.1%}")
     print(f"    Top 10% by quality_score:    actual WR = {top_wr:.1%}")
