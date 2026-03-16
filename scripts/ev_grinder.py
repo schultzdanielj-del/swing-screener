@@ -24,6 +24,7 @@ import pandas as pd
 from datetime import datetime, timezone
 from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from scipy.stats import rankdata
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
@@ -1493,9 +1494,240 @@ def run_cross_dedup(survivors, signal_dates, label, n_workers=None, corr_thresho
     return deduped, stats
 
 
+
+
+# ══════════════════════════════════════════════════════════════
+# SCORING CURVES + SIGNAL SCORING (INCREMENT 5)
+# ══════════════════════════════════════════════════════════════
+
+def build_scoring_curves(deduped_survivors, all_signals, label):
+    """Build percentile-based scoring curves for each surviving feature.
+
+    For each feature:
+      1. Compute each signal's percentile rank (0-100) within the feature's distribution
+      2. Flip descending features so higher = better
+      3. Preserve decile curves (already computed in screening) for WR/MFE interpolation
+
+    Args:
+        deduped_survivors: list of dicts from dedup step (with 'values' arrays attached)
+        all_signals: list of signal dicts
+        label: str ("pre" or "post")
+
+    Returns:
+        (enriched_features, percentile_matrix)
+        enriched_features: list of feature dicts with scoring curve data
+        percentile_matrix: np.ndarray shape (n_signals, n_features) float 0-100
+    """
+    print(f"\n  ── SCORING CURVES ({label.upper()}) ──")
+    t0 = time.time()
+    n_signals = len(all_signals)
+    n_features = len(deduped_survivors)
+    print(f"  {n_signals} signals × {n_features} features")
+
+    if n_features == 0:
+        return [], np.zeros((n_signals, 0), dtype=np.float64)
+
+    percentile_matrix = np.full((n_signals, n_features), 50.0, dtype=np.float64)
+    enriched = []
+
+    for fi, surv in enumerate(deduped_survivors):
+        vals = surv.get("values")
+        if vals is None:
+            enriched.append(_build_feature_dict(surv, fi))
+            continue
+
+        vals = np.asarray(vals, dtype=np.float64)
+        valid_mask = np.isfinite(vals)
+        n_valid = int(valid_mask.sum())
+
+        if n_valid < 20:
+            enriched.append(_build_feature_dict(surv, fi))
+            continue
+
+        # Percentile rank among valid values: rankdata gives 1..n_valid, convert to 0..100
+        valid_vals = vals[valid_mask]
+        ranks = rankdata(valid_vals, method='average')
+        percentiles = (ranks - 1) / max(n_valid - 1, 1) * 100.0
+
+        # Write percentiles into matrix (NaN positions stay at 50 = neutral)
+        percentile_matrix[valid_mask, fi] = percentiles
+
+        # Flip descending features so higher percentile = better outcome
+        direction = surv.get("direction", "ascending")
+        if direction == "descending":
+            percentile_matrix[:, fi] = 100.0 - percentile_matrix[:, fi]
+
+        enriched.append(_build_feature_dict(surv, fi))
+
+    elapsed = time.time() - t0
+    print(f"  Scoring curves built ({elapsed:.1f}s)")
+    return enriched, percentile_matrix
+
+
+def _build_feature_dict(surv, col_idx):
+    """Build the output feature dict (no 'values' array — stripped before save)."""
+    return {
+        "name": surv.get("name"),
+        "source": surv.get("source", "market"),
+        "instrument": surv.get("instrument"),
+        "expression": surv.get("expression"),
+        "screen_type": surv.get("screen_type"),
+        "wr_spread": surv.get("wr_spread"),
+        "mfe_spread": surv.get("mfe_spread"),
+        "direction": surv.get("direction"),
+        "weight": max(surv.get("wr_spread", 0), surv.get("mfe_spread", 0) / 10.0),
+        "decile_boundaries": surv.get("decile_boundaries"),
+        "decile_wr": surv.get("decile_wr"),
+        "decile_mfe": surv.get("decile_mfe"),
+        "n_per_decile": surv.get("n_per_decile"),
+        "col_idx": col_idx,
+    }
+
+
+def _interpolate_decile(percentile, decile_values):
+    """Interpolate a value from a 10-point decile curve given a percentile (0-100).
+
+    decile_values: list of 10 values (D1 through D10).
+    Decile midpoints are at 5, 15, 25, 35, 45, 55, 65, 75, 85, 95.
+
+    Returns interpolated value, or None if decile_values has None/NaN at the relevant points.
+    """
+    if decile_values is None or len(decile_values) != 10:
+        return None
+
+    midpoints = [5, 15, 25, 35, 45, 55, 65, 75, 85, 95]
+
+    # Clamp to 5..95 (no extrapolation beyond decile centers)
+    p = max(5.0, min(95.0, float(percentile)))
+
+    for i in range(9):
+        if p <= midpoints[i + 1]:
+            lo_val = decile_values[i]
+            hi_val = decile_values[i + 1]
+            if lo_val is None or hi_val is None:
+                return None
+            if not np.isfinite(lo_val) or not np.isfinite(hi_val):
+                return None
+            frac = (p - midpoints[i]) / (midpoints[i + 1] - midpoints[i])
+            return lo_val + frac * (hi_val - lo_val)
+
+    return None
+
+
+def score_signals(percentile_matrix, features, all_signals, label):
+    """Score every signal using percentile-based continuous scoring.
+
+    For each signal:
+      1. quality_score = weighted average of its feature percentiles (0-100)
+      2. predicted_wr = weighted interpolation of decile WR curves
+      3. predicted_mfe = weighted interpolation of decile MFE curves
+      4. ev = (predicted_wr * predicted_mfe) - ((1 - predicted_wr) * 1.0)
+    """
+    print(f"\n  ── SIGNAL SCORING ({label.upper()}) ──")
+    t0 = time.time()
+    n_signals, n_features = percentile_matrix.shape
+    print(f"  {n_signals} signals × {n_features} features")
+
+    if n_features == 0:
+        print("  WARNING: No features — all signals get neutral scores")
+        return [{"quality_score": 50.0, "predicted_wr": 0.5, "predicted_mfe": 0.0,
+                 "ev": 0.0, "feature_percentiles": []} for _ in range(n_signals)]
+
+    weights = np.array([f.get("weight", 0.0) for f in features], dtype=np.float64)
+    total_weight = weights.sum()
+    if total_weight < 1e-10:
+        total_weight = 1.0
+
+    directions = [f.get("direction", "ascending") for f in features]
+    decile_wr_curves = [f.get("decile_wr") for f in features]
+    decile_mfe_curves = [f.get("decile_mfe") for f in features]
+
+    results = []
+
+    for si in range(n_signals):
+        pcts = percentile_matrix[si, :]  # direction-flipped (higher = better)
+
+        # 1. Quality score
+        quality_score = float(np.dot(pcts, weights) / total_weight)
+
+        # 2. Predicted WR and MFE via decile interpolation
+        # Un-flip percentile to get position in original value distribution
+        wr_sum = 0.0
+        wr_weight_sum = 0.0
+        mfe_sum = 0.0
+        mfe_weight_sum = 0.0
+
+        for fi in range(n_features):
+            orig_pct = pcts[fi] if directions[fi] == "ascending" else (100.0 - pcts[fi])
+
+            wr_val = _interpolate_decile(orig_pct, decile_wr_curves[fi])
+            if wr_val is not None:
+                wr_sum += wr_val * weights[fi]
+                wr_weight_sum += weights[fi]
+
+            mfe_val = _interpolate_decile(orig_pct, decile_mfe_curves[fi])
+            if mfe_val is not None:
+                mfe_sum += mfe_val * weights[fi]
+                mfe_weight_sum += weights[fi]
+
+        predicted_wr = (wr_sum / wr_weight_sum) if wr_weight_sum > 0 else 0.5
+        predicted_wr = max(0.01, min(0.99, predicted_wr))
+
+        predicted_mfe = (mfe_sum / mfe_weight_sum) if mfe_weight_sum > 0 else 0.0
+        predicted_mfe = max(0.0, predicted_mfe)
+
+        # 3. EV
+        ev = (predicted_wr * predicted_mfe) - ((1.0 - predicted_wr) * 1.0)
+
+        results.append({
+            "quality_score": round(quality_score, 2),
+            "predicted_wr": round(predicted_wr, 4),
+            "predicted_mfe": round(predicted_mfe, 3),
+            "ev": round(ev, 3),
+            "feature_percentiles": [round(float(pcts[fi]), 1) for fi in range(n_features)],
+        })
+
+    elapsed = time.time() - t0
+
+    # Verification
+    qs = [r["quality_score"] for r in results]
+    wrs = [r["predicted_wr"] for r in results]
+    mfes = [r["predicted_mfe"] for r in results]
+    evs = [r["ev"] for r in results]
+
+    print(f"\n  Score distributions:")
+    print(f"    quality_score: min={min(qs):.1f} med={sorted(qs)[len(qs)//2]:.1f} max={max(qs):.1f}")
+    print(f"    predicted_wr:  min={min(wrs):.4f} med={sorted(wrs)[len(wrs)//2]:.4f} max={max(wrs):.4f}")
+    print(f"    predicted_mfe: min={min(mfes):.2f} med={sorted(mfes)[len(mfes)//2]:.2f} max={max(mfes):.2f}")
+    print(f"    ev:            min={min(evs):.3f} med={sorted(evs)[len(evs)//2]:.3f} max={max(evs):.3f}")
+
+    # Sanity: top decile by quality_score should have higher actual WR
+    n_dec = max(n_signals // 10, 1)
+    sorted_by_qs = sorted(range(n_signals), key=lambda i: results[i]["quality_score"])
+    bot_indices = sorted_by_qs[:n_dec]
+    top_indices = sorted_by_qs[-n_dec:]
+
+    bot_wr = sum(1 for i in bot_indices if "WIN" in all_signals[i].get("classification", "")) / max(len(bot_indices), 1)
+    top_wr = sum(1 for i in top_indices if "WIN" in all_signals[i].get("classification", "")) / max(len(top_indices), 1)
+    print(f"\n  Calibration check:")
+    print(f"    Bottom 10% by quality_score: actual WR = {bot_wr:.1%}")
+    print(f"    Top 10% by quality_score:    actual WR = {top_wr:.1%}")
+    if top_wr > bot_wr:
+        print(f"    ✓ Top > Bottom by {top_wr - bot_wr:.1%}")
+    else:
+        print(f"    ⚠ WARNING: Top ({top_wr:.1%}) ≤ Bottom ({bot_wr:.1%}) — model may not be calibrated")
+
+    example_indices = [i for i, s in enumerate(all_signals) if s.get("is_example")]
+    examples_scored = sum(1 for i in example_indices if results[i]["quality_score"] is not None)
+    print(f"\n  Examples scored: {examples_scored}/{len(example_indices)}")
+    print(f"  Signal scoring complete ({elapsed:.1f}s)")
+    return results
+
+
 # ══════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════
+
 
 def run(setup_type):
     print("\n" + "=" * 70)
@@ -1556,22 +1788,16 @@ def run(setup_type):
 
     # Inc 3: Feature screening
     n_workers = os.cpu_count() or 8
-
-    # Setup feature screening
     setup_surv_pre, setup_surv_post, setup_stats = screen_setup_features(all_signals, ps)
-
-    # Market feature screening (parallel, all cores)
     mkt_surv_pre, mkt_surv_post, mkt_stats = run_market_screening(
         all_signals, ps, n_workers=n_workers)
 
-    # Tag market survivors with source
     for s in mkt_surv_pre + mkt_surv_post:
         s["source"] = "market"
         parts = s["name"].split("__", 1)
         s["instrument"] = parts[0] if len(parts) == 2 else None
         s["expression"] = parts[1] if len(parts) == 2 else s["name"]
 
-    # Combined screening counts
     total_pre = len(setup_surv_pre) + len(mkt_surv_pre)
     total_post = len(setup_surv_post) + len(mkt_surv_post)
     print(f"\n  ── SCREENING SUMMARY ──")
@@ -1579,18 +1805,15 @@ def run(setup_type):
     print(f"  Market features: {len(mkt_surv_pre)} pre / {len(mkt_surv_post)} post")
     print(f"  Total survivors: {total_pre} pre / {total_post} post")
 
-    # Verify all examples have values
     example_sigs = [s for s in all_signals if s["is_example"]]
     ex_ok = len(example_sigs) == ne
     print(f"  Examples: {len(example_sigs)}/{ne} {'✓' if ex_ok else '✗'}")
 
-    # ── Inc 4: Cross-instrument dedup (two-pass, optimized) ──
-
+    # Inc 4: Cross-instrument dedup
     combined_pre = setup_surv_pre + mkt_surv_pre
     combined_post = setup_surv_post + mkt_surv_post
 
     sig_dates_pre = [s["date"] for s in all_signals]
-
     post_dates_set = set((s.get("ticker"), s.get("signal_date", s.get("date")))
                          for s in ps)
     post_indices = [i for i, s in enumerate(all_signals)
@@ -1602,7 +1825,7 @@ def run(setup_type):
     deduped_post, dedup_stats_post = run_cross_dedup(
         combined_post, sig_dates_post, "post", n_workers=n_workers)
 
-    # ── Verification ──
+    # Dedup verification
     print(f"\n  ── DEDUP VERIFICATION ──")
     def _verify_no_high_corr(deduped, label, threshold=0.95):
         n = len(deduped)
@@ -1615,25 +1838,20 @@ def run(setup_type):
         check_limit = min(n, 500)
         for i in range(check_limit):
             vi = deduped[i].get("values")
-            if vi is None:
-                continue
+            if vi is None: continue
             for j in range(i + 1, check_limit):
                 vj = deduped[j].get("values")
-                if vj is None:
-                    continue
+                if vj is None: continue
                 both = np.isfinite(vi) & np.isfinite(vj)
                 nv = int(both.sum())
-                if nv < 50:
-                    continue
+                if nv < 50: continue
                 ci, cj = vi[both], vj[both]
-                if np.std(ci) < 1e-10 or np.std(cj) < 1e-10:
-                    continue
+                if np.std(ci) < 1e-10 or np.std(cj) < 1e-10: continue
                 c = abs(np.corrcoef(ci, cj)[0, 1])
                 if c > max_corr:
                     max_corr = c
                     max_pair = (deduped[i]["name"], deduped[j]["name"])
-                if c >= threshold:
-                    violations += 1
+                if c >= threshold: violations += 1
         ok = violations == 0
         print(f"  {label}: {n} features, max_corr={max_corr:.4f}, violations={violations} "
               f"{'✓' if ok else '✗'}")
@@ -1644,25 +1862,72 @@ def run(setup_type):
     corr_ok_pre, v_pre = _verify_no_high_corr(deduped_pre, "Pre")
     corr_ok_post, v_post = _verify_no_high_corr(deduped_post, "Post")
 
-    # ── Save output ──
+    # ── Inc 5: Scoring curves + signal scoring ──
+    post_signals_for_scoring = [all_signals[i] for i in post_indices]
+
+    features_pre, pct_matrix_pre = build_scoring_curves(deduped_pre, all_signals, "pre")
+    scores_pre = score_signals(pct_matrix_pre, features_pre, all_signals, "pre")
+
+    features_post, pct_matrix_post = build_scoring_curves(deduped_post, post_signals_for_scoring, "post")
+    scores_post = score_signals(pct_matrix_post, features_post, post_signals_for_scoring, "post")
+
+    # Hard fail: all examples must be scored
+    example_scored_count = sum(
+        1 for i, s in enumerate(all_signals)
+        if s.get("is_example") and scores_pre[i]["quality_score"] is not None
+    )
+    if example_scored_count < ne:
+        print(f"\n  ✗ HARD FAIL: Only {example_scored_count}/{ne} examples scored")
+        return None
+    print(f"\n  ✓ All {ne} examples scored")
+
+    # Build output signals array
+    signals_out = []
+    for i, s in enumerate(all_signals):
+        signals_out.append({
+            "ticker": s["ticker"], "date": s["date"], "close": s.get("close"),
+            "classification": s.get("classification"),
+            "is_example": s.get("is_example", False),
+            "move_adr": s.get("move_adr"), "adr_at_signal": s.get("adr_at_signal"),
+            "entry_high": s.get("entry_high"), "cluster_id": s.get("cluster_id"),
+            "killed_at_depth": kad.get(s.get("cluster_id")),
+            "quality_score": scores_pre[i]["quality_score"],
+            "predicted_wr": scores_pre[i]["predicted_wr"],
+            "predicted_mfe": scores_pre[i]["predicted_mfe"],
+            "ev": scores_pre[i]["ev"],
+            "feature_percentiles": scores_pre[i]["feature_percentiles"],
+        })
+
+    post_signals_out = []
+    for pi, orig_idx in enumerate(post_indices):
+        s = all_signals[orig_idx]
+        post_signals_out.append({
+            "ticker": s["ticker"], "date": s["date"],
+            "classification": s.get("classification"),
+            "is_example": s.get("is_example", False),
+            "move_adr": s.get("move_adr"),
+            "quality_score": scores_post[pi]["quality_score"],
+            "predicted_wr": scores_post[pi]["predicted_wr"],
+            "predicted_mfe": scores_post[pi]["predicted_mfe"],
+            "ev": scores_post[pi]["ev"],
+            "feature_percentiles": scores_post[pi]["feature_percentiles"],
+        })
+
+    # Save output
     tt = time.time() - t_total
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    def _clean_survivor(s):
-        r = {k: v for k, v in s.items() if k != "values"}
-        return r
-
     out = {
-        "setup": setup_type, "increment": 4,
+        "setup": setup_type, "increment": 5,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "total_time_s": round(tt, 1),
         "clusters_file": cf, "refinement_file": rf,
         "verification": {
-            "depth_replay_passed": dok,
-            "features_passed": fok,
+            "depth_replay_passed": dok, "features_passed": fok,
             "feature_comparison": fcomp,
             "dedup_corr_check_pre": {"passed": corr_ok_pre, "violations": v_pre},
             "dedup_corr_check_post": {"passed": corr_ok_post, "violations": v_post},
+            "examples_scored": example_scored_count, "examples_total": ne,
         },
         "feature_coverage": fcov,
         "depth_stats": ds,
@@ -1687,24 +1952,37 @@ def run(setup_type):
             "pre_refinement": dedup_stats_pre,
             "post_refinement": dedup_stats_post,
         },
-        "survivors_pre": [_clean_survivor(s) for s in deduped_pre],
-        "survivors_post": [_clean_survivor(s) for s in deduped_post],
+        "features_pre": features_pre,
+        "features_post": features_post,
+        "signals": signals_out,
+        "signals_post": post_signals_out,
+        "scan_config": {
+            "signal_conditions_count": 87,
+            "refinement_conditions_count": len(rc),
+            "default_refinement_depth": len(rc),
+            "quality_score_range": {
+                "min": round(min(s["quality_score"] for s in signals_out), 1),
+                "max": round(max(s["quality_score"] for s in signals_out), 1),
+            },
+            "assumed_stop_adr": 1.0,
+        },
         "summary": {
             "pre_refinement_signals": len(all_signals),
             "post_refinement_signals": len(ps),
             "refinement_conditions": len(rc),
-            "clusters_killed": len(kad),
-            "examples": ne,
+            "clusters_killed": len(kad), "examples": ne,
             "total_features_tested": mkt_stats.get("n_features_tested", 0) + setup_stats.get("n_features", 0),
             "screening_survivors_pre": total_pre,
             "screening_survivors_post": total_post,
             "deduped_survivors_pre": len(deduped_pre),
             "deduped_survivors_post": len(deduped_post),
+            "scoring_features_pre": len(features_pre),
+            "scoring_features_post": len(features_post),
         },
     }
 
     os.makedirs(CACHE_DIR, exist_ok=True)
-    op = os.path.join(CACHE_DIR, f"ev_{setup_type}_inc4_{ts}.json")
+    op = os.path.join(CACHE_DIR, f"ev_{setup_type}_inc5_{ts}.json")
     with open(op, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\n  Saved: {op}")
@@ -1716,9 +1994,13 @@ def run(setup_type):
         print(f"  WARNING: Mirror failed: {e}")
 
     print(f"\n  {'=' * 50}")
-    print(f"  INCREMENT 4 COMPLETE ({tt:.1f}s)")
-    print(f"  Screening: {total_pre} pre / {total_post} post")
-    print(f"  After dedup: {len(deduped_pre)} pre / {len(deduped_post)} post")
+    print(f"  INCREMENT 5 COMPLETE ({tt:.1f}s)")
+    print(f"  Features: {len(features_pre)} pre / {len(features_post)} post")
+    print(f"  Signals scored: {len(signals_out)} pre / {len(post_signals_out)} post")
+    qs_all = [s["quality_score"] for s in signals_out]
+    print(f"  Quality score range: {min(qs_all):.1f} — {max(qs_all):.1f}")
+    evs_all = [s["ev"] for s in signals_out]
+    print(f"  EV range: {min(evs_all):.3f} — {max(evs_all):.3f}")
     print(f"  {'=' * 50}")
     return out
 
