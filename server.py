@@ -4,6 +4,10 @@ import os
 import json as _json
 import math
 import sqlite3
+import subprocess
+import sys
+import threading
+import time as _time
 from datetime import datetime, timedelta
 from pathlib import Path
 from contextlib import contextmanager
@@ -24,7 +28,9 @@ from pydantic import BaseModel
 
 app = FastAPI(title="ScanPerfect V2")
 
-DB_DIR = Path(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/app/data"))
+_railway_vol = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
+IS_RAILWAY = _railway_vol is not None
+DB_DIR = Path(_railway_vol) if IS_RAILWAY else Path("data")
 DB_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DB_DIR / "scanperfect.db"
 
@@ -297,6 +303,88 @@ init_db()
 
 
 # ============================================================
+# LOCAL OHLCV CACHE (replaces universe_ohlcv SQL table locally)
+# ============================================================
+
+_ohlcv_cache = {}  # {ticker: DataFrame} — loaded from 5yr pickle
+
+def _load_ohlcv_cache():
+    """Load the 5yr OHLCV pickle into memory. Only in local mode."""
+    global _ohlcv_cache
+    cache_path = Path("local_runner/cache/universe_ohlcv_5yr.pkl")
+    if not cache_path.exists():
+        print(f"  WARNING: 5yr OHLCV cache not found at {cache_path}")
+        print(f"  Vetting charts and ADR calculations will not work.")
+        print(f"  Run: python local_runner/cache_builder.py --5yr --force")
+        return
+    import pickle
+    t0 = _time.time()
+    with open(cache_path, "rb") as f:
+        _ohlcv_cache = pickle.load(f)
+    elapsed = _time.time() - t0
+    print(f"  OHLCV cache loaded: {len(_ohlcv_cache)} tickers in {elapsed:.1f}s")
+
+if not IS_RAILWAY:
+    _load_ohlcv_cache()
+
+
+def _get_ohlcv(ticker):
+    """Get OHLCV DataFrame for a ticker. Returns None if not found.
+    Local: reads from in-memory cache.
+    Railway: reads from universe_ohlcv SQL table.
+    """
+    ticker = ticker.upper()
+    if not IS_RAILWAY:
+        df = _ohlcv_cache.get(ticker)
+        if df is None:
+            return None
+        return df.copy()
+    else:
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT date, open, high, low, close, volume FROM universe_ohlcv WHERE ticker=? ORDER BY date",
+                (ticker,)
+            ).fetchall()
+        if not rows:
+            return None
+        df = pd.DataFrame([dict(r) for r in rows])
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+
+
+def _get_all_tickers():
+    """Get set of all tickers with OHLCV data.
+    Local: keys from in-memory cache.
+    Railway: distinct tickers from universe_ohlcv.
+    """
+    if not IS_RAILWAY:
+        return set(_ohlcv_cache.keys())
+    else:
+        with get_db() as db:
+            rows = db.execute("SELECT DISTINCT ticker FROM universe_ohlcv").fetchall()
+        return set(r[0].upper() for r in rows)
+
+
+def _has_bar(ticker, date_str):
+    """Check if a specific ticker+date exists in OHLCV data.
+    Local: check in-memory cache.
+    Railway: SQL lookup.
+    """
+    ticker = ticker.upper()
+    if not IS_RAILWAY:
+        df = _ohlcv_cache.get(ticker)
+        if df is None:
+            return False
+        dates = df["date"].dt.strftime("%Y-%m-%d").values
+        return date_str in dates
+    else:
+        with get_db() as db:
+            return db.execute(
+                "SELECT 1 FROM universe_ohlcv WHERE ticker=? AND date=?", (ticker, date_str)
+            ).fetchone() is not None
+
+
+# ============================================================
 # HELPERS
 # ============================================================
 
@@ -463,6 +551,141 @@ def _load_pipeline_logs():   return _load_json(PIPELINE_LOGS_FILE, {})
 def _save_pipeline_logs(l):  _save_json(PIPELINE_LOGS_FILE, l)
 
 
+# ── Local subprocess runner (replaces pipeline_agent.py polling) ──
+
+REPO_ROOT = str(Path(__file__).resolve().parent)
+LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
+
+STEP_COMMANDS = {
+    "nightly": [sys.executable, os.path.join(LOCAL_DIR, "nightly.py")],
+    "signal_grind": [
+        sys.executable, os.path.join(LOCAL_DIR, "pyramid_grinder.py"),
+        "--setup", "{setup}", "--peak-target", "3", "--beam", "10000", "--depth", "100",
+    ],
+    "exit_grind": [
+        sys.executable, os.path.join(REPO_ROOT, "scripts", "exit_grinder.py"),
+        "--setup", "{setup}", "--max-forward", "120",
+    ],
+    "refinement_grind": [
+        sys.executable, os.path.join(LOCAL_DIR, "pyramid_grinder.py"),
+        "--setup", "{setup}", "--blackout",
+    ],
+    "ev_grind": [
+        sys.executable, os.path.join(REPO_ROOT, "scripts", "ev_grinder.py"),
+        "--setup", "{setup}",
+    ],
+}
+
+_running_process = None  # Track the active subprocess for stop support
+
+
+def _extract_summary(lines):
+    """Pull key result lines from subprocess output."""
+    summary_lines = []
+    for line in lines[-80:]:
+        lower = line.lower().strip()
+        if any(kw in lower for kw in [
+            "winner", "best:", "result:", "final", "complete",
+            "signals", "peak", "conditions", "floor=", "median=",
+            "all passes complete", "total signals", "\u2713",
+        ]):
+            summary_lines.append(line.strip())
+    return "\n".join(summary_lines[-10:]) if summary_lines else None
+
+
+def _run_step_local(step_id, setup_type):
+    """Run a pipeline step as a local subprocess in a background thread."""
+    global _running_process
+
+    cmd_template = STEP_COMMANDS.get(step_id)
+    if not cmd_template:
+        _update_step_status(step_id, "error", error=f"Unknown step: {step_id}")
+        return
+
+    # Substitute {setup} placeholder with actual setup type
+    cmd = [arg.replace("{setup}", setup_type) for arg in cmd_template]
+
+    # Mark as running
+    _update_step_status(step_id, "running")
+
+    # Clear log
+    logs = _load_pipeline_logs()
+    logs[step_id] = []
+    _save_pipeline_logs(logs)
+
+    all_lines = []
+    start_time = _time.time()
+
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=REPO_ROOT,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            bufsize=1,
+            universal_newlines=True,
+        )
+        _running_process = process
+
+        for line in process.stdout:
+            all_lines.append(line.rstrip("\n"))
+            # Flush to log file periodically (every 20 lines)
+            if len(all_lines) % 20 == 0:
+                logs = _load_pipeline_logs()
+                logs[step_id] = all_lines[-4000:]  # Keep last 4000
+                _save_pipeline_logs(logs)
+
+        process.wait()
+        _running_process = None
+        exit_code = process.returncode
+        duration = round(_time.time() - start_time, 1)
+
+        # Final log flush
+        logs = _load_pipeline_logs()
+        logs[step_id] = all_lines[-4000:]
+        _save_pipeline_logs(logs)
+
+        if exit_code == 0:
+            _update_step_status(step_id, "done",
+                                duration_s=duration, exit_code=0,
+                                result_summary=_extract_summary(all_lines))
+        else:
+            error_tail = "\n".join(all_lines[-20:])
+            _update_step_status(step_id, "error",
+                                duration_s=duration, exit_code=exit_code,
+                                error=error_tail,
+                                result_summary=_extract_summary(all_lines))
+
+    except Exception as e:
+        _running_process = None
+        duration = round(_time.time() - start_time, 1)
+        _update_step_status(step_id, "error",
+                            duration_s=duration,
+                            error=f"{type(e).__name__}: {e}")
+
+
+def _update_step_status(step_id, status, **kwargs):
+    """Update pipeline step status directly (no network hop)."""
+    state = _load_pipeline_state()
+    ss = state.setdefault("steps", {}).setdefault(step_id, {})
+    ss["status"] = status
+    now = datetime.now().isoformat()
+    if status == "running":
+        ss["started_at"] = now
+    elif status in ("done", "error", "stopped"):
+        ss["finished_at"] = now
+        ss["duration_s"] = kwargs.get("duration_s")
+        ss["exit_code"] = kwargs.get("exit_code")
+        ss["error"] = kwargs.get("error")
+        ss["result_summary"] = kwargs.get("result_summary")
+        # Also update the job record
+        for j in state.get("jobs", []):
+            if j.get("step_id") == step_id and j.get("status") in ("claimed", "running"):
+                j["status"] = status
+    _save_pipeline_state(state)
+
+
 @app.get("/api/pipeline/steps")
 async def get_pipeline_steps():
     state = _load_pipeline_state()
@@ -470,14 +693,19 @@ async def get_pipeline_steps():
     if state.get("jobs"):
         state["jobs"] = [j for j in state["jobs"] if j.get("step_id") in valid_ids]
         _save_pipeline_state(state)
-    agent = _load_json(GRINDER_AGENT_FILE, {})
-    agent_status = "unknown"
-    last_hb = agent.get("last_heartbeat","")
-    if last_hb:
-        try:
-            hb_time = datetime.fromisoformat(last_hb.replace('+00:00','').replace('Z',''))
-            agent_status = "online" if (datetime.utcnow()-hb_time).total_seconds()<20 else "offline"
-        except: agent_status = "unknown"
+    # Local mode: server IS the agent — always online
+    if not IS_RAILWAY:
+        agent_status = "online"
+        last_hb = datetime.utcnow().isoformat()
+    else:
+        agent = _load_json(GRINDER_AGENT_FILE, {})
+        agent_status = "unknown"
+        last_hb = agent.get("last_heartbeat","")
+        if last_hb:
+            try:
+                hb_time = datetime.fromisoformat(last_hb.replace('+00:00','').replace('Z',''))
+                agent_status = "online" if (datetime.utcnow()-hb_time).total_seconds()<20 else "offline"
+            except: agent_status = "unknown"
     steps_out = []
     for step_def in PIPELINE_STEPS:
         step_state = state.get("steps",{}).get(step_def["id"], {
@@ -519,39 +747,37 @@ async def get_pipeline_steps():
 @app.post("/api/pipeline/run/{step_id}")
 async def pipeline_run_step(step_id: str, request: Request = None):
     step_params = {}
+    setup_type = "dtss"
     if request:
         try:
             body = await request.json()
-            if isinstance(body, dict): step_params = body.get("params",{})
+            if isinstance(body, dict):
+                step_params = body.get("params",{})
+                setup_type = body.get("setup_type", "dtss")
         except: pass
     step_def = next((s for s in PIPELINE_STEPS if s["id"]==step_id), None)
     if not step_def: return {"error":f"Unknown step: {step_id}"}
     state = _load_pipeline_state()
-    agent = _load_json(GRINDER_AGENT_FILE,{})
-    last_hb = agent.get("last_heartbeat","")
-    agent_alive = False
-    if last_hb:
-        try:
-            hb_time = datetime.fromisoformat(last_hb.replace('+00:00','').replace('Z',''))
-            agent_alive = (datetime.utcnow()-hb_time).total_seconds()<30
-        except: pass
-    if not agent_alive:
-        state["jobs"] = []
-    else:
-        active_other = [j for j in state.get("jobs",[]) if j.get("status") in ("queued","running","claimed") and j.get("step_id")!=step_id]
-        if active_other: return {"error":f"Already running: {active_other[0].get('step_id')}"}
-        state["jobs"] = [j for j in state.get("jobs",[]) if j.get("step_id")!=step_id]
+    # Check prerequisites
     for prereq in step_def["prerequisites"]:
         if state.get("steps",{}).get(prereq,{}).get("status")!="done":
             return {"error":f"Prerequisite not met: {prereq}"}
-    job = {"job_id":f"pipe_{step_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-           "step_id":step_id,"status":"queued","params":step_params,"created_at":datetime.now().isoformat()}
+    # Check if something is already running
+    active = [j for j in state.get("jobs",[]) if j.get("status") in ("queued","running","claimed")]
+    if active: return {"error":f"Already running: {active[0].get('step_id')}"}
+    # Create job record
+    job_id = f"pipe_{step_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    job = {"job_id":job_id,"step_id":step_id,"status":"running","params":step_params,"created_at":datetime.now().isoformat()}
+    state["jobs"] = [j for j in state.get("jobs",[]) if j.get("step_id")!=step_id]
     state.setdefault("jobs",[]).append(job)
-    state.setdefault("steps",{})[step_id] = {"status":"queued","started_at":None,"finished_at":None,
+    state.setdefault("steps",{})[step_id] = {"status":"running","started_at":datetime.now().isoformat(),"finished_at":None,
         "duration_s":None,"exit_code":None,"error":None,"result_summary":None}
     _save_pipeline_state(state)
     logs = _load_pipeline_logs(); logs[step_id]=[]; _save_pipeline_logs(logs)
-    return {"status":"queued","job_id":job["job_id"],"step_id":step_id}
+    # Launch subprocess in background thread
+    thread = threading.Thread(target=_run_step_local, args=(step_id, setup_type), daemon=True)
+    thread.start()
+    return {"status":"running","job_id":job_id,"step_id":step_id}
 
 
 @app.get("/api/pipeline/jobs/pending")
@@ -605,10 +831,24 @@ async def pipeline_reset_step(step_id: str):
 
 @app.post("/api/pipeline/stop")
 async def pipeline_stop():
+    global _running_process
     state=_load_pipeline_state()
     for j in state.get("jobs",[]):
-        if j.get("status") in ("queued","claimed","running"): j["status"]="stop_requested"
-    _save_pipeline_state(state); return {"ok":True}
+        if j.get("status") in ("queued","claimed","running"):
+            j["status"]="stopped"
+            step_id = j.get("step_id")
+            if step_id:
+                ss = state.get("steps",{}).get(step_id,{})
+                ss["status"] = "stopped"
+                ss["finished_at"] = datetime.now().isoformat()
+    _save_pipeline_state(state)
+    # Kill the running subprocess if any
+    if _running_process and _running_process.poll() is None:
+        try:
+            _running_process.terminate()
+        except: pass
+        _running_process = None
+    return {"ok":True}
 
 
 @app.get("/api/pipeline/stop-check/{step_id}")
@@ -633,6 +873,9 @@ async def agent_heartbeat(request: Request):
 
 @app.get("/api/grinder/agent/status")
 async def get_agent_status():
+    # Local mode: server IS the agent
+    if not IS_RAILWAY:
+        return {"status":"online","agent":{"status":"online","agent_id":"local"}}
     agent=_load_json(GRINDER_AGENT_FILE,{})
     if not agent: return {"status":"unknown","agent":None}
     last_hb=agent.get("last_heartbeat","")
@@ -707,21 +950,27 @@ async def patch_setup(setup_type: str, request: Request):
 async def get_examples(setup_type: str):
     with get_db() as db:
         rows=db.execute("SELECT id,ticker,chart_date,entry_date FROM examples WHERE setup_type=? ORDER BY ticker",(setup_type,)).fetchall()
-        examples=[]
-        for r in rows:
-            ex={"id":r["id"],"ticker":r["ticker"],"chartDate":r["chart_date"],"entryDate":r["entry_date"]}
-            try:
-                pre=db.execute("SELECT high,low FROM universe_ohlcv WHERE ticker=? AND date<? ORDER BY date DESC LIMIT 14",(r["ticker"],r["entry_date"])).fetchall()
-                if pre and len(pre)>=5:
-                    adr=sum(abs(p["high"]-p["low"]) for p in pre)/len(pre)
-                    if adr>0:
-                        fwd=db.execute("SELECT high,close FROM universe_ohlcv WHERE ticker=? AND date>=? ORDER BY date LIMIT 120",(r["ticker"],r["entry_date"])).fetchall()
-                        if fwd and len(fwd)>=2:
-                            entry_high=fwd[0]["high"]
-                            best_close=min(b["close"] for b in fwd[1:])
-                            ex["adrMove"]=round((entry_high-best_close)/adr,1)
-            except: pass
-            examples.append(ex)
+    examples=[]
+    for r in rows:
+        ex={"id":r["id"],"ticker":r["ticker"],"chartDate":r["chart_date"],"entryDate":r["entry_date"]}
+        try:
+            df = _get_ohlcv(r["ticker"])
+            if df is not None and len(df) > 5:
+                dates = df["date"].dt.strftime("%Y-%m-%d").values
+                entry_date = r["entry_date"]
+                entry_mask = dates < entry_date
+                pre = df[entry_mask].tail(14)
+                if len(pre) >= 5:
+                    adr = (pre["high"] - pre["low"]).abs().mean()
+                    if adr > 0:
+                        fwd_mask = dates >= entry_date
+                        fwd = df[fwd_mask].head(120)
+                        if len(fwd) >= 2:
+                            entry_high = float(fwd.iloc[0]["high"])
+                            best_close = float(fwd.iloc[1:]["close"].min())
+                            ex["adrMove"] = round((entry_high - best_close) / adr, 1)
+        except: pass
+        examples.append(ex)
     return {"setupType":setup_type,"examples":examples}
 
 
@@ -760,11 +1009,8 @@ async def bulk_add_examples(setup_type: str, request: Request):
     failed = []
 
     with get_db() as db:
-        # Build set of valid tickers and trading dates for fast lookup
-        valid_tickers = set()
-        rows = db.execute("SELECT DISTINCT ticker FROM universe_ohlcv").fetchall()
-        for r in rows:
-            valid_tickers.add(r[0].upper())
+        # Build set of valid tickers
+        valid_tickers = _get_all_tickers()
 
         for line in lines:
             parts = line.split()
@@ -789,10 +1035,7 @@ async def bulk_add_examples(setup_type: str, request: Request):
                 continue
 
             # Validate date is a trading day (exists in OHLCV)
-            has_bar = db.execute(
-                "SELECT 1 FROM universe_ohlcv WHERE ticker=? AND date=?", (ticker, entry_date)
-            ).fetchone()
-            if not has_bar:
+            if not _has_bar(ticker, entry_date):
                 failed.append({"line": line, "reason": f"No trading data for {ticker} on {entry_date}"})
                 continue
 
@@ -814,14 +1057,13 @@ async def bulk_add_examples(setup_type: str, request: Request):
     return {"added": len(added), "failed": len(failed), "details_added": added, "details_failed": failed}
 async def get_chart_by_ticker(setup_type: str, ticker: str, entry_date: str):
     """Generate chart PNG for any ticker+date (used by AI review)."""
-    # Try universe_ohlcv first, fall back to yfinance
-    with get_db() as db:
-        rows = db.execute("SELECT date as Date, open as Open, high as High, low as Low, close as Close, volume as Volume FROM universe_ohlcv WHERE ticker=? ORDER BY date", (ticker.upper(),)).fetchall()
-    if rows:
-        df = pd.DataFrame([dict(r) for r in rows])
-        df["Date"] = pd.to_datetime(df["Date"])
+    df = _get_ohlcv(ticker)
+    if df is not None and not df.empty:
+        # Rename columns to match generate_chart_png expectations
+        df = df.rename(columns={"date":"Date","open":"Open","high":"High","low":"Low","close":"Close","volume":"Volume"})
     else:
-        df = fetch_ohlcv_yf(ticker, entry_date)
+        # Railway fallback: try yfinance
+        df = fetch_ohlcv_yf(ticker, entry_date) if IS_RAILWAY else None
     if df is None or df.empty:
         raise HTTPException(404, f"No OHLCV data for {ticker}")
     png = generate_chart_png(df, ticker, entry_date, at_entry=False, setup_type=setup_type)
@@ -903,10 +1145,13 @@ async def get_setup_grinder_signals(setup_type: str):
 @app.get("/api/vetting/{setup_type}/ohlcv/{ticker}")
 async def get_vetting_ohlcv(setup_type: str, ticker: str,
                              signal_date: str=Query(...), lookback: int=Query(120), forward: int=Query(80)):
-    with get_db() as db:
-        rows=db.execute("SELECT date,open,high,low,close,volume FROM universe_ohlcv WHERE ticker=? ORDER BY date",(ticker,)).fetchall()
-    if not rows: raise HTTPException(404,f"No OHLCV for {ticker}")
-    all_data=[dict(r) for r in rows]; dates=[r["date"] for r in all_data]
+    df = _get_ohlcv(ticker)
+    if df is None or df.empty: raise HTTPException(404,f"No OHLCV for {ticker}")
+    # Convert to list of dicts with string dates for JSON response
+    all_data = [{"date":r["date"].strftime("%Y-%m-%d") if hasattr(r["date"],"strftime") else str(r["date"]),
+                 "open":float(r["open"]),"high":float(r["high"]),"low":float(r["low"]),
+                 "close":float(r["close"]),"volume":float(r["volume"])} for _,r in df.iterrows()]
+    dates = [d["date"] for d in all_data]
     try: sig_idx=dates.index(signal_date)
     except ValueError:
         sig_idx=min(range(len(dates)),key=lambda i:abs((datetime.strptime(dates[i],"%Y-%m-%d")-datetime.strptime(signal_date,"%Y-%m-%d")).days))
@@ -1106,7 +1351,11 @@ async def approve_pending(setup_type: str, pending_id: int):
         if not row: raise HTTPException(404,"Not found")
         ticker,entry_date=row["ticker"],row["entry_date"]
         if not db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",(setup_type,ticker,entry_date)).fetchone():
-            ohlcv_df=fetch_ohlcv_yf(ticker,entry_date)
+            ohlcv_df = _get_ohlcv(ticker)
+            if ohlcv_df is not None:
+                ohlcv_df = ohlcv_df.rename(columns={"date":"Date","open":"Open","high":"High","low":"Low","close":"Close","volume":"Volume"})
+            elif IS_RAILWAY:
+                ohlcv_df = fetch_ohlcv_yf(ticker, entry_date)
             if ohlcv_df is not None:
                 eid=db.execute("INSERT INTO examples (setup_type,ticker,chart_date,entry_date) VALUES (?,?,?,?)",(setup_type,ticker,entry_date,entry_date)).lastrowid
                 store_ohlcv(db,eid,ohlcv_df)
@@ -1150,7 +1399,11 @@ async def approve_all_pending(setup_type: str):
         approved=0
         for row in rows:
             if not db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",(setup_type,row["ticker"],row["entry_date"])).fetchone():
-                ohlcv_df=fetch_ohlcv_yf(row["ticker"],row["entry_date"])
+                ohlcv_df = _get_ohlcv(row["ticker"])
+                if ohlcv_df is not None:
+                    ohlcv_df = ohlcv_df.rename(columns={"date":"Date","open":"Open","high":"High","low":"Low","close":"Close","volume":"Volume"})
+                elif IS_RAILWAY:
+                    ohlcv_df = fetch_ohlcv_yf(row["ticker"], row["entry_date"])
                 if ohlcv_df is not None:
                     eid=db.execute("INSERT INTO examples (setup_type,ticker,chart_date,entry_date) VALUES (?,?,?,?)",(setup_type,row["ticker"],row["entry_date"],row["entry_date"])).lastrowid
                     store_ohlcv(db,eid,ohlcv_df); approved+=1

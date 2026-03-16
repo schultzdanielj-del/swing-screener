@@ -113,3 +113,7 @@ Recovery process:
 - **Startup**: Need to start the server before using the UI. Windows Task Scheduler or startup script.
 - **DB corruption**: Local SQLite is single-writer. No concurrent access issues since only one server process.
 - **Disaster recovery**: Seed vault covers this. Expression cache rebuild is the longest step (~2 hrs).
+
+## Claude Session Note
+
+This migration touches server.py, nightly.py, pipeline_agent.py, cache_builder.py, and the UI files. Every phase involves disconnecting something from Railway and reconnecting it locally. Claude needs to read the full codebase at session start — server.py, nightly.py, pipeline_agent.py, cache_builder.py, the UI HTML files, and this doc — before proposing any changes. Without full context, it's too easy to break a dependency chain that isn't obvious from a single file.

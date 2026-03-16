@@ -14,6 +14,7 @@ What it does (in order):
     6. Refreshes earnings dates
     7. Appends market context cache (256 instruments OHLCV + recomputes expressions)
     8. Refreshes fundamentals cache (new tickers daily, full re-fetch Mondays)
+    9. Pushes seed vault backup to Railway (disaster recovery)
 
 Run after market close (~4:30pm ET). Total time: ~15-20 min.
 After completion, grind iterations are fast (~2-3 min each).
@@ -50,7 +51,7 @@ def step_header(num, total, title):
 
 def step_1_railway_append():
     """Trigger Railway to append missing trading days."""
-    step_header(1, 8, "Railway — Append Missing Days")
+    step_header(1, 9, "Railway — Append Missing Days")
 
     print("  Calling POST /api/universe/append-daily ...")
     print("  (This fetches new bars from yfinance for all tradable tickers)")
@@ -104,7 +105,7 @@ def step_1_railway_append():
 
 def step_2_daily_cache():
     """Refresh local daily OHLCV cache (300 bars)."""
-    step_header(2, 8, "Local Daily OHLCV Cache")
+    step_header(2, 9, "Local Daily OHLCV Cache")
 
     from cache_builder import build_cache
     t0 = time.time()
@@ -115,7 +116,7 @@ def step_2_daily_cache():
 
 def step_3_5yr_cache():
     """Refresh local 5yr OHLCV cache."""
-    step_header(3, 8, "Local 5yr OHLCV Cache")
+    step_header(3, 9, "Local 5yr OHLCV Cache")
 
     from cache_builder import build_5yr_cache
     t0 = time.time()
@@ -126,7 +127,7 @@ def step_3_5yr_cache():
 
 def step_4_expr_cache():
     """Append new bars to expression series cache."""
-    step_header(4, 8, "Expression Series Cache — Append")
+    step_header(4, 9, "Expression Series Cache — Append")
 
     cache_dir = os.path.join(LOCAL_DIR, "cache", "expr_series")
     if not os.path.exists(cache_dir):
@@ -143,7 +144,7 @@ def step_4_expr_cache():
 
 def step_5_matrix():
     """Rebuild D1 universe matrix."""
-    step_header(5, 8, "Universe Matrix Rebuild")
+    step_header(5, 9, "Universe Matrix Rebuild")
 
     from matrix_builder import get_universe_matrix
 
@@ -158,7 +159,7 @@ def step_5_matrix():
 
 def step_6_earnings():
     """Refresh earnings dates for all tradable tickers."""
-    step_header(6, 8, "Earnings Dates Refresh")
+    step_header(6, 9, "Earnings Dates Refresh")
 
     print("  Calling POST /api/universe/refresh-earnings ...")
     print("  (Scrapes Yahoo Finance for all tradable tickers)")
@@ -199,7 +200,7 @@ def step_6_earnings():
 
 def step_7_market_cache():
     """Append new bars to market context cache (266 instruments) and recompute."""
-    step_header(7, 8, "Market Context Cache — Append")
+    step_header(7, 9, "Market Context Cache — Append")
 
     try:
         from market_cache_builder import append_new_bars
@@ -215,7 +216,7 @@ def step_7_market_cache():
 
 def step_8_fundamentals():
     """Refresh fundamentals cache — fetch new tickers, periodic full re-fetch."""
-    step_header(8, 8, "Fundamentals Cache — Incremental")
+    step_header(8, 9, "Fundamentals Cache — Incremental")
 
     try:
         from scripts.fetch_fundamentals import (
@@ -305,11 +306,31 @@ def step_8_fundamentals():
         print("  (Non-fatal — EV grinder will use existing cache)")
 
 
+def step_9_seed_vault():
+    """Push seed vault backup to Railway."""
+    step_header(9, 9, "Seed Vault — Backup to Railway")
+
+    try:
+        from scripts.seed_vault import backup
+        backup()
+    except ImportError:
+        try:
+            sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
+            from seed_vault import backup
+            backup()
+        except ImportError:
+            print("  ✗ seed_vault.py not found — skipping")
+            return
+    except Exception as e:
+        print(f"  ✗ Seed vault backup failed: {e}")
+        print("  (Non-fatal — data is safe locally)")
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Nightly data refresh")
     parser.add_argument("--force", action="store_true",
-                        help="Skip Railway append check, run steps 2-8 regardless")
+                        help="Skip Railway append check, run steps 2-9 regardless")
     args = parser.parse_args()
 
     print(f"\n{'═'*60}")
@@ -320,7 +341,7 @@ def main():
     total_start = time.time()
 
     if args.force:
-        print("\n  --force: skipping Railway append, running steps 2-8")
+        print("\n  --force: skipping Railway append, running steps 2-9")
     else:
         # Step 1: Railway append (gate — stops if already current)
         has_new_data = step_1_railway_append()
@@ -332,7 +353,7 @@ def main():
             print(f"{'═'*60}\n")
             return
 
-    # Steps 2-8: refresh all local data
+    # Steps 2-9: refresh all local data + backup
     step_2_daily_cache()
     step_3_5yr_cache()
     step_4_expr_cache()
@@ -340,6 +361,7 @@ def main():
     step_6_earnings()
     step_7_market_cache()
     step_8_fundamentals()
+    step_9_seed_vault()
 
     total_elapsed = time.time() - total_start
     minutes = total_elapsed / 60
