@@ -7,13 +7,11 @@ Railway adds network latency to every operation. Vetting charts take 50-200ms pe
 ## Architecture After Migration
 
 **Local (your desktop):**
-- FastAPI server (server.py) on localhost:8000
-- SQLite DB: examples, setups, vetting decisions, earnings, pending reviews
-- All caches: 5yr OHLCV, expression cache, market cache, fundamentals
-- Pipeline runs directly (no agent polling — server triggers subprocesses)
-- UI served from localhost
-- AI review via Claude CLI (Max plan, no API cost)
-- Start with: `python server.py` (or Windows shortcut/service)
+- Native PySide6 desktop app (`scanperfect.py`) — no browser, no server process
+- SQLite DB (`data/scanperfect.db`): examples, setups, vetting decisions, earnings, pending reviews, grind cycles, conditions, signals, regime model, watchlist
+- All caches: 5yr OHLCV pickle (in-memory), expression cache, market cache, fundamentals
+- Pipeline runs as subprocesses launched directly from the app
+- Start with: double-click `ScanPerfect.bat`
 
 **Railway (seed vault only):**
 - File mirror API: receives daily backups + grind result JSONs
@@ -21,99 +19,116 @@ Railway adds network latency to every operation. Vetting charts take 50-200ms pe
 - Endpoint: `POST /api/v2/files` (already exists)
 - Claude reads grind results from here during chat sessions
 
-## What Moves Local
+## Current Status
 
-| Data | Currently | After | Notes |
-|------|-----------|-------|-------|
-| Examples | Railway SQLite | Local SQLite | 65 rows, tiny |
-| Setups | Railway SQLite | Local SQLite | 3 rows |
-| Vetting decisions | Railway JSON files | Local SQLite or JSON | Per-setup files |
-| Pending AI reviews | Railway SQLite | Local SQLite | |
-| Earnings dates | Railway SQLite | Local cache (nightly refresh) | Part of fundamentals fetch |
-| Pipeline state | Railway JSON | Eliminated — direct subprocess calls | |
-| Pipeline agent | Polling Railway | Eliminated — server runs steps directly | |
-| OHLCV (universe) | Railway SQLite (11M rows) | Already local (5yr cache) | |
-| Expression cache | Local only | No change | |
-| Market cache | Local only | No change | |
-| Grind results | Local + mirrored to Railway | No change | |
+### Completed
 
-## What Stays on Railway
+**Phase 1 — Local Server** ✅
+- `IS_RAILWAY` flag: DB defaults to `data/` locally, Railway volume path when deployed
+- `init_db()` creates all 21 tables locally, seeds 3 setups
+- `scripts/import_from_railway.py`: one-time migration of examples, pending, rejected, earnings
 
-- File mirror (`/api/v2/files`) — receives:
-  - Grind result JSONs (refinement, EV, etc.) — for Claude chat access
-  - Daily seed vault backup (see below)
-- That's it. Railway server shrinks to ~50 lines.
+**Phase 2 — Eliminate Agent Polling** ✅
+- Server launches pipeline subprocesses directly via background threads
+- `STEP_COMMANDS` with `{setup}` placeholder for multi-setup support
+- Agent status always "online" in local mode (server IS the agent)
+- Stop endpoint terminates running subprocess
 
-## Seed Vault (Daily Backup)
+**Phase 3 — Wire Local OHLCV** ✅
+- 5yr pickle loaded into memory at startup (~4,169 tickers in 0.5s)
+- `_get_ohlcv()`, `_get_all_tickers()`, `_has_bar()` helpers
+- All `universe_ohlcv` SQL queries replaced with in-memory cache reads locally
+- yfinance fallback only on Railway
 
-Pushed to Railway as step 8 of the nightly refresh (4:30pm ET).
+**Phase 4 — Seed Vault** ✅
+- `scripts/seed_vault.py`: backs up all 14 SQLite tables + vetting JSON files to Railway
+- `scripts/seed_vault.py --restore`: full disaster recovery from Railway
+- Wired into `nightly.py` as step 9 (9 steps total)
+- Covers everything needed for full rebuild: examples, setups, earnings, pending, rejected, grind cycles, conditions, signals, exit conditions, health, regime model, scores, watchlist, signal filter files, vetting decisions
 
-Contents:
-- `seed/examples.json` — all examples across all setups
-- `seed/setups.json` — setup definitions (name, description, direction)
-- `seed/earnings.json` — earnings dates cache
-- `seed/vetting.json` — all vetting decisions
-- `seed/pending.json` — pending AI reviews
+### Next
 
-Recovery process:
-1. Pull seed vault from Railway: `GET /api/v2/files/seed/*`
-2. Import into local SQLite
-3. Run nightly pipeline to rebuild all caches:
-   - OHLCV: re-fetch from Yahoo (~30 min for full universe)
-   - Expression cache: rebuild (~2 hrs)
-   - Market cache: rebuild (~10 min)
-   - Grind results: re-run grinders or pull from Railway file mirror
-4. Everything operational
+**Phase 6 — Native Desktop UI (PySide6)**
 
-## Migration Steps
+Replace the browser-based HTML/JS UI with a native PySide6 desktop application. This eliminates the FastAPI server entirely — the app reads directly from SQLite + pickle cache.
 
-### Phase 1 — Local Server
-1. Copy server.py to run locally (it already works as a standalone FastAPI app)
-2. Point it at a local SQLite DB path instead of Railway volume
-3. Create the DB tables (init_db already handles this)
-4. Import the 65 examples from Railway (one API call + bulk insert)
-5. Import setup definitions
-6. Test: `python -m uvicorn server:app --port 8000` → open localhost:8000
+Build approach:
+1. Load all three HTML files (index.html, vetting.html, pipeline.html) + server.py endpoints into context
+2. Rebuild the identical UI in PySide6 as a single `scanperfect.py`
+3. Use QtCharts for interactive candlestick charts (zoom, pan, click-to-select entry date)
+4. Read data directly from SQLite + in-memory OHLCV cache — no HTTP layer
 
-### Phase 2 — Eliminate Agent Polling
-1. Replace pipeline agent's Railway polling with direct subprocess calls
-2. Server.py `run_step` endpoint calls subprocess directly instead of queuing for agent
-3. Remove: heartbeat, job queue, agent status, polling loop
-4. Pipeline runs are synchronous (or async with local subprocess)
+PySide6 was chosen because:
+- Prebuilt wheels for Python 3.14 on Windows (`pip install pyside6`)
+- Built-in QtCharts for professional interactive trading charts
+- Native window — no browser, no server process, no background services
+- This is what professional trading terminals are built with
+- Single dependency, zero compilation
 
-### Phase 3 — Wire Local OHLCV
-1. Server reads OHLCV from local 5yr cache instead of universe_ohlcv table
-2. Or: populate local SQLite universe_ohlcv from the 5yr cache on startup
-3. Vetting charts now load from local disk — microsecond reads
+Tabs to replicate:
+- **Pipeline** — step status cards, run/stop buttons, log viewer
+- **Examples** — grid of chart thumbnails with ADR moves, add/delete, bulk import
+- **Vetting** — full-screen chart with signal navigation, yes/no/skip workflow, earnings overlay, keyboard shortcuts
+- **Watchlist** — ranked signal list with scores (once EV grinder is complete)
 
-### Phase 4 — Seed Vault
-1. Add step 8 to nightly_refresh.bat: push seed vault to Railway
-2. Script: dump examples, setups, earnings, vetting to JSON, upload via file mirror API
-3. Add recovery script: pull seed vault, import, trigger cache rebuild
+After this phase, `server.py` is no longer needed for the local UI. It remains only for Railway deployment (file mirror).
 
-### Phase 5 — Slim Railway
+**Phase 5 — Slim Railway** (low priority, do anytime)
 1. Strip Railway server.py down to just the file mirror endpoints
 2. Remove all pipeline, vetting, examples, agent endpoints
 3. Keep: POST/GET/DELETE /api/v2/files, health check
 4. Redeploy
 
+## Seed Vault (Daily Backup)
+
+Pushed to Railway as step 9 of the nightly refresh (4:30pm ET).
+
+Contents (14 SQLite tables):
+- `seed/examples.json` — all examples across all setups
+- `seed/setups.json` — setup definitions
+- `seed/earnings_dates.json` — earnings dates cache
+- `seed/pending_examples.json` — pending AI reviews
+- `seed/rejected_signals.json` — rejected signals
+- `seed/grind_cycles.json` — grind cycle records (which is current)
+- `seed/cycle_conditions.json` — scan conditions (the live scan)
+- `seed/cycle_signals.json` — all classified signals
+- `seed/cycle_sacrificial_signals.json` — sacrificial signals
+- `seed/exit_conditions.json` — exit rule per setup
+- `seed/cycle_health.json` — health metrics
+- `seed/regime_model.json` — EV scoring model
+- `seed/signal_regime_scores.json` — per-signal scores
+- `seed/nightly_watchlist.json` — latest watchlist output
+
+Plus JSON files:
+- `seed/files/signal_filter/filtered_*.json` — vetting signal lists
+- `seed/files/vetting/vetting_*.json` — vetting decisions
+- `seed/files/setup_refiner/refined_*.json` — setup refiner outputs
+
+Recovery (desktop explodes → new machine):
+1. Clone repo from GitHub — 5 min
+2. `pip install -r requirements.txt` — 2 min
+3. `python scripts/seed_vault.py --restore` — 1 min
+4. `python local_runner/cache_builder.py --5yr --force` — 30 min
+5. `python local_runner/expr_cache_builder.py --build` — 2 hrs
+6. `python local_runner/nightly.py --force` — 20 min
+7. `ScanPerfect.bat` — done, exact same scan running
+
 ## What Doesn't Change
 
-- UI (index.html) — identical, just served from localhost
 - All grinder scripts — unchanged, they read local caches
 - Expression engine — unchanged
-- Nightly refresh steps 1-7 — unchanged
+- Nightly refresh steps 1-8 — unchanged (step 9 = seed vault, new)
 - Grind result mirroring to Railway — unchanged
 - Claude CLI AI review — unchanged
 
 ## Risks
 
-- **Port conflicts**: localhost:8000 might conflict with other services. Configurable port.
-- **Firewall**: Windows might prompt for firewall access on first run. One-time allow.
-- **Startup**: Need to start the server before using the UI. Windows Task Scheduler or startup script.
-- **DB corruption**: Local SQLite is single-writer. No concurrent access issues since only one server process.
+- **DB corruption**: Local SQLite is single-writer. No concurrent access issues since only one app process.
 - **Disaster recovery**: Seed vault covers this. Expression cache rebuild is the longest step (~2 hrs).
+- **PySide6 updates**: Qt releases are stable; breaking changes rare between minor versions.
 
 ## Claude Session Note
 
 This migration touches server.py, nightly.py, pipeline_agent.py, cache_builder.py, and the UI files. Every phase involves disconnecting something from Railway and reconnecting it locally. Claude needs to read the full codebase at session start — server.py, nightly.py, pipeline_agent.py, cache_builder.py, the UI HTML files, and this doc — before proposing any changes. Without full context, it's too easy to break a dependency chain that isn't obvious from a single file.
+
+For the Phase 6 UI rebuild: Claude must load all three HTML files (index.html ~56KB, vetting.html ~28KB, pipeline.html ~22KB) plus the server.py endpoints they call to understand every interaction, data flow, and visual layout before writing any PySide6 code.
