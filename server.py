@@ -448,14 +448,10 @@ GRINDER_AGENT_FILE = DATA_DIR / "grinder_agent.json"
 VETTING_DATA_DIR   = DATA_DIR
 
 PIPELINE_STEPS = [
-    {"id":"signal_grind",    "name":"1. Signal Grind",      "category":"pipeline", "prerequisites":[], "description":"Pyramid grinder — examples vs universe → candidate conditions."},
-    {"id":"exit_grind",      "name":"2. Exit Grind",        "category":"pipeline", "prerequisites":[], "description":"Brute-force optimal exit condition from example entry bar highs."},
-    {"id":"scan",            "name":"3. Scan",              "category":"pipeline", "prerequisites":[], "description":"Apply conditions to 5yr history → deduped signals → exit filter → classified signal set (winners/losers)."},
-    {"id":"refinement_grind","name":"4. Refinement Grind",  "category":"pipeline", "prerequisites":[], "description":"Grind (examples + exit-triggered) vs no-exit with blackout. Eliminates losers, protects winners. Manual gate."},
-    {"id":"vet",             "name":"5. Vet",               "category":"pipeline", "prerequisites":[], "description":"Review winner pile. YES → AI review → approve → examples. Source toggle: step 3 or step 4.", "is_manual":True},
-    {"id":"proximity_grind", "name":"6. Proximity Grind",   "category":"pipeline", "prerequisites":[], "description":"Post-convergence. Trim losers using sacrificial (leftward dedup) signals as analytical fuel. Win pile untouched."},
-    {"id":"regime",          "name":"7. Regime Model",      "category":"pipeline", "prerequisites":[], "description":"Winner/loser ratio vs market conditions (266 instruments). Runs on proximity-trimmed signal set."},
-    {"id":"health",          "name":"8. Health Check",      "category":"pipeline", "prerequisites":[], "description":"Cycle quality, EV, promote / revert / live-ready determination."},
+    {"id":"signal_grind",     "name":"1. Signal Grind",      "category":"pipeline", "prerequisites":[], "description":"Pyramid grinder — examples vs universe → candidate conditions."},
+    {"id":"exit_grind",       "name":"2. Exit Grind",        "category":"pipeline", "prerequisites":[], "description":"Brute-force optimal exit condition from example entry bar highs."},
+    {"id":"refinement_grind", "name":"3. Refinement Grind",  "category":"pipeline", "prerequisites":[], "description":"Scan universe, classify winners/losers via ceiling+exit race, beam-search to eliminate losers."},
+    {"id":"ev_grind",         "name":"4. EV Grinder",        "category":"pipeline", "prerequisites":[], "description":"Score every signal with predicted WR, MFE, EV. Unified correlative scoring across all features."},
 ]
 
 

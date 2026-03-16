@@ -38,8 +38,6 @@ STEP_COMMANDS = {
     "nightly": [sys.executable, os.path.join(LOCAL_DIR, "nightly.py")],
 
     # ── V2 pipeline steps ──
-    # Single-command steps: value is a list of args.
-    # Multi-command steps: value is a list of lists (run sequentially; any failure aborts).
     "signal_grind": [
         sys.executable, os.path.join(LOCAL_DIR, "pyramid_grinder.py"),
         "--setup", "dtss", "--peak-target", "3", "--beam", "10000", "--depth", "100",
@@ -48,45 +46,12 @@ STEP_COMMANDS = {
         sys.executable, os.path.join(REPO_ROOT, "scripts", "exit_grinder.py"),
         "--setup", "dtss", "--max-forward", "120",
     ],
-    "scan": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "signal_filter.py"),
-        "--setup", "dtss",
-    ],
-    # refinement_grind: single command — pyramid_grinder --blackout handles
-    # scanning, clustering, classification, and cluster-aware beam search internally
     "refinement_grind": [
         sys.executable, os.path.join(LOCAL_DIR, "pyramid_grinder.py"),
         "--setup", "dtss", "--blackout",
     ],
-    # ev_grind: unified correlative scoring (replaces market_grinder + setup_grinder)
     "ev_grind": [
         sys.executable, os.path.join(REPO_ROOT, "scripts", "ev_grinder.py"),
-        "--setup", "dtss",
-    ],
-    "health": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "cycle_health.py"),
-        "--setup", "dtss",
-    ],
-
-    # ── Legacy / utility steps ──
-    "multistage_exit": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "multistage_exit_grinder.py"),
-        "--setup", "dtss",
-    ],
-    "signal_filter": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "signal_filter.py"),
-        "--setup", "dtss",
-    ],
-    "profit_grinder": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "profit_grinder.py"),
-        "--setup", "dtss", "--max-forward", "120",
-    ],
-    "outcome_grind": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "outcome_grinder.py"),
-        "--setup", "dtss",
-    ],
-    "backtest": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "backtest_runner.py"),
         "--setup", "dtss",
     ],
 }
