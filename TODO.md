@@ -378,18 +378,21 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ## Immediate Tasks
 
+### NEXT: Localization
+0. **Localize everything** — move server, DB, UI to local machine. Railway becomes seed vault only. See `LOCALIZE.md` for full plan. This is the next thing to build.
+
 ### Grinder Improvements
 1. **Depth progression output (refinement grinder)** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running via Settings Lock UI.
 2. **Multi-run consensus (signal grinder)** — the beam search is non-deterministic: different runs find different condition sets with wildly different signal counts. Run N times (e.g. 5-10), keep conditions that appear in most runs. A condition in 8/10 runs is robust; a condition in 1/10 was a fluke. This stabilizes the foundation the entire downstream pipeline depends on. Signal grind margin (5%) is a search parameter and stays fixed — it is NOT tunable post-hoc (attempted and reverted 2026-03-16, produced worse results).
 3. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
 
 ### Phase 3 — EV Grinder
-4. ~~**EV Grinder increments 5-6**~~ — ✅ DONE. Inc 1-6 complete. Continuous percentile scoring, category-balanced weighting, decile calibration tables, redundancy analysis. Output: `ev_{setup}_inc6_*.json` mirrored to Railway.
+4. ~~**EV Grinder increments 5-6**~~ — ✅ DONE.
 
 ### Vetting UI
 5. **Entry candle scorer integrated into refinement grind** — scorer runs automatically at the end of refinement grind, not as a separate step. Produces combined_score per winner signal (move_adr × entry candle similarity). Vetting UI sorts by combined_score when available, falls back to move_adr.
-6. **AI vet queue** -- YES picks go to pending_examples (AI second-pass), then one-click approve adds to examples. Flow needs to work end-to-end.
-7. **Workflow and ease-of-use improvements** -- many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
+6. ~~**AI vet queue**~~ — ✅ BUILT. YES → pending → AI review → approve on Examples tab. Pending items show as chart grid inside Add Examples.
+7. ~~**Workflow and ease-of-use improvements**~~ — ✅ BUILT. Keyboard-driven (1/2/3/↑↓), floating Yes button at click position, mouse wheel zoom, V/U/N checkboxes, chart preloading, entry bar requirement enforced.
 
 ### Pipeline UI
 8. **Pipeline flowchart UI (post-localization)** — replace current sidebar+panel layout with a visual flowchart. Each pipeline stage is a clickable node: Examples → Signal Grind → Exit Grind → Refinement Grind → Vetting → EV Grinder → Scan Tuning (sliders) → Profit Grind → Live Watchlist. Click a node to expand it inline (run controls, logs, results) or navigate to its tab (Examples, Vetting, Watchlist). Shows setup development progress visually. Build after localization for instant rendering and direct subprocess calls.
@@ -407,11 +410,12 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 ## Infrastructure
 
 - **Repo:** `schultzdanielj-del/swing-screener`, branch `v2`
-- **Railway:** `https://web-production-e3025.up.railway.app`
+- **Railway:** `https://web-production-e3025.up.railway.app` — migrating to seed vault only (see LOCALIZE.md)
 - **Expression cache:** 16,051 expressions, ~21 GB
 - **5yr OHLCV cache:** ~4,167 tickers
-- **File mirror:** All grind results → Railway via `file_mirror.py`
-- **Nightly refresh:** 4:30pm ET, 7 steps, fully automated
+- **File mirror:** Grind results → Railway via `file_mirror.py` (stays post-localization for Claude access)
+- **Nightly refresh:** 4:30pm ET, 7 steps + step 8 seed vault push (planned), fully automated
+- **UI:** DM Sans, grayscale design system. Currently Railway-hosted, moving to localhost
 
 ---
 
