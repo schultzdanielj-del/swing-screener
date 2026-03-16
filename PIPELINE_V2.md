@@ -490,39 +490,55 @@ bars against that combined set.
 
 ## Layer 6: Profit Grind
 
-**What it solves:** Finds the optimal trade exit condition — when to close the
-position to maximize compounded equity growth. Uses a bespoke exit expression
-library (exit_expressions.py) specifically designed to evaluate the traded range
-(entry bar forward to exit bar).
+**What it solves:** Finds the optimal trade exit strategy — stop, target, trail
+parameters — that maximize account growth consistency (SQN), not raw per-trade
+MFE capture. Brute-forces across the full parameter space at multiple EV slider
+threshold levels.
 
-**When it runs:** After Settings Lock (step 6). Runs on the signal set defined by
-the locked settings — the signals you'd actually trade at the chosen margin and
-depth, scored by the EV grinder. The profit grind optimizes exit strategy for the
-top-ranked signals, not the entire set.
+**When it runs:** After EV Grinder (Layer 5). Runs on the EV-scored signal set,
+testing exit strategies at various Slider 1 (quality_score threshold) and
+Slider 2 (minimum predicted WR) settings. The optimal exit strategy may differ
+at different quality levels — tight stops may work for A+ signals but not B signals.
 
-**Distinction from Step 2 (Exit Grind / signal_exit_grinder.py):**
-Step 2 finds a signal-level exit condition using the main expression cache —
+**Entry prices:** Uses actual entry candle prices where available (examples and
+vetted YES picks have real entry candles from the vetting flow). For non-example
+signals, uses the forward window bar that best matches the entry candle centroid
+(from entry_candle_scorer.py). This gives realistic fill prices for the simulation
+rather than the conservative forward-window-max-high used in refinement.
+
+**Distinction from Layer 2 (Exit Grind / signal_exit_grinder.py):**
+Layer 2 finds a signal-level exit condition using the main expression cache —
 it answers "did the setup work?" for classification purposes. The profit grind
-answers "given the setup worked, when should you close the trade?" using a
-dedicated expression set built for post-entry price action analysis.
+answers "given the setup worked, when should you close the trade?" by brute-forcing
+stop/target/trail parameters against actual post-entry price action.
 
-**Objective function:** Compound growth rate, not raw MFE capture. A strategy
-that captures 60% MFE consistently may outcompound one that captures 90% with
-high variance, because drawdowns from volatile strategies kill position sizing.
+**Parameter space (brute-forced):**
+- Stop loss levels (in ADR units) — the risk per trade
+- Target levels (in ADR units) — where to take profits
+- Trail stop parameters — when to switch from fixed stop to trailing
+- Trim-and-trail strategies — sell a portion at target, trail the rest
+- All tested across multiple Slider 1/2 threshold combinations
 
-**Expression set:** ~4,500 bespoke exit expressions (exit_expressions.py):
-- Move captured (close, low, ADR, ATR, % normalized)
-- MFE, capture efficiency
-- Extension structure dynamics in the traded range
-- MA reclaim sequences, volume character
-- Boolean aggregations across 7 forward windows (5-60 bars)
+**Objective function:** SQN (System Quality Number) — sqrt(N) × expectancy /
+stdev of R-multiples. Optimizes for consistency, not raw size. A strategy with
+slightly lower average win but tighter distribution compounds better because
+drawdowns kill compounding and SQN penalizes variance. Once you have the
+highest-SQN exit strategy, position sizing (Kelly, fixed fractional) is a
+separate optimization layered on top.
+
+**Data source:** Full 5yr OHLCV cache. Every bar after entry is available to
+test exit conditions against.
 
 **Script:** `scripts/profit_grinder.py --setup {setup}`
 
 **Output:**
-- Optimal exit strategy parameters
-- Compounded equity curve + drawdown profile
-- Per-example capture stats (median, mean, distribution)
+- Optimal stop/target/trail parameters at each slider threshold level
+- SQN score per parameter combination
+- Compounded equity curve (fixed fractional sizing baseline)
+- Drawdown profile (max, avg, recovery time)
+- Per-trade stats: avg win (R), avg loss (R), win rate, expectancy
+- MFE capture efficiency
+- Comparison table: top parameter combos ranked by SQN
 - Uploads to Railway
 
 ---

@@ -224,17 +224,35 @@ A new signal fires tonight. Compute its feature values (market cache lookup + OH
 
 ### a) Profit Grinder
 
-Runs on the full signal set with EV scores attached. The profit grinder optimizes exit strategy across the signals you'd actually take — the ones the EV scoring ranks highest.
+Finds the optimal exit strategy for maximum account growth, not maximum per-trade profit. Runs on the EV-scored signal set at various Slider 1 (quality_score threshold) and Slider 2 (minimum predicted WR) settings.
 
-Tests multiple exit strategies (trim and trail, fixed targets, volatility-based stops, etc.) and evaluates them by compounded equity growth over N trades, not average MFE capture per trade. A strategy that captures 60% MFE consistently may outcompound one that captures 90% with high variance, because drawdowns from volatile strategies kill position sizing.
+**Entry prices:** Uses actual entry candle prices where available (examples and vetted YES picks have real entry candles). For non-example signals, uses the best available guess — the forward window bar that best matches the entry candle centroid (from entry_candle_scorer.py). This gives realistic fill prices for the simulation.
 
-The objective function is compound growth rate, not raw MFE. Consistency IS the edge when compounding.
+**What it brute-forces:**
+- Stop loss levels (in ADR units) — the risk per trade
+- Target levels (in ADR units) — where to take profits
+- Trail stop parameters — when to switch from fixed stop to trailing
+- Trim-and-trail strategies — sell a portion at target, trail the rest
+- All of the above tested across multiple Slider 1/2 threshold combinations, because the optimal exit strategy may differ at different quality levels
 
-Output: optimal exit strategy with compounded equity curve, drawdown profile, and MFE capture stats.
+**Objective function:** SQN (System Quality Number) — sqrt(N) × expectancy / stdev of R-multiples. This optimizes for consistency of returns, not raw size. A strategy with slightly lower average win but tighter distribution of outcomes will score higher, because it compounds better. Drawdowns kill compounding; SQN penalizes variance.
 
-- Input: EV-scored signal set with entry bars and price data
-- Output: Exit strategy parameters + compounded equity simulation
-- Script: `profit_grinder.py` (exists, needs rewiring to new pipeline and new objective function)
+**Why SQN, not compound growth rate directly:** Compound growth rate is the ultimate goal, but it's sensitive to sequence of returns and position sizing assumptions. SQN measures the quality of the edge independent of sizing. Once you have the highest-SQN exit strategy, position sizing (Kelly fraction, fixed fractional, etc.) is a separate optimization that can be layered on top.
+
+**Data source:** Full 5yr OHLCV cache for post-entry price simulation. Every bar after entry is available to test exit conditions against.
+
+**Output:**
+- Optimal stop/target/trail parameters at each slider threshold level
+- SQN score per parameter combination
+- Compounded equity curve (using fixed fractional sizing as baseline)
+- Drawdown profile (max drawdown, avg drawdown, recovery time)
+- Per-trade stats: avg win (R), avg loss (R), win rate, expectancy
+- MFE capture efficiency: what % of available move does the exit strategy capture
+- Comparison table: top parameter combos ranked by SQN
+
+- Input: EV-scored signal set + entry candle data + Slider 1/2 ranges + 5yr OHLCV cache
+- Output: Exit strategy parameters + equity simulation + SQN ranking
+- Script: `profit_grinder.py` (exists, needs full rewire to new pipeline, new objective function, slider integration)
 
 ---
 
@@ -281,7 +299,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
 | Phase 3: EV Grinder | ✅ Complete (inc 1-6) | 1,816 pre / 1,940 post features. Continuous percentile scoring, category-balanced weighting (50/50). Calibration: pre D1=19.1%→D10=64.1%, post D1=56.5%→D10=93.5%. RMSE 0.090 post. 247 genuine features, 1,569 redundant. File: `ev_dtss_inc6_*.json` (4.4MB) |
-| Phase 4: Profit Optimization | ⏸ Needs rewire | Script exists, needs new objective function (compound growth) |
+| Phase 4: Profit Optimization | ⏸ Not started | Script exists, needs full rewire: SQN objective, slider integration, entry candle prices |
 | Phase 5: Live Watchlist | ⏸ Not built | |
 
 ### Refinement Grind Result (2026-03-13)
