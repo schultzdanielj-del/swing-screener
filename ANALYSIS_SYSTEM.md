@@ -233,7 +233,7 @@ The watchlist is the end product. Every cycle of the loop makes it more accurate
 | Exit Grind | signal_exit_grinder.py | Examples + expr cache | Exit condition in local cache |
 | Refinement Grind | pyramid_grinder.py --blackout | Pyramid result + exit cond + expr cache + 5yr OHLCV | raw_signal_clusters_{setup}.json + refinement_{setup}_*.json |
 | Entry Candle Scorer | entry_candle_scorer.py | Examples (Railway API) + refinement output + raw_signal_clusters + expr cache | entry_scores_{setup}.json |
-| EV Grinder | ev_grinder.py (inc 1-5 done) | Refinement result + raw clusters + market cache + 5yr OHLCV + fundamentals cache | ev_{setup}_inc5_*.json (features + per-signal quality_score, predicted_wr, predicted_mfe, ev, killed_at_depth) |
+| EV Grinder | ev_grinder.py (complete, inc 1-6) | Refinement result + raw clusters + market cache + 5yr OHLCV + fundamentals cache | ev_{setup}_inc6_*.json (features, per-signal scores, calibration tables, redundancy analysis) |
 | Profit Grind | profit_grinder.py (needs rewire) | EV-scored signals + price data | Exit strategy + equity curve |
 
 All grinder outputs are also mirrored to Railway via file_mirror.py and uploaded via grind_uploader.py.

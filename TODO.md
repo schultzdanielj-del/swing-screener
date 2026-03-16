@@ -1,4 +1,4 @@
-# ScanPerfect Pipeline (2026-03-15, EV Grinder inc 1-5 complete)
+# ScanPerfect Pipeline (2026-03-15, EV Grinder complete)
 
 ## The Goal
 
@@ -280,7 +280,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 2a: Signal Grind | ✅ Done | 87 conditions, 1,218 raw → 893 deduped |
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
-| Phase 3: EV Grinder | ✅ Inc 1-5 done | 1,816 pre / 1,940 post features. Continuous percentile scoring with category-balanced weighting (50% market / 50% setup). Pre-refinement calibration: D1=19.1% → D10=64.1% actual WR. Post-refinement: D1=56.5% → D10=93.5%. File: `ev_dtss_inc5_*.json` (4.3MB) |
+| Phase 3: EV Grinder | ✅ Complete (inc 1-6) | 1,816 pre / 1,940 post features. Continuous percentile scoring, category-balanced weighting (50/50). Calibration: pre D1=19.1%→D10=64.1%, post D1=56.5%→D10=93.5%. RMSE 0.090 post. 247 genuine features, 1,569 redundant. File: `ev_dtss_inc6_*.json` (4.4MB) |
 | Phase 4: Profit Optimization | ⏸ Needs rewire | Script exists, needs new objective function (compound growth) |
 | Phase 5: Live Watchlist | ⏸ Not built | |
 
@@ -321,6 +321,13 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - Total runtime: ~317s (~5 min, dominated by market screening at 171s)
 - File: `ev_dtss_inc5_20260315_214318.json`
 
+### EV Grinder Validation Result (2026-03-15)
+- Decile calibration (pre, 893 signals): D1=19.1% → D10=64.1% actual WR, RMSE=0.114
+- Decile calibration (post, 467 signals): D1=56.5% → D10=93.5% actual WR, RMSE=0.090
+- Predicted WR compressed (additive model averaging effect) but ranking is monotonically correct
+- Redundancy: 247 features both, 1,569 pre-only (refinement captured), 1,693 post-only
+- File: `ev_dtss_inc6_20260315_221658.json`
+
 ### Regime Model Result (2026-03-13)
 - 256 instruments × 15,805 expressions → 3M+ features tested → 50 selected (deduplicated)
 - Runs on both pre-refinement (893 clusters) and post-refinement (467 clusters)
@@ -359,7 +366,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 3. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
 
 ### Phase 3 — EV Grinder
-4. ~~**EV Grinder increments 5-6**~~ — ✅ DONE. Inc 1-5 complete. Continuous percentile scoring with category-balanced weighting. Calibration check built in. Output: `ev_{setup}_inc5_*.json` mirrored to Railway. Inc 6 (formal decile calibration table) folded into inc 5 output.
+4. ~~**EV Grinder increments 5-6**~~ — ✅ DONE. Inc 1-6 complete. Continuous percentile scoring, category-balanced weighting, decile calibration tables, redundancy analysis. Output: `ev_{setup}_inc6_*.json` mirrored to Railway.
 
 ### Vetting UI
 5. **Wire vetting UI to entry candle scorer output** -- vetting UI reads entry_scores_{setup}.json from Railway file mirror. Two modes: signal grind vet (sort by move_adr only) and post-refinement vet (sort by combined_score from entry candle scorer). Mode toggle in UI.

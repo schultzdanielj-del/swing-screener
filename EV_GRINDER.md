@@ -1,7 +1,7 @@
 # EV Grinder — Phase 3 Correlative Scoring Engine
 
 **Created:** 2026-03-14
-**Status:** Inc 1-5 complete. Script functional, output mirrored to Railway.
+**Status:** Complete (inc 1-6). Script functional, output mirrored to Railway.
 **Script:** `scripts/ev_grinder.py`
 **Pipeline step:** `ev_grind` (wired in `pipeline_agent.py`)
 
@@ -527,11 +527,13 @@ Replay 100 refinement conditions against all 893 clusters. Build per-condition e
 - Calibration check: D1 vs D10 actual WR printed
 - **Result:** Pre D1=19.1% → D10=64.1%. Post D1=56.5% → D10=93.5%. 65/65 examples scored.
 
-### Increment 6: Validation + Full Output + Mirror ✅ (folded into Inc 5)
+### Increment 6: Decile Calibration + Redundancy Analysis ✅
 
-- Decile calibration built into score_signals (prints D1-D10 actual WR)
-- Full JSON saved + mirrored to Railway
-- Redundancy analysis: compare features_pre vs features_post in output
+- 10-row calibration table per signal set (pre + post refinement): predicted WR vs actual WR per quality_score decile, plus actual MFE
+- WR calibration RMSE: 0.114 pre, 0.090 post
+- Redundancy analysis: 247 features in both sets (genuine), 1,569 pre-only (refinement captured), 1,693 post-only
+- Output: `validation.calibration_pre/post` + `validation.calibration_rmse_wr_*` + `redundancy` dict
+- File: `ev_{setup}_inc6_*.json`, mirrored to Railway
 
 ### Increment 7: UI — SPY Chart + Dual Sliders (separate task)
 
