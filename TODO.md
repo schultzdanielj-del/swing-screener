@@ -387,7 +387,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 4. ~~**EV Grinder increments 5-6**~~ — ✅ DONE. Inc 1-6 complete. Continuous percentile scoring, category-balanced weighting, decile calibration tables, redundancy analysis. Output: `ev_{setup}_inc6_*.json` mirrored to Railway.
 
 ### Vetting UI
-5. **Wire vetting UI to entry candle scorer output** -- vetting UI reads entry_scores_{setup}.json from Railway file mirror. Two modes: signal grind vet (sort by move_adr only) and post-refinement vet (sort by combined_score from entry candle scorer). Mode toggle in UI.
+5. **Entry candle scorer integrated into refinement grind** — scorer runs automatically at the end of refinement grind, not as a separate step. Produces combined_score per winner signal (move_adr × entry candle similarity). Vetting UI sorts by combined_score when available, falls back to move_adr.
 6. **AI vet queue** -- YES picks go to pending_examples (AI second-pass), then one-click approve adds to examples. Flow needs to work end-to-end.
 7. **Workflow and ease-of-use improvements** -- many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
 
