@@ -158,11 +158,16 @@ def load_example_data(setup_type, universe_cache):
 # EXPRESSION LIBRARY + EXAMPLE RANGES
 # ══════════════════════════════════════════════════════════════
 
-def compute_example_ranges(example_dfs, expressions, expr_cache=None):
+def compute_example_ranges(example_dfs, expressions, expr_cache=None, margin_pct=0.05):
     """Compute [min, max] range for every expression across all example scan bars.
 
     Loads values from expr cache .npz files. expr_cache is REQUIRED — all grinders
     must use the same computation path (no live compute_series fallback).
+
+    Args:
+        margin_pct: fraction of (max - min) to add on each side. 0.0 = exact min/max,
+                    0.05 = 5% margin (old default). Signal grind passes 0.0 and uses
+                    margin_progression for post-hoc adjustment.
 
     Returns:
         ranges: dict {expr_name: (low, high)} — only for expressions with enough valid examples
@@ -210,7 +215,7 @@ def compute_example_ranges(example_dfs, expressions, expr_cache=None):
     print(f"  Loaded from expr cache: {n_valid_total:,} values "
           f"({n_valid_total / max(n_ex * n_expr, 1) * 100:.1f}% fill)")
 
-    # Derive ranges with 5% margin (same as spiderweb)
+    # Derive ranges with configurable margin
     # CRITICAL: require ALL examples (with scan_idx) to have non-NaN values.
     # If any example returns NaN for an expression, that expression cannot be
     # used as a condition — it would fail validation for that example.
@@ -223,10 +228,157 @@ def compute_example_ranges(example_dfs, expressions, expr_cache=None):
             # At least one example has NaN — skip this expression
             continue
         ex_min, ex_max = np.min(valid), np.max(valid)
-        margin = (ex_max - ex_min) * 0.05
+        margin = (ex_max - ex_min) * margin_pct
         ranges[expr["name"]] = (ex_min - margin, ex_max + margin)
 
     return ranges, example_matrix
+
+
+def compute_margin_progression(conditions, example_matrix, expressions, expr_cache,
+                               universe_cache, margin_levels=None):
+    """Compute signal counts at multiple margin levels for the given condition set.
+
+    Lightweight post-hoc analysis. For each margin level:
+      - Widen each condition's bounds by margin_pct * (example_max - example_min)
+      - Count how many 5yr universe bars pass ALL conditions at that margin
+      - Record signal count + peak/day + avg/day
+
+    Does NOT re-run the beam search. Read-only analysis on the final condition set.
+
+    Args:
+        conditions: list of condition dicts (from beam search result) with 'name', 'low', 'high'
+        example_matrix: np.array (n_examples, n_exprs) — from compute_example_ranges
+        expressions: full expression list (for name→column mapping)
+        expr_cache: ExprSeriesCache instance
+        universe_cache: {ticker: DataFrame} — 5yr OHLCV cache (only used for ticker list + bar counts)
+        margin_levels: list of float margin percentages, default [0, 0.01, 0.02, 0.03, 0.04, 0.05]
+
+    Returns:
+        list of dicts: [{margin_pct, signal_count, peak_per_day, avg_per_day}, ...]
+    """
+    if margin_levels is None:
+        margin_levels = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05]
+
+    if not conditions:
+        return [{"margin_pct": int(m * 100), "signal_count": 0, "peak_per_day": 0, "avg_per_day": 0.0}
+                for m in margin_levels]
+
+    print(f"\n  ── MARGIN PROGRESSION ──")
+    print(f"  Conditions: {len(conditions)}")
+    print(f"  Margin levels: {', '.join(f'{int(m*100)}%' for m in margin_levels)}")
+    t0 = time.time()
+
+    # Build expression name → column index in example_matrix
+    expr_name_list = [e["name"] for e in expressions]
+    name_to_expr_col = {name: j for j, name in enumerate(expr_name_list)}
+
+    # For each condition, compute the raw example min/max (0% margin bounds)
+    # so we can widen them by each margin level
+    cond_base_ranges = []  # list of (expr_name, ex_min, ex_max, cache_col_idx)
+    cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
+    for cond in conditions:
+        name = cond["name"]
+        cache_col = cache_name_to_idx.get(name)
+        if cache_col is None:
+            continue
+
+        expr_col = name_to_expr_col.get(name)
+        if expr_col is not None:
+            vals = example_matrix[:, expr_col]
+            valid = vals[~np.isnan(vals)]
+            if len(valid) > 0:
+                ex_min = float(np.min(valid))
+                ex_max = float(np.max(valid))
+                cond_base_ranges.append((name, ex_min, ex_max, cache_col))
+
+    if not cond_base_ranges:
+        print(f"  WARNING: No conditions could be resolved to base ranges")
+        return [{"margin_pct": int(m * 100), "signal_count": 0, "peak_per_day": 0, "avg_per_day": 0.0}
+                for m in margin_levels]
+
+    print(f"  Resolved {len(cond_base_ranges)}/{len(conditions)} conditions to base ranges")
+
+    # Scan all tickers in universe, count signals at each margin level
+    # For each ticker: load expr cache, check all bars against all conditions
+    n_margin = len(margin_levels)
+    # Pre-compute widened ranges for each margin level
+    # widened_ranges[m] = list of (cache_col, low, high) for margin level m
+    widened_ranges = []
+    for m in margin_levels:
+        level_ranges = []
+        for name, ex_min, ex_max, cache_col in cond_base_ranges:
+            margin = (ex_max - ex_min) * m
+            level_ranges.append((cache_col, ex_min - margin, ex_max + margin))
+        widened_ranges.append(level_ranges)
+
+    # Per-margin-level: {date_str: count} for peak/avg calculation
+    date_counts = [defaultdict(int) for _ in range(n_margin)]
+    signal_totals = [0] * n_margin
+
+    tickers = sorted(universe_cache.keys())
+    n_tickers = len(tickers)
+    skipped = 0
+
+    for ti, ticker in enumerate(tickers):
+        df = universe_cache[ticker]
+        if df is None or len(df) < 100:
+            skipped += 1
+            continue
+
+        dates, data = expr_cache.get_ticker(ticker)
+        if dates is None or data is None or len(dates) != len(df):
+            skipped += 1
+            continue
+
+        n_bars = len(dates)
+
+        # For each margin level, compute pass mask across all conditions
+        for mi in range(n_margin):
+            pass_mask = np.ones(n_bars, dtype=bool)
+            pass_mask[:50] = False  # warmup
+
+            for cache_col, low, high in widened_ranges[mi]:
+                series = data[:, cache_col]
+                in_range = (series >= low) & (series <= high)
+                in_range[np.isnan(series)] = False
+                pass_mask &= in_range
+
+            signal_indices = np.where(pass_mask)[0]
+            n_signals = len(signal_indices)
+            if n_signals > 0:
+                signal_totals[mi] += n_signals
+                for idx in signal_indices:
+                    date_str = str(dates[idx])[:10]
+                    date_counts[mi][date_str] += 1
+
+        if (ti + 1) % 500 == 0:
+            elapsed = time.time() - t0
+            print(f"    {ti + 1}/{n_tickers} tickers [{elapsed:.0f}s]")
+
+    elapsed = time.time() - t0
+    print(f"  Scanned {n_tickers - skipped} tickers ({skipped} skipped) in {elapsed:.1f}s")
+
+    # Build results
+    progression = []
+    for mi, m in enumerate(margin_levels):
+        counts = date_counts[mi]
+        if counts:
+            peak = max(counts.values())
+            avg = round(sum(counts.values()) / len(counts), 1)
+        else:
+            peak = 0
+            avg = 0.0
+
+        progression.append({
+            "margin_pct": int(m * 100),
+            "signal_count": signal_totals[mi],
+            "peak_per_day": peak,
+            "avg_per_day": avg,
+        })
+        print(f"    {int(m*100)}%: {signal_totals[mi]:>7,} signals, "
+              f"peak={peak}/day, avg={avg}/day")
+
+    return progression
 
 
 def prefilter_candidates(expressions, example_ranges, threshold=0.85):
@@ -1627,7 +1779,8 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
                      example_ranges_full, example_matrix_full,
                      locked_conditions, expr_cache,
                      beam_width, depth, peak_target,
-                     d1_beam, d1_depth, blackout_map=None, whitelist_map=None):
+                     d1_beam, d1_depth, blackout_map=None, whitelist_map=None,
+                     margin_pct=0.05):
     """Run one pass of the multi-pass pyramid.
 
     Args:
@@ -1661,7 +1814,7 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
     # (We need ranges for the pass-specific candidates, but also need
     # existing locked conditions to still work via the full ranges)
     pass_ranges, pass_matrix = compute_example_ranges(
-        example_dfs, pass_expressions, expr_cache=expr_cache)
+        example_dfs, pass_expressions, expr_cache=expr_cache, margin_pct=margin_pct)
     print(f"  {len(pass_ranges)} expressions have valid ranges for this pass")
 
     new_conditions = []
@@ -1907,6 +2060,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 d1_depth=d1_depth,
                 blackout_map=blackout_map,
                 whitelist_map=whitelist_map,
+                margin_pct=0.0,  # signal grind always runs at 0% (tightest)
             )
 
             if new_conds is None:
@@ -1947,7 +2101,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         print(f"\n  Computing example ranges...")
         t0 = time.time()
         example_ranges, example_matrix = compute_example_ranges(
-            example_dfs, expressions, expr_cache=expr_cache)
+            example_dfs, expressions, expr_cache=expr_cache, margin_pct=0.0)
         print(f"  {len(example_ranges)} expressions have valid ranges ({time.time()-t0:.0f}s)")
 
         all_conditions = []
@@ -2146,6 +2300,21 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     examples_failing = 0
     print(f"    {examples_passing}/{examples_passing} examples pass all conditions")
 
+    # ── Margin progression (signal grind only, not refinement) ──
+    margin_progression = None
+    if not is_refinement and all_conditions:
+        # Compute example_matrix for ALL expressions (needed for base range lookup)
+        # This is lightweight — just reads scan bar values from expr cache
+        _, full_example_matrix = compute_example_ranges(
+            example_dfs, all_expressions, expr_cache=expr_cache, margin_pct=0.0)
+        margin_progression = compute_margin_progression(
+            conditions=all_conditions,
+            example_matrix=full_example_matrix,
+            expressions=all_expressions,
+            expr_cache=expr_cache,
+            universe_cache=universe_cache,
+        )
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     mode_tag = "mp" if multi_pass else "sp"
     is_refinement = whitelist_map is not None
@@ -2181,6 +2350,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         "example_signals": example_signals,
         "examples_passing": examples_passing,
         "examples_failing": examples_failing,
+        "margin_progression": margin_progression,
     }
 
     os.makedirs(CACHE_DIR, exist_ok=True)
