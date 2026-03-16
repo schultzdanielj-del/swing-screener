@@ -234,24 +234,24 @@ def compute_example_ranges(example_dfs, expressions, expr_cache=None, margin_pct
     return ranges, example_matrix
 
 
-def compute_margin_progression(conditions, example_matrix, expressions, expr_cache,
-                               universe_cache, margin_levels=None):
+def compute_margin_progression(conditions, expr_cache, slim_cache, margin_levels=None):
     """Compute signal counts at multiple margin levels for the given condition set.
 
     Lightweight post-hoc analysis. For each margin level:
-      - Widen each condition's bounds by margin_pct * (example_max - example_min)
+      - Widen each condition's bounds by margin_pct * (condition_high - condition_low)
       - Count how many 5yr universe bars pass ALL conditions at that margin
       - Record signal count + peak/day + avg/day
 
+    Since the signal grind runs at 0% margin, each condition's low/high IS the exact
+    example min/max. Widening by N% means adding N% of (high - low) on each side.
+
     Does NOT re-run the beam search. Read-only analysis on the final condition set.
-    Parallelized across all CPU cores using the same pattern as the tier matrix builder.
+    Parallelized across all CPU cores.
 
     Args:
-        conditions: list of condition dicts (from beam search result) with 'name', 'low', 'high'
-        example_matrix: np.array (n_examples, n_exprs) — from compute_example_ranges
-        expressions: full expression list (for name→column mapping)
+        conditions: list of condition dicts with 'name', 'low', 'high'
         expr_cache: ExprSeriesCache instance
-        universe_cache: {ticker: DataFrame} — 5yr OHLCV cache (only used for ticker list + bar counts)
+        slim_cache: {ticker: n_bars} — lightweight ticker→bar count map
         margin_levels: list of float margin percentages, default [0, 0.01, 0.02, 0.03, 0.04, 0.05]
 
     Returns:
@@ -269,54 +269,37 @@ def compute_margin_progression(conditions, example_matrix, expressions, expr_cac
     print(f"  Margin levels: {', '.join(f'{int(m*100)}%' for m in margin_levels)}")
     t0 = time.time()
 
-    # Build expression name → column index in example_matrix
-    expr_name_list = [e["name"] for e in expressions]
-    name_to_expr_col = {name: j for j, name in enumerate(expr_name_list)}
-
-    # For each condition, compute the raw example min/max (0% margin bounds)
-    # so we can widen them by each margin level
-    cond_base_ranges = []  # list of (expr_name, ex_min, ex_max, cache_col_idx)
+    # Build widened ranges for each margin level using condition low/high directly.
+    # At 0% margin, low/high = exact example min/max (beam search ran at 0%).
     cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
+
+    cond_base_info = []  # list of (cache_col, base_low, base_high)
     for cond in conditions:
-        name = cond["name"]
-        cache_col = cache_name_to_idx.get(name)
+        cache_col = cache_name_to_idx.get(cond["name"])
         if cache_col is None:
             continue
+        cond_base_info.append((cache_col, cond["low"], cond["high"]))
 
-        expr_col = name_to_expr_col.get(name)
-        if expr_col is not None:
-            vals = example_matrix[:, expr_col]
-            valid = vals[~np.isnan(vals)]
-            if len(valid) > 0:
-                ex_min = float(np.min(valid))
-                ex_max = float(np.max(valid))
-                cond_base_ranges.append((name, ex_min, ex_max, cache_col))
-
-    if not cond_base_ranges:
-        print(f"  WARNING: No conditions could be resolved to base ranges")
+    if not cond_base_info:
+        print(f"  WARNING: No conditions could be resolved to cache columns")
         return [{"margin_pct": int(m * 100), "signal_count": 0, "peak_per_day": 0, "avg_per_day": 0.0}
                 for m in margin_levels]
 
-    print(f"  Resolved {len(cond_base_ranges)}/{len(conditions)} conditions to base ranges")
+    print(f"  Resolved {len(cond_base_info)}/{len(conditions)} conditions to cache columns")
 
-    # Pre-compute widened ranges for each margin level
-    # widened_ranges[m] = list of (cache_col, low, high) for margin level m
     n_margin = len(margin_levels)
     widened_ranges = []
     for m in margin_levels:
         level_ranges = []
-        for name, ex_min, ex_max, cache_col in cond_base_ranges:
-            margin = (ex_max - ex_min) * m
-            level_ranges.append((cache_col, ex_min - margin, ex_max + margin))
+        for cache_col, base_low, base_high in cond_base_info:
+            span = base_high - base_low
+            margin = span * m
+            level_ranges.append((cache_col, base_low - margin, base_high + margin))
         widened_ranges.append(level_ranges)
-
-    # Build slim cache: {ticker: n_bars} for workers (same pattern as tier builder)
-    slim = {ticker: len(df) for ticker, df in universe_cache.items()
-            if df is not None and len(df) >= 100}
 
     # Parallel scan
     n_workers = max(cpu_count() - 1, 1)
-    tickers = sorted(slim.keys())
+    tickers = sorted(slim_cache.keys())
     batch_size = max(len(tickers) // (n_workers * 4), 50)
     batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
 
@@ -329,7 +312,7 @@ def compute_margin_progression(conditions, example_matrix, expressions, expr_cac
     with ProcessPoolExecutor(
         max_workers=n_workers,
         initializer=_init_margin_worker,
-        initargs=(slim, widened_ranges, n_margin),
+        initargs=(slim_cache, widened_ranges, n_margin),
     ) as pool:
         futures = {pool.submit(_margin_scan_batch, batch): batch for batch in batches}
         completed = 0
@@ -392,6 +375,15 @@ def _margin_scan_batch(tickers):
     """
     from expr_cache_builder import load_ticker_cache
 
+    # Extract the set of cache columns needed (same across all margin levels,
+    # only the low/high bounds differ). Slice early to minimize RAM per ticker.
+    needed_cols = sorted(set(col for level in _mp_widened_ranges for col, _, _ in level))
+    col_remap = {old: new for new, old in enumerate(needed_cols)}
+    # Rebuild widened_ranges with remapped column indices
+    remapped_ranges = []
+    for level in _mp_widened_ranges:
+        remapped_ranges.append([(col_remap[col], low, high) for col, low, high in level])
+
     totals = [0] * _mp_n_margin
     date_counts = [defaultdict(int) for _ in range(_mp_n_margin)]
 
@@ -406,11 +398,14 @@ def _margin_scan_batch(tickers):
 
         n_bars = len(dates)
 
+        # Slice to only the columns we need — frees the full ~15K column matrix
+        data = data[:, needed_cols]
+
         for mi in range(_mp_n_margin):
             pass_mask = np.ones(n_bars, dtype=bool)
             pass_mask[:50] = False  # warmup
 
-            for cache_col, low, high in _mp_widened_ranges[mi]:
+            for cache_col, low, high in remapped_ranges[mi]:
                 if cache_col >= data.shape[1]:
                     pass_mask[:] = False
                     break
@@ -2352,16 +2347,16 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     # ── Margin progression (signal grind only, not refinement) ──
     margin_progression = None
     if whitelist_map is None and all_conditions:
-        # Compute example_matrix for ALL expressions (needed for base range lookup)
-        # This is lightweight — just reads scan bar values from expr cache
-        _, full_example_matrix = compute_example_ranges(
-            example_dfs, all_expressions, expr_cache=expr_cache, margin_pct=0.0)
+        # Build slim ticker→bar_count map, then free universe_cache before parallel scan
+        slim_for_progression = {ticker: len(df) for ticker, df in universe_cache.items()
+                                if df is not None and len(df) >= 100}
+        del universe_cache
+        import gc; gc.collect()
+
         margin_progression = compute_margin_progression(
             conditions=all_conditions,
-            example_matrix=full_example_matrix,
-            expressions=all_expressions,
             expr_cache=expr_cache,
-            universe_cache=universe_cache,
+            slim_cache=slim_for_progression,
         )
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
