@@ -1932,6 +1932,76 @@ def run(setup_type):
         return None
     print(f"\n  ✓ All {ne} examples scored")
 
+    # ── Inc 6: Decile calibration tables ──
+    print(f"\n  ── DECILE CALIBRATION ──")
+
+    def _build_calibration(scores, signals, label):
+        """Build 10-row calibration table: predicted vs actual WR per quality_score decile."""
+        n = len(scores)
+        if n < 20:
+            print(f"  {label}: too few signals ({n})")
+            return []
+        order = sorted(range(n), key=lambda i: scores[i]["quality_score"])
+        dec_size = n // 10
+        rows = []
+        for d in range(10):
+            start = d * dec_size
+            end = (d + 1) * dec_size if d < 9 else n
+            chunk_idx = order[start:end]
+            actual_wins = sum(1 for i in chunk_idx if "WIN" in signals[i].get("classification", ""))
+            actual_wr = actual_wins / len(chunk_idx)
+            avg_qs = sum(scores[i]["quality_score"] for i in chunk_idx) / len(chunk_idx)
+            avg_pwr = sum(scores[i]["predicted_wr"] for i in chunk_idx) / len(chunk_idx)
+            avg_pmfe = sum(scores[i]["predicted_mfe"] for i in chunk_idx) / len(chunk_idx)
+            avg_ev = sum(scores[i]["ev"] for i in chunk_idx) / len(chunk_idx)
+            # Actual MFE among winners in this decile
+            winner_moves = [signals[i].get("move_adr") for i in chunk_idx
+                           if "WIN" in signals[i].get("classification", "")
+                           and signals[i].get("move_adr") is not None]
+            actual_mfe = sorted(winner_moves)[len(winner_moves)//2] if winner_moves else None
+            row = {
+                "decile": d + 1,
+                "n": len(chunk_idx),
+                "avg_quality_score": round(avg_qs, 1),
+                "predicted_wr": round(avg_pwr, 4),
+                "actual_wr": round(actual_wr, 4),
+                "wr_error": round(avg_pwr - actual_wr, 4),
+                "predicted_mfe": round(avg_pmfe, 2),
+                "actual_mfe": round(actual_mfe, 2) if actual_mfe is not None else None,
+                "avg_ev": round(avg_ev, 3),
+            }
+            rows.append(row)
+            print(f"    {label} D{d+1:2d}: QS={avg_qs:5.1f}  pred_WR={avg_pwr:.3f}  "
+                  f"actual_WR={actual_wr:.3f}  err={avg_pwr-actual_wr:+.3f}  n={len(chunk_idx)}")
+
+        # RMSE
+        rmse_wr = (sum(r["wr_error"]**2 for r in rows) / len(rows)) ** 0.5
+        print(f"    {label} WR calibration RMSE: {rmse_wr:.4f}")
+        return rows
+
+    calibration_pre = _build_calibration(scores_pre, all_signals, "Pre")
+    calibration_post = _build_calibration(scores_post, post_signals_for_scoring, "Post")
+
+    # ── Inc 6: Redundancy analysis ──
+    print(f"\n  ── REDUNDANCY ANALYSIS ──")
+    pre_names = set(f["name"] for f in features_pre)
+    post_names = set(f["name"] for f in features_post)
+    both = pre_names & post_names
+    pre_only = pre_names - post_names
+    post_only = post_names - pre_names
+    print(f"  Pre-only:  {len(pre_only)} (survived pre but not post = refinement captured)")
+    print(f"  Post-only: {len(post_only)} (survived post but not pre = rare)")
+    print(f"  Both:      {len(both)} (genuine additive value)")
+
+    redundancy = {
+        "features_pre_only": sorted(pre_only),
+        "features_post_only": sorted(post_only),
+        "features_both": sorted(both),
+        "n_pre_only": len(pre_only),
+        "n_post_only": len(post_only),
+        "n_both": len(both),
+    }
+
     # Build output signals array
     signals_out = []
     for i, s in enumerate(all_signals):
@@ -1967,7 +2037,7 @@ def run(setup_type):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     out = {
-        "setup": setup_type, "increment": 5,
+        "setup": setup_type, "increment": 6,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "total_time_s": round(tt, 1),
         "clusters_file": cf, "refinement_file": rf,
@@ -2001,6 +2071,13 @@ def run(setup_type):
             "pre_refinement": dedup_stats_pre,
             "post_refinement": dedup_stats_post,
         },
+        "validation": {
+            "calibration_pre": calibration_pre,
+            "calibration_post": calibration_post,
+            "calibration_rmse_wr_pre": round((sum(r["wr_error"]**2 for r in calibration_pre) / max(len(calibration_pre), 1)) ** 0.5, 4) if calibration_pre else None,
+            "calibration_rmse_wr_post": round((sum(r["wr_error"]**2 for r in calibration_post) / max(len(calibration_post), 1)) ** 0.5, 4) if calibration_post else None,
+        },
+        "redundancy": redundancy,
         "features_pre": features_pre,
         "features_post": features_post,
         "signals": signals_out,
@@ -2031,7 +2108,7 @@ def run(setup_type):
     }
 
     os.makedirs(CACHE_DIR, exist_ok=True)
-    op = os.path.join(CACHE_DIR, f"ev_{setup_type}_inc5_{ts}.json")
+    op = os.path.join(CACHE_DIR, f"ev_{setup_type}_inc6_{ts}.json")
     with open(op, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\n  Saved: {op}")
@@ -2043,7 +2120,7 @@ def run(setup_type):
         print(f"  WARNING: Mirror failed: {e}")
 
     print(f"\n  {'=' * 50}")
-    print(f"  INCREMENT 5 COMPLETE ({tt:.1f}s)")
+    print(f"  INCREMENT 6 COMPLETE ({tt:.1f}s)")
     print(f"  Features: {len(features_pre)} pre / {len(features_post)} post")
     print(f"  Signals scored: {len(signals_out)} pre / {len(post_signals_out)} post")
     qs_all = [s["quality_score"] for s in signals_out]
