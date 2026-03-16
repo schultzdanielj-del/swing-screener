@@ -392,7 +392,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 7. **Workflow and ease-of-use improvements** -- many setups will be running, vetting is factory-line gruntwork. UI needs to be fast, keyboard-driven, minimal clicks per chart.
 
 ### Pipeline UI
-8. **Full pipeline control from UI** — every grinder step runnable from the UI with all parameters and tweaks selectable at each level. Fully wired to the pipeline agent.
+8. **Pipeline flowchart UI (post-localization)** — replace current sidebar+panel layout with a visual flowchart. Each pipeline stage is a clickable node: Examples → Signal Grind → Exit Grind → Refinement Grind → Vetting → EV Grinder → Scan Tuning (sliders) → Profit Grind → Live Watchlist. Click a node to expand it inline (run controls, logs, results) or navigate to its tab (Examples, Vetting, Watchlist). Shows setup development progress visually. Build after localization for instant rendering and direct subprocess calls.
 9. **Update PIPELINE_V2.md** — replace proximity grind, profit grind, regime model sections with EV Grinder architecture. Update pipeline diagram. Update watchlist section.
 
 ### Code Cleanup (future)
