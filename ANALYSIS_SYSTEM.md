@@ -162,9 +162,9 @@ Three numbers per signal:
 3. Univariate MFE screening: same for winner move_adr, keep features with D10-D1 spread > 1.0 ADR
 4. Per-instrument cap (top 200 by strength) + Union survivors
 5. Cross-instrument deduplication: greedy dedup by inter-feature correlation (< 0.95)
-6. Scoring curves: decile boundaries + WR/MFE per decile stored as lookup table
-7. Score every signal: weighted average of WR and MFE contributions
-8. Validation: bucket by predicted WR into deciles, check actual vs predicted
+6. Percentile scoring: continuous percentile rank per signal per feature (scipy.stats.rankdata), direction-flipped so higher = better
+7. Category-balanced scoring: market features (50%) and setup features (50%) weighted equally, then weighted average → quality_score (0-100) + interpolated WR/MFE from decile curves → predicted EV
+8. Validation: decile calibration (actual WR per quality_score decile), example coverage check
 
 - Input: Refinement output + market cache + 5yr OHLCV cache + external data cache
 - Output: Scoring equation + per-signal scores (WR, MFE, EV) + validation stats
@@ -218,6 +218,8 @@ The watchlist is the end product. Every cycle of the loop makes it more accurate
 - **Phase 3 scores, it does not filter.** Every signal that passes Phase 2 makes the watchlist.
 - **EV grinder replaces market_grinder + setup_grinder.** One unified engine, all features compete on equal footing.
 - **Additive scoring model for ~893 signals.** Interaction terms deferred until more examples accumulate.
+- **Category-balanced weighting (50/50).** Market features and setup features each get 50% of total weight regardless of headcount. Prevents 1,800 market features from drowning out 3 setup features.
+- **Continuous percentile scoring (Option C).** quality_score 0-100 per signal, not discrete quartile levels. Slider 2 threshold is continuous.
 - **Assumed stop of 1.0 ADR for EV calculation.** Adjustable without re-running.
 - **100% example pass rate required.** Any grinder result where an example fails is invalid.
 
@@ -231,7 +233,7 @@ The watchlist is the end product. Every cycle of the loop makes it more accurate
 | Exit Grind | signal_exit_grinder.py | Examples + expr cache | Exit condition in local cache |
 | Refinement Grind | pyramid_grinder.py --blackout | Pyramid result + exit cond + expr cache + 5yr OHLCV | raw_signal_clusters_{setup}.json + refinement_{setup}_*.json |
 | Entry Candle Scorer | entry_candle_scorer.py | Examples (Railway API) + refinement output + raw_signal_clusters + expr cache | entry_scores_{setup}.json |
-| EV Grinder | ev_grinder.py (inc 1-3 done) | Refinement result + raw clusters + market cache + 5yr OHLCV + fundamentals cache | ev_{setup}_inc3_*.json (intermediate), ev_{setup}_*.json (final) |
+| EV Grinder | ev_grinder.py (inc 1-5 done) | Refinement result + raw clusters + market cache + 5yr OHLCV + fundamentals cache | ev_{setup}_inc5_*.json (features + per-signal quality_score, predicted_wr, predicted_mfe, ev, killed_at_depth) |
 | Profit Grind | profit_grinder.py (needs rewire) | EV-scored signals + price data | Exit strategy + equity curve |
 
 All grinder outputs are also mirrored to Railway via file_mirror.py and uploaded via grind_uploader.py.

@@ -1,7 +1,7 @@
 # EV Grinder — Phase 3 Correlative Scoring Engine
 
 **Created:** 2026-03-14
-**Status:** Design complete, not yet built
+**Status:** Inc 1-5 complete. Script functional, output mirrored to Railway.
 **Script:** `scripts/ev_grinder.py`
 **Pipeline step:** `ev_grind` (wired in `pipeline_agent.py`)
 
@@ -128,10 +128,11 @@ All three are replaced by a single unified engine where all features compete on 
       "mfe_spread": 2.1,             // Q4−Q1 median winner move spread
       "direction": "ascending",      // "ascending" = higher is better, "descending" = lower is better
       "weight": 0.25,                // screening strength, used for weighted scoring
-      "quartile_boundaries": [q1_cutoff, q2_cutoff, q3_cutoff],
-      "quartile_wr": [0.65, 0.72, 0.80, 0.90],
-      "quartile_mfe": [4.2, 5.1, 6.8, 8.3],
-      "n_per_quartile": [223, 224, 223, 223]
+      "decile_boundaries": [9 cutpoint values],
+      "decile_wr": [10 values, D1 through D10],
+      "decile_mfe": [10 values, D1 through D10, null where <3 winners],
+      "n_per_decile": [10 counts],
+      "weight": 0.25
     },
     ...
   ],
@@ -154,10 +155,8 @@ All three are replaced by a single unified engine where all features compete on 
       // integer = depth at which this signal's cluster is fully eliminated
       "killed_at_depth": null,
 
-      // Slider 2: which quartile is this signal in for each feature?
-      // Array index matches the "features" array above
-      // 1 = lowest value quartile, 4 = highest
-      "feature_quartiles": [3, 4, 2, 4, 1, 3, ...],
+      // Slider 2: continuous quality score (0-100)
+      "quality_score": 58.3,
 
       // EV scores (computed from pre-refinement model)
       "predicted_wr": 0.72,
@@ -209,13 +208,8 @@ All three are replaced by a single unified engine where all features compete on 
     "signal_conditions_count": 87,
     "refinement_conditions_count": 100,
     "default_refinement_depth": 100,
-    "default_ev_quality_level": 0,
-    "ev_quality_levels": {
-      "0": "No filtering — all signals pass",
-      "1": "Remove signals in worst quartile for any feature",
-      "2": "Keep only signals in top 2 quartiles for all features",
-      "3": "Keep only signals in best quartile for all features"
-    }
+    "quality_score_range": {"min": 20.3, "max": 75.9},
+    "assumed_stop_adr": 1.0
   }
 }
 ```
@@ -313,16 +307,16 @@ For each signal, look up every feature's value on the signal date.
 
 For each feature independently:
 1. Exclude signals with NaN for this feature
-2. If >50% NaN or any quartile would have <20 signals, skip
-3. Bucket remaining signals into 4 quartiles by feature value
-4. Compute win rate per quartile
-5. If spread between best and worst quartile ≥ 10 percentage points, feature survives
+2. If >50% NaN or any decile would have <8 signals, skip
+3. Bucket remaining signals into 10 deciles by feature value
+4. Compute win rate per decile
+5. If D10-D1 spread ≥ 10 percentage points, feature survives
 
 Catches both directions: features where high values predict wins AND features where low values predict wins.
 
 ### Step 3: Univariate MFE Screening
 
-Same quartile bucketing, but compute median `move_adr` among winners only per quartile. Feature survives if spread between best and worst quartile ≥ 1.0 ADR.
+Same decile bucketing, but compute median `move_adr` among winners only per decile. Feature survives if D10-D1 spread ≥ 1.0 ADR.
 
 ### Step 4: Union Survivors
 
@@ -332,24 +326,24 @@ A feature passes if it cleared either the WR screen OR the MFE screen. Tagged as
 
 Among survivors, compute pairwise correlation of each feature's value series across all signals. Greedy dedup: rank survivors by screening strength (max of WR spread and MFE spread normalized), walk best to worst, drop any feature correlating >0.95 with an already-kept feature.
 
-### Step 6: Build Scoring Curves
+### Step 6: Percentile Scoring + Category-Balanced Weighting
 
 For each surviving feature:
-- Store the 3 quartile boundary values (25th, 50th, 75th percentile cutoffs)
-- Store the actual WR per quartile (4 values)
-- Store the median winner move_adr per quartile (4 values)
-- Determine direction: which quartile is "best" (highest WR)? If Q4 is best → ascending. If Q1 is best → descending.
+- Compute percentile rank (0-100) for each signal using scipy.stats.rankdata
+- Flip descending features so higher always = better
+- Store decile boundaries (9 cutpoints) + WR/MFE per decile (10 values each) for interpolation
 
-### Step 7: Score Every Signal
+Category-balanced weighting: market features collectively get 50% of total weight, setup features get 50%. Within each category, features compete by individual screening strength (max of WR spread and normalized MFE spread). This prevents 1,800+ market features from drowning out 3 setup features by headcount.
+
+### Step 7: Score Every Signal (Vectorized)
 
 For each signal:
-1. Look up its quartile for each surviving feature → `feature_quartiles` array
-2. For each feature: get the WR and MFE contribution from the scoring curve
-3. Weighted average of all features' WR contributions → predicted_wr
-4. Weighted average of all features' MFE contributions → predicted_mfe
-5. EV = (predicted_wr × predicted_mfe) − ((1 − predicted_wr) × 1.0)
+1. quality_score = category-balanced weighted average of percentile scores (0-100)
+2. For predicted WR: un-flip percentile to raw distribution position, interpolate each feature's decile WR curve at that position (vectorized via np.searchsorted), take weighted average
+3. Same for predicted MFE using decile MFE curves
+4. EV = (predicted_wr × predicted_mfe) − ((1 − predicted_wr) × 1.0)
 
-Weight per feature = its screening spread strength (stronger features count more).
+All computation is vectorized — loop over ~1,800 features, each doing numpy array ops on all signals at once. No Python loop over signals.
 
 ### Step 8: Validation
 
@@ -393,36 +387,32 @@ This gives the UI everything it needs for Slider 1. Peeling off condition 100 br
 
 ---
 
-## Slider 2 — EV Quality Filter
+## Slider 2 — EV Quality Filter (Continuous Percentile Scoring)
 
-**Range:** 0% (all signals pass) to 100% (only best-quartile signals for every feature — near zero signals)
+**Range:** Continuous 0-100, mapped to the quality_score range in the output data.
 
 **What it does:**
 
-Every surviving feature has a "direction" (ascending or descending) indicating whether higher or lower values predict better outcomes.
+Every signal has a single `quality_score` (0-100) — a category-balanced weighted average of its percentile ranks across all surviving features. Market features (1,800+) collectively get 50% weight, setup features (3) get 50% weight. Within each category, features compete by individual screening strength.
 
-The slider maps to a quality level that progressively tightens the acceptable quartile range:
+The slider sets a minimum quality_score threshold. Slide right = demand higher quality = fewer signals survive.
 
-| Slider Position | Quality Level | What It Does |
-|----------------|---------------|-----------------------------------------------|
-| 0% | 0 | No filtering — all signals pass |
-| ~33% | 1 | Remove signals in the WORST quartile for any feature |
-| ~67% | 2 | Keep only signals in the TOP 2 quartiles for all features |
-| 100% | 3 | Keep only signals in the BEST quartile for all features |
+**How quality_score is computed:**
+1. For each surviving feature, compute every signal's percentile rank (0-100) within that feature's distribution using scipy.stats.rankdata
+2. Flip descending features (lower raw value = better) so higher percentile always means better outcome
+3. Category-balanced weighted average: market weights sum to 0.5, setup weights sum to 0.5
+4. Result: single float 0-100 per signal
 
-**0% to ~50%: Cutting the bad.** Signals in hostile market regimes or with the worst stock characteristics get eliminated. Easy kills — high impact on WR, moderate impact on signal count.
+**Predicted WR and MFE** are computed separately via vectorized interpolation of each feature's decile WR/MFE curves at each signal's raw percentile position. Weighted average across features → predicted_wr and predicted_mfe. EV = (WR × MFE) - ((1-WR) × 1.0 ADR stop).
 
-**~50% to 100%: Demanding the best.** No longer just removing garbage — requiring excellence. Signal count drops sharply because you need EVERY feature to line up. WR and MFE keep climbing.
+**Client-side computation:** Filter signals where `quality_score >= slider_value`. One number comparison per signal = sub-millisecond.
 
-**At 100%:** Only signals where every single feature is in its best quartile. This intersection is vanishingly small — effectively zero signals.
+**DTSS calibration (2026-03-15):**
+- Pre-refinement (893 signals): D1 actual WR = 19.1% → D10 = 64.1% (+45pp spread)
+- Post-refinement (467 signals): D1 = 56.5% → D10 = 93.5% (+37pp spread)
+- Post-refinement top 50%: 234 signals, 86.8% actual WR, ~39/year
 
-**The sweet spot for live trading is somewhere in the middle.** Enough filtering to avoid the garbage, not so much that you never get a signal.
-
-**Per-signal data:** Each signal has a `feature_quartiles` array (one integer 1-4 per surviving feature). The UI checks each signal against the quality level threshold for each feature's direction. Signal survives only if it passes ALL features at the current quality level.
-
-**Client-side computation:** ~900 signals × ~50 features × integer comparison = sub-millisecond. No precomputation needed.
-
-**Live scan uses:** The quality level = how many bad quartiles the nightly scan rejects.
+**Live scan uses:** The slider position = minimum quality_score for tonight's watchlist.
 
 ---
 
@@ -435,7 +425,7 @@ Each signal is a circle positioned at its date on the SPY X-axis:
 - **Circle color:** Predicted WR (green gradient = higher WR, red gradient = lower WR)
 - **Tooltip:** Ticker, date, classification, predicted WR, predicted MFE, EV, move_adr (actual)
 
-Both sliders affect which circles are visible. As Slider 1 increases, loser circles disappear. As Slider 2 increases, circles in bad quartiles disappear.
+Both sliders affect which circles are visible. As Slider 1 increases, loser circles disappear. As Slider 2 increases, circles below the quality_score threshold disappear.
 
 **Stats bar (always visible):**
 - Peak signals/day
@@ -465,7 +455,7 @@ Split 256 instruments across workers (ProcessPoolExecutor).
 Each worker:
 1. Loads one .npz (~80MB)
 2. Builds date→row index for O(1) lookups
-3. For each of 15,805 expressions: looks up value at each signal's date, buckets into quartiles, computes WR spread and MFE spread
+3. For each of 15,805 expressions: looks up value at each signal's date, buckets into deciles, computes WR spread and MFE spread
 4. Returns ONLY the survivors (feature name + values for all signals + screening stats)
 
 **Both signal sets (pre and post refinement) are processed simultaneously per instrument.** Each worker screens features against both the 893-signal set and the 467-signal set in one pass. This halves disk I/O since each .npz is loaded once, not twice.
@@ -474,7 +464,7 @@ Each worker:
 
 ### Phase C — Combine + Dedup + Score (serial, fast, <1 min)
 
-Take all survivors (market + setup + fundamentals), dedup by correlation, build scoring curves, assign quartiles, score every signal, validate.
+Take all survivors (market + setup + fundamentals), dedup by correlation, compute percentile ranks, category-balanced weighted scoring, validate.
 
 ### Phase D — Refinement Replay (serial, ~1 min)
 
@@ -486,7 +476,7 @@ Replay 100 refinement conditions against all 893 clusters. Build per-condition e
 
 ## Edge Cases and Guardrails
 
-- **NaN handling:** If >50% of signals have NaN for a feature, skip it. Signals with NaN excluded from that feature's quartile computation. Minimum 20 signals per quartile or skip.
+- **NaN handling:** If >50% of signals have NaN for a feature, skip it. Signals with NaN get percentile 50 (neutral). Minimum 8 signals per decile or skip.
 - **Date matching:** Market .npz dates are strings. Build dict for O(1) lookup. If signal date not in instrument's dates (holidays, different calendar), take most recent prior date.
 - **100% example pass:** All 65 examples must get scored in both runs. Hard fail if any example is missing a score.
 - **No mid-run aborts:** Log issues, skip bad features, keep going.
@@ -498,7 +488,7 @@ Replay 100 refinement conditions against all 893 clusters. Build per-condition e
 
 ## Build Increments
 
-### Increment 1: Script Skeleton + Data Loaders + Refinement Replay
+### Increment 1: Script Skeleton + Data Loaders + Refinement Replay ✅
 
 - Parse CLI args (`--setup dtss`)
 - Find and load latest refinement JSON + raw clusters JSON
@@ -508,46 +498,46 @@ Replay 100 refinement conditions against all 893 clusters. Build per-condition e
 - Print verification: depth 0 = 893, depth 100 = 467
 - **Test:** Run it, verify counts match refinement output exactly
 
-### Increment 2: Setup Feature Computation
+### Increment 2: Setup Feature Computation ✅
 
 - Compute 6 OHLCV features for all 893 signals
 - Compute 4 fundamentals features
 - **Test:** Spot-check against preserved `setup_dtss_20260313_135931.json` (has all 893 signals with all 6 OHLCV features)
 
-### Increment 3: Market Feature Screening (Parallel)
+### Increment 3: Market Feature Screening (Parallel) ✅
 
 - Worker function: loads one .npz, screens 15,805 features against both signal sets
 - Orchestrator: runs workers across 256 instruments with ProcessPoolExecutor
 - Returns survivors per instrument with values for all signals
 - **Test:** Timing, survivor counts per instrument, RAM stays stable. Cross-check SPY features against regime model output.
 
-### Increment 4: Union + Dedup
+### Increment 4: Union + Dedup ✅
 
 - Combine market survivors + setup survivors
 - Greedy dedup by correlation
 - **Test:** Before/after counts, verify no >0.95 correlations remain
 
-### Increment 5: Scoring Curves + Quartile Assignment + Scoring
+### Increment 5: Continuous Percentile Scoring + Signal EV ✅
 
-- Build quartile lookup tables per surviving feature
-- Determine direction per feature
-- Assign `feature_quartiles` array per signal
-- Compute predicted_wr, predicted_mfe, ev per signal
-- **Test:** All examples scored, score distribution makes sense, top EV signals are mostly winners
+- Percentile rank per signal per feature (scipy.stats.rankdata), direction-flipped
+- Category-balanced weighting: 50% market / 50% setup
+- Vectorized decile interpolation for predicted WR/MFE (np.searchsorted, no Python signal loop)
+- quality_score (0-100), predicted_wr, predicted_mfe, ev per signal
+- feature_percentiles stripped from output (40MB → 4.3MB)
+- Calibration check: D1 vs D10 actual WR printed
+- **Result:** Pre D1=19.1% → D10=64.1%. Post D1=56.5% → D10=93.5%. 65/65 examples scored.
 
-### Increment 6: Validation + Full Output + Mirror
+### Increment 6: Validation + Full Output + Mirror ✅ (folded into Inc 5)
 
-- Decile calibration for both pre and post refinement
-- Redundancy analysis (pre-only vs post-only vs both)
-- Save full JSON output
-- Mirror to Railway
-- **Test:** Calibration stats, file accessible on Railway
+- Decile calibration built into score_signals (prints D1-D10 actual WR)
+- Full JSON saved + mirrored to Railway
+- Redundancy analysis: compare features_pre vs features_post in output
 
 ### Increment 7: UI — SPY Chart + Dual Sliders (separate task)
 
 - Scrollable SPY chart with signal circles
 - Slider 1: refinement depth (reads `depth_stats` + `killed_at_depth`)
-- Slider 2: EV quality (reads `feature_quartiles` + feature directions)
+- Slider 2: EV quality (reads `quality_score` per signal, continuous threshold)
 - Stats bar always visible
 - Slider positions saved to Railway as live scan parameters
 
@@ -559,8 +549,8 @@ After the EV grinder has run and the user sets slider positions:
 
 1. **Nightly scan** runs tonight's bars against signal conditions (87) + refinement conditions (first N, per Slider 1 position)
 2. For each signal that fires: compute feature values (market cache lookup + OHLCV + fundamentals)
-3. Look up quartile for each surviving feature using stored quartile boundaries
-4. Apply EV quality filter (reject signals in bad quartiles per Slider 2 position)
+3. Compute quality_score using stored percentile scoring equation
+4. Apply EV quality filter (reject signals below quality_score threshold per Slider 2 position)
 5. Compute EV score using stored feature weights + scoring curves
 6. Rank by EV, highest to lowest
 7. Top of list = what you trade tomorrow
@@ -573,7 +563,9 @@ Scoring is milliseconds per signal. All lookups from local caches.
 
 - **Scoring, not filtering.** Phase 3 does not remove signals from the pipeline. It ranks them. The sliders let the user choose their own filtering threshold.
 - **Additive model.** Each feature contributes independently. Well-supported by ~893 data points. Interaction terms ("UVXY matters more on high-priced stocks") not captured, but correlated features will both independently predict WR/MFE. Interactions can layer in later as examples grow.
-- **Quartile bucketing captures nonlinearity.** A feature that only matters at extremes (e.g., VIX only predicts when >30) is visible in the Q4 vs Q1-Q3 spread. Linear correlation would miss this.
+- **Decile bucketing captures nonlinearity.** A feature that only matters at extremes is visible in the D10 vs D1 spread. Linear correlation would miss this.
+- **Category-balanced weighting (50/50 market/setup).** Without balancing, 1,800+ market features drown out 3 setup features by headcount. Each category gets 50% of total weight. Within each category, features compete by screening strength.
+- **Continuous percentile scoring, not discrete quartile levels.** quality_score is 0-100 per signal. Slider 2 sets a continuous threshold. No arbitrary bucketing of signals into 4 quality levels.
 - **1.0 ADR assumed stop for EV calculation.** Losers don't have meaningful move_adr (setup broke). The loss side uses a fixed 1 ADR assumption. Adjustable parameter, not re-run required.
 - **Pre AND post refinement.** Both runs tell different stories. Pre-refinement reveals genuine correlative features. Post-refinement reveals what's left after chart-level filtering. Features surviving both are the most valuable.
 - **One output file, two sliders.** Everything the UI needs is in one JSON. No server round-trips for slider interactions. Client-side computation is trivially fast.
