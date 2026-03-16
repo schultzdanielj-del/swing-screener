@@ -2351,7 +2351,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 
     # ── Margin progression (signal grind only, not refinement) ──
     margin_progression = None
-    if not is_refinement and all_conditions:
+    if whitelist_map is None and all_conditions:
         # Compute example_matrix for ALL expressions (needed for base range lookup)
         # This is lightweight — just reads scan bar values from expr cache
         _, full_example_matrix = compute_example_ranges(
