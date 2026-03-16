@@ -913,6 +913,73 @@ async def get_vetting_ohlcv(setup_type: str, ticker: str,
     return {"ticker":ticker,"signal_date":signal_date,"data":all_data[max(0,sig_idx-lookback):min(len(all_data),sig_idx+forward)]}
 
 
+@app.get("/api/vetting/{setup_type}/refinement-signals")
+async def get_refinement_signals(setup_type: str, pile: str = Query("post")):
+    """Serve signals from the latest refinement JSON.
+    pile=pre: all signals (winners + losers + eliminated)
+    pile=post: winners + surviving losers only (eliminated removed)
+    """
+    # Find latest refinement file
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT path, data FROM file_mirror WHERE path LIKE ? ORDER BY created_at DESC LIMIT 1",
+            (f"local_runner/cache/refinement_{setup_type}_%",),
+        ).fetchall()
+    if not rows:
+        raise HTTPException(404, f"No refinement data for {setup_type}. Run the refinement grind first.")
+    data = _json.loads(rows[0]["data"])
+    winners = data.get("winner_signals", [])
+    losers = data.get("loser_signals", [])
+    eliminated = data.get("eliminated_signals", [])
+    # Tag each signal with its pile
+    for s in winners:
+        s["pile"] = "winner"
+    for s in losers:
+        s["pile"] = "loser"
+    for s in eliminated:
+        s["pile"] = "eliminated"
+    if pile == "pre":
+        signals = winners + losers + eliminated
+    else:
+        signals = winners + losers
+    # Normalize field names for the vetting UI
+    vetting_decisions = _load_json(VETTING_DATA_DIR / "vetting" / f"vetting_{setup_type}.json", {})
+    example_dates = _get_example_dates(setup_type)
+    out = []
+    for s in signals:
+        sig_date = s.get("signal_date", s.get("date", ""))
+        tk = s.get("ticker", "")
+        # Skip if it's already an example
+        if _is_dup({"ticker": tk, "date": sig_date}, example_dates):
+            continue
+        key = f"{tk}_{sig_date}"
+        verdict_data = vetting_decisions.get(key, {})
+        out.append({
+            "ticker": tk,
+            "signal_date": sig_date,
+            "date": sig_date,
+            "move_adr": clean_val(s.get("move_adr")),
+            "adr_at_signal": clean_val(s.get("adr_at_signal")),
+            "classification": s.get("classification"),
+            "pile": s.get("pile"),
+            "is_example": s.get("is_example", 0),
+            "verdict": verdict_data.get("verdict"),
+            "entry_date": verdict_data.get("entry_date"),
+        })
+    n_winners = sum(1 for s in out if s["pile"] == "winner")
+    n_losers = sum(1 for s in out if s["pile"] == "loser")
+    n_eliminated = sum(1 for s in out if s["pile"] == "eliminated")
+    return {
+        "setup_type": setup_type,
+        "pile": pile,
+        "n_signals": len(out),
+        "n_winners": n_winners,
+        "n_losers": n_losers,
+        "n_eliminated": n_eliminated,
+        "signals": out,
+    }
+
+
 class VettingDecision(BaseModel):
     ticker: str; signal_date: str; verdict: str; entry_date: str = None
 
