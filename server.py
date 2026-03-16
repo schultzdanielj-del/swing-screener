@@ -940,6 +940,8 @@ async def get_refinement_signals(setup_type: str, pile: str = Query("post")):
         s["pile"] = "eliminated"
     if pile == "pre":
         signals = winners + losers + eliminated
+    elif pile == "winners":
+        signals = winners
     else:
         signals = winners + losers
     # Normalize field names for the vetting UI
