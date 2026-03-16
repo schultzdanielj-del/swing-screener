@@ -244,6 +244,7 @@ def compute_margin_progression(conditions, example_matrix, expressions, expr_cac
       - Record signal count + peak/day + avg/day
 
     Does NOT re-run the beam search. Read-only analysis on the final condition set.
+    Parallelized across all CPU cores using the same pattern as the tier matrix builder.
 
     Args:
         conditions: list of condition dicts (from beam search result) with 'name', 'low', 'high'
@@ -298,11 +299,9 @@ def compute_margin_progression(conditions, example_matrix, expressions, expr_cac
 
     print(f"  Resolved {len(cond_base_ranges)}/{len(conditions)} conditions to base ranges")
 
-    # Scan all tickers in universe, count signals at each margin level
-    # For each ticker: load expr cache, check all bars against all conditions
-    n_margin = len(margin_levels)
     # Pre-compute widened ranges for each margin level
     # widened_ranges[m] = list of (cache_col, low, high) for margin level m
+    n_margin = len(margin_levels)
     widened_ranges = []
     for m in margin_levels:
         level_ranges = []
@@ -311,57 +310,47 @@ def compute_margin_progression(conditions, example_matrix, expressions, expr_cac
             level_ranges.append((cache_col, ex_min - margin, ex_max + margin))
         widened_ranges.append(level_ranges)
 
-    # Per-margin-level: {date_str: count} for peak/avg calculation
-    date_counts = [defaultdict(int) for _ in range(n_margin)]
-    signal_totals = [0] * n_margin
+    # Build slim cache: {ticker: n_bars} for workers (same pattern as tier builder)
+    slim = {ticker: len(df) for ticker, df in universe_cache.items()
+            if df is not None and len(df) >= 100}
 
-    tickers = sorted(universe_cache.keys())
-    n_tickers = len(tickers)
-    skipped = 0
+    # Parallel scan
+    n_workers = max(cpu_count() - 1, 1)
+    tickers = sorted(slim.keys())
+    batch_size = max(len(tickers) // (n_workers * 4), 50)
+    batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
 
-    for ti, ticker in enumerate(tickers):
-        df = universe_cache[ticker]
-        if df is None or len(df) < 100:
-            skipped += 1
-            continue
+    print(f"  {n_workers} workers, {len(batches)} batches of ~{batch_size} tickers")
 
-        dates, data = expr_cache.get_ticker(ticker)
-        if dates is None or data is None or len(dates) != len(df):
-            skipped += 1
-            continue
+    # Merge results from all workers
+    merged_date_counts = [defaultdict(int) for _ in range(n_margin)]
+    merged_totals = [0] * n_margin
 
-        n_bars = len(dates)
-
-        # For each margin level, compute pass mask across all conditions
-        for mi in range(n_margin):
-            pass_mask = np.ones(n_bars, dtype=bool)
-            pass_mask[:50] = False  # warmup
-
-            for cache_col, low, high in widened_ranges[mi]:
-                series = data[:, cache_col]
-                in_range = (series >= low) & (series <= high)
-                in_range[np.isnan(series)] = False
-                pass_mask &= in_range
-
-            signal_indices = np.where(pass_mask)[0]
-            n_signals = len(signal_indices)
-            if n_signals > 0:
-                signal_totals[mi] += n_signals
-                for idx in signal_indices:
-                    date_str = str(dates[idx])[:10]
-                    date_counts[mi][date_str] += 1
-
-        if (ti + 1) % 500 == 0:
-            elapsed = time.time() - t0
-            print(f"    {ti + 1}/{n_tickers} tickers [{elapsed:.0f}s]")
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_init_margin_worker,
+        initargs=(slim, widened_ranges, n_margin),
+    ) as pool:
+        futures = {pool.submit(_margin_scan_batch, batch): batch for batch in batches}
+        completed = 0
+        for future in as_completed(futures):
+            batch_totals, batch_date_counts = future.result()
+            for mi in range(n_margin):
+                merged_totals[mi] += batch_totals[mi]
+                for date_str, cnt in batch_date_counts[mi].items():
+                    merged_date_counts[mi][date_str] += cnt
+            completed += 1
+            if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
+                elapsed = time.time() - t0
+                print(f"    {completed}/{len(batches)} batches [{elapsed:.0f}s]")
 
     elapsed = time.time() - t0
-    print(f"  Scanned {n_tickers - skipped} tickers ({skipped} skipped) in {elapsed:.1f}s")
+    print(f"  Scanned {len(tickers)} tickers in {elapsed:.1f}s")
 
     # Build results
     progression = []
     for mi, m in enumerate(margin_levels):
-        counts = date_counts[mi]
+        counts = merged_date_counts[mi]
         if counts:
             peak = max(counts.values())
             avg = round(sum(counts.values()) / len(counts), 1)
@@ -371,14 +360,74 @@ def compute_margin_progression(conditions, example_matrix, expressions, expr_cac
 
         progression.append({
             "margin_pct": int(m * 100),
-            "signal_count": signal_totals[mi],
+            "signal_count": merged_totals[mi],
             "peak_per_day": peak,
             "avg_per_day": avg,
         })
-        print(f"    {int(m*100)}%: {signal_totals[mi]:>7,} signals, "
+        print(f"    {int(m*100)}%: {merged_totals[mi]:>7,} signals, "
               f"peak={peak}/day, avg={avg}/day")
 
     return progression
+
+
+# ── Margin progression worker globals + batch function ──
+
+_mp_slim = None
+_mp_widened_ranges = None
+_mp_n_margin = None
+
+
+def _init_margin_worker(slim, widened_ranges, n_margin):
+    """Initializer: serialize config once per worker."""
+    global _mp_slim, _mp_widened_ranges, _mp_n_margin
+    _mp_slim = slim
+    _mp_widened_ranges = widened_ranges
+    _mp_n_margin = n_margin
+
+
+def _margin_scan_batch(tickers):
+    """Scan a batch of tickers for signal counts at each margin level.
+
+    Returns (totals_list, date_counts_list) where each is indexed by margin level.
+    """
+    from expr_cache_builder import load_ticker_cache
+
+    totals = [0] * _mp_n_margin
+    date_counts = [defaultdict(int) for _ in range(_mp_n_margin)]
+
+    for ticker in tickers:
+        n_bars_expected = _mp_slim.get(ticker)
+        if n_bars_expected is None:
+            continue
+
+        dates, data = load_ticker_cache(ticker)
+        if dates is None or data is None or len(dates) != n_bars_expected:
+            continue
+
+        n_bars = len(dates)
+
+        for mi in range(_mp_n_margin):
+            pass_mask = np.ones(n_bars, dtype=bool)
+            pass_mask[:50] = False  # warmup
+
+            for cache_col, low, high in _mp_widened_ranges[mi]:
+                if cache_col >= data.shape[1]:
+                    pass_mask[:] = False
+                    break
+                series = data[:, cache_col]
+                in_range = (series >= low) & (series <= high)
+                in_range[np.isnan(series)] = False
+                pass_mask &= in_range
+
+            signal_indices = np.where(pass_mask)[0]
+            n_signals = len(signal_indices)
+            if n_signals > 0:
+                totals[mi] += n_signals
+                for idx in signal_indices:
+                    date_str = str(dates[idx])[:10]
+                    date_counts[mi][date_str] += 1
+
+    return totals, date_counts
 
 
 def prefilter_candidates(expressions, example_ranges, threshold=0.85):
