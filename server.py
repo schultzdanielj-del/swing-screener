@@ -254,6 +254,13 @@ def init_db():
                 log TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_research_jobs_status ON research_jobs(status);
+            CREATE TABLE IF NOT EXISTS setups (
+                setup_type TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                direction TEXT NOT NULL DEFAULT 'short',
+                created_at TEXT DEFAULT (datetime('now'))
+            );
         """)
         # ── Add new grind_cycles columns (safe — no-op if already exist) ──
         for col, coltype in [
@@ -274,6 +281,16 @@ def init_db():
                 db.execute(f"ALTER TABLE research_jobs ADD COLUMN {col} {coltype}")
             except Exception:
                 pass
+        # ── Seed default setups ──
+        for st, name, desc, direction in [
+            ("dtss", "DTSS", "Double Top Short Sell", "short"),
+            ("3-4db", "3-4DB", "3-4 Day Bounce (Short)", "short"),
+            ("htf", "HTF", "High Tight Flag (Long)", "long"),
+        ]:
+            db.execute(
+                "INSERT OR IGNORE INTO setups (setup_type, name, description, direction) VALUES (?,?,?,?)",
+                (st, name, desc, direction),
+            )
 
 
 init_db()
@@ -637,13 +654,57 @@ async def get_agent_status():
 
 @app.get("/api/setups")
 async def get_setups():
-    types={"dtss":{"name":"DTSS","desc":"Double Top Short Sell"},
-            "3-4db":{"name":"3-4DB","desc":"3-4 Day Bounce (Short)"},
-            "htf":{"name":"HTF","desc":"High Tight Flag (Long)"}}
     with get_db() as db:
-        for st in types:
-            types[st]["examples"]=db.execute("SELECT COUNT(*) FROM examples WHERE setup_type=?",(st,)).fetchone()[0]
-    return types
+        rows = db.execute("SELECT setup_type, name, description, direction FROM setups ORDER BY created_at").fetchall()
+        result = {}
+        for r in rows:
+            n = db.execute("SELECT COUNT(*) FROM examples WHERE setup_type=?", (r["setup_type"],)).fetchone()[0]
+            result[r["setup_type"]] = {
+                "name": r["name"], "desc": r["description"],
+                "direction": r["direction"], "examples": n,
+            }
+    return result
+
+
+class CreateSetupRequest(BaseModel):
+    name: str
+    description: str = ""
+    direction: str = "short"
+
+
+@app.post("/api/setups")
+async def create_setup(req: CreateSetupRequest):
+    import re
+    setup_type = re.sub(r"[^a-z0-9]+", "-", req.name.lower()).strip("-")
+    if not setup_type:
+        raise HTTPException(400, "Invalid setup name")
+    if req.direction not in ("long", "short"):
+        raise HTTPException(400, "direction must be 'long' or 'short'")
+    with get_db() as db:
+        if db.execute("SELECT setup_type FROM setups WHERE setup_type=?", (setup_type,)).fetchone():
+            raise HTTPException(409, f"Setup '{setup_type}' already exists")
+        db.execute(
+            "INSERT INTO setups (setup_type, name, description, direction) VALUES (?,?,?,?)",
+            (setup_type, req.name.strip(), req.description.strip(), req.direction),
+        )
+    return {"setup_type": setup_type, "name": req.name.strip(), "direction": req.direction}
+
+
+@app.patch("/api/setups/{setup_type}")
+async def patch_setup(setup_type: str, request: Request):
+    body = await request.json()
+    ALLOWED = {"name", "description", "direction"}
+    updates = {k: v for k, v in body.items() if k in ALLOWED}
+    if not updates:
+        raise HTTPException(400, "No valid fields to update")
+    if "direction" in updates and updates["direction"] not in ("long", "short"):
+        raise HTTPException(400, "direction must be 'long' or 'short'")
+    with get_db() as db:
+        if not db.execute("SELECT setup_type FROM setups WHERE setup_type=?", (setup_type,)).fetchone():
+            raise HTTPException(404, f"Setup '{setup_type}' not found")
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        db.execute(f"UPDATE setups SET {set_clause} WHERE setup_type=?", list(updates.values()) + [setup_type])
+    return {"setup_type": setup_type, "updated": list(updates.keys())}
 
 
 @app.get("/api/examples/{setup_type}")
@@ -689,7 +750,72 @@ async def delete_example(setup_type: str, example_id: int):
     return {"deleted":example_id}
 
 
-@app.get("/api/chart/{setup_type}/{ticker}/{entry_date}")
+@app.post("/api/examples/{setup_type}/bulk")
+async def bulk_add_examples(setup_type: str, request: Request):
+    """Parse a text blob of 'TICKER MM/DD/YYYY' lines and add them as examples."""
+    body = await request.json()
+    raw = body.get("text", "")
+    if not raw.strip():
+        raise HTTPException(400, "No text provided")
+
+    from dateutil import parser as dateparser
+    lines = [l.strip() for l in raw.strip().splitlines() if l.strip()]
+    added = []
+    failed = []
+
+    with get_db() as db:
+        # Build set of valid tickers and trading dates for fast lookup
+        valid_tickers = set()
+        rows = db.execute("SELECT DISTINCT ticker FROM universe_ohlcv").fetchall()
+        for r in rows:
+            valid_tickers.add(r[0].upper())
+
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 2:
+                failed.append({"line": line, "reason": "Could not parse — need TICKER DATE"})
+                continue
+
+            ticker = normalize_ticker(parts[0])
+            date_str = " ".join(parts[1:])
+
+            # Parse flexible date formats
+            try:
+                dt = dateparser.parse(date_str)
+                entry_date = dt.strftime("%Y-%m-%d")
+            except Exception:
+                failed.append({"line": line, "reason": f"Could not parse date: {date_str}"})
+                continue
+
+            # Validate ticker exists in universe
+            if ticker not in valid_tickers:
+                failed.append({"line": line, "reason": f"Ticker {ticker} not in universe"})
+                continue
+
+            # Validate date is a trading day (exists in OHLCV)
+            has_bar = db.execute(
+                "SELECT 1 FROM universe_ohlcv WHERE ticker=? AND date=?", (ticker, entry_date)
+            ).fetchone()
+            if not has_bar:
+                failed.append({"line": line, "reason": f"No trading data for {ticker} on {entry_date}"})
+                continue
+
+            # Check duplicate
+            if db.execute(
+                "SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                (setup_type, ticker, entry_date),
+            ).fetchone():
+                failed.append({"line": line, "reason": f"Duplicate: {ticker} {entry_date}"})
+                continue
+
+            # Insert
+            db.execute(
+                "INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
+                (setup_type, ticker, entry_date, entry_date),
+            )
+            added.append({"ticker": ticker, "entry_date": entry_date})
+
+    return {"added": len(added), "failed": len(failed), "details_added": added, "details_failed": failed}
 async def get_chart_by_ticker(setup_type: str, ticker: str, entry_date: str):
     """Generate chart PNG for any ticker+date (used by AI review)."""
     # Try universe_ohlcv first, fall back to yfinance
