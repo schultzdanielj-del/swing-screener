@@ -56,16 +56,17 @@ and is not being rebuilt. The brute force search against this library is the cor
 method. What changes is what the search is optimizing against.
 
 **Tight for building, loose for live.**
-The grinders have two tunable knobs — signal grind margin (how tight the bounding box
-is around examples) and refinement depth (how many conditions discriminate winners from
-losers). During the example-building phase, both are cranked tight: 0% margin produces
-a small, high-concentration signal pile that makes vetting fast; max refinement depth
-aggressively culls losers. The output is intentionally too tight to catch live signals
-reliably — but every chart you vet is likely a real setup, so you bank examples fast.
-Once the example library is fat, you loosen both knobs: wider margin so the signal
-grind can catch signals that look slightly different from historical examples, shallower
-refinement depth to reduce curve-fit risk. The EV grinder handles ranking from there.
-Both knobs are set via sliders in the Settings Lock step after the grind cycle completes.
+The refinement grinder has a tunable knob — depth (how many conditions discriminate
+winners from losers). During the example-building phase, depth is cranked to maximum:
+aggressively culls losers, producing a small high-concentration pile that makes vetting
+fast. The output is intentionally too tight to catch live signals reliably — but every
+chart you vet is likely a real setup, so you bank examples fast. Once the example
+library is fat, you reduce depth to lower curve-fit risk. The EV grinder handles
+ranking from there. Depth is set via a slider in the Settings Lock step after the
+grind cycle completes.
+
+The signal grind margin (5%) is a search parameter, not a post-hoc knob. Changing it
+fundamentally alters what conditions the beam search finds. It stays fixed.
 
 ---
 
@@ -80,30 +81,27 @@ examples found). Steps 5-8 run once after convergence.
 
 ```
 The Vetting Loop (repeat until convergence):
-  Step 1: Signal Grind      — examples vs universe → candidate conditions
-                               Always runs at 0% margin (tightest). Saves progression
-                               data at 0/1/2/3/4/5% margin for post-hoc adjustment.
+  Step 1: Signal Grind      — examples vs universe → candidate conditions (5% margin, fixed)
   Step 2: Exit Grind        — optimal exit condition from example entry bar highs
   Step 3: Refinement Grind  — scans universe with step 1 conditions, clusters consecutive
                                bars, classifies via ceiling+exit race, then grinds
                                winners vs losers (cluster-aware). Runs at max depth.
-                               Saves progression data per depth level. Manual gate.
+                               Saves depth progression per level. Manual gate.
   Step 4: Vet               — review winner pile
                                YES → AI review → approve → examples → loop back to step 1
 
 After Convergence (run once, in order):
   Step 5: EV Grinder        — unified correlative scoring: all ~4M market features +
                                setup-specific features → per-signal estimated WR, MFE, EV
-  Step 6: Settings Lock     — review signal margin + refinement depth sliders, see
-                               downstream impact on signal count / WR / EV calibration,
-                               lock in settings for nightly scanning
+  Step 6: Settings Lock     — review refinement depth slider, see downstream impact on
+                               signal count / WR / EV calibration, lock in for nightly scanning
   Step 7: Profit Grind      — optimal exit strategy, maximizes compounded equity growth
                                (runs on the locked signal set from step 6)
   Step 8: Health Check      — cycle quality, EV, promote / revert / live-ready
 
 Live:
   Nightly scan + EV scoring → unified watchlist (rank ordered, no filtering)
-  Uses locked settings from step 6 (margin + depth)
+  Uses locked refinement depth from step 6
 ```
 
 **Convergence:** When a full vetting pass on the refined winner pile produces no new
@@ -138,37 +136,19 @@ universe. More examples → tighter discrimination → fewer false positives.
 - 100% example pass rate enforced — every known example must pass all conditions
 - Peak target: ≤3-5 signals/day at each historical tier
 - Multi-pass: daily expressions first, then weekly, then monthly on top
-- Always runs at 0% margin (skin-tight to example min/max on every expression)
-
-**Margin progression:**
-After the beam search completes, a post-hoc signal count is computed at each margin
-level (0%, 1%, 2%, 3%, 4%, 5%). For each level, the condition bounds are widened by
-that percentage of the example range on each side, and the resulting signal count and
-peak/day are recorded. This data is saved in the output JSON as `margin_progression`.
-The beam search itself always runs at 0% — progression is read-only analysis.
-
-The margin slider controls how tight the bounding box is around known examples:
-- **Tight (0-1%):** Fewer signals, each one a near-clone of known setups. Best for
-  vetting — small pile, high hit rate, bank examples fast.
-- **Loose (4-5%):** More signals, catches setups that look slightly different from
-  historical examples. Best for live scanning — wider net, less curve fit, let the
-  EV grinder handle ranking.
+- 5% margin on bounding boxes (fixed — this is a search parameter, not tunable post-hoc)
 
 **What changes from V1:**
 - D1 tier gets a hard row floor constraint: stop locking D1 conditions if surviving
   1wk rows would drop below a minimum threshold (e.g. 500 rows). This prevents D1
   from over-locking and destroying downstream tiers (BUG-001).
-- Default margin changed from 5% to 0%. The beam search always finds conditions at
-  the tightest possible bounding box. Widening is a post-hoc choice via the slider.
-- Margin progression data saved in output JSON for post-hoc adjustment without re-running.
 - After every grind, compute and store: n_conditions, n_signals, peak/day, signal
-  stability vs previous cycle. These feed Layer 8.
+  stability vs previous cycle. These feed Layer 7.
 - Results upload to Railway automatically as part of the grind run — no separate step.
 
 **Output:**
-- Condition set for this cycle (at 0% margin)
+- Condition set for this cycle
 - Raw signal list (ticker + date) across 5yr history
-- Margin progression: signal count + peak/day at each margin level (0-5%)
 
 **Reuse from V1:** `pyramid_grinder.py` — the engine is correct, fix D1 constraint.
 
@@ -421,23 +401,16 @@ Those scripts are preserved for reference but are no longer pipeline dependencie
 ## Layer 5: Settings Review & Lock-In
 
 **What it solves:** After the grind cycle and EV scoring are complete, you need to
-choose the operating point for live scanning. The grinders ran at their tightest
-settings (0% margin, max depth) to give maximum flexibility. Now you decide where
-on the tightness spectrum the nightly scan should operate.
+choose the operating point for live scanning. The refinement grinder ran at maximum
+depth to give maximum flexibility. Now you decide where on the depth spectrum the
+nightly scan should operate.
 
 **When it runs:** After the EV grinder (step 5). This is a manual, UI-driven step —
 no compute, just review and decision.
 
 **What you see:**
 
-A summary screen with two sliders and their impact:
-
-**Signal grind margin slider (0-5%):**
-- Reads `margin_progression` from the signal grind output JSON
-- Shows signal count + peak/day at each margin level
-- At 0%: fewest signals, skin-tight to examples (vetting mode)
-- At 5%: most signals, widest net (old default, live mode)
-- Conditions don't change — same expressions. Only the bounds widen.
+A summary screen with one slider and its impact:
 
 **Refinement depth slider (1 to max depth):**
 - Reads `depth_progression` from the refinement grind output JSON
@@ -448,9 +421,9 @@ A summary screen with two sliders and their impact:
   conditions are applied. The rest are ignored.
 
 **Downstream impact preview:**
-- Combined signal count at the chosen settings
-- Estimated WR and EV calibration at those settings (from EV grinder data)
-- Comparison to the "tightest" and "loosest" extremes
+- Signal count at the chosen depth
+- Estimated WR and EV calibration at that depth (from EV grinder data)
+- Comparison to the deepest and shallowest extremes
 
 **Lock-in:**
 When you're satisfied, hit "Lock In." This writes a settings config:
@@ -460,7 +433,6 @@ scan_settings_{setup}.json:
 {
   "setup_type": "dtss",
   "locked_at": "2026-03-16T...",
-  "signal_margin_pct": 3,
   "refinement_depth": 60,
   "signal_grind_source": "pyramid_dtss_mp_sig1218_pk14_20260310.json",
   "refinement_source": "refinement_dtss_cl102_pk5_20260313.json",
@@ -468,17 +440,16 @@ scan_settings_{setup}.json:
 }
 ```
 
-The nightly scan reads this config. It takes the signal conditions from the signal
-grind output, widens each condition's bounds by the locked margin percentage, applies
+The nightly scan reads this config. It applies all signal conditions (unchanged) plus
 only the first N refinement conditions (where N = locked depth), and scans tonight's
 bars against that combined set.
 
 **Lifecycle:**
-- **Example building phase:** Lock at 0% margin, max depth. The nightly scan is
-  intentionally too tight — it's there for live testing and catching obvious signals,
-  not for breadth. Your energy goes into vetting.
-- **Live readiness phase:** Lock at 3-5% margin, moderate depth. The nightly scan
-  catches real signals. The EV grinder ranks them. You trade the top of the list.
+- **Example building phase:** Lock at max depth. The nightly scan is intentionally
+  tight — it's there for live testing and catching obvious signals, not for breadth.
+  Your energy goes into vetting.
+- **Live readiness phase:** Lock at moderate depth. The nightly scan catches more
+  signals. The EV grinder ranks them. You trade the top of the list.
 - **Re-lock any time:** After any regrind cycle, you review and re-lock. The old
   settings are overwritten. The nightly scan picks up the new settings automatically.
 
@@ -495,10 +466,10 @@ parameters — that maximize account growth consistency (SQN), not raw per-trade
 MFE capture. Brute-forces across the full parameter space at multiple EV slider
 threshold levels.
 
-**When it runs:** After EV Grinder (Layer 5). Runs on the EV-scored signal set,
-testing exit strategies at various Slider 1 (quality_score threshold) and
-Slider 2 (minimum predicted WR) settings. The optimal exit strategy may differ
-at different quality levels — tight stops may work for A+ signals but not B signals.
+**When it runs:** After Settings Lock (step 6). Runs on the signal set defined by
+the locked settings — the signals you'd actually trade at the chosen depth, scored
+by the EV grinder. The profit grind optimizes exit strategy for the top-ranked
+signals, not the entire set.
 
 **Entry prices:** Uses actual entry candle prices where available (examples and
 vetted YES picks have real entry candles from the vetting flow). For non-example
@@ -574,7 +545,6 @@ EV on signal set:
 - ev_estimate: win_rate × median_winner − loss_rate × median_loser
 
 Settings impact:
-- locked_margin_pct: current signal grind margin setting
 - locked_refinement_depth: current refinement depth setting
 - signal_count_at_locked_settings: how many signals the locked settings produce
 - wr_at_locked_settings: win rate at the locked settings
@@ -621,8 +591,8 @@ Once a setup type is live-ready, it contributes to the unified nightly watchlist
 After each market close:
 
 1. Load locked settings from `scan_settings_{setup}.json` for each live setup type
-2. For each live setup type: apply signal conditions at the locked margin + refinement
-   conditions truncated to the locked depth. Scan tonight's bars.
+2. For each live setup type: apply signal conditions + refinement conditions truncated
+   to the locked depth. Scan tonight's bars.
 3. For each signal that fires: compute EV score using the EV grinder's equation
    (look up market regime features + setup-specific features, run through scoring curves)
 4. Run AI chart vet on each signal — chart shape check only, flags but doesn't remove
@@ -660,7 +630,7 @@ status            — running / complete / reverted
 conditions        — full condition set with tier, expression, low, high, filter_power
 signals           — deduped signal set with classification labels
 exit_condition    — expression, direction, threshold used for exit filter
-locked_settings   — signal_margin_pct + refinement_depth from Settings Lock
+locked_settings   — refinement_depth from Settings Lock
 health_metrics    — all Layer 7 metrics for this cycle
 promoted_at       — timestamp when promoted to current
 reverted_at       — timestamp if reverted
@@ -687,7 +657,7 @@ be exact — no step ID mismatch between UI and agent.
 
 ```
 signal_grind     → pyramid_grinder.py --setup {setup} --beam 10000 --depth 100 --peak-target 3
-                   (always runs at 0% margin; saves margin_progression for 0-5%)
+                   (5% margin, fixed — this is a search parameter)
 exit_grind       → signal_exit_grinder.py --setup {setup}
 refinement_grind → pyramid_grinder.py --setup {setup} --blackout
                    (gathers raw signal clusters + ceiling/exit classification
@@ -742,8 +712,7 @@ These need to be rebuilt or are new:
 | AI review queue | New — server.py endpoint + UI queue view |
 | EV grinder | ✅ **DONE** — `scripts/ev_grinder.py` (replaces market_grinder + setup_grinder) |
 | Fundamentals cache | ✅ **DONE** — `scripts/fetch_fundamentals.py` (Yahoo Finance sector/float/shares) |
-| Settings Lock UI | New — sliders for signal margin + refinement depth, writes scan_settings JSON |
-| Margin progression (signal grind) | New — post-hoc signal counts at 0-5% margin levels |
+| Settings Lock UI | New — refinement depth slider, writes scan_settings JSON |
 | Depth progression (refinement grind) | New — condition set + cluster counts at each depth level |
 | Nightly watchlist | New — unified ranked list across all setup types, reads locked settings |
 | UI: EV display + watchlist | New — EV scores, WR, MFE per signal |
@@ -764,12 +733,12 @@ Build in this order so each piece is useful immediately when complete:
 7. **AI review queue** — two-stage vetting gate, server endpoint + UI
 8. ~~**Fundamentals cache**~~ — **DONE** — `fetch_fundamentals.py`
 9. ~~**EV grinder**~~ — **DONE** — `scripts/ev_grinder.py`
-10. **Margin progression** — signal grind saves post-hoc signal counts at 0-5% margin
-11. **Depth progression** — refinement grind saves condition set + cluster counts per depth level
-12. **Settings Lock UI** — sliders + lock-in, writes `scan_settings_{setup}.json`
-13. **Profit grind** — trade exit optimization, reads locked settings
-14. **UI: EV display + unified nightly watchlist** — the live product
+10. **Depth progression** — refinement grind saves condition set + cluster counts per depth level
+11. **Settings Lock UI** — depth slider + lock-in, writes `scan_settings_{setup}.json`
+12. **Profit grind** — trade exit optimization, reads locked settings
+13. **UI: EV display + unified nightly watchlist** — the live product
 
 **Current status (2026-03-16):** DTSS Phase 2 complete (signal grind + exit grind +
-refinement grind). EV grinder complete (inc 1-6). Next: margin progression + depth
-progression (steps 10-11), then Settings Lock UI (step 12), then vet winner pile.
+refinement grind). EV grinder complete (inc 1-6). Signal grind margin slider attempted
+and reverted — margin is a search parameter, not post-hoc tunable. Next: depth
+progression (step 10), then Settings Lock UI (step 11), then vet winner pile.
