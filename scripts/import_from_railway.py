@@ -191,9 +191,10 @@ def main():
     print("=" * 60)
 
     if not os.path.exists(DB_PATH):
-        print(f"\n  ✗ DB not found at {DB_PATH}")
-        print("  Run 'python -c \"import server\"' first to create it.")
-        sys.exit(1)
+        print(f"\n  DB not found — creating via server init...")
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        import server  # triggers init_db()
+        print(f"  ✓ DB created at {DB_PATH}")
 
     db = get_db()
 
