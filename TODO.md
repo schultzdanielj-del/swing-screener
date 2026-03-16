@@ -400,6 +400,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ### Vetting
 11. **Vet winner pile** — review 365 winners, add examples, loop if needed.
+12. **AI review quality improvement** — `review_samples.py` prompt needs tightening. Current issues: (a) AI sometimes returns "UNKNOWN" instead of APPROVE/REJECT, (b) reasoning is verbose chart description instead of pattern evaluation, (c) needs to compare candidate against example library centroid/characteristics, not just describe what it sees. The prompt should force a binary decision with 2-3 sentence reasoning focused on why this does or doesn't match the setup pattern. No chart narration.
 
 ---
 
