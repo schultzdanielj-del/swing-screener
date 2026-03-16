@@ -1,18 +1,18 @@
 """
-ScanPerfect Desktop — Auto-launch server + browser.
+ScanPerfect Desktop — Local server + auto-open browser.
 
 Usage:
     python scanperfect.py
 
-Starts the local FastAPI server and opens the UI in your default browser.
-Close the terminal window (or Ctrl+C) to stop the server.
+Starts the local server and opens the UI in your default browser.
+Close the terminal window (or Ctrl+C) to shut down.
 """
 
-import os
 import sys
-import time
-import webbrowser
+import os
 import threading
+import webbrowser
+import time
 
 # Ensure we're running from the project root
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -31,7 +31,7 @@ def open_browser():
             return
         except Exception:
             time.sleep(0.5)
-    # Fallback: open anyway
+    # Server didn't start in 15s — open anyway, user will see the error
     webbrowser.open(URL)
 
 
