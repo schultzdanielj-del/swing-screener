@@ -165,7 +165,7 @@ kbd{background:var(--s3);border:1px solid var(--b2);padding:0 4px;font:9px var(-
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--b2)}
 ::-webkit-scrollbar-thumb:hover{background:var(--t3)}
-.ex-chart-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.ex-chart-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
 .ex-cg-card{background:var(--bg);position:relative;cursor:pointer;aspect-ratio:16/10;overflow:hidden;border:1px solid var(--b1)}
 .ex-cg-card:hover{background:var(--s2)}
 .ex-cg-card.expanded{grid-column:1/-1;aspect-ratio:unset;height:400px}
@@ -212,9 +212,9 @@ kbd{background:var(--s3);border:1px solid var(--b2);padding:0 4px;font:9px var(-
 </div></div>
 <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;margin-bottom:2px">
 <div style="display:flex;align-items:center;gap:16px;font-size:12px">
-<span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:0;border-top:2px dashed #E0E0E0;display:inline-block"></span><span style="color:#B0B0B0">Entry</span></span>
-<span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:0;border-top:2px dashed #888;display:inline-block"></span><span style="color:#888">Exit Signal</span></span>
-<span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:0;border-top:2px dotted #555;display:inline-block"></span><span style="color:#555">Profit Exit</span></span>
+<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:#E0E0E0;display:inline-block"></span><span style="color:#B0B0B0">Entry</span></span>
+<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:#E8A735;display:inline-block"></span><span style="color:#888">Exit Signal</span></span>
+<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:#5B8DEF;display:inline-block"></span><span style="color:#555">Profit Exit</span></span>
 </div>
 <div style="display:flex;gap:0;border:1px solid var(--b1)"><button class="btn bn bs ex-sort-btn" data-sort="adr" onclick="setExSort('adr')" style="border:none;padding:4px 10px;font-size:11px">ADR Move ↓</button><button class="btn bn bs ex-sort-btn on" data-sort="ticker" onclick="setExSort('ticker')" style="border:none;padding:4px 10px;font-size:11px">Ticker</button><button class="btn bn bs ex-sort-btn" data-sort="date" onclick="setExSort('date')" style="border:none;padding:4px 10px;font-size:11px">Date</button></div>
 </div>
