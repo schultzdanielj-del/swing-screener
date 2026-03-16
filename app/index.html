@@ -203,14 +203,6 @@ kbd{background:var(--s3);border:1px solid var(--b2);padding:0 4px;font:9px var(-
 <input id="nsDesc" placeholder="Description (e.g. Double Top Short Sell)" style="width:100%;background:var(--bg);border:1px solid var(--b1);color:var(--t1);font:14px var(--f);padding:8px 10px;outline:none;margin-bottom:10px">
 <div style="display:flex;gap:8px"><button class="btn ba bs" onclick="createSetup()">Create</button><button class="btn bn bs" onclick="hideNewSetupModal()">Cancel</button></div>
 </div>
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-<div style="display:flex;align-items:center;gap:16px;font-size:12px">
-<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:#E0E0E0;display:inline-block"></span><span style="color:#B0B0B0">Entry</span></span>
-<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:#E8A735;display:inline-block"></span><span style="color:#888">Exit Signal</span></span>
-<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:#A855F7;display:inline-block"></span><span style="color:#888">Profit Exit</span></span>
-</div>
-<div style="display:flex;gap:0;border:1px solid var(--b1)"><button class="btn bn bs ex-sort-btn" data-sort="adr" onclick="setExSort('adr')" style="border:none;padding:4px 10px;font-size:11px">ADR Move ↓</button><button class="btn bn bs ex-sort-btn on" data-sort="ticker" onclick="setExSort('ticker')" style="border:none;padding:4px 10px;font-size:11px">Ticker</button><button class="btn bn bs ex-sort-btn" data-sort="date" onclick="setExSort('date')" style="border:none;padding:4px 10px;font-size:11px">Date</button></div>
-</div>
 <div style="display:flex;gap:16px;margin-bottom:12px">
 <div style="flex:1">
 <div class="add-section"><div class="add-section-hdr" onclick="toggleAddSection()"><span style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.1em;font-weight:500">Add Examples</span><span id="addSectionArrow" style="color:var(--t3);font-size:13px">▸</span></div>
@@ -225,6 +217,14 @@ kbd{background:var(--s3);border:1px solid var(--b2);padding:0 4px;font:9px var(-
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.1em;font-weight:500">Setup Description</span><button class="btn bn bs" style="font-size:10px;padding:2px 8px" onclick="saveSetupDesc()">Save</button></div>
 <textarea id="setupDesc" placeholder="Describe the setup pattern — what makes it valid, what disqualifies it. Used by the AI reviewer." style="flex:1;min-height:80px;background:var(--bg);border:1px solid var(--b1);color:var(--t2);font:13px var(--f);padding:8px 10px;outline:none;resize:vertical;line-height:1.5"></textarea>
 </div>
+</div>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;padding-top:8px;border-top:1px solid var(--b1)">
+<div style="display:flex;align-items:center;gap:16px;font-size:12px">
+<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:#E0E0E0;display:inline-block"></span><span style="color:#B0B0B0">Entry</span></span>
+<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:#E8A735;display:inline-block"></span><span style="color:#888">Exit Signal</span></span>
+<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:#A855F7;display:inline-block"></span><span style="color:#888">Profit Exit</span></span>
+</div>
+<div style="display:flex;gap:0;border:1px solid var(--b1)"><button class="btn bn bs ex-sort-btn" data-sort="adr" onclick="setExSort('adr')" style="border:none;padding:4px 10px;font-size:11px">ADR Move ↓</button><button class="btn bn bs ex-sort-btn on" data-sort="ticker" onclick="setExSort('ticker')" style="border:none;padding:4px 10px;font-size:11px">Ticker</button><button class="btn bn bs ex-sort-btn" data-sort="date" onclick="setExSort('date')" style="border:none;padding:4px 10px;font-size:11px">Date</button></div>
 </div>
 <div id="exChartGrid" class="ex-chart-grid"></div>
 </div></div>
