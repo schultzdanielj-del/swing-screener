@@ -1651,12 +1651,35 @@ def score_signals(percentile_matrix, features, all_signals, label):
     if n_features == 0:
         print("  WARNING: No features — all signals get neutral scores")
         return [{"quality_score": 50.0, "predicted_wr": 0.5, "predicted_mfe": 0.0,
-                 "ev": 0.0, "feature_percentiles": []} for _ in range(n_signals)]
+                 "ev": 0.0} for _ in range(n_signals)]
 
-    weights = np.array([f.get("weight", 0.0) for f in features], dtype=np.float64)
+    # Category-balanced weighting: market features and setup features each get
+    # 50% of total weight. Without this, 1800 market features drown out 3 setup
+    # features even though each individual feature has similar screening strength.
+    raw_weights = np.array([f.get("weight", 0.0) for f in features], dtype=np.float64)
+    is_market = np.array([f.get("source") == "market" for f in features])
+    is_setup = ~is_market
+
+    market_sum = raw_weights[is_market].sum()
+    setup_sum = raw_weights[is_setup].sum()
+
+    weights = np.zeros_like(raw_weights)
+    if market_sum > 1e-10 and setup_sum > 1e-10:
+        # Both categories present: each gets 50%
+        weights[is_market] = raw_weights[is_market] / market_sum * 0.5
+        weights[is_setup] = raw_weights[is_setup] / setup_sum * 0.5
+    elif market_sum > 1e-10:
+        weights[is_market] = raw_weights[is_market] / market_sum
+    elif setup_sum > 1e-10:
+        weights[is_setup] = raw_weights[is_setup] / setup_sum
+
     total_weight = weights.sum()
     if total_weight < 1e-10:
         total_weight = 1.0
+
+    n_mkt = int(is_market.sum())
+    n_stp = int(is_setup.sum())
+    print(f"  Weights: {n_mkt} market (50%) + {n_stp} setup (50%) = {n_features} features")
 
     # 1. Quality score: matrix-vector multiply (already vectorized)
     quality_scores = percentile_matrix @ weights / total_weight  # (n_signals,)
@@ -1712,9 +1735,6 @@ def score_signals(percentile_matrix, features, all_signals, label):
     # 4. EV = (WR * MFE) - ((1 - WR) * 1.0 ADR assumed stop)
     ev = predicted_wr * predicted_mfe - (1.0 - predicted_wr) * 1.0
 
-    # Build feature_percentiles matrix for output (round once, vectorized)
-    pct_rounded = np.round(percentile_matrix, 1)
-
     elapsed = time.time() - t0
 
     # Build results list
@@ -1725,7 +1745,6 @@ def score_signals(percentile_matrix, features, all_signals, label):
             "predicted_wr": round(float(predicted_wr[si]), 4),
             "predicted_mfe": round(float(predicted_mfe[si]), 3),
             "ev": round(float(ev[si]), 3),
-            "feature_percentiles": pct_rounded[si].tolist(),
         })
 
     # Verification
@@ -1927,7 +1946,6 @@ def run(setup_type):
             "predicted_wr": scores_pre[i]["predicted_wr"],
             "predicted_mfe": scores_pre[i]["predicted_mfe"],
             "ev": scores_pre[i]["ev"],
-            "feature_percentiles": scores_pre[i]["feature_percentiles"],
         })
 
     post_signals_out = []
@@ -1942,7 +1960,6 @@ def run(setup_type):
             "predicted_wr": scores_post[pi]["predicted_wr"],
             "predicted_mfe": scores_post[pi]["predicted_mfe"],
             "ev": scores_post[pi]["ev"],
-            "feature_percentiles": scores_post[pi]["feature_percentiles"],
         })
 
     # Save output
