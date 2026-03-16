@@ -1,45 +1,47 @@
 """
-ScanPerfect Desktop — Native window launcher.
+ScanPerfect Desktop — Auto-launch server + browser.
 
 Usage:
     python scanperfect.py
 
-Opens the ScanPerfect UI in a native desktop window.
-The FastAPI server runs embedded — no separate process, no browser tab.
-Close the window and everything shuts down cleanly.
-
-Requirements:
-    pip install pywebview
-
-On Windows, pywebview uses Edge WebView2 (built into Windows 10/11).
+Starts the local FastAPI server and opens the UI in your default browser.
+Close the terminal window (or Ctrl+C) to stop the server.
 """
 
-import sys
 import os
+import sys
+import time
+import webbrowser
+import threading
 
 # Ensure we're running from the project root
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# Import the FastAPI app (this also triggers init_db + OHLCV cache load)
-from server import app
+PORT = 8000
+URL = f"http://localhost:{PORT}"
 
-import webview
+
+def open_browser():
+    """Wait for server to be ready, then open browser."""
+    import urllib.request
+    for _ in range(30):
+        try:
+            urllib.request.urlopen(f"{URL}/api/setups", timeout=2)
+            webbrowser.open(URL)
+            return
+        except Exception:
+            time.sleep(0.5)
+    # Fallback: open anyway
+    webbrowser.open(URL)
 
 
 def main():
-    # Create native window pointing at the FastAPI ASGI app
-    window = webview.create_window(
-        title="ScanPerfect",
-        url=app,
-        width=1400,
-        height=900,
-        min_size=(1000, 600),
-        background_color="#0a0e17",
-        text_select=True,
-    )
+    # Open browser in background thread once server is ready
+    threading.Thread(target=open_browser, daemon=True).start()
 
-    # Start the GUI loop (blocks until window is closed)
-    webview.start(debug="--debug" in sys.argv, private_mode=False)
+    # Start uvicorn (blocks until Ctrl+C or window close)
+    import uvicorn
+    uvicorn.run("server:app", host="127.0.0.1", port=PORT, log_level="warning")
 
 
 if __name__ == "__main__":
