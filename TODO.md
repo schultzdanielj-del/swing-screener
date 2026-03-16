@@ -379,8 +379,8 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 ## Immediate Tasks
 
 ### Grinder Improvements
-1. **Depth progression output (refinement grinder)** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running.
-2. **Margin progression output (signal grinder)** — save tier-by-tier signal counts at different bounding box margins (5%, 3%, 1%, 0%). More examples = tighter margins viable. Allows post-hoc margin tuning without re-running.
+1. **Depth progression output (refinement grinder)** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running via Settings Lock UI.
+2. **Multi-run consensus (signal grinder)** — the beam search is non-deterministic: different runs find different condition sets with wildly different signal counts. Run N times (e.g. 5-10), keep conditions that appear in most runs. A condition in 8/10 runs is robust; a condition in 1/10 was a fluke. This stabilizes the foundation the entire downstream pipeline depends on. Signal grind margin (5%) is a search parameter and stays fixed — it is NOT tunable post-hoc (attempted and reverted 2026-03-16, produced worse results).
 3. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
 
 ### Phase 3 — EV Grinder
@@ -418,7 +418,8 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 ## Key Design Decisions
 
 - **Pyramid with D1 cap=15 is the official signal grind engine.** Experimental grinders (dartboard, hybrid) failed. Shelved.
-- **Beam search instability accepted.** Individual runs produce usable signal sets despite low run-to-run overlap.
+- **Beam search instability is a known problem.** Individual runs produce usable signal sets but with low run-to-run overlap. Multi-run consensus (task #2) will fix this by keeping only conditions that appear across most runs. Until then, instability is accepted.
+- **Signal grind margin (5%) is a search parameter, not a post-hoc knob.** Changing it to 0% was attempted (2026-03-16) and produced worse results (2,254 signals vs 1,218 at 5%). The margin fundamentally changes what conditions the beam search finds. It stays fixed at 5%.
 - **Cluster-aware refinement scoring.** A losing cluster only counts as eliminated when ALL its bars are dead.
 - **No re-scan/re-classify in refinement.** Phase 1 classification is truth.
 - **Regime runs on pre-refinement data.** Post-refinement has too few losers for the model to learn from.
