@@ -945,6 +945,12 @@ async def get_refinement_signals(setup_type: str, pile: str = Query("post")):
     # Normalize field names for the vetting UI
     vetting_decisions = _load_json(VETTING_DATA_DIR / "vetting" / f"vetting_{setup_type}.json", {})
     example_dates = _get_example_dates(setup_type)
+    # Also load rejected signals from DB
+    with get_db() as db:
+        rejected_rows = db.execute(
+            "SELECT ticker, signal_date FROM rejected_signals WHERE setup_type=?", (setup_type,)
+        ).fetchall()
+    rejected_set = set(f"{r['ticker']}_{r['signal_date']}" for r in rejected_rows)
     out = []
     for s in signals:
         sig_date = s.get("signal_date", s.get("date", ""))
@@ -954,6 +960,9 @@ async def get_refinement_signals(setup_type: str, pile: str = Query("post")):
             continue
         key = f"{tk}_{sig_date}"
         verdict_data = vetting_decisions.get(key, {})
+        verdict = verdict_data.get("verdict")
+        if not verdict and key in rejected_set:
+            verdict = "no"
         out.append({
             "ticker": tk,
             "signal_date": sig_date,
@@ -963,7 +972,7 @@ async def get_refinement_signals(setup_type: str, pile: str = Query("post")):
             "classification": s.get("classification"),
             "pile": s.get("pile"),
             "is_example": s.get("is_example", 0),
-            "verdict": verdict_data.get("verdict"),
+            "verdict": verdict,
             "entry_date": verdict_data.get("entry_date"),
         })
     n_winners = sum(1 for s in out if s["pile"] == "winner")
