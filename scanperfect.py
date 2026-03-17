@@ -1225,8 +1225,8 @@ class PipelineTab(QWidget):
                     self._details[nid].update_from_state(steps)
 
             elif nid == "examples":
-                # Progress bar: examples / unique winner tickers
-                # Winner pile already includes examples (they're AUTO_WIN)
+                # Progress bar: examples / winner clusters
+                # winner_signals is one entry per winning cluster (365 per refinement)
                 n_winners = 0
                 try:
                     with get_db() as db:
@@ -1236,8 +1236,7 @@ class PipelineTab(QWidget):
                         ).fetchone()
                         if row:
                             rdata = json.loads(row["data"])
-                            winners = rdata.get("winner_signals", [])
-                            n_winners = len(set(w.get("ticker", "") for w in winners))
+                            n_winners = len(rdata.get("winner_signals", []))
                 except Exception:
                     pass
                 if n_winners == 0:
@@ -1247,8 +1246,7 @@ class PipelineTab(QWidget):
                             if fp.name.startswith("refinement_%s_" % setup) and fp.suffix == ".json":
                                 try:
                                     rdata = json.loads(fp.read_text())
-                                    winners = rdata.get("winner_signals", [])
-                                    n_winners = len(set(w.get("ticker", "") for w in winners))
+                                    n_winners = len(rdata.get("winner_signals", []))
                                 except Exception:
                                     pass
                                 break
