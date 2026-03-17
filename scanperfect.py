@@ -730,12 +730,18 @@ class FlowchartCanvas(QWidget):
             summary_y = row2_top
         self._rects["summary"] = (summary_x, summary_y, summary_w, summary_h)
 
-        # Expanded card overlay — grows both wider and taller
+        # Expanded card overlay — grows wider/taller, CENTERED on screen
         if self._expanded_id and self._expanded_id in self._rects:
             ex, ey, ew, _ = self._rects[self._expanded_id]
             new_w = ew + self._anim_expand_w
             new_h = nh + self._anim_expand_h
-            self._rects[self._expanded_id] = (ex, ey, new_w, new_h)
+            # Center horizontally on the canvas
+            center_x = w // 2 - new_w // 2
+            # Lerp from original x to centered x based on animation progress
+            target_w = getattr(self, '_anim_target_w', 0) or 1
+            t = min(1.0, self._anim_expand_w / target_w) if target_w > 0 else 0
+            new_x = int(ex + (center_x - ex) * t)
+            self._rects[self._expanded_id] = (new_x, ey, new_w, new_h)
 
         self._expand_h = self._anim_expand_h
         self.setMinimumHeight(int(y + loop_v + nh + 40))
@@ -1030,53 +1036,41 @@ class FlowchartCanvas(QWidget):
         else:
             p.drawRect(x, y, w, h)
 
-        # Name
+        # Name + inline example count for Examples card
         p.setPen(QPen(text_col))
         f = p.font(); f.setPixelSize(name_px); f.setWeight(QFont.DemiBold); p.setFont(f)
         name_y = y + pad
-        name_h = int(header_h * 0.35)
-        p.drawText(QRectF(x + pad, name_y, w - pad*2, name_h),
-                   Qt.AlignLeft | Qt.AlignVCenter, nd["name"])
-
-        # Info / desc
-        info = self._infos.get(nid, nd["desc"])
-        p.setPen(QPen(sub_col))
-        f.setPixelSize(desc_px); f.setWeight(QFont.Normal); p.setFont(f)
-        desc_y = name_y + name_h
-        desc_h = int(header_h * 0.3)
-        p.drawText(QRectF(x + pad, desc_y, w - pad*2, desc_h),
-                   Qt.AlignLeft | Qt.AlignVCenter, info)
-
-        # Examples: thick progress bar with count inside
+        name_h = int(header_h * 0.4)
+        title_text = nd["name"]
         if nid == "examples" and not locked:
-            progress = getattr(self, "_example_progress", 0.0)
             n_ex = getattr(self, "_example_n", 0)
             n_tot = getattr(self, "_example_total", 0)
-            bar_y = desc_y + desc_h + 2
+            if n_tot > 0:
+                title_text = "%s  %d / %d" % (nd["name"], n_ex, n_tot)
+            else:
+                title_text = "%s  %d" % (nd["name"], n_ex)
+        p.drawText(QRectF(x + pad, name_y, w - pad*2, name_h),
+                   Qt.AlignLeft | Qt.AlignVCenter, title_text)
+
+        # Progress bar for Examples (below title, no desc text)
+        if nid == "examples" and not locked:
+            progress = getattr(self, "_example_progress", 0.0)
+            bar_y = name_y + name_h + 2
             bar_h = max(18, int(header_h * 0.18))
             bar_w = w - pad * 2
-            bar_r = bar_h // 2  # fully rounded ends
+            bar_r = bar_h // 2
 
-            # Track background
             p.setPen(Qt.NoPen)
             p.setBrush(QColor("#1a0a0c"))
             p.drawRoundedRect(int(x + pad), int(bar_y), int(bar_w), bar_h, bar_r, bar_r)
 
-            # Fill
             if progress > 0:
-                fill_w = max(bar_h, int(bar_w * min(progress, 1.0)))  # min width = bar height for rounded cap
+                fill_w = max(bar_h, int(bar_w * min(progress, 1.0)))
                 fg = QLinearGradient(QPointF(x + pad, bar_y), QPointF(x + pad + fill_w, bar_y))
                 fg.setColorAt(0, QColor("#5c2d33"))
                 fg.setColorAt(1, QColor("#8c4450"))
                 p.setBrush(fg)
                 p.drawRoundedRect(int(x + pad), int(bar_y), fill_w, bar_h, bar_r, bar_r)
-
-            # Text inside the bar: "66 / 365 winners"
-            bar_text = "%d / %d winners" % (n_ex, n_tot) if n_tot > 0 else "%d examples" % n_ex
-            p.setPen(QPen(QColor("#E0E0E0")))
-            f.setPixelSize(max(10, int(bar_h * 0.6))); f.setWeight(QFont.DemiBold); p.setFont(f)
-            p.drawText(QRectF(x + pad + 8, bar_y, bar_w - 16, bar_h),
-                       Qt.AlignLeft | Qt.AlignVCenter, bar_text)
 
         # Lock icon
         elif locked:
@@ -1231,18 +1225,10 @@ class PipelineTab(QWidget):
                     self._details[nid].update_from_state(steps)
 
             elif nid == "examples":
-                # Progress bar: examples / unique winner tickers (excluding examples themselves)
+                # Progress bar: examples / unique winner tickers
+                # Winner pile already includes examples (they're AUTO_WIN)
                 n_winners = 0
                 try:
-                    # Get example tickers to exclude from winner count
-                    example_tickers = set()
-                    with get_db() as db:
-                        ex_rows = db.execute(
-                            "SELECT DISTINCT ticker FROM examples WHERE setup_type=?", (setup,)
-                        ).fetchall()
-                        example_tickers = set(r[0] for r in ex_rows)
-
-                    # Try file_mirror first
                     with get_db() as db:
                         row = db.execute(
                             "SELECT data FROM file_mirror WHERE path LIKE ? ORDER BY created_at DESC LIMIT 1",
@@ -1251,13 +1237,9 @@ class PipelineTab(QWidget):
                         if row:
                             rdata = json.loads(row["data"])
                             winners = rdata.get("winner_signals", [])
-                            # Count unique winner tickers, excluding example tickers
-                            winner_tickers = set(w.get("ticker", "") for w in winners)
-                            non_example_winners = winner_tickers - example_tickers
-                            n_winners = len(non_example_winners) + n_examples  # total unique = non-ex winners + examples
+                            n_winners = len(set(w.get("ticker", "") for w in winners))
                 except Exception:
                     pass
-                # Fallback: local files
                 if n_winners == 0:
                     cache_dir = REPO_ROOT / "local_runner" / "cache"
                     if cache_dir.exists():
@@ -1266,8 +1248,7 @@ class PipelineTab(QWidget):
                                 try:
                                     rdata = json.loads(fp.read_text())
                                     winners = rdata.get("winner_signals", [])
-                                    winner_tickers = set(w.get("ticker", "") for w in winners)
-                                    n_winners = len(winner_tickers)
+                                    n_winners = len(set(w.get("ticker", "") for w in winners))
                                 except Exception:
                                     pass
                                 break
@@ -1275,10 +1256,9 @@ class PipelineTab(QWidget):
                 if n_winners > 0:
                     progress = min(1.0, n_examples / n_winners)
                     self._canvas.set_example_progress(progress, n_examples, n_winners)
-                    self._canvas.set_info(nid, nd["desc"])
                 else:
                     self._canvas.set_example_progress(0.0, n_examples, 0)
-                    self._canvas.set_info(nid, "%d examples" % n_examples)
+                self._canvas.set_info(nid, "")
                 self._canvas.set_status(nid, "idle")
 
             elif nid == "vetting":
