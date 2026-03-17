@@ -729,15 +729,21 @@ class FlowchartCanvas(QWidget):
 
             nw = getattr(self, '_nw', 300)
             nh = getattr(self, '_nh', 100)
-            canvas_h = self.height()
-            canvas_w = self.width()
+            # Use the visible viewport size, not the full canvas size
+            viewport = self.parent()  # QScrollArea viewport
+            if viewport and hasattr(viewport, 'width'):
+                vis_w = viewport.width()
+                vis_h = viewport.height()
+            else:
+                vis_w = self.width()
+                vis_h = self.height()
 
             if nd["kind"] == "do":
-                # DO nodes expand to nearly full canvas
-                self._anim_target_h = max(500, canvas_h - nh - 80)
-                self._anim_target_w = max(400, canvas_w - nw - 200)
+                # DO nodes: fill most of the visible area
+                self._anim_target_h = max(400, vis_h - nh - 60)
+                self._anim_target_w = max(300, vis_w - nw - 140)
             else:
-                # RUN nodes expand moderately
+                # RUN nodes: moderate expansion
                 self._anim_target_h = max(380, nh * 4)
                 self._anim_target_w = max(200, int(nw * 0.7))
 
