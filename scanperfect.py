@@ -200,29 +200,72 @@ STEP_COMMANDS = {
 #   Loop 2 (bot row):  Scan Tuning ↔ Profit Grind
 #   Summary at bottom
 
+
+# ============================================================
+# NODE DEFINITIONS — 7 nodes, two feedback loops
+# ============================================================
+
 FLOW_NODES = [
-    {"id": "examples",     "name": "Examples",          "type": "nav",         "tab": 1,
-     "desc": "Define setups · manage example libraries"},
-    {"id": "causative",    "name": "Causative Grind",   "type": "grinder",     "tab": None,
-     "desc": "Signal → Exit → Refinement",
-     "sub_steps": ["signal_grind", "exit_grind", "refinement_grind"]},
-    {"id": "vetting",      "name": "Vetting",           "type": "nav",         "tab": 2,
-     "desc": "Review winners · bank new examples"},
-    {"id": "correlative",  "name": "Correlative Grind", "type": "grinder",     "tab": None,
-     "desc": "EV scoring — predicted WR, MFE, EV per signal",
-     "sub_steps": ["ev_grind"]},
-    {"id": "scan_tuning",  "name": "Scan Tuning",       "type": "placeholder", "tab": None,
-     "desc": "Quality score + WR threshold sliders"},
-    {"id": "profit_grind", "name": "Profit Grind",      "type": "placeholder", "tab": None,
-     "desc": "Optimize exit strategy · maximize SQN"},
-    {"id": "summary",      "name": "Summary",           "type": "summary",     "tab": None,
+    # DO nodes — interactive, user does the work
+    {"id": "examples",     "name": "Examples",          "kind": "do",  "tab": 1,
+     "desc": "Define setups \u00b7 manage example library"},
+    {"id": "vetting",      "name": "Vetting",           "kind": "do",  "tab": 2,
+     "desc": "Review winners \u00b7 bank new examples"},
+    {"id": "scan_tuning",  "name": "Scan Tuning",       "kind": "do",  "tab": None,
+     "desc": "Quality + WR threshold sliders"},
+    # RUN nodes — automated, machine does the work
+    {"id": "causative",    "name": "Causative Grind",   "kind": "run", "tab": None,
+     "desc": "Signal \u2192 Exit \u2192 Refinement"},
+    {"id": "correlative",  "name": "Correlative Grind", "kind": "run", "tab": None,
+     "desc": "EV scoring \u2014 predicted WR, MFE, EV"},
+    {"id": "profit_grind", "name": "Profit Grind",      "kind": "run", "tab": None,
+     "desc": "Optimize exit strategy \u00b7 maximize SQN"},
+    # Summary — read-only output
+    {"id": "summary",      "name": "Summary",           "kind": "summary", "tab": None,
      "desc": "Setup readiness overview"},
 ]
 
 GRINDER_SUB_STEPS = {
     "causative":   ["signal_grind", "exit_grind", "refinement_grind"],
     "correlative": ["ev_grind"],
+    "profit_grind": [],  # future
 }
+
+# Unlock requirements: (node_id) -> callable(n_examples, step_statuses) -> bool
+def _is_unlocked(nid, n_examples, step_statuses):
+    """Check if a pipeline node is unlocked based on current progress."""
+    if nid == "examples":
+        return True  # always unlocked
+    if nid == "causative":
+        return n_examples >= 20
+    if nid == "vetting":
+        # Unlocked when causative is done
+        for ss in GRINDER_SUB_STEPS.get("causative", []):
+            if step_statuses.get(ss, {}).get("status") not in ("done", "complete"):
+                return False
+        return True
+    if nid == "correlative":
+        # Need 60+ examples AND causative done
+        if n_examples < 60:
+            return False
+        for ss in GRINDER_SUB_STEPS.get("causative", []):
+            if step_statuses.get(ss, {}).get("status") not in ("done", "complete"):
+                return False
+        return True
+    if nid == "scan_tuning":
+        for ss in GRINDER_SUB_STEPS.get("correlative", []):
+            if step_statuses.get(ss, {}).get("status") not in ("done", "complete"):
+                return False
+        return True
+    if nid == "profit_grind":
+        # Unlocked when scan_tuning has been visited (for now, same gate as correlative done)
+        for ss in GRINDER_SUB_STEPS.get("correlative", []):
+            if step_statuses.get(ss, {}).get("status") not in ("done", "complete"):
+                return False
+        return True
+    if nid == "summary":
+        return False  # future — needs profit grind done
+    return False
 
 
 # ============================================================
@@ -287,7 +330,6 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 """ % C
 
 
-
 # ============================================================
 # WIDGETS
 # ============================================================
@@ -348,8 +390,12 @@ class StatusBadge(QLabel):
         )
 
 
+# ============================================================
+# GRINDER DETAIL PANEL
+# ============================================================
+
 class GrinderDetail(QFrame):
-    """Expandable detail panel with metrics, run/stop, sub-step badges, and log."""
+    """Expandable detail: sub-step badges, metrics, Run/Stop, log."""
     run_requested = Signal(str)
     stop_requested = Signal(str)
 
@@ -388,7 +434,7 @@ class GrinderDetail(QFrame):
         mrow.addStretch()
         lay.addLayout(mrow)
 
-        # Sub-step badges (causative has 3)
+        # Sub-step badges
         subs = GRINDER_SUB_STEPS.get(node_id, [])
         self._sub_badges = {}
         if len(subs) > 1:
@@ -424,7 +470,6 @@ class GrinderDetail(QFrame):
         brow.addStretch()
         lay.addLayout(brow)
 
-        # Log
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setMinimumHeight(180)
@@ -501,33 +546,33 @@ class GrinderDetail(QFrame):
 
 
 # ============================================================
-# FLOWCHART CANVAS — QPainter spatial diagram
+# FLOWCHART CANVAS — QPainter 2D diagram
 # ============================================================
 
 class FlowchartCanvas(QWidget):
-    """Draws pipeline as a 2D spatial flowchart with loops.
+    """Draws pipeline as a spatial flowchart.
 
-    Layout:
-      Row 1:  [Examples] ----> [Causative] ----> [Vetting]
-               ^--- dashed loop "add examples" ------<
-      Row 2:              [Correlative]
-      Row 3:        [Scan Tuning] ----> [Profit Grind]
-                       ^--- dashed loop "tune" --<
-      Row 4:               [Summary]
+    DO nodes (left column): rounded corners, softer border
+    RUN nodes (right column): sharp corners, heavier border
+    Locked nodes: fully dimmed
+    Two feedback loops drawn with dashed arcs
     """
     node_clicked = Signal(str)
 
-    NW, NH = 220, 72
-    HGAP, VGAP = 60, 50
-    LOOP_M = 36
+    NW, NH = 210, 72
+    COL_GAP = 120  # horizontal gap between DO and RUN columns
+    ROW_GAP = 56
+    LOOP_M = 32
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(520)
+        self.setMinimumHeight(560)
         self._rects = {}
         self._statuses = {}
         self._infos = {}
+        self._locked = {}
         self._hover = None
+        self._n_examples = 0
         self.setMouseTracking(True)
 
     def set_status(self, nid, s):
@@ -538,39 +583,59 @@ class FlowchartCanvas(QWidget):
         self._infos[nid] = t
         self.update()
 
+    def set_locked(self, nid, locked):
+        self._locked[nid] = locked
+        self.update()
+
+    def set_n_examples(self, n):
+        self._n_examples = n
+        self.update()
+
     def _layout(self):
         w = self.width()
-        nw, nh, hg, vg, lm = self.NW, self.NH, self.HGAP, self.VGAP, self.LOOP_M
+        nw, nh = self.NW, self.NH
+        cg, rg, lm = self.COL_GAP, self.ROW_GAP, self.LOOP_M
 
-        # Row 1: three nodes
-        r1w = nw * 3 + hg * 2
-        r1x = (w - r1w) // 2
-        y1 = lm + 20
-        self._rects["examples"]  = (r1x, y1, nw, nh)
-        self._rects["causative"] = (r1x + nw + hg, y1, nw, nh)
-        self._rects["vetting"]   = (r1x + 2 * (nw + hg), y1, nw, nh)
+        # Two columns: DO (left) and RUN (right)
+        total_w = nw * 2 + cg
+        lx = (w - total_w) // 2        # left column x (DO)
+        rx = lx + nw + cg              # right column x (RUN)
 
-        # Row 2: correlative centered
-        y2 = y1 + nh + vg + lm
-        cx = r1x + nw + hg + nw // 2
-        self._rects["correlative"] = (cx - nw // 2, y2, nw, nh)
+        y = lm + 30
 
-        # Row 3: scan_tuning + profit_grind
-        y3 = y2 + nh + vg
-        r3w = nw * 2 + hg
-        r3x = (w - r3w) // 2
-        self._rects["scan_tuning"]  = (r3x, y3, nw, nh)
-        self._rects["profit_grind"] = (r3x + nw + hg, y3, nw, nh)
+        # Row 1: Examples (DO-left) → Causative (RUN-right)
+        self._rects["examples"]  = (lx, y, nw, nh)
+        self._rects["causative"] = (rx, y, nw, nh)
 
-        # Row 4: summary
-        y4 = y3 + nh + vg + lm
-        self._rects["summary"] = ((w - nw) // 2, y4, nw, nh)
+        # Row 2: Vetting (DO-left) ← fed by Causative
+        y += nh + rg
+        self._rects["vetting"] = (lx, y, nw, nh)
 
-        self.setMinimumHeight(y4 + nh + 40)
+        # Row 3: Correlative (RUN-right)
+        y += nh + rg
+        self._rects["correlative"] = (rx, y, nw, nh)
+
+        # Row 4: Scan Tuning (DO-left) → Profit Grind (RUN-right)
+        y += nh + rg
+        self._rects["scan_tuning"]  = (lx, y, nw, nh)
+        self._rects["profit_grind"] = (rx, y, nw, nh)
+
+        # Row 5: Summary (centered)
+        y += nh + rg + lm
+        self._rects["summary"] = ((w - nw) // 2, y, nw, nh)
+
+        self.setMinimumHeight(y + nh + 40)
 
     def resizeEvent(self, ev):
         self._layout()
         super().resizeEvent(ev)
+
+    def _edge(self, nid, side):
+        x, y, w, h = self._rects[nid]
+        if side == "r":  return x + w, y + h // 2
+        if side == "l":  return x, y + h // 2
+        if side == "b":  return x + w // 2, y + h
+        if side == "t":  return x + w // 2, y
 
     def paintEvent(self, ev):
         self._layout()
@@ -581,88 +646,113 @@ class FlowchartCanvas(QWidget):
             self._draw_node(p, nd)
         p.end()
 
-    def _edge(self, nid, side):
-        x, y, w, h = self._rects[nid]
-        if side == "r":  return x + w, y + h // 2
-        if side == "l":  return x, y + h // 2
-        if side == "b":  return x + w // 2, y + h
-        if side == "t":  return x + w // 2, y
-
-    def _arrow(self, p, x, y, d, color):
-        p.setPen(QPen(color, 1.5))
-        s = 6
-        if d == "r":
-            p.drawLine(x - s, y - s // 2, x, y); p.drawLine(x - s, y + s // 2, x, y)
-        elif d == "d":
-            p.drawLine(x - s // 2, y - s, x, y); p.drawLine(x + s // 2, y - s, x, y)
-        elif d == "u":
-            p.drawLine(x - s // 2, y + s, x, y); p.drawLine(x + s // 2, y + s, x, y)
-        elif d == "l":
-            p.drawLine(x + s, y - s // 2, x, y); p.drawLine(x + s, y + s // 2, x, y)
-
     def _draw_connections(self, p):
         from PySide6.QtCore import QRectF
         solid = QPen(QColor(C["border_bright"]), 1.5)
+        solid_locked = QPen(QColor("#151515"), 1)
         dash = QPen(QColor(C["text_muted"]), 1, Qt.DashLine)
-        ac = QColor(C["text_muted"])
+        dash_locked = QPen(QColor("#1A1A1A"), 1, Qt.DashLine)
 
-        # --- Forward flow (solid) ---
-        p.setPen(solid)
+        def is_locked(nid):
+            return self._locked.get(nid, False)
 
-        # Examples -> Causative
+        def conn_pen(nid_from, nid_to):
+            return solid_locked if (is_locked(nid_from) or is_locked(nid_to)) else solid
+
+        def arrow_tip(p, x, y, direction, locked=False):
+            c = QColor("#1A1A1A" if locked else C["text_muted"])
+            p.setPen(QPen(c, 1.5))
+            s = 5
+            if direction == "r":
+                p.drawLine(x-s, y-s, x, y); p.drawLine(x-s, y+s, x, y)
+            elif direction == "d":
+                p.drawLine(x-s, y-s, x, y); p.drawLine(x+s, y-s, x, y)
+            elif direction == "l":
+                p.drawLine(x+s, y-s, x, y); p.drawLine(x+s, y+s, x, y)
+            elif direction == "u":
+                p.drawLine(x-s, y+s, x, y); p.drawLine(x+s, y+s, x, y)
+
+        # Examples → Causative (horizontal right)
+        p.setPen(conn_pen("examples", "causative"))
         x1, y1 = self._edge("examples", "r"); x2, y2 = self._edge("causative", "l")
-        p.drawLine(x1, y1, x2, y2); self._arrow(p, x2, y2, "r", ac)
+        p.drawLine(x1, y1, x2, y2)
+        arrow_tip(p, x2, y2, "r", is_locked("causative"))
 
-        # Causative -> Vetting
-        x1, y1 = self._edge("causative", "r"); x2, y2 = self._edge("vetting", "l")
-        p.drawLine(x1, y1, x2, y2); self._arrow(p, x2, y2, "r", ac)
+        # Causative → Vetting (down-left L-shape)
+        p.setPen(conn_pen("causative", "vetting"))
+        x1, y1 = self._edge("causative", "b"); x2, y2 = self._edge("vetting", "r")
+        p.drawLine(x1, y1, x1, y2); p.drawLine(x1, y2, x2, y2)
+        arrow_tip(p, x2, y2, "l", is_locked("vetting"))
 
-        # Vetting -> Correlative (L-shape)
+        # Loop 1: Vetting → Examples (dashed, left side)
+        lk1 = is_locked("vetting")
+        p.setPen(dash_locked if lk1 else dash)
+        ex = self._rects["examples"]; vt = self._rects["vetting"]
+        vl_x, vl_y = vt[0], vt[1] + vt[3] // 2
+        el_x, el_y = ex[0], ex[1] + ex[3] // 2
+        loop_x = min(vl_x, el_x) - self.LOOP_M
+        p.drawLine(vl_x, vl_y, loop_x, vl_y)
+        p.drawLine(loop_x, vl_y, loop_x, el_y)
+        p.drawLine(loop_x, el_y, el_x, el_y)
+        arrow_tip(p, el_x, el_y, "r", lk1)
+        if not lk1:
+            p.setPen(QPen(QColor(C["text_muted"])))
+            f = p.font(); f.setPixelSize(9); p.setFont(f)
+            p.save()
+            p.translate(loop_x - 8, (vl_y + el_y) // 2 + 30)
+            p.rotate(-90)
+            p.drawText(0, 0, "add examples")
+            p.restore()
+
+        # Vetting → Correlative (down from vetting, across to correlative)
+        p.setPen(conn_pen("vetting", "correlative"))
         x1, y1 = self._edge("vetting", "b"); x2, y2 = self._edge("correlative", "t")
         my = y1 + (y2 - y1) // 2
         p.drawLine(x1, y1, x1, my); p.drawLine(x1, my, x2, my); p.drawLine(x2, my, x2, y2)
-        self._arrow(p, x2, y2, "d", ac)
+        arrow_tip(p, x2, y2, "d", is_locked("correlative"))
 
-        # Correlative -> Scan Tuning (L-shape)
-        x1, y1 = self._edge("correlative", "b"); x2, y2 = self._edge("scan_tuning", "t")
-        my = y1 + (y2 - y1) // 2
-        p.drawLine(x1, y1, x1, my); p.drawLine(x1, my, x2, my); p.drawLine(x2, my, x2, y2)
-        self._arrow(p, x2, y2, "d", ac)
+        # Gate label: 60 examples
+        if is_locked("correlative"):
+            p.setPen(QPen(QColor(C["text_muted"])))
+            f = p.font(); f.setPixelSize(9); p.setFont(f)
+            gate_x = (x1 + x2) // 2
+            p.drawText(QRectF(gate_x - 40, my - 14, 80, 14), Qt.AlignCenter,
+                       "%d/60 examples" % self._n_examples)
 
-        # Scan Tuning -> Profit Grind
+        # Correlative → Scan Tuning (down-left L-shape)
+        p.setPen(conn_pen("correlative", "scan_tuning"))
+        x1, y1 = self._edge("correlative", "b"); x2, y2 = self._edge("scan_tuning", "r")
+        p.drawLine(x1, y1, x1, y2); p.drawLine(x1, y2, x2, y2)
+        arrow_tip(p, x2, y2, "l", is_locked("scan_tuning"))
+
+        # Scan Tuning → Profit Grind (horizontal right)
+        p.setPen(conn_pen("scan_tuning", "profit_grind"))
         x1, y1 = self._edge("scan_tuning", "r"); x2, y2 = self._edge("profit_grind", "l")
-        p.drawLine(x1, y1, x2, y2); self._arrow(p, x2, y2, "r", ac)
+        p.drawLine(x1, y1, x2, y2)
+        arrow_tip(p, x2, y2, "r", is_locked("profit_grind"))
 
-        # Profit Grind -> Summary (L-shape)
+        # Loop 2: Profit Grind → Scan Tuning (dashed, below)
+        lk2 = is_locked("profit_grind")
+        p.setPen(dash_locked if lk2 else dash)
+        st = self._rects["scan_tuning"]; pg = self._rects["profit_grind"]
+        pb_x, pb_y = pg[0] + pg[2] // 2, pg[1] + pg[3]
+        sb_x, sb_y = st[0] + st[2] // 2, st[1] + st[3]
+        ly = max(pb_y, sb_y) + self.LOOP_M // 2 + 4
+        p.drawLine(pb_x, pb_y, pb_x, ly)
+        p.drawLine(pb_x, ly, sb_x, ly)
+        p.drawLine(sb_x, ly, sb_x, sb_y)
+        arrow_tip(p, sb_x, sb_y, "u", lk2)
+        if not lk2:
+            p.setPen(QPen(QColor(C["text_muted"])))
+            f = p.font(); f.setPixelSize(9); p.setFont(f)
+            p.drawText(QRectF((pb_x + sb_x)//2 - 40, ly + 2, 80, 14), Qt.AlignCenter, "tweak \u00b7 re-run")
+
+        # Profit Grind → Summary
+        p.setPen(conn_pen("profit_grind", "summary"))
         x1, y1 = self._edge("profit_grind", "b"); x2, y2 = self._edge("summary", "t")
         my = y1 + (y2 - y1) // 2
         p.drawLine(x1, y1, x1, my); p.drawLine(x1, my, x2, my); p.drawLine(x2, my, x2, y2)
-        self._arrow(p, x2, y2, "d", ac)
-
-        # --- Loop 1: Vetting -> Examples (dashed, above row 1) ---
-        p.setPen(dash)
-        ex = self._rects["examples"]; vt = self._rects["vetting"]
-        vtx = vt[0] + vt[2] // 2 + 20; vty = vt[1]
-        exx = ex[0] + ex[2] // 2 - 20; exy = ex[1]
-        ly = min(vty, exy) - self.LOOP_M
-        p.drawLine(vtx, vty, vtx, ly); p.drawLine(vtx, ly, exx, ly); p.drawLine(exx, ly, exx, exy)
-        self._arrow(p, exx, exy, "d", ac)
-        p.setPen(QPen(QColor(C["text_muted"])))
-        f = p.font(); f.setPixelSize(9); p.setFont(f)
-        p.drawText(QRectF((vtx + exx) // 2 - 70, ly - 15, 140, 14),
-                   Qt.AlignCenter, "add examples \u00b7 regrind")
-
-        # --- Loop 2: Profit Grind -> Scan Tuning (dashed, below row 3) ---
-        p.setPen(dash)
-        st = self._rects["scan_tuning"]; pg = self._rects["profit_grind"]
-        pgx = pg[0] + pg[2] // 2 - 20; pgy = pg[1] + pg[3]
-        stx = st[0] + st[2] // 2 + 20; sty = st[1] + st[3]
-        ly2 = max(pgy, sty) + self.LOOP_M // 2 + 4
-        p.drawLine(pgx, pgy, pgx, ly2); p.drawLine(pgx, ly2, stx, ly2); p.drawLine(stx, ly2, stx, sty)
-        self._arrow(p, stx, sty, "u", ac)
-        p.setPen(QPen(QColor(C["text_muted"])))
-        p.drawText(QRectF((pgx + stx) // 2 - 50, ly2 + 2, 100, 14),
-                   Qt.AlignCenter, "tune \u00b7 regrind")
+        arrow_tip(p, x2, y2, "d", is_locked("summary"))
 
     def _draw_node(self, p, nd):
         from PySide6.QtCore import QRectF
@@ -671,50 +761,80 @@ class FlowchartCanvas(QWidget):
             return
         x, y, w, h = self._rects[nid]
         status = self._statuses.get(nid, "idle")
-        hover = self._hover == nid
+        locked = self._locked.get(nid, False)
+        hover = self._hover == nid and not locked
+        kind = nd["kind"]  # "do", "run", "summary"
 
-        # Background
-        p.setBrush(QColor("#111111" if hover else C["surface"]))
-        bc_map = {"done": C["green"], "complete": C["green"],
-                  "running": C["amber"], "queued": C["amber"], "error": C["red"]}
-        bc = QColor(bc_map.get(status, C["border_bright"]))
-        p.setPen(QPen(bc, 1.5 if status in bc_map else 1))
-        p.drawRect(x, y, w, h)
+        # ── Colors based on locked/status ──
+        if locked:
+            bg_col = QColor("#060606")
+            border_col = QColor("#111111")
+            text_col = QColor("#333333")
+            sub_col = QColor("#222222")
+        else:
+            bg_col = QColor("#0F0F0F" if hover else C["surface"])
+            sc_map = {"done": C["green"], "complete": C["green"],
+                      "running": C["amber"], "queued": C["amber"], "error": C["red"]}
+            border_col = QColor(sc_map.get(status, C["border_bright"]))
+            text_col = QColor(C["text"])
+            sub_col = QColor(C["text_muted"])
 
-        # Left accent
-        if status in bc_map:
-            p.fillRect(x, y, 3, h, bc)
+        # ── Shape: DO nodes get rounded corners, RUN nodes get sharp ──
+        p.setBrush(bg_col)
+        pen_w = 1.5 if (not locked and status in ("done","complete","running","queued","error")) else 1
+        p.setPen(QPen(border_col, pen_w))
 
-        # Small dot connectors at midpoints of edges
-        dot_col = QColor(C["border_bright"])
-        for side in ["l", "r", "t", "b"]:
-            dx, dy = self._edge(nid, side[0])
-            p.setBrush(dot_col)
-            p.setPen(Qt.NoPen)
-            p.drawEllipse(dx - 3, dy - 3, 6, 6)
+        if kind == "do":
+            p.drawRoundedRect(x, y, w, h, 8, 8)
+        elif kind == "summary":
+            p.drawRoundedRect(x, y, w, h, 4, 4)
+        else:  # "run"
+            p.drawRect(x, y, w, h)
 
-        # Name
-        p.setPen(QPen(QColor(C["text"])))
+        # ── Left accent bar (only if active status) ──
+        if not locked and status in ("done", "complete", "running", "queued", "error"):
+            accent = QColor({"done": C["green"], "complete": C["green"],
+                            "running": C["amber"], "error": C["red"]}.get(status, C["border_bright"]))
+            p.fillRect(x+1, y+1, 3, h-2, accent)
+
+        # ── Name ──
+        p.setPen(QPen(text_col))
         f = p.font(); f.setPixelSize(12); f.setWeight(QFont.DemiBold); p.setFont(f)
         p.drawText(QRectF(x + 12, y + 12, w - 24, 18), Qt.AlignLeft | Qt.AlignVCenter, nd["name"])
 
-        # Desc / info
+        # ── Info / desc ──
         info = self._infos.get(nid, nd["desc"])
-        p.setPen(QPen(QColor(C["text_muted"])))
+        p.setPen(QPen(sub_col))
         f.setPixelSize(10); f.setWeight(QFont.Normal); p.setFont(f)
-        p.drawText(QRectF(x + 12, y + 32, w - 24, 16), Qt.AlignLeft | Qt.AlignVCenter, info)
+        p.drawText(QRectF(x + 12, y + 34, w - 24, 16), Qt.AlignLeft | Qt.AlignVCenter, info)
 
-        # Status text top-right
-        if status not in ("idle", "pending"):
-            p.setPen(QPen(QColor(bc_map.get(status, C["text_muted"]))))
+        # ── Lock indicator ──
+        if locked:
+            p.setPen(QPen(QColor("#333333")))
+            f.setPixelSize(14); p.setFont(f)
+            p.drawText(QRectF(x + w - 28, y + h//2 - 10, 20, 20), Qt.AlignCenter, "\U0001f512")
+
+        # ── Status badge (top-right, only if not idle/locked) ──
+        elif status not in ("idle", "pending"):
+            sc_map = {"done": C["green"], "complete": C["green"],
+                      "running": C["amber"], "queued": C["amber"], "error": C["red"]}
+            p.setPen(QPen(QColor(sc_map.get(status, C["text_muted"]))))
             f.setPixelSize(8); f.setWeight(QFont.Bold); p.setFont(f)
-            p.drawText(QRectF(x + w - 70, y + 8, 60, 14), Qt.AlignRight | Qt.AlignVCenter, status.upper())
+            p.drawText(QRectF(x + w - 60, y + 8, 50, 12), Qt.AlignRight | Qt.AlignVCenter, status.upper())
 
-        # Nav arrow
-        if nd["type"] == "nav":
+        # ── Nav arrow for DO nodes with tabs ──
+        if kind == "do" and nd.get("tab") is not None and not locked:
             p.setPen(QPen(QColor(C["text_muted"])))
             f.setPixelSize(14); p.setFont(f)
-            p.drawText(QRectF(x + w - 24, y + h // 2 - 10, 16, 20), Qt.AlignCenter, "\u2192")
+            p.drawText(QRectF(x + w - 24, y + h//2 - 10, 16, 20), Qt.AlignCenter, "\u2192")
+
+        # ── Dot connectors at edges ──
+        if not locked:
+            p.setBrush(QColor(C["border_bright"]))
+            p.setPen(Qt.NoPen)
+            for side in ("l", "r", "t", "b"):
+                dx, dy = self._edge(nid, side)
+                p.drawEllipse(dx - 2, dy - 2, 4, 4)
 
     def mouseMoveEvent(self, ev):
         pos = ev.position() if hasattr(ev, "position") else ev.pos()
@@ -723,7 +843,9 @@ class FlowchartCanvas(QWidget):
         self._hover = None
         for nid, (x, y, w, h) in self._rects.items():
             if x <= mx <= x + w and y <= my <= y + h:
-                self._hover = nid
+                locked = self._locked.get(nid, False)
+                if not locked:
+                    self._hover = nid
                 break
         if old != self._hover:
             self.setCursor(Qt.PointingHandCursor if self._hover else Qt.ArrowCursor)
@@ -751,7 +873,6 @@ class PipelineTab(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Flowchart canvas (scrollable)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -760,14 +881,13 @@ class PipelineTab(QWidget):
         scroll.setWidget(self._canvas)
         outer.addWidget(scroll, 1)
 
-        # Detail panel area (below canvas, hidden by default)
         self._det_frame = QFrame()
         self._det_frame.setStyleSheet("QFrame { border-top:1px solid %s; }" % C["border"])
         self._det_lay = QVBoxLayout(self._det_frame)
         self._det_lay.setContentsMargins(0, 0, 0, 0)
         self._det_lay.setSpacing(0)
         for nd in FLOW_NODES:
-            if nd["type"] == "grinder":
+            if nd["kind"] == "run":
                 det = GrinderDetail(nd["id"])
                 det.run_requested.connect(self._fwd_run)
                 det.stop_requested.connect(self._fwd_stop)
@@ -781,9 +901,9 @@ class PipelineTab(QWidget):
         nd = next((n for n in FLOW_NODES if n["id"] == nid), None)
         if not nd:
             return
-        if nd["type"] == "nav":
+        if nd["kind"] == "do" and nd.get("tab") is not None:
             self.navigate_to_tab.emit(nd["tab"])
-        elif nd["type"] == "grinder":
+        elif nd["kind"] == "run":
             if self._expanded == nid:
                 self._details[nid].setVisible(False)
                 self._det_frame.setVisible(False)
@@ -820,16 +940,33 @@ class PipelineTab(QWidget):
         state = load_json(PIPELINE_FILE, {"steps": {}})
         steps = state.get("steps", {})
 
+        # Get example count for unlock gates
+        n_examples = 0
+        try:
+            win = self.window()
+            setup = win._setup_type if hasattr(win, "_setup_type") else "dtss"
+            with get_db() as db:
+                n_examples = db.execute(
+                    "SELECT COUNT(*) FROM examples WHERE setup_type=?", (setup,)
+                ).fetchone()[0]
+        except Exception:
+            pass
+
+        self._canvas.set_n_examples(n_examples)
+
         for nd in FLOW_NODES:
             nid = nd["id"]
-            if nd["type"] == "grinder":
+            locked = not _is_unlocked(nid, n_examples, steps)
+            self._canvas.set_locked(nid, locked)
+
+            if nd["kind"] == "run":
                 subs = GRINDER_SUB_STEPS.get(nid, [nid])
                 statuses = [steps.get(s, {}).get("status", "idle") for s in subs]
                 if "running" in statuses or "queued" in statuses:
                     overall = "running"
                 elif "error" in statuses:
                     overall = "error"
-                elif all(s in ("done", "complete") for s in statuses):
+                elif all(s in ("done", "complete") for s in statuses) and len(subs) > 0:
                     overall = "done"
                 else:
                     overall = "idle"
@@ -838,21 +975,12 @@ class PipelineTab(QWidget):
                     self._details[nid].update_from_state(steps)
 
             elif nid == "examples":
-                try:
-                    win = self.window()
-                    setup = win._setup_type if hasattr(win, "_setup_type") else "dtss"
-                    with get_db() as db:
-                        n = db.execute("SELECT COUNT(*) FROM examples WHERE setup_type=?",
-                                       (setup,)).fetchone()[0]
-                    self._canvas.set_info(nid, "%d examples" % n)
-                    self._canvas.set_status(nid, "done" if n > 0 else "idle")
-                except Exception:
-                    pass
+                self._canvas.set_info(nid, "%d examples" % n_examples)
+                self._canvas.set_status(nid, "done" if n_examples >= 20 else "idle")
 
             elif nid == "vetting":
                 try:
-                    win = self.window()
-                    setup = win._setup_type if hasattr(win, "_setup_type") else "dtss"
+                    setup = self._setup
                     vp = REPO_ROOT / "data" / "vetting" / ("vetting_%s.json" % setup)
                     dec = load_json(vp, {})
                     ny = sum(1 for v in dec.values() if v.get("verdict") == "yes")
@@ -861,18 +989,17 @@ class PipelineTab(QWidget):
                 except Exception:
                     pass
 
-            elif nid in ("scan_tuning", "profit_grind"):
-                self._canvas.set_status(nid, "idle")
-                self._canvas.set_info(nid, "not yet built")
-
             elif nid == "summary":
                 self._canvas.set_status(nid, "idle")
                 self._canvas.set_info(nid, "setup readiness overview")
 
+            else:
+                self._canvas.set_status(nid, "idle")
+                if locked:
+                    self._canvas.set_info(nid, nd["desc"])
+                else:
+                    self._canvas.set_info(nid, "not yet built")
 
-# ============================================================
-# PLACEHOLDER TAB
-# ============================================================
 
 class PlaceholderTab(QWidget):
     def __init__(self, title, msg, parent=None):
