@@ -675,18 +675,39 @@ class FlowchartCanvas(QWidget):
             summary_y = row2_top
         self._rects["summary"] = (summary_x, summary_y, summary_w, summary_h)
 
-        # Expanded card overlay — grows wider/taller, CENTERED on screen
+        # Expanded card overlay — grows wider/taller, centered in viewport
         if self._expanded_id and self._expanded_id in self._rects:
             ex, ey, ew, _ = self._rects[self._expanded_id]
             new_w = ew + self._anim_expand_w
             new_h = nh + self._anim_expand_h
-            # Center horizontally on the canvas
-            center_x = w // 2 - new_w // 2
-            # Lerp from original x to centered x based on animation progress
+
+            # Get viewport size for centering
+            viewport = self.parent()
+            vis_w = viewport.width() if viewport and hasattr(viewport, 'width') else w
+            vis_h = viewport.height() if viewport and hasattr(viewport, 'height') else 600
+            # Scroll position offset
+            scroll_y = 0
+            if viewport and hasattr(viewport, 'parent'):
+                scroll_area = viewport.parent()
+                if scroll_area and hasattr(scroll_area, 'verticalScrollBar'):
+                    scroll_y = scroll_area.verticalScrollBar().value()
+
+            # Animation progress (0→1)
             target_w = getattr(self, '_anim_target_w', 0) or 1
-            t = min(1.0, self._anim_expand_w / target_w) if target_w > 0 else 0
+            target_h = getattr(self, '_anim_target_h', 0) or 1
+            tw = min(1.0, self._anim_expand_w / target_w) if target_w > 0 else 0
+            th = min(1.0, self._anim_expand_h / target_h) if target_h > 0 else 0
+            t = max(tw, th)
+
+            # Center targets
+            center_x = vis_w // 2 - new_w // 2
+            center_y = scroll_y + vis_h // 2 - new_h // 2
+            center_y = max(10, center_y)  # don't go above canvas top
+
+            # Lerp from original position to centered
             new_x = int(ex + (center_x - ex) * t)
-            self._rects[self._expanded_id] = (new_x, ey, new_w, new_h)
+            new_y = int(ey + (center_y - ey) * t)
+            self._rects[self._expanded_id] = (new_x, new_y, new_w, new_h)
 
         self._expand_h = self._anim_expand_h
         self.setMinimumHeight(int(y + loop_v + nh + 40))
