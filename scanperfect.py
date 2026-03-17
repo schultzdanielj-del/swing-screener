@@ -1226,56 +1226,22 @@ class PipelineTab(QWidget):
                     self._details[nid].update_from_state(steps)
 
             elif nid == "examples":
-                # Progress bar: examples / winner clusters from cluster-aware refinement
+                # Progress: examples / winner clusters from refinement_dtss_cl*.json
                 n_winners = 0
-                ref_source = ""
-                try:
-                    with get_db() as db:
-                        row = db.execute(
-                            "SELECT data, path FROM file_mirror WHERE path LIKE ? ORDER BY created_at DESC LIMIT 1",
-                            ("local_runner/cache/refinement_%s_cl%%" % setup,),
-                        ).fetchone()
-                        if row:
-                            rdata = json.loads(row["data"])
+                cache_dir = REPO_ROOT / "local_runner" / "cache"
+                if cache_dir.exists():
+                    ref_files = sorted(
+                        [f for f in cache_dir.iterdir()
+                         if f.name.startswith("refinement_%s_cl" % setup) and f.suffix == ".json"],
+                        key=lambda f: f.stat().st_mtime,
+                        reverse=True
+                    )
+                    if ref_files:
+                        try:
+                            rdata = json.loads(ref_files[0].read_text())
                             n_winners = len(rdata.get("winner_signals", []))
-                            ref_source = "mirror: " + row["path"]
-                except Exception:
-                    pass
-                if n_winners == 0:
-                    cache_dir = REPO_ROOT / "local_runner" / "cache"
-                    if cache_dir.exists():
-                        ref_files = sorted(
-                            [f for f in cache_dir.iterdir()
-                             if f.name.startswith("refinement_%s_cl" % setup) and f.suffix == ".json"],
-                            key=lambda f: f.stat().st_mtime,
-                            reverse=True
-                        )
-                        if ref_files:
-                            try:
-                                rdata = json.loads(ref_files[0].read_text())
-                                n_winners = len(rdata.get("winner_signals", []))
-                                ref_source = "local: " + ref_files[0].name
-                            except Exception:
-                                pass
-                        else:
-                            # Fallback: try without _cl if no cluster-aware file found
-                            ref_files2 = sorted(
-                                [f for f in cache_dir.iterdir()
-                                 if f.name.startswith("refinement_%s_" % setup) and f.suffix == ".json"],
-                                key=lambda f: f.stat().st_mtime,
-                                reverse=True
-                            )
-                            if ref_files2:
-                                try:
-                                    rdata = json.loads(ref_files2[0].read_text())
-                                    n_winners = len(rdata.get("winner_signals", []))
-                                    ref_source = "local(no-cl): " + ref_files2[0].name
-                                except Exception:
-                                    pass
-
-                # Debug: print to console so Dan can see what's loading
-                if ref_source:
-                    print(f"  [Examples] source={ref_source}, winner_signals={n_winners}")
+                        except Exception:
+                            pass
 
                 if n_winners > 0:
                     progress = min(1.0, n_examples / n_winners)
