@@ -1226,14 +1226,15 @@ class PipelineTab(QWidget):
                     self._details[nid].update_from_state(steps)
 
             elif nid == "examples":
-                # Progress bar: examples / winner clusters
-                # winner_signals is one entry per winning cluster (365 per refinement)
+                # Progress bar: examples / winner clusters from cluster-aware refinement
+                # File pattern: refinement_{setup}_cl{N}_pk{N}_{timestamp}.json
+                # winner_signals = one entry per winning cluster (rightmost bar only)
                 n_winners = 0
                 try:
                     with get_db() as db:
                         row = db.execute(
                             "SELECT data FROM file_mirror WHERE path LIKE ? ORDER BY created_at DESC LIMIT 1",
-                            ("local_runner/cache/refinement_%s_%%" % setup,),
+                            ("local_runner/cache/refinement_%s_cl%%" % setup,),
                         ).fetchone()
                         if row:
                             rdata = json.loads(row["data"])
@@ -1243,14 +1244,19 @@ class PipelineTab(QWidget):
                 if n_winners == 0:
                     cache_dir = REPO_ROOT / "local_runner" / "cache"
                     if cache_dir.exists():
-                        for fp in sorted(cache_dir.iterdir(), reverse=True):
-                            if fp.name.startswith("refinement_%s_" % setup) and fp.suffix == ".json":
-                                try:
-                                    rdata = json.loads(fp.read_text())
-                                    n_winners = len(rdata.get("winner_signals", []))
-                                except Exception:
-                                    pass
-                                break
+                        # Only match cluster-aware refinement files (have _cl in name)
+                        ref_files = sorted(
+                            [f for f in cache_dir.iterdir()
+                             if f.name.startswith("refinement_%s_cl" % setup) and f.suffix == ".json"],
+                            key=lambda f: f.stat().st_mtime,
+                            reverse=True
+                        )
+                        if ref_files:
+                            try:
+                                rdata = json.loads(ref_files[0].read_text())
+                                n_winners = len(rdata.get("winner_signals", []))
+                            except Exception:
+                                pass
 
                 if n_winners > 0:
                     progress = min(1.0, n_examples / n_winners)
