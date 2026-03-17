@@ -379,7 +379,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 ## Immediate Tasks
 
 ### NEXT: Localization
-0. **Localize everything** — move server, DB, UI to local machine. Railway becomes seed vault only. See `LOCALIZE.md` for full plan. This is the next thing to build.
+0. ~~**Localize everything**~~ — ✅ DONE. See `LOCALIZE.md`.
 
 ### Grinder Improvements
 1. **Depth progression output (refinement grinder)** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running via Settings Lock UI.
@@ -395,8 +395,8 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 7. ~~**Workflow and ease-of-use improvements**~~ — ✅ BUILT. Keyboard-driven (1/2/3/↑↓), floating Yes button at click position, mouse wheel zoom, V/U/N checkboxes, chart preloading, entry bar requirement enforced.
 
 ### Pipeline UI
-8. **Pipeline flowchart UI (post-localization)** — replace current sidebar+panel layout with a visual flowchart. Each pipeline stage is a clickable node: Examples → Signal Grind → Exit Grind → Refinement Grind → Vetting → EV Grinder → Scan Tuning (sliders) → Profit Grind → Live Watchlist. Click a node to expand it inline (run controls, logs, results) or navigate to its tab (Examples, Vetting, Watchlist). Shows setup development progress visually. Build after localization for instant rendering and direct subprocess calls.
-9. **Update PIPELINE_V2.md** — replace proximity grind, profit grind, regime model sections with EV Grinder architecture. Update pipeline diagram. Update watchlist section.
+8. ~~**Pipeline flowchart UI**~~ — ✅ DONE. 7-node flowchart with color-coded cards, animated expansion, unlock progression, two feedback loops. No tabs — flowchart is the interface.
+9. ~~**Update PIPELINE_V2.md**~~ — ✅ DONE (2026-03-17). All docs updated to reflect local-first architecture and 7-node flowchart.
 
 ### Code Cleanup (future)
 10. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.

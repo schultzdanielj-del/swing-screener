@@ -63,7 +63,7 @@ Vetting is a standalone workbench outside the pipeline loop. You open it when yo
 - For each winner cluster: scans leftmost bar through rightmost bar + forward_window
 - Scores each bar via weighted cosine similarity to centroid, keeps best match
 - Combined score = percentile_rank(entry_candle_score) x percentile_rank(move_adr)
-- Output: entry_scores_{setup}.json, mirrored to Railway
+- Output: entry_scores_{setup}.json, mirrored to Railway (backup)
 - Self-improving: more examples = tighter centroid = better scoring next session
 
 **Vetting flow:**
@@ -153,7 +153,7 @@ Three numbers per signal:
 
 **Setup-specific features (OHLCV-derived, 6):** price, ADR, dollar volume (20d avg), days since IPO, RS vs SPY (D1), RS vs SPY (W1).
 
-**Setup-specific features (external data, 10):** market cap, float, volume/float ratio, sector mapping, RS vs sector, sector RS vs SPY, EPS growth QoQ, EPS growth trailing 4Q, revenue growth QoQ, revenue growth trailing 4Q.
+**Setup-specific features (external data, 10):** market cap, float, volume/float ratio, sector mapping, RS vs sector, sector RS vs SPY, 
 
 ### Architecture
 
@@ -229,14 +229,14 @@ The watchlist is the end product. Every cycle of the loop makes it more accurate
 
 | Step | Script | Input | Output |
 |------|--------|-------|--------|
-| Signal Grind | pyramid_grinder.py | Examples (Railway API) + expr cache + 5yr OHLCV | pyramid_{setup}_*.json |
+| Signal Grind | pyramid_grinder.py | Examples (local SQLite) + expr cache + 5yr OHLCV | pyramid_{setup}_*.json |
 | Exit Grind | signal_exit_grinder.py | Examples + expr cache | Exit condition in local cache |
 | Refinement Grind | pyramid_grinder.py --blackout | Pyramid result + exit cond + expr cache + 5yr OHLCV | raw_signal_clusters_{setup}.json + refinement_{setup}_*.json |
-| Entry Candle Scorer | entry_candle_scorer.py | Examples (Railway API) + refinement output + raw_signal_clusters + expr cache | entry_scores_{setup}.json |
+| Entry Candle Scorer | entry_candle_scorer.py | Examples (local SQLite) + refinement output + raw_signal_clusters + expr cache | entry_scores_{setup}.json |
 | EV Grinder | ev_grinder.py (complete, inc 1-6) | Refinement result + raw clusters + market cache + 5yr OHLCV + fundamentals cache | ev_{setup}_inc6_*.json (features, per-signal scores, calibration tables, redundancy analysis) |
 | Profit Grind | profit_grinder.py (needs rewire) | EV-scored signals + price data | Exit strategy + equity curve |
 
-All grinder outputs are also mirrored to Railway via file_mirror.py and uploaded via grind_uploader.py.
+All grinder outputs are also mirrored to Railway (backup) via file_mirror.py and .
 The entry candle scorer is not a pipeline step -- it is a standalone vetting utility that mirrors its output to Railway for the vetting UI.
 
 ---
@@ -249,7 +249,7 @@ The entry candle scorer is not a pipeline step -- it is a standalone vetting uti
 - **5yr OHLCV cache:** ~4,167 tickers
 - **File mirror:** All grind results → Railway via `file_mirror.py`
 - **Nightly refresh:** 4:30pm ET, 7 steps, fully automated
-- **DB schema:** See `DATA_CONTRACT.md` for full Railway SQLite schema
+- **DB schema:** See `DATA_CONTRACT.md` for full Local SQLite schema
 - **Pipeline spec:** See `PIPELINE_V2.md` for authoritative architecture
 - **Task list:** See `TODO.md` for current work items
 

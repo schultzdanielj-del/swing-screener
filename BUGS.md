@@ -1,5 +1,9 @@
 # BUGS.md — Known Issues
 
+**Note (2026-03-17):** Bug entries below reference Railway as authoritative store and pipeline_agent.py.
+These are historical descriptions of past bugs. The current architecture is local-first — see LOCALIZE.md.
+pipeline_agent.py is legacy, replaced by direct subprocess via QProcess in scanperfect.py.
+
 This file documents confirmed bugs and structural problems in the project.
 Each entry includes what was observed, what the root cause is, and what needs to be fixed.
 Nothing in here gets touched until explicitly approved.

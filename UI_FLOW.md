@@ -1,137 +1,104 @@
-# ScanPerfect UI Flow — Design Document
+# ScanPerfect UI — Design Document
 
-**Updated:** 2026-03-16 (all questions answered, Phase 1 + Vetting built)
-
-**Design spec:** DM Sans, pure grayscale palette, no accent colors. Functional color only for candle up/down (green/red), yes/no verdicts (green/red), earnings dates (red).
-
-**Architecture:** Currently on Railway, migrating to fully local (see LOCALIZE.md). UI code is identical either way.
+**Updated:** 2026-03-17
 
 ---
 
-## Top-Level Structure
+## Architecture
 
-**Navigation:** Four tabs — Pipeline, Examples, Vetting, Watchlist. Setup selector dropdown top-right.
+Native PySide6 desktop app (`scanperfect.py`). No browser, no server, no tabs.
 
-**Pipeline tab:** Will become a visual flowchart post-localization (see TODO #8). Currently a sidebar + panel layout with 4 grinder steps.
-
-**Design system:** Gordon Murray stripped style. Black background, grayscale hierarchy (#000 bg, #0A0A0A surface, #1A1A1A rules, #555/#888/#B0B0B0/#E0E0E0 text). No cards, no rounded corners, no shadows. DM Sans font.
+The pipeline flowchart IS the interface. Each node expands in place to become its own workspace. Setup selector dropdown in the top bar.
 
 ---
 
-## Examples Tab (Phase 1) — BUILT
+## Design System
 
-**Purpose:** Define setups and manage example libraries.
-
-**Layout (top to bottom):**
-1. Header: setup name + "New Setup" button + example count
-2. Side-by-side: Add Examples (collapsible, left) + Setup Description (editable textarea, right)
-3. Legend + sort bar (Entry white, Exit amber, Profit purple) + sort buttons (ADR/Ticker/Date)
-4. Chart grid: 4-wide, each card = candlestick thumbnail with entry marker, ticker, date, ADR move
-
-**Decisions made:**
-- Examples added one at a time (ticker + date) or via paste list (TICKER MM/DD/YYYY format, one per line)
-- No chart preview needed when adding — user already knows the trade from Discord/TC2000
-- No CSV import — paste box only
-- New setups created from UI (name, direction long/short, description)
-- Setup description is editable and feeds into AI reviewer prompt
-- Chart grid lazy-loads with IntersectionObserver, preloads 2 rows ahead
-- Click card to expand to full width
-- Pending AI reviews live inside the Add Examples collapsible (chart grid format, not text)
-- Sort default: ADR Move descending (biggest movers first)
-- Green flash animation + scroll-to on newly added examples
-
-**Entry/Exit/Profit markers on charts:**
-- Entry: solid white line
-- Exit Signal: solid amber (#E8A735) line
-- Profit Exit: solid purple (#A855F7) line (when profit grind data exists)
-- All solid lines, no dashed/dotted
+- **Font:** DM Sans (all text — titles, labels, card content, detail panels)
+- **Background:** #000000
+- **Card colors:** Each node type has a distinct deep saturated background color
+  - Examples: deep red (#2a1215 → #3d1b20 gradient)
+  - Vetting: deep orange (#2a1f0d → #3d2e15)
+  - Scan Tuning: deep yellow (#2a2610 → #3d3818)
+  - Grinds (Causative, Correlative, Optimal Management): deep blue (#0d1a2a → #15263d)
+  - Summary: deep green (#0d2a1a → #153d26)
+- **Borders:** 2.5px, color-matched to card type
+- **Locked nodes:** Nearly invisible (#060606 bg, #111 border)
+- **Text:** #E0E0E0 primary, #888 secondary, #555 muted
 
 ---
 
-## Pipeline Tab (Phases 2-4) — BUILT (basic), REDESIGN PLANNED
+## Pipeline Flowchart — 7 Nodes, Two Loops
 
-**Current:** 4-step sidebar + panel layout. Signal Grind, Exit Grind, Refinement Grind, EV Grinder. Each has run/stop buttons and log stream.
+```
+        ┌──────────────────────────────┐
+        │         LOOP 1               │
+  [Examples] ──→ [Causative Processing] ──→ [Vetting]
+        ↑                                      │
+        └──────── add examples ────────────────┘
+                                               │
+                                    [Correlative Targeting]
+                                               │
+        ┌──────────────────────────────────────┤
+        │         LOOP 2                       │
+  [Scan Tuning] ──→ [Optimal Management]       │
+        ↑                    │                 │
+        └── tweak · re-run ──┘        [Summary]
+```
 
-**Post-localization redesign:** Visual flowchart. Each pipeline stage is a clickable node. Click to expand inline (run controls, logs, results) or navigate to relevant tab. Shows setup development progress visually.
+**DO nodes (left column, warm colors, rounded corners):**
+- Examples — manage example library, progress bar (examples / winner clusters)
+- Vetting — review winners, bank new examples (navigates to vetting workspace)
+- Scan Tuning — quality score + WR threshold sliders (future)
 
-**Decisions made:**
-- Grinder output always taken as-is — no manual condition editing
-- No margin progression slider (scrapped)
-- No depth progression slider (scrapped)
-- Always trust the grinder for exit expression — no manual override
-- Vetting is optional — can skip straight to EV Grinder
-- Entry candle scorer integrated into refinement grind step (not a separate button)
+**RUN nodes (right column, blue, sharp corners):**
+- Causative Processing — Signal Grind → Exit Grind → Refinement Grind (one Run button)
+- Correlative Targeting — EV grinder scoring
+- Optimal Management — exit strategy optimization via SQN (future)
 
-**Flowchart nodes (planned):**
-Examples → Signal Grind → Exit Grind → Refinement Grind → Vetting → EV Grinder → Scan Tuning (sliders) → Profit Grind → Live Watchlist
-
----
-
-## Vetting Tab (Phase 5) — BUILT
-
-**Purpose:** Review winner signals from refinement grind, bank new examples.
-
-**Layout:**
-- Header: "Winners" label + count | V/U/N checkboxes (stacked, with counts) | Legend (Signal/Exit/Profit/Earnings)
-- Left panel: signal list (ticker, date, ADR move, verdict indicator)
-- Center: candlestick chart (large, zoomable)
-- Bottom bar: signal metadata + Yes/No/Skip buttons
-
-**Decisions made:**
-- Shows winner pile ONLY — no pre/post refinement toggle, no losers
-- V/U/N checkboxes to filter: V (green) = vetted yes, U (gray) = unvetted, N (red) = no
-  - U checked by default
-  - Check N to see and undo rejected signals
-- YES requires clicking an entry bar on the chart first — button disabled until clicked
-- Clicking entry bar shows floating green "Yes ✓" button right next to click position
-- YES → pending_examples → AI second-pass → approve on Examples tab (AI gate kept)
-- NO removes signal from unvetted list, stored in rejected_signals table
-- Signal bar labeled "SIG" (not "ENTRY") — ENTRY label only appears when you click
-- Mouse wheel zoom: scroll up = zoom in, scroll down = zoom out, centered on signal
-- Chart preloading: first 15 signals fetched on load, next 10 preloaded on every navigation
-- Earnings dates: bold red (#EF4444) solid vertical lines with "E" label
-- Keyboard: 1=yes, 2=no, 3=skip, ↑↓=navigate
+**Summary (right side, green):**
+- Setup readiness overview (future)
 
 ---
 
-## EV Grinder (Phase 6) — NOT YET BUILT
+## Unlock Progression
 
-**Purpose:** Score every signal with predicted WR, MFE, EV.
-
-**Planned UI:**
-- Run button + log
-- Feature summary, calibration table, RMSE
-- Slider 1: quality_score threshold
-- Slider 2: minimum predicted WR
-- Top signals table ranked by EV
-
-**Open questions (for when we build it):**
-- Q13: Do sliders pass fixed values to Profit Grind, or does Profit Grind test across slider ranges?
-- Q15: Per-year breakdown of signal performance?
+Everything starts locked except Examples. Gates:
+- **Causative Processing:** ≥20 examples
+- **Vetting:** Causative complete (refinement_*_cl*.json exists)
+- **Correlative Targeting:** ≥60 examples AND Causative complete
+- **Scan Tuning:** Correlative complete (ev_*.json exists)
+- **Optimal Management:** Correlative complete
+- **Summary:** Optimal Management complete (future)
 
 ---
 
-## Profit Grind (Phase 7) — NOT YET BUILT
+## Card Interaction
 
-**Purpose:** Optimize exit strategy for max account growth (SQN).
+**DO nodes** (Examples, Vetting, Scan Tuning): Click navigates to that workspace (will expand in place when workspace is built).
 
-**Key decisions already made:**
-- Uses SQN (System Quality Number) as objective function, not raw compound growth
-- Brute-forces stop/target/trail parameters across Slider 1/2 threshold combinations
-- Uses actual entry candle prices where available
-- Trim-and-trail strategies tested
-- Data source: 5yr OHLCV cache
+**RUN nodes** (Causative, Correlative, Optimal Management): Click expands the card in place with animation — grows wider AND taller, centers on screen. Shows:
+- Sub-step progress badges (Causative has 3: Signal Grind / Exit Grind / Refinement)
+- Metrics row: Status, Last Run, Duration, Setup
+- Run / Stop / Clear Log buttons
+- Real-time log viewer (QProcess stdout streaming)
 
-**Open questions (for when we build it):**
-- Q16-Q20: See TODO.md Phase 4 section for full spec
+Click again to collapse.
 
 ---
 
-## Watchlist Tab (Phase 8) — NOT YET BUILT
+## Examples Card
 
-**Purpose:** Nightly ranked signal list across all setup types.
+Shows progress bar: `66 / 365` (examples / winner clusters from latest refinement_*_cl*.json).
+Progress bar is thick with rounded ends, gradient fill in the card's red accent color.
+Count shown inline next to the title.
 
-**Open questions (for when we build it):**
-- Q21: Today's signals only, or also active trades?
-- Q22: Paper trade mode?
-- Q23: Interleaved by EV rank or grouped by setup type?
+---
+
+## Functional Color (within workspaces, not the flowchart)
+
+- Candle up/down: green (#4ade80) / red (#f87171)
+- Yes/No verdicts: green / red
+- Earnings dates: red (#EF4444)
+- Entry marker: white
+- Exit marker: amber (#E8A735)

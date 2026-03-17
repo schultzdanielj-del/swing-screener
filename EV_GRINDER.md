@@ -1,9 +1,9 @@
 # EV Grinder — Phase 3 Correlative Scoring Engine
 
 **Created:** 2026-03-14
-**Status:** Complete (inc 1-6). Script functional, output mirrored to Railway.
+**Status:** Complete (inc 1-6). Script functional, output saved locally, mirrored to Railway as backup.
 **Script:** `scripts/ev_grinder.py`
-**Pipeline step:** `ev_grind` (wired in `pipeline_agent.py`)
+**Pipeline step:** `ev_grind` (wired in scanperfect.py PySide6 app)
 
 ---
 
@@ -73,7 +73,7 @@ All three are replaced by a single unified engine where all features compete on 
 
 ### Primary Output File
 - **Path:** `local_runner/cache/ev_{setup}_{timestamp}.json`
-- **Mirrored to:** Railway via `file_mirror.py`
+- **Mirrored to Railway as backup via file_mirror.py`
 - **Read by:** UI (SPY overlay chart + dual sliders + stats bar)
 
 ### What the Output Contains
@@ -438,7 +438,7 @@ Both sliders affect which circles are visible. As Slider 1 increases, loser circ
 
 Stats update in real-time as sliders move.
 
-SPY OHLCV data is fetched separately (already in Railway DB or market cache). The EV grinder output just needs signal dates + scores.
+SPY OHLCV data is fetched separately (in the local 5yr OHLCV pickle or market cache). The EV grinder output just needs signal dates + scores.
 
 ---
 
@@ -533,7 +533,7 @@ Replay 100 refinement conditions against all 893 clusters. Build per-condition e
 - WR calibration RMSE: 0.114 pre, 0.090 post
 - Redundancy analysis: 247 features in both sets (genuine), 1,569 pre-only (refinement captured), 1,693 post-only
 - Output: `validation.calibration_pre/post` + `validation.calibration_rmse_wr_*` + `redundancy` dict
-- File: `ev_{setup}_inc6_*.json`, mirrored to Railway
+- File: `ev_{setup}_inc6_*.json`, saved locally, mirrored to Railway as backup
 
 ### Increment 7: UI — SPY Chart + Dual Sliders (separate task)
 
@@ -541,7 +541,7 @@ Replay 100 refinement conditions against all 893 clusters. Build per-condition e
 - Slider 1: refinement depth (reads `depth_stats` + `killed_at_depth`)
 - Slider 2: EV quality (reads `quality_score` per signal, continuous threshold)
 - Stats bar always visible
-- Slider positions saved to Railway as live scan parameters
+- Slider positions saved locally as scan_settings JSON
 
 ---
 

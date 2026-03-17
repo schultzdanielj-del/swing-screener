@@ -144,7 +144,7 @@ universe. More examples → tighter discrimination → fewer false positives.
   from over-locking and destroying downstream tiers (BUG-001).
 - After every grind, compute and store: n_conditions, n_signals, peak/day, signal
   stability vs previous cycle. These feed Layer 7.
-- Results upload to Railway automatically as part of the grind run — no separate step.
+- Results mirror to Railway (backup) automatically as part of the grind run — no separate step.
 
 **Output:**
 - Condition set for this cycle
@@ -510,7 +510,7 @@ test exit conditions against.
 - Per-trade stats: avg win (R), avg loss (R), win rate, expectancy
 - MFE capture efficiency
 - Comparison table: top parameter combos ranked by SQN
-- Uploads to Railway
+- Mirrors to Railway as backup
 
 ---
 
@@ -643,8 +643,8 @@ from current.
 delete the bad cycle. One operation. No manual reconstruction. The previous cycle's
 conditions, signals, locked settings, and health metrics become current instantly.
 
-**Railway is the authoritative store.** All compute runs locally, all results upload
-to Railway on completion. The UI reads only from Railway. Local files are ephemeral.
+**Local files are the authoritative store. Railway is seed vault only.
+to Railway on completion. The PySide6 app reads from local files and local SQLite.
 
 ---
 
@@ -677,8 +677,8 @@ signal_filter.py is retained for standalone signal analysis and chart vetting.
 It no longer produces `classified_{setup}.json` — that file has been replaced by
 `raw_signal_clusters_{setup}.json` produced by the refinement grinder itself.
 
-Every command uploads its output to Railway on completion. No exceptions.
-The agent streams logs to Railway in real time. Status updates after every major step.
+Every command saves output locally and mirrors to Railway as backup.
+Pipeline runs as direct subprocesses via QProcess.
 
 ---
 
