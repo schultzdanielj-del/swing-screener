@@ -624,6 +624,11 @@ class FlowchartCanvas(QWidget):
         self._n_examples = 0
         self._expanded_id = None  # which RUN node is expanded
         self._detail_widgets = {}  # nid -> GrinderDetail widget (children of canvas)
+        self._anim_expand_h = 0.0  # current animated expand height (0 to target)
+        self._anim_target_h = 0.0  # target expand height
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(16)  # ~60fps
+        self._anim_timer.timeout.connect(self._anim_step)
         self.setMouseTracking(True)
 
     def set_status(self, nid, s):
@@ -660,8 +665,8 @@ class FlowchartCanvas(QWidget):
         row_gap = max(40, usable_h * 0.06)
         nh = max(80, min(130, (usable_h - row_gap * 5) / 5))
 
-        # Height of expanded detail panel
-        expand_h = 380 if self._expanded_id else 0
+        # Height of expanded detail panel (animated)
+        expand_h = self._anim_expand_h
 
         lx = side_pad + loop_margin
         rx = lx + nw + col_gap
@@ -716,22 +721,48 @@ class FlowchartCanvas(QWidget):
         self._detail_widgets[nid] = widget
 
     def expand_node(self, nid):
-        """Expand a RUN node to show its detail panel inline."""
+        """Expand/collapse a RUN node with animation."""
+        EXPANDED_H = 380
+
         if self._expanded_id == nid:
-            # Collapse
-            self._expanded_id = None
-            if nid in self._detail_widgets:
-                self._detail_widgets[nid].setVisible(False)
+            # Collapse current
+            self._anim_target_h = 0
+            self._anim_timer.start()
         else:
-            # Collapse previous
+            # Collapse previous instantly if switching
             if self._expanded_id and self._expanded_id in self._detail_widgets:
                 self._detail_widgets[self._expanded_id].setVisible(False)
             self._expanded_id = nid
+            self._anim_expand_h = 0
+            self._anim_target_h = EXPANDED_H
             if nid in self._detail_widgets:
                 self._detail_widgets[nid].setVisible(True)
+            self._anim_timer.start()
+
+    def _anim_step(self):
+        """Animate expand/collapse one frame."""
+        speed = 30  # pixels per frame (~60fps = ~480px/s)
+        if self._anim_target_h > self._anim_expand_h:
+            self._anim_expand_h = min(self._anim_expand_h + speed, self._anim_target_h)
+        elif self._anim_target_h < self._anim_expand_h:
+            self._anim_expand_h = max(self._anim_expand_h - speed, self._anim_target_h)
+
         self._layout()
         self._position_detail()
         self.update()
+
+        # Done?
+        if abs(self._anim_expand_h - self._anim_target_h) < 1:
+            self._anim_expand_h = self._anim_target_h
+            self._anim_timer.stop()
+            # If collapsed, clear expanded state
+            if self._anim_target_h == 0:
+                if self._expanded_id in self._detail_widgets:
+                    self._detail_widgets[self._expanded_id].setVisible(False)
+                self._expanded_id = None
+            self._layout()
+            self._position_detail()
+            self.update()
 
     def _position_detail(self):
         """Position the active detail widget inside the expanded card rect."""
