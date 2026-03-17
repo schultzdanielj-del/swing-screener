@@ -166,10 +166,10 @@ The grinder tests every correlative feature available — both market conditions
 - Sector mapping (GICS or similar)
 - RS vs sector (stock RS minus sector RS)
 - Sector RS vs SPY (sector performance vs broad market)
-- EPS growth QoQ (most recent quarter vs prior quarter)
-- EPS growth trailing 4Q (YoY from last 4 quarters)
-- Revenue growth QoQ
-- Revenue growth trailing 4Q
+- ~~EPS growth QoQ~~ (scrapped — paid API required)
+- ~~EPS growth trailing 4Q~~ (scrapped)
+- ~~Revenue growth QoQ~~ (scrapped)
+- ~~Revenue growth trailing 4Q~~ (scrapped)
 
 All features are included for every setup type. The grinder's screening step determines which ones matter for each setup — something redundant for DTSS might be the strongest predictor for another setup.
 

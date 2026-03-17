@@ -280,8 +280,8 @@ Sector mapping comes from Yahoo Finance (`fundamentals_cache.json`). 11 sectors.
 
 ### Features NOT Included (not sourced)
 
-- EPS growth QoQ / trailing 4Q
-- Revenue growth QoQ / trailing 4Q
+- ~~EPS growth QoQ / trailing 4Q~~ (scrapped — requires paid API)
+- ~~Revenue growth QoQ / trailing 4Q~~ (scrapped — requires paid API)
 - Float absolute level (have float_shares, but using volume/float ratio instead)
 - Industry-level RS (have sector-level only)
 

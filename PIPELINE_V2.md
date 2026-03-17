@@ -72,8 +72,8 @@ fundamentally alters what conditions the beam search finds. It stays fixed.
 
 ## The Pipeline
 
-Nine steps. Steps 1-4 are the vetting loop — repeat until convergence (no new
-examples found). Steps 5-8 run once after convergence.
+Seven nodes in the UI flowchart. The vetting loop (Examples → Causative Processing → Vetting) repeats until convergence (no new
+examples found). After convergence: Correlative Targeting → Scan Tuning ↔ Optimal Management → Summary.
 
 **Nightly auto-refresh (4:30pm ET, fully automated):**
   OHLCV append → daily cache → 5yr cache → expr cache → matrix → earnings → market cache (256 instruments)
