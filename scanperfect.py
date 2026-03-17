@@ -905,7 +905,7 @@ class FlowchartCanvas(QWidget):
         arrow_tip(p, el_x, el_y, "r", lk1)
         if not lk1:
             p.setPen(QPen(QColor(C["text_muted"])))
-            f = p.font(); f.setPixelSize(9); p.setFont(f)
+            f = QFont("DM Sans", 1); f.setPixelSize(9); p.setFont(f)
             p.save()
             p.translate(loop_x - 8, (vl_y + el_y) // 2 + 30)
             p.rotate(-90)
@@ -922,7 +922,7 @@ class FlowchartCanvas(QWidget):
         # Gate label: 60 examples
         if is_locked("correlative"):
             p.setPen(QPen(QColor(C["text_muted"])))
-            f = p.font(); f.setPixelSize(9); p.setFont(f)
+            f = QFont("DM Sans", 1); f.setPixelSize(9); p.setFont(f)
             gate_x = (x1 + x2) // 2
             p.drawText(QRectF(gate_x - 40, my - 14, 80, 14), Qt.AlignCenter,
                        "%d/60 examples" % self._n_examples)
@@ -952,7 +952,7 @@ class FlowchartCanvas(QWidget):
         arrow_tip(p, sb_x, sb_y, "u", lk2)
         if not lk2:
             p.setPen(QPen(QColor(C["text_muted"])))
-            f = p.font(); f.setPixelSize(9); p.setFont(f)
+            f = QFont("DM Sans", 1); f.setPixelSize(9); p.setFont(f)
             p.drawText(QRectF((pb_x + sb_x)//2 - 40, ly + 2, 80, 14), Qt.AlignCenter, "tweak \u00b7 re-run")
 
         # Profit Grind → Summary (horizontal right, or L-shape)
@@ -1038,7 +1038,8 @@ class FlowchartCanvas(QWidget):
 
         # Name + inline example count for Examples card
         p.setPen(QPen(text_col))
-        f = p.font(); f.setPixelSize(name_px); f.setWeight(QFont.DemiBold); p.setFont(f)
+        f = QFont("DM Sans", 1)
+        f.setPixelSize(name_px); f.setWeight(QFont.DemiBold); p.setFont(f)
         name_y = y + pad
         name_h = int(header_h * 0.4)
         title_text = nd["name"]
@@ -1085,7 +1086,7 @@ class FlowchartCanvas(QWidget):
             p.setPen(QPen(QColor(sc_map.get(status, C["text_muted"]))))
             f.setPixelSize(badge_px); f.setWeight(QFont.Bold); p.setFont(f)
             p.drawText(QRectF(x + w - 70, y + pad - 2, 56, 16),
-                       Qt.AlignRight | Qt.AlignVCenter, status.upper())
+                       Qt.AlignRight | Qt.AlignVCenter, status)
 
         # Nav arrow for DO nodes
         if kind == "do" and nd.get("tab") is not None and not locked:
