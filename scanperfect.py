@@ -15,7 +15,7 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QComboBox, QStackedWidget, QScrollArea,
+    QLabel, QPushButton, QComboBox, QScrollArea,
     QPlainTextEdit, QFrame,
 )
 from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment
@@ -354,33 +354,6 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 # ============================================================
 # WIDGETS
 # ============================================================
-
-class TabButton(QPushButton):
-    def __init__(self, text, parent=None):
-        super().__init__(text, parent)
-        self._active = False
-        self.setFixedHeight(48)
-        self.setCursor(Qt.PointingHandCursor)
-        self._restyle()
-
-    def set_active(self, on):
-        self._active = on
-        self._restyle()
-
-    def _restyle(self):
-        if self._active:
-            self.setStyleSheet(
-                "border:none; padding:0 18px; border-bottom:2px solid %s;"
-                "color:%s; font-size:12px; font-weight:600; letter-spacing:1px;"
-                "background:transparent;" % (C["white"], C["white"])
-            )
-        else:
-            self.setStyleSheet(
-                "border:none; padding:0 18px; border-bottom:2px solid transparent;"
-                "color:%s; font-size:12px; font-weight:600; letter-spacing:1px;"
-                "background:transparent;" % C["text_muted"]
-            )
-
 
 class StatusBadge(QLabel):
     _MAP = {
@@ -737,7 +710,11 @@ class FlowchartCanvas(QWidget):
         self._detail_widgets[nid] = widget
 
     def expand_node(self, nid):
-        """Expand/collapse a RUN node with animation — grows both directions."""
+        """Expand/collapse a node with animation. DO nodes expand nearly fullscreen, RUN nodes smaller."""
+        nd = next((n for n in FLOW_NODES if n["id"] == nid), None)
+        if not nd:
+            return
+
         if self._expanded_id == nid:
             # Collapse
             self._anim_target_h = 0
@@ -749,11 +726,21 @@ class FlowchartCanvas(QWidget):
             self._expanded_id = nid
             self._anim_expand_h = 0
             self._anim_expand_w = 0
-            # Target: much bigger — cover most of the flowchart
+
             nw = getattr(self, '_nw', 300)
             nh = getattr(self, '_nh', 100)
-            self._anim_target_h = max(380, nh * 4)
-            self._anim_target_w = max(200, int(nw * 0.7))
+            canvas_h = self.height()
+            canvas_w = self.width()
+
+            if nd["kind"] == "do":
+                # DO nodes expand to nearly full canvas
+                self._anim_target_h = max(500, canvas_h - nh - 80)
+                self._anim_target_w = max(400, canvas_w - nw - 200)
+            else:
+                # RUN nodes expand moderately
+                self._anim_target_h = max(380, nh * 4)
+                self._anim_target_w = max(200, int(nw * 0.7))
+
             if nid in self._detail_widgets:
                 self._detail_widgets[nid].setVisible(True)
             self._anim_timer.start()
@@ -1095,12 +1082,49 @@ class FlowchartCanvas(QWidget):
             self.node_clicked.emit(self._hover)
 
 
+class WorkspaceDetail(QFrame):
+    """Expandable workspace for DO nodes (Examples, Vetting, Scan Tuning).
+    Placeholder content for now — will be filled with full workspace UI."""
+
+    def __init__(self, node_id, parent=None):
+        super().__init__(parent)
+        self.node_id = node_id
+        self.setStyleSheet(
+            "WorkspaceDetail { background:%s; border:1px solid %s; }" % (C["surface"], C["border"])
+        )
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 16, 20, 16)
+        lay.setSpacing(10)
+
+        # Header
+        titles = {"examples": "Examples", "vetting": "Vetting", "scan_tuning": "Scan Tuning"}
+        descs = {
+            "examples": "Example library with chart thumbnails — coming next increment",
+            "vetting": "Full-screen chart vetting workflow — coming next increment",
+            "scan_tuning": "Quality score + WR threshold sliders — not yet built",
+        }
+
+        header = QLabel(titles.get(node_id, node_id))
+        header.setStyleSheet(
+            "font-size:18px; font-weight:700; color:%s; background:transparent; border:none;" % C["text"]
+        )
+        lay.addWidget(header)
+
+        desc = QLabel(descs.get(node_id, ""))
+        desc.setStyleSheet(
+            "font-size:12px; color:%s; background:transparent; border:none;" % C["text_muted"]
+        )
+        lay.addWidget(desc)
+
+        lay.addStretch()
+
+
 # ============================================================
 # PIPELINE TAB
 # ============================================================
 
 class PipelineTab(QWidget):
-    navigate_to_tab = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1117,12 +1141,16 @@ class PipelineTab(QWidget):
         self._canvas = FlowchartCanvas()
         self._canvas.node_clicked.connect(self._on_node_click)
 
-        # Create detail widgets as children of the canvas
+        # Create detail widgets for ALL expandable nodes
         for nd in FLOW_NODES:
             if nd["kind"] == "run":
                 det = GrinderDetail(nd["id"])
                 det.run_requested.connect(self._fwd_run)
                 det.stop_requested.connect(self._fwd_stop)
+                self._canvas.add_detail_widget(nd["id"], det)
+                self._details[nd["id"]] = det
+            elif nd["kind"] == "do":
+                det = WorkspaceDetail(nd["id"])
                 self._canvas.add_detail_widget(nd["id"], det)
                 self._details[nd["id"]] = det
 
@@ -1133,9 +1161,7 @@ class PipelineTab(QWidget):
         nd = next((n for n in FLOW_NODES if n["id"] == nid), None)
         if not nd:
             return
-        if nd["kind"] == "do" and nd.get("tab") is not None:
-            self.navigate_to_tab.emit(nd["tab"])
-        elif nd["kind"] == "run":
+        if nd["kind"] in ("do", "run"):
             self._canvas.expand_node(nid)
 
     def _fwd_run(self, step_id):
@@ -1246,24 +1272,6 @@ class PipelineTab(QWidget):
                     self._canvas.set_info(nid, "not yet built")
 
 
-class PlaceholderTab(QWidget):
-    def __init__(self, title, msg, parent=None):
-        super().__init__(parent)
-        lay = QVBoxLayout(self)
-        lay.setAlignment(Qt.AlignCenter)
-        for text, style in [
-            ("◇", "font-size:48px; color:%s; border:none;" % C["text_muted"]),
-            (title, "font-size:15px; font-weight:600; color:%s; border:none;" % C["text_dim"]),
-            (msg, "font-size:13px; color:%s; border:none;" % C["text_muted"]),
-        ]:
-            lbl = QLabel(text)
-            lbl.setStyleSheet(style)
-            lbl.setAlignment(Qt.AlignCenter)
-            lbl.setWordWrap(True)
-            lbl.setMaximumWidth(400)
-            lay.addWidget(lbl)
-
-
 # ============================================================
 # MAIN WINDOW
 # ============================================================
@@ -1286,7 +1294,7 @@ class ScanPerfectWindow(QMainWindow):
         ml.setContentsMargins(0, 0, 0, 0)
         ml.setSpacing(0)
 
-        # Top bar
+        # Top bar — logo + setup selector only (no tabs)
         top = QFrame()
         top.setFixedHeight(48)
         top.setStyleSheet("QFrame { background:%s; border-bottom:1px solid %s; }" % (C["surface"], C["border"]))
@@ -1297,16 +1305,6 @@ class ScanPerfectWindow(QMainWindow):
         logo = QLabel("SCANPERFECT")
         logo.setStyleSheet("font-size:12px; font-weight:700; letter-spacing:3px; color:%s; border:none; background:transparent;" % C["white"])
         tl.addWidget(logo)
-        sep = QLabel("│")
-        sep.setStyleSheet("color:%s; font-size:14px; margin:0 12px; border:none; background:transparent;" % C["border"])
-        tl.addWidget(sep)
-
-        self._tab_btns = []
-        for i, name in enumerate(["PIPELINE", "EXAMPLES", "VETTING", "WATCHLIST"]):
-            btn = TabButton(name)
-            btn.clicked.connect(lambda _, idx=i: self._switch_tab(idx))
-            tl.addWidget(btn)
-            self._tab_btns.append(btn)
 
         tl.addStretch()
 
@@ -1316,19 +1314,12 @@ class ScanPerfectWindow(QMainWindow):
 
         ml.addWidget(top)
 
-        # Stack
-        self._stack = QStackedWidget()
+        # Pipeline flowchart is the entire UI
         self._pipeline = PipelineTab()
-        self._pipeline.navigate_to_tab.connect(self._switch_tab)
-        self._stack.addWidget(self._pipeline)
-        self._stack.addWidget(PlaceholderTab("Examples", "Coming in Increment 2 — example library with chart thumbnails."))
-        self._stack.addWidget(PlaceholderTab("Vetting", "Coming in Increment 3 — full-screen chart vetting workflow."))
-        self._stack.addWidget(PlaceholderTab("Nightly Watchlist", "Not yet built — will show ranked signals across all setups."))
-        ml.addWidget(self._stack)
+        ml.addWidget(self._pipeline)
 
         # Init
         self._load_setups()
-        self._switch_tab(0)
         self._pipeline.set_setup(self._setup_type)
         self._pipeline.refresh()
 
@@ -1346,11 +1337,6 @@ class ScanPerfectWindow(QMainWindow):
         except Exception:
             self._setup_combo.addItem("DTSS (dtss)", "dtss")
 
-    def _switch_tab(self, idx):
-        self._stack.setCurrentIndex(idx)
-        for i, b in enumerate(self._tab_btns):
-            b.set_active(i == idx)
-
     def _on_setup_changed(self):
         data = self._setup_combo.currentData()
         if data:
@@ -1359,8 +1345,7 @@ class ScanPerfectWindow(QMainWindow):
             self._pipeline.refresh()
 
     def _on_tick(self):
-        if self._stack.currentIndex() == 0:
-            self._pipeline.refresh()
+        self._pipeline.refresh()
 
     # ── Subprocess management (centralized) ──
 
