@@ -647,11 +647,11 @@ class FlowchartCanvas(QWidget):
         self._n_examples = n
         self.update()
 
-    def _layout(self):
+    def _calc_base_layout(self):
+        """Calculate base card sizes from window dimensions. Called on resize only."""
         w = self.width()
         h = self.height()
 
-        # Scale card sizes to fill the space
         loop_margin = 50
         side_pad = 60
         usable_w = w - side_pad * 2 - loop_margin
@@ -665,20 +665,33 @@ class FlowchartCanvas(QWidget):
         row_gap = max(40, usable_h * 0.06)
         nh = max(80, min(130, (usable_h - row_gap * 5) / 5))
 
-        # Height of expanded detail panel (animated)
-        expand_h = self._anim_expand_h
+        self._nw = nw
+        self._nh = nh
+        self._col_gap = col_gap
+        self._row_gap = row_gap
+        self._loop_margin = loop_margin
+        self._side_pad = side_pad
+        self._top_pad = top_pad
+        self._loop_v = loop_v
+        self._loop_m = 36
+
+    def _layout(self):
+        """Position all cards using cached base sizes. Expanded card gets extra
+        height but does NOT push other cards — it overlaps on top."""
+        nw = getattr(self, '_nw', 300)
+        nh = getattr(self, '_nh', 100)
+        col_gap = getattr(self, '_col_gap', 100)
+        row_gap = getattr(self, '_row_gap', 50)
+        loop_margin = getattr(self, '_loop_margin', 50)
+        side_pad = getattr(self, '_side_pad', 60)
+        top_pad = getattr(self, '_top_pad', 50)
+        loop_v = getattr(self, '_loop_v', 50)
+        w = self.width()
 
         lx = side_pad + loop_margin
         rx = lx + nw + col_gap
 
         y = top_pad
-
-        # Row order: which rows contain which nodes
-        # Row 0: examples (lx), causative (rx)
-        # Row 1: vetting (lx)
-        # Row 2: correlative (rx)
-        # Row 3: scan_tuning (lx), profit_grind (rx)
-        # Row 4: summary (centered)
 
         row_nodes = [
             [("examples", lx), ("causative", rx)],
@@ -687,32 +700,36 @@ class FlowchartCanvas(QWidget):
             [("scan_tuning", lx), ("profit_grind", rx)],
         ]
 
+        # All cards get base height — no pushing
         for row in row_nodes:
             for nid, nx in row:
-                this_h = nh
-                if nid == self._expanded_id:
-                    this_h = nh + expand_h
-                self._rects[nid] = (nx, y, nw, this_h)
-            # Row height = max card height in this row
-            max_h = max(self._rects[nid][3] for nid, _ in row)
-            y += max_h + row_gap
+                self._rects[nid] = (nx, y, nw, nh)
+            y += nh + row_gap
 
-        # Summary row
         y += loop_v
         summary_w = min(nw, 300)
         self._rects["summary"] = ((w - summary_w) // 2, y, summary_w, nh)
 
-        self._nw = nw
-        self._nh = nh  # base (collapsed) height
-        self._expand_h = expand_h
-        self._loop_m = 36
+        # Expanded card gets extra height ON TOP of the base layout
+        # (painted last so it draws over others)
+        if self._expanded_id and self._expanded_id in self._rects:
+            x, base_y, rw, _ = self._rects[self._expanded_id]
+            self._rects[self._expanded_id] = (x, base_y, rw, nh + self._anim_expand_h)
 
+        self._expand_h = self._anim_expand_h
         self.setMinimumHeight(int(y + nh + 40))
 
     def resizeEvent(self, ev):
+        self._calc_base_layout()
         self._layout()
         self._position_detail()
         super().resizeEvent(ev)
+
+    def showEvent(self, ev):
+        self._calc_base_layout()
+        self._layout()
+        self._position_detail()
+        super().showEvent(ev)
 
     def add_detail_widget(self, nid, widget):
         """Register a GrinderDetail as a child widget of the canvas."""
@@ -789,8 +806,14 @@ class FlowchartCanvas(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         self._draw_connections(p)
+        # Draw non-expanded nodes first, expanded node last (on top)
         for nd in FLOW_NODES:
-            self._draw_node(p, nd)
+            if nd["id"] != self._expanded_id:
+                self._draw_node(p, nd)
+        if self._expanded_id:
+            nd = next((n for n in FLOW_NODES if n["id"] == self._expanded_id), None)
+            if nd:
+                self._draw_node(p, nd)
         p.end()
 
     def _draw_connections(self, p):
