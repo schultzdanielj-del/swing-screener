@@ -214,11 +214,11 @@ FLOW_NODES = [
     {"id": "scan_tuning",  "name": "Scan Tuning",       "kind": "do",  "tab": None,
      "desc": "Quality + WR threshold sliders"},
     # RUN nodes — automated, machine does the work
-    {"id": "causative",    "name": "Causative Grind",   "kind": "run", "tab": None,
+    {"id": "causative",    "name": "Causative Processing",   "kind": "run", "tab": None,
      "desc": "Signal \u2192 Exit \u2192 Refinement"},
-    {"id": "correlative",  "name": "Correlative Grind", "kind": "run", "tab": None,
+    {"id": "correlative",  "name": "Correlative Targeting", "kind": "run", "tab": None,
      "desc": "EV scoring \u2014 predicted WR, MFE, EV"},
-    {"id": "profit_grind", "name": "Profit Grind",      "kind": "run", "tab": None,
+    {"id": "profit_grind", "name": "Optimal Management",      "kind": "run", "tab": None,
      "desc": "Optimize exit strategy \u00b7 maximize SQN"},
     # Summary — read-only output
     {"id": "summary",      "name": "Summary",           "kind": "summary", "tab": None,
@@ -624,8 +624,10 @@ class FlowchartCanvas(QWidget):
         self._n_examples = 0
         self._expanded_id = None  # which RUN node is expanded
         self._detail_widgets = {}  # nid -> GrinderDetail widget (children of canvas)
-        self._anim_expand_h = 0.0  # current animated expand height (0 to target)
-        self._anim_target_h = 0.0  # target expand height
+        self._anim_expand_h = 0.0
+        self._anim_expand_w = 0.0
+        self._anim_target_h = 0.0
+        self._anim_target_w = 0.0
         self._anim_timer = QTimer(self)
         self._anim_timer.setInterval(16)  # ~60fps
         self._anim_timer.timeout.connect(self._anim_step)
@@ -724,10 +726,12 @@ class FlowchartCanvas(QWidget):
             summary_y = row2_top
         self._rects["summary"] = (summary_x, summary_y, summary_w, summary_h)
 
-        # Expanded card overlay
+        # Expanded card overlay — grows both wider and taller
         if self._expanded_id and self._expanded_id in self._rects:
             ex, ey, ew, _ = self._rects[self._expanded_id]
-            self._rects[self._expanded_id] = (ex, ey, ew, nh + self._anim_expand_h)
+            new_w = ew + self._anim_expand_w
+            new_h = nh + self._anim_expand_h
+            self._rects[self._expanded_id] = (ex, ey, new_w, new_h)
 
         self._expand_h = self._anim_expand_h
         self.setMinimumHeight(int(y + loop_v + nh + 40))
@@ -751,41 +755,52 @@ class FlowchartCanvas(QWidget):
         self._detail_widgets[nid] = widget
 
     def expand_node(self, nid):
-        """Expand/collapse a RUN node with animation."""
-        EXPANDED_H = 380
-
+        """Expand/collapse a RUN node with animation — grows both directions."""
         if self._expanded_id == nid:
-            # Collapse current
+            # Collapse
             self._anim_target_h = 0
+            self._anim_target_w = 0
             self._anim_timer.start()
         else:
-            # Collapse previous instantly if switching
             if self._expanded_id and self._expanded_id in self._detail_widgets:
                 self._detail_widgets[self._expanded_id].setVisible(False)
             self._expanded_id = nid
             self._anim_expand_h = 0
-            self._anim_target_h = EXPANDED_H
+            self._anim_expand_w = 0
+            # Target: much bigger — cover most of the flowchart
+            nw = getattr(self, '_nw', 300)
+            nh = getattr(self, '_nh', 100)
+            self._anim_target_h = max(380, nh * 4)
+            self._anim_target_w = max(200, int(nw * 0.7))
             if nid in self._detail_widgets:
                 self._detail_widgets[nid].setVisible(True)
             self._anim_timer.start()
 
     def _anim_step(self):
-        """Animate expand/collapse one frame."""
-        speed = 30  # pixels per frame (~60fps = ~480px/s)
+        """Animate expand/collapse one frame — both dimensions."""
+        speed_h = 35
+        speed_w = 25
+
         if self._anim_target_h > self._anim_expand_h:
-            self._anim_expand_h = min(self._anim_expand_h + speed, self._anim_target_h)
+            self._anim_expand_h = min(self._anim_expand_h + speed_h, self._anim_target_h)
         elif self._anim_target_h < self._anim_expand_h:
-            self._anim_expand_h = max(self._anim_expand_h - speed, self._anim_target_h)
+            self._anim_expand_h = max(self._anim_expand_h - speed_h, self._anim_target_h)
+
+        if self._anim_target_w > self._anim_expand_w:
+            self._anim_expand_w = min(self._anim_expand_w + speed_w, self._anim_target_w)
+        elif self._anim_target_w < self._anim_expand_w:
+            self._anim_expand_w = max(self._anim_expand_w - speed_w, self._anim_target_w)
 
         self._layout()
         self._position_detail()
         self.update()
 
-        # Done?
-        if abs(self._anim_expand_h - self._anim_target_h) < 1:
+        done_h = abs(self._anim_expand_h - self._anim_target_h) < 1
+        done_w = abs(self._anim_expand_w - self._anim_target_w) < 1
+        if done_h and done_w:
             self._anim_expand_h = self._anim_target_h
+            self._anim_expand_w = self._anim_target_w
             self._anim_timer.stop()
-            # If collapsed, clear expanded state
             if self._anim_target_h == 0:
                 if self._expanded_id in self._detail_widgets:
                     self._detail_widgets[self._expanded_id].setVisible(False)
@@ -954,7 +969,12 @@ class FlowchartCanvas(QWidget):
         hover = self._hover == nid and not locked
         kind = nd["kind"]
 
-        name_px = max(13, int(header_h * 0.17))
+        # Title font scales up when expanded
+        if is_expanded and self._anim_expand_h > 10:
+            expand_ratio = min(1.0, self._anim_expand_h / (getattr(self, '_anim_target_h', 380) or 380))
+            name_px = max(13, int(header_h * 0.17 + 10 * expand_ratio))
+        else:
+            name_px = max(13, int(header_h * 0.17))
         desc_px = max(10, int(header_h * 0.12))
         badge_px = max(9, int(header_h * 0.1))
         pad = max(14, int(w * 0.04))
