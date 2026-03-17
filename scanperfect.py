@@ -796,8 +796,13 @@ class FlowchartCanvas(QWidget):
 
             if nd["kind"] == "do":
                 # DO nodes: fill most of the visible area
-                self._anim_target_h = max(400, vis_h - nh - 60)
-                self._anim_target_w = max(300, vis_w - nw - 140)
+                # Vetting needs maximum space for chart workspace
+                if nid == "vetting":
+                    self._anim_target_h = max(500, vis_h - 40)
+                    self._anim_target_w = max(400, vis_w - nw - 40)
+                else:
+                    self._anim_target_h = max(400, vis_h - nh - 60)
+                    self._anim_target_w = max(300, vis_w - nw - 140)
             else:
                 # RUN nodes: moderate expansion
                 self._anim_target_h = max(380, nh * 4)
@@ -845,9 +850,10 @@ class FlowchartCanvas(QWidget):
         for nid, widget in self._detail_widgets.items():
             if nid == self._expanded_id and nid in self._rects:
                 x, y, w, h = self._rects[nid]
-                nh = self._nh  # base card height (header area)
-                # Place detail below the header area, within the expanded rect
-                widget.setGeometry(int(x + 1), int(y + nh), int(w - 2), int(h - nh - 1))
+                # Vetting gets a thin header (just enough to click-collapse)
+                # Other nodes use the full base card height as header
+                header_h = 32 if nid == "vetting" else self._nh
+                widget.setGeometry(int(x + 1), int(y + header_h), int(w - 2), int(h - header_h - 1))
                 widget.setVisible(True)
                 widget.raise_()
             else:
