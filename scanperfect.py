@@ -262,53 +262,25 @@ def _is_unlocked(nid, n_examples, step_statuses):
 
 
 def _causative_done(step_statuses):
-    """Check if causative grind is complete — state file OR output files exist."""
-    # Check pipeline state
+    """Check if causative grind is complete — pipeline state OR local output files."""
     subs = GRINDER_SUB_STEPS.get("causative", [])
-    all_done = all(
-        step_statuses.get(ss, {}).get("status") in ("done", "complete")
-        for ss in subs
-    )
-    if all_done:
+    if all(step_statuses.get(ss, {}).get("status") in ("done", "complete") for ss in subs):
         return True
-    # Fallback: check if refinement output exists in file_mirror or as local file
-    try:
-        with get_db() as db:
-            row = db.execute(
-                "SELECT 1 FROM file_mirror WHERE path LIKE 'local_runner/cache/refinement_%' LIMIT 1"
-            ).fetchone()
-            if row:
-                return True
-    except Exception:
-        pass
-    # Also check local cache directory
+    # Check if cluster-aware refinement output exists locally
     cache_dir = REPO_ROOT / "local_runner" / "cache"
     if cache_dir.exists():
         for f in cache_dir.iterdir():
-            if f.name.startswith("refinement_") and f.suffix == ".json":
+            if f.name.startswith("refinement_") and "_cl" in f.name and f.suffix == ".json":
                 return True
     return False
 
 
 def _correlative_done(step_statuses):
-    """Check if correlative grind is complete — state file OR output files exist."""
+    """Check if correlative grind is complete — pipeline state OR local output files."""
     subs = GRINDER_SUB_STEPS.get("correlative", [])
-    all_done = all(
-        step_statuses.get(ss, {}).get("status") in ("done", "complete")
-        for ss in subs
-    )
-    if all_done:
+    if all(step_statuses.get(ss, {}).get("status") in ("done", "complete") for ss in subs):
         return True
-    # Fallback: check if EV grinder output exists
-    try:
-        with get_db() as db:
-            row = db.execute(
-                "SELECT 1 FROM file_mirror WHERE path LIKE 'local_runner/cache/ev_%' LIMIT 1"
-            ).fetchone()
-            if row:
-                return True
-    except Exception:
-        pass
+    # Check if EV grinder output exists locally
     cache_dir = REPO_ROOT / "local_runner" / "cache"
     if cache_dir.exists():
         for f in cache_dir.iterdir():
