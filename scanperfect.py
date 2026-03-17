@@ -233,38 +233,87 @@ GRINDER_SUB_STEPS = {
 
 # Unlock requirements: (node_id) -> callable(n_examples, step_statuses) -> bool
 def _is_unlocked(nid, n_examples, step_statuses):
-    """Check if a pipeline node is unlocked based on current progress."""
+    """Check if a pipeline node is unlocked based on current progress.
+    
+    Uses both pipeline_state.json AND existence of output files,
+    since grinds may have been run before the state file existed.
+    """
     if nid == "examples":
-        return True  # always unlocked
+        return True
     if nid == "causative":
         return n_examples >= 20
     if nid == "vetting":
-        # Unlocked when causative is done
-        for ss in GRINDER_SUB_STEPS.get("causative", []):
-            if step_statuses.get(ss, {}).get("status") not in ("done", "complete"):
-                return False
-        return True
+        # Unlocked when causative is done — check state OR refinement output exists
+        if _causative_done(step_statuses):
+            return True
+        return False
     if nid == "correlative":
         # Need 60+ examples AND causative done
         if n_examples < 60:
             return False
-        for ss in GRINDER_SUB_STEPS.get("causative", []):
-            if step_statuses.get(ss, {}).get("status") not in ("done", "complete"):
-                return False
-        return True
+        return _causative_done(step_statuses)
     if nid == "scan_tuning":
-        for ss in GRINDER_SUB_STEPS.get("correlative", []):
-            if step_statuses.get(ss, {}).get("status") not in ("done", "complete"):
-                return False
-        return True
+        return _correlative_done(step_statuses)
     if nid == "profit_grind":
-        # Unlocked when scan_tuning has been visited (for now, same gate as correlative done)
-        for ss in GRINDER_SUB_STEPS.get("correlative", []):
-            if step_statuses.get(ss, {}).get("status") not in ("done", "complete"):
-                return False
-        return True
+        return _correlative_done(step_statuses)
     if nid == "summary":
-        return False  # future — needs profit grind done
+        return False  # future
+    return False
+
+
+def _causative_done(step_statuses):
+    """Check if causative grind is complete — state file OR output files exist."""
+    # Check pipeline state
+    subs = GRINDER_SUB_STEPS.get("causative", [])
+    all_done = all(
+        step_statuses.get(ss, {}).get("status") in ("done", "complete")
+        for ss in subs
+    )
+    if all_done:
+        return True
+    # Fallback: check if refinement output exists in file_mirror or as local file
+    try:
+        with get_db() as db:
+            row = db.execute(
+                "SELECT 1 FROM file_mirror WHERE path LIKE 'local_runner/cache/refinement_%' LIMIT 1"
+            ).fetchone()
+            if row:
+                return True
+    except Exception:
+        pass
+    # Also check local cache directory
+    cache_dir = REPO_ROOT / "local_runner" / "cache"
+    if cache_dir.exists():
+        for f in cache_dir.iterdir():
+            if f.name.startswith("refinement_") and f.suffix == ".json":
+                return True
+    return False
+
+
+def _correlative_done(step_statuses):
+    """Check if correlative grind is complete — state file OR output files exist."""
+    subs = GRINDER_SUB_STEPS.get("correlative", [])
+    all_done = all(
+        step_statuses.get(ss, {}).get("status") in ("done", "complete")
+        for ss in subs
+    )
+    if all_done:
+        return True
+    # Fallback: check if EV grinder output exists
+    try:
+        with get_db() as db:
+            row = db.execute(
+                "SELECT 1 FROM file_mirror WHERE path LIKE 'local_runner/cache/ev_%' LIMIT 1"
+            ).fetchone()
+            if row:
+                return True
+    except Exception:
+        pass
+    cache_dir = REPO_ROOT / "local_runner" / "cache"
+    if cache_dir.exists():
+        for f in cache_dir.iterdir():
+            if f.name.startswith("ev_") and f.suffix == ".json":
+                return True
     return False
 
 
