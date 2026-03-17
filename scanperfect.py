@@ -5,7 +5,9 @@ Reads directly from SQLite + 5yr OHLCV pickle. No server process needed.
 """
 
 import json
+import math
 import os
+import pickle
 import sys
 import sqlite3
 import time
@@ -13,13 +15,17 @@ from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime
 
+import numpy as np
+import pandas as pd
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QScrollArea,
-    QPlainTextEdit, QFrame,
+    QPlainTextEdit, QFrame, QCheckBox, QSizePolicy,
+    QListWidget, QListWidgetItem, QAbstractItemView,
 )
-from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment
-from PySide6.QtGui import QFont, QFontDatabase, QColor, QPainter, QPen, QLinearGradient
+from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment, QThread, QRectF, QPointF
+from PySide6.QtGui import QFont, QFontDatabase, QColor, QPainter, QPen, QLinearGradient, QBrush, QPainterPath
 
 
 # ============================================================
@@ -125,6 +131,35 @@ def init_db():
                 "INSERT OR IGNORE INTO setups (setup_type, name, description, direction) VALUES (?,?,?,?)",
                 (st, name, desc, direction),
             )
+
+
+# ============================================================
+# OHLCV CACHE — 5yr pickle loaded into memory at startup
+# ============================================================
+
+_ohlcv_cache = {}  # {ticker: DataFrame}
+
+
+def _load_ohlcv_cache():
+    """Load the 5yr OHLCV pickle into memory."""
+    global _ohlcv_cache
+    cache_path = REPO_ROOT / "local_runner" / "cache" / "universe_ohlcv_5yr.pkl"
+    if not cache_path.exists():
+        print("WARNING: 5yr OHLCV cache not found at %s" % cache_path)
+        print("  Charts will not work. Run: python local_runner/cache_builder.py --5yr --force")
+        return
+    t0 = time.time()
+    with open(cache_path, "rb") as f:
+        _ohlcv_cache = pickle.load(f)
+    print("OHLCV cache loaded: %d tickers in %.1fs" % (len(_ohlcv_cache), time.time() - t0))
+
+
+def _get_ohlcv(ticker):
+    """Get OHLCV DataFrame for a ticker from in-memory cache. Returns None if not found."""
+    df = _ohlcv_cache.get(ticker.upper())
+    if df is None:
+        return None
+    return df.copy()
 
 
 # ============================================================
@@ -1110,7 +1145,7 @@ class FlowchartCanvas(QWidget):
 
 
 class WorkspaceDetail(QFrame):
-    """Expandable workspace for DO nodes (Examples, Vetting, Scan Tuning).
+    """Expandable workspace for DO nodes (Examples, Scan Tuning).
     Placeholder content for now — will be filled with full workspace UI."""
 
     def __init__(self, node_id, parent=None):
@@ -1124,11 +1159,9 @@ class WorkspaceDetail(QFrame):
         lay.setContentsMargins(20, 16, 20, 16)
         lay.setSpacing(10)
 
-        # Header
-        titles = {"examples": "Examples", "vetting": "Vetting", "scan_tuning": "Scan Tuning"}
+        titles = {"examples": "Examples", "scan_tuning": "Scan Tuning"}
         descs = {
             "examples": "Example library with chart thumbnails — coming next increment",
-            "vetting": "Full-screen chart vetting workflow — coming next increment",
             "scan_tuning": "Quality score + WR threshold sliders — not yet built",
         }
 
@@ -1145,6 +1178,1083 @@ class WorkspaceDetail(QFrame):
         lay.addWidget(desc)
 
         lay.addStretch()
+
+
+# ============================================================
+# MA HELPERS — EMA / SMA computation (matches web UI)
+# ============================================================
+
+def _compute_ema(data, period):
+    """Compute EMA. data is a list of floats (or None). Returns list of same length."""
+    k = 2.0 / (period + 1)
+    result = [None] * len(data)
+    prev = None
+    for i, v in enumerate(data):
+        if v is None:
+            continue
+        if prev is None:
+            prev = v
+            result[i] = prev
+        else:
+            prev = v * k + prev * (1 - k)
+            result[i] = prev
+    return result
+
+
+def _compute_sma(data, period):
+    """Compute SMA. data is a list of floats (or None). Returns list of same length."""
+    result = [None] * len(data)
+    for i in range(period - 1, len(data)):
+        vals = [data[j] for j in range(i - period + 1, i + 1) if data[j] is not None]
+        if len(vals) == period:
+            result[i] = sum(vals) / period
+    return result
+
+
+# ============================================================
+# OHLCV PRELOAD THREAD
+# ============================================================
+
+class OhlcvPreloadThread(QThread):
+    """Preload OHLCV + MA data for upcoming signals in background."""
+
+    def __init__(self, signals, start_idx, count=10, lookback=250, forward=80, parent=None):
+        super().__init__(parent)
+        self._signals = signals
+        self._start = start_idx
+        self._count = count
+        self._lookback = lookback
+        self._forward = forward
+        self.results = {}  # key -> prepared candle list
+
+    def run(self):
+        for i in range(self._start, min(self._start + self._count, len(self._signals))):
+            sig = self._signals[i]
+            key = "%s_%s" % (sig["ticker"], sig["signal_date"])
+            if key in self.results:
+                continue
+            candles = _prepare_candles(sig["ticker"], sig["signal_date"],
+                                      self._lookback, self._forward)
+            if candles:
+                self.results[key] = candles
+
+
+def _prepare_candles(ticker, signal_date, lookback=250, forward=80):
+    """Load OHLCV from cache, slice around signal, compute MAs. Returns list of dicts."""
+    df = _get_ohlcv(ticker)
+    if df is None or df.empty:
+        return None
+    # Ensure date column is string for comparison
+    if hasattr(df["date"].iloc[0], "strftime"):
+        dates = [d.strftime("%Y-%m-%d") for d in df["date"]]
+    else:
+        dates = [str(d) for d in df["date"]]
+    # Find signal index
+    try:
+        sig_idx = dates.index(signal_date)
+    except ValueError:
+        # Find closest
+        try:
+            target = datetime.strptime(signal_date, "%Y-%m-%d")
+            sig_idx = min(range(len(dates)),
+                         key=lambda i: abs((datetime.strptime(dates[i], "%Y-%m-%d") - target).days))
+        except Exception:
+            return None
+    start = max(0, sig_idx - lookback)
+    end = min(len(df), sig_idx + forward)
+    sliced = df.iloc[start:end]
+    # Build candle dicts
+    candles = []
+    for _, r in sliced.iterrows():
+        d = r["date"]
+        if hasattr(d, "strftime"):
+            d = d.strftime("%Y-%m-%d")
+        else:
+            d = str(d)
+        candles.append({
+            "date": d,
+            "open": float(r["open"]),
+            "high": float(r["high"]),
+            "low": float(r["low"]),
+            "close": float(r["close"]),
+            "volume": float(r["volume"]),
+        })
+    # Compute MAs
+    closes = [c["close"] for c in candles]
+    vols = [c["volume"] for c in candles]
+    ema8 = _compute_ema(closes, 8)
+    ema21 = _compute_ema(closes, 21)
+    sma50 = _compute_sma(closes, 50)
+    sma200 = _compute_sma(closes, 200)
+    vol_avg = _compute_sma(vols, 20)
+    for i, c in enumerate(candles):
+        c["ema8"] = ema8[i]
+        c["ema21"] = ema21[i]
+        c["sma50"] = sma50[i]
+        c["sma200"] = sma200[i]
+        c["vol_avg20"] = vol_avg[i]
+    return candles
+
+
+# ============================================================
+# CANDLESTICK CHART WIDGET (QPainter)
+# ============================================================
+
+class CandlestickChart(QWidget):
+    """QPainter candlestick chart with MAs, signal/exit/entry/earnings markers."""
+    candle_clicked = Signal(str)  # emits date string
+
+    UP_COLOR = "#4ade80"
+    DOWN_COLOR = "#f87171"
+    BG_COLOR = "#000000"
+    GRID_COLOR = "#1A1A1A"
+    EMA8_COLOR = "#5dade2"
+    EMA21_COLOR = "#d4a853"
+    SMA50_COLOR = "#f5c542"
+    SMA200_COLOR = "#e74c3c"
+    SIGNAL_COLOR = "#FFFFFF"
+    ENTRY_COLOR = "#4ade80"
+    EXIT_COLOR = "#E8A735"
+    EARNINGS_COLOR = "#EF4444"
+
+    MARGIN_TOP = 32
+    MARGIN_RIGHT = 64
+    VOL_H = 60
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumHeight(200)
+
+        self._candles = []       # list of dicts with date/OHLCV/MA
+        self._ticker = ""
+        self._signal_date = None
+        self._entry_date = None
+        self._exit_date = None
+        self._earnings_dates = set()
+        self._hover_idx = None
+        self._scroll_offset = 0
+        self._visible_count = 200  # how many bars to show (zoom)
+
+        # Floating "Yes ✓" button
+        self._yes_btn = QPushButton("Yes ✓", self)
+        self._yes_btn.setVisible(False)
+        self._yes_btn.setStyleSheet(
+            "QPushButton { background:#059669; color:#fff; border:1px solid #4ade80;"
+            "font-size:11px; font-weight:700; padding:4px 12px; }"
+            "QPushButton:hover { background:#4ade80; color:#000; }"
+        )
+        self._yes_btn.clicked.connect(lambda: self.candle_clicked.emit("__yes__"))
+
+    def set_data(self, candles, ticker, signal_date, exit_date=None, earnings_dates=None):
+        self._candles = candles or []
+        self._ticker = ticker
+        self._signal_date = signal_date
+        self._exit_date = exit_date
+        self._earnings_dates = set(earnings_dates or [])
+        self._entry_date = None
+        self._hover_idx = None
+        self._yes_btn.setVisible(False)
+        # Auto-scroll to center on signal
+        self._visible_count = min(max(len(self._candles), 100), 330)
+        sig_idx = self._find_idx(signal_date)
+        if sig_idx is not None:
+            self._scroll_offset = max(0, sig_idx - self._visible_count // 2)
+        else:
+            self._scroll_offset = max(0, len(self._candles) - self._visible_count)
+        self.update()
+
+    def set_entry_date(self, d):
+        self._entry_date = d
+        self.update()
+
+    def _find_idx(self, date_str):
+        if not date_str:
+            return None
+        for i, c in enumerate(self._candles):
+            if c["date"] == date_str:
+                return i
+        return None
+
+    def _visible_slice(self):
+        n = len(self._candles)
+        max_off = max(0, n - self._visible_count)
+        off = min(max(0, self._scroll_offset), max_off)
+        return self._candles[off:off + self._visible_count], off
+
+    def _chart_geometry(self):
+        w = self.width()
+        h = self.height()
+        chart_h = h - self.MARGIN_TOP - self.VOL_H
+        chart_w = w - self.MARGIN_RIGHT
+        return w, h, chart_w, chart_h
+
+    def paintEvent(self, ev):
+        if not self._candles:
+            p = QPainter(self)
+            p.fillRect(self.rect(), QColor(self.BG_COLOR))
+            p.setPen(QColor(C["text_muted"]))
+            f = QFont("DM Sans", 12)
+            p.setFont(f)
+            p.drawText(self.rect(), Qt.AlignCenter, "Select a signal to view chart")
+            p.end()
+            return
+
+        visible, offset = self._visible_slice()
+        if not visible:
+            return
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h, chart_w, chart_h = self._chart_geometry()
+        candle_w = chart_w / len(visible) if visible else 1
+        body_w = max(1, candle_w * 0.6)
+
+        # Background
+        p.fillRect(self.rect(), QColor(self.BG_COLOR))
+
+        # Price range
+        prices = []
+        for c in visible:
+            prices.extend([c["high"], c["low"]])
+        if not prices:
+            p.end()
+            return
+        p_min = min(prices) * 0.995
+        p_max = max(prices) * 1.005
+        p_range = p_max - p_min
+        if p_range < 0.001:
+            p_range = 1.0
+
+        def price_y(price):
+            return self.MARGIN_TOP + chart_h * (1 - (price - p_min) / p_range)
+
+        def candle_x(i):
+            return i * candle_w + candle_w / 2
+
+        # Grid lines + price labels
+        p.setPen(QPen(QColor(self.GRID_COLOR), 0.5))
+        f = QFont("JetBrains Mono", 1)
+        f.setPixelSize(10)
+        p.setFont(f)
+        for i in range(7):
+            y = self.MARGIN_TOP + (chart_h / 6) * i
+            p.setPen(QPen(QColor(self.GRID_COLOR), 0.5))
+            p.drawLine(0, int(y), chart_w, int(y))
+            price = p_max - (p_range / 6) * i
+            p.setPen(QColor(C["text_muted"]))
+            p.drawText(QRectF(chart_w + 4, y - 6, self.MARGIN_RIGHT - 6, 12),
+                       Qt.AlignLeft | Qt.AlignVCenter, "%.2f" % price)
+
+        # Ticker watermark
+        p.setPen(QColor(255, 255, 255, 12))
+        f2 = QFont("DM Sans", 1)
+        f2.setPixelSize(52)
+        f2.setWeight(QFont.Bold)
+        p.setFont(f2)
+        p.drawText(QRectF(chart_w - 200, self.MARGIN_TOP, 188, 60),
+                   Qt.AlignRight | Qt.AlignTop, self._ticker)
+
+        # MAs
+        def draw_ma(key, color):
+            p.setPen(QPen(QColor(color), 1.2))
+            path = QPainterPath()
+            started = False
+            for i, c in enumerate(visible):
+                v = c.get(key)
+                if v is None:
+                    continue
+                x = candle_x(i)
+                y = price_y(v)
+                if not started:
+                    path.moveTo(x, y)
+                    started = True
+                else:
+                    path.lineTo(x, y)
+            if started:
+                p.drawPath(path)
+
+        draw_ma("ema8", self.EMA8_COLOR)
+        draw_ma("ema21", self.EMA21_COLOR)
+        draw_ma("sma50", self.SMA50_COLOR)
+        draw_ma("sma200", self.SMA200_COLOR)
+
+        # Earnings markers (behind candles)
+        if self._earnings_dates:
+            for i, c in enumerate(visible):
+                prev_date = visible[i - 1]["date"] if i > 0 else (
+                    self._candles[offset - 1]["date"] if offset > 0 else None)
+                is_report = c["date"] in self._earnings_dates
+                is_reaction = prev_date and prev_date in self._earnings_dates
+                if is_report or is_reaction:
+                    x = candle_x(i)
+                    alpha = 30 if is_reaction else 15
+                    p.fillRect(QRectF(x - candle_w / 2, self.MARGIN_TOP, candle_w, chart_h),
+                               QColor(239, 68, 68, alpha))
+                    p.setPen(QColor(self.EARNINGS_COLOR))
+                    f.setPixelSize(9)
+                    f.setWeight(QFont.Bold)
+                    p.setFont(f)
+                    p.drawText(QRectF(x - 6, self.MARGIN_TOP, 12, 12), Qt.AlignCenter, "E")
+
+        # Signal / Entry / Exit markers
+        for i, c in enumerate(visible):
+            x = candle_x(i)
+            is_sig = c["date"] == self._signal_date
+            is_entry = c["date"] == self._entry_date
+            is_exit = c["date"] == self._exit_date
+
+            if is_sig:
+                p.fillRect(QRectF(x - candle_w / 2, self.MARGIN_TOP, candle_w, chart_h),
+                           QColor(255, 255, 255, 15))
+                pen = QPen(QColor(self.SIGNAL_COLOR), 1, Qt.DashLine)
+                p.setPen(pen)
+                p.drawLine(int(x), self.MARGIN_TOP, int(x), self.MARGIN_TOP + chart_h)
+
+            if is_entry and not is_sig:
+                p.fillRect(QRectF(x - candle_w / 2, self.MARGIN_TOP, candle_w, chart_h),
+                           QColor(74, 222, 128, 20))
+                pen = QPen(QColor(self.ENTRY_COLOR), 1, Qt.DashLine)
+                p.setPen(pen)
+                p.drawLine(int(x), self.MARGIN_TOP, int(x), self.MARGIN_TOP + chart_h)
+
+            if is_exit:
+                pen = QPen(QColor(self.EXIT_COLOR), 1, Qt.DashLine)
+                p.setPen(pen)
+                p.drawLine(int(x), self.MARGIN_TOP, int(x), self.MARGIN_TOP + chart_h)
+
+        # Candles
+        for i, c in enumerate(visible):
+            x = candle_x(i)
+            is_up = c["close"] >= c["open"]
+            color = QColor(self.UP_COLOR if is_up else self.DOWN_COLOR)
+
+            # Wick
+            p.setPen(QPen(color, 1))
+            p.drawLine(int(x), int(price_y(c["high"])), int(x), int(price_y(c["low"])))
+
+            # Body
+            b_top = price_y(max(c["open"], c["close"]))
+            b_bot = price_y(min(c["open"], c["close"]))
+            b_h = max(1, b_bot - b_top)
+            if is_up:
+                p.setPen(QPen(color, 1))
+                p.setBrush(Qt.NoBrush)
+                p.drawRect(QRectF(x - body_w / 2, b_top, body_w, b_h))
+            else:
+                p.setPen(Qt.NoPen)
+                p.setBrush(color)
+                p.drawRect(QRectF(x - body_w / 2, b_top, body_w, b_h))
+
+        # Labels for signal/entry/exit
+        f.setPixelSize(9)
+        f.setWeight(QFont.Bold)
+        p.setFont(f)
+        for i, c in enumerate(visible):
+            x = candle_x(i)
+            if c["date"] == self._signal_date:
+                lbl = "ENTRY" if c["date"] == self._entry_date else "SIG"
+                col = self.ENTRY_COLOR if c["date"] == self._entry_date else self.SIGNAL_COLOR
+                p.setPen(QColor(col))
+                p.drawText(QRectF(x - 18, self.MARGIN_TOP + chart_h - 14, 36, 12),
+                           Qt.AlignCenter, lbl)
+            elif c["date"] == self._entry_date:
+                p.setPen(QColor(self.ENTRY_COLOR))
+                p.setBrush(QColor(self.ENTRY_COLOR))
+                p.drawEllipse(QPointF(x, price_y(c["low"]) + 10), 3, 3)
+                p.drawText(QRectF(x - 18, price_y(c["low"]) + 16, 36, 12),
+                           Qt.AlignCenter, "ENTRY")
+            if c["date"] == self._exit_date:
+                p.setPen(QColor(self.EXIT_COLOR))
+                p.drawText(QRectF(x - 12, self.MARGIN_TOP + 2, 24, 12),
+                           Qt.AlignCenter, "EXIT")
+
+        # Volume bars
+        vol_top = h - self.VOL_H
+        p.setPen(QPen(QColor(self.GRID_COLOR), 0.5))
+        p.drawLine(0, vol_top, chart_w, vol_top)
+        vol_max = max((c["volume"] for c in visible), default=1) or 1
+        for i, c in enumerate(visible):
+            x = candle_x(i)
+            is_up = c["close"] >= c["open"]
+            bar_h = (c["volume"] / vol_max) * (self.VOL_H - 8)
+            alpha = 90
+            col = QColor(self.UP_COLOR) if is_up else QColor(self.DOWN_COLOR)
+            col.setAlpha(alpha)
+            p.setPen(Qt.NoPen)
+            p.setBrush(col)
+            p.drawRect(QRectF(x - body_w / 2, h - bar_h, body_w, bar_h))
+        # Vol average line
+        pen = QPen(QColor(245, 158, 11, 128), 1)
+        p.setPen(pen)
+        vol_path = QPainterPath()
+        started = False
+        for i, c in enumerate(visible):
+            va = c.get("vol_avg20")
+            if va is None:
+                continue
+            x = candle_x(i)
+            y = h - (va / vol_max) * (self.VOL_H - 8)
+            if not started:
+                vol_path.moveTo(x, y)
+                started = True
+            else:
+                vol_path.lineTo(x, y)
+        if started:
+            p.drawPath(vol_path)
+
+        # Date labels on volume
+        p.setPen(QColor(C["text_muted"]))
+        f.setPixelSize(9)
+        f.setWeight(QFont.Normal)
+        p.setFont(f)
+        step = max(1, len(visible) // 8)
+        for i, c in enumerate(visible):
+            if i % step == 0:
+                parts = c["date"].split("-")
+                if len(parts) >= 3:
+                    p.drawText(QRectF(candle_x(i) - 18, h - 12, 36, 12),
+                               Qt.AlignCenter, "%s/%s" % (parts[1], parts[2]))
+
+        # Hover crosshair + OHLCV readout
+        if self._hover_idx is not None and 0 <= self._hover_idx < len(visible):
+            hc = visible[self._hover_idx]
+            hx = candle_x(self._hover_idx)
+            p.setPen(QPen(QColor(255, 255, 255, 40), 0.5, Qt.DashLine))
+            p.drawLine(int(hx), self.MARGIN_TOP, int(hx), self.MARGIN_TOP + chart_h)
+            is_up = hc["close"] >= hc["open"]
+            col = QColor(self.UP_COLOR if is_up else self.DOWN_COLOR)
+            p.setPen(col)
+            f.setPixelSize(11)
+            p.setFont(f)
+            txt = "%s  O:%.2f H:%.2f L:%.2f C:%.2f  V:%.1fM" % (
+                hc["date"], hc["open"], hc["high"], hc["low"], hc["close"],
+                hc["volume"] / 1e6)
+            p.drawText(QRectF(8, 2, w - 16, 16), Qt.AlignLeft | Qt.AlignVCenter, txt)
+
+        # MA legend at top
+        legend_y = self.MARGIN_TOP + chart_h + 2
+        legend_x = 8
+        f.setPixelSize(9)
+        f.setWeight(QFont.Normal)
+        p.setFont(f)
+        for label, color in [("EMA 8", self.EMA8_COLOR), ("EMA 21", self.EMA21_COLOR),
+                             ("SMA 50", self.SMA50_COLOR), ("SMA 200", self.SMA200_COLOR)]:
+            p.setPen(QPen(QColor(color), 2))
+            p.drawLine(int(legend_x), int(vol_top + 8), int(legend_x + 12), int(vol_top + 8))
+            p.setPen(QColor(color))
+            p.drawText(QRectF(legend_x + 14, vol_top + 2, 50, 12),
+                       Qt.AlignLeft | Qt.AlignVCenter, label)
+            legend_x += 68
+
+        p.end()
+
+    def mouseMoveEvent(self, ev):
+        if not self._candles:
+            return
+        visible, offset = self._visible_slice()
+        if not visible:
+            return
+        w, h, chart_w, chart_h = self._chart_geometry()
+        candle_w = chart_w / len(visible) if visible else 1
+        pos = ev.position() if hasattr(ev, "position") else ev.pos()
+        mx = pos.x()
+        idx = int(mx / candle_w) if candle_w > 0 else None
+        if idx is not None and 0 <= idx < len(visible):
+            if self._hover_idx != idx:
+                self._hover_idx = idx
+                self.update()
+        elif self._hover_idx is not None:
+            self._hover_idx = None
+            self.update()
+
+    def leaveEvent(self, ev):
+        if self._hover_idx is not None:
+            self._hover_idx = None
+            self.update()
+
+    def mousePressEvent(self, ev):
+        if not self._candles:
+            return
+        visible, offset = self._visible_slice()
+        if not visible:
+            return
+        w, h, chart_w, chart_h = self._chart_geometry()
+        candle_w = chart_w / len(visible) if visible else 1
+        pos = ev.position() if hasattr(ev, "position") else ev.pos()
+        mx, my = pos.x(), pos.y()
+        idx = int(mx / candle_w) if candle_w > 0 else None
+        if idx is not None and 0 <= idx < len(visible):
+            clicked_date = visible[idx]["date"]
+            self._entry_date = clicked_date
+            # Position floating Yes button near click
+            btn_x = min(int(mx + 8), self.width() - 70)
+            btn_y = max(int(my - 30), 4)
+            self._yes_btn.move(btn_x, btn_y)
+            self._yes_btn.setVisible(True)
+            self.candle_clicked.emit(clicked_date)
+            self.update()
+
+    def wheelEvent(self, ev):
+        if not self._candles:
+            return
+        delta = ev.angleDelta().y()
+        if ev.modifiers() & Qt.ControlModifier:
+            # Zoom: Ctrl+wheel changes visible count
+            if delta > 0:
+                self._visible_count = max(40, self._visible_count - 20)
+            else:
+                self._visible_count = min(len(self._candles), self._visible_count + 20)
+            # Re-center on signal
+            sig_idx = self._find_idx(self._signal_date)
+            if sig_idx is not None:
+                self._scroll_offset = max(0, sig_idx - self._visible_count // 2)
+        else:
+            # Pan: scroll left/right
+            step = max(1, self._visible_count // 20)
+            if delta > 0:
+                self._scroll_offset = max(0, self._scroll_offset - step)
+            else:
+                max_off = max(0, len(self._candles) - self._visible_count)
+                self._scroll_offset = min(max_off, self._scroll_offset + step)
+        self.update()
+
+
+# ============================================================
+# VETTING WORKSPACE — full chart vetting workflow
+# ============================================================
+
+class VettingWorkspace(QFrame):
+    """Full vetting workspace: signal list, candlestick chart, verdict buttons."""
+
+    def __init__(self, node_id="vetting", parent=None):
+        super().__init__(parent)
+        self.node_id = node_id
+        self._setup = "dtss"
+        self._signals = []       # list of signal dicts
+        self._filtered = []      # filtered view
+        self._current_idx = 0
+        self._candle_cache = {}  # "ticker_date" -> candle list
+        self._preload_thread = None
+        self.setStyleSheet(
+            "VettingWorkspace { background:%s; border:1px solid %s; }" % (C["surface"], C["border"])
+        )
+        self.setFocusPolicy(Qt.StrongFocus)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        # ── Top bar: stats ──
+        top_bar = QFrame()
+        top_bar.setFixedHeight(32)
+        top_bar.setStyleSheet(
+            "QFrame { background:#0A0A0A; border-bottom:1px solid %s; }" % C["border"]
+        )
+        tb_lay = QHBoxLayout(top_bar)
+        tb_lay.setContentsMargins(12, 0, 12, 0)
+        tb_lay.setSpacing(16)
+        self._stats_label = QLabel("")
+        self._stats_label.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
+            "color:%s; background:transparent; border:none;" % C["text_dim"]
+        )
+        tb_lay.addWidget(self._stats_label)
+        tb_lay.addStretch()
+        # Keyboard hints
+        hints = QLabel("↑↓ navigate · 1 yes · 2 no · 3 skip · click candle = entry · Ctrl+wheel zoom")
+        hints.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
+            "color:%s; background:transparent; border:none;" % C["text_muted"]
+        )
+        tb_lay.addWidget(hints)
+        lay.addWidget(top_bar)
+
+        # ── Body: sidebar + chart + bottom bar ──
+        body = QWidget()
+        body_lay = QHBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(0)
+
+        # LEFT: filter bar + signal list
+        left = QFrame()
+        left.setFixedWidth(260)
+        left.setStyleSheet("QFrame { background:#050505; border-right:1px solid %s; }" % C["border"])
+        left_lay = QVBoxLayout(left)
+        left_lay.setContentsMargins(0, 0, 0, 0)
+        left_lay.setSpacing(0)
+
+        # Filter checkboxes
+        fbar = QFrame()
+        fbar.setFixedHeight(30)
+        fbar.setStyleSheet("QFrame { background:#0A0A0A; border-bottom:1px solid %s; }" % C["border"])
+        fb_lay = QHBoxLayout(fbar)
+        fb_lay.setContentsMargins(8, 0, 8, 0)
+        fb_lay.setSpacing(6)
+        self._filter_checks = {}
+        for key, label, color in [
+            ("yes", "V", C["green"]),
+            ("unvetted", "U", C["text_dim"]),
+            ("no", "N", C["red"]),
+        ]:
+            cb = QCheckBox(label)
+            cb.setChecked(True)
+            cb.setStyleSheet(
+                "QCheckBox { color:%s; font-size:10px; font-weight:700;"
+                "font-family:'JetBrains Mono','Consolas',monospace;"
+                "background:transparent; border:none; spacing:3px; }"
+                "QCheckBox::indicator { width:12px; height:12px; }" % color
+            )
+            cb.stateChanged.connect(self._on_filter_changed)
+            fb_lay.addWidget(cb)
+            self._filter_checks[key] = cb
+        fb_lay.addStretch()
+        left_lay.addWidget(fbar)
+
+        # Signal list
+        self._sig_list = QListWidget()
+        self._sig_list.setStyleSheet(
+            "QListWidget { background:#050505; border:none; outline:none; }"
+            "QListWidget::item { padding:6px 10px; border-bottom:1px solid #111; }"
+            "QListWidget::item:selected { background:rgba(74,222,128,0.1); }"
+            "QListWidget::item:hover { background:rgba(255,255,255,0.03); }"
+        )
+        self._sig_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._sig_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._sig_list.currentRowChanged.connect(self._on_signal_selected)
+        left_lay.addWidget(self._sig_list, 1)
+        body_lay.addWidget(left)
+
+        # CENTER: chart + bottom bar
+        center = QWidget()
+        center_lay = QVBoxLayout(center)
+        center_lay.setContentsMargins(0, 0, 0, 0)
+        center_lay.setSpacing(0)
+
+        self._chart = CandlestickChart()
+        self._chart.candle_clicked.connect(self._on_candle_click)
+        center_lay.addWidget(self._chart, 1)
+
+        # Bottom metadata + verdict buttons
+        bot = QFrame()
+        bot.setFixedHeight(42)
+        bot.setStyleSheet("QFrame { background:#0A0A0A; border-top:1px solid %s; }" % C["border"])
+        bot_lay = QHBoxLayout(bot)
+        bot_lay.setContentsMargins(12, 0, 12, 0)
+        bot_lay.setSpacing(12)
+
+        self._meta_label = QLabel("")
+        self._meta_label.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
+            "color:%s; background:transparent; border:none;" % C["text_dim"]
+        )
+        bot_lay.addWidget(self._meta_label, 1)
+
+        # Entry indicator
+        self._entry_label = QLabel("")
+        self._entry_label.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
+            "color:%s; background:transparent; border:none; font-weight:700;" % C["green"]
+        )
+        bot_lay.addWidget(self._entry_label)
+
+        # Verdict buttons
+        for key, label, fg, bg_hover in [
+            ("yes", "YES (1)", C["green"], "#059669"),
+            ("no", "NO (2)", C["red"], "#dc2626"),
+            ("skip", "SKIP (3)", C["text_dim"], C["surface2"]),
+        ]:
+            btn = QPushButton(label)
+            btn.setFixedWidth(80)
+            btn.setStyleSheet(
+                "QPushButton { color:%s; border:2px solid %s; background:transparent;"
+                "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
+                "font-weight:700; padding:4px 8px; }"
+                "QPushButton:hover { background:%s; color:#000; }" % (fg, fg, bg_hover)
+            )
+            btn.clicked.connect(lambda checked, k=key: self._do_verdict(k))
+            bot_lay.addWidget(btn)
+
+        center_lay.addWidget(bot)
+        body_lay.addWidget(center, 1)
+        lay.addWidget(body, 1)
+
+    def set_setup(self, setup):
+        self._setup = setup
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self._load_signals()
+
+    def _load_signals(self):
+        """Load winner signals from refinement file + vetting decisions + rejected."""
+        setup = self._setup
+        # Find latest refinement file
+        cache_dir = REPO_ROOT / "local_runner" / "cache"
+        ref_files = []
+        if cache_dir.exists():
+            ref_files = sorted(
+                [f for f in cache_dir.iterdir()
+                 if f.name.startswith("refinement_%s_cl" % setup) and f.suffix == ".json"],
+                key=lambda f: f.stat().st_mtime, reverse=True
+            )
+        if not ref_files:
+            self._signals = []
+            self._apply_filter()
+            self._update_stats()
+            return
+
+        try:
+            rdata = json.loads(ref_files[0].read_text())
+        except Exception:
+            self._signals = []
+            self._apply_filter()
+            self._update_stats()
+            return
+
+        winners = rdata.get("winner_signals", [])
+
+        # Load vetting decisions
+        vetting_path = REPO_ROOT / "data" / "vetting" / ("vetting_%s.json" % setup)
+        decisions = load_json(vetting_path, {})
+
+        # Load rejected signals
+        rejected_set = set()
+        try:
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT ticker, signal_date FROM rejected_signals WHERE setup_type=?",
+                    (setup,)
+                ).fetchall()
+            rejected_set = set("%s_%s" % (r["ticker"], r["signal_date"]) for r in rows)
+        except Exception:
+            pass
+
+        # Load existing examples (to exclude)
+        example_set = set()
+        try:
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT ticker, entry_date FROM examples WHERE setup_type=?", (setup,)
+                ).fetchall()
+            example_set = set("%s_%s" % (r["ticker"], r["entry_date"]) for r in rows)
+        except Exception:
+            pass
+
+        # Build signal list
+        signals = []
+        for s in winners:
+            tk = s.get("ticker", "")
+            sd = s.get("signal_date", "")
+            # Skip existing examples
+            if any("%s_%s" % (tk, sd) == ex for ex in example_set):
+                continue
+            key = "%s_%s" % (tk, sd)
+            vd = decisions.get(key, {})
+            verdict = vd.get("verdict")
+            if not verdict and key in rejected_set:
+                verdict = "no"
+            signals.append({
+                "ticker": tk,
+                "signal_date": sd,
+                "move_adr": s.get("move_adr", 0),
+                "adr_at_signal": s.get("adr_at_signal", 0),
+                "classification": s.get("classification", ""),
+                "verdict": verdict,
+                "entry_date": vd.get("entry_date"),
+            })
+
+        # Sort by move_adr descending
+        signals.sort(key=lambda x: x.get("move_adr", 0), reverse=True)
+        self._signals = signals
+        self._apply_filter()
+        self._update_stats()
+
+    def _apply_filter(self):
+        """Filter signals based on checkbox state."""
+        show_yes = self._filter_checks["yes"].isChecked()
+        show_unvetted = self._filter_checks["unvetted"].isChecked()
+        show_no = self._filter_checks["no"].isChecked()
+
+        filtered = []
+        for s in self._signals:
+            v = s.get("verdict")
+            if v == "yes" and show_yes:
+                filtered.append(s)
+            elif v == "no" and show_no:
+                filtered.append(s)
+            elif v is None and show_unvetted:
+                filtered.append(s)
+        self._filtered = filtered
+
+        # Rebuild list widget
+        self._sig_list.blockSignals(True)
+        self._sig_list.clear()
+        for sig in filtered:
+            item = QListWidgetItem()
+            # Custom display via widget
+            w = self._make_signal_item(sig)
+            item.setSizeHint(w.sizeHint())
+            self._sig_list.addItem(item)
+            self._sig_list.setItemWidget(item, w)
+        self._sig_list.blockSignals(False)
+
+        # Preserve or reset selection
+        if self._filtered:
+            idx = min(self._current_idx, len(self._filtered) - 1)
+            self._current_idx = idx
+            self._sig_list.setCurrentRow(idx)
+        self._update_stats()
+
+    def _make_signal_item(self, sig):
+        """Create a widget for a signal list item."""
+        w = QWidget()
+        w.setStyleSheet("background:transparent; border:none;")
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(2, 2, 2, 2)
+        lay.setSpacing(1)
+
+        # Row 1: ticker + move_adr
+        r1 = QHBoxLayout()
+        r1.setSpacing(0)
+        tk = QLabel(sig["ticker"])
+        tk.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:12px;"
+            "font-weight:700; color:%s; background:transparent; border:none;" % C["text"]
+        )
+        r1.addWidget(tk)
+        r1.addStretch()
+        adr = QLabel("+%.1f ADR" % sig.get("move_adr", 0))
+        adr.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+            "font-weight:600; color:%s; background:transparent; border:none;" % C["green"]
+        )
+        r1.addWidget(adr)
+        lay.addLayout(r1)
+
+        # Row 2: date + verdict
+        r2 = QHBoxLayout()
+        r2.setSpacing(0)
+        dt = QLabel(sig["signal_date"])
+        dt.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
+            "color:%s; background:transparent; border:none;" % C["text_muted"]
+        )
+        r2.addWidget(dt)
+        r2.addStretch()
+        v = sig.get("verdict")
+        if v:
+            vc = C["green"] if v == "yes" else C["red"]
+            vl = QLabel(v.upper())
+            vl.setStyleSheet(
+                "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
+                "font-weight:700; color:%s; background:transparent; border:none;" % vc
+            )
+            r2.addWidget(vl)
+        lay.addLayout(r2)
+
+        # Left border color based on verdict
+        if v == "yes":
+            w.setStyleSheet("background:transparent; border:none; border-left:3px solid %s;" % C["green"])
+        elif v == "no":
+            w.setStyleSheet("background:transparent; border:none; border-left:3px solid %s; opacity:0.5;" % C["red"])
+        return w
+
+    def _update_stats(self):
+        n_yes = sum(1 for s in self._signals if s.get("verdict") == "yes")
+        n_no = sum(1 for s in self._signals if s.get("verdict") == "no")
+        n_unvetted = sum(1 for s in self._signals if s.get("verdict") is None)
+        total = len(self._signals)
+
+        # Update filter checkbox labels
+        self._filter_checks["yes"].setText("V %d" % n_yes)
+        self._filter_checks["unvetted"].setText("U %d" % n_unvetted)
+        self._filter_checks["no"].setText("N %d" % n_no)
+
+        self._stats_label.setText(
+            "%d signals  ·  %d yes  ·  %d no  ·  %d unvetted" % (total, n_yes, n_no, n_unvetted)
+        )
+
+    def _on_filter_changed(self):
+        self._apply_filter()
+
+    def _on_signal_selected(self, row):
+        if row < 0 or row >= len(self._filtered):
+            return
+        self._current_idx = row
+        sig = self._filtered[row]
+        self._load_chart(sig)
+        self._update_meta(sig)
+        # Preload next signals
+        self._preload_ahead(row + 1)
+
+    def _load_chart(self, sig):
+        """Load candles for signal (from cache or compute)."""
+        key = "%s_%s" % (sig["ticker"], sig["signal_date"])
+        candles = self._candle_cache.get(key)
+        if not candles:
+            candles = _prepare_candles(sig["ticker"], sig["signal_date"])
+            if candles:
+                self._candle_cache[key] = candles
+        # Load earnings dates
+        earnings = []
+        try:
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT earnings_date FROM earnings_dates WHERE ticker=? ORDER BY earnings_date",
+                    (sig["ticker"],)
+                ).fetchall()
+            earnings = [r[0] for r in rows]
+        except Exception:
+            pass
+        self._chart.set_data(candles, sig["ticker"], sig["signal_date"],
+                             exit_date=None, earnings_dates=earnings)
+        # Restore entry if previously set
+        if sig.get("entry_date"):
+            self._chart.set_entry_date(sig["entry_date"])
+            self._entry_label.setText("Entry: %s" % sig["entry_date"])
+        else:
+            self._entry_label.setText("")
+
+    def _update_meta(self, sig):
+        parts = ["Ticker: %s" % sig["ticker"], "Signal: %s" % sig["signal_date"]]
+        if sig.get("move_adr"):
+            parts.append("Move: +%.1f ADR" % sig["move_adr"])
+        if sig.get("adr_at_signal"):
+            parts.append("ADR: %.2f" % sig["adr_at_signal"])
+        parts.append("Entry = click chart")
+        self._meta_label.setText("  ·  ".join(parts))
+
+    def _preload_ahead(self, start_idx):
+        """Preload OHLCV for next N signals in background."""
+        if self._preload_thread and self._preload_thread.isRunning():
+            return  # don't stack threads
+        sigs_to_load = []
+        for i in range(start_idx, min(start_idx + 10, len(self._filtered))):
+            key = "%s_%s" % (self._filtered[i]["ticker"], self._filtered[i]["signal_date"])
+            if key not in self._candle_cache:
+                sigs_to_load.append(self._filtered[i])
+        if not sigs_to_load:
+            return
+        self._preload_thread = OhlcvPreloadThread(sigs_to_load, 0, len(sigs_to_load))
+        self._preload_thread.finished.connect(self._on_preload_done)
+        self._preload_thread.start()
+
+    def _on_preload_done(self):
+        if self._preload_thread:
+            self._candle_cache.update(self._preload_thread.results)
+            self._preload_thread = None
+
+    def _on_candle_click(self, date_str):
+        if date_str == "__yes__":
+            self._do_verdict("yes")
+            return
+        # Set entry date
+        if self._filtered and 0 <= self._current_idx < len(self._filtered):
+            self._filtered[self._current_idx]["entry_date"] = date_str
+            self._entry_label.setText("Entry: %s" % date_str)
+
+    def _do_verdict(self, verdict):
+        if not self._filtered or self._current_idx >= len(self._filtered):
+            return
+        sig = self._filtered[self._current_idx]
+
+        if verdict == "skip":
+            self._advance_to_next()
+            return
+
+        if verdict == "yes":
+            entry = sig.get("entry_date") or self._chart._entry_date
+            if not entry:
+                return  # need entry date
+            sig["entry_date"] = entry
+        sig["verdict"] = verdict
+
+        # Save to vetting JSON
+        vetting_dir = REPO_ROOT / "data" / "vetting"
+        vetting_dir.mkdir(parents=True, exist_ok=True)
+        vetting_path = vetting_dir / ("vetting_%s.json" % self._setup)
+        decisions = load_json(vetting_path, {})
+        key = "%s_%s" % (sig["ticker"], sig["signal_date"])
+        decisions[key] = {
+            "ticker": sig["ticker"],
+            "signal_date": sig["signal_date"],
+            "verdict": verdict,
+            "entry_date": sig.get("entry_date"),
+            "timestamp": datetime.now().isoformat(),
+        }
+        save_json(vetting_path, decisions)
+
+        # Save to DB
+        if verdict == "yes":
+            try:
+                with get_db() as db:
+                    if not db.execute(
+                        "SELECT id FROM pending_examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                        (self._setup, sig["ticker"], sig["entry_date"])
+                    ).fetchone():
+                        db.execute(
+                            "INSERT INTO pending_examples (setup_type, ticker, signal_date, entry_date) "
+                            "VALUES (?,?,?,?)",
+                            (self._setup, sig["ticker"], sig["signal_date"], sig["entry_date"])
+                        )
+            except Exception:
+                pass
+        elif verdict == "no":
+            try:
+                with get_db() as db:
+                    db.execute(
+                        "INSERT OR IGNORE INTO rejected_signals (setup_type, ticker, signal_date) "
+                        "VALUES (?,?,?)",
+                        (self._setup, sig["ticker"], sig["signal_date"])
+                    )
+            except Exception:
+                pass
+
+        # Update master signals list too
+        for s in self._signals:
+            if s["ticker"] == sig["ticker"] and s["signal_date"] == sig["signal_date"]:
+                s["verdict"] = verdict
+                s["entry_date"] = sig.get("entry_date")
+                break
+
+        self._chart._yes_btn.setVisible(False)
+        self._update_stats()
+        self._apply_filter()
+        self._advance_to_next()
+
+    def _advance_to_next(self):
+        """Advance to next unvetted signal, or just next signal."""
+        # Find next unvetted in filtered list
+        for i in range(self._current_idx + 1, len(self._filtered)):
+            if self._filtered[i].get("verdict") is None:
+                self._current_idx = i
+                self._sig_list.setCurrentRow(i)
+                return
+        # Otherwise just go to next
+        if self._current_idx < len(self._filtered) - 1:
+            self._current_idx += 1
+            self._sig_list.setCurrentRow(self._current_idx)
+
+    def keyPressEvent(self, ev):
+        key = ev.key()
+        if key == Qt.Key_1:
+            self._do_verdict("yes")
+        elif key == Qt.Key_2:
+            self._do_verdict("no")
+        elif key == Qt.Key_3:
+            self._do_verdict("skip")
+        elif key == Qt.Key_Up:
+            if self._current_idx > 0:
+                self._current_idx -= 1
+                self._sig_list.setCurrentRow(self._current_idx)
+        elif key == Qt.Key_Down:
+            if self._current_idx < len(self._filtered) - 1:
+                self._current_idx += 1
+                self._sig_list.setCurrentRow(self._current_idx)
+        else:
+            super().keyPressEvent(ev)
 
 
 # ============================================================
@@ -1177,7 +2287,10 @@ class PipelineTab(QWidget):
                 self._canvas.add_detail_widget(nd["id"], det)
                 self._details[nd["id"]] = det
             elif nd["kind"] == "do":
-                det = WorkspaceDetail(nd["id"])
+                if nd["id"] == "vetting":
+                    det = VettingWorkspace(nd["id"])
+                else:
+                    det = WorkspaceDetail(nd["id"])
                 self._canvas.add_detail_widget(nd["id"], det)
                 self._details[nd["id"]] = det
 
@@ -1485,6 +2598,7 @@ class ScanPerfectWindow(QMainWindow):
 
 def main():
     init_db()
+    _load_ohlcv_cache()
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLESHEET)
 
