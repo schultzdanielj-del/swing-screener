@@ -1,8 +1,8 @@
 # Swing Screener Project — State Document
 
-**Last updated:** 2026-03-14
+**Last updated:** 2026-03-16
 **GitHub repo:** https://github.com/schultzdanielj-del/swing-screener (branch: v2)
-**Railway app:** https://web-production-e3025.up.railway.app
+**Railway app:** https://web-production-e3025.up.railway.app (seed vault / file mirror only)
 
 ---
 
@@ -16,7 +16,7 @@
 6. **NEVER dump large data (CSV, JSON) into context.** Process via scripts, not inline.
 7. **GitHub token for bash git push:** Stored in Claude memory. Use bash `git push`, NOT MCP push_files (payload limits).
 8. **Before ANY TA work — READ `ta_knowledge.md` FIRST.** Non-negotiable.
-9. **All OHLCV data from Railway SQLite DB or local caches.** Never yfinance.
+9. **All OHLCV data from local caches (5yr pickle, expr cache).** Never yfinance. Railway DB is legacy.
 10. **Break work into small tasks.** Update `TODO.md` and `ANALYSIS_SYSTEM.md` when finishing tasks.
 11. **READ THE ACTUAL CODE before making claims about what scripts do.** Verify, don't guess.
 12. **At session start:** Read the full codebase before proposing anything. With 1M context window, no need for Dan to specify which files — read everything.
@@ -33,14 +33,14 @@ Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds t
 
 ---
 
-## CURRENT STATE (2026-03-14)
+## CURRENT STATE (2026-03-16)
 
 ### Pipeline Architecture
 
 ```
 Phase 1 — Sample Gathering (Vetting)
 Phase 2 — Causative Filtering (Signal Grind → Exit Grind → Refinement Grind)
-Phase 3 — Correlative Scoring (EV Grinder) ← NEXT TO BUILD
+Phase 3 — Correlative Scoring (EV Grinder) ← IN PROGRESS (Inc 5 next)
 Phase 4 — Profit Optimization
 Phase 5 — Live Watchlist
 ```
@@ -50,65 +50,78 @@ Phase 5 — Live Watchlist
 - **Phase 2a - Signal Grind:** 87 conditions, 1,218 raw → 893 deduped signals, 42.6% WR
 - **Phase 2b - Exit Grind:** `slope_xavgc21_off7_adr14 <= -1.128826`
 - **Phase 2c - Refinement Grind:** 100 refinement conditions, 182 combined, 426/528 losing clusters eliminated, 78% WR, median winner 6.4 ADR
-- **Phase 3:** Not yet built. Regime model + setup correlation completed and shelved — replaced by unified EV grinder.
+- **Phase 3:** EV Grinder in progress — Inc 1-4 complete, Inc 5 (scoring curves) next
 
-### What's next (per TODO.md):
-- **Build EV grinder** — unified correlative scoring (Phase 3)
+### Local Migration (completed 2026-03-16):
+- Everything runs locally on Dan's desktop — no Railway dependency for compute or UI
+- Local SQLite DB (`data/scanperfect.db`) with all tables
+- 5yr OHLCV loaded into memory from pickle (~4,169 tickers in 0.5s)
+- Pipeline runs as direct subprocesses (no agent polling)
+- Seed vault backs up everything to Railway nightly (step 9)
+- See `LOCALIZE.md` for full details
+
+### What's next:
+- **Phase 6: Native Desktop UI** — PySide6 app replacing browser-based HTML UI (see LOCALIZE.md)
+- **EV Grinder Inc 5** — scoring curves + quartile assignment + signal scoring
 - **Vet winner pile** — review 365 winners, add examples, loop
-- **Vetting UI improvements** — read from cluster files, AI vet queue
-- **Pipeline UI** — full control from UI with all parameters
 
 ---
 
 ## ARCHITECTURE
 
 ```
+scanperfect.py         # Desktop app launcher (PySide6 — PLANNED, currently browser-based)
+server.py              # FastAPI backend (local mode + Railway deploy)
+
 local_runner/          # Desktop grinder system (runs on Dan's machine)
-├── agent.py           # Polling agent, nightly auto-rebuild trigger
-├── nightly.py         # 7-step nightly pipeline
+├── nightly.py         # 9-step nightly pipeline (including seed vault backup)
 ├── pyramid_grinder.py # Signal grind (step 1) + refinement grind (--blackout)
 ├── spiderweb.py       # Phase 1 beam search (used by D1 tier)
 ├── matrix_builder.py  # Universe + example matrix precomputation
 ├── brute_expressions.py  # 15,805 expression generator
-├── cache_builder.py   # OHLCV caches (daily + 5yr)
+├── cache_builder.py   # OHLCV caches (daily + 5yr) — pulls from Railway
 ├── expr_cache_builder.py # Expression series cache (~21 GB)
 ├── market_cache_builder.py # Market instrument cache (256 instruments)
-├── pipeline_agent.py  # UI → local compute bridge
 ├── grind_uploader.py  # Railway cycle upload
 ├── file_mirror.py     # Railway file mirror
+├── pipeline_agent.py  # LEGACY — replaced by direct subprocess in server.py
 └── cache/             # Local caches (matrices, OHLCV, expr series)
 
 scripts/               # Analysis & backtesting scripts
+├── ev_grinder.py      # EV grinder (Phase 3) — IN PROGRESS
 ├── expression_engine.py    # Expression computation (point + series)
 ├── backtest_conditions.py  # Series computation (88 ops, full parity)
 ├── signal_filter.py        # Signal scan + exit filter + classification
 ├── signal_exit_grinder.py  # Exit condition optimizer
 ├── exit_grinder.py         # Exit expression search
-├── profit_grinder.py       # Profit optimization (needs rewire)
+├── seed_vault.py           # Backup/restore to Railway file mirror
+├── import_from_railway.py  # One-time migration from Railway → local DB
+├── fetch_fundamentals.py   # Yahoo Finance fundamentals fetch
 ├── cycle_health.py         # Health check metrics
-├── backtest_runner.py      # Signal scan + chart generation
-├── signal_distribution.py  # Signal analyzer
 ├── fetch_universe.py       # Universe OHLCV fetcher
 └── [profiling, discovery, management engines]
 
-server.py              # Railway FastAPI backend
-app/                   # ScanPerfect frontend
-├── index.html         # Main UI (Examples tab)
+app/                   # Browser UI (being replaced by PySide6 native app)
+├── index.html         # Main UI (Pipeline + Examples tabs)
 ├── pipeline.html      # Pipeline control tab
 └── vetting.html       # Chart vetting tab
 
+data/                  # Local data (gitignored: scanperfect.db, pipeline state)
+├── scanperfect.db     # Local SQLite DB (all tables)
+├── signal_filter/     # Signal filter outputs
+├── vetting/           # Vetting decision files
+└── [grind output archives]
+
 archive/               # Shelved code, docs, and data (preserved, not in use)
-├── shelved_scripts/   # Dead grinders and one-off scripts
-├── shelved_docs/      # Obsolete design docs
-├── shelved_data/      # Old grinder outputs
-└── v1/                # V1 code
 ```
 
 ### Key docs (in repo):
 - **`TODO.md`** — task list, pipeline status, immediate work items. **Check this first.**
+- **`LOCALIZE.md`** — local migration plan + Phase 6 UI rebuild plan
 - **`PIPELINE_V2.md`** — authoritative pipeline architecture
+- **`EV_GRINDER.md`** — EV grinder spec
 - **`ANALYSIS_SYSTEM.md`** — repeatable process for building any setup
-- **`DATA_CONTRACT.md`** — Railway SQLite schema, input/output per step
+- **`DATA_CONTRACT.md`** — SQLite schema, input/output per step
 - **`GRIND_STORAGE.md`** — how grind results are stored and uploaded
 - **`ta_knowledge.md`** — TA concepts: extensions, AVWAP, channels, market stages
 - **`pcf.md`** — TC2000 PCF language reference
@@ -119,7 +132,7 @@ archive/               # Shelved code, docs, and data (preserved, not in use)
 
 | Setup | Status | Examples | Phase 2 Result |
 |-------|--------|----------|----------------|
-| **DTSS** (Double Top Short Sell) | Phase 2 complete | 68 (65 valid) | 182 conditions, 78% WR, median winner 6.4 ADR |
+| **DTSS** (Double Top Short Sell) | Phase 2 complete, Phase 3 in progress | 68 (65 valid) | 182 conditions, 78% WR, median winner 6.4 ADR |
 | **3-4DB** (3-4 Day Bounce, short) | Examples loaded | 21 examples | Not yet ground |
 | **HTF** (High Tight Flag, long) | Scaffolded | None yet | — |
 
@@ -130,13 +143,13 @@ archive/               # Shelved code, docs, and data (preserved, not in use)
 - Claude Max — this + other projects
 - TC2000 — scanning platform
 - GitHub — code hosting
-- Railway — app hosting
+- Railway — seed vault / file mirror only (no longer serves UI or compute)
 - Discord — trading community
+- PySide6 — desktop UI framework (installed, build pending)
 
 ---
 
 ## KEY LINKS
 
-- **Railway app:** https://web-production-e3025.up.railway.app
 - **Repo:** https://github.com/schultzdanielj-del/swing-screener (branch: v2)
-- **Swagger docs:** https://web-production-e3025.up.railway.app/docs
+- **Railway (file mirror):** https://web-production-e3025.up.railway.app
