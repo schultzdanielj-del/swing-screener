@@ -839,22 +839,37 @@ class FlowchartCanvas(QWidget):
         desc_px = max(10, int(header_h * 0.12))
         badge_px = max(9, int(header_h * 0.1))
         pad = max(14, int(w * 0.04))
-        accent_w = max(3, int(w * 0.01))
+        # accent_w removed - full card is color coded
         radius = max(6, int(header_h * 0.08))
 
         # Colors based on locked/status
+        # Per-node color coding (dark enough for white text)
+        NODE_COLORS = {
+            "examples":     {"bg": "#2a1215", "border": "#5c2d33", "hover": "#3a1a1f"},  # deep red
+            "vetting":      {"bg": "#2a1f0d", "border": "#5c4422", "hover": "#3a2a14"},  # deep orange
+            "scan_tuning":  {"bg": "#2a2610", "border": "#5c5222", "hover": "#3a3318"},  # deep yellow
+            "causative":    {"bg": "#0d1a2a", "border": "#223d5c", "hover": "#142640"},  # deep blue
+            "correlative":  {"bg": "#0d1a2a", "border": "#223d5c", "hover": "#142640"},  # deep blue
+            "profit_grind": {"bg": "#0d1a2a", "border": "#223d5c", "hover": "#142640"},  # deep blue
+            "summary":      {"bg": "#0d2a1a", "border": "#225c3d", "hover": "#143a24"},  # deep green
+        }
+
         if locked:
             bg_col = QColor("#060606")
             border_col = QColor("#111111")
             text_col = QColor("#333333")
             sub_col = QColor("#222222")
         else:
-            bg_col = QColor("#0F0F0F" if hover else C["surface"])
+            nc = NODE_COLORS.get(nid, {"bg": C["surface"], "border": C["border_bright"], "hover": C["surface2"]})
+            bg_col = QColor(nc["hover"] if hover else nc["bg"])
+            border_col = QColor(nc["border"])
+            text_col = QColor(C["text"])
+            sub_col = QColor(C["text_dim"])
+            # Override border with status color when active
             sc_map = {"done": C["green"], "complete": C["green"],
                       "running": C["amber"], "queued": C["amber"], "error": C["red"]}
-            border_col = QColor(sc_map.get(status, C["border_bright"]))
-            text_col = QColor(C["text"])
-            sub_col = QColor(C["text_muted"])
+            if status in sc_map:
+                border_col = QColor(sc_map[status])
 
         # Shape
         p.setBrush(bg_col)
@@ -868,18 +883,12 @@ class FlowchartCanvas(QWidget):
         else:
             p.drawRect(x, y, w, h)
 
-        # Left accent bar
-        if not locked and status in ("done", "complete", "running", "queued", "error"):
-            accent = QColor({"done": C["green"], "complete": C["green"],
-                            "running": C["amber"], "error": C["red"]}.get(status, C["border_bright"]))
-            p.fillRect(x+1, y+1, accent_w, h-2, accent)
-
         # Name — vertically centered in top portion of header
         p.setPen(QPen(text_col))
         f = p.font(); f.setPixelSize(name_px); f.setWeight(QFont.DemiBold); p.setFont(f)
         name_y = y + pad
         name_h = int(header_h * 0.35)
-        p.drawText(QRectF(x + pad + accent_w, name_y, w - pad*2 - accent_w, name_h),
+        p.drawText(QRectF(x + pad, name_y, w - pad*2, name_h),
                    Qt.AlignLeft | Qt.AlignVCenter, nd["name"])
 
         # Info / desc — in bottom portion of header
@@ -888,7 +897,7 @@ class FlowchartCanvas(QWidget):
         f.setPixelSize(desc_px); f.setWeight(QFont.Normal); p.setFont(f)
         desc_y = name_y + name_h
         desc_h = int(header_h * 0.3)
-        p.drawText(QRectF(x + pad + accent_w, desc_y, w - pad*2 - accent_w, desc_h),
+        p.drawText(QRectF(x + pad, desc_y, w - pad*2, desc_h),
                    Qt.AlignLeft | Qt.AlignVCenter, info)
 
         # Lock icon
