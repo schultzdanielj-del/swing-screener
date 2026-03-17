@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QFrame,
 )
 from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment
-from PySide6.QtGui import QFont, QFontDatabase, QColor, QPainter, QPen
+from PySide6.QtGui import QFont, QFontDatabase, QColor, QPainter, QPen, QLinearGradient
 
 
 # ============================================================
@@ -629,6 +629,7 @@ class FlowchartCanvas(QWidget):
         self._anim_timer = QTimer(self)
         self._anim_timer.setInterval(16)  # ~60fps
         self._anim_timer.timeout.connect(self._anim_step)
+        self._example_progress = 0.0  # 0.0 to 1.0
         self.setMouseTracking(True)
 
     def set_status(self, nid, s):
@@ -645,6 +646,11 @@ class FlowchartCanvas(QWidget):
 
     def set_n_examples(self, n):
         self._n_examples = n
+        self.update()
+
+    def set_example_progress(self, ratio):
+        """Set examples progress: n_examples / n_winner_signals (0.0-1.0)."""
+        self._example_progress = ratio
         self.update()
 
     def _calc_base_layout(self):
@@ -676,8 +682,7 @@ class FlowchartCanvas(QWidget):
         self._loop_m = 36
 
     def _layout(self):
-        """Position all cards using cached base sizes. Expanded card gets extra
-        height but does NOT push other cards — it overlaps on top."""
+        """Position all cards. Expanded card overlaps on top."""
         nw = getattr(self, '_nw', 300)
         nh = getattr(self, '_nh', 100)
         col_gap = getattr(self, '_col_gap', 100)
@@ -700,24 +705,32 @@ class FlowchartCanvas(QWidget):
             [("scan_tuning", lx), ("profit_grind", rx)],
         ]
 
-        # All cards get base height — no pushing
         for row in row_nodes:
             for nid, nx in row:
                 self._rects[nid] = (nx, y, nw, nh)
             y += nh + row_gap
 
-        y += loop_v
-        summary_w = min(nw, 300)
-        self._rects["summary"] = ((w - summary_w) // 2, y, summary_w, nh)
+        # Summary: to the RIGHT of the flowchart, vertically centered
+        summary_w = min(nw, 280)
+        summary_h = nh * 2 + row_gap  # taller card
+        summary_x = rx + nw + max(30, col_gap // 2)
+        # If it would go off-screen, place it below profit_grind row instead
+        if summary_x + summary_w > w - 20:
+            summary_x = rx
+            summary_y = y + loop_v
+        else:
+            # Vertically center against rows 2-3 (correlative / scan_tuning area)
+            row2_top = self._rects["correlative"][1] if "correlative" in self._rects else top_pad + 2*(nh+row_gap)
+            summary_y = row2_top
+        self._rects["summary"] = (summary_x, summary_y, summary_w, summary_h)
 
-        # Expanded card gets extra height ON TOP of the base layout
-        # (painted last so it draws over others)
+        # Expanded card overlay
         if self._expanded_id and self._expanded_id in self._rects:
-            x, base_y, rw, _ = self._rects[self._expanded_id]
-            self._rects[self._expanded_id] = (x, base_y, rw, nh + self._anim_expand_h)
+            ex, ey, ew, _ = self._rects[self._expanded_id]
+            self._rects[self._expanded_id] = (ex, ey, ew, nh + self._anim_expand_h)
 
         self._expand_h = self._anim_expand_h
-        self.setMinimumHeight(int(y + nh + 40))
+        self.setMinimumHeight(int(y + loop_v + nh + 40))
 
     def resizeEvent(self, ev):
         self._calc_base_layout()
@@ -917,76 +930,83 @@ class FlowchartCanvas(QWidget):
             f = p.font(); f.setPixelSize(9); p.setFont(f)
             p.drawText(QRectF((pb_x + sb_x)//2 - 40, ly + 2, 80, 14), Qt.AlignCenter, "tweak \u00b7 re-run")
 
-        # Profit Grind → Summary
+        # Profit Grind → Summary (horizontal right, or L-shape)
         p.setPen(conn_pen("profit_grind", "summary"))
-        x1, y1 = self._edge("profit_grind", "b"); x2, y2 = self._edge("summary", "t")
-        my = y1 + (y2 - y1) // 2
-        p.drawLine(x1, y1, x1, my); p.drawLine(x1, my, x2, my); p.drawLine(x2, my, x2, y2)
-        arrow_tip(p, x2, y2, "d", is_locked("summary"))
+        x1, y1 = self._edge("profit_grind", "r"); x2, y2 = self._edge("summary", "l")
+        if abs(y1 - y2) < 10:
+            p.drawLine(x1, y1, x2, y2)
+            arrow_tip(p, x2, y2, "r", is_locked("summary"))
+        else:
+            mx = (x1 + x2) // 2
+            p.drawLine(x1, y1, mx, y1); p.drawLine(mx, y1, mx, y2); p.drawLine(mx, y2, x2, y2)
+            arrow_tip(p, x2, y2, "r", is_locked("summary"))
 
     def _draw_node(self, p, nd):
-        from PySide6.QtCore import QRectF
+        from PySide6.QtCore import QRectF, QPointF
         nid = nd["id"]
         if nid not in self._rects:
             return
         x, y, w, h = self._rects[nid]
         is_expanded = (nid == self._expanded_id)
-        header_h = self._nh if is_expanded else h  # text goes in header area only
+        header_h = self._nh if is_expanded else h
         status = self._statuses.get(nid, "idle")
         locked = self._locked.get(nid, False)
         hover = self._hover == nid and not locked
         kind = nd["kind"]
 
-        # Scale font sizes relative to header height
         name_px = max(13, int(header_h * 0.17))
         desc_px = max(10, int(header_h * 0.12))
         badge_px = max(9, int(header_h * 0.1))
         pad = max(14, int(w * 0.04))
-        # accent_w removed - full card is color coded
         radius = max(6, int(header_h * 0.08))
 
-        # Colors based on locked/status
-        # Per-node color coding (dark enough for white text)
         NODE_COLORS = {
-            "examples":     {"bg": "#2a1215", "border": "#5c2d33", "hover": "#3a1a1f"},  # deep red
-            "vetting":      {"bg": "#2a1f0d", "border": "#5c4422", "hover": "#3a2a14"},  # deep orange
-            "scan_tuning":  {"bg": "#2a2610", "border": "#5c5222", "hover": "#3a3318"},  # deep yellow
-            "causative":    {"bg": "#0d1a2a", "border": "#223d5c", "hover": "#142640"},  # deep blue
-            "correlative":  {"bg": "#0d1a2a", "border": "#223d5c", "hover": "#142640"},  # deep blue
-            "profit_grind": {"bg": "#0d1a2a", "border": "#223d5c", "hover": "#142640"},  # deep blue
-            "summary":      {"bg": "#0d2a1a", "border": "#225c3d", "hover": "#143a24"},  # deep green
+            "examples":     {"bg": "#2a1215", "bg_r": "#3d1b20", "border": "#5c2d33"},
+            "vetting":      {"bg": "#2a1f0d", "bg_r": "#3d2e15", "border": "#5c4422"},
+            "scan_tuning":  {"bg": "#2a2610", "bg_r": "#3d3818", "border": "#5c5222"},
+            "causative":    {"bg": "#0d1a2a", "bg_r": "#15263d", "border": "#223d5c"},
+            "correlative":  {"bg": "#0d1a2a", "bg_r": "#15263d", "border": "#223d5c"},
+            "profit_grind": {"bg": "#0d1a2a", "bg_r": "#15263d", "border": "#223d5c"},
+            "summary":      {"bg": "#0d2a1a", "bg_r": "#153d26", "border": "#225c3d"},
         }
 
         if locked:
-            bg_col = QColor("#060606")
+            grad = QLinearGradient(QPointF(x, y), QPointF(x + w, y))
+            grad.setColorAt(0, QColor("#050505"))
+            grad.setColorAt(1, QColor("#080808"))
+            p.setBrush(grad)
             border_col = QColor("#111111")
             text_col = QColor("#333333")
             sub_col = QColor("#222222")
         else:
-            nc = NODE_COLORS.get(nid, {"bg": C["surface"], "border": C["border_bright"], "hover": C["surface2"]})
-            bg_col = QColor(nc["hover"] if hover else nc["bg"])
+            nc = NODE_COLORS.get(nid, {"bg": "#0A0A0A", "bg_r": "#141414", "border": "#222222"})
+            left_c = nc["bg"]
+            right_c = nc["bg_r"]
+            if hover:
+                left_c = QColor(left_c).lighter(120).name()
+                right_c = QColor(right_c).lighter(120).name()
+            grad = QLinearGradient(QPointF(x, y), QPointF(x + w, y))
+            grad.setColorAt(0, QColor(left_c))
+            grad.setColorAt(1, QColor(right_c))
+            p.setBrush(grad)
             border_col = QColor(nc["border"])
             text_col = QColor(C["text"])
             sub_col = QColor(C["text_dim"])
-            # Override border with status color when active
-            sc_map = {"done": C["green"], "complete": C["green"],
-                      "running": C["amber"], "queued": C["amber"], "error": C["red"]}
+            sc_map = {"running": C["amber"], "queued": C["amber"], "error": C["red"]}
             if status in sc_map:
                 border_col = QColor(sc_map[status])
 
-        # Shape
-        p.setBrush(bg_col)
-        pen_w = 2 if (not locked and status in ("done","complete","running","queued","error")) else 1
-        p.setPen(QPen(border_col, pen_w))
+        # Thicker borders
+        p.setPen(QPen(border_col, 2.5))
 
         if kind == "do":
             p.drawRoundedRect(x, y, w, h, radius, radius)
         elif kind == "summary":
-            p.drawRoundedRect(x, y, w, h, radius // 2, radius // 2)
+            p.drawRoundedRect(x, y, w, h, radius, radius)
         else:
             p.drawRect(x, y, w, h)
 
-        # Name — vertically centered in top portion of header
+        # Name
         p.setPen(QPen(text_col))
         f = p.font(); f.setPixelSize(name_px); f.setWeight(QFont.DemiBold); p.setFont(f)
         name_y = y + pad
@@ -994,7 +1014,7 @@ class FlowchartCanvas(QWidget):
         p.drawText(QRectF(x + pad, name_y, w - pad*2, name_h),
                    Qt.AlignLeft | Qt.AlignVCenter, nd["name"])
 
-        # Info / desc — in bottom portion of header
+        # Info / desc
         info = self._infos.get(nid, nd["desc"])
         p.setPen(QPen(sub_col))
         f.setPixelSize(desc_px); f.setWeight(QFont.Normal); p.setFont(f)
@@ -1003,16 +1023,39 @@ class FlowchartCanvas(QWidget):
         p.drawText(QRectF(x + pad, desc_y, w - pad*2, desc_h),
                    Qt.AlignLeft | Qt.AlignVCenter, info)
 
+        # Examples: progress bar instead of status badge
+        if nid == "examples" and not locked:
+            progress = getattr(self, "_example_progress", 0.0)
+            bar_y = desc_y + desc_h + 4
+            bar_h = max(4, int(header_h * 0.05))
+            bar_w = w - pad * 2
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#1a0a0c"))
+            p.drawRoundedRect(int(x + pad), int(bar_y), int(bar_w), bar_h, 2, 2)
+            if progress > 0:
+                fill_w = max(2, int(bar_w * min(progress, 1.0)))
+                fg = QLinearGradient(QPointF(x + pad, bar_y), QPointF(x + pad + fill_w, bar_y))
+                fg.setColorAt(0, QColor("#5c2d33"))
+                fg.setColorAt(1, QColor("#8c4450"))
+                p.setBrush(fg)
+                p.drawRoundedRect(int(x + pad), int(bar_y), fill_w, bar_h, 2, 2)
+            pct_text = "%d%%" % int(progress * 100) if progress > 0 else ""
+            if pct_text:
+                p.setPen(QPen(QColor(C["text_dim"])))
+                f.setPixelSize(max(8, int(header_h * 0.09))); p.setFont(f)
+                p.drawText(QRectF(x + pad + bar_w - 40, bar_y - 1, 40, bar_h + 2),
+                           Qt.AlignRight | Qt.AlignVCenter, pct_text)
+
         # Lock icon
-        if locked:
+        elif locked:
             p.setPen(QPen(QColor("#333333")))
             f.setPixelSize(max(16, int(header_h * 0.18))); p.setFont(f)
-            p.drawText(QRectF(x + w - pad - 20, y + header_h//2 - 12, 24, 24), Qt.AlignCenter, "\U0001f512")
+            p.drawText(QRectF(x + w - pad - 20, y + header_h//2 - 12, 24, 24),
+                       Qt.AlignCenter, "\U0001f512")
 
-        # Status badge (top-right)
-        elif status not in ("idle", "pending"):
-            sc_map = {"done": C["green"], "complete": C["green"],
-                      "running": C["amber"], "queued": C["amber"], "error": C["red"]}
+        # Status badge (running/error only)
+        elif status in ("running", "queued", "error"):
+            sc_map = {"running": C["amber"], "queued": C["amber"], "error": C["red"]}
             p.setPen(QPen(QColor(sc_map.get(status, C["text_muted"]))))
             f.setPixelSize(badge_px); f.setWeight(QFont.Bold); p.setFont(f)
             p.drawText(QRectF(x + w - 70, y + pad - 2, 56, 16),
@@ -1022,7 +1065,8 @@ class FlowchartCanvas(QWidget):
         if kind == "do" and nd.get("tab") is not None and not locked:
             p.setPen(QPen(QColor(C["text_muted"])))
             f.setPixelSize(max(16, int(header_h * 0.18))); p.setFont(f)
-            p.drawText(QRectF(x + w - pad - 16, y + header_h//2 - 10, 20, 20), Qt.AlignCenter, "\u2192")
+            p.drawText(QRectF(x + w - pad - 16, y + header_h//2 - 10, 20, 20),
+                       Qt.AlignCenter, "\u2192")
 
         # Dot connectors
         if not locked:
@@ -1155,8 +1199,43 @@ class PipelineTab(QWidget):
                     self._details[nid].update_from_state(steps)
 
             elif nid == "examples":
-                self._canvas.set_info(nid, "%d examples" % n_examples)
-                self._canvas.set_status(nid, "done" if n_examples >= 20 else "idle")
+                # Progress bar: examples / deduped winner signals
+                n_winners = 0
+                try:
+                    with get_db() as db:
+                        row = db.execute(
+                            "SELECT data FROM file_mirror WHERE path LIKE ? ORDER BY created_at DESC LIMIT 1",
+                            ("local_runner/cache/refinement_%s_%%" % setup,),
+                        ).fetchone()
+                        if row:
+                            rdata = json.loads(row["data"])
+                            winners = rdata.get("winner_signals", [])
+                            # Dedup: count unique tickers (one signal per ticker counts)
+                            n_winners = len(winners)
+                except Exception:
+                    pass
+                # Also check local files
+                if n_winners == 0:
+                    cache_dir = REPO_ROOT / "local_runner" / "cache"
+                    if cache_dir.exists():
+                        for fp in sorted(cache_dir.iterdir(), reverse=True):
+                            if fp.name.startswith("refinement_%s_" % setup) and fp.suffix == ".json":
+                                try:
+                                    rdata = json.loads(fp.read_text())
+                                    n_winners = len(rdata.get("winner_signals", []))
+                                except Exception:
+                                    pass
+                                break
+
+                if n_winners > 0:
+                    progress = min(1.0, n_examples / n_winners)
+                    self._canvas.set_example_progress(progress)
+                    self._canvas.set_info(nid, "%d / %d examples (%d%%)" % (
+                        n_examples, n_winners, int(progress * 100)))
+                else:
+                    self._canvas.set_example_progress(0.0)
+                    self._canvas.set_info(nid, "%d examples" % n_examples)
+                self._canvas.set_status(nid, "idle")
 
             elif nid == "vetting":
                 try:
