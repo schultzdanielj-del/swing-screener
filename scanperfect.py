@@ -632,6 +632,8 @@ class FlowchartCanvas(QWidget):
         self._anim_timer.setInterval(16)  # ~60fps
         self._anim_timer.timeout.connect(self._anim_step)
         self._example_progress = 0.0  # 0.0 to 1.0
+        self._example_n = 0
+        self._example_total = 0
         self.setMouseTracking(True)
 
     def set_status(self, nid, s):
@@ -650,9 +652,11 @@ class FlowchartCanvas(QWidget):
         self._n_examples = n
         self.update()
 
-    def set_example_progress(self, ratio):
-        """Set examples progress: n_examples / n_winner_signals (0.0-1.0)."""
+    def set_example_progress(self, ratio, n_examples=0, n_total=0):
+        """Set examples progress bar data."""
         self._example_progress = ratio
+        self._example_n = n_examples
+        self._example_total = n_total
         self.update()
 
     def _calc_base_layout(self):
@@ -1043,28 +1047,36 @@ class FlowchartCanvas(QWidget):
         p.drawText(QRectF(x + pad, desc_y, w - pad*2, desc_h),
                    Qt.AlignLeft | Qt.AlignVCenter, info)
 
-        # Examples: progress bar instead of status badge
+        # Examples: thick progress bar with count inside
         if nid == "examples" and not locked:
             progress = getattr(self, "_example_progress", 0.0)
-            bar_y = desc_y + desc_h + 4
-            bar_h = max(4, int(header_h * 0.05))
+            n_ex = getattr(self, "_example_n", 0)
+            n_tot = getattr(self, "_example_total", 0)
+            bar_y = desc_y + desc_h + 2
+            bar_h = max(18, int(header_h * 0.18))
             bar_w = w - pad * 2
+            bar_r = bar_h // 2  # fully rounded ends
+
+            # Track background
             p.setPen(Qt.NoPen)
             p.setBrush(QColor("#1a0a0c"))
-            p.drawRoundedRect(int(x + pad), int(bar_y), int(bar_w), bar_h, 2, 2)
+            p.drawRoundedRect(int(x + pad), int(bar_y), int(bar_w), bar_h, bar_r, bar_r)
+
+            # Fill
             if progress > 0:
-                fill_w = max(2, int(bar_w * min(progress, 1.0)))
+                fill_w = max(bar_h, int(bar_w * min(progress, 1.0)))  # min width = bar height for rounded cap
                 fg = QLinearGradient(QPointF(x + pad, bar_y), QPointF(x + pad + fill_w, bar_y))
                 fg.setColorAt(0, QColor("#5c2d33"))
                 fg.setColorAt(1, QColor("#8c4450"))
                 p.setBrush(fg)
-                p.drawRoundedRect(int(x + pad), int(bar_y), fill_w, bar_h, 2, 2)
-            pct_text = "%d%%" % int(progress * 100) if progress > 0 else ""
-            if pct_text:
-                p.setPen(QPen(QColor(C["text_dim"])))
-                f.setPixelSize(max(8, int(header_h * 0.09))); p.setFont(f)
-                p.drawText(QRectF(x + pad + bar_w - 40, bar_y - 1, 40, bar_h + 2),
-                           Qt.AlignRight | Qt.AlignVCenter, pct_text)
+                p.drawRoundedRect(int(x + pad), int(bar_y), fill_w, bar_h, bar_r, bar_r)
+
+            # Text inside the bar: "66 / 365 winners"
+            bar_text = "%d / %d winners" % (n_ex, n_tot) if n_tot > 0 else "%d examples" % n_ex
+            p.setPen(QPen(QColor("#E0E0E0")))
+            f.setPixelSize(max(10, int(bar_h * 0.6))); f.setWeight(QFont.DemiBold); p.setFont(f)
+            p.drawText(QRectF(x + pad + 8, bar_y, bar_w - 16, bar_h),
+                       Qt.AlignLeft | Qt.AlignVCenter, bar_text)
 
         # Lock icon
         elif locked:
@@ -1219,9 +1231,18 @@ class PipelineTab(QWidget):
                     self._details[nid].update_from_state(steps)
 
             elif nid == "examples":
-                # Progress bar: examples / deduped winner signals
+                # Progress bar: examples / unique winner tickers (excluding examples themselves)
                 n_winners = 0
                 try:
+                    # Get example tickers to exclude from winner count
+                    example_tickers = set()
+                    with get_db() as db:
+                        ex_rows = db.execute(
+                            "SELECT DISTINCT ticker FROM examples WHERE setup_type=?", (setup,)
+                        ).fetchall()
+                        example_tickers = set(r[0] for r in ex_rows)
+
+                    # Try file_mirror first
                     with get_db() as db:
                         row = db.execute(
                             "SELECT data FROM file_mirror WHERE path LIKE ? ORDER BY created_at DESC LIMIT 1",
@@ -1230,11 +1251,13 @@ class PipelineTab(QWidget):
                         if row:
                             rdata = json.loads(row["data"])
                             winners = rdata.get("winner_signals", [])
-                            # Dedup: count unique tickers (one signal per ticker counts)
-                            n_winners = len(winners)
+                            # Count unique winner tickers, excluding example tickers
+                            winner_tickers = set(w.get("ticker", "") for w in winners)
+                            non_example_winners = winner_tickers - example_tickers
+                            n_winners = len(non_example_winners) + n_examples  # total unique = non-ex winners + examples
                 except Exception:
                     pass
-                # Also check local files
+                # Fallback: local files
                 if n_winners == 0:
                     cache_dir = REPO_ROOT / "local_runner" / "cache"
                     if cache_dir.exists():
@@ -1242,18 +1265,19 @@ class PipelineTab(QWidget):
                             if fp.name.startswith("refinement_%s_" % setup) and fp.suffix == ".json":
                                 try:
                                     rdata = json.loads(fp.read_text())
-                                    n_winners = len(rdata.get("winner_signals", []))
+                                    winners = rdata.get("winner_signals", [])
+                                    winner_tickers = set(w.get("ticker", "") for w in winners)
+                                    n_winners = len(winner_tickers)
                                 except Exception:
                                     pass
                                 break
 
                 if n_winners > 0:
                     progress = min(1.0, n_examples / n_winners)
-                    self._canvas.set_example_progress(progress)
-                    self._canvas.set_info(nid, "%d / %d examples (%d%%)" % (
-                        n_examples, n_winners, int(progress * 100)))
+                    self._canvas.set_example_progress(progress, n_examples, n_winners)
+                    self._canvas.set_info(nid, nd["desc"])
                 else:
-                    self._canvas.set_example_progress(0.0)
+                    self._canvas.set_example_progress(0.0, n_examples, 0)
                     self._canvas.set_info(nid, "%d examples" % n_examples)
                 self._canvas.set_status(nid, "idle")
 
