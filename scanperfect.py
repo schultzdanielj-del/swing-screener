@@ -559,8 +559,8 @@ class FlowchartCanvas(QWidget):
     """
     node_clicked = Signal(str)
 
-    NW, NH = 210, 72
-    COL_GAP = 120  # horizontal gap between DO and RUN columns
+    NW, NH = 210, 72  # fallback minimums
+    COL_GAP = 120
     ROW_GAP = 56
     LOOP_M = 32
 
@@ -593,38 +593,50 @@ class FlowchartCanvas(QWidget):
 
     def _layout(self):
         w = self.width()
-        nw, nh = self.NW, self.NH
-        cg, rg, lm = self.COL_GAP, self.ROW_GAP, self.LOOP_M
+        h = self.height()
 
-        # Two columns: DO (left) and RUN (right)
-        total_w = nw * 2 + cg
-        lx = (w - total_w) // 2        # left column x (DO)
-        rx = lx + nw + cg              # right column x (RUN)
+        # Scale card sizes to fill the space
+        # Horizontal: two cards + gap + loop margin on left side
+        loop_margin = 50  # space for the left-side loop arrow
+        side_pad = 60
+        usable_w = w - side_pad * 2 - loop_margin
+        col_gap = max(80, usable_w * 0.08)
+        nw = max(240, min(420, (usable_w - col_gap) / 2))
 
-        y = lm + 30
+        # Vertical: 5 rows of cards + gaps + loop margins
+        top_pad = 50
+        bot_pad = 50
+        loop_v = 50  # space for bottom loop arc
+        usable_h = h - top_pad - bot_pad - loop_v
+        row_gap = max(40, usable_h * 0.06)
+        nh = max(80, min(130, (usable_h - row_gap * 5) / 5))
 
-        # Row 1: Examples (DO-left) → Causative (RUN-right)
+        lx = side_pad + loop_margin  # left column (DO)
+        rx = lx + nw + col_gap       # right column (RUN)
+
+        y = top_pad
+
         self._rects["examples"]  = (lx, y, nw, nh)
         self._rects["causative"] = (rx, y, nw, nh)
 
-        # Row 2: Vetting (DO-left) ← fed by Causative
-        y += nh + rg
+        y += nh + row_gap
         self._rects["vetting"] = (lx, y, nw, nh)
 
-        # Row 3: Correlative (RUN-right)
-        y += nh + rg
+        y += nh + row_gap
         self._rects["correlative"] = (rx, y, nw, nh)
 
-        # Row 4: Scan Tuning (DO-left) → Profit Grind (RUN-right)
-        y += nh + rg
+        y += nh + row_gap
         self._rects["scan_tuning"]  = (lx, y, nw, nh)
         self._rects["profit_grind"] = (rx, y, nw, nh)
 
-        # Row 5: Summary (centered)
-        y += nh + rg + lm
-        self._rects["summary"] = ((w - nw) // 2, y, nw, nh)
+        y += nh + row_gap + loop_v
+        summary_w = min(nw, 300)
+        self._rects["summary"] = ((w - summary_w) // 2, y, summary_w, nh)
 
-        self.setMinimumHeight(y + nh + 40)
+        # Store computed sizes for painter
+        self._nw = nw
+        self._nh = nh
+        self._loop_m = 36
 
     def resizeEvent(self, ev):
         self._layout()
@@ -690,7 +702,7 @@ class FlowchartCanvas(QWidget):
         ex = self._rects["examples"]; vt = self._rects["vetting"]
         vl_x, vl_y = vt[0], vt[1] + vt[3] // 2
         el_x, el_y = ex[0], ex[1] + ex[3] // 2
-        loop_x = min(vl_x, el_x) - self.LOOP_M
+        loop_x = min(vl_x, el_x) - self._loop_m
         p.drawLine(vl_x, vl_y, loop_x, vl_y)
         p.drawLine(loop_x, vl_y, loop_x, el_y)
         p.drawLine(loop_x, el_y, el_x, el_y)
@@ -737,7 +749,7 @@ class FlowchartCanvas(QWidget):
         st = self._rects["scan_tuning"]; pg = self._rects["profit_grind"]
         pb_x, pb_y = pg[0] + pg[2] // 2, pg[1] + pg[3]
         sb_x, sb_y = st[0] + st[2] // 2, st[1] + st[3]
-        ly = max(pb_y, sb_y) + self.LOOP_M // 2 + 4
+        ly = max(pb_y, sb_y) + self._loop_m // 2 + 4
         p.drawLine(pb_x, pb_y, pb_x, ly)
         p.drawLine(pb_x, ly, sb_x, ly)
         p.drawLine(sb_x, ly, sb_x, sb_y)
@@ -765,7 +777,15 @@ class FlowchartCanvas(QWidget):
         hover = self._hover == nid and not locked
         kind = nd["kind"]  # "do", "run", "summary"
 
-        # ── Colors based on locked/status ──
+        # Scale font sizes relative to card height
+        name_px = max(13, int(h * 0.17))
+        desc_px = max(10, int(h * 0.12))
+        badge_px = max(9, int(h * 0.1))
+        pad = max(14, int(w * 0.04))
+        accent_w = max(3, int(w * 0.01))
+        radius = max(6, int(h * 0.08))
+
+        # Colors based on locked/status
         if locked:
             bg_col = QColor("#060606")
             border_col = QColor("#111111")
@@ -779,62 +799,69 @@ class FlowchartCanvas(QWidget):
             text_col = QColor(C["text"])
             sub_col = QColor(C["text_muted"])
 
-        # ── Shape: DO nodes get rounded corners, RUN nodes get sharp ──
+        # Shape
         p.setBrush(bg_col)
-        pen_w = 1.5 if (not locked and status in ("done","complete","running","queued","error")) else 1
+        pen_w = 2 if (not locked and status in ("done","complete","running","queued","error")) else 1
         p.setPen(QPen(border_col, pen_w))
 
         if kind == "do":
-            p.drawRoundedRect(x, y, w, h, 8, 8)
+            p.drawRoundedRect(x, y, w, h, radius, radius)
         elif kind == "summary":
-            p.drawRoundedRect(x, y, w, h, 4, 4)
-        else:  # "run"
+            p.drawRoundedRect(x, y, w, h, radius // 2, radius // 2)
+        else:
             p.drawRect(x, y, w, h)
 
-        # ── Left accent bar (only if active status) ──
+        # Left accent bar
         if not locked and status in ("done", "complete", "running", "queued", "error"):
             accent = QColor({"done": C["green"], "complete": C["green"],
                             "running": C["amber"], "error": C["red"]}.get(status, C["border_bright"]))
-            p.fillRect(x+1, y+1, 3, h-2, accent)
+            p.fillRect(x+1, y+1, accent_w, h-2, accent)
 
-        # ── Name ──
+        # Name — vertically centered in top portion of card
         p.setPen(QPen(text_col))
-        f = p.font(); f.setPixelSize(12); f.setWeight(QFont.DemiBold); p.setFont(f)
-        p.drawText(QRectF(x + 12, y + 12, w - 24, 18), Qt.AlignLeft | Qt.AlignVCenter, nd["name"])
+        f = p.font(); f.setPixelSize(name_px); f.setWeight(QFont.DemiBold); p.setFont(f)
+        name_y = y + pad
+        name_h = int(h * 0.35)
+        p.drawText(QRectF(x + pad + accent_w, name_y, w - pad*2 - accent_w, name_h),
+                   Qt.AlignLeft | Qt.AlignVCenter, nd["name"])
 
-        # ── Info / desc ──
+        # Info / desc — in bottom portion
         info = self._infos.get(nid, nd["desc"])
         p.setPen(QPen(sub_col))
-        f.setPixelSize(10); f.setWeight(QFont.Normal); p.setFont(f)
-        p.drawText(QRectF(x + 12, y + 34, w - 24, 16), Qt.AlignLeft | Qt.AlignVCenter, info)
+        f.setPixelSize(desc_px); f.setWeight(QFont.Normal); p.setFont(f)
+        desc_y = name_y + name_h
+        desc_h = int(h * 0.3)
+        p.drawText(QRectF(x + pad + accent_w, desc_y, w - pad*2 - accent_w, desc_h),
+                   Qt.AlignLeft | Qt.AlignVCenter, info)
 
-        # ── Lock indicator ──
+        # Lock icon
         if locked:
             p.setPen(QPen(QColor("#333333")))
-            f.setPixelSize(14); p.setFont(f)
-            p.drawText(QRectF(x + w - 28, y + h//2 - 10, 20, 20), Qt.AlignCenter, "\U0001f512")
+            f.setPixelSize(max(16, int(h * 0.18))); p.setFont(f)
+            p.drawText(QRectF(x + w - pad - 20, y + h//2 - 12, 24, 24), Qt.AlignCenter, "\U0001f512")
 
-        # ── Status badge (top-right, only if not idle/locked) ──
+        # Status badge (top-right)
         elif status not in ("idle", "pending"):
             sc_map = {"done": C["green"], "complete": C["green"],
                       "running": C["amber"], "queued": C["amber"], "error": C["red"]}
             p.setPen(QPen(QColor(sc_map.get(status, C["text_muted"]))))
-            f.setPixelSize(8); f.setWeight(QFont.Bold); p.setFont(f)
-            p.drawText(QRectF(x + w - 60, y + 8, 50, 12), Qt.AlignRight | Qt.AlignVCenter, status.upper())
+            f.setPixelSize(badge_px); f.setWeight(QFont.Bold); p.setFont(f)
+            p.drawText(QRectF(x + w - 70, y + pad - 2, 56, 16),
+                       Qt.AlignRight | Qt.AlignVCenter, status.upper())
 
-        # ── Nav arrow for DO nodes with tabs ──
+        # Nav arrow for DO nodes
         if kind == "do" and nd.get("tab") is not None and not locked:
             p.setPen(QPen(QColor(C["text_muted"])))
-            f.setPixelSize(14); p.setFont(f)
-            p.drawText(QRectF(x + w - 24, y + h//2 - 10, 16, 20), Qt.AlignCenter, "\u2192")
+            f.setPixelSize(max(16, int(h * 0.18))); p.setFont(f)
+            p.drawText(QRectF(x + w - pad - 16, y + h//2 - 10, 20, 20), Qt.AlignCenter, "\u2192")
 
-        # ── Dot connectors at edges ──
+        # Dot connectors
         if not locked:
             p.setBrush(QColor(C["border_bright"]))
             p.setPen(Qt.NoPen)
             for side in ("l", "r", "t", "b"):
                 dx, dy = self._edge(nid, side)
-                p.drawEllipse(dx - 2, dy - 2, 4, 4)
+                p.drawEllipse(dx - 3, dy - 3, 6, 6)
 
     def mouseMoveEvent(self, ev):
         pos = ev.position() if hasattr(ev, "position") else ev.pos()
