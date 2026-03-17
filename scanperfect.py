@@ -1972,7 +1972,7 @@ class VettingWorkspace(QFrame):
             })
 
         # Sort by move_adr descending
-        signals.sort(key=lambda x: x.get("move_adr", 0), reverse=True)
+        signals.sort(key=lambda x: x.get("move_adr") or 0, reverse=True)
         self._signals = signals
         self._apply_filter()
         self._update_stats()
@@ -2031,7 +2031,7 @@ class VettingWorkspace(QFrame):
         )
         r1.addWidget(tk)
         r1.addStretch()
-        adr = QLabel("+%.1f ADR" % sig.get("move_adr", 0))
+        adr = QLabel("+%.1f ADR" % (sig.get("move_adr") or 0))
         adr.setStyleSheet(
             "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
             "font-weight:600; color:%s; background:transparent; border:none;" % C["green"]
