@@ -1183,7 +1183,8 @@ class PipelineTab(QWidget):
     def set_setup(self, setup):
         self._setup = setup
         for d in self._details.values():
-            d.set_setup(setup)
+            if hasattr(d, 'set_setup'):
+                d.set_setup(setup)
 
     def refresh(self):
         state = load_json(PIPELINE_FILE, {"steps": {}})
