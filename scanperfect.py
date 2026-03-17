@@ -573,6 +573,8 @@ class FlowchartCanvas(QWidget):
         self._locked = {}
         self._hover = None
         self._n_examples = 0
+        self._expanded_id = None  # which RUN node is expanded
+        self._detail_widgets = {}  # nid -> GrinderDetail widget (children of canvas)
         self.setMouseTracking(True)
 
     def set_status(self, nid, s):
@@ -596,51 +598,104 @@ class FlowchartCanvas(QWidget):
         h = self.height()
 
         # Scale card sizes to fill the space
-        # Horizontal: two cards + gap + loop margin on left side
-        loop_margin = 50  # space for the left-side loop arrow
+        loop_margin = 50
         side_pad = 60
         usable_w = w - side_pad * 2 - loop_margin
         col_gap = max(80, usable_w * 0.08)
         nw = max(240, min(420, (usable_w - col_gap) / 2))
 
-        # Vertical: 5 rows of cards + gaps + loop margins
         top_pad = 50
         bot_pad = 50
-        loop_v = 50  # space for bottom loop arc
+        loop_v = 50
         usable_h = h - top_pad - bot_pad - loop_v
         row_gap = max(40, usable_h * 0.06)
         nh = max(80, min(130, (usable_h - row_gap * 5) / 5))
 
-        lx = side_pad + loop_margin  # left column (DO)
-        rx = lx + nw + col_gap       # right column (RUN)
+        # Height of expanded detail panel
+        expand_h = 380 if self._expanded_id else 0
+
+        lx = side_pad + loop_margin
+        rx = lx + nw + col_gap
 
         y = top_pad
 
-        self._rects["examples"]  = (lx, y, nw, nh)
-        self._rects["causative"] = (rx, y, nw, nh)
+        # Row order: which rows contain which nodes
+        # Row 0: examples (lx), causative (rx)
+        # Row 1: vetting (lx)
+        # Row 2: correlative (rx)
+        # Row 3: scan_tuning (lx), profit_grind (rx)
+        # Row 4: summary (centered)
 
-        y += nh + row_gap
-        self._rects["vetting"] = (lx, y, nw, nh)
+        row_nodes = [
+            [("examples", lx), ("causative", rx)],
+            [("vetting", lx)],
+            [("correlative", rx)],
+            [("scan_tuning", lx), ("profit_grind", rx)],
+        ]
 
-        y += nh + row_gap
-        self._rects["correlative"] = (rx, y, nw, nh)
+        for row in row_nodes:
+            for nid, nx in row:
+                this_h = nh
+                if nid == self._expanded_id:
+                    this_h = nh + expand_h
+                self._rects[nid] = (nx, y, nw, this_h)
+            # Row height = max card height in this row
+            max_h = max(self._rects[nid][3] for nid, _ in row)
+            y += max_h + row_gap
 
-        y += nh + row_gap
-        self._rects["scan_tuning"]  = (lx, y, nw, nh)
-        self._rects["profit_grind"] = (rx, y, nw, nh)
-
-        y += nh + row_gap + loop_v
+        # Summary row
+        y += loop_v
         summary_w = min(nw, 300)
         self._rects["summary"] = ((w - summary_w) // 2, y, summary_w, nh)
 
-        # Store computed sizes for painter
         self._nw = nw
-        self._nh = nh
+        self._nh = nh  # base (collapsed) height
+        self._expand_h = expand_h
         self._loop_m = 36
+
+        self.setMinimumHeight(int(y + nh + 40))
 
     def resizeEvent(self, ev):
         self._layout()
+        self._position_detail()
         super().resizeEvent(ev)
+
+    def add_detail_widget(self, nid, widget):
+        """Register a GrinderDetail as a child widget of the canvas."""
+        widget.setParent(self)
+        widget.setVisible(False)
+        self._detail_widgets[nid] = widget
+
+    def expand_node(self, nid):
+        """Expand a RUN node to show its detail panel inline."""
+        if self._expanded_id == nid:
+            # Collapse
+            self._expanded_id = None
+            if nid in self._detail_widgets:
+                self._detail_widgets[nid].setVisible(False)
+        else:
+            # Collapse previous
+            if self._expanded_id and self._expanded_id in self._detail_widgets:
+                self._detail_widgets[self._expanded_id].setVisible(False)
+            self._expanded_id = nid
+            if nid in self._detail_widgets:
+                self._detail_widgets[nid].setVisible(True)
+        self._layout()
+        self._position_detail()
+        self.update()
+
+    def _position_detail(self):
+        """Position the active detail widget inside the expanded card rect."""
+        for nid, widget in self._detail_widgets.items():
+            if nid == self._expanded_id and nid in self._rects:
+                x, y, w, h = self._rects[nid]
+                nh = self._nh  # base card height (header area)
+                # Place detail below the header area, within the expanded rect
+                widget.setGeometry(int(x + 1), int(y + nh), int(w - 2), int(h - nh - 1))
+                widget.setVisible(True)
+                widget.raise_()
+            else:
+                widget.setVisible(False)
 
     def _edge(self, nid, side):
         x, y, w, h = self._rects[nid]
@@ -772,18 +827,20 @@ class FlowchartCanvas(QWidget):
         if nid not in self._rects:
             return
         x, y, w, h = self._rects[nid]
+        is_expanded = (nid == self._expanded_id)
+        header_h = self._nh if is_expanded else h  # text goes in header area only
         status = self._statuses.get(nid, "idle")
         locked = self._locked.get(nid, False)
         hover = self._hover == nid and not locked
-        kind = nd["kind"]  # "do", "run", "summary"
+        kind = nd["kind"]
 
-        # Scale font sizes relative to card height
-        name_px = max(13, int(h * 0.17))
-        desc_px = max(10, int(h * 0.12))
-        badge_px = max(9, int(h * 0.1))
+        # Scale font sizes relative to header height
+        name_px = max(13, int(header_h * 0.17))
+        desc_px = max(10, int(header_h * 0.12))
+        badge_px = max(9, int(header_h * 0.1))
         pad = max(14, int(w * 0.04))
         accent_w = max(3, int(w * 0.01))
-        radius = max(6, int(h * 0.08))
+        radius = max(6, int(header_h * 0.08))
 
         # Colors based on locked/status
         if locked:
@@ -817,28 +874,28 @@ class FlowchartCanvas(QWidget):
                             "running": C["amber"], "error": C["red"]}.get(status, C["border_bright"]))
             p.fillRect(x+1, y+1, accent_w, h-2, accent)
 
-        # Name — vertically centered in top portion of card
+        # Name — vertically centered in top portion of header
         p.setPen(QPen(text_col))
         f = p.font(); f.setPixelSize(name_px); f.setWeight(QFont.DemiBold); p.setFont(f)
         name_y = y + pad
-        name_h = int(h * 0.35)
+        name_h = int(header_h * 0.35)
         p.drawText(QRectF(x + pad + accent_w, name_y, w - pad*2 - accent_w, name_h),
                    Qt.AlignLeft | Qt.AlignVCenter, nd["name"])
 
-        # Info / desc — in bottom portion
+        # Info / desc — in bottom portion of header
         info = self._infos.get(nid, nd["desc"])
         p.setPen(QPen(sub_col))
         f.setPixelSize(desc_px); f.setWeight(QFont.Normal); p.setFont(f)
         desc_y = name_y + name_h
-        desc_h = int(h * 0.3)
+        desc_h = int(header_h * 0.3)
         p.drawText(QRectF(x + pad + accent_w, desc_y, w - pad*2 - accent_w, desc_h),
                    Qt.AlignLeft | Qt.AlignVCenter, info)
 
         # Lock icon
         if locked:
             p.setPen(QPen(QColor("#333333")))
-            f.setPixelSize(max(16, int(h * 0.18))); p.setFont(f)
-            p.drawText(QRectF(x + w - pad - 20, y + h//2 - 12, 24, 24), Qt.AlignCenter, "\U0001f512")
+            f.setPixelSize(max(16, int(header_h * 0.18))); p.setFont(f)
+            p.drawText(QRectF(x + w - pad - 20, y + header_h//2 - 12, 24, 24), Qt.AlignCenter, "\U0001f512")
 
         # Status badge (top-right)
         elif status not in ("idle", "pending"):
@@ -852,8 +909,8 @@ class FlowchartCanvas(QWidget):
         # Nav arrow for DO nodes
         if kind == "do" and nd.get("tab") is not None and not locked:
             p.setPen(QPen(QColor(C["text_muted"])))
-            f.setPixelSize(max(16, int(h * 0.18))); p.setFont(f)
-            p.drawText(QRectF(x + w - pad - 16, y + h//2 - 10, 20, 20), Qt.AlignCenter, "\u2192")
+            f.setPixelSize(max(16, int(header_h * 0.18))); p.setFont(f)
+            p.drawText(QRectF(x + w - pad - 16, y + header_h//2 - 10, 20, 20), Qt.AlignCenter, "\u2192")
 
         # Dot connectors
         if not locked:
@@ -893,7 +950,6 @@ class PipelineTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup = "dtss"
-        self._expanded = None
         self._details = {}
 
         outer = QVBoxLayout(self)
@@ -905,24 +961,18 @@ class PipelineTab(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._canvas = FlowchartCanvas()
         self._canvas.node_clicked.connect(self._on_node_click)
-        scroll.setWidget(self._canvas)
-        outer.addWidget(scroll, 1)
 
-        self._det_frame = QFrame()
-        self._det_frame.setStyleSheet("QFrame { border-top:1px solid %s; }" % C["border"])
-        self._det_lay = QVBoxLayout(self._det_frame)
-        self._det_lay.setContentsMargins(0, 0, 0, 0)
-        self._det_lay.setSpacing(0)
+        # Create detail widgets as children of the canvas
         for nd in FLOW_NODES:
             if nd["kind"] == "run":
                 det = GrinderDetail(nd["id"])
                 det.run_requested.connect(self._fwd_run)
                 det.stop_requested.connect(self._fwd_stop)
-                det.setVisible(False)
-                self._det_lay.addWidget(det)
+                self._canvas.add_detail_widget(nd["id"], det)
                 self._details[nd["id"]] = det
-        self._det_frame.setVisible(False)
-        outer.addWidget(self._det_frame, 0)
+
+        scroll.setWidget(self._canvas)
+        outer.addWidget(scroll, 1)
 
     def _on_node_click(self, nid):
         nd = next((n for n in FLOW_NODES if n["id"] == nid), None)
@@ -931,16 +981,7 @@ class PipelineTab(QWidget):
         if nd["kind"] == "do" and nd.get("tab") is not None:
             self.navigate_to_tab.emit(nd["tab"])
         elif nd["kind"] == "run":
-            if self._expanded == nid:
-                self._details[nid].setVisible(False)
-                self._det_frame.setVisible(False)
-                self._expanded = None
-            else:
-                if self._expanded and self._expanded in self._details:
-                    self._details[self._expanded].setVisible(False)
-                self._details[nid].setVisible(True)
-                self._det_frame.setVisible(True)
-                self._expanded = nid
+            self._canvas.expand_node(nid)
 
     def _fwd_run(self, step_id):
         win = self.window()
