@@ -287,6 +287,7 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 """ % C
 
 
+
 # ============================================================
 # WIDGETS
 # ============================================================
@@ -347,142 +348,81 @@ class StatusBadge(QLabel):
         )
 
 
-
-class FlowCard(QFrame):
-    """A single card in the pipeline flowchart."""
-    clicked = Signal(str)
-
-    def __init__(self, node_def, parent=None):
-        super().__init__(parent)
-        self.node_id = node_def["id"]
-        self.node_type = node_def["type"]
-        self._status = "idle"
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFixedSize(200, 70)
-        self._restyle()
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(12, 8, 12, 8)
-        lay.setSpacing(2)
-
-        top = QHBoxLayout()
-        top.setSpacing(8)
-        self._name_lbl = QLabel(node_def["name"])
-        self._name_lbl.setStyleSheet(
-            "font-size:12px; font-weight:700; color:%s; background:transparent; border:none;" % C["text"]
-        )
-        top.addWidget(self._name_lbl)
-        top.addStretch()
-        self._badge = StatusBadge("idle")
-        top.addWidget(self._badge)
-        lay.addLayout(top)
-
-        self._desc_lbl = QLabel(node_def["desc"])
-        self._desc_lbl.setStyleSheet(
-            "font-size:10px; color:%s; background:transparent; border:none;" % C["text_muted"]
-        )
-        self._desc_lbl.setWordWrap(True)
-        lay.addWidget(self._desc_lbl)
-
-    def set_status(self, s):
-        self._status = s
-        self._badge.set_status(s)
-        self._restyle()
-
-    def set_info(self, text):
-        self._desc_lbl.setText(text)
-
-    def _restyle(self):
-        cmap = {"done": C["green"], "complete": C["green"], "running": C["amber"],
-                "queued": C["amber"], "error": C["red"]}
-        bc = cmap.get(self._status, C["border_bright"])
-        self.setStyleSheet(
-            "FlowCard { background:%s; border:1px solid %s; border-left:3px solid %s; }"
-            "FlowCard:hover { background:%s; border-color:%s; border-left:3px solid %s; }"
-            % (C["surface"], C["border"], bc, C["surface2"], C["border_bright"], bc)
-        )
-
-    def mousePressEvent(self, ev):
-        self.clicked.emit(self.node_id)
-        super().mousePressEvent(ev)
-
-
 class GrinderDetail(QFrame):
-    """Expandable detail panel with sub-step progress, Run/Stop, and log."""
+    """Expandable detail panel with metrics, run/stop, sub-step badges, and log."""
     run_requested = Signal(str)
     stop_requested = Signal(str)
 
-    def __init__(self, node_id, sub_steps, parent=None):
+    def __init__(self, node_id, parent=None):
         super().__init__(parent)
         self.node_id = node_id
-        self._sub_steps = sub_steps
         self.setStyleSheet(
             "GrinderDetail { background:%s; border:1px solid %s; }" % (C["surface"], C["border"])
         )
-
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(14, 10, 14, 10)
-        lay.setSpacing(8)
+        lay.setContentsMargins(16, 12, 16, 12)
+        lay.setSpacing(10)
 
-        # Sub-step indicators (only if multiple sub-steps)
-        self._sub_labels = {}
-        if len(sub_steps) > 1:
-            sub_row = QHBoxLayout()
-            sub_row.setSpacing(6)
-            for ss in sub_steps:
-                nice = ss.replace("_", " ").title()
-                lbl = QLabel(nice)
-                lbl.setStyleSheet(
-                    "font-size:10px; font-weight:600; color:%s; background:%s;"
-                    "padding:3px 8px; border:none;" % (C["text_muted"], C["surface2"])
-                )
-                lbl.setAlignment(Qt.AlignCenter)
-                sub_row.addWidget(lbl)
-                self._sub_labels[ss] = lbl
-            sub_row.addStretch()
-            lay.addLayout(sub_row)
-
-        # Metrics + buttons row
+        # Metrics
         mrow = QHBoxLayout()
-        mrow.setSpacing(20)
+        mrow.setSpacing(24)
         self._m = {}
-        for key, label in [("status", "STATUS"), ("lastrun", "LAST RUN"),
-                           ("duration", "DURATION"), ("setup", "SETUP")]:
+        for key, label in [("status","STATUS"), ("lastrun","LAST RUN"),
+                           ("duration","DURATION"), ("setup","SETUP")]:
             col = QVBoxLayout()
-            col.setSpacing(1)
-            k = QLabel(label)
-            k.setStyleSheet(
-                "font-size:9px; font-weight:700; letter-spacing:1px; color:%s;"
+            col.setSpacing(2)
+            lbl = QLabel(label)
+            lbl.setStyleSheet(
+                "font-size:9px; font-weight:600; letter-spacing:1.2px; color:%s;"
                 "background:transparent; border:none;" % C["text_muted"]
             )
-            col.addWidget(k)
-            v = QLabel("\u2014")
-            v.setStyleSheet(
-                "font-size:13px; font-weight:500; color:%s; background:transparent; border:none;"
-                "font-family:\'JetBrains Mono\',\'Consolas\',monospace;" % C["text"]
+            val = QLabel("\u2014")
+            val.setStyleSheet(
+                "font-size:13px; font-weight:500; color:%s;"
+                "background:transparent; border:none;" % C["text"]
             )
-            col.addWidget(v)
-            self._m[key] = v
+            col.addWidget(lbl)
+            col.addWidget(val)
             mrow.addLayout(col)
+            self._m[key] = val
         mrow.addStretch()
+        lay.addLayout(mrow)
 
+        # Sub-step badges (causative has 3)
+        subs = GRINDER_SUB_STEPS.get(node_id, [])
+        self._sub_badges = {}
+        if len(subs) > 1:
+            sr = QHBoxLayout()
+            sr.setSpacing(12)
+            for sid in subs:
+                sl = QLabel(sid.replace("_", " ").title())
+                sl.setStyleSheet(
+                    "font-size:10px; color:%s; background:transparent; border:none;" % C["text_muted"]
+                )
+                sb = StatusBadge("idle")
+                sr.addWidget(sl)
+                sr.addWidget(sb)
+                self._sub_badges[sid] = sb
+            sr.addStretch()
+            lay.addLayout(sr)
+
+        # Buttons
         brow = QHBoxLayout()
         brow.setSpacing(8)
         self._run_btn = QPushButton("\u25b6  RUN")
         self._run_btn.setObjectName("runBtn")
-        self._run_btn.clicked.connect(lambda: self.run_requested.emit(self.node_id))
+        self._run_btn.clicked.connect(self._on_run)
         brow.addWidget(self._run_btn)
         self._stop_btn = QPushButton("\u25a0  STOP")
         self._stop_btn.setObjectName("stopBtn")
         self._stop_btn.setEnabled(False)
-        self._stop_btn.clicked.connect(lambda: self.stop_requested.emit(self.node_id))
+        self._stop_btn.clicked.connect(self._on_stop)
         brow.addWidget(self._stop_btn)
         clr = QPushButton("CLEAR LOG")
         clr.clicked.connect(lambda: self._log.clear())
         brow.addWidget(clr)
         brow.addStretch()
-        mrow.addLayout(brow)
-        lay.addLayout(mrow)
+        lay.addLayout(brow)
 
         # Log
         self._log = QPlainTextEdit()
@@ -491,14 +431,24 @@ class GrinderDetail(QFrame):
         self._log.setMaximumHeight(350)
         self._log.setPlaceholderText("No logs yet")
         lay.addWidget(self._log)
+        self._load_logs()
 
-        # Load existing logs
+    def _on_run(self):
+        subs = GRINDER_SUB_STEPS.get(self.node_id, [])
+        self.run_requested.emit(subs[0] if subs else self.node_id)
+
+    def _on_stop(self):
+        subs = GRINDER_SUB_STEPS.get(self.node_id, [])
+        self.stop_requested.emit(subs[0] if subs else self.node_id)
+
+    def _load_logs(self):
         logs = load_json(PIPELINE_LOGS_FILE, {})
-        combined = []
-        for ss in sub_steps:
-            combined.extend(logs.get(ss, []))
-        if combined:
-            self._log.setPlainText("\n".join(combined[-500:]))
+        subs = GRINDER_SUB_STEPS.get(self.node_id, [self.node_id])
+        all_lines = []
+        for sid in subs:
+            all_lines.extend(logs.get(sid, []))
+        if all_lines:
+            self._log.setPlainText("\n".join(all_lines[-500:]))
             sb = self._log.verticalScrollBar()
             sb.setValue(sb.maximum())
 
@@ -506,52 +456,40 @@ class GrinderDetail(QFrame):
         self._m["setup"].setText(setup.upper())
 
     def update_from_state(self, pipeline_steps):
-        overall = "idle"
-        last_finished = None
-        total_dur = 0
-        for ss in self._sub_steps:
-            st = pipeline_steps.get(ss, {})
-            s = st.get("status", "idle")
-            if s in ("running", "queued"):
-                overall = "running"
-            elif s in ("done", "complete") and overall not in ("running", "error"):
-                overall = "done"
-            elif s == "error":
-                overall = "error"
-            if st.get("duration_s"):
-                total_dur += st["duration_s"]
-            fin = st.get("finished_at")
-            if fin:
-                last_finished = fin
-            if ss in self._sub_labels:
-                scmap = {"done": C["green"], "complete": C["green"],
-                         "running": C["amber"], "error": C["red"]}
-                sc = scmap.get(s, C["text_muted"])
-                bgc = {"done": "rgba(74,222,128,0.12)", "complete": "rgba(74,222,128,0.12)",
-                        "running": "rgba(251,191,36,0.12)", "error": "rgba(248,113,113,0.12)"
-                       }.get(s, C["surface2"])
-                self._sub_labels[ss].setStyleSheet(
-                    "font-size:10px; font-weight:600; color:%s; background:%s;"
-                    "padding:3px 8px; border:none;" % (sc, bgc)
-                )
+        subs = GRINDER_SUB_STEPS.get(self.node_id, [self.node_id])
+        statuses = [pipeline_steps.get(s, {}).get("status", "idle") for s in subs]
+        if "running" in statuses or "queued" in statuses:
+            overall = "running"
+        elif "error" in statuses:
+            overall = "error"
+        elif all(s in ("done", "complete") for s in statuses):
+            overall = "done"
+        else:
+            overall = "idle"
 
         self._m["status"].setText(overall.upper())
-        sc = {"done": C["green"], "running": C["amber"], "error": C["red"]}.get(overall, C["text"])
+        sc = {"done": C["green"], "complete": C["green"],
+              "running": C["amber"], "error": C["red"]}.get(overall, C["text"])
         self._m["status"].setStyleSheet(
-            "font-size:13px; font-weight:500; color:%s; background:transparent; border:none;"
-            "font-family:\'JetBrains Mono\',\'Consolas\',monospace;" % sc
+            "font-size:13px; font-weight:500; color:%s; background:transparent; border:none;" % sc
         )
-        if last_finished:
-            try:
-                self._m["lastrun"].setText(datetime.fromisoformat(last_finished).strftime("%Y-%m-%d %H:%M"))
-            except Exception:
-                self._m["lastrun"].setText(str(last_finished)[:16])
-        if total_dur > 0:
-            self._m["duration"].setText(fmt_dur(total_dur))
+        for sid in reversed(subs):
+            ss = pipeline_steps.get(sid, {})
+            fin = ss.get("finished_at")
+            if fin:
+                try:
+                    self._m["lastrun"].setText(datetime.fromisoformat(fin).strftime("%Y-%m-%d %H:%M"))
+                except Exception:
+                    self._m["lastrun"].setText(str(fin)[:16])
+                dur = ss.get("duration_s")
+                if dur:
+                    self._m["duration"].setText(fmt_dur(dur))
+                break
+        for sid, badge in self._sub_badges.items():
+            badge.set_status(pipeline_steps.get(sid, {}).get("status", "idle"))
         is_run = overall in ("running", "queued")
         self._run_btn.setEnabled(not is_run)
         self._stop_btn.setEnabled(is_run)
-        return overall
 
     def append_log(self, text):
         self._log.appendPlainText(text)
@@ -562,148 +500,238 @@ class GrinderDetail(QFrame):
         self._log.clear()
 
 
+# ============================================================
+# FLOWCHART CANVAS — QPainter spatial diagram
+# ============================================================
+
 class FlowchartCanvas(QWidget):
-    """QPainter canvas that draws connecting lines and loop-back arrows."""
+    """Draws pipeline as a 2D spatial flowchart with loops.
+
+    Layout:
+      Row 1:  [Examples] ----> [Causative] ----> [Vetting]
+               ^--- dashed loop "add examples" ------<
+      Row 2:              [Correlative]
+      Row 3:        [Scan Tuning] ----> [Profit Grind]
+                       ^--- dashed loop "tune" --<
+      Row 4:               [Summary]
+    """
+    node_clicked = Signal(str)
+
+    NW, NH = 220, 72
+    HGAP, VGAP = 60, 50
+    LOOP_M = 36
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(900, 520)
-        self._positions = {}
+        self.setMinimumHeight(520)
+        self._rects = {}
+        self._statuses = {}
+        self._infos = {}
+        self._hover = None
+        self.setMouseTracking(True)
 
-    def paintEvent(self, _):
-        import math
+    def set_status(self, nid, s):
+        self._statuses[nid] = s
+        self.update()
+
+    def set_info(self, nid, t):
+        self._infos[nid] = t
+        self.update()
+
+    def _layout(self):
+        w = self.width()
+        nw, nh, hg, vg, lm = self.NW, self.NH, self.HGAP, self.VGAP, self.LOOP_M
+
+        # Row 1: three nodes
+        r1w = nw * 3 + hg * 2
+        r1x = (w - r1w) // 2
+        y1 = lm + 20
+        self._rects["examples"]  = (r1x, y1, nw, nh)
+        self._rects["causative"] = (r1x + nw + hg, y1, nw, nh)
+        self._rects["vetting"]   = (r1x + 2 * (nw + hg), y1, nw, nh)
+
+        # Row 2: correlative centered
+        y2 = y1 + nh + vg + lm
+        cx = r1x + nw + hg + nw // 2
+        self._rects["correlative"] = (cx - nw // 2, y2, nw, nh)
+
+        # Row 3: scan_tuning + profit_grind
+        y3 = y2 + nh + vg
+        r3w = nw * 2 + hg
+        r3x = (w - r3w) // 2
+        self._rects["scan_tuning"]  = (r3x, y3, nw, nh)
+        self._rects["profit_grind"] = (r3x + nw + hg, y3, nw, nh)
+
+        # Row 4: summary
+        y4 = y3 + nh + vg + lm
+        self._rects["summary"] = ((w - nw) // 2, y4, nw, nh)
+
+        self.setMinimumHeight(y4 + nh + 40)
+
+    def resizeEvent(self, ev):
+        self._layout()
+        super().resizeEvent(ev)
+
+    def paintEvent(self, ev):
+        self._layout()
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        pos = self._positions
-        if not pos:
-            p.end()
-            return
-
-        pen_main = QPen(QColor(C["border_bright"]), 1.5)
-        pen_loop = QPen(QColor(C["text_muted"]), 1, Qt.DashLine)
-        pen_text = QPen(QColor(C["text_muted"]))
-
-        def rect_center(nid):
-            r = pos.get(nid)
-            return (r[0] + r[2]//2, r[1] + r[3]//2) if r else None
-
-        def rect_edge(nid, side):
-            r = pos.get(nid)
-            if not r:
-                return None
-            x, y, w, h = r
-            if side == "top":    return (x + w//2, y)
-            if side == "bottom": return (x + w//2, y + h)
-            if side == "left":   return (x, y + h//2)
-            if side == "right":  return (x + w, y + h//2)
-
-        def arrow_head(x2, y2, x1, y1, size=6):
-            angle = math.atan2(y2 - y1, x2 - x1)
-            p.drawLine(int(x2), int(y2),
-                       int(x2 - size * math.cos(angle - 0.4)),
-                       int(y2 - size * math.sin(angle - 0.4)))
-            p.drawLine(int(x2), int(y2),
-                       int(x2 - size * math.cos(angle + 0.4)),
-                       int(y2 - size * math.sin(angle + 0.4)))
-
-        def draw_line(x1, y1, x2, y2, head=True):
-            p.drawLine(int(x1), int(y1), int(x2), int(y2))
-            if head:
-                arrow_head(x2, y2, x1, y1)
-
-        def dot(x, y):
-            p.setBrush(QColor(C["border_bright"]))
-            p.drawEllipse(int(x) - 3, int(y) - 3, 6, 6)
-            p.setBrush(Qt.NoBrush)
-
-        # ═══ LOOP 1: Examples → Causative → Vetting ═══
-        p.setPen(pen_main)
-
-        a = rect_edge("examples", "right")
-        b = rect_edge("causative", "left")
-        if a and b:
-            dot(a[0], a[1])
-            draw_line(a[0], a[1], b[0], b[1])
-
-        a = rect_edge("causative", "right")
-        b = rect_edge("vetting", "left")
-        if a and b:
-            dot(a[0], a[1])
-            draw_line(a[0], a[1], b[0], b[1])
-
-        # Loop-back arc: Vetting → Examples (above row 1)
-        vt = rect_edge("vetting", "top")
-        et = rect_edge("examples", "top")
-        if vt and et:
-            p.setPen(pen_loop)
-            arc_y = et[1] - 30
-            dot(vt[0], vt[1])
-            p.drawLine(int(vt[0]), int(vt[1]), int(vt[0]), int(arc_y))
-            p.drawLine(int(vt[0]), int(arc_y), int(et[0]), int(arc_y))
-            p.setPen(pen_loop)
-            draw_line(et[0], arc_y, et[0], et[1])
-            p.setPen(pen_text)
-            p.setFont(QFont("DM Sans", 8))
-            mid_x = (vt[0] + et[0]) // 2
-            p.drawText(int(mid_x) - 50, int(arc_y) - 6, "add examples \u00b7 regrind")
-            p.setPen(pen_main)
-
-        # ═══ Vetting → Correlative (downward) ═══
-        a = rect_edge("vetting", "bottom")
-        b = rect_edge("correlative", "top")
-        if a and b:
-            dot(a[0], a[1])
-            # Route: down from vetting, then left/right to correlative top
-            mid_y = (a[1] + b[1]) // 2
-            p.drawLine(int(a[0]), int(a[1]), int(a[0]), int(mid_y))
-            p.drawLine(int(a[0]), int(mid_y), int(b[0]), int(mid_y))
-            draw_line(b[0], mid_y, b[0], b[1])
-
-        # ═══ Correlative → Scan Tuning (downward) ═══
-        a = rect_edge("correlative", "bottom")
-        b = rect_edge("scan_tuning", "top")
-        if a and b:
-            dot(a[0], a[1])
-            mid_y = (a[1] + b[1]) // 2
-            p.drawLine(int(a[0]), int(a[1]), int(a[0]), int(mid_y))
-            p.drawLine(int(a[0]), int(mid_y), int(b[0]), int(mid_y))
-            draw_line(b[0], mid_y, b[0], b[1])
-
-        # ═══ LOOP 2: Scan Tuning → Profit Grind ═══
-        a = rect_edge("scan_tuning", "right")
-        b = rect_edge("profit_grind", "left")
-        if a and b:
-            dot(a[0], a[1])
-            draw_line(a[0], a[1], b[0], b[1])
-
-        # Loop-back: Profit Grind → Scan Tuning (below row 3)
-        pb = rect_edge("profit_grind", "bottom")
-        sb = rect_edge("scan_tuning", "bottom")
-        if pb and sb:
-            p.setPen(pen_loop)
-            arc_y = max(pb[1], sb[1]) + 30
-            dot(pb[0], pb[1])
-            p.drawLine(int(pb[0]), int(pb[1]), int(pb[0]), int(arc_y))
-            p.drawLine(int(pb[0]), int(arc_y), int(sb[0]), int(arc_y))
-            p.setPen(pen_loop)
-            draw_line(sb[0], arc_y, sb[0], sb[1])
-            p.setPen(pen_text)
-            p.setFont(QFont("DM Sans", 8))
-            mid_x = (pb[0] + sb[0]) // 2
-            p.drawText(int(mid_x) - 30, int(arc_y) + 14, "tweak \u00b7 re-run")
-            p.setPen(pen_main)
-
-        # ═══ Profit Grind → Summary ═══
-        a = rect_edge("profit_grind", "bottom")
-        b = rect_edge("summary", "top")
-        if a and b:
-            dot(a[0], a[1])
-            mid_y = (a[1] + 40 + b[1]) // 2  # offset to avoid loop arc
-            p.drawLine(int(a[0]), int(a[1] + 40), int(a[0]), int(mid_y))
-            p.drawLine(int(a[0]), int(mid_y), int(b[0]), int(mid_y))
-            draw_line(b[0], mid_y, b[0], b[1])
-
+        self._draw_connections(p)
+        for nd in FLOW_NODES:
+            self._draw_node(p, nd)
         p.end()
+
+    def _edge(self, nid, side):
+        x, y, w, h = self._rects[nid]
+        if side == "r":  return x + w, y + h // 2
+        if side == "l":  return x, y + h // 2
+        if side == "b":  return x + w // 2, y + h
+        if side == "t":  return x + w // 2, y
+
+    def _arrow(self, p, x, y, d, color):
+        p.setPen(QPen(color, 1.5))
+        s = 6
+        if d == "r":
+            p.drawLine(x - s, y - s // 2, x, y); p.drawLine(x - s, y + s // 2, x, y)
+        elif d == "d":
+            p.drawLine(x - s // 2, y - s, x, y); p.drawLine(x + s // 2, y - s, x, y)
+        elif d == "u":
+            p.drawLine(x - s // 2, y + s, x, y); p.drawLine(x + s // 2, y + s, x, y)
+        elif d == "l":
+            p.drawLine(x + s, y - s // 2, x, y); p.drawLine(x + s, y + s // 2, x, y)
+
+    def _draw_connections(self, p):
+        from PySide6.QtCore import QRectF
+        solid = QPen(QColor(C["border_bright"]), 1.5)
+        dash = QPen(QColor(C["text_muted"]), 1, Qt.DashLine)
+        ac = QColor(C["text_muted"])
+
+        # --- Forward flow (solid) ---
+        p.setPen(solid)
+
+        # Examples -> Causative
+        x1, y1 = self._edge("examples", "r"); x2, y2 = self._edge("causative", "l")
+        p.drawLine(x1, y1, x2, y2); self._arrow(p, x2, y2, "r", ac)
+
+        # Causative -> Vetting
+        x1, y1 = self._edge("causative", "r"); x2, y2 = self._edge("vetting", "l")
+        p.drawLine(x1, y1, x2, y2); self._arrow(p, x2, y2, "r", ac)
+
+        # Vetting -> Correlative (L-shape)
+        x1, y1 = self._edge("vetting", "b"); x2, y2 = self._edge("correlative", "t")
+        my = y1 + (y2 - y1) // 2
+        p.drawLine(x1, y1, x1, my); p.drawLine(x1, my, x2, my); p.drawLine(x2, my, x2, y2)
+        self._arrow(p, x2, y2, "d", ac)
+
+        # Correlative -> Scan Tuning (L-shape)
+        x1, y1 = self._edge("correlative", "b"); x2, y2 = self._edge("scan_tuning", "t")
+        my = y1 + (y2 - y1) // 2
+        p.drawLine(x1, y1, x1, my); p.drawLine(x1, my, x2, my); p.drawLine(x2, my, x2, y2)
+        self._arrow(p, x2, y2, "d", ac)
+
+        # Scan Tuning -> Profit Grind
+        x1, y1 = self._edge("scan_tuning", "r"); x2, y2 = self._edge("profit_grind", "l")
+        p.drawLine(x1, y1, x2, y2); self._arrow(p, x2, y2, "r", ac)
+
+        # Profit Grind -> Summary (L-shape)
+        x1, y1 = self._edge("profit_grind", "b"); x2, y2 = self._edge("summary", "t")
+        my = y1 + (y2 - y1) // 2
+        p.drawLine(x1, y1, x1, my); p.drawLine(x1, my, x2, my); p.drawLine(x2, my, x2, y2)
+        self._arrow(p, x2, y2, "d", ac)
+
+        # --- Loop 1: Vetting -> Examples (dashed, above row 1) ---
+        p.setPen(dash)
+        ex = self._rects["examples"]; vt = self._rects["vetting"]
+        vtx = vt[0] + vt[2] // 2 + 20; vty = vt[1]
+        exx = ex[0] + ex[2] // 2 - 20; exy = ex[1]
+        ly = min(vty, exy) - self.LOOP_M
+        p.drawLine(vtx, vty, vtx, ly); p.drawLine(vtx, ly, exx, ly); p.drawLine(exx, ly, exx, exy)
+        self._arrow(p, exx, exy, "d", ac)
+        p.setPen(QPen(QColor(C["text_muted"])))
+        f = p.font(); f.setPixelSize(9); p.setFont(f)
+        p.drawText(QRectF((vtx + exx) // 2 - 70, ly - 15, 140, 14),
+                   Qt.AlignCenter, "add examples \u00b7 regrind")
+
+        # --- Loop 2: Profit Grind -> Scan Tuning (dashed, below row 3) ---
+        p.setPen(dash)
+        st = self._rects["scan_tuning"]; pg = self._rects["profit_grind"]
+        pgx = pg[0] + pg[2] // 2 - 20; pgy = pg[1] + pg[3]
+        stx = st[0] + st[2] // 2 + 20; sty = st[1] + st[3]
+        ly2 = max(pgy, sty) + self.LOOP_M // 2 + 4
+        p.drawLine(pgx, pgy, pgx, ly2); p.drawLine(pgx, ly2, stx, ly2); p.drawLine(stx, ly2, stx, sty)
+        self._arrow(p, stx, sty, "u", ac)
+        p.setPen(QPen(QColor(C["text_muted"])))
+        p.drawText(QRectF((pgx + stx) // 2 - 50, ly2 + 2, 100, 14),
+                   Qt.AlignCenter, "tune \u00b7 regrind")
+
+    def _draw_node(self, p, nd):
+        from PySide6.QtCore import QRectF
+        nid = nd["id"]
+        if nid not in self._rects:
+            return
+        x, y, w, h = self._rects[nid]
+        status = self._statuses.get(nid, "idle")
+        hover = self._hover == nid
+
+        # Background
+        p.setBrush(QColor("#111111" if hover else C["surface"]))
+        bc_map = {"done": C["green"], "complete": C["green"],
+                  "running": C["amber"], "queued": C["amber"], "error": C["red"]}
+        bc = QColor(bc_map.get(status, C["border_bright"]))
+        p.setPen(QPen(bc, 1.5 if status in bc_map else 1))
+        p.drawRect(x, y, w, h)
+
+        # Left accent
+        if status in bc_map:
+            p.fillRect(x, y, 3, h, bc)
+
+        # Small dot connectors at midpoints of edges
+        dot_col = QColor(C["border_bright"])
+        for side in ["l", "r", "t", "b"]:
+            dx, dy = self._edge(nid, side[0])
+            p.setBrush(dot_col)
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(dx - 3, dy - 3, 6, 6)
+
+        # Name
+        p.setPen(QPen(QColor(C["text"])))
+        f = p.font(); f.setPixelSize(12); f.setWeight(QFont.DemiBold); p.setFont(f)
+        p.drawText(QRectF(x + 12, y + 12, w - 24, 18), Qt.AlignLeft | Qt.AlignVCenter, nd["name"])
+
+        # Desc / info
+        info = self._infos.get(nid, nd["desc"])
+        p.setPen(QPen(QColor(C["text_muted"])))
+        f.setPixelSize(10); f.setWeight(QFont.Normal); p.setFont(f)
+        p.drawText(QRectF(x + 12, y + 32, w - 24, 16), Qt.AlignLeft | Qt.AlignVCenter, info)
+
+        # Status text top-right
+        if status not in ("idle", "pending"):
+            p.setPen(QPen(QColor(bc_map.get(status, C["text_muted"]))))
+            f.setPixelSize(8); f.setWeight(QFont.Bold); p.setFont(f)
+            p.drawText(QRectF(x + w - 70, y + 8, 60, 14), Qt.AlignRight | Qt.AlignVCenter, status.upper())
+
+        # Nav arrow
+        if nd["type"] == "nav":
+            p.setPen(QPen(QColor(C["text_muted"])))
+            f.setPixelSize(14); p.setFont(f)
+            p.drawText(QRectF(x + w - 24, y + h // 2 - 10, 16, 20), Qt.AlignCenter, "\u2192")
+
+    def mouseMoveEvent(self, ev):
+        pos = ev.position() if hasattr(ev, "position") else ev.pos()
+        mx, my = int(pos.x()), int(pos.y())
+        old = self._hover
+        self._hover = None
+        for nid, (x, y, w, h) in self._rects.items():
+            if x <= mx <= x + w and y <= my <= y + h:
+                self._hover = nid
+                break
+        if old != self._hover:
+            self.setCursor(Qt.PointingHandCursor if self._hover else Qt.ArrowCursor)
+            self.update()
+
+    def mousePressEvent(self, ev):
+        if self._hover:
+            self.node_clicked.emit(self._hover)
 
 
 # ============================================================
@@ -715,93 +743,42 @@ class PipelineTab(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._setup = "dtss"
+        self._expanded = None
+        self._details = {}
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Flowchart scroll area
+        # Flowchart canvas (scrollable)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._canvas = FlowchartCanvas()
-
-        self._cards = {}
-        self._details = {}
-        self._expanded = None
-
-        for nd in PIPELINE_NODES:
-            card = FlowCard(nd, self._canvas)
-            card.clicked.connect(self._on_click)
-            self._cards[nd["id"]] = card
-
-            if nd["type"] == "grinder":
-                sub = GRINDER_SUB_STEPS.get(nd["id"], [])
-                det = GrinderDetail(nd["id"], sub)
-                det.setVisible(False)
-                det.run_requested.connect(self._fwd_run)
-                det.stop_requested.connect(self._fwd_stop)
-                self._details[nd["id"]] = det
-
+        self._canvas.node_clicked.connect(self._on_node_click)
         scroll.setWidget(self._canvas)
         outer.addWidget(scroll, 1)
 
-        # Detail area below flowchart
-        self._detail_area = QWidget()
-        det_lay = QVBoxLayout(self._detail_area)
-        det_lay.setContentsMargins(40, 0, 40, 12)
-        for det in self._details.values():
-            det_lay.addWidget(det)
-        self._detail_area.setVisible(False)
-        outer.addWidget(self._detail_area)
+        # Detail panel area (below canvas, hidden by default)
+        self._det_frame = QFrame()
+        self._det_frame.setStyleSheet("QFrame { border-top:1px solid %s; }" % C["border"])
+        self._det_lay = QVBoxLayout(self._det_frame)
+        self._det_lay.setContentsMargins(0, 0, 0, 0)
+        self._det_lay.setSpacing(0)
+        for nd in FLOW_NODES:
+            if nd["type"] == "grinder":
+                det = GrinderDetail(nd["id"])
+                det.run_requested.connect(self._fwd_run)
+                det.stop_requested.connect(self._fwd_stop)
+                det.setVisible(False)
+                self._det_lay.addWidget(det)
+                self._details[nd["id"]] = det
+        self._det_frame.setVisible(False)
+        outer.addWidget(self._det_frame, 0)
 
-        QTimer.singleShot(50, self._layout_cards)
-
-    def resizeEvent(self, ev):
-        super().resizeEvent(ev)
-        self._layout_cards()
-
-    def _layout_cards(self):
-        cw, ch = 200, 70
-        canvas_w = max(self._canvas.width(), 900)
-        gap_h, gap_v = 50, 70
-
-        # Row 1: Examples — Causative — Vetting
-        row1_w = cw * 3 + gap_h * 2
-        row1_x = (canvas_w - row1_w) // 2
-        row1_y = 55
-
-        pos = {}
-        pos["examples"]  = (row1_x, row1_y, cw, ch)
-        pos["causative"] = (row1_x + cw + gap_h, row1_y, cw, ch)
-        pos["vetting"]   = (row1_x + 2*(cw + gap_h), row1_y, cw, ch)
-
-        # Row 2: Correlative (centered under row 1)
-        row2_y = row1_y + ch + gap_v
-        row1_center = row1_x + row1_w // 2
-        pos["correlative"] = (row1_center - cw//2, row2_y, cw, ch)
-
-        # Row 3: Scan Tuning — Profit Grind
-        row3_y = row2_y + ch + gap_v
-        row3_w = cw * 2 + gap_h
-        row3_x = row1_center - row3_w // 2
-        pos["scan_tuning"]  = (row3_x, row3_y, cw, ch)
-        pos["profit_grind"] = (row3_x + cw + gap_h, row3_y, cw, ch)
-
-        # Row 4: Summary
-        row4_y = row3_y + ch + gap_v + 30
-        pos["summary"] = (row1_center - cw//2, row4_y, cw, ch)
-
-        for nid, (x, y, w, h) in pos.items():
-            card = self._cards.get(nid)
-            if card:
-                card.setGeometry(int(x), int(y), int(w), int(h))
-                card.show()
-
-        self._canvas._positions = pos
-        self._canvas.setMinimumHeight(int(row4_y + ch + 40))
-        self._canvas.update()
-
-    def _on_click(self, nid):
-        nd = next((n for n in PIPELINE_NODES if n["id"] == nid), None)
+    def _on_node_click(self, nid):
+        nd = next((n for n in FLOW_NODES if n["id"] == nid), None)
         if not nd:
             return
         if nd["type"] == "nav":
@@ -809,84 +786,88 @@ class PipelineTab(QWidget):
         elif nd["type"] == "grinder":
             if self._expanded == nid:
                 self._details[nid].setVisible(False)
-                self._detail_area.setVisible(False)
+                self._det_frame.setVisible(False)
                 self._expanded = None
             else:
-                for k, d in self._details.items():
-                    d.setVisible(k == nid)
-                self._detail_area.setVisible(True)
+                if self._expanded and self._expanded in self._details:
+                    self._details[self._expanded].setVisible(False)
+                self._details[nid].setVisible(True)
+                self._det_frame.setVisible(True)
                 self._expanded = nid
 
-    def _fwd_run(self, node_id):
+    def _fwd_run(self, step_id):
         win = self.window()
         if hasattr(win, "run_pipeline_step"):
-            sub = GRINDER_SUB_STEPS.get(node_id, [node_id])
-            win.run_pipeline_step(sub[0])
+            win.run_pipeline_step(step_id)
 
     def _fwd_stop(self, step_id):
         win = self.window()
         if hasattr(win, "stop_pipeline_step"):
             win.stop_pipeline_step(step_id)
 
-    def get_node(self, nid):
+    def get_node(self, step_id):
         for gid, subs in GRINDER_SUB_STEPS.items():
-            if nid in subs:
+            if step_id in subs:
                 return self._details.get(gid)
-        return self._details.get(nid)
+        return self._details.get(step_id)
 
     def set_setup(self, setup):
+        self._setup = setup
         for d in self._details.values():
             d.set_setup(setup)
 
     def refresh(self):
         state = load_json(PIPELINE_FILE, {"steps": {}})
         steps = state.get("steps", {})
-        for nd in PIPELINE_NODES:
+
+        for nd in FLOW_NODES:
             nid = nd["id"]
-            card = self._cards.get(nid)
-            if not card:
-                continue
             if nd["type"] == "grinder":
-                sub = GRINDER_SUB_STEPS.get(nid, [])
-                agg = "idle"
-                for ss in sub:
-                    s = steps.get(ss, {}).get("status", "idle")
-                    if s in ("running", "queued"):
-                        agg = "running"
-                    elif s in ("done", "complete") and agg not in ("running", "error"):
-                        agg = "done"
-                    elif s == "error":
-                        agg = "error"
-                card.set_status(agg)
+                subs = GRINDER_SUB_STEPS.get(nid, [nid])
+                statuses = [steps.get(s, {}).get("status", "idle") for s in subs]
+                if "running" in statuses or "queued" in statuses:
+                    overall = "running"
+                elif "error" in statuses:
+                    overall = "error"
+                elif all(s in ("done", "complete") for s in statuses):
+                    overall = "done"
+                else:
+                    overall = "idle"
+                self._canvas.set_status(nid, overall)
                 if nid in self._details:
                     self._details[nid].update_from_state(steps)
+
             elif nid == "examples":
                 try:
                     win = self.window()
                     setup = win._setup_type if hasattr(win, "_setup_type") else "dtss"
                     with get_db() as db:
-                        n = db.execute("SELECT COUNT(*) FROM examples WHERE setup_type=?", (setup,)).fetchone()[0]
-                    card.set_info(f"{n} examples")
-                    card.set_status("done" if n > 0 else "idle")
+                        n = db.execute("SELECT COUNT(*) FROM examples WHERE setup_type=?",
+                                       (setup,)).fetchone()[0]
+                    self._canvas.set_info(nid, "%d examples" % n)
+                    self._canvas.set_status(nid, "done" if n > 0 else "idle")
                 except Exception:
                     pass
+
             elif nid == "vetting":
                 try:
                     win = self.window()
                     setup = win._setup_type if hasattr(win, "_setup_type") else "dtss"
-                    vp = REPO_ROOT / "data" / "vetting" / f"vetting_{setup}.json"
+                    vp = REPO_ROOT / "data" / "vetting" / ("vetting_%s.json" % setup)
                     dec = load_json(vp, {})
                     ny = sum(1 for v in dec.values() if v.get("verdict") == "yes")
-                    card.set_info(f"{ny} yes / {len(dec)} vetted")
-                    card.set_status("done" if ny > 0 else "idle")
+                    self._canvas.set_info(nid, "%d yes / %d vetted" % (ny, len(dec)))
+                    self._canvas.set_status(nid, "done" if ny > 0 else "idle")
                 except Exception:
                     pass
+
+            elif nid in ("scan_tuning", "profit_grind"):
+                self._canvas.set_status(nid, "idle")
+                self._canvas.set_info(nid, "not yet built")
+
             elif nid == "summary":
-                card.set_status("idle")
-                card.set_info("Setup readiness overview")
-            else:
-                card.set_status("idle")
-                card.set_info("not yet built")
+                self._canvas.set_status(nid, "idle")
+                self._canvas.set_info(nid, "setup readiness overview")
 
 
 # ============================================================
