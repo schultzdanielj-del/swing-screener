@@ -815,7 +815,7 @@ class FlowchartCanvas(QWidget):
     def _anim_step(self):
         """Animate expand/collapse one frame — both dimensions."""
         speed_h = 80
-        speed_w = 60
+        speed_w = 160
 
         if self._anim_target_h > self._anim_expand_h:
             self._anim_expand_h = min(self._anim_expand_h + speed_h, self._anim_target_h)
