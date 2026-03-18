@@ -1721,6 +1721,9 @@ class ExamplesWorkspace(QFrame):
             tag_lbl.setStyleSheet(
                 "%s font-size:9px; font-weight:600; color:%s; padding:1px 5px;"
                 "background:%s; border:1px solid %s;" % (mono, tc, tbg, tbd))
+            reasoning = data.get("ai_reasoning") or ""
+            if reasoning:
+                tag_lbl.setToolTip(reasoning)
             lr.addWidget(tag_lbl)
 
         tk_lbl = QLabel(ticker)
