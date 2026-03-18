@@ -1301,24 +1301,13 @@ class MiniChartWidget(QWidget):
             p.setBrush(col70)
             p.drawRect(QRectF(x - bw / 2, bt, bw, bh))
 
-        # Exit signal marker — amber line (reduced opacity if profit exit exists)
-        has_profit = self._profit_exit_date is not None
+        # Exit signal marker — amber line
         if self._exit_date:
             for i, c in enumerate(candles):
                 if c["date"] == self._exit_date:
                     ex = cx(i)
-                    alpha = 80 if has_profit else 180
-                    p.setPen(QPen(QColor(232, 167, 53, alpha), 1))
+                    p.setPen(QPen(QColor(232, 167, 53, 180), 1))
                     p.drawLine(int(ex), PAD, int(ex), h - PAD)
-                    break
-
-        # Profit exit marker — purple line
-        if self._profit_exit_date:
-            for i, c in enumerate(candles):
-                if c["date"] == self._profit_exit_date:
-                    px_ = cx(i)
-                    p.setPen(QPen(QColor(168, 85, 247, 150), 1))
-                    p.drawLine(int(px_), PAD, int(px_), h - PAD)
                     break
 
         # White dot on entry candle close
@@ -1683,10 +1672,6 @@ class ExamplesWorkspace(QFrame):
         """Load candle data in batches of 4 so the UI stays responsive."""
         charts = self._find_deferred_charts(self._grid_w)
         charts += self._find_deferred_charts(self._pend_area)
-        print("DEFERRED: found %d charts, first 3: %s" % (
-            len(charts),
-            [(getattr(c, "_deferred_ticker", ""), getattr(c, "_deferred_entry", "")) for c in charts[:3]]
-        ))
         self._deferred_queue = charts
         self._load_next_batch()
 
@@ -1704,7 +1689,6 @@ class ExamplesWorkspace(QFrame):
             if candles:
                 exit_dt = _compute_exit_date(candles, ed)
                 profit_dt = getattr(self, "_profit_exit_lookup", {}).get("%s_%s" % (tk, ed))
-                print("  BATCH: %s %s exit=%s profit=%s candles=%d" % (tk, ed, exit_dt, profit_dt, len(candles)))
                 chart.set_data(candles, ed, exit_date=exit_dt, profit_exit_date=profit_dt)
             chart._deferred_ticker = ""
         if self._deferred_queue:
