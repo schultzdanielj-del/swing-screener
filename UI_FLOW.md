@@ -8,7 +8,7 @@
 
 Native PySide6 desktop app (`scanperfect.py`). No browser, no server, no tabs.
 
-The pipeline flowchart IS the interface. Each node expands in place to become its own workspace. Setup selector dropdown in the top bar. 5yr OHLCV pickle loaded into memory at startup (~4,169 tickers in 0.5s).
+The pipeline flowchart IS the interface. Each node expands in place to become its own workspace. DO nodes (Examples, Vetting, Scan Tuning) expand to fill the viewport with 20px padding. RUN nodes expand moderately from their position. Setup selector dropdown in the top bar. 5yr OHLCV pickle loaded into memory at startup (~4,169 tickers in 0.5s).
 
 ---
 
@@ -26,80 +26,87 @@ The pipeline flowchart IS the interface. Each node expands in place to become it
 ## What's Built and Verified Working
 
 - Pipeline flowchart with 7 nodes, expand/collapse animation
+- DO nodes expand to fill viewport with 20px padding — clean, fast
 - RUN nodes expand to show sub-step badges, Run/Stop/Clear buttons, real-time log streaming
 - Causative auto-chains 5 sub-steps: signal_grind → exit_grind → refinement_grind → signal_filter → entry_score
-- Examples workspace expands near-fullscreen with chart card grid
-- Vetting workspace expands near-fullscreen with signal list + candlestick chart
-- OHLCV loaded at startup, chart browsing is instant
-- Yes/No/Skip verdicts save to SQLite + JSON
-- Keyboard shortcuts: 1=yes 2=no 3=skip ↑↓=navigate
+- Examples workspace: chart card grid with batched loading (4 per tick, no UI freeze)
+- Vetting workspace: signal list + full candlestick chart + verdict buttons in top bar
+- OHLCV loaded at startup, chart browsing is instant (preload thread removed — not needed)
+- Mouse wheel zoom on charts
+- Yes/No/Skip verdicts all working — buttons in top bar + keyboard 1/2/3
+- ADR/ENTRY/COMBINED sort buttons in vetting left panel filter bar
 - Causative/Correlative toggle switches signal sources
+- Exit lines on vetting charts (from filtered file)
+- Exit lines on example cards (computed from exit grinder condition on OHLCV)
+- Amber exit lines only on example cards (no purple profit lines)
+- Crash protection: vetting interactions wrapped in try/except
+- Full DTSS setup description restored and editable
 - entry_candle_scorer.py localized (reads local SQLite)
-- pyramid_grinder.py now saves exit_date + exit_bar per signal
 
 ---
 
-## Known Broken / Unverified
+## Known Issues
 
-- **ADR/ENTRY/COMBINED sort buttons** — code added to vetting top bar but NOT verified to appear or produce different orderings. Dan reports they do not show on screen. May be a layout issue or git pull issue.
-- **No button (2 key)** — reported broken early, debug prints added, focus fix added, never confirmed working.
-- **Correlative signal count wrong** — shows 402 instead of matching 365 causative winners. EV grinder's signals_post includes signals at various refinement depths, not just the current cl102 file. Not fixed.
-- **Chart preloading** — OhlcvPreloadThread code exists, never verified it runs.
+- **Correlative signal count wrong** — shows 402 instead of matching causative winners. Deferred until Scan Tuning workspace is built (will filter/threshold EV signals there).
 
 ---
 
 ## Examples Workspace
 
-Two-column top: Add Examples (left, collapsible) + Setup Description (right, with SAVE)
+Title from flowchart header (no duplicate). Count + setup label in scroll body.
 
-Add section contains:
+Add section (collapsible):
 - Single add: TICKER + MM/DD/YYYY + ADD button
 - Bulk paste textarea + IMPORT ALL
-- Pending AI Review grid inside add section (4 columns, PENDING tags, Approve/Reject)
+- Pending Final Review grid (4 columns) — shows ADR + entry candle % match + Approve/Reject buttons
 
-Chart card grid (4 columns):
+Setup Description (right side, with SAVE) — editable text area, stored in SQLite setups table.
+
+Chart card grid (4 columns, batched loading):
 - MiniChartWidget: 80 lookback + 40 forward bars, EMA 8/21, entry dot
-- Exit/profit markers drawn if data available (joined from filtered + profit JSON)
-- Label row below chart: ticker + date + actions
+- Amber exit line computed from OHLCV using exit grinder condition (slope_xavgc21_off7_adr14 <= -1.128826)
+- Label row below chart: ticker + date + delete button
 - Sort: ADR MOVE / TICKER / DATE
 
-Data sources: examples + pending_examples tables (SQLite), 5yr OHLCV pickle, exit dates from filtered_{setup}.json, profit exits from profit_{setup}.json
+Data sources: examples + pending_examples tables (SQLite), 5yr OHLCV pickle, exit condition computed live from OHLCV
 
 ---
 
 ## Vetting Workspace
 
-Top bar: CAUSATIVE / CORRELATIVE toggle + signal stats + keyboard hints
-(ADR/ENTRY/COMBINED sort buttons added in code but not verified on screen)
+Top bar: CAUSATIVE / CORRELATIVE toggle + signal stats + Entry label + YES/NO/SKIP buttons
 
-Three-panel layout:
-- Left (260px): Signal list with V/U/N filter checkboxes
-- Center: CandlestickChart — candles, EMA 8/21, SMA 50/200, volume, hover crosshair
-- Bottom (42px): Metadata + verdict buttons
+Left panel (260px):
+- Filter bar: V/U/N checkboxes + ADR/ENTRY/COMBINED sort buttons
+- Signal list below
+
+Center: CandlestickChart — candles, EMA 8/21, SMA 50/200, volume, hover crosshair
+
+Metadata label below chart.
 
 ### Causative Mode
 - Signals: filtered_{setup}.json (produced by signal_filter.py — every signal has exit_date, exit_bar, move_adr, capture_eff)
 - Entry scores: joined from entry_scores_{setup}.json
 
 ### Correlative Mode
-- Signals: ev_{setup}_*.json signals_post (currently 402 — WRONG, should match causative set)
+- Signals: ev_{setup}_*.json signals_post
 - EV, predicted WR, MFE shown
 
 ### Chart Markers
-- SIG (white) — signal date ✅
-- ENTRY (green) — user-clicked candle ✅
-- EXIT (amber) — exit signal date (only when data exists — ~24% currently)
-- PROFIT (purple) — profit grind exit date (only when data exists)
-- E (red) — earnings dates ✅
+- SIG (white) — signal date
+- ENTRY (green) — user-clicked candle
+- EXIT (amber) — exit signal date
+- E (red) — earnings dates
 
 ### Interactions
-- Click signal → loads chart ✅
-- Click candle → sets entry date ✅
-- 1=YES (requires entry_date) ✅
-- 2=NO — reported broken, unverified fix
-- 3=SKIP ✅
-- ↑↓ navigate ✅
-- Mouse wheel zoom ✅
+- Click signal → loads chart
+- Click candle → sets entry date
+- 1=YES (requires entry_date)
+- 2=NO
+- 3=SKIP
+- ↑↓ navigate
+- Mouse wheel zoom
+- Floating Yes button at click position
 
 ---
 
@@ -113,11 +120,24 @@ Three-panel layout:
 
 ---
 
+## Not Yet Built
+
+- **Scan Tuning workspace** — quality_score + WR threshold sliders
+- **Summary workspace** — setup readiness overview
+
+---
+
+## Shelved
+
+- **AI chart review** — Claude CLI vision review of pending examples. Shelved: LSP often off-screen on thumbnails, pattern matching quality insufficient for the complexity. Manual vetting with 1/2/3 keys is fast enough.
+- **Chart preloading thread** — OhlcvPreloadThread removed. Charts load instantly from in-memory pickle, no preloading needed.
+
+---
+
 ## Functional Color
 
 - Candle up: #4ade80 (vetting), #00e87b (thumbnails)
 - Candle down: #f87171 (vetting), #ff3b3b (thumbnails)
 - Entry: white #E0E0E0
-- Exit signal: amber #E8A735 (reduced opacity when profit exit exists)
-- Profit exit: purple #A855F7
+- Exit signal: amber #E8A735
 - Earnings: red #EF4444
