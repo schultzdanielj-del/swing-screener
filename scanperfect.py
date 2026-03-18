@@ -1202,11 +1202,15 @@ class MiniChartWidget(QWidget):
         super().__init__(parent)
         self._candles = None
         self._entry_date = None
+        self._exit_date = None
+        self._profit_exit_date = None
         self.setMinimumSize(80, 50)
 
-    def set_data(self, candles, entry_date):
+    def set_data(self, candles, entry_date, exit_date=None, profit_exit_date=None):
         self._candles = candles
         self._entry_date = entry_date
+        self._exit_date = exit_date
+        self._profit_exit_date = profit_exit_date
         self.update()
 
     def paintEvent(self, ev):
@@ -1292,6 +1296,26 @@ class MiniChartWidget(QWidget):
             p.setPen(Qt.NoPen)
             p.setBrush(col70)
             p.drawRect(QRectF(x - bw / 2, bt, bw, bh))
+
+        # Exit signal marker — amber line (reduced opacity if profit exit exists)
+        has_profit = self._profit_exit_date is not None
+        if self._exit_date:
+            for i, c in enumerate(candles):
+                if c["date"] == self._exit_date:
+                    ex = cx(i)
+                    alpha = 60 if has_profit else 120
+                    p.setPen(QPen(QColor(232, 167, 53, alpha), 1))
+                    p.drawLine(int(ex), PAD, int(ex), h - PAD)
+                    break
+
+        # Profit exit marker — purple line
+        if self._profit_exit_date:
+            for i, c in enumerate(candles):
+                if c["date"] == self._profit_exit_date:
+                    px_ = cx(i)
+                    p.setPen(QPen(QColor(168, 85, 247, 150), 1))
+                    p.drawLine(int(px_), PAD, int(px_), h - PAD)
+                    break
 
         # White dot on entry candle close
         if entry_idx >= 0:
@@ -1568,6 +1592,32 @@ class ExamplesWorkspace(QFrame):
         except Exception:
             pass
 
+        # Load exit data lookups for chart markers
+        self._exit_lookup = {}
+        self._profit_exit_lookup = {}
+        # Exit signal dates from filtered file
+        filtered_path = REPO_ROOT / "data" / "signal_filter" / ("filtered_%s.json" % setup)
+        if filtered_path.exists():
+            try:
+                filt_data = json.loads(filtered_path.read_text())
+                for fs in filt_data.get("signals", []):
+                    fk = "%s_%s" % (fs.get("ticker", ""), fs.get("date", ""))
+                    self._exit_lookup[fk] = fs.get("exit_date")
+            except Exception:
+                pass
+        # Profit exit dates
+        profit_path = REPO_ROOT / "data" / "profit_grind" / ("profit_%s.json" % setup)
+        if profit_path.exists():
+            try:
+                profit_data = json.loads(profit_path.read_text())
+                for pk, pv in profit_data.get("exit_dates", {}).items():
+                    # Key format: TICKER|entry_date
+                    parts = pk.split("|", 1)
+                    if len(parts) == 2:
+                        self._profit_exit_lookup["%s_%s" % (parts[0], parts[1])] = pv
+            except Exception:
+                pass
+
         ne = len(self._examples)
         np_ = len(self._pending)
         parts = ["%d examples" % ne]
@@ -1649,7 +1699,15 @@ class ExamplesWorkspace(QFrame):
         chart.setMinimumHeight(180)
         candles = _prepare_candles(ticker, entry_date, lookback=80, forward=40)
         if candles:
-            chart.set_data(candles, entry_date)
+            # Look up exit dates for this example
+            sig_key = "%s_%s" % (ticker, entry_date)
+            exit_dt = getattr(self, "_exit_lookup", {}).get(sig_key)
+            profit_dt = getattr(self, "_profit_exit_lookup", {}).get(sig_key)
+            # Also try signal_date key for pending items
+            sd = data.get("signal_date", "")
+            if not exit_dt and sd:
+                exit_dt = getattr(self, "_exit_lookup", {}).get("%s_%s" % (ticker, sd))
+            chart.set_data(candles, entry_date, exit_date=exit_dt, profit_exit_date=profit_dt)
         cl.addWidget(chart, 1)
 
         # Label row below chart
@@ -1971,6 +2029,7 @@ class CandlestickChart(QWidget):
         self._signal_date = None
         self._entry_date = None
         self._exit_date = None
+        self._profit_exit_date = None
         self._earnings_dates = set()
         self._hover_idx = None
         self._scroll_offset = 0
@@ -1986,11 +2045,12 @@ class CandlestickChart(QWidget):
         )
         self._yes_btn.clicked.connect(lambda: self.candle_clicked.emit("__yes__"))
 
-    def set_data(self, candles, ticker, signal_date, exit_date=None, earnings_dates=None):
+    def set_data(self, candles, ticker, signal_date, exit_date=None, profit_exit_date=None, earnings_dates=None):
         self._candles = candles or []
         self._ticker = ticker
         self._signal_date = signal_date
         self._exit_date = exit_date
+        self._profit_exit_date = profit_exit_date
         self._earnings_dates = set(earnings_dates or [])
         self._entry_date = None
         self._hover_idx = None
@@ -2137,12 +2197,14 @@ class CandlestickChart(QWidget):
                     p.setFont(f)
                     p.drawText(QRectF(x - 6, self.MARGIN_TOP, 12, 12), Qt.AlignCenter, "E")
 
-        # Signal / Entry / Exit markers
+        # Signal / Entry / Exit / Profit Exit markers
+        has_profit_exit = self._profit_exit_date is not None
         for i, c in enumerate(visible):
             x = candle_x(i)
             is_sig = c["date"] == self._signal_date
             is_entry = c["date"] == self._entry_date
             is_exit = c["date"] == self._exit_date
+            is_profit = c["date"] == self._profit_exit_date
 
             if is_sig:
                 p.fillRect(QRectF(x - candle_w / 2, self.MARGIN_TOP, candle_w, chart_h),
@@ -2159,7 +2221,16 @@ class CandlestickChart(QWidget):
                 p.drawLine(int(x), self.MARGIN_TOP, int(x), self.MARGIN_TOP + chart_h)
 
             if is_exit:
-                pen = QPen(QColor(self.EXIT_COLOR), 1, Qt.DashLine)
+                # Reduced opacity when profit exit also exists
+                exit_col = QColor(self.EXIT_COLOR)
+                if has_profit_exit:
+                    exit_col.setAlpha(80)
+                pen = QPen(exit_col, 1, Qt.DashLine)
+                p.setPen(pen)
+                p.drawLine(int(x), self.MARGIN_TOP, int(x), self.MARGIN_TOP + chart_h)
+
+            if is_profit:
+                pen = QPen(QColor("#A855F7"), 1, Qt.DashLine)
                 p.setPen(pen)
                 p.drawLine(int(x), self.MARGIN_TOP, int(x), self.MARGIN_TOP + chart_h)
 
@@ -2205,9 +2276,16 @@ class CandlestickChart(QWidget):
                 p.drawText(QRectF(x - 18, price_y(c["low"]) + 16, 36, 12),
                            Qt.AlignCenter, "ENTRY")
             if c["date"] == self._exit_date:
-                p.setPen(QColor(self.EXIT_COLOR))
+                exit_lbl_col = QColor(self.EXIT_COLOR)
+                if has_profit_exit:
+                    exit_lbl_col.setAlpha(80)
+                p.setPen(exit_lbl_col)
                 p.drawText(QRectF(x - 12, self.MARGIN_TOP + 2, 24, 12),
                            Qt.AlignCenter, "EXIT")
+            if c["date"] == self._profit_exit_date:
+                p.setPen(QColor("#A855F7"))
+                p.drawText(QRectF(x - 18, self.MARGIN_TOP + 2, 36, 12),
+                           Qt.AlignCenter, "PROFIT")
 
         # Volume bars
         vol_top = h - self.VOL_H
@@ -2633,7 +2711,7 @@ class VettingWorkspace(QFrame):
             "ticker": ticker, "signal_date": signal_date,
             "move_adr": None, "adr_at_signal": None, "classification": "",
             "verdict": None, "entry_date": None,
-            "exit_date": None, "exit_bar": None,
+            "exit_date": None, "exit_bar": None, "profit_exit_date": None,
             "mfe_adr": None, "capture_eff": None, "move_pct": None,
             "combined_score": None, "entry_candle_score": None,
             "entry_candle_date": None, "entry_candle_pct": None, "move_adr_pct": None,
@@ -2698,6 +2776,24 @@ class VettingWorkspace(QFrame):
                         sig["mfe_adr"] = fs.get("mfe_adr")
                         sig["capture_eff"] = fs.get("capture_eff")
                         sig["move_pct"] = fs.get("move_pct")
+            except Exception:
+                pass
+
+        # Join profit grind exit dates if available
+        profit_path = REPO_ROOT / "data" / "profit_grind" / ("profit_%s.json" % setup)
+        if profit_path.exists():
+            try:
+                profit_data = json.loads(profit_path.read_text())
+                profit_exits = profit_data.get("exit_dates", {})
+                # Keys are "TICKER|entry_date", we need to match by ticker + signal_date
+                # But profit grind uses entry_date, not signal_date — build both lookups
+                for sig in signals:
+                    # Try ticker|signal_date first, then ticker|entry_date
+                    pk1 = "%s|%s" % (sig["ticker"], sig["signal_date"])
+                    pk2 = "%s|%s" % (sig["ticker"], sig.get("entry_date", ""))
+                    ped = profit_exits.get(pk1) or profit_exits.get(pk2)
+                    if ped:
+                        sig["profit_exit_date"] = ped
             except Exception:
                 pass
 
@@ -2931,7 +3027,9 @@ class VettingWorkspace(QFrame):
         except Exception:
             pass
         self._chart.set_data(candles, sig["ticker"], sig["signal_date"],
-                             exit_date=sig.get("exit_date"), earnings_dates=earnings)
+                             exit_date=sig.get("exit_date"),
+                             profit_exit_date=sig.get("profit_exit_date"),
+                             earnings_dates=earnings)
         # Restore entry if previously set
         if sig.get("entry_date"):
             self._chart.set_entry_date(sig["entry_date"])
