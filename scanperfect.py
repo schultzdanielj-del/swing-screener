@@ -8,10 +8,8 @@ import json
 import math
 import os
 import pickle
-import subprocess
 import sys
 import sqlite3
-import tempfile
 import time
 from pathlib import Path
 from contextlib import contextmanager
@@ -27,7 +25,7 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QAbstractItemView,
     QGridLayout, QLineEdit, QTextEdit,
 )
-from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment, QRectF, QPointF, QThread
+from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment, QRectF, QPointF
 from PySide6.QtGui import QFont, QFontDatabase, QColor, QPainter, QPen, QLinearGradient, QBrush, QPainterPath
 
 
@@ -1993,22 +1991,6 @@ def _prepare_candles(ticker, signal_date, lookback=250, forward=80):
     return candles
 
 
-def _render_chart_png(ticker, entry_date, out_path, width=1200, height=600):
-    """Render a candlestick chart to PNG for AI review. Runs on main thread."""
-    from PySide6.QtGui import QPixmap
-    candles = _prepare_candles(ticker, entry_date, lookback=120, forward=60)
-    if not candles:
-        return False
-    chart = CandlestickChart()
-    chart.resize(width, height)
-    chart.set_data(candles, ticker, entry_date)
-    chart.set_entry_date(entry_date)
-    pixmap = QPixmap(width, height)
-    chart.render(pixmap)
-    pixmap.save(out_path, "PNG")
-    return True
-
-
 # ============================================================
 # CANDLESTICK CHART WIDGET (QPainter)
 # ============================================================
@@ -2444,126 +2426,6 @@ class CandlestickChart(QWidget):
             self._scroll_offset = max(0, sig_idx - self._visible_count // 2)
         self.update()
 
-
-# ============================================================
-# AI REVIEW — background thread for Claude CLI chart review
-# ============================================================
-
-def _get_review_prompt(setup_type):
-    """Build AI review prompt from the setup description in the database."""
-    desc = ""
-    try:
-        with get_db() as db:
-            row = db.execute(
-                "SELECT description FROM setups WHERE setup_type=?",
-                (setup_type,)
-            ).fetchone()
-            if row:
-                desc = row[0] or ""
-    except Exception:
-        pass
-    if not desc:
-        return None
-    return (
-        "Review this stock chart. The entry bar is marked with a white dot "
-        "and/or ENTRY label.\n\n"
-        "Does the chart show this pattern BEFORE the entry bar?\n\n"
-        "Setup description:\n%s\n\n"
-        "APPROVE if the pattern described above is clearly visible before the entry.\n"
-        "REJECT if the pattern is not visible or the chart doesn't match the description.\n\n"
-        "IMPORTANT: Respond with ONLY these two lines, nothing else:\n"
-        "VERDICT: APPROVE\n"
-        "REASONING: your 1-2 sentence explanation\n\n"
-        "or\n\n"
-        "VERDICT: REJECT\n"
-        "REASONING: your 1-2 sentence explanation"
-    ) % desc
-
-
-class AiReviewThread(QThread):
-    """Background thread: sends chart PNG to Claude CLI, stores verdict in DB."""
-
-    def __init__(self, png_path, setup_type, ticker, entry_date, pending_id, parent=None):
-        super().__init__(parent)
-        self._png = png_path
-        self._setup = setup_type
-        self._ticker = ticker
-        self._entry = entry_date
-        self._pid = pending_id
-
-    def run(self):
-        print("AI REVIEW THREAD: starting for %s %s" % (self._ticker, self._entry))
-        prompt = _get_review_prompt(self._setup)
-        if not prompt:
-            self._store("REJECT", "No review prompt for setup: %s" % self._setup)
-            return
-        try:
-            # Find claude.cmd on Windows
-            claude_cmd = "claude"
-            if sys.platform == "win32":
-                import shutil
-                found = shutil.which("claude")
-                if found:
-                    claude_cmd = found
-            full_prompt = "Look at the file %s and review the chart.\n\n%s" % (
-                self._png.replace("\\", "/"), prompt)
-            result = subprocess.run(
-                [claude_cmd, "-p", full_prompt],
-                capture_output=True, text=True, timeout=120,
-            )
-            output = result.stdout.strip()
-            stderr = result.stderr.strip() if result.stderr else ""
-            # Auth errors or CLI errors — don't mark as reviewed, leave in queue
-            if "authenticate" in stderr.lower() or "401" in stderr or (not output and stderr):
-                print("AI REVIEW: %s %s — CLI error (leaving in queue): %s" % (
-                    self._ticker, self._entry, stderr[:120]))
-                return
-            verdict, reasoning = self._parse(output)
-            self._store(verdict, reasoning)
-        except subprocess.TimeoutExpired:
-            print("AI REVIEW: %s %s — timed out (leaving in queue)" % (self._ticker, self._entry))
-        except FileNotFoundError:
-            print("AI REVIEW: %s %s — claude CLI not found (leaving in queue)" % (self._ticker, self._entry))
-        except Exception as e:
-            print("AI REVIEW: %s %s — error (leaving in queue): %s" % (self._ticker, self._entry, e))
-        finally:
-            try:
-                os.unlink(self._png)
-            except Exception:
-                pass
-
-    def _parse(self, output):
-        verdict = None
-        reasoning = output
-        for line in output.split("\n"):
-            up = line.strip().upper()
-            if up.startswith("VERDICT:"):
-                v = up.replace("VERDICT:", "").strip()
-                verdict = "APPROVE" if "APPROVE" in v else "REJECT"
-            elif line.strip().upper().startswith("REASONING:"):
-                reasoning = line.strip()[len("REASONING:"):].strip()
-        if verdict is None:
-            up = output.upper()
-            if "APPROVE" in up and "REJECT" not in up:
-                verdict = "APPROVE"
-            elif "REJECT" in up:
-                verdict = "REJECT"
-            else:
-                verdict = "REJECT"
-        return verdict, reasoning
-
-    def _store(self, verdict, reasoning):
-        print("AI REVIEW: %s %s → %s" % (self._ticker, self._entry, verdict))
-        print("  %s" % reasoning)
-        try:
-            with get_db() as db:
-                db.execute(
-                    "UPDATE pending_examples SET ai_verdict=?, ai_reasoning=?, "
-                    "status='reviewed', reviewed_at=datetime('now') WHERE id=?",
-                    (verdict, reasoning, self._pid),
-                )
-        except Exception:
-            pass
 
 
 # ============================================================
@@ -3527,12 +3389,6 @@ class ScanPerfectWindow(QMainWindow):
         self._timer.timeout.connect(self._on_tick)
         self._timer.start(5000)
 
-        # AI review worker — polls pending_examples every 5s, reviews one at a time
-        self._review_thread = None
-        self._review_timer = QTimer(self)
-        self._review_timer.timeout.connect(self._check_review_queue)
-        self._review_timer.start(5000)
-
     def _load_setups(self):
         self._setup_combo.clear()
         try:
@@ -3668,51 +3524,6 @@ class ScanPerfectWindow(QMainWindow):
                             det.append_log("\n→ Auto-starting %s..." % next_step)
                         QTimer.singleShot(500, lambda s=next_step: self.run_pipeline_step(s))
                     break
-
-    # ── AI Review Worker ──
-
-    def _check_review_queue(self):
-        """Poll for unreviewed pending examples. Render chart + send to Claude CLI."""
-        if self._review_thread and self._review_thread.isRunning():
-            return  # one at a time
-        try:
-            with get_db() as db:
-                row = db.execute(
-                    "SELECT id, setup_type, ticker, entry_date FROM pending_examples "
-                    "WHERE ai_verdict IS NULL AND status='pending' LIMIT 1"
-                ).fetchone()
-            if not row:
-                return
-            pid, setup, ticker, entry = row[0], row[1], row[2], row[3]
-        except Exception as e:
-            print("AI REVIEW: DB error: %s" % e)
-            return
-        print("AI REVIEW: %s %s (id=%d) — rendering chart..." % (ticker, entry, pid))
-        # Render chart to temp PNG (main thread, fast)
-        tmp = os.path.join(str(REPO_ROOT / "data"), "_review_%d.png" % pid)
-        try:
-            ok = _render_chart_png(ticker, entry, tmp)
-            print("AI REVIEW: render ok=%s, file exists=%s" % (ok, os.path.exists(tmp)))
-        except Exception as e:
-            print("AI REVIEW: render error: %s" % e)
-            ok = False
-        if not ok:
-            # Can't render — mark as reviewed with error
-            try:
-                with get_db() as db:
-                    db.execute(
-                        "UPDATE pending_examples SET ai_verdict='REJECT', "
-                        "ai_reasoning='Could not render chart', status='reviewed', "
-                        "reviewed_at=datetime('now') WHERE id=?", (pid,))
-            except Exception:
-                pass
-            return
-        self._review_thread = AiReviewThread(tmp, setup, ticker, entry, pid)
-        self._review_thread.finished.connect(self._on_review_done)
-        self._review_thread.start()
-
-    def _on_review_done(self):
-        self._review_thread = None
 
 
 # ============================================================
