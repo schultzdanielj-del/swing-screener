@@ -219,6 +219,10 @@ STEP_COMMANDS = {
         sys.executable, str(LOCAL_DIR / "pyramid_grinder.py"),
         "--setup", "{setup}", "--blackout",
     ],
+    "signal_filter": [
+        sys.executable, str(REPO_ROOT / "scripts" / "signal_filter.py"),
+        "--setup", "{setup}",
+    ],
     "entry_score": [
         sys.executable, str(REPO_ROOT / "scripts" / "entry_candle_scorer.py"),
         "--setup", "{setup}",
@@ -266,7 +270,7 @@ FLOW_NODES = [
 ]
 
 GRINDER_SUB_STEPS = {
-    "causative":   ["signal_grind", "exit_grind", "refinement_grind", "entry_score"],
+    "causative":   ["signal_grind", "exit_grind", "refinement_grind", "signal_filter", "entry_score"],
     "correlative": ["ev_grind"],
     "profit_grind": [],  # future
 }
