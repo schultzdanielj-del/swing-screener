@@ -1742,6 +1742,7 @@ class VettingWorkspace(QFrame):
         super().__init__(parent)
         self.node_id = node_id
         self._setup = "dtss"
+        self._mode = "causative"  # "causative" or "correlative"
         self._signals = []       # list of signal dicts
         self._filtered = []      # filtered view
         self._current_idx = 0
@@ -1757,7 +1758,7 @@ class VettingWorkspace(QFrame):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
-        # ── Top bar: stats ──
+        # ── Top bar: mode toggle + stats + hints ──
         top_bar = QFrame()
         top_bar.setFixedHeight(32)
         top_bar.setStyleSheet(
@@ -1765,7 +1766,21 @@ class VettingWorkspace(QFrame):
         )
         tb_lay = QHBoxLayout(top_bar)
         tb_lay.setContentsMargins(12, 0, 12, 0)
-        tb_lay.setSpacing(16)
+        tb_lay.setSpacing(8)
+
+        # Mode toggle buttons
+        self._mode_btns = {}
+        for mode_key, mode_label in [("causative", "CAUSATIVE"), ("correlative", "CORRELATIVE")]:
+            btn = QPushButton(mode_label)
+            btn.setFixedHeight(22)
+            btn.setCheckable(True)
+            btn.setChecked(mode_key == "causative")
+            btn.clicked.connect(lambda checked, m=mode_key: self._set_mode(m))
+            tb_lay.addWidget(btn)
+            self._mode_btns[mode_key] = btn
+        self._update_mode_btn_styles()
+
+        tb_lay.addSpacing(8)
         self._stats_label = QLabel("")
         self._stats_label.setStyleSheet(
             "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
@@ -1781,6 +1796,17 @@ class VettingWorkspace(QFrame):
         )
         tb_lay.addWidget(hints)
         lay.addWidget(top_bar)
+
+        # ── Slider bar (correlative mode only) ──
+        self._slider_bar = QFrame()
+        self._slider_bar.setFixedHeight(36)
+        self._slider_bar.setStyleSheet(
+            "QFrame { background:#080808; border-bottom:1px solid %s; }" % C["border"]
+        )
+        self._slider_bar.setVisible(False)
+        sl_lay = QHBoxLayout(self._slider_bar)
+        sl_lay.setContentsMargins(12, 4, 12, 4)
+        sl_lay.setSpacing(16)
 
         # ── Body: sidebar + chart + bottom bar ──
         body = QWidget()
@@ -1894,14 +1920,99 @@ class VettingWorkspace(QFrame):
     def set_setup(self, setup):
         self._setup = setup
 
+    def _set_mode(self, mode):
+        """Switch between causative and correlative vetting modes."""
+        if mode == self._mode:
+            return
+        self._mode = mode
+        self._current_idx = 0
+        self._candle_cache = {}
+        self._update_mode_btn_styles()
+        self._load_signals()
+        self.setFocus()
+
+    def _update_mode_btn_styles(self):
+        for key, btn in self._mode_btns.items():
+            active = key == self._mode
+            btn.setChecked(active)
+            if active:
+                btn.setStyleSheet(
+                    "QPushButton { background:%s; color:#000; border:1px solid %s;"
+                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+                    "font-weight:700; padding:2px 10px; }" % (C["green"], C["green"])
+                )
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background:transparent; color:%s; border:1px solid %s;"
+                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+                    "font-weight:600; padding:2px 10px; }"
+                    "QPushButton:hover { background:%s; color:%s; }" % (
+                        C["text_muted"], C["border"], C["surface2"], C["text"])
+                )
+
     def showEvent(self, ev):
         super().showEvent(ev)
         self._load_signals()
 
     def _load_signals(self):
-        """Load winner signals from refinement file + vetting decisions + rejected."""
+        """Load signals based on current mode."""
+        if self._mode == "correlative":
+            self._load_correlative_signals()
+        else:
+            self._load_causative_signals()
+
+    def _load_vetting_decisions(self, setup):
+        """Load vetting decisions, rejected signals, and example set. Shared by both modes."""
+        decisions = load_json(REPO_ROOT / "data" / "vetting" / ("vetting_%s.json" % setup), {})
+        rejected_set = set()
+        try:
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT ticker, signal_date FROM rejected_signals WHERE setup_type=?",
+                    (setup,)
+                ).fetchall()
+            rejected_set = set("%s_%s" % (r["ticker"], r["signal_date"]) for r in rows)
+        except Exception:
+            pass
+        example_set = set()
+        try:
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT ticker, entry_date FROM examples WHERE setup_type=?", (setup,)
+                ).fetchall()
+            example_set = set("%s_%s" % (r["ticker"], r["entry_date"]) for r in rows)
+        except Exception:
+            pass
+        return decisions, rejected_set, example_set
+
+    def _apply_verdict(self, sig, decisions, rejected_set):
+        """Apply verdict from decisions/rejected onto a signal dict."""
+        key = "%s_%s" % (sig["ticker"], sig["signal_date"])
+        vd = decisions.get(key, {})
+        verdict = vd.get("verdict")
+        if not verdict and key in rejected_set:
+            verdict = "no"
+        sig["verdict"] = verdict
+        sig["entry_date"] = vd.get("entry_date")
+
+    def _make_signal_dict(self, ticker, signal_date, **extra):
+        """Create a signal dict with all standard fields."""
+        sig = {
+            "ticker": ticker, "signal_date": signal_date,
+            "move_adr": None, "adr_at_signal": None, "classification": "",
+            "verdict": None, "entry_date": None,
+            "exit_date": None, "exit_bar": None,
+            "mfe_adr": None, "capture_eff": None, "move_pct": None,
+            "combined_score": None, "entry_candle_score": None,
+            "entry_candle_date": None, "entry_candle_pct": None, "move_adr_pct": None,
+            "quality_score": None, "predicted_wr": None, "predicted_mfe": None, "ev": None,
+        }
+        sig.update(extra)
+        return sig
+
+    def _load_causative_signals(self):
+        """Load winner signals from refinement file."""
         setup = self._setup
-        # Find latest refinement file
         cache_dir = REPO_ROOT / "local_runner" / "cache"
         ref_files = []
         if cache_dir.exists():
@@ -1915,7 +2026,6 @@ class VettingWorkspace(QFrame):
             self._apply_filter()
             self._update_stats()
             return
-
         try:
             rdata = json.loads(ref_files[0].read_text())
         except Exception:
@@ -1925,92 +2035,39 @@ class VettingWorkspace(QFrame):
             return
 
         winners = rdata.get("winner_signals", [])
+        decisions, rejected_set, example_set = self._load_vetting_decisions(setup)
 
-        # Load vetting decisions
-        vetting_path = REPO_ROOT / "data" / "vetting" / ("vetting_%s.json" % setup)
-        decisions = load_json(vetting_path, {})
-
-        # Load rejected signals
-        rejected_set = set()
-        try:
-            with get_db() as db:
-                rows = db.execute(
-                    "SELECT ticker, signal_date FROM rejected_signals WHERE setup_type=?",
-                    (setup,)
-                ).fetchall()
-            rejected_set = set("%s_%s" % (r["ticker"], r["signal_date"]) for r in rows)
-        except Exception:
-            pass
-
-        # Load existing examples (to exclude)
-        example_set = set()
-        try:
-            with get_db() as db:
-                rows = db.execute(
-                    "SELECT ticker, entry_date FROM examples WHERE setup_type=?", (setup,)
-                ).fetchall()
-            example_set = set("%s_%s" % (r["ticker"], r["entry_date"]) for r in rows)
-        except Exception:
-            pass
-
-        # Build signal list
         signals = []
         for s in winners:
             tk = s.get("ticker", "")
             sd = s.get("signal_date", "")
-            # Skip existing examples
             if any("%s_%s" % (tk, sd) == ex for ex in example_set):
                 continue
-            key = "%s_%s" % (tk, sd)
-            vd = decisions.get(key, {})
-            verdict = vd.get("verdict")
-            if not verdict and key in rejected_set:
-                verdict = "no"
-            signals.append({
-                "ticker": tk,
-                "signal_date": sd,
-                "move_adr": s.get("move_adr", 0),
-                "adr_at_signal": s.get("adr_at_signal", 0),
-                "classification": s.get("classification", ""),
-                "verdict": verdict,
-                "entry_date": vd.get("entry_date"),
-                "exit_date": None,
-                "exit_bar": None,
-                "mfe_adr": None,
-                "capture_eff": None,
-                "move_pct": None,
-                "combined_score": None,
-                "entry_candle_score": None,
-                "entry_candle_date": None,
-                "entry_candle_pct": None,
-                "move_adr_pct": None,
-            })
+            sig = self._make_signal_dict(tk, sd,
+                move_adr=s.get("move_adr"), adr_at_signal=s.get("adr_at_signal"),
+                classification=s.get("classification", ""))
+            self._apply_verdict(sig, decisions, rejected_set)
+            signals.append(sig)
 
         # Join exit data from filtered_{setup}.json if available
         filtered_path = REPO_ROOT / "data" / "signal_filter" / ("filtered_%s.json" % setup)
         if filtered_path.exists():
             try:
                 filt_data = json.loads(filtered_path.read_text())
-                filt_sigs = filt_data.get("signals", [])
-                exit_lookup = {}
-                for fs in filt_sigs:
-                    fk = "%s_%s" % (fs.get("ticker", ""), fs.get("date", ""))
-                    exit_lookup[fk] = fs
-                n_exit = 0
+                exit_lookup = {
+                    "%s_%s" % (fs.get("ticker", ""), fs.get("date", "")): fs
+                    for fs in filt_data.get("signals", [])
+                }
                 for sig in signals:
-                    fk = "%s_%s" % (sig["ticker"], sig["signal_date"])
-                    fs = exit_lookup.get(fk)
+                    fs = exit_lookup.get("%s_%s" % (sig["ticker"], sig["signal_date"]))
                     if fs:
                         sig["exit_date"] = fs.get("exit_date")
                         sig["exit_bar"] = fs.get("exit_bar")
                         sig["mfe_adr"] = fs.get("mfe_adr")
                         sig["capture_eff"] = fs.get("capture_eff")
                         sig["move_pct"] = fs.get("move_pct")
-                        n_exit += 1
-                if n_exit > 0:
-                    print("Exit data joined: %d/%d signals" % (n_exit, len(signals)))
-            except Exception as e:
-                print("WARNING: Failed to load exit data: %s" % e)
+            except Exception:
+                pass
 
         # Join entry candle scores if available
         entry_scores_path = REPO_ROOT / "local_runner" / "cache" / ("entry_scores_%s.json" % setup)
@@ -2018,35 +2075,80 @@ class VettingWorkspace(QFrame):
         if entry_scores_path.exists():
             try:
                 es_data = json.loads(entry_scores_path.read_text())
-                scored_list = es_data.get("scored_signals", [])
-                # Build lookup: ticker_signaldate -> score dict
-                score_lookup = {}
-                for sc in scored_list:
-                    sk = "%s_%s" % (sc.get("ticker", ""), sc.get("signal_date", ""))
-                    score_lookup[sk] = sc
-                n_joined = 0
+                score_lookup = {
+                    "%s_%s" % (sc.get("ticker", ""), sc.get("signal_date", "")): sc
+                    for sc in es_data.get("scored_signals", [])
+                }
                 for sig in signals:
-                    sk = "%s_%s" % (sig["ticker"], sig["signal_date"])
-                    sc = score_lookup.get(sk)
+                    sc = score_lookup.get("%s_%s" % (sig["ticker"], sig["signal_date"]))
                     if sc:
                         sig["combined_score"] = sc.get("combined_score")
                         sig["entry_candle_score"] = sc.get("entry_candle_score")
                         sig["entry_candle_date"] = sc.get("entry_candle_date")
                         sig["entry_candle_pct"] = sc.get("entry_candle_pct")
                         sig["move_adr_pct"] = sc.get("move_adr_pct")
-                        n_joined += 1
-                if n_joined > 0:
-                    has_entry_scores = True
-                    print("Entry scores joined: %d/%d signals" % (n_joined, len(signals)))
-            except Exception as e:
-                print("WARNING: Failed to load entry scores: %s" % e)
+                        has_entry_scores = True
+            except Exception:
+                pass
 
-        # Sort: by combined_score if available, else by move_adr
         if has_entry_scores:
             signals.sort(key=lambda x: x.get("combined_score") or 0, reverse=True)
         else:
             signals.sort(key=lambda x: x.get("move_adr") or 0, reverse=True)
         self._has_entry_scores = has_entry_scores
+        self._signals = signals
+        self._apply_filter()
+        self._update_stats()
+
+    def _load_correlative_signals(self):
+        """Load EV-scored signals from latest ev_{setup}_*.json."""
+        setup = self._setup
+        cache_dir = REPO_ROOT / "local_runner" / "cache"
+        ev_files = []
+        if cache_dir.exists():
+            ev_files = sorted(
+                [f for f in cache_dir.iterdir()
+                 if f.name.startswith("ev_%s_" % setup) and f.suffix == ".json"],
+                key=lambda f: f.stat().st_mtime, reverse=True
+            )
+        if not ev_files:
+            self._signals = []
+            self._apply_filter()
+            self._update_stats()
+            return
+        try:
+            ev_data = json.loads(ev_files[0].read_text())
+        except Exception:
+            self._signals = []
+            self._apply_filter()
+            self._update_stats()
+            return
+
+        # Use signals_post (post-refinement) if available, else signals
+        raw_signals = ev_data.get("signals_post", ev_data.get("signals", []))
+        decisions, rejected_set, example_set = self._load_vetting_decisions(setup)
+
+        signals = []
+        for s in raw_signals:
+            tk = s.get("ticker", "")
+            sd = s.get("date", s.get("signal_date", ""))
+            if any("%s_%s" % (tk, sd) == ex for ex in example_set):
+                continue
+            if s.get("is_example"):
+                continue
+            sig = self._make_signal_dict(tk, sd,
+                move_adr=s.get("move_adr"), adr_at_signal=s.get("adr_at_signal"),
+                classification=s.get("classification", ""),
+                quality_score=s.get("quality_score"),
+                predicted_wr=s.get("predicted_wr"),
+                predicted_mfe=s.get("predicted_mfe"),
+                ev=s.get("ev"))
+            self._apply_verdict(sig, decisions, rejected_set)
+            signals.append(sig)
+
+        # Sort by EV descending
+        signals.sort(key=lambda x: x.get("ev") or 0, reverse=True)
+        self._has_entry_scores = False
         self._signals = signals
         self._apply_filter()
         self._update_stats()
@@ -2094,72 +2196,76 @@ class VettingWorkspace(QFrame):
         lay = QVBoxLayout(w)
         lay.setContentsMargins(2, 2, 2, 2)
         lay.setSpacing(1)
+        mono = "font-family:'JetBrains Mono','Consolas',monospace;"
 
-        # Row 1: ticker + move_adr
+        # Row 1: ticker + primary metric
         r1 = QHBoxLayout()
         r1.setSpacing(0)
         tk = QLabel(sig["ticker"])
-        tk.setStyleSheet(
-            "font-family:'JetBrains Mono','Consolas',monospace; font-size:12px;"
-            "font-weight:700; color:%s; background:transparent; border:none;" % C["text"]
-        )
+        tk.setStyleSheet("%s font-size:12px; font-weight:700; color:%s;"
+                         "background:transparent; border:none;" % (mono, C["text"]))
         r1.addWidget(tk)
         r1.addStretch()
-        adr = QLabel("+%.1f ADR" % (sig.get("move_adr") or 0))
-        adr.setStyleSheet(
-            "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
-            "font-weight:600; color:%s; background:transparent; border:none;" % C["green"]
-        )
-        r1.addWidget(adr)
+
+        if self._mode == "correlative" and sig.get("ev") is not None:
+            # Show EV + WR in correlative mode
+            ev_txt = "EV %.1f" % sig["ev"]
+            ev_lbl = QLabel(ev_txt)
+            ev_lbl.setStyleSheet("%s font-size:10px; font-weight:600; color:%s;"
+                                 "background:transparent; border:none;" % (mono, C["green"]))
+            r1.addWidget(ev_lbl)
+            wr = sig.get("predicted_wr")
+            if wr is not None:
+                wr_lbl = QLabel("  %.0f%%" % (wr * 100))
+                wr_lbl.setStyleSheet("%s font-size:10px; font-weight:600; color:%s;"
+                                     "background:transparent; border:none;" % (mono, C["amber"]))
+                r1.addWidget(wr_lbl)
+        else:
+            adr = QLabel("+%.1f ADR" % (sig.get("move_adr") or 0))
+            adr.setStyleSheet("%s font-size:10px; font-weight:600; color:%s;"
+                              "background:transparent; border:none;" % (mono, C["green"]))
+            r1.addWidget(adr)
         lay.addLayout(r1)
 
-        # Row 2: date + combined score (if available) + verdict
+        # Row 2: date + secondary metrics + verdict
         r2 = QHBoxLayout()
         r2.setSpacing(4)
         dt = QLabel(sig["signal_date"])
-        dt.setStyleSheet(
-            "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
-            "color:%s; background:transparent; border:none;" % C["text_muted"]
-        )
+        dt.setStyleSheet("%s font-size:9px; color:%s;"
+                         "background:transparent; border:none;" % (mono, C["text_muted"]))
         r2.addWidget(dt)
-        # Exit bar count if available
-        eb = sig.get("exit_bar")
-        if eb:
-            eb_label = QLabel("%dd" % eb)
-            eb_label.setStyleSheet(
-                "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
-                "color:%s; background:transparent; border:none;" % C["text_muted"]
-            )
-            r2.addWidget(eb_label)
-        # Entry candle score badge
-        cs = sig.get("combined_score")
-        if cs is not None:
-            # Color gradient: low=dim, high=bright amber
-            if cs >= 0.7:
-                sc_color = C["amber"]
-            elif cs >= 0.4:
-                sc_color = C["text_dim"]
-            else:
-                sc_color = C["text_muted"]
-            sc_label = QLabel("%.0f%%" % (cs * 100))
-            sc_label.setStyleSheet(
-                "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
-                "font-weight:700; color:%s; background:transparent; border:none;" % sc_color
-            )
-            sc_label.setToolTip(
-                "Combined score: entry candle %.0f%% × move ADR %.0f%%" % (
-                    (sig.get("entry_candle_pct") or 0) * 100,
-                    (sig.get("move_adr_pct") or 0) * 100))
-            r2.addWidget(sc_label)
+
+        if self._mode == "correlative":
+            qs = sig.get("quality_score")
+            if qs is not None:
+                qs_lbl = QLabel("QS %.0f" % qs)
+                qs_lbl.setStyleSheet("%s font-size:9px; color:%s;"
+                                     "background:transparent; border:none;" % (mono, C["text_muted"]))
+                r2.addWidget(qs_lbl)
+        else:
+            # Exit bar count
+            eb = sig.get("exit_bar")
+            if eb:
+                eb_lbl = QLabel("%dd" % eb)
+                eb_lbl.setStyleSheet("%s font-size:9px; color:%s;"
+                                     "background:transparent; border:none;" % (mono, C["text_muted"]))
+                r2.addWidget(eb_lbl)
+            # Entry candle score badge
+            cs = sig.get("combined_score")
+            if cs is not None:
+                sc_color = C["amber"] if cs >= 0.7 else C["text_dim"] if cs >= 0.4 else C["text_muted"]
+                sc_lbl = QLabel("%.0f%%" % (cs * 100))
+                sc_lbl.setStyleSheet("%s font-size:9px; font-weight:700; color:%s;"
+                                     "background:transparent; border:none;" % (mono, sc_color))
+                r2.addWidget(sc_lbl)
+
         r2.addStretch()
         v = sig.get("verdict")
         if v:
             vc = C["green"] if v == "yes" else C["red"]
             vl = QLabel(v.upper())
-            vl.setStyleSheet(
-                "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
-                "font-weight:700; color:%s; background:transparent; border:none;" % vc
-            )
+            vl.setStyleSheet("%s font-size:9px; font-weight:700; color:%s;"
+                             "background:transparent; border:none;" % (mono, vc))
             r2.addWidget(vl)
         lay.addLayout(r2)
 
@@ -2181,7 +2287,12 @@ class VettingWorkspace(QFrame):
         self._filter_checks["unvetted"].setText("U %d" % n_unvetted)
         self._filter_checks["no"].setText("N %d" % n_no)
 
-        sort_mode = "by score" if getattr(self, "_has_entry_scores", False) else "by ADR"
+        if self._mode == "correlative":
+            sort_mode = "by EV"
+        elif getattr(self, "_has_entry_scores", False):
+            sort_mode = "by score"
+        else:
+            sort_mode = "by ADR"
         self._stats_label.setText(
             "%d signals  ·  %d yes  ·  %d no  ·  %d unvetted  ·  sorted %s" % (
                 total, n_yes, n_no, n_unvetted, sort_mode)
@@ -2230,25 +2341,37 @@ class VettingWorkspace(QFrame):
 
     def _update_meta(self, sig):
         parts = ["Ticker: %s" % sig["ticker"], "Signal: %s" % sig["signal_date"]]
-        if sig.get("move_adr"):
-            parts.append("Move: +%.1f ADR" % sig["move_adr"])
-        if sig.get("mfe_adr"):
-            parts.append("MFE: %.1f ADR" % sig["mfe_adr"])
-        if sig.get("capture_eff") is not None:
-            parts.append("Eff: %.0f%%" % (sig["capture_eff"] * 100))
-        if sig.get("exit_date"):
-            exit_info = "Exit: %s" % sig["exit_date"]
-            if sig.get("exit_bar"):
-                exit_info += " (%dd)" % sig["exit_bar"]
-            parts.append(exit_info)
-        if sig.get("adr_at_signal"):
-            parts.append("ADR: %.2f" % sig["adr_at_signal"])
-        cs = sig.get("combined_score")
-        if cs is not None:
-            parts.append("Score: %.0f%%" % (cs * 100))
-            ecd = sig.get("entry_candle_date")
-            if ecd:
-                parts.append("Best entry: %s" % ecd)
+        if self._mode == "correlative":
+            if sig.get("ev") is not None:
+                parts.append("EV: %.2f" % sig["ev"])
+            if sig.get("predicted_wr") is not None:
+                parts.append("WR: %.0f%%" % (sig["predicted_wr"] * 100))
+            if sig.get("predicted_mfe") is not None:
+                parts.append("MFE: %.1f ADR" % sig["predicted_mfe"])
+            if sig.get("quality_score") is not None:
+                parts.append("QS: %.0f" % sig["quality_score"])
+            if sig.get("move_adr"):
+                parts.append("Move: +%.1f ADR" % sig["move_adr"])
+        else:
+            if sig.get("move_adr"):
+                parts.append("Move: +%.1f ADR" % sig["move_adr"])
+            if sig.get("mfe_adr"):
+                parts.append("MFE: %.1f ADR" % sig["mfe_adr"])
+            if sig.get("capture_eff") is not None:
+                parts.append("Eff: %.0f%%" % (sig["capture_eff"] * 100))
+            if sig.get("exit_date"):
+                exit_info = "Exit: %s" % sig["exit_date"]
+                if sig.get("exit_bar"):
+                    exit_info += " (%dd)" % sig["exit_bar"]
+                parts.append(exit_info)
+            if sig.get("adr_at_signal"):
+                parts.append("ADR: %.2f" % sig["adr_at_signal"])
+            cs = sig.get("combined_score")
+            if cs is not None:
+                parts.append("Score: %.0f%%" % (cs * 100))
+                ecd = sig.get("entry_candle_date")
+                if ecd:
+                    parts.append("Best entry: %s" % ecd)
         parts.append("Entry = click chart")
         self._meta_label.setText("  ·  ".join(parts))
 
