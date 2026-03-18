@@ -2448,30 +2448,23 @@ class CandlestickChart(QWidget):
 
 _REVIEW_PROMPTS = {
     "dtss": (
-        "You are reviewing a stock chart to determine if it shows a valid DTSS "
-        "(Double Top Short Sell) setup.\n\n"
-        "DTSS criteria:\n"
-        "- Clear prior high / resistance level (left side pivot)\n"
-        "- Second rally into the same zone — can be slightly above or below the prior peak\n"
-        "- Rejection candle or reversal pattern at the double top level\n"
-        "- Volume often spikes on the failed attempt then dries up\n"
-        "- MAs may be flattening or starting to roll over\n"
-        "- The stock should be FAILING at or near the double top, not still rallying\n"
-        "- After the double top, price breaks down and continues lower\n"
-        "- This is a SHORT setup — the stock goes DOWN after entry\n\n"
-        "The entry bar is marked on the chart (ENTRY label or white dot). "
-        "Look at the price action BEFORE the entry to confirm the double top pattern, "
-        "and AFTER to confirm the stock broke down.\n\n"
-        "REJECT if:\n"
-        "- No clear double top pattern visible\n"
-        "- Stock is still in an uptrend with no reversal\n"
-        "- The \"double top\" is really just consolidation in a trend\n"
-        "- The move after entry is tiny or the stock bounces back up quickly\n"
-        "- Entry is too late (stock already crashed before entry)\n"
-        "- Entry is too early (stock hasn't confirmed the top yet)\n\n"
-        "Respond in this exact format:\n"
-        "VERDICT: APPROVE or REJECT\n"
-        "REASONING: 2-3 sentences explaining what you see and why."
+        "Review this stock chart for a DTSS (Double Top Short Sell) setup.\n\n"
+        "DTSS = short setup targeting failed double tops. Criteria:\n"
+        "- Clear prior high/resistance (left side pivot)\n"
+        "- Second rally into same zone, rejection or reversal at that level\n"
+        "- MAs flattening or rolling over\n"
+        "- Stock FAILING at the double top, not still rallying\n"
+        "- After entry, price breaks down and continues lower\n\n"
+        "The entry bar is marked with a white dot and ENTRY label.\n\n"
+        "APPROVE if: clear double top visible before entry, stock reversed and broke down after entry.\n"
+        "REJECT if: no double top, still uptrending, consolidation not a top, move after entry is tiny, "
+        "entry too late or too early.\n\n"
+        "IMPORTANT: Respond with ONLY these two lines, nothing else:\n"
+        "VERDICT: APPROVE\n"
+        "REASONING: your 1-2 sentence explanation\n\n"
+        "or\n\n"
+        "VERDICT: REJECT\n"
+        "REASONING: your 1-2 sentence explanation"
     ),
 }
 
@@ -2549,7 +2542,8 @@ class AiReviewThread(QThread):
         return verdict, reasoning
 
     def _store(self, verdict, reasoning):
-        print("AI REVIEW: %s %s → %s — %s" % (self._ticker, self._entry, verdict, reasoning[:80]))
+        print("AI REVIEW: %s %s → %s" % (self._ticker, self._entry, verdict))
+        print("  %s" % reasoning)
         try:
             with get_db() as db:
                 db.execute(
