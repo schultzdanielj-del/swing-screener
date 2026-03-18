@@ -2494,10 +2494,6 @@ class AiReviewThread(QThread):
             self._store("REJECT", "No review prompt for setup: %s" % self._setup)
             return
         try:
-            # Write prompt to temp file (avoids shell escaping issues)
-            prompt_file = self._png.replace(".png", "_prompt.txt")
-            with open(prompt_file, "w", encoding="utf-8") as f:
-                f.write(prompt)
             # Find claude.cmd on Windows
             claude_cmd = "claude"
             if sys.platform == "win32":
@@ -2510,23 +2506,25 @@ class AiReviewThread(QThread):
                 capture_output=True, text=True, timeout=120,
             )
             output = result.stdout.strip()
-            if not output and result.stderr:
-                self._store("REJECT", "CLI error: %s" % result.stderr[:200])
+            stderr = result.stderr.strip() if result.stderr else ""
+            # Auth errors or CLI errors — don't mark as reviewed, leave in queue
+            if "authenticate" in stderr.lower() or "401" in stderr or (not output and stderr):
+                print("AI REVIEW: %s %s — CLI error (leaving in queue): %s" % (
+                    self._ticker, self._entry, stderr[:120]))
                 return
             verdict, reasoning = self._parse(output)
             self._store(verdict, reasoning)
         except subprocess.TimeoutExpired:
-            self._store("REJECT", "Claude CLI timed out")
+            print("AI REVIEW: %s %s — timed out (leaving in queue)" % (self._ticker, self._entry))
         except FileNotFoundError:
-            self._store("REJECT", "claude CLI not found in PATH")
+            print("AI REVIEW: %s %s — claude CLI not found (leaving in queue)" % (self._ticker, self._entry))
         except Exception as e:
-            self._store("REJECT", "Error: %s" % str(e))
+            print("AI REVIEW: %s %s — error (leaving in queue): %s" % (self._ticker, self._entry, e))
         finally:
-            for f in [self._png, self._png.replace(".png", "_prompt.txt")]:
-                try:
-                    os.unlink(f)
-                except Exception:
-                    pass
+            try:
+                os.unlink(self._png)
+            except Exception:
+                pass
 
     def _parse(self, output):
         verdict = None
