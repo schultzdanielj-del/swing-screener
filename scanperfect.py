@@ -123,8 +123,19 @@ def init_db():
                 ai_vet_reason TEXT, created_at TEXT NOT NULL
             );
         """)
+        _DTSS_DESC = (
+            "Short setup targeting failed double tops. Look for: clear prior high/resistance "
+            "(left side pivot), second rally into the same zone (can be slightly above or below), "
+            "rejection candle or reversal pattern at the double top level, volume often spikes on "
+            "the failed attempt then dries up. MAs may be flattening or rolling over. The stock "
+            "should be FAILING at or near the double top, not still rallying. After the double top, "
+            "price breaks down through the LSP AVWAP and continues lower.\n\n"
+            "Reject if: no clear double top visible, stock still in uptrend with no reversal, "
+            "the \"double top\" is just consolidation in a trend, move after entry is tiny or "
+            "bounces back, entry is too late (already crashed), or entry is too early (top not confirmed)."
+        )
         for st, name, desc, direction in [
-            ("dtss", "DTSS", "Double Top Short Sell", "short"),
+            ("dtss", "DTSS", _DTSS_DESC, "short"),
             ("3-4db", "3-4DB", "3-4 Day Bounce (Short)", "short"),
             ("htf", "HTF", "High Tight Flag (Long)", "long"),
         ]:
@@ -132,6 +143,9 @@ def init_db():
                 "INSERT OR IGNORE INTO setups (setup_type, name, description, direction) VALUES (?,?,?,?)",
                 (st, name, desc, direction),
             )
+        # Update existing rows that only have the short name
+        db.execute("UPDATE setups SET description=? WHERE setup_type='dtss' AND length(description) < 100",
+                   (_DTSS_DESC,))
 
 
 # ============================================================
