@@ -1544,11 +1544,45 @@ class ExamplesWorkspace(QFrame):
         try:
             with get_db() as db:
                 self._pending = [dict(r) for r in db.execute(
-                    "SELECT id, ticker, signal_date, entry_date, status, ai_verdict, ai_reasoning "
+                    "SELECT id, ticker, signal_date, entry_date, status "
                     "FROM pending_examples WHERE setup_type=? ORDER BY created_at DESC",
                     (setup,)).fetchall()]
         except Exception:
             pass
+
+        # Enrich pending with ADR + entry candle %
+        entry_scores = {}
+        es_path = REPO_ROOT / "local_runner" / "cache" / ("entry_scores_%s.json" % setup)
+        if es_path.exists():
+            try:
+                es_data = json.loads(es_path.read_text())
+                for sc in es_data.get("scored_signals", []):
+                    entry_scores["%s_%s" % (sc.get("ticker", ""), sc.get("signal_date", ""))] = sc
+            except Exception:
+                pass
+        for p in self._pending:
+            # ADR from OHLCV pickle
+            df = _get_ohlcv(p["ticker"])
+            if df is not None and not df.empty:
+                try:
+                    ranges = (df["high"] - df["low"]).rolling(14).mean()
+                    if hasattr(df["date"].iloc[0], "strftime"):
+                        dates = [d.strftime("%Y-%m-%d") for d in df["date"]]
+                    else:
+                        dates = [str(d) for d in df["date"]]
+                    idx = None
+                    for i, d in enumerate(dates):
+                        if d == p["entry_date"]:
+                            idx = i
+                            break
+                    if idx is not None and idx < len(ranges):
+                        p["adr"] = round(float(ranges.iloc[idx]), 2) if pd.notna(ranges.iloc[idx]) else None
+                except Exception:
+                    pass
+            # Entry candle % from scores file
+            sc = entry_scores.get("%s_%s" % (p["ticker"], p.get("signal_date", "")))
+            if sc:
+                p["entry_candle_pct"] = sc.get("entry_candle_pct")
 
         # Load setup description
         try:
@@ -1600,7 +1634,7 @@ class ExamplesWorkspace(QFrame):
             return
         self._pend_area.setVisible(True)
 
-        lbl = QLabel("PENDING AI REVIEW")
+        lbl = QLabel("PENDING FINAL REVIEW")
         lbl.setStyleSheet("font-size:10px; font-weight:500; letter-spacing:1px; color:#555;"
                           "background:transparent; border:none;")
         self._pend_lay.addWidget(lbl)
@@ -1707,22 +1741,22 @@ class ExamplesWorkspace(QFrame):
         mono = "font-family:'JetBrains Mono','Consolas',monospace;"
 
         if section == "pending":
-            ai = data.get("ai_verdict")
-            tag_text = ai or "PENDING"
-            if ai == "APPROVE":
-                tc, tbg, tbd = "#4ade80", "rgba(0,200,100,0.08)", "rgba(0,200,100,0.2)"
-            elif ai == "REJECT":
-                tc, tbg, tbd = "#f87171", "rgba(255,80,80,0.08)", "rgba(255,80,80,0.2)"
-            else:
-                tc, tbg, tbd = "#B0B0B0", "rgba(255,255,255,0.08)", "#2A2A2A"
-            tag_lbl = QLabel(tag_text)
-            tag_lbl.setStyleSheet(
-                "%s font-size:9px; font-weight:600; color:%s; padding:1px 5px;"
-                "background:%s; border:1px solid %s;" % (mono, tc, tbg, tbd))
-            reasoning = data.get("ai_reasoning") or ""
-            if reasoning:
-                tag_lbl.setToolTip(reasoning)
-            lr.addWidget(tag_lbl)
+            # ADR label
+            adr = data.get("adr")
+            if adr:
+                adr_lbl = QLabel("%.1f%%" % adr)
+                adr_lbl.setStyleSheet(
+                    "%s font-size:9px; font-weight:600; color:#fbbf24; padding:1px 5px;"
+                    "background:rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.2);" % mono)
+                lr.addWidget(adr_lbl)
+            # Entry candle % label
+            ecp = data.get("entry_candle_pct")
+            if ecp is not None:
+                ecp_lbl = QLabel("%.0f%% match" % (ecp * 100))
+                ecp_lbl.setStyleSheet(
+                    "%s font-size:9px; font-weight:600; color:#60a5fa; padding:1px 5px;"
+                    "background:rgba(96,165,250,0.08); border:1px solid rgba(96,165,250,0.2);" % mono)
+                lr.addWidget(ecp_lbl)
 
         tk_lbl = QLabel(ticker)
         tk_lbl.setStyleSheet("%s font-size:13px; font-weight:500; color:#fff;"
