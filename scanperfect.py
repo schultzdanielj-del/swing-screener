@@ -2502,7 +2502,7 @@ class AiReviewThread(QThread):
                 if found:
                     claude_cmd = found
             result = subprocess.run(
-                [claude_cmd, "-p", prompt, "--image", self._png],
+                [claude_cmd, "-p", prompt, self._png],
                 capture_output=True, text=True, timeout=120,
             )
             output = result.stdout.strip()
