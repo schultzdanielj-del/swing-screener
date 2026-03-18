@@ -2479,6 +2479,7 @@ class VettingWorkspace(QFrame):
         self.node_id = node_id
         self._setup = "dtss"
         self._mode = "causative"  # "causative" or "correlative"
+        self._vet_sort = "combined"  # "adr", "entry", "combined"
         self._signals = []       # list of signal dicts
         self._filtered = []      # filtered view
         self._current_idx = 0
@@ -2524,25 +2525,27 @@ class VettingWorkspace(QFrame):
         )
         tb_lay.addWidget(self._stats_label)
         tb_lay.addStretch()
+
+        # Sort buttons
+        self._vet_sort_btns = {}
+        for sort_key, sort_label in [("adr", "ADR"), ("entry", "ENTRY"), ("combined", "COMBINED")]:
+            btn = QPushButton(sort_label)
+            btn.setFixedHeight(20)
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked, k=sort_key: self._set_vet_sort(k))
+            tb_lay.addWidget(btn)
+            self._vet_sort_btns[sort_key] = btn
+        self._style_vet_sort_btns()
+
+        tb_lay.addSpacing(8)
         # Keyboard hints
-        hints = QLabel("↑↓ navigate · 1 yes · 2 no · 3 skip · click candle = entry · Ctrl+wheel zoom")
+        hints = QLabel("↑↓ navigate · 1 yes · 2 no · 3 skip · click = entry · Ctrl+wheel zoom")
         hints.setStyleSheet(
             "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
             "color:%s; background:transparent; border:none;" % C["text_muted"]
         )
         tb_lay.addWidget(hints)
         lay.addWidget(top_bar)
-
-        # ── Slider bar (correlative mode only) ──
-        self._slider_bar = QFrame()
-        self._slider_bar.setFixedHeight(36)
-        self._slider_bar.setStyleSheet(
-            "QFrame { background:#080808; border-bottom:1px solid %s; }" % C["border"]
-        )
-        self._slider_bar.setVisible(False)
-        sl_lay = QHBoxLayout(self._slider_bar)
-        sl_lay.setContentsMargins(12, 4, 12, 4)
-        sl_lay.setSpacing(16)
 
         # ── Body: sidebar + chart + bottom bar ──
         body = QWidget()
@@ -2685,6 +2688,40 @@ class VettingWorkspace(QFrame):
                     "QPushButton:hover { background:%s; color:%s; }" % (
                         C["text_muted"], C["border"], C["surface2"], C["text"])
                 )
+
+    def _set_vet_sort(self, sort_key):
+        self._vet_sort = sort_key
+        self._style_vet_sort_btns()
+        self._sort_and_refresh()
+        self.setFocus()
+
+    def _style_vet_sort_btns(self):
+        for key, btn in self._vet_sort_btns.items():
+            active = key == self._vet_sort
+            btn.setChecked(active)
+            if active:
+                btn.setStyleSheet(
+                    "QPushButton { background:#222; color:#E0E0E0; border:none;"
+                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+                    "font-weight:700; padding:2px 8px; }")
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background:transparent; color:#555; border:none;"
+                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+                    "font-weight:500; padding:2px 8px; }"
+                    "QPushButton:hover { color:#888; }")
+
+    def _sort_and_refresh(self):
+        """Re-sort signals based on current sort key and rebuild list."""
+        if self._vet_sort == "adr":
+            self._signals.sort(key=lambda x: x.get("move_adr") or 0, reverse=True)
+        elif self._vet_sort == "entry":
+            self._signals.sort(key=lambda x: x.get("entry_candle_pct") or 0, reverse=True)
+        elif self._vet_sort == "combined":
+            self._signals.sort(key=lambda x: x.get("combined_score") or 0, reverse=True)
+        self._current_idx = 0
+        self._apply_filter()
+        self._update_stats()
 
     def showEvent(self, ev):
         super().showEvent(ev)
@@ -2846,14 +2883,10 @@ class VettingWorkspace(QFrame):
             except Exception:
                 pass
 
-        if has_entry_scores:
-            signals.sort(key=lambda x: x.get("combined_score") or 0, reverse=True)
-        else:
-            signals.sort(key=lambda x: x.get("move_adr") or 0, reverse=True)
         self._has_entry_scores = has_entry_scores
         self._signals = signals
-        self._apply_filter()
-        self._update_stats()
+        self._style_vet_sort_btns()
+        self._sort_and_refresh()
 
     def _load_correlative_signals(self):
         """Load EV-scored signals from latest ev_{setup}_*.json."""
@@ -2924,14 +2957,10 @@ class VettingWorkspace(QFrame):
                 pass
 
         # Sort: same as causative — combined_score if available, else move_adr
-        if has_entry_scores:
-            signals.sort(key=lambda x: x.get("combined_score") or 0, reverse=True)
-        else:
-            signals.sort(key=lambda x: x.get("move_adr") or 0, reverse=True)
         self._has_entry_scores = has_entry_scores
         self._signals = signals
-        self._apply_filter()
-        self._update_stats()
+        self._style_vet_sort_btns()
+        self._sort_and_refresh()
 
     def _apply_filter(self):
         """Filter signals based on checkbox state."""
@@ -3012,10 +3041,8 @@ class VettingWorkspace(QFrame):
         self._filter_checks["unvetted"].setText("U %d" % n_unvetted)
         self._filter_checks["no"].setText("N %d" % n_no)
 
-        if getattr(self, "_has_entry_scores", False):
-            sort_mode = "by score"
-        else:
-            sort_mode = "by ADR"
+        sort_names = {"adr": "by ADR", "entry": "by entry candle", "combined": "by combined"}
+        sort_mode = sort_names.get(getattr(self, "_vet_sort", "combined"), "by combined")
         self._stats_label.setText(
             "%d signals  ·  %d yes  ·  %d no  ·  %d unvetted  ·  sorted %s" % (
                 total, n_yes, n_no, n_unvetted, sort_mode)
