@@ -2488,6 +2488,7 @@ class AiReviewThread(QThread):
         self._pid = pending_id
 
     def run(self):
+        print("AI REVIEW THREAD: starting for %s %s" % (self._ticker, self._entry))
         prompt = _REVIEW_PROMPTS.get(self._setup)
         if not prompt:
             self._store("REJECT", "No review prompt for setup: %s" % self._setup)
@@ -3678,14 +3679,17 @@ class ScanPerfectWindow(QMainWindow):
             if not row:
                 return
             pid, setup, ticker, entry = row[0], row[1], row[2], row[3]
-        except Exception:
+        except Exception as e:
+            print("AI REVIEW: DB error: %s" % e)
             return
         print("AI REVIEW: %s %s (id=%d) — rendering chart..." % (ticker, entry, pid))
         # Render chart to temp PNG (main thread, fast)
         tmp = os.path.join(str(REPO_ROOT / "data"), "_review_%d.png" % pid)
         try:
             ok = _render_chart_png(ticker, entry, tmp)
-        except Exception:
+            print("AI REVIEW: render ok=%s, file exists=%s" % (ok, os.path.exists(tmp)))
+        except Exception as e:
+            print("AI REVIEW: render error: %s" % e)
             ok = False
         if not ok:
             # Can't render — mark as reviewed with error
