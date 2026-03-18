@@ -2536,20 +2536,9 @@ class VettingWorkspace(QFrame):
         tb_lay.addWidget(self._stats_label)
         tb_lay.addStretch()
 
-        # Sort buttons
-        self._vet_sort_btns = {}
-        for sort_key, sort_label in [("adr", "ADR"), ("entry", "ENTRY"), ("combined", "COMBINED")]:
-            btn = QPushButton(sort_label)
-            btn.setFixedHeight(20)
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda checked, k=sort_key: self._set_vet_sort(k))
-            tb_lay.addWidget(btn)
-            self._vet_sort_btns[sort_key] = btn
-        self._style_vet_sort_btns()
-
         tb_lay.addSpacing(8)
         # Keyboard hints
-        hints = QLabel("↑↓ navigate · 1 yes · 2 no · 3 skip · click = entry · Ctrl+wheel zoom")
+        hints = QLabel("↑↓ navigate · 1 yes · 2 no · 3 skip · click = entry · wheel zoom")
         hints.setStyleSheet(
             "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
             "color:%s; background:transparent; border:none;" % C["text_muted"]
@@ -2596,6 +2585,16 @@ class VettingWorkspace(QFrame):
             fb_lay.addWidget(cb)
             self._filter_checks[key] = cb
         fb_lay.addStretch()
+        # Sort buttons
+        self._vet_sort_btns = {}
+        for sort_key, sort_label in [("adr", "ADR"), ("entry", "ENTRY"), ("combined", "COMBINED")]:
+            btn = QPushButton(sort_label)
+            btn.setFixedHeight(18)
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked, k=sort_key: self._set_vet_sort(k))
+            fb_lay.addWidget(btn)
+            self._vet_sort_btns[sort_key] = btn
+        self._style_vet_sort_btns()
         left_lay.addWidget(fbar)
 
         # Signal list
