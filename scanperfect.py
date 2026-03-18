@@ -1743,6 +1743,7 @@ class VettingWorkspace(QFrame):
         self._current_idx = 0
         self._candle_cache = {}  # "ticker_date" -> candle list
         self._preload_thread = None
+        self._has_entry_scores = False
         self.setStyleSheet(
             "VettingWorkspace { background:%s; border:1px solid %s; }" % (C["surface"], C["border"])
         )
@@ -1969,10 +1970,48 @@ class VettingWorkspace(QFrame):
                 "classification": s.get("classification", ""),
                 "verdict": verdict,
                 "entry_date": vd.get("entry_date"),
+                "combined_score": None,
+                "entry_candle_score": None,
+                "entry_candle_date": None,
+                "entry_candle_pct": None,
+                "move_adr_pct": None,
             })
 
-        # Sort by move_adr descending
-        signals.sort(key=lambda x: x.get("move_adr") or 0, reverse=True)
+        # Join entry candle scores if available
+        entry_scores_path = REPO_ROOT / "local_runner" / "cache" / ("entry_scores_%s.json" % setup)
+        has_entry_scores = False
+        if entry_scores_path.exists():
+            try:
+                es_data = json.loads(entry_scores_path.read_text())
+                scored_list = es_data.get("scored_signals", [])
+                # Build lookup: ticker_signaldate -> score dict
+                score_lookup = {}
+                for sc in scored_list:
+                    sk = "%s_%s" % (sc.get("ticker", ""), sc.get("signal_date", ""))
+                    score_lookup[sk] = sc
+                n_joined = 0
+                for sig in signals:
+                    sk = "%s_%s" % (sig["ticker"], sig["signal_date"])
+                    sc = score_lookup.get(sk)
+                    if sc:
+                        sig["combined_score"] = sc.get("combined_score")
+                        sig["entry_candle_score"] = sc.get("entry_candle_score")
+                        sig["entry_candle_date"] = sc.get("entry_candle_date")
+                        sig["entry_candle_pct"] = sc.get("entry_candle_pct")
+                        sig["move_adr_pct"] = sc.get("move_adr_pct")
+                        n_joined += 1
+                if n_joined > 0:
+                    has_entry_scores = True
+                    print("Entry scores joined: %d/%d signals" % (n_joined, len(signals)))
+            except Exception as e:
+                print("WARNING: Failed to load entry scores: %s" % e)
+
+        # Sort: by combined_score if available, else by move_adr
+        if has_entry_scores:
+            signals.sort(key=lambda x: x.get("combined_score") or 0, reverse=True)
+        else:
+            signals.sort(key=lambda x: x.get("move_adr") or 0, reverse=True)
+        self._has_entry_scores = has_entry_scores
         self._signals = signals
         self._apply_filter()
         self._update_stats()
@@ -2039,15 +2078,35 @@ class VettingWorkspace(QFrame):
         r1.addWidget(adr)
         lay.addLayout(r1)
 
-        # Row 2: date + verdict
+        # Row 2: date + combined score (if available) + verdict
         r2 = QHBoxLayout()
-        r2.setSpacing(0)
+        r2.setSpacing(4)
         dt = QLabel(sig["signal_date"])
         dt.setStyleSheet(
             "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
             "color:%s; background:transparent; border:none;" % C["text_muted"]
         )
         r2.addWidget(dt)
+        # Entry candle score badge
+        cs = sig.get("combined_score")
+        if cs is not None:
+            # Color gradient: low=dim, high=bright amber
+            if cs >= 0.7:
+                sc_color = C["amber"]
+            elif cs >= 0.4:
+                sc_color = C["text_dim"]
+            else:
+                sc_color = C["text_muted"]
+            sc_label = QLabel("%.0f%%" % (cs * 100))
+            sc_label.setStyleSheet(
+                "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
+                "font-weight:700; color:%s; background:transparent; border:none;" % sc_color
+            )
+            sc_label.setToolTip(
+                "Combined score: entry candle %.0f%% × move ADR %.0f%%" % (
+                    (sig.get("entry_candle_pct") or 0) * 100,
+                    (sig.get("move_adr_pct") or 0) * 100))
+            r2.addWidget(sc_label)
         r2.addStretch()
         v = sig.get("verdict")
         if v:
@@ -2078,8 +2137,10 @@ class VettingWorkspace(QFrame):
         self._filter_checks["unvetted"].setText("U %d" % n_unvetted)
         self._filter_checks["no"].setText("N %d" % n_no)
 
+        sort_mode = "by score" if getattr(self, "_has_entry_scores", False) else "by ADR"
         self._stats_label.setText(
-            "%d signals  ·  %d yes  ·  %d no  ·  %d unvetted" % (total, n_yes, n_no, n_unvetted)
+            "%d signals  ·  %d yes  ·  %d no  ·  %d unvetted  ·  sorted %s" % (
+                total, n_yes, n_no, n_unvetted, sort_mode)
         )
 
     def _on_filter_changed(self):
@@ -2129,6 +2190,12 @@ class VettingWorkspace(QFrame):
             parts.append("Move: +%.1f ADR" % sig["move_adr"])
         if sig.get("adr_at_signal"):
             parts.append("ADR: %.2f" % sig["adr_at_signal"])
+        cs = sig.get("combined_score")
+        if cs is not None:
+            parts.append("Score: %.0f%%" % (cs * 100))
+            ecd = sig.get("entry_candle_date")
+            if ecd:
+                parts.append("Best entry: %s" % ecd)
         parts.append("Entry = click chart")
         self._meta_label.setText("  ·  ".join(parts))
 
@@ -2162,17 +2229,13 @@ class VettingWorkspace(QFrame):
             self._entry_label.setText("Entry: %s" % date_str)
 
     def _do_verdict(self, verdict):
-        print("[VETTING] _do_verdict called: verdict=%s, idx=%d, filtered=%d" % (
-            verdict, self._current_idx, len(self._filtered)))
         if not self._filtered or self._current_idx >= len(self._filtered):
-            print("[VETTING] early return: no filtered signals or idx out of range")
             return
         sig = self._filtered[self._current_idx]
-        print("[VETTING] signal: %s %s, current verdict=%s" % (
-            sig["ticker"], sig["signal_date"], sig.get("verdict")))
 
         if verdict == "skip":
             self._advance_to_next()
+            self.setFocus()
             return
 
         if verdict == "yes":
@@ -2234,6 +2297,7 @@ class VettingWorkspace(QFrame):
         self._update_stats()
         self._apply_filter()
         self._advance_to_next()
+        self.setFocus()  # re-grab focus so arrow keys work
 
     def _advance_to_next(self):
         """Advance to next unvetted signal, or just next signal."""
