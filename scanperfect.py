@@ -2146,9 +2146,34 @@ class VettingWorkspace(QFrame):
             self._apply_verdict(sig, decisions, rejected_set)
             signals.append(sig)
 
-        # Sort same as causative — these are survivors, not ranked by EV
-        signals.sort(key=lambda x: x.get("move_adr") or 0, reverse=True)
-        self._has_entry_scores = False
+        # Join entry candle scores if available (same as causative)
+        entry_scores_path = REPO_ROOT / "local_runner" / "cache" / ("entry_scores_%s.json" % setup)
+        has_entry_scores = False
+        if entry_scores_path.exists():
+            try:
+                es_data = json.loads(entry_scores_path.read_text())
+                score_lookup = {
+                    "%s_%s" % (sc.get("ticker", ""), sc.get("signal_date", "")): sc
+                    for sc in es_data.get("scored_signals", [])
+                }
+                for sig in signals:
+                    sc = score_lookup.get("%s_%s" % (sig["ticker"], sig["signal_date"]))
+                    if sc:
+                        sig["combined_score"] = sc.get("combined_score")
+                        sig["entry_candle_score"] = sc.get("entry_candle_score")
+                        sig["entry_candle_date"] = sc.get("entry_candle_date")
+                        sig["entry_candle_pct"] = sc.get("entry_candle_pct")
+                        sig["move_adr_pct"] = sc.get("move_adr_pct")
+                        has_entry_scores = True
+            except Exception:
+                pass
+
+        # Sort: same as causative — combined_score if available, else move_adr
+        if has_entry_scores:
+            signals.sort(key=lambda x: x.get("combined_score") or 0, reverse=True)
+        else:
+            signals.sort(key=lambda x: x.get("move_adr") or 0, reverse=True)
+        self._has_entry_scores = has_entry_scores
         self._signals = signals
         self._apply_filter()
         self._update_stats()
@@ -2242,6 +2267,14 @@ class VettingWorkspace(QFrame):
                 qs_lbl.setStyleSheet("%s font-size:9px; color:%s;"
                                      "background:transparent; border:none;" % (mono, C["text_muted"]))
                 r2.addWidget(qs_lbl)
+            # Entry candle score badge (shared across modes)
+            cs = sig.get("combined_score")
+            if cs is not None:
+                sc_color = C["amber"] if cs >= 0.7 else C["text_dim"] if cs >= 0.4 else C["text_muted"]
+                sc_lbl = QLabel("%.0f%%" % (cs * 100))
+                sc_lbl.setStyleSheet("%s font-size:9px; font-weight:700; color:%s;"
+                                     "background:transparent; border:none;" % (mono, sc_color))
+                r2.addWidget(sc_lbl)
         else:
             # Exit bar count
             eb = sig.get("exit_bar")
@@ -2287,9 +2320,7 @@ class VettingWorkspace(QFrame):
         self._filter_checks["unvetted"].setText("U %d" % n_unvetted)
         self._filter_checks["no"].setText("N %d" % n_no)
 
-        if self._mode == "correlative":
-            sort_mode = "by ADR (correlative)"
-        elif getattr(self, "_has_entry_scores", False):
+        if getattr(self, "_has_entry_scores", False):
             sort_mode = "by score"
         else:
             sort_mode = "by ADR"
