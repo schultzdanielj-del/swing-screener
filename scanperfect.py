@@ -2501,8 +2501,10 @@ class AiReviewThread(QThread):
                 found = shutil.which("claude")
                 if found:
                     claude_cmd = found
+            full_prompt = "Look at the file %s and review the chart.\n\n%s" % (
+                self._png.replace("\\", "/"), prompt)
             result = subprocess.run(
-                [claude_cmd, "-p", prompt, self._png],
+                [claude_cmd, "-p", full_prompt],
                 capture_output=True, text=True, timeout=120,
             )
             output = result.stdout.strip()
