@@ -1151,8 +1151,7 @@ class FlowchartCanvas(QWidget):
 
 
 class WorkspaceDetail(QFrame):
-    """Expandable workspace for DO nodes (Examples, Scan Tuning).
-    Placeholder content for now — will be filled with full workspace UI."""
+    """Expandable workspace for DO nodes. Placeholder — title shown by flowchart header."""
 
     def __init__(self, node_id, parent=None):
         super().__init__(parent)
@@ -1165,17 +1164,9 @@ class WorkspaceDetail(QFrame):
         lay.setContentsMargins(20, 16, 20, 16)
         lay.setSpacing(10)
 
-        titles = {"examples": "Examples", "scan_tuning": "Scan Tuning"}
         descs = {
-            "examples": "Example library with chart thumbnails — coming next increment",
             "scan_tuning": "Quality score + WR threshold sliders — not yet built",
         }
-
-        header = QLabel(titles.get(node_id, node_id))
-        header.setStyleSheet(
-            "font-size:18px; font-weight:700; color:%s; background:transparent; border:none;" % C["text"]
-        )
-        lay.addWidget(header)
 
         desc = QLabel(descs.get(node_id, ""))
         desc.setStyleSheet(
@@ -1331,25 +1322,6 @@ class ExamplesWorkspace(QFrame):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
-        # ── Header: "Examples" + DTSS + count ──
-        hbar = QFrame()
-        hbar.setFixedHeight(48)
-        hbar.setStyleSheet("QFrame { background:#000; border-bottom:1px solid %s; }" % C["border"])
-        hb = QHBoxLayout(hbar)
-        hb.setContentsMargins(20, 0, 20, 0)
-        hb.setSpacing(12)
-        title = QLabel("Examples")
-        title.setStyleSheet("font-size:18px; font-weight:700; color:#fff; background:transparent; border:none;")
-        hb.addWidget(title)
-        self._sub_label = QLabel("DTSS")
-        self._sub_label.setStyleSheet("font-size:12px; color:#888; background:transparent; border:none;")
-        hb.addWidget(self._sub_label)
-        hb.addStretch()
-        self._count_label = QLabel("")
-        self._count_label.setStyleSheet("font-size:13px; color:#888; background:transparent; border:none;")
-        hb.addWidget(self._count_label)
-        lay.addWidget(hbar)
-
         # ── Scrollable body ──
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1357,8 +1329,19 @@ class ExamplesWorkspace(QFrame):
         body = QWidget()
         body.setStyleSheet("background:#000;")
         bl = QVBoxLayout(body)
-        bl.setContentsMargins(20, 16, 20, 20)
+        bl.setContentsMargins(20, 12, 20, 20)
         bl.setSpacing(16)
+
+        # Count + sub label row
+        count_row = QHBoxLayout()
+        self._sub_label = QLabel("DTSS")
+        self._sub_label.setStyleSheet("font-size:12px; color:#888; background:transparent; border:none;")
+        count_row.addWidget(self._sub_label)
+        count_row.addStretch()
+        self._count_label = QLabel("")
+        self._count_label.setStyleSheet("font-size:13px; color:#888; background:transparent; border:none;")
+        count_row.addWidget(self._count_label)
+        bl.addLayout(count_row)
 
         # ── Top row: Add Examples (left) + Setup Description (right) ──
         top_row = QHBoxLayout()
