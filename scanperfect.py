@@ -1303,7 +1303,7 @@ class MiniChartWidget(QWidget):
             for i, c in enumerate(candles):
                 if c["date"] == self._exit_date:
                     ex = cx(i)
-                    alpha = 60 if has_profit else 120
+                    alpha = 80 if has_profit else 180
                     p.setPen(QPen(QColor(232, 167, 53, alpha), 1))
                     p.drawLine(int(ex), PAD, int(ex), h - PAD)
                     break
@@ -1683,6 +1683,39 @@ class ExamplesWorkspace(QFrame):
             card = self._make_card(ex, "banked")
             self._grid_lay.addWidget(card, i // cols, i % cols)
 
+        # Defer chart loading — process in batches via QTimer so UI appears instantly
+        QTimer.singleShot(50, self._load_deferred_charts)
+
+    def _load_deferred_charts(self):
+        """Load candle data for all deferred MiniChartWidgets."""
+        charts = self._find_deferred_charts(self._grid_w)
+        charts += self._find_deferred_charts(self._pend_area)
+        for chart in charts:
+            tk = getattr(chart, "_deferred_ticker", "")
+            ed = getattr(chart, "_deferred_entry", "")
+            sd = getattr(chart, "_deferred_signal", "")
+            if not tk:
+                continue
+            candles = _prepare_candles(tk, ed, lookback=80, forward=40)
+            if candles:
+                sig_key = "%s_%s" % (tk, ed)
+                exit_dt = getattr(self, "_exit_lookup", {}).get(sig_key)
+                profit_dt = getattr(self, "_profit_exit_lookup", {}).get(sig_key)
+                if not exit_dt and sd:
+                    exit_dt = getattr(self, "_exit_lookup", {}).get("%s_%s" % (tk, sd))
+                chart.set_data(candles, ed, exit_date=exit_dt, profit_exit_date=profit_dt)
+            chart._deferred_ticker = ""  # mark as loaded
+
+    def _find_deferred_charts(self, parent):
+        """Find all MiniChartWidgets with deferred data under a parent."""
+        charts = []
+        if parent is None:
+            return charts
+        for child in parent.findChildren(MiniChartWidget):
+            if getattr(child, "_deferred_ticker", ""):
+                charts.append(child)
+        return charts
+
     def _make_card(self, data, section):
         """Chart card: tall chart filling card, label row below. Matches old web UI."""
         card = QFrame()
@@ -1694,20 +1727,12 @@ class ExamplesWorkspace(QFrame):
         ticker = data.get("ticker", "")
         entry_date = data.get("entry_date", "")
 
-        # Chart — 120 bars, tall cards
+        # Chart — defer loading for speed (loaded via _load_visible_charts after grid built)
         chart = MiniChartWidget()
         chart.setMinimumHeight(180)
-        candles = _prepare_candles(ticker, entry_date, lookback=80, forward=40)
-        if candles:
-            # Look up exit dates for this example
-            sig_key = "%s_%s" % (ticker, entry_date)
-            exit_dt = getattr(self, "_exit_lookup", {}).get(sig_key)
-            profit_dt = getattr(self, "_profit_exit_lookup", {}).get(sig_key)
-            # Also try signal_date key for pending items
-            sd = data.get("signal_date", "")
-            if not exit_dt and sd:
-                exit_dt = getattr(self, "_exit_lookup", {}).get("%s_%s" % (ticker, sd))
-            chart.set_data(candles, entry_date, exit_date=exit_dt, profit_exit_date=profit_dt)
+        chart._deferred_ticker = ticker
+        chart._deferred_entry = entry_date
+        chart._deferred_signal = data.get("signal_date", "")
         cl.addWidget(chart, 1)
 
         # Label row below chart
