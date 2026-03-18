@@ -800,8 +800,8 @@ class FlowchartCanvas(QWidget):
 
             if nd["kind"] == "do":
                 # DO nodes: fill most of the visible area
-                # Vetting needs maximum space for chart workspace
-                if nid == "vetting":
+                # Vetting + Examples need maximum space
+                if nid in ("vetting", "examples"):
                     self._anim_target_h = max(500, vis_h - 40)
                     self._anim_target_w = max(400, vis_w - nw - 40)
                 else:
@@ -856,7 +856,7 @@ class FlowchartCanvas(QWidget):
                 x, y, w, h = self._rects[nid]
                 # Vetting gets a thin header (just enough to click-collapse)
                 # Other nodes use the full base card height as header
-                header_h = 32 if nid == "vetting" else self._nh
+                header_h = 32 if nid in ("vetting", "examples") else self._nh
                 widget.setGeometry(int(x + 1), int(y + header_h), int(w - 2), int(h - header_h - 1))
                 widget.setVisible(True)
                 widget.raise_()
@@ -1188,6 +1188,514 @@ class WorkspaceDetail(QFrame):
         lay.addWidget(desc)
 
         lay.addStretch()
+
+
+# ============================================================
+# MINI CHART THUMBNAIL — simplified candlestick for grid cards
+# ============================================================
+
+class MiniChartWidget(QWidget):
+    """Small candlestick thumbnail for example grid cards."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._candles = None
+        self._entry_date = None
+        self.setMinimumSize(80, 50)
+
+    def set_data(self, candles, entry_date):
+        self._candles = candles
+        self._entry_date = entry_date
+        self.update()
+
+    def paintEvent(self, ev):
+        if not self._candles:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        p.fillRect(0, 0, w, h, QColor("#000000"))
+
+        candles = self._candles
+        n = len(candles)
+        if n == 0:
+            p.end()
+            return
+
+        cw = w / n
+        bw = max(1, cw * 0.6)
+        prices = []
+        for c in candles:
+            prices.extend([c["high"], c["low"]])
+        p_min = min(prices) * 0.998
+        p_max = max(prices) * 1.002
+        p_range = p_max - p_min
+        if p_range < 0.001:
+            p_range = 1.0
+
+        def py(price):
+            return int(h * (1 - (price - p_min) / p_range))
+
+        def cx(i):
+            return i * cw + cw / 2
+
+        # Entry marker
+        for i, c in enumerate(candles):
+            if c["date"] == self._entry_date:
+                x = cx(i)
+                p.setPen(QPen(QColor(255, 255, 255, 60), 1, Qt.DashLine))
+                p.drawLine(int(x), 0, int(x), h)
+                break
+
+        # Candles
+        for i, c in enumerate(candles):
+            x = cx(i)
+            is_up = c["close"] >= c["open"]
+            color = QColor("#4ade80" if is_up else "#f87171")
+            p.setPen(QPen(color, 1))
+            p.drawLine(int(x), py(c["high"]), int(x), py(c["low"]))
+            bt = py(max(c["open"], c["close"]))
+            bb = py(min(c["open"], c["close"]))
+            bh = max(1, bb - bt)
+            if is_up:
+                p.setPen(QPen(color, 1))
+                p.setBrush(Qt.NoBrush)
+            else:
+                p.setPen(Qt.NoPen)
+                p.setBrush(color)
+            p.drawRect(QRectF(x - bw / 2, bt, bw, bh))
+        p.end()
+
+
+# ============================================================
+# EXAMPLES WORKSPACE — example library + pending review
+# ============================================================
+
+class ExamplesWorkspace(QFrame):
+    """Full examples workspace: banked example grid + pending review section."""
+
+    def __init__(self, node_id="examples", parent=None):
+        super().__init__(parent)
+        self.node_id = node_id
+        self._setup = "dtss"
+        self._sort = "adr"  # adr, ticker, date
+        self._examples = []
+        self._pending = []
+        self._expanded_card = None  # (section, idx) if a card is expanded
+        self.setStyleSheet(
+            "ExamplesWorkspace { background:%s; border:1px solid %s; }" % (C["surface"], C["border"])
+        )
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        # ── Top bar: counts + sort buttons ──
+        top_bar = QFrame()
+        top_bar.setFixedHeight(32)
+        top_bar.setStyleSheet(
+            "QFrame { background:#0A0A0A; border-bottom:1px solid %s; }" % C["border"]
+        )
+        tb_lay = QHBoxLayout(top_bar)
+        tb_lay.setContentsMargins(12, 0, 12, 0)
+        tb_lay.setSpacing(12)
+
+        self._count_label = QLabel("")
+        self._count_label.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
+            "color:%s; background:transparent; border:none;" % C["text_dim"]
+        )
+        tb_lay.addWidget(self._count_label)
+        tb_lay.addStretch()
+
+        # Sort buttons
+        self._sort_btns = {}
+        for key, label in [("adr", "ADR Move ↓"), ("ticker", "Ticker"), ("date", "Date")]:
+            btn = QPushButton(label)
+            btn.setFixedHeight(22)
+            btn.setCheckable(True)
+            btn.setChecked(key == "adr")
+            btn.clicked.connect(lambda checked, k=key: self._set_sort(k))
+            tb_lay.addWidget(btn)
+            self._sort_btns[key] = btn
+        self._update_sort_btn_styles()
+        lay.addWidget(top_bar)
+
+        # ── Scrollable body ──
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        body = QWidget()
+        self._body_lay = QVBoxLayout(body)
+        self._body_lay.setContentsMargins(12, 12, 12, 12)
+        self._body_lay.setSpacing(16)
+
+        # Banked examples grid container
+        self._banked_grid = QWidget()
+        self._banked_grid_lay = None
+        self._body_lay.addWidget(self._banked_grid)
+
+        # Pending section
+        self._pending_frame = QFrame()
+        self._pending_frame.setStyleSheet(
+            "QFrame { border-top:1px solid %s; }" % C["border"]
+        )
+        pf_lay = QVBoxLayout(self._pending_frame)
+        pf_lay.setContentsMargins(0, 12, 0, 0)
+        pf_lay.setSpacing(8)
+
+        # Pending header
+        ph_row = QHBoxLayout()
+        self._pending_label = QLabel("Pending Review")
+        self._pending_label.setStyleSheet(
+            "font-size:11px; font-weight:600; letter-spacing:1px; color:%s;"
+            "background:transparent; border:none; text-transform:uppercase;" % C["text_muted"]
+        )
+        ph_row.addWidget(self._pending_label)
+        ph_row.addStretch()
+        self._approve_all_btn = QPushButton("APPROVE ALL")
+        self._approve_all_btn.setFixedHeight(22)
+        self._approve_all_btn.setStyleSheet(
+            "QPushButton { background:transparent; color:%s; border:1px solid %s;"
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+            "font-weight:700; padding:2px 10px; }"
+            "QPushButton:hover { background:%s; color:#000; }" % (C["green"], C["green"], C["green"])
+        )
+        self._approve_all_btn.clicked.connect(self._approve_all)
+        ph_row.addWidget(self._approve_all_btn)
+        pf_lay.addLayout(ph_row)
+
+        self._pending_grid = QWidget()
+        self._pending_grid_lay = None
+        pf_lay.addWidget(self._pending_grid)
+        self._body_lay.addWidget(self._pending_frame)
+
+        # Expanded chart area (hidden by default)
+        self._expanded_chart = CandlestickChart()
+        self._expanded_chart.setFixedHeight(400)
+        self._expanded_chart.setVisible(False)
+        self._body_lay.addWidget(self._expanded_chart)
+
+        self._body_lay.addStretch()
+        scroll.setWidget(body)
+        lay.addWidget(scroll, 1)
+
+    def set_setup(self, setup):
+        self._setup = setup
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self._load_data()
+
+    def _set_sort(self, key):
+        self._sort = key
+        self._update_sort_btn_styles()
+        self._rebuild_banked_grid()
+
+    def _update_sort_btn_styles(self):
+        for key, btn in self._sort_btns.items():
+            active = key == self._sort
+            btn.setChecked(active)
+            if active:
+                btn.setStyleSheet(
+                    "QPushButton { background:%s; color:#000; border:1px solid %s;"
+                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+                    "font-weight:700; padding:2px 10px; }" % (C["text_dim"], C["text_dim"])
+                )
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background:transparent; color:%s; border:1px solid %s;"
+                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+                    "font-weight:600; padding:2px 10px; }"
+                    "QPushButton:hover { background:%s; }" % (C["text_muted"], C["border"], C["surface2"])
+                )
+
+    def _load_data(self):
+        """Load banked examples and pending from SQLite."""
+        setup = self._setup
+        self._examples = []
+        self._pending = []
+        try:
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT id, ticker, entry_date, chart_date FROM examples WHERE setup_type=? ORDER BY ticker",
+                    (setup,)
+                ).fetchall()
+            self._examples = [dict(r) for r in rows]
+        except Exception:
+            pass
+        try:
+            with get_db() as db:
+                rows = db.execute(
+                    "SELECT id, ticker, signal_date, entry_date, status, ai_verdict, ai_reasoning "
+                    "FROM pending_examples WHERE setup_type=? ORDER BY created_at DESC",
+                    (setup,)
+                ).fetchall()
+            self._pending = [dict(r) for r in rows]
+        except Exception:
+            pass
+
+        self._update_counts()
+        self._rebuild_banked_grid()
+        self._rebuild_pending_grid()
+
+    def _update_counts(self):
+        ne = len(self._examples)
+        np_ = len(self._pending)
+        parts = ["%d examples" % ne]
+        if np_ > 0:
+            parts.append("%d pending" % np_)
+        if ne < 20:
+            parts.append("need %d more" % (20 - ne))
+        self._count_label.setText("  ·  ".join(parts))
+        self._pending_frame.setVisible(np_ > 0)
+
+    def _sort_examples(self):
+        exs = list(self._examples)
+        if self._sort == "adr":
+            # No adrMove in local DB, sort by ticker as fallback
+            exs.sort(key=lambda x: x.get("ticker", ""))
+        elif self._sort == "date":
+            exs.sort(key=lambda x: x.get("entry_date", ""), reverse=True)
+        else:
+            exs.sort(key=lambda x: x.get("ticker", ""))
+        return exs
+
+    def _rebuild_banked_grid(self):
+        """Rebuild the banked examples grid."""
+        # Clear old grid
+        if self._banked_grid_lay:
+            while self._banked_grid_lay.count():
+                item = self._banked_grid_lay.takeAt(0)
+                w = item.widget()
+                if w:
+                    w.deleteLater()
+        from PySide6.QtWidgets import QGridLayout
+        self._banked_grid_lay = QGridLayout(self._banked_grid) if not self._banked_grid_lay else self._banked_grid_lay
+
+        # Clear existing layout
+        old_lay = self._banked_grid.layout()
+        if old_lay and old_lay != self._banked_grid_lay:
+            # Remove old layout
+            QWidget().setLayout(old_lay)
+
+        if not self._banked_grid.layout():
+            self._banked_grid.setLayout(self._banked_grid_lay)
+
+        self._banked_grid_lay.setSpacing(8)
+        self._banked_grid_lay.setContentsMargins(0, 0, 0, 0)
+
+        exs = self._sort_examples()
+        cols = 4
+        for i, ex in enumerate(exs):
+            card = self._make_example_card(ex, "banked", i)
+            self._banked_grid_lay.addWidget(card, i // cols, i % cols)
+
+        if not exs:
+            lbl = QLabel("No examples yet. Vet signals to add them.")
+            lbl.setStyleSheet(
+                "font-size:12px; color:%s; background:transparent; border:none; padding:30px;" % C["text_muted"]
+            )
+            lbl.setAlignment(Qt.AlignCenter)
+            self._banked_grid_lay.addWidget(lbl, 0, 0, 1, cols)
+
+    def _rebuild_pending_grid(self):
+        """Rebuild the pending review grid."""
+        if self._pending_grid_lay:
+            while self._pending_grid_lay.count():
+                item = self._pending_grid_lay.takeAt(0)
+                w = item.widget()
+                if w:
+                    w.deleteLater()
+        from PySide6.QtWidgets import QGridLayout
+        if not self._pending_grid.layout():
+            self._pending_grid_lay = QGridLayout()
+            self._pending_grid.setLayout(self._pending_grid_lay)
+        else:
+            self._pending_grid_lay = self._pending_grid.layout()
+
+        self._pending_grid_lay.setSpacing(8)
+        self._pending_grid_lay.setContentsMargins(0, 0, 0, 0)
+
+        cols = 4
+        for i, pend in enumerate(self._pending):
+            card = self._make_example_card(pend, "pending", i)
+            self._pending_grid_lay.addWidget(card, i // cols, i % cols)
+
+        self._pending_label.setText("Pending Review (%d)" % len(self._pending))
+        self._approve_all_btn.setVisible(len(self._pending) > 0)
+
+    def _make_example_card(self, data, section, idx):
+        """Create a card widget for an example or pending item."""
+        card = QFrame()
+        card.setFixedHeight(140)
+        card.setStyleSheet(
+            "QFrame { background:#0A0A0A; border:1px solid #2A2A2A; }"
+            "QFrame:hover { background:#111; }"
+        )
+        card.setCursor(Qt.PointingHandCursor)
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(0, 0, 0, 0)
+        card_lay.setSpacing(0)
+
+        # Chart area
+        chart = MiniChartWidget()
+        chart_lay.addWidget(chart, 1)
+
+        # Load candles for thumbnail
+        ticker = data.get("ticker", "")
+        entry_date = data.get("entry_date", "")
+        candles = _prepare_candles(ticker, entry_date, lookback=30, forward=30)
+        if candles:
+            chart.set_data(candles, entry_date)
+
+        # Status tag for pending
+        if section == "pending":
+            ai = data.get("ai_verdict")
+            if ai == "APPROVE":
+                tag_text, tag_color = "APPROVE", C["green"]
+            elif ai == "REJECT":
+                tag_text, tag_color = "REJECT", C["red"]
+            else:
+                tag_text, tag_color = "PENDING", C["text_muted"]
+            # Overlay tag — we'll add it to the label bar instead
+
+        # Bottom label bar
+        label_bar = QFrame()
+        label_bar.setFixedHeight(28)
+        label_bar.setStyleSheet(
+            "QFrame { background:#000; border-top:1px solid #1A1A1A; }"
+        )
+        lb_lay = QHBoxLayout(label_bar)
+        lb_lay.setContentsMargins(6, 0, 6, 0)
+        lb_lay.setSpacing(4)
+
+        mono = "font-family:'JetBrains Mono','Consolas',monospace;"
+        tk_lbl = QLabel(ticker)
+        tk_lbl.setStyleSheet("%s font-size:11px; font-weight:600; color:%s;"
+                             "background:transparent; border:none;" % (mono, C["text"]))
+        lb_lay.addWidget(tk_lbl)
+
+        dt_lbl = QLabel(entry_date)
+        dt_lbl.setStyleSheet("%s font-size:10px; color:%s;"
+                             "background:transparent; border:none;" % (mono, C["text_muted"]))
+        lb_lay.addWidget(dt_lbl)
+        lb_lay.addStretch()
+
+        if section == "pending":
+            ai = data.get("ai_verdict")
+            if ai == "APPROVE":
+                tag_color = C["green"]
+            elif ai == "REJECT":
+                tag_color = C["red"]
+            else:
+                tag_color = C["text_muted"]
+            tag_text = (ai or "PENDING")
+            tag_lbl = QLabel(tag_text)
+            tag_lbl.setStyleSheet(
+                "%s font-size:9px; font-weight:700; color:%s;"
+                "background:transparent; border:none;" % (mono, tag_color)
+            )
+            lb_lay.addWidget(tag_lbl)
+
+            # Action buttons
+            approve_btn = QPushButton("✓")
+            approve_btn.setFixedSize(22, 22)
+            approve_btn.setStyleSheet(
+                "QPushButton { background:transparent; color:%s; border:1px solid %s;"
+                "font-size:12px; font-weight:700; }"
+                "QPushButton:hover { background:%s; color:#000; }" % (C["green"], C["green"], C["green"])
+            )
+            approve_btn.setToolTip("Approve — promote to examples")
+            approve_btn.clicked.connect(lambda checked, d=data: self._approve_one(d))
+            lb_lay.addWidget(approve_btn)
+
+            reject_btn = QPushButton("✗")
+            reject_btn.setFixedSize(22, 22)
+            reject_btn.setStyleSheet(
+                "QPushButton { background:transparent; color:%s; border:1px solid %s;"
+                "font-size:12px; font-weight:700; }"
+                "QPushButton:hover { background:%s; color:#fff; }" % (C["red"], C["red"], C["red"])
+            )
+            reject_btn.setToolTip("Reject — move to rejected signals")
+            reject_btn.clicked.connect(lambda checked, d=data: self._reject_one(d))
+            lb_lay.addWidget(reject_btn)
+
+        elif section == "banked":
+            del_btn = QPushButton("×")
+            del_btn.setFixedSize(22, 22)
+            del_btn.setStyleSheet(
+                "QPushButton { background:transparent; color:%s; border:1px solid %s;"
+                "font-size:14px; font-weight:700; }"
+                "QPushButton:hover { background:%s; color:#fff; }" % (C["text_muted"], C["border"], C["red"])
+            )
+            del_btn.setToolTip("Remove example")
+            del_btn.clicked.connect(lambda checked, d=data: self._delete_example(d))
+            lb_lay.addWidget(del_btn)
+
+        card_lay.addWidget(label_bar)
+        return card
+
+    def _approve_one(self, pend):
+        """Approve a pending example — promote to examples table."""
+        try:
+            with get_db() as db:
+                ticker = pend["ticker"]
+                entry_date = pend["entry_date"]
+                if not db.execute(
+                    "SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                    (self._setup, ticker, entry_date)
+                ).fetchone():
+                    db.execute(
+                        "INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
+                        (self._setup, ticker, entry_date, entry_date)
+                    )
+                db.execute("DELETE FROM pending_examples WHERE id=?", (pend["id"],))
+        except Exception as e:
+            print("Approve error: %s" % e)
+        self._load_data()
+
+    def _reject_one(self, pend):
+        """Reject a pending example — move to rejected_signals."""
+        try:
+            with get_db() as db:
+                db.execute(
+                    "INSERT OR IGNORE INTO rejected_signals (setup_type, ticker, signal_date) VALUES (?,?,?)",
+                    (self._setup, pend["ticker"], pend.get("signal_date", pend.get("entry_date", "")))
+                )
+                db.execute("DELETE FROM pending_examples WHERE id=?", (pend["id"],))
+        except Exception as e:
+            print("Reject error: %s" % e)
+        self._load_data()
+
+    def _approve_all(self):
+        """Approve all pending examples."""
+        try:
+            with get_db() as db:
+                for pend in self._pending:
+                    ticker = pend["ticker"]
+                    entry_date = pend["entry_date"]
+                    if not db.execute(
+                        "SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                        (self._setup, ticker, entry_date)
+                    ).fetchone():
+                        db.execute(
+                            "INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
+                            (self._setup, ticker, entry_date, entry_date)
+                        )
+                    db.execute("DELETE FROM pending_examples WHERE id=?", (pend["id"],))
+        except Exception as e:
+            print("Approve all error: %s" % e)
+        self._load_data()
+
+    def _delete_example(self, ex):
+        """Delete a banked example."""
+        try:
+            with get_db() as db:
+                db.execute("DELETE FROM examples WHERE id=?", (ex["id"],))
+        except Exception as e:
+            print("Delete error: %s" % e)
+        self._load_data()
 
 
 # ============================================================
@@ -2571,6 +3079,8 @@ class PipelineTab(QWidget):
             elif nd["kind"] == "do":
                 if nd["id"] == "vetting":
                     det = VettingWorkspace(nd["id"])
+                elif nd["id"] == "examples":
+                    det = ExamplesWorkspace(nd["id"])
                 else:
                     det = WorkspaceDetail(nd["id"])
                 self._canvas.add_detail_widget(nd["id"], det)
