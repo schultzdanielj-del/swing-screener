@@ -1540,7 +1540,7 @@ class ExamplesWorkspace(QFrame):
 
         # Chart area
         chart = MiniChartWidget()
-        chart_lay.addWidget(chart, 1)
+        card_lay.addWidget(chart, 1)
 
         # Load candles for thumbnail
         ticker = data.get("ticker", "")
