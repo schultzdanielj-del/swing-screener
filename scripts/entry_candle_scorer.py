@@ -1,9 +1,9 @@
 """
-Entry Candle Scorer — Standalone vetting utility.
+Entry Candle Scorer — Post-refinement pipeline step.
 
 Scores the refinement winner pile by how similar each signal's forward window
-bars are to validated example entry candles. Not a pipeline step — a vetting
-tool you run on demand to rank-order charts for review.
+bars are to validated example entry candles. Runs automatically after
+refinement grind; output consumed by vetting workspace for sort ordering.
 
 Usage:
     python scripts/entry_candle_scorer.py --setup dtss
@@ -14,18 +14,17 @@ import sys
 import json
 import glob
 import argparse
+import sqlite3
 import numpy as np
-import requests
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
+DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
 
 from expr_cache_builder import ExprSeriesCache
-
-API_BASE = "https://web-production-e3025.up.railway.app"
 
 # Minimum fraction of examples that must have a valid value for an expression
 # to be included in the centroid. Below this, the expression is NaN'd out.
@@ -40,11 +39,22 @@ def build_entry_candle_centroid(setup_type, expr_cache):
                   Expressions with < MIN_VALID_FRACTION coverage are set to NaN.
         n_examples_used: how many examples had valid expr cache lookups
     """
-    # ── Load examples from Railway API ──
-    print("\n  Loading examples from Railway API...")
-    resp = requests.get(f"{API_BASE}/api/examples/{setup_type}", timeout=30)
-    resp.raise_for_status()
-    examples = resp.json().get("examples", [])
+    # ── Load examples from local SQLite ──
+    print("\n  Loading examples from local DB...")
+    examples = []
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT ticker, entry_date, chart_date FROM examples WHERE setup_type=?",
+            (setup_type,)
+        ).fetchall()
+        conn.close()
+        examples = [{"ticker": r["ticker"], "entry_date": r["entry_date"],
+                      "chart_date": r["chart_date"]} for r in rows]
+    except Exception as e:
+        print(f"  ERROR loading examples: {e}")
+        return None, 0, None
     print(f"  {len(examples)} examples loaded")
 
     # ── Look up entry candle expression vectors ──
@@ -54,7 +64,7 @@ def build_entry_candle_centroid(setup_type, expr_cache):
 
     for ex in examples:
         ticker = ex.get("ticker")
-        entry_date = ex.get("entryDate", ex.get("entry_date"))
+        entry_date = ex.get("entry_date")
         if not ticker or not entry_date:
             skipped.append(f"{ticker} (no entry_date)")
             continue

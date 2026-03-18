@@ -218,6 +218,10 @@ STEP_COMMANDS = {
         sys.executable, str(LOCAL_DIR / "pyramid_grinder.py"),
         "--setup", "{setup}", "--blackout",
     ],
+    "entry_score": [
+        sys.executable, str(REPO_ROOT / "scripts" / "entry_candle_scorer.py"),
+        "--setup", "{setup}",
+    ],
     "ev_grind": [
         sys.executable, str(REPO_ROOT / "scripts" / "ev_grinder.py"),
         "--setup", "{setup}",
@@ -261,7 +265,7 @@ FLOW_NODES = [
 ]
 
 GRINDER_SUB_STEPS = {
-    "causative":   ["signal_grind", "exit_grind", "refinement_grind"],
+    "causative":   ["signal_grind", "exit_grind", "refinement_grind", "entry_score"],
     "correlative": ["ev_grind"],
     "profit_grind": [],  # future
 }
@@ -2665,6 +2669,19 @@ class ScanPerfectWindow(QMainWindow):
         self._process_lines = []
         self._process_start = None
         self._pipeline.refresh()
+
+        # Auto-chain: if this step succeeded and is part of a sub-step sequence,
+        # automatically start the next sub-step
+        if exit_code == 0:
+            for gid, subs in GRINDER_SUB_STEPS.items():
+                if sid in subs:
+                    idx = subs.index(sid)
+                    if idx + 1 < len(subs):
+                        next_step = subs[idx + 1]
+                        if det:
+                            det.append_log("\n→ Auto-starting %s..." % next_step)
+                        QTimer.singleShot(500, lambda s=next_step: self.run_pipeline_step(s))
+                    break
 
 
 # ============================================================
