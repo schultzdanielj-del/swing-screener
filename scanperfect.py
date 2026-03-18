@@ -1707,8 +1707,7 @@ class ExamplesWorkspace(QFrame):
                 continue
             candles = _prepare_candles(tk, ed, lookback=80, forward=40)
             if candles:
-                # Find exit_date: match the filtered signal for this ticker
-                # whose signal date is closest to (and <= ) the entry date
+                # Try filtered file first
                 exit_dt = None
                 sigs_for_tk = getattr(self, "_exit_by_ticker", {}).get(tk, [])
                 best_date = None
@@ -1717,6 +1716,9 @@ class ExamplesWorkspace(QFrame):
                     if fd <= ed and (best_date is None or fd > best_date):
                         best_date = fd
                         exit_dt = fs["exit_date"]
+                # Fallback: compute exit from OHLCV using exit grinder condition
+                if not exit_dt:
+                    exit_dt = _compute_exit_date(candles, ed)
                 profit_dt = getattr(self, "_profit_exit_lookup", {}).get("%s_%s" % (tk, ed))
                 chart.set_data(candles, ed, exit_date=exit_dt, profit_exit_date=profit_dt)
             chart._deferred_ticker = ""  # mark as loaded
@@ -1946,6 +1948,41 @@ def _compute_sma(data, period):
         if len(vals) == period:
             result[i] = sum(vals) / period
     return result
+
+
+def _compute_exit_date(candles, entry_date):
+    """Find exit date by applying the DTSS exit condition to OHLCV data.
+    Exit condition: slope_xavgc21_off7_adr14 <= -1.128826
+    i.e. (EMA21[i] - EMA21[i-7]) / ADR14[i] <= -1.128826
+    Scans forward from entry bar. Returns date string or None.
+    """
+    closes = [c["close"] for c in candles]
+    ranges = [c["high"] - c["low"] for c in candles]
+    ema21 = _compute_ema(closes, 21)
+    adr14 = _compute_sma(ranges, 14)
+
+    # Find entry bar index
+    entry_idx = None
+    for i, c in enumerate(candles):
+        if c["date"] == entry_date:
+            entry_idx = i
+            break
+    if entry_idx is None:
+        return None
+
+    # Scan forward from entry
+    for i in range(entry_idx + 1, len(candles)):
+        if i < 7:
+            continue
+        e21_now = ema21[i]
+        e21_ago = ema21[i - 7]
+        adr = adr14[i]
+        if e21_now is None or e21_ago is None or adr is None or adr < 0.001:
+            continue
+        slope = (e21_now - e21_ago) / adr
+        if slope <= -1.128826:
+            return candles[i]["date"]
+    return None
 
 
 # ============================================================
