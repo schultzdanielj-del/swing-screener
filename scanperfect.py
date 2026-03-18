@@ -1683,6 +1683,7 @@ class ExamplesWorkspace(QFrame):
         """Load candle data for all deferred MiniChartWidgets."""
         charts = self._find_deferred_charts(self._grid_w)
         charts += self._find_deferred_charts(self._pend_area)
+        print("DEBUG _load_deferred_charts: %d charts found" % len(charts))
         for chart in charts:
             tk = getattr(chart, "_deferred_ticker", "")
             ed = getattr(chart, "_deferred_entry", "")
@@ -1691,6 +1692,7 @@ class ExamplesWorkspace(QFrame):
             candles = _prepare_candles(tk, ed, lookback=80, forward=40)
             if candles:
                 exit_dt = _compute_exit_date(candles, ed)
+                print("DEBUG   %s %s -> exit=%s (candles=%d)" % (tk, ed, exit_dt, len(candles)))
                 profit_dt = getattr(self, "_profit_exit_lookup", {}).get("%s_%s" % (tk, ed))
                 chart.set_data(candles, ed, exit_date=exit_dt, profit_exit_date=profit_dt)
             chart._deferred_ticker = ""  # mark as loaded
