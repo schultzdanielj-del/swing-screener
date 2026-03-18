@@ -1680,10 +1680,18 @@ class ExamplesWorkspace(QFrame):
         QTimer.singleShot(50, self._load_deferred_charts)
 
     def _load_deferred_charts(self):
-        """Load candle data for all deferred MiniChartWidgets."""
+        """Load candle data in batches of 4 so the UI stays responsive."""
         charts = self._find_deferred_charts(self._grid_w)
         charts += self._find_deferred_charts(self._pend_area)
-        for chart in charts:
+        self._deferred_queue = charts
+        self._load_next_batch()
+
+    def _load_next_batch(self):
+        """Load up to 4 charts, then schedule next batch."""
+        for _ in range(4):
+            if not self._deferred_queue:
+                return
+            chart = self._deferred_queue.pop(0)
             tk = getattr(chart, "_deferred_ticker", "")
             ed = getattr(chart, "_deferred_entry", "")
             if not tk:
@@ -1693,7 +1701,9 @@ class ExamplesWorkspace(QFrame):
                 exit_dt = _compute_exit_date(candles, ed)
                 profit_dt = getattr(self, "_profit_exit_lookup", {}).get("%s_%s" % (tk, ed))
                 chart.set_data(candles, ed, exit_date=exit_dt, profit_exit_date=profit_dt)
-            chart._deferred_ticker = ""  # mark as loaded
+            chart._deferred_ticker = ""
+        if self._deferred_queue:
+            QTimer.singleShot(16, self._load_next_batch)
 
     def _find_deferred_charts(self, parent):
         """Find all MiniChartWidgets with deferred data under a parent."""
