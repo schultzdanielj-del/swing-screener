@@ -2443,27 +2443,18 @@ class CandlestickChart(QWidget):
             self.update()
 
     def wheelEvent(self, ev):
+        ev.accept()  # consume event so QScrollArea never sees it
         if not self._candles:
             return
         delta = ev.angleDelta().y()
-        if ev.modifiers() & Qt.ControlModifier:
-            # Zoom: Ctrl+wheel changes visible count
-            if delta > 0:
-                self._visible_count = max(40, self._visible_count - 20)
-            else:
-                self._visible_count = min(len(self._candles), self._visible_count + 20)
-            # Re-center on signal
-            sig_idx = self._find_idx(self._signal_date)
-            if sig_idx is not None:
-                self._scroll_offset = max(0, sig_idx - self._visible_count // 2)
+        if delta > 0:
+            self._visible_count = max(40, self._visible_count - 20)
         else:
-            # Pan: scroll left/right
-            step = max(1, self._visible_count // 20)
-            if delta > 0:
-                self._scroll_offset = max(0, self._scroll_offset - step)
-            else:
-                max_off = max(0, len(self._candles) - self._visible_count)
-                self._scroll_offset = min(max_off, self._scroll_offset + step)
+            self._visible_count = min(len(self._candles), self._visible_count + 20)
+        # Re-center on signal
+        sig_idx = self._find_idx(self._signal_date)
+        if sig_idx is not None:
+            self._scroll_offset = max(0, sig_idx - self._visible_count // 2)
         self.update()
 
 
