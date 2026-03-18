@@ -2162,9 +2162,14 @@ class VettingWorkspace(QFrame):
             self._entry_label.setText("Entry: %s" % date_str)
 
     def _do_verdict(self, verdict):
+        print("[VETTING] _do_verdict called: verdict=%s, idx=%d, filtered=%d" % (
+            verdict, self._current_idx, len(self._filtered)))
         if not self._filtered or self._current_idx >= len(self._filtered):
+            print("[VETTING] early return: no filtered signals or idx out of range")
             return
         sig = self._filtered[self._current_idx]
+        print("[VETTING] signal: %s %s, current verdict=%s" % (
+            sig["ticker"], sig["signal_date"], sig.get("verdict")))
 
         if verdict == "skip":
             self._advance_to_next()
