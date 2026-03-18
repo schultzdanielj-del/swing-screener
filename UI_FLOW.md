@@ -41,8 +41,6 @@ The pipeline flowchart IS the interface. Each node expands in place to become it
 
 ## Known Broken / Unverified
 
-- **Zoom non-functional** — Ctrl+wheel code exists but likely consumed by QScrollArea parent before reaching chart widget. Never tested.
-- **Yellow exit lines only on ~24% of vetting charts** — causative reads refinement winners (365) and joins exit dates from filtered_dtss.json, but only 87 overlap because filtered file is from March 6 and refinement is from March 13. Fix requires re-running signal_filter.py. The pyramid_grinder now saves exit_date but that refinement hasn't been re-run either.
 - **ADR/ENTRY/COMBINED sort buttons** — code added to vetting top bar but NOT verified to appear or produce different orderings. Dan reports they do not show on screen. May be a layout issue or git pull issue.
 - **No button (2 key)** — reported broken early, debug prints added, focus fix added, never confirmed working.
 - **Correlative signal count wrong** — shows 402 instead of matching 365 causative winners. EV grinder's signals_post includes signals at various refinement depths, not just the current cl102 file. Not fixed.
@@ -82,8 +80,7 @@ Three-panel layout:
 - Bottom (42px): Metadata + verdict buttons
 
 ### Causative Mode
-- Signals: refinement_*_cl*.json winner_signals (365)
-- Exit dates: joined from filtered_{setup}.json (only ~87/365 have exit dates currently)
+- Signals: filtered_{setup}.json (produced by signal_filter.py — every signal has exit_date, exit_bar, move_adr, capture_eff)
 - Entry scores: joined from entry_scores_{setup}.json
 
 ### Correlative Mode
@@ -104,7 +101,7 @@ Three-panel layout:
 - 2=NO — reported broken, unverified fix
 - 3=SKIP ✅
 - ↑↓ navigate ✅
-- Ctrl+wheel zoom — BROKEN
+- Mouse wheel zoom ✅
 
 ---
 
