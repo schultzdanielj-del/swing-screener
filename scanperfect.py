@@ -2784,11 +2784,13 @@ class VettingWorkspace(QFrame):
                 continue
             sig = self._make_signal_dict(tk, sd,
                 move_adr=s.get("move_adr"), adr_at_signal=s.get("adr_at_signal"),
-                classification=s.get("classification", ""))
+                classification=s.get("classification", ""),
+                exit_date=s.get("exit_date"), exit_bar=s.get("exit_bar"))
             self._apply_verdict(sig, decisions, rejected_set)
             signals.append(sig)
 
-        # Join exit data from filtered_{setup}.json if available
+        # Fill gaps: join extra exit data from filtered_{setup}.json for signals
+        # that don't have exit_date from refinement (older refinement files)
         filtered_path = REPO_ROOT / "data" / "signal_filter" / ("filtered_%s.json" % setup)
         if filtered_path.exists():
             try:
@@ -2798,6 +2800,8 @@ class VettingWorkspace(QFrame):
                     for fs in filt_data.get("signals", [])
                 }
                 for sig in signals:
+                    if sig.get("exit_date"):
+                        continue  # already has exit from refinement
                     fs = exit_lookup.get("%s_%s" % (sig["ticker"], sig["signal_date"]))
                     if fs:
                         sig["exit_date"] = fs.get("exit_date")

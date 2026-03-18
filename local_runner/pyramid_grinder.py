@@ -2734,9 +2734,18 @@ def _gather_raw_signal_clusters(setup_type):
             exit_idx = bar_idx + c["exit_bar"]
             if exit_idx >= len(closes):
                 c["move_adr"] = None
+                c["exit_date"] = None
                 n_move_skip += 1
                 continue
             exit_close = float(closes[exit_idx])
+
+            # Save exit date
+            dates = df["date"].values
+            if exit_idx < len(dates):
+                ed = dates[exit_idx]
+                c["exit_date"] = str(ed)[:10] if ed is not None else None
+            else:
+                c["exit_date"] = None
 
             # move_adr: entry_high to exit_close in ADR
             if direction == "short":
@@ -2973,6 +2982,8 @@ def _load_refinement_piles(setup_type):
             "move_adr": c.get("move_adr"),
             "adr_at_signal": c.get("adr_at_signal"),
             "entry_high": c.get("entry_high"),
+            "exit_bar": c.get("exit_bar"),
+            "exit_date": c.get("exit_date"),
         })
 
     raw_losers = []
@@ -2987,6 +2998,8 @@ def _load_refinement_piles(setup_type):
             "move_adr": c.get("move_adr"),
             "adr_at_signal": c.get("adr_at_signal"),
             "entry_high": c.get("entry_high"),
+            "exit_bar": c.get("exit_bar"),
+            "exit_date": c.get("exit_date"),
         })
 
     # adr_threshold = 0.0 — classification handled by ceiling+exit race in clusters,
