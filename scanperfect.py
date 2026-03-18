@@ -805,12 +805,12 @@ class FlowchartCanvas(QWidget):
 
             if nd["kind"] == "do":
                 # DO nodes: fill most of the visible area
-                # Vetting + Examples need maximum space
+                # target_h is ADDED to base card height nh, so subtract nh to fit viewport
                 if nid in ("vetting", "examples"):
-                    self._anim_target_h = max(500, vis_h - 40)
+                    self._anim_target_h = max(400, vis_h - 40 - nh)
                     self._anim_target_w = max(400, vis_w - nw - 40)
                 else:
-                    self._anim_target_h = max(400, vis_h - nh - 60)
+                    self._anim_target_h = max(300, vis_h - nh - 60 - nh)
                     self._anim_target_w = max(300, vis_w - nw - 140)
             else:
                 # RUN nodes: moderate expansion
