@@ -8,8 +8,10 @@ import json
 import math
 import os
 import pickle
+import subprocess
 import sys
 import sqlite3
+import tempfile
 import time
 from pathlib import Path
 from contextlib import contextmanager
@@ -25,7 +27,7 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QAbstractItemView,
     QGridLayout, QLineEdit, QTextEdit,
 )
-from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment, QRectF, QPointF
+from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment, QRectF, QPointF, QThread
 from PySide6.QtGui import QFont, QFontDatabase, QColor, QPainter, QPen, QLinearGradient, QBrush, QPainterPath
 
 
@@ -2429,6 +2431,108 @@ class CandlestickChart(QWidget):
 
 
 # ============================================================
+# AI REVIEW — background thread for Claude CLI chart review
+# ============================================================
+
+_REVIEW_PROMPTS = {
+    "dtss": (
+        "You are reviewing a stock chart to determine if it shows a valid DTSS "
+        "(Double Top Short Sell) setup.\n\n"
+        "DTSS criteria:\n"
+        "- Clear prior high / resistance level (left side pivot)\n"
+        "- Second rally into the same zone — can be slightly above or below the prior peak\n"
+        "- Rejection candle or reversal pattern at the double top level\n"
+        "- Volume often spikes on the failed attempt then dries up\n"
+        "- MAs may be flattening or starting to roll over\n"
+        "- The stock should be FAILING at or near the double top, not still rallying\n"
+        "- After the double top, price breaks down and continues lower\n"
+        "- This is a SHORT setup — the stock goes DOWN after entry\n\n"
+        "The entry bar is marked on the chart (ENTRY label or white dot). "
+        "Look at the price action BEFORE the entry to confirm the double top pattern, "
+        "and AFTER to confirm the stock broke down.\n\n"
+        "REJECT if:\n"
+        "- No clear double top pattern visible\n"
+        "- Stock is still in an uptrend with no reversal\n"
+        "- The \"double top\" is really just consolidation in a trend\n"
+        "- The move after entry is tiny or the stock bounces back up quickly\n"
+        "- Entry is too late (stock already crashed before entry)\n"
+        "- Entry is too early (stock hasn't confirmed the top yet)\n\n"
+        "Respond in this exact format:\n"
+        "VERDICT: APPROVE or REJECT\n"
+        "REASONING: 2-3 sentences explaining what you see and why."
+    ),
+}
+
+
+class AiReviewThread(QThread):
+    """Background thread: sends chart PNG to Claude CLI, stores verdict in DB."""
+
+    def __init__(self, png_path, setup_type, ticker, entry_date, pending_id, parent=None):
+        super().__init__(parent)
+        self._png = png_path
+        self._setup = setup_type
+        self._ticker = ticker
+        self._entry = entry_date
+        self._pid = pending_id
+
+    def run(self):
+        prompt = _REVIEW_PROMPTS.get(self._setup)
+        if not prompt:
+            self._store("REJECT", "No review prompt for setup: %s" % self._setup)
+            return
+        try:
+            result = subprocess.run(
+                ["claude", "-p", prompt, "--image", self._png],
+                capture_output=True, text=True, timeout=120,
+            )
+            output = result.stdout.strip()
+            verdict, reasoning = self._parse(output)
+            self._store(verdict, reasoning)
+        except subprocess.TimeoutExpired:
+            self._store("REJECT", "Claude CLI timed out")
+        except FileNotFoundError:
+            self._store("REJECT", "claude CLI not found in PATH")
+        except Exception as e:
+            self._store("REJECT", "Error: %s" % str(e))
+        finally:
+            try:
+                os.unlink(self._png)
+            except Exception:
+                pass
+
+    def _parse(self, output):
+        verdict = None
+        reasoning = output
+        for line in output.split("\n"):
+            up = line.strip().upper()
+            if up.startswith("VERDICT:"):
+                v = up.replace("VERDICT:", "").strip()
+                verdict = "APPROVE" if "APPROVE" in v else "REJECT"
+            elif line.strip().upper().startswith("REASONING:"):
+                reasoning = line.strip()[len("REASONING:"):].strip()
+        if verdict is None:
+            up = output.upper()
+            if "APPROVE" in up and "REJECT" not in up:
+                verdict = "APPROVE"
+            elif "REJECT" in up:
+                verdict = "REJECT"
+            else:
+                verdict = "REJECT"
+        return verdict, reasoning
+
+    def _store(self, verdict, reasoning):
+        try:
+            with get_db() as db:
+                db.execute(
+                    "UPDATE pending_examples SET ai_verdict=?, ai_reasoning=?, "
+                    "status='reviewed', reviewed_at=datetime('now') WHERE id=?",
+                    (verdict, reasoning, self._pid),
+                )
+        except Exception:
+            pass
+
+
+# ============================================================
 # VETTING WORKSPACE — full chart vetting workflow
 # ============================================================
 
@@ -3103,6 +3207,7 @@ class VettingWorkspace(QFrame):
 
         # Save to DB
         if verdict == "yes":
+            pending_id = None
             try:
                 with get_db() as db:
                     if not db.execute(
@@ -3114,8 +3219,17 @@ class VettingWorkspace(QFrame):
                             "VALUES (?,?,?,?)",
                             (self._setup, sig["ticker"], sig["signal_date"], sig["entry_date"])
                         )
+                    row = db.execute(
+                        "SELECT id FROM pending_examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                        (self._setup, sig["ticker"], sig["entry_date"])
+                    ).fetchone()
+                    if row:
+                        pending_id = row[0]
             except Exception:
                 pass
+            # Kick off AI review in background
+            if pending_id:
+                self._start_ai_review(sig, pending_id)
         elif verdict == "no":
             try:
                 with get_db() as db:
@@ -3139,6 +3253,26 @@ class VettingWorkspace(QFrame):
         self._apply_filter()
         self._advance_to_next()
         self.setFocus()  # re-grab focus so arrow keys work
+
+    def _start_ai_review(self, sig, pending_id):
+        """Grab current chart as PNG, send to Claude CLI in background."""
+        try:
+            pixmap = self._chart.grab()
+            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False, dir=str(REPO_ROOT / "data"))
+            tmp.close()
+            pixmap.save(tmp.name, "PNG")
+            thread = AiReviewThread(
+                tmp.name, self._setup, sig["ticker"], sig["entry_date"], pending_id
+            )
+            # Keep reference so thread isn't garbage collected
+            if not hasattr(self, "_review_threads"):
+                self._review_threads = []
+            # Clean up finished threads
+            self._review_threads = [t for t in self._review_threads if t.isRunning()]
+            self._review_threads.append(thread)
+            thread.start()
+        except Exception:
+            pass
 
     def _advance_to_next(self):
         """Advance to next unvetted signal, or just next signal."""
