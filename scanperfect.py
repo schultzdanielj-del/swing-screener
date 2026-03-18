@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QComboBox, QScrollArea,
     QPlainTextEdit, QFrame, QCheckBox, QSizePolicy,
     QListWidget, QListWidgetItem, QAbstractItemView,
+    QGridLayout, QLineEdit, QTextEdit,
 )
 from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment, QThread, QRectF, QPointF
 from PySide6.QtGui import QFont, QFontDatabase, QColor, QPainter, QPen, QLinearGradient, QBrush, QPainterPath
@@ -1272,112 +1273,181 @@ class MiniChartWidget(QWidget):
 # ============================================================
 
 class ExamplesWorkspace(QFrame):
-    """Full examples workspace: banked example grid + pending review section."""
+    """Full examples workspace: chart card grid, pending review, add examples."""
 
     def __init__(self, node_id="examples", parent=None):
         super().__init__(parent)
         self.node_id = node_id
         self._setup = "dtss"
-        self._sort = "adr"  # adr, ticker, date
+        self._sort = "ticker"
         self._examples = []
         self._pending = []
-        self._expanded_card = None  # (section, idx) if a card is expanded
+        self._expanded_idx = None  # which card is expanded (section, idx)
         self.setStyleSheet(
-            "ExamplesWorkspace { background:%s; border:1px solid %s; }" % (C["surface"], C["border"])
+            "ExamplesWorkspace { background:%s; border:1px solid %s; }" % (C["bg"], C["border"])
         )
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
-        # ── Top bar: counts + sort buttons ──
-        top_bar = QFrame()
-        top_bar.setFixedHeight(32)
-        top_bar.setStyleSheet(
-            "QFrame { background:#0A0A0A; border-bottom:1px solid %s; }" % C["border"]
+        # ── Header bar ──
+        hbar = QFrame()
+        hbar.setFixedHeight(40)
+        hbar.setStyleSheet("QFrame { background:#0A0A0A; border-bottom:1px solid %s; }" % C["border"])
+        hb = QHBoxLayout(hbar)
+        hb.setContentsMargins(16, 0, 16, 0)
+        hb.setSpacing(12)
+
+        self._title_label = QLabel("Examples")
+        self._title_label.setStyleSheet(
+            "font-size:16px; font-weight:700; color:%s; background:transparent; border:none;" % C["text"]
         )
-        tb_lay = QHBoxLayout(top_bar)
-        tb_lay.setContentsMargins(12, 0, 12, 0)
-        tb_lay.setSpacing(12)
+        hb.addWidget(self._title_label)
 
         self._count_label = QLabel("")
         self._count_label.setStyleSheet(
             "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
             "color:%s; background:transparent; border:none;" % C["text_dim"]
         )
-        tb_lay.addWidget(self._count_label)
-        tb_lay.addStretch()
+        hb.addWidget(self._count_label)
+        hb.addStretch()
 
-        # Sort buttons
+        # Sort toggle
         self._sort_btns = {}
-        for key, label in [("adr", "ADR Move ↓"), ("ticker", "Ticker"), ("date", "Date")]:
+        for key, label in [("adr", "ADR ↓"), ("ticker", "Ticker"), ("date", "Date")]:
             btn = QPushButton(label)
             btn.setFixedHeight(22)
             btn.setCheckable(True)
-            btn.setChecked(key == "adr")
+            btn.setChecked(key == self._sort)
             btn.clicked.connect(lambda checked, k=key: self._set_sort(k))
-            tb_lay.addWidget(btn)
+            hb.addWidget(btn)
             self._sort_btns[key] = btn
-        self._update_sort_btn_styles()
-        lay.addWidget(top_bar)
+        self._style_sort_btns()
+        lay.addWidget(hbar)
 
         # ── Scrollable body ──
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        body = QWidget()
-        self._body_lay = QVBoxLayout(body)
+        self._body = QWidget()
+        self._body_lay = QVBoxLayout(self._body)
         self._body_lay.setContentsMargins(12, 12, 12, 12)
-        self._body_lay.setSpacing(16)
+        self._body_lay.setSpacing(0)
 
-        # Banked examples grid container
-        self._banked_grid = QWidget()
-        self._banked_grid_lay = None
-        self._body_lay.addWidget(self._banked_grid)
+        # Add Examples — collapsible section
+        self._add_section = QFrame()
+        self._add_section.setStyleSheet("QFrame { border:1px solid %s; }" % C["border"])
+        add_lay = QVBoxLayout(self._add_section)
+        add_lay.setContentsMargins(0, 0, 0, 0)
+        add_lay.setSpacing(0)
 
-        # Pending section
-        self._pending_frame = QFrame()
-        self._pending_frame.setStyleSheet(
-            "QFrame { border-top:1px solid %s; }" % C["border"]
+        self._add_header = QPushButton("▸  Add Examples")
+        self._add_header.setStyleSheet(
+            "QPushButton { background:#0A0A0A; color:%s; border:none; text-align:left;"
+            "font-size:11px; font-weight:600; letter-spacing:0.5px; padding:10px 15px; }"
+            "QPushButton:hover { background:#111; }" % C["text_muted"]
         )
-        pf_lay = QVBoxLayout(self._pending_frame)
-        pf_lay.setContentsMargins(0, 12, 0, 0)
-        pf_lay.setSpacing(8)
+        self._add_header.clicked.connect(self._toggle_add_section)
+        add_lay.addWidget(self._add_header)
 
-        # Pending header
-        ph_row = QHBoxLayout()
-        self._pending_label = QLabel("Pending Review")
-        self._pending_label.setStyleSheet(
-            "font-size:11px; font-weight:600; letter-spacing:1px; color:%s;"
-            "background:transparent; border:none; text-transform:uppercase;" % C["text_muted"]
+        self._add_body = QWidget()
+        self._add_body.setVisible(False)
+        ab_lay = QVBoxLayout(self._add_body)
+        ab_lay.setContentsMargins(15, 10, 15, 15)
+        ab_lay.setSpacing(8)
+
+        # Single add row
+        single_row = QHBoxLayout()
+        single_row.setSpacing(8)
+        self._add_ticker = QLineEdit()
+        self._add_ticker.setPlaceholderText("TICKER")
+        self._add_ticker.setFixedWidth(100)
+        self._add_ticker.setStyleSheet(
+            "QLineEdit { background:#000; border:1px solid %s; color:%s; font-size:13px;"
+            "padding:6px 8px; text-transform:uppercase; }" % (C["border"], C["text"])
         )
-        ph_row.addWidget(self._pending_label)
-        ph_row.addStretch()
-        self._approve_all_btn = QPushButton("APPROVE ALL")
-        self._approve_all_btn.setFixedHeight(22)
-        self._approve_all_btn.setStyleSheet(
-            "QPushButton { background:transparent; color:%s; border:1px solid %s;"
-            "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
-            "font-weight:700; padding:2px 10px; }"
-            "QPushButton:hover { background:%s; color:#000; }" % (C["green"], C["green"], C["green"])
+        single_row.addWidget(self._add_ticker)
+        self._add_date = QLineEdit()
+        self._add_date.setPlaceholderText("YYYY-MM-DD")
+        self._add_date.setFixedWidth(130)
+        self._add_date.setStyleSheet(
+            "QLineEdit { background:#000; border:1px solid %s; color:%s; font-size:13px;"
+            "padding:6px 8px; }" % (C["border"], C["text"])
         )
-        self._approve_all_btn.clicked.connect(self._approve_all)
-        ph_row.addWidget(self._approve_all_btn)
-        pf_lay.addLayout(ph_row)
+        single_row.addWidget(self._add_date)
+        add_btn = QPushButton("Add")
+        add_btn.setStyleSheet(
+            "QPushButton { background:%s; color:#000; border:none; font-size:12px;"
+            "font-weight:700; padding:6px 16px; }"
+            "QPushButton:hover { background:%s; }" % (C["green"], "#22c55e")
+        )
+        add_btn.clicked.connect(self._add_single)
+        single_row.addWidget(add_btn)
+        single_row.addStretch()
+        ab_lay.addLayout(single_row)
 
-        self._pending_grid = QWidget()
-        self._pending_grid_lay = None
-        pf_lay.addWidget(self._pending_grid)
-        self._body_lay.addWidget(self._pending_frame)
+        # Bulk paste
+        self._bulk_text = QTextEdit()
+        self._bulk_text.setPlaceholderText("Paste list — one per line: TICKER YYYY-MM-DD")
+        self._bulk_text.setFixedHeight(80)
+        self._bulk_text.setStyleSheet(
+            "QTextEdit { background:#000; border:1px solid %s; color:%s; font-size:12px;"
+            "padding:6px; }" % (C["border"], C["text_dim"])
+        )
+        ab_lay.addWidget(self._bulk_text)
 
-        # Expanded chart area (hidden by default)
-        self._expanded_chart = CandlestickChart()
-        self._expanded_chart.setFixedHeight(400)
-        self._expanded_chart.setVisible(False)
-        self._body_lay.addWidget(self._expanded_chart)
+        bulk_row = QHBoxLayout()
+        bulk_btn = QPushButton("Import All")
+        bulk_btn.setStyleSheet(
+            "QPushButton { background:%s; color:#000; border:none; font-size:12px;"
+            "font-weight:700; padding:6px 16px; }"
+            "QPushButton:hover { background:%s; }" % (C["green"], "#22c55e")
+        )
+        bulk_btn.clicked.connect(self._bulk_add)
+        bulk_row.addWidget(bulk_btn)
+        self._add_result = QLabel("")
+        self._add_result.setStyleSheet(
+            "font-size:12px; color:%s; background:transparent; border:none;" % C["text_dim"]
+        )
+        bulk_row.addWidget(self._add_result)
+        bulk_row.addStretch()
+        ab_lay.addLayout(bulk_row)
+
+        # Pending review area (inside add section)
+        self._pending_area = QWidget()
+        self._pending_area_lay = QVBoxLayout(self._pending_area)
+        self._pending_area_lay.setContentsMargins(0, 12, 0, 0)
+        self._pending_area_lay.setSpacing(8)
+        self._pending_area.setVisible(False)
+        ab_lay.addWidget(self._pending_area)
+
+        add_lay.addWidget(self._add_body)
+        self._body_lay.addWidget(self._add_section)
+
+        # Chart legend
+        legend_row = QHBoxLayout()
+        legend_row.setContentsMargins(0, 10, 0, 4)
+        for label, color in [("Entry", "#E0E0E0"), ("Exit Signal", "#E8A735")]:
+            dot = QLabel("■")
+            dot.setStyleSheet("font-size:10px; color:%s; background:transparent; border:none;" % color)
+            legend_row.addWidget(dot)
+            ll = QLabel(label)
+            ll.setStyleSheet("font-size:11px; color:%s; background:transparent; border:none;" % C["text_muted"])
+            legend_row.addWidget(ll)
+            legend_row.addSpacing(8)
+        legend_row.addStretch()
+        self._body_lay.addLayout(legend_row)
+
+        # Main chart grid
+        self._grid_widget = QWidget()
+        self._grid_layout = QGridLayout(self._grid_widget)
+        self._grid_layout.setSpacing(10)
+        self._grid_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_lay.addWidget(self._grid_widget)
 
         self._body_lay.addStretch()
-        scroll.setWidget(body)
+        scroll.setWidget(self._body)
         lay.addWidget(scroll, 1)
 
     def set_setup(self, setup):
@@ -1387,38 +1457,41 @@ class ExamplesWorkspace(QFrame):
         super().showEvent(ev)
         self._load_data()
 
-    def _set_sort(self, key):
-        self._sort = key
-        self._update_sort_btn_styles()
-        self._rebuild_banked_grid()
-
-    def _update_sort_btn_styles(self):
+    def _style_sort_btns(self):
         for key, btn in self._sort_btns.items():
             active = key == self._sort
             btn.setChecked(active)
             if active:
                 btn.setStyleSheet(
-                    "QPushButton { background:%s; color:#000; border:1px solid %s;"
-                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
-                    "font-weight:700; padding:2px 10px; }" % (C["text_dim"], C["text_dim"])
+                    "QPushButton { background:#222; color:%s; border:1px solid %s;"
+                    "font-size:10px; font-weight:700; padding:2px 10px; }" % (C["text"], C["border_bright"])
                 )
             else:
                 btn.setStyleSheet(
                     "QPushButton { background:transparent; color:%s; border:1px solid %s;"
-                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
-                    "font-weight:600; padding:2px 10px; }"
-                    "QPushButton:hover { background:%s; }" % (C["text_muted"], C["border"], C["surface2"])
+                    "font-size:10px; font-weight:600; padding:2px 10px; }"
+                    "QPushButton:hover { background:#111; }" % (C["text_muted"], C["border"])
                 )
 
+    def _set_sort(self, key):
+        self._sort = key
+        self._style_sort_btns()
+        self._rebuild_grid()
+
+    def _toggle_add_section(self):
+        vis = not self._add_body.isVisible()
+        self._add_body.setVisible(vis)
+        self._add_header.setText(("▾" if vis else "▸") + "  Add Examples" +
+                                 (" (%d pending)" % len(self._pending) if self._pending else ""))
+
     def _load_data(self):
-        """Load banked examples and pending from SQLite."""
         setup = self._setup
         self._examples = []
         self._pending = []
         try:
             with get_db() as db:
                 rows = db.execute(
-                    "SELECT id, ticker, entry_date, chart_date FROM examples WHERE setup_type=? ORDER BY ticker",
+                    "SELECT id, ticker, entry_date, chart_date FROM examples WHERE setup_type=?",
                     (setup,)
                 ).fetchall()
             self._examples = [dict(r) for r in rows]
@@ -1435,11 +1508,7 @@ class ExamplesWorkspace(QFrame):
         except Exception:
             pass
 
-        self._update_counts()
-        self._rebuild_banked_grid()
-        self._rebuild_pending_grid()
-
-    def _update_counts(self):
+        # Update counts
         ne = len(self._examples)
         np_ = len(self._pending)
         parts = ["%d examples" % ne]
@@ -1448,207 +1517,283 @@ class ExamplesWorkspace(QFrame):
         if ne < 20:
             parts.append("need %d more" % (20 - ne))
         self._count_label.setText("  ·  ".join(parts))
-        self._pending_frame.setVisible(np_ > 0)
 
-    def _sort_examples(self):
+        # Update add header
+        self._add_header.setText(
+            ("▾" if self._add_body.isVisible() else "▸") + "  Add Examples" +
+            (" (%d pending)" % np_ if np_ else "")
+        )
+
+        # If pending, auto-open add section and show pending area
+        if np_ > 0 and not self._add_body.isVisible():
+            self._add_body.setVisible(True)
+            self._add_header.setText("▾  Add Examples (%d pending)" % np_)
+
+        self._rebuild_pending()
+        self._rebuild_grid()
+
+    def _rebuild_pending(self):
+        """Rebuild pending review cards inside the add section."""
+        # Clear old
+        while self._pending_area_lay.count():
+            item = self._pending_area_lay.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        if not self._pending:
+            self._pending_area.setVisible(False)
+            return
+        self._pending_area.setVisible(True)
+
+        # Header
+        hdr_row = QHBoxLayout()
+        hdr = QLabel("PENDING AI REVIEW")
+        hdr.setStyleSheet(
+            "font-size:10px; font-weight:600; letter-spacing:1px; color:%s;"
+            "background:transparent; border:none;" % C["text_muted"]
+        )
+        hdr_row.addWidget(hdr)
+        hdr_row.addStretch()
+        approve_all = QPushButton("Approve All")
+        approve_all.setStyleSheet(
+            "QPushButton { background:transparent; color:%s; border:1px solid %s;"
+            "font-size:10px; font-weight:700; padding:3px 10px; }"
+            "QPushButton:hover { background:%s; color:#000; }" % (C["green"], C["green"], C["green"])
+        )
+        approve_all.clicked.connect(self._approve_all)
+        hdr_row.addWidget(approve_all)
+        hdr_w = QWidget()
+        hdr_w.setLayout(hdr_row)
+        self._pending_area_lay.addWidget(hdr_w)
+
+        # Pending grid
+        pgrid = QWidget()
+        pg_lay = QGridLayout(pgrid)
+        pg_lay.setSpacing(10)
+        pg_lay.setContentsMargins(0, 4, 0, 0)
+        cols = 4
+        for i, pend in enumerate(self._pending):
+            card = self._make_card(pend, "pending")
+            pg_lay.addWidget(card, i // cols, i % cols)
+        self._pending_area_lay.addWidget(pgrid)
+
+    def _rebuild_grid(self):
+        """Rebuild the main banked examples grid."""
+        # Clear
+        while self._grid_layout.count():
+            item = self._grid_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        exs = self._sorted_examples()
+        cols = 4
+        if not exs:
+            lbl = QLabel("No examples yet. Use Add Examples above or vet signals.")
+            lbl.setStyleSheet(
+                "font-size:12px; color:%s; padding:40px; background:transparent; border:none;" % C["text_muted"]
+            )
+            lbl.setAlignment(Qt.AlignCenter)
+            self._grid_layout.addWidget(lbl, 0, 0, 1, cols)
+            return
+
+        for i, ex in enumerate(exs):
+            card = self._make_card(ex, "banked")
+            self._grid_layout.addWidget(card, i // cols, i % cols)
+
+    def _sorted_examples(self):
         exs = list(self._examples)
-        if self._sort == "adr":
-            # No adrMove in local DB, sort by ticker as fallback
-            exs.sort(key=lambda x: x.get("ticker", ""))
-        elif self._sort == "date":
+        if self._sort == "date":
             exs.sort(key=lambda x: x.get("entry_date", ""), reverse=True)
+        elif self._sort == "adr":
+            exs.sort(key=lambda x: x.get("entry_date", ""), reverse=True)  # no adr in DB, fallback
         else:
             exs.sort(key=lambda x: x.get("ticker", ""))
         return exs
 
-    def _rebuild_banked_grid(self):
-        """Rebuild the banked examples grid."""
-        # Clear old grid
-        if self._banked_grid_lay:
-            while self._banked_grid_lay.count():
-                item = self._banked_grid_lay.takeAt(0)
-                w = item.widget()
-                if w:
-                    w.deleteLater()
-        from PySide6.QtWidgets import QGridLayout
-        self._banked_grid_lay = QGridLayout(self._banked_grid) if not self._banked_grid_lay else self._banked_grid_lay
-
-        # Clear existing layout
-        old_lay = self._banked_grid.layout()
-        if old_lay and old_lay != self._banked_grid_lay:
-            # Remove old layout
-            QWidget().setLayout(old_lay)
-
-        if not self._banked_grid.layout():
-            self._banked_grid.setLayout(self._banked_grid_lay)
-
-        self._banked_grid_lay.setSpacing(8)
-        self._banked_grid_lay.setContentsMargins(0, 0, 0, 0)
-
-        exs = self._sort_examples()
-        cols = 4
-        for i, ex in enumerate(exs):
-            card = self._make_example_card(ex, "banked", i)
-            self._banked_grid_lay.addWidget(card, i // cols, i % cols)
-
-        if not exs:
-            lbl = QLabel("No examples yet. Vet signals to add them.")
-            lbl.setStyleSheet(
-                "font-size:12px; color:%s; background:transparent; border:none; padding:30px;" % C["text_muted"]
-            )
-            lbl.setAlignment(Qt.AlignCenter)
-            self._banked_grid_lay.addWidget(lbl, 0, 0, 1, cols)
-
-    def _rebuild_pending_grid(self):
-        """Rebuild the pending review grid."""
-        if self._pending_grid_lay:
-            while self._pending_grid_lay.count():
-                item = self._pending_grid_lay.takeAt(0)
-                w = item.widget()
-                if w:
-                    w.deleteLater()
-        from PySide6.QtWidgets import QGridLayout
-        if not self._pending_grid.layout():
-            self._pending_grid_lay = QGridLayout()
-            self._pending_grid.setLayout(self._pending_grid_lay)
-        else:
-            self._pending_grid_lay = self._pending_grid.layout()
-
-        self._pending_grid_lay.setSpacing(8)
-        self._pending_grid_lay.setContentsMargins(0, 0, 0, 0)
-
-        cols = 4
-        for i, pend in enumerate(self._pending):
-            card = self._make_example_card(pend, "pending", i)
-            self._pending_grid_lay.addWidget(card, i // cols, i % cols)
-
-        self._pending_label.setText("Pending Review (%d)" % len(self._pending))
-        self._approve_all_btn.setVisible(len(self._pending) > 0)
-
-    def _make_example_card(self, data, section, idx):
-        """Create a card widget for an example or pending item."""
+    def _make_card(self, data, section):
+        """Create a 16:10 chart card with overlaid label — matching old web UI."""
         card = QFrame()
-        card.setFixedHeight(140)
-        card.setStyleSheet(
-            "QFrame { background:#0A0A0A; border:1px solid #2A2A2A; }"
-            "QFrame:hover { background:#111; }"
-        )
-        card.setCursor(Qt.PointingHandCursor)
-        card_lay = QVBoxLayout(card)
-        card_lay.setContentsMargins(0, 0, 0, 0)
-        card_lay.setSpacing(0)
+        card.setMinimumHeight(160)
+        card.setStyleSheet("QFrame { background:#0A0A0A; border:1px solid #2A2A2A; }")
 
-        # Chart area
+        # Stack layout: chart fills card, label overlaid at bottom
+        stack = QVBoxLayout(card)
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.setSpacing(0)
+
+        # Chart fills the card
         chart = MiniChartWidget()
-        card_lay.addWidget(chart, 1)
-
-        # Load candles for thumbnail
         ticker = data.get("ticker", "")
         entry_date = data.get("entry_date", "")
-        candles = _prepare_candles(ticker, entry_date, lookback=30, forward=30)
+        candles = _prepare_candles(ticker, entry_date, lookback=60, forward=20)
         if candles:
             chart.set_data(candles, entry_date)
+        stack.addWidget(chart, 1)
 
-        # Status tag for pending
-        if section == "pending":
-            ai = data.get("ai_verdict")
-            if ai == "APPROVE":
-                tag_text, tag_color = "APPROVE", C["green"]
-            elif ai == "REJECT":
-                tag_text, tag_color = "REJECT", C["red"]
-            else:
-                tag_text, tag_color = "PENDING", C["text_muted"]
-            # Overlay tag — we'll add it to the label bar instead
-
-        # Bottom label bar
+        # Overlaid bottom label
         label_bar = QFrame()
-        label_bar.setFixedHeight(28)
-        label_bar.setStyleSheet(
-            "QFrame { background:#000; border-top:1px solid #1A1A1A; }"
-        )
-        lb_lay = QHBoxLayout(label_bar)
-        lb_lay.setContentsMargins(6, 0, 6, 0)
-        lb_lay.setSpacing(4)
+        label_bar.setFixedHeight(26)
+        label_bar.setStyleSheet("QFrame { background:rgba(0,0,0,0.85); border-top:1px solid #1A1A1A; }")
+        lb = QHBoxLayout(label_bar)
+        lb.setContentsMargins(8, 0, 8, 0)
+        lb.setSpacing(6)
 
         mono = "font-family:'JetBrains Mono','Consolas',monospace;"
         tk_lbl = QLabel(ticker)
-        tk_lbl.setStyleSheet("%s font-size:11px; font-weight:600; color:%s;"
-                             "background:transparent; border:none;" % (mono, C["text"]))
-        lb_lay.addWidget(tk_lbl)
-
+        tk_lbl.setStyleSheet("%s font-size:13px; font-weight:600; color:#fff;"
+                             "background:transparent; border:none;" % mono)
+        lb.addWidget(tk_lbl)
         dt_lbl = QLabel(entry_date)
-        dt_lbl.setStyleSheet("%s font-size:10px; color:%s;"
-                             "background:transparent; border:none;" % (mono, C["text_muted"]))
-        lb_lay.addWidget(dt_lbl)
-        lb_lay.addStretch()
+        dt_lbl.setStyleSheet("%s font-size:11px; color:#B0B0B0;"
+                             "background:transparent; border:none;" % mono)
+        lb.addWidget(dt_lbl)
+        lb.addStretch()
 
         if section == "pending":
             ai = data.get("ai_verdict")
+            tag = ai or "PENDING"
             if ai == "APPROVE":
-                tag_color = C["green"]
+                tc = C["green"]
             elif ai == "REJECT":
-                tag_color = C["red"]
+                tc = C["red"]
             else:
-                tag_color = C["text_muted"]
-            tag_text = (ai or "PENDING")
-            tag_lbl = QLabel(tag_text)
+                tc = C["text_muted"]
+            tag_lbl = QLabel(tag)
             tag_lbl.setStyleSheet(
-                "%s font-size:9px; font-weight:700; color:%s;"
-                "background:transparent; border:none;" % (mono, tag_color)
+                "%s font-size:9px; font-weight:700; color:%s; padding:1px 5px;"
+                "background:rgba(255,255,255,0.06); border:1px solid %s;" % (mono, tc, C["border"])
             )
-            lb_lay.addWidget(tag_lbl)
+            lb.addWidget(tag_lbl)
 
-            # Action buttons
-            approve_btn = QPushButton("✓")
-            approve_btn.setFixedSize(22, 22)
-            approve_btn.setStyleSheet(
+            appr = QPushButton("Approve")
+            appr.setFixedHeight(20)
+            appr.setStyleSheet(
                 "QPushButton { background:transparent; color:%s; border:1px solid %s;"
-                "font-size:12px; font-weight:700; }"
+                "font-size:10px; font-weight:600; padding:1px 6px; }"
                 "QPushButton:hover { background:%s; color:#000; }" % (C["green"], C["green"], C["green"])
             )
-            approve_btn.setToolTip("Approve — promote to examples")
-            approve_btn.clicked.connect(lambda checked, d=data: self._approve_one(d))
-            lb_lay.addWidget(approve_btn)
+            appr.clicked.connect(lambda checked, d=data: self._approve_one(d))
+            lb.addWidget(appr)
 
-            reject_btn = QPushButton("✗")
-            reject_btn.setFixedSize(22, 22)
-            reject_btn.setStyleSheet(
+            rej = QPushButton("Reject")
+            rej.setFixedHeight(20)
+            rej.setStyleSheet(
                 "QPushButton { background:transparent; color:%s; border:1px solid %s;"
-                "font-size:12px; font-weight:700; }"
+                "font-size:10px; font-weight:600; padding:1px 6px; }"
                 "QPushButton:hover { background:%s; color:#fff; }" % (C["red"], C["red"], C["red"])
             )
-            reject_btn.setToolTip("Reject — move to rejected signals")
-            reject_btn.clicked.connect(lambda checked, d=data: self._reject_one(d))
-            lb_lay.addWidget(reject_btn)
+            rej.clicked.connect(lambda checked, d=data: self._reject_one(d))
+            lb.addWidget(rej)
 
         elif section == "banked":
             del_btn = QPushButton("×")
-            del_btn.setFixedSize(22, 22)
+            del_btn.setFixedSize(20, 20)
             del_btn.setStyleSheet(
-                "QPushButton { background:transparent; color:%s; border:1px solid %s;"
+                "QPushButton { background:transparent; color:%s; border:none;"
                 "font-size:14px; font-weight:700; }"
-                "QPushButton:hover { background:%s; color:#fff; }" % (C["text_muted"], C["border"], C["red"])
+                "QPushButton:hover { color:%s; }" % (C["text_muted"], C["red"])
             )
-            del_btn.setToolTip("Remove example")
             del_btn.clicked.connect(lambda checked, d=data: self._delete_example(d))
-            lb_lay.addWidget(del_btn)
+            lb.addWidget(del_btn)
 
-        card_lay.addWidget(label_bar)
+        stack.addWidget(label_bar)
         return card
 
-    def _approve_one(self, pend):
-        """Approve a pending example — promote to examples table."""
+    # ── Add examples ──
+
+    def _add_single(self):
+        ticker = self._add_ticker.text().strip().upper()
+        date = self._add_date.text().strip()
+        if not ticker or not date:
+            self._add_result.setText("Enter both ticker and date")
+            self._add_result.setStyleSheet(
+                "font-size:12px; color:%s; background:transparent; border:none;" % C["red"])
+            return
         try:
             with get_db() as db:
-                ticker = pend["ticker"]
-                entry_date = pend["entry_date"]
+                if db.execute(
+                    "SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                    (self._setup, ticker, date)
+                ).fetchone():
+                    self._add_result.setText("Already exists: %s %s" % (ticker, date))
+                    return
+                db.execute(
+                    "INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
+                    (self._setup, ticker, date, date)
+                )
+            self._add_ticker.clear()
+            self._add_date.clear()
+            self._add_result.setText("Added %s" % ticker)
+            self._add_result.setStyleSheet(
+                "font-size:12px; color:%s; background:transparent; border:none;" % C["green"])
+            self._load_data()
+        except Exception as e:
+            self._add_result.setText("Error: %s" % e)
+            self._add_result.setStyleSheet(
+                "font-size:12px; color:%s; background:transparent; border:none;" % C["red"])
+
+    def _bulk_add(self):
+        raw = self._bulk_text.toPlainText().strip()
+        if not raw:
+            return
+        lines = [l.strip() for l in raw.splitlines() if l.strip()]
+        added = 0
+        failed = 0
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 2:
+                failed += 1
+                continue
+            ticker = parts[0].upper()
+            date = parts[1]
+            # Convert MM/DD/YYYY to YYYY-MM-DD if needed
+            if "/" in date and len(date) == 10:
+                try:
+                    p = date.split("/")
+                    date = "%s-%s-%s" % (p[2], p[0], p[1])
+                except Exception:
+                    pass
+            try:
+                with get_db() as db:
+                    if not db.execute(
+                        "SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                        (self._setup, ticker, date)
+                    ).fetchone():
+                        db.execute(
+                            "INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
+                            (self._setup, ticker, date, date)
+                        )
+                        added += 1
+                    else:
+                        failed += 1
+            except Exception:
+                failed += 1
+        msg = "%d added" % added
+        if failed:
+            msg += ", %d failed" % failed
+        self._add_result.setText(msg)
+        self._add_result.setStyleSheet(
+            "font-size:12px; color:%s; background:transparent; border:none;" % (
+                C["green"] if failed == 0 else C["red"]))
+        if added > 0:
+            self._bulk_text.clear()
+            self._load_data()
+
+    # ── Actions ──
+
+    def _approve_one(self, pend):
+        try:
+            with get_db() as db:
+                tk, ed = pend["ticker"], pend["entry_date"]
                 if not db.execute(
                     "SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
-                    (self._setup, ticker, entry_date)
+                    (self._setup, tk, ed)
                 ).fetchone():
                     db.execute(
                         "INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
-                        (self._setup, ticker, entry_date, entry_date)
+                        (self._setup, tk, ed, ed)
                     )
                 db.execute("DELETE FROM pending_examples WHERE id=?", (pend["id"],))
         except Exception as e:
@@ -1656,7 +1801,6 @@ class ExamplesWorkspace(QFrame):
         self._load_data()
 
     def _reject_one(self, pend):
-        """Reject a pending example — move to rejected_signals."""
         try:
             with get_db() as db:
                 db.execute(
@@ -1669,27 +1813,24 @@ class ExamplesWorkspace(QFrame):
         self._load_data()
 
     def _approve_all(self):
-        """Approve all pending examples."""
         try:
             with get_db() as db:
-                for pend in self._pending:
-                    ticker = pend["ticker"]
-                    entry_date = pend["entry_date"]
+                for p in self._pending:
+                    tk, ed = p["ticker"], p["entry_date"]
                     if not db.execute(
                         "SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
-                        (self._setup, ticker, entry_date)
+                        (self._setup, tk, ed)
                     ).fetchone():
                         db.execute(
                             "INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
-                            (self._setup, ticker, entry_date, entry_date)
+                            (self._setup, tk, ed, ed)
                         )
-                    db.execute("DELETE FROM pending_examples WHERE id=?", (pend["id"],))
+                    db.execute("DELETE FROM pending_examples WHERE id=?", (p["id"],))
         except Exception as e:
             print("Approve all error: %s" % e)
         self._load_data()
 
     def _delete_example(self, ex):
-        """Delete a banked example."""
         try:
             with get_db() as db:
                 db.execute("DELETE FROM examples WHERE id=?", (ex["id"],))
