@@ -2495,7 +2495,7 @@ class AiReviewThread(QThread):
         try:
             result = subprocess.run(
                 ["claude", "-p", prompt, "--image", self._png],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=120, shell=True,
             )
             output = result.stdout.strip()
             verdict, reasoning = self._parse(output)
