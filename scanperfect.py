@@ -1974,12 +1974,43 @@ class VettingWorkspace(QFrame):
                 "classification": s.get("classification", ""),
                 "verdict": verdict,
                 "entry_date": vd.get("entry_date"),
+                "exit_date": None,
+                "exit_bar": None,
+                "mfe_adr": None,
+                "capture_eff": None,
+                "move_pct": None,
                 "combined_score": None,
                 "entry_candle_score": None,
                 "entry_candle_date": None,
                 "entry_candle_pct": None,
                 "move_adr_pct": None,
             })
+
+        # Join exit data from filtered_{setup}.json if available
+        filtered_path = REPO_ROOT / "data" / "signal_filter" / ("filtered_%s.json" % setup)
+        if filtered_path.exists():
+            try:
+                filt_data = json.loads(filtered_path.read_text())
+                filt_sigs = filt_data.get("signals", [])
+                exit_lookup = {}
+                for fs in filt_sigs:
+                    fk = "%s_%s" % (fs.get("ticker", ""), fs.get("date", ""))
+                    exit_lookup[fk] = fs
+                n_exit = 0
+                for sig in signals:
+                    fk = "%s_%s" % (sig["ticker"], sig["signal_date"])
+                    fs = exit_lookup.get(fk)
+                    if fs:
+                        sig["exit_date"] = fs.get("exit_date")
+                        sig["exit_bar"] = fs.get("exit_bar")
+                        sig["mfe_adr"] = fs.get("mfe_adr")
+                        sig["capture_eff"] = fs.get("capture_eff")
+                        sig["move_pct"] = fs.get("move_pct")
+                        n_exit += 1
+                if n_exit > 0:
+                    print("Exit data joined: %d/%d signals" % (n_exit, len(signals)))
+            except Exception as e:
+                print("WARNING: Failed to load exit data: %s" % e)
 
         # Join entry candle scores if available
         entry_scores_path = REPO_ROOT / "local_runner" / "cache" / ("entry_scores_%s.json" % setup)
@@ -2091,6 +2122,15 @@ class VettingWorkspace(QFrame):
             "color:%s; background:transparent; border:none;" % C["text_muted"]
         )
         r2.addWidget(dt)
+        # Exit bar count if available
+        eb = sig.get("exit_bar")
+        if eb:
+            eb_label = QLabel("%dd" % eb)
+            eb_label.setStyleSheet(
+                "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
+                "color:%s; background:transparent; border:none;" % C["text_muted"]
+            )
+            r2.addWidget(eb_label)
         # Entry candle score badge
         cs = sig.get("combined_score")
         if cs is not None:
@@ -2180,7 +2220,7 @@ class VettingWorkspace(QFrame):
         except Exception:
             pass
         self._chart.set_data(candles, sig["ticker"], sig["signal_date"],
-                             exit_date=None, earnings_dates=earnings)
+                             exit_date=sig.get("exit_date"), earnings_dates=earnings)
         # Restore entry if previously set
         if sig.get("entry_date"):
             self._chart.set_entry_date(sig["entry_date"])
@@ -2192,6 +2232,15 @@ class VettingWorkspace(QFrame):
         parts = ["Ticker: %s" % sig["ticker"], "Signal: %s" % sig["signal_date"]]
         if sig.get("move_adr"):
             parts.append("Move: +%.1f ADR" % sig["move_adr"])
+        if sig.get("mfe_adr"):
+            parts.append("MFE: %.1f ADR" % sig["mfe_adr"])
+        if sig.get("capture_eff") is not None:
+            parts.append("Eff: %.0f%%" % (sig["capture_eff"] * 100))
+        if sig.get("exit_date"):
+            exit_info = "Exit: %s" % sig["exit_date"]
+            if sig.get("exit_bar"):
+                exit_info += " (%dd)" % sig["exit_bar"]
+            parts.append(exit_info)
         if sig.get("adr_at_signal"):
             parts.append("ADR: %.2f" % sig["adr_at_signal"])
         cs = sig.get("combined_score")
