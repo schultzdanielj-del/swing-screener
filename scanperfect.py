@@ -719,39 +719,28 @@ class FlowchartCanvas(QWidget):
             summary_y = row2_top
         self._rects["summary"] = (summary_x, summary_y, summary_w, summary_h)
 
-        # Expanded card overlay — grows wider/taller, centered in viewport
+        # Expanded card overlay
         if self._expanded_id and self._expanded_id in self._rects:
-            ex, ey, ew, _ = self._rects[self._expanded_id]
-            new_w = ew + self._anim_expand_w
-            new_h = nh + self._anim_expand_h
+            nd = next((n for n in FLOW_NODES if n["id"] == self._expanded_id), None)
+            is_do = nd and nd["kind"] == "do"
 
-            # Get viewport size for centering
-            viewport = self.parent()
-            vis_w = viewport.width() if viewport and hasattr(viewport, 'width') else w
-            vis_h = viewport.height() if viewport and hasattr(viewport, 'height') else 600
-            # Scroll position offset
-            scroll_y = 0
-            if viewport and hasattr(viewport, 'parent'):
-                scroll_area = viewport.parent()
-                if scroll_area and hasattr(scroll_area, 'verticalScrollBar'):
-                    scroll_y = scroll_area.verticalScrollBar().value()
-
-            # Animation progress (0→1)
-            target_w = getattr(self, '_anim_target_w', 0) or 1
-            target_h = getattr(self, '_anim_target_h', 0) or 1
-            tw = min(1.0, self._anim_expand_w / target_w) if target_w > 0 else 0
-            th = min(1.0, self._anim_expand_h / target_h) if target_h > 0 else 0
-            t = max(tw, th)
-
-            # Center targets
-            center_x = vis_w // 2 - new_w // 2
-            center_y = scroll_y + vis_h // 2 - new_h // 2
-            center_y = max(10, center_y)  # don't go above canvas top
-
-            # Lerp from original position to centered
-            new_x = int(ex + (center_x - ex) * t)
-            new_y = int(ey + (center_y - ey) * t)
-            self._rects[self._expanded_id] = (new_x, new_y, new_w, new_h)
+            if is_do:
+                # DO nodes: fill viewport with 20px padding
+                viewport = self.parent()
+                scroll_y = 0
+                if viewport and hasattr(viewport, 'parent'):
+                    scroll_area = viewport.parent()
+                    if scroll_area and hasattr(scroll_area, 'verticalScrollBar'):
+                        scroll_y = scroll_area.verticalScrollBar().value()
+                new_w = self._anim_expand_w
+                new_h = self._anim_expand_h
+                self._rects[self._expanded_id] = (20, scroll_y + 20, new_w, new_h)
+            else:
+                # RUN nodes: grow from original position
+                ex, ey, ew, _ = self._rects[self._expanded_id]
+                new_w = ew + self._anim_expand_w
+                new_h = nh + self._anim_expand_h
+                self._rects[self._expanded_id] = (ex, ey, new_w, new_h)
 
         self._expand_h = self._anim_expand_h
         self.setMinimumHeight(int(y + loop_v + nh + 40))
@@ -775,7 +764,7 @@ class FlowchartCanvas(QWidget):
         self._detail_widgets[nid] = widget
 
     def expand_node(self, nid):
-        """Expand/collapse a node with animation. DO nodes expand nearly fullscreen, RUN nodes smaller."""
+        """Expand/collapse a node with animation."""
         nd = next((n for n in FLOW_NODES if n["id"] == nid), None)
         if not nd:
             return
@@ -792,28 +781,16 @@ class FlowchartCanvas(QWidget):
             self._anim_expand_h = 0
             self._anim_expand_w = 0
 
-            nw = getattr(self, '_nw', 300)
-            nh = getattr(self, '_nh', 100)
-            # Use the visible viewport size, not the full canvas size
-            viewport = self.parent()  # QScrollArea viewport
-            if viewport and hasattr(viewport, 'width'):
-                vis_w = viewport.width()
-                vis_h = viewport.height()
-            else:
-                vis_w = self.width()
-                vis_h = self.height()
+            viewport = self.parent()
+            vis_w = viewport.width() if viewport and hasattr(viewport, 'width') else self.width()
+            vis_h = viewport.height() if viewport and hasattr(viewport, 'height') else 600
 
             if nd["kind"] == "do":
-                # DO nodes: fill most of the visible area
-                # target_h is ADDED to base card height nh, so subtract nh to fit viewport
-                if nid in ("vetting", "examples"):
-                    self._anim_target_h = max(400, vis_h - 40 - nh)
-                    self._anim_target_w = max(400, vis_w - nw - 40)
-                else:
-                    self._anim_target_h = max(300, vis_h - nh - 60 - nh)
-                    self._anim_target_w = max(300, vis_w - nw - 140)
+                self._anim_target_w = vis_w - 40
+                self._anim_target_h = vis_h - 40
             else:
-                # RUN nodes: moderate expansion
+                nh = getattr(self, '_nh', 100)
+                nw = getattr(self, '_nw', 300)
                 self._anim_target_h = max(380, nh * 4)
                 self._anim_target_w = max(200, int(nw * 0.7))
 
