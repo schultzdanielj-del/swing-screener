@@ -2533,6 +2533,7 @@ class AiReviewThread(QThread):
         return verdict, reasoning
 
     def _store(self, verdict, reasoning):
+        print("AI REVIEW: %s %s → %s — %s" % (self._ticker, self._entry, verdict, reasoning[:80]))
         try:
             with get_db() as db:
                 db.execute(
@@ -3664,6 +3665,7 @@ class ScanPerfectWindow(QMainWindow):
             pid, setup, ticker, entry = row[0], row[1], row[2], row[3]
         except Exception:
             return
+        print("AI REVIEW: %s %s (id=%d) — rendering chart..." % (ticker, entry, pid))
         # Render chart to temp PNG (main thread, fast)
         tmp = os.path.join(str(REPO_ROOT / "data"), "_review_%d.png" % pid)
         try:
