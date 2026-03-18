@@ -2146,8 +2146,8 @@ class VettingWorkspace(QFrame):
             self._apply_verdict(sig, decisions, rejected_set)
             signals.append(sig)
 
-        # Sort by EV descending
-        signals.sort(key=lambda x: x.get("ev") or 0, reverse=True)
+        # Sort same as causative — these are survivors, not ranked by EV
+        signals.sort(key=lambda x: x.get("move_adr") or 0, reverse=True)
         self._has_entry_scores = False
         self._signals = signals
         self._apply_filter()
@@ -2288,7 +2288,7 @@ class VettingWorkspace(QFrame):
         self._filter_checks["no"].setText("N %d" % n_no)
 
         if self._mode == "correlative":
-            sort_mode = "by EV"
+            sort_mode = "by ADR (correlative)"
         elif getattr(self, "_has_entry_scores", False):
             sort_mode = "by score"
         else:
