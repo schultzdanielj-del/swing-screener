@@ -3007,12 +3007,14 @@ class VettingWorkspace(QFrame):
     def _on_signal_selected(self, row):
         if row < 0 or row >= len(self._filtered):
             return
-        self._current_idx = row
-        sig = self._filtered[row]
-        self._load_chart(sig)
-        self._update_meta(sig)
-        # Preload next signals
-        self._preload_ahead(row + 1)
+        try:
+            self._current_idx = row
+            sig = self._filtered[row]
+            self._load_chart(sig)
+            self._update_meta(sig)
+            self._preload_ahead(row + 1)
+        except Exception:
+            pass
 
     def _load_chart(self, sig):
         """Load candles for signal (from cache or compute)."""
@@ -3112,6 +3114,12 @@ class VettingWorkspace(QFrame):
     def _do_verdict(self, verdict):
         if not self._filtered or self._current_idx >= len(self._filtered):
             return
+        try:
+            self._do_verdict_inner(verdict)
+        except Exception:
+            pass
+
+    def _do_verdict_inner(self, verdict):
         sig = self._filtered[self._current_idx]
 
         if verdict == "skip":
@@ -3194,23 +3202,26 @@ class VettingWorkspace(QFrame):
             self._sig_list.setCurrentRow(self._current_idx)
 
     def keyPressEvent(self, ev):
-        key = ev.key()
-        if key == Qt.Key_1:
-            self._do_verdict("yes")
-        elif key == Qt.Key_2:
-            self._do_verdict("no")
-        elif key == Qt.Key_3:
-            self._do_verdict("skip")
-        elif key == Qt.Key_Up:
-            if self._current_idx > 0:
-                self._current_idx -= 1
-                self._sig_list.setCurrentRow(self._current_idx)
-        elif key == Qt.Key_Down:
-            if self._current_idx < len(self._filtered) - 1:
-                self._current_idx += 1
-                self._sig_list.setCurrentRow(self._current_idx)
-        else:
-            super().keyPressEvent(ev)
+        try:
+            key = ev.key()
+            if key == Qt.Key_1:
+                self._do_verdict("yes")
+            elif key == Qt.Key_2:
+                self._do_verdict("no")
+            elif key == Qt.Key_3:
+                self._do_verdict("skip")
+            elif key == Qt.Key_Up:
+                if self._current_idx > 0:
+                    self._current_idx -= 1
+                    self._sig_list.setCurrentRow(self._current_idx)
+            elif key == Qt.Key_Down:
+                if self._current_idx < len(self._filtered) - 1:
+                    self._current_idx += 1
+                    self._sig_list.setCurrentRow(self._current_idx)
+            else:
+                super().keyPressEvent(ev)
+        except Exception:
+            pass
 
 
 # ============================================================
