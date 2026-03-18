@@ -818,8 +818,8 @@ class FlowchartCanvas(QWidget):
 
     def _anim_step(self):
         """Animate expand/collapse one frame — both dimensions."""
-        speed_h = 35
-        speed_w = 25
+        speed_h = 80
+        speed_w = 60
 
         if self._anim_target_h > self._anim_expand_h:
             self._anim_expand_h = min(self._anim_expand_h + speed_h, self._anim_target_h)
@@ -2460,10 +2460,13 @@ class VettingWorkspace(QFrame):
 
     def showEvent(self, ev):
         super().showEvent(ev)
-        self._load_signals()
+        # Only reload if we haven't loaded yet or setup changed
+        if not self._signals or getattr(self, "_loaded_setup", None) != self._setup:
+            self._load_signals()
 
     def _load_signals(self):
         """Load signals based on current mode."""
+        self._loaded_setup = self._setup
         if self._mode == "correlative":
             self._load_correlative_signals()
         else:
@@ -2703,16 +2706,22 @@ class VettingWorkspace(QFrame):
                 filtered.append(s)
         self._filtered = filtered
 
-        # Rebuild list widget
+        # Rebuild list widget — plain text items for speed
         self._sig_list.blockSignals(True)
         self._sig_list.clear()
         for sig in filtered:
-            item = QListWidgetItem()
-            # Custom display via widget
-            w = self._make_signal_item(sig)
-            item.setSizeHint(w.sizeHint())
+            text = self._format_signal_text(sig)
+            item = QListWidgetItem(text)
+            item.setFont(QFont("JetBrains Mono", 9))
+            # Color based on verdict
+            v = sig.get("verdict")
+            if v == "yes":
+                item.setForeground(QColor(C["green"]))
+            elif v == "no":
+                item.setForeground(QColor(C["red"]))
+            else:
+                item.setForeground(QColor(C["text"]))
             self._sig_list.addItem(item)
-            self._sig_list.setItemWidget(item, w)
         self._sig_list.blockSignals(False)
 
         # Preserve or reset selection
@@ -2722,100 +2731,31 @@ class VettingWorkspace(QFrame):
             self._sig_list.setCurrentRow(idx)
         self._update_stats()
 
-    def _make_signal_item(self, sig):
-        """Create a widget for a signal list item."""
-        w = QWidget()
-        w.setStyleSheet("background:transparent; border:none;")
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(2, 2, 2, 2)
-        lay.setSpacing(1)
-        mono = "font-family:'JetBrains Mono','Consolas',monospace;"
-
-        # Row 1: ticker + primary metric
-        r1 = QHBoxLayout()
-        r1.setSpacing(0)
-        tk = QLabel(sig["ticker"])
-        tk.setStyleSheet("%s font-size:12px; font-weight:700; color:%s;"
-                         "background:transparent; border:none;" % (mono, C["text"]))
-        r1.addWidget(tk)
-        r1.addStretch()
+    def _format_signal_text(self, sig):
+        """Format signal as a compact text line for the list."""
+        tk = sig["ticker"]
+        adr = sig.get("move_adr") or 0
+        parts = ["%-6s" % tk, "+%.1f" % adr]
 
         if self._mode == "correlative" and sig.get("ev") is not None:
-            # Show EV + WR in correlative mode
-            ev_txt = "EV %.1f" % sig["ev"]
-            ev_lbl = QLabel(ev_txt)
-            ev_lbl.setStyleSheet("%s font-size:10px; font-weight:600; color:%s;"
-                                 "background:transparent; border:none;" % (mono, C["green"]))
-            r1.addWidget(ev_lbl)
+            parts.append("EV%.1f" % sig["ev"])
             wr = sig.get("predicted_wr")
             if wr is not None:
-                wr_lbl = QLabel("  %.0f%%" % (wr * 100))
-                wr_lbl.setStyleSheet("%s font-size:10px; font-weight:600; color:%s;"
-                                     "background:transparent; border:none;" % (mono, C["amber"]))
-                r1.addWidget(wr_lbl)
+                parts.append("%.0f%%" % (wr * 100))
         else:
-            adr = QLabel("+%.1f ADR" % (sig.get("move_adr") or 0))
-            adr.setStyleSheet("%s font-size:10px; font-weight:600; color:%s;"
-                              "background:transparent; border:none;" % (mono, C["green"]))
-            r1.addWidget(adr)
-        lay.addLayout(r1)
-
-        # Row 2: date + secondary metrics + verdict
-        r2 = QHBoxLayout()
-        r2.setSpacing(4)
-        dt = QLabel(sig["signal_date"])
-        dt.setStyleSheet("%s font-size:9px; color:%s;"
-                         "background:transparent; border:none;" % (mono, C["text_muted"]))
-        r2.addWidget(dt)
-
-        if self._mode == "correlative":
-            qs = sig.get("quality_score")
-            if qs is not None:
-                qs_lbl = QLabel("QS %.0f" % qs)
-                qs_lbl.setStyleSheet("%s font-size:9px; color:%s;"
-                                     "background:transparent; border:none;" % (mono, C["text_muted"]))
-                r2.addWidget(qs_lbl)
-            # Entry candle score badge (shared across modes)
             cs = sig.get("combined_score")
             if cs is not None:
-                sc_color = C["amber"] if cs >= 0.7 else C["text_dim"] if cs >= 0.4 else C["text_muted"]
-                sc_lbl = QLabel("%.0f%%" % (cs * 100))
-                sc_lbl.setStyleSheet("%s font-size:9px; font-weight:700; color:%s;"
-                                     "background:transparent; border:none;" % (mono, sc_color))
-                r2.addWidget(sc_lbl)
-        else:
-            # Exit bar count
-            eb = sig.get("exit_bar")
-            if eb:
-                eb_lbl = QLabel("%dd" % eb)
-                eb_lbl.setStyleSheet("%s font-size:9px; color:%s;"
-                                     "background:transparent; border:none;" % (mono, C["text_muted"]))
-                r2.addWidget(eb_lbl)
-            # Entry candle score badge
-            cs = sig.get("combined_score")
-            if cs is not None:
-                sc_color = C["amber"] if cs >= 0.7 else C["text_dim"] if cs >= 0.4 else C["text_muted"]
-                sc_lbl = QLabel("%.0f%%" % (cs * 100))
-                sc_lbl.setStyleSheet("%s font-size:9px; font-weight:700; color:%s;"
-                                     "background:transparent; border:none;" % (mono, sc_color))
-                r2.addWidget(sc_lbl)
+                parts.append("%.0f%%" % (cs * 100))
 
-        r2.addStretch()
+        eb = sig.get("exit_bar")
+        if eb:
+            parts.append("%dd" % eb)
+
         v = sig.get("verdict")
         if v:
-            vc = C["green"] if v == "yes" else C["red"]
-            vl = QLabel(v.upper())
-            vl.setStyleSheet("%s font-size:9px; font-weight:700; color:%s;"
-                             "background:transparent; border:none;" % (mono, vc))
-            r2.addWidget(vl)
-        lay.addLayout(r2)
+            parts.append(v.upper())
 
-        # Left border color based on verdict
-        if v == "yes":
-            w.setStyleSheet("background:transparent; border:none; border-left:3px solid %s;" % C["green"])
-        elif v == "no":
-            w.setStyleSheet("background:transparent; border:none; border-left:3px solid %s; opacity:0.5;" % C["red"])
-        return w
+        return "  ".join(parts)
 
     def _update_stats(self):
         n_yes = sum(1 for s in self._signals if s.get("verdict") == "yes")
