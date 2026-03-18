@@ -45,8 +45,6 @@ The pipeline flowchart IS the interface. Each node expands in place to become it
 - **No button (2 key)** — reported broken early, debug prints added, focus fix added, never confirmed working.
 - **Correlative signal count wrong** — shows 402 instead of matching 365 causative winners. EV grinder's signals_post includes signals at various refinement depths, not just the current cl102 file. Not fixed.
 - **Chart preloading** — OhlcvPreloadThread code exists, never verified it runs.
-- **Deferred chart loading in Examples** — code exists (QTimer 50ms), not verified.
-- **Purple profit exit lines** — showing on examples cards because profit_dtss.json has 68 entries. This is correct behavior IF profit grind is considered finalized. Dan may not want these shown.
 
 ---
 
