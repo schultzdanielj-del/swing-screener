@@ -1597,7 +1597,8 @@ class ExamplesWorkspace(QFrame):
             pass
 
         # Load exit data lookups for chart markers
-        self._exit_lookup = {}
+        # Grouped by ticker — each ticker has a list of {date, exit_date} from filtered file
+        self._exit_by_ticker = {}
         self._profit_exit_lookup = {}
         # Exit signal dates from filtered file
         filtered_path = REPO_ROOT / "data" / "signal_filter" / ("filtered_%s.json" % setup)
@@ -1605,8 +1606,13 @@ class ExamplesWorkspace(QFrame):
             try:
                 filt_data = json.loads(filtered_path.read_text())
                 for fs in filt_data.get("signals", []):
-                    fk = "%s_%s" % (fs.get("ticker", ""), fs.get("date", ""))
-                    self._exit_lookup[fk] = fs.get("exit_date")
+                    tk = fs.get("ticker", "")
+                    if tk not in self._exit_by_ticker:
+                        self._exit_by_ticker[tk] = []
+                    self._exit_by_ticker[tk].append({
+                        "date": fs.get("date", ""),
+                        "exit_date": fs.get("exit_date"),
+                    })
             except Exception:
                 pass
         # Profit exit dates
@@ -1697,16 +1703,21 @@ class ExamplesWorkspace(QFrame):
         for chart in charts:
             tk = getattr(chart, "_deferred_ticker", "")
             ed = getattr(chart, "_deferred_entry", "")
-            sd = getattr(chart, "_deferred_signal", "")
             if not tk:
                 continue
             candles = _prepare_candles(tk, ed, lookback=80, forward=40)
             if candles:
-                sig_key = "%s_%s" % (tk, ed)
-                exit_dt = getattr(self, "_exit_lookup", {}).get(sig_key)
-                profit_dt = getattr(self, "_profit_exit_lookup", {}).get(sig_key)
-                if not exit_dt and sd:
-                    exit_dt = getattr(self, "_exit_lookup", {}).get("%s_%s" % (tk, sd))
+                # Find exit_date: match the filtered signal for this ticker
+                # whose signal date is closest to (and <= ) the entry date
+                exit_dt = None
+                sigs_for_tk = getattr(self, "_exit_by_ticker", {}).get(tk, [])
+                best_date = None
+                for fs in sigs_for_tk:
+                    fd = fs["date"]
+                    if fd <= ed and (best_date is None or fd > best_date):
+                        best_date = fd
+                        exit_dt = fs["exit_date"]
+                profit_dt = getattr(self, "_profit_exit_lookup", {}).get("%s_%s" % (tk, ed))
                 chart.set_data(candles, ed, exit_date=exit_dt, profit_exit_date=profit_dt)
             chart._deferred_ticker = ""  # mark as loaded
 
