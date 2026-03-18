@@ -1704,6 +1704,7 @@ class ExamplesWorkspace(QFrame):
             if candles:
                 exit_dt = _compute_exit_date(candles, ed)
                 profit_dt = getattr(self, "_profit_exit_lookup", {}).get("%s_%s" % (tk, ed))
+                print("  BATCH: %s %s exit=%s profit=%s candles=%d" % (tk, ed, exit_dt, profit_dt, len(candles)))
                 chart.set_data(candles, ed, exit_date=exit_dt, profit_exit_date=profit_dt)
             chart._deferred_ticker = ""
         if self._deferred_queue:
