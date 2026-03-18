@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QAbstractItemView,
     QGridLayout, QLineEdit, QTextEdit,
 )
-from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment, QThread, QRectF, QPointF
+from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment, QRectF, QPointF
 from PySide6.QtGui import QFont, QFontDatabase, QColor, QPainter, QPen, QLinearGradient, QBrush, QPainterPath
 
 
@@ -1937,29 +1937,6 @@ def _compute_exit_date(candles, entry_date):
 # OHLCV PRELOAD THREAD
 # ============================================================
 
-class OhlcvPreloadThread(QThread):
-    """Preload OHLCV + MA data for upcoming signals in background."""
-
-    def __init__(self, signals, start_idx, count=10, lookback=250, forward=80, parent=None):
-        super().__init__(parent)
-        self._signals = signals
-        self._start = start_idx
-        self._count = count
-        self._lookback = lookback
-        self._forward = forward
-        self.results = {}  # key -> prepared candle list
-
-    def run(self):
-        for i in range(self._start, min(self._start + self._count, len(self._signals))):
-            sig = self._signals[i]
-            key = "%s_%s" % (sig["ticker"], sig["signal_date"])
-            if key in self.results:
-                continue
-            candles = _prepare_candles(sig["ticker"], sig["signal_date"],
-                                      self._lookback, self._forward)
-            if candles:
-                self.results[key] = candles
-
 
 def _prepare_candles(ticker, signal_date, lookback=250, forward=80):
     """Load OHLCV from cache, slice around signal, compute MAs. Returns list of dicts."""
@@ -2471,7 +2448,6 @@ class VettingWorkspace(QFrame):
         self._filtered = []      # filtered view
         self._current_idx = 0
         self._candle_cache = {}  # "ticker_date" -> candle list
-        self._preload_thread = None
         self._has_entry_scores = False
         self.setStyleSheet(
             "VettingWorkspace { background:%s; border:1px solid %s; }" % (C["surface"], C["border"])
@@ -3012,7 +2988,6 @@ class VettingWorkspace(QFrame):
             sig = self._filtered[row]
             self._load_chart(sig)
             self._update_meta(sig)
-            self._preload_ahead(row + 1)
         except Exception:
             pass
 
@@ -3081,26 +3056,6 @@ class VettingWorkspace(QFrame):
                     parts.append("Best entry: %s" % ecd)
         parts.append("Entry = click chart")
         self._meta_label.setText("  ·  ".join(parts))
-
-    def _preload_ahead(self, start_idx):
-        """Preload OHLCV for next N signals in background."""
-        if self._preload_thread and self._preload_thread.isRunning():
-            return  # don't stack threads
-        sigs_to_load = []
-        for i in range(start_idx, min(start_idx + 10, len(self._filtered))):
-            key = "%s_%s" % (self._filtered[i]["ticker"], self._filtered[i]["signal_date"])
-            if key not in self._candle_cache:
-                sigs_to_load.append(self._filtered[i])
-        if not sigs_to_load:
-            return
-        self._preload_thread = OhlcvPreloadThread(sigs_to_load, 0, len(sigs_to_load))
-        self._preload_thread.finished.connect(self._on_preload_done)
-        self._preload_thread.start()
-
-    def _on_preload_done(self):
-        if self._preload_thread:
-            self._candle_cache.update(self._preload_thread.results)
-            self._preload_thread = None
 
     def _on_candle_click(self, date_str):
         if date_str == "__yes__":
