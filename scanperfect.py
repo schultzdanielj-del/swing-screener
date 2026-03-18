@@ -2536,14 +2536,32 @@ class VettingWorkspace(QFrame):
         tb_lay.addWidget(self._stats_label)
         tb_lay.addStretch()
 
-        tb_lay.addSpacing(8)
-        # Keyboard hints
-        hints = QLabel("↑↓ navigate · 1 yes · 2 no · 3 skip · click = entry · wheel zoom")
-        hints.setStyleSheet(
-            "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
-            "color:%s; background:transparent; border:none;" % C["text_muted"]
+        # Entry indicator
+        self._entry_label = QLabel("")
+        self._entry_label.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
+            "color:%s; background:transparent; border:none; font-weight:700;" % C["green"]
         )
-        tb_lay.addWidget(hints)
+        tb_lay.addWidget(self._entry_label)
+
+        # Verdict buttons
+        for key, label, fg, bg_hover in [
+            ("yes", "YES (1)", C["green"], "#059669"),
+            ("no", "NO (2)", C["red"], "#dc2626"),
+            ("skip", "SKIP (3)", C["text_dim"], C["surface2"]),
+        ]:
+            btn = QPushButton(label)
+            btn.setFixedHeight(22)
+            btn.setFixedWidth(70)
+            btn.setStyleSheet(
+                "QPushButton { color:%s; border:1px solid %s; background:transparent;"
+                "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+                "font-weight:700; padding:2px 6px; }"
+                "QPushButton:hover { background:%s; color:#000; }" % (fg, fg, bg_hover)
+            )
+            btn.clicked.connect(lambda checked, k=key: self._do_verdict(k))
+            tb_lay.addWidget(btn)
+
         lay.addWidget(top_bar)
 
         # ── Body: sidebar + chart + bottom bar ──
@@ -2611,7 +2629,7 @@ class VettingWorkspace(QFrame):
         left_lay.addWidget(self._sig_list, 1)
         body_lay.addWidget(left)
 
-        # CENTER: chart + bottom bar
+        # CENTER: chart
         center = QWidget()
         center_lay = QVBoxLayout(center)
         center_lay.setContentsMargins(0, 0, 0, 0)
@@ -2621,47 +2639,14 @@ class VettingWorkspace(QFrame):
         self._chart.candle_clicked.connect(self._on_candle_click)
         center_lay.addWidget(self._chart, 1)
 
-        # Bottom metadata + verdict buttons
-        bot = QFrame()
-        bot.setFixedHeight(42)
-        bot.setStyleSheet("QFrame { background:#0A0A0A; border-top:1px solid %s; }" % C["border"])
-        bot_lay = QHBoxLayout(bot)
-        bot_lay.setContentsMargins(12, 0, 12, 0)
-        bot_lay.setSpacing(12)
-
+        # Metadata label overlaid at bottom of chart area
         self._meta_label = QLabel("")
         self._meta_label.setStyleSheet(
             "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
             "color:%s; background:transparent; border:none;" % C["text_dim"]
         )
-        bot_lay.addWidget(self._meta_label, 1)
+        center_lay.addWidget(self._meta_label)
 
-        # Entry indicator
-        self._entry_label = QLabel("")
-        self._entry_label.setStyleSheet(
-            "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
-            "color:%s; background:transparent; border:none; font-weight:700;" % C["green"]
-        )
-        bot_lay.addWidget(self._entry_label)
-
-        # Verdict buttons
-        for key, label, fg, bg_hover in [
-            ("yes", "YES (1)", C["green"], "#059669"),
-            ("no", "NO (2)", C["red"], "#dc2626"),
-            ("skip", "SKIP (3)", C["text_dim"], C["surface2"]),
-        ]:
-            btn = QPushButton(label)
-            btn.setFixedWidth(80)
-            btn.setStyleSheet(
-                "QPushButton { color:%s; border:2px solid %s; background:transparent;"
-                "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
-                "font-weight:700; padding:4px 8px; }"
-                "QPushButton:hover { background:%s; color:#000; }" % (fg, fg, bg_hover)
-            )
-            btn.clicked.connect(lambda checked, k=key: self._do_verdict(k))
-            bot_lay.addWidget(btn)
-
-        center_lay.addWidget(bot)
         body_lay.addWidget(center, 1)
         lay.addWidget(body, 1)
 
