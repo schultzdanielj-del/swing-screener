@@ -2449,27 +2449,42 @@ class CandlestickChart(QWidget):
 # AI REVIEW — background thread for Claude CLI chart review
 # ============================================================
 
-_REVIEW_PROMPTS = {
-    "dtss": (
-        "Review this stock chart for a DTSS (Double Top Short Sell) SHORT trade setup.\n\n"
-        "THIS IS A SHORT TRADE. The trader SELLS SHORT at the entry bar. "
-        "Price going DOWN after entry = GOOD (profitable). "
-        "Price going UP after entry = BAD (losing trade).\n\n"
-        "DTSS pattern criteria (look BEFORE entry):\n"
-        "- Two peaks at roughly the same price level (double top)\n"
-        "- Stock failed at the second peak and started rolling over\n"
-        "- MAs flattening or crossing down\n\n"
-        "APPROVE if: double top visible before entry AND price dropped significantly after entry.\n"
-        "REJECT if: no double top pattern, or price went UP after entry, or barely moved down.\n\n"
+def _get_review_prompt(setup_type):
+    """Build AI review prompt from the setup description in the database."""
+    desc = ""
+    direction = "short"
+    try:
+        with get_db() as db:
+            row = db.execute(
+                "SELECT description, direction FROM setups WHERE setup_type=?",
+                (setup_type,)
+            ).fetchone()
+            if row:
+                desc = row[0] or ""
+                direction = row[1] or "short"
+    except Exception:
+        pass
+    if not desc:
+        return None
+    is_short = direction == "short"
+    dir_label = "SHORT" if is_short else "LONG"
+    good = "DOWN" if is_short else "UP"
+    bad = "UP" if is_short else "DOWN"
+    return (
+        "Review this stock chart for a %s %s trade setup.\n\n"
+        "THIS IS A %s TRADE. Price going %s after entry = GOOD (profitable). "
+        "Price going %s after entry = BAD (losing trade).\n\n"
+        "Setup description:\n%s\n\n"
         "The entry bar is marked with a white dot and/or ENTRY label.\n\n"
+        "APPROVE if the chart matches the setup description and the trade would have been profitable.\n"
+        "REJECT if it doesn't match or the trade would have lost money.\n\n"
         "IMPORTANT: Respond with ONLY these two lines, nothing else:\n"
         "VERDICT: APPROVE\n"
         "REASONING: your 1-2 sentence explanation\n\n"
         "or\n\n"
         "VERDICT: REJECT\n"
         "REASONING: your 1-2 sentence explanation"
-    ),
-}
+    ) % (setup_type.upper(), dir_label, dir_label, good, bad, desc)
 
 
 class AiReviewThread(QThread):
@@ -2485,7 +2500,7 @@ class AiReviewThread(QThread):
 
     def run(self):
         print("AI REVIEW THREAD: starting for %s %s" % (self._ticker, self._entry))
-        prompt = _REVIEW_PROMPTS.get(self._setup)
+        prompt = _get_review_prompt(self._setup)
         if not prompt:
             self._store("REJECT", "No review prompt for setup: %s" % self._setup)
             return
