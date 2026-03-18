@@ -1683,6 +1683,10 @@ class ExamplesWorkspace(QFrame):
         """Load candle data in batches of 4 so the UI stays responsive."""
         charts = self._find_deferred_charts(self._grid_w)
         charts += self._find_deferred_charts(self._pend_area)
+        print("DEFERRED: found %d charts, first 3: %s" % (
+            len(charts),
+            [(getattr(c, "_deferred_ticker", ""), getattr(c, "_deferred_entry", "")) for c in charts[:3]]
+        ))
         self._deferred_queue = charts
         self._load_next_batch()
 
