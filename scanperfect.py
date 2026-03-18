@@ -2750,67 +2750,64 @@ class VettingWorkspace(QFrame):
         return sig
 
     def _load_causative_signals(self):
-        """Load winner signals from refinement file."""
+        """Load signals from filtered_{setup}.json — same source the old web UI used.
+        Has exit_date, exit_bar, mfe_adr, capture_eff for every signal.
+        Falls back to refinement file if filtered doesn't exist."""
         setup = self._setup
-        cache_dir = REPO_ROOT / "local_runner" / "cache"
-        ref_files = []
-        if cache_dir.exists():
-            ref_files = sorted(
-                [f for f in cache_dir.iterdir()
-                 if f.name.startswith("refinement_%s_cl" % setup) and f.suffix == ".json"],
-                key=lambda f: f.stat().st_mtime, reverse=True
-            )
-        if not ref_files:
-            self._signals = []
-            self._apply_filter()
-            self._update_stats()
-            return
-        try:
-            rdata = json.loads(ref_files[0].read_text())
-        except Exception:
-            self._signals = []
-            self._apply_filter()
-            self._update_stats()
-            return
-
-        winners = rdata.get("winner_signals", [])
         decisions, rejected_set, example_set = self._load_vetting_decisions(setup)
-
         signals = []
-        for s in winners:
-            tk = s.get("ticker", "")
-            sd = s.get("signal_date", "")
-            if any("%s_%s" % (tk, sd) == ex for ex in example_set):
-                continue
-            sig = self._make_signal_dict(tk, sd,
-                move_adr=s.get("move_adr"), adr_at_signal=s.get("adr_at_signal"),
-                classification=s.get("classification", ""),
-                exit_date=s.get("exit_date"), exit_bar=s.get("exit_bar"))
-            self._apply_verdict(sig, decisions, rejected_set)
-            signals.append(sig)
 
-        # Fill gaps: join extra exit data from filtered_{setup}.json for signals
-        # that don't have exit_date from refinement (older refinement files)
+        # Primary source: filtered_{setup}.json (has exit dates for all signals)
         filtered_path = REPO_ROOT / "data" / "signal_filter" / ("filtered_%s.json" % setup)
         if filtered_path.exists():
             try:
                 filt_data = json.loads(filtered_path.read_text())
-                exit_lookup = {
-                    "%s_%s" % (fs.get("ticker", ""), fs.get("date", "")): fs
-                    for fs in filt_data.get("signals", [])
-                }
-                for sig in signals:
-                    if sig.get("exit_date"):
-                        continue  # already has exit from refinement
-                    fs = exit_lookup.get("%s_%s" % (sig["ticker"], sig["signal_date"]))
-                    if fs:
-                        sig["exit_date"] = fs.get("exit_date")
-                        sig["exit_bar"] = fs.get("exit_bar")
-                        sig["mfe_adr"] = fs.get("mfe_adr")
-                        sig["capture_eff"] = fs.get("capture_eff")
-                        sig["move_pct"] = fs.get("move_pct")
+                for s in filt_data.get("signals", []):
+                    tk = s.get("ticker", "")
+                    sd = s.get("date", "")
+                    if any("%s_%s" % (tk, sd) == ex for ex in example_set):
+                        continue
+                    sig = self._make_signal_dict(tk, sd,
+                        move_adr=s.get("move_adr"), adr_at_signal=s.get("adr_at_signal"),
+                        classification=s.get("classification", ""),
+                        exit_date=s.get("exit_date"), exit_bar=s.get("exit_bar"),
+                        mfe_adr=s.get("mfe_adr"), capture_eff=s.get("capture_eff"),
+                        move_pct=s.get("move_pct"))
+                    self._apply_verdict(sig, decisions, rejected_set)
+                    signals.append(sig)
             except Exception:
                 pass
+
+        # Fallback: refinement file (if no filtered file exists)
+        if not signals:
+            cache_dir = REPO_ROOT / "local_runner" / "cache"
+            ref_files = sorted(
+                [f for f in cache_dir.iterdir()
+                 if f.name.startswith("refinement_%s_cl" % setup) and f.suffix == ".json"],
+                key=lambda f: f.stat().st_mtime, reverse=True
+            ) if cache_dir.exists() else []
+            if ref_files:
+                try:
+                    rdata = json.loads(ref_files[0].read_text())
+                    for s in rdata.get("winner_signals", []):
+                        tk = s.get("ticker", "")
+                        sd = s.get("signal_date", "")
+                        if any("%s_%s" % (tk, sd) == ex for ex in example_set):
+                            continue
+                        sig = self._make_signal_dict(tk, sd,
+                            move_adr=s.get("move_adr"), adr_at_signal=s.get("adr_at_signal"),
+                            classification=s.get("classification", ""),
+                            exit_date=s.get("exit_date"), exit_bar=s.get("exit_bar"))
+                        self._apply_verdict(sig, decisions, rejected_set)
+                        signals.append(sig)
+                except Exception:
+                    pass
+
+        if not signals:
+            self._signals = []
+            self._apply_filter()
+            self._update_stats()
+            return
 
         # Join profit grind exit dates if available
         profit_path = REPO_ROOT / "data" / "profit_grind" / ("profit_%s.json" % setup)
@@ -2818,10 +2815,7 @@ class VettingWorkspace(QFrame):
             try:
                 profit_data = json.loads(profit_path.read_text())
                 profit_exits = profit_data.get("exit_dates", {})
-                # Keys are "TICKER|entry_date", we need to match by ticker + signal_date
-                # But profit grind uses entry_date, not signal_date — build both lookups
                 for sig in signals:
-                    # Try ticker|signal_date first, then ticker|entry_date
                     pk1 = "%s|%s" % (sig["ticker"], sig["signal_date"])
                     pk2 = "%s|%s" % (sig["ticker"], sig.get("entry_date", ""))
                     ped = profit_exits.get(pk1) or profit_exits.get(pk2)
