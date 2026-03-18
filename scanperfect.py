@@ -1932,10 +1932,6 @@ def _compute_exit_date(candles, entry_date):
     return None
 
 
-# ============================================================
-# OHLCV PRELOAD THREAD
-# ============================================================
-
 
 def _prepare_candles(ticker, signal_date, lookback=250, forward=80):
     """Load OHLCV from cache, slice around signal, compute MAs. Returns list of dicts."""
@@ -1992,6 +1988,22 @@ def _prepare_candles(ticker, signal_date, lookback=250, forward=80):
         c["sma200"] = sma200[i]
         c["vol_avg20"] = vol_avg[i]
     return candles
+
+
+def _render_chart_png(ticker, entry_date, out_path, width=1200, height=600):
+    """Render a candlestick chart to PNG for AI review. Runs on main thread."""
+    from PySide6.QtGui import QPixmap
+    candles = _prepare_candles(ticker, entry_date, lookback=120, forward=60)
+    if not candles:
+        return False
+    chart = CandlestickChart()
+    chart.resize(width, height)
+    chart.set_data(candles, ticker, entry_date)
+    chart.set_entry_date(entry_date)
+    pixmap = QPixmap(width, height)
+    chart.render(pixmap)
+    pixmap.save(out_path, "PNG")
+    return True
 
 
 # ============================================================
@@ -3207,7 +3219,6 @@ class VettingWorkspace(QFrame):
 
         # Save to DB
         if verdict == "yes":
-            pending_id = None
             try:
                 with get_db() as db:
                     if not db.execute(
@@ -3219,17 +3230,8 @@ class VettingWorkspace(QFrame):
                             "VALUES (?,?,?,?)",
                             (self._setup, sig["ticker"], sig["signal_date"], sig["entry_date"])
                         )
-                    row = db.execute(
-                        "SELECT id FROM pending_examples WHERE setup_type=? AND ticker=? AND entry_date=?",
-                        (self._setup, sig["ticker"], sig["entry_date"])
-                    ).fetchone()
-                    if row:
-                        pending_id = row[0]
             except Exception:
                 pass
-            # Kick off AI review in background
-            if pending_id:
-                self._start_ai_review(sig, pending_id)
         elif verdict == "no":
             try:
                 with get_db() as db:
@@ -3253,26 +3255,6 @@ class VettingWorkspace(QFrame):
         self._apply_filter()
         self._advance_to_next()
         self.setFocus()  # re-grab focus so arrow keys work
-
-    def _start_ai_review(self, sig, pending_id):
-        """Grab current chart as PNG, send to Claude CLI in background."""
-        try:
-            pixmap = self._chart.grab()
-            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False, dir=str(REPO_ROOT / "data"))
-            tmp.close()
-            pixmap.save(tmp.name, "PNG")
-            thread = AiReviewThread(
-                tmp.name, self._setup, sig["ticker"], sig["entry_date"], pending_id
-            )
-            # Keep reference so thread isn't garbage collected
-            if not hasattr(self, "_review_threads"):
-                self._review_threads = []
-            # Clean up finished threads
-            self._review_threads = [t for t in self._review_threads if t.isRunning()]
-            self._review_threads.append(thread)
-            thread.start()
-        except Exception:
-            pass
 
     def _advance_to_next(self):
         """Advance to next unvetted signal, or just next signal."""
@@ -3523,6 +3505,12 @@ class ScanPerfectWindow(QMainWindow):
         self._timer.timeout.connect(self._on_tick)
         self._timer.start(5000)
 
+        # AI review worker — polls pending_examples every 5s, reviews one at a time
+        self._review_thread = None
+        self._review_timer = QTimer(self)
+        self._review_timer.timeout.connect(self._check_review_queue)
+        self._review_timer.start(5000)
+
     def _load_setups(self):
         self._setup_combo.clear()
         try:
@@ -3658,6 +3646,47 @@ class ScanPerfectWindow(QMainWindow):
                             det.append_log("\n→ Auto-starting %s..." % next_step)
                         QTimer.singleShot(500, lambda s=next_step: self.run_pipeline_step(s))
                     break
+
+    # ── AI Review Worker ──
+
+    def _check_review_queue(self):
+        """Poll for unreviewed pending examples. Render chart + send to Claude CLI."""
+        if self._review_thread and self._review_thread.isRunning():
+            return  # one at a time
+        try:
+            with get_db() as db:
+                row = db.execute(
+                    "SELECT id, setup_type, ticker, entry_date FROM pending_examples "
+                    "WHERE ai_verdict IS NULL AND status='pending' LIMIT 1"
+                ).fetchone()
+            if not row:
+                return
+            pid, setup, ticker, entry = row[0], row[1], row[2], row[3]
+        except Exception:
+            return
+        # Render chart to temp PNG (main thread, fast)
+        tmp = os.path.join(str(REPO_ROOT / "data"), "_review_%d.png" % pid)
+        try:
+            ok = _render_chart_png(ticker, entry, tmp)
+        except Exception:
+            ok = False
+        if not ok:
+            # Can't render — mark as reviewed with error
+            try:
+                with get_db() as db:
+                    db.execute(
+                        "UPDATE pending_examples SET ai_verdict='REJECT', "
+                        "ai_reasoning='Could not render chart', status='reviewed', "
+                        "reviewed_at=datetime('now') WHERE id=?", (pid,))
+            except Exception:
+                pass
+            return
+        self._review_thread = AiReviewThread(tmp, setup, ticker, entry, pid)
+        self._review_thread.finished.connect(self._on_review_done)
+        self._review_thread.start()
+
+    def _on_review_done(self):
+        self._review_thread = None
 
 
 # ============================================================
