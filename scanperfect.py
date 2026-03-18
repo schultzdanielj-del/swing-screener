@@ -1597,24 +1597,7 @@ class ExamplesWorkspace(QFrame):
             pass
 
         # Load exit data lookups for chart markers
-        # Grouped by ticker — each ticker has a list of {date, exit_date} from filtered file
-        self._exit_by_ticker = {}
         self._profit_exit_lookup = {}
-        # Exit signal dates from filtered file
-        filtered_path = REPO_ROOT / "data" / "signal_filter" / ("filtered_%s.json" % setup)
-        if filtered_path.exists():
-            try:
-                filt_data = json.loads(filtered_path.read_text())
-                for fs in filt_data.get("signals", []):
-                    tk = fs.get("ticker", "")
-                    if tk not in self._exit_by_ticker:
-                        self._exit_by_ticker[tk] = []
-                    self._exit_by_ticker[tk].append({
-                        "date": fs.get("date", ""),
-                        "exit_date": fs.get("exit_date"),
-                    })
-            except Exception:
-                pass
         # Profit exit dates
         profit_path = REPO_ROOT / "data" / "profit_grind" / ("profit_%s.json" % setup)
         if profit_path.exists():
@@ -1705,20 +1688,9 @@ class ExamplesWorkspace(QFrame):
             ed = getattr(chart, "_deferred_entry", "")
             if not tk:
                 continue
-            candles = _prepare_candles(tk, ed, lookback=80, forward=40)
+            candles = _prepare_candles(tk, ed, lookback=80, forward=120)
             if candles:
-                # Try filtered file first
-                exit_dt = None
-                sigs_for_tk = getattr(self, "_exit_by_ticker", {}).get(tk, [])
-                best_date = None
-                for fs in sigs_for_tk:
-                    fd = fs["date"]
-                    if fd <= ed and (best_date is None or fd > best_date):
-                        best_date = fd
-                        exit_dt = fs["exit_date"]
-                # Fallback: compute exit from OHLCV using exit grinder condition
-                if not exit_dt:
-                    exit_dt = _compute_exit_date(candles, ed)
+                exit_dt = _compute_exit_date(candles, ed)
                 profit_dt = getattr(self, "_profit_exit_lookup", {}).get("%s_%s" % (tk, ed))
                 chart.set_data(candles, ed, exit_date=exit_dt, profit_exit_date=profit_dt)
             chart._deferred_ticker = ""  # mark as loaded
