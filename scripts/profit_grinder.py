@@ -5,10 +5,12 @@ Brute-forces the expression cache (~12K expressions after boolean exclusion)
 testing every expression × threshold × direction against forward expression
 values of all winner signals to find optimal exit conditions.
 
-Entry bar detection: For each signal, finds the bar where entry_high occurred
-in the forward window. Exit expression search starts AFTER that bar — you
-can't exit before you've entered. Already-true-at-entry check uses expression
-values at the entry_high bar.
+Two distinct forward windows:
+  - entry_window: how far from the signal bar the refinement grinder looked
+    to find entry_high (read from raw_signal_clusters file). Used to locate
+    which bar has the entry_high price.
+  - exit_horizon: how far from the signal bar to search for exit conditions
+    (default 120 bars). Exit search starts AFTER the entry_high bar.
 
 Weighting:
   - Examples + vetted YES: weight 1.0, hard trigger requirement
@@ -19,7 +21,7 @@ See PROFIT_GRINDER.md for full spec.
 
 Usage:
     python scripts/profit_grinder.py --setup dtss
-    python scripts/profit_grinder.py --setup dtss --max-forward 120
+    python scripts/profit_grinder.py --setup dtss --exit-horizon 120
 """
 
 import argparse, sys, os, time, json, glob, sqlite3, gc
@@ -36,7 +38,7 @@ CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
 sys.path.insert(0, REPO_ROOT); sys.path.insert(0, LOCAL_DIR)
 
-MAX_FORWARD_DEFAULT = 120
+EXIT_HORIZON_DEFAULT = 120  # how far from signal bar to search for exit expressions
 INITIAL_CAPITAL = 100_000
 RISK_PER_TRADE = 0.01
 TRADING_DAYS_PER_YEAR = 252
@@ -119,6 +121,30 @@ def load_vetting_decisions(st):
     except Exception as e: print(f"  WARNING: DB error: {e}")
     print(f"  Examples: {len(ek)} keys, Rejected: {len(rk)} keys"); return ek, rk
 
+def load_entry_window(setup_type):
+    """Load the entry_window from the raw_signal_clusters file.
+
+    This is how far from the rightmost signal bar the refinement grinder
+    looked to find the entry_high price. Must match exactly so the profit
+    grinder finds the same bar.
+    """
+    latest = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
+    if not os.path.exists(latest):
+        cs = glob.glob(os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}_*.json"))
+        if not cs:
+            print(f"  WARNING: No cluster file for {setup_type} — using entry_window=1 (entry candle only)")
+            return 1
+        cs.sort(key=os.path.getmtime, reverse=True)
+        latest = cs[0]
+    with open(latest) as f:
+        data = json.load(f)
+    ew = data.get("forward_window")
+    if ew is None or ew < 1:
+        print(f"  WARNING: No forward_window in cluster file — using entry_window=1")
+        return 1
+    print(f"  Entry window from cluster file: {ew} bars ({os.path.basename(latest)})")
+    return int(ew)
+
 # ── Signal Population ──
 def build_signal_population(ev_data, entry_scores, example_keys, rejected_keys):
     raw = ev_data.get("signals",[])
@@ -148,22 +174,26 @@ def build_expr_col_map(expr_names):
     return ecm, fn, ne
 
 # ── Forward Data Construction ──
-def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map, direction, max_forward):
+def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
+                       direction, exit_horizon, entry_window):
     """Build per-signal forward data with entry_high bar detection.
 
-    For each signal:
-      - Forward window starts at signal_bar+1 (full window for expression data)
-      - Finds which bar in that window has the entry_high price
-      - Stores the offset so the grind can start searching AFTER that bar
-      - Stores expression values AT the entry_high bar for already-true check
+    Two windows:
+      - entry_window: how far from signal_bar+1 to search for the entry_high
+        bar (must match the refinement grinder's forward_window).
+      - exit_horizon: how far from signal_bar+1 to load forward expression
+        data for exit searching.
+
+    For examples, entry_high is the high of the entry candle (bar 0 = signal_bar+1).
+    For non-examples, entry_high is the max high within entry_window bars.
     """
     import pandas as pd
     n_signals = len(signals)
     cache_cols = np.array([ci for _,ci in expr_col_map], dtype=np.int32)
-    fwd_expr = [None]*n_signals       # (n_fwd_bars, n_filtered_exprs) per signal
-    fwd_closes = [None]*n_signals     # (n_fwd_bars,) per signal
-    entry_high_bar_expr = [None]*n_signals  # expression values at the entry_high bar
-    entry_high_offset = np.full(n_signals, -1, dtype=np.int32)  # which bar in fwd window has entry_high
+    fwd_expr = [None]*n_signals
+    fwd_closes = [None]*n_signals
+    entry_high_bar_expr = [None]*n_signals
+    entry_high_offset = np.full(n_signals, -1, dtype=np.int32)
     entry_prices = np.zeros(n_signals, dtype=np.float64)
     adr_values = np.zeros(n_signals, dtype=np.float64)
     signal_meta = []
@@ -194,29 +224,27 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map, direction
                 skipped_date+=1; signal_meta.append({"idx":i,"ticker":ticker,"status":"no_date","date":sd}); continue
             entry_prices[i]=sig["entry_high"]
             adr_values[i]=sig["adr_at_signal"]
-            nf=min(min(len(df)-oi-1,len(edata)-ei-1),max_forward)
+            # Forward window for exit search (exit_horizon bars from signal_bar+1)
+            nf=min(min(len(df)-oi-1,len(edata)-ei-1),exit_horizon)
             if nf<1:
                 skipped_fwd+=1; signal_meta.append({"idx":i,"ticker":ticker,"status":"no_fwd","date":sd}); continue
 
-            # Forward window starts at signal_bar+1
             fwd_closes[i]=ca[oi+1:oi+1+nf].copy()
             fwd_expr[i]=edata[ei+1:ei+1+nf][:,cache_cols].copy()
 
-            # Find which bar in the forward window has the entry_high price
-            fwd_highs = ha[oi+1:oi+1+nf]
+            # Find which bar in the forward window has the entry_high price.
+            # Only search within entry_window bars (matching the refinement grinder).
             eh_price = sig["entry_high"]
-            # Find bar with high closest to entry_high (handles float precision)
+            eh_search_end = min(entry_window, nf)  # don't search beyond available bars
+            fwd_highs = ha[oi+1:oi+1+eh_search_end]
             eh_diffs = np.abs(fwd_highs - eh_price)
             eh_bar = int(np.argmin(eh_diffs))
             # Verify it's actually close (within 0.01 or 0.1% of price)
             if eh_diffs[eh_bar] > max(0.01, eh_price * 0.001):
-                # entry_high not found in forward window — could be from a different
-                # window definition. Use bar 0 as fallback (conservative: search from bar 1)
                 eh_bar = 0
                 skipped_no_ehbar += 1
 
             entry_high_offset[i] = eh_bar
-            # Expression values at the entry_high bar (for already-true check)
             entry_high_bar_expr[i] = fwd_expr[i][eh_bar, :].copy()
 
             fd=ds[oi+1:oi+1+nf].tolist()
@@ -235,15 +263,14 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map, direction
            "skipped_no_ehbar":skipped_no_ehbar,"n_valid":int(vm.sum())}
     return fwd_expr, fwd_closes, entry_high_bar_expr, entry_high_offset, entry_prices, adr_values, signal_meta, vm, stats
 
-def extract_column_padded(fwd_expr_list, valid_indices, expr_col, max_forward):
+def extract_column_padded(fwd_expr_list, valid_indices, expr_col, exit_horizon):
     n=len(valid_indices)
-    c=np.full((n,max_forward),np.nan,dtype=np.float32)
+    c=np.full((n,exit_horizon),np.nan,dtype=np.float32)
     for vi,si in enumerate(valid_indices):
         fe=fwd_expr_list[si]; c[vi,:fe.shape[0]]=fe[:,expr_col]
     return c
 
 def extract_entry_high_bar_column(entry_high_bar_expr_list, valid_indices, expr_col):
-    """Extract one expression column at the entry_high bar for all valid signals."""
     n=len(valid_indices)
     vals=np.full(n,np.nan,dtype=np.float32)
     for vi,si in enumerate(valid_indices):
@@ -342,13 +369,7 @@ def _mdd(eq):
 def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
                  entry_high_offset_v, valid_indices,
                  entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
-                 move_adrs_v, n_bars_per_signal, filtered_names, direction, max_forward):
-    """Exit search starts AFTER the entry_high bar for each signal.
-
-    For each signal, bars 0 through entry_high_offset are masked out — you
-    can't exit before you've entered. The already-true check uses expression
-    values at the entry_high bar itself.
-    """
+                 move_adrs_v, n_bars_per_signal, filtered_names, direction, exit_horizon):
     nv=len(valid_indices); ne=len(filtered_names)
     print(f"\n  ── 1-STAGE EXPRESSION GRIND ──")
     print(f"  {nv} signals × {ne} expressions × ~{N_THRESHOLDS} thresholds × 2 directions")
@@ -358,29 +379,23 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
     print_ram("(before grind)")
     t0=time.time(); candidates=[]; tested=0; hgf=0; atef=0
 
-    cl2d=np.full((nv,max_forward),np.nan,dtype=np.float64)
+    cl2d=np.full((nv,exit_horizon),np.nan,dtype=np.float64)
     for vi,si in enumerate(valid_indices):
         fc=fwd_close_list[si]; cl2d[vi,:len(fc)]=fc
 
-    # Build search-valid mask: True only for bars AFTER the entry_high bar
-    # (you can't exit before you've entered)
-    search_valid=np.zeros((nv,max_forward),dtype=bool)
+    search_valid=np.zeros((nv,exit_horizon),dtype=bool)
     for vi in range(nv):
-        si = valid_indices[vi]
-        eh_off = entry_high_offset_v[vi]  # which bar has the entry_high
+        eh_off = entry_high_offset_v[vi]
         n_bars = n_bars_per_signal[vi]
-        # Search starts at eh_off+1 (the bar after entry_high)
         start = eh_off + 1
         if start < n_bars:
             search_valid[vi, start:n_bars] = True
 
-    bi=np.arange(max_forward)[np.newaxis,:]
+    bi=np.arange(exit_horizon)[np.newaxis,:]
 
-    # Print entry_high offset stats
     eh_offsets = entry_high_offset_v
     print(f"  Entry-high bar offsets: min={eh_offsets.min()} med={int(np.median(eh_offsets))} "
-          f"max={eh_offsets.max()} (0=first bar after signal)")
-    # How many searchable bars per signal after entry_high
+          f"max={eh_offsets.max()} (0=entry candle)")
     searchable = search_valid.sum(axis=1)
     print(f"  Searchable bars after entry: min={int(searchable.min())} "
           f"med={int(np.median(searchable))} max={int(searchable.max())}")
@@ -392,15 +407,14 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
                   f"{tested:,} tested, {hgf:,} gate, {atef:,} already-true")
         if (ei+1)%2000==0: check_ram(f"(at expr {ei+1})",min_gb=1.0)
 
-        col=extract_column_padded(fwd_expr_list,valid_indices,ei,max_forward)
-        fm=np.isfinite(col)&search_valid  # only search bars after entry_high
+        col=extract_column_padded(fwd_expr_list,valid_indices,ei,exit_horizon)
+        fm=np.isfinite(col)&search_valid
         fv=col[fm]
         if len(fv)<nv: continue
         pcts=np.linspace(5,95,N_THRESHOLDS)
         ths=np.unique(np.percentile(fv,pcts))
         if len(ths)<2: continue
 
-        # Entry_high bar values for this expression (for already-true check)
         eb_vals=extract_entry_high_bar_column(entry_high_bar_expr_list,valid_indices,ei)
         eb_finite=np.isfinite(eb_vals)
 
@@ -411,11 +425,10 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
                 if above: hit=(col>=th)&fm
                 else: hit=(col<=th)&fm
 
-                hb=np.where(hit,bi,max_forward+1)
+                hb=np.where(hit,bi,exit_horizon+1)
                 fb=np.min(hb,axis=1)
-                triggered=fb<max_forward+1
+                triggered=fb<exit_horizon+1
 
-                # Already-true-at-entry: check expression value at entry_high bar
                 if above: ate=eb_finite&(eb_vals>=th)
                 else: ate=eb_finite&(eb_vals<=th)
                 triggered=triggered&(~ate)
@@ -426,13 +439,12 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
                     continue
 
                 ca=np.full(nv,-LOSS_ASSUMPTION_ADR,dtype=np.float64)
-                bh=np.full(nv,max_forward,dtype=np.int32)
+                bh=np.full(nv,exit_horizon,dtype=np.int32)
                 for vi in np.where(triggered)[0]:
                     f=fb[vi]; ec=cl2d[vi,f]
                     if np.isfinite(ec) and adr_values_v[vi]>0:
                         if direction=="short": ca[vi]=(entry_prices_v[vi]-ec)/adr_values_v[vi]
                         else: ca[vi]=(ec-entry_prices_v[vi])/adr_values_v[vi]
-                    # bars_held = bars from entry_high to exit (not from signal bar)
                     bh[vi]=f - entry_high_offset_v[vi]
 
                 st=compute_weighted_stats(ca,weights_v,triggered,move_adrs_v,bh)
@@ -449,10 +461,10 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
     print(f"    Already-true-at-entry fails: {atef:,}")
     print(f"    Raw candidates: {len(candidates):,}")
     print_ram("(after grind)")
-    return dedup_candidates(candidates)
+    return dedup_candidates(candidates, exit_horizon)
 
 # ── Dedup ──
-def dedup_candidates(candidates):
+def dedup_candidates(candidates, exit_horizon):
     if len(candidates)<2: return [c[0] for c in candidates]
     print(f"\n  ── CANDIDATE DEDUP ──")
     t0=time.time(); nr=len(candidates)
@@ -473,7 +485,7 @@ def dedup_candidates(candidates):
     for ci in range(nc):
         row=em[ci]; dom=False
         for k in kr:
-            bv=(row<MAX_FORWARD_DEFAULT+1)&(k<MAX_FORWARD_DEFAULT+1); nv=int(bv.sum())
+            bv=(row<exit_horizon+1)&(k<exit_horizon+1); nv=int(bv.sum())
             if nv<50: continue
             rv,kv=row[bv],k[bv]
             if np.std(rv)<1e-10 or np.std(kv)<1e-10: dom=True; break
@@ -490,19 +502,24 @@ def dedup_candidates(candidates):
 def main():
     pa=argparse.ArgumentParser(description="Profit Grinder — Phase 4")
     pa.add_argument("--setup",default="dtss"); pa.add_argument("--direction",default=None)
-    pa.add_argument("--ev-file",default=None); pa.add_argument("--max-forward",type=int,default=MAX_FORWARD_DEFAULT)
+    pa.add_argument("--ev-file",default=None)
+    pa.add_argument("--exit-horizon",type=int,default=EXIT_HORIZON_DEFAULT,
+                    help="How far from signal bar to search for exit expressions (default: 120)")
     args=pa.parse_args()
     setup=args.setup; cfg=SETUP_CONFIGS.get(setup,{"direction":"short"}); direction=args.direction or cfg["direction"]
+    exit_horizon=args.exit_horizon
 
     print(f"\n{'='*70}\n  PROFIT GRINDER — Phase 4 Exit Optimization\n{'='*70}")
     print(f"  Setup: {setup.upper()}, Direction: {direction}")
-    print(f"  Max forward: {args.max_forward} bars, Loss: {LOSS_ASSUMPTION_ADR} ADR, Thresholds: {N_THRESHOLDS}")
+    print(f"  Exit horizon: {exit_horizon} bars (how far to search for exits)")
+    print(f"  Loss: {LOSS_ASSUMPTION_ADR} ADR, Thresholds: {N_THRESHOLDS}")
     print_ram("(startup)"); check_ram("(startup)",min_gb=4.0); t0=time.time()
 
     print(f"\n  ── LOADING DATA ──")
     ev_data,ev_path=load_ev_data(setup,args.ev_file)
     entry_scores=load_entry_scores(setup)
     example_keys,rejected_keys=load_vetting_decisions(setup)
+    entry_window=load_entry_window(setup)
 
     print(f"\n  ── BUILDING POPULATION ──")
     signals,counts=build_signal_population(ev_data,entry_scores,example_keys,rejected_keys)
@@ -525,13 +542,15 @@ def main():
     print(f"  {len(ec.expr_names)} total, {ne} boolean excluded, {nf} for search")
 
     print(f"\n  ── FORWARD MATRIX CONSTRUCTION ──")
+    print(f"  Entry window: {entry_window} bars (from cluster file — where entry_high was computed)")
+    print(f"  Exit horizon: {exit_horizon} bars (how far to search for exits)")
     check_ram("(pre-OHLCV)",min_gb=3.0); oc=load_5yr_cache(); print_ram("(OHLCV loaded)")
     fwd_expr,fwd_closes,entry_high_bar_expr,entry_high_offset,entry_prices,adr_values,signal_meta,valid_mask,bs=\
-        build_forward_data(signals,oc,ec,ecm,direction,args.max_forward)
+        build_forward_data(signals,oc,ec,ecm,direction,exit_horizon,entry_window)
     del oc; gc.collect()
     print(f"  Loaded: {bs['loaded']}  Valid: {bs['n_valid']}")
     if bs.get('skipped_no_ehbar',0)>0:
-        print(f"  ⚠ {bs['skipped_no_ehbar']} signals: entry_high bar not found in forward window (using bar 0 fallback)")
+        print(f"  ⚠ {bs['skipped_no_ehbar']} signals: entry_high not found within entry_window (bar 0 fallback)")
     if bs['loaded']<counts['total']:
         print(f"  Skipped: ohlcv={bs['skipped_ohlcv']} expr={bs['skipped_expr']} "
               f"date={bs['skipped_date']} fwd={bs['skipped_fwd']}")
@@ -553,7 +572,7 @@ def main():
     eho=entry_high_offset[vi]
 
     cands=grind_1stage(fwd_expr,fwd_closes,entry_high_bar_expr,eho,vi,
-                       epv,av,wv,ihg,mv,nbp,fn,direction,args.max_forward)
+                       epv,av,wv,ihg,mv,nbp,fn,direction,exit_horizon)
 
     if cands:
         t=cands[0]
@@ -582,6 +601,7 @@ def main():
     print(f"  COMPLETE ({el:.1f}s / {el/60:.1f} min)")
     print(f"  {'='*50}")
     print(f"  Signals: {counts['total']}  Expressions: {nf}  Candidates: {len(cands)}")
+    print(f"  Entry window: {entry_window} bars  Exit horizon: {exit_horizon} bars")
     print(f"  EV source: {os.path.basename(ev_path)}")
     print_ram("(final)"); print(f"  {'='*50}")
 
