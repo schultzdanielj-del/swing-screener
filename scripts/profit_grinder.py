@@ -15,6 +15,9 @@ Entry_high bar detection (no price matching — deterministic):
   - Examples: entry_date from DB → find in OHLCV → compute offset
   - Non-examples: argmax of highs within entry_window bars
 
+Parallelized grind using ThreadPoolExecutor — numpy releases GIL so
+threads run truly parallel on vectorized operations. No data copying.
+
 See PROFIT_GRINDER.md for full spec.
 
 Usage:
@@ -25,6 +28,8 @@ Usage:
 import argparse, sys, os, time, json, glob, sqlite3, gc
 import numpy as np, pickle
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -118,42 +123,28 @@ def load_vetting_decisions(st):
         cn.close()
     except Exception as e: print(f"  WARNING: DB error: {e}")
     print(f"  Examples: {len(ek)} keys, Rejected: {len(rk)} keys"); return ek, rk
-
 def load_example_entry_dates(setup_type):
-    """Load example entry dates from SQLite. Returns {(ticker, entry_date): entry_date}.
-
-    The signal date in the EV output is the scan bar date (day before entry).
-    We need the actual entry_date to find the entry bar in the OHLCV.
-    """
     result = {}
-    if not os.path.exists(DB_PATH):
-        return result
+    if not os.path.exists(DB_PATH): return result
     try:
         cn = sqlite3.connect(DB_PATH); cn.row_factory = sqlite3.Row
         for r in cn.execute("SELECT ticker, entry_date FROM examples WHERE setup_type=?", (setup_type,)):
             tk, ed = r["ticker"], r["entry_date"]
-            if tk and ed:
-                result[(tk, ed)] = ed
+            if tk and ed: result[(tk, ed)] = ed
         cn.close()
-    except Exception as e:
-        print(f"  WARNING: Error loading example entry dates: {e}")
+    except Exception as e: print(f"  WARNING: Error loading example entry dates: {e}")
     print(f"  Example entry dates loaded: {len(result)}")
     return result
-
 def load_entry_window(setup_type):
     latest = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
     if not os.path.exists(latest):
         cs = glob.glob(os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}_*.json"))
-        if not cs:
-            print(f"  WARNING: No cluster file for {setup_type} — using entry_window=1")
-            return 1
+        if not cs: print(f"  WARNING: No cluster file — using entry_window=1"); return 1
         cs.sort(key=os.path.getmtime, reverse=True); latest = cs[0]
     with open(latest) as f: data = json.load(f)
     ew = data.get("forward_window")
-    if ew is None or ew < 1:
-        print(f"  WARNING: No forward_window in cluster file — using entry_window=1"); return 1
-    print(f"  Entry window from cluster file: {ew} bars ({os.path.basename(latest)})")
-    return int(ew)
+    if ew is None or ew < 1: print(f"  WARNING: No forward_window — using entry_window=1"); return 1
+    print(f"  Entry window from cluster file: {ew} bars ({os.path.basename(latest)})"); return int(ew)
 
 # ── Signal Population ──
 def build_signal_population(ev_data, entry_scores, example_keys, rejected_keys):
@@ -186,15 +177,6 @@ def build_expr_col_map(expr_names):
 # ── Forward Data Construction ──
 def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
                        direction, exit_horizon, entry_window, example_entry_dates):
-    """Build per-signal forward data with deterministic entry_high bar detection.
-
-    Entry_high bar offset (no price matching needed):
-      - Examples: look up entry_date in OHLCV date index, compute offset
-        from forward window start (signal_bar+1). The entry bar IS the
-        entry_date — it's defined in the examples table.
-      - Non-examples: argmax of highs within entry_window bars after the
-        signal bar. Identical to how the refinement grinder computed it.
-    """
     import pandas as pd
     n_signals = len(signals)
     cache_cols = np.array([ci for _,ci in expr_col_map], dtype=np.int32)
@@ -209,14 +191,6 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
     n_ex_date_found=n_ex_date_fallback=n_nonex_argmax=0
     tg = {}
     for i,sig in enumerate(signals): tg.setdefault(sig["ticker"],[]).append(i)
-
-    # Build reverse lookup: (ticker, entry_date) exists in example_entry_dates
-    # The signal's date field is the scan bar date. For examples, entry_date = scan_date + 1 trading day.
-    # But we have the actual entry_date from the DB, keyed by (ticker, entry_date).
-    # We need to map from signal (ticker, scan_date) to its entry_date.
-    # The examples table has entry_date directly. The signal's scan_date should be
-    # the trading day before entry_date in the OHLCV.
-
     for ticker, indices in tg.items():
         df = ohlcv_cache.get(ticker)
         if df is None:
@@ -239,48 +213,29 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
             sig=signals[i]; sd=sig["date"]; oi=d2i.get(sd); ei=edm.get(sd)
             if oi is None or ei is None:
                 skipped_date+=1; signal_meta.append({"idx":i,"ticker":ticker,"status":"no_date","date":sd}); continue
-            entry_prices[i]=sig["entry_high"]
-            adr_values[i]=sig["adr_at_signal"]
+            entry_prices[i]=sig["entry_high"]; adr_values[i]=sig["adr_at_signal"]
             nf=min(min(len(df)-oi-1,len(edata)-ei-1),exit_horizon)
             if nf<1:
                 skipped_fwd+=1; signal_meta.append({"idx":i,"ticker":ticker,"status":"no_fwd","date":sd}); continue
-
             fwd_closes[i]=ca[oi+1:oi+1+nf].copy()
             fwd_expr[i]=edata[ei+1:ei+1+nf][:,cache_cols].copy()
-
-            # ── Determine entry_high bar offset ──
-            fwd_start = oi + 1  # absolute OHLCV index where forward window begins
-
+            fwd_start = oi + 1
             if sig.get("is_example", False):
-                # Example: look up the actual entry_date in the OHLCV
-                # The entry_date is stored in the DB. Find it by checking
-                # all example_entry_dates for this ticker.
                 entry_date_found = False
                 for (etk, edt), _ in example_entry_dates.items():
-                    if etk != ticker:
-                        continue
+                    if etk != ticker: continue
                     entry_ohlcv_idx = d2i.get(edt)
                     if entry_ohlcv_idx is not None:
                         eh_bar = entry_ohlcv_idx - fwd_start
                         if 0 <= eh_bar < nf:
-                            entry_high_offset[i] = eh_bar
-                            entry_date_found = True
-                            n_ex_date_found += 1
-                            break
-                if not entry_date_found:
-                    # Fallback: bar 0 (entry candle = first bar after scan bar)
-                    entry_high_offset[i] = 0
-                    n_ex_date_fallback += 1
+                            entry_high_offset[i] = eh_bar; entry_date_found = True; n_ex_date_found += 1; break
+                if not entry_date_found: entry_high_offset[i] = 0; n_ex_date_fallback += 1
             else:
-                # Non-example: argmax of highs within entry_window
                 eh_search_end = min(entry_window, nf)
-                fwd_highs = ha[fwd_start:fwd_start+eh_search_end]
-                entry_high_offset[i] = int(np.argmax(fwd_highs))
+                entry_high_offset[i] = int(np.argmax(ha[fwd_start:fwd_start+eh_search_end]))
                 n_nonex_argmax += 1
-
             eh_bar = entry_high_offset[i]
             entry_high_bar_expr[i] = fwd_expr[i][eh_bar, :].copy()
-
             fd=ds[oi+1:oi+1+nf].tolist()
             signal_meta.append({"idx":i,"ticker":ticker,"signal_date":sd,
                 "entry_price":float(entry_prices[i]),"adr":float(adr_values[i]),
@@ -320,8 +275,7 @@ def compute_weighted_stats(captured_adr, weights, triggered, move_adrs_actual, n
     w=weights.copy(); ws=w.sum()
     if ws<1e-10: return None
     iw=captured_adr>0; il=~iw
-    wr=float(np.sum(w[iw])/ws)
-    exp=float(np.sum(captured_adr*w)/ws)
+    wr=float(np.sum(w[iw])/ws); exp=float(np.sum(captured_adr*w)/ws)
     wv=np.sum(w*(captured_adr-exp)**2)/ws; wstd=float(np.sqrt(max(wv,0.0)))
     ne=(ws**2)/np.sum(w**2) if np.sum(w**2)>0 else 1.0
     sqn=float(np.sqrt(ne)*exp/wstd) if wstd>0 else 0.0
@@ -342,10 +296,8 @@ def compute_weighted_stats(captured_adr, weights, triggered, move_adrs_actual, n
     tr=eq[-1]/eq[0] if eq[0]>0 else 1.0
     cagr=float((tr**(1/yr)-1)) if yr>0 and tr>0 else 0.0
     tpy=TRADING_DAYS_PER_YEAR/ab if ab>0 else 1.0
-    ar=exp*tpy; astd=wstd*np.sqrt(tpy)
-    sh=float(ar/astd) if astd>0 else 0.0
-    ds=captured_adr[captured_adr<0]
-    dstd=float(np.std(ds,ddof=1)) if len(ds)>1 else 1.0
+    ar=exp*tpy; astd=wstd*np.sqrt(tpy); sh=float(ar/astd) if astd>0 else 0.0
+    ds=captured_adr[captured_adr<0]; dstd=float(np.std(ds,ddof=1)) if len(ds)>1 else 1.0
     so=float(ar/(dstd*np.sqrt(tpy))) if dstd>0 else 0.0
     ca=float(cagr/mdd) if mdd>0 else 999.0
     tm=triggered&(move_adrs_actual>0)
@@ -380,7 +332,6 @@ def compute_weighted_stats(captured_adr, weights, triggered, move_adrs_actual, n
         "total_return_pct":round(float((eq[-1]/eq[0]-1)*100),2),
         "median_capture_eff":round(mc,4),"floor_capture_eff":round(fc,4),
         "mean_capture_eff":round(mnc,4),"std_capture_eff":round(sc,4)}
-
 def _maxc(ba):
     mx=cur=0
     for v in ba:
@@ -400,102 +351,144 @@ def _mdd(eq):
         else: cur+=1; mx=max(mx,cur)
     return mx
 
-# ── 1-Stage Expression Grind ──
+# ── Worker function for parallel grind ──
+def _grind_expr_chunk(expr_indices, fwd_expr_list, valid_indices,
+                      close_2d, search_valid, bar_indices,
+                      entry_high_bar_expr_list, entry_high_offset_v,
+                      entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
+                      move_adrs_v, filtered_names, direction, exit_horizon):
+    """Process a chunk of expression indices. Thread-safe — reads shared arrays, writes nothing shared."""
+    nv = len(valid_indices)
+    candidates = []
+    tested = 0; hgf = 0; atef = 0
+
+    for ei in expr_indices:
+        col = extract_column_padded(fwd_expr_list, valid_indices, ei, exit_horizon)
+        fm = np.isfinite(col) & search_valid
+        fv = col[fm]
+        if len(fv) < nv: continue
+        pcts = np.linspace(5, 95, N_THRESHOLDS)
+        ths = np.unique(np.percentile(fv, pcts))
+        if len(ths) < 2: continue
+
+        eb_vals = extract_entry_high_bar_column(entry_high_bar_expr_list, valid_indices, ei)
+        eb_finite = np.isfinite(eb_vals)
+        en = filtered_names[ei]
+
+        for th in ths:
+            for dl, above in [("above", True), ("below", False)]:
+                tested += 1
+                if above: hit = (col >= th) & fm
+                else: hit = (col <= th) & fm
+
+                hb = np.where(hit, bar_indices, exit_horizon + 1)
+                fb = np.min(hb, axis=1)
+                triggered = fb < exit_horizon + 1
+
+                if above: ate = eb_finite & (eb_vals >= th)
+                else: ate = eb_finite & (eb_vals <= th)
+                triggered = triggered & (~ate)
+
+                if not triggered[is_hard_gate_v].all():
+                    if ate[is_hard_gate_v].any(): atef += 1
+                    else: hgf += 1
+                    continue
+
+                ca = np.full(nv, -LOSS_ASSUMPTION_ADR, dtype=np.float64)
+                bh = np.full(nv, exit_horizon, dtype=np.int32)
+                for vi in np.where(triggered)[0]:
+                    f = fb[vi]; ec = close_2d[vi, f]
+                    if np.isfinite(ec) and adr_values_v[vi] > 0:
+                        if direction == "short": ca[vi] = (entry_prices_v[vi] - ec) / adr_values_v[vi]
+                        else: ca[vi] = (ec - entry_prices_v[vi]) / adr_values_v[vi]
+                    bh[vi] = f - entry_high_offset_v[vi]
+
+                st = compute_weighted_stats(ca, weights_v, triggered, move_adrs_v, bh)
+                if st is None: continue
+                st["expr_name"] = en; st["direction"] = dl; st["threshold"] = round(float(th), 6)
+                st["n_already_true"] = int(ate.sum())
+                candidates.append((st, fb.astype(np.int16).copy()))
+
+    return candidates, tested, hgf, atef
+
+
+# ── 1-Stage Expression Grind (parallel) ──
 def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
                  entry_high_offset_v, valid_indices,
                  entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
-                 move_adrs_v, n_bars_per_signal, filtered_names, direction, exit_horizon):
-    nv=len(valid_indices); ne=len(filtered_names)
+                 move_adrs_v, n_bars_per_signal, filtered_names, direction, exit_horizon,
+                 n_workers=None):
+    if n_workers is None:
+        n_workers = os.cpu_count() or 8
+    nv = len(valid_indices); ne = len(filtered_names)
     print(f"\n  ── 1-STAGE EXPRESSION GRIND ──")
     print(f"  {nv} signals × {ne} expressions × ~{N_THRESHOLDS} thresholds × 2 directions")
     print(f"  Hard gate signals: {int(is_hard_gate_v.sum())}")
-    print(f"  Already-true-at-entry filter: ON (checks entry_high bar)")
+    print(f"  Workers: {n_workers} threads (numpy releases GIL)")
     print_ram("(before grind)")
-    t0=time.time(); candidates=[]; tested=0; hgf=0; atef=0
+    t0 = time.time()
 
-    cl2d=np.full((nv,exit_horizon),np.nan,dtype=np.float64)
-    for vi,si in enumerate(valid_indices):
-        fc=fwd_close_list[si]; cl2d[vi,:len(fc)]=fc
+    # Pre-build shared arrays (read-only by all threads, no copies needed)
+    close_2d = np.full((nv, exit_horizon), np.nan, dtype=np.float64)
+    for vi, si in enumerate(valid_indices):
+        fc = fwd_close_list[si]; close_2d[vi, :len(fc)] = fc
 
-    search_valid=np.zeros((nv,exit_horizon),dtype=bool)
+    search_valid = np.zeros((nv, exit_horizon), dtype=bool)
     for vi in range(nv):
-        eh_off = entry_high_offset_v[vi]
-        n_bars = n_bars_per_signal[vi]
+        eh_off = entry_high_offset_v[vi]; n_bars = n_bars_per_signal[vi]
         start = eh_off + 1
-        if start < n_bars:
-            search_valid[vi, start:n_bars] = True
+        if start < n_bars: search_valid[vi, start:n_bars] = True
 
-    bi=np.arange(exit_horizon)[np.newaxis,:]
+    bar_indices = np.arange(exit_horizon)[np.newaxis, :]
 
     eh_offsets = entry_high_offset_v
     print(f"  Entry-high bar offsets: min={eh_offsets.min()} med={int(np.median(eh_offsets))} "
-          f"max={eh_offsets.max()} (0=entry candle)")
+          f"max={eh_offsets.max()}")
     searchable = search_valid.sum(axis=1)
     print(f"  Searchable bars after entry: min={int(searchable.min())} "
           f"med={int(np.median(searchable))} max={int(searchable.max())}")
 
-    for ei in range(ne):
-        if (ei+1)%1000==0:
-            el=time.time()-t0; r=(ei+1)/el if el>0 else 0
-            print(f"    [{ei+1}/{ne}] {r:.0f} expr/s, {len(candidates)} cands, "
-                  f"{tested:,} tested, {hgf:,} gate, {atef:,} already-true")
-        if (ei+1)%2000==0: check_ram(f"(at expr {ei+1})",min_gb=1.0)
+    # Split expression indices into chunks for parallel processing
+    all_expr_indices = list(range(ne))
+    chunk_size = max(1, ne // n_workers)
+    chunks = [all_expr_indices[i:i+chunk_size] for i in range(0, ne, chunk_size)]
+    print(f"  {len(chunks)} chunks of ~{chunk_size} expressions each")
 
-        col=extract_column_padded(fwd_expr_list,valid_indices,ei,exit_horizon)
-        fm=np.isfinite(col)&search_valid
-        fv=col[fm]
-        if len(fv)<nv: continue
-        pcts=np.linspace(5,95,N_THRESHOLDS)
-        ths=np.unique(np.percentile(fv,pcts))
-        if len(ths)<2: continue
+    # Run in parallel using threads (numpy releases GIL for vectorized ops)
+    all_candidates = []
+    total_tested = 0; total_hgf = 0; total_atef = 0
+    completed_chunks = 0
+    lock = threading.Lock()
 
-        eb_vals=extract_entry_high_bar_column(entry_high_bar_expr_list,valid_indices,ei)
-        eb_finite=np.isfinite(eb_vals)
+    def _run_chunk(chunk):
+        return _grind_expr_chunk(
+            chunk, fwd_expr_list, valid_indices,
+            close_2d, search_valid, bar_indices,
+            entry_high_bar_expr_list, entry_high_offset_v,
+            entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
+            move_adrs_v, filtered_names, direction, exit_horizon)
 
-        en=filtered_names[ei]
-        for th in ths:
-            for dl,above in [("above",True),("below",False)]:
-                tested+=1
-                if above: hit=(col>=th)&fm
-                else: hit=(col<=th)&fm
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = {pool.submit(_run_chunk, chunk): ci for ci, chunk in enumerate(chunks)}
+        for future in as_completed(futures):
+            cands, tested, hgf, atef = future.result()
+            all_candidates.extend(cands)
+            total_tested += tested; total_hgf += hgf; total_atef += atef
+            completed_chunks += 1
+            if completed_chunks % max(1, len(chunks) // 5) == 0 or completed_chunks == len(chunks):
+                elapsed = time.time() - t0
+                print(f"    [{completed_chunks}/{len(chunks)} chunks] "
+                      f"{elapsed:.1f}s, {len(all_candidates):,} candidates")
 
-                hb=np.where(hit,bi,exit_horizon+1)
-                fb=np.min(hb,axis=1)
-                triggered=fb<exit_horizon+1
-
-                if above: ate=eb_finite&(eb_vals>=th)
-                else: ate=eb_finite&(eb_vals<=th)
-                triggered=triggered&(~ate)
-
-                if not triggered[is_hard_gate_v].all():
-                    if ate[is_hard_gate_v].any(): atef+=1
-                    else: hgf+=1
-                    continue
-
-                ca=np.full(nv,-LOSS_ASSUMPTION_ADR,dtype=np.float64)
-                bh=np.full(nv,exit_horizon,dtype=np.int32)
-                for vi in np.where(triggered)[0]:
-                    f=fb[vi]; ec=cl2d[vi,f]
-                    if np.isfinite(ec) and adr_values_v[vi]>0:
-                        if direction=="short": ca[vi]=(entry_prices_v[vi]-ec)/adr_values_v[vi]
-                        else: ca[vi]=(ec-entry_prices_v[vi])/adr_values_v[vi]
-                    bh[vi]=f - entry_high_offset_v[vi]
-
-                st=compute_weighted_stats(ca,weights_v,triggered,move_adrs_v,bh)
-                if st is None: continue
-                st["expr_name"]=en; st["direction"]=dl; st["threshold"]=round(float(th),6)
-                st["n_already_true"]=int(ate.sum())
-                candidates.append((st,fb.astype(np.int16).copy()))
-
-    el=time.time()-t0
+    elapsed = time.time() - t0
     print(f"\n  Raw grind complete:")
-    print(f"    Time: {el:.1f}s ({el/60:.1f} min)")
-    print(f"    Tested: {tested:,}")
-    print(f"    Hard gate fails: {hgf:,}")
-    print(f"    Already-true-at-entry fails: {atef:,}")
-    print(f"    Raw candidates: {len(candidates):,}")
+    print(f"    Time: {elapsed:.1f}s ({elapsed/60:.1f} min)")
+    print(f"    Tested: {total_tested:,}")
+    print(f"    Hard gate fails: {total_hgf:,}")
+    print(f"    Already-true-at-entry fails: {total_atef:,}")
+    print(f"    Raw candidates: {len(all_candidates):,}")
     print_ram("(after grind)")
-    return dedup_candidates(candidates, exit_horizon)
+    return dedup_candidates(all_candidates, exit_horizon)
 
 # ── Dedup ──
 def dedup_candidates(candidates, exit_horizon):
@@ -510,8 +503,7 @@ def dedup_candidates(candidates, exit_horizon):
     print(f"  Pass 1 (best/expression): {nr:,} → {n1:,}")
     p1.sort(key=lambda x:x[0]["expectancy"],reverse=True)
     tn=p1[:DEDUP_TOP_N]; rest=p1[DEDUP_TOP_N:]
-    if len(tn)<2:
-        print(f"  Pass 2: skipped"); return [c[0] for c in p1]
+    if len(tn)<2: print(f"  Pass 2: skipped"); return [c[0] for c in p1]
     nc=len(tn); ns=len(tn[0][1])
     em=np.zeros((nc,ns),dtype=np.float64)
     for ci,(st,ex) in enumerate(tn): em[ci,:]=ex.astype(np.float64)
@@ -538,13 +530,16 @@ def main():
     pa.add_argument("--setup",default="dtss"); pa.add_argument("--direction",default=None)
     pa.add_argument("--ev-file",default=None)
     pa.add_argument("--exit-horizon",type=int,default=EXIT_HORIZON_DEFAULT)
+    pa.add_argument("--workers",type=int,default=None,help="Thread count (default: all CPUs)")
     args=pa.parse_args()
     setup=args.setup; cfg=SETUP_CONFIGS.get(setup,{"direction":"short"}); direction=args.direction or cfg["direction"]
     exit_horizon=args.exit_horizon
+    n_workers=args.workers or os.cpu_count() or 8
 
     print(f"\n{'='*70}\n  PROFIT GRINDER — Phase 4 Exit Optimization\n{'='*70}")
     print(f"  Setup: {setup.upper()}, Direction: {direction}")
     print(f"  Exit horizon: {exit_horizon} bars, Loss: {LOSS_ASSUMPTION_ADR} ADR, Thresholds: {N_THRESHOLDS}")
+    print(f"  Workers: {n_workers} threads")
     print_ram("(startup)"); check_ram("(startup)",min_gb=4.0); t0=time.time()
 
     print(f"\n  ── LOADING DATA ──")
@@ -609,7 +604,7 @@ def main():
     eho=entry_high_offset[vi]
 
     cands=grind_1stage(fwd_expr,fwd_closes,entry_high_bar_expr,eho,vi,
-                       epv,av,wv,ihg,mv,nbp,fn,direction,exit_horizon)
+                       epv,av,wv,ihg,mv,nbp,fn,direction,exit_horizon,n_workers)
 
     if cands:
         t=cands[0]
