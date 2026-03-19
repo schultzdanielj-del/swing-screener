@@ -333,6 +333,80 @@ This cascading approach keeps the search tractable while still exploring the ful
 
 ---
 
+## Build Increments
+
+### Increment 1: Data Loading + Signal Population + Weighting + Forward Expression Matrices ⬜
+
+**What it does:**
+- Load EV grinder output (latest `ev_{setup}_*.json`) — extract winner signals (move_adr not null)
+- Load entry candle scorer output (`entry_scores_{setup}.json`) — extract `entry_candle_score` per signal, matched by ticker + date
+- Load vetting decisions from local SQLite: examples table (weight 1.0), rejected_signals table (excluded)
+- Build the weighted signal population: assign weight per signal per the weighting table (examples/vetted YES = 1.0, vetted NO = excluded, unvetted = entry_candle_score)
+- Load expression cache manifest — get expression names, identify boolean aggregation prefixes (ct_, st_, tir_) to exclude
+- Build `expr_col_map`: mapping from filtered expression index to actual cache column index (skipping excluded booleans)
+- Load 5yr OHLCV cache — find entry bar per signal by date, extract forward close prices for move measurement
+- Build forward expression matrices from expr cache: for each signal, load ticker .npz, find entry bar, slice forward window (entry bar through entry bar + max_forward). Result: per-signal matrix of (n_forward_bars × n_filtered_expressions)
+- Free OHLCV cache after building forward close arrays
+- Print population summary: total signals, examples, vetted YES, vetted NO excluded, unvetted, weight distribution stats, expression count (before/after boolean exclusion), forward matrix shapes
+
+**What it does NOT do:** No grinding, no stats, no output file. Just data loading and validation.
+
+**Test:** Run it. Verify signal count matches EV grinder output (364 winners for DTSS). Verify example count matches. Verify weight distribution looks sane (examples at 1.0, unvetted spread across 0–1). Verify expression count after filtering (should be ~12K, dropping ~3.6K boolean aggregations). Verify forward matrices have expected shapes. Verify no signals lost to missing cache data.
+
+**What can be reused from current script:** `load_5yr_cache()`, `find_latest_ev_file()`, `load_ev_data()`, `select_signals()` (modified for weighting), CLI arg structure. Everything else is new.
+
+---
+
+### Increment 2: 1-Stage Expression Grind ⬜
+
+**What it does:**
+- For each non-excluded expression column, gather all forward-window values across all signals
+- Generate 50 thresholds from percentiles (5th to 95th) of the pooled forward values
+- For each threshold × direction (above/below): walk each signal's forward expression series, find first bar where condition triggers
+- Apply trigger rules: if any example or vetted YES signal doesn't trigger → reject candidate. For unvetted non-triggers → record as 1-ADR loss at their entry_candle_score weight
+- For triggered signals: compute captured move (entry_high to exit bar close, in ADR), bars held
+- Compute full weighted stats panel per candidate (SQN, expectancy, profit factor, win rate, equity curve, drawdown, CAGR, Sharpe, Sortino, Calmar, capture efficiency — all weighted by entry_candle_score)
+- Parallelized via ProcessPoolExecutor: each worker gets a chunk of expression columns, processes all thresholds × directions for those columns across all signals
+- No multi-stage yet — 1-stage full exit only (100% of position exits when condition fires)
+
+**Test:** Run it. Verify candidate count is plausible (thousands of expressions × thresholds that pass the hard gate). Verify timing (~10-20 min estimated). Verify stats look sane (SQN, expectancy positive for top candidates, equity curves grow). Verify all examples triggered on every passing candidate. Spot-check a top candidate manually: does the expression/threshold/direction make TA sense for exits?
+
+**What can be reused from current script:** Stats computation structure (SQN, equity curve, drawdown helpers) — but all need weighting added. Parallelization pattern (ProcessPoolExecutor with chunked work items). Nothing from the current simulate_trades or grid builders — those are all ADR price-level based and get replaced entirely.
+
+---
+
+### Increment 3: Multi-Stage (2-Stage, 3-Stage) Cascading Search ⬜
+
+**What it does:**
+- Take top N candidates from 1-stage results (e.g., top 200 by weighted SQN or weighted median capture — TBD which metric to rank by for the cascade)
+- **2-stage search:** For each of those top N as the final exit (stage 2): test all ~12K expressions as stage 1 trim triggers. Stage 1 expression evaluated only on bars BEFORE stage 2 fires. For each trim percentage in [0.25, 0.33, 0.50]: compute the blended trade outcome (trim portion captured at stage 1 price, remainder captured at stage 2 price). Same hard gate + weighted penalty rules. Same full stats panel per 2-stage combo. Keep top M 2-stage combos.
+- **3-stage search:** For each top 2-stage combo: test all ~12K expressions as a middle trim trigger (fires after stage 1, before stage 3). Same rules. Keep top K 3-stage combos.
+- Parallelized same as increment 2 — workers get chunks of expression columns for the new stage being searched
+
+**Test:** Run 2-stage first, verify combos make sense (stage 1 fires before stage 2, trim percentages applied correctly, blended outcome math is right). Verify 2-stage SQN >= 1-stage SQN for top combos (trimming should improve consistency if the first target is well-placed). Run 3-stage, same checks. Verify timing is tractable (should be faster than 1-stage since the candidate set is already narrowed).
+
+**What can be reused:** All of increment 2's grinding and stats infrastructure. The forward matrix data is already built. Only the per-signal exit logic changes (multi-stage walk instead of single-stage walk).
+
+---
+
+### Increment 4: Output Packaging + Trade Detail + Save ⬜
+
+**What it does:**
+- Package results per the output structure in the spec: signal metadata array, stage_1/stage_2/stage_3 result blocks
+- For top 100 candidates per stage mode: re-run to extract per-trade detail (ticker, signal_date, exit_bar, exit_date, captured_adr, bars_held, mfe_capture_eff, weight, triggered). Build equity curve per candidate.
+- For all candidates per stage mode: stats-only grid (no trades, no equity curve — too much data)
+- Best-per-metric summary per stage mode (best SQN, best expectancy, best CAGR, etc.)
+- Save timestamped JSON to `local_runner/cache/profit_{setup}_{timestamp}.json`
+- Save latest pointer to `local_runner/cache/profit_{setup}.json`
+- Mirror both to Railway via file_mirror
+- Print summary report: top candidates per metric, overall timing
+
+**Test:** Verify output JSON structure matches spec. Verify top 100 trade detail arrays have expected length (should equal signal count). Verify equity curves are monotonically computed (no NaN, no negative equity). Verify file sizes are reasonable (trade detail for 100 candidates × 364 signals could be large — check it doesn't blow up). Verify Railway mirror succeeds.
+
+**What can be reused from current script:** `save_output()` pattern (timestamped + latest pointer + mirror), `np_fix()` JSON serializer, `package_mode_results()` structure (adapted for new stats), `print_mode_summary()` reporting pattern. The `build_trade_detail()` function pattern is reusable but internals change (expression-based exit instead of price-level exit).
+
+---
+
 ## Key Design Decisions
 
 - **TA-based exits only.** No fixed ADR price targets, no fixed stop losses. The chart determines the exit through expression conditions. The system measures what the chart does, not what an arbitrary price level says.
