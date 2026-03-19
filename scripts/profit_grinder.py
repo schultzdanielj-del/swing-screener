@@ -7,15 +7,13 @@ values of all winner signals to find optimal exit conditions.
 
 Two distinct forward windows:
   - entry_window: how far from the signal bar the refinement grinder looked
-    to find entry_high (read from raw_signal_clusters file). Used to locate
-    which bar has the entry_high price.
+    to find entry_high for non-examples (from raw_signal_clusters file).
   - exit_horizon: how far from the signal bar to search for exit conditions
     (default 120 bars). Exit search starts AFTER the entry_high bar.
 
-Weighting:
-  - Examples + vetted YES: weight 1.0, hard trigger requirement
-  - Vetted NO: excluded entirely
-  - Unvetted winners: weighted by entry_candle_score
+Entry_high bar detection (no price matching — deterministic):
+  - Examples: entry_date from DB → find in OHLCV → compute offset
+  - Non-examples: argmax of highs within entry_window bars
 
 See PROFIT_GRINDER.md for full spec.
 
@@ -38,7 +36,7 @@ CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
 sys.path.insert(0, REPO_ROOT); sys.path.insert(0, LOCAL_DIR)
 
-EXIT_HORIZON_DEFAULT = 120  # how far from signal bar to search for exit expressions
+EXIT_HORIZON_DEFAULT = 120
 INITIAL_CAPITAL = 100_000
 RISK_PER_TRADE = 0.01
 TRADING_DAYS_PER_YEAR = 252
@@ -121,27 +119,39 @@ def load_vetting_decisions(st):
     except Exception as e: print(f"  WARNING: DB error: {e}")
     print(f"  Examples: {len(ek)} keys, Rejected: {len(rk)} keys"); return ek, rk
 
-def load_entry_window(setup_type):
-    """Load the entry_window from the raw_signal_clusters file.
+def load_example_entry_dates(setup_type):
+    """Load example entry dates from SQLite. Returns {(ticker, entry_date): entry_date}.
 
-    This is how far from the rightmost signal bar the refinement grinder
-    looked to find the entry_high price. Must match exactly so the profit
-    grinder finds the same bar.
+    The signal date in the EV output is the scan bar date (day before entry).
+    We need the actual entry_date to find the entry bar in the OHLCV.
     """
+    result = {}
+    if not os.path.exists(DB_PATH):
+        return result
+    try:
+        cn = sqlite3.connect(DB_PATH); cn.row_factory = sqlite3.Row
+        for r in cn.execute("SELECT ticker, entry_date FROM examples WHERE setup_type=?", (setup_type,)):
+            tk, ed = r["ticker"], r["entry_date"]
+            if tk and ed:
+                result[(tk, ed)] = ed
+        cn.close()
+    except Exception as e:
+        print(f"  WARNING: Error loading example entry dates: {e}")
+    print(f"  Example entry dates loaded: {len(result)}")
+    return result
+
+def load_entry_window(setup_type):
     latest = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
     if not os.path.exists(latest):
         cs = glob.glob(os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}_*.json"))
         if not cs:
-            print(f"  WARNING: No cluster file for {setup_type} — using entry_window=1 (entry candle only)")
+            print(f"  WARNING: No cluster file for {setup_type} — using entry_window=1")
             return 1
-        cs.sort(key=os.path.getmtime, reverse=True)
-        latest = cs[0]
-    with open(latest) as f:
-        data = json.load(f)
+        cs.sort(key=os.path.getmtime, reverse=True); latest = cs[0]
+    with open(latest) as f: data = json.load(f)
     ew = data.get("forward_window")
     if ew is None or ew < 1:
-        print(f"  WARNING: No forward_window in cluster file — using entry_window=1")
-        return 1
+        print(f"  WARNING: No forward_window in cluster file — using entry_window=1"); return 1
     print(f"  Entry window from cluster file: {ew} bars ({os.path.basename(latest)})")
     return int(ew)
 
@@ -175,17 +185,15 @@ def build_expr_col_map(expr_names):
 
 # ── Forward Data Construction ──
 def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
-                       direction, exit_horizon, entry_window):
-    """Build per-signal forward data with entry_high bar detection.
+                       direction, exit_horizon, entry_window, example_entry_dates):
+    """Build per-signal forward data with deterministic entry_high bar detection.
 
-    Two windows:
-      - entry_window: how far from signal_bar+1 to search for the entry_high
-        bar (must match the refinement grinder's forward_window).
-      - exit_horizon: how far from signal_bar+1 to load forward expression
-        data for exit searching.
-
-    For examples, entry_high is the high of the entry candle (bar 0 = signal_bar+1).
-    For non-examples, entry_high is the max high within entry_window bars.
+    Entry_high bar offset (no price matching needed):
+      - Examples: look up entry_date in OHLCV date index, compute offset
+        from forward window start (signal_bar+1). The entry bar IS the
+        entry_date — it's defined in the examples table.
+      - Non-examples: argmax of highs within entry_window bars after the
+        signal bar. Identical to how the refinement grinder computed it.
     """
     import pandas as pd
     n_signals = len(signals)
@@ -197,9 +205,18 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
     entry_prices = np.zeros(n_signals, dtype=np.float64)
     adr_values = np.zeros(n_signals, dtype=np.float64)
     signal_meta = []
-    loaded=skipped_ohlcv=skipped_expr=skipped_date=skipped_fwd=skipped_no_ehbar=0
+    loaded=skipped_ohlcv=skipped_expr=skipped_date=skipped_fwd=0
+    n_ex_date_found=n_ex_date_fallback=n_nonex_argmax=0
     tg = {}
     for i,sig in enumerate(signals): tg.setdefault(sig["ticker"],[]).append(i)
+
+    # Build reverse lookup: (ticker, entry_date) exists in example_entry_dates
+    # The signal's date field is the scan bar date. For examples, entry_date = scan_date + 1 trading day.
+    # But we have the actual entry_date from the DB, keyed by (ticker, entry_date).
+    # We need to map from signal (ticker, scan_date) to its entry_date.
+    # The examples table has entry_date directly. The signal's scan_date should be
+    # the trading day before entry_date in the OHLCV.
+
     for ticker, indices in tg.items():
         df = ohlcv_cache.get(ticker)
         if df is None:
@@ -224,7 +241,6 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
                 skipped_date+=1; signal_meta.append({"idx":i,"ticker":ticker,"status":"no_date","date":sd}); continue
             entry_prices[i]=sig["entry_high"]
             adr_values[i]=sig["adr_at_signal"]
-            # Forward window for exit search (exit_horizon bars from signal_bar+1)
             nf=min(min(len(df)-oi-1,len(edata)-ei-1),exit_horizon)
             if nf<1:
                 skipped_fwd+=1; signal_meta.append({"idx":i,"ticker":ticker,"status":"no_fwd","date":sd}); continue
@@ -232,19 +248,37 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
             fwd_closes[i]=ca[oi+1:oi+1+nf].copy()
             fwd_expr[i]=edata[ei+1:ei+1+nf][:,cache_cols].copy()
 
-            # Find which bar in the forward window has the entry_high price.
-            # Only search within entry_window bars (matching the refinement grinder).
-            eh_price = sig["entry_high"]
-            eh_search_end = min(entry_window, nf)  # don't search beyond available bars
-            fwd_highs = ha[oi+1:oi+1+eh_search_end]
-            eh_diffs = np.abs(fwd_highs - eh_price)
-            eh_bar = int(np.argmin(eh_diffs))
-            # Verify it's actually close (within 0.01 or 0.1% of price)
-            if eh_diffs[eh_bar] > max(0.01, eh_price * 0.001):
-                eh_bar = 0
-                skipped_no_ehbar += 1
+            # ── Determine entry_high bar offset ──
+            fwd_start = oi + 1  # absolute OHLCV index where forward window begins
 
-            entry_high_offset[i] = eh_bar
+            if sig.get("is_example", False):
+                # Example: look up the actual entry_date in the OHLCV
+                # The entry_date is stored in the DB. Find it by checking
+                # all example_entry_dates for this ticker.
+                entry_date_found = False
+                for (etk, edt), _ in example_entry_dates.items():
+                    if etk != ticker:
+                        continue
+                    entry_ohlcv_idx = d2i.get(edt)
+                    if entry_ohlcv_idx is not None:
+                        eh_bar = entry_ohlcv_idx - fwd_start
+                        if 0 <= eh_bar < nf:
+                            entry_high_offset[i] = eh_bar
+                            entry_date_found = True
+                            n_ex_date_found += 1
+                            break
+                if not entry_date_found:
+                    # Fallback: bar 0 (entry candle = first bar after scan bar)
+                    entry_high_offset[i] = 0
+                    n_ex_date_fallback += 1
+            else:
+                # Non-example: argmax of highs within entry_window
+                eh_search_end = min(entry_window, nf)
+                fwd_highs = ha[fwd_start:fwd_start+eh_search_end]
+                entry_high_offset[i] = int(np.argmax(fwd_highs))
+                n_nonex_argmax += 1
+
+            eh_bar = entry_high_offset[i]
             entry_high_bar_expr[i] = fwd_expr[i][eh_bar, :].copy()
 
             fd=ds[oi+1:oi+1+nf].tolist()
@@ -259,8 +293,9 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
             loaded+=1
     vm=np.array([fwd_expr[i] is not None for i in range(n_signals)])
     stats={"loaded":loaded,"skipped_ohlcv":skipped_ohlcv,"skipped_expr":skipped_expr,
-           "skipped_date":skipped_date,"skipped_fwd":skipped_fwd,
-           "skipped_no_ehbar":skipped_no_ehbar,"n_valid":int(vm.sum())}
+           "skipped_date":skipped_date,"skipped_fwd":skipped_fwd,"n_valid":int(vm.sum()),
+           "n_ex_date_found":n_ex_date_found,"n_ex_date_fallback":n_ex_date_fallback,
+           "n_nonex_argmax":n_nonex_argmax}
     return fwd_expr, fwd_closes, entry_high_bar_expr, entry_high_offset, entry_prices, adr_values, signal_meta, vm, stats
 
 def extract_column_padded(fwd_expr_list, valid_indices, expr_col, exit_horizon):
@@ -374,7 +409,6 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
     print(f"\n  ── 1-STAGE EXPRESSION GRIND ──")
     print(f"  {nv} signals × {ne} expressions × ~{N_THRESHOLDS} thresholds × 2 directions")
     print(f"  Hard gate signals: {int(is_hard_gate_v.sum())}")
-    print(f"  Entry-high bar detection: ON (exit search starts after entry_high bar)")
     print(f"  Already-true-at-entry filter: ON (checks entry_high bar)")
     print_ram("(before grind)")
     t0=time.time(); candidates=[]; tested=0; hgf=0; atef=0
@@ -503,22 +537,21 @@ def main():
     pa=argparse.ArgumentParser(description="Profit Grinder — Phase 4")
     pa.add_argument("--setup",default="dtss"); pa.add_argument("--direction",default=None)
     pa.add_argument("--ev-file",default=None)
-    pa.add_argument("--exit-horizon",type=int,default=EXIT_HORIZON_DEFAULT,
-                    help="How far from signal bar to search for exit expressions (default: 120)")
+    pa.add_argument("--exit-horizon",type=int,default=EXIT_HORIZON_DEFAULT)
     args=pa.parse_args()
     setup=args.setup; cfg=SETUP_CONFIGS.get(setup,{"direction":"short"}); direction=args.direction or cfg["direction"]
     exit_horizon=args.exit_horizon
 
     print(f"\n{'='*70}\n  PROFIT GRINDER — Phase 4 Exit Optimization\n{'='*70}")
     print(f"  Setup: {setup.upper()}, Direction: {direction}")
-    print(f"  Exit horizon: {exit_horizon} bars (how far to search for exits)")
-    print(f"  Loss: {LOSS_ASSUMPTION_ADR} ADR, Thresholds: {N_THRESHOLDS}")
+    print(f"  Exit horizon: {exit_horizon} bars, Loss: {LOSS_ASSUMPTION_ADR} ADR, Thresholds: {N_THRESHOLDS}")
     print_ram("(startup)"); check_ram("(startup)",min_gb=4.0); t0=time.time()
 
     print(f"\n  ── LOADING DATA ──")
     ev_data,ev_path=load_ev_data(setup,args.ev_file)
     entry_scores=load_entry_scores(setup)
     example_keys,rejected_keys=load_vetting_decisions(setup)
+    example_entry_dates=load_example_entry_dates(setup)
     entry_window=load_entry_window(setup)
 
     print(f"\n  ── BUILDING POPULATION ──")
@@ -542,15 +575,19 @@ def main():
     print(f"  {len(ec.expr_names)} total, {ne} boolean excluded, {nf} for search")
 
     print(f"\n  ── FORWARD MATRIX CONSTRUCTION ──")
-    print(f"  Entry window: {entry_window} bars (from cluster file — where entry_high was computed)")
-    print(f"  Exit horizon: {exit_horizon} bars (how far to search for exits)")
+    print(f"  Entry window: {entry_window} bars (non-examples: argmax of highs)")
+    print(f"  Examples: entry bar from DB entry_date ({len(example_entry_dates)} dates)")
+    print(f"  Exit horizon: {exit_horizon} bars")
     check_ram("(pre-OHLCV)",min_gb=3.0); oc=load_5yr_cache(); print_ram("(OHLCV loaded)")
     fwd_expr,fwd_closes,entry_high_bar_expr,entry_high_offset,entry_prices,adr_values,signal_meta,valid_mask,bs=\
-        build_forward_data(signals,oc,ec,ecm,direction,exit_horizon,entry_window)
+        build_forward_data(signals,oc,ec,ecm,direction,exit_horizon,entry_window,example_entry_dates)
     del oc; gc.collect()
     print(f"  Loaded: {bs['loaded']}  Valid: {bs['n_valid']}")
-    if bs.get('skipped_no_ehbar',0)>0:
-        print(f"  ⚠ {bs['skipped_no_ehbar']} signals: entry_high not found within entry_window (bar 0 fallback)")
+    print(f"  Entry bar detection: {bs['n_ex_date_found']} examples by date, "
+          f"{bs['n_ex_date_fallback']} example fallbacks, "
+          f"{bs['n_nonex_argmax']} non-examples by argmax")
+    if bs['n_ex_date_fallback']>0:
+        print(f"  ⚠ {bs['n_ex_date_fallback']} examples: entry_date not found in OHLCV (bar 0 fallback)")
     if bs['loaded']<counts['total']:
         print(f"  Skipped: ohlcv={bs['skipped_ohlcv']} expr={bs['skipped_expr']} "
               f"date={bs['skipped_date']} fwd={bs['skipped_fwd']}")
