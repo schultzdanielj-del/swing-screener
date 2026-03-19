@@ -5,21 +5,15 @@ Brute-forces the expression cache (~12K expressions after boolean exclusion)
 testing every expression × threshold × direction against forward expression
 values of all winner signals to find optimal exit conditions.
 
+Entry bar detection: For each signal, finds the bar where entry_high occurred
+in the forward window. Exit expression search starts AFTER that bar — you
+can't exit before you've entered. Already-true-at-entry check uses expression
+values at the entry_high bar.
+
 Weighting:
   - Examples + vetted YES: weight 1.0, hard trigger requirement
   - Vetted NO: excluded entirely
-  - Unvetted winners: weighted by entry_candle_score (cosine similarity to
-    example centroid). Non-triggers scored as 1-ADR loss at their weight.
-
-Already-true-at-entry filter: if an expression already satisfies the
-threshold condition at the entry bar (bar 0), it is not detecting an exit —
-it's describing the setup state. That signal is treated as a non-trigger.
-
-NOTE: Population is winner signals only (move_adr not null). SQN and win_rate
-are inflated because there are no losing signals in the population. These
-metrics are useful for comparing candidates relative to each other but their
-absolute values are not meaningful. Capture efficiency and expectancy are
-the more reliable ranking metrics.
+  - Unvetted winners: weighted by entry_candle_score
 
 See PROFIT_GRINDER.md for full spec.
 
@@ -54,7 +48,7 @@ DEDUP_CORR_THRESHOLD = 0.95
 DEDUP_TOP_N = 500
 SETUP_CONFIGS = {"dtss": {"direction": "short"}, "3-4db": {"direction": "short"}, "htf": {"direction": "long"}}
 
-# ── RAM monitoring ──
+# ── RAM ──
 def get_available_ram_gb():
     try:
         import psutil; return psutil.virtual_memory().available / (1024**3)
@@ -70,12 +64,10 @@ def get_available_ram_gb():
                 return s.ullAvailPhys / (1024**3)
         except: pass
     return None
-
 def check_ram(label="", min_gb=2.0):
     a = get_available_ram_gb()
     if a is not None and a < min_gb:
         print(f"\n  ✗ RAM ABORT {label}: {a:.1f} GB avail, need {min_gb:.1f}"); sys.exit(1)
-
 def print_ram(label=""):
     a = get_available_ram_gb()
     if a is not None: print(f"  RAM available: {a:.1f} GB {label}")
@@ -89,18 +81,15 @@ def load_5yr_cache():
             with open(p,"rb") as f: c = pickle.load(f)
             print(f"  {len(c)} tickers"); return c
     raise FileNotFoundError("No OHLCV cache.")
-
 def find_latest_ev_file(st):
     cs = [os.path.join(CACHE_DIR,f) for f in os.listdir(CACHE_DIR) if f.startswith(f"ev_{st}_") and f.endswith(".json")]
     if not cs: raise FileNotFoundError(f"No EV output for {st}")
     cs.sort(key=os.path.getmtime, reverse=True); return cs[0]
-
 def load_ev_data(st, ef=None):
     p = ef or find_latest_ev_file(st)
     print(f"  Loading EV data from {os.path.basename(p)}...")
     with open(p) as f: d = json.load(f)
     print(f"  {len(d.get('signals',[]))} total signals"); return d, p
-
 def load_entry_scores(st):
     p = os.path.join(CACHE_DIR, f"entry_scores_{st}.json")
     if not os.path.exists(p):
@@ -114,7 +103,6 @@ def load_entry_scores(st):
         t,sd,sc = s.get("ticker"), s.get("signal_date",s.get("date")), s.get("entry_candle_score")
         if t and sd and sc is not None: lk[(t,sd)] = sc
     print(f"  {len(lk)} signals with entry_candle_score"); return lk
-
 def load_vetting_decisions(st):
     ek, rk = set(), set()
     if not os.path.exists(DB_PATH): print(f"  WARNING: No DB at {DB_PATH}"); return ek, rk
@@ -161,17 +149,25 @@ def build_expr_col_map(expr_names):
 
 # ── Forward Data Construction ──
 def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map, direction, max_forward):
-    """Build per-signal forward expression arrays, forward closes, AND entry bar expression values."""
+    """Build per-signal forward data with entry_high bar detection.
+
+    For each signal:
+      - Forward window starts at signal_bar+1 (full window for expression data)
+      - Finds which bar in that window has the entry_high price
+      - Stores the offset so the grind can start searching AFTER that bar
+      - Stores expression values AT the entry_high bar for already-true check
+    """
     import pandas as pd
     n_signals = len(signals)
     cache_cols = np.array([ci for _,ci in expr_col_map], dtype=np.int32)
-    fwd_expr = [None]*n_signals
-    fwd_closes = [None]*n_signals
-    entry_bar_expr = [None]*n_signals  # NEW: expression values at bar 0 (entry bar)
+    fwd_expr = [None]*n_signals       # (n_fwd_bars, n_filtered_exprs) per signal
+    fwd_closes = [None]*n_signals     # (n_fwd_bars,) per signal
+    entry_high_bar_expr = [None]*n_signals  # expression values at the entry_high bar
+    entry_high_offset = np.full(n_signals, -1, dtype=np.int32)  # which bar in fwd window has entry_high
     entry_prices = np.zeros(n_signals, dtype=np.float64)
     adr_values = np.zeros(n_signals, dtype=np.float64)
     signal_meta = []
-    loaded=skipped_ohlcv=skipped_expr=skipped_date=skipped_fwd=0
+    loaded=skipped_ohlcv=skipped_expr=skipped_date=skipped_fwd=skipped_no_ehbar=0
     tg = {}
     for i,sig in enumerate(signals): tg.setdefault(sig["ticker"],[]).append(i)
     for ticker, indices in tg.items():
@@ -185,6 +181,7 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map, direction
         ds=df["date"].dt.strftime("%Y-%m-%d").values
         d2i={d:i for i,d in enumerate(ds)}
         ca=df["close"].values.astype(np.float64)
+        ha=df["high"].values.astype(np.float64)
         ed,edata=expr_cache.get_ticker(ticker)
         if ed is None:
             skipped_expr+=len(indices)
@@ -195,17 +192,37 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map, direction
             sig=signals[i]; sd=sig["date"]; oi=d2i.get(sd); ei=edm.get(sd)
             if oi is None or ei is None:
                 skipped_date+=1; signal_meta.append({"idx":i,"ticker":ticker,"status":"no_date","date":sd}); continue
-            entry_prices[i]=sig["entry_high"] if direction=="short" else df["low"].values[oi]
+            entry_prices[i]=sig["entry_high"]
             adr_values[i]=sig["adr_at_signal"]
             nf=min(min(len(df)-oi-1,len(edata)-ei-1),max_forward)
             if nf<1:
                 skipped_fwd+=1; signal_meta.append({"idx":i,"ticker":ticker,"status":"no_fwd","date":sd}); continue
+
+            # Forward window starts at signal_bar+1
             fwd_closes[i]=ca[oi+1:oi+1+nf].copy()
             fwd_expr[i]=edata[ei+1:ei+1+nf][:,cache_cols].copy()
-            entry_bar_expr[i]=edata[ei,cache_cols].copy()  # bar 0 values
+
+            # Find which bar in the forward window has the entry_high price
+            fwd_highs = ha[oi+1:oi+1+nf]
+            eh_price = sig["entry_high"]
+            # Find bar with high closest to entry_high (handles float precision)
+            eh_diffs = np.abs(fwd_highs - eh_price)
+            eh_bar = int(np.argmin(eh_diffs))
+            # Verify it's actually close (within 0.01 or 0.1% of price)
+            if eh_diffs[eh_bar] > max(0.01, eh_price * 0.001):
+                # entry_high not found in forward window — could be from a different
+                # window definition. Use bar 0 as fallback (conservative: search from bar 1)
+                eh_bar = 0
+                skipped_no_ehbar += 1
+
+            entry_high_offset[i] = eh_bar
+            # Expression values at the entry_high bar (for already-true check)
+            entry_high_bar_expr[i] = fwd_expr[i][eh_bar, :].copy()
+
             fd=ds[oi+1:oi+1+nf].tolist()
             signal_meta.append({"idx":i,"ticker":ticker,"signal_date":sd,
                 "entry_price":float(entry_prices[i]),"adr":float(adr_values[i]),
+                "entry_high_bar_offset":int(eh_bar),
                 "classification":sig.get("classification"),"is_example":sig.get("is_example",False),
                 "quality_score":sig.get("quality_score",0),"move_adr":sig.get("move_adr"),
                 "killed_at_depth":sig.get("killed_at_depth"),"weight":sig["weight"],
@@ -214,8 +231,9 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map, direction
             loaded+=1
     vm=np.array([fwd_expr[i] is not None for i in range(n_signals)])
     stats={"loaded":loaded,"skipped_ohlcv":skipped_ohlcv,"skipped_expr":skipped_expr,
-           "skipped_date":skipped_date,"skipped_fwd":skipped_fwd,"n_valid":int(vm.sum())}
-    return fwd_expr, fwd_closes, entry_bar_expr, entry_prices, adr_values, signal_meta, vm, stats
+           "skipped_date":skipped_date,"skipped_fwd":skipped_fwd,
+           "skipped_no_ehbar":skipped_no_ehbar,"n_valid":int(vm.sum())}
+    return fwd_expr, fwd_closes, entry_high_bar_expr, entry_high_offset, entry_prices, adr_values, signal_meta, vm, stats
 
 def extract_column_padded(fwd_expr_list, valid_indices, expr_col, max_forward):
     n=len(valid_indices)
@@ -224,12 +242,12 @@ def extract_column_padded(fwd_expr_list, valid_indices, expr_col, max_forward):
         fe=fwd_expr_list[si]; c[vi,:fe.shape[0]]=fe[:,expr_col]
     return c
 
-def extract_entry_bar_column(entry_bar_expr_list, valid_indices, expr_col):
-    """Extract one expression column at bar 0 for all valid signals. Shape (n_valid,)."""
+def extract_entry_high_bar_column(entry_high_bar_expr_list, valid_indices, expr_col):
+    """Extract one expression column at the entry_high bar for all valid signals."""
     n=len(valid_indices)
     vals=np.full(n,np.nan,dtype=np.float32)
     for vi,si in enumerate(valid_indices):
-        eb=entry_bar_expr_list[si]
+        eb=entry_high_bar_expr_list[si]
         if eb is not None: vals[vi]=eb[expr_col]
     return vals
 
@@ -271,7 +289,8 @@ def compute_weighted_stats(captured_adr, weights, triggered, move_adrs_actual, n
     tm=triggered&(move_adrs_actual>0)
     if tm.any():
         ce=captured_adr[tm]/move_adrs_actual[tm]
-        mc,fc,mnc,sc=float(np.median(ce)),float(np.min(ce)),float(np.mean(ce)),float(np.std(ce,ddof=1)) if tm.sum()>1 else 0.0
+        mc,fc,mnc=float(np.median(ce)),float(np.min(ce)),float(np.mean(ce))
+        sc=float(np.std(ce,ddof=1)) if tm.sum()>1 else 0.0
     else: mc=fc=mnc=sc=0.0
     tbars=n_bars_held[triggered]
     if len(tbars)>0:
@@ -306,14 +325,12 @@ def _maxc(ba):
         if v: cur+=1; mx=max(mx,cur)
         else: cur=0
     return mx
-
 def _bwec(ca, w, cap, risk):
     n=len(ca); eq=np.zeros(n+1); eq[0]=cap
     for i in range(n):
         eq[i+1]=eq[i]+eq[i]*risk*ca[i]*w[i]
         if eq[i+1]<=0: eq[i+1:]=0; break
     return eq
-
 def _mdd(eq):
     pk=eq[0]; mx=cur=0
     for v in eq[1:]:
@@ -322,23 +339,51 @@ def _mdd(eq):
     return mx
 
 # ── 1-Stage Expression Grind ──
-def grind_1stage(fwd_expr_list, fwd_close_list, entry_bar_expr_list, valid_indices,
+def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
+                 entry_high_offset_v, valid_indices,
                  entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
                  move_adrs_v, n_bars_per_signal, filtered_names, direction, max_forward):
+    """Exit search starts AFTER the entry_high bar for each signal.
+
+    For each signal, bars 0 through entry_high_offset are masked out — you
+    can't exit before you've entered. The already-true check uses expression
+    values at the entry_high bar itself.
+    """
     nv=len(valid_indices); ne=len(filtered_names)
     print(f"\n  ── 1-STAGE EXPRESSION GRIND ──")
     print(f"  {nv} signals × {ne} expressions × ~{N_THRESHOLDS} thresholds × 2 directions")
     print(f"  Hard gate signals: {int(is_hard_gate_v.sum())}")
-    print(f"  Already-true-at-entry filter: ON")
+    print(f"  Entry-high bar detection: ON (exit search starts after entry_high bar)")
+    print(f"  Already-true-at-entry filter: ON (checks entry_high bar)")
     print_ram("(before grind)")
     t0=time.time(); candidates=[]; tested=0; hgf=0; atef=0
 
     cl2d=np.full((nv,max_forward),np.nan,dtype=np.float64)
     for vi,si in enumerate(valid_indices):
         fc=fwd_close_list[si]; cl2d[vi,:len(fc)]=fc
-    bv=np.zeros((nv,max_forward),dtype=bool)
-    for vi in range(nv): bv[vi,:n_bars_per_signal[vi]]=True
+
+    # Build search-valid mask: True only for bars AFTER the entry_high bar
+    # (you can't exit before you've entered)
+    search_valid=np.zeros((nv,max_forward),dtype=bool)
+    for vi in range(nv):
+        si = valid_indices[vi]
+        eh_off = entry_high_offset_v[vi]  # which bar has the entry_high
+        n_bars = n_bars_per_signal[vi]
+        # Search starts at eh_off+1 (the bar after entry_high)
+        start = eh_off + 1
+        if start < n_bars:
+            search_valid[vi, start:n_bars] = True
+
     bi=np.arange(max_forward)[np.newaxis,:]
+
+    # Print entry_high offset stats
+    eh_offsets = entry_high_offset_v
+    print(f"  Entry-high bar offsets: min={eh_offsets.min()} med={int(np.median(eh_offsets))} "
+          f"max={eh_offsets.max()} (0=first bar after signal)")
+    # How many searchable bars per signal after entry_high
+    searchable = search_valid.sum(axis=1)
+    print(f"  Searchable bars after entry: min={int(searchable.min())} "
+          f"med={int(np.median(searchable))} max={int(searchable.max())}")
 
     for ei in range(ne):
         if (ei+1)%1000==0:
@@ -348,14 +393,15 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_bar_expr_list, valid_indic
         if (ei+1)%2000==0: check_ram(f"(at expr {ei+1})",min_gb=1.0)
 
         col=extract_column_padded(fwd_expr_list,valid_indices,ei,max_forward)
-        fm=np.isfinite(col)&bv; fv=col[fm]
+        fm=np.isfinite(col)&search_valid  # only search bars after entry_high
+        fv=col[fm]
         if len(fv)<nv: continue
         pcts=np.linspace(5,95,N_THRESHOLDS)
         ths=np.unique(np.percentile(fv,pcts))
         if len(ths)<2: continue
 
-        # Entry bar values for this expression
-        eb_vals=extract_entry_bar_column(entry_bar_expr_list,valid_indices,ei)
+        # Entry_high bar values for this expression (for already-true check)
+        eb_vals=extract_entry_high_bar_column(entry_high_bar_expr_list,valid_indices,ei)
         eb_finite=np.isfinite(eb_vals)
 
         en=filtered_names[ei]
@@ -369,16 +415,12 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_bar_expr_list, valid_indic
                 fb=np.min(hb,axis=1)
                 triggered=fb<max_forward+1
 
-                # Already-true-at-entry filter:
-                # If the expression already satisfies the threshold at bar 0,
-                # this is not detecting an exit — it was true before the trade.
-                # Treat as non-trigger.
+                # Already-true-at-entry: check expression value at entry_high bar
                 if above: ate=eb_finite&(eb_vals>=th)
                 else: ate=eb_finite&(eb_vals<=th)
                 triggered=triggered&(~ate)
 
                 if not triggered[is_hard_gate_v].all():
-                    # Check if failure is due to already-true-at-entry on hard gate signals
                     if ate[is_hard_gate_v].any(): atef+=1
                     else: hgf+=1
                     continue
@@ -390,7 +432,8 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_bar_expr_list, valid_indic
                     if np.isfinite(ec) and adr_values_v[vi]>0:
                         if direction=="short": ca[vi]=(entry_prices_v[vi]-ec)/adr_values_v[vi]
                         else: ca[vi]=(ec-entry_prices_v[vi])/adr_values_v[vi]
-                    bh[vi]=f+1
+                    # bars_held = bars from entry_high to exit (not from signal bar)
+                    bh[vi]=f - entry_high_offset_v[vi]
 
                 st=compute_weighted_stats(ca,weights_v,triggered,move_adrs_v,bh)
                 if st is None: continue
@@ -483,10 +526,12 @@ def main():
 
     print(f"\n  ── FORWARD MATRIX CONSTRUCTION ──")
     check_ram("(pre-OHLCV)",min_gb=3.0); oc=load_5yr_cache(); print_ram("(OHLCV loaded)")
-    fwd_expr,fwd_closes,entry_bar_expr,entry_prices,adr_values,signal_meta,valid_mask,bs=\
+    fwd_expr,fwd_closes,entry_high_bar_expr,entry_high_offset,entry_prices,adr_values,signal_meta,valid_mask,bs=\
         build_forward_data(signals,oc,ec,ecm,direction,args.max_forward)
     del oc; gc.collect()
     print(f"  Loaded: {bs['loaded']}  Valid: {bs['n_valid']}")
+    if bs.get('skipped_no_ehbar',0)>0:
+        print(f"  ⚠ {bs['skipped_no_ehbar']} signals: entry_high bar not found in forward window (using bar 0 fallback)")
     if bs['loaded']<counts['total']:
         print(f"  Skipped: ohlcv={bs['skipped_ohlcv']} expr={bs['skipped_expr']} "
               f"date={bs['skipped_date']} fwd={bs['skipped_fwd']}")
@@ -505,8 +550,10 @@ def main():
     mv=np.array([signals[si].get("move_adr",0) or 0 for si in vi])
     ihg=np.array([signals[si]["weight_category"] in ("example","vetted_yes") for si in vi])
     nbp=np.array([fwd_expr[si].shape[0] for si in vi],dtype=np.int32)
+    eho=entry_high_offset[vi]
 
-    cands=grind_1stage(fwd_expr,fwd_closes,entry_bar_expr,vi,epv,av,wv,ihg,mv,nbp,fn,direction,args.max_forward)
+    cands=grind_1stage(fwd_expr,fwd_closes,entry_high_bar_expr,eho,vi,
+                       epv,av,wv,ihg,mv,nbp,fn,direction,args.max_forward)
 
     if cands:
         t=cands[0]
@@ -515,7 +562,7 @@ def main():
         print(f"    Exp={t['expectancy']:.3f}  SQN={t['sqn']:.3f}  WR={t['win_rate']:.1%}  PF={t['profit_factor']:.2f}")
         print(f"    Triggered: {t['n_triggered']}/{t['n_signals']}  Already-true: {t.get('n_already_true',0)}")
         print(f"    Capture: med={t['median_capture_eff']:.2f}±{t['std_capture_eff']:.2f} floor={t['floor_capture_eff']:.2f}")
-        print(f"    Bars: min={t['bars_held_min']} med={t['bars_held_median']} max={t['bars_held_max']} std={t['bars_held_std']:.1f}")
+        print(f"    Bars after entry: min={t['bars_held_min']} med={t['bars_held_median']} max={t['bars_held_max']} std={t['bars_held_std']:.1f}")
         print(f"    Equity: ${t['final_equity']:,.0f}  CAGR={t['cagr']:.1%}  MaxDD={t['max_drawdown']:.1%}")
 
     if len(cands)>=10:
