@@ -15,7 +15,7 @@ See PROFIT_GRINDER.md for full spec.
 
 Usage:
     python scripts/profit_grinder.py --setup dtss
-    python scripts/profit_grinder.py --setup dtss --workers 12 --max-forward 120
+    python scripts/profit_grinder.py --setup dtss --max-forward 120
 """
 
 import argparse
@@ -25,6 +25,7 @@ import time
 import json
 import glob
 import sqlite3
+import gc
 import numpy as np
 import pickle
 from datetime import datetime, timezone
@@ -45,7 +46,6 @@ sys.path.insert(0, LOCAL_DIR)
 # ============================================================
 # Config
 # ============================================================
-DEFAULT_WORKERS = os.cpu_count() or 8
 MAX_FORWARD_DEFAULT = 120
 INITIAL_CAPITAL = 100_000
 RISK_PER_TRADE = 0.01
@@ -55,6 +55,9 @@ LOSS_ASSUMPTION_ADR = 1.0
 N_THRESHOLDS = 50
 BOOLEAN_AGG_PREFIXES = ("ct_", "st_", "tir_")
 
+# RAM safety: abort if available RAM drops below this (bytes)
+MIN_AVAILABLE_RAM_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
+
 SETUP_CONFIGS = {
     "dtss": {"direction": "short"},
     "3-4db": {"direction": "short"},
@@ -63,7 +66,65 @@ SETUP_CONFIGS = {
 
 
 # ============================================================
-# Data Loading (unchanged from Inc 1)
+# RAM monitoring
+# ============================================================
+
+def get_available_ram_gb():
+    """Get available system RAM in GB. Returns None if unavailable."""
+    try:
+        import psutil
+        return psutil.virtual_memory().available / (1024 ** 3)
+    except ImportError:
+        # psutil not installed — try platform-specific fallback
+        try:
+            if sys.platform == 'win32':
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                c_ulonglong = ctypes.c_ulonglong
+
+                class MEMORYSTATUSEX(ctypes.Structure):
+                    _fields_ = [
+                        ('dwLength', ctypes.c_ulong),
+                        ('dwMemoryLoad', ctypes.c_ulong),
+                        ('ullTotalPhys', c_ulonglong),
+                        ('ullAvailPhys', c_ulonglong),
+                        ('ullTotalPageFile', c_ulonglong),
+                        ('ullAvailPageFile', c_ulonglong),
+                        ('ullTotalVirtual', c_ulonglong),
+                        ('ullAvailVirtual', c_ulonglong),
+                        ('ullAvailExtendedVirtual', c_ulonglong),
+                    ]
+
+                stat = MEMORYSTATUSEX()
+                stat.dwLength = ctypes.sizeof(stat)
+                kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+                return stat.ullAvailPhys / (1024 ** 3)
+        except Exception:
+            pass
+    return None
+
+
+def check_ram(label="", min_gb=2.0):
+    """Check available RAM and abort if below threshold."""
+    avail = get_available_ram_gb()
+    if avail is None:
+        return True  # can't check, proceed cautiously
+    if avail < min_gb:
+        print(f"\n  ✗ RAM SAFETY ABORT {label}: {avail:.1f} GB available, need {min_gb:.1f} GB minimum")
+        print(f"    Close other applications and retry, or reduce --max-forward")
+        sys.exit(1)
+    return True
+
+
+def print_ram(label=""):
+    """Print current available RAM."""
+    avail = get_available_ram_gb()
+    if avail is not None:
+        print(f"  RAM available: {avail:.1f} GB {label}")
+
+
+# ============================================================
+# Data Loading
 # ============================================================
 
 def load_5yr_cache():
@@ -219,7 +280,7 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
     """Build per-signal forward expression arrays and forward close arrays.
 
     RAM-safe: stores data as a list of small per-signal arrays, not one big
-    contiguous block. Total ~2 GB spread across 364 separate allocations.
+    contiguous block. Total ~2 GB spread across many separate allocations.
     """
     import pandas as pd
 
@@ -311,20 +372,12 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
 # ============================================================
 
 def extract_column_padded(fwd_expr_list, valid_indices, expr_col, max_forward):
-    """Extract one expression column from per-signal arrays into a padded 2D array.
-
-    This is the RAM-safe alternative to building a full 3D padded array.
-    Each call allocates ~175 KB (364 × 120 × 4 bytes) instead of 2.1 GB.
-
-    Returns:
-        col_2d: np.ndarray (n_valid, max_forward) float32, NaN-padded
-    """
+    """Extract one expression column into a small padded 2D array (~175 KB)."""
     n_valid = len(valid_indices)
     col_2d = np.full((n_valid, max_forward), np.nan, dtype=np.float32)
     for vi, si in enumerate(valid_indices):
         fe = fwd_expr_list[si]
-        nb = fe.shape[0]
-        col_2d[vi, :nb] = fe[:, expr_col]
+        col_2d[vi, :fe.shape[0]] = fe[:, expr_col]
     return col_2d
 
 
@@ -334,7 +387,6 @@ def extract_column_padded(fwd_expr_list, valid_indices, expr_col, max_forward):
 
 def compute_weighted_stats(captured_adr, weights, triggered, move_adrs_actual,
                            n_bars_held):
-    """Compute full weighted stats panel for one exit candidate."""
     n = len(captured_adr)
     if n < 2:
         return None
@@ -469,15 +521,15 @@ def grind_1stage(fwd_expr_list, fwd_close_list, valid_indices,
                  direction, max_forward):
     """Brute-force all expressions × thresholds × directions for 1-stage exits.
 
-    RAM-safe: extracts one expression column at a time into a small 2D array
-    (~175 KB per column) instead of building a 2.1 GB 3D padded array.
+    RAM-safe: extracts one expression column at a time (~175 KB per extraction).
+    Checks available RAM every 2000 expressions and aborts gracefully if low.
     """
     n_valid = len(valid_indices)
     n_exprs = len(filtered_names)
     print(f"\n  ── 1-STAGE EXPRESSION GRIND ──")
     print(f"  {n_valid} signals × {n_exprs} expressions × ~{N_THRESHOLDS} thresholds × 2 directions")
     print(f"  Hard gate signals: {int(is_hard_gate_v.sum())}")
-    print(f"  RAM-safe mode: one column at a time (~175 KB per extraction)")
+    print_ram("(before grind)")
 
     t0 = time.time()
     candidates = []
@@ -496,7 +548,7 @@ def grind_1stage(fwd_expr_list, fwd_close_list, valid_indices,
         bar_valid[vi, :n_bars_per_signal[vi]] = True
 
     # Bar index array for vectorized first-bar finding
-    bar_indices = np.arange(max_forward)[np.newaxis, :]  # (1, max_forward)
+    bar_indices = np.arange(max_forward)[np.newaxis, :]
 
     for expr_i in range(n_exprs):
         if (expr_i + 1) % 1000 == 0:
@@ -506,16 +558,18 @@ def grind_1stage(fwd_expr_list, fwd_close_list, valid_indices,
                   f"{len(candidates)} candidates, {tested:,} tested, "
                   f"{hard_gate_fails:,} gate fails")
 
-        # Extract one column: (n_valid, max_forward) — ~175 KB
+        # RAM check every 2000 expressions
+        if (expr_i + 1) % 2000 == 0:
+            check_ram(f"(at expr {expr_i+1})", min_gb=1.0)
+
+        # Extract one column: ~175 KB
         col = extract_column_padded(fwd_expr_list, valid_indices, expr_i, max_forward)
 
-        # Finite mask for this column
         finite_mask = np.isfinite(col) & bar_valid
         finite_vals = col[finite_mask]
         if len(finite_vals) < n_valid:
             continue
 
-        # Thresholds
         pcts = np.linspace(5, 95, N_THRESHOLDS)
         thresholds = np.unique(np.percentile(finite_vals, pcts))
         if len(thresholds) < 2:
@@ -532,17 +586,14 @@ def grind_1stage(fwd_expr_list, fwd_close_list, valid_indices,
                 else:
                     hit = (col <= thresh) & finite_mask
 
-                # First triggering bar per signal
                 hit_bars = np.where(hit, bar_indices, max_forward + 1)
                 first_bar = np.min(hit_bars, axis=1)
                 triggered = first_bar < max_forward + 1
 
-                # Hard gate
                 if not triggered[is_hard_gate_v].all():
                     hard_gate_fails += 1
                     continue
 
-                # Captured move
                 captured_adr = np.full(n_valid, -LOSS_ASSUMPTION_ADR, dtype=np.float64)
                 bars_held = np.full(n_valid, max_forward, dtype=np.int32)
 
@@ -575,6 +626,7 @@ def grind_1stage(fwd_expr_list, fwd_close_list, valid_indices,
     print(f"    Tested: {tested:,}")
     print(f"    Hard gate fails: {hard_gate_fails:,}")
     print(f"    Passing candidates: {len(candidates):,}")
+    print_ram("(after grind)")
 
     if candidates:
         top = candidates[0]
@@ -611,7 +663,6 @@ def main():
     parser.add_argument("--direction", default=None)
     parser.add_argument("--ev-file", default=None)
     parser.add_argument("--max-forward", type=int, default=MAX_FORWARD_DEFAULT)
-    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     args = parser.parse_args()
 
     setup = args.setup
@@ -624,6 +675,8 @@ def main():
     print(f"  Setup: {setup.upper()}, Direction: {direction}")
     print(f"  Max forward: {args.max_forward} bars")
     print(f"  Loss assumption: {LOSS_ASSUMPTION_ADR} ADR")
+    print_ram("(startup)")
+    check_ram("(startup)", min_gb=4.0)
     t_total = time.time()
 
     # ── Load data ──
@@ -666,11 +719,15 @@ def main():
 
     # ── Forward matrices ──
     print(f"\n  ── FORWARD MATRIX CONSTRUCTION ──")
+    check_ram("(before OHLCV load)", min_gb=3.0)
     ohlcv_cache = load_5yr_cache()
+    print_ram("(OHLCV loaded)")
+
     fwd_expr, fwd_closes, entry_prices, adr_values, signal_meta, valid_mask, bstats = \
         build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
                            direction, args.max_forward)
     del ohlcv_cache
+    gc.collect()
 
     print(f"  Loaded: {bstats['loaded']}  Valid: {bstats['n_valid']}")
     if bstats['loaded'] < counts['total']:
@@ -683,10 +740,14 @@ def main():
         print(f"  ✗ HARD FAIL: {ex_loaded}/{counts['examples']} examples loaded"); sys.exit(1)
     print(f"  ✓ All {counts['examples']} examples loaded")
 
+    # RAM after forward build
+    total_fwd_bytes = sum(fwd_expr[si].nbytes for si in range(len(signals)) if fwd_expr[si] is not None)
+    print(f"  Forward data: {total_fwd_bytes / 1e9:.2f} GB across {bstats['n_valid']} arrays")
+    print_ram("(after forward build, OHLCV freed)")
+    check_ram("(before grind)", min_gb=2.0)
+
     # ── Prepare grind arrays ──
     valid_indices = np.where(valid_mask)[0]
-
-    # Sort chronologically for equity curve
     sig_dates = [signals[si]["date"] for si in valid_indices]
     date_order = np.argsort(sig_dates)
     valid_indices = valid_indices[date_order]
@@ -698,11 +759,6 @@ def main():
     is_hard_gate_v = np.array([signals[si]["weight_category"] in ("example", "vetted_yes")
                                for si in valid_indices])
     n_bars_per = np.array([fwd_expr[si].shape[0] for si in valid_indices], dtype=np.int32)
-
-    # Estimate RAM: per-signal arrays are already allocated, grind adds ~175 KB per column extraction
-    total_fwd_bytes = sum(fwd_expr[si].nbytes for si in valid_indices)
-    print(f"\n  Forward data RAM: {total_fwd_bytes / 1e9:.2f} GB (spread across {len(valid_indices)} arrays)")
-    print(f"  Grind will extract one column at a time (~{364 * args.max_forward * 4 / 1024:.0f} KB per extraction)")
 
     # ── Grind ──
     candidates = grind_1stage(
@@ -717,6 +773,7 @@ def main():
     print(f"  {'='*50}")
     print(f"  Signals: {counts['total']}  Expressions: {n_filtered}  Candidates: {len(candidates)}")
     print(f"  EV source: {os.path.basename(ev_path)}")
+    print_ram("(final)")
     print(f"  {'='*50}")
 
 
