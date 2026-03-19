@@ -1,7 +1,7 @@
 # Profit Grinder — Phase 4: Exit Optimization
 
 **Created:** 2026-03-19
-**Status:** Spec locked. Script needs rewrite.
+**Status:** Spec locked. Script needs full rewrite.
 **Script:** `scripts/profit_grinder.py`
 **Pipeline step:** `profit_grind` (Step 7 in PIPELINE_V2.md)
 
@@ -21,8 +21,6 @@ This is distinct from the exit grinder (Phase 2b), which found one expression co
 
 The current `profit_grinder.py` on the v2 branch (as of 2026-03-19) is an ADR-based price-level simulator that brute-forces fixed stop/target/trail/trim levels. That is wrong — exits should be TA-expression-based, not arbitrary price levels. The script needs a full rewrite using the design below.
 
-The old profit_grinder.py (pre-rewrite) was an expression-cache exit grinder that ran on examples only (~65 signals). The core engine was correct — the population was too small and the stats were too limited.
-
 ---
 
 ## Inputs
@@ -33,11 +31,11 @@ The old profit_grinder.py (pre-rewrite) was an expression-cache exit grinder tha
 
 ### 2. Entry Candle Scorer Output
 - **File:** `local_runner/cache/entry_scores_{setup}.json`
-- **Used for:** `combined_score` per winner signal — the tradability weight
+- **Used for:** `entry_candle_score` per winner signal — the tradability weight
 
 ### 3. Vetting Decisions
 - **Source:** Local SQLite `rejected_signals` table + examples table
-- **Used for:** Vetted NO → exclude entirely. Vetted YES / examples → highest weight.
+- **Used for:** Vetted NO → exclude entirely. Vetted YES / examples → weight 1.0.
 
 ### 4. Expression Cache
 - **Location:** `local_runner/cache/expr_series/*.npz`
@@ -53,30 +51,45 @@ The old profit_grinder.py (pre-rewrite) was an expression-cache exit grinder tha
 
 Signals where the exit condition fired (`move_adr` is not null). For DTSS: 364 winners + examples.
 
-### Weighting (applied during the grind search)
+### Weighting
 
-The weight determines how much each signal influences which expression condition wins. Higher weight = this signal's outcome matters more when evaluating candidate exits.
+The weight determines how much each signal influences which expression condition wins and how the stats are computed. Higher weight = this signal's outcome matters more.
 
 | Signal type | Weight |
 |-------------|--------|
-| Examples (validated by human) | Maximum (1.0) |
-| Vetted YES (approved in vetting UI) | High (treated same as examples) |
+| Examples (validated by human) | 1.0 |
+| Vetted YES (approved in vetting UI) | 1.0 |
 | Vetted NO (rejected in vetting UI) | **Excluded entirely** — not in the population |
-| Unvetted winners | `combined_score` from entry candle scorer (0 to 1 continuous) |
+| Unvetted winners | `entry_candle_score` from entry candle scorer (raw cosine similarity, 0 to ~1) |
 
-**Why weight this way:** The exit conditions need to work optimally on charts that are actually tradable. A signal with no realistic entry candle is technically a winner but you'd never trade it — it shouldn't have equal say in which exit expression wins. Examples and vetted YES signals are confirmed tradable, so they pull hardest.
+**Why `entry_candle_score` and not `combined_score`:** At trade time, you have the entry candle in front of you. You don't know how far the stock will move — that's the outcome. Weighting by `combined_score` (which includes `move_adr_pct`) uses future information that won't exist in live trading. `entry_candle_score` measures only "does this chart look like the kind of entry I'd actually take" — information you HAVE at trade time.
 
-**Improves with vetting:** More vetting → more signals at maximum weight → grind results increasingly reflect real tradable performance. The profit grinder is always runnable (even with zero vetting), but gets more accurate every time you vet.
+**Why not `combined_score` for another reason:** A winner that moved only 2 ADR but had a perfect entry candle is still a trade you'd enter and need a clean exit for. Penalizing it via the move_adr component in combined_score would cause the exit expression to ignore charts you'd actually trade, leading to scratched trades and a choppy equity curve in live practice.
+
+### Trigger Requirement
+
+The exit expression must fire on every chart you'd actually enter. There is no trigger rate floor or binning — the weighting system handles this naturally.
+
+**Hard gate (binary, pass/fail):**
+- Must trigger on 100% of examples + vetted YES signals. Any miss = candidate rejected.
+
+**Unvetted winners — no gate, penalty via weighted scoring:**
+- If the exit expression triggers: scored normally (captured move in ADR) at the signal's `entry_candle_score` weight.
+- If the exit expression does NOT trigger: scored as a **1-ADR loss** at the signal's `entry_candle_score` weight.
+
+**Why this works without a gate:** A candidate that misses high-`entry_candle_score` signals (charts that look like examples — you'd trade them) takes a heavy hit to weighted SQN/expectancy because those 1-ADR losses carry heavy weight. A candidate that misses low-`entry_candle_score` signals (charts that look nothing like examples — you'd skip them) barely feels it because the weight is negligible.
+
+The scoring function IS the regulation. N signals = N resolution. Fully continuous, no bins, no hardcoded thresholds, self-referencing through the `entry_candle_score` weights. Different setups with different score distributions get different effective tolerances automatically.
+
+**Improves with vetting:** More vetting → more signals at 1.0 weight (hard gate) → grind results increasingly reflect real tradable performance. The profit grinder is always runnable (even with zero vetting), but gets more accurate every time you vet.
 
 ### Stats Reporting (also weighted)
 
-The stats panel (SQN, expectancy, equity curve, drawdown, etc.) is also computed with the same tradability weights. The equity curve you see reflects the performance on signals you'd actually trade, not a mix of tradable and non-tradable.
+The stats panel (SQN, expectancy, equity curve, drawdown, etc.) is computed with the same `entry_candle_score` weights. The equity curve you see reflects the performance on signals you'd actually trade, not a mix of tradable and non-tradable.
 
 ---
 
 ## Core Engine
-
-Same approach as the old profit_grinder.py:
 
 ### Per signal:
 1. Load ticker's `.npz` from expression cache
@@ -88,7 +101,7 @@ Same approach as the old profit_grinder.py:
 1. For each signal, walk the forward expression series
 2. Find the first bar where the expression crosses the threshold in the specified direction
 3. Record: exit bar index, captured move (entry_high to exit bar close), bars held
-4. Require 100% trigger rate — if the expression doesn't fire on all signals, skip it
+4. Apply trigger rules: hard gate on examples/vetted YES, 1-ADR loss penalty for unvetted non-triggers
 
 ### Threshold generation:
 - For each expression, gather all forward-window values across all signals
@@ -136,11 +149,13 @@ Total trade outcome = weighted sum of all stage outcomes.
 
 1 ADR on the loss side for all stats calculations. This is not a real stop — it's the assumed loss for computing expectancy, SQN, and other stats. In practice, the loss is the entry candle high/low (handled by the trader, not the system).
 
+Also used as the penalty for non-triggering unvetted winners: a signal where the exit expression never fires within the forward window is scored as a 1-ADR loss at its `entry_candle_score` weight.
+
 ---
 
 ## Stats Panel (per candidate exit condition)
 
-Computed for every candidate that passes the 100% trigger requirement. All stats are **weighted** by tradability scores.
+Computed for every candidate that passes the hard gate (100% trigger on examples + vetted YES). All stats are **weighted** by `entry_candle_score`.
 
 ### Trade quality:
 - SQN (sqrt(N_weighted) × weighted_mean / weighted_stdev)
@@ -170,6 +185,7 @@ Computed for every candidate that passes the 100% trigger requirement. All stats
 - Equity curve using fixed fractional sizing (1% risk per trade)
 - Starting capital $100,000
 - Trades ordered chronologically by signal date
+- Each trade's P&L contribution scaled by its `entry_candle_score` weight
 
 ### Capture stats:
 - MFE capture efficiency: what % of the available move (move_adr from refinement) does this exit capture
@@ -192,8 +208,13 @@ Computed for every candidate that passes the 100% trigger requirement. All stats
   "setup_type": "dtss",
   "timestamp": "...",
   "ev_source": "ev_dtss_inc6_*.json",
+  "entry_scores_source": "entry_scores_dtss.json",
   "direction": "short",
   "n_signals": 364,
+  "n_examples": 65,
+  "n_vetted_yes": 0,
+  "n_vetted_no_excluded": 0,
+  "n_unvetted": 299,
   "n_expressions_tested": 12000,
   "loss_assumption_adr": 1.0,
 
@@ -206,8 +227,9 @@ Computed for every candidate that passes the 100% trigger requirement. All stats
       "killed_at_depth": null,
       "move_adr": 5.865,
       "is_example": false,
-      "weight": 0.72,          // tradability weight used in grind
-      "entry_candle_score": 0.68
+      "is_vetted_yes": false,
+      "weight": 0.72,
+      "entry_candle_score": 0.72
     },
     ...
   ],
@@ -238,7 +260,7 @@ Computed for every candidate that passes the 100% trigger requirement. All stats
         "trades": [
           {"ticker": "AAOI", "signal_date": "2024-02-12", "exit_bar": 12,
            "exit_date": "2024-02-28", "captured_adr": 5.2, "bars_held": 12,
-           "mfe_capture_eff": 0.89, "weight": 0.72},
+           "mfe_capture_eff": 0.89, "weight": 0.72, "triggered": true},
           ...
         ],
         "equity_curve": [100000, 102100, ...]
@@ -314,12 +336,13 @@ This cascading approach keeps the search tractable while still exploring the ful
 ## Key Design Decisions
 
 - **TA-based exits only.** No fixed ADR price targets, no fixed stop losses. The chart determines the exit through expression conditions. The system measures what the chart does, not what an arbitrary price level says.
-- **Tradability weighting in the search.** The grind optimizes for tradable charts. Examples and vetted YES signals have maximum influence. Non-tradable winners contribute proportionally to their entry candle score. Vetted NO signals are excluded.
+- **`entry_candle_score` weighting, not `combined_score`.** The weight reflects "would I enter this trade" — information available at trade time. Move size is the outcome, not the entry decision. Including move_adr in the weight would use future information and would cause the exit to ignore small-mover winners with great entries, leading to scratched trades in live practice.
+- **No trigger gate on unvetted winners.** Instead of requiring a minimum trigger rate, non-triggering unvetted signals are scored as 1-ADR losses at their `entry_candle_score` weight. The weighted scoring function self-regulates: missing high-score signals is heavily penalized, missing low-score signals is negligible. No bins, no hardcoded thresholds, N signals = N resolution, fully continuous, self-referencing.
+- **Hard gate on examples + vetted YES only.** These are confirmed tradable — the exit expression must work on every one of them. Binary pass/fail.
 - **Stats also weighted.** The stats panel reflects performance on the signals you'd actually trade, not a mix of tradable and non-tradable.
-- **Loss = 1 ADR for stats.** Not a real stop. Just the assumed loss side for computing expectancy and risk metrics. The trader handles real risk management.
+- **Loss = 1 ADR for stats and for non-trigger penalty.** Not a real stop. The assumed loss side for computing expectancy and risk metrics, and the penalty applied to signals where the exit never fires.
 - **Improves with vetting.** Zero vetting = usable but noisy. Heavy vetting = highly accurate. Every vetting session improves both the entry candle scorer (tighter centroid) and the profit grinder (more high-weight signals). Same flywheel as the rest of the system.
 - **Cascading multi-stage search.** 1-stage narrows the candidate set, 2-stage builds on those winners, 3-stage builds on 2-stage winners. Keeps compute tractable.
-- **100% trigger requirement.** Every candidate exit condition must fire on every signal in the population. Same rule as all other grinders.
 - **Expression cache only.** No live computation. Same expression library, same cache, same as all other grinders.
 
 ---

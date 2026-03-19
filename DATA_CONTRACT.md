@@ -1,6 +1,6 @@
 # Data Contract — ScanPerfect Schema & Data Flow
 
-**Last updated:** 2026-03-17
+**Last updated:** 2026-03-19
 **Status:** Authoritative. Build from this. Do not assume anything not written here.
 
 ---
@@ -60,7 +60,7 @@ AI vet queue. YES picks awaiting AI review.
 | reviewed_at | TEXT | |
 
 ### `rejected_signals`
-Signals marked NO. Prevents re-surfacing in vetting.
+Signals marked NO. Prevents re-surfacing in vetting. Also used by profit grinder to exclude vetted-NO signals from the population.
 
 ### `earnings_dates`
 Cached earnings dates per ticker.
@@ -83,10 +83,13 @@ These are the authoritative grind outputs. The PySide6 app reads them directly.
 | `raw_signal_clusters_{setup}.json` | Refinement grind (phase 1) | All clusters with classification |
 | `refinement_{setup}_cl*.json` | Refinement grind (phase 2) | Winner/loser/eliminated signals + combined conditions |
 | `ev_{setup}_*.json` | EV grinder | Scoring equation + per-signal WR/MFE/EV + calibration |
-| `entry_scores_{setup}.json` | Entry candle scorer | Combined scores for vetting sort order |
+| `entry_scores_{setup}.json` | Entry candle scorer | Per-winner entry_candle_score, combined_score for vetting sort. Also consumed by profit grinder for tradability weighting. |
+| `profit_{setup}_*.json` | Profit grinder | Exit expression candidates + weighted stats + equity curves + per-trade detail |
+| `profit_{setup}.json` | Profit grinder | Latest pointer (symlink-style copy of most recent timestamped file) |
 | `universe_ohlcv_5yr.pkl` | cache_builder.py | 5yr OHLCV for ~4,169 tickers (loaded into memory) |
 | `market_cache_*.npz` | market_cache_builder.py | 256 instrument expression series |
 | `expr_cache/*.npz` | expr_cache_builder.py | Per-ticker expression series (~21 GB) |
+| `fundamentals_cache.json` | fetch_fundamentals.py | Per-ticker sector, shares outstanding, float |
 
 ---
 
@@ -100,6 +103,9 @@ Examples (SQLite) + Expression Cache (local .npz files)
 
 Refinement output + Market Cache + OHLCV + Fundamentals
     → EV Grinder → ev_{setup}_*.json
+
+EV output + Entry Scores + Vetting Decisions (SQLite) + Expression Cache + OHLCV
+    → Profit Grinder → profit_{setup}_*.json
 
 All outputs mirrored to Railway via file_mirror.py (backup only)
 Nightly seed vault pushes SQLite tables to Railway (backup only)

@@ -34,7 +34,7 @@ Phase 3 — Correlative Scoring (EV Grinder)
   b) EV Grinder — unified scoring of all market + setup-specific features
 
 Phase 4 — Profit Optimization
-  a) Profit Grinder — maximize compounded equity growth
+  a) Profit Grinder — TA-expression-based exit optimization
 
 Phase 5 — Live Watchlist
   a) Dynamic EV Scoring
@@ -65,6 +65,7 @@ Vetting is a standalone workbench outside the pipeline loop. You open it when yo
 - Combined score = percentile_rank(entry_candle_score) x percentile_rank(move_adr)
 - Output: entry_scores_{setup}.json, mirrored to Railway (backup)
 - Self-improving: more examples = tighter centroid = better scoring next session
+- **Also consumed by profit grinder:** the raw `entry_candle_score` (not combined_score) is used as the tradability weight for exit optimization
 
 **Vetting flow:**
 1. Click Update Scores (entry candle scorer runs, ~10 seconds)
@@ -153,7 +154,7 @@ Three numbers per signal:
 
 **Setup-specific features (OHLCV-derived, 6):** price, ADR, dollar volume (20d avg), days since IPO, RS vs SPY (D1), RS vs SPY (W1).
 
-**Setup-specific features (external data, 10):** market cap, float, volume/float ratio, sector mapping, RS vs sector, sector RS vs SPY, 
+**Setup-specific features (external data, 10):** market cap, float, volume/float ratio, sector mapping, RS vs sector, sector RS vs SPY.
 
 ### Architecture
 
@@ -180,11 +181,22 @@ The EV grinder replaces `market_grinder.py` + `setup_grinder.py` + the planned c
 
 ### a) Profit Grinder
 
-Runs on the full signal set with EV scores attached. Optimizes exit strategy by compounded equity growth, not average MFE capture. A strategy that captures 60% MFE consistently may outcompound one that captures 90% with high variance, because drawdowns from volatile strategies kill position sizing.
+Finds the optimal TA-expression-based exit conditions for maximizing trade profit across the winner signal set. Brute-forces the expression cache (same 15,805 expressions) testing every expression × threshold × direction against forward price paths.
 
-- Input: EV-scored signal set with entry bars and price data
-- Output: Exit strategy parameters + compounded equity simulation
-- Script: `profit_grinder.py` (exists, needs rewiring to new pipeline and new objective function)
+This is distinct from the exit grinder (Phase 2b), which found one expression condition for **classification** (separating winners from losers). The profit grinder finds expression conditions for **profit-taking** — the optimal time to close the trade once you're in it.
+
+**Weighting:** Each signal's influence is determined by its tradability. Examples and vetted YES signals get weight 1.0 (hard gate — exit must trigger on all of them). Vetted NO signals are excluded. Unvetted winners are weighted by their raw `entry_candle_score` (cosine similarity to the example centroid). This measures "does this chart look like an entry I'd take" — information available at trade time. Move size is explicitly NOT part of the weight because it's the outcome, not the entry decision.
+
+**No trigger gate on unvetted winners.** If the exit expression doesn't trigger on an unvetted winner, that signal is scored as a 1-ADR loss at its `entry_candle_score` weight. The weighted scoring naturally penalizes candidates that miss tradable charts (heavy penalty) while tolerating misses on non-tradable charts (negligible penalty). No bins, no hardcoded thresholds — fully continuous, self-referencing.
+
+**Multi-stage trim:** The grinder searches for up to 3 exit stages (trim at first target, trim at second, exit remainder). Cascading search: 1-stage narrows candidate set, 2-stage builds on those, 3-stage on 2-stage.
+
+**All stats weighted by `entry_candle_score`.** SQN, expectancy, equity curve, drawdown — all reflect performance on signals you'd actually trade.
+
+- Input: EV-scored signals + entry candle scores + vetting decisions (SQLite) + expression cache + 5yr OHLCV
+- Output: Exit expression candidates + weighted stats + equity curves + per-trade detail
+- Script: `scripts/profit_grinder.py` (full rewrite in progress)
+- Saves to `local_runner/cache/profit_{setup}_{timestamp}.json`, mirrors to Railway
 
 ---
 
@@ -222,6 +234,9 @@ The watchlist is the end product. Every cycle of the loop makes it more accurate
 - **Continuous percentile scoring (Option C).** quality_score 0-100 per signal, not discrete quartile levels. Slider 2 threshold is continuous.
 - **Assumed stop of 1.0 ADR for EV calculation.** Adjustable without re-running.
 - **100% example pass rate required.** Any grinder result where an example fails is invalid.
+- **Profit grinder uses `entry_candle_score` weighting, not `combined_score`.** Move size is future information — not available at trade time. Entry candle similarity is the right tradability proxy.
+- **Profit grinder: no trigger gate on unvetted winners.** Non-triggers scored as 1-ADR loss at their weight. The scoring function self-regulates. No bins, no hardcoded thresholds.
+- **Profit grinder: TA-expression-based exits only.** No fixed ADR price targets or stop losses. The chart determines the exit through expression conditions.
 
 ---
 
@@ -234,10 +249,10 @@ The watchlist is the end product. Every cycle of the loop makes it more accurate
 | Refinement Grind | pyramid_grinder.py --blackout | Pyramid result + exit cond + expr cache + 5yr OHLCV | raw_signal_clusters_{setup}.json + refinement_{setup}_*.json |
 | Entry Candle Scorer | entry_candle_scorer.py | Examples (local SQLite) + refinement output + raw_signal_clusters + expr cache | entry_scores_{setup}.json |
 | EV Grinder | ev_grinder.py (complete, inc 1-6) | Refinement result + raw clusters + market cache + 5yr OHLCV + fundamentals cache | ev_{setup}_inc6_*.json (features, per-signal scores, calibration tables, redundancy analysis) |
-| Profit Grind | profit_grinder.py (needs rewire) | EV-scored signals + price data | Exit strategy + equity curve |
+| Profit Grinder | profit_grinder.py (rewrite in progress) | EV output + entry candle scores + vetting decisions (SQLite) + expr cache + 5yr OHLCV | profit_{setup}_*.json (exit candidates, weighted stats, equity curves, per-trade detail) |
 
-All grinder outputs are also mirrored to Railway (backup) via file_mirror.py and .
-The entry candle scorer is not a pipeline step -- it is a standalone vetting utility that mirrors its output to Railway for the vetting UI.
+All grinder outputs are also mirrored to Railway (backup) via file_mirror.py.
+The entry candle scorer is not a pipeline step -- it is a standalone vetting utility that also provides tradability weights for the profit grinder.
 
 ---
 
@@ -248,7 +263,7 @@ The entry candle scorer is not a pipeline step -- it is a standalone vetting uti
 - **Expression cache:** 15,805 expressions, ~21 GB
 - **5yr OHLCV cache:** ~4,167 tickers
 - **File mirror:** All grind results → Railway via `file_mirror.py`
-- **Nightly refresh:** 4:30pm ET, 7 steps, fully automated
+- **Nightly refresh:** 4:30pm ET, 9 steps, fully automated
 - **DB schema:** See `DATA_CONTRACT.md` for full Local SQLite schema
 - **Pipeline spec:** See `PIPELINE_V2.md` for authoritative architecture
 - **Task list:** See `TODO.md` for current work items

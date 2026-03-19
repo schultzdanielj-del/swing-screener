@@ -1,4 +1,4 @@
-# ScanPerfect Pipeline (2026-03-15, EV Grinder complete)
+# ScanPerfect Pipeline (2026-03-19, Profit Grinder rewrite in progress)
 
 ## The Goal
 
@@ -22,7 +22,7 @@ Phase 3 — Correlative Scoring (EV Grinder)
   b) EV Grinder — unified scoring of all market + setup-specific features
 
 Phase 4 — Profit Optimization
-  a) Profit Grinder — maximize compounded equity growth, not raw MFE capture
+  a) Profit Grinder — TA-expression-based exit optimization
 
 Phase 5 — Live Watchlist
   a) Dynamic EV Scoring
@@ -59,7 +59,7 @@ Vetting is not a one-time gate. It is a quality layer that improves continuously
 
 **Post-Refinement vet** -- after refinement grind produces the winner pile. The entry candle scorer runs on the winner pile and produces a combined_score per signal. Signals with both a high-ADR move AND a bar in the forward window that looks like a real entry candle float to the top. You vet top-down and stop when quality drops off.
 
-**Entry Candle Scorer** (scripts/entry_candle_scorer.py) -- standalone vetting utility, not a pipeline step. Builds a centroid from all example entry candle expression vectors (16,051 dimensions), computes per-expression discrimination weights (how tightly entry candles cluster vs how spread out winner forward window bars are, capped at 95th percentile), then scores each winner forward window bar against the centroid using weighted cosine similarity. Scan range per cluster: leftmost bar through rightmost bar + forward_window. Best-matching bar per cluster is the entry candle score. Combined score = percentile rank of entry_candle_score x percentile rank of move_adr. Output: entry_scores_{setup}.json mirrored to Railway.
+**Entry Candle Scorer** (scripts/entry_candle_scorer.py) -- standalone vetting utility, not a pipeline step. Builds a centroid from all example entry candle expression vectors (16,051 dimensions), computes per-expression discrimination weights (how tightly entry candles cluster vs how spread out winner forward window bars are, capped at 95th percentile), then scores each winner forward window bar against the centroid using weighted cosine similarity. Scan range per cluster: leftmost bar through rightmost bar + forward_window. Best-matching bar per cluster is the entry candle score. Combined score = percentile rank of entry_candle_score x percentile rank of move_adr. Output: entry_scores_{setup}.json mirrored to Railway. Also consumed by profit grinder: the raw `entry_candle_score` (not combined_score) provides tradability weighting for exit optimization.
 
 **Vetting flow:**
 1. Click Update Scores -- entry candle scorer runs (~10 seconds)
@@ -110,7 +110,7 @@ Examples run through the full classification race (ceiling calc, exit condition 
 - Input: Signal conditions + exit condition + example library + expression cache + 5yr OHLCV
 - Output: Combined conditions (signal + refinement) + filtered winner/loser signal lists with move_adr data
 - Script: `pyramid_grinder.py --blackout`
-- Overfitting risk: More refinement depth = more conditions = higher curve fit risk. Depth progression output (TODO) will allow post-hoc threshold tuning.
+- Overfitting risk: More refinement depth = more conditions = higher curve fit risk. Depth progression output (TODO) will allow post-hoc condition threshold tuning.
 
 ### move_adr measurement
 
@@ -224,35 +224,20 @@ A new signal fires tonight. Compute its feature values (market cache lookup + OH
 
 ### a) Profit Grinder
 
-Finds the optimal exit strategy for maximum account growth, not maximum per-trade profit. Runs on the EV-scored signal set at various Slider 1 (quality_score threshold) and Slider 2 (minimum predicted WR) settings.
+Finds the optimal TA-expression-based exit conditions for maximizing trade profit. Brute-forces the expression cache (same 15,805 expressions, excluding boolean aggregations ct_/st_/tir_) testing every expression × threshold × direction against forward expression values of all winner signals.
 
-**Entry prices:** Uses actual entry candle prices where available (examples and vetted YES picks have real entry candles). For non-example signals, uses the best available guess — the forward window bar that best matches the entry candle centroid (from entry_candle_scorer.py). This gives realistic fill prices for the simulation.
+**Weighting:** Examples and vetted YES get weight 1.0 with a hard trigger requirement (exit must fire on all of them). Vetted NO signals excluded. Unvetted winners weighted by raw `entry_candle_score` — cosine similarity to the example entry candle centroid. This measures "does this chart look like an entry I'd take" using only information available at trade time. Move size is explicitly NOT in the weight — it's the outcome, not the entry decision.
 
-**What it brute-forces:**
-- Stop loss levels (in ADR units) — the risk per trade
-- Target levels (in ADR units) — where to take profits
-- Trail stop parameters — when to switch from fixed stop to trailing
-- Trim-and-trail strategies — sell a portion at target, trail the rest
-- All of the above tested across multiple Slider 1/2 threshold combinations, because the optimal exit strategy may differ at different quality levels
+**No trigger gate on unvetted winners.** If the exit doesn't trigger on an unvetted winner, that signal is scored as a 1-ADR loss at its `entry_candle_score` weight. The weighted scoring self-regulates: missing high-score signals (charts you'd trade) is heavily penalized, missing low-score signals (charts you'd skip) is negligible. No bins, no hardcoded thresholds — fully continuous, self-referencing.
 
-**Objective function:** SQN (System Quality Number) — sqrt(N) × expectancy / stdev of R-multiples. This optimizes for consistency of returns, not raw size. A strategy with slightly lower average win but tighter distribution of outcomes will score higher, because it compounds better. Drawdowns kill compounding; SQN penalizes variance.
+**Multi-stage trim:** Searches for 1-stage (full exit), 2-stage (trim + exit), and 3-stage (trim + trim + exit) strategies. Cascading search keeps compute tractable.
 
-**Why SQN, not compound growth rate directly:** Compound growth rate is the ultimate goal, but it's sensitive to sequence of returns and position sizing assumptions. SQN measures the quality of the edge independent of sizing. Once you have the highest-SQN exit strategy, position sizing (Kelly fraction, fixed fractional, etc.) is a separate optimization that can be layered on top.
+**All stats weighted by `entry_candle_score`.** SQN, expectancy, equity curve, drawdown — all reflect performance on signals you'd actually trade.
 
-**Data source:** Full 5yr OHLCV cache for post-entry price simulation. Every bar after entry is available to test exit conditions against.
-
-**Output:**
-- Optimal stop/target/trail parameters at each slider threshold level
-- SQN score per parameter combination
-- Compounded equity curve (using fixed fractional sizing as baseline)
-- Drawdown profile (max drawdown, avg drawdown, recovery time)
-- Per-trade stats: avg win (R), avg loss (R), win rate, expectancy
-- MFE capture efficiency: what % of available move does the exit strategy capture
-- Comparison table: top parameter combos ranked by SQN
-
-- Input: EV-scored signal set + entry candle data + Slider 1/2 ranges + 5yr OHLCV cache
-- Output: Exit strategy parameters + equity simulation + SQN ranking
-- Script: `profit_grinder.py` (exists, needs full rewire to new pipeline, new objective function, slider integration)
+- Input: EV-scored signal set + entry candle scores + vetting decisions (SQLite) + expression cache + 5yr OHLCV
+- Output: Exit expression candidates + weighted stats + equity curves + per-trade detail
+- Script: `profit_grinder.py` (full rewrite in progress — current version is wrong ADR-level approach)
+- See `PROFIT_GRINDER.md` for full spec
 
 ---
 
@@ -299,7 +284,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
 | Phase 3: EV Grinder | ✅ Complete (inc 1-6) | 1,816 pre / 1,940 post features. Continuous percentile scoring, category-balanced weighting (50/50). Calibration: pre D1=19.1%→D10=64.1%, post D1=56.5%→D10=93.5%. RMSE 0.090 post. 247 genuine features, 1,569 redundant. File: `ev_dtss_inc6_*.json` (4.4MB) |
-| Phase 4: Profit Optimization | ⏸ Not started | Script exists, needs full rewire: SQN objective, slider integration, entry candle prices |
+| Phase 4: Profit Optimization | 🔄 Rewrite in progress | Current script is wrong (ADR price levels). Full rewrite to TA-expression-based exits with entry_candle_score weighting. See PROFIT_GRINDER.md |
 | Phase 5: Live Watchlist | ⏸ Not built | |
 
 ### Refinement Grind Result (2026-03-13)
@@ -378,51 +363,54 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ## Immediate Tasks
 
-### NEXT: Localization
-0. ~~**Localize everything**~~ — ✅ DONE. See `LOCALIZE.md`.
+### NEXT: Profit Grinder Rewrite
+0. **Profit Grinder full rewrite** — 🔄 IN PROGRESS. Current script is ADR price-level based (wrong). Rewriting to TA-expression-based exits with entry_candle_score weighting. See `PROFIT_GRINDER.md` for spec.
+
+### Localization
+1. ~~**Localize everything**~~ — ✅ DONE. See `LOCALIZE.md`.
 
 ### Grinder Improvements
-1. **Depth progression output (refinement grinder)** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running via Settings Lock UI.
-2. **Multi-run consensus (signal grinder)** — the beam search is non-deterministic: different runs find different condition sets with wildly different signal counts. Run N times (e.g. 5-10), keep conditions that appear in most runs. A condition in 8/10 runs is robust; a condition in 1/10 was a fluke. This stabilizes the foundation the entire downstream pipeline depends on. Signal grind margin (5%) is a search parameter and stays fixed — it is NOT tunable post-hoc (attempted and reverted 2026-03-16, produced worse results).
-3. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
+2. **Depth progression output (refinement grinder)** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running via Settings Lock UI.
+3. **Multi-run consensus (signal grinder)** — the beam search is non-deterministic: different runs find different condition sets with wildly different signal counts. Run N times (e.g. 5-10), keep conditions that appear in most runs. A condition in 8/10 runs is robust; a condition in 1/10 was a fluke. This stabilizes the foundation the entire downstream pipeline depends on. Signal grind margin (5%) is a search parameter and stays fixed — it is NOT tunable post-hoc (attempted and reverted 2026-03-16, produced worse results).
+4. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
 
 ### Phase 3 — EV Grinder
-4. ~~**EV Grinder increments 5-6**~~ — ✅ DONE.
+5. ~~**EV Grinder increments 5-6**~~ — ✅ DONE.
 
 ### Vetting UI
-5. **Entry candle scorer integrated into refinement grind** — scorer runs automatically at the end of refinement grind, not as a separate step. Produces combined_score per winner signal (move_adr × entry candle similarity). Vetting UI sorts by combined_score when available, falls back to move_adr.
-6. ~~**AI vet queue**~~ — ✅ BUILT. YES → pending → AI review → approve on Examples tab. Pending items show as chart grid inside Add Examples.
-7. ~~**Workflow and ease-of-use improvements**~~ — ✅ BUILT. Keyboard-driven (1/2/3/↑↓), floating Yes button at click position, mouse wheel zoom, V/U/N checkboxes, chart preloading, entry bar requirement enforced.
+6. **Entry candle scorer integrated into refinement grind** — scorer runs automatically at the end of refinement grind, not as a separate step. Produces combined_score per winner signal (move_adr × entry candle similarity). Vetting UI sorts by combined_score when available, falls back to move_adr.
+7. ~~**AI vet queue**~~ — ✅ BUILT. YES → pending → AI review → approve on Examples tab. Pending items show as chart grid inside Add Examples.
+8. ~~**Workflow and ease-of-use improvements**~~ — ✅ BUILT. Keyboard-driven (1/2/3/↑↓), floating Yes button at click position, mouse wheel zoom, V/U/N checkboxes, chart preloading, entry bar requirement enforced.
 
 ### Pipeline UI
-8. ~~**Pipeline flowchart UI**~~ — ✅ DONE. 7-node flowchart with color-coded cards, animated expansion, unlock progression, two feedback loops. No tabs — flowchart is the interface.
-9. ~~**Update PIPELINE_V2.md**~~ — ✅ DONE (2026-03-17). All docs updated to reflect local-first architecture and 7-node flowchart.
+9. ~~**Pipeline flowchart UI**~~ — ✅ DONE. 7-node flowchart with color-coded cards, animated expansion, unlock progression, two feedback loops. No tabs — flowchart is the interface.
+10. ~~**Update PIPELINE_V2.md**~~ — ✅ DONE (2026-03-17). All docs updated to reflect local-first architecture and 7-node flowchart.
 
 ### Code Cleanup (future)
-10. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.
+11. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.
 
 ### Vetting
-11. **Vet winner pile** — review 365 winners, add examples, loop if needed.
-12. **AI review quality improvement** — `review_samples.py` prompt needs tightening. Current issues: (a) AI sometimes returns "UNKNOWN" instead of APPROVE/REJECT, (b) reasoning is verbose chart description instead of pattern evaluation, (c) needs to compare candidate against example library centroid/characteristics, not just describe what it sees. The prompt should force a binary decision with 2-3 sentence reasoning focused on why this does or doesn't match the setup pattern. No chart narration.
+12. **Vet winner pile** — review 365 winners, add examples, loop if needed.
+13. **AI review quality improvement** — `review_samples.py` prompt needs tightening. Current issues: (a) AI sometimes returns "UNKNOWN" instead of APPROVE/REJECT, (b) reasoning is verbose chart description instead of pattern evaluation, (c) needs to compare candidate against example library centroid/characteristics, not just describe what it sees. The prompt should force a binary decision with 2-3 sentence reasoning focused on why this does or doesn't match the setup pattern. No chart narration.
 
 ---
 
 ## Infrastructure
 
 - **Repo:** `schultzdanielj-del/swing-screener`, branch `v2`
-- **Railway:** `https://web-production-e3025.up.railway.app` — migrating to seed vault only (see LOCALIZE.md)
+- **Railway:** `https://web-production-e3025.up.railway.app` — seed vault only (see LOCALIZE.md)
 - **Expression cache:** 16,051 expressions, ~21 GB
 - **5yr OHLCV cache:** ~4,167 tickers
 - **File mirror:** Grind results → Railway via `file_mirror.py` (stays post-localization for Claude access)
-- **Nightly refresh:** 4:30pm ET, 7 steps + step 8 seed vault push (planned), fully automated
-- **UI:** DM Sans, grayscale design system. Currently Railway-hosted, moving to localhost
+- **Nightly refresh:** 4:30pm ET, 9 steps + seed vault push, fully automated
+- **UI:** DM Sans, grayscale design system. PySide6 desktop app (`scanperfect.py`)
 
 ---
 
 ## Key Design Decisions
 
 - **Pyramid with D1 cap=15 is the official signal grind engine.** Experimental grinders (dartboard, hybrid) failed. Shelved.
-- **Beam search instability is a known problem.** Individual runs produce usable signal sets but with low run-to-run overlap. Multi-run consensus (task #2) will fix this by keeping only conditions that appear across most runs. Until then, instability is accepted.
+- **Beam search instability is a known problem.** Individual runs produce usable signal sets but with low run-to-run overlap. Multi-run consensus (task #3) will fix this by keeping only conditions that appear across most runs. Until then, instability is accepted.
 - **Signal grind margin (5%) is a search parameter, not a post-hoc knob.** Changing it to 0% was attempted (2026-03-16) and produced worse results (2,254 signals vs 1,218 at 5%). The margin fundamentally changes what conditions the beam search finds. It stays fixed at 5%.
 - **Cluster-aware refinement scoring.** A losing cluster only counts as eliminated when ALL its bars are dead.
 - **No re-scan/re-classify in refinement.** Phase 1 classification is truth.
@@ -442,6 +430,9 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - **Three-pass dedup catches all redundancy levels.** Pass 1 (within-instrument) catches expression variants. Pass 1.5 (same-expression) keeps only the strongest instrument per expression. Pass 2 (cross-instrument exact Pearson) catches remaining correlated pairs. All use np.isfinite to handle inf values from market caches.
 - **100% example pass rate required.** Any grinder result where an example fails is invalid.
 - **Silent failures are dangerous.** The system produces plausible wrong numbers. Verify empirically.
+- **Profit grinder uses `entry_candle_score` weighting, not `combined_score`.** Move size is future information — not available at trade time. Entry candle similarity is the right tradability proxy.
+- **Profit grinder: no trigger gate on unvetted winners.** Non-triggers scored as 1-ADR loss at their weight. The scoring function self-regulates. No bins, no hardcoded thresholds.
+- **Profit grinder: TA-expression-based exits only.** No fixed ADR price targets or stop losses. The chart determines the exit through expression conditions.
 
 ---
 
@@ -450,7 +441,6 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - `dartboard_grinder.py` — additive scoring washes out discrimination
 - `hybrid_grinder.py` — correlated booleans don't filter
 - `proximity_grinder.py` — replaced by refinement grinder
-- `profit_grinder.py` — removed from pipeline
 - `setup_refiner.py` — legacy, unused
 - `signal_filter.py` classified output — replaced by `raw_signal_clusters_{setup}.json`
 - `market_grinder.py` — replaced by EV grinder. Results preserved for reference (`regime_dtss_20260313_095056.json`). Feature selection work (top 50 of 3M+) informs EV grinder.
