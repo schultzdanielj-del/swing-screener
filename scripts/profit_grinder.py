@@ -334,20 +334,20 @@ def _mdd(eq):
         else: cur+=1; mx=max(mx,cur)
     return mx
 
-# ── Worker for parallel 1-stage grind ──
-def _grind_expr_chunk(expr_indices, fwd_expr_list, valid_indices,
+# ── Worker for parallel 1-stage grind (pre-built 3D array) ──
+def _grind_expr_chunk(expr_indices, expr_3d, eb_2d,
                       close_2d, search_valid, bar_indices,
-                      entry_high_bar_expr_list, entry_high_offset_v,
+                      entry_high_offset_v,
                       entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
                       move_adrs_v, filtered_names, direction, exit_horizon):
-    nv = len(valid_indices); candidates = []; tested=0; hgf=0; atef=0
+    nv = expr_3d.shape[0]; candidates = []; tested=0; hgf=0; atef=0
     for ei in expr_indices:
-        col = extract_column_padded(fwd_expr_list, valid_indices, ei, exit_horizon)
+        col = expr_3d[:, :, ei]
         fm = np.isfinite(col) & search_valid; fv = col[fm]
         if len(fv) < nv: continue
         ths = np.unique(np.percentile(fv, np.linspace(5, 95, N_THRESHOLDS)))
         if len(ths) < 2: continue
-        eb_vals = extract_entry_high_bar_column(entry_high_bar_expr_list, valid_indices, ei)
+        eb_vals = eb_2d[:, ei]
         eb_finite = np.isfinite(eb_vals); en = filtered_names[ei]
         for th in ths:
             for dl, above in [("above", True), ("below", False)]:
@@ -376,7 +376,7 @@ def _grind_expr_chunk(expr_indices, fwd_expr_list, valid_indices,
                 candidates.append((st, fb.astype(np.int16).copy()))
     return candidates, tested, hgf, atef
 
-# ── 1-Stage Grind ──
+# ── 1-Stage Grind (pre-built 3D array — no per-expression Python loop) ──
 def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
                  entry_high_offset_v, valid_indices,
                  entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
@@ -397,11 +397,29 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
         if s<n_bars_per_signal[vi]: search_valid[vi,s:n_bars_per_signal[vi]]=True
     bar_indices = np.arange(exit_horizon)[np.newaxis, :]
 
+    # Pre-build 3D padded array: (nv, exit_horizon, ne) — eliminates per-expression Python loop
+    print(f"  Building 3D expression array ({nv} x {exit_horizon} x {ne})...")
+    expr_3d = np.full((nv, exit_horizon, ne), np.nan, dtype=np.float32)
+    for vi, si in enumerate(valid_indices):
+        fe = fwd_expr_list[si]
+        expr_3d[vi, :fe.shape[0], :] = fe
+    sz_gb = expr_3d.nbytes / 1e9
+    print(f"  3D array: {sz_gb:.2f} GB")
+    print_ram("(3D built)")
+    check_ram("(3D built)", min_gb=1.0)
+
+    # Pre-build entry_high_bar expression values: (nv, ne)
+    eb_2d = np.full((nv, ne), np.nan, dtype=np.float32)
+    for vi, si in enumerate(valid_indices):
+        eb = entry_high_bar_expr_list[si]
+        if eb is not None: eb_2d[vi, :] = eb
+
     chunks = [list(range(ne))[i:i+max(1,ne//n_workers)] for i in range(0,ne,max(1,ne//n_workers))]
+    print(f"  {len(chunks)} chunks, dispatching...")
     all_cands=[]; tt=0; thgf=0; tatef=0; done=0
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futs={pool.submit(_grind_expr_chunk, ch, fwd_expr_list, valid_indices,
-              close_2d, search_valid, bar_indices, entry_high_bar_expr_list,
+        futs={pool.submit(_grind_expr_chunk, ch, expr_3d, eb_2d,
+              close_2d, search_valid, bar_indices,
               entry_high_offset_v, entry_prices_v, adr_values_v, weights_v,
               is_hard_gate_v, move_adrs_v, filtered_names, direction, exit_horizon):ci
               for ci,ch in enumerate(chunks)}
@@ -413,6 +431,7 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
     el=time.time()-t0
     print(f"\n  1-stage complete: {el:.1f}s, {tt:,} tested, {len(all_cands):,} raw")
     print_ram("(after 1-stage)")
+    del expr_3d, eb_2d; gc.collect()
     return dedup_candidates(all_cands, exit_horizon), close_2d, search_valid, bar_indices
 
 # ── 2-Stage Grind ──
