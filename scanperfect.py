@@ -1298,6 +1298,10 @@ class ScanTuningWorkspace(QFrame):
         self._depth_slider.valueChanged.connect(self._on_slider_changed)
         self._wr_slider.valueChanged.connect(self._on_slider_changed)
 
+    # ── Event handling ──
+    def mousePressEvent(self, ev):
+        ev.accept()  # consume — prevent canvas from collapsing workspace
+
     # ── Helper: create styled section labels ──
     def _make_section_label(self, text):
         lbl = QLabel(text)
@@ -2375,6 +2379,9 @@ class SpyBubbleChart(QWidget):
         self._scroll_offset = 0
         self._visible_count = 500
         self._max_move_adr = 1.0  # for bubble scaling
+        self._drag_start_x = None
+        self._drag_start_offset = None
+        self._dragging = False
 
     def load_spy(self):
         """Load SPY candles from OHLCV cache."""
@@ -2625,16 +2632,51 @@ class SpyBubbleChart(QWidget):
 
         p.end()
 
-    def mouseMoveEvent(self, ev):
+    def mousePressEvent(self, ev):
+        ev.accept()  # consume — prevent canvas from collapsing the workspace
         if not self._candles:
             return
+        pos = ev.position() if hasattr(ev, "position") else ev.pos()
+        self._drag_start_x = pos.x()
+        self._drag_start_offset = self._scroll_offset
+        self._dragging = False
+
+    def mouseReleaseEvent(self, ev):
+        ev.accept()
+        self._drag_start_x = None
+        self._drag_start_offset = None
+        self._dragging = False
+
+    def mouseMoveEvent(self, ev):
+        ev.accept()
+        if not self._candles:
+            return
+        pos = ev.position() if hasattr(ev, "position") else ev.pos()
+        mx = pos.x()
+
+        # Drag scrolling
+        if self._drag_start_x is not None:
+            dx = mx - self._drag_start_x
+            if abs(dx) > 4:
+                self._dragging = True
+            if self._dragging:
+                visible, offset = self._visible_slice()
+                n_vis = len(visible) if visible else 1
+                w, h, chart_w, chart_h = self._chart_geometry()
+                candle_w = chart_w / n_vis if n_vis else 1
+                bar_shift = int(-dx / candle_w) if candle_w > 0 else 0
+                new_off = self._drag_start_offset + bar_shift
+                max_off = max(0, len(self._candles) - self._visible_count)
+                self._scroll_offset = max(0, min(new_off, max_off))
+                self.update()
+                return
+
+        # Hover (when not dragging)
         visible, offset = self._visible_slice()
         if not visible:
             return
         w, h, chart_w, chart_h = self._chart_geometry()
         candle_w = chart_w / len(visible) if visible else 1
-        pos = ev.position() if hasattr(ev, "position") else ev.pos()
-        mx = pos.x()
         idx = int(mx / candle_w) if candle_w > 0 else None
         if idx is not None and 0 <= idx < len(visible):
             if self._hover_idx != idx:
@@ -2648,9 +2690,11 @@ class SpyBubbleChart(QWidget):
         if self._hover_idx is not None:
             self._hover_idx = None
             self.update()
+        self._drag_start_x = None
+        self._dragging = False
 
     def wheelEvent(self, ev):
-        ev.accept()
+        ev.accept()  # consume — prevent scroll area from scrolling
         if not self._candles:
             return
         delta = ev.angleDelta().y()
