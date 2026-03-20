@@ -17,6 +17,7 @@ import numpy as np, pickle
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+from profit_grinder_2stage import grind_2stage  # optimized: outer loop = expressions
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
