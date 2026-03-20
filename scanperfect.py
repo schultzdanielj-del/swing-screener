@@ -637,6 +637,7 @@ class FlowchartCanvas(QWidget):
         self._example_progress = 0.0  # 0.0 to 1.0
         self._example_n = 0
         self._example_total = 0
+        self._scan_tuning_tab = "entry"  # "entry" or "exit"
         self.setMouseTracking(True)
 
     def set_status(self, nid, s):
@@ -852,7 +853,7 @@ class FlowchartCanvas(QWidget):
                 x, y, w, h = self._rects[nid]
                 # Vetting gets a thin header (just enough to click-collapse)
                 # Other nodes use the full base card height as header
-                header_h = 32 if nid in ("vetting", "examples", "scan_tuning") else self._nh
+                header_h = 32 if nid in ("vetting", "examples") else (56 if nid == "scan_tuning" else self._nh)
                 widget.setGeometry(int(x + 1), int(y + header_h), int(w - 2), int(h - header_h - 1))
                 widget.setVisible(True)
                 widget.raise_()
@@ -1084,6 +1085,48 @@ class FlowchartCanvas(QWidget):
         p.drawText(QRectF(x + pad, name_y, w - pad*2, name_h),
                    Qt.AlignLeft | Qt.AlignVCenter, title_text)
 
+        # ENTRY / EXIT tab bars for Scan Tuning (in header, below title)
+        if nid == "scan_tuning" and is_expanded and not locked:
+            tab_y = y + 30  # below title
+            tab_h = 22
+            tab_gap = 6
+            half_w = (w - pad * 2 - tab_gap) // 2
+            entry_x = x + pad
+            exit_x = entry_x + half_w + tab_gap
+            active = self._scan_tuning_tab
+
+            # Entry tab
+            if active == "entry":
+                p.setBrush(QColor("#4ade80"))
+                p.setPen(Qt.NoPen)
+            else:
+                p.setBrush(QColor("#1a3d25"))
+                p.setPen(Qt.NoPen)
+            p.drawRoundedRect(int(entry_x), int(tab_y), int(half_w), tab_h, 4, 4)
+            p.setPen(QColor("#000" if active == "entry" else "#4ade80"))
+            f.setPixelSize(11); f.setWeight(QFont.Bold); p.setFont(f)
+            p.drawText(QRectF(entry_x, tab_y, half_w, tab_h),
+                       Qt.AlignCenter, "entry")
+
+            # Exit tab
+            if active == "exit":
+                p.setBrush(QColor("#f87171"))
+                p.setPen(Qt.NoPen)
+            else:
+                p.setBrush(QColor("#3d1a1a"))
+                p.setPen(Qt.NoPen)
+            p.drawRoundedRect(int(exit_x), int(tab_y), int(half_w), tab_h, 4, 4)
+            p.setPen(QColor("#000" if active == "exit" else "#f87171"))
+            f.setPixelSize(11); f.setWeight(QFont.Bold); p.setFont(f)
+            p.drawText(QRectF(exit_x, tab_y, half_w, tab_h),
+                       Qt.AlignCenter, "exit")
+
+            # Store tab rects for click detection
+            self._scan_tab_rects = {
+                "entry": (int(entry_x), int(tab_y), int(half_w), tab_h),
+                "exit": (int(exit_x), int(tab_y), int(half_w), tab_h),
+            }
+
         # Progress bar for Examples (below title, no desc text)
         if nid == "examples" and not locked:
             progress = getattr(self, "_example_progress", 0.0)
@@ -1150,6 +1193,21 @@ class FlowchartCanvas(QWidget):
             self.update()
 
     def mousePressEvent(self, ev):
+        # Check scan tuning tab clicks first (when expanded)
+        if self._expanded_id == "scan_tuning" and hasattr(self, "_scan_tab_rects"):
+            pos = ev.position() if hasattr(ev, "position") else ev.pos()
+            mx, my = int(pos.x()), int(pos.y())
+            for tab_key, (tx, ty, tw, th) in self._scan_tab_rects.items():
+                if tx <= mx <= tx + tw and ty <= my <= ty + th:
+                    if tab_key != self._scan_tuning_tab:
+                        self._scan_tuning_tab = tab_key
+                        # Tell the workspace to switch tabs
+                        ws = self._detail_widgets.get("scan_tuning")
+                        if ws and hasattr(ws, "_set_tab"):
+                            ws._set_tab(tab_key)
+                        self.update()
+                    return  # consumed — don't collapse
+
         if self._hover:
             self.node_clicked.emit(self._hover)
 
@@ -1203,7 +1261,7 @@ class ScanTuningWorkspace(QFrame):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
-        # ── Top bar: tab toggles + stats ──
+        # ── Top bar: stats ──
         top_bar = QFrame()
         top_bar.setFixedHeight(32)
         top_bar.setStyleSheet(
@@ -1212,20 +1270,6 @@ class ScanTuningWorkspace(QFrame):
         tb_lay = QHBoxLayout(top_bar)
         tb_lay.setContentsMargins(12, 0, 12, 0)
         tb_lay.setSpacing(8)
-
-        # Tab toggle buttons
-        self._tab_btns = {}
-        for tab_key, tab_label in [("entry", "ENTRY"), ("exit", "EXIT")]:
-            btn = QPushButton(tab_label)
-            btn.setFixedHeight(22)
-            btn.setCheckable(True)
-            btn.setChecked(tab_key == "entry")
-            btn.clicked.connect(lambda checked, t=tab_key: self._set_tab(t))
-            tb_lay.addWidget(btn)
-            self._tab_btns[tab_key] = btn
-        self._update_tab_btn_styles()
-
-        tb_lay.addSpacing(12)
 
         self._stats_label = QLabel("No data loaded")
         self._stats_label.setStyleSheet(
@@ -1376,34 +1420,14 @@ class ScanTuningWorkspace(QFrame):
         self._wr_slider.valueChanged.connect(self._on_slider_changed)
         self._trim_slider.valueChanged.connect(self._on_slider_changed)
 
-    # ── Tab switching ──
+    # ── Tab switching (called by FlowchartCanvas tab click) ──
     def _set_tab(self, tab):
         if tab == self._tab:
             return
         self._tab = tab
         self._entry_panel.setVisible(tab == "entry")
         self._exit_panel.setVisible(tab == "exit")
-        self._update_tab_btn_styles()
         self._apply_filters()
-
-    def _update_tab_btn_styles(self):
-        for key, btn in self._tab_btns.items():
-            active = key == self._tab
-            btn.setChecked(active)
-            if active:
-                btn.setStyleSheet(
-                    "QPushButton { background:%s; color:#000; border:1px solid %s;"
-                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
-                    "font-weight:700; padding:2px 10px; }" % (C["amber"], C["amber"])
-                )
-            else:
-                btn.setStyleSheet(
-                    "QPushButton { background:transparent; color:%s; border:1px solid %s;"
-                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
-                    "font-weight:600; padding:2px 10px; }"
-                    "QPushButton:hover { background:%s; color:%s; }" % (
-                        C["text_muted"], C["border"], C["surface2"], C["text"])
-                )
 
     # ── Objective toggle ──
     def _set_objective(self, obj):
