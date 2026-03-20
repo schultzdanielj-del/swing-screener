@@ -1087,44 +1087,37 @@ class FlowchartCanvas(QWidget):
 
         # ENTRY / EXIT tab bars for Scan Tuning (in header, below title)
         if nid == "scan_tuning" and is_expanded and not locked:
-            tab_y = y + 30  # below title
-            tab_h = 22
-            tab_gap = 6
-            half_w = (w - pad * 2 - tab_gap) // 2
-            entry_x = x + pad
-            exit_x = entry_x + half_w + tab_gap
+            tab_y = y + 32  # below title
+            tab_h = 24
+            half_w = w // 2
+            entry_x = x
+            exit_x = x + half_w
             active = self._scan_tuning_tab
 
-            # Entry tab
-            if active == "entry":
-                p.setBrush(QColor("#4ade80"))
-                p.setPen(Qt.NoPen)
-            else:
-                p.setBrush(QColor("#1a3d25"))
-                p.setPen(Qt.NoPen)
-            p.drawRoundedRect(int(entry_x), int(tab_y), int(half_w), tab_h, 4, 4)
-            p.setPen(QColor("#000" if active == "entry" else "#4ade80"))
-            f.setPixelSize(11); f.setWeight(QFont.Bold); p.setFont(f)
+            # Entry tab — green
+            entry_bright = active == "entry"
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#4ade80" if entry_bright else "#2d8a56"))
+            p.drawRect(int(entry_x), int(tab_y), int(half_w), tab_h)
+            p.setPen(QColor("#000000" if entry_bright else "#1a1a1a"))
+            f.setPixelSize(12); f.setWeight(QFont.Bold); p.setFont(f)
             p.drawText(QRectF(entry_x, tab_y, half_w, tab_h),
                        Qt.AlignCenter, "entry")
 
-            # Exit tab
-            if active == "exit":
-                p.setBrush(QColor("#f87171"))
-                p.setPen(Qt.NoPen)
-            else:
-                p.setBrush(QColor("#3d1a1a"))
-                p.setPen(Qt.NoPen)
-            p.drawRoundedRect(int(exit_x), int(tab_y), int(half_w), tab_h, 4, 4)
-            p.setPen(QColor("#000" if active == "exit" else "#f87171"))
-            f.setPixelSize(11); f.setWeight(QFont.Bold); p.setFont(f)
-            p.drawText(QRectF(exit_x, tab_y, half_w, tab_h),
+            # Exit tab — red
+            exit_bright = active == "exit"
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#f87171" if exit_bright else "#b84c4c"))
+            p.drawRect(int(exit_x), int(tab_y), int(w - half_w), tab_h)
+            p.setPen(QColor("#000000" if exit_bright else "#1a1a1a"))
+            f.setPixelSize(12); f.setWeight(QFont.Bold); p.setFont(f)
+            p.drawText(QRectF(exit_x, tab_y, w - half_w, tab_h),
                        Qt.AlignCenter, "exit")
 
             # Store tab rects for click detection
             self._scan_tab_rects = {
                 "entry": (int(entry_x), int(tab_y), int(half_w), tab_h),
-                "exit": (int(exit_x), int(tab_y), int(half_w), tab_h),
+                "exit": (int(exit_x), int(tab_y), int(w - half_w), tab_h),
             }
 
         # Progress bar for Examples (below title, no desc text)
