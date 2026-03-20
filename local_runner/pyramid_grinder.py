@@ -2308,15 +2308,21 @@ def _gather_raw_signal_clusters(setup_type):
         return None
     print(f"  Exit condition: {exit_cond['expression']} {exit_cond['direction']} {exit_cond['threshold']}")
 
-    # ── Load examples from Railway API ──
+    # ── Load examples from local SQLite ──
     print(f"  Loading examples...")
-    import requests
+    import sqlite3
+    db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
     try:
-        resp = requests.get(f"{API_BASE}/api/examples/{setup_type}", timeout=30)
-        resp.raise_for_status()
-        examples_raw = resp.json().get("examples", [])
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT ticker, entry_date FROM examples WHERE setup_type=?",
+            (setup_type,)
+        ).fetchall()
+        conn.close()
+        examples_raw = [{"ticker": r["ticker"], "entry_date": r["entry_date"]} for r in rows]
     except Exception as e:
-        print(f"  ERROR: Could not load examples: {e}")
+        print(f"  ERROR: Could not load examples from {db_path}: {e}")
         return None
     print(f"  {len(examples_raw)} examples loaded")
 
@@ -2332,29 +2338,29 @@ def _gather_raw_signal_clusters(setup_type):
     print(f"  Loading 5yr cache...")
     universe_cache = load_5yr_cache()
 
-    # Build example lookup: {ticker: set(scan_idx)} for tagging
-    # scan_idx = bar before entry_date (same logic as signal_filter.deduplicate_examples)
-    example_bar_lookup = {}
+    # Build example lookup: {ticker: list of entry_date strings}
+    # Used to tag clusters as examples by date proximity.
+    # entry_date is the hardcoded truth from the examples table.
+    example_date_lookup = {}
     for ex in examples_raw:
         ticker = ex.get("ticker")
-        entry_date = ex.get("entryDate", ex.get("entry_date"))
+        entry_date = ex.get("entry_date")
+        if ticker is None or entry_date is None:
+            continue
+        if ticker not in example_date_lookup:
+            example_date_lookup[ticker] = []
+        example_date_lookup[ticker].append(entry_date)
+    print(f"  Example date lookup: {sum(len(v) for v in example_date_lookup.values())} entries across {len(example_date_lookup)} tickers")
+
+    # Build date→bar_idx mapping per ticker for matching clusters to examples
+    # This converts the OHLCV date column to {date_str: bar_idx} once per ticker
+    _ticker_date_to_idx = {}
+    for ticker in example_date_lookup:
         df = universe_cache.get(ticker)
-        if df is None or entry_date is None:
+        if df is None:
             continue
         dates_str = [str(d)[:10] for d in df["date"].values]
-        if entry_date not in dates_str:
-            continue
-        entry_idx = dates_str.index(entry_date)
-        scan_idx = entry_idx - 1
-        if scan_idx < 0:
-            continue
-        if ticker not in example_bar_lookup:
-            example_bar_lookup[ticker] = set()
-        example_bar_lookup[ticker].add(scan_idx)
-    print(f"  Example bar lookup: {sum(len(v) for v in example_bar_lookup.values())} bars across {len(example_bar_lookup)} tickers")
-    # DEBUG — remove after diagnosis
-    for _dbg_tk, _dbg_idxs in list(example_bar_lookup.items())[:3]:
-        print(f"  DEBUG ex: {_dbg_tk} scan_idx={_dbg_idxs}")
+        _ticker_date_to_idx[ticker] = {d: i for i, d in enumerate(dates_str)}
 
     # Build slim cache for scan workers
     sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
@@ -2423,11 +2429,43 @@ def _gather_raw_signal_clusters(setup_type):
     print(f"  {total_leftward:,} leftward (sacrificial) bars")
 
     # ── Exit + classify on rightmost bars ──
-    # DEBUG — remove after diagnosis
-    _debug_tks = set(list(example_bar_lookup.keys())[:3])
-    for c in clusters:
-        if c["ticker"] in _debug_tks:
-            print(f"  DEBUG cl: {c['ticker']} rightmost={c['rightmost']['bar_idx']} leftward={[b['bar_idx'] for b in c['leftward']]}")
+
+    # Build cluster-to-example matching by date proximity.
+    # For each cluster, check if the cluster's rightmost date falls within a window
+    # before any example's entry_date for that ticker. The signal bar is the bar
+    # before entry, and the cluster rightmost could be the signal bar or earlier
+    # (leftward bars). Match if rightmost_date is within 10 bars before entry_date.
+    MAX_MATCH_DISTANCE = 10  # bars between cluster rightmost and example entry
+
+    def _match_cluster_to_example(cluster):
+        """Check if this cluster corresponds to a known example.
+        Returns (is_example, entry_date, entry_bar_idx) or (False, None, None).
+        """
+        tk = cluster["ticker"]
+        if tk not in example_date_lookup:
+            return False, None, None
+        rightmost_idx = cluster["rightmost"]["bar_idx"]
+        all_bar_idxs = [rightmost_idx] + [b["bar_idx"] for b in cluster.get("leftward", [])]
+        leftmost_idx = min(all_bar_idxs)
+        date_map = _ticker_date_to_idx.get(tk, {})
+        for entry_date in example_date_lookup[tk]:
+            entry_idx = date_map.get(entry_date)
+            if entry_idx is None:
+                continue
+            # The signal bar (scan bar) is entry_idx - 1.
+            # The cluster should contain or be near the scan bar.
+            # Match if any cluster bar is within range of the scan bar,
+            # OR if the scan bar falls between leftmost and rightmost + small margin.
+            scan_idx = entry_idx - 1
+            if scan_idx < 0:
+                continue
+            # Check: is the scan bar inside or near this cluster?
+            if leftmost_idx <= scan_idx <= rightmost_idx:
+                return True, entry_date, entry_idx
+            # Check: is the cluster rightmost just before the entry?
+            if 0 <= (entry_idx - rightmost_idx) <= MAX_MATCH_DISTANCE:
+                return True, entry_date, entry_idx
+        return False, None, None
 
     print(f"\n  Applying exit condition on rightmost bars...")
 
@@ -2452,26 +2490,17 @@ def _gather_raw_signal_clusters(setup_type):
     for c in clusters:
         ticker = c["ticker"]
         bar_idx = c["rightmost"]["bar_idx"]
-        # Check if ANY bar in this cluster is an example (not just rightmost)
         all_bar_idxs = [bar_idx] + [b["bar_idx"] for b in c["leftward"]]
-        is_ex = (ticker in example_bar_lookup
-                 and any(bi in example_bar_lookup[ticker] for bi in all_bar_idxs))
+        is_ex, entry_date, entry_bar_idx = _match_cluster_to_example(c)
         if not is_ex:
             continue
 
-        # Find the actual example scan bar within this cluster
-        ex_scan_bar = None
-        for bi in all_bar_idxs:
-            if ticker in example_bar_lookup and bi in example_bar_lookup[ticker]:
-                ex_scan_bar = bi
-                break
-
-        # Forward window: leftmost signal bar to entry bar (scan bar + 1)
+        # Forward window: leftmost signal bar to entry bar
         leftmost_bar = min(all_bar_idxs)
-        entry_bar_idx = ex_scan_bar + 1  # entry = day after scan
         fwd_window_bars = entry_bar_idx - leftmost_bar
         example_fwd_windows.append(fwd_window_bars)
 
+        ex_scan_bar = entry_bar_idx - 1  # scan bar = day before entry
         df = universe_cache.get(ticker)
         if df is None or ex_scan_bar >= len(df) - 1:
             continue
@@ -2541,10 +2570,12 @@ def _gather_raw_signal_clusters(setup_type):
         ticker = c["ticker"]
         bar_idx = c["rightmost"]["bar_idx"]
         all_bar_idxs = [bar_idx] + [b["bar_idx"] for b in c["leftward"]]
-        is_ex = (ticker in example_bar_lookup
-                 and any(bi in example_bar_lookup[ticker] for bi in all_bar_idxs))
+        is_ex, ex_entry_date, ex_entry_idx = _match_cluster_to_example(c)
 
         c["is_example"] = 1 if is_ex else 0
+        if is_ex:
+            c["example_entry_date"] = ex_entry_date
+            c["example_entry_idx"] = ex_entry_idx
 
         df = universe_cache.get(ticker)
         if df is None or bar_idx >= len(df) - 1:
@@ -2712,15 +2743,10 @@ def _gather_raw_signal_clusters(setup_type):
 
             # Entry high: examples use entry candle, non-examples use forward window max high
             if c.get("is_example") == 1:
-                # Find the example scan bar within this cluster
-                all_bar_idxs = [bar_idx] + [b["bar_idx"] for b in c.get("leftward", [])]
-                ex_scan_bar = None
-                for bi in all_bar_idxs:
-                    if ticker in example_bar_lookup and bi in example_bar_lookup[ticker]:
-                        ex_scan_bar = bi
-                        break
-                if ex_scan_bar is not None and ex_scan_bar + 1 < len(highs):
-                    entry_high = float(highs[ex_scan_bar + 1])
+                # Use the hardcoded entry_date → entry bar is the entry candle
+                ex_entry_idx = c.get("example_entry_idx")
+                if ex_entry_idx is not None and ex_entry_idx < len(highs):
+                    entry_high = float(highs[ex_entry_idx])
                 else:
                     # Fallback: forward window max high
                     fw_end = min(bar_idx + forward_window, len(df) - 1)
