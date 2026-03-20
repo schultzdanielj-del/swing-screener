@@ -1,6 +1,1 @@
-# Wire optimized 2-stage into profit_grinder.py
-# This file is imported at the top of profit_grinder.py to override grind_2stage
-# with the optimized version from profit_grinder_2stage.py
-#
-# Add this line after imports in profit_grinder.py:
-#   from profit_grinder_2stage import grind_2stage
+DELETE THIS FILE - was a placeholder
