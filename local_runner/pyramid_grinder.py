@@ -2431,15 +2431,16 @@ def _gather_raw_signal_clusters(setup_type):
     # ── Exit + classify on rightmost bars ──
 
     # Build cluster-to-example matching by date proximity.
-    # For each cluster, check if the cluster's rightmost date falls within a window
-    # before any example's entry_date for that ticker. The signal bar is the bar
-    # before entry, and the cluster rightmost could be the signal bar or earlier
-    # (leftward bars). Match if rightmost_date is within 10 bars before entry_date.
-    MAX_MATCH_DISTANCE = 10  # bars between cluster rightmost and example entry
+    # Two-pass approach:
+    #   Pass 1: strict containment (scan bar inside cluster) → compute forward_window
+    #   Pass 2: use forward_window as match distance for remaining examples
 
-    def _match_cluster_to_example(cluster):
+    def _match_cluster_to_example(cluster, max_distance=0):
         """Check if this cluster corresponds to a known example.
         Returns (is_example, entry_date, entry_bar_idx) or (False, None, None).
+
+        max_distance=0: containment only (scan bar must be inside cluster range).
+        max_distance>0: also match if entry_idx is within max_distance bars after rightmost.
         """
         tk = cluster["ticker"]
         if tk not in example_date_lookup:
@@ -2452,18 +2453,14 @@ def _gather_raw_signal_clusters(setup_type):
             entry_idx = date_map.get(entry_date)
             if entry_idx is None:
                 continue
-            # The signal bar (scan bar) is entry_idx - 1.
-            # The cluster should contain or be near the scan bar.
-            # Match if any cluster bar is within range of the scan bar,
-            # OR if the scan bar falls between leftmost and rightmost + small margin.
             scan_idx = entry_idx - 1
             if scan_idx < 0:
                 continue
-            # Check: is the scan bar inside or near this cluster?
+            # Check: is the scan bar inside this cluster?
             if leftmost_idx <= scan_idx <= rightmost_idx:
                 return True, entry_date, entry_idx
-            # Check: is the cluster rightmost just before the entry?
-            if 0 <= (entry_idx - rightmost_idx) <= MAX_MATCH_DISTANCE:
+            # Check: is the entry bar within max_distance after cluster rightmost?
+            if max_distance > 0 and 0 < (entry_idx - rightmost_idx) <= max_distance:
                 return True, entry_date, entry_idx
         return False, None, None
 
@@ -2483,17 +2480,20 @@ def _gather_raw_signal_clusters(setup_type):
         print(f"  ERROR: Exit expression '{exit_expr}' not in expr cache")
         return None
 
-    # Measure example metrics: exit distances (informational) + forward window
+    # Pass 1: Match examples to clusters by strict containment only (scan bar inside cluster).
+    # This computes the forward window — distance from leftmost signal bar to entry bar.
     example_adrs = []
     example_exit_bars = []
     example_fwd_windows = []  # leftmost signal bar to entry bar distance
+    pass1_matched = 0
     for c in clusters:
         ticker = c["ticker"]
         bar_idx = c["rightmost"]["bar_idx"]
         all_bar_idxs = [bar_idx] + [b["bar_idx"] for b in c["leftward"]]
-        is_ex, entry_date, entry_bar_idx = _match_cluster_to_example(c)
+        is_ex, entry_date, entry_bar_idx = _match_cluster_to_example(c, max_distance=0)
         if not is_ex:
             continue
+        pass1_matched += 1
 
         # Forward window: leftmost signal bar to entry bar
         leftmost_bar = min(all_bar_idxs)
@@ -2539,7 +2539,7 @@ def _gather_raw_signal_clusters(setup_type):
             continue
 
     if not example_fwd_windows:
-        print(f"  ERROR: No example forward windows computed")
+        print(f"  ERROR: No example forward windows computed (pass 1 matched {pass1_matched} examples)")
         return None
 
     # Forward window: max leftmost-to-entry distance + 10%
@@ -2547,11 +2547,14 @@ def _gather_raw_signal_clusters(setup_type):
     forward_window = round(max_fwd_window * 1.1)
     if forward_window < 1:
         forward_window = 1
-    print(f"\n  Forward window: max={max_fwd_window} bars, using {forward_window} bars (110%)")
+    n_total_examples = sum(len(v) for v in example_date_lookup.values())
+    print(f"\n  Pass 1 (containment): {pass1_matched}/{n_total_examples} examples matched")
+    print(f"  Forward window: max={max_fwd_window} bars, using {forward_window} bars (110%)")
     if example_adrs:
         print(f"  Example floor (informational): {min(example_adrs):.1f} ADR")
 
     # ── Classify each cluster ──
+    # Pass 2: use forward_window as match distance for ALL example matching.
     # For each cluster:
     #   1. Find highest high across all signal bars in cluster
     #   2. From rightmost bar, look forward by forward_window → find max high → ceiling
@@ -2560,7 +2563,7 @@ def _gather_raw_signal_clusters(setup_type):
     #      - exit condition fires → AUTO_WIN
     #      - end of data → AUTO_WIN
     #   4. Example clusters → AUTO_WIN
-    print(f"\n  Classifying clusters (ceiling + exit race)...")
+    print(f"\n  Classifying clusters (ceiling + exit race, match distance={forward_window})...")
     tcache = {}
     prev_tk = None
     n_win = 0
@@ -2570,7 +2573,7 @@ def _gather_raw_signal_clusters(setup_type):
         ticker = c["ticker"]
         bar_idx = c["rightmost"]["bar_idx"]
         all_bar_idxs = [bar_idx] + [b["bar_idx"] for b in c["leftward"]]
-        is_ex, ex_entry_date, ex_entry_idx = _match_cluster_to_example(c)
+        is_ex, ex_entry_date, ex_entry_idx = _match_cluster_to_example(c, max_distance=forward_window)
 
         c["is_example"] = 1 if is_ex else 0
         if is_ex:
