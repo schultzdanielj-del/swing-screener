@@ -1277,20 +1277,16 @@ class ScanTuningWorkspace(QFrame):
 
         body_lay.addWidget(left_panel)
 
-        # Right panel — SPY bubble chart placeholder
+        # Right panel — SPY bubble chart
         right_panel = QFrame()
         right_panel.setStyleSheet(
             "QFrame { background:#000; }"
         )
         right_lay = QVBoxLayout(right_panel)
-        right_lay.setContentsMargins(12, 12, 12, 12)
+        right_lay.setContentsMargins(0, 0, 0, 0)
 
-        self._chart_placeholder = QLabel("SPY bubble chart — wired in next increment")
-        self._chart_placeholder.setStyleSheet(
-            "font-size:13px; color:%s; background:transparent; border:none;" % C["text_muted"]
-        )
-        self._chart_placeholder.setAlignment(Qt.AlignCenter)
-        right_lay.addWidget(self._chart_placeholder)
+        self._spy_chart = SpyBubbleChart()
+        right_lay.addWidget(self._spy_chart)
 
         body_lay.addWidget(right_panel, 1)
 
@@ -1390,6 +1386,7 @@ class ScanTuningWorkspace(QFrame):
             self._depth_slider.setValue(100)
 
         self._update_stats()
+        self._spy_chart.load_spy()
         self._apply_filters()
 
     # ── Filtering ──
@@ -1445,6 +1442,7 @@ class ScanTuningWorkspace(QFrame):
         )
 
         self._update_slider_labels()
+        self._spy_chart.set_bubbles(surviving)
 
     def _update_slider_labels(self):
         """Update the value labels under each slider."""
@@ -2341,6 +2339,342 @@ def _prepare_candles(ticker, signal_date, lookback=250, forward=80):
         c["sma200"] = sma200[i]
         c["vol_avg20"] = vol_avg[i]
     return candles
+
+
+# ============================================================
+# SPY BUBBLE CHART — candlestick chart with signal overlay bubbles
+# ============================================================
+
+class SpyBubbleChart(QWidget):
+    """SPY candlestick chart with colored bubbles for each surviving signal.
+    Green = winner (sized by move_adr), Red = loser (fixed small size).
+    Used by ScanTuningWorkspace as the visual feedback chart."""
+
+    UP_COLOR = "#4ade80"
+    DOWN_COLOR = "#f87171"
+    BG_COLOR = "#000000"
+    GRID_COLOR = "#1A1A1A"
+    EMA21_COLOR = "#d4a853"
+    SMA50_COLOR = "#f5c542"
+    MARGIN_TOP = 24
+    MARGIN_RIGHT = 56
+    VOL_H = 40
+    BUBBLE_MIN = 4
+    BUBBLE_MAX = 16
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumHeight(200)
+
+        self._candles = []
+        self._date_index = {}     # date_str -> candle index
+        self._bubbles = []        # list of {"date", "is_winner", "move_adr", "ticker"}
+        self._hover_idx = None
+        self._scroll_offset = 0
+        self._visible_count = 500
+        self._max_move_adr = 1.0  # for bubble scaling
+
+    def load_spy(self):
+        """Load SPY candles from OHLCV cache."""
+        df = _get_ohlcv("SPY")
+        if df is None or df.empty:
+            self._candles = []
+            self._date_index = {}
+            self.update()
+            return
+        # Convert full history to candle dicts
+        candles = []
+        for _, r in df.iterrows():
+            d = r["date"]
+            if hasattr(d, "strftime"):
+                d = d.strftime("%Y-%m-%d")
+            else:
+                d = str(d)
+            candles.append({
+                "date": d,
+                "open": float(r["open"]),
+                "high": float(r["high"]),
+                "low": float(r["low"]),
+                "close": float(r["close"]),
+                "volume": float(r["volume"]),
+            })
+        # Compute MAs
+        closes = [c["close"] for c in candles]
+        ema21 = _compute_ema(closes, 21)
+        sma50 = _compute_sma(closes, 50)
+        for i, c in enumerate(candles):
+            c["ema21"] = ema21[i]
+            c["sma50"] = sma50[i]
+        self._candles = candles
+        self._date_index = {c["date"]: i for i, c in enumerate(candles)}
+        # Default: show last 500 bars
+        self._scroll_offset = max(0, len(candles) - self._visible_count)
+        self.update()
+
+    def set_bubbles(self, signals):
+        """Update bubble overlay from filtered signal list.
+        Each signal dict needs: date, classification, move_adr (optional), ticker."""
+        self._bubbles = []
+        max_adr = 1.0
+        for s in signals:
+            is_win = "WIN" in s.get("classification", "")
+            madr = s.get("move_adr") or 0
+            if is_win and madr > max_adr:
+                max_adr = madr
+            self._bubbles.append({
+                "date": s.get("date", ""),
+                "is_winner": is_win,
+                "move_adr": madr,
+                "ticker": s.get("ticker", ""),
+            })
+        self._max_move_adr = max(max_adr, 1.0)
+        self.update()
+
+    def _visible_slice(self):
+        n = len(self._candles)
+        max_off = max(0, n - self._visible_count)
+        off = min(max(0, self._scroll_offset), max_off)
+        return self._candles[off:off + self._visible_count], off
+
+    def _chart_geometry(self):
+        w = self.width()
+        h = self.height()
+        chart_h = h - self.MARGIN_TOP - self.VOL_H
+        chart_w = w - self.MARGIN_RIGHT
+        return w, h, chart_w, chart_h
+
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor(self.BG_COLOR))
+
+        if not self._candles:
+            p.setPen(QColor(C["text_muted"]))
+            f = QFont("DM Sans", 12)
+            p.setFont(f)
+            p.drawText(self.rect(), Qt.AlignCenter, "Loading SPY data...")
+            p.end()
+            return
+
+        visible, offset = self._visible_slice()
+        if not visible:
+            p.end()
+            return
+
+        w, h, chart_w, chart_h = self._chart_geometry()
+        n_vis = len(visible)
+        candle_w = chart_w / n_vis if n_vis else 1
+        body_w = max(1, candle_w * 0.55)
+
+        # Price range
+        prices = []
+        for c in visible:
+            prices.extend([c["high"], c["low"]])
+        p_min = min(prices) * 0.998
+        p_max = max(prices) * 1.002
+        p_range = max(p_max - p_min, 0.01)
+
+        def price_y(price):
+            return self.MARGIN_TOP + chart_h * (1 - (price - p_min) / p_range)
+
+        def candle_x(i):
+            return i * candle_w + candle_w / 2
+
+        # Grid lines + price labels
+        f = QFont("JetBrains Mono", 1)
+        f.setPixelSize(9)
+        p.setFont(f)
+        for i in range(6):
+            y = self.MARGIN_TOP + (chart_h / 5) * i
+            p.setPen(QPen(QColor(self.GRID_COLOR), 0.5))
+            p.drawLine(0, int(y), chart_w, int(y))
+            price = p_max - (p_range / 5) * i
+            p.setPen(QColor(C["text_muted"]))
+            p.drawText(QRectF(chart_w + 2, y - 6, self.MARGIN_RIGHT - 4, 12),
+                       Qt.AlignLeft | Qt.AlignVCenter, "%.0f" % price)
+
+        # SPY watermark
+        p.setPen(QColor(255, 255, 255, 10))
+        f2 = QFont("DM Sans", 1)
+        f2.setPixelSize(40)
+        f2.setWeight(QFont.Bold)
+        p.setFont(f2)
+        p.drawText(QRectF(chart_w - 120, self.MARGIN_TOP, 110, 48),
+                   Qt.AlignRight | Qt.AlignTop, "SPY")
+
+        # MAs
+        def draw_ma(key, color):
+            p.setPen(QPen(QColor(color), 1.0))
+            path = QPainterPath()
+            started = False
+            for i, c in enumerate(visible):
+                v = c.get(key)
+                if v is None:
+                    continue
+                x = candle_x(i)
+                y = price_y(v)
+                if not started:
+                    path.moveTo(x, y)
+                    started = True
+                else:
+                    path.lineTo(x, y)
+            if started:
+                p.drawPath(path)
+
+        draw_ma("ema21", self.EMA21_COLOR)
+        draw_ma("sma50", self.SMA50_COLOR)
+
+        # Candles (thin, muted — the bubbles are the star)
+        for i, c in enumerate(visible):
+            x = candle_x(i)
+            is_up = c["close"] >= c["open"]
+            col = QColor(self.UP_COLOR if is_up else self.DOWN_COLOR)
+            col.setAlpha(60)
+            # Wick
+            p.setPen(QPen(col, 0.5))
+            p.drawLine(int(x), int(price_y(c["high"])), int(x), int(price_y(c["low"])))
+            # Body
+            bt = price_y(max(c["open"], c["close"]))
+            bb = price_y(min(c["open"], c["close"]))
+            bh = max(1, bb - bt)
+            p.setPen(Qt.NoPen)
+            p.setBrush(col)
+            p.drawRect(QRectF(x - body_w / 2, bt, body_w, bh))
+
+        # Date labels
+        p.setPen(QColor(C["text_muted"]))
+        f.setPixelSize(9)
+        f.setWeight(QFont.Normal)
+        p.setFont(f)
+        step = max(1, n_vis // 10)
+        for i, c in enumerate(visible):
+            if i % step == 0:
+                parts = c["date"].split("-")
+                if len(parts) >= 3:
+                    p.drawText(QRectF(candle_x(i) - 20, h - 12, 40, 12),
+                               Qt.AlignCenter, "%s/%s" % (parts[1], parts[2]))
+
+        # ── SIGNAL BUBBLES ──
+        vis_start_date = visible[0]["date"]
+        vis_end_date = visible[-1]["date"]
+        for b in self._bubbles:
+            bd = b["date"]
+            if bd < vis_start_date or bd > vis_end_date:
+                continue
+            ci = self._date_index.get(bd)
+            if ci is None:
+                continue
+            local_i = ci - offset
+            if local_i < 0 or local_i >= n_vis:
+                continue
+            # Position: x from candle index, y at SPY close price
+            x = candle_x(local_i)
+            spy_close = visible[local_i]["close"]
+            y = price_y(spy_close)
+
+            if b["is_winner"]:
+                # Green bubble, size by move_adr
+                adr = max(b["move_adr"], 0.5)
+                t = min(adr / self._max_move_adr, 1.0)
+                radius = self.BUBBLE_MIN + t * (self.BUBBLE_MAX - self.BUBBLE_MIN)
+                col = QColor(74, 222, 128, 140)  # green with alpha
+                p.setPen(QPen(QColor(74, 222, 128, 200), 1.0))
+            else:
+                # Red bubble, fixed small size
+                radius = self.BUBBLE_MIN
+                col = QColor(248, 113, 113, 120)  # red with alpha
+                p.setPen(QPen(QColor(248, 113, 113, 180), 1.0))
+
+            p.setBrush(col)
+            p.drawEllipse(QPointF(x, y), radius, radius)
+
+        # Hover tooltip
+        if self._hover_idx is not None and 0 <= self._hover_idx < n_vis:
+            hc = visible[self._hover_idx]
+            hx = candle_x(self._hover_idx)
+            p.setPen(QPen(QColor(255, 255, 255, 30), 0.5, Qt.DashLine))
+            p.drawLine(int(hx), self.MARGIN_TOP, int(hx), self.MARGIN_TOP + chart_h)
+            # Check for bubbles on this date
+            hd = hc["date"]
+            hits = [b for b in self._bubbles if b["date"] == hd]
+            p.setPen(QColor(C["text"]))
+            f.setPixelSize(10)
+            p.setFont(f)
+            if hits:
+                labels = []
+                for hit in hits[:5]:
+                    wl = "W" if hit["is_winner"] else "L"
+                    madr = hit["move_adr"]
+                    labels.append("%s %s %.1f" % (hit["ticker"], wl, madr))
+                txt = "%s  SPY:%.2f  %s" % (hd, hc["close"], " | ".join(labels))
+            else:
+                txt = "%s  SPY:%.2f" % (hd, hc["close"])
+            p.drawText(QRectF(8, 2, w - 16, 16), Qt.AlignLeft | Qt.AlignVCenter, txt)
+
+        # Bubble count legend
+        n_green = sum(1 for b in self._bubbles if b["is_winner"])
+        n_red = sum(1 for b in self._bubbles if not b["is_winner"])
+        p.setPen(QColor(C["text_dim"]))
+        f.setPixelSize(10)
+        p.setFont(f)
+        p.drawText(QRectF(8, h - self.VOL_H - 16, 200, 14),
+                   Qt.AlignLeft | Qt.AlignVCenter,
+                   "%d signals (%d W / %d R)" % (len(self._bubbles), n_green, n_red))
+
+        p.end()
+
+    def mouseMoveEvent(self, ev):
+        if not self._candles:
+            return
+        visible, offset = self._visible_slice()
+        if not visible:
+            return
+        w, h, chart_w, chart_h = self._chart_geometry()
+        candle_w = chart_w / len(visible) if visible else 1
+        pos = ev.position() if hasattr(ev, "position") else ev.pos()
+        mx = pos.x()
+        idx = int(mx / candle_w) if candle_w > 0 else None
+        if idx is not None and 0 <= idx < len(visible):
+            if self._hover_idx != idx:
+                self._hover_idx = idx
+                self.update()
+        elif self._hover_idx is not None:
+            self._hover_idx = None
+            self.update()
+
+    def leaveEvent(self, ev):
+        if self._hover_idx is not None:
+            self._hover_idx = None
+            self.update()
+
+    def wheelEvent(self, ev):
+        ev.accept()
+        if not self._candles:
+            return
+        delta = ev.angleDelta().y()
+        old_count = self._visible_count
+        if delta > 0:
+            self._visible_count = max(60, self._visible_count - 40)
+        else:
+            self._visible_count = min(len(self._candles), self._visible_count + 40)
+        # Keep view roughly centered
+        if old_count != self._visible_count:
+            visible, offset = self._visible_slice()
+            center = offset + old_count // 2
+            self._scroll_offset = max(0, center - self._visible_count // 2)
+        self.update()
+
+    def keyPressEvent(self, ev):
+        """Arrow keys to scroll left/right."""
+        if ev.key() == Qt.Key_Left:
+            self._scroll_offset = max(0, self._scroll_offset - max(1, self._visible_count // 10))
+            self.update()
+        elif ev.key() == Qt.Key_Right:
+            max_off = max(0, len(self._candles) - self._visible_count)
+            self._scroll_offset = min(max_off, self._scroll_offset + max(1, self._visible_count // 10))
+            self.update()
 
 
 # ============================================================
