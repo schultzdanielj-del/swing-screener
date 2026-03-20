@@ -1650,7 +1650,8 @@ def score_signals(percentile_matrix, features, all_signals, label):
 
     if n_features == 0:
         print("  WARNING: No features — all signals get neutral scores")
-        return [{"quality_score": 50.0, "predicted_wr": 0.5, "predicted_mfe": 0.0,
+        return [{"quality_score": 50.0, "setup_score": 50.0, "market_score": 50.0,
+                 "predicted_wr": 0.5, "predicted_mfe": 0.0,
                  "ev": 0.0} for _ in range(n_signals)]
 
     # Category-balanced weighting: market features and setup features each get
@@ -1683,6 +1684,18 @@ def score_signals(percentile_matrix, features, all_signals, label):
 
     # 1. Quality score: matrix-vector multiply (already vectorized)
     quality_scores = percentile_matrix @ weights / total_weight  # (n_signals,)
+
+    # 1b. Component scores: setup-only and market-only sub-scores for Scan Tuning sliders
+    setup_weights = np.zeros_like(raw_weights)
+    market_weights = np.zeros_like(raw_weights)
+    if setup_sum > 1e-10:
+        setup_weights[is_setup] = raw_weights[is_setup] / setup_sum
+    if market_sum > 1e-10:
+        market_weights[is_market] = raw_weights[is_market] / market_sum
+    setup_wt = setup_weights.sum()
+    market_wt = market_weights.sum()
+    setup_scores = (percentile_matrix @ setup_weights / setup_wt) if setup_wt > 1e-10 else np.full(n_signals, 50.0)
+    market_scores = (percentile_matrix @ market_weights / market_wt) if market_wt > 1e-10 else np.full(n_signals, 50.0)
 
     # 2 & 3. Predicted WR and MFE: vectorized decile interpolation
     # For each feature, un-flip percentiles to raw distribution position,
@@ -1742,6 +1755,8 @@ def score_signals(percentile_matrix, features, all_signals, label):
     for si in range(n_signals):
         results.append({
             "quality_score": round(float(quality_scores[si]), 2),
+            "setup_score": round(float(setup_scores[si]), 2),
+            "market_score": round(float(market_scores[si]), 2),
             "predicted_wr": round(float(predicted_wr[si]), 4),
             "predicted_mfe": round(float(predicted_mfe[si]), 3),
             "ev": round(float(ev[si]), 3),
@@ -1750,6 +1765,8 @@ def score_signals(percentile_matrix, features, all_signals, label):
     # Verification
     print(f"\n  Score distributions:")
     print(f"    quality_score: min={quality_scores.min():.1f} med={np.median(quality_scores):.1f} max={quality_scores.max():.1f}")
+    print(f"    setup_score:   min={setup_scores.min():.1f} med={np.median(setup_scores):.1f} max={setup_scores.max():.1f}")
+    print(f"    market_score:  min={market_scores.min():.1f} med={np.median(market_scores):.1f} max={market_scores.max():.1f}")
     print(f"    predicted_wr:  min={predicted_wr.min():.4f} med={np.median(predicted_wr):.4f} max={predicted_wr.max():.4f}")
     print(f"    predicted_mfe: min={predicted_mfe.min():.2f} med={np.median(predicted_mfe):.2f} max={predicted_mfe.max():.2f}")
     print(f"    ev:            min={ev.min():.3f} med={np.median(ev):.3f} max={ev.max():.3f}")
@@ -2013,6 +2030,8 @@ def run(setup_type):
             "entry_high": s.get("entry_high"), "cluster_id": s.get("cluster_id"),
             "killed_at_depth": kad.get(s.get("cluster_id")),
             "quality_score": scores_pre[i]["quality_score"],
+            "setup_score": scores_pre[i]["setup_score"],
+            "market_score": scores_pre[i]["market_score"],
             "predicted_wr": scores_pre[i]["predicted_wr"],
             "predicted_mfe": scores_pre[i]["predicted_mfe"],
             "ev": scores_pre[i]["ev"],
@@ -2027,6 +2046,8 @@ def run(setup_type):
             "is_example": s.get("is_example", False),
             "move_adr": s.get("move_adr"),
             "quality_score": scores_post[pi]["quality_score"],
+            "setup_score": scores_post[pi]["setup_score"],
+            "market_score": scores_post[pi]["market_score"],
             "predicted_wr": scores_post[pi]["predicted_wr"],
             "predicted_mfe": scores_post[pi]["predicted_mfe"],
             "ev": scores_post[pi]["ev"],
@@ -2089,6 +2110,14 @@ def run(setup_type):
             "quality_score_range": {
                 "min": round(min(s["quality_score"] for s in signals_out), 1),
                 "max": round(max(s["quality_score"] for s in signals_out), 1),
+            },
+            "setup_score_range": {
+                "min": round(min(s["setup_score"] for s in signals_out), 1),
+                "max": round(max(s["setup_score"] for s in signals_out), 1),
+            },
+            "market_score_range": {
+                "min": round(min(s["market_score"] for s in signals_out), 1),
+                "max": round(max(s["market_score"] for s in signals_out), 1),
             },
             "assumed_stop_adr": 1.0,
         },
