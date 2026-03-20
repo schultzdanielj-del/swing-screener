@@ -1085,34 +1085,57 @@ class FlowchartCanvas(QWidget):
         p.drawText(QRectF(x + pad, name_y, w - pad*2, name_h),
                    Qt.AlignLeft | Qt.AlignVCenter, title_text)
 
-        # ENTRY / EXIT tab bars for Scan Tuning (in header, below title)
+        # ENTRY / EXIT Chrome-style tabs for Scan Tuning (in header, below title)
         if nid == "scan_tuning" and is_expanded and not locked:
-            tab_y = y + 32  # below title
-            tab_h = 24
+            tab_y = y + 30
+            tab_h = 26
+            tab_bottom = tab_y + tab_h
             half_w = w // 2
             entry_x = x
             exit_x = x + half_w
             active = self._scan_tuning_tab
+            curve = 8  # shoulder curve radius
 
-            # Entry tab — green
-            entry_bright = active == "entry"
+            # Draw tab bar background (the "shelf" behind inactive tabs)
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#4ade80" if entry_bright else "#2d8a56"))
-            p.drawRect(int(entry_x), int(tab_y), int(half_w), tab_h)
-            p.setPen(QColor("#000000" if entry_bright else "#1a1a1a"))
-            f.setPixelSize(12); f.setWeight(QFont.Bold); p.setFont(f)
-            p.drawText(QRectF(entry_x, tab_y, half_w, tab_h),
-                       Qt.AlignCenter, "entry")
+            p.setBrush(QColor("#1A1A1A"))
+            p.drawRect(int(x), int(tab_y), int(w), tab_h)
 
-            # Exit tab — red
-            exit_bright = active == "exit"
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#f87171" if exit_bright else "#b84c4c"))
-            p.drawRect(int(exit_x), int(tab_y), int(w - half_w), tab_h)
-            p.setPen(QColor("#000000" if exit_bright else "#1a1a1a"))
-            f.setPixelSize(12); f.setWeight(QFont.Bold); p.setFont(f)
-            p.drawText(QRectF(exit_x, tab_y, w - half_w, tab_h),
-                       Qt.AlignCenter, "exit")
+            # Active tab: raised shape with curved top corners, no bottom border
+            # Inactive tab: flat, sits on the shelf
+            for tab_key, tx, tw, bright_col, dim_col in [
+                ("entry", entry_x, half_w, "#4ade80", "#2a5e3f"),
+                ("exit", exit_x, w - half_w, "#f87171", "#8a4444"),
+            ]:
+                is_active = active == tab_key
+                if is_active:
+                    # Chrome-style raised tab: curved top shoulders, flat bottom
+                    path = QPainterPath()
+                    path.moveTo(tx, tab_bottom)
+                    path.lineTo(tx, tab_y + curve)
+                    path.quadTo(tx, tab_y, tx + curve, tab_y)
+                    path.lineTo(tx + tw - curve, tab_y)
+                    path.quadTo(tx + tw, tab_y, tx + tw, tab_y + curve)
+                    path.lineTo(tx + tw, tab_bottom)
+                    path.closeSubpath()
+                    p.setPen(Qt.NoPen)
+                    p.setBrush(QColor(bright_col))
+                    p.drawPath(path)
+                    # Text
+                    p.setPen(QColor("#000000"))
+                else:
+                    # Inactive: subtle fill, sits behind
+                    p.setPen(Qt.NoPen)
+                    p.setBrush(QColor(dim_col))
+                    p.drawRect(int(tx + 2), int(tab_y + 6), int(tw - 4), tab_h - 6)
+                    # Text
+                    p.setPen(QColor("#999999"))
+
+                f.setPixelSize(12); f.setWeight(QFont.Bold); p.setFont(f)
+                text_y = tab_y + (0 if is_active else 4)
+                text_h = tab_h - (0 if is_active else 4)
+                p.drawText(QRectF(tx, text_y, tw, text_h),
+                           Qt.AlignCenter, tab_key)
 
             # Store tab rects for click detection
             self._scan_tab_rects = {
