@@ -730,6 +730,77 @@ def dedup_candidates(candidates, exit_horizon):
     result.sort(key=lambda c:c.get("expectancy",float('-inf')),reverse=True)
     print(f"  Final: {len(result):,}"); return result
 
+
+def _np_fix(obj):
+    """JSON serializer for numpy types."""
+    if isinstance(obj, (np.integer,)): return int(obj)
+    if isinstance(obj, (np.floating,)): return float(obj)
+    if isinstance(obj, np.ndarray): return obj.tolist()
+    if isinstance(obj, (np.bool_,)): return bool(obj)
+    return obj
+
+def save_output(setup, direction, exit_horizon, entry_window,
+                ev_path, counts, stage1, stage2, elapsed):
+    """Save profit grinder results to timestamped JSON + latest pointer."""
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    out = {
+        "setup_type": setup,
+        "timestamp": ts,
+        "direction": direction,
+        "exit_horizon": exit_horizon,
+        "entry_window": entry_window,
+        "ev_source": os.path.basename(ev_path),
+        "loss_assumption_adr": LOSS_ASSUMPTION_ADR,
+        "n_thresholds": N_THRESHOLDS,
+        "elapsed_seconds": round(elapsed, 1),
+        "population": {
+            "total": counts["total"],
+            "examples": counts["examples"],
+            "vetted_yes": counts.get("vetted_yes", 0),
+            "rejected": counts["rejected"],
+            "unvetted": counts["unvetted"],
+            "no_score": counts["no_score"],
+        },
+        "stage_1": {
+            "n_candidates": len(stage1),
+            "top_100": stage1[:100],
+        },
+        "stage_2": {
+            "n_candidates": len(stage2),
+            "n_beating_1stage": len([c for c in stage2 if c.get("expectancy",0) > c.get("final_exit_expectancy",0)]),
+            "trim_pcts": TRIM_PCTS,
+            "top_100": stage2[:100],
+        },
+    }
+    
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    # Timestamped file
+    fname = f"profit_{setup}_{ts}.json"
+    fpath = os.path.join(CACHE_DIR, fname)
+    with open(fpath, "w") as f:
+        json.dump(out, f, indent=2, default=_np_fix)
+    sz_mb = os.path.getsize(fpath) / 1e6
+    print(f"\n  ── SAVED ──")
+    print(f"  {fname} ({sz_mb:.1f} MB)")
+    
+    # Latest pointer (copy)
+    latest = os.path.join(CACHE_DIR, f"profit_{setup}.json")
+    import shutil
+    shutil.copy2(fpath, latest)
+    print(f"  profit_{setup}.json (latest pointer)")
+    
+    # Mirror to Railway
+    try:
+        sys.path.insert(0, os.path.join(REPO_ROOT, "local_runner"))
+        from file_mirror import mirror_file
+        mirror_file(fpath)
+        print(f"  Mirrored to Railway")
+    except Exception as e:
+        print(f"  WARNING: Mirror failed: {e}")
+    
+    return fpath
+
 # ── Main ──
 def main():
     pa=argparse.ArgumentParser(description="Profit Grinder — Phase 4")
@@ -837,8 +908,12 @@ def main():
     import shutil
     shutil.rmtree(tmpdir, ignore_errors=True)
 
-    # ── Summary ──
+    # ── Save Output ──
     el=time.time()-t0
+    save_output(setup, direction, exit_horizon, entry_window,
+                ev_path, counts, stage1, stage2, el)
+
+    # ── Summary ──
     print(f"\n  {'='*60}")
     print(f"  PROFIT GRINDER COMPLETE ({el:.1f}s / {el/60:.1f} min)")
     print(f"  {'='*60}")
