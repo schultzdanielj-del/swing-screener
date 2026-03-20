@@ -457,16 +457,16 @@ def _init_2stage(expr_path, eb_path, shared):
     _w.update(shared)
 
 def _work_2stage(expr_indices):
-    """2-stage worker: vectorized trim_caps, thresholds once per expr, early filter."""
+    """2-stage worker: lightweight — only computes expectancy, not full stats."""
     e3=_w['e3']; eb=_w['eb']; c2d=_w['c2d']
-    ad=_w['ad']; ep=_w['ep']; wt=_w['wt']; mv=_w['mv']
+    ad=_w['ad']; ep=_w['ep']; wt=_w['wt']
     nm=_w['nm']; dr=_w['dr']; eh=_w['eh']
     fd_list=_w['fd']; tps=_w['tp']; sv=_w['sv']
-    nv=e3.shape[0]; bi=np.arange(eh)[np.newaxis,:]; combos=[]; tested=0; skipped=0
+    nv=e3.shape[0]; bi=np.arange(eh)[np.newaxis,:]; combos=[]; tested=0
     ws=wt.sum(); adr_ok=ad>0; sig_idx=np.arange(nv)
+    if ws<1e-10: return combos, tested, 0
     for ei in expr_indices:
         col=e3[:,:,ei]; ebv=eb[:,ei]; ebf=np.isfinite(ebv); tn=nm[ei]
-        # Thresholds ONCE per expression (from full search_valid, not per-final mask)
         fm_full=np.isfinite(col)&sv; fv_full=col[fm_full]
         if len(fv_full)<nv: continue
         ths=np.unique(np.percentile(fv_full,np.linspace(5,95,N_THRESHOLDS)))
@@ -483,7 +483,6 @@ def _work_2stage(expr_indices):
                     ate=ebf&((ebv>=th) if above else (ebv<=th))
                     tt=tt&(~ate); nt=int(tt.sum())
                     if nt<5: continue
-                    # Vectorized trim capture — no Python loop
                     tb_clipped=np.clip(tb,0,eh-1)
                     exit_prices=c2d[sig_idx,tb_clipped]
                     if dr=="short": trim_caps=(ep-exit_prices)/np.where(adr_ok,ad,1.0)
@@ -492,18 +491,19 @@ def _work_2stage(expr_indices):
                     for tp in tps:
                         bl=fd['cap'].copy()
                         bl[tt]=tp*trim_caps[tt]+(1-tp)*fd['cap'][tt]
-                        qexp=float(np.sum(bl*wt)/ws) if ws>0 else 0
-                        if qexp<=baseline: skipped+=1; continue
-                        st=compute_weighted_stats(bl,wt,fd['tr'],mv,fd['bh'])
-                        if st is None: continue
-                        st["mode"]="2-stage"; st["trim_expr"]=tn
-                        st["trim_direction"]=dl; st["trim_threshold"]=round(float(th),6)
-                        st["trim_pct"]=tp; st["final_expr"]=fd['nm']
-                        st["final_direction"]=fd['dr']; st["final_threshold"]=fd['th']
-                        st["n_trimmed"]=nt; st["trim_rate"]=round(nt/nv,4)
-                        st["final_exit_expectancy"]=baseline
-                        combos.append(st)
-    return combos, tested, skipped
+                        qexp=float(np.sum(bl*wt)/ws)
+                        if qexp<=baseline: continue
+                        # LIGHTWEIGHT: store only what we need to reconstruct later
+                        combos.append({
+                            "expectancy":round(qexp,4),
+                            "trim_expr":tn,"trim_direction":dl,
+                            "trim_threshold":round(float(th),6),
+                            "trim_pct":tp,"final_expr":fd['nm'],
+                            "final_direction":fd['dr'],"final_threshold":fd['th'],
+                            "n_trimmed":nt,"trim_rate":round(nt/nv,4),
+                            "final_exit_expectancy":baseline,"mode":"2-stage"
+                        })
+    return combos, tested, 0
 
 
 # ── 2-Stage Grind (ProcessPoolExecutor + mmap) ──
@@ -590,8 +590,8 @@ def grind_2stage(stage1_results, entry_high_offset_v, valid_indices, close_2d,
                 print(f"    [{done}/{len(chunks)}] {el:.1f}s, {len(all_combos):,} combos, {total_tested:,} tested")
 
     el=time.time()-t0
-    print(f"\n  2-stage: {el:.1f}s ({el/60:.1f} min), {total_tested:,} tested, {len(all_combos):,} raw")
-    print_ram("(after 2-stage)")
+    print(f"\n  2-stage grind: {el:.1f}s ({el/60:.1f} min), {total_tested:,} tested, {len(all_combos):,} raw")
+    print_ram("(after 2-stage grind)")
 
     all_combos.sort(key=lambda c:c.get("expectancy",float('-inf')),reverse=True)
     seen=set(); deduped=[]
@@ -602,6 +602,73 @@ def grind_2stage(stage1_results, entry_high_offset_v, valid_indices, close_2d,
 
     improved=[c for c in deduped if c["expectancy"]>c["final_exit_expectancy"]]
     print(f"  Combos beating 1-stage: {len(improved)}")
+
+    # Run full stats on top 500 only (workers computed expectancy only)
+    if improved:
+        top_n = min(500, len(improved))
+        print(f"  Computing full stats on top {top_n}...")
+        e3 = np.load(expr_path, mmap_mode='r')
+        bi = np.arange(exit_horizon)[np.newaxis, :]
+        for ci, combo in enumerate(improved[:top_n]):
+            # Reconstruct blended capture for this combo
+            # Find final exit
+            fn=combo["final_expr"]; fd_dir=combo["final_direction"]; ft=combo["final_threshold"]
+            fei=None
+            for j, name in enumerate(filtered_names):
+                if name==fn: fei=j; break
+            if fei is None: continue
+            fcol=e3[:,:,fei]
+            fsr=np.zeros((nv,exit_horizon),dtype=bool)
+            for vi in range(nv):
+                s=entry_high_offset_v[vi]+1
+                if s<n_bars_per_signal[vi]: fsr[vi,s:n_bars_per_signal[vi]]=True
+            fm=np.isfinite(fcol)&fsr
+            fhit=((fcol>=ft) if fd_dir=="above" else (fcol<=ft))&fm
+            fhb=np.where(fhit,bi,exit_horizon+1); feb=np.min(fhb,axis=1)
+            fcap=np.full(nv,-LOSS_ASSUMPTION_ADR,dtype=np.float64)
+            ftrig=feb<exit_horizon+1
+            sig_idx=np.arange(nv)
+            feb_clip=np.clip(feb,0,exit_horizon-1)
+            fprices=close_2d[sig_idx,feb_clip]
+            adr_ok=adr_values_v>0
+            if direction=="short": fcap=np.where(ftrig&adr_ok&np.isfinite(fprices),(entry_prices_v-fprices)/adr_values_v,-LOSS_ASSUMPTION_ADR)
+            else: fcap=np.where(ftrig&adr_ok&np.isfinite(fprices),(fprices-entry_prices_v)/adr_values_v,-LOSS_ASSUMPTION_ADR)
+            # Find trim
+            tn=combo["trim_expr"]; td=combo["trim_direction"]; tt_th=combo["trim_threshold"]; tp=combo["trim_pct"]
+            tei=None
+            for j, name in enumerate(filtered_names):
+                if name==tn: tei=j; break
+            if tei is None: continue
+            tcol=e3[:,:,tei]
+            pe=np.zeros((nv,exit_horizon),dtype=bool)
+            for vi in range(nv):
+                eh=entry_high_offset_v[vi]; fb=feb[vi]
+                if fb<exit_horizon+1 and eh+2<=fb: pe[vi,eh+1:fb]=True
+            tfm=np.isfinite(tcol)&pe
+            thit=((tcol>=tt_th) if td=="above" else (tcol<=tt_th))&tfm
+            thb=np.where(thit,bi,exit_horizon+1); ttb=np.min(thb,axis=1)
+            ttrig=ttb<exit_horizon+1
+            # ATE check
+            teb=e3[sig_idx,0,tei] if tei<e3.shape[2] else np.full(nv,np.nan)
+            # Actually use eb_2d for ATE
+            eb_2d=np.load(eb_path,mmap_mode='r')
+            teb=eb_2d[:,tei]; tebf=np.isfinite(teb)
+            ate=tebf&((teb>=tt_th) if td=="above" else (teb<=tt_th))
+            ttrig=ttrig&(~ate)
+            # Vectorized trim capture
+            ttb_clip=np.clip(ttb,0,exit_horizon-1)
+            tprices=close_2d[sig_idx,ttb_clip]
+            if direction=="short": tcaps=np.where(ttrig&adr_ok&np.isfinite(tprices),(entry_prices_v-tprices)/adr_values_v,0.0)
+            else: tcaps=np.where(ttrig&adr_ok&np.isfinite(tprices),(tprices-entry_prices_v)/adr_values_v,0.0)
+            bl=fcap.copy(); bl[ttrig]=tp*tcaps[ttrig]+(1-tp)*fcap[ttrig]
+            bh=np.full(nv,exit_horizon,dtype=np.int32)
+            for vi in np.where(ftrig)[0]: bh[vi]=feb[vi]-entry_high_offset_v[vi]
+            st=compute_weighted_stats(bl,weights_v,ftrig,move_adrs_v,bh)
+            if st is not None:
+                combo.update(st)
+            if (ci+1)%100==0: print(f"    [{ci+1}/{top_n}] full stats computed")
+        del e3
+        print(f"  Full stats done on {min(top_n,len(improved))} combos")
     if improved:
         print(f"\n  Top 10 2-stage (beating 1-stage):")
         print(f"    {'#':<3} {'Trim':<30} {'Dir':<6} {'T%':>4} "
