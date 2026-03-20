@@ -15,9 +15,9 @@ Usage:
 import argparse, sys, os, time, json, glob, sqlite3, gc
 import numpy as np, pickle
 from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
-from profit_grinder_2stage import grind_2stage  # optimized: outer loop = expressions
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import tempfile
+
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -334,49 +334,56 @@ def _mdd(eq):
         else: cur+=1; mx=max(mx,cur)
     return mx
 
-# ── Worker for parallel 1-stage grind (pre-built 3D array) ──
-def _grind_expr_chunk(expr_indices, expr_3d, eb_2d,
-                      close_2d, search_valid, bar_indices,
-                      entry_high_offset_v,
-                      entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
-                      move_adrs_v, filtered_names, direction, exit_horizon):
-    nv = expr_3d.shape[0]; candidates = []; tested=0; hgf=0; atef=0
-    for ei in expr_indices:
-        col = expr_3d[:, :, ei]
-        fm = np.isfinite(col) & search_valid; fv = col[fm]
-        if len(fv) < nv: continue
-        ths = np.unique(np.percentile(fv, np.linspace(5, 95, N_THRESHOLDS)))
-        if len(ths) < 2: continue
-        eb_vals = eb_2d[:, ei]
-        eb_finite = np.isfinite(eb_vals); en = filtered_names[ei]
-        for th in ths:
-            for dl, above in [("above", True), ("below", False)]:
-                tested += 1
-                hit = ((col >= th) if above else (col <= th)) & fm
-                hb = np.where(hit, bar_indices, exit_horizon + 1)
-                fb = np.min(hb, axis=1); triggered = fb < exit_horizon + 1
-                ate = eb_finite & ((eb_vals >= th) if above else (eb_vals <= th))
-                triggered = triggered & (~ate)
-                if not triggered[is_hard_gate_v].all():
-                    if ate[is_hard_gate_v].any(): atef += 1
-                    else: hgf += 1
-                    continue
-                ca = np.full(nv, -LOSS_ASSUMPTION_ADR, dtype=np.float64)
-                bh = np.full(nv, exit_horizon, dtype=np.int32)
-                for vi in np.where(triggered)[0]:
-                    f = fb[vi]; ec = close_2d[vi, f]
-                    if np.isfinite(ec) and adr_values_v[vi] > 0:
-                        if direction == "short": ca[vi] = (entry_prices_v[vi] - ec) / adr_values_v[vi]
-                        else: ca[vi] = (ec - entry_prices_v[vi]) / adr_values_v[vi]
-                    bh[vi] = f - entry_high_offset_v[vi]
-                st = compute_weighted_stats(ca, weights_v, triggered, move_adrs_v, bh)
-                if st is None: continue
-                st["expr_name"]=en; st["direction"]=dl; st["threshold"]=round(float(th),6)
-                st["n_already_true"]=int(ate.sum())
-                candidates.append((st, fb.astype(np.int16).copy()))
-    return candidates, tested, hgf, atef
+# ── ProcessPoolExecutor worker state (set by initializer in each subprocess) ──
+_w = {}
 
-# ── 1-Stage Grind (pre-built 3D array — no per-expression Python loop) ──
+def _init_1stage(expr_path, eb_path, shared):
+    """Initializer for 1-stage workers. Loads mmap'd arrays."""
+    _w['e3'] = np.load(expr_path, mmap_mode='r')
+    _w['eb'] = np.load(eb_path, mmap_mode='r')
+    _w.update(shared)
+
+def _work_1stage(expr_indices):
+    """1-stage worker: process expression chunk in subprocess."""
+    e3=_w['e3']; eb=_w['eb']; c2d=_w['c2d']; sv=_w['sv']; bi=_w['bi']
+    eho=_w['eho']; ep=_w['ep']; ad=_w['ad']; wt=_w['wt']; hg=_w['hg']
+    mv=_w['mv']; nm=_w['nm']; dr=_w['dr']; eh=_w['eh']
+    nv=e3.shape[0]; cands=[]; tested=0; hgf=0; atef=0
+    for ei in expr_indices:
+        col=e3[:,:,ei]; fm=np.isfinite(col)&sv; fv=col[fm]
+        if len(fv)<nv: continue
+        ths=np.unique(np.percentile(fv,np.linspace(5,95,N_THRESHOLDS)))
+        if len(ths)<2: continue
+        ebv=eb[:,ei]; ebf=np.isfinite(ebv); en=nm[ei]
+        for th in ths:
+            for dl,above in [("above",True),("below",False)]:
+                tested+=1
+                hit=((col>=th) if above else (col<=th))&fm
+                hb=np.where(hit,bi,eh+1); fb=np.min(hb,axis=1)
+                trig=fb<eh+1
+                ate=ebf&((ebv>=th) if above else (ebv<=th))
+                trig=trig&(~ate)
+                if not trig[hg].all():
+                    if ate[hg].any(): atef+=1
+                    else: hgf+=1
+                    continue
+                ca=np.full(nv,-LOSS_ASSUMPTION_ADR,dtype=np.float64)
+                bh=np.full(nv,eh,dtype=np.int32)
+                for vi in np.where(trig)[0]:
+                    f=fb[vi]; ec=c2d[vi,f]
+                    if np.isfinite(ec) and ad[vi]>0:
+                        if dr=="short": ca[vi]=(ep[vi]-ec)/ad[vi]
+                        else: ca[vi]=(ec-ep[vi])/ad[vi]
+                    bh[vi]=f-eho[vi]
+                st=compute_weighted_stats(ca,wt,trig,mv,bh)
+                if st is None: continue
+                st["expr_name"]=en; st["direction"]=dl
+                st["threshold"]=round(float(th),6)
+                st["n_already_true"]=int(ate.sum())
+                cands.append((st,fb.astype(np.int16).copy()))
+    return cands, tested, hgf, atef
+
+# ── 1-Stage Grind (ProcessPoolExecutor + mmap) ──
 def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
                  entry_high_offset_v, valid_indices,
                  entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
@@ -385,9 +392,9 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
     if n_workers is None: n_workers = os.cpu_count() or 8
     nv = len(valid_indices); ne = len(filtered_names)
     print(f"\n  ── 1-STAGE EXPRESSION GRIND ──")
-    print(f"  {nv} signals × {ne} expressions × ~{N_THRESHOLDS} thresholds × 2 directions")
-    print(f"  Hard gate: {int(is_hard_gate_v.sum())}  Workers: {n_workers}")
-    print_ram("(before grind)"); t0 = time.time()
+    print(f"  {nv} signals × {ne} expressions × ~{N_THRESHOLDS} thresholds × 2 dirs")
+    print(f"  Hard gate: {int(is_hard_gate_v.sum())}  Workers: {n_workers} processes")
+    print_ram("(before 1-stage)"); t0 = time.time()
 
     close_2d = np.full((nv, exit_horizon), np.nan, dtype=np.float64)
     for vi, si in enumerate(valid_indices): fc=fwd_close_list[si]; close_2d[vi,:len(fc)]=fc
@@ -397,236 +404,206 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
         if s<n_bars_per_signal[vi]: search_valid[vi,s:n_bars_per_signal[vi]]=True
     bar_indices = np.arange(exit_horizon)[np.newaxis, :]
 
-    # Pre-build 3D padded array: (nv, exit_horizon, ne) — eliminates per-expression Python loop
     print(f"  Building 3D expression array ({nv} x {exit_horizon} x {ne})...")
     expr_3d = np.full((nv, exit_horizon, ne), np.nan, dtype=np.float32)
     for vi, si in enumerate(valid_indices):
-        fe = fwd_expr_list[si]
-        expr_3d[vi, :fe.shape[0], :] = fe
-    sz_gb = expr_3d.nbytes / 1e9
-    print(f"  3D array: {sz_gb:.2f} GB")
-    print_ram("(3D built)")
-    check_ram("(3D built)", min_gb=1.0)
-
-    # Pre-build entry_high_bar expression values: (nv, ne)
+        fe = fwd_expr_list[si]; expr_3d[vi, :fe.shape[0], :] = fe
     eb_2d = np.full((nv, ne), np.nan, dtype=np.float32)
     for vi, si in enumerate(valid_indices):
         eb = entry_high_bar_expr_list[si]
         if eb is not None: eb_2d[vi, :] = eb
+    print(f"  3D: {expr_3d.nbytes/1e9:.2f} GB")
 
-    chunks = [list(range(ne))[i:i+max(1,ne//n_workers)] for i in range(0,ne,max(1,ne//n_workers))]
-    print(f"  {len(chunks)} chunks, dispatching...")
-    all_cands=[]; tt=0; thgf=0; tatef=0; done=0
-    with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futs={pool.submit(_grind_expr_chunk, ch, expr_3d, eb_2d,
-              close_2d, search_valid, bar_indices,
-              entry_high_offset_v, entry_prices_v, adr_values_v, weights_v,
-              is_hard_gate_v, move_adrs_v, filtered_names, direction, exit_horizon):ci
-              for ci,ch in enumerate(chunks)}
-        for f in as_completed(futs):
-            c,t,h,a=f.result(); all_cands.extend(c); tt+=t; thgf+=h; tatef+=a; done+=1
-            if done%max(1,len(chunks)//5)==0 or done==len(chunks):
-                print(f"    [{done}/{len(chunks)}] {time.time()-t0:.1f}s, {len(all_cands):,} cands")
-
-    el=time.time()-t0
-    print(f"\n  1-stage complete: {el:.1f}s, {tt:,} tested, {len(all_cands):,} raw")
-    print_ram("(after 1-stage)")
+    tmpdir = tempfile.mkdtemp(prefix='pg_')
+    expr_path = os.path.join(tmpdir, 'expr_3d.npy')
+    eb_path = os.path.join(tmpdir, 'eb_2d.npy')
+    np.save(expr_path, expr_3d); np.save(eb_path, eb_2d)
     del expr_3d, eb_2d; gc.collect()
-    return dedup_candidates(all_cands, exit_horizon), close_2d, search_valid, bar_indices
+    print(f"  Saved to temp, arrays freed")
+    print_ram("(mmap ready)")
+    check_ram("(pre-grind)", min_gb=1.0)
 
-# ── 2-Stage Grind ──
-def _grind_2stage_unoptimized(stage1_results, fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
-                 entry_high_offset_v, valid_indices, close_2d,
-                 entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
-                 move_adrs_v, n_bars_per_signal, filtered_names, direction, exit_horizon,
-                 top_n_final=50):
-    """2-stage trim search: for each top final exit, find best earlier trim expression.
+    shared = {'c2d':close_2d, 'sv':search_valid, 'bi':bar_indices,
+              'eho':entry_high_offset_v, 'ep':entry_prices_v, 'ad':adr_values_v,
+              'wt':weights_v, 'hg':is_hard_gate_v, 'mv':move_adrs_v,
+              'nm':filtered_names, 'dr':direction, 'eh':exit_horizon}
 
-    For each final exit from 1-stage results:
-      - We know which bar it exits each signal on (the 1-stage exit bar)
-      - Search all expressions for a trim trigger that fires BETWEEN
-        entry_high bar and the final exit bar
-      - Trim is optional: if it doesn't fire, full position rides to final exit
-      - Blended outcome = trim_pct × trim_capture + (1-trim_pct) × final_capture
-    """
+    chunk_sz = max(1, ne // n_workers)
+    chunks = [list(range(ne))[i:i+chunk_sz] for i in range(0, ne, chunk_sz)]
+    print(f"  {len(chunks)} chunks of ~{chunk_sz}, dispatching {n_workers} processes...")
+
+    all_cands=[]; tt=0; thgf=0; tatef=0; done=0
+    with ProcessPoolExecutor(max_workers=n_workers,
+                              initializer=_init_1stage,
+                              initargs=(expr_path, eb_path, shared)) as pool:
+        futs = {pool.submit(_work_1stage, ch): ci for ci, ch in enumerate(chunks)}
+        for f in as_completed(futs):
+            c,t,h,a = f.result()
+            all_cands.extend(c); tt+=t; thgf+=h; tatef+=a; done+=1
+            el = time.time()-t0
+            print(f"    [{done}/{len(chunks)}] {el:.1f}s, {len(all_cands):,} cands, "
+                  f"{tt:,} tested")
+
+    el = time.time()-t0
+    print(f"\n  1-stage: {el:.1f}s ({el/60:.1f} min)")
+    print(f"    {tt:,} tested, {thgf:,} gate, {tatef:,} ate, {len(all_cands):,} raw")
+    print_ram("(after 1-stage)")
+    return dedup_candidates(all_cands, exit_horizon), close_2d, expr_path, eb_path, tmpdir
+
+def _init_2stage(expr_path, eb_path, shared):
+    """Initializer for 2-stage workers."""
+    _w['e3'] = np.load(expr_path, mmap_mode='r')
+    _w['eb'] = np.load(eb_path, mmap_mode='r')
+    _w.update(shared)
+
+def _work_2stage(expr_indices):
+    """2-stage worker: test trim expressions against all final exits."""
+    e3=_w['e3']; eb=_w['eb']; c2d=_w['c2d']
+    ad=_w['ad']; ep=_w['ep']; wt=_w['wt']; mv=_w['mv']
+    nm=_w['nm']; dr=_w['dr']; eh=_w['eh']
+    fd_list=_w['fd']; tps=_w['tp']
+    nv=e3.shape[0]; bi=np.arange(eh)[np.newaxis,:]; combos=[]; tested=0
+    for ei in expr_indices:
+        col=e3[:,:,ei]; ebv=eb[:,ei]; ebf=np.isfinite(ebv); tn=nm[ei]
+        for fd in fd_list:
+            fm=np.isfinite(col)&fd['pe']; fv=col[fm]
+            if len(fv)<20: continue
+            ths=np.unique(np.percentile(fv,np.linspace(5,95,N_THRESHOLDS)))
+            if len(ths)<2: continue
+            for th in ths:
+                for dl,above in [("above",True),("below",False)]:
+                    tested+=1
+                    hit=((col>=th) if above else (col<=th))&fm
+                    hb=np.where(hit,bi,eh+1); tb=np.min(hb,axis=1)
+                    tt=tb<eh+1
+                    ate=ebf&((ebv>=th) if above else (ebv<=th))
+                    tt=tt&(~ate); nt=int(tt.sum())
+                    if nt<5: continue
+                    for tp in tps:
+                        bl=fd['cap'].copy()
+                        for vi in np.where(tt)[0]:
+                            tbi=tb[vi]; tc=c2d[vi,tbi]
+                            if np.isfinite(tc) and ad[vi]>0:
+                                if dr=="short": tcap=(ep[vi]-tc)/ad[vi]
+                                else: tcap=(tc-ep[vi])/ad[vi]
+                                bl[vi]=tp*tcap+(1-tp)*fd['cap'][vi]
+                        st=compute_weighted_stats(bl,wt,fd['tr'],mv,fd['bh'])
+                        if st is None: continue
+                        st["mode"]="2-stage"; st["trim_expr"]=tn
+                        st["trim_direction"]=dl; st["trim_threshold"]=round(float(th),6)
+                        st["trim_pct"]=tp; st["final_expr"]=fd['nm']
+                        st["final_direction"]=fd['dr']; st["final_threshold"]=fd['th']
+                        st["n_trimmed"]=nt; st["trim_rate"]=round(nt/nv,4)
+                        st["final_exit_expectancy"]=fd['ex']
+                        combos.append(st)
+    return combos, tested
+
+# ── 2-Stage Grind (ProcessPoolExecutor + mmap) ──
+def grind_2stage(stage1_results, entry_high_offset_v, valid_indices, close_2d,
+                 entry_prices_v, adr_values_v, weights_v,
+                 move_adrs_v, n_bars_per_signal, filtered_names,
+                 direction, exit_horizon, expr_path, eb_path,
+                 top_n_final=50, n_workers=None):
+    if n_workers is None: n_workers = os.cpu_count() or 8
     nv = len(valid_indices); ne = len(filtered_names)
     n_final = min(top_n_final, len(stage1_results))
-    if n_final == 0:
-        print("\n  ── 2-STAGE: No 1-stage results to build on ──"); return []
+    if n_final == 0: print("\n  ── 2-STAGE: No results ──"); return []
 
     print(f"\n  ── 2-STAGE TRIM SEARCH ──")
-    print(f"  {n_final} final exits × {ne} trim expressions × ~{N_THRESHOLDS} thresholds × 2 dirs")
-    print(f"  Trim percentages: {[f'{p:.0%}' for p in TRIM_PCTS]}")
-    print(f"  Trim is optional (no penalty if trim doesn't fire)")
+    print(f"  {ne} exprs × {n_final} final exits × ~{N_THRESHOLDS} thresholds × 2 dirs × {len(TRIM_PCTS)} trim%")
+    print(f"  Trim%: {TRIM_PCTS}  Workers: {n_workers} processes")
     print_ram("(before 2-stage)"); t0 = time.time()
 
     bi = np.arange(exit_horizon)[np.newaxis, :]
-    all_combos = []
-    total_tested = 0
 
+    print(f"  Pre-computing {n_final} final exit profiles...")
+    e3 = np.load(expr_path, mmap_mode='r')
+    final_data = []
     for fi in range(n_final):
         final = stage1_results[fi]
-        final_name = final["expr_name"]
-        final_dir = final["direction"]
-        final_thresh = final["threshold"]
-
-        # Reconstruct the final exit bar per signal
-        # Re-run the final exit expression to get per-signal exit bars
-        # Find expression index
-        final_ei = None
-        for j, fn in enumerate(filtered_names):
-            if fn == final_name: final_ei = j; break
-        if final_ei is None: continue
-
-        final_col = extract_column_padded(fwd_expr_list, valid_indices, final_ei, exit_horizon)
-        # Build search mask for final exit (same as 1-stage)
-        final_search = np.zeros((nv, exit_horizon), dtype=bool)
+        fn=final["expr_name"]; fd=final["direction"]; ft=final["threshold"]
+        fei=None
+        for j, name in enumerate(filtered_names):
+            if name==fn: fei=j; break
+        if fei is None: continue
+        fcol=e3[:,:,fei]
+        fsr=np.zeros((nv,exit_horizon),dtype=bool)
         for vi in range(nv):
-            s = entry_high_offset_v[vi] + 1
-            if s < n_bars_per_signal[vi]: final_search[vi, s:n_bars_per_signal[vi]] = True
-        fm = np.isfinite(final_col) & final_search
-        if final_dir == "above": final_hit = (final_col >= final_thresh) & fm
-        else: final_hit = (final_col <= final_thresh) & fm
-        final_hb = np.where(final_hit, bi, exit_horizon + 1)
-        final_exit_bars = np.min(final_hb, axis=1)  # (nv,) — bar where final exit fires
-
-        # Pre-compute final exit capture per signal (used when trim doesn't fire)
-        final_capture = np.full(nv, -LOSS_ASSUMPTION_ADR, dtype=np.float64)
-        final_triggered = final_exit_bars < exit_horizon + 1
-        for vi in np.where(final_triggered)[0]:
-            fb = final_exit_bars[vi]; ec = close_2d[vi, fb]
-            if np.isfinite(ec) and adr_values_v[vi] > 0:
-                if direction == "short": final_capture[vi] = (entry_prices_v[vi] - ec) / adr_values_v[vi]
-                else: final_capture[vi] = (ec - entry_prices_v[vi]) / adr_values_v[vi]
-
-        # Build pre-exit search mask: bars between entry_high+1 and final_exit_bar-1
-        # (trim must fire strictly before the final exit)
-        pre_exit_valid = np.zeros((nv, exit_horizon), dtype=bool)
-        n_with_room = 0
+            s=entry_high_offset_v[vi]+1
+            if s<n_bars_per_signal[vi]: fsr[vi,s:n_bars_per_signal[vi]]=True
+        fm=np.isfinite(fcol)&fsr
+        fhit=((fcol>=ft) if fd=="above" else (fcol<=ft))&fm
+        fhb=np.where(fhit,bi,exit_horizon+1); feb=np.min(fhb,axis=1)
+        fcap=np.full(nv,-LOSS_ASSUMPTION_ADR,dtype=np.float64)
+        ftrig=feb<exit_horizon+1
+        for vi in np.where(ftrig)[0]:
+            fb=feb[vi]; ec=close_2d[vi,fb]
+            if np.isfinite(ec) and adr_values_v[vi]>0:
+                if direction=="short": fcap[vi]=(entry_prices_v[vi]-ec)/adr_values_v[vi]
+                else: fcap[vi]=(ec-entry_prices_v[vi])/adr_values_v[vi]
+        pe=np.zeros((nv,exit_horizon),dtype=bool); nr=0
         for vi in range(nv):
-            eh = entry_high_offset_v[vi]
-            feb = final_exit_bars[vi]
-            if feb < exit_horizon + 1 and eh + 2 <= feb:  # at least 1 bar between entry and exit
-                pre_exit_valid[vi, eh+1:feb] = True
-                n_with_room += 1
+            eh=entry_high_offset_v[vi]; fb=feb[vi]
+            if fb<exit_horizon+1 and eh+2<=fb: pe[vi,eh+1:fb]=True; nr+=1
+        bh=np.full(nv,exit_horizon,dtype=np.int32)
+        for vi in np.where(ftrig)[0]: bh[vi]=feb[vi]-entry_high_offset_v[vi]
+        if nr>=20:
+            final_data.append({'pe':pe,'cap':fcap,'tr':ftrig,'bh':bh,
+                'nm':fn,'dr':fd,'th':ft,'ex':final["expectancy"]})
+    del e3
+    na=len(final_data)
+    print(f"  Active final exits: {na}/{n_final}")
+    if na==0: print("  No room for trim."); return []
 
-        if n_with_room < 20:
-            # Not enough signals have room for a trim between entry and exit
-            continue
+    shared = {'c2d':close_2d, 'ad':adr_values_v, 'ep':entry_prices_v,
+              'wt':weights_v, 'mv':move_adrs_v,
+              'nm':filtered_names, 'dr':direction, 'eh':exit_horizon,
+              'fd':final_data, 'tp':TRIM_PCTS}
 
-        # Search all expressions as trim triggers
-        for ei in range(ne):
-            col = extract_column_padded(fwd_expr_list, valid_indices, ei, exit_horizon)
-            fm_trim = np.isfinite(col) & pre_exit_valid
-            fv = col[fm_trim]
-            if len(fv) < 20: continue
-            ths = np.unique(np.percentile(fv, np.linspace(5, 95, N_THRESHOLDS)))
-            if len(ths) < 2: continue
+    chunk_sz = max(1, ne // (n_workers * 4))
+    chunks = [list(range(ne))[i:i+chunk_sz] for i in range(0, ne, chunk_sz)]
+    print(f"  {len(chunks)} chunks of ~{chunk_sz}, dispatching {n_workers} processes...")
 
-            # Also check already-true-at-entry for trim expression
-            eb_vals = extract_entry_high_bar_column(entry_high_bar_expr_list, valid_indices, ei)
-            eb_finite = np.isfinite(eb_vals)
-            trim_name = filtered_names[ei]
+    all_combos=[]; total_tested=0; done=0
+    with ProcessPoolExecutor(max_workers=n_workers,
+                              initializer=_init_2stage,
+                              initargs=(expr_path, eb_path, shared)) as pool:
+        futs = {pool.submit(_work_2stage, ch): ci for ci, ch in enumerate(chunks)}
+        for f in as_completed(futs):
+            combos, tested = f.result()
+            all_combos.extend(combos); total_tested+=tested; done+=1
+            if done%max(1,len(chunks)//20)==0 or done==len(chunks):
+                el=time.time()-t0
+                print(f"    [{done}/{len(chunks)}] {el:.1f}s, {len(all_combos):,} combos, {total_tested:,} tested")
 
-            for th in ths:
-                for dl, above in [("above", True), ("below", False)]:
-                    total_tested += 1
-                    hit = ((col >= th) if above else (col <= th)) & fm_trim
-                    hb = np.where(hit, bi, exit_horizon + 1)
-                    trim_bars = np.min(hb, axis=1)
-                    trim_triggered = trim_bars < exit_horizon + 1
-
-                    # Already-true-at-entry: trim expression already satisfied at entry
-                    ate = eb_finite & ((eb_vals >= th) if above else (eb_vals <= th))
-                    trim_triggered = trim_triggered & (~ate)
-
-                    # How many signals actually trimmed?
-                    n_trimmed = int(trim_triggered.sum())
-                    if n_trimmed < 5: continue  # need meaningful trim activity
-
-                    # For each trim percentage, compute blended outcome
-                    for trim_pct in TRIM_PCTS:
-                        # Blended capture: if trim fires, blend. If not, full ride to final exit.
-                        blended = final_capture.copy()  # start with final exit outcome for all
-
-                        for vi in np.where(trim_triggered)[0]:
-                            tb = trim_bars[vi]; tc = close_2d[vi, tb]
-                            if np.isfinite(tc) and adr_values_v[vi] > 0:
-                                if direction == "short":
-                                    trim_cap = (entry_prices_v[vi] - tc) / adr_values_v[vi]
-                                else:
-                                    trim_cap = (tc - entry_prices_v[vi]) / adr_values_v[vi]
-                                blended[vi] = trim_pct * trim_cap + (1 - trim_pct) * final_capture[vi]
-
-                        # bars_held = final exit bar (trade isn't fully closed until final exit)
-                        bh = np.full(nv, exit_horizon, dtype=np.int32)
-                        for vi in np.where(final_triggered)[0]:
-                            bh[vi] = final_exit_bars[vi] - entry_high_offset_v[vi]
-
-                        # All signals "triggered" = final exit triggered (trim is optional)
-                        st = compute_weighted_stats(blended, weights_v, final_triggered, move_adrs_v, bh)
-                        if st is None: continue
-
-                        st["mode"] = "2-stage"
-                        st["trim_expr"] = trim_name
-                        st["trim_direction"] = dl
-                        st["trim_threshold"] = round(float(th), 6)
-                        st["trim_pct"] = trim_pct
-                        st["final_expr"] = final_name
-                        st["final_direction"] = final_dir
-                        st["final_threshold"] = final_thresh
-                        st["n_trimmed"] = n_trimmed
-                        st["trim_rate"] = round(n_trimmed / nv, 4)
-                        # Also store the 1-stage expectancy for comparison
-                        st["final_exit_expectancy"] = final["expectancy"]
-                        all_combos.append(st)
-
-        if (fi + 1) % 10 == 0 or fi == n_final - 1:
-            el = time.time() - t0
-            print(f"    [{fi+1}/{n_final} final exits] {el:.1f}s, "
-                  f"{total_tested:,} tested, {len(all_combos):,} combos")
-
-    el = time.time() - t0
-    print(f"\n  2-stage complete: {el:.1f}s ({el/60:.1f} min)")
-    print(f"    Tested: {total_tested:,}")
-    print(f"    Raw combos: {len(all_combos):,}")
+    el=time.time()-t0
+    print(f"\n  2-stage: {el:.1f}s ({el/60:.1f} min), {total_tested:,} tested, {len(all_combos):,} raw")
     print_ram("(after 2-stage)")
 
-    # Sort by expectancy, keep unique (trim_expr, final_expr, trim_pct) combos
-    all_combos.sort(key=lambda c: c.get("expectancy", float('-inf')), reverse=True)
-
-    # Dedup: keep best per (trim_expr, final_expr, trim_pct)
-    seen = set()
-    deduped = []
+    all_combos.sort(key=lambda c:c.get("expectancy",float('-inf')),reverse=True)
+    seen=set(); deduped=[]
     for c in all_combos:
-        key = (c["trim_expr"], c["final_expr"], c["trim_pct"])
-        if key not in seen:
-            seen.add(key)
-            deduped.append(c)
+        k=(c["trim_expr"],c["final_expr"],c["trim_pct"])
+        if k not in seen: seen.add(k); deduped.append(c)
+    print(f"  Dedup: {len(all_combos):,} -> {len(deduped):,}")
 
-    print(f"    After dedup: {len(deduped):,}")
-
-    # Print top results
-    if deduped:
-        # Only show combos that beat their 1-stage final exit
-        improved = [c for c in deduped if c["expectancy"] > c["final_exit_expectancy"]]
-        print(f"    Combos that beat 1-stage: {len(improved)}")
-
-        if improved:
-            print(f"\n  Top 10 2-stage combos (by expectancy, beating 1-stage):")
-            print(f"    {'#':<3} {'Trim Expr':<30} {'Dir':<6} {'Trim%':>5} "
-                  f"{'Final Expr':<30} {'Exp':>6} {'1stgExp':>7} {'Δ':>5} {'TrimR':>5}")
-            print(f"    {'-'*120}")
-            for i, c in enumerate(improved[:10]):
-                delta = c["expectancy"] - c["final_exit_expectancy"]
-                print(f"    {i+1:<3} {c['trim_expr']:<30} {c['trim_direction']:<6} "
-                      f"{c['trim_pct']:>5.0%} {c['final_expr']:<30} "
-                      f"{c['expectancy']:>6.3f} {c['final_exit_expectancy']:>7.3f} "
-                      f"{delta:>+5.3f} {c['trim_rate']:>5.1%}")
-        else:
-            print(f"\n  No 2-stage combo beats the 1-stage exit.")
-
+    improved=[c for c in deduped if c["expectancy"]>c["final_exit_expectancy"]]
+    print(f"  Combos beating 1-stage: {len(improved)}")
+    if improved:
+        print(f"\n  Top 10 2-stage (beating 1-stage):")
+        print(f"    {'#':<3} {'Trim':<30} {'Dir':<6} {'T%':>4} "
+              f"{'Final':<30} {'Exp':>6} {'1stg':>6} {'D':>5} {'TrR':>5}")
+        print(f"    {'-'*105}")
+        for i,c in enumerate(improved[:10]):
+            d=c["expectancy"]-c["final_exit_expectancy"]
+            print(f"    {i+1:<3} {c['trim_expr']:<30} {c['trim_direction']:<6} "
+                  f"{c['trim_pct']:>4.0%} {c['final_expr']:<30} "
+                  f"{c['expectancy']:>6.3f} {c['final_exit_expectancy']:>6.3f} "
+                  f"{d:>+5.3f} {c['trim_rate']:>5.1%}")
+    else:
+        print(f"\n  No 2-stage combo beats 1-stage.")
     return deduped
+
 
 # ── Dedup ──
 def dedup_candidates(candidates, exit_horizon):
@@ -735,7 +712,7 @@ def main():
     eho=entry_high_offset[vi]
 
     # ── 1-Stage ──
-    stage1, close_2d, search_valid, bar_indices = grind_1stage(
+    stage1, close_2d, expr_path, eb_path, tmpdir = grind_1stage(
         fwd_expr,fwd_closes,entry_high_bar_expr,eho,vi,
         epv,av,wv,ihg,mv,nbp,fn,direction,exit_horizon,n_workers)
 
@@ -758,14 +735,16 @@ def main():
     stage2 = []
     if not args.skip_2stage and stage1:
         stage2 = grind_2stage(
-            stage1, fwd_expr_list=fwd_expr, fwd_close_list=fwd_closes,
-            entry_high_bar_expr_list=entry_high_bar_expr,
-            entry_high_offset_v=eho, valid_indices=vi, close_2d=close_2d,
+            stage1, entry_high_offset_v=eho, valid_indices=vi, close_2d=close_2d,
             entry_prices_v=epv, adr_values_v=av, weights_v=wv,
-            is_hard_gate_v=ihg, move_adrs_v=mv,
-            n_bars_per_signal=nbp, filtered_names=fn,
+            move_adrs_v=mv, n_bars_per_signal=nbp, filtered_names=fn,
             direction=direction, exit_horizon=exit_horizon,
-            top_n_final=args.top_n_2stage)
+            expr_path=expr_path, eb_path=eb_path,
+            top_n_final=args.top_n_2stage, n_workers=n_workers)
+
+    # Cleanup temp files
+    import shutil
+    shutil.rmtree(tmpdir, ignore_errors=True)
 
     # ── Summary ──
     el=time.time()-t0
