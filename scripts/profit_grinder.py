@@ -416,7 +416,7 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
     return dedup_candidates(all_cands, exit_horizon), close_2d, search_valid, bar_indices
 
 # ── 2-Stage Grind ──
-def grind_2stage(stage1_results, fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
+def _grind_2stage_unoptimized(stage1_results, fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
                  entry_high_offset_v, valid_indices, close_2d,
                  entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
                  move_adrs_v, n_bars_per_signal, filtered_names, direction, exit_horizon,
