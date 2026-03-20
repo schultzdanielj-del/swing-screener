@@ -457,21 +457,23 @@ def _init_2stage(expr_path, eb_path, shared):
     _w.update(shared)
 
 def _work_2stage(expr_indices):
-    """2-stage worker: optimized with early expectancy filter."""
+    """2-stage worker: vectorized trim_caps, thresholds once per expr, early filter."""
     e3=_w['e3']; eb=_w['eb']; c2d=_w['c2d']
     ad=_w['ad']; ep=_w['ep']; wt=_w['wt']; mv=_w['mv']
     nm=_w['nm']; dr=_w['dr']; eh=_w['eh']
-    fd_list=_w['fd']; tps=_w['tp']
+    fd_list=_w['fd']; tps=_w['tp']; sv=_w['sv']
     nv=e3.shape[0]; bi=np.arange(eh)[np.newaxis,:]; combos=[]; tested=0; skipped=0
-    ws=wt.sum()
+    ws=wt.sum(); adr_ok=ad>0; sig_idx=np.arange(nv)
     for ei in expr_indices:
         col=e3[:,:,ei]; ebv=eb[:,ei]; ebf=np.isfinite(ebv); tn=nm[ei]
+        # Thresholds ONCE per expression (from full search_valid, not per-final mask)
+        fm_full=np.isfinite(col)&sv; fv_full=col[fm_full]
+        if len(fv_full)<nv: continue
+        ths=np.unique(np.percentile(fv_full,np.linspace(5,95,N_THRESHOLDS)))
+        if len(ths)<2: continue
         for fd in fd_list:
-            fm=np.isfinite(col)&fd['pe']; fv=col[fm]
-            if len(fv)<20: continue
-            ths=np.unique(np.percentile(fv,np.linspace(5,95,N_THRESHOLDS)))
-            if len(ths)<2: continue
-            baseline=fd['ex']  # 1-stage expectancy to beat
+            fm=np.isfinite(col)&fd['pe']
+            baseline=fd['ex']
             for th in ths:
                 for dl,above in [("above",True),("below",False)]:
                     tested+=1
@@ -481,18 +483,15 @@ def _work_2stage(expr_indices):
                     ate=ebf&((ebv>=th) if above else (ebv<=th))
                     tt=tt&(~ate); nt=int(tt.sum())
                     if nt<5: continue
-                    # Compute trim capture for triggered signals ONCE
-                    trim_caps=np.zeros(nv,dtype=np.float64)
-                    for vi in np.where(tt)[0]:
-                        tbi=tb[vi]; tc=c2d[vi,tbi]
-                        if np.isfinite(tc) and ad[vi]>0:
-                            if dr=="short": trim_caps[vi]=(ep[vi]-tc)/ad[vi]
-                            else: trim_caps[vi]=(tc-ep[vi])/ad[vi]
+                    # Vectorized trim capture — no Python loop
+                    tb_clipped=np.clip(tb,0,eh-1)
+                    exit_prices=c2d[sig_idx,tb_clipped]
+                    if dr=="short": trim_caps=(ep-exit_prices)/np.where(adr_ok,ad,1.0)
+                    else: trim_caps=(exit_prices-ep)/np.where(adr_ok,ad,1.0)
+                    trim_caps=np.where(adr_ok&np.isfinite(exit_prices)&tt,trim_caps,0.0)
                     for tp in tps:
-                        # Blend: trimmed signals get blended, others keep final capture
                         bl=fd['cap'].copy()
                         bl[tt]=tp*trim_caps[tt]+(1-tp)*fd['cap'][tt]
-                        # Quick expectancy check before expensive full stats
                         qexp=float(np.sum(bl*wt)/ws) if ws>0 else 0
                         if qexp<=baseline: skipped+=1; continue
                         st=compute_weighted_stats(bl,wt,fd['tr'],mv,fd['bh'])
@@ -505,6 +504,7 @@ def _work_2stage(expr_indices):
                         st["final_exit_expectancy"]=baseline
                         combos.append(st)
     return combos, tested, skipped
+
 
 # ── 2-Stage Grind (ProcessPoolExecutor + mmap) ──
 def grind_2stage(stage1_results, entry_high_offset_v, valid_indices, close_2d,
@@ -563,10 +563,15 @@ def grind_2stage(stage1_results, entry_high_offset_v, valid_indices, close_2d,
     print(f"  Active final exits: {na}/{n_final}")
     if na==0: print("  No room for trim."); return []
 
+    # Build search_valid for threshold generation
+    search_valid=np.zeros((nv,exit_horizon),dtype=bool)
+    for vi in range(nv):
+        s=entry_high_offset_v[vi]+1
+        if s<n_bars_per_signal[vi]: search_valid[vi,s:n_bars_per_signal[vi]]=True
     shared = {'c2d':close_2d, 'ad':adr_values_v, 'ep':entry_prices_v,
               'wt':weights_v, 'mv':move_adrs_v,
               'nm':filtered_names, 'dr':direction, 'eh':exit_horizon,
-              'fd':final_data, 'tp':TRIM_PCTS}
+              'fd':final_data, 'tp':TRIM_PCTS, 'sv':search_valid}
 
     chunk_sz = max(1, ne // (n_workers * 8))
     chunks = [list(range(ne))[i:i+chunk_sz] for i in range(0, ne, chunk_sz)]
@@ -659,7 +664,7 @@ def main():
     pa.add_argument("--skip-2stage",action="store_true",help="Skip 2-stage search")
     args=pa.parse_args()
     setup=args.setup; cfg=SETUP_CONFIGS.get(setup,{"direction":"short"}); direction=args.direction or cfg["direction"]
-    exit_horizon=args.exit_horizon; n_workers=args.workers or os.cpu_count() or 8
+    exit_horizon=args.exit_horizon; n_workers=args.workers or min(os.cpu_count() or 8, 12)
 
     print(f"\n{'='*70}\n  PROFIT GRINDER — Phase 4 Exit Optimization\n{'='*70}")
     print(f"  Setup: {setup.upper()}, Direction: {direction}")
