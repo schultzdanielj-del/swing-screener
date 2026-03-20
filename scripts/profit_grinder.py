@@ -573,7 +573,7 @@ def grind_2stage(stage1_results, entry_high_offset_v, valid_indices, close_2d,
               'nm':filtered_names, 'dr':direction, 'eh':exit_horizon,
               'fd':final_data, 'tp':TRIM_PCTS, 'sv':search_valid}
 
-    chunk_sz = max(1, ne // (n_workers * 8))
+    chunk_sz = 10
     chunks = [list(range(ne))[i:i+chunk_sz] for i in range(0, ne, chunk_sz)]
     print(f"  {len(chunks)} chunks of ~{chunk_sz}, dispatching {n_workers} processes...")
 
