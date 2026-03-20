@@ -1018,12 +1018,12 @@ class FlowchartCanvas(QWidget):
         radius = max(6, int(header_h * 0.08))
 
         NODE_COLORS = {
-            "examples":     {"bg": "#2a1215", "bg_r": "#3d1b20", "border": "#5c2d33"},
-            "vetting":      {"bg": "#2a1f0d", "bg_r": "#3d2e15", "border": "#5c4422"},
-            "scan_tuning":  {"bg": "#2a2610", "bg_r": "#3d3818", "border": "#5c5222"},
-            "causative":    {"bg": "#0d1a2a", "bg_r": "#15263d", "border": "#223d5c"},
-            "correlative":  {"bg": "#0d1a2a", "bg_r": "#15263d", "border": "#223d5c"},
-            "profit_grind": {"bg": "#0d1a2a", "bg_r": "#15263d", "border": "#223d5c"},
+            "examples":     {"bg": "#F08080", "bg_r": "#d9736f", "border": "#F08080", "dark_text": True},
+            "vetting":      {"bg": "#FFD166", "bg_r": "#e6bc5c", "border": "#FFD166", "dark_text": True},
+            "scan_tuning":  {"bg": "#FFD166", "bg_r": "#e6bc5c", "border": "#FFD166", "dark_text": True},
+            "causative":    {"bg": "#7DC4FF", "bg_r": "#6ab0e6", "border": "#7DC4FF", "dark_text": True},
+            "correlative":  {"bg": "#7DC4FF", "bg_r": "#6ab0e6", "border": "#7DC4FF", "dark_text": True},
+            "profit_grind": {"bg": "#7DC4FF", "bg_r": "#6ab0e6", "border": "#7DC4FF", "dark_text": True},
             "summary":      {"bg": "#0d2a1a", "bg_r": "#153d26", "border": "#225c3d"},
         }
 
@@ -1047,8 +1047,12 @@ class FlowchartCanvas(QWidget):
             grad.setColorAt(1, QColor(right_c))
             p.setBrush(grad)
             border_col = QColor(nc["border"])
-            text_col = QColor(C["text"])
-            sub_col = QColor(C["text_dim"])
+            if nc.get("dark_text"):
+                text_col = QColor("#1a1a1a")
+                sub_col = QColor("#333333")
+            else:
+                text_col = QColor(C["text"])
+                sub_col = QColor(C["text_dim"])
             sc_map = {"running": C["amber"], "queued": C["amber"], "error": C["red"]}
             if status in sc_map:
                 border_col = QColor(sc_map[status])
