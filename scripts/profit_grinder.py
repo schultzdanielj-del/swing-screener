@@ -457,12 +457,13 @@ def _init_2stage(expr_path, eb_path, shared):
     _w.update(shared)
 
 def _work_2stage(expr_indices):
-    """2-stage worker: test trim expressions against all final exits."""
+    """2-stage worker: optimized with early expectancy filter."""
     e3=_w['e3']; eb=_w['eb']; c2d=_w['c2d']
     ad=_w['ad']; ep=_w['ep']; wt=_w['wt']; mv=_w['mv']
     nm=_w['nm']; dr=_w['dr']; eh=_w['eh']
     fd_list=_w['fd']; tps=_w['tp']
-    nv=e3.shape[0]; bi=np.arange(eh)[np.newaxis,:]; combos=[]; tested=0
+    nv=e3.shape[0]; bi=np.arange(eh)[np.newaxis,:]; combos=[]; tested=0; skipped=0
+    ws=wt.sum()
     for ei in expr_indices:
         col=e3[:,:,ei]; ebv=eb[:,ei]; ebf=np.isfinite(ebv); tn=nm[ei]
         for fd in fd_list:
@@ -470,6 +471,7 @@ def _work_2stage(expr_indices):
             if len(fv)<20: continue
             ths=np.unique(np.percentile(fv,np.linspace(5,95,N_THRESHOLDS)))
             if len(ths)<2: continue
+            baseline=fd['ex']  # 1-stage expectancy to beat
             for th in ths:
                 for dl,above in [("above",True),("below",False)]:
                     tested+=1
@@ -479,14 +481,20 @@ def _work_2stage(expr_indices):
                     ate=ebf&((ebv>=th) if above else (ebv<=th))
                     tt=tt&(~ate); nt=int(tt.sum())
                     if nt<5: continue
+                    # Compute trim capture for triggered signals ONCE
+                    trim_caps=np.zeros(nv,dtype=np.float64)
+                    for vi in np.where(tt)[0]:
+                        tbi=tb[vi]; tc=c2d[vi,tbi]
+                        if np.isfinite(tc) and ad[vi]>0:
+                            if dr=="short": trim_caps[vi]=(ep[vi]-tc)/ad[vi]
+                            else: trim_caps[vi]=(tc-ep[vi])/ad[vi]
                     for tp in tps:
+                        # Blend: trimmed signals get blended, others keep final capture
                         bl=fd['cap'].copy()
-                        for vi in np.where(tt)[0]:
-                            tbi=tb[vi]; tc=c2d[vi,tbi]
-                            if np.isfinite(tc) and ad[vi]>0:
-                                if dr=="short": tcap=(ep[vi]-tc)/ad[vi]
-                                else: tcap=(tc-ep[vi])/ad[vi]
-                                bl[vi]=tp*tcap+(1-tp)*fd['cap'][vi]
+                        bl[tt]=tp*trim_caps[tt]+(1-tp)*fd['cap'][tt]
+                        # Quick expectancy check before expensive full stats
+                        qexp=float(np.sum(bl*wt)/ws) if ws>0 else 0
+                        if qexp<=baseline: skipped+=1; continue
                         st=compute_weighted_stats(bl,wt,fd['tr'],mv,fd['bh'])
                         if st is None: continue
                         st["mode"]="2-stage"; st["trim_expr"]=tn
@@ -494,9 +502,9 @@ def _work_2stage(expr_indices):
                         st["trim_pct"]=tp; st["final_expr"]=fd['nm']
                         st["final_direction"]=fd['dr']; st["final_threshold"]=fd['th']
                         st["n_trimmed"]=nt; st["trim_rate"]=round(nt/nv,4)
-                        st["final_exit_expectancy"]=fd['ex']
+                        st["final_exit_expectancy"]=baseline
                         combos.append(st)
-    return combos, tested
+    return combos, tested, skipped
 
 # ── 2-Stage Grind (ProcessPoolExecutor + mmap) ──
 def grind_2stage(stage1_results, entry_high_offset_v, valid_indices, close_2d,
@@ -560,7 +568,7 @@ def grind_2stage(stage1_results, entry_high_offset_v, valid_indices, close_2d,
               'nm':filtered_names, 'dr':direction, 'eh':exit_horizon,
               'fd':final_data, 'tp':TRIM_PCTS}
 
-    chunk_sz = max(1, ne // (n_workers * 4))
+    chunk_sz = max(1, ne // (n_workers * 8))
     chunks = [list(range(ne))[i:i+chunk_sz] for i in range(0, ne, chunk_sz)]
     print(f"  {len(chunks)} chunks of ~{chunk_sz}, dispatching {n_workers} processes...")
 
@@ -570,7 +578,7 @@ def grind_2stage(stage1_results, entry_high_offset_v, valid_indices, close_2d,
                               initargs=(expr_path, eb_path, shared)) as pool:
         futs = {pool.submit(_work_2stage, ch): ci for ci, ch in enumerate(chunks)}
         for f in as_completed(futs):
-            combos, tested = f.result()
+            combos, tested, sk = f.result()
             all_combos.extend(combos); total_tested+=tested; done+=1
             if done%max(1,len(chunks)//20)==0 or done==len(chunks):
                 el=time.time()-t0
