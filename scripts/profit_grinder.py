@@ -518,7 +518,7 @@ def grind_2stage(stage1_results, entry_high_offset_v, valid_indices, close_2d,
     if n_final == 0: print("\n  ── 2-STAGE: No results ──"); return []
 
     print(f"\n  ── 2-STAGE TRIM SEARCH ──")
-    print(f"  {ne} exprs × {n_final} final exits × ~{N_THRESHOLDS} thresholds × 2 dirs × {len(TRIM_PCTS)} trim%")
+    print(f"  Top ~300 trim exprs × {n_final} final exits × ~{N_THRESHOLDS} thresholds × 2 dirs × {len(TRIM_PCTS)} trim%")
     print(f"  Trim%: {TRIM_PCTS}  Workers: {n_workers} processes")
     print_ram("(before 2-stage)"); t0 = time.time()
 
@@ -573,8 +573,19 @@ def grind_2stage(stage1_results, entry_high_offset_v, valid_indices, close_2d,
               'nm':filtered_names, 'dr':direction, 'eh':exit_horizon,
               'fd':final_data, 'tp':TRIM_PCTS, 'sv':search_valid}
 
-    chunk_sz = 10
-    chunks = [list(range(ne))[i:i+chunk_sz] for i in range(0, ne, chunk_sz)]
+    # Only test expressions that proved useful in 1-stage as trim candidates.
+    # Testing all 12,878 × 50 finals is 50× the 1-stage work — too slow.
+    # Top 300 1-stage expressions cover the meaningful TA signals.
+    trim_expr_limit = min(300, len(stage1_results))
+    trim_expr_names = set()
+    for r in stage1_results[:trim_expr_limit]:
+        trim_expr_names.add(r["expr_name"])
+    trim_expr_indices = [i for i, n in enumerate(filtered_names) if n in trim_expr_names]
+    n_trim = len(trim_expr_indices)
+    print(f"  Trim candidates: {n_trim} expressions (top {trim_expr_limit} from 1-stage)")
+
+    chunk_sz = max(1, n_trim // (n_workers * 2))
+    chunks = [trim_expr_indices[i:i+chunk_sz] for i in range(0, n_trim, chunk_sz)]
     print(f"  {len(chunks)} chunks of ~{chunk_sz}, dispatching {n_workers} processes...")
 
     all_combos=[]; total_tested=0; done=0
