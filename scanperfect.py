@@ -2363,8 +2363,8 @@ class SpyBubbleChart(QWidget):
     MARGIN_TOP = 24
     MARGIN_RIGHT = 56
     VOL_H = 40
-    BUBBLE_MIN = 4
-    BUBBLE_MAX = 16
+    BUBBLE_MIN = 3
+    BUBBLE_MAX = 10
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2533,12 +2533,12 @@ class SpyBubbleChart(QWidget):
         draw_ma("ema21", self.EMA21_COLOR)
         draw_ma("sma50", self.SMA50_COLOR)
 
-        # Candles (thin, muted — the bubbles are the star)
+        # Candles
         for i, c in enumerate(visible):
             x = candle_x(i)
             is_up = c["close"] >= c["open"]
             col = QColor(self.UP_COLOR if is_up else self.DOWN_COLOR)
-            col.setAlpha(60)
+            col.setAlpha(140)
             # Wick
             p.setPen(QPen(col, 0.5))
             p.drawLine(int(x), int(price_y(c["high"])), int(x), int(price_y(c["low"])))
@@ -2582,17 +2582,18 @@ class SpyBubbleChart(QWidget):
             y = price_y(spy_close)
 
             if b["is_winner"]:
-                # Green bubble, size by move_adr
+                # Green bubble, sqrt-scaled by move_adr
                 adr = max(b["move_adr"], 0.5)
                 t = min(adr / self._max_move_adr, 1.0)
+                t = t ** 0.5  # sqrt scaling — spreads small/mid, compresses big
                 radius = self.BUBBLE_MIN + t * (self.BUBBLE_MAX - self.BUBBLE_MIN)
-                col = QColor(74, 222, 128, 140)  # green with alpha
-                p.setPen(QPen(QColor(74, 222, 128, 200), 1.0))
+                col = QColor(74, 222, 128, 60)
+                p.setPen(QPen(QColor(74, 222, 128, 90), 0.5))
             else:
                 # Red bubble, fixed small size
                 radius = self.BUBBLE_MIN
-                col = QColor(248, 113, 113, 120)  # red with alpha
-                p.setPen(QPen(QColor(248, 113, 113, 180), 1.0))
+                col = QColor(248, 113, 113, 50)
+                p.setPen(QPen(QColor(248, 113, 113, 80), 0.5))
 
             p.setBrush(col)
             p.drawEllipse(QPointF(x, y), radius, radius)
