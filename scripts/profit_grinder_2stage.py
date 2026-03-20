@@ -2,28 +2,22 @@
 
 Extracts each expression column ONCE and tests against all final exits.
 12,878 extractions instead of 50 x 12,878 = 643,900.
+
+Imported by profit_grinder.py. Not run standalone.
 """
 import time, os, sys
 import numpy as np
 
-# These are imported from the parent module at runtime
-from scripts.profit_grinder import (
-    extract_column_padded, extract_entry_high_bar_column,
-    compute_weighted_stats, check_ram, print_ram,
-    LOSS_ASSUMPTION_ADR, N_THRESHOLDS, TRIM_PCTS, EXIT_HORIZON_DEFAULT
-)
+TRIM_PCTS = [0.33, 0.50, 0.67]
 
 
-def grind_2stage(stage1_results, fwd_expr_list, fwd_close_list,
-                entry_high_bar_expr_list, entry_high_offset_v, valid_indices,
-                close_2d, entry_prices_v, adr_values_v, weights_v,
-                is_hard_gate_v, move_adrs_v, n_bars_per_signal,
-                filtered_names, direction, exit_horizon, top_n_final=50):
-    """2-stage trim search — optimized: outer loop = expressions, inner = final exits.
-
-    Each expression column extracted ONCE (12,878 extractions total),
-    then tested against all final exit profiles. 50x faster.
-    """
+def grind_2stage(stage1_results, fwd_expr_list, entry_high_bar_expr_list,
+                entry_high_offset_v, valid_indices, close_2d,
+                entry_prices_v, adr_values_v, weights_v, move_adrs_v,
+                n_bars_per_signal, filtered_names, direction, exit_horizon,
+                top_n_final, n_thresholds, loss_assumption_adr,
+                extract_col_fn, extract_eb_fn, stats_fn, check_ram_fn, print_ram_fn):
+    """2-stage trim search — outer loop = expressions, inner = final exits."""
     nv = len(valid_indices)
     ne = len(filtered_names)
     n_final = min(top_n_final, len(stage1_results))
@@ -32,14 +26,14 @@ def grind_2stage(stage1_results, fwd_expr_list, fwd_close_list,
         return []
 
     print(f"\n  -- 2-STAGE TRIM SEARCH (optimized) --")
-    print(f"  {ne} trim expressions x {n_final} final exits x ~{N_THRESHOLDS} thresholds x 2 dirs x {len(TRIM_PCTS)} trim%")
+    print(f"  {ne} trim exprs x {n_final} final exits x ~{n_thresholds} thresholds x 2 dirs x {len(TRIM_PCTS)} trim%")
     print(f"  Trim%: {[f'{p:.0%}' for p in TRIM_PCTS]}  (optional)")
-    print_ram("(before 2-stage)")
+    print_ram_fn("(before 2-stage)")
     t0 = time.time()
 
     bi = np.arange(exit_horizon)[np.newaxis, :]
 
-    # -- Pre-compute all final exit profiles (done ONCE) --
+    # -- Pre-compute all final exit profiles --
     print(f"  Pre-computing {n_final} final exit profiles...")
     final_data = []
     for fi in range(n_final):
@@ -48,7 +42,6 @@ def grind_2stage(stage1_results, fwd_expr_list, fwd_close_list,
         fn_dir = final["direction"]
         fn_thresh = final["threshold"]
 
-        # Find expression index
         fei = None
         for j, name in enumerate(filtered_names):
             if name == fn_name:
@@ -57,7 +50,7 @@ def grind_2stage(stage1_results, fwd_expr_list, fwd_close_list,
         if fei is None:
             continue
 
-        fcol = extract_column_padded(fwd_expr_list, valid_indices, fei, exit_horizon)
+        fcol = extract_col_fn(fwd_expr_list, valid_indices, fei, exit_horizon)
         fsearch = np.zeros((nv, exit_horizon), dtype=bool)
         for vi in range(nv):
             s = entry_high_offset_v[vi] + 1
@@ -71,8 +64,7 @@ def grind_2stage(stage1_results, fwd_expr_list, fwd_close_list,
         fhb = np.where(fhit, bi, exit_horizon + 1)
         fexit_bars = np.min(fhb, axis=1)
 
-        # Final capture per signal
-        fcap = np.full(nv, -LOSS_ASSUMPTION_ADR, dtype=np.float64)
+        fcap = np.full(nv, -loss_assumption_adr, dtype=np.float64)
         ftrig = fexit_bars < exit_horizon + 1
         for vi in np.where(ftrig)[0]:
             fb = fexit_bars[vi]
@@ -83,7 +75,6 @@ def grind_2stage(stage1_results, fwd_expr_list, fwd_close_list,
                 else:
                     fcap[vi] = (ec - entry_prices_v[vi]) / adr_values_v[vi]
 
-        # Pre-exit mask: bars between entry_high+1 and final_exit-1
         pre_exit = np.zeros((nv, exit_horizon), dtype=bool)
         n_room = 0
         for vi in range(nv):
@@ -93,7 +84,6 @@ def grind_2stage(stage1_results, fwd_expr_list, fwd_close_list,
                 pre_exit[vi, eh + 1:feb] = True
                 n_room += 1
 
-        # Bars held
         bh = np.full(nv, exit_horizon, dtype=np.int32)
         for vi in np.where(ftrig)[0]:
             bh[vi] = fexit_bars[vi] - entry_high_offset_v[vi]
@@ -122,21 +112,19 @@ def grind_2stage(stage1_results, fwd_expr_list, fwd_close_list,
             r = (ei + 1) / el if el > 0 else 0
             print(f"    [{ei+1}/{ne}] {r:.0f} expr/s, {len(all_combos):,} combos, {total_tested:,} tested")
         if (ei + 1) % 2000 == 0:
-            check_ram(f"(2stg expr {ei+1})", min_gb=1.0)
+            check_ram_fn(f"(2stg expr {ei+1})", min_gb=1.0)
 
-        # Extract this expression column ONCE
-        col = extract_column_padded(fwd_expr_list, valid_indices, ei, exit_horizon)
-        eb_vals = extract_entry_high_bar_column(entry_high_bar_expr_list, valid_indices, ei)
+        col = extract_col_fn(fwd_expr_list, valid_indices, ei, exit_horizon)
+        eb_vals = extract_eb_fn(entry_high_bar_expr_list, valid_indices, ei)
         eb_finite = np.isfinite(eb_vals)
         trim_name = filtered_names[ei]
 
-        # Test against each final exit
         for fd in final_data:
             fm_trim = np.isfinite(col) & fd["pre_exit_mask"]
             fv = col[fm_trim]
             if len(fv) < 20:
                 continue
-            ths = np.unique(np.percentile(fv, np.linspace(5, 95, N_THRESHOLDS)))
+            ths = np.unique(np.percentile(fv, np.linspace(5, 95, n_thresholds)))
             if len(ths) < 2:
                 continue
 
@@ -167,8 +155,7 @@ def grind_2stage(stage1_results, fwd_expr_list, fwd_close_list,
                                     tcap = (tc - entry_prices_v[vi]) / adr_values_v[vi]
                                 blended[vi] = trim_pct * tcap + (1 - trim_pct) * fd["capture"][vi]
 
-                        st = compute_weighted_stats(
-                            blended, weights_v, fd["triggered"], move_adrs_v, fd["bars_held"])
+                        st = stats_fn(blended, weights_v, fd["triggered"], move_adrs_v, fd["bars_held"])
                         if st is None:
                             continue
 
@@ -187,9 +174,8 @@ def grind_2stage(stage1_results, fwd_expr_list, fwd_close_list,
 
     el = time.time() - t0
     print(f"\n  2-stage: {el:.1f}s ({el/60:.1f} min), {total_tested:,} tested, {len(all_combos):,} raw")
-    print_ram("(after 2-stage)")
+    print_ram_fn("(after 2-stage)")
 
-    # Dedup: best per (trim_expr, final_expr, trim_pct)
     all_combos.sort(key=lambda c: c.get("expectancy", float('-inf')), reverse=True)
     seen = set()
     deduped = []
