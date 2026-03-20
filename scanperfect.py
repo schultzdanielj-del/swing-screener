@@ -852,7 +852,7 @@ class FlowchartCanvas(QWidget):
                 x, y, w, h = self._rects[nid]
                 # Vetting gets a thin header (just enough to click-collapse)
                 # Other nodes use the full base card height as header
-                header_h = 32 if nid in ("vetting", "examples") else self._nh
+                header_h = 32 if nid in ("vetting", "examples", "scan_tuning") else self._nh
                 widget.setGeometry(int(x + 1), int(y + header_h), int(w - 2), int(h - header_h - 1))
                 widget.setVisible(True)
                 widget.raise_()
@@ -1172,23 +1172,27 @@ class WorkspaceDetail(QFrame):
 
 
 class ScanTuningWorkspace(QFrame):
-    """Scan Tuning workspace: sliders to adjust setup/market aggressiveness,
-    refinement depth, WR floor, and management objective. SPY bubble chart
-    shows surviving signals as green/red bubbles sized by move_adr.
+    """Scan Tuning workspace with two tabs:
+      ENTRY — setup/market aggressiveness, refinement depth, WR floor
+      EXIT  — profit grinder exit expression selection, trim, management objective
+
+    Both tabs share the SPY bubble chart on the right.
 
     Data sources:
-      - ev_{setup}_*.json  — signals with quality_score, setup_score, market_score,
-                              predicted_wr, predicted_mfe, ev, killed_at_depth
-      - refinement_{setup}_*.json — depth_progression (condition sets per depth level)
+      - ev_{setup}_*.json  — signals with scores + killed_at_depth
+      - refinement_{setup}_*.json — depth_progression
+      - profit_{setup}.json — profit grinder results (exit tab)
     """
 
     def __init__(self, node_id="scan_tuning", parent=None):
         super().__init__(parent)
         self.node_id = node_id
         self._setup = "dtss"
-        self._ev_data = None        # full EV JSON
-        self._signals = []          # all signals from EV output
-        self._depth_progression = []  # from refinement output
+        self._tab = "entry"         # "entry" or "exit"
+        self._ev_data = None
+        self._signals = []
+        self._depth_progression = []
+        self._profit_data = None    # profit grinder output
         self._loaded_setup = None
 
         self.setStyleSheet(
@@ -1199,7 +1203,7 @@ class ScanTuningWorkspace(QFrame):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
-        # ── Top bar: stats summary ──
+        # ── Top bar: tab toggles + stats ──
         top_bar = QFrame()
         top_bar.setFixedHeight(32)
         top_bar.setStyleSheet(
@@ -1208,6 +1212,20 @@ class ScanTuningWorkspace(QFrame):
         tb_lay = QHBoxLayout(top_bar)
         tb_lay.setContentsMargins(12, 0, 12, 0)
         tb_lay.setSpacing(8)
+
+        # Tab toggle buttons
+        self._tab_btns = {}
+        for tab_key, tab_label in [("entry", "ENTRY"), ("exit", "EXIT")]:
+            btn = QPushButton(tab_label)
+            btn.setFixedHeight(22)
+            btn.setCheckable(True)
+            btn.setChecked(tab_key == "entry")
+            btn.clicked.connect(lambda checked, t=tab_key: self._set_tab(t))
+            tb_lay.addWidget(btn)
+            self._tab_btns[tab_key] = btn
+        self._update_tab_btn_styles()
+
+        tb_lay.addSpacing(12)
 
         self._stats_label = QLabel("No data loaded")
         self._stats_label.setStyleSheet(
@@ -1219,51 +1237,53 @@ class ScanTuningWorkspace(QFrame):
 
         lay.addWidget(top_bar)
 
-        # ── Main body: left sliders + right chart ──
+        # ── Main body: left panel (swappable) + right chart (shared) ──
         body = QWidget()
         body_lay = QHBoxLayout(body)
         body_lay.setContentsMargins(0, 0, 0, 0)
         body_lay.setSpacing(0)
 
-        # Left panel — slider controls (fixed width)
-        left_panel = QFrame()
-        left_panel.setFixedWidth(280)
-        left_panel.setStyleSheet(
+        # Left panel container — holds both entry and exit panels, only one visible
+        self._left_container = QWidget()
+        self._left_container.setFixedWidth(280)
+        left_stack = QVBoxLayout(self._left_container)
+        left_stack.setContentsMargins(0, 0, 0, 0)
+        left_stack.setSpacing(0)
+
+        # ── ENTRY panel ──
+        self._entry_panel = QFrame()
+        self._entry_panel.setStyleSheet(
             "QFrame { background:#050505; border-right:1px solid %s; }" % C["border"]
         )
-        left_lay = QVBoxLayout(left_panel)
-        left_lay.setContentsMargins(12, 12, 12, 12)
-        left_lay.setSpacing(16)
+        entry_lay = QVBoxLayout(self._entry_panel)
+        entry_lay.setContentsMargins(12, 12, 12, 12)
+        entry_lay.setSpacing(16)
 
-        # Slider section: Setup aggressiveness
-        left_lay.addWidget(self._make_section_label("SETUP FEATURES"))
+        entry_lay.addWidget(self._make_section_label("SETUP FEATURES"))
         self._setup_slider = self._make_slider()
-        left_lay.addWidget(self._setup_slider)
-        self._setup_val_label = self._make_value_label("0%")
-        left_lay.addWidget(self._setup_val_label)
+        entry_lay.addWidget(self._setup_slider)
+        self._setup_val_label = self._make_value_label("Off")
+        entry_lay.addWidget(self._setup_val_label)
 
-        # Slider section: Market aggressiveness
-        left_lay.addWidget(self._make_section_label("MARKET FEATURES"))
+        entry_lay.addWidget(self._make_section_label("MARKET FEATURES"))
         self._market_slider = self._make_slider()
-        left_lay.addWidget(self._market_slider)
-        self._market_val_label = self._make_value_label("0%")
-        left_lay.addWidget(self._market_val_label)
+        entry_lay.addWidget(self._market_slider)
+        self._market_val_label = self._make_value_label("Off")
+        entry_lay.addWidget(self._market_val_label)
 
-        # Slider section: Refinement depth
-        left_lay.addWidget(self._make_section_label("REFINEMENT DEPTH"))
+        entry_lay.addWidget(self._make_section_label("REFINEMENT DEPTH"))
         self._depth_slider = self._make_slider()
-        left_lay.addWidget(self._depth_slider)
+        entry_lay.addWidget(self._depth_slider)
         self._depth_val_label = self._make_value_label("max")
-        left_lay.addWidget(self._depth_val_label)
+        entry_lay.addWidget(self._depth_val_label)
 
-        # Slider section: WR floor
-        left_lay.addWidget(self._make_section_label("WIN RATE FLOOR"))
+        entry_lay.addWidget(self._make_section_label("WIN RATE FLOOR"))
         self._wr_slider = self._make_slider()
-        left_lay.addWidget(self._wr_slider)
-        self._wr_val_label = self._make_value_label("0%")
-        left_lay.addWidget(self._wr_val_label)
+        entry_lay.addWidget(self._wr_slider)
+        self._wr_val_label = self._make_value_label("Off")
+        entry_lay.addWidget(self._wr_val_label)
 
-        # Surviving signal count
+        # Surviving signal count (entry tab)
         self._surviving_label = QLabel("—")
         self._surviving_label.setStyleSheet(
             "font-family:'JetBrains Mono','Consolas',monospace; font-size:14px;"
@@ -1271,13 +1291,70 @@ class ScanTuningWorkspace(QFrame):
             "padding-top:12px;" % C["amber"]
         )
         self._surviving_label.setAlignment(Qt.AlignCenter)
-        left_lay.addWidget(self._surviving_label)
+        entry_lay.addWidget(self._surviving_label)
 
-        left_lay.addStretch()
+        entry_lay.addStretch()
+        left_stack.addWidget(self._entry_panel)
 
-        body_lay.addWidget(left_panel)
+        # ── EXIT panel ──
+        self._exit_panel = QFrame()
+        self._exit_panel.setStyleSheet(
+            "QFrame { background:#050505; border-right:1px solid %s; }" % C["border"]
+        )
+        exit_lay = QVBoxLayout(self._exit_panel)
+        exit_lay.setContentsMargins(12, 12, 12, 12)
+        exit_lay.setSpacing(16)
 
-        # Right panel — SPY bubble chart
+        exit_lay.addWidget(self._make_section_label("MANAGEMENT OBJECTIVE"))
+        # SQN vs Max Profit toggle
+        obj_row = QHBoxLayout()
+        obj_row.setSpacing(4)
+        self._obj_btns = {}
+        for obj_key, obj_label in [("sqn", "SQN"), ("max_profit", "MAX PROFIT")]:
+            btn = QPushButton(obj_label)
+            btn.setFixedHeight(22)
+            btn.setCheckable(True)
+            btn.setChecked(obj_key == "sqn")
+            btn.clicked.connect(lambda checked, o=obj_key: self._set_objective(o))
+            obj_row.addWidget(btn)
+            self._obj_btns[obj_key] = btn
+        exit_lay.addLayout(obj_row)
+        self._update_obj_btn_styles()
+
+        exit_lay.addWidget(self._make_section_label("EXIT EXPRESSION"))
+        self._exit_expr_label = QLabel("No profit grinder data")
+        self._exit_expr_label.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+            "color:%s; background:transparent; border:none; padding:4px 0;" % C["text_dim"]
+        )
+        self._exit_expr_label.setWordWrap(True)
+        exit_lay.addWidget(self._exit_expr_label)
+
+        exit_lay.addWidget(self._make_section_label("TRIM"))
+        self._trim_slider = self._make_slider()
+        self._trim_slider.setRange(0, 100)
+        self._trim_slider.setValue(0)
+        exit_lay.addWidget(self._trim_slider)
+        self._trim_val_label = self._make_value_label("Off")
+        exit_lay.addWidget(self._trim_val_label)
+
+        # Exit stats
+        self._exit_stats_label = QLabel("—")
+        self._exit_stats_label.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:14px;"
+            "font-weight:700; color:%s; background:transparent; border:none;"
+            "padding-top:12px;" % C["amber"]
+        )
+        self._exit_stats_label.setAlignment(Qt.AlignCenter)
+        exit_lay.addWidget(self._exit_stats_label)
+
+        exit_lay.addStretch()
+        left_stack.addWidget(self._exit_panel)
+        self._exit_panel.setVisible(False)
+
+        body_lay.addWidget(self._left_container)
+
+        # Right panel — SPY bubble chart (shared between tabs)
         right_panel = QFrame()
         right_panel.setStyleSheet(
             "QFrame { background:#000; }"
@@ -1292,11 +1369,62 @@ class ScanTuningWorkspace(QFrame):
 
         lay.addWidget(body, 1)
 
-        # Connect sliders
+        # Connect entry sliders
         self._setup_slider.valueChanged.connect(self._on_slider_changed)
         self._market_slider.valueChanged.connect(self._on_slider_changed)
         self._depth_slider.valueChanged.connect(self._on_slider_changed)
         self._wr_slider.valueChanged.connect(self._on_slider_changed)
+        self._trim_slider.valueChanged.connect(self._on_slider_changed)
+
+    # ── Tab switching ──
+    def _set_tab(self, tab):
+        if tab == self._tab:
+            return
+        self._tab = tab
+        self._entry_panel.setVisible(tab == "entry")
+        self._exit_panel.setVisible(tab == "exit")
+        self._update_tab_btn_styles()
+        self._apply_filters()
+
+    def _update_tab_btn_styles(self):
+        for key, btn in self._tab_btns.items():
+            active = key == self._tab
+            btn.setChecked(active)
+            if active:
+                btn.setStyleSheet(
+                    "QPushButton { background:%s; color:#000; border:1px solid %s;"
+                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+                    "font-weight:700; padding:2px 10px; }" % (C["amber"], C["amber"])
+                )
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background:transparent; color:%s; border:1px solid %s;"
+                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+                    "font-weight:600; padding:2px 10px; }"
+                    "QPushButton:hover { background:%s; color:%s; }" % (
+                        C["text_muted"], C["border"], C["surface2"], C["text"])
+                )
+
+    # ── Objective toggle ──
+    def _set_objective(self, obj):
+        for key, btn in self._obj_btns.items():
+            btn.setChecked(key == obj)
+        self._update_obj_btn_styles()
+
+    def _update_obj_btn_styles(self):
+        for key, btn in self._obj_btns.items():
+            active = btn.isChecked()
+            if active:
+                btn.setStyleSheet(
+                    "QPushButton { background:#222; color:#E0E0E0; border:none;"
+                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+                    "font-weight:700; padding:2px 8px; }")
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background:transparent; color:#555; border:none;"
+                    "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+                    "font-weight:500; padding:2px 8px; }"
+                    "QPushButton:hover { color:#888; }")
 
     # ── Event handling ──
     def mousePressEvent(self, ev):
@@ -1344,7 +1472,7 @@ class ScanTuningWorkspace(QFrame):
             self._load_data()
 
     def _load_data(self):
-        """Load EV output + refinement depth_progression."""
+        """Load EV output + refinement depth_progression + profit grinder output."""
         self._loaded_setup = self._setup
         setup = self._setup
         cache_dir = REPO_ROOT / "local_runner" / "cache"
@@ -1380,6 +1508,16 @@ class ScanTuningWorkspace(QFrame):
                 except Exception as e:
                     print(f"  ScanTuning: refinement load error: {e}")
 
+        # Load profit grinder output
+        self._profit_data = None
+        if cache_dir.exists():
+            profit_path = cache_dir / ("profit_%s.json" % setup)
+            if profit_path.exists():
+                try:
+                    self._profit_data = json.loads(profit_path.read_text())
+                except Exception as e:
+                    print(f"  ScanTuning: profit load error: {e}")
+
         # Configure depth slider range
         max_depth = len(self._depth_progression)
         if max_depth > 0:
@@ -1390,6 +1528,7 @@ class ScanTuningWorkspace(QFrame):
             self._depth_slider.setValue(100)
 
         self._update_stats()
+        self._update_exit_panel()
         self._spy_chart.load_spy()
         self._apply_filters()
 
@@ -1495,6 +1634,42 @@ class ScanTuningWorkspace(QFrame):
             parts.append("⚠ Re-run EV grinder for setup/market scores")
 
         self._stats_label.setText("  ·  ".join(parts))
+
+    def _update_exit_panel(self):
+        """Update exit tab with profit grinder data."""
+        if not self._profit_data:
+            self._exit_expr_label.setText("No profit grinder data — run Optimal Management first")
+            self._exit_stats_label.setText("—")
+            return
+
+        # Show top exit expression from stage 1
+        s1 = self._profit_data.get("stage_1", {})
+        top = s1.get("top_100", [])
+        if top:
+            best = top[0]
+            expr_name = best.get("expr_name", best.get("expression", "?"))
+            direction = best.get("direction", "?")
+            threshold = best.get("threshold", 0)
+            expectancy = best.get("expectancy", 0)
+            self._exit_expr_label.setText(
+                "%s %s %.4f\nExpectancy: %.3f ADR" % (expr_name, direction, threshold, expectancy)
+            )
+        else:
+            self._exit_expr_label.setText("No exit candidates found")
+
+        # Show stage 2 summary if available
+        s2 = self._profit_data.get("stage_2", {})
+        n_s2 = s2.get("n_candidates", 0)
+        n_beating = s2.get("n_beating_1stage", 0)
+        pop = self._profit_data.get("population", {})
+        n_total = pop.get("total", 0)
+
+        parts = ["%d signals" % n_total]
+        if n_s2 > 0:
+            parts.append("%d 2-stage combos" % n_s2)
+            if n_beating > 0:
+                parts.append("%d beat 1-stage" % n_beating)
+        self._exit_stats_label.setText("\n".join(parts))
 
 
 # ============================================================
