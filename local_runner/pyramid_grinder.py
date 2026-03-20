@@ -2431,36 +2431,33 @@ def _gather_raw_signal_clusters(setup_type):
     # ── Exit + classify on rightmost bars ──
 
     # Build cluster-to-example matching by date proximity.
-    # Two-pass approach:
-    #   Pass 1: strict containment (scan bar inside cluster) → compute forward_window
-    #   Pass 2: use forward_window as match distance for remaining examples
+    # The example has a hardcoded entry_date. The cluster has signal bars
+    # that fire BEFORE the entry. Match if the cluster's rightmost bar is
+    # within max_distance bars before the example's entry_date.
+    #
+    # Two-pass:
+    #   Pass 1: seed distance of 3 bars → compute forward_window
+    #   Pass 2: use forward_window as match distance for classification
 
-    def _match_cluster_to_example(cluster, max_distance=0):
+    def _match_cluster_to_example(cluster, max_distance=3):
         """Check if this cluster corresponds to a known example.
         Returns (is_example, entry_date, entry_bar_idx) or (False, None, None).
 
-        max_distance=0: containment only (scan bar must be inside cluster range).
-        max_distance>0: also match if entry_idx is within max_distance bars after rightmost.
+        Match if the cluster's rightmost bar is within max_distance bars
+        before the example's entry_date.
         """
         tk = cluster["ticker"]
         if tk not in example_date_lookup:
             return False, None, None
         rightmost_idx = cluster["rightmost"]["bar_idx"]
-        all_bar_idxs = [rightmost_idx] + [b["bar_idx"] for b in cluster.get("leftward", [])]
-        leftmost_idx = min(all_bar_idxs)
         date_map = _ticker_date_to_idx.get(tk, {})
         for entry_date in example_date_lookup[tk]:
             entry_idx = date_map.get(entry_date)
             if entry_idx is None:
                 continue
-            scan_idx = entry_idx - 1
-            if scan_idx < 0:
-                continue
-            # Check: is the scan bar inside this cluster?
-            if leftmost_idx <= scan_idx <= rightmost_idx:
-                return True, entry_date, entry_idx
-            # Check: is the entry bar within max_distance after cluster rightmost?
-            if max_distance > 0 and 0 < (entry_idx - rightmost_idx) <= max_distance:
+            # Cluster rightmost should be before entry_date, within max_distance
+            distance = entry_idx - rightmost_idx
+            if 0 < distance <= max_distance:
                 return True, entry_date, entry_idx
         return False, None, None
 
@@ -2490,7 +2487,7 @@ def _gather_raw_signal_clusters(setup_type):
         ticker = c["ticker"]
         bar_idx = c["rightmost"]["bar_idx"]
         all_bar_idxs = [bar_idx] + [b["bar_idx"] for b in c["leftward"]]
-        is_ex, entry_date, entry_bar_idx = _match_cluster_to_example(c, max_distance=0)
+        is_ex, entry_date, entry_bar_idx = _match_cluster_to_example(c, max_distance=3)
         if not is_ex:
             continue
         pass1_matched += 1
@@ -2500,36 +2497,36 @@ def _gather_raw_signal_clusters(setup_type):
         fwd_window_bars = entry_bar_idx - leftmost_bar
         example_fwd_windows.append(fwd_window_bars)
 
-        ex_scan_bar = entry_bar_idx - 1  # scan bar = day before entry
+        # Informational: measure exit distance from entry bar
+        pre_entry_bar = entry_bar_idx - 1  # bar before entry, for ADR measurement
         df = universe_cache.get(ticker)
-        if df is None or ex_scan_bar >= len(df) - 1:
+        if df is None or pre_entry_bar >= len(df) - 1:
             continue
         try:
             cached_dates, cached_data = expr_cache.get_ticker(ticker)
             if cached_dates is None or len(cached_dates) != len(df):
                 continue
-            # Informational: measure exit distance from scan bar
-            adr = float(np.mean(df["high"].values[max(0, ex_scan_bar-13):ex_scan_bar+1] - df["low"].values[max(0, ex_scan_bar-13):ex_scan_bar+1]))
+            adr = float(np.mean(df["high"].values[max(0, pre_entry_bar-13):pre_entry_bar+1] - df["low"].values[max(0, pre_entry_bar-13):pre_entry_bar+1]))
             if adr <= 0 or np.isnan(adr):
                 continue
-            sc = float(df["close"].values[ex_scan_bar])
-            fwd = min(120, len(df) - ex_scan_bar - 1)
+            sc = float(df["close"].values[pre_entry_bar])
+            fwd = min(120, len(df) - pre_entry_bar - 1)
             if fwd < 5:
                 continue
             es = cached_data[:, exit_col]
             for f_i in range(1, fwd + 1):
-                v = es[ex_scan_bar + f_i]
+                v = es[pre_entry_bar + f_i]
                 if np.isnan(v):
                     continue
                 if exit_dir in (">=", "above") and v >= exit_thresh:
-                    ec = float(df["close"].values[ex_scan_bar + f_i])
+                    ec = float(df["close"].values[pre_entry_bar + f_i])
                     move = (sc - ec) / adr if direction == "short" else (ec - sc) / adr
                     example_adrs.append(move)
                     example_exit_bars.append(f_i)
                     print(f"    {ticker}: {f_i} bars, {move:.1f} ADR, fwd_window={fwd_window_bars}")
                     break
                 elif exit_dir in ("<=", "below") and v <= exit_thresh:
-                    ec = float(df["close"].values[ex_scan_bar + f_i])
+                    ec = float(df["close"].values[pre_entry_bar + f_i])
                     move = (sc - ec) / adr if direction == "short" else (ec - sc) / adr
                     example_adrs.append(move)
                     example_exit_bars.append(f_i)
