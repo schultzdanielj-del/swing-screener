@@ -403,9 +403,12 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 1. ~~**Localize everything**~~ — ✅ DONE. See `LOCALIZE.md`.
 
 ### Grinder Improvements
-2. **Depth progression output (refinement grinder)** — save level-by-level best path and cluster count in refinement JSON. Allows post-hoc condition threshold tuning without re-running via Settings Lock UI.
+2. ~~**Depth progression output (refinement grinder)**~~ — ✅ DONE. Beam search saves condition set + cluster counts + WR at each depth level in `depth_progression` key of refinement JSON. Settings Lock slider reads this.
 3. **Multi-run consensus (signal grinder)** — the beam search is non-deterministic: different runs find different condition sets with wildly different signal counts. Run N times (e.g. 5-10), keep conditions that appear in most runs. A condition in 8/10 runs is robust; a condition in 1/10 was a fluke. This stabilizes the foundation the entire downstream pipeline depends on. Signal grind margin (5%) is a search parameter and stays fixed — it is NOT tunable post-hoc (attempted and reverted 2026-03-16, produced worse results).
 4. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
+
+### Infrastructure
+5. **Remove Railway from nightly data flow** — currently yfinance → Railway → local (round trip). Should be yfinance → local directly, Railway gets a backup copy. The nightly refresh should not depend on Railway for any compute or data. Railway is seed vault only. Affects: `nightly.py` steps 1-3, `cache_builder.py` (both daily and 5yr), and the yfinance append logic in `server.py`. The 5yr cache builder had `LIMIT 1260` that dropped old bars on every rebuild, causing OHLCV/expr cache date drift — fixed 2026-03-20 by removing the limit.
 
 ### Phase 3 — EV Grinder
 5. ~~**EV Grinder increments 5-6**~~ — ✅ DONE.

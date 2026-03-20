@@ -178,16 +178,15 @@ def load_cache():
 # ══════════════════════════════════════════════════════════════
 
 def fetch_one_ticker_5yr(ticker):
-    """Fetch 5yr OHLCV for a single ticker. Uses pagination if needed."""
+    """Fetch ALL OHLCV for a single ticker from Railway. No bar limit."""
     try:
-        # Railway DB has all data — just fetch with higher limit
         sql = (
             f"SELECT date, open, high, low, close, volume "
             f"FROM universe_ohlcv WHERE ticker = '{ticker}' "
-            f"ORDER BY date DESC LIMIT {LOOKBACK_5YR}"
+            f"ORDER BY date DESC"
         )
         r = requests.post(f"{API_BASE}/api/query/bulk", json={
-            "sql": sql, "limit": LOOKBACK_5YR
+            "sql": sql, "limit": 10000
         }, timeout=60)
         if r.status_code != 200:
             return ticker, None
