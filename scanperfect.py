@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QComboBox, QScrollArea,
     QPlainTextEdit, QFrame, QCheckBox, QSizePolicy,
     QListWidget, QListWidgetItem, QAbstractItemView,
-    QGridLayout, QLineEdit, QTextEdit,
+    QGridLayout, QLineEdit, QTextEdit, QSlider,
 )
 from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment, QRectF, QPointF
 from PySide6.QtGui import QFont, QFontDatabase, QColor, QPainter, QPen, QLinearGradient, QBrush, QPainterPath
@@ -1155,7 +1155,7 @@ class FlowchartCanvas(QWidget):
 
 
 class WorkspaceDetail(QFrame):
-    """Expandable workspace for DO nodes. Placeholder — title shown by flowchart header."""
+    """Expandable workspace for DO nodes. Generic placeholder."""
 
     def __init__(self, node_id, parent=None):
         super().__init__(parent)
@@ -1163,22 +1163,336 @@ class WorkspaceDetail(QFrame):
         self.setStyleSheet(
             "WorkspaceDetail { background:%s; border:1px solid %s; }" % (C["surface"], C["border"])
         )
-
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 16, 20, 16)
-        lay.setSpacing(10)
-
-        descs = {
-            "scan_tuning": "Quality score + WR threshold sliders — not yet built",
-        }
-
-        desc = QLabel(descs.get(node_id, ""))
-        desc.setStyleSheet(
-            "font-size:12px; color:%s; background:transparent; border:none;" % C["text_muted"]
-        )
-        lay.addWidget(desc)
-
         lay.addStretch()
+
+    def set_setup(self, setup):
+        pass
+
+
+class ScanTuningWorkspace(QFrame):
+    """Scan Tuning workspace: sliders to adjust setup/market aggressiveness,
+    refinement depth, WR floor, and management objective. SPY bubble chart
+    shows surviving signals as green/red bubbles sized by move_adr.
+
+    Data sources:
+      - ev_{setup}_*.json  — signals with quality_score, setup_score, market_score,
+                              predicted_wr, predicted_mfe, ev, killed_at_depth
+      - refinement_{setup}_*.json — depth_progression (condition sets per depth level)
+    """
+
+    def __init__(self, node_id="scan_tuning", parent=None):
+        super().__init__(parent)
+        self.node_id = node_id
+        self._setup = "dtss"
+        self._ev_data = None        # full EV JSON
+        self._signals = []          # all signals from EV output
+        self._depth_progression = []  # from refinement output
+        self._loaded_setup = None
+
+        self.setStyleSheet(
+            "ScanTuningWorkspace { background:%s; border:1px solid %s; }" % (C["surface"], C["border"])
+        )
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        # ── Top bar: stats summary ──
+        top_bar = QFrame()
+        top_bar.setFixedHeight(32)
+        top_bar.setStyleSheet(
+            "QFrame { background:#0A0A0A; border-bottom:1px solid %s; }" % C["border"]
+        )
+        tb_lay = QHBoxLayout(top_bar)
+        tb_lay.setContentsMargins(12, 0, 12, 0)
+        tb_lay.setSpacing(8)
+
+        self._stats_label = QLabel("No data loaded")
+        self._stats_label.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
+            "color:%s; background:transparent; border:none;" % C["text_dim"]
+        )
+        tb_lay.addWidget(self._stats_label)
+        tb_lay.addStretch()
+
+        lay.addWidget(top_bar)
+
+        # ── Main body: left sliders + right chart ──
+        body = QWidget()
+        body_lay = QHBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(0)
+
+        # Left panel — slider controls (fixed width)
+        left_panel = QFrame()
+        left_panel.setFixedWidth(280)
+        left_panel.setStyleSheet(
+            "QFrame { background:#050505; border-right:1px solid %s; }" % C["border"]
+        )
+        left_lay = QVBoxLayout(left_panel)
+        left_lay.setContentsMargins(12, 12, 12, 12)
+        left_lay.setSpacing(16)
+
+        # Slider section: Setup aggressiveness
+        left_lay.addWidget(self._make_section_label("SETUP FEATURES"))
+        self._setup_slider = self._make_slider()
+        left_lay.addWidget(self._setup_slider)
+        self._setup_val_label = self._make_value_label("0%")
+        left_lay.addWidget(self._setup_val_label)
+
+        # Slider section: Market aggressiveness
+        left_lay.addWidget(self._make_section_label("MARKET FEATURES"))
+        self._market_slider = self._make_slider()
+        left_lay.addWidget(self._market_slider)
+        self._market_val_label = self._make_value_label("0%")
+        left_lay.addWidget(self._market_val_label)
+
+        # Slider section: Refinement depth
+        left_lay.addWidget(self._make_section_label("REFINEMENT DEPTH"))
+        self._depth_slider = self._make_slider()
+        left_lay.addWidget(self._depth_slider)
+        self._depth_val_label = self._make_value_label("max")
+        left_lay.addWidget(self._depth_val_label)
+
+        # Slider section: WR floor
+        left_lay.addWidget(self._make_section_label("WIN RATE FLOOR"))
+        self._wr_slider = self._make_slider()
+        left_lay.addWidget(self._wr_slider)
+        self._wr_val_label = self._make_value_label("0%")
+        left_lay.addWidget(self._wr_val_label)
+
+        # Surviving signal count
+        self._surviving_label = QLabel("—")
+        self._surviving_label.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:14px;"
+            "font-weight:700; color:%s; background:transparent; border:none;"
+            "padding-top:12px;" % C["amber"]
+        )
+        self._surviving_label.setAlignment(Qt.AlignCenter)
+        left_lay.addWidget(self._surviving_label)
+
+        left_lay.addStretch()
+
+        body_lay.addWidget(left_panel)
+
+        # Right panel — SPY bubble chart placeholder
+        right_panel = QFrame()
+        right_panel.setStyleSheet(
+            "QFrame { background:#000; }"
+        )
+        right_lay = QVBoxLayout(right_panel)
+        right_lay.setContentsMargins(12, 12, 12, 12)
+
+        self._chart_placeholder = QLabel("SPY bubble chart — wired in next increment")
+        self._chart_placeholder.setStyleSheet(
+            "font-size:13px; color:%s; background:transparent; border:none;" % C["text_muted"]
+        )
+        self._chart_placeholder.setAlignment(Qt.AlignCenter)
+        right_lay.addWidget(self._chart_placeholder)
+
+        body_lay.addWidget(right_panel, 1)
+
+        lay.addWidget(body, 1)
+
+        # Connect sliders
+        self._setup_slider.valueChanged.connect(self._on_slider_changed)
+        self._market_slider.valueChanged.connect(self._on_slider_changed)
+        self._depth_slider.valueChanged.connect(self._on_slider_changed)
+        self._wr_slider.valueChanged.connect(self._on_slider_changed)
+
+    # ── Helper: create styled section labels ──
+    def _make_section_label(self, text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
+            "font-weight:700; color:%s; background:transparent; border:none;"
+            "letter-spacing:1px;" % C["text_muted"]
+        )
+        return lbl
+
+    def _make_slider(self):
+        s = QSlider(Qt.Horizontal)
+        s.setRange(0, 100)
+        s.setValue(0)
+        s.setFixedHeight(20)
+        s.setStyleSheet(
+            "QSlider::groove:horizontal { background:#1A1A1A; height:4px; border-radius:2px; }"
+            "QSlider::handle:horizontal { background:%s; width:12px; margin:-4px 0; border-radius:6px; }"
+            "QSlider::sub-page:horizontal { background:%s; border-radius:2px; }" % (
+                C["amber"], "#3d3818")
+        )
+        return s
+
+    def _make_value_label(self, text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
+            "color:%s; background:transparent; border:none;" % C["text"]
+        )
+        lbl.setAlignment(Qt.AlignCenter)
+        return lbl
+
+    # ── Data loading ──
+    def set_setup(self, setup):
+        self._setup = setup
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        if not self._signals or self._loaded_setup != self._setup:
+            self._load_data()
+
+    def _load_data(self):
+        """Load EV output + refinement depth_progression."""
+        self._loaded_setup = self._setup
+        setup = self._setup
+        cache_dir = REPO_ROOT / "local_runner" / "cache"
+
+        # Load EV data
+        self._ev_data = None
+        self._signals = []
+        if cache_dir.exists():
+            ev_files = sorted(
+                [f for f in cache_dir.iterdir()
+                 if f.name.startswith("ev_%s_" % setup) and f.suffix == ".json"],
+                key=lambda f: f.stat().st_mtime, reverse=True
+            )
+            if ev_files:
+                try:
+                    self._ev_data = json.loads(ev_files[0].read_text())
+                    self._signals = self._ev_data.get("signals", [])
+                except Exception as e:
+                    print(f"  ScanTuning: EV load error: {e}")
+
+        # Load depth progression from refinement output
+        self._depth_progression = []
+        if cache_dir.exists():
+            ref_files = sorted(
+                [f for f in cache_dir.iterdir()
+                 if f.name.startswith("refinement_%s_" % setup) and f.suffix == ".json"],
+                key=lambda f: f.stat().st_mtime, reverse=True
+            )
+            if ref_files:
+                try:
+                    ref_data = json.loads(ref_files[0].read_text())
+                    self._depth_progression = ref_data.get("depth_progression", [])
+                except Exception as e:
+                    print(f"  ScanTuning: refinement load error: {e}")
+
+        # Configure depth slider range
+        max_depth = len(self._depth_progression)
+        if max_depth > 0:
+            self._depth_slider.setRange(0, max_depth)
+            self._depth_slider.setValue(max_depth)
+        else:
+            self._depth_slider.setRange(0, 100)
+            self._depth_slider.setValue(100)
+
+        self._update_stats()
+        self._apply_filters()
+
+    # ── Filtering ──
+    def _on_slider_changed(self, _value=None):
+        self._apply_filters()
+
+    def _apply_filters(self):
+        """Recompute surviving signals based on current slider positions."""
+        if not self._signals:
+            self._surviving_label.setText("No signals")
+            self._update_slider_labels()
+            return
+
+        setup_floor = self._setup_slider.value()     # 0-100: percentile floor
+        market_floor = self._market_slider.value()    # 0-100: percentile floor
+        depth_val = self._depth_slider.value()        # 0-max_depth
+        wr_floor = self._wr_slider.value() / 100.0    # 0-1.0
+
+        surviving = []
+        for s in self._signals:
+            # Depth filter: killed_at_depth = depth level where this cluster was
+            # fully eliminated. If slider depth >= kad, cluster is dead — skip signal.
+            # kad=None means winner or never-killed loser — always survives depth filter.
+            kad = s.get("killed_at_depth")
+            if kad is not None and depth_val >= kad:
+                continue  # cluster eliminated at this depth
+
+            # Setup score floor
+            ss = s.get("setup_score", 50.0)
+            if ss < setup_floor:
+                continue
+
+            # Market score floor
+            ms = s.get("market_score", 50.0)
+            if ms < market_floor:
+                continue
+
+            # WR floor
+            pwr = s.get("predicted_wr", 0.5)
+            if pwr < wr_floor:
+                continue
+
+            surviving.append(s)
+
+        n_win = sum(1 for s in surviving if "WIN" in s.get("classification", ""))
+        n_lose = sum(1 for s in surviving if "LOSE" in s.get("classification", "").upper()
+                     or "LOSS" in s.get("classification", "").upper())
+        n_total = len(surviving)
+        wr = n_win / n_total if n_total > 0 else 0
+
+        self._surviving_label.setText(
+            "%d signals\n%d W / %d L\n%.0f%% WR" % (n_total, n_win, n_lose, wr * 100)
+        )
+
+        self._update_slider_labels()
+
+    def _update_slider_labels(self):
+        """Update the value labels under each slider."""
+        self._setup_val_label.setText(
+            "Floor: %d%%" % self._setup_slider.value() if self._setup_slider.value() > 0
+            else "Off"
+        )
+        self._market_val_label.setText(
+            "Floor: %d%%" % self._market_slider.value() if self._market_slider.value() > 0
+            else "Off"
+        )
+        dp = self._depth_slider
+        if dp.value() == dp.maximum():
+            self._depth_val_label.setText("Max depth (%d)" % dp.maximum())
+        else:
+            self._depth_val_label.setText("Depth: %d / %d" % (dp.value(), dp.maximum()))
+        self._wr_val_label.setText(
+            "Floor: %d%%" % self._wr_slider.value() if self._wr_slider.value() > 0
+            else "Off"
+        )
+
+    def _update_stats(self):
+        """Update the top stats bar with data summary."""
+        if not self._signals:
+            self._stats_label.setText("No EV data — run Correlative Targeting first")
+            return
+        n = len(self._signals)
+        n_w = sum(1 for s in self._signals if "WIN" in s.get("classification", ""))
+        n_l = n - n_w
+
+        # Check for component scores
+        has_setup = any(s.get("setup_score") is not None for s in self._signals[:5])
+        has_market = any(s.get("market_score") is not None for s in self._signals[:5])
+        has_depth = len(self._depth_progression) > 0
+
+        parts = ["%d signals (%d W / %d L)" % (n, n_w, n_l)]
+        if has_setup:
+            ss_vals = [s.get("setup_score", 50) for s in self._signals]
+            parts.append("Setup: %.0f–%.0f" % (min(ss_vals), max(ss_vals)))
+        if has_market:
+            ms_vals = [s.get("market_score", 50) for s in self._signals]
+            parts.append("Market: %.0f–%.0f" % (min(ms_vals), max(ms_vals)))
+        if has_depth:
+            parts.append("Depth: %d levels" % len(self._depth_progression))
+        if not has_setup and not has_market:
+            parts.append("⚠ Re-run EV grinder for setup/market scores")
+
+        self._stats_label.setText("  ·  ".join(parts))
 
 
 # ============================================================
@@ -3248,6 +3562,8 @@ class PipelineTab(QWidget):
                     det = VettingWorkspace(nd["id"])
                 elif nd["id"] == "examples":
                     det = ExamplesWorkspace(nd["id"])
+                elif nd["id"] == "scan_tuning":
+                    det = ScanTuningWorkspace(nd["id"])
                 else:
                     det = WorkspaceDetail(nd["id"])
                 self._canvas.add_detail_widget(nd["id"], det)
