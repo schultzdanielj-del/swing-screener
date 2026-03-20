@@ -36,7 +36,7 @@ Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds t
 - **Examples:** 66 (65 with valid scan bars in clusters, out of ~365 winner clusters)
 - **Causative (Phase 2):** Complete — 87 signal conditions + 100 refinement conditions, 182 combined, 78% WR, median winner 6.4 ADR
 - **Correlative (Phase 3):** Complete — EV Grinder inc 1-6 done. 1,816 pre / 1,940 post features. D1→D10 spread +45pp WR. RMSE 0.090
-- **Profit (Phase 4):** Not started
+- **Profit (Phase 4):** ✅ Inc 1-4 done (835 1-stage, 7703 2-stage, ~12 min)
 - **Live Watchlist (Phase 5):** Not built
 
 ### Native Desktop UI (Phase 6):

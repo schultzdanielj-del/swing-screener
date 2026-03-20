@@ -195,7 +195,7 @@ This is distinct from the exit grinder (Phase 2b), which found one expression co
 
 - Input: EV-scored signals + entry candle scores + vetting decisions (SQLite) + expression cache + 5yr OHLCV
 - Output: Exit expression candidates + weighted stats + equity curves + per-trade detail
-- Script: `scripts/profit_grinder.py` (full rewrite in progress)
+- Scripts: `scripts/profit_grinder.py` + `scripts/profit_grinder_2stage.py` (Inc 1-4 COMPLETE)
 - Saves to `local_runner/cache/profit_{setup}_{timestamp}.json`, mirrors to Railway
 
 ---

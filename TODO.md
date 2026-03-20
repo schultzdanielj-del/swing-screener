@@ -1,4 +1,4 @@
-# ScanPerfect Pipeline (2026-03-20, Profit Grinder Inc 1-3 done)
+# ScanPerfect Pipeline (2026-03-20, Profit Grinder Inc 1-4 done)
 
 ## The Goal
 
@@ -298,7 +298,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
 | Phase 3: EV Grinder | ✅ Complete (inc 1-6) | 1,816 pre / 1,940 post features. Continuous percentile scoring, category-balanced weighting (50/50). Calibration: pre D1=19.1%→D10=64.1%, post D1=56.5%→D10=93.5%. RMSE 0.090 post. 247 genuine features, 1,569 redundant. File: `ev_dtss_inc6_*.json` (4.4MB) |
-| Phase 4: Profit Optimization | ✅ Inc 1-3 done | 1-stage: 835 candidates (top: slope_xavgc21_off7_adr14 below -1.1675, Exp=6.730). 2-stage: 7,703 trim combos beat 1-stage (marginal: best +0.038 ADR). ProcessPoolExecutor+mmap, ~12 min total. Inc 4 (save output) NEXT. |
+| Phase 4: Profit Optimization | ✅ Inc 1-4 done | 835 1-stage, 7,703 2-stage combos. Top: slope_xavgc21_off7_adr14 below -1.1675 (Exp=6.730). Output: profit_dtss_20260320_133906.json (0.3 MB). ~12 min total. |
 | Phase 5: Live Watchlist | ⏸ Not built | |
 
 ### Refinement Grind Result (2026-03-13)
@@ -362,7 +362,8 @@ This is the ultimate use of the system — find the optimal entry and exit condi
   - Finding: 2-stage trim adds marginal value for DTSS. Shorts are smash-and-grab — the exit fires when the move is done, trimming earlier just captures less.
   - Runtime: 7.9 min (12 workers)
 - **Total runtime:** 11.8 min (was 2+ hours before ProcessPoolExecutor + mmap optimization)
-- File: not yet saved (Inc 4 TODO)
+- File: `profit_dtss_20260320_133906.json` (0.3 MB, mirrored to Railway)
+- Latest pointer: `profit_dtss.json`
 ### Regime Model Result (2026-03-13)
 - 256 instruments × 15,805 expressions → 3M+ features tested → 50 selected (deduplicated)
 - Runs on both pre-refinement (893 clusters) and post-refinement (467 clusters)
@@ -395,8 +396,8 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ## Immediate Tasks
 
-### NEXT: Profit Grinder Inc 4 (Save Output)
-0. **Profit Grinder Inc 4** — Save results to JSON (timestamped + latest pointer), per-trade detail for top 100, mirror to Railway. Inc 1-3 complete: 1-stage brute-force (12,878 exprs, ~3 min), 2-stage trim search (top 300 exprs × 50 final exits, ~8 min). ProcessPoolExecutor + numpy mmap for real multi-core parallelism. DTSS finding: 2-stage trim adds marginal value (+0.038 ADR best) — shorts are smash-and-grab, trims help more on longs.
+### NEXT: Phase 5 (Live Watchlist) or Vet Winner Pile
+0. **Profit Grinder** — ✅ COMPLETE (Inc 1-4). 1-stage brute-force (12,878 exprs, ~3 min), 2-stage trim search (top 300 exprs × 50 final exits, ~8 min). ProcessPoolExecutor + numpy mmap. Output saved to profit_{setup}_{ts}.json + Railway mirror. DTSS finding: 2-stage trim adds marginal value for shorts (+0.038 ADR best).
 
 ### Localization
 1. ~~**Localize everything**~~ — ✅ DONE. See `LOCALIZE.md`.

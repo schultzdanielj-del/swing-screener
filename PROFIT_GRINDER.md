@@ -1,7 +1,7 @@
 # Profit Grinder — Phase 4: Exit Optimization
 
 **Created:** 2026-03-19
-**Status:** Spec locked. Script needs full rewrite.
+**Status:** Inc 1-4 COMPLETE. Script fully rewritten.
 **Script:** `scripts/profit_grinder.py`
 **Pipeline step:** `profit_grind` (Step 7 in PIPELINE_V2.md)
 
@@ -291,22 +291,29 @@ Computed for every candidate that passes the hard gate (100% trigger on examples
 
 ## Parallelization
 
-- Expression grinding parallelized across CPU cores via ProcessPoolExecutor
-- Each worker gets a chunk of expression columns to test
-- Forward matrices loaded once per signal, shared across workers (copy-on-write via fork on Linux, explicit passing on Windows)
+- Both stages use ProcessPoolExecutor (separate processes, real multi-core parallelism)
+- 3D expression array (nv × exit_horizon × n_exprs) saved to temp .npy file
+- Workers open via np.load(mmap_mode='r') — zero-copy memory-mapped access
+- Small arrays (close_2d, weights, masks, final exit profiles) serialized to workers via pickle
+- Default 12 workers (capped to leave headroom for OS)
+- ThreadPoolExecutor does NOT work — GIL prevents parallelism for CPU-bound numpy loops
 - No API calls, no network I/O — all local cache reads
-- OHLCV cache freed after building trade arrays
 
 ---
 
-## Runtime Estimate
+## Runtime (actual, DTSS 2026-03-20)
 
-- 364 signals × ~12,000 expressions (after boolean exclusion) × ~50 thresholds × 2 directions = ~1.2B threshold tests for 1-stage
-- Old script did ~12K expressions × 50 thresholds × 2 dirs on 65 examples in ~5 min
-- 364 signals ≈ 5.6× more data per test, but numpy vectorizes across signals
-- Estimated: 10-20 min for 1-stage on 16 cores
-- 2-stage and 3-stage are combinatorial on top — need the 1-stage results to narrow the candidate set before testing multi-stage combos
-- Total: possibly 20-40 min depending on how aggressively we prune between stages
+- **1-stage:** 3.3 min (12 ProcessPoolExecutor workers, i5-12600k)
+  - 12,878 expressions × ~100 thresholds × 2 dirs = 1.1M tested
+  - Already-true-at-entry filter killed 92% before stats
+  - 20,319 raw → 835 after dedup
+- **2-stage:** 7.9 min (12 workers)
+  - Top 300 1-stage expressions × 50 final exits × ~100 thresholds × 2 dirs × 3 trim%
+  - 2.9M tested, 46,054 raw → 7,753 after dedup
+  - Workers compute expectancy only — full stats on top 500 after
+- **Total:** ~12 min including data loading
+- **Critical:** Uses ProcessPoolExecutor (separate processes), NOT ThreadPoolExecutor (threads share GIL, no speedup for CPU-bound numpy work)
+- **Memory:** ~2.25 GB for 3D expression array (364 × 120 × 12,878 float32), saved to temp .npy, workers open via np.load(mmap_mode='r')
 
 ---
 
@@ -335,7 +342,7 @@ This cascading approach keeps the search tractable while still exploring the ful
 
 ## Build Increments
 
-### Increment 1: Data Loading + Signal Population + Weighting + Forward Expression Matrices ⬜
+### Increment 1: Data Loading + Signal Population + Weighting + Forward Expression Matrices ✅
 
 **What it does:**
 - Load EV grinder output (latest `ev_{setup}_*.json`) — extract winner signals (move_adr not null)
@@ -357,7 +364,7 @@ This cascading approach keeps the search tractable while still exploring the ful
 
 ---
 
-### Increment 2: 1-Stage Expression Grind ⬜
+### Increment 2: 1-Stage Expression Grind ✅
 
 **What it does:**
 - For each non-excluded expression column, gather all forward-window values across all signals
@@ -375,7 +382,7 @@ This cascading approach keeps the search tractable while still exploring the ful
 
 ---
 
-### Increment 3: Multi-Stage (2-Stage, 3-Stage) Cascading Search ⬜
+### Increment 3: 2-Stage Trim Search ✅ (3-stage shelved)
 
 **What it does:**
 - Take top N candidates from 1-stage results (e.g., top 200 by weighted SQN or weighted median capture — TBD which metric to rank by for the cascade)
@@ -389,7 +396,7 @@ This cascading approach keeps the search tractable while still exploring the ful
 
 ---
 
-### Increment 4: Output Packaging + Trade Detail + Save ⬜
+### Increment 4: Output Packaging + Save ✅
 
 **What it does:**
 - Package results per the output structure in the spec: signal metadata array, stage_1/stage_2/stage_3 result blocks
