@@ -1,4 +1,4 @@
-# ScanPerfect Pipeline (2026-03-19, Profit Grinder rewrite in progress)
+# ScanPerfect Pipeline (2026-03-20, Profit Grinder Inc 1-3 done)
 
 ## The Goal
 
@@ -230,13 +230,27 @@ Finds the optimal TA-expression-based exit conditions for maximizing trade profi
 
 **No trigger gate on unvetted winners.** If the exit doesn't trigger on an unvetted winner, that signal is scored as a 1-ADR loss at its `entry_candle_score` weight. The weighted scoring self-regulates: missing high-score signals (charts you'd trade) is heavily penalized, missing low-score signals (charts you'd skip) is negligible. No bins, no hardcoded thresholds — fully continuous, self-referencing.
 
-**Multi-stage trim:** Searches for 1-stage (full exit), 2-stage (trim + exit), and 3-stage (trim + trim + exit) strategies. Cascading search keeps compute tractable.
+**Multi-stage trim:** 1-stage (full exit) + 2-stage (optional trim + exit). 3-stage shelved for now. Trim is optional — if it doesn't fire before the final exit, full position rides to final exit (no penalty). Trim percentages: 33%, 50%, 67%.
+
+**Two distinct forward windows:**
+- `entry_window`: how far from the signal bar the refinement grinder looked for entry_high (from cluster file, 6 bars for DTSS)
+- `exit_horizon`: how far to search for exit expressions (default 120 bars)
+
+**Entry bar detection (deterministic, no price matching):**
+- Examples: actual entry_date from SQLite DB → find in OHLCV date index → compute offset
+- Non-examples: argmax of highs within entry_window bars (replicates refinement grinder)
+
+**Already-true-at-entry filter:** If the exit expression condition is already satisfied at the entry_high bar, that signal is treated as non-triggering. Killed 92% of candidates in DTSS.
+
+**Parallelization:** ProcessPoolExecutor + numpy mmap. 3D expression array (364 × 120 × 12,878) saved to temp .npy, workers open with `np.load(mmap_mode='r')`. Saturates all CPU cores. Threading does NOT work (GIL prevents real parallelism for CPU-bound numpy loops).
+
+**2-stage optimization:** Only top 300 1-stage expressions tested as trim candidates (not all 12,878). Thresholds computed once per expression. Workers compute expectancy only — full stats on top 500 after all workers finish.
 
 **All stats weighted by `entry_candle_score`.** SQN, expectancy, equity curve, drawdown — all reflect performance on signals you'd actually trade.
 
 - Input: EV-scored signal set + entry candle scores + vetting decisions (SQLite) + expression cache + 5yr OHLCV
 - Output: Exit expression candidates + weighted stats + equity curves + per-trade detail
-- Script: `profit_grinder.py` (full rewrite in progress — current version is wrong ADR-level approach)
+- Scripts: `profit_grinder.py` + `profit_grinder_2stage.py`
 - See `PROFIT_GRINDER.md` for full spec
 
 ---
@@ -284,7 +298,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
 | Phase 3: EV Grinder | ✅ Complete (inc 1-6) | 1,816 pre / 1,940 post features. Continuous percentile scoring, category-balanced weighting (50/50). Calibration: pre D1=19.1%→D10=64.1%, post D1=56.5%→D10=93.5%. RMSE 0.090 post. 247 genuine features, 1,569 redundant. File: `ev_dtss_inc6_*.json` (4.4MB) |
-| Phase 4: Profit Optimization | 🔄 Rewrite in progress | Current script is wrong (ADR price levels). Full rewrite to TA-expression-based exits with entry_candle_score weighting. See PROFIT_GRINDER.md |
+| Phase 4: Profit Optimization | ✅ Inc 1-3 done | 1-stage: 835 candidates (top: slope_xavgc21_off7_adr14 below -1.1675, Exp=6.730). 2-stage: 7,703 trim combos beat 1-stage (marginal: best +0.038 ADR). ProcessPoolExecutor+mmap, ~12 min total. Inc 4 (save output) NEXT. |
 | Phase 5: Live Watchlist | ⏸ Not built | |
 
 ### Refinement Grind Result (2026-03-13)
@@ -331,6 +345,24 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - Redundancy: 247 features both, 1,569 pre-only (refinement captured), 1,693 post-only
 - File: `ev_dtss_inc6_20260315_221658.json`
 
+
+### Profit Grinder Result (2026-03-20)
+- **1-stage:** 12,878 expressions × ~100 thresholds × 2 dirs = 1,104,338 tested
+  - Already-true-at-entry filter killed 92% (1,020,982)
+  - Hard gate fails: 63,037
+  - Raw candidates: 20,319 → dedup → 835
+  - Top: `slope_xavgc21_off7_adr14 below -1.1675` (Exp=6.730, Capture=1.00±0.13, Bars med=20)
+  - All top 10 are "below" direction — DTSS exits when price drops hard below moving averages
+  - Runtime: 3.3 min (12 ProcessPoolExecutor workers)
+- **2-stage:** Top 300 trim exprs × 50 final exits × ~100 thresholds × 2 dirs × 3 trim%
+  - 2,864,500 tested, 46,054 raw combos → dedup → 7,753
+  - 7,703 combos beat their 1-stage final exit
+  - Best: `slope_xavgc21_off3_adr14 below` trim 67% + `slope_xavgc21_off7_adr14 below` final (Exp=6.767, +0.038 vs 1-stage)
+  - Same expression family (slope of 21-day XMA), just shorter lookback offset (3 vs 7) fires earlier
+  - Finding: 2-stage trim adds marginal value for DTSS. Shorts are smash-and-grab — the exit fires when the move is done, trimming earlier just captures less.
+  - Runtime: 7.9 min (12 workers)
+- **Total runtime:** 11.8 min (was 2+ hours before ProcessPoolExecutor + mmap optimization)
+- File: not yet saved (Inc 4 TODO)
 ### Regime Model Result (2026-03-13)
 - 256 instruments × 15,805 expressions → 3M+ features tested → 50 selected (deduplicated)
 - Runs on both pre-refinement (893 clusters) and post-refinement (467 clusters)
@@ -363,8 +395,8 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ## Immediate Tasks
 
-### NEXT: Profit Grinder Rewrite
-0. **Profit Grinder full rewrite** — 🔄 IN PROGRESS. Current script is ADR price-level based (wrong). Rewriting to TA-expression-based exits with entry_candle_score weighting. See `PROFIT_GRINDER.md` for spec.
+### NEXT: Profit Grinder Inc 4 (Save Output)
+0. **Profit Grinder Inc 4** — Save results to JSON (timestamped + latest pointer), per-trade detail for top 100, mirror to Railway. Inc 1-3 complete: 1-stage brute-force (12,878 exprs, ~3 min), 2-stage trim search (top 300 exprs × 50 final exits, ~8 min). ProcessPoolExecutor + numpy mmap for real multi-core parallelism. DTSS finding: 2-stage trim adds marginal value (+0.038 ADR best) — shorts are smash-and-grab, trims help more on longs.
 
 ### Localization
 1. ~~**Localize everything**~~ — ✅ DONE. See `LOCALIZE.md`.
