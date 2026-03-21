@@ -2625,6 +2625,8 @@ class SpyBubbleChart(QWidget):
         self._candles = []
         self._date_index = {}     # date_str -> candle index
         self._bubbles = []        # list of {"date", "is_winner", "move_adr", "ticker"}
+        self._bubble_positions = []  # list of (screen_x, screen_y, radius, bubble_dict) — rebuilt each paint
+        self._hovered_bubble = None  # signal dict of currently hovered bubble, or None
         self._hover_idx = None
         self._scroll_offset = 0
         self._visible_count = 500
@@ -2813,9 +2815,14 @@ class SpyBubbleChart(QWidget):
                     p.drawText(QRectF(candle_x(i) - 20, h - 12, 40, 12),
                                Qt.AlignCenter, "%s/%s" % (parts[1], parts[2]))
 
-        # ── SIGNAL BUBBLES ──
+        # ── SIGNAL BUBBLES (with vertical stacking when zoomed in) ──
         vis_start_date = visible[0]["date"]
         vis_end_date = visible[-1]["date"]
+        zoomed_in = candle_w >= 8  # enough room to stack and hover individual bubbles
+
+        # Group bubbles by date for stacking
+        from collections import defaultdict as _ddict
+        date_groups = _ddict(list)
         for b in self._bubbles:
             bd = b["date"]
             if bd < vis_start_date or bd > vis_end_date:
@@ -2826,49 +2833,77 @@ class SpyBubbleChart(QWidget):
             local_i = ci - offset
             if local_i < 0 or local_i >= n_vis:
                 continue
-            # Position: x from candle index, y at SPY close price
+            date_groups[local_i].append(b)
+
+        bubble_positions = []
+        for local_i, group in date_groups.items():
             x = candle_x(local_i)
             spy_close = visible[local_i]["close"]
-            y = price_y(spy_close)
+            base_y = price_y(spy_close)
 
-            if b["is_winner"]:
-                # Green bubble, sqrt-scaled by move_adr
-                adr = max(b["move_adr"], 0.5)
-                t = min(adr / self._max_move_adr, 1.0)
-                t = t ** 0.5  # sqrt scaling — spreads small/mid, compresses big
-                radius = self.BUBBLE_MIN + t * (self.BUBBLE_MAX - self.BUBBLE_MIN)
-                col = QColor(74, 222, 128, 60)
-                p.setPen(QPen(QColor(74, 222, 128, 90), 0.5))
-            else:
-                # Purple bubble, fixed small size
-                radius = self.BUBBLE_MIN
-                col = QColor(160, 80, 220, 200)
-                p.setPen(QPen(QColor(160, 80, 220, 255), 0.5))
+            for bi, b in enumerate(group):
+                if b["is_winner"]:
+                    adr = max(b["move_adr"], 0.5)
+                    t = min(adr / self._max_move_adr, 1.0)
+                    t = t ** 0.5
+                    radius = self.BUBBLE_MIN + t * (self.BUBBLE_MAX - self.BUBBLE_MIN)
+                    col = QColor(74, 222, 128, 60)
+                    p.setPen(QPen(QColor(74, 222, 128, 90), 0.5))
+                else:
+                    radius = self.BUBBLE_MIN
+                    col = QColor(160, 80, 220, 200)
+                    p.setPen(QPen(QColor(160, 80, 220, 255), 0.5))
 
-            p.setBrush(col)
-            p.drawEllipse(QPointF(x, y), radius, radius)
+                # Stack vertically when zoomed in, overlap when zoomed out
+                if zoomed_in and len(group) > 1:
+                    y = base_y - bi * (self.BUBBLE_MAX * 2 + 3)
+                else:
+                    y = base_y
 
-        # Hover tooltip
+                p.setBrush(col)
+                p.drawEllipse(QPointF(x, y), radius, radius)
+                bubble_positions.append((x, y, radius, b))
+
+        self._bubble_positions = bubble_positions
+
+        # Hover tooltip — bubble-level when zoomed in, date-level when zoomed out
         if self._hover_idx is not None and 0 <= self._hover_idx < n_vis:
             hc = visible[self._hover_idx]
             hx = candle_x(self._hover_idx)
             p.setPen(QPen(QColor(255, 255, 255, 30), 0.5, Qt.DashLine))
             p.drawLine(int(hx), self.MARGIN_TOP, int(hx), self.MARGIN_TOP + chart_h)
-            # Check for bubbles on this date
-            hd = hc["date"]
-            hits = [b for b in self._bubbles if b["date"] == hd]
+
             p.setPen(QColor(C["text"]))
             f.setPixelSize(10)
             p.setFont(f)
-            if hits:
-                labels = []
-                for hit in hits[:5]:
-                    wl = "W" if hit["is_winner"] else "L"
-                    madr = hit["move_adr"]
-                    labels.append("%s %s %.1f" % (hit["ticker"], wl, madr))
-                txt = "%s  SPY:%.2f  %s" % (hd, hc["close"], " | ".join(labels))
+
+            hb = self._hovered_bubble
+            if hb and zoomed_in:
+                # Single bubble hover — highlight it
+                wl = "W" if hb["is_winner"] else "L"
+                txt = "%s  %s  %s  %.1f ADR" % (hb["date"], hb["ticker"], wl, hb["move_adr"])
+                # Draw highlight ring around hovered bubble
+                for bx, by, br, bd in bubble_positions:
+                    if bd is hb:
+                        p.setPen(QPen(QColor(255, 255, 255, 180), 1.5))
+                        p.setBrush(Qt.NoBrush)
+                        p.drawEllipse(QPointF(bx, by), br + 2, br + 2)
+                        break
+                p.setPen(QColor(C["text"]))
             else:
-                txt = "%s  SPY:%.2f" % (hd, hc["close"])
+                # Date-level hover (zoomed out or no specific bubble)
+                hd = hc["date"]
+                hits = [b for b in self._bubbles if b["date"] == hd]
+                if hits:
+                    labels = []
+                    for hit in hits[:5]:
+                        wl = "W" if hit["is_winner"] else "L"
+                        labels.append("%s %s %.1f" % (hit["ticker"], wl, hit["move_adr"]))
+                    if len(hits) > 5:
+                        labels.append("+%d more" % (len(hits) - 5))
+                    txt = "%s  SPY:%.2f  %s" % (hd, hc["close"], " | ".join(labels))
+                else:
+                    txt = "%s  SPY:%.2f" % (hd, hc["close"])
             p.drawText(QRectF(8, 2, w - 16, 16), Qt.AlignLeft | Qt.AlignVCenter, txt)
 
         # Bubble count legend
@@ -2904,6 +2939,7 @@ class SpyBubbleChart(QWidget):
             return
         pos = ev.position() if hasattr(ev, "position") else ev.pos()
         mx = pos.x()
+        my = pos.y()
 
         # Drag scrolling
         if self._drag_start_x is not None:
@@ -2929,18 +2965,40 @@ class SpyBubbleChart(QWidget):
         w, h, chart_w, chart_h = self._chart_geometry()
         candle_w = chart_w / len(visible) if visible else 1
         idx = int(mx / candle_w) if candle_w > 0 else None
+
+        changed = False
+
+        # Candle hover index
         if idx is not None and 0 <= idx < len(visible):
             if self._hover_idx != idx:
                 self._hover_idx = idx
-                self.update()
+                changed = True
         elif self._hover_idx is not None:
             self._hover_idx = None
+            changed = True
+
+        # Bubble hit detection when zoomed in
+        old_hb = self._hovered_bubble
+        self._hovered_bubble = None
+        if candle_w >= 8 and self._bubble_positions:
+            best_dist = float("inf")
+            for bx, by, br, bd in self._bubble_positions:
+                dist = ((mx - bx) ** 2 + (my - by) ** 2) ** 0.5
+                hit_radius = max(br + 4, 8)  # generous hit area
+                if dist <= hit_radius and dist < best_dist:
+                    best_dist = dist
+                    self._hovered_bubble = bd
+        if self._hovered_bubble is not old_hb:
+            changed = True
+
+        if changed:
             self.update()
 
     def leaveEvent(self, ev):
         if self._hover_idx is not None:
             self._hover_idx = None
             self.update()
+        self._hovered_bubble = None
         self._drag_start_x = None
         self._dragging = False
 
