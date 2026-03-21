@@ -30,13 +30,14 @@ from collections import defaultdict
 def _build_feature_matrix(deduped_survivors, n_signals, top_n=200):
     """Build raw feature matrix from deduped survivors.
 
-    Selects top N features by screening strength (same metric used in dedup:
-    max of wr_spread and mfe_spread/10). Returns matrix + metadata.
+    Always includes ALL surviving setup features first (same category
+    representation as the additive model's 50/50 balancing). Remaining
+    slots filled with top market features by screening strength.
 
     Args:
         deduped_survivors: list of dicts with 'values' arrays from dedup step.
         n_signals: int, number of signals.
-        top_n: int, max features to feed into tree model.
+        top_n: int, max MARKET features to include (setup always included on top).
 
     Returns:
         (X, feature_meta, selected_indices)
@@ -44,14 +45,21 @@ def _build_feature_matrix(deduped_survivors, n_signals, top_n=200):
         feature_meta: list of dicts (name, source, instrument, expression, etc.)
         selected_indices: list of ints — indices into deduped_survivors.
     """
-    # Rank by screening strength, take top N
-    strengths = []
+    # Separate setup vs market
+    setup_indices = []
+    market_with_strength = []
     for i, s in enumerate(deduped_survivors):
         strength = max(s.get("wr_spread", 0), s.get("mfe_spread", 0) / 10.0)
-        strengths.append((strength, i))
-    strengths.sort(reverse=True)
+        if s.get("source") != "market":
+            setup_indices.append(i)
+        else:
+            market_with_strength.append((strength, i))
 
-    selected = [idx for _, idx in strengths[:top_n]]
+    # All setup features always included
+    market_with_strength.sort(reverse=True)
+    market_selected = [idx for _, idx in market_with_strength[:top_n]]
+
+    selected = setup_indices + market_selected
     selected.sort()  # preserve original order for reproducibility
 
     n_feat = len(selected)
@@ -119,13 +127,13 @@ def _train_wr_model(X, y_win, n_splits=5, seed=42):
     params = {
         "objective": "binary:logistic",
         "eval_metric": "logloss",
-        "max_depth": 3,
-        "min_child_weight": 20,
+        "max_depth": 4,
+        "min_child_weight": 15,
         "subsample": 0.7,
-        "colsample_bytree": 0.5,
+        "colsample_bytree": 0.6,
         "learning_rate": 0.05,
-        "reg_alpha": 1.0,
-        "reg_lambda": 5.0,
+        "reg_alpha": 0.5,
+        "reg_lambda": 3.0,
         "seed": seed,
         "verbosity": 0,
     }
@@ -219,13 +227,13 @@ def _train_mfe_model(X, y_mfe, winner_mask, n_splits=5, seed=42):
     params = {
         "objective": "reg:squarederror",
         "eval_metric": "rmse",
-        "max_depth": 3,
+        "max_depth": 4,
         "min_child_weight": 15,
         "subsample": 0.7,
-        "colsample_bytree": 0.5,
+        "colsample_bytree": 0.6,
         "learning_rate": 0.05,
-        "reg_alpha": 1.0,
-        "reg_lambda": 5.0,
+        "reg_alpha": 0.5,
+        "reg_lambda": 3.0,
         "seed": seed,
         "verbosity": 0,
     }

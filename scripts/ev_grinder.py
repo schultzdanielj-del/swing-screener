@@ -1949,10 +1949,10 @@ def run(setup_type):
         print(f"  {'=' * 50}")
 
         tree_scores_pre, tree_info_pre = tree_score_signals(
-            deduped_pre, all_signals, "pre", top_n_features=200)
+            deduped_pre, all_signals, "pre", top_n_features=100)
 
         tree_scores_post, tree_info_post = tree_score_signals(
-            deduped_post, post_signals_for_scoring, "post", top_n_features=200)
+            deduped_post, post_signals_for_scoring, "post", top_n_features=100)
 
         # ── A/B Comparison ──
         print(f"\n  {'=' * 50}")
