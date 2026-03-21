@@ -2596,6 +2596,76 @@ def _prepare_candles(ticker, signal_date, lookback=250, forward=80):
 
 
 # ============================================================
+# BUBBLE TOOLTIP — floating chart thumbnail for hovered bubble
+# ============================================================
+
+class BubbleTooltip(QFrame):
+    """Floating tooltip with mini chart thumbnail for a hovered signal bubble."""
+
+    TOOLTIP_W = 260
+    TOOLTIP_H = 180
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(self.TOOLTIP_W, self.TOOLTIP_H)
+        self.setStyleSheet(
+            "BubbleTooltip { background:#111; border:1px solid #333; }"
+        )
+        self.setVisible(False)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(2)
+
+        # Header: ticker + W/L + move_adr
+        self._header = QLabel("")
+        self._header.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
+            "font-weight:700; color:#E0E0E0; background:transparent; border:none;"
+        )
+        lay.addWidget(self._header)
+
+        # Mini chart
+        self._chart = MiniChartWidget()
+        self._chart.setMinimumHeight(130)
+        lay.addWidget(self._chart, 1)
+
+        # Date label
+        self._date_label = QLabel("")
+        self._date_label.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:9px;"
+            "color:#888; background:transparent; border:none;"
+        )
+        self._date_label.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self._date_label)
+
+    def show_for_bubble(self, bubble_dict, candles, exit_date=None):
+        """Update contents and show."""
+        tk = bubble_dict.get("ticker", "")
+        wl = "WIN" if bubble_dict.get("is_winner") else "LOSS"
+        madr = bubble_dict.get("move_adr", 0)
+        date = bubble_dict.get("date", "")
+
+        wl_color = "#4ade80" if bubble_dict.get("is_winner") else "#A050DC"
+        self._header.setText("%s  %s  %.1f ADR" % (tk, wl, madr))
+        self._header.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:11px;"
+            "font-weight:700; color:%s; background:transparent; border:none;" % wl_color
+        )
+        self._date_label.setText(date)
+
+        if candles:
+            self._chart.set_data(candles, date, exit_date=exit_date)
+        else:
+            self._chart.set_data(None, "")
+
+        self.setVisible(True)
+
+    def hide_tooltip(self):
+        self.setVisible(False)
+
+
+# ============================================================
 # SPY BUBBLE CHART — candlestick chart with signal overlay bubbles
 # ============================================================
 
@@ -2634,6 +2704,12 @@ class SpyBubbleChart(QWidget):
         self._drag_start_x = None
         self._drag_start_offset = None
         self._dragging = False
+
+        # Floating thumbnail tooltip for bubble hover
+        self._tooltip = BubbleTooltip(self)
+        self._tooltip.setVisible(False)
+        self._candle_cache = {}   # LRU: "ticker_date" -> (candles, exit_date), max 8 entries
+        self._candle_cache_order = []  # LRU order tracking
 
     def load_spy(self):
         """Load SPY candles from OHLCV cache."""
@@ -2690,6 +2766,48 @@ class SpyBubbleChart(QWidget):
             })
         self._max_move_adr = max(max_adr, 1.0)
         self.update()
+
+    def _get_cached_candles(self, ticker, date):
+        """Load candles for a ticker/date, with LRU cache (max 8)."""
+        key = "%s_%s" % (ticker, date)
+        if key in self._candle_cache:
+            # Move to end of LRU
+            if key in self._candle_cache_order:
+                self._candle_cache_order.remove(key)
+            self._candle_cache_order.append(key)
+            return self._candle_cache[key]
+        # Load fresh — short lookback/forward for thumbnail
+        candles = _prepare_candles(ticker, date, lookback=80, forward=40)
+        exit_date = _compute_exit_date(candles, date) if candles else None
+        entry = (candles, exit_date)
+        self._candle_cache[key] = entry
+        self._candle_cache_order.append(key)
+        # Evict oldest if over limit
+        while len(self._candle_cache_order) > 8:
+            old_key = self._candle_cache_order.pop(0)
+            self._candle_cache.pop(old_key, None)
+        return entry
+
+    def _show_bubble_tooltip(self, bubble_dict, screen_x, screen_y):
+        """Show the floating thumbnail tooltip near the given screen position."""
+        candles, exit_date = self._get_cached_candles(
+            bubble_dict["ticker"], bubble_dict["date"])
+        self._tooltip.show_for_bubble(bubble_dict, candles, exit_date)
+        # Position: prefer right of bubble, flip left if near right edge
+        tw = BubbleTooltip.TOOLTIP_W
+        th = BubbleTooltip.TOOLTIP_H
+        margin = 12
+        tx = int(screen_x + margin)
+        if tx + tw > self.width() - 4:
+            tx = int(screen_x - tw - margin)
+        ty = int(screen_y - th // 2)
+        ty = max(4, min(ty, self.height() - th - 4))
+        self._tooltip.move(tx, ty)
+        self._tooltip.raise_()
+
+    def _hide_bubble_tooltip(self):
+        """Hide the floating tooltip."""
+        self._tooltip.hide_tooltip()
 
     def _visible_slice(self):
         n = len(self._candles)
@@ -2980,6 +3098,8 @@ class SpyBubbleChart(QWidget):
         # Bubble hit detection when zoomed in
         old_hb = self._hovered_bubble
         self._hovered_bubble = None
+        hb_screen_x = 0
+        hb_screen_y = 0
         if candle_w >= 8 and self._bubble_positions:
             best_dist = float("inf")
             for bx, by, br, bd in self._bubble_positions:
@@ -2988,8 +3108,14 @@ class SpyBubbleChart(QWidget):
                 if dist <= hit_radius and dist < best_dist:
                     best_dist = dist
                     self._hovered_bubble = bd
+                    hb_screen_x = bx
+                    hb_screen_y = by
         if self._hovered_bubble is not old_hb:
             changed = True
+            if self._hovered_bubble is not None:
+                self._show_bubble_tooltip(self._hovered_bubble, hb_screen_x, hb_screen_y)
+            else:
+                self._hide_bubble_tooltip()
 
         if changed:
             self.update()
@@ -2999,6 +3125,7 @@ class SpyBubbleChart(QWidget):
             self._hover_idx = None
             self.update()
         self._hovered_bubble = None
+        self._hide_bubble_tooltip()
         self._drag_start_x = None
         self._dragging = False
 
@@ -3006,6 +3133,8 @@ class SpyBubbleChart(QWidget):
         ev.accept()  # consume — prevent scroll area from scrolling
         if not self._candles:
             return
+        self._hovered_bubble = None
+        self._hide_bubble_tooltip()
         delta = ev.angleDelta().y()
         old_count = self._visible_count
         if delta > 0:
