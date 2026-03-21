@@ -1353,6 +1353,18 @@ class ScanTuningWorkspace(QFrame):
         self._surviving_label.setAlignment(Qt.AlignCenter)
         entry_lay.addWidget(self._surviving_label)
 
+        # Lock-in button
+        self._lock_btn_entry = QPushButton("LOCK IN")
+        self._lock_btn_entry.setFixedHeight(32)
+        self._lock_btn_entry.setStyleSheet(
+            "QPushButton { background:#059669; color:#fff; border:none;"
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:12px;"
+            "font-weight:700; padding:4px 12px; }"
+            "QPushButton:hover { background:#4ade80; color:#000; }"
+        )
+        self._lock_btn_entry.clicked.connect(self._lock_in)
+        entry_lay.addWidget(self._lock_btn_entry)
+
         entry_lay.addStretch()
         left_stack.addWidget(self._entry_panel)
 
@@ -1407,6 +1419,18 @@ class ScanTuningWorkspace(QFrame):
         )
         self._exit_stats_label.setAlignment(Qt.AlignCenter)
         exit_lay.addWidget(self._exit_stats_label)
+
+        # Lock-in button (same action as entry panel)
+        self._lock_btn_exit = QPushButton("LOCK IN")
+        self._lock_btn_exit.setFixedHeight(32)
+        self._lock_btn_exit.setStyleSheet(
+            "QPushButton { background:#059669; color:#fff; border:none;"
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:12px;"
+            "font-weight:700; padding:4px 12px; }"
+            "QPushButton:hover { background:#4ade80; color:#000; }"
+        )
+        self._lock_btn_exit.clicked.connect(self._lock_in)
+        exit_lay.addWidget(self._lock_btn_exit)
 
         exit_lay.addStretch()
         left_stack.addWidget(self._exit_panel)
@@ -1710,6 +1734,62 @@ class ScanTuningWorkspace(QFrame):
             if n_beating > 0:
                 parts.append("%d beat 1-stage" % n_beating)
         self._exit_stats_label.setText("\n".join(parts))
+
+    def _lock_in(self):
+        """Save current slider settings to scan_settings_{setup}.json."""
+        setup = self._setup
+        cache_dir = REPO_ROOT / "local_runner" / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get active objective from exit panel
+        objective = "sqn"
+        for key, btn in self._obj_btns.items():
+            if btn.isChecked():
+                objective = key
+                break
+
+        settings = {
+            "setup": setup,
+            "locked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "entry": {
+                "setup_score_floor": self._setup_slider.value(),
+                "market_score_floor": self._market_slider.value(),
+                "refinement_depth": self._depth_slider.value(),
+                "refinement_depth_max": self._depth_slider.maximum(),
+                "wr_floor": self._wr_slider.value() / 100.0,
+            },
+            "exit": {
+                "objective": objective,
+                "trim_pct": self._trim_slider.value() / 100.0,
+            },
+        }
+
+        path = cache_dir / ("scan_settings_%s.json" % setup)
+        with open(path, "w") as f:
+            json.dump(settings, f, indent=2)
+
+        print("  Scan settings locked: %s" % path)
+
+        # Visual feedback — flash the button green briefly
+        for btn in (self._lock_btn_entry, self._lock_btn_exit):
+            btn.setText("LOCKED ✓")
+            btn.setStyleSheet(
+                "QPushButton { background:#4ade80; color:#000; border:none;"
+                "font-family:'JetBrains Mono','Consolas',monospace; font-size:12px;"
+                "font-weight:700; padding:4px 12px; }"
+            )
+        # Reset after 2 seconds
+        QTimer.singleShot(2000, self._reset_lock_btn)
+
+    def _reset_lock_btn(self):
+        for btn in (self._lock_btn_entry, self._lock_btn_exit):
+            btn.setText("LOCK IN")
+            btn.setStyleSheet(
+                "QPushButton { background:#059669; color:#fff; border:none;"
+                "font-family:'JetBrains Mono','Consolas',monospace; font-size:12px;"
+                "font-weight:700; padding:4px 12px; }"
+                "QPushButton:hover { background:#4ade80; color:#000; }"
+            )
 
 
 # ============================================================
