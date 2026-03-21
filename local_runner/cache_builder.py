@@ -300,6 +300,151 @@ def load_5yr_cache():
         return pickle.load(f)
 
 
+def _fetch_ticker_after_date(ticker, after_date):
+    """Fetch OHLCV bars for a ticker after a given date from Railway."""
+    try:
+        sql = (
+            f"SELECT date, open, high, low, close, volume "
+            f"FROM universe_ohlcv WHERE ticker = '{ticker}' "
+            f"AND date > '{after_date}' "
+            f"ORDER BY date ASC"
+        )
+        r = requests.post(f"{API_BASE}/api/query/bulk", json={
+            "sql": sql, "limit": 500
+        }, timeout=30)
+        if r.status_code != 200:
+            return ticker, None
+        rows = r.json().get("results", [])
+        if not rows:
+            return ticker, None
+        df = pd.DataFrame(rows)
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date").reset_index(drop=True)
+        return ticker, df
+    except Exception:
+        return ticker, None
+
+
+def append_5yr_cache():
+    """Append new bars to existing 5yr cache. Never touches old bars.
+
+    For each ticker already in the cache, fetches only bars after the last
+    cached date from Railway and appends them. New tickers (in tradable
+    universe but not in cache) get a full fetch. Old bars are never modified.
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+    if not os.path.exists(CACHE_5YR_FILE):
+        print("  No existing 5yr cache. Running full build...")
+        return build_5yr_cache()
+
+    # Load existing cache
+    print("  Loading existing 5yr cache...")
+    with open(CACHE_5YR_FILE, "rb") as f:
+        universe = pickle.load(f)
+    print(f"  {len(universe)} tickers in cache")
+
+    # Get current tradable tickers
+    print("  Fetching tradable ticker list...")
+    tickers = get_tradable_tickers()
+    print(f"  {len(tickers)} tradable tickers")
+
+    # Find last date per cached ticker
+    last_dates = {}
+    for ticker, df in universe.items():
+        if len(df) > 0:
+            last_dates[ticker] = str(df["date"].iloc[-1])[:10]
+
+    # Categorize work
+    to_append = []  # existing tickers needing new bars
+    to_fetch_full = []  # new tickers not in cache
+
+    for ticker in tickers:
+        if ticker in last_dates:
+            to_append.append(ticker)
+        else:
+            to_fetch_full.append(ticker)
+
+    print(f"  Tickers to append: {len(to_append)}")
+    print(f"  New tickers (full fetch): {len(to_fetch_full)}")
+
+    t0 = time.time()
+    appended = 0
+    new_added = 0
+    no_new = 0
+    failed = 0
+
+    # Append new bars for existing tickers
+    if to_append:
+        print(f"\n  Appending new bars ({MAX_WORKERS} workers)...")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(_fetch_ticker_after_date, t, last_dates[t]): t
+                for t in to_append
+            }
+            done = 0
+            for future in as_completed(futures):
+                ticker = futures[future]
+                done += 1
+                try:
+                    _, new_df = future.result()
+                    if new_df is not None and len(new_df) > 0:
+                        existing = universe[ticker]
+                        # Recompute dvol_20d on combined data
+                        combined = pd.concat([existing, new_df], ignore_index=True)
+                        combined = combined.sort_values("date").reset_index(drop=True)
+                        compute_dvol_20d(combined)
+                        universe[ticker] = combined
+                        appended += 1
+                    else:
+                        no_new += 1
+                except Exception:
+                    failed += 1
+
+                if done % 500 == 0 or done == len(to_append):
+                    elapsed = time.time() - t0
+                    print(f"    {done:,}/{len(to_append):,} checked "
+                          f"({appended} appended, {no_new} current, {failed} failed) "
+                          f"[{elapsed:.0f}s]")
+
+    # Full fetch for new tickers
+    if to_fetch_full:
+        print(f"\n  Fetching {len(to_fetch_full)} new tickers...")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {pool.submit(fetch_one_ticker_5yr, t): t for t in to_fetch_full}
+            for future in as_completed(futures):
+                ticker = futures[future]
+                try:
+                    _, df = future.result()
+                    if df is not None and len(df) >= 50:
+                        universe[ticker] = df
+                        new_added += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+
+    elapsed = time.time() - t0
+
+    # Save
+    print(f"\n  Saving 5yr cache...")
+    with open(CACHE_5YR_FILE, "wb") as f:
+        pickle.dump(universe, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    with open(CACHE_5YR_META, "w") as f:
+        f.write(datetime.now().isoformat())
+
+    size_mb = os.path.getsize(CACHE_5YR_FILE) / 1024 / 1024
+    print(f"  Saved: {CACHE_5YR_FILE} ({size_mb:.1f} MB)")
+    print(f"  Appended: {appended}, New: {new_added}, "
+          f"No change: {no_new}, Failed: {failed}")
+    print(f"  Time: {elapsed:.0f}s")
+
+    return universe
+
+
 if __name__ == "__main__":
     force = "--force" in sys.argv
     mode_5yr = "--5yr" in sys.argv

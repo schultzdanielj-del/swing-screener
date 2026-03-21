@@ -115,14 +115,14 @@ def step_2_daily_cache():
 
 
 def step_3_5yr_cache():
-    """Refresh local 5yr OHLCV cache."""
-    step_header(3, 9, "Local 5yr OHLCV Cache")
+    """Append new bars to local 5yr OHLCV cache. Never rebuilds, never touches old bars."""
+    step_header(3, 9, "Local 5yr OHLCV Cache — Append")
 
-    from cache_builder import build_5yr_cache
+    from cache_builder import append_5yr_cache
     t0 = time.time()
-    data = build_5yr_cache(force=True)
+    data = append_5yr_cache()
     elapsed = time.time() - t0
-    print(f"  ✓ {len(data)} tickers cached in {elapsed:.1f}s")
+    print(f"  ✓ {len(data)} tickers in cache ({elapsed:.1f}s)")
 
 
 def step_4_expr_cache():
