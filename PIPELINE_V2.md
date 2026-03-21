@@ -62,7 +62,7 @@ aggressively culls losers, producing a small high-concentration pile that makes 
 fast. The output is intentionally too tight to catch live signals reliably — but every
 chart you vet is likely a real setup, so you bank examples fast. Once the example
 library is fat, you reduce depth to lower curve-fit risk. The EV grinder handles
-ranking from there. Depth is set via a slider in the Settings Lock step after the
+ranking from there. Depth is set via a slider in the Scan Tuning workspace after the
 grind cycle completes.
 
 The signal grind margin (5%) is a search parameter, not a post-hoc knob. Changing it
@@ -93,10 +93,12 @@ The Vetting Loop (repeat until convergence):
 After Convergence (run once, in order):
   Step 5: EV Grinder        — unified correlative scoring: all ~4M market features +
                                setup-specific features → per-signal estimated WR, MFE, EV
-  Step 6: Settings Lock     — review refinement depth slider, see downstream impact on
-                               signal count / WR / EV calibration, lock in for nightly scanning
+  Step 6: Scan Tuning       — Entry tab: setup/market feature floors, refinement depth,
+                               WR floor. Exit tab: browse profit grinder results, pick
+                               exit strategy, trim settings. SPY bubble chart shows effect.
+                               Settings auto-save on close (scan_settings_{setup}.json).
   Step 7: Profit Grind      — optimal exit strategy, maximizes compounded equity growth
-                               (runs on the locked signal set from step 6)
+                               (brute-forces all expressions; Scan Tuning selects from results)
   Step 8: Health Check      — cycle quality, EV, promote / revert / live-ready
 
 Live:
@@ -207,7 +209,7 @@ its bars are dead. Killing 3 of 4 bars in a losing cluster is useless — the
 4th still fires in live scanning.
 
 Always runs at maximum configured depth. The depth slider is applied post-hoc
-via the Settings Lock step.
+via the Scan Tuning step.
 
 **Depth progression:**
 At each depth level during the beam search, the output records: the condition set
@@ -398,64 +400,69 @@ Those scripts are preserved for reference but are no longer pipeline dependencie
 
 ---
 
-## Layer 5: Settings Review & Lock-In
+## Layer 5: Scan Tuning (✅ BUILT 2026-03-20)
 
-**What it solves:** After the grind cycle and EV scoring are complete, you need to
-choose the operating point for live scanning. The refinement grinder ran at maximum
-depth to give maximum flexibility. Now you decide where on the depth spectrum the
-nightly scan should operate.
+**What it solves:** After the grind cycle, EV scoring, and profit grinder are complete,
+you dial in the personality of your scanner — not just how tight, but tight on what.
+One person cranks market features (only trade in perfect conditions), another cranks
+setup features (only the cleanest charts). The SPY bubble chart shows the effect.
 
-**When it runs:** After the EV grinder (step 5). This is a manual, UI-driven step —
-no compute, just review and decision.
+**When it runs:** After the EV grinder (step 5) and profit grinder (step 7). This is a
+manual, UI-driven step — no compute, just review and decision. Settings auto-save
+when you collapse the workspace.
 
-**What you see:**
+**Two tabs:**
 
-A summary screen with one slider and its impact:
+**ENTRY tab — controls which signals make the cut:**
+- Setup feature floor (0-100): minimum `setup_score` from EV grinder
+- Market feature floor (0-100): minimum `market_score` from EV grinder
+- Refinement depth (0 to max): reads `depth_progression`, controls curve fit vs loser elimination
+- WR floor (0-100%): minimum `predicted_wr` from EV grinder
 
-**Refinement depth slider (1 to max depth):**
-- Reads `depth_progression` from the refinement grind output JSON
-- Shows clusters eliminated + WR at each depth level
-- At max depth: most losers killed, highest WR (vetting mode)
-- At shallow depth: fewer conditions applied, less curve fit (live mode)
-- Conditions literally fall off — at depth 5, only the first 5 refinement
-  conditions are applied. The rest are ignored.
+**EXIT tab — controls how you manage trades once entered:**
+- Management objective toggle: SQN (consistency) vs max profit (aggression)
+- Exit expression display: reads profit grinder output, shows top candidates
+- Trim slider: controls trim percentage for 2-stage exit strategies
 
-**Downstream impact preview:**
-- Signal count at the chosen depth
-- Estimated WR and EV calibration at that depth (from EV grinder data)
-- Comparison to the deepest and shallowest extremes
+**SPY bubble chart (shared between tabs):**
+- Full SPY candlestick chart with signal overlay
+- Green bubbles = winners (sized by move_adr), red = losers (fixed small)
+- Bubbles appear/disappear as you drag sliders
+- Drag to scroll, wheel to zoom, hover for signal details
 
-**Lock-in:**
-When you're satisfied, hit "Lock In." This writes a settings config:
+**Settings file:**
 
 ```
 scan_settings_{setup}.json:
 {
-  "setup_type": "dtss",
-  "locked_at": "2026-03-16T...",
-  "refinement_depth": 60,
-  "signal_grind_source": "pyramid_dtss_mp_sig1218_pk14_20260310.json",
-  "refinement_source": "refinement_dtss_cl102_pk5_20260313.json",
-  "ev_source": "ev_dtss_inc6_20260315.json"
+  "setup": "dtss",
+  "saved_at": "2026-03-20 15:30:00",
+  "entry": {
+    "setup_score_floor": 0,
+    "market_score_floor": 0,
+    "refinement_depth": 100,
+    "refinement_depth_max": 100,
+    "wr_floor": 0.0
+  },
+  "exit": {
+    "objective": "sqn",
+    "trim_pct": 0.0
+  }
 }
 ```
 
-The nightly scan reads this config. It applies all signal conditions (unchanged) plus
-only the first N refinement conditions (where N = locked depth), and scans tonight's
-bars against that combined set.
+Auto-saved to `local_runner/cache/` when workspace collapses. Restored when reopened.
+The nightly scan reads this config to determine production parameters.
 
 **Lifecycle:**
-- **Example building phase:** Lock at max depth. The nightly scan is intentionally
-  tight — it's there for live testing and catching obvious signals, not for breadth.
-  Your energy goes into vetting.
-- **Live readiness phase:** Lock at moderate depth. The nightly scan catches more
-  signals. The EV grinder ranks them. You trade the top of the list.
-- **Re-lock any time:** After any regrind cycle, you review and re-lock. The old
-  settings are overwritten. The nightly scan picks up the new settings automatically.
+- **Example building phase:** Sliders loose. Cast a wide net, vet lots of signals.
+- **Live readiness phase:** Tighten setup/market floors and depth. Trade the top of the ranked list.
+- **Re-tune any time:** After any regrind or new EV run, reopen Scan Tuning and adjust.
+  Settings overwrite automatically on close.
 
 **Output:**
-- `scan_settings_{setup}.json` — saved to local cache + mirrored to Railway
-- The downstream profit grinder and nightly scan both read this config
+- `scan_settings_{setup}.json` — saved to local cache
+- The nightly scan reads this config
 
 ---
 
@@ -466,7 +473,7 @@ parameters — that maximize account growth consistency (SQN), not raw per-trade
 MFE capture. Brute-forces across the full parameter space at multiple EV slider
 threshold levels.
 
-**When it runs:** After Settings Lock (step 6). Runs on the signal set defined by
+**When it runs:** After Scan Tuning (step 6). Runs on the signal set defined by
 the locked settings — the signals you'd actually trade at the chosen depth, scored
 by the EV grinder. The profit grind optimizes exit strategy for the top-ranked
 signals, not the entire set.
@@ -568,7 +575,7 @@ Cycle delta (comparison to previous cycle):
 - ev_estimate > 0 (positive expectancy across the full signal set)
 - median_loser_adr < 1.0 (losers capped under 1 ADR)
 - examples_added_last_two_cycles < 5 (example library approaching convergence)
-- settings_locked: true (Settings Lock step completed for this cycle)
+- scan_tuning_done: true (Scan Tuning step completed for this cycle)
 
 **Output:**
 - Health report for current cycle (all metrics above)
@@ -630,7 +637,7 @@ status            — running / complete / reverted
 conditions        — full condition set with tier, expression, low, high, filter_power
 signals           — deduped signal set with classification labels
 exit_condition    — expression, direction, threshold used for exit filter
-locked_settings   — refinement_depth from Settings Lock
+locked_settings   — refinement_depth from Scan Tuning
 health_metrics    — all Layer 7 metrics for this cycle
 promoted_at       — timestamp when promoted to current
 reverted_at       — timestamp if reverted
@@ -712,7 +719,7 @@ These need to be rebuilt or are new:
 | AI review queue | New — server.py endpoint + UI queue view |
 | EV grinder | ✅ **DONE** — `scripts/ev_grinder.py` (replaces market_grinder + setup_grinder) |
 | Fundamentals cache | ✅ **DONE** — `scripts/fetch_fundamentals.py` (Yahoo Finance sector/float/shares) |
-| Settings Lock UI | New — refinement depth slider, writes scan_settings JSON |
+| Scan Tuning UI | ✅ Done — two-tab workspace, SPY bubble chart, auto-save settings |
 | Depth progression (refinement grind) | New — condition set + cluster counts at each depth level |
 | Nightly watchlist | New — unified ranked list across all setup types, reads locked settings |
 | UI: EV display + watchlist | New — EV scores, WR, MFE per signal |
@@ -734,11 +741,11 @@ Build in this order so each piece is useful immediately when complete:
 8. ~~**Fundamentals cache**~~ — **DONE** — `fetch_fundamentals.py`
 9. ~~**EV grinder**~~ — **DONE** — `scripts/ev_grinder.py`
 10. **Depth progression** — refinement grind saves condition set + cluster counts per depth level
-11. **Settings Lock UI** — depth slider + lock-in, writes `scan_settings_{setup}.json`
+11. ~~**Scan Tuning UI**~~ — ✅ DONE (2026-03-20). Two-tab workspace (Entry/Exit) with SPY bubble chart. Entry: setup/market feature floors, refinement depth, WR floor. Exit: SQN/max profit objective, exit expression, trim. EV grinder outputs setup_score + market_score. Settings auto-save on close.
 12. **Profit grind** — trade exit optimization, reads locked settings
 13. **UI: EV display + unified nightly watchlist** — the live product
 
 **Current status (2026-03-16):** DTSS Phase 2 complete (signal grind + exit grind +
 refinement grind). EV grinder complete (inc 1-6). Signal grind margin slider attempted
 and reverted — margin is a search parameter, not post-hoc tunable. Next: depth
-progression (step 10), then Settings Lock UI (step 11), then vet winner pile.
+progression (step 10), then Scan Tuning UI (step 11 — ✅ DONE), then vet winner pile.

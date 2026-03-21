@@ -21,7 +21,7 @@ It also owns the **refinement depth replay** — reconstructing which refinement
 
 The output powers two UI sliders that together define the live nightly scan parameters:
 - **Slider 1 (Refinement Depth):** How many of the 100 refinement conditions to enforce
-- **Slider 2 (EV Quality):** How aggressively to filter signals by correlative feature quality
+- **Slider 2a/2b (Setup/Market Features):** Independent aggressiveness sliders for setup-specific and market features
 
 ---
 
@@ -155,8 +155,15 @@ All three are replaced by a single unified engine where all features compete on 
       // integer = depth at which this signal's cluster is fully eliminated
       "killed_at_depth": null,
 
-      // Slider 2: continuous quality score (0-100)
+      // Scan Tuning sliders: continuous quality scores (0-100)
       "quality_score": 58.3,
+
+      // Component scores for Scan Tuning independent sliders (0-100 each)
+      // setup_score = weighted average of setup-only feature percentiles
+      // market_score = weighted average of market-only feature percentiles
+      // quality_score = 50/50 blend of the two
+      "setup_score": 65.1,
+      "market_score": 51.5,
 
       // EV scores (computed from pre-refinement model)
       "predicted_wr": 0.72,
@@ -209,6 +216,8 @@ All three are replaced by a single unified engine where all features compete on 
     "refinement_conditions_count": 100,
     "default_refinement_depth": 100,
     "quality_score_range": {"min": 20.3, "max": 75.9},
+    "setup_score_range": {"min": 15.2, "max": 82.1},
+    "market_score_range": {"min": 18.7, "max": 71.3},
     "assumed_stop_adr": 1.0
   }
 }
@@ -387,32 +396,36 @@ This gives the UI everything it needs for Slider 1. Peeling off condition 100 br
 
 ---
 
-## Slider 2 — EV Quality Filter (Continuous Percentile Scoring)
+## EV Quality Filter (Independent Setup + Market Sliders)
 
-**Range:** Continuous 0-100, mapped to the quality_score range in the output data.
+**Range:** Continuous 0-100 each, mapped to the score ranges in the output data.
 
 **What it does:**
 
-Every signal has a single `quality_score` (0-100) — a category-balanced weighted average of its percentile ranks across all surviving features. Market features (1,800+) collectively get 50% weight, setup features (3) get 50% weight. Within each category, features compete by individual screening strength.
+Every signal has three scores:
+- `quality_score` (0-100) — category-balanced 50/50 blend of setup and market
+- `setup_score` (0-100) — weighted average of setup-only feature percentiles (price, ADR, dollar volume, RS, days since IPO, sector, float)
+- `market_score` (0-100) — weighted average of market-only feature percentiles (~1,800 instrument expressions across 256 market instruments)
 
-The slider sets a minimum quality_score threshold. Slide right = demand higher quality = fewer signals survive.
+The Scan Tuning workspace has two independent sliders — one for setup features, one for market features. This lets you crank market aggressiveness (only trade in perfect market conditions) while leaving setup loose, or vice versa. The `quality_score` blended score is still available but the independent sliders give finer control.
 
-**How quality_score is computed:**
-1. For each surviving feature, compute every signal's percentile rank (0-100) within that feature's distribution using scipy.stats.rankdata
+**How scores are computed:**
+1. For each surviving feature, compute every signal's percentile rank (0-100) using scipy.stats.rankdata
 2. Flip descending features (lower raw value = better) so higher percentile always means better outcome
-3. Category-balanced weighted average: market weights sum to 0.5, setup weights sum to 0.5
-4. Result: single float 0-100 per signal
+3. Setup weights: normalize setup feature weights to sum to 1.0 → `setup_score`
+4. Market weights: normalize market feature weights to sum to 1.0 → `market_score`
+5. Blended: `quality_score` = 50% setup + 50% market (same as before)
 
 **Predicted WR and MFE** are computed separately via vectorized interpolation of each feature's decile WR/MFE curves at each signal's raw percentile position. Weighted average across features → predicted_wr and predicted_mfe. EV = (WR × MFE) - ((1-WR) × 1.0 ADR stop).
 
-**Client-side computation:** Filter signals where `quality_score >= slider_value`. One number comparison per signal = sub-millisecond.
+**Client-side computation:** Filter signals where `setup_score >= setup_slider` AND `market_score >= market_slider`. Two comparisons per signal = sub-millisecond.
 
 **DTSS calibration (2026-03-15):**
 - Pre-refinement (893 signals): D1 actual WR = 19.1% → D10 = 64.1% (+45pp spread)
 - Post-refinement (467 signals): D1 = 56.5% → D10 = 93.5% (+37pp spread)
 - Post-refinement top 50%: 234 signals, 86.8% actual WR, ~39/year
 
-**Live scan uses:** The slider position = minimum quality_score for tonight's watchlist.
+**Live scan uses:** The slider positions = minimum setup_score and market_score for tonight's watchlist.
 
 ---
 
@@ -425,7 +438,7 @@ Each signal is a circle positioned at its date on the SPY X-axis:
 - **Circle color:** Predicted WR (green gradient = higher WR, red gradient = lower WR)
 - **Tooltip:** Ticker, date, classification, predicted WR, predicted MFE, EV, move_adr (actual)
 
-Both sliders affect which circles are visible. As Slider 1 increases, loser circles disappear. As Slider 2 increases, circles below the quality_score threshold disappear.
+Both slider types affect which circles are visible. As Slider 1 (depth) increases, loser circles disappear. As Sliders 2a/2b increase, circles below the setup_score or market_score thresholds disappear.
 
 **Stats bar (always visible):**
 - Peak signals/day
@@ -535,24 +548,27 @@ Replay 100 refinement conditions against all 893 clusters. Build per-condition e
 - Output: `validation.calibration_pre/post` + `validation.calibration_rmse_wr_*` + `redundancy` dict
 - File: `ev_{setup}_inc6_*.json`, saved locally, mirrored to Railway as backup
 
-### Increment 7: UI — SPY Chart + Dual Sliders (separate task)
+### Increment 7: UI — SPY Chart + Scan Tuning Sliders (✅ DONE 2026-03-20)
 
-- Scrollable SPY chart with signal circles
-- Slider 1: refinement depth (reads `depth_stats` + `killed_at_depth`)
-- Slider 2: EV quality (reads `quality_score` per signal, continuous threshold)
+- Scrollable SPY chart with signal bubbles (green=winner sized by move_adr, red=loser)
+- Slider 1: refinement depth (reads `depth_progression` + `killed_at_depth`)
+- Slider 2a: setup feature floor (reads `setup_score` per signal)
+- Slider 2b: market feature floor (reads `market_score` per signal)
+- Slider 3: WR floor (reads `predicted_wr` per signal)
+- Entry/Exit tab system — entry sliders + exit strategy selection
 - Stats bar always visible
-- Slider positions saved locally as scan_settings JSON
+- Slider positions auto-saved to scan_settings JSON on workspace close, restored on open
 
 ---
 
 ## Live Nightly Scan Integration
 
-After the EV grinder has run and the user sets slider positions:
+After the EV grinder has run and the user sets Scan Tuning sliders:
 
-1. **Nightly scan** runs tonight's bars against signal conditions (87) + refinement conditions (first N, per Slider 1 position)
+1. **Nightly scan** runs tonight's bars against signal conditions (87) + refinement conditions (first N, per depth slider)
 2. For each signal that fires: compute feature values (market cache lookup + OHLCV + fundamentals)
-3. Compute quality_score using stored percentile scoring equation
-4. Apply EV quality filter (reject signals below quality_score threshold per Slider 2 position)
+3. Compute setup_score and market_score using stored percentile scoring equation
+4. Apply filters: reject signals below setup_score floor, market_score floor, or WR floor (per Scan Tuning slider positions from `scan_settings_{setup}.json`)
 5. Compute EV score using stored feature weights + scoring curves
 6. Rank by EV, highest to lowest
 7. Top of list = what you trade tomorrow
@@ -567,9 +583,9 @@ Scoring is milliseconds per signal. All lookups from local caches.
 - **Additive model.** Each feature contributes independently. Well-supported by ~893 data points. Interaction terms ("UVXY matters more on high-priced stocks") not captured, but correlated features will both independently predict WR/MFE. Interactions can layer in later as examples grow.
 - **Decile bucketing captures nonlinearity.** A feature that only matters at extremes is visible in the D10 vs D1 spread. Linear correlation would miss this.
 - **Category-balanced weighting (50/50 market/setup).** Without balancing, 1,800+ market features drown out 3 setup features by headcount. Each category gets 50% of total weight. Within each category, features compete by screening strength.
-- **Continuous percentile scoring, not discrete quartile levels.** quality_score is 0-100 per signal. Slider 2 sets a continuous threshold. No arbitrary bucketing of signals into 4 quality levels.
+- **Continuous percentile scoring, not discrete quartile levels.** setup_score and market_score are 0-100 per signal. Scan Tuning sliders set continuous thresholds. No arbitrary bucketing of signals into quality levels.
 - **1.0 ADR assumed stop for EV calculation.** Losers don't have meaningful move_adr (setup broke). The loss side uses a fixed 1 ADR assumption. Adjustable parameter, not re-run required.
 - **Pre AND post refinement.** Both runs tell different stories. Pre-refinement reveals genuine correlative features. Post-refinement reveals what's left after chart-level filtering. Features surviving both are the most valuable.
-- **One output file, two sliders.** Everything the UI needs is in one JSON. No server round-trips for slider interactions. Client-side computation is trivially fast.
+- **One output file, four sliders.** Everything the UI needs is in one JSON. No server round-trips for slider interactions. Client-side computation is trivially fast.
 - **Setup-specific features are NOT from the expression cache.** The signal grind already mined all 16K expressions — anything in the cache that separates winners from losers would already be a signal/refinement condition. Setup features must come from outside the cache.
-- **Whatever the sliders are set at = what the live nightly scan uses.** This is not a visualization-only tool. The slider positions define production parameters.
+- **Whatever the sliders are set at = what the live nightly scan uses.** This is not a visualization-only tool. The slider positions (saved in `scan_settings_{setup}.json`) define production parameters.

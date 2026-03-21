@@ -1,4 +1,4 @@
-# ScanPerfect Pipeline (2026-03-20, Profit Grinder Inc 1-4 done)
+# ScanPerfect Pipeline (2026-03-20, Scan Tuning UI built, Profit Grinder Inc 1-4 done)
 
 ## The Goal
 
@@ -299,6 +299,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
 | Phase 3: EV Grinder | ✅ Complete (inc 1-6) | 1,816 pre / 1,940 post features. Continuous percentile scoring, category-balanced weighting (50/50). Calibration: pre D1=19.1%→D10=64.1%, post D1=56.5%→D10=93.5%. RMSE 0.090 post. 247 genuine features, 1,569 redundant. File: `ev_dtss_inc6_*.json` (4.4MB) |
 | Phase 4: Profit Optimization | ✅ Inc 1-4 done | 835 1-stage, 7,703 2-stage combos. Top: slope_xavgc21_off7_adr14 below -1.1675 (Exp=6.730). Output: profit_dtss_20260320_133906.json (0.3 MB). ~12 min total. |
+| Scan Tuning UI | ✅ Built | Entry tab (setup/market/depth/WR sliders) + Exit tab (objective/expression/trim). SPY bubble chart overlay. Settings auto-save. EV grinder outputs setup_score + market_score per signal. |
 | Phase 5: Live Watchlist | ⏸ Not built | |
 
 ### Refinement Grind Result (2026-03-13)
@@ -421,6 +422,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 ### Pipeline UI
 9. ~~**Pipeline flowchart UI**~~ — ✅ DONE. 7-node flowchart with color-coded cards, animated expansion, unlock progression, two feedback loops. No tabs — flowchart is the interface.
 10. ~~**Update PIPELINE_V2.md**~~ — ✅ DONE (2026-03-17). All docs updated to reflect local-first architecture and 7-node flowchart.
+11. ~~**Scan Tuning workspace**~~ — ✅ DONE (2026-03-20). Two-tab (Entry/Exit) workspace with SPY bubble chart. Entry: setup/market feature floors, refinement depth, WR floor. Exit: SQN/max profit objective, exit expression, trim. EV grinder outputs setup_score + market_score per signal. Settings auto-save on close, restore on open. Profit grinder output browsed in exit tab — no re-run needed.
 
 ### Code Cleanup (future)
 11. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.

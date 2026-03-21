@@ -47,7 +47,7 @@ The pipeline flowchart IS the interface. Each node expands in place to become it
 
 ## Known Issues
 
-- **Correlative signal count wrong** — shows 402 instead of matching causative winners. Deferred until Scan Tuning workspace is built (will filter/threshold EV signals there).
+- **Correlative signal count wrong** — shows 402 instead of matching causative winners. Scan Tuning workspace entry sliders now filter these independently.
 
 ---
 
@@ -122,7 +122,7 @@ Metadata label below chart.
 
 ## Not Yet Built
 
-- **Scan Tuning workspace** — quality_score + WR threshold sliders
+- **Scan Tuning workspace** — ✅ BUILT. Two tabs (Entry/Exit) in yellow card header. Entry: setup/market feature sliders, refinement depth, WR floor. Exit: management objective toggle, exit expression display, trim slider. SPY bubble chart with signal overlay (green=winner sized by move_adr, red=loser). Drag-scroll, wheel zoom, hover tooltips. Settings auto-save on close, restore on open (`scan_settings_{setup}.json`). EV grinder outputs `setup_score` + `market_score` per signal for independent slider control.
 - **Summary workspace** — setup readiness overview
 
 ---
