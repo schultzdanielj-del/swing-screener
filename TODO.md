@@ -296,22 +296,23 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 | Phase 1: Vetting | ✅ 68 examples | 65 with valid scan bars in clusters |
 | Phase 2a: Signal Grind | ✅ Done | 87 conditions, 1,218 raw → 893 deduped |
 | Phase 2b: Exit Grind | ✅ Done | `slope_xavgc21_off7_adr14 <= -1.128826` |
-| Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 426/528 clusters killed, 78% WR |
+| Phase 2c: Refinement Grind | ✅ Done | 100 refinement conditions, 420/519 clusters killed, 78% WR. Depth progression saved (100 levels). |
 | Phase 3: EV Grinder | ✅ Complete (inc 1-6) | 1,816 pre / 1,940 post features. Continuous percentile scoring, category-balanced weighting (50/50). Calibration: pre D1=19.1%→D10=64.1%, post D1=56.5%→D10=93.5%. RMSE 0.090 post. 247 genuine features, 1,569 redundant. File: `ev_dtss_inc6_*.json` (4.4MB) |
 | Phase 4: Profit Optimization | ✅ Inc 1-4 done | 835 1-stage, 7,703 2-stage combos. Top: slope_xavgc21_off7_adr14 below -1.1675 (Exp=6.730). Output: profit_dtss_20260320_133906.json (0.3 MB). ~12 min total. |
 | Scan Tuning UI | ✅ Built | Entry tab (setup/market/depth/WR sliders) + Exit tab (objective/expression/trim). SPY bubble chart overlay. Settings auto-save. EV grinder outputs setup_score + market_score per signal. |
 | Phase 5: Live Watchlist | ⏸ Not built | |
 
-### Refinement Grind Result (2026-03-13)
-- 893 clusters: 365 WIN, 528 LOSS
+### Refinement Grind Result (2026-03-20)
+- 872 clusters: 353 WIN, 519 LOSS (64/66 examples matched by entry_date)
 - 100 refinement conditions (depth capped at 100)
-- 426/528 losing clusters eliminated (80.7%)
-- All 365 winners pass all conditions
-- 182 combined conditions (87 signal + 100 refinement, 5 overlap)
-- Pre-regime win rate: 78% (365 / 467)
-- **Winner move_adr: median 6.4, mean 6.7, floor 2.9, ceiling 13.1 ADR (364/365 with data)**
-- All examples now run through full classification race (exit_bar, ceiling, move_adr)
-- File: `refinement_dtss_cl102_pk5_20260313_122818.json`
+- 420/519 losing clusters eliminated (80.9%)
+- All 353 winners pass all conditions
+- Pre-regime win rate: 78.1% (353 / 452)
+- Forward window: 6 bars (max 5 + 10%)
+- **Depth progression: 100 levels saved (D1=41.7% WR → D100=78.1% WR)**
+- Example matching uses hardcoded entry_date (date proximity), not bar indices
+- Nightly 5yr cache now appends only — no more OHLCV/expr cache date drift
+- File: `refinement_dtss_cl99_pk5_20260320_*.json`
 
 ### EV Grinder Dedup Result (2026-03-15)
 - 256 instruments × 15,805 expressions + 10 setup features → ~4M features tested
@@ -409,7 +410,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 4. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
 
 ### Infrastructure
-5. **Remove Railway from nightly data flow** — currently yfinance → Railway → local (round trip). Should be yfinance → local directly, Railway gets a backup copy. The nightly refresh should not depend on Railway for any compute or data. Railway is seed vault only. Affects: `nightly.py` steps 1-3, `cache_builder.py` (both daily and 5yr), and the yfinance append logic in `server.py`. The 5yr cache builder had `LIMIT 1260` that dropped old bars on every rebuild, causing OHLCV/expr cache date drift — fixed 2026-03-20 by removing the limit.
+5. **Remove Railway from nightly data flow** — currently yfinance → Railway → local (round trip). Should be yfinance → local directly, Railway gets a backup copy. The nightly refresh should not depend on Railway for any compute or data. Railway is seed vault only. **Partially fixed 2026-03-20:** 5yr cache `LIMIT 1260` removed (was dropping old bars causing OHLCV/expr cache date drift). Nightly step 3 changed from full rebuild to append-only. OHLCV and expr cache now stay in sync permanently. **Remaining:** Steps 1-2 still go through Railway. Yfinance → local direct pipeline not yet built.
 
 ### Phase 3 — EV Grinder
 5. ~~**EV Grinder increments 5-6**~~ — ✅ DONE.
@@ -438,9 +439,12 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - **Repo:** `schultzdanielj-del/swing-screener`, branch `v2`
 - **Railway:** `https://web-production-e3025.up.railway.app` — seed vault only (see LOCALIZE.md)
 - **Expression cache:** 16,051 expressions, ~21 GB
-- **5yr OHLCV cache:** ~4,167 tickers
+- **5yr OHLCV cache:** ~4,169 tickers (all available history, no bar limit)
 - **File mirror:** Grind results → Railway via `file_mirror.py` (stays post-localization for Claude access)
 - **Nightly refresh:** 4:30pm ET, 9 steps + seed vault push, fully automated
+  - Step 3 (5yr cache) now **appends** new bars only — never rebuilds, never drops old bars
+  - Step 4 (expr cache) appends new bars to match
+  - OHLCV and expr cache stay permanently in sync
 - **UI:** DM Sans, grayscale design system. PySide6 desktop app (`scanperfect.py`)
 
 ---
@@ -471,6 +475,8 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - **Profit grinder uses `entry_candle_score` weighting, not `combined_score`.** Move size is future information — not available at trade time. Entry candle similarity is the right tradability proxy.
 - **Profit grinder: no trigger gate on unvetted winners.** Non-triggers scored as 1-ADR loss at their weight. The scoring function self-regulates. No bins, no hardcoded thresholds.
 - **Profit grinder: TA-expression-based exits only.** No fixed ADR price targets or stop losses. The chart determines the exit through expression conditions.
+- **Example matching uses hardcoded entry_date, never bar indices.** Bar indices shift when OHLCV or expr caches rebuild. Dates are stable. The refinement grinder matches examples to clusters by finding the cluster with ANY signal bar within forward_window bars before the example's entry_date. Two-pass: seed distance 3 for forward_window computation, then forward_window as distance for classification. Fixed 2026-03-20 after OHLCV/expr cache drift caused 65→7 example matches.
+- **Nightly 5yr cache appends only, never rebuilds.** The old full-rebuild approach dropped bars from the front of the 5yr window, drifting OHLCV start dates away from the expr cache. Fixed 2026-03-20. The expr cache append already worked correctly (add to end only).
 
 ---
 
