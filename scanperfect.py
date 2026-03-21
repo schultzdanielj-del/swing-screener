@@ -637,7 +637,6 @@ class FlowchartCanvas(QWidget):
         self._example_progress = 0.0  # 0.0 to 1.0
         self._example_n = 0
         self._example_total = 0
-        self._scan_tuning_tab = "entry"  # "entry" or "exit"
         self.setMouseTracking(True)
 
     def set_status(self, nid, s):
@@ -853,7 +852,7 @@ class FlowchartCanvas(QWidget):
                 x, y, w, h = self._rects[nid]
                 # Vetting gets a thin header (just enough to click-collapse)
                 # Other nodes use the full base card height as header
-                header_h = 32 if nid in ("vetting", "examples") else (56 if nid == "scan_tuning" else self._nh)
+                header_h = 32 if nid in ("vetting", "examples", "scan_tuning") else self._nh
                 widget.setGeometry(int(x + 1), int(y + header_h), int(w - 2), int(h - header_h - 1))
                 widget.setVisible(True)
                 widget.raise_()
@@ -1085,64 +1084,6 @@ class FlowchartCanvas(QWidget):
         p.drawText(QRectF(x + pad, name_y, w - pad*2, name_h),
                    Qt.AlignLeft | Qt.AlignVCenter, title_text)
 
-        # ENTRY / EXIT Chrome-style tabs for Scan Tuning (in header, below title)
-        if nid == "scan_tuning" and is_expanded and not locked:
-            tab_y = y + 30
-            tab_h = 26
-            tab_bottom = tab_y + tab_h
-            half_w = w // 2
-            entry_x = x
-            exit_x = x + half_w
-            active = self._scan_tuning_tab
-            curve = 8  # shoulder curve radius
-
-            # Draw tab bar background (the "shelf" behind inactive tabs)
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#1A1A1A"))
-            p.drawRect(int(x), int(tab_y), int(w), tab_h)
-
-            # Active tab: raised shape with curved top corners, no bottom border
-            # Inactive tab: flat, sits on the shelf
-            for tab_key, tx, tw, bright_col, dim_col in [
-                ("entry", entry_x, half_w, "#4ade80", "#2a5e3f"),
-                ("exit", exit_x, w - half_w, "#f87171", "#8a4444"),
-            ]:
-                is_active = active == tab_key
-                if is_active:
-                    # Chrome-style raised tab: curved top shoulders, flat bottom
-                    path = QPainterPath()
-                    path.moveTo(tx, tab_bottom)
-                    path.lineTo(tx, tab_y + curve)
-                    path.quadTo(tx, tab_y, tx + curve, tab_y)
-                    path.lineTo(tx + tw - curve, tab_y)
-                    path.quadTo(tx + tw, tab_y, tx + tw, tab_y + curve)
-                    path.lineTo(tx + tw, tab_bottom)
-                    path.closeSubpath()
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(QColor(bright_col))
-                    p.drawPath(path)
-                    # Text
-                    p.setPen(QColor("#000000"))
-                else:
-                    # Inactive: subtle fill, sits behind
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(QColor(dim_col))
-                    p.drawRect(int(tx + 2), int(tab_y + 6), int(tw - 4), tab_h - 6)
-                    # Text
-                    p.setPen(QColor("#999999"))
-
-                f.setPixelSize(12); f.setWeight(QFont.Bold); p.setFont(f)
-                text_y = tab_y + (0 if is_active else 4)
-                text_h = tab_h - (0 if is_active else 4)
-                p.drawText(QRectF(tx, text_y, tw, text_h),
-                           Qt.AlignCenter, tab_key)
-
-            # Store tab rects for click detection
-            self._scan_tab_rects = {
-                "entry": (int(entry_x), int(tab_y), int(half_w), tab_h),
-                "exit": (int(exit_x), int(tab_y), int(w - half_w), tab_h),
-            }
-
         # Progress bar for Examples (below title, no desc text)
         if nid == "examples" and not locked:
             progress = getattr(self, "_example_progress", 0.0)
@@ -1209,21 +1150,6 @@ class FlowchartCanvas(QWidget):
             self.update()
 
     def mousePressEvent(self, ev):
-        # Check scan tuning tab clicks first (when expanded)
-        if self._expanded_id == "scan_tuning" and hasattr(self, "_scan_tab_rects"):
-            pos = ev.position() if hasattr(ev, "position") else ev.pos()
-            mx, my = int(pos.x()), int(pos.y())
-            for tab_key, (tx, ty, tw, th) in self._scan_tab_rects.items():
-                if tx <= mx <= tx + tw and ty <= my <= ty + th:
-                    if tab_key != self._scan_tuning_tab:
-                        self._scan_tuning_tab = tab_key
-                        # Tell the workspace to switch tabs
-                        ws = self._detail_widgets.get("scan_tuning")
-                        if ws and hasattr(ws, "_set_tab"):
-                            ws._set_tab(tab_key)
-                        self.update()
-                    return  # consumed — don't collapse
-
         if self._hover:
             self.node_clicked.emit(self._hover)
 
@@ -1262,7 +1188,6 @@ class ScanTuningWorkspace(QFrame):
         super().__init__(parent)
         self.node_id = node_id
         self._setup = "dtss"
-        self._tab = "entry"         # "entry" or "exit"
         self._ev_data = None
         self._signals = []
         self._depth_progression = []
@@ -1297,21 +1222,15 @@ class ScanTuningWorkspace(QFrame):
 
         lay.addWidget(top_bar)
 
-        # ── Main body: left panel (swappable) + right chart (shared) ──
+        # ── Main body: left entry panel + center chart + right exit panel ──
         body = QWidget()
         body_lay = QHBoxLayout(body)
         body_lay.setContentsMargins(0, 0, 0, 0)
         body_lay.setSpacing(0)
 
-        # Left panel container — holds both entry and exit panels, only one visible
-        self._left_container = QWidget()
-        self._left_container.setFixedWidth(280)
-        left_stack = QVBoxLayout(self._left_container)
-        left_stack.setContentsMargins(0, 0, 0, 0)
-        left_stack.setSpacing(0)
-
-        # ── ENTRY panel ──
+        # ── LEFT: ENTRY panel ──
         self._entry_panel = QFrame()
+        self._entry_panel.setFixedWidth(280)
         self._entry_panel.setStyleSheet(
             "QFrame { background:#050505; border-right:1px solid %s; }" % C["border"]
         )
@@ -1343,7 +1262,7 @@ class ScanTuningWorkspace(QFrame):
         self._wr_val_label = self._make_value_label("Off")
         entry_lay.addWidget(self._wr_val_label)
 
-        # Surviving signal count (entry tab)
+        # Surviving signal count
         self._surviving_label = QLabel("—")
         self._surviving_label.setStyleSheet(
             "font-family:'JetBrains Mono','Consolas',monospace; font-size:14px;"
@@ -1364,13 +1283,38 @@ class ScanTuningWorkspace(QFrame):
         self._freq_label.setWordWrap(True)
         entry_lay.addWidget(self._freq_label)
 
-        entry_lay.addStretch()
-        left_stack.addWidget(self._entry_panel)
+        # Winner ADR stats (median/avg/peak)
+        self._winner_adr_label = QLabel("")
+        self._winner_adr_label.setStyleSheet(
+            "font-family:'JetBrains Mono','Consolas',monospace; font-size:10px;"
+            "color:%s; background:transparent; border:none;"
+            "padding-top:4px;" % C["text_dim"]
+        )
+        self._winner_adr_label.setAlignment(Qt.AlignCenter)
+        self._winner_adr_label.setWordWrap(True)
+        entry_lay.addWidget(self._winner_adr_label)
 
-        # ── EXIT panel ──
+        entry_lay.addStretch()
+        body_lay.addWidget(self._entry_panel)
+
+        # ── CENTER: SPY bubble chart ──
+        center_panel = QFrame()
+        center_panel.setStyleSheet(
+            "QFrame { background:#000; }"
+        )
+        center_lay = QVBoxLayout(center_panel)
+        center_lay.setContentsMargins(0, 0, 0, 0)
+
+        self._spy_chart = SpyBubbleChart()
+        center_lay.addWidget(self._spy_chart)
+
+        body_lay.addWidget(center_panel, 1)
+
+        # ── RIGHT: EXIT panel ──
         self._exit_panel = QFrame()
+        self._exit_panel.setFixedWidth(280)
         self._exit_panel.setStyleSheet(
-            "QFrame { background:#050505; border-right:1px solid %s; }" % C["border"]
+            "QFrame { background:#050505; border-left:1px solid %s; }" % C["border"]
         )
         exit_lay = QVBoxLayout(self._exit_panel)
         exit_lay.setContentsMargins(12, 12, 12, 12)
@@ -1420,41 +1364,16 @@ class ScanTuningWorkspace(QFrame):
         exit_lay.addWidget(self._exit_stats_label)
 
         exit_lay.addStretch()
-        left_stack.addWidget(self._exit_panel)
-        self._exit_panel.setVisible(False)
-
-        body_lay.addWidget(self._left_container)
-
-        # Right panel — SPY bubble chart (shared between tabs)
-        right_panel = QFrame()
-        right_panel.setStyleSheet(
-            "QFrame { background:#000; }"
-        )
-        right_lay = QVBoxLayout(right_panel)
-        right_lay.setContentsMargins(0, 0, 0, 0)
-
-        self._spy_chart = SpyBubbleChart()
-        right_lay.addWidget(self._spy_chart)
-
-        body_lay.addWidget(right_panel, 1)
+        body_lay.addWidget(self._exit_panel)
 
         lay.addWidget(body, 1)
 
-        # Connect entry sliders
+        # Connect sliders
         self._setup_slider.valueChanged.connect(self._on_slider_changed)
         self._market_slider.valueChanged.connect(self._on_slider_changed)
         self._depth_slider.valueChanged.connect(self._on_slider_changed)
         self._wr_slider.valueChanged.connect(self._on_slider_changed)
         self._trim_slider.valueChanged.connect(self._on_slider_changed)
-
-    # ── Tab switching (called by FlowchartCanvas tab click) ──
-    def _set_tab(self, tab):
-        if tab == self._tab:
-            return
-        self._tab = tab
-        self._entry_panel.setVisible(tab == "entry")
-        self._exit_panel.setVisible(tab == "exit")
-        self._apply_filters()
 
     # ── Objective toggle ──
     def _set_objective(self, obj):
@@ -1681,8 +1600,24 @@ class ScanTuningWorkspace(QFrame):
                 "%.1f/wk · %.1f/mo · %.0f/yr" % (
                     peak_day, avg_day, avg_week, avg_month, avg_year)
             )
+            # Winner ADR stats
+            winner_adrs = [s.get("move_adr") for s in surviving
+                           if "WIN" in s.get("classification", "") and s.get("move_adr") is not None]
+            if winner_adrs:
+                winner_adrs.sort()
+                n_w_adr = len(winner_adrs)
+                med_adr = winner_adrs[n_w_adr // 2]
+                avg_adr = sum(winner_adrs) / n_w_adr
+                peak_adr = winner_adrs[-1]
+                self._winner_adr_label.setText(
+                    "winner move (ADR)\n"
+                    "med %.1f · avg %.1f · peak %.1f" % (med_adr, avg_adr, peak_adr)
+                )
+            else:
+                self._winner_adr_label.setText("")
         else:
             self._freq_label.setText("")
+            self._winner_adr_label.setText("")
 
         self._update_slider_labels()
         self._spy_chart.set_bubbles(surviving)
