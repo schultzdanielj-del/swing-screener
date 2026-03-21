@@ -177,8 +177,11 @@ def compute_consensus(all_run_conditions, n_runs, threshold=0.7, max_conditions=
     min_appearances = max(1, int(n_runs * threshold))
     consensus_names = [name for name in all_names if condition_freq[name] >= min_appearances]
 
-    # Apply condition cap
-    capped_names = consensus_names[:max_conditions]
+    # Apply condition cap (if provided — usually None, EPV enforced at grinder)
+    if max_conditions is not None:
+        capped_names = consensus_names[:max_conditions]
+    else:
+        capped_names = consensus_names
 
     # Build consensus condition list with metadata
     consensus_conditions = []
@@ -317,20 +320,27 @@ def run(setup_type, stage, threshold=0.7, n_latest=None, epv_divisor=3,
         print(f"    {i+1:>3}. {rf['filename']:<60s} "
               f"{rf['n_conditions']:>3} conds  {total} signals")
 
-    # EPV cap
+    # EPV validation — cap should be enforced at grinder level via --depth
     if stage == "signal":
         n_examples = get_example_count(setup_type)
         epv_cap = n_examples // epv_divisor if n_examples > 0 else hard_cap
-        max_conditions = min(epv_cap, hard_cap)
+        recommended_depth = min(epv_cap, hard_cap)
         print(f"\n  Examples: {n_examples}")
-        print(f"  EPV cap: {n_examples} ÷ {epv_divisor} = {epv_cap}")
-        print(f"  Hard ceiling: {hard_cap}")
-        print(f"  Effective cap: {max_conditions}")
+        print(f"  EPV recommended depth: min({n_examples} ÷ {epv_divisor}, {hard_cap}) = {recommended_depth}")
+
+        # Check if the runs were actually EPV-capped
+        avg_conds = sum(rf["n_conditions"] for rf in run_files) / n_runs
+        if avg_conds > recommended_depth * 1.5:
+            print(f"\n  ⚠ WARNING: Runs averaged {avg_conds:.0f} conditions, but EPV says max {recommended_depth}.")
+            print(f"    Re-run with: --depth {recommended_depth}")
+            print(f"    Without EPV capping at the grinder level, consensus selects")
+            print(f"    the most popular overfit conditions — not the most robust ones.")
+        max_conditions = None  # no cap at consensus level — threshold is the filter
     else:
-        # Refinement: EPV based on signal count, not example count
-        # Use a higher divisor since the population is much larger
-        max_conditions = hard_cap
-        print(f"\n  Condition cap: {max_conditions} (refinement ceiling)")
+        n_examples = None
+        recommended_depth = hard_cap
+        max_conditions = None  # threshold only
+        print(f"\n  Refinement ceiling: {hard_cap} (enforce via --depth at grinder level)")
 
     # Extract conditions from each run
     print(f"\n  Extracting conditions...")
@@ -344,11 +354,11 @@ def run(setup_type, stage, threshold=0.7, n_latest=None, epv_divisor=3,
             print(f"    ERROR reading {rf['filename']}: {e}")
             all_run_conditions.append([])
 
-    # Compute consensus
+    # Compute consensus — threshold only, no cap (EPV enforced at grinder level)
     result = compute_consensus(
         all_run_conditions, n_runs,
         threshold=threshold,
-        max_conditions=max_conditions,
+        max_conditions=None,
     )
 
     # Print results
@@ -357,7 +367,12 @@ def run(setup_type, stage, threshold=0.7, n_latest=None, epv_divisor=3,
     print(f"  Unique conditions found: {result['n_unique_conditions']}")
     print(f"  Above {threshold:.0%} threshold ({result['min_appearances']}/{n_runs}): "
           f"{result['n_above_threshold']}")
-    print(f"  After cap ({max_conditions}): {result['n_after_cap']}")
+    if stage == "signal":
+        if result['n_above_threshold'] > recommended_depth:
+            print(f"  ⚠ {result['n_above_threshold']} survived threshold but EPV recommends max {recommended_depth}")
+            print(f"    This means grinder --depth was too high. Re-run with --depth {recommended_depth}")
+        else:
+            print(f"  ✓ {result['n_above_threshold']} conditions — within EPV limit of {recommended_depth}")
 
     sm = result["stability_metrics"]
     print(f"\n  Stability Metrics:")
@@ -405,9 +420,9 @@ def run(setup_type, stage, threshold=0.7, n_latest=None, epv_divisor=3,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "n_runs": n_runs,
         "threshold": threshold,
-        "max_conditions_cap": max_conditions,
-        "n_examples": get_example_count(setup_type) if stage == "signal" else None,
+        "n_examples": n_examples if stage == "signal" else None,
         "epv_divisor": epv_divisor if stage == "signal" else None,
+        "recommended_grinder_depth": recommended_depth,
         "run_files": [rf["filename"] for rf in run_files],
         "consensus": result,
     }
