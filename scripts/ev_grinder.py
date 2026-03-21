@@ -1939,6 +1939,77 @@ def run(setup_type):
     features_post, pct_matrix_post = build_scoring_curves(deduped_post, post_signals_for_scoring, "post")
     scores_post = score_signals(pct_matrix_post, features_post, post_signals_for_scoring, "post")
 
+    # ── Inc 5b: Tree-based scoring (XGBoost + SHAP) ──
+    tree_scores_pre = tree_scores_post = None
+    tree_info_pre = tree_info_post = None
+    try:
+        from ev_tree_scorer import tree_score_signals
+        print(f"\n  {'=' * 50}")
+        print(f"  TREE MODEL SCORING (A/B comparison)")
+        print(f"  {'=' * 50}")
+
+        tree_scores_pre, tree_info_pre = tree_score_signals(
+            deduped_pre, all_signals, "pre", top_n_features=200)
+
+        tree_scores_post, tree_info_post = tree_score_signals(
+            deduped_post, post_signals_for_scoring, "post", top_n_features=200)
+
+        # ── A/B Comparison ──
+        print(f"\n  {'=' * 50}")
+        print(f"  A/B COMPARISON: Additive vs Tree")
+        print(f"  {'=' * 50}")
+
+        for ab_label, ab_scores_add, ab_scores_tree, ab_signals, ab_info in [
+            ("Pre", scores_pre, tree_scores_pre, all_signals, tree_info_pre),
+            ("Post", scores_post, tree_scores_post, post_signals_for_scoring, tree_info_post),
+        ]:
+            n_ab = len(ab_signals)
+            is_winner = np.array(["WIN" in s.get("classification", "") for s in ab_signals])
+            n_dec = max(n_ab // 10, 1)
+
+            # Additive D10-D1
+            add_wr = np.array([s["predicted_wr"] for s in ab_scores_add])
+            add_order = np.argsort(add_wr)
+            add_bot = float(is_winner[add_order[:n_dec]].mean())
+            add_top = float(is_winner[add_order[-n_dec:]].mean())
+
+            # Tree D10-D1
+            tree_wr = np.array([s["predicted_wr"] for s in ab_scores_tree])
+            tree_order = np.argsort(tree_wr)
+            tree_bot = float(is_winner[tree_order[:n_dec]].mean())
+            tree_top = float(is_winner[tree_order[-n_dec:]].mean())
+
+            print(f"\n  {ab_label}-refinement ({n_ab} signals):")
+            print(f"    Additive:  D1={add_bot:.1%}  D10={add_top:.1%}  spread={add_top-add_bot:+.1%}")
+            print(f"    Tree (OOF): D1={tree_bot:.1%}  D10={tree_top:.1%}  spread={tree_top-tree_bot:+.1%}")
+            if ab_info:
+                print(f"    Tree CV AUC: {ab_info['cv_wr']['cv_auc']}")
+
+            # Disagreement analysis: signals where models differ by >15pp
+            disagree = []
+            for i in range(n_ab):
+                diff = abs(ab_scores_tree[i]["predicted_wr"] - ab_scores_add[i]["predicted_wr"])
+                if diff > 0.15:
+                    disagree.append((i, diff, ab_scores_add[i]["predicted_wr"],
+                                     ab_scores_tree[i]["predicted_wr"],
+                                     "WIN" in ab_signals[i].get("classification", "")))
+            if disagree:
+                disagree.sort(key=lambda x: x[1], reverse=True)
+                print(f"    Disagreements (>15pp): {len(disagree)}")
+                # Who's right more often?
+                tree_right = sum(1 for _, _, aw, tw, won in disagree
+                                 if (tw > aw and won) or (tw < aw and not won))
+                add_right = sum(1 for _, _, aw, tw, won in disagree
+                                if (aw > tw and won) or (aw < tw and not won))
+                print(f"    Tree right: {tree_right}/{len(disagree)}, "
+                      f"Additive right: {add_right}/{len(disagree)}")
+            else:
+                print(f"    Disagreements (>15pp): 0")
+
+    except Exception as e:
+        print(f"\n  WARNING: Tree scoring failed: {e}")
+        import traceback; traceback.print_exc()
+
     # Hard fail: all examples must be scored
     example_scored_count = sum(
         1 for i, s in enumerate(all_signals)
@@ -2022,7 +2093,7 @@ def run(setup_type):
     # Build output signals array
     signals_out = []
     for i, s in enumerate(all_signals):
-        signals_out.append({
+        sig = {
             "ticker": s["ticker"], "date": s["date"], "close": s.get("close"),
             "classification": s.get("classification"),
             "is_example": s.get("is_example", False),
@@ -2035,12 +2106,20 @@ def run(setup_type):
             "predicted_wr": scores_pre[i]["predicted_wr"],
             "predicted_mfe": scores_pre[i]["predicted_mfe"],
             "ev": scores_pre[i]["ev"],
-        })
+        }
+        if tree_scores_pre:
+            sig["tree_quality_score"] = tree_scores_pre[i]["quality_score"]
+            sig["tree_setup_score"] = tree_scores_pre[i]["setup_score"]
+            sig["tree_market_score"] = tree_scores_pre[i]["market_score"]
+            sig["tree_predicted_wr"] = tree_scores_pre[i]["predicted_wr"]
+            sig["tree_predicted_mfe"] = tree_scores_pre[i]["predicted_mfe"]
+            sig["tree_ev"] = tree_scores_pre[i]["ev"]
+        signals_out.append(sig)
 
     post_signals_out = []
     for pi, orig_idx in enumerate(post_indices):
         s = all_signals[orig_idx]
-        post_signals_out.append({
+        sig = {
             "ticker": s["ticker"], "date": s["date"],
             "classification": s.get("classification"),
             "is_example": s.get("is_example", False),
@@ -2051,7 +2130,15 @@ def run(setup_type):
             "predicted_wr": scores_post[pi]["predicted_wr"],
             "predicted_mfe": scores_post[pi]["predicted_mfe"],
             "ev": scores_post[pi]["ev"],
-        })
+        }
+        if tree_scores_post:
+            sig["tree_quality_score"] = tree_scores_post[pi]["quality_score"]
+            sig["tree_setup_score"] = tree_scores_post[pi]["setup_score"]
+            sig["tree_market_score"] = tree_scores_post[pi]["market_score"]
+            sig["tree_predicted_wr"] = tree_scores_post[pi]["predicted_wr"]
+            sig["tree_predicted_mfe"] = tree_scores_post[pi]["predicted_mfe"]
+            sig["tree_ev"] = tree_scores_post[pi]["ev"]
+        post_signals_out.append(sig)
 
     # Save output
     tt = time.time() - t_total
@@ -2135,6 +2222,17 @@ def run(setup_type):
             "scoring_features_post": len(features_post),
         },
     }
+
+    # Add tree model comparison data if available
+    if tree_info_pre or tree_info_post:
+        def _safe_tree_info(info):
+            if info is None:
+                return None
+            return {k: v for k, v in info.items() if not k.startswith("_")}
+        out["tree_model"] = {
+            "pre_refinement": _safe_tree_info(tree_info_pre),
+            "post_refinement": _safe_tree_info(tree_info_post),
+        }
 
     os.makedirs(CACHE_DIR, exist_ok=True)
     op = os.path.join(CACHE_DIR, f"ev_{setup_type}_inc6_{ts}.json")
