@@ -76,7 +76,8 @@ Seven nodes in the UI flowchart. The vetting loop (Examples → Causative Proces
 examples found). After convergence: Correlative Targeting → Scan Tuning ↔ Optimal Management → Summary.
 
 **Nightly auto-refresh (4:30pm ET, fully automated):**
-  OHLCV append → daily cache → 5yr cache → expr cache → matrix → earnings → market cache (256 instruments)
+  OHLCV append → daily cache → 5yr cache (append-only) → expr cache (append) → matrix → earnings → market cache (256 instruments)
+  5yr cache and expr cache never rebuild from scratch — only new bars appended.
   When you sit down, all data is current. No manual refresh needed.
 
 ```
@@ -167,7 +168,7 @@ everything internally.
 **Inputs:**
 - Signal conditions from Layer 1 (step 1 pyramid result)
 - Exit condition from exit grinder (step 2)
-- Example library (from Railway API)
+- Example library (from local SQLite — `data/scanperfect.db`)
 - Expression series cache (for scan + beam search)
 - 5yr OHLCV cache (for price data)
 
@@ -191,7 +192,14 @@ Classification uses a ceiling + exit race:
    - Close above ceiling (for shorts) → AUTO_LOSS (setup broke)
    - Exit condition fires → AUTO_WIN (setup resolved)
    - End of available data → AUTO_WIN (setup held, never stopped out)
-4. Example clusters (any bar matches a validated example) → AUTO_WIN regardless
+4. Example clusters (matched by hardcoded entry_date proximity) → AUTO_WIN regardless
+
+**Example-to-cluster matching** uses the hardcoded `entry_date` from the examples
+table. For each example, find the cluster in the same ticker with ANY signal bar
+(rightmost or leftward) within `forward_window` bars before the entry_date. Two-pass:
+seed distance of 3 bars to compute forward_window, then forward_window as distance
+for classification. NEVER uses bar indices for matching — dates are stable across
+cache rebuilds, bar indices are not.
 
 No ADR floor for pile separation. A scratch or tiny win is not a loser — the
 setup held. The profit side (how much winners win) gets handled by later steps.
@@ -719,8 +727,8 @@ These need to be rebuilt or are new:
 | AI review queue | New — server.py endpoint + UI queue view |
 | EV grinder | ✅ **DONE** — `scripts/ev_grinder.py` (replaces market_grinder + setup_grinder) |
 | Fundamentals cache | ✅ **DONE** — `scripts/fetch_fundamentals.py` (Yahoo Finance sector/float/shares) |
-| Scan Tuning UI | ✅ Done — two-tab workspace, SPY bubble chart, auto-save settings |
-| Depth progression (refinement grind) | New — condition set + cluster counts at each depth level |
+| Scan Tuning UI | ✅ **DONE** (2026-03-20) — two-tab workspace, SPY bubble chart, auto-save settings |
+| Depth progression (refinement grind) | ✅ **DONE** (2026-03-20) — `depth_progression` in refinement JSON |
 | Nightly watchlist | New — unified ranked list across all setup types, reads locked settings |
 | UI: EV display + watchlist | New — EV scores, WR, MFE per signal |
 | UI cycle management | New — health metrics, diff, revert button, regrind indicator |
@@ -740,12 +748,13 @@ Build in this order so each piece is useful immediately when complete:
 7. **AI review queue** — two-stage vetting gate, server endpoint + UI
 8. ~~**Fundamentals cache**~~ — **DONE** — `fetch_fundamentals.py`
 9. ~~**EV grinder**~~ — **DONE** — `scripts/ev_grinder.py`
-10. **Depth progression** — refinement grind saves condition set + cluster counts per depth level
+10. ~~**Depth progression**~~ — ✅ DONE (2026-03-20). Refinement grind saves `depth_progression` in output JSON — condition set + cluster counts + WR at each depth level. Scan Tuning reads this for the depth slider.
 11. ~~**Scan Tuning UI**~~ — ✅ DONE (2026-03-20). Two-tab workspace (Entry/Exit) with SPY bubble chart. Entry: setup/market feature floors, refinement depth, WR floor. Exit: SQN/max profit objective, exit expression, trim. EV grinder outputs setup_score + market_score. Settings auto-save on close.
 12. **Profit grind** — trade exit optimization, reads locked settings
 13. **UI: EV display + unified nightly watchlist** — the live product
 
-**Current status (2026-03-16):** DTSS Phase 2 complete (signal grind + exit grind +
-refinement grind). EV grinder complete (inc 1-6). Signal grind margin slider attempted
-and reverted — margin is a search parameter, not post-hoc tunable. Next: depth
-progression (step 10), then Scan Tuning UI (step 11 — ✅ DONE), then vet winner pile.
+**Current status (2026-03-20):** DTSS through Phase 4 (profit grinder complete).
+EV grinder complete (inc 1-6). Depth progression done. Scan Tuning UI built. Nightly
+5yr cache fixed (append-only, no LIMIT, no date drift). Example matching uses hardcoded
+entry_date (fixed 2026-03-20 — was using bar indices which drifted across cache rebuilds).
+Next: verify Scan Tuning works end-to-end, vet winner pile, then Phase 5 (live watchlist).
