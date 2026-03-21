@@ -2432,8 +2432,8 @@ def _gather_raw_signal_clusters(setup_type):
 
     # Build cluster-to-example matching by date proximity.
     # The example has a hardcoded entry_date. The cluster has signal bars
-    # that fire BEFORE the entry. Match if the cluster's rightmost bar is
-    # within max_distance bars before the example's entry_date.
+    # that fire BEFORE the entry. Match if ANY bar in the cluster is within
+    # max_distance bars before the example's entry_date.
     #
     # Two-pass:
     #   Pass 1: seed distance of 3 bars → compute forward_window
@@ -2443,22 +2443,24 @@ def _gather_raw_signal_clusters(setup_type):
         """Check if this cluster corresponds to a known example.
         Returns (is_example, entry_date, entry_bar_idx) or (False, None, None).
 
-        Match if the cluster's rightmost bar is within max_distance bars
-        before the example's entry_date.
+        Match if ANY bar in the cluster (rightmost or leftward) is within
+        max_distance bars before the example's entry_date.
         """
         tk = cluster["ticker"]
         if tk not in example_date_lookup:
             return False, None, None
-        rightmost_idx = cluster["rightmost"]["bar_idx"]
+        all_bar_idxs = [cluster["rightmost"]["bar_idx"]] + [
+            b["bar_idx"] for b in cluster.get("leftward", [])]
         date_map = _ticker_date_to_idx.get(tk, {})
         for entry_date in example_date_lookup[tk]:
             entry_idx = date_map.get(entry_date)
             if entry_idx is None:
                 continue
-            # Cluster rightmost should be before entry_date, within max_distance
-            distance = entry_idx - rightmost_idx
-            if 0 < distance <= max_distance:
-                return True, entry_date, entry_idx
+            # Check if ANY cluster bar is within max_distance before entry
+            for bi in all_bar_idxs:
+                distance = entry_idx - bi
+                if 0 < distance <= max_distance:
+                    return True, entry_date, entry_idx
         return False, None, None
 
     print(f"\n  Applying exit condition on rightmost bars...")
