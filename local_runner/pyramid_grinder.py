@@ -1786,7 +1786,7 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
 def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 d1_depth=None, d1_beam=None, multi_pass=True,
                 blackout_map=None, whitelist_map=None,
-                override_example_dfs=None):
+                override_example_dfs=None, output_dir=None):
     """Run the full pyramid grinder.
 
     Args:
@@ -2185,33 +2185,36 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         "examples_failing": examples_failing,
     }
 
-    os.makedirs(CACHE_DIR, exist_ok=True)
+    save_dir = output_dir if output_dir else CACHE_DIR
+    os.makedirs(save_dir, exist_ok=True)
 
     # Timestamped archive — always unique, never overwrites anything
     # This is the local backup. Railway is the permanent record.
-    out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
+    out_path = os.path.join(save_dir, f"{desc_name}.json")
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
 
-    # ── Mirror to Railway ──
-    from file_mirror import mirror_file
-    mirror_file(out_path)
+    # ── Mirror to Railway (skip for consensus intermediate files) ──
+    if not output_dir:
+        from file_mirror import mirror_file
+        mirror_file(out_path)
 
-    # ── Upload to Railway ──
-    step_type = "refinement_grind" if is_refinement else "signal_grind"
-    try:
-        from grind_uploader import upload as railway_upload
-        railway_upload(
-            result=result,
-            result_path=out_path,
-            step_type=step_type,
-            setup_type=setup_type,
-            activate=True,
-        )
-    except Exception as e:
-        print(f"\n  [pyramid_grinder] WARNING: Railway upload failed: {e}")
-        print(f"  [pyramid_grinder] Local files are saved. Upload manually or retry later.")
+    # ── Upload to Railway (skip for consensus intermediate files) ──
+    if not output_dir:
+        step_type = "refinement_grind" if is_refinement else "signal_grind"
+        try:
+            from grind_uploader import upload as railway_upload
+            railway_upload(
+                result=result,
+                result_path=out_path,
+                step_type=step_type,
+                setup_type=setup_type,
+                activate=True,
+            )
+        except Exception as e:
+            print(f"\n  [pyramid_grinder] WARNING: Railway upload failed: {e}")
+            print(f"  [pyramid_grinder] Local files are saved. Upload manually or retry later.")
 
     return result
 
@@ -3039,7 +3042,8 @@ def _load_refinement_piles(setup_type):
     return win_example_dfs, whitelist_map, raw_winners, raw_losers, universe_cache, adr_threshold, losing_cluster_bars, win_leftward_bars
 
 
-def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
+def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3,
+                   output_dir=None):
     """Refinement grind: cluster-aware beam search, winners must-pass, minimize losing clusters.
 
     Gathers raw signal clusters (Phase 1), loads full expendable set,
@@ -3392,29 +3396,32 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
         "depth_progression": depth_progression,
     }
 
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
+    save_dir = output_dir if output_dir else CACHE_DIR
+    os.makedirs(save_dir, exist_ok=True)
+    out_path = os.path.join(save_dir, f"{desc_name}.json")
     with open(out_path, "w") as f:
         json.dump(result_data, f, indent=2)
     print(f"\n  Saved: {out_path}")
 
-    # Mirror to Railway
-    from file_mirror import mirror_file
-    mirror_file(out_path)
+    # Mirror to Railway (skip for consensus intermediate files)
+    if not output_dir:
+        from file_mirror import mirror_file
+        mirror_file(out_path)
 
-    # Upload to Railway cycle
-    try:
-        from grind_uploader import upload as railway_upload
-        railway_upload(
-            result=result_data,
-            result_path=out_path,
-            step_type="refinement_grind",
-            setup_type=setup_type,
-            activate=True,
-        )
-    except Exception as e:
-        print(f"\n  WARNING: Railway upload failed: {e}")
-        print(f"  Local file saved. Upload manually or retry later.")
+    # Upload to Railway cycle (skip for consensus intermediate files)
+    if not output_dir:
+        try:
+            from grind_uploader import upload as railway_upload
+            railway_upload(
+                result=result_data,
+                result_path=out_path,
+                step_type="refinement_grind",
+                setup_type=setup_type,
+                activate=True,
+            )
+        except Exception as e:
+            print(f"\n  WARNING: Railway upload failed: {e}")
+            print(f"  Local file saved. Upload manually or retry later.")
 
     return result_data
 
@@ -3514,6 +3521,7 @@ def main():
             beam_width=ref_beam,
             depth=ref_depth,
             peak_target=ref_peak,
+            output_dir=args.output_dir,
         )
         if result is None:
             sys.exit(1)
@@ -3538,6 +3546,7 @@ def main():
             d1_depth=args.d1_depth,
             d1_beam=args.d1_beam,
             multi_pass=multi_pass,
+            output_dir=args.output_dir,
         )
         results.append(result)
 
