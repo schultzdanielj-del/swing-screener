@@ -1847,19 +1847,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 
     # ── Load data ──
     print(f"\n  Loading OHLCV cache...")
-    universe_cache = load_5yr_cache()
-    print(f"  {len(universe_cache)} tickers loaded")
-
-    # ── Universe subsampling (consensus pipeline) ──
-    if subsample is not None:
-        import random as _random
-        rng = _random.Random(seed)
-        all_tickers = sorted(universe_cache.keys())
-        n_keep = max(1, int(len(all_tickers) * subsample))
-        keep_tickers = set(rng.sample(all_tickers, n_keep))
-        universe_cache = {t: df for t, df in universe_cache.items() if t in keep_tickers}
-        print(f"  Subsampled to {len(universe_cache)} tickers "
-              f"({subsample:.0%} of {len(all_tickers)}, seed={seed})")
+    full_universe_cache = load_5yr_cache()
+    print(f"  {len(full_universe_cache)} tickers loaded")
 
     # ── Override peak target (consensus pipeline: run to ceiling) ──
     if no_peak_target:
@@ -1871,8 +1860,27 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         example_dfs = override_example_dfs
         print(f"  {len(example_dfs)} examples (override — win pile)")
     else:
-        example_dfs = load_example_data(setup_type, universe_cache)
+        # Load from full cache so no examples are dropped by subsampling
+        example_dfs = load_example_data(setup_type, full_universe_cache)
         print(f"  {len(example_dfs)} examples loaded")
+
+    # ── Universe subsampling (consensus pipeline) ──
+    # Must happen AFTER example loading — examples are never subsampled.
+    # Example tickers are force-added back after subsampling.
+    if subsample is not None:
+        import random as _random
+        rng = _random.Random(seed)
+        all_tickers = sorted(full_universe_cache.keys())
+        n_keep = max(1, int(len(all_tickers) * subsample))
+        keep_tickers = set(rng.sample(all_tickers, n_keep))
+        # Force-add example tickers so they're always in the universe
+        example_tickers = set(ex["ticker"] for ex in example_dfs)
+        keep_tickers |= example_tickers
+        universe_cache = {t: df for t, df in full_universe_cache.items() if t in keep_tickers}
+        print(f"  Subsampled to {len(universe_cache)} tickers "
+              f"({subsample:.0%} of {len(all_tickers)}, seed={seed})")
+    else:
+        universe_cache = full_universe_cache
 
     print(f"\n  Loading expressions...")
     # Signal expressions for grinding (what the grinder actually uses)
