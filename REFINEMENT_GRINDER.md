@@ -450,9 +450,14 @@ In that case: skip refinement, proceed to EV grinder on the unrefined population
 ## WHAT NEEDS TO CHANGE IN pyramid_grinder.py
 
 1. **`--skip-gather` flag for refinement:** When set, skip `_gather_raw_signal_clusters()` and jump to `_load_refinement_piles()`. Hard error if cluster file doesn't exist.
-2. **`--runs N` for refinement:** Currently does not apply. The orchestrator calls `run_refinement()` in a loop with loser subsampling, so `--runs` is not needed — the orchestrator manages the loop.
+2. **`--runs N` for refinement:** Currently does not apply. The orchestrator calls `run_refinement()` as subprocesses with loser subsampling, so `--runs` is not needed — the orchestrator manages the loop.
 3. **Loser cluster subsampling:** `run_refinement()` needs a parameter for which loser clusters to include. The orchestrator passes a random seed per run, `run_refinement()` draws 50% of clusters from that seed.
-4. **Output directory:** Same `--output-dir` flag as signal grinder, directing consensus runs to `consensus/` subdirectory.
+4. **New `--seed` parameter for refinement:** Integer seed passed by the orchestrator, used by `run_refinement()` to deterministically draw 50% of loser clusters. Without `--seed`, a random seed is generated internally (for manual testing). Same CLI arg as signal grinder — one `--seed` parameter serves both code paths.
+5. **Output directory:** Same `--output-dir` flag as signal grinder, directing consensus runs to `consensus/` subdirectory.
+6. **`--conditions-file` for refinement:** When `--blackout --skip-gather --conditions-file` are all set, `run_refinement()` receives the signal conditions from the file instead of calling `_load_signal_conditions()`. Used in two places inside `run_refinement()`:
+   - Line 3321: building the combined signal+refinement condition set (signal conditions come from file, not auto-discovery)
+   - Output JSON: the `signal_conditions` field is populated from the supplied file
+   Implementation: add `signal_conditions_override` parameter to `run_refinement()`. If not None, skip `_load_signal_conditions()` call and use the override. `main()` loads the JSON when `--conditions-file` is provided and passes the extracted conditions list.
 
 ## WHAT NEEDS TO CHANGE IN consensus_engine.py
 
@@ -502,7 +507,7 @@ In that case: skip refinement, proceed to EV grinder on the unrefined population
 
 ## OPEN QUESTIONS FOR IMPLEMENTATION
 
-1. The loser subsampling seed — passed as a parameter to `run_refinement()`, or generated internally per run?
+1. ~~The loser subsampling seed — passed as a parameter to `run_refinement()`, or generated internally per run?~~ **RESOLVED:** Passed as CLI arg `--seed`. The orchestrator assigns a unique seed per run. `run_refinement()` uses `random.Random(seed)` to draw 50% of loser clusters. Without `--seed`, a random seed is generated internally for manual testing.
 2. Consensus threshold: exact value within 0.6-0.9 range — start with 0.7 and see?
 3. For the binomial test universe baseline: load all expression cache data into memory at once, or stream per-ticker? Memory implications with ~4,167 tickers × ~1,260 bars.
 4. If the signal population is much larger (2,500+ clusters instead of 893), the refinement matrix is also larger. Does beam 10,000 still finish in seconds, or does it need adjustment?
