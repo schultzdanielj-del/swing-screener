@@ -1959,6 +1959,9 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             if not pd.api.types.is_datetime64_any_dtype(df["date"]):
                 df["date"] = pd.to_datetime(df["date"])
             df = df.sort_values("date").reset_index(drop=True)
+            # Verify bar_idx is valid in the OHLCV DataFrame too
+            if bar_idx >= len(df):
+                continue
             # entry_date = day after scan bar
             if bar_idx + 1 < len(df):
                 entry_date = str(df["date"].iloc[bar_idx + 1].date())
