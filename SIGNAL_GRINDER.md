@@ -258,6 +258,7 @@ Run `run_pyramid()` 15 times. Each run uses:
 - **No peak target — run every tier to natural ceiling** (no improvement possible at the current beam level). Don't stop early. Each run finds ALL conditions that contribute any filter power. Consensus picks the stable ones afterward.
 - **0% margin on bounding boxes during the grind.** The beam search works with exact example min/max. Tighter boxes produce sharper conditions. Consensus judges stability on the sharpest version of each condition. Margin is applied later at Step 2 Phase E only.
 - D1 depth cap 15 still applies (prevents overfitting to a single day's snapshot).
+- **D1 subsampling:** `run_d1_tier()` loads the full universe matrix from `get_universe_matrix()`, then filters its rows to only tickers present in `universe_cache`. Since the orchestrator subsamples `universe_cache` to 50% before calling `run_pyramid()`, D1 automatically sees the same ticker subset as every other tier. No new parameters, no new data paths — one filter step after the matrix load.
 
 **Interleave with permuted runs:** Run order is real, permuted, real, permuted, real, permuted... This enables the early abort checkpoint.
 
@@ -592,7 +593,7 @@ Full rewrite (current version has fake EPV cap logic):
 ## OPEN QUESTIONS FOR IMPLEMENTATION
 
 1. Does `--zero-margin` need to propagate to `compute_example_ranges()` as a parameter, or should it be a global mode flag?
-2. The subsampling draws 50% of tradable universe tickers — does the expression cache need to be pre-filtered too, or is it sufficient to filter `universe_cache` only?
+2. ~~The subsampling draws 50% of tradable universe tickers — does the expression cache need to be pre-filtered too, or is it sufficient to filter `universe_cache` only?~~ **RESOLVED:** Filter `universe_cache` only. The expression cache doesn't need filtering — tickers not in `universe_cache` never get their `.npz` loaded. The tier matrix builder iterates `universe_cache.keys()`. D1 filters its matrix rows to match `universe_cache` after loading (see Step 1A).
 3. The orchestrator calls `run_pyramid()` in-process vs spawning subprocesses — which is better for memory management across 30 runs?
 4. The consensus threshold X in Phase C — sweep across multiple thresholds, or fixed at 0.7?
 5. How to handle the case where the test runner passes but the full overnight run fails at step 8+ (EV grinder chokes on larger population)?
