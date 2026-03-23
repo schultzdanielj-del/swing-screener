@@ -396,7 +396,7 @@ depth_progression
 params, summary, timestamp
 ```
 
-**Signal conditions source:** `run_refinement()` calls `_load_signal_conditions()` to populate the `signal_conditions` field. With the updated loading path, this finds `consensus_signal_{setup}.json` (same fix as signal grinder wiring item 2).
+**Signal conditions source:** When the orchestrator runs refinement, it passes `--conditions-file consensus_signal_{setup}.json`. `run_refinement()` uses the supplied conditions instead of calling `_load_signal_conditions()` internally. This populates the `signal_conditions` field in the output JSON with the consensus conditions.
 
 ### Steps 6 + 7: EV grinder + Profit grinder
 

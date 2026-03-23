@@ -383,7 +383,7 @@ Output: `raw_signal_clusters_{setup}.json` in the standard cache directory, same
 The exit condition (`signal_exit_{setup}.json`) was previously ground against signal bars from a single-run pyramid result. The consensus signal population has different signal bars (different conditions, different clusters). The exit condition must be re-ground against the new population.
 
 - Run `signal_exit_grinder.py --setup {setup}` after Step 3 completes.
-- The exit grinder loads the consensus signal conditions (via the updated loading path — prefers `consensus_signal_{setup}.json` when it exists), resolves signal bars on the new population, finds the best exit expression.
+- The exit grinder receives `--conditions-file consensus_signal_{setup}.json` from the orchestrator, resolves signal bars on the new population, finds the best exit expression.
 - Output: updated `signal_exit_{setup}.json`, same format, overwriting the old one.
 - **This must happen before Step 4.** The refinement grinder uses the exit condition for classification. A stale exit condition means misclassified signals, which means wrong winner/loser splits, which poisons everything downstream.
 
@@ -412,11 +412,14 @@ No cleanup step. No rollback.
 
 ### Orchestrator run loop
 
-The orchestrator (`scripts/run_consensus_pipeline.py`) handles the run loop directly. It calls `run_pyramid()` 30 times with per-call parameters:
+The orchestrator (`scripts/run_consensus_pipeline.py`) handles the run loop directly. Each grind runs as a **subprocess** (`subprocess.run(["python", "local_runner/pyramid_grinder.py", ...])`) — not an in-process `run_pyramid()` call. This guarantees clean memory per run: each Python process loads the 5yr cache (~2GB), runs one grind, exits, and the OS reclaims everything. Over 30 sequential runs, pickle deserialization and numpy fragmentation would push RSS upward in a single long-lived process. Subprocess isolation eliminates this risk. Startup overhead (~10-15s per run for cache loading) is negligible against 8-10 hour total runtime.
+
+Per-run parameters are passed as CLI arguments:
 
 - Calls 1-30: alternating real/permuted. Call 1 = real, call 2 = permuted, call 3 = real, etc.
-- Each call receives: a unique random seed (for 50% universe subsampling), a randomly shuffled pass ordering, and the permute flag (True/False).
+- Each call receives: a unique random seed (for 50% universe subsampling via `--seed`), a randomly shuffled pass ordering (via `--pass-order`), the permute flag (`--permute`), and output directory (`--output-dir consensus/`).
 - The `--runs` flag on `pyramid_grinder.py` is not used by the orchestrator. It remains functional for manual testing.
+- If a subprocess crashes (non-zero exit code), the orchestrator logs the failure and stops. No silent continuation past a failed run.
 
 The orchestrator manages interleaving, early abort checkpoint logic, z-gate decision, and chaining to downstream steps. These responsibilities cannot live inside `--runs` because `--runs` has no knowledge of permuted runs or z-scores.
 
@@ -481,7 +484,7 @@ Build on a feature branch off v2: `v2-consensus`. The existing pipeline on v2 re
 2. `pyramid_grinder.py` — add `--conditions-file` flag for deterministic scan. Override internal `_load_signal_conditions()` with supplied conditions. Test: feed fake conditions, verify scan runs.
 3. `pyramid_grinder.py` — add `--skip-gather` flag for refinement. Hard error if cluster file missing. Test: run refinement without prior scan, verify error message.
 4. `scripts/consensus_engine.py` — full rewrite. Signal mode (z-score) + refinement mode (consensus + binomial). Test: feed 1+1 output, verify z-score math.
-5. Signal conditions loading path — update `_load_signal_conditions()` to prefer `consensus_signal_{setup}.json`. Verify refinement and exit grinder find it.
+5. `--conditions-file` argument on `pyramid_grinder.py` and `signal_exit_grinder.py` — bypass internal condition loading when provided. Verify: refinement and exit grinder use supplied conditions, manual pipeline runs still use `_load_signal_conditions()` unchanged.
 6. `scripts/run_consensus_pipeline.py` — orchestrator with z-gate and chaining. Test: run miniature version end-to-end.
 7. `scripts/test_consensus_pipeline.py` — automated test runner. Self-verifying.
 
@@ -493,11 +496,15 @@ Each increment is independently testable. No increment depends on a later one. A
 
 1. **Permuted file naming:** Permuted runs use `permuted_{setup}_*.json` prefix. All existing loading functions (`_load_signal_conditions()`, etc.) search for `pyramid_{setup}_*.json` and will never accidentally grab permuted files.
 
-2. **Signal conditions loading path:** `_load_signal_conditions()` must check for `consensus_signal_{setup}.json` first. If it exists, use it. Fall back to latest `pyramid_{setup}_*.json` only if no consensus file exists. This affects: `_gather_raw_signal_clusters()`, `run_refinement()`, `signal_exit_grinder.py`, and any other consumer of signal conditions.
+2. **Signal conditions loading path: NO automatic consensus preference.** `_load_signal_conditions()` stays unchanged — it always finds the latest `pyramid_{setup}_*.json`. This prevents stale consensus files from a previous cycle being picked up during a manual single-run pipeline. The orchestrator passes `--conditions-file consensus_signal_{setup}.json` explicitly to every downstream step that needs consensus conditions (Step 3 scan, Step 3.5 exit re-grind, Step 4 refinement). Manual pipeline runs never see consensus files unless the user explicitly passes `--conditions-file`.
 
 3. **Step 3 conditions injection:** `--conditions-file` argument passes the consensus JSON path. `_gather_raw_signal_clusters()` uses the supplied conditions instead of calling `_load_signal_conditions()` internally.
 
-4. **Exit grinder re-run dependency:** Step 3.5 must complete before Step 4 starts. The orchestrator enforces ordering.
+4. **Step 3.5 conditions injection:** The exit grinder (`signal_exit_grinder.py`) gets the same `--conditions-file` argument. When provided, it uses the supplied conditions instead of calling its internal `load_pyramid_conditions()`.
+
+5. **Step 4 conditions injection:** The refinement grinder receives `--conditions-file` to populate the `signal_conditions` field in the output JSON. `_load_signal_conditions()` inside `run_refinement()` is bypassed when `--conditions-file` is set.
+
+6. **Exit grinder re-run dependency:** Step 3.5 must complete before Step 4 starts. The orchestrator enforces ordering.
 
 ---
 
@@ -594,6 +601,6 @@ Full rewrite (current version has fake EPV cap logic):
 
 1. Does `--zero-margin` need to propagate to `compute_example_ranges()` as a parameter, or should it be a global mode flag?
 2. ~~The subsampling draws 50% of tradable universe tickers — does the expression cache need to be pre-filtered too, or is it sufficient to filter `universe_cache` only?~~ **RESOLVED:** Filter `universe_cache` only. The expression cache doesn't need filtering — tickers not in `universe_cache` never get their `.npz` loaded. The tier matrix builder iterates `universe_cache.keys()`. D1 filters its matrix rows to match `universe_cache` after loading (see Step 1A).
-3. The orchestrator calls `run_pyramid()` in-process vs spawning subprocesses — which is better for memory management across 30 runs?
+3. ~~The orchestrator calls `run_pyramid()` in-process vs spawning subprocesses — which is better for memory management across 30 runs?~~ **RESOLVED:** Subprocess per run via `subprocess.run()`. Guarantees clean memory, isolates crashes. ~5-8 min total startup overhead across 30 runs (negligible against 8-10 hour batch). See orchestrator run loop section.
 4. The consensus threshold X in Phase C — sweep across multiple thresholds, or fixed at 0.7?
 5. How to handle the case where the test runner passes but the full overnight run fails at step 8+ (EV grinder chokes on larger population)?
