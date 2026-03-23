@@ -631,7 +631,17 @@ def main():
 
     # Load data
     ohlcv_cache = load_5yr_cache()
-    conditions = load_pyramid_conditions(setup)
+    if args.conditions_file:
+        import json as _json
+        with open(args.conditions_file) as f:
+            cond_data = _json.load(f)
+        conditions = cond_data.get("all_conditions", [])
+        if not conditions:
+            print(f"  ERROR: No 'all_conditions' found in {args.conditions_file}")
+            sys.exit(1)
+        print(f"  Loaded {len(conditions)} conditions from {args.conditions_file}")
+    else:
+        conditions = load_pyramid_conditions(setup)
     examples = load_examples(setup)
 
     # Phase 1: Resolve example signal bars
