@@ -497,19 +497,301 @@ Runs a miniature version of the full pipeline (1 real + 1 permuted instead of 15
 
 Build on a feature branch off v2: `v2-consensus`. The existing pipeline on v2 remains fully functional and runnable throughout development.
 
-**Build order on the branch:**
-
-1. `pyramid_grinder.py` — add `--permute` flag, `--subsample`, `--seed`, `--pass-order`, `--zero-margin` (overwrite ranges after compute), `--no-peak-target`, `--output-dir`. D1 matrix row filtering to match subsampled `universe_cache`. Test: run 1 real + 1 permuted, verify output format and that D1 sees fewer tickers.
-2. `pyramid_grinder.py` — add `--scan-only` and `--conditions-file`. `--scan-only` calls `_gather_raw_signal_clusters(conditions_override=...)` then exits. `_gather_raw_signal_clusters()` gets `conditions_override` parameter. Test: feed fake conditions with `--scan-only`, verify cluster file produced, no beam search ran.
-3. `pyramid_grinder.py` — add `--skip-gather`, `--seed`, and `--subsample-losers` for refinement. `--skip-gather` skips Phase 1, hard error if cluster file missing. `--subsample-losers` enables 50% loser cluster subsampling (off by default to preserve manual behavior). `--seed` controls the draw when `--subsample-losers` is set. `--conditions-file` plumbed through `run_refinement()` via `signal_conditions_override` for combined condition set + output JSON. Test: run refinement with `--skip-gather`, verify error without cluster file, verify subsampling changes output with different seeds, verify manual run WITHOUT `--subsample-losers` uses all losers.
-4. `signal_exit_grinder.py` — add `--conditions-file`. When provided, bypass internal `load_pyramid_conditions()`. Test: feed consensus conditions, verify exit grinder uses them.
-5. `scripts/consensus_engine.py` — full rewrite. Signal mode (z-score with bootstrap) + refinement mode (consensus + binomial). Test: feed 1+1 output, verify z-score math, verify bootstrap produces a distribution.
-6. `scripts/run_consensus_pipeline.py` — orchestrator. Subprocess per run, interleaving, early abort checkpoint, z-gate, chaining through Steps 3→3.5→4→5→6→7. All steps receive `--conditions-file` explicitly. Test: run miniature version end-to-end.
-7. `scripts/test_consensus_pipeline.py` — automated test runner. 1+1 signal runs, 1 refinement run. Self-verifying format checks at each step.
-
-Each increment is independently testable. No increment depends on a later one. A failure at any point doesn't break the existing v2 pipeline.
-
 **Merge to v2:** After one full overnight run produces good results end-to-end on the branch, merge `v2-consensus` into `v2`. One codebase, not two permanent versions.
+
+### Build increments
+
+Each increment is independently testable on your machine. A failure at any step doesn't break the existing v2 pipeline.
+
+**Increment 1 — Branch + CLI skeleton**
+
+Create `v2-consensus` branch off `v2`. Add all new argparse arguments to `pyramid_grinder.py` `main()` and `signal_exit_grinder.py` `main()`. No logic changes — just parsing and passing args through. CLI validation rules (mutual exclusion checks).
+
+Test:
+```
+python local_runner/pyramid_grinder.py --help
+# Verify: --permute, --subsample, --seed, --pass-order, --zero-margin,
+#   --no-peak-target, --scan-only, --conditions-file, --skip-gather,
+#   --subsample-losers, --output-dir all appear
+
+python local_runner/pyramid_grinder.py --setup dtss --beam 50 --depth 5
+# Verify: existing pipeline still runs, produces output, no errors
+
+python local_runner/pyramid_grinder.py --scan-only --setup dtss
+# Verify: hard error "requires --conditions-file"
+
+python local_runner/pyramid_grinder.py --scan-only --blackout --setup dtss --conditions-file x.json
+# Verify: hard error "mutually exclusive"
+```
+
+**Increment 2 — `--output-dir` + Railway suppression**
+
+When `--output-dir` is set, grind output JSONs write there instead of CACHE_DIR. `mirror_file()` and `grind_uploader.upload()` skipped. `os.makedirs(output_dir, exist_ok=True)` at the top.
+
+Test:
+```
+mkdir -p local_runner/cache/test_outputdir
+
+python local_runner/pyramid_grinder.py --setup dtss --beam 50 --depth 5 \
+  --output-dir local_runner/cache/test_outputdir/
+# Verify: pyramid_dtss_*.json in test_outputdir/, NOT in cache/
+# Verify: no Railway upload messages in output
+
+python local_runner/pyramid_grinder.py --setup dtss --beam 50 --depth 5
+# Verify: still saves to cache/ as before (backward compatible)
+
+rm -rf local_runner/cache/test_outputdir/
+```
+
+**Increment 3 — `--seed` + `--subsample` + `--zero-margin` + `--no-peak-target` + `--pass-order` + D1 filtering**
+
+The core consensus-run mechanics inside `run_pyramid()`. Universe subsampling after cache load. D1 matrix row filter. Zero-margin overwrite. Peak target disabled via `peak_target=0`. Pass ordering via `MULTI_PASS_DEFS` reorder.
+
+Test:
+```
+python local_runner/pyramid_grinder.py --setup dtss --beam 50 --depth 5 \
+  --seed 42 --subsample 0.5 --zero-margin --no-peak-target --pass-order 2,1,3 \
+  --output-dir local_runner/cache/test_consensus/
+
+# Verify in output:
+#   "Loading OHLCV cache... 4169 tickers" then "Subsampled to ~2084 tickers"
+#   Pass 2 (Weekly) runs FIRST (pass-order 2,1,3)
+#   Conditions have exact bounds (no 5% margin visible in low/high)
+#   Search runs to ceiling on every tier (no "Peak target reached" message)
+#   D1 matrix shows ~2084 tickers, not 4169
+
+# Run same seed again — verify identical conditions (deterministic):
+python local_runner/pyramid_grinder.py --setup dtss --beam 50 --depth 5 \
+  --seed 42 --subsample 0.5 --zero-margin --no-peak-target --pass-order 2,1,3 \
+  --output-dir local_runner/cache/test_consensus/
+
+# Run different seed — verify different conditions:
+python local_runner/pyramid_grinder.py --setup dtss --beam 50 --depth 5 \
+  --seed 99 --subsample 0.5 --zero-margin --no-peak-target --pass-order 1,3,2 \
+  --output-dir local_runner/cache/test_consensus/
+
+rm -rf local_runner/cache/test_consensus/
+```
+
+**Increment 4 — `--permute` + filename prefix**
+
+Fake example generation inside `run_pyramid()` using `--seed`. Output filename prefix changes from `pyramid_` to `permuted_`.
+
+Test:
+```
+python local_runner/pyramid_grinder.py --setup dtss --beam 50 --depth 5 \
+  --permute --seed 1 --subsample 0.5 --zero-margin --no-peak-target \
+  --output-dir local_runner/cache/test_consensus/
+
+# Verify:
+#   File is named permuted_dtss_mp_*.json (not pyramid_)
+#   Conditions exist but are from random examples (noise)
+#   Print statement shows "68 fake examples generated"
+#   Example tickers are NOT the real DTSS examples
+
+# Verify loading functions don't see permuted files:
+python -c "
+import sys; sys.path.insert(0,'local_runner')
+from pyramid_grinder import _load_signal_conditions
+conds, src = _load_signal_conditions('dtss')
+print(f'Loaded from: {src}')
+assert 'permuted' not in (src or ''), 'BUG: loaded permuted file!'
+print('OK: permuted file not picked up')
+"
+
+rm -rf local_runner/cache/test_consensus/
+```
+
+**Increment 5 — `--scan-only` + `--conditions-file` (scan path)**
+
+New `main()` code path. `conditions_override` parameter on `_gather_raw_signal_clusters()`. Loads JSON, extracts `all_conditions`, passes to scan function, saves cluster file to CACHE_DIR, exits.
+
+Test:
+```
+# Use the latest real pyramid result as the conditions source:
+COND_FILE=$(ls -t local_runner/cache/pyramid_dtss_mp_*.json | head -1)
+echo "Using: $COND_FILE"
+
+python local_runner/pyramid_grinder.py --setup dtss \
+  --scan-only --conditions-file "$COND_FILE"
+
+# Verify:
+#   raw_signal_clusters_dtss.json written to CACHE_DIR
+#   Output shows "GATHERING RAW SIGNAL CLUSTERS" then classification stats
+#   NO beam search output (no "PeakSpiderweb", no "Level N:")
+#   Exit code 0
+```
+
+**Increment 6 — `--skip-gather` + `--subsample-losers` + `--seed` + `--conditions-file` (refinement path)**
+
+Skip Phase 1. Loser subsampling. `signal_conditions_override` in `run_refinement()`. See also REFINEMENT_GRINDER.md.
+
+Test:
+```
+# Requires: raw_signal_clusters_dtss.json exists in CACHE_DIR (from inc 5 or prior run)
+COND_FILE=$(ls -t local_runner/cache/pyramid_dtss_mp_*.json | head -1)
+
+# Without --subsample-losers (all losers, today's behavior):
+python local_runner/pyramid_grinder.py --setup dtss --blackout \
+  --skip-gather --conditions-file "$COND_FILE" \
+  --output-dir local_runner/cache/test_consensus/
+# Verify: "SKIPPING cluster gathering" message, uses all losers
+
+# With --subsample-losers:
+python local_runner/pyramid_grinder.py --setup dtss --blackout \
+  --skip-gather --subsample-losers --seed 1 \
+  --conditions-file "$COND_FILE" \
+  --output-dir local_runner/cache/test_consensus/
+# Verify: "Subsampled 50% of loser clusters" message, fewer losers
+
+# Different seed produces different conditions:
+python local_runner/pyramid_grinder.py --setup dtss --blackout \
+  --skip-gather --subsample-losers --seed 2 \
+  --conditions-file "$COND_FILE" \
+  --output-dir local_runner/cache/test_consensus/
+# Verify: different refinement_conditions_only than seed 1
+
+# Verify signal_conditions in output comes from --conditions-file:
+python -c "
+import json, os
+files = sorted([f for f in os.listdir('local_runner/cache/test_consensus') if f.startswith('refinement_')])
+d = json.load(open(f'local_runner/cache/test_consensus/{files[-1]}'))
+print(f'signal_conditions: {len(d.get(\"signal_conditions\",[]))}')
+print(f'refinement_conditions_only: {len(d.get(\"refinement_conditions_only\",[]))}')
+print(f'all_conditions: {len(d.get(\"all_conditions\",[]))}')
+"
+
+rm -rf local_runner/cache/test_consensus/
+```
+
+**Increment 7 — `signal_exit_grinder.py --conditions-file`**
+
+Bypass internal `load_pyramid_conditions()` when `--conditions-file` is provided.
+
+Test:
+```
+COND_FILE=$(ls -t local_runner/cache/pyramid_dtss_mp_*.json | head -1)
+
+python scripts/signal_exit_grinder.py --setup dtss \
+  --conditions-file "$COND_FILE"
+
+# Verify:
+#   "Loaded N conditions from <supplied file>" (not auto-discovered)
+#   Exit condition computed and saved
+#   Output matches normal format
+```
+
+**Increment 8 — `consensus_engine.py` signal mode rewrite**
+
+Read real + permuted JSONs. Bootstrap z-score. Phase E condition locking with full dict copy + 5% margin. Full output assembly.
+
+Test:
+```
+# Generate test data (1 real + 1 permuted from increments 3+4):
+mkdir -p local_runner/cache/consensus/test_ce
+
+python local_runner/pyramid_grinder.py --setup dtss --beam 50 --depth 5 \
+  --seed 1 --subsample 0.5 --zero-margin --no-peak-target --pass-order 1,2,3 \
+  --output-dir local_runner/cache/consensus/test_ce/
+
+python local_runner/pyramid_grinder.py --setup dtss --beam 50 --depth 5 \
+  --permute --seed 2 --subsample 0.5 --zero-margin --no-peak-target --pass-order 2,1,3 \
+  --output-dir local_runner/cache/consensus/test_ce/
+
+# Run consensus:
+python scripts/consensus_engine.py --setup dtss --stage signal \
+  --threshold 0.7 --input-dir local_runner/cache/consensus/test_ce/
+
+# Verify:
+#   z-score computed (won't be meaningful from 1+1, but math executes)
+#   Output has: all_conditions, z_score, stability_metrics
+#   Each condition has: name, low, high, category, tier, compute, frequency
+#   low/high have 5% margin applied (wider than input bounds)
+
+rm -rf local_runner/cache/consensus/test_ce/
+```
+
+**Increment 9 — `consensus_engine.py` refinement mode**
+
+Read refinement JSONs. Consensus + binomial test. Full output assembly with correct schema (see REFINEMENT_GRINDER.md per-signal field format and cluster-to-signal mapping). See also REFINEMENT_GRINDER.md.
+
+Test:
+```
+# Requires: raw_signal_clusters_dtss.json in CACHE_DIR,
+#   consensus_signal_dtss.json in CACHE_DIR (from inc 8 or manual),
+#   signal_exit_dtss.json in data/signal_exit_grind/
+
+mkdir -p local_runner/cache/consensus/test_ref
+COND_FILE=local_runner/cache/consensus_signal_dtss.json
+
+python local_runner/pyramid_grinder.py --setup dtss --blackout \
+  --skip-gather --subsample-losers --seed 1 \
+  --conditions-file "$COND_FILE" \
+  --output-dir local_runner/cache/consensus/test_ref/
+
+python scripts/consensus_engine.py --setup dtss --stage refinement \
+  --threshold 0.7 --input-dir local_runner/cache/consensus/test_ref/
+
+# Verify output has ALL required fields:
+python -c "
+import json, os
+f = [f for f in os.listdir('local_runner/cache') if f.startswith('refinement_dtss_') and 'consensus' in f]
+assert f, 'No consensus refinement output found'
+d = json.load(open(f'local_runner/cache/{sorted(f)[-1]}'))
+for k in ['all_conditions','refinement_conditions_only','signal_conditions',
+           'exit_condition','winner_signals','loser_signals','eliminated_signals',
+           'depth_progression','summary','params']:
+    assert k in d, f'Missing key: {k}'
+    print(f'  {k}: {type(d[k]).__name__} len={len(d[k]) if isinstance(d[k],list) else \"n/a\"}')
+# Check per-signal field format:
+w = d['winner_signals'][0]
+for fld in ['ticker','signal_date','bar_idx','close','classification','move_adr',
+            'adr_at_signal','entry_high','is_example','exit_bar','exit_date']:
+    assert fld in w, f'winner_signals missing field: {fld}'
+print('ALL FIELDS PRESENT')
+"
+
+rm -rf local_runner/cache/consensus/test_ref/
+```
+
+**Increment 10 — `run_consensus_pipeline.py` orchestrator**
+
+Subprocess execution. Interleaving. Early abort (mean comparison, not bootstrap). z-gate. Chaining through Steps 3→3.5→4→5→6→7. Nightly refresh guard.
+
+Test:
+```
+# Mini run: 1 real + 1 permuted (not 15+15).
+# --test-mode flag uses 1+1 signal runs + 1 refinement run.
+
+python scripts/run_consensus_pipeline.py --setup dtss --test-mode
+
+# Verify:
+#   Nightly refresh check passes (or skip with --skip-nightly-check)
+#   1 real signal grind subprocess completes
+#   1 permuted signal grind subprocess completes
+#   Consensus engine runs (z-score computed)
+#   If z > 3: Steps 3 → 3.5 → 4 → 5 → 6 → 7 chain
+#   If z < 3: gate report written, pipeline stops
+#   Summary report written at end
+#   All subprocess calls show correct CLI args in terminal output
+```
+
+**Increment 11 — `test_consensus_pipeline.py` automated test runner**
+
+Self-verifying format checks at each step. Clean test directory. Pass/fail report.
+
+Test:
+```
+python scripts/test_consensus_pipeline.py --setup dtss
+
+# Verify:
+#   Cleans consensus/test/ at start
+#   9 steps execute sequentially
+#   Green checkmark per passing step
+#   Red X on first failure (if any)
+#   All files written to consensus/test/
+#   Final: "9/9 PASSED" or "FAILED at step N"
+```
 
 ### Required wiring changes (signal grinder)
 

@@ -447,6 +447,97 @@ In that case: skip refinement, proceed to EV grinder on the unrefined population
 
 ---
 
+## BUILD INCREMENTS
+
+Full 11-increment build plan is in SIGNAL_GRINDER.md. Refinement-specific increments are **6** and **9**. All others are signal grinder, exit grinder, consensus engine, or orchestrator work.
+
+### Increment 6 — `--skip-gather` + `--subsample-losers` + `--seed` + `--conditions-file` (refinement path)
+
+Skip Phase 1. Loser subsampling. `signal_conditions_override` in `run_refinement()`.
+
+Test:
+```
+# Requires: raw_signal_clusters_dtss.json exists in CACHE_DIR (from inc 5 or prior run)
+COND_FILE=$(ls -t local_runner/cache/pyramid_dtss_mp_*.json | head -1)
+
+# Without --subsample-losers (all losers, today's behavior):
+python local_runner/pyramid_grinder.py --setup dtss --blackout \
+  --skip-gather --conditions-file "$COND_FILE" \
+  --output-dir local_runner/cache/test_consensus/
+# Verify: "SKIPPING cluster gathering" message, uses all losers
+
+# With --subsample-losers:
+python local_runner/pyramid_grinder.py --setup dtss --blackout \
+  --skip-gather --subsample-losers --seed 1 \
+  --conditions-file "$COND_FILE" \
+  --output-dir local_runner/cache/test_consensus/
+# Verify: "Subsampled 50% of loser clusters" message, fewer losers
+
+# Different seed produces different conditions:
+python local_runner/pyramid_grinder.py --setup dtss --blackout \
+  --skip-gather --subsample-losers --seed 2 \
+  --conditions-file "$COND_FILE" \
+  --output-dir local_runner/cache/test_consensus/
+# Verify: different refinement_conditions_only than seed 1
+
+# Verify signal_conditions in output comes from --conditions-file:
+python -c "
+import json, os
+files = sorted([f for f in os.listdir('local_runner/cache/test_consensus') if f.startswith('refinement_')])
+d = json.load(open(f'local_runner/cache/test_consensus/{files[-1]}'))
+print(f'signal_conditions: {len(d.get(\"signal_conditions\",[]))}')
+print(f'refinement_conditions_only: {len(d.get(\"refinement_conditions_only\",[]))}')
+print(f'all_conditions: {len(d.get(\"all_conditions\",[]))}')
+"
+
+rm -rf local_runner/cache/test_consensus/
+```
+
+### Increment 9 — `consensus_engine.py` refinement mode
+
+Read refinement JSONs. Consensus + binomial test. Full output assembly with correct schema (per-signal field format and cluster-to-signal mapping documented above).
+
+Test:
+```
+# Requires: raw_signal_clusters_dtss.json in CACHE_DIR,
+#   consensus_signal_dtss.json in CACHE_DIR (from inc 8 or manual),
+#   signal_exit_dtss.json in data/signal_exit_grind/
+
+mkdir -p local_runner/cache/consensus/test_ref
+COND_FILE=local_runner/cache/consensus_signal_dtss.json
+
+python local_runner/pyramid_grinder.py --setup dtss --blackout \
+  --skip-gather --subsample-losers --seed 1 \
+  --conditions-file "$COND_FILE" \
+  --output-dir local_runner/cache/consensus/test_ref/
+
+python scripts/consensus_engine.py --setup dtss --stage refinement \
+  --threshold 0.7 --input-dir local_runner/cache/consensus/test_ref/
+
+# Verify output has ALL required fields:
+python -c "
+import json, os
+f = [f for f in os.listdir('local_runner/cache') if f.startswith('refinement_dtss_') and 'consensus' in f]
+assert f, 'No consensus refinement output found'
+d = json.load(open(f'local_runner/cache/{sorted(f)[-1]}'))
+for k in ['all_conditions','refinement_conditions_only','signal_conditions',
+           'exit_condition','winner_signals','loser_signals','eliminated_signals',
+           'depth_progression','summary','params']:
+    assert k in d, f'Missing key: {k}'
+    print(f'  {k}: {type(d[k]).__name__} len={len(d[k]) if isinstance(d[k],list) else \"n/a\"}')
+# Check per-signal field format:
+w = d['winner_signals'][0]
+for fld in ['ticker','signal_date','bar_idx','close','classification','move_adr',
+            'adr_at_signal','entry_high','is_example','exit_bar','exit_date']:
+    assert fld in w, f'winner_signals missing field: {fld}'
+print('ALL FIELDS PRESENT')
+"
+
+rm -rf local_runner/cache/consensus/test_ref/
+```
+
+---
+
 ## WHAT NEEDS TO CHANGE IN pyramid_grinder.py
 
 1. **`--skip-gather` flag for refinement:** When set, skip `_gather_raw_signal_clusters()` and jump to `_load_refinement_piles()`. Hard error if cluster file doesn't exist.
