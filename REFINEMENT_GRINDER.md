@@ -453,7 +453,7 @@ In that case: skip refinement, proceed to EV grinder on the unrefined population
 2. **`--runs N` for refinement:** Currently does not apply. The orchestrator calls `run_refinement()` as subprocesses with loser subsampling, so `--runs` is not needed — the orchestrator manages the loop.
 3. **Loser cluster subsampling:** `run_refinement()` needs a parameter for which loser clusters to include. The orchestrator passes a random seed per run, `run_refinement()` draws 50% of clusters from that seed.
 4. **New `--seed` parameter for refinement:** Integer seed passed by the orchestrator, used by `run_refinement()` to deterministically draw 50% of loser clusters. Without `--seed`, a random seed is generated internally (for manual testing). Same CLI arg as signal grinder — one `--seed` parameter serves both code paths.
-5. **Output directory:** Same `--output-dir` flag as signal grinder, directing consensus runs to `consensus/` subdirectory.
+5. **Output directory:** Same `--output-dir` flag as signal grinder, directing consensus refinement runs to `consensus/` subdirectory. Controls where refinement grind JSONs are written. `--skip-gather` always reads cluster file from CACHE_DIR regardless of `--output-dir`. Railway mirror/upload suppressed when `--output-dir` is set (consensus runs are intermediate files).
 6. **`--conditions-file` for refinement:** When `--blackout --skip-gather --conditions-file` are all set, `run_refinement()` receives the signal conditions from the file instead of calling `_load_signal_conditions()`. Used in two places inside `run_refinement()`:
    - Line 3321: building the combined signal+refinement condition set (signal conditions come from file, not auto-discovery)
    - Output JSON: the `signal_conditions` field is populated from the supplied file
@@ -461,15 +461,46 @@ In that case: skip refinement, proceed to EV grinder on the unrefined population
 
 ## WHAT NEEDS TO CHANGE IN consensus_engine.py
 
-- `--stage refinement` mode
-- Read 10 refinement run JSONs from `consensus/` directory
-- Extract `refinement_conditions_only` from each
-- Count frequencies (Test 1)
-- Load expression cache for universe baseline computation
-- For each surviving condition, run binomial significance test against 5yr universe baseline (Test 2)
-- Order surviving conditions by individual filter power
-- Build depth_progression from ordered conditions against full loser pile
-- Output locked refinement conditions + depth_progression
+`--stage refinement` mode. This is the most complex piece — the consensus engine must assemble a complete refinement output that the EV grinder and profit grinder can read unchanged.
+
+**Inputs:**
+- 10 refinement run JSONs from `consensus/` directory (each has `refinement_conditions_only`)
+- `raw_signal_clusters_{setup}.json` — the fixed cluster file from Step 3 (full loser pile for final replay)
+- `consensus_signal_{setup}.json` — locked signal conditions from Step 2 (for `signal_conditions` field)
+- `signal_exit_{setup}.json` — exit condition from Step 3.5 (for `exit_condition` field)
+- Expression cache — for universe baseline computation (Test 2)
+
+**Processing:**
+1. Extract `refinement_conditions_only` from each of 10 run JSONs
+2. Count frequencies (Test 1 — consensus stability)
+3. Load expression cache, compute universe baseline F per condition (Test 2 — binomial significance)
+4. Surviving conditions = those passing BOTH tests
+5. Order surviving conditions by individual filter power against FULL loser pile (not subsampled)
+6. Build `depth_progression`: progressively apply ordered conditions to full loser pile, record stats per level
+7. Replay final condition set against full loser pile to determine which clusters are eliminated vs surviving
+8. Build `winner_signals`, `loser_signals` (surviving), `eliminated_signals` from cluster file classifications + elimination results
+
+**Output:** A single JSON written to standard cache directory as `refinement_{setup}_cl{surviving}_pk{peak}_consensus_{timestamp}.json`. Must contain ALL of these keys (EV grinder and profit grinder read them):
+
+```
+setup_type, timestamp, total_time_s, refinement: true,
+n_conditions,
+all_conditions         — combined signal + refinement (signal from consensus file + refinement from this engine)
+refinement_conditions_only  — just the conditions that survived both tests
+signal_conditions      — copied from consensus_signal_{setup}.json
+exit_condition         — copied from signal_exit_{setup}.json
+params                 — beam_width, depth, peak_target, source: "refinement_consensus"
+summary                — losing_clusters_input, losing_clusters_eliminated, losing_clusters_surviving,
+                         final_peak, final_avg, winners_input, winners_passing
+winner_signals         — flat list from cluster file (all AUTO_WIN rightmost bars)
+loser_signals          — flat list of surviving AUTO_LOSS rightmost bars (clusters not eliminated)
+eliminated_signals     — flat list of eliminated AUTO_LOSS rightmost bars
+depth_progression      — ordered condition application with per-level stats
+```
+
+`all_conditions` merge logic: start with signal conditions, append refinement conditions. If a name appears in both, refinement version replaces signal version (tighter bounds). Same merge logic as `run_refinement()` lines 3339-3343.
+
+If zero conditions survive both tests: output still writes with empty `refinement_conditions_only`, empty `depth_progression`, all losers in `loser_signals`, none in `eliminated_signals`. Downstream consumers handle this gracefully.
 
 ---
 

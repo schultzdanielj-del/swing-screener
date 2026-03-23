@@ -69,6 +69,7 @@ To read a value: `expr_cache.get_ticker(ticker)` → `(dates, data)`, then `data
 - If pass_rate ≥ 0.85 (85%), the expression is dropped — it's too broad to be a useful filter
 - Expressions not in the D1 universe matrix (HTF etc.) are kept — they'll be evaluated at their proper tier
 - Output: filtered `ranges` dict (subset of input)
+- **Under subsampling:** `prefilter_candidates()` calls `get_universe_matrix()` independently — it always loads the full precomputed universe matrix regardless of `--subsample`. This makes the pre-filter slightly more conservative than necessary (drops expressions that pass 85% of the full universe, some of which might be useful candidates in the 50% subsample). This is intentional and harmless — better to be conservative in the pre-filter than to let through expressions that would waste beam search time.
 
 ### NaN handling asymmetry
 
@@ -266,7 +267,9 @@ Output: 15 JSON files, each containing a list of conditions with names, bounds, 
 
 **File naming convention:** Real runs use `pyramid_{setup}_mp_*.json` (unchanged). This prevents permuted files from contaminating any loading function that searches for `pyramid_*.json`.
 
-**Universe subsampling consistency within a run:** The random 50% ticker selection happens once at the top of each `run_pyramid()` call and applies to ALL tiers and ALL passes within that run. The subsample is drawn before any tier runs. Every tier in that run sees the same universe subset. Implementation: draw the subsample, filter `universe_cache` to the selected tickers, pass the filtered cache to all downstream functions.
+**Universe subsampling consistency within a run:** The random 50% ticker selection happens once at the top of each `run_pyramid()` call, after loading the 5yr cache (line 1824) but before any tier runs. Implementation: `rng = random.Random(seed)`, draw 50% of `universe_cache.keys()`, filter `universe_cache` to the selected tickers. Every tier in that run sees the same universe subset.
+
+**Fake example generation for permuted runs:** Also happens inside `run_pyramid()`, after loading the 5yr cache and expression cache but before `compute_example_ranges()`. Uses the same `rng` from `--seed`. Cannot happen in `main()` because `main()` doesn't load the caches — `run_pyramid()` does (line 1824). The generated fakes are used as the example set for the rest of the run (same code path as `override_example_dfs`).
 
 ### Step 1B: Permuted signal grind runs (×15)
 
@@ -278,7 +281,7 @@ New `--permute` flag. When set:
   3. Pick a random bar index between 50 (warmup floor) and the ticker's cached bar count minus 1.
   4. Verify expression values at that bar are not all-NaN (same check `compute_example_ranges()` applies). If invalid, repick.
   5. Construct a fake `example_df` with `{ticker, entry_date: date_at_bar+1, scan_idx: bar_idx, df: ticker_ohlcv}`.
-- Pass as `override_example_dfs` to `run_pyramid()` (parameter already exists).
+- Generation happens inside `run_pyramid()` after cache loading (see "Fake example generation" above). The fakes are used via the same internal path as `override_example_dfs`.
 - Everything else identical: same 50% subsampling rate, same randomized pass ordering, same beam 10,000, same exhaustion to ceiling.
 - The beam search doesn't know the examples are fake. It finds conditions purely from statistical coincidence. This is the noise floor.
 - Each permuted run generates a fresh set of 68 fake examples. Different permuted runs use different random fakes.
@@ -307,10 +310,15 @@ The test runner writes all files to `local_runner/cache/consensus/test/`. Comple
 
 ### Early abort checkpoint (~2 hours in)
 
-After 3 real + 3 permuted runs (interleaved, ~2 hours at overnight settings), compute preliminary z-score. This is a screening test, not a gate:
+After 3 real + 3 permuted runs (interleaved, ~2 hours at overnight settings), compute a preliminary separation estimate. This is a practical heuristic computed by the orchestrator directly — NOT the consensus engine (the bootstrap formula doesn't work with n=3).
 
-- If real runs average ~70 conditions and permuted average ~55 → z will be garbage at full count. Kill it. Go vet more examples.
-- If real runs average ~70 and permuted average ~15 → safe to let the remaining 24 runs cook overnight.
+Method: count total conditions found per run. Compare `mean(3 real counts)` vs `mean(3 permuted counts)`. If the gap is small relative to the values, the full run will fail z > 3.
+
+- If real runs average ~70 conditions and permuted average ~55 → separation too small, kill it. Go vet more examples.
+- If real runs average ~70 and permuted average ~15 → clear separation, safe to continue overnight.
+- If ambiguous (gap is moderate but unclear): err toward continuing — 12 more runs per group will sharpen the estimate.
+
+Decision threshold: if `(mean_real - mean_perm) / mean_perm < 0.5`, abort. This is a rough heuristic, not a statistical test.
 
 Start at 4:30pm (after nightly refresh completes), checkpoint at ~6:30pm. Either abort and plan vetting, or walk away and check results in the morning.
 
@@ -366,7 +374,7 @@ z > 3 is a universal statistical convention (99.7% confidence), not a system-spe
 
 **Phase E — Lock conditions:**
 
-If z > 3, take the conditions from the real consensus that appeared above the frequency threshold. Recompute bounds from the full example set (consensus picks WHICH conditions, not bounds). **Apply 5% margin to the locked bounds.** This margin exists because 68 examples are a sample — the sample min/max underestimates the true range. 5% is conservative, which is correct because a missed real signal never enters the pipeline, while a false positive just gets a low EV score. The cost of missing signals is higher than the cost of extra signals.
+If z > 3, take the conditions from the real consensus that appeared above the frequency threshold. Read low/high bounds from any real run's JSON — all 15 runs computed ranges on the same 68 examples with 0% margin, so the values are identical across runs. **Apply 5% margin to the locked bounds:** `margin = (high - low) * 0.05; locked_low = low - margin; locked_high = high + margin`. No cache loading needed — just arithmetic on the JSON values. This margin exists because 68 examples are a sample — the sample min/max underestimates the true range. 5% is conservative, which is correct because a missed real signal never enters the pipeline, while a false positive just gets a low EV score. The cost of missing signals is higher than the cost of extra signals.
 
 Output: `consensus_signal_{setup}.json` written to the standard `local_runner/cache/` directory, with locked conditions + z-score + stability metrics. Condition format identical to what the rest of the pipeline expects.
 
@@ -446,8 +454,8 @@ Chains the entire pipeline as one unattended overnight run:
 
 1. Check nightly refresh completed. If not, exit with message.
 2. Run Steps 1A + 1B interleaved (15 real + 15 permuted signal grinds) to `consensus/` directory.
-3. Early abort checkpoint after 3+3 runs — practical heuristic, not a statistical test (n=3 per group gives enormous variance on the z estimate). If preliminary z < 1, kill the pipeline, write abort report. Stop. If z is ambiguous (1.0–1.5), err toward continuing — 12 more runs per group will sharpen the estimate.
-4. If preliminary z looks viable, continue remaining 24 runs.
+3. Early abort checkpoint after 3+3 runs — orchestrator computes `(mean_real - mean_perm) / mean_perm` on per-run condition counts. If < 0.5, abort and write report. If ambiguous, continue.
+4. If separation looks viable, continue remaining 24 runs.
 5. Run Step 2 (signal consensus engine). If z < 3, write gate report. Stop.
 6. If z ≥ 3: write consensus output to standard cache directory. Run Step 3: `pyramid_grinder.py --setup {setup} --scan-only --conditions-file consensus_signal_{setup}.json`.
 7. Run Step 3.5: `signal_exit_grinder.py --setup {setup} --conditions-file consensus_signal_{setup}.json`.
@@ -471,11 +479,11 @@ Runs a miniature version of the full pipeline (1 real + 1 permuted instead of 15
 
 1. Run 1 real signal grind with `--subsample 0.5 --seed 1 --pass-order 1,2,3 --no-peak-target --zero-margin --output-dir consensus/test/` → verify: output file exists, has `all_conditions` key, conditions list is non-empty, file matches `pyramid_{setup}_mp_*.json` pattern.
 2. Run 1 permuted signal grind with `--permute --subsample 0.5 --seed 2 --pass-order 2,1,3 --no-peak-target --zero-margin --output-dir consensus/test/` → verify: output file exists with `permuted_{setup}_mp_*.json` prefix, has conditions, example tickers differ from real examples.
-3. Run consensus engine on those 2 files → verify: z-score computation ran without errors (bootstrap executes on 1 permuted run), output file has `consensus_conditions` and `z_score` fields. z-score won't be statistically meaningful from 1+1 but the math must execute cleanly.
+3. Run consensus engine on those 2 files → verify: z-score computation ran without errors (bootstrap executes on 1 permuted run), output file has `all_conditions` and `z_score` fields. z-score won't be statistically meaningful from 1+1 but the math must execute cleanly.
 4. Run deterministic scan: `--scan-only --conditions-file consensus/test/consensus_signal_{setup}.json` → verify: cluster file exists, has `clusters` array, each cluster has `classification` field.
 5. Run exit re-grind: `signal_exit_grinder.py --conditions-file consensus/test/consensus_signal_{setup}.json` → verify: exit file exists, timestamp is after Step 4 started, has `top_conditions` with at least one entry.
 6. Run 1 refinement: `--blackout --skip-gather --conditions-file consensus/test/consensus_signal_{setup}.json --seed 1 --output-dir consensus/test/` → verify: output file exists, has `refinement_conditions_only` key.
-7. Run refinement consensus on that 1 file → verify: both tests executed (consensus + binomial), output has `consensus_conditions`, `depth_progression`, `winner_signals`, `loser_signals`.
+7. Run refinement consensus on that 1 file → verify: both tests executed (consensus + binomial), output has `all_conditions`, `refinement_conditions_only`, `depth_progression`, `winner_signals`, `loser_signals`.
 8. Run EV grinder → verify: output has `signals` array, each signal has `setup_score`, `market_score`, `killed_at_depth`.
 9. Run profit grinder → verify: output has `stage_1` and `stage_2` keys.
 
@@ -546,7 +554,7 @@ The example count does NOT gate the pipeline. You can run this with 68 examples 
 
 4. **New `--pass-order` parameter:** Explicit comma-separated pass ordering (e.g. `2,1,3` = weekly first, daily second, monthly third). The orchestrator determines the ordering for each run and passes it explicitly. If omitted, uses `--seed` to shuffle. This replaces the previously proposed `--randomize-passes` boolean flag — with subprocess execution, the orchestrator must control the ordering externally.
 
-5. **New `--no-peak-target` flag:** Disables peak target — every tier runs to natural ceiling.
+5. **New `--no-peak-target` flag:** Disables peak target — every tier runs to natural ceiling. Implementation: pass `peak_target=0` to beam search. The stop condition `best.peak <= 0` is never satisfied (peak is always ≥ 1 when signals exist), so the search runs until condition (c) — ceiling (peak didn't improve from previous level). No changes to `PeakSpiderweb.run()` internals.
 
 6. **New `--zero-margin` flag:** Uses 0% margin on bounding boxes during the grind. Implementation: after `compute_example_ranges()` returns (which applies 5% margin), overwrite each range with exact `min(valid)` / `max(valid)` — same pattern as the refinement grinder (lines 3106–3116). No changes to `compute_example_ranges()` function signature.
 
@@ -555,11 +563,19 @@ The example count does NOT gate the pipeline. You can run this with 68 examples 
 8. **New `--conditions-file` argument:** Accepts a path to a JSON file containing pre-supplied conditions. Two distinct uses depending on mode:
    - **Step 3 scan-only mode** (`--scan-only`): Passed to `_gather_raw_signal_clusters()` via a new `conditions_override` parameter. If not None, used instead of calling `_load_signal_conditions()` internally. The scan runs, clusters are built, classification runs, output saved, then exit.
    - **Step 4 refinement mode** (`--blackout --skip-gather`): Passed to `run_refinement()` via a new `signal_conditions_override` parameter. Used at the end (lines 3321–3354) when building the combined signal+refinement condition set, instead of calling `_load_signal_conditions()`. Also used to populate the `signal_conditions` field in the output JSON.
-   In both cases, `main()` loads the JSON, extracts `all_conditions` (or `consensus_conditions`), and passes the list to the relevant function.
+   In both cases, `main()` loads the JSON, extracts `all_conditions`, and passes the list to the relevant function. The consensus engine writes `all_conditions` as the primary key — same key as every other grinder output, compatible with all existing loading code.
 
 9. **New `--scan-only` flag:** Runs `_gather_raw_signal_clusters()` with supplied `--conditions-file` conditions, saves `raw_signal_clusters_{setup}.json`, then exits. No beam search, no refinement. This is the entry point for Step 3 (deterministic scan). Requires `--conditions-file` — hard error without it. Code path in `main()`: before the `--blackout` check, add `if args.scan_only: ...`.
 
-10. **New `--output-dir` argument:** Writes output to a specified directory instead of the default cache directory. Used by the orchestrator to direct consensus runs to `consensus/` subdirectory.
+10. **New `--output-dir` argument:** Controls where **grind output JSONs** are written — signal grind results (`pyramid_*.json`, `permuted_*.json`) and refinement grind results (`refinement_*.json`). These are the files that would contaminate loading functions if they landed in CACHE_DIR (e.g. `_load_signal_conditions()` globs for `pyramid_*.json`). When set, replaces CACHE_DIR for grind output writes only. Without `--output-dir`, everything uses CACHE_DIR (backward compatible).
+   Files that always write to CACHE_DIR regardless of `--output-dir`:
+   - `--scan-only` cluster file (`raw_signal_clusters_{setup}.json`) — production file read by downstream steps from a fixed path
+   - Final consensus output (`consensus_signal_{setup}.json`) — written by consensus engine, not the grinder
+   - Final refinement consensus output — written by consensus engine
+   `--skip-gather` always reads the cluster file from CACHE_DIR.
+   The test runner overwrites CACHE_DIR cluster/exit files, which is fine — you only run the test right before the overnight batch, which will overwrite them anyway.
+
+11. **Suppress Railway mirror/upload when `--output-dir` is set.** Consensus runs are intermediate files — 40 unnecessary Railway uploads during an overnight batch. When `--output-dir` is set, skip `mirror_file()` and `grind_uploader.upload()`. Only the final consensus outputs (written to CACHE_DIR by the consensus engine) get mirrored.
 
 ## WHAT NEEDS TO CHANGE IN consensus_engine.py
 
