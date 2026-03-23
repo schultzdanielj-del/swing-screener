@@ -3174,7 +3174,8 @@ def _load_refinement_piles(setup_type):
 
 
 def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3,
-                   output_dir=None):
+                   output_dir=None, skip_gather=False, subsample_losers=False,
+                   seed=None, signal_conditions_override=None):
     """Refinement grind: cluster-aware beam search, winners must-pass, minimize losing clusters.
 
     Gathers raw signal clusters (Phase 1), loads full expendable set,
@@ -3191,20 +3192,52 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3,
     t_total = time.time()
 
     # ── Phase 1: Gather raw signal clusters (pre-dedup) ──
-    # Scans the universe, groups consecutive bars into clusters,
-    # applies exit + classifies. Output saved and used by Phase 2 below.
-    cluster_path = _gather_raw_signal_clusters(setup_type)
-    if cluster_path:
-        print(f"  Raw signal clusters saved: {os.path.basename(cluster_path)}")
+    if skip_gather:
+        # Skip Phase 1 — use existing cluster file from a prior scan-only run
+        cluster_path = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
+        if not os.path.exists(cluster_path):
+            print(f"  ERROR: --skip-gather requires existing cluster file: {cluster_path}")
+            print(f"  Run Step 3 first: python local_runner/pyramid_grinder.py --setup {setup_type} --scan-only --conditions-file <file>")
+            return None
+        print(f"  SKIPPING cluster gathering — using existing: {os.path.basename(cluster_path)}")
     else:
-        print(f"  WARNING: Raw signal cluster gathering failed")
-        return None
+        # Scans the universe, groups consecutive bars into clusters,
+        # applies exit + classifies. Output saved and used by Phase 2 below.
+        cluster_path = _gather_raw_signal_clusters(setup_type)
+        if cluster_path:
+            print(f"  Raw signal clusters saved: {os.path.basename(cluster_path)}")
+        else:
+            print(f"  WARNING: Raw signal cluster gathering failed")
+            return None
 
     # ── Load classified signals ──
     win_dfs, loser_whitelist, raw_winners, raw_losers, universe_cache, adr_threshold, losing_cluster_bars, win_leftward_bars = _load_refinement_piles(setup_type)
     if win_dfs is None:
         print("  ABORT: Could not load refinement piles.")
         return None
+
+    # ── Loser cluster subsampling (consensus pipeline) ──
+    if subsample_losers:
+        import random as _random
+        rng = _random.Random(seed)
+        n_total = len(losing_cluster_bars)
+        n_keep = max(1, n_total // 2)
+        keep_indices = set(rng.sample(range(n_total), n_keep))
+        losing_cluster_bars = [losing_cluster_bars[i] for i in range(n_total) if i in keep_indices]
+        # Rebuild loser_whitelist from subsampled clusters + winning leftward bars
+        loser_whitelist = {}
+        for cluster_bars in losing_cluster_bars:
+            for (tk, bi) in cluster_bars:
+                if tk not in loser_whitelist:
+                    loser_whitelist[tk] = set()
+                loser_whitelist[tk].add(bi)
+        # Re-add winning leftward bars (always included, never subsampled)
+        for tk, bar_set in win_leftward_bars.items():
+            if tk not in loser_whitelist:
+                loser_whitelist[tk] = set()
+            loser_whitelist[tk] |= bar_set
+        print(f"  Subsampled {n_keep}/{n_total} loser clusters "
+              f"(50%, seed={seed})")
 
     # ── Load expression cache ──
     print(f"\n  Loading expression cache...")
@@ -3453,11 +3486,15 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3,
     print(f"    Losers eliminated:   {len(eliminated_losers)}")
 
     # ── Combine signal + refinement conditions ──
-    signal_conditions, _cond_src = _load_signal_conditions(setup_type)
-    if signal_conditions:
-        print(f"\n  Signal conditions: {len(signal_conditions)} from {_cond_src}")
+    if signal_conditions_override is not None:
+        signal_conditions = signal_conditions_override
+        print(f"\n  Signal conditions: {len(signal_conditions)} from supplied conditions file")
     else:
-        print(f"\n  WARNING: No pyramid result found.")
+        signal_conditions, _cond_src = _load_signal_conditions(setup_type)
+        if signal_conditions:
+            print(f"\n  Signal conditions: {len(signal_conditions)} from {_cond_src}")
+        else:
+            print(f"\n  WARNING: No pyramid result found.")
 
     exit_cond = _load_exit_cond(setup_type)
     if exit_cond:
@@ -3666,12 +3703,28 @@ def main():
         ref_beam = args.beam if args.beam != 50 else 10000
         ref_depth = args.depth if args.depth != 10 else 100
         ref_peak = args.peak_target if args.peak_target != 15 else 3
+
+        # Load signal conditions override if provided
+        sig_cond_override = None
+        if args.conditions_file:
+            with open(args.conditions_file) as f:
+                cond_data = json.load(f)
+            sig_cond_override = cond_data.get("all_conditions", [])
+            if not sig_cond_override:
+                print(f"  ERROR: No 'all_conditions' found in {args.conditions_file}")
+                sys.exit(1)
+            print(f"  Loaded {len(sig_cond_override)} signal conditions from {args.conditions_file}")
+
         result = run_refinement(
             setup_type=args.setup,
             beam_width=ref_beam,
             depth=ref_depth,
             peak_target=ref_peak,
             output_dir=args.output_dir,
+            skip_gather=args.skip_gather,
+            subsample_losers=args.subsample_losers,
+            seed=args.seed,
+            signal_conditions_override=sig_cond_override,
         )
         if result is None:
             sys.exit(1)
