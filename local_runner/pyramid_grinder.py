@@ -2424,6 +2424,7 @@ def _gather_raw_signal_clusters(setup_type, conditions_override=None):
     # ── Load signal conditions ──
     if conditions_override is not None:
         signal_conditions = conditions_override
+        cond_source = "conditions_override"
         print(f"  Signal conditions: {len(signal_conditions)} from supplied conditions file")
     else:
         signal_conditions, cond_source = _load_signal_conditions(setup_type)
