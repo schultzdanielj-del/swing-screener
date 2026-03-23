@@ -498,6 +498,42 @@ eliminated_signals     — flat list of eliminated AUTO_LOSS rightmost bars
 depth_progression      — ordered condition application with per-level stats
 ```
 
+**Per-signal dict format** (same for winner_signals, loser_signals, eliminated_signals — must match what `run_refinement()` produces at lines 3004-3033, which is what the EV grinder's `load_refinement()` expects):
+
+```json
+{
+  "ticker": "AAPL",
+  "signal_date": "2024-06-15",
+  "bar_idx": 1205,
+  "close": 185.23,
+  "is_example": 0,
+  "classification": "AUTO_WIN",
+  "move_adr": 3.2,
+  "adr_at_signal": 1.45,
+  "entry_high": 186.50,
+  "exit_bar": 12,
+  "exit_date": "2024-07-02"
+}
+```
+
+The consensus engine builds these by reading `raw_signal_clusters_{setup}.json` and extracting from each cluster's `rightmost` bar + top-level cluster fields. Field mapping from cluster to signal dict:
+
+| Signal field | Cluster source |
+|-------------|---------------|
+| `ticker` | `cluster["ticker"]` |
+| `signal_date` | `cluster["rightmost"]["date"]` |
+| `bar_idx` | `cluster["rightmost"]["bar_idx"]` |
+| `close` | `cluster["rightmost"]["close"]` |
+| `is_example` | `cluster["is_example"]` (0 or 1) |
+| `classification` | `cluster["classification"]` ("AUTO_WIN" or "AUTO_LOSS") |
+| `move_adr` | `cluster["move_adr"]` (null if no exit) |
+| `adr_at_signal` | `cluster["adr_at_signal"]` |
+| `entry_high` | `cluster["entry_high"]` |
+| `exit_bar` | `cluster["exit_bar"]` (null if no exit) |
+| `exit_date` | `cluster["exit_date"]` (null if no exit) |
+
+Which list a loser cluster lands in (loser_signals vs eliminated_signals) is determined by the consensus engine's replay of validated conditions against the full loser pile in processing step 7.
+
 `all_conditions` merge logic: start with signal conditions, append refinement conditions. If a name appears in both, refinement version replaces signal version (tighter bounds). Same merge logic as `run_refinement()` lines 3339-3343.
 
 If zero conditions survive both tests: output still writes with empty `refinement_conditions_only`, empty `depth_progression`, all losers in `loser_signals`, none in `eliminated_signals`. Downstream consumers handle this gracefully.
