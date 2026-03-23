@@ -1305,6 +1305,16 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
     full_expr_names = uni_data["expr_names"]
     full_expr_categories = uni_data["expr_categories"]
 
+    # Filter D1 matrix rows to only tickers in universe_cache
+    # (When subsampling, universe_cache is already filtered to the subset)
+    cache_tickers = set(universe_cache.keys())
+    row_mask = [t in cache_tickers for t in tickers]
+    if sum(row_mask) < len(tickers):
+        row_mask_arr = np.array(row_mask)
+        full_uni_matrix = full_uni_matrix[row_mask_arr]
+        tickers = [t for t, keep in zip(tickers, row_mask) if keep]
+        print(f"  D1 filtered to {len(tickers)} tickers (matching universe_cache)")
+
     # Build column subset: only the expressions in our pass
     pass_expr_names = [e["name"] for e in expressions]
     pass_expr_set = set(pass_expr_names)
@@ -1629,7 +1639,8 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
                      example_ranges_full, example_matrix_full,
                      locked_conditions, expr_cache,
                      beam_width, depth, peak_target,
-                     d1_beam, d1_depth, blackout_map=None, whitelist_map=None):
+                     d1_beam, d1_depth, blackout_map=None, whitelist_map=None,
+                     zero_margin=False):
     """Run one pass of the multi-pass pyramid.
 
     Args:
@@ -1665,6 +1676,19 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
     pass_ranges, pass_matrix = compute_example_ranges(
         example_dfs, pass_expressions, expr_cache=expr_cache)
     print(f"  {len(pass_ranges)} expressions have valid ranges for this pass")
+
+    # ── Zero-margin overwrite (consensus pipeline) ──
+    if zero_margin:
+        pass_expr_names = [e["name"] for e in pass_expressions]
+        for j, name in enumerate(pass_expr_names):
+            if name not in pass_ranges:
+                continue
+            vals = pass_matrix[:, j]
+            valid = vals[~np.isnan(vals)]
+            if len(valid) == 0:
+                continue
+            pass_ranges[name] = (float(np.min(valid)), float(np.max(valid)))
+        print(f"  Zero-margin: overwrote ranges with exact min/max")
 
     new_conditions = []
     tier_results = {}
@@ -1786,7 +1810,9 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
 def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 d1_depth=None, d1_beam=None, multi_pass=True,
                 blackout_map=None, whitelist_map=None,
-                override_example_dfs=None, output_dir=None):
+                override_example_dfs=None, output_dir=None,
+                seed=None, subsample=None, zero_margin=False,
+                no_peak_target=False, pass_order=None):
     """Run the full pyramid grinder.
 
     Args:
@@ -1823,6 +1849,22 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     print(f"\n  Loading OHLCV cache...")
     universe_cache = load_5yr_cache()
     print(f"  {len(universe_cache)} tickers loaded")
+
+    # ── Universe subsampling (consensus pipeline) ──
+    if subsample is not None:
+        import random as _random
+        rng = _random.Random(seed)
+        all_tickers = sorted(universe_cache.keys())
+        n_keep = max(1, int(len(all_tickers) * subsample))
+        keep_tickers = set(rng.sample(all_tickers, n_keep))
+        universe_cache = {t: df for t, df in universe_cache.items() if t in keep_tickers}
+        print(f"  Subsampled to {len(universe_cache)} tickers "
+              f"({subsample:.0%} of {len(all_tickers)}, seed={seed})")
+
+    # ── Override peak target (consensus pipeline: run to ceiling) ──
+    if no_peak_target:
+        peak_target = 0
+        print(f"  Peak target disabled — every tier runs to natural ceiling")
 
     print(f"\n  Loading examples...")
     if override_example_dfs is not None:
@@ -1886,7 +1928,14 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         all_tier_results = {}
         pass_summaries = []
 
-        for pass_def in MULTI_PASS_DEFS:
+        # ── Pass ordering (consensus pipeline) ──
+        pass_defs = list(MULTI_PASS_DEFS)  # copy so we don't mutate the global
+        if pass_order is not None:
+            # pass_order is e.g. [2, 1, 3] — 1-indexed into MULTI_PASS_DEFS
+            pass_defs = [MULTI_PASS_DEFS[i - 1] for i in pass_order]
+            print(f"  Pass order: {' → '.join(p[0] for p in pass_defs)}")
+
+        for pass_def in pass_defs:
             pass_name, timeframe, pass_tier_defs = pass_def
             pass_exprs = _filter_expressions_by_timeframe(all_expressions, timeframe)
 
@@ -1909,6 +1958,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 d1_depth=d1_depth,
                 blackout_map=blackout_map,
                 whitelist_map=whitelist_map,
+                zero_margin=zero_margin,
             )
 
             if new_conds is None:
@@ -1951,6 +2001,19 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         example_ranges, example_matrix = compute_example_ranges(
             example_dfs, expressions, expr_cache=expr_cache)
         print(f"  {len(example_ranges)} expressions have valid ranges ({time.time()-t0:.0f}s)")
+
+        # ── Zero-margin overwrite (consensus pipeline) ──
+        if zero_margin:
+            expr_name_list = [e["name"] for e in expressions]
+            for j, name in enumerate(expr_name_list):
+                if name not in example_ranges:
+                    continue
+                vals = example_matrix[:, j]
+                valid = vals[~np.isnan(vals)]
+                if len(valid) == 0:
+                    continue
+                example_ranges[name] = (float(np.min(valid)), float(np.max(valid)))
+            print(f"  Zero-margin: overwrote ranges with exact min/max")
 
         all_conditions = []
         tier_results = {}
@@ -3538,6 +3601,11 @@ def main():
             print(f"  RUN {run_i + 1} of {n_runs}")
             print(f"{'#'*70}")
 
+        # Parse pass_order into list of ints if provided
+        parsed_pass_order = None
+        if args.pass_order is not None:
+            parsed_pass_order = [int(x.strip()) for x in args.pass_order.split(",")]
+
         result = run_pyramid(
             setup_type=args.setup,
             peak_target=args.peak_target,
@@ -3547,6 +3615,11 @@ def main():
             d1_beam=args.d1_beam,
             multi_pass=multi_pass,
             output_dir=args.output_dir,
+            seed=args.seed,
+            subsample=args.subsample,
+            zero_margin=args.zero_margin,
+            no_peak_target=args.no_peak_target,
+            pass_order=parsed_pass_order,
         )
         results.append(result)
 
