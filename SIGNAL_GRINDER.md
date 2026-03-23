@@ -70,6 +70,21 @@ To read a value: `expr_cache.get_ticker(ticker)` → `(dates, data)`, then `data
 - Expressions not in the D1 universe matrix (HTF etc.) are kept — they'll be evaluated at their proper tier
 - Output: filtered `ranges` dict (subset of input)
 
+### NaN handling asymmetry
+
+NaN values are treated differently depending on context. This is consistent design logic — beam search treats NaN as "can't filter, don't penalize" while locked conditions and validation treat NaN as "can't verify, fail safe" — but it affects which conditions the search finds vs which survive validation.
+
+| Context | NaN behavior | Location |
+|---------|-------------|----------|
+| Example range computation | Expression skipped if ANY example is NaN | pyramid_grinder.py:222 |
+| Pre-filter (85% pass rate) | NaN = passes (counts as in-range) | pyramid_grinder.py:276 |
+| PeakSpiderweb beam search | NaN = passes (counts as in-range) | pyramid_grinder.py:501 |
+| Tier matrix locked-condition filter | NaN = **fails** (row excluded from matrix) | pyramid_grinder.py:384 |
+| scan_all_signals (signal_filter.py) | NaN = **fails** (bar excluded from signals) | signal_filter.py:255 |
+| validate_examples | NaN = **fails** (example fails condition) | pyramid_grinder.py:1570 |
+
+A condition where some universe rows have NaN will appear more permissive in the beam search (NaN rows "pass") than in the downstream scan or validation (NaN rows fail). This means the beam search can select a condition that looks effective during search but performs slightly differently when applied as a locked condition in later tiers or during the full universe scan.
+
 ### Multi-pass logic (daily → weekly → monthly)
 
 Default mode (`--multi-pass`, or no flag). Three passes defined in `MULTI_PASS_DEFS` (line 1604):
@@ -125,13 +140,14 @@ Workers use `ProcessPoolExecutor` with `cpu_count() - 1` workers. Workers receiv
 4. **Deepen** (level 2 through `depth`):
    - For each node in current beam: try adding each valid candidate not already in the node's condition set
    - Deduplicate by sorted condition tuple
-   - Cap expansion at `beam_width * 8` per level
+   - Cap expansion at `beam_width * 8` per level — this cap breaks the **outer node loop**, not just the inner candidate loop (line 621: `if len(next_level) >= beam_width * 8: break`). Nodes later in the beam never get expanded. Because the number of children per node varies, which nodes get cut depends on the ordering of the current beam, making the cap an indirect source of non-determinism.
    - Sort by peak score, trim to `beam_width`
    - Update global best if improved
    - **Stop conditions:** (a) peak ≤ target, (b) zero signals, (c) peak didn't improve from previous level (ceiling)
 5. No shuffling, no randomization, no subsampling — the search is deterministic given the same input matrix. Non-determinism comes from:
    - Input matrix varies with cache state (nightly appends)
-   - `beam_width * 8` expansion cap + `as_completed()` ordering in parallel matrix build can produce slightly different row orderings between runs
+   - `as_completed()` ordering in parallel tier matrix build (line 1464) produces non-deterministic row ordering in the stacked matrix — different row order means different tie-breaking in the beam
+   - The `beam_width * 8` expansion cap (see above) amplifies row-order differences by cutting different nodes
 
 **Leave-one-out filter power:** For each condition in the best path, compute `signals_without` (total signals if that one condition is removed). `filter_power = (signals_without - total) / total`.
 

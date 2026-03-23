@@ -40,6 +40,11 @@ Default parameters when called via `--blackout`: beam=10000 (overrides default 5
 7. Classify each cluster as AUTO_WIN or AUTO_LOSS
 8. Save to `raw_signal_clusters_{setup}.json`
 
+**Phase 1 implementation notes:**
+
+- **Slim cache bar minimum:** Phase 1 imports `_build_slim_cache` from `signal_filter.py`, which excludes tickers with `len(df) < 100` (signal_filter.py:280). The signal grinder's tier matrix builder uses a different slim cache with a lower floor of `n_bars < 50` (pyramid_grinder.py:349). In practice this doesn't matter — 5yr cache tickers all have 1000+ bars — but the thresholds differ.
+- **Scan determinism:** `scan_all_signals()` (signal_filter.py:321) iterates futures in **submission order** (`for future in futures`), NOT `as_completed()`. Combined with batch assignment being deterministic (sequential slicing of the sorted ticker list), the Phase 1 scan produces identical results given identical inputs. This is more deterministic than the signal grinder's tier matrix builder, which uses `as_completed()` (pyramid_grinder.py:1464).
+
 **Phase 2 — Load and split piles:** `_load_refinement_piles()` (line 2871)
 - Reads the cluster file produced by Phase 1
 - Splits into win_clusters (AUTO_WIN) and lose_clusters (AUTO_LOSS)
@@ -77,7 +82,7 @@ For each cluster:
 
 ### Winner bounding box computation (exact min/max, no margin)
 
-`compute_example_ranges()` is called on `win_dfs` (line 3103), which initially returns ranges WITH 5% margin. Then immediately overwritten (lines 3106–3116): for each expression, recompute to exact `min(valid)` and `max(valid)` — **no margin** for refinement.
+`compute_example_ranges()` is called on `win_dfs` (line 3103), which returns ranges WITH 5% margin. These are overwritten in the next block (lines 3106–3116): for each expression, recompute to exact `min(valid)` and `max(valid)` — **no margin** for refinement.
 
 This is a critical difference from the signal grind (which uses 5% margin). The refinement bounding box is tight because the winner set is fixed and no new winners will be added.
 
@@ -140,6 +145,19 @@ Leftward bars from winning clusters are included in the expendable set (line 296
 - The beam search can use them for scoring context (they contribute to row counts)
 - They are NOT part of any losing cluster, so eliminating them doesn't affect the cluster score
 - They are "sacrificial" — conditions can exclude them without penalty
+
+### NaN handling asymmetry
+
+NaN values are treated differently depending on context within the refinement pipeline. This is consistent with the signal grinder's logic — beam search treats NaN as "can't filter, don't penalize" while locked conditions and validation treat NaN as "can't verify, fail safe."
+
+| Context | NaN behavior | Location |
+|---------|-------------|----------|
+| Winner range computation | Expression skipped if ANY winner is NaN | pyramid_grinder.py:222 (via compute_example_ranges) |
+| ClusterAwareRefinement beam search | NaN = passes (counts as in-range) | pyramid_grinder.py:1046 |
+| Phase 1 scan (signal_filter.py) | NaN = **fails** (bar excluded from signals) | signal_filter.py:255 |
+| Phase 3 validation (winners pass all) | NaN = **fails** (winner fails condition) | pyramid_grinder.py:1570 |
+
+A condition where some loser bars have NaN will appear to eliminate fewer bars during the beam search (NaN bars "pass" and survive) than it actually would during a downstream re-scan (NaN bars would fail). This makes the beam search's elimination estimates conservative — the real exclusion rate is at least as high as what the search measures.
 
 ### Combined conditions (signal + refinement)
 
