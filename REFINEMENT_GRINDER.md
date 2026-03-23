@@ -280,7 +280,7 @@ Run the cluster-aware beam search 10 times with identical base inputs:
 - Same winner bounding box (computed from fixed winners, **exact min/max, 0% margin** — same as today's refinement grind).
 - Same expression cache.
 - Beam 10,000, depth 100, no peak target — run to ceiling.
-- **Random 50% subsample of loser clusters per run.** This is required because the cluster-aware beam search is fully deterministic given identical input. Without subsampling, all 10 runs produce identical results and consensus is meaningless. Each run draws a different random 50% of loser clusters, keeping all winners (must-pass set is never subsampled).
+- **Random 50% subsample of loser clusters per run** (enabled by `--subsample-losers` flag). This is required because the cluster-aware beam search is fully deterministic given identical input. Without subsampling, all 10 runs produce identical results and consensus is meaningless. Each run draws a different random 50% of loser clusters (controlled by `--seed`), keeping all winners (must-pass set is never subsampled).
 
 **Loser subsampling matrix rebuild:** The cluster file from Step 3 is loaded once at the start of Step 4. For each of 10 refinement runs:
 
@@ -451,8 +451,8 @@ In that case: skip refinement, proceed to EV grinder on the unrefined population
 
 1. **`--skip-gather` flag for refinement:** When set, skip `_gather_raw_signal_clusters()` and jump to `_load_refinement_piles()`. Hard error if cluster file doesn't exist.
 2. **`--runs N` for refinement:** Currently does not apply. The orchestrator calls `run_refinement()` as subprocesses with loser subsampling, so `--runs` is not needed — the orchestrator manages the loop.
-3. **Loser cluster subsampling:** `run_refinement()` needs a parameter for which loser clusters to include. The orchestrator passes a random seed per run, `run_refinement()` draws 50% of clusters from that seed.
-4. **New `--seed` parameter for refinement:** Integer seed passed by the orchestrator, used by `run_refinement()` to deterministically draw 50% of loser clusters. Without `--seed`, a random seed is generated internally (for manual testing). Same CLI arg as signal grinder — one `--seed` parameter serves both code paths.
+3. **Loser cluster subsampling:** `run_refinement()` needs a `--subsample-losers` flag. When set, draws 50% of loser clusters using the seed from `--seed`. When NOT set, uses all losers (today's behavior). Manual `--blackout` runs omit this flag and get the full loser set. The orchestrator always passes `--subsample-losers`.
+4. **New `--seed` parameter for refinement:** Integer seed for reproducible randomization. Only affects loser subsampling when `--subsample-losers` is also set. Without `--seed`, a random seed is generated internally if `--subsample-losers` is set. Same CLI arg as signal grinder — one `--seed` parameter serves both code paths.
 5. **Output directory:** Same `--output-dir` flag as signal grinder, directing consensus refinement runs to `consensus/` subdirectory. Controls where refinement grind JSONs are written. `--skip-gather` always reads cluster file from CACHE_DIR regardless of `--output-dir`. Railway mirror/upload suppressed when `--output-dir` is set (consensus runs are intermediate files).
 6. **`--conditions-file` for refinement:** When `--blackout --skip-gather --conditions-file` are all set, `run_refinement()` receives the signal conditions from the file instead of calling `_load_signal_conditions()`. Used in two places inside `run_refinement()`:
    - Line 3321: building the combined signal+refinement condition set (signal conditions come from file, not auto-discovery)
@@ -538,7 +538,7 @@ If zero conditions survive both tests: output still writes with empty `refinemen
 
 ## OPEN QUESTIONS FOR IMPLEMENTATION
 
-1. ~~The loser subsampling seed — passed as a parameter to `run_refinement()`, or generated internally per run?~~ **RESOLVED:** Passed as CLI arg `--seed`. The orchestrator assigns a unique seed per run. `run_refinement()` uses `random.Random(seed)` to draw 50% of loser clusters. Without `--seed`, a random seed is generated internally for manual testing.
+1. ~~The loser subsampling seed — passed as a parameter to `run_refinement()`, or generated internally per run?~~ **RESOLVED:** `--seed` passed as CLI arg, but subsampling only happens when `--subsample-losers` is also set. Manual runs omit `--subsample-losers` and use all losers (today's behavior). The orchestrator always passes both flags.
 2. Consensus threshold: exact value within 0.6-0.9 range — start with 0.7 and see?
 3. For the binomial test universe baseline: load all expression cache data into memory at once, or stream per-ticker? Memory implications with ~4,167 tickers × ~1,260 bars.
 4. If the signal population is much larger (2,500+ clusters instead of 893), the refinement matrix is also larger. Does beam 10,000 still finish in seconds, or does it need adjustment?

@@ -402,7 +402,9 @@ The exit condition (`signal_exit_{setup}.json`) was previously ground against si
 - Run `signal_exit_grinder.py --setup {setup}` after Step 3 completes.
 - The exit grinder receives `--conditions-file consensus_signal_{setup}.json` from the orchestrator, resolves signal bars on the new population, finds the best exit expression.
 - Output: updated `signal_exit_{setup}.json`, same format, overwriting the old one.
-- **This must happen before Step 4.** The refinement grinder uses the exit condition for classification. A stale exit condition means misclassified signals, which means wrong winner/loser splits, which poisons everything downstream.
+- **This must happen before Step 4.** The refinement grinder reads the exit condition for the output JSON metadata and for the `all_conditions` combine step.
+
+**Known ordering subtlety:** Step 3 classifies clusters using the exit condition from `signal_exit_{setup}.json` as it existed BEFORE Step 3.5 runs (the previous cycle's exit). Step 3.5 then overwrites that file with a re-ground exit. Step 4 reads clusters classified by the old exit but stores the new exit in its output. If the exit condition changes significantly between cycles, some clusters may have been classified differently than they would be with the new exit. This is the same ordering as the current (non-consensus) pipeline and is acceptable — the exit condition captures "did the setup play out" which is pattern-dependent, not population-dependent. The two-test validation in Step 5 catches coincidental refinement conditions regardless of classification source.
 
 Runtime: ~5 minutes.
 
@@ -459,7 +461,7 @@ Chains the entire pipeline as one unattended overnight run:
 5. Run Step 2 (signal consensus engine). If z < 3, write gate report. Stop.
 6. If z ≥ 3: write consensus output to standard cache directory. Run Step 3: `pyramid_grinder.py --setup {setup} --scan-only --conditions-file consensus_signal_{setup}.json`.
 7. Run Step 3.5: `signal_exit_grinder.py --setup {setup} --conditions-file consensus_signal_{setup}.json`.
-8. Run Step 4 (refinement × 10): `pyramid_grinder.py --setup {setup} --blackout --skip-gather --conditions-file consensus_signal_{setup}.json --seed {N} --output-dir consensus/` — see REFINEMENT_GRINDER.md.
+8. Run Step 4 (refinement × 10): `pyramid_grinder.py --setup {setup} --blackout --skip-gather --subsample-losers --conditions-file consensus_signal_{setup}.json --seed {N} --output-dir consensus/` — see REFINEMENT_GRINDER.md.
 9. Run Step 5 (refinement consensus) — see REFINEMENT_GRINDER.md.
 10. Run Step 6 (EV grinder).
 11. Run Step 7 (profit grinder).
@@ -480,9 +482,9 @@ Runs a miniature version of the full pipeline (1 real + 1 permuted instead of 15
 1. Run 1 real signal grind with `--subsample 0.5 --seed 1 --pass-order 1,2,3 --no-peak-target --zero-margin --output-dir consensus/test/` → verify: output file exists, has `all_conditions` key, conditions list is non-empty, file matches `pyramid_{setup}_mp_*.json` pattern.
 2. Run 1 permuted signal grind with `--permute --subsample 0.5 --seed 2 --pass-order 2,1,3 --no-peak-target --zero-margin --output-dir consensus/test/` → verify: output file exists with `permuted_{setup}_mp_*.json` prefix, has conditions, example tickers differ from real examples.
 3. Run consensus engine on those 2 files → verify: z-score computation ran without errors (bootstrap executes on 1 permuted run), output file has `all_conditions` and `z_score` fields. z-score won't be statistically meaningful from 1+1 but the math must execute cleanly.
-4. Run deterministic scan: `--scan-only --conditions-file consensus/test/consensus_signal_{setup}.json` → verify: cluster file exists, has `clusters` array, each cluster has `classification` field.
-5. Run exit re-grind: `signal_exit_grinder.py --conditions-file consensus/test/consensus_signal_{setup}.json` → verify: exit file exists, timestamp is after Step 4 started, has `top_conditions` with at least one entry.
-6. Run 1 refinement: `--blackout --skip-gather --conditions-file consensus/test/consensus_signal_{setup}.json --seed 1 --output-dir consensus/test/` → verify: output file exists, has `refinement_conditions_only` key.
+4. Run deterministic scan: `pyramid_grinder.py --setup {setup} --scan-only --conditions-file consensus/test/consensus_signal_{setup}.json` → verify: cluster file exists, has `clusters` array, each cluster has `classification` field.
+5. Run exit re-grind: `signal_exit_grinder.py --setup {setup} --conditions-file consensus/test/consensus_signal_{setup}.json` → verify: exit file exists, timestamp is after Step 4 started, has `top_conditions` with at least one entry.
+6. Run 1 refinement: `pyramid_grinder.py --setup {setup} --blackout --skip-gather --subsample-losers --conditions-file consensus/test/consensus_signal_{setup}.json --seed 1 --output-dir consensus/test/` → verify: output file exists, has `refinement_conditions_only` key.
 7. Run refinement consensus on that 1 file → verify: both tests executed (consensus + binomial), output has `all_conditions`, `refinement_conditions_only`, `depth_progression`, `winner_signals`, `loser_signals`.
 8. Run EV grinder → verify: output has `signals` array, each signal has `setup_score`, `market_score`, `killed_at_depth`.
 9. Run profit grinder → verify: output has `stage_1` and `stage_2` keys.
@@ -499,7 +501,7 @@ Build on a feature branch off v2: `v2-consensus`. The existing pipeline on v2 re
 
 1. `pyramid_grinder.py` — add `--permute` flag, `--subsample`, `--seed`, `--pass-order`, `--zero-margin` (overwrite ranges after compute), `--no-peak-target`, `--output-dir`. D1 matrix row filtering to match subsampled `universe_cache`. Test: run 1 real + 1 permuted, verify output format and that D1 sees fewer tickers.
 2. `pyramid_grinder.py` — add `--scan-only` and `--conditions-file`. `--scan-only` calls `_gather_raw_signal_clusters(conditions_override=...)` then exits. `_gather_raw_signal_clusters()` gets `conditions_override` parameter. Test: feed fake conditions with `--scan-only`, verify cluster file produced, no beam search ran.
-3. `pyramid_grinder.py` — add `--skip-gather` and `--seed` for refinement. `--skip-gather` skips Phase 1, hard error if cluster file missing. `--seed` controls 50% loser cluster subsampling in `run_refinement()`. `--conditions-file` plumbed through `run_refinement()` via `signal_conditions_override` for combined condition set + output JSON. Test: run refinement with `--skip-gather`, verify error without cluster file, verify subsampling changes output with different seeds.
+3. `pyramid_grinder.py` — add `--skip-gather`, `--seed`, and `--subsample-losers` for refinement. `--skip-gather` skips Phase 1, hard error if cluster file missing. `--subsample-losers` enables 50% loser cluster subsampling (off by default to preserve manual behavior). `--seed` controls the draw when `--subsample-losers` is set. `--conditions-file` plumbed through `run_refinement()` via `signal_conditions_override` for combined condition set + output JSON. Test: run refinement with `--skip-gather`, verify error without cluster file, verify subsampling changes output with different seeds, verify manual run WITHOUT `--subsample-losers` uses all losers.
 4. `signal_exit_grinder.py` — add `--conditions-file`. When provided, bypass internal `load_pyramid_conditions()`. Test: feed consensus conditions, verify exit grinder uses them.
 5. `scripts/consensus_engine.py` — full rewrite. Signal mode (z-score with bootstrap) + refinement mode (consensus + binomial). Test: feed 1+1 output, verify z-score math, verify bootstrap produces a distribution.
 6. `scripts/run_consensus_pipeline.py` — orchestrator. Subprocess per run, interleaving, early abort checkpoint, z-gate, chaining through Steps 3→3.5→4→5→6→7. All steps receive `--conditions-file` explicitly. Test: run miniature version end-to-end.
@@ -546,7 +548,7 @@ The example count does NOT gate the pipeline. You can run this with 68 examples 
 
 ## WHAT NEEDS TO CHANGE IN pyramid_grinder.py
 
-1. **New `--permute` flag:** When set, generates fake examples from the tradable universe before running. Takes the N (ticker, entry_date) pairs and randomly assigns them to different positions. Everything else stays the same.
+1. **New `--permute` flag:** When set, generates fake examples from the tradable universe before running. Takes the N (ticker, entry_date) pairs and randomly assigns them to different positions. Everything else stays the same EXCEPT the output filename prefix: `desc_name` changes from `pyramid_{setup}_...` to `permuted_{setup}_...` (line 2155). This is critical — without it, `_load_signal_conditions()` and every other function that globs `pyramid_*.json` would pick up permuted files as real conditions.
 
 2. **New `--subsample` parameter:** Fraction of tradable universe to include per run (default 0.5). Applied once at the top of each run, consistent across all tiers and passes.
 
@@ -576,6 +578,13 @@ The example count does NOT gate the pipeline. You can run this with 68 examples 
    The test runner overwrites CACHE_DIR cluster/exit files, which is fine — you only run the test right before the overnight batch, which will overwrite them anyway.
 
 11. **Suppress Railway mirror/upload when `--output-dir` is set.** Consensus runs are intermediate files — 40 unnecessary Railway uploads during an overnight batch. When `--output-dir` is set, skip `mirror_file()` and `grind_uploader.upload()`. Only the final consensus outputs (written to CACHE_DIR by the consensus engine) get mirrored.
+
+12. **CLI arg validation in `main()`:**
+   - `--scan-only` requires `--conditions-file`. Hard error without it.
+   - `--scan-only` is mutually exclusive with `--blackout`, `--permute`, `--subsample`, `--no-peak-target`, `--zero-margin`. It runs a scan, not a grind.
+   - `--skip-gather` requires `--blackout` (only applies to refinement).
+   - `--subsample-losers` requires `--blackout` (only applies to refinement).
+   - `--pass-order` values must be a permutation of `1,2,3`. Hard error on invalid input.
 
 ## WHAT NEEDS TO CHANGE IN consensus_engine.py
 
