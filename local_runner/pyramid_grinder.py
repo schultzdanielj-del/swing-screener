@@ -1812,7 +1812,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 blackout_map=None, whitelist_map=None,
                 override_example_dfs=None, output_dir=None,
                 seed=None, subsample=None, zero_margin=False,
-                no_peak_target=False, pass_order=None):
+                no_peak_target=False, pass_order=None, permute=False):
     """Run the full pyramid grinder.
 
     Args:
@@ -1864,12 +1864,15 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         example_dfs = load_example_data(setup_type, full_universe_cache)
         print(f"  {len(example_dfs)} examples loaded")
 
+    # ── Random state (consensus pipeline) ──
+    # Single rng for all randomization: subsampling, pass ordering, fake examples.
+    import random as _random
+    rng = _random.Random(seed) if seed is not None else _random.Random()
+
     # ── Universe subsampling (consensus pipeline) ──
     # Must happen AFTER example loading — examples are never subsampled.
     # Example tickers are force-added back after subsampling.
     if subsample is not None:
-        import random as _random
-        rng = _random.Random(seed)
         all_tickers = sorted(full_universe_cache.keys())
         n_keep = max(1, int(len(all_tickers) * subsample))
         keep_tickers = set(rng.sample(all_tickers, n_keep))
@@ -1927,6 +1930,52 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "Expression series cache not found or invalid.\n"
             "Run: python local_runner/expr_cache_builder.py --build"
         )
+
+    # ── Fake example generation (permutation test null) ──
+    if permute:
+        n_fakes = len(example_dfs)
+        cached_tickers = expr_cache.get_available_tickers()
+        # Eligible tickers: in both 5yr cache and expr cache
+        eligible = sorted(set(full_universe_cache.keys()) & cached_tickers)
+        fake_dfs = []
+        attempts = 0
+        max_attempts = n_fakes * 20  # safety valve
+        while len(fake_dfs) < n_fakes and attempts < max_attempts:
+            attempts += 1
+            ticker = rng.choice(eligible)
+            n_bars = expr_cache.get_ticker_bar_count(ticker)
+            if n_bars <= 50:
+                continue
+            bar_idx = rng.randint(50, n_bars - 1)
+            # Verify expression values aren't all-NaN at this bar
+            dates, data = expr_cache.get_ticker(ticker)
+            if data is None or bar_idx >= len(data):
+                continue
+            row = data[bar_idx]
+            if np.all(np.isnan(row)):
+                continue
+            # Build fake example_df matching the real structure
+            df = full_universe_cache[ticker].copy()
+            if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+                df["date"] = pd.to_datetime(df["date"])
+            df = df.sort_values("date").reset_index(drop=True)
+            # entry_date = day after scan bar
+            if bar_idx + 1 < len(df):
+                entry_date = str(df["date"].iloc[bar_idx + 1].date())
+            else:
+                entry_date = str(df["date"].iloc[bar_idx].date())
+            fake_dfs.append({
+                "ticker": ticker,
+                "entry_date": entry_date,
+                "scan_idx": bar_idx,
+                "df": df,
+            })
+        example_dfs = fake_dfs
+        print(f"\n  ── PERMUTATION TEST ──")
+        print(f"  {len(fake_dfs)} fake examples generated from tradable universe "
+              f"(seed={seed}, {attempts} attempts)")
+        fake_tickers = sorted(set(ex["ticker"] for ex in fake_dfs))
+        print(f"  Fake tickers: {', '.join(fake_tickers[:10])}{'...' if len(fake_tickers) > 10 else ''}")
 
     # ══════════════════════════════════════════════════════════════
     # MULTI-PASS MODE
@@ -2223,7 +2272,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     mode_tag = "mp" if multi_pass else "sp"
     is_refinement = whitelist_map is not None
     refinement_tag = "_refinement" if is_refinement else ""
-    desc_name = f"pyramid_{setup_type}_{mode_tag}{refinement_tag}_sig{final_total}_pk{final_peak}_{ts}"
+    file_prefix = "permuted" if permute else "pyramid"
+    desc_name = f"{file_prefix}_{setup_type}_{mode_tag}{refinement_tag}_sig{final_total}_pk{final_peak}_{ts}"
 
     result = {
         "setup_type": setup_type,
@@ -3628,6 +3678,7 @@ def main():
             zero_margin=args.zero_margin,
             no_peak_target=args.no_peak_target,
             pass_order=parsed_pass_order,
+            permute=args.permute,
         )
         results.append(result)
 
