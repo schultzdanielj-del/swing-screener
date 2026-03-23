@@ -320,7 +320,7 @@ This is the self-referential test. For each condition that passed Test 1:
 1. The winner bounding box on expression X covers range [a, b].
 2. Compute what fraction F of the entire tradable universe falls within [a, b] on any given day.
 3. By pure geometry, about (1 - F) of ANY random set of signals would fall outside [a, b] — not just losers.
-4. Measure the actual fraction of loser bars that fall outside [a, b].
+4. Measure the actual fraction of loser bars that fall outside [a, b]. **"Loser bars" = all bars (rightmost + leftward) from ALL losing clusters in the full cluster file.** Not winning leftward bars (those aren't losers). Not just rightmost bars (all bars in a cluster participate in elimination scoring). This gives maximum statistical power for the test.
 5. Run a binomial test: is the loser exclusion rate significantly greater than the universe baseline (1 - F)?
 
 ```
@@ -475,7 +475,8 @@ In that case: skip refinement, proceed to EV grinder on the unrefined population
 2. Count frequencies (Test 1 — consensus stability)
 3. Load expression cache, compute universe baseline F per condition (Test 2 — binomial significance)
 4. Surviving conditions = those passing BOTH tests
-5. Order surviving conditions by individual filter power against FULL loser pile (not subsampled)
+5. For each surviving condition, copy the full condition dict (`name`, `category`, `compute`, `low`, `high`, `filter_power`) from any of the 10 runs that contains it. Bounds are exact min/max (0% margin) — identical across all 10 runs since the winner set is fixed. **No margin is applied by the refinement consensus engine** (unlike the signal consensus engine which adds 5%). Refinement uses exact bounds because winners are the fixed signal population, not a sample.
+6. Order surviving conditions by individual filter power against FULL loser pile (not subsampled)
 6. Build `depth_progression`: progressively apply ordered conditions to full loser pile, record stats per level
 7. Replay final condition set against full loser pile to determine which clusters are eliminated vs surviving
 8. Build `winner_signals`, `loser_signals` (surviving), `eliminated_signals` from cluster file classifications + elimination results
