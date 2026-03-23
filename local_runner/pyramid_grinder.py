@@ -3439,7 +3439,69 @@ def main():
     parser.add_argument("--blackout", action="store_true",
                         help="Refinement grind: winners as must-pass, losers as universe "
                              "(Step 4 — loads classified signals from step 3)")
+
+    # ── Consensus pipeline arguments ──
+    parser.add_argument("--permute", action="store_true",
+                        help="Generate fake examples from tradable universe (permutation test null)")
+    parser.add_argument("--subsample", type=float, default=None,
+                        help="Fraction of tradable universe to include per run (e.g. 0.5)")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Integer seed for reproducible randomization (universe subsample, "
+                             "pass order, fake examples, loser subsample)")
+    parser.add_argument("--pass-order", type=str, default=None,
+                        help="Explicit comma-separated pass ordering, e.g. '2,1,3' "
+                             "(must be permutation of 1,2,3)")
+    parser.add_argument("--no-peak-target", action="store_true",
+                        help="Disable peak target — every tier runs to natural ceiling")
+    parser.add_argument("--zero-margin", action="store_true",
+                        help="Use 0%% margin on bounding boxes (exact min/max)")
+    parser.add_argument("--scan-only", action="store_true",
+                        help="Run scan with supplied --conditions-file, save clusters, exit. "
+                             "No beam search.")
+    parser.add_argument("--conditions-file", type=str, default=None,
+                        help="Path to JSON file with pre-supplied conditions "
+                             "(for --scan-only or --blackout --skip-gather)")
+    parser.add_argument("--skip-gather", action="store_true",
+                        help="Skip Phase 1 cluster gathering in refinement "
+                             "(reads existing cluster file)")
+    parser.add_argument("--subsample-losers", action="store_true",
+                        help="Subsample 50%% of loser clusters per refinement run")
+    parser.add_argument("--output-dir", type=str, default=None,
+                        help="Write grind output JSONs to this directory instead of CACHE_DIR")
+
     args = parser.parse_args()
+
+    # ── CLI validation ──
+    if args.scan_only:
+        if not args.conditions_file:
+            parser.error("--scan-only requires --conditions-file")
+        conflict_flags = []
+        if args.blackout:
+            conflict_flags.append("--blackout")
+        if args.permute:
+            conflict_flags.append("--permute")
+        if args.subsample is not None:
+            conflict_flags.append("--subsample")
+        if args.no_peak_target:
+            conflict_flags.append("--no-peak-target")
+        if args.zero_margin:
+            conflict_flags.append("--zero-margin")
+        if conflict_flags:
+            parser.error(f"--scan-only is mutually exclusive with: {', '.join(conflict_flags)}")
+
+    if args.skip_gather and not args.blackout:
+        parser.error("--skip-gather requires --blackout")
+
+    if args.subsample_losers and not args.blackout:
+        parser.error("--subsample-losers requires --blackout")
+
+    if args.pass_order is not None:
+        try:
+            parts = [int(x.strip()) for x in args.pass_order.split(",")]
+        except ValueError:
+            parser.error(f"--pass-order must be comma-separated integers, got: {args.pass_order}")
+        if sorted(parts) != [1, 2, 3]:
+            parser.error(f"--pass-order must be a permutation of 1,2,3, got: {parts}")
 
     # ── Refinement grind: separate path ──
     if args.blackout:
