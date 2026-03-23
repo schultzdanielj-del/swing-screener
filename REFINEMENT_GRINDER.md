@@ -285,7 +285,7 @@ Run the cluster-aware beam search 10 times with identical base inputs:
 **Loser subsampling matrix rebuild:** The cluster file from Step 3 is loaded once at the start of Step 4. For each of 10 refinement runs:
 
 1. Draw a random 50% of loser clusters from the loaded file.
-2. Rebuild the expendable matrix from the subsampled loser clusters + all winner leftward bars. Winner leftward bars from non-subsampled losing clusters are excluded. Winner leftward bars from winning clusters are always included (winners are never subsampled).
+2. Rebuild the expendable matrix from the subsampled loser clusters + all winner leftward bars. Loser cluster bars not selected in the 50% draw are simply absent from the matrix. Winner leftward bars from winning clusters are always included (winners are never subsampled).
 3. Rebuild the `(ticker, bar_idx) → cluster_id` mapping for the subsampled clusters.
 4. Run the cluster-aware beam search on the rebuilt matrix.
 

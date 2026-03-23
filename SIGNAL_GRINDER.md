@@ -256,7 +256,7 @@ Run `run_pyramid()` 15 times. Each run uses:
 - **Random 50% subsample of the tradable universe** (different tickers per run, drawn from the ~4,167 tradable universe tickers from `build_tradable.py`). This is a core requirement of Meinshausen stability selection, not an optimization. Without subsampling, all runs produce near-identical results and consensus measures nothing. The 50% rate matches Meinshausen's original paper.
 - **Randomized pass ordering** — the three passes (daily, weekly, monthly) run in a randomly shuffled order per run. Six possible orderings, each gets 2-3 runs across 15. A condition that only survives when its timeframe goes first appears in ~5/15 runs and fails consensus. A condition that survives regardless of ordering appears in 12+/15 and passes.
 - **No peak target — run every tier to natural ceiling** (no improvement possible at the current beam level). Don't stop early. Each run finds ALL conditions that contribute any filter power. Consensus picks the stable ones afterward.
-- **0% margin on bounding boxes during the grind.** The beam search works with exact example min/max. Tighter boxes produce sharper conditions. Consensus judges stability on the sharpest version of each condition. Margin is applied later at Step 2 Phase E only.
+- **0% margin on bounding boxes during the grind.** The beam search works with exact example min/max. Tighter boxes produce sharper conditions. Consensus judges stability on the sharpest version of each condition. Margin is applied later at Step 2 Phase E only. **Performance note:** Tighter boxes → lower universe pass rates per expression → fewer expressions exceed the 85% pre-filter threshold → more candidates survive to beam search. More candidates means more nodes explored per level. Per-run timing may increase substantially compared to today's 5%-margin runs. The test runner (Step 1, 1+1 runs) reveals actual timing before committing to the overnight batch.
 - D1 depth cap 15 still applies (prevents overfitting to a single day's snapshot).
 - **D1 subsampling:** `run_d1_tier()` loads the full universe matrix from `get_universe_matrix()`, then filters its rows to only tickers present in `universe_cache`. Since the orchestrator subsamples `universe_cache` to 50% before calling `run_pyramid()`, D1 automatically sees the same ticker subset as every other tier. No new parameters, no new data paths — one filter step after the matrix load.
 
@@ -434,7 +434,7 @@ Chains the entire pipeline as one unattended overnight run:
 
 1. Check nightly refresh completed. If not, exit with message.
 2. Run Steps 1A + 1B interleaved (15 real + 15 permuted signal grinds) to `consensus/` directory.
-3. Early abort checkpoint after 3+3 runs — if preliminary z < 1, kill the pipeline, write abort report. Stop.
+3. Early abort checkpoint after 3+3 runs — practical heuristic, not a statistical test (n=3 per group gives enormous variance on the z estimate). If preliminary z < 1, kill the pipeline, write abort report. Stop. If z is ambiguous (1.0–1.5), err toward continuing — 12 more runs per group will sharpen the estimate.
 4. If preliminary z looks viable, continue remaining 24 runs.
 5. Run Step 2 (signal consensus engine). If z < 3, write gate report. Stop.
 6. If z ≥ 3: write consensus output to standard cache directory. Run Step 3 (deterministic scan).
