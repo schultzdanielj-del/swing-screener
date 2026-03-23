@@ -2399,12 +2399,17 @@ def _load_exit_cond(setup_type):
     return None
 
 
-def _gather_raw_signal_clusters(setup_type):
+def _gather_raw_signal_clusters(setup_type, conditions_override=None):
     """Gather raw pre-dedup signal clusters for the refinement grinder.
 
     Scans the full universe with step 1 signal conditions, groups consecutive
     bars into clusters, applies exit condition on rightmost bars, classifies
     each cluster as AUTO_WIN or AUTO_LOSS.
+
+    Args:
+        setup_type: e.g. "dtss"
+        conditions_override: if provided, use these conditions instead of
+            loading from _load_signal_conditions(). List of condition dicts.
 
     Output saved to local_runner/cache/raw_signal_clusters_{setup}.json.
     The existing refinement grinder does NOT use this yet — it's gathered
@@ -2417,12 +2422,16 @@ def _gather_raw_signal_clusters(setup_type):
     print(f"\n  ── GATHERING RAW SIGNAL CLUSTERS ──")
 
     # ── Load signal conditions ──
-    signal_conditions, cond_source = _load_signal_conditions(setup_type)
-    if not signal_conditions:
-        print(f"  ERROR: No signal conditions found for {setup_type}")
-        print(f"  Run step 1 first: python local_runner/pyramid_grinder.py --setup {setup_type}")
-        return None
-    print(f"  Signal conditions: {len(signal_conditions)} from {cond_source}")
+    if conditions_override is not None:
+        signal_conditions = conditions_override
+        print(f"  Signal conditions: {len(signal_conditions)} from supplied conditions file")
+    else:
+        signal_conditions, cond_source = _load_signal_conditions(setup_type)
+        if not signal_conditions:
+            print(f"  ERROR: No signal conditions found for {setup_type}")
+            print(f"  Run step 1 first: python local_runner/pyramid_grinder.py --setup {setup_type}")
+            return None
+        print(f"  Signal conditions: {len(signal_conditions)} from {cond_source}")
 
     # ── Load exit condition ──
     exit_cond = _load_exit_cond(setup_type)
@@ -3630,6 +3639,25 @@ def main():
             parser.error(f"--pass-order must be comma-separated integers, got: {args.pass_order}")
         if sorted(parts) != [1, 2, 3]:
             parser.error(f"--pass-order must be a permutation of 1,2,3, got: {parts}")
+
+    # ── Scan-only mode: scan with supplied conditions, save clusters, exit ──
+    if args.scan_only:
+        print(f"\n  ── SCAN-ONLY MODE ──")
+        print(f"  Loading conditions from: {args.conditions_file}")
+        with open(args.conditions_file) as f:
+            cond_data = json.load(f)
+        conditions = cond_data.get("all_conditions", [])
+        if not conditions:
+            print(f"  ERROR: No 'all_conditions' found in {args.conditions_file}")
+            sys.exit(1)
+        print(f"  {len(conditions)} conditions loaded")
+        result_path = _gather_raw_signal_clusters(
+            setup_type=args.setup,
+            conditions_override=conditions,
+        )
+        if result_path is None:
+            sys.exit(1)
+        sys.exit(0)
 
     # ── Refinement grind: separate path ──
     if args.blackout:
