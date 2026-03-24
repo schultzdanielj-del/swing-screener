@@ -165,15 +165,47 @@ def build_expr_col_map(expr_names):
 
 # ── Forward Data Construction ──
 def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
-                       direction, exit_horizon, entry_window, example_entry_dates):
+                       direction, exit_horizon, entry_window, example_entry_dates,
+                       tmpdir=None):
+    """Build forward expression + close data for all signals.
+
+    When tmpdir is provided, writes expression data directly to memory-mapped
+    files on disk instead of holding in RAM. This allows processing populations
+    of 4,000+ signals without exceeding 32 GB RAM.
+    """
     import pandas as pd
     n_signals = len(signals)
+    n_expr = len(expr_col_map)
     cache_cols = np.array([ci for _,ci in expr_col_map], dtype=np.int32)
-    fwd_expr = [None]*n_signals; fwd_closes = [None]*n_signals
-    entry_high_bar_expr = [None]*n_signals
+
+    # Forward closes stay in RAM (small: n_signals × exit_horizon × 8 bytes)
+    fwd_closes = [None]*n_signals
+
+    # Forward expressions + entry high bar go to memmap if tmpdir provided
+    use_mmap = tmpdir is not None
+    if use_mmap:
+        os.makedirs(tmpdir, exist_ok=True)
+        expr_path = os.path.join(tmpdir, 'expr_3d.npy')
+        eb_path = os.path.join(tmpdir, 'eb_2d.npy')
+        # Pre-allocate memmap files filled with NaN
+        expr_3d = np.lib.format.open_memmap(
+            expr_path, mode='w+', dtype=np.float32,
+            shape=(n_signals, exit_horizon, n_expr))
+        expr_3d[:] = np.nan
+        eb_2d = np.lib.format.open_memmap(
+            eb_path, mode='w+', dtype=np.float32,
+            shape=(n_signals, n_expr))
+        eb_2d[:] = np.nan
+        print(f"  Memmap files: expr_3d {expr_3d.nbytes/1e9:.2f} GB, eb_2d {eb_2d.nbytes/1e6:.1f} MB")
+    else:
+        fwd_expr_list = [None]*n_signals
+        entry_high_bar_expr = [None]*n_signals
+        expr_path = None; eb_path = None
+
     entry_high_offset = np.full(n_signals, -1, dtype=np.int32)
     entry_prices = np.zeros(n_signals, dtype=np.float64)
     adr_values = np.zeros(n_signals, dtype=np.float64)
+    n_bars_per = np.zeros(n_signals, dtype=np.int32)
     signal_meta = []
     loaded=skipped_ohlcv=skipped_expr=skipped_date=skipped_fwd=0
     n_ex_date_found=n_ex_date_fallback=n_nonex_argmax=0
@@ -204,7 +236,14 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
             if nf<1:
                 skipped_fwd+=1; signal_meta.append({"idx":i,"ticker":ticker,"status":"no_fwd","date":sd}); continue
             fwd_closes[i]=ca[oi+1:oi+1+nf].copy()
-            fwd_expr[i]=edata[ei+1:ei+1+nf][:,cache_cols].copy()
+            fwd_slice = edata[ei+1:ei+1+nf][:,cache_cols]
+            n_bars_per[i] = nf
+
+            if use_mmap:
+                expr_3d[i, :nf, :] = fwd_slice
+            else:
+                fwd_expr_list[i] = fwd_slice.copy()
+
             fwd_start = oi + 1
             if sig.get("is_example", False):
                 entry_date_found = False
@@ -221,7 +260,12 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
                 entry_high_offset[i] = int(np.argmax(ha[fwd_start:fwd_start+eh_search_end]))
                 n_nonex_argmax += 1
             eh_bar = entry_high_offset[i]
-            entry_high_bar_expr[i] = fwd_expr[i][eh_bar, :].copy()
+
+            if use_mmap:
+                eb_2d[i, :] = expr_3d[i, eh_bar, :]
+            else:
+                entry_high_bar_expr[i] = fwd_slice[eh_bar, :].copy()
+
             fd=ds[oi+1:oi+1+nf].tolist()
             signal_meta.append({"idx":i,"ticker":ticker,"signal_date":sd,
                 "entry_price":float(entry_prices[i]),"adr":float(adr_values[i]),
@@ -232,12 +276,18 @@ def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
                 "weight_category":sig["weight_category"],"entry_candle_score":sig.get("entry_candle_score"),
                 "n_forward_bars":nf,"fwd_dates":fd,"status":"ok"})
             loaded+=1
-    vm=np.array([fwd_expr[i] is not None for i in range(n_signals)])
+
+    if use_mmap:
+        # Flush memmap to disk
+        del expr_3d, eb_2d
+        fwd_expr_list = None
+        entry_high_bar_expr = None
+    vm=np.array([n_bars_per[i] > 0 for i in range(n_signals)])
     stats={"loaded":loaded,"skipped_ohlcv":skipped_ohlcv,"skipped_expr":skipped_expr,
            "skipped_date":skipped_date,"skipped_fwd":skipped_fwd,"n_valid":int(vm.sum()),
            "n_ex_date_found":n_ex_date_found,"n_ex_date_fallback":n_ex_date_fallback,
            "n_nonex_argmax":n_nonex_argmax}
-    return fwd_expr, fwd_closes, entry_high_bar_expr, entry_high_offset, entry_prices, adr_values, signal_meta, vm, stats
+    return fwd_expr_list, fwd_closes, entry_high_bar_expr, entry_high_offset, entry_prices, adr_values, signal_meta, vm, stats, n_bars_per, expr_path, eb_path
 
 def extract_column_padded(fwd_expr_list, valid_indices, expr_col, exit_horizon):
     n=len(valid_indices); c=np.full((n,exit_horizon),np.nan,dtype=np.float32)
@@ -388,7 +438,7 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
                  entry_high_offset_v, valid_indices,
                  entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
                  move_adrs_v, n_bars_per_signal, filtered_names, direction, exit_horizon,
-                 n_workers=None):
+                 n_workers=None, prebuilt_expr_path=None, prebuilt_eb_path=None):
     if n_workers is None: n_workers = os.cpu_count() or 8
     nv = len(valid_indices); ne = len(filtered_names)
     print(f"\n  ── 1-STAGE EXPRESSION GRIND ──")
@@ -404,23 +454,52 @@ def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
         if s<n_bars_per_signal[vi]: search_valid[vi,s:n_bars_per_signal[vi]]=True
     bar_indices = np.arange(exit_horizon)[np.newaxis, :]
 
-    print(f"  Building 3D expression array ({nv} x {exit_horizon} x {ne})...")
-    expr_3d = np.full((nv, exit_horizon, ne), np.nan, dtype=np.float32)
-    for vi, si in enumerate(valid_indices):
-        fe = fwd_expr_list[si]; expr_3d[vi, :fe.shape[0], :] = fe
-    eb_2d = np.full((nv, ne), np.nan, dtype=np.float32)
-    for vi, si in enumerate(valid_indices):
-        eb = entry_high_bar_expr_list[si]
-        if eb is not None: eb_2d[vi, :] = eb
-    print(f"  3D: {expr_3d.nbytes/1e9:.2f} GB")
+    if prebuilt_expr_path and os.path.exists(prebuilt_expr_path):
+        # Memmap files already built by build_forward_data — use directly
+        # But they're indexed by signal index, not valid_index order.
+        # We need to reindex to valid_indices order for the grind workers.
+        print(f"  Loading prebuilt memmap and reindexing to {nv} valid signals...")
+        src_3d = np.load(prebuilt_expr_path, mmap_mode='r')
+        src_eb = np.load(prebuilt_eb_path, mmap_mode='r')
 
-    tmpdir = tempfile.mkdtemp(prefix='pg_')
-    expr_path = os.path.join(tmpdir, 'expr_3d.npy')
-    eb_path = os.path.join(tmpdir, 'eb_2d.npy')
-    np.save(expr_path, expr_3d); np.save(eb_path, eb_2d)
-    del expr_3d, eb_2d; gc.collect()
-    print(f"  Saved to temp, arrays freed")
-    print_ram("(mmap ready)")
+        tmpdir = tempfile.mkdtemp(prefix='pg_')
+        expr_path = os.path.join(tmpdir, 'expr_3d.npy')
+        eb_path = os.path.join(tmpdir, 'eb_2d.npy')
+
+        expr_3d = np.lib.format.open_memmap(
+            expr_path, mode='w+', dtype=np.float32,
+            shape=(nv, exit_horizon, ne))
+        expr_3d[:] = np.nan
+        eb_2d = np.lib.format.open_memmap(
+            eb_path, mode='w+', dtype=np.float32,
+            shape=(nv, ne))
+        eb_2d[:] = np.nan
+
+        for vi, si in enumerate(valid_indices):
+            expr_3d[vi, :, :] = src_3d[si, :, :]
+            eb_2d[vi, :] = src_eb[si, :]
+
+        del src_3d, src_eb, expr_3d, eb_2d; gc.collect()
+        print(f"  Reindexed to valid-only memmap")
+        print_ram("(mmap ready)")
+    else:
+        print(f"  Building 3D expression array ({nv} x {exit_horizon} x {ne})...")
+        expr_3d = np.full((nv, exit_horizon, ne), np.nan, dtype=np.float32)
+        for vi, si in enumerate(valid_indices):
+            fe = fwd_expr_list[si]; expr_3d[vi, :fe.shape[0], :] = fe
+        eb_2d = np.full((nv, ne), np.nan, dtype=np.float32)
+        for vi, si in enumerate(valid_indices):
+            eb = entry_high_bar_expr_list[si]
+            if eb is not None: eb_2d[vi, :] = eb
+        print(f"  3D: {expr_3d.nbytes/1e9:.2f} GB")
+
+        tmpdir = tempfile.mkdtemp(prefix='pg_')
+        expr_path = os.path.join(tmpdir, 'expr_3d.npy')
+        eb_path = os.path.join(tmpdir, 'eb_2d.npy')
+        np.save(expr_path, expr_3d); np.save(eb_path, eb_2d)
+        del expr_3d, eb_2d; gc.collect()
+        print(f"  Saved to temp, arrays freed")
+        print_ram("(mmap ready)")
     check_ram("(pre-grind)", min_gb=1.0)
 
     shared = {'c2d':close_2d, 'sv':search_valid, 'bi':bar_indices,
@@ -851,8 +930,14 @@ def main():
     print(f"\n  ── FORWARD MATRIX CONSTRUCTION ──")
     print(f"  Entry window: {entry_window} bars  Exit horizon: {exit_horizon} bars")
     check_ram("(pre-OHLCV)",min_gb=3.0); oc=load_5yr_cache(); print_ram("(OHLCV loaded)")
-    fwd_expr,fwd_closes,entry_high_bar_expr,entry_high_offset,entry_prices,adr_values,signal_meta,valid_mask,bs=\
-        build_forward_data(signals,oc,ec,ecm,direction,exit_horizon,entry_window,example_entry_dates)
+
+    # Create temp directory for memmap files — written during build, mmap'd during grind
+    import tempfile as _tempfile
+    tmpdir = _tempfile.mkdtemp(prefix='pg_')
+    print(f"  Memmap dir: {tmpdir}")
+
+    fwd_expr,fwd_closes,entry_high_bar_expr,entry_high_offset,entry_prices,adr_values,signal_meta,valid_mask,bs,n_bars_per,expr_path,eb_path=\
+        build_forward_data(signals,oc,ec,ecm,direction,exit_horizon,entry_window,example_entry_dates,tmpdir=tmpdir)
     del oc; gc.collect()
     print(f"  Loaded: {bs['loaded']}  Valid: {bs['n_valid']}")
     print(f"  Entry bar: {bs['n_ex_date_found']} ex by date, {bs['n_ex_date_fallback']} ex fallback, {bs['n_nonex_argmax']} non-ex argmax")
@@ -860,9 +945,13 @@ def main():
     exl=sum(1 for m in signal_meta if m.get("status")=="ok" and m.get("is_example"))
     if exl<counts["examples"]: print(f"  ✗ FAIL: {exl}/{counts['examples']} examples"); sys.exit(1)
     print(f"  ✓ All {counts['examples']} examples loaded")
-    tfb=sum(fwd_expr[si].nbytes for si in range(len(signals)) if fwd_expr[si] is not None)
+    # Forward data size from memmap file
+    if expr_path and os.path.exists(expr_path):
+        tfb = os.path.getsize(expr_path)
+    else:
+        tfb=sum(fwd_expr[si].nbytes for si in range(len(signals)) if fwd_expr[si] is not None)
     print(f"  Forward data: {tfb/1e9:.2f} GB")
-    print_ram("(OHLCV freed)"); check_ram("(pre-grind)",min_gb=2.0)
+    print_ram("(OHLCV freed)"); check_ram("(pre-grind)",min_gb=1.0)
 
     vi=np.where(valid_mask)[0]
     sd=[signals[si]["date"] for si in vi]; do=np.argsort(sd); vi=vi[do]
@@ -870,13 +959,14 @@ def main():
     epv=entry_prices[vi]; av=adr_values[vi]
     mv=np.array([signals[si].get("move_adr",0) or 0 for si in vi])
     ihg=np.array([signals[si]["weight_category"] in ("example","vetted_yes") for si in vi])
-    nbp=np.array([fwd_expr[si].shape[0] for si in vi],dtype=np.int32)
+    nbp=n_bars_per[vi]
     eho=entry_high_offset[vi]
 
     # ── 1-Stage ──
-    stage1, close_2d, expr_path, eb_path, tmpdir = grind_1stage(
+    stage1, close_2d, expr_path_out, eb_path_out, tmpdir_out = grind_1stage(
         fwd_expr,fwd_closes,entry_high_bar_expr,eho,vi,
-        epv,av,wv,ihg,mv,nbp,fn,direction,exit_horizon,n_workers)
+        epv,av,wv,ihg,mv,nbp,fn,direction,exit_horizon,n_workers,
+        prebuilt_expr_path=expr_path, prebuilt_eb_path=eb_path)
 
     if stage1:
         t=stage1[0]
@@ -901,12 +991,14 @@ def main():
             entry_prices_v=epv, adr_values_v=av, weights_v=wv,
             move_adrs_v=mv, n_bars_per_signal=nbp, filtered_names=fn,
             direction=direction, exit_horizon=exit_horizon,
-            expr_path=expr_path, eb_path=eb_path,
+            expr_path=expr_path_out, eb_path=eb_path_out,
             top_n_final=args.top_n_2stage, n_workers=n_workers)
 
-    # Cleanup temp files
+    # Cleanup temp files (both the build memmap dir and the grind reindexed dir)
     import shutil
     shutil.rmtree(tmpdir, ignore_errors=True)
+    if tmpdir_out and tmpdir_out != tmpdir:
+        shutil.rmtree(tmpdir_out, ignore_errors=True)
 
     # ── Save Output ──
     el=time.time()-t0
