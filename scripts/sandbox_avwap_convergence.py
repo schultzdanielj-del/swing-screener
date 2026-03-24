@@ -349,10 +349,15 @@ def main():
                 if diff > 0.01:
                     changed = ' ← CHANGED'
 
+            lp = f"{c['line_price']:.2f}" if isinstance(c['line_price'], float) else str(c['line_price'])
+            cl = f"{c['close']:.2f}" if isinstance(c['close'], float) else str(c['close'])
+            ov = f"{c['old_convergence']:.4f}" if isinstance(c['old_convergence'], float) else str(c['old_convergence'])
+            nv = f"{c['new_convergence']:.4f}" if isinstance(c['new_convergence'], float) else str(c['new_convergence'])
+            av = f"{c['avwap_price']:.2f}" if isinstance(c['avwap_price'], float) else str(c['avwap_price'])
             print(f"  bar {c['bar']:4d} ({c['date']}) {c['direction']:6s} | "
-                  f"line=${c['line_price']:>8s}  close=${c['close']:>8s} | "
-                  f"OLD={c['old_convergence']:>8s}  NEW={c['new_convergence']:>8s}{changed} | "
-                  f"AVWAP=${c['avwap_price']:>8s}  "
+                  f"line=${lp:>8s}  close=${cl:>8s} | "
+                  f"OLD={ov:>8s}  NEW={nv:>8s}{changed} | "
+                  f"AVWAP=${av:>8s}  "
                   f"pivot@{c['pivot_bar']}  opp@{c['opp_pivot_bar']}  "
                   f"anchor@{c['anchor_bar']}  width={c['search_width']}")
 
