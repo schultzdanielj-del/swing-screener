@@ -173,7 +173,7 @@ def compute_z_score(R, bootstrap_counts):
 # SIGNAL CONSENSUS
 # ══════════════════════════════════════════════════════════════
 
-def run_signal_consensus(setup_type, threshold, input_dir):
+def run_signal_consensus(setup_type, threshold, input_dir, min_permuted=3):
     """Run the full signal consensus pipeline.
 
     Phases A-E from SIGNAL_GRINDER.md spec.
@@ -235,8 +235,8 @@ def run_signal_consensus(setup_type, threshold, input_dir):
     n_perm = len(perm_files)
     print(f"  Found {n_perm} permuted runs")
 
-    if n_perm < 3:
-        print(f"  ERROR: Need at least 3 permuted runs for reliable null distribution. "
+    if n_perm < min_permuted:
+        print(f"  ERROR: Need at least {min_permuted} permuted runs for reliable null distribution. "
               f"Found {n_perm}.")
         # Write abort report
         _write_abort_report(setup_type, input_dir, n_real, n_perm, R,
@@ -1000,6 +1000,8 @@ if __name__ == "__main__":
                         help="Consensus frequency threshold 0.0-1.0 (default: 0.7)")
     parser.add_argument("--input-dir", type=str, required=True,
                         help="Directory containing real + permuted grind outputs")
+    parser.add_argument("--min-permuted", type=int, default=3,
+                        help="Minimum permuted runs required (default: 3, use 1 for test mode)")
     args = parser.parse_args()
 
     if args.stage == "signal":
@@ -1007,6 +1009,7 @@ if __name__ == "__main__":
             setup_type=args.setup,
             threshold=args.threshold,
             input_dir=args.input_dir,
+            min_permuted=args.min_permuted,
         )
         if result is None:
             sys.exit(1)
