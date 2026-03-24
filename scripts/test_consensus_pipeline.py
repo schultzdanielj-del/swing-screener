@@ -274,6 +274,7 @@ def run_tests(setup_type, beam=50, depth=5):
         sys.executable, "local_runner/pyramid_grinder.py",
         "--setup", setup_type,
         "--blackout",
+        "--beam", str(beam), "--depth", str(depth),
         "--skip-gather",
         "--subsample-losers",
         "--seed", "1",
