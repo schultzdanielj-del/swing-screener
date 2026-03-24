@@ -32,12 +32,63 @@ from scripts.algo_line_detector import (
 # NEW LOGIC — pivot-to-pivot contextual AVWAP
 # ══════════════════════════════════════════════════════════════
 
+def _compute_ema8(closes: np.ndarray) -> np.ndarray:
+    """8-period EMA. Pure numpy."""
+    n = len(closes)
+    ema = np.full(n, np.nan, dtype=np.float64)
+    if n < 8:
+        return ema
+    # Seed with SMA of first 8 bars
+    ema[7] = closes[:8].mean()
+    mult = 2.0 / (8 + 1)
+    for i in range(8, n):
+        ema[i] = closes[i] * mult + ema[i - 1] * (1 - mult)
+    return ema
+
+
+def _ema_crossed_between(ema: np.ndarray, closes: np.ndarray,
+                         start_idx: int, end_idx: int) -> bool:
+    """Check if close crossed the 8 EMA between start_idx and end_idx.
+
+    A cross = close went from one side of EMA to the other at any point
+    in the range. This confirms the two pivots are on opposite sides of
+    a meaningful move, not just minor wiggles in the same consolidation.
+    """
+    if start_idx < 0 or end_idx <= start_idx:
+        return False
+
+    segment_close = closes[start_idx:end_idx + 1]
+    segment_ema = ema[start_idx:end_idx + 1]
+
+    # Need valid EMA values
+    valid = ~np.isnan(segment_ema)
+    if not valid.any():
+        return False
+
+    diff = segment_close[valid] - segment_ema[valid]
+    if len(diff) < 2:
+        return False
+
+    # Check for sign change (cross)
+    signs = np.sign(diff)
+    # Remove zeros (treat as no cross)
+    signs = signs[signs != 0]
+    if len(signs) < 2:
+        return False
+
+    return np.any(signs[1:] != signs[:-1])
+
+
 def find_contextual_avwap(bar_idx: int, pivots: list, cum_tpv: np.ndarray,
-                          cum_v: np.ndarray, n_bars: int) -> tuple:
+                          cum_v: np.ndarray, n_bars: int,
+                          ema8: np.ndarray = None,
+                          closes: np.ndarray = None) -> tuple:
     """Find the contextual AVWAP at bar_idx using pivot-to-pivot range.
 
     1. Find the nearest D1 pivot BEFORE bar_idx
-    2. Find the previous opposite pivot before that one (trend leg start)
+    2. Walk backward to find the previous opposite pivot where the 8 EMA
+       was crossed between the two — confirms a real trend change, not
+       just minor wiggles in consolidation
     3. Sweep all anchors in that range for max (pivot high) or min (pivot low)
     4. Return (avwap_value, pivot_idx, opposite_pivot_idx, anchor_idx)
 
@@ -61,14 +112,22 @@ def find_contextual_avwap(bar_idx: int, pivots: list, cum_tpv: np.ndarray,
     pivot_idx = prior_pivots[0][0]
     pivot_is_high = prior_pivots[0][1]
 
-    # Find the previous OPPOSITE pivot before this one
+    # Find the previous OPPOSITE pivot where the 8 EMA was crossed between them
     opposite_idx = -1
+    have_ema = ema8 is not None and closes is not None
     for p_idx, p_is_high, p_price, p_window in prior_pivots[1:]:
         if p_is_high != pivot_is_high:
-            opposite_idx = p_idx
-            break
+            if have_ema:
+                # Only accept if price crossed the 8 EMA between these pivots
+                if _ema_crossed_between(ema8, closes, p_idx, pivot_idx):
+                    opposite_idx = p_idx
+                    break
+            else:
+                # Fallback if no EMA data (shouldn't happen in practice)
+                opposite_idx = p_idx
+                break
 
-    # If no opposite pivot found, use bar 0 as start
+    # If no qualifying opposite pivot found, use bar 0 as start
     search_start = opposite_idx if opposite_idx >= 0 else 0
     search_end = pivot_idx  # exclusive — never to the right of the pivot
 
@@ -124,14 +183,15 @@ def find_contextual_avwap(bar_idx: int, pivots: list, cum_tpv: np.ndarray,
 def compute_avwap_convergence_new(line_price: float, bar_idx: int,
                                    pivots: list, cum_tpv: np.ndarray,
                                    cum_v: np.ndarray, atr_val: float,
-                                   n_bars: int) -> float:
+                                   n_bars: int, ema8: np.ndarray = None,
+                                   closes: np.ndarray = None) -> float:
     """New convergence metric: distance between algo line price and
     pivot-to-pivot contextual AVWAP, normalized by ATR."""
     if atr_val <= 0:
         return np.nan
 
     avwap_val, _, _, _ = find_contextual_avwap(
-        bar_idx, pivots, cum_tpv, cum_v, n_bars
+        bar_idx, pivots, cum_tpv, cum_v, n_bars, ema8=ema8, closes=closes
     )
     if np.isnan(avwap_val):
         return np.nan
@@ -223,6 +283,9 @@ def test_ticker(ticker: str, df: pd.DataFrame) -> dict:
     # ATR
     atr = _compute_atr14(highs, lows, closes)
 
+    # 8 EMA for pivot separation filter
+    ema8 = _compute_ema8(closes)
+
     # Compare at a sample of bars (every 50th bar from 100 onward)
     sample_bars = list(range(100, n_bars, 50))
     if n_bars - 1 not in sample_bars:
@@ -260,12 +323,13 @@ def test_ticker(ticker: str, df: pd.DataFrame) -> dict:
             )
 
             new_val = compute_avwap_convergence_new(
-                s_line_price, bar_idx, pivots, cum_tpv, cum_v, atr_val, n_bars
+                s_line_price, bar_idx, pivots, cum_tpv, cum_v, atr_val, n_bars,
+                ema8=ema8, closes=closes
             )
 
             # Get diagnostic info from new logic
             avwap_price, pivot_used, opp_pivot, anchor_used = find_contextual_avwap(
-                bar_idx, pivots, cum_tpv, cum_v, n_bars
+                bar_idx, pivots, cum_tpv, cum_v, n_bars, ema8=ema8, closes=closes
             )
 
             results['comparisons'].append({
