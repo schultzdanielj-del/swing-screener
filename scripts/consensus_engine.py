@@ -600,69 +600,101 @@ def run_refinement_consensus(setup_type, threshold, input_dir):
 
     cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
 
-    test2_survivors = set()
-    test2_results = {}
-
-    for name in sorted(test1_survivors):
-        c = condition_dicts[name]
-        low, high = c["low"], c["high"]
+    # Map conditions to cache column indices
+    cond_names_sorted = sorted(test1_survivors)
+    cond_col_indices = []
+    cond_bounds = []
+    valid_cond_names = []
+    for name in cond_names_sorted:
         col_idx = cache_name_to_idx.get(name)
         if col_idx is None:
             print(f"    {name}: not in expr cache — SKIP")
             continue
+        c = condition_dicts[name]
+        cond_col_indices.append(col_idx)
+        cond_bounds.append((c["low"], c["high"]))
+        valid_cond_names.append(name)
 
-        # Universe baseline: fraction of all bars within [low, high]
-        n_total = 0
-        n_inside = 0
-        for ticker in expr_cache.get_available_tickers():
-            dates, data = expr_cache.get_ticker(ticker)
-            if data is None:
+    n_conds = len(valid_cond_names)
+    if n_conds == 0:
+        print(f"  No conditions have valid expr cache columns.")
+        return _build_refinement_output(
+            setup_type, [], input_dir, t_start, threshold, n_runs)
+
+    col_idx_arr = np.array(cond_col_indices)
+    lows = np.array([b[0] for b in cond_bounds], dtype=np.float64)
+    highs = np.array([b[1] for b in cond_bounds], dtype=np.float64)
+
+    # Single pass over expr cache: compute universe baseline for all conditions
+    print(f"  Computing universe baseline for {n_conds} conditions (single pass)...")
+    uni_n_total = np.zeros(n_conds, dtype=np.int64)
+    uni_n_inside = np.zeros(n_conds, dtype=np.int64)
+    available_tickers = sorted(expr_cache.get_available_tickers())
+    for ti, ticker in enumerate(available_tickers):
+        dates, data = expr_cache.get_ticker(ticker)
+        if data is None:
+            continue
+        # Extract columns for all conditions at once
+        cols = data[:, col_idx_arr]  # shape: (n_bars, n_conds)
+        valid = ~np.isnan(cols)
+        uni_n_total += valid.sum(axis=0).astype(np.int64)
+        inside = valid & (cols >= lows) & (cols <= highs)
+        uni_n_inside += inside.sum(axis=0).astype(np.int64)
+        if (ti + 1) % 500 == 0:
+            print(f"    {ti+1}/{len(available_tickers)} tickers...")
+
+    print(f"  Universe baseline computed ({len(available_tickers)} tickers)")
+
+    # Single pass over loser bars: compute loser exclusion for all conditions
+    print(f"  Computing loser exclusion rates...")
+    loser_n_total = np.zeros(n_conds, dtype=np.int64)
+    loser_n_outside = np.zeros(n_conds, dtype=np.int64)
+
+    # Group loser bars by ticker to load each ticker once
+    loser_bars_by_ticker = defaultdict(list)
+    for ticker, bar_idx in loser_bars:
+        loser_bars_by_ticker[ticker].append(bar_idx)
+
+    for ticker, bar_indices in loser_bars_by_ticker.items():
+        dates, data = expr_cache.get_ticker(ticker)
+        if data is None:
+            continue
+        for bar_idx in bar_indices:
+            if bar_idx >= len(data):
                 continue
-            vals = data[:, col_idx]
-            valid_mask = ~np.isnan(vals)
-            valid_vals = vals[valid_mask]
-            n_total += len(valid_vals)
-            n_inside += int(np.sum((valid_vals >= low) & (valid_vals <= high)))
+            vals = data[bar_idx, col_idx_arr]  # shape: (n_conds,)
+            valid = ~np.isnan(vals)
+            loser_n_total += valid.astype(np.int64)
+            outside = valid & ((vals < lows) | (vals > highs))
+            loser_n_outside += outside.astype(np.int64)
 
-        if n_total == 0:
+    # Run binomial test for each condition
+    test2_survivors = set()
+    test2_results = {}
+
+    for i, name in enumerate(valid_cond_names):
+        if uni_n_total[i] == 0:
             print(f"    {name}: no valid universe data — SKIP")
             continue
-
-        F = n_inside / n_total
+        F = uni_n_inside[i] / uni_n_total[i]
         expected_exclusion = 1.0 - F
 
-        # Loser exclusion rate
-        n_loser_total = 0
-        n_loser_outside = 0
-        for ticker, bar_idx in loser_bars:
-            dates, data = expr_cache.get_ticker(ticker)
-            if data is None or bar_idx >= len(data):
-                continue
-            val = data[bar_idx, col_idx]
-            if np.isnan(val):
-                continue
-            n_loser_total += 1
-            if val < low or val > high:
-                n_loser_outside += 1
-
-        if n_loser_total == 0:
+        if loser_n_total[i] == 0:
             print(f"    {name}: no valid loser data — SKIP")
             continue
+        observed_exclusion = loser_n_outside[i] / loser_n_total[i]
 
-        observed_exclusion = n_loser_outside / n_loser_total
-
-        # Binomial test: is observed exclusion > expected?
-        result = binomtest(n_loser_outside, n_loser_total, expected_exclusion,
-                           alternative="greater")
+        result = binomtest(int(loser_n_outside[i]), int(loser_n_total[i]),
+                           expected_exclusion, alternative="greater")
         p_value = result.pvalue
 
         test2_results[name] = {
-            "F_universe": round(F, 4),
-            "expected_exclusion": round(expected_exclusion, 4),
-            "observed_exclusion": round(observed_exclusion, 4),
-            "n_loser_bars": n_loser_total,
-            "n_outside": n_loser_outside,
-            "p_value": p_value,
+            "F_universe": round(float(F), 4),
+            "expected_exclusion": round(float(expected_exclusion), 4),
+            "observed_exclusion": round(float(observed_exclusion), 4),
+            "n_loser_bars": int(loser_n_total[i]),
+            "n_outside": int(loser_n_outside[i]),
+            "p_value": float(p_value),
         }
 
         if p_value < 0.01:
