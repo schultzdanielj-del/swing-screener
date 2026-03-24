@@ -125,6 +125,18 @@ No re-scan, no re-classify after the beam search. Phase 1 classification (ceilin
 - Output: Combined conditions (signal + refinement) + filtered winner/loser signal lists with move_adr data
 - Script: `pyramid_grinder.py --blackout`
 
+### d) Consensus Pipeline (replaces single-run Phase 2)
+
+Multi-run stability selection + permutation testing. Runs the signal grind 15 times on 50% universe subsamples with randomized pass ordering and 0% margin, plus 15 permuted runs (fake examples = noise floor). Bootstrap z-score gates the pattern at z > 3 (99.7% confidence). Consensus conditions locked with 5% margin. Then: deterministic scan → exit re-grind → 10 refinement runs with loser subsampling → two-test refinement validation (consensus stability + binomial significance per condition).
+
+- Orchestrator: `scripts/run_consensus_pipeline.py --setup dtss`
+- Test runner: `scripts/test_consensus_pipeline.py --setup dtss`
+- Signal consensus: `scripts/consensus_engine.py --stage signal`
+- Refinement consensus: `scripts/consensus_engine.py --stage refinement`
+- Full spec: `SIGNAL_GRINDER.md` and `REFINEMENT_GRINDER.md`
+
+The existing single-run pipeline (`pyramid_grinder.py --setup dtss`) still works unchanged. Both paths can coexist.
+
 ### move_adr measurement
 
 Every cluster with an exit_bar gets `move_adr` (entry_high to exit_close, in ADR units), `adr_at_signal`, and `entry_high`.
@@ -247,6 +259,8 @@ The watchlist is the end product. Every cycle of the loop makes it more accurate
 | Signal Grind | pyramid_grinder.py | Examples (local SQLite) + expr cache + 5yr OHLCV | pyramid_{setup}_*.json |
 | Exit Grind | signal_exit_grinder.py | Examples + expr cache | Exit condition in local cache |
 | Refinement Grind | pyramid_grinder.py --blackout | Pyramid result + exit cond + expr cache + 5yr OHLCV | raw_signal_clusters_{setup}.json + refinement_{setup}_*.json |
+| Consensus Pipeline | run_consensus_pipeline.py | Examples + expr cache + 5yr OHLCV | consensus_signal_{setup}.json + refinement consensus + EV + profit |
+| Consensus Engine | consensus_engine.py | Real + permuted grind JSONs | consensus_signal_{setup}.json (signal) or refinement consensus (refinement) |
 | Entry Candle Scorer | entry_candle_scorer.py | Examples (local SQLite) + refinement output + raw_signal_clusters + expr cache | entry_scores_{setup}.json |
 | EV Grinder | ev_grinder.py (complete, inc 1-6) | Refinement result + raw clusters + market cache + 5yr OHLCV + fundamentals cache | ev_{setup}_inc6_*.json (features, per-signal scores, calibration tables, redundancy analysis) |
 | Profit Grinder | profit_grinder.py (rewrite in progress) | EV output + entry candle scores + vetting decisions (SQLite) + expr cache + 5yr OHLCV | profit_{setup}_*.json (exit candidates, weighted stats, equity curves, per-trade detail) |
@@ -258,10 +272,10 @@ The entry candle scorer is not a pipeline step -- it is a standalone vetting uti
 
 ## Infrastructure
 
-- **Repo:** `schultzdanielj-del/swing-screener`, branch `v2`
+- **Repo:** `schultzdanielj-del/swing-screener`, branch `v2` (production), `v2-consensus` (consensus pipeline)
 - **Railway:** `https://web-production-e3025.up.railway.app`
-- **Expression cache:** 15,805 expressions, ~21 GB
-- **5yr OHLCV cache:** ~4,167 tickers
+- **Expression cache:** 16,051 expressions, ~21 GB
+- **5yr OHLCV cache:** ~4,169 tickers
 - **File mirror:** All grind results → Railway via `file_mirror.py`
 - **Nightly refresh:** 4:30pm ET, 9 steps, fully automated
 - **DB schema:** See `DATA_CONTRACT.md` for full Local SQLite schema

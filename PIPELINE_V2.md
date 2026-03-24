@@ -122,6 +122,44 @@ decide there are enough new ones to warrant a regrind. The UI shows a "regrind n
 indicator when examples have been added since the last grind. You trigger the regrind
 explicitly when ready.
 
+### Consensus Pipeline (replaces single-run Phase 2 when ready)
+
+The single-run pipeline above works for early development and vetting cycles. The consensus
+pipeline replaces it for production-grade condition discovery:
+
+```
+Consensus Pipeline (overnight, unattended):
+  Step 1A: 15 real signal grinds     — 50% universe subsample, randomized pass order,
+                                        0% margin, run to ceiling. Each finds conditions.
+  Step 1B: 15 permuted signal grinds — fake examples from noise. Same parameters.
+           (1A + 1B interleaved: real, permuted, real, permuted...)
+  Step 2:  Signal consensus engine   — bootstrap z-score comparing real vs permuted
+           z > 3 → PROCEED (99.7% confidence pattern is real)
+           z < 2 → STOP (vet more examples)
+           Locks consensus conditions with 5% margin
+  Step 3:  Deterministic scan        — full universe scan with locked conditions
+  Step 3.5: Exit re-grind            — exit condition matched to consensus population
+  Step 4:  10 refinement grinds      — 50% loser cluster subsampling per run
+  Step 5:  Refinement consensus      — two-test validation:
+           Test 1: consensus stability (appeared in ≥70% of runs)
+           Test 2: binomial significance (p < 0.01 vs universe baseline)
+  Step 6:  EV grinder                — unchanged, reads consensus refinement output
+  Step 7:  Profit grinder            — unchanged, reads EV output
+```
+
+Early abort checkpoint after 3+3 runs (~2 hours in). ETA printed after first 2 runs.
+Both pipelines coexist — the single-run path still works for manual testing and quick
+iteration during vetting cycles.
+
+Scripts:
+  - `scripts/run_consensus_pipeline.py --setup dtss` — full overnight run
+  - `scripts/run_consensus_pipeline.py --setup dtss --test-mode --skip-nightly-check` — mini test
+  - `scripts/test_consensus_pipeline.py --setup dtss` — self-verifying 9-step test
+  - `scripts/consensus_engine.py --stage signal --input-dir ...` — signal consensus
+  - `scripts/consensus_engine.py --stage refinement --input-dir ...` — refinement consensus
+
+Full spec: `SIGNAL_GRINDER.md` and `REFINEMENT_GRINDER.md`
+
 ---
 
 ## Layer 1: Grind

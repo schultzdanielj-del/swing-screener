@@ -1,6 +1,6 @@
 # Data Contract — ScanPerfect Schema & Data Flow
 
-**Last updated:** 2026-03-20
+**Last updated:** 2026-03-24
 **Status:** Authoritative. Build from this. Do not assume anything not written here.
 
 ---
@@ -82,8 +82,14 @@ These are the authoritative grind outputs. The PySide6 app reads them directly.
 | File Pattern | Producer | Contents |
 |-------------|----------|----------|
 | `pyramid_{setup}_*.json` | Signal grind | Condition set + raw signals |
-| `raw_signal_clusters_{setup}.json` | Refinement grind (phase 1) | All clusters with classification |
+| `permuted_{setup}_*.json` | Signal grind (permuted) | Noise-floor conditions from fake examples |
+| `consensus_signal_{setup}.json` | Consensus engine (signal) | Locked consensus conditions + z-score + stability metrics |
+| `consensus/pyramid_{setup}_*.json` | Consensus orchestrator | Individual real signal grind runs (intermediate) |
+| `consensus/permuted_{setup}_*.json` | Consensus orchestrator | Individual permuted signal grind runs (intermediate) |
+| `consensus/refinement_{setup}_*.json` | Consensus orchestrator | Individual refinement runs (intermediate) |
+| `raw_signal_clusters_{setup}.json` | Refinement grind (phase 1) / scan-only | All clusters with classification |
 | `refinement_{setup}_cl*.json` | Refinement grind (phase 2) | Winner/loser/eliminated signals + combined conditions + `depth_progression` (condition set + cluster counts + WR at each depth level) |
+| `refinement_{setup}_*consensus*.json` | Consensus engine (refinement) | Two-test validated refinement conditions + depth progression + signal lists |
 | `ev_{setup}_*.json` | EV grinder | Scoring equation + per-signal WR/MFE/EV + setup_score/market_score + killed_at_depth + calibration |
 | `entry_scores_{setup}.json` | Entry candle scorer | Per-winner entry_candle_score, combined_score for vetting sort. Also consumed by profit grinder for tradability weighting. |
 | `profit_{setup}_*.json` | Profit grinder | Exit expression candidates + weighted stats + equity curves + per-trade detail |
@@ -103,6 +109,14 @@ Examples (SQLite) + Expression Cache (local .npz files)
     → Signal Grind → pyramid_{setup}_*.json
     → Exit Grind → exit condition in local cache
     → Refinement Grind → raw_signal_clusters_{setup}.json + refinement_{setup}_cl*.json
+
+  CONSENSUS PATH (optional, replaces single-run pipeline):
+    → 15 real + 15 permuted signal grinds → consensus/pyramid_*.json + consensus/permuted_*.json
+    → Signal consensus engine (z-score gate) → consensus_signal_{setup}.json
+    → Deterministic scan (scan-only) → raw_signal_clusters_{setup}.json
+    → Exit re-grind → signal_exit_{setup}.json
+    → 10 refinement grinds with loser subsampling → consensus/refinement_*.json
+    → Refinement consensus (two-test) → refinement_{setup}_*consensus*.json
 
 Refinement output + Market Cache + OHLCV + Fundamentals
     → EV Grinder → ev_{setup}_*.json

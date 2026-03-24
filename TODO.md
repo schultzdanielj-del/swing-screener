@@ -406,7 +406,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ### Grinder Improvements
 2. ~~**Depth progression output (refinement grinder)**~~ — ✅ DONE. Beam search saves condition set + cluster counts + WR at each depth level in `depth_progression` key of refinement JSON. Settings Lock slider reads this.
-3. **Multi-run consensus (signal grinder)** — the beam search is non-deterministic: different runs find different condition sets with wildly different signal counts. Run N times (e.g. 5-10), keep conditions that appear in most runs. A condition in 8/10 runs is robust; a condition in 1/10 was a fluke. This stabilizes the foundation the entire downstream pipeline depends on. Signal grind margin (5%) is a search parameter and stays fixed — it is NOT tunable post-hoc (attempted and reverted 2026-03-16, produced worse results).
+3. ~~**Multi-run consensus (signal grinder)**~~ — ✅ DONE (2026-03-24). Full consensus pipeline built on `v2-consensus` branch. 15 real + 15 permuted signal grinds with 50% universe subsampling, randomized pass ordering, 0% margin during grind. Bootstrap z-score (Meinshausen stability selection + permutation test). z > 3 gate. Deterministic scan → exit re-grind → 10 refinement runs with loser subsampling → two-test refinement consensus (stability + binomial significance). Orchestrator: `scripts/run_consensus_pipeline.py`. Test runner: `scripts/test_consensus_pipeline.py` (8/9 steps verified, Step 9 profit grinder RAM constraint on larger populations). Signal grind margin: 0% during consensus grind, 5% applied at lock time by consensus engine.
 4. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
 
 ### Infrastructure
@@ -459,8 +459,8 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 ## Key Design Decisions
 
 - **Pyramid with D1 cap=15 is the official signal grind engine.** Experimental grinders (dartboard, hybrid) failed. Shelved.
-- **Beam search instability is a known problem.** Individual runs produce usable signal sets but with low run-to-run overlap. Multi-run consensus (task #3) will fix this by keeping only conditions that appear across most runs. Until then, instability is accepted.
-- **Signal grind margin (5%) is a search parameter, not a post-hoc knob.** Changing it to 0% was attempted (2026-03-16) and produced worse results (2,254 signals vs 1,218 at 5%). The margin fundamentally changes what conditions the beam search finds. It stays fixed at 5%.
+- **Beam search instability solved by consensus pipeline.** Multi-run consensus (15 real + 15 permuted, stability selection + permutation testing) keeps only conditions that appear consistently across subsampled runs. z > 3 gate validates the pattern is real. Individual runs still vary, but consensus extracts the stable core. See `SIGNAL_GRINDER.md` and `REFINEMENT_GRINDER.md` for full spec.
+- **Signal grind margin: 0% during consensus, 5% at lock time.** Consensus grind uses exact min/max (0% margin) for sharpest conditions during discovery. The consensus engine applies 5% margin when locking conditions for downstream use. This replaces the old fixed 5% margin during single-run grinds. The 5% margin at lock time exists because 68 examples are a sample — the sample min/max underestimates the true range.
 - **Cluster-aware refinement scoring.** A losing cluster only counts as eliminated when ALL its bars are dead.
 - **No re-scan/re-classify in refinement.** Phase 1 classification is truth.
 - **Regime runs on pre-refinement data.** Post-refinement has too few losers for the model to learn from.
