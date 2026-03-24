@@ -226,8 +226,11 @@ def test_ticker(ticker: str, df: pd.DataFrame) -> dict:
             'avwap': round(avwap_price, 2) if not np.isnan(avwap_price) else 'NaN',
             'pivot_type': 'HIGH' if pivot_is_high else 'LOW' if pivot_is_high is not None else '—',
             'pivot_bar': pivot_used,
+            'pivot_date': str(df['date'].iloc[pivot_used].date()) if 0 <= pivot_used < n_bars else '—',
             'opp_pivot_bar': opp_pivot,
+            'opp_date': str(df['date'].iloc[opp_pivot].date()) if 0 <= opp_pivot < n_bars else '—',
             'anchor_bar': anchor_used,
+            'anchor_date': str(df['date'].iloc[anchor_used].date()) if 0 <= anchor_used < n_bars else '—',
             'width': (pivot_used - opp_pivot) if opp_pivot >= 0 else 'N/A',
         })
 
@@ -283,10 +286,10 @@ def main():
         recent = results['samples'][-5:]
         for s in recent:
             av = f"{s['avwap']:.2f}" if isinstance(s['avwap'], float) else str(s['avwap'])
-            print(f"  bar {s['bar']:4d} ({s['date']}) close=${s['close']:>8.2f} | "
+            print(f"  {s['date']} close=${s['close']:>8.2f} | "
                   f"AVWAP=${av:>8s}  pivot={s['pivot_type']:4s} "
-                  f"pivot@{s['pivot_bar']}  opp@{s['opp_pivot_bar']}  "
-                  f"anchor@{s['anchor_bar']}  width={s['width']}")
+                  f"pivot={s['pivot_date']}  opp={s['opp_date']}  "
+                  f"anchor={s['anchor_date']}  width={s['width']}")
 
     print(f"\n{'=' * 100}")
     print("Done. Verify:")
