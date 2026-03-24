@@ -532,6 +532,11 @@ def compute_all_algo_series(daily_df: pd.DataFrame,
         if np.isnan(atr_val) or atr_val <= 0 or close <= 0:
             continue
 
+        # Compute highest AVWAP once per bar (independent of algo lines)
+        highest_avwap = np.nan
+        if compute_avwap:
+            highest_avwap = find_highest_avwap(bar_idx, cum_tpv, cum_v)
+
         for dir_name, line_list, is_hminus in directions:
             # Get active lines at this bar, sorted by proximity
             active = _get_active_lines_at_bar(
@@ -565,53 +570,41 @@ def compute_all_algo_series(daily_df: pd.DataFrame,
                 series[shal_prefix + "touch_count"][bar_idx] = s_line.touch_count
 
                 # AVWAP convergence: distance between shallowest line price
-                # and the nearest contextual AVWAP
-                if compute_avwap:
-                    convergence = _compute_avwap_convergence(
-                        s_line, s_line_price, bar_idx,
-                        cum_tpv, cum_v, close, atr_val
-                    )
+                # and the highest contextual AVWAP at this bar
+                if not np.isnan(highest_avwap) and atr_val > 0:
+                    convergence = (s_line_price - highest_avwap) / atr_val
                     series[shal_prefix + "avwap_convergence"][bar_idx] = convergence
 
     return series
 
 
-def _compute_avwap_convergence(line: AlgoLine, line_price: float,
-                               bar_idx: int, cum_tpv: np.ndarray,
-                               cum_v: np.ndarray, close: float,
-                               atr_val: float, search_range: int = 25) -> float:
-    """Compute convergence between algo line price and nearest contextual AVWAP.
+def find_highest_avwap(bar_idx: int, cum_tpv: np.ndarray,
+                      cum_v: np.ndarray) -> float:
+    """Find the highest possible AVWAP at bar_idx from any prior anchor.
 
-    Searches for the AVWAP anchored near the line's origin that produces
-    the closest value to the line price at the current bar.
+    Sweeps every prior bar as a potential AVWAP anchor, picks the one
+    producing the highest value at the current bar. Pure vectorized numpy.
 
-    Returns distance between line price and best AVWAP, normalized by ATR.
-    Small values = convergence (line and AVWAP aligning).
+    This is a standalone contextual AVWAP computation. It has nothing to
+    do with algo lines — it only depends on cumulative TP*V and V arrays.
+
+    Returns AVWAP value, or np.nan if none valid.
     """
-    origin = line.origin_idx
-    search_start = max(0, origin - search_range)
-    search_end = min(origin + search_range, bar_idx)
-
-    if search_start >= search_end or bar_idx >= len(cum_tpv):
+    if bar_idx < 1 or bar_idx >= len(cum_tpv):
         return np.nan
 
-    anchors = np.arange(search_start, search_end)
+    anchors = np.arange(0, bar_idx)
 
     tpv_at_bar = cum_tpv[bar_idx]
     v_at_bar = cum_v[bar_idx]
 
-    # Handle anchor=0 case
-    if anchors[0] == 0:
-        prev_tpv = np.empty(len(anchors))
-        prev_v = np.empty(len(anchors))
-        prev_tpv[0] = 0.0
-        prev_v[0] = 0.0
-        if len(anchors) > 1:
-            prev_tpv[1:] = cum_tpv[anchors[1:] - 1]
-            prev_v[1:] = cum_v[anchors[1:] - 1]
-    else:
-        prev_tpv = cum_tpv[anchors - 1]
-        prev_v = cum_v[anchors - 1]
+    prev_tpv = np.empty(len(anchors))
+    prev_v = np.empty(len(anchors))
+    prev_tpv[0] = 0.0
+    prev_v[0] = 0.0
+    if len(anchors) > 1:
+        prev_tpv[1:] = cum_tpv[anchors[1:] - 1]
+        prev_v[1:] = cum_v[anchors[1:] - 1]
 
     total_tpv = tpv_at_bar - prev_tpv
     total_v = v_at_bar - prev_v
@@ -620,19 +613,14 @@ def _compute_avwap_convergence(line: AlgoLine, line_price: float,
     if not valid.any():
         return np.nan
 
-    avwaps = np.full(len(anchors), np.nan)
+    avwaps = np.full(len(anchors), -np.inf)
     avwaps[valid] = total_tpv[valid] / total_v[valid]
 
-    # Find the AVWAP closest to the line price
-    distances = np.abs(avwaps - line_price)
-    best_idx = np.nanargmin(distances)
-    best_avwap = avwaps[best_idx]
-
-    if np.isnan(best_avwap) or atr_val <= 0:
+    best_avwap = avwaps.max()
+    if best_avwap == -np.inf:
         return np.nan
 
-    # Return distance between line and AVWAP, normalized by ATR
-    return (line_price - best_avwap) / atr_val
+    return best_avwap
 
 
 # ══════════════════════════════════════════════════════════════
