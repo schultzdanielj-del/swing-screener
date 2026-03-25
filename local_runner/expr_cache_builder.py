@@ -880,19 +880,31 @@ def append_new_bars():
     updated = 0
     failed = 0
 
-    # Process appends
+    # Process appends — chunked submission to prevent memory blowup
     if work_append:
         print(f"\n  Appending new bars ({n_workers} workers)...")
+        max_in_flight = n_workers * 2
         with ProcessPoolExecutor(
             max_workers=n_workers,
             initializer=_init_worker,
             initargs=(expressions,)
         ) as pool:
-            futures = {pool.submit(_append_ticker, item): item[0]
-                       for item in work_append}
+            pending = {}
+            work_idx = 0
 
-            for future in as_completed(futures):
-                ticker = futures[future]
+            def _submit_next_append():
+                nonlocal work_idx
+                if work_idx < len(work_append):
+                    item = work_append[work_idx]
+                    future = pool.submit(_append_ticker, item)
+                    pending[future] = item[0]
+                    work_idx += 1
+                    return True
+                return False
+
+            def _collect_one_append(future):
+                nonlocal updated, failed
+                ticker = pending.pop(future)
                 try:
                     ticker_out, new_dates, new_data = future.result()
                     if new_dates is not None and new_data is not None:
@@ -914,25 +926,48 @@ def append_new_bars():
                         pass
                 except:
                     failed += 1
-
+                del future
                 if (updated + failed) % 200 == 0:
                     elapsed = time.time() - t0
                     print(f"    Appended: {updated}/{len(work_append)} "
                           f"[{elapsed:.0f}s]")
 
-    # Process new tickers (full compute)
+            # Seed initial batch
+            for _ in range(min(max_in_flight, len(work_append))):
+                _submit_next_append()
+
+            # Process as completed, submit replacements
+            while pending:
+                done_iter = as_completed(pending)
+                future = next(done_iter)
+                _collect_one_append(future)
+                _submit_next_append()
+
+    # Process new tickers (full compute) — same chunked pattern
     if work_new:
         print(f"\n  Computing {len(work_new)} new tickers...")
+        max_in_flight = n_workers * 2
         with ProcessPoolExecutor(
             max_workers=n_workers,
             initializer=_init_worker,
             initargs=(expressions,)
         ) as pool:
-            futures = {pool.submit(_compute_ticker_full, item): item[0]
-                       for item in work_new}
+            pending = {}
+            work_idx = 0
 
-            for future in as_completed(futures):
-                ticker = futures[future]
+            def _submit_next_new():
+                nonlocal work_idx
+                if work_idx < len(work_new):
+                    item = work_new[work_idx]
+                    future = pool.submit(_compute_ticker_full, item)
+                    pending[future] = item[0]
+                    work_idx += 1
+                    return True
+                return False
+
+            def _collect_one_new(future):
+                nonlocal updated, failed
+                ticker = pending.pop(future)
                 try:
                     ticker_out, dates, data = future.result()
                     if dates is not None and data is not None:
@@ -946,6 +981,18 @@ def append_new_bars():
                         failed += 1
                 except:
                     failed += 1
+                del future
+
+            # Seed initial batch
+            for _ in range(min(max_in_flight, len(work_new))):
+                _submit_next_new()
+
+            # Process as completed, submit replacements
+            while pending:
+                done_iter = as_completed(pending)
+                future = next(done_iter)
+                _collect_one_new(future)
+                _submit_next_new()
 
     total_time = time.time() - t0
 
