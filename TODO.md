@@ -1,4 +1,4 @@
-# ScanPerfect Pipeline (2026-03-20, Scan Tuning UI built, Profit Grinder Inc 1-4 done)
+# ScanPerfect Pipeline (2026-03-24, Consensus Pipeline built, first overnight run in progress)
 
 ## The Goal
 
@@ -398,8 +398,9 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ## Immediate Tasks
 
-### NEXT: Phase 5 (Live Watchlist) or Vet Winner Pile
-0. **Profit Grinder** — ✅ COMPLETE (Inc 1-4). 1-stage brute-force (12,878 exprs, ~3 min), 2-stage trim search (top 300 exprs × 50 final exits, ~8 min). ProcessPoolExecutor + numpy mmap. Output saved to profit_{setup}_{ts}.json + Railway mirror. DTSS finding: 2-stage trim adds marginal value for shorts (+0.038 ADR best).
+### NEXT: Review overnight consensus results → Vet winner pile if z < 3
+0. **Profit Grinder** — ✅ COMPLETE (Inc 1-4). Memmap fix applied for large populations (3,961+ signals). 1-stage brute-force (12,878 exprs, ~3 min at 900 signals, ~2 hrs at 4,000), 2-stage trim search (top 300 exprs × 50 final exits). ProcessPoolExecutor + numpy mmap. DTSS finding: 2-stage trim adds marginal value for shorts (+0.038 ADR best).
+0b. **First overnight consensus run** — IN PROGRESS (2026-03-24 ~8:35pm ET). Full 15+15 signal grinds + downstream. Results determine if 66 examples produce a z > 3 pattern. If z < 3: vet more examples from winner pile and re-run. If z > 3: consensus conditions locked, system advances to production-grade pipeline.
 
 ### Localization
 1. ~~**Localize everything**~~ — ✅ DONE. See `LOCALIZE.md`.
@@ -443,9 +444,9 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ## Infrastructure
 
-- **Repo:** `schultzdanielj-del/swing-screener`, branch `v2`
+- **Repo:** `schultzdanielj-del/swing-screener`, branch `v2` (production), `v2-consensus` (consensus pipeline)
 - **Railway:** `https://web-production-e3025.up.railway.app` — seed vault only (see LOCALIZE.md)
-- **Expression cache:** 16,051 expressions, ~21 GB
+- **Expression cache:** ~16,051 expressions, ~65 GB (rebuilt 2026-03-24 after AVWAP expression changes)
 - **5yr OHLCV cache:** ~4,169 tickers (all available history, no bar limit)
 - **File mirror:** Grind results → Railway via `file_mirror.py` (stays post-localization for Claude access)
 - **Nightly refresh:** 4:30pm ET, 9 steps + seed vault push, fully automated

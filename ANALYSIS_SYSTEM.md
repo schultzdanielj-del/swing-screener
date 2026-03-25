@@ -274,7 +274,7 @@ The entry candle scorer is not a pipeline step -- it is a standalone vetting uti
 
 - **Repo:** `schultzdanielj-del/swing-screener`, branch `v2` (production), `v2-consensus` (consensus pipeline)
 - **Railway:** `https://web-production-e3025.up.railway.app`
-- **Expression cache:** 16,051 expressions, ~21 GB
+- **Expression cache:** ~16,051 expressions, ~65 GB (rebuilt 2026-03-24)
 - **5yr OHLCV cache:** ~4,169 tickers
 - **File mirror:** All grind results → Railway via `file_mirror.py`
 - **Nightly refresh:** 4:30pm ET, 9 steps, fully automated
