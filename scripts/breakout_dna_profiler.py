@@ -544,18 +544,27 @@ def main():
         "subtypes": dict(valid_subtypes),
         "skipped": [{"ticker": t, "date": d, "subtype": s, "reason": r} 
                     for t, d, s, r in skipped],
-        "top_100_consensus": results[:100],
-        "top_50_divergences": divergences[:50],
+        "all_consensus": results,
+        "all_divergences": divergences,
         "summary": {
             "high_consensus_count": len(high_consensus),
             "medium_consensus_count": len(medium_consensus),
             "high_divergence_count": len(high_divergence),
+            "total_analyzed": len(results),
+            "total_divergent": len(divergences),
         }
     }
     
     with open(output_path, "w") as f:
         json.dump(output, f, indent=2, cls=NumpyEncoder)
     print(f"\n  Full results saved to: {output_path}")
+    
+    # ── Mirror to Railway ──
+    try:
+        from file_mirror import mirror_file
+        mirror_file(output_path)
+    except Exception as e:
+        print(f"  [mirror] WARNING: Could not mirror to Railway: {e}")
 
 
 if __name__ == "__main__":
