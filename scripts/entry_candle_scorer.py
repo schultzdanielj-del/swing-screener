@@ -498,7 +498,7 @@ def save_scores(setup_type, scored):
 
 def main():
     parser = argparse.ArgumentParser(description="Entry Candle Scorer")
-    parser.add_argument("--setup", default="dtss", help="Setup type")
+    parser.add_argument("--setup", required=True, help="Setup type")
     args = parser.parse_args()
 
     print("=" * 60)

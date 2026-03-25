@@ -2472,7 +2472,17 @@ def _gather_raw_signal_clusters(setup_type):
     exit_thresh = exit_cond["threshold"]
     exit_dir = exit_cond["direction"]
     exit_col = expr_cache.expr_index(exit_expr)
-    direction = "short"  # DTSS — parameterize when other setups added
+    # Look up trade direction from the setups table
+    import sqlite3 as _sqlite3
+    _db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+    _conn = _sqlite3.connect(_db_path)
+    _row = _conn.execute("SELECT direction FROM setups WHERE setup_type=?", (setup_type,)).fetchone()
+    _conn.close()
+    if not _row:
+        print(f"  ERROR: Setup '{setup_type}' not found in setups table")
+        return None
+    direction = _row[0]
+    print(f"  Trade direction: {direction}")
     MAX_FWD = 120  # Ceiling for example exit search (informational only)
 
     if exit_col is None:
@@ -3421,7 +3431,7 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
 
 def main():
     parser = argparse.ArgumentParser(description="Pyramidal Grinder")
-    parser.add_argument("--setup", default="dtss", help="Setup type")
+    parser.add_argument("--setup", required=True, help="Setup type")
     parser.add_argument("--peak-target", type=int, default=15,
                         help="Target peak signals/day (default: 15)")
     parser.add_argument("--beam", type=int, default=50,

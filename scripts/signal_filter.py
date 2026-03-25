@@ -47,9 +47,17 @@ RAILWAY_URL = "https://web-production-e3025.up.railway.app"
 MAX_FORWARD = 120
 DEFAULT_WORKERS = os.cpu_count() or 8
 
-SETUP_CONFIGS = {
-    "dtss": {"direction": "short", "examples_endpoint": "/api/examples/dtss"},
-}
+def _get_setup_direction(setup_type):
+    """Look up trade direction from the local setups table."""
+    import sqlite3
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db_path = os.path.join(repo_root, "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT direction FROM setups WHERE setup_type=?", (setup_type,)).fetchone()
+    conn.close()
+    if not row:
+        raise ValueError(f"Setup '{setup_type}' not found in setups table")
+    return row[0]
 
 
 # ============================================================
@@ -1050,7 +1058,7 @@ def measure_example_exit_distances(example_signals, cache, exit_cond, direction,
 # ============================================================
 def main():
     parser = argparse.ArgumentParser(description="Signal Filter -- Dedup + Exit + Rank")
-    parser.add_argument("--setup", default="dtss", help="Setup type")
+    parser.add_argument("--setup", required=True, help="Setup type")
     parser.add_argument("--min-adr", type=float, default=None,
                         help="Min exit distance in ADR (default: derived from examples)")
     parser.add_argument("--max-forward", type=int, default=MAX_FORWARD)
@@ -1062,8 +1070,7 @@ def main():
     args = parser.parse_args()
 
     setup = args.setup
-    config = SETUP_CONFIGS.get(setup, {"direction": "short"})
-    direction = config["direction"]
+    direction = _get_setup_direction(setup)
 
     print(f"\n{'='*60}")
     print(f"  SIGNAL FILTER -- {setup.upper()}")

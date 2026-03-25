@@ -56,11 +56,16 @@ MAX_FORWARD_DEFAULT = 120
 DEFAULT_WORKERS = os.cpu_count() or 8
 N_THRESHOLDS = 20
 
-SETUP_CONFIGS = {
-    "dtss": {"direction": "short"},
-    "3-4db": {"direction": "short"},
-    "htf": {"direction": "long"},
-}
+def _get_setup_direction(setup_type):
+    """Look up trade direction from the local setups table."""
+    import sqlite3
+    db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT direction FROM setups WHERE setup_type=?", (setup_type,)).fetchone()
+    conn.close()
+    if not row:
+        raise ValueError(f"Setup '{setup_type}' not found in setups table")
+    return row[0]
 
 
 # ============================================================
@@ -595,7 +600,7 @@ def _upload_exit_to_railway(setup_type, best_candidate, args_max_forward=MAX_FOR
 def main():
     parser = argparse.ArgumentParser(
         description="Signal Exit Grinder — cache-compatible exit for signal filtering")
-    parser.add_argument("--setup", default="dtss", help="Setup type")
+    parser.add_argument("--setup", required=True, help="Setup type")
     parser.add_argument("--max-forward", type=int, default=MAX_FORWARD_DEFAULT,
                         help="Max forward bars from signal (default: 120)")
     parser.add_argument("--n-thresholds", type=int, default=N_THRESHOLDS,
@@ -606,8 +611,7 @@ def main():
     args = parser.parse_args()
 
     setup = args.setup
-    config = SETUP_CONFIGS.get(setup, {"direction": "short"})
-    direction = config["direction"]
+    direction = _get_setup_direction(setup)
 
     print(f"\n{'='*60}")
     print(f"  SIGNAL EXIT GRINDER — {setup.upper()}")

@@ -1852,7 +1852,11 @@ def run(setup_type):
 
     # Inc 2: Setup features
     fcov = compute_setup_features(all_signals)
-    fok, fcomp = validate_setup_features(all_signals)
+    if setup_type == "dtss":
+        fok, fcomp = validate_setup_features(all_signals)
+    else:
+        print("  (Skipping DTSS-specific setup feature validation)")
+        fok, fcomp = True, {}
 
     # Inc 3: Feature screening
     n_workers = os.cpu_count() or 8
@@ -2260,7 +2264,7 @@ def run(setup_type):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="EV Grinder — Phase 3")
-    parser.add_argument("--setup", default="dtss", help="Setup type (default: dtss)")
+    parser.add_argument("--setup", required=True, help="Setup type")
     args = parser.parse_args()
     result = run(args.setup)
     if result is None:

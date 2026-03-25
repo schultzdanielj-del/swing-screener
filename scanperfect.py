@@ -226,7 +226,7 @@ STEP_COMMANDS = {
         "--setup", "{setup}", "--peak-target", "3", "--beam", "10000", "--depth", "100",
     ],
     "exit_grind": [
-        sys.executable, str(REPO_ROOT / "scripts" / "exit_grinder.py"),
+        sys.executable, str(REPO_ROOT / "scripts" / "signal_exit_grinder.py"),
         "--setup", "{setup}", "--max-forward", "120",
     ],
     "refinement_grind": [
