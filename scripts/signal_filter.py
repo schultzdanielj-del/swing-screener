@@ -182,17 +182,19 @@ def load_exit_condition(setup_type):
 
 
 def load_examples(setup_type):
-    """Load validated examples from Railway."""
-    import requests
-    try:
-        r = requests.get(f"{RAILWAY_URL}/api/examples/{setup_type}", timeout=30)
-        r.raise_for_status()
-        examples = r.json().get("examples", [])
-        print(f"  Loaded {len(examples)} examples from Railway")
-        return examples
-    except Exception as e:
-        print(f"  Warning: couldn't load examples from Railway: {e}")
-        return []
+    """Load validated examples from local SQLite."""
+    import sqlite3
+    db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT ticker, entry_date FROM examples WHERE setup_type=? ORDER BY ticker",
+        (setup_type,)
+    ).fetchall()
+    conn.close()
+    examples = [{"ticker": r["ticker"], "entry_date": r["entry_date"]} for r in rows]
+    print(f"  Loaded {len(examples)} examples from local DB")
+    return examples
 
 
 # ============================================================
@@ -670,7 +672,7 @@ def deduplicate_examples(examples, cache, conditions, expr_cache):
     results = []
     for ex in examples:
         ticker = ex.get("ticker")
-        entry_date = ex.get("entryDate", ex.get("entry_date"))
+        entry_date = ex.get("entry_date")
         df = cache.get(ticker)
         if df is None:
             print(f"    {ticker}: not in cache, skipping")

@@ -101,22 +101,29 @@ def load_5yr_cache():
 def load_example_data(setup_type, universe_cache):
     """Load example data using the 5yr universe cache for OHLCV.
 
-    Examples metadata (ticker, entryDate) comes from Railway API.
+    Examples metadata (ticker, entry_date) comes from local SQLite.
     OHLCV data comes from the same 5yr cache used by the backtest scanner,
     ensuring identical indicator values and history depth.
     """
-    import requests
-    resp = requests.get(f"{API_BASE}/api/examples/{setup_type}", timeout=30)
-    data = resp.json()
-    if "examples" not in data:
-        raise KeyError(f"API response missing 'examples' key. Status: {resp.status_code}")
-    examples = data["examples"]
+    import sqlite3
+    db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT ticker, entry_date FROM examples WHERE setup_type=? ORDER BY ticker",
+        (setup_type,)
+    ).fetchall()
+    conn.close()
+    examples = [{"ticker": r["ticker"], "entry_date": r["entry_date"]} for r in rows]
+    if not examples:
+        raise ValueError(f"No examples found for setup '{setup_type}' in local DB")
+    print(f"  Loaded {len(examples)} examples from local DB")
 
     example_dfs = []
     skipped = []
     for ex in examples:
         ticker = ex["ticker"]
-        entry_date = ex.get("entryDate") or ex.get("entry_date")
+        entry_date = ex.get("entry_date")
 
         # Use 5yr cache — same data source as backtest scanner
         df = universe_cache.get(ticker)

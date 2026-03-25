@@ -169,9 +169,70 @@ def backup():
     upload_to_railway("seed/manifest.json", json.dumps(manifest, indent=2))
 
     db.close()
+
+    # Sync examples into Railway's actual DB (not just file mirror)
+    sync_examples_to_railway()
+
     print(f"\n{'=' * 60}")
     print(f"  Done — {total_uploaded} items backed up")
     print(f"{'=' * 60}\n")
+
+
+# ════════════════════════════════════════════════════════════
+# SYNC EXAMPLES TO RAILWAY DB
+# ════════════════════════════════════════════════════════════
+
+def sync_examples_to_railway():
+    """Push local examples into Railway's actual SQLite DB.
+
+    The seed vault JSON backup is for disaster recovery.
+    This sync ensures Railway's /api/examples/{setup_type} endpoint
+    returns current data (used by legacy endpoints and as a cross-check).
+    Uses the bulk endpoint — duplicates are safely ignored.
+    """
+    print("\n── Sync Examples to Railway DB ──")
+    if not os.path.exists(DB_PATH):
+        print("  ✗ Local DB not found")
+        return
+
+    db = get_db()
+
+    # Get all setup types
+    setups = [r[0] for r in db.execute("SELECT DISTINCT setup_type FROM examples").fetchall()]
+    if not setups:
+        print("  · No examples to sync")
+        db.close()
+        return
+
+    total_synced = 0
+    for setup_type in setups:
+        rows = db.execute(
+            "SELECT ticker, entry_date FROM examples WHERE setup_type=? ORDER BY ticker",
+            (setup_type,)
+        ).fetchall()
+        if not rows:
+            continue
+
+        # Build bulk text blob (TICKER YYYY-MM-DD per line)
+        lines = [f"{r[0]} {r[1]}" for r in rows]
+        text_blob = "\n".join(lines)
+
+        try:
+            r = requests.post(
+                f"{RAILWAY_API}/api/examples/{setup_type}/bulk",
+                json={"text": text_blob},
+                timeout=30,
+            )
+            r.raise_for_status()
+            result = r.json()
+            n_added = len(result.get("added", []))
+            total_synced += n_added
+            print(f"  ✓ {setup_type}: {len(rows)} local → {n_added} new on Railway")
+        except Exception as e:
+            print(f"  ✗ {setup_type}: sync failed — {e}")
+
+    db.close()
+    print(f"  Total new on Railway: {total_synced}")
 
 
 # ════════════════════════════════════════════════════════════
