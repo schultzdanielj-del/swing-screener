@@ -234,6 +234,7 @@ The watchlist is the end product. Every cycle of the loop makes it more accurate
 - **Continuous percentile scoring (Option C).** quality_score 0-100 per signal, not discrete quartile levels. Slider 2 threshold is continuous.
 - **Assumed stop of 1.0 ADR for EV calculation.** Adjustable without re-running.
 - **100% example pass rate required.** Any grinder result where an example fails is invalid.
+- **Trade direction always from DB.** All grinder scripts read the setup's direction from the `setups` table in `scanperfect.db` — never hardcoded. The `--setup` CLI arg is required (no default). Examples load from Railway (seed vault); direction is local-only.
 - **Profit grinder uses `entry_candle_score` weighting, not `combined_score`.** Move size is future information — not available at trade time. Entry candle similarity is the right tradability proxy.
 - **Profit grinder: no trigger gate on unvetted winners.** Non-triggers scored as 1-ADR loss at their weight. The scoring function self-regulates. No bins, no hardcoded thresholds.
 - **Profit grinder: TA-expression-based exits only.** No fixed ADR price targets or stop losses. The chart determines the exit through expression conditions.

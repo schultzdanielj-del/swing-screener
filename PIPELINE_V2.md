@@ -710,7 +710,7 @@ These components are correct and reusable:
 | Nightly pipeline | `local_runner/nightly.py` | ✅ Keep as-is |
 | Signal scan (expr cache path) | `scripts/signal_filter.py` scan phase | ✅ Keep |
 | Exit filter + measurement | `scripts/signal_filter.py` exit phase | ✅ Keep |
-| Exit grinder | `scripts/exit_grinder.py` | ✅ Keep as-is |
+| Exit grinder | `scripts/signal_exit_grinder.py` | ✅ Keep — active exit discovery script |
 | Classification logic | `server.py` vetting endpoints | ✅ Keep rules, rewire storage |
 | Chart vetting UI | `app/index.html` vetting page | ✅ Keep, add AI queue |
 | Example library | Railway DB `examples` table | ✅ Keep — 68 DTSS examples (65 valid scan bars) |

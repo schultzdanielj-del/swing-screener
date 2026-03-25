@@ -1,4 +1,4 @@
-# ScanPerfect Pipeline (2026-03-20, Scan Tuning UI built, Profit Grinder Inc 1-4 done)
+# ScanPerfect Pipeline (2026-03-25, setup-agnostic pipeline fix, Profit Grinder Inc 1-4 done)
 
 ## The Goal
 
@@ -434,6 +434,17 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ### Code Cleanup (future)
 11. **Remove dead ADR code from signal_filter.py** — once vetting sources from cluster files, remove: `measure_example_exit_distances()`, ADR floor classification in `_build_classified_signals()`, ADR-based `min_adr` filtering. The ceiling+exit race in clusters replaces all of it. Three current ADR computation spots: `signal_filter.py` (two places) and `_gather_raw_signal_clusters()` (two places) — consolidate to clusters only.
+
+### Setup-Agnostic Pipeline (2026-03-25) — ✅ DONE
+19. ~~**Remove hardcoded setup direction from all grinder scripts**~~ — ✅ DONE.
+    - `pyramid_grinder.py`: replaced `direction = "short"` in `_gather_raw_signal_clusters()` with DB lookup from `setups` table. Long-side logic already existed in all downstream branches, just never fired.
+    - `signal_filter.py`: deleted `SETUP_CONFIGS` dict (only had dtss). New `_get_setup_direction()` queries local DB.
+    - `signal_exit_grinder.py`: deleted `SETUP_CONFIGS` dict (had dtss/3-4db/htf hardcoded). New `_get_setup_direction()` queries local DB.
+    - `ev_grinder.py`: gated `validate_setup_features()` to only run for dtss (references a DTSS-specific Railway file). Other setups skip with log message.
+    - `scanperfect.py`: fixed `STEP_COMMANDS` — `exit_grind` was pointing to shelved `exit_grinder.py`, now correctly points to `signal_exit_grinder.py`.
+    - All 5 scripts: `--setup` argparse changed from `default="dtss"` to `required=True`.
+    - Direction source is now always the `setups` table in `scanperfect.db` (created by `init_db()` on every app launch). Examples still load from Railway (seed vault).
+    - Pipeline is now fully setup-agnostic: create a setup via the `+` button, load examples, switch the combo box, and every grinder runs with the correct direction.
 
 ### Vetting
 12. **Vet winner pile** — review 365 winners, add examples, loop if needed.
