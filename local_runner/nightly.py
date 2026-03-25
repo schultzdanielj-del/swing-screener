@@ -69,7 +69,8 @@ def step_1_railway_append():
         return True  # Continue anyway — caches may still benefit from refresh
     except Exception as e:
         print(f"  X Failed to reach Railway: {e}")
-        return False
+        print("  Continuing with cache refreshes using existing data...")
+        return True  # Don't block local updates because Railway is flaky
 
     status = result.get("status")
 
@@ -95,7 +96,8 @@ def step_1_railway_append():
 
     elif status == "error":
         print(f"  X Railway append error: {result.get('error', '?')}")
-        return False
+        print("  Continuing with cache refreshes using existing data...")
+        return True  # Don't block local updates
 
     else:
         print(f"  WARNING: Unexpected response: {result}")
