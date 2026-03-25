@@ -36,6 +36,22 @@ from expr_cache_builder import ExprSeriesCache, load_manifest
 
 
 # ══════════════════════════════════════════════════════════════
+# JSON HELPER
+# ══════════════════════════════════════════════════════════════
+
+class NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles numpy types."""
+    def default(self, obj):
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+
+# ══════════════════════════════════════════════════════════════
 # PARSE EXAMPLE FILE
 # ══════════════════════════════════════════════════════════════
 
@@ -233,9 +249,9 @@ def analyze_consensus(values, valid_examples, expr_names):
             st_vals = col[indices]
             st_valid = st_vals[~np.isnan(st_vals)]
             if len(st_valid) > 0:
-                subtype_medians[st] = np.median(st_valid)
+                subtype_medians[st] = float(np.median(st_valid))
                 # What % of this subtype falls within the global IQR?
-                subtype_coverage[st] = np.mean((st_valid >= q25) & (st_valid <= q75))
+                subtype_coverage[st] = float(np.mean((st_valid >= q25) & (st_valid <= q75)))
         
         # Cross-subtype agreement: how close are the subtype medians?
         if len(subtype_medians) >= 2:
@@ -251,12 +267,12 @@ def analyze_consensus(values, valid_examples, expr_names):
         consensus_score = (tightness * 0.3) + (cross_agreement * 0.5) + (in_band * 0.2)
         
         results.append({
-            "expr_idx": j,
+            "expr_idx": int(j),
             "name": expr_names[j] if j < len(expr_names) else f"expr_{j}",
-            "consensus_score": round(consensus_score, 4),
-            "cross_agreement": round(cross_agreement, 4),
-            "tightness": round(tightness, 4),
-            "range_ratio": round(range_ratio, 3),
+            "consensus_score": round(float(consensus_score), 4),
+            "cross_agreement": round(float(cross_agreement), 4),
+            "tightness": round(float(tightness), 4),
+            "range_ratio": round(float(range_ratio), 3),
             "median": round(float(median), 4),
             "q25": round(float(q25), 4),
             "q75": round(float(q75), 4),
@@ -302,10 +318,10 @@ def find_divergences(values, valid_examples, expr_names):
             st_valid = st_vals[~np.isnan(st_vals)]
             if len(st_valid) >= 3:
                 st_stats[st] = {
-                    "median": np.median(st_valid),
-                    "q25": np.percentile(st_valid, 25),
-                    "q75": np.percentile(st_valid, 75),
-                    "std": np.std(st_valid),
+                    "median": round(float(np.median(st_valid)), 4),
+                    "q25": round(float(np.percentile(st_valid, 25)), 4),
+                    "q75": round(float(np.percentile(st_valid, 75)), 4),
+                    "std": round(float(np.std(st_valid)), 4),
                 }
         
         if len(st_stats) < 2:
@@ -322,11 +338,10 @@ def find_divergences(values, valid_examples, expr_names):
         
         if separation > 1.5:  # subtypes are >1.5 std apart
             divergences.append({
-                "expr_idx": j,
+                "expr_idx": int(j),
                 "name": expr_names[j] if j < len(expr_names) else f"expr_{j}",
-                "separation": round(separation, 3),
-                "subtype_stats": {k: {kk: round(float(vv), 4) for kk, vv in v.items()} 
-                                  for k, v in st_stats.items()},
+                "separation": round(float(separation), 3),
+                "subtype_stats": st_stats,
             })
     
     divergences.sort(key=lambda x: x["separation"], reverse=True)
@@ -539,7 +554,7 @@ def main():
     }
     
     with open(output_path, "w") as f:
-        json.dump(output, f, indent=2)
+        json.dump(output, f, indent=2, cls=NumpyEncoder)
     print(f"\n  Full results saved to: {output_path}")
 
 
