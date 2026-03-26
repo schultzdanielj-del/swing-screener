@@ -460,143 +460,22 @@ def _compute_ticker_full(args):
         return (ticker, None, None)
 
 
-def _append_ticker(args):
-    """Compute expression values for just the new bars of a ticker.
+def _compute_and_save_ticker(args):
+    """Compute all expressions and save to disk — all inside the worker.
 
-    Used for nightly append — extends the cached array by N new rows.
-    Must recompute full series (indicators need history) then extract new bars.
+    Same as _compute_ticker_full but saves the .npz file in-process,
+    so compression is parallelized across all workers instead of
+    bottlenecking on the main thread.
 
-    Args: (ticker, df_dict, existing_n_bars)
-
-    Returns: (ticker, new_dates, new_data) or (ticker, None, None)
+    Args: (ticker, df_dict)
+    Returns: (ticker, n_bars, last_date) or (None, None, None)
     """
-    ticker, df_dict, existing_n_bars = args
-    global _w_expressions, _w_daily_indices, _w_ext_struct_indices
-    global _w_ext_series_name_to_idx
-    global _w_lsp_indices, _w_algo_indices
-    global _w_htf_weekly_indices, _w_htf_monthly_indices
-    global _w_htf_weekly_base, _w_htf_monthly_base
-
-    try:
-        from scripts.expression_engine import ExpressionEngine
-        from scripts.backtest_conditions import compute_series
-
-        df = pd.DataFrame(df_dict)
-        df["date"] = pd.to_datetime(df["date"])
-        for col in ["open", "high", "low", "close", "volume"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        n_bars = len(df)
-        if n_bars < 50 or n_bars <= existing_n_bars:
-            return (ticker, None, None)
-
-        n_new = n_bars - existing_n_bars
-        n_exprs = len(_w_expressions)
-        engine = ExpressionEngine(df)
-
-        # Compute full series but only extract the new bars
-        new_data = np.full((n_new, n_exprs), np.nan, dtype=np.float32)
-
-        # ── 1. Daily expressions ──
-        for j in _w_daily_indices:
-            try:
-                series = compute_series(engine, _w_expressions[j]["compute"])
-                if series is not None and len(series) == n_bars:
-                    arr = np.asarray(series, dtype=np.float32)
-                    new_data[:, j] = arr[-n_new:]
-            except:
-                pass
-
-        # ── 2. LSP expressions ──
-        if _w_lsp_indices:
-            try:
-                from scripts.lsp_detector_v2 import compute_all_lsp_series
-                lsp_dict = compute_all_lsp_series(df)
-                for j in _w_lsp_indices:
-                    col_name = _w_expressions[j]["compute"]["column"]
-                    if col_name in lsp_dict:
-                        arr = lsp_dict[col_name]
-                        if len(arr) == n_bars:
-                            new_data[:, j] = arr[-n_new:].astype(np.float32)
-            except Exception:
-                pass
-
-        # ── 2b. Algo line expressions ──
-        if _w_algo_indices:
-            try:
-                from scripts.algo_line_detector import compute_all_algo_series
-                algo_dict = compute_all_algo_series(df)
-                for j in _w_algo_indices:
-                    col_name = _w_expressions[j]["compute"]["column"]
-                    if col_name in algo_dict:
-                        arr = algo_dict[col_name]
-                        if len(arr) == n_bars:
-                            new_data[:, j] = arr[-n_new:].astype(np.float32)
-            except Exception:
-                pass
-
-        # ── 3. HTF expressions ──
-        for tf_freq, tf_indices, tf_base_computes in [
-            ("W", _w_htf_weekly_indices, _w_htf_weekly_base),
-            ("ME", _w_htf_monthly_indices, _w_htf_monthly_base),
-        ]:
-            if not tf_indices:
-                continue
-
-            htf_df = resample_ohlcv(df, tf_freq)
-            if htf_df is None or len(htf_df) < 5:
-                continue
-
-            htf_map = build_htf_to_daily_map(df["date"], htf_df, tf_freq)
-            htf_engine = ExpressionEngine(htf_df)
-
-            for k, j in enumerate(tf_indices):
-                try:
-                    base_compute = tf_base_computes[k]
-                    htf_series = compute_series(htf_engine, base_compute)
-                    if htf_series is not None:
-                        htf_arr = np.asarray(htf_series, dtype=np.float32)
-                        daily_arr = map_htf_series_to_daily(htf_arr, htf_map)
-                        new_data[:, j] = daily_arr[-n_new:]
-                except:
-                    pass
-
-        # ── 4. Extension structure (on_series — second pass) ──
-        if _w_ext_struct_indices and _w_ext_series_name_to_idx:
-            from scripts.backtest_conditions import compute_on_series
-
-            # Need full-length extension series to compute, then extract new bars
-            series_registry = {}
-            for sname, sidx in _w_ext_series_name_to_idx.items():
-                # Compute the extension series from the engine (full length)
-                from scripts.backtest_conditions import _EXT_SERIES_COMPUTE
-                base_comp = _EXT_SERIES_COMPUTE.get(sname)
-                if base_comp:
-                    try:
-                        full_series = compute_series(engine, base_comp)
-                        if full_series is not None and len(full_series) == n_bars:
-                            series_registry[sname] = np.asarray(full_series, dtype=np.float64)
-                    except:
-                        pass
-
-            if series_registry:
-                for j in _w_ext_struct_indices:
-                    try:
-                        series = compute_series(
-                            engine, _w_expressions[j]["compute"],
-                            series_registry=series_registry
-                        )
-                        if series is not None and len(series) == n_bars:
-                            arr = np.asarray(series, dtype=np.float32)
-                            new_data[:, j] = arr[-n_new:]
-                    except:
-                        pass
-
-        new_dates = df["date"].dt.strftime("%Y-%m-%d").values[-n_new:]
-        return (ticker, new_dates, new_data)
-
-    except Exception as e:
-        return (ticker, None, None)
+    ticker, df_dict = args
+    ticker_out, dates, data = _compute_ticker_full(args)
+    if dates is not None and data is not None:
+        save_ticker_cache(ticker_out, dates, data)
+        return (ticker_out, len(dates), str(dates[-1]))
+    return (None, None, None)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -880,9 +759,15 @@ def append_new_bars():
     updated = 0
     failed = 0
 
-    # Process appends — chunked submission to prevent memory blowup
-    if work_append:
-        print(f"\n  Appending new bars ({n_workers} workers)...")
+    # Combine both lists — all tickers use full recompute + direct save.
+    # _compute_ticker_full recomputes the entire series and returns it.
+    # The worker saves compressed to disk (parallel I/O across all cores).
+    # No load+concat needed — the full recompute produces identical output.
+    all_work = [(t, d) for t, d, _ in work_append] + list(work_new)
+
+    if all_work:
+        label = "Recomputing" if work_append else "Computing"
+        print(f"\n  {label} {len(all_work)} tickers ({n_workers} workers)...")
         max_in_flight = n_workers * 2
         with ProcessPoolExecutor(
             max_workers=n_workers,
@@ -892,89 +777,25 @@ def append_new_bars():
             pending = {}
             work_idx = 0
 
-            def _submit_next_append():
+            def _submit_next():
                 nonlocal work_idx
-                if work_idx < len(work_append):
-                    item = work_append[work_idx]
-                    future = pool.submit(_append_ticker, item)
+                if work_idx < len(all_work):
+                    item = all_work[work_idx]
+                    future = pool.submit(_compute_and_save_ticker, item)
                     pending[future] = item[0]
                     work_idx += 1
                     return True
                 return False
 
-            def _collect_one_append(future):
+            def _collect_one(future):
                 nonlocal updated, failed
                 ticker = pending.pop(future)
                 try:
-                    ticker_out, new_dates, new_data = future.result()
-                    if new_dates is not None and new_data is not None:
-                        # Load existing, concatenate, save
-                        old_dates, old_data = load_ticker_cache(ticker_out)
-                        if old_dates is not None:
-                            merged_dates = np.concatenate([old_dates, new_dates])
-                            merged_data = np.vstack([old_data, new_data])
-                            save_ticker_cache(ticker_out, merged_dates, merged_data)
-                            cached_tickers[ticker_out] = {
-                                "n_bars": len(merged_dates),
-                                "last_date": str(merged_dates[-1]),
-                            }
-                            updated += 1
-                        else:
-                            failed += 1
-                    else:
-                        # No new bars (might be same length)
-                        pass
-                except:
-                    failed += 1
-                del future
-                if (updated + failed) % 200 == 0:
-                    elapsed = time.time() - t0
-                    print(f"    Appended: {updated}/{len(work_append)} "
-                          f"[{elapsed:.0f}s]")
-
-            # Seed initial batch
-            for _ in range(min(max_in_flight, len(work_append))):
-                _submit_next_append()
-
-            # Process as completed, submit replacements
-            while pending:
-                done_iter = as_completed(pending)
-                future = next(done_iter)
-                _collect_one_append(future)
-                _submit_next_append()
-
-    # Process new tickers (full compute) — same chunked pattern
-    if work_new:
-        print(f"\n  Computing {len(work_new)} new tickers...")
-        max_in_flight = n_workers * 2
-        with ProcessPoolExecutor(
-            max_workers=n_workers,
-            initializer=_init_worker,
-            initargs=(expressions,)
-        ) as pool:
-            pending = {}
-            work_idx = 0
-
-            def _submit_next_new():
-                nonlocal work_idx
-                if work_idx < len(work_new):
-                    item = work_new[work_idx]
-                    future = pool.submit(_compute_ticker_full, item)
-                    pending[future] = item[0]
-                    work_idx += 1
-                    return True
-                return False
-
-            def _collect_one_new(future):
-                nonlocal updated, failed
-                ticker = pending.pop(future)
-                try:
-                    ticker_out, dates, data = future.result()
-                    if dates is not None and data is not None:
-                        save_ticker_cache(ticker_out, dates, data)
+                    ticker_out, n_bars, last_date = future.result()
+                    if ticker_out is not None:
                         cached_tickers[ticker_out] = {
-                            "n_bars": len(dates),
-                            "last_date": str(dates[-1]),
+                            "n_bars": n_bars,
+                            "last_date": last_date,
                         }
                         updated += 1
                     else:
@@ -982,17 +803,22 @@ def append_new_bars():
                 except:
                     failed += 1
                 del future
+                if (updated + failed) % 200 == 0:
+                    elapsed = time.time() - t0
+                    pct = (updated + failed) / len(all_work) * 100
+                    print(f"    {updated + failed}/{len(all_work)} ({pct:.0f}%) "
+                          f"[{elapsed:.0f}s]")
 
             # Seed initial batch
-            for _ in range(min(max_in_flight, len(work_new))):
-                _submit_next_new()
+            for _ in range(min(max_in_flight, len(all_work))):
+                _submit_next()
 
             # Process as completed, submit replacements
             while pending:
                 done_iter = as_completed(pending)
                 future = next(done_iter)
-                _collect_one_new(future)
-                _submit_next_new()
+                _collect_one(future)
+                _submit_next()
 
     total_time = time.time() - t0
 
