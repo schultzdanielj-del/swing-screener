@@ -1009,37 +1009,6 @@ class RefinementSearch:
 
 
 
-# ── Parallel worker for ClusterAwareRefinementSearch ──
-_ref_cand_surviving = None  # {ci: frozenset} — shared across workers
-_ref_valid_cands = None     # list of valid candidate indices
-
-def _init_refinement_worker(cand_surviving_clusters, valid_cands):
-    """Initialize worker with shared candidate surviving cluster sets."""
-    global _ref_cand_surviving, _ref_valid_cands
-    _ref_cand_surviving = cand_surviving_clusters
-    _ref_valid_cands = valid_cands
-
-
-def _expand_beam_batch(batch):
-    """Expand a batch of beam nodes, return scored results.
-
-    batch: list of (conditions_tuple, surviving_frozenset)
-    Returns: list of (combo_tuple, new_surviving_frozenset, combo_key_frozenset)
-    """
-    results = []
-    for conditions, surviving in batch:
-        if len(surviving) == 0:
-            continue
-        used = set(conditions)
-        for ci in _ref_valid_cands:
-            if ci in used:
-                continue
-            new_surviving = surviving & _ref_cand_surviving[ci]
-            combo = tuple(sorted(conditions + (ci,)))
-            # Return combo_key for dedup in main process
-            results.append((combo, new_surviving, frozenset(conditions + (ci,))))
-    return results
-
 
 class ClusterAwareRefinementSearch:
     """Cluster-aware beam search for refinement grind (step 4).
@@ -1161,11 +1130,14 @@ class ClusterAwareRefinementSearch:
     def run(self, depth=100, beam_width=10000, peak_target=3):
         """Run beam search minimizing surviving losing clusters.
 
-        Uses set-based cluster tracking with parallel beam expansion.
+        Uses set-based cluster tracking with threaded beam expansion.
         Each node carries a frozenset of surviving cluster indices.
         Adding a candidate = set intersection with pre-computed set.
-        Deepening levels parallelized via ProcessPoolExecutor.
+        Frozenset operations release the GIL, so ThreadPoolExecutor
+        gives real parallelism with zero memory duplication.
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         t0 = time.time()
         nodes_explored = 0
 
@@ -1220,27 +1192,41 @@ class ClusterAwareRefinementSearch:
             return self._build_result(best_node, levels, nodes_explored, t0,
                                       base_peak, base_cluster_score)
 
-        # Deepen — parallel beam expansion
-        n_workers = max(cpu_count() - 1, 1)
+        # Deepen — threaded beam expansion
+        # Frozenset intersection releases the GIL → threads run in parallel
+        # All threads share the same cand_surviving_clusters dict (read-only)
+        n_threads = max(cpu_count() - 1, 1)
+        cand_surv = self.cand_surviving_clusters  # local ref for thread closure
+        valid_cands = self.valid_cands
 
-        with ProcessPoolExecutor(
-            max_workers=n_workers,
-            initializer=_init_refinement_worker,
-            initargs=(dict(self.cand_surviving_clusters), list(self.valid_cands))
-        ) as pool:
-            for lv in range(2, depth + 1):
-                # Split beam nodes into batches for workers
-                batch_size = max(len(current_level) // (n_workers * 2), 1)
-                batches = [current_level[i:i+batch_size]
-                           for i in range(0, len(current_level), batch_size)]
+        def _expand_batch(batch):
+            """Expand a batch of beam nodes. Runs in a thread."""
+            results = []
+            for conditions, surviving in batch:
+                if len(surviving) == 0:
+                    continue
+                used = set(conditions)
+                for ci in valid_cands:
+                    if ci in used:
+                        continue
+                    new_surviving = surviving & cand_surv[ci]
+                    combo = tuple(sorted(conditions + (ci,)))
+                    results.append((combo, new_surviving, frozenset(conditions + (ci,))))
+            return results
 
-                # Submit batches
-                futures = [pool.submit(_expand_beam_batch, batch) for batch in batches]
+        for lv in range(2, depth + 1):
+            # Split beam nodes into batches for threads
+            batch_size = max(len(current_level) // (n_threads * 2), 1)
+            batches = [current_level[i:i+batch_size]
+                       for i in range(0, len(current_level), batch_size)]
 
-                # Collect results and dedup
-                next_level = []
-                seen = set()
-                for future in futures:
+            # Submit batches to thread pool
+            next_level = []
+            seen = set()
+
+            with ThreadPoolExecutor(max_workers=n_threads) as pool:
+                futures = [pool.submit(_expand_batch, batch) for batch in batches]
+                for future in as_completed(futures):
                     batch_results = future.result()
                     for combo, new_surviving, combo_key in batch_results:
                         if combo_key in seen:
@@ -1249,34 +1235,29 @@ class ClusterAwareRefinementSearch:
                         next_level.append((combo, new_surviving))
                         nodes_explored += 1
 
-                        if len(next_level) >= beam_width * 8:
-                            break
-                    if len(next_level) >= beam_width * 8:
-                        break
+            if not next_level:
+                print(f"\n    \u2593 Ceiling at level {lv}")
+                break
 
-                if not next_level:
-                    print(f"\n    \u2593 Ceiling at level {lv}")
-                    break
+            next_level.sort(key=lambda n: len(n[1]))
+            current_level = next_level[:beam_width]
 
-                next_level.sort(key=lambda n: len(n[1]))
-                current_level = next_level[:beam_width]
+            if len(current_level[0][1]) < best_score:
+                best_conditions = current_level[0][0]
+                best_surviving = current_level[0][1]
+                best_score = len(best_surviving)
 
-                if len(current_level[0][1]) < best_score:
-                    best_conditions = current_level[0][0]
-                    best_surviving = current_level[0][1]
-                    best_score = len(best_surviving)
+            levels.append(self._level_summary_fast(lv, current_level, time.time() - t0))
+            self._print_level_fast(lv, current_level, base_cluster_score, nodes_explored, time.time() - t0)
 
-                levels.append(self._level_summary_fast(lv, current_level, time.time() - t0))
-                self._print_level_fast(lv, current_level, base_cluster_score, nodes_explored, time.time() - t0)
+            if best_score == 0:
+                print(f"\n    \u2713 All losing clusters eliminated")
+                break
 
-                if best_score == 0:
-                    print(f"\n    \u2713 All losing clusters eliminated")
-                    break
-
-                # Ceiling: if score didn't improve this level, stop
-                if len(levels) >= 2 and levels[-1]["best_cluster_score"] == levels[-2]["best_cluster_score"]:
-                    print(f"\n    \u2593 Ceiling at level {lv} ({best_score} clusters remaining)")
-                    break
+            # Ceiling: if score didn't improve this level, stop
+            if len(levels) >= 2 and levels[-1]["best_cluster_score"] == levels[-2]["best_cluster_score"]:
+                print(f"\n    \u2593 Ceiling at level {lv} ({best_score} clusters remaining)")
+                break
 
         # Reconstruct row_mask for the best node (needed by _build_result)
         best_node = self._make_result_node(best_conditions, best_score)
