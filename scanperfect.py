@@ -4638,15 +4638,24 @@ class ScanPerfectWindow(QMainWindow):
     def _add_setup_dialog(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("Create New Setup")
-        dlg.setFixedSize(360, 220)
-        dlg.setStyleSheet("QDialog { background:%s; } QLabel { color:%s; font-size:12px; } "
-                          "QLineEdit, QComboBox { background:%s; color:%s; border:1px solid %s; "
-                          "border-radius:4px; padding:6px; font-size:12px; } "
-                          "QPushButton { background:%s; color:%s; border:1px solid %s; "
-                          "border-radius:4px; padding:8px 20px; font-weight:600; } "
-                          "QPushButton:hover { background:%s; }"
-                          % (C["surface"], C["white"], C["bg"], C["white"], C["border"],
-                             C["surface"], C["white"], C["border"], C["border"]))
+        dlg.setFixedSize(360, 240)
+        dlg.setStyleSheet(
+            "QDialog { background:#111; }"
+            "QLabel { color:#E0E0E0; font-size:12px; background:transparent; border:none; }"
+            "QLineEdit { background:#000; color:#E0E0E0; border:1px solid #333; "
+            "border-radius:4px; padding:6px; font-size:12px; }"
+            "QLineEdit:focus { border:1px solid #666; }"
+            "QComboBox { background:#000; color:#E0E0E0; border:1px solid #333; "
+            "border-radius:4px; padding:6px; font-size:12px; }"
+            "QComboBox QAbstractItemView { background:#111; color:#E0E0E0; "
+            "selection-background-color:#333; }"
+            "QComboBox::drop-down { border:none; width:20px; }"
+            "QComboBox::down-arrow { image:none; border-left:4px solid transparent; "
+            "border-right:4px solid transparent; border-top:5px solid #888; }"
+            "QPushButton { background:#E0E0E0; color:#000; border:none; "
+            "border-radius:4px; padding:8px 24px; font-size:12px; font-weight:600; }"
+            "QPushButton:hover { background:#fff; }"
+        )
         lay = QVBoxLayout(dlg)
         lay.setSpacing(10)
         lay.setContentsMargins(20, 20, 20, 20)
