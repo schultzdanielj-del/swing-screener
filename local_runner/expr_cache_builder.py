@@ -875,64 +875,48 @@ def append_new_bars():
         print("  Nothing to do — cache is up to date.")
         return manifest
 
+    # Free universe_cache — work items have everything we need
+    del universe_cache
+    import gc; gc.collect()
+
     t0 = time.time()
     n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", max(cpu_count() - 1, 1)))
     updated = 0
     failed = 0
 
-    # Process appends
-    if work_append:
-        print(f"\n  Appending new bars ({n_workers} workers)...")
+    # Combine append + new into one work list — all use _compute_ticker_full.
+    # The old _append_ticker path computed full series anyway, then the main
+    # thread serialized load/concat/save per ticker (3.2s × 4100 = 219 min).
+    # Full recompute + direct save matches the build_full() code path.
+    all_work = [(t, d) for t, d, _ in work_append] + work_new
+    total_work = len(all_work)
+
+    if total_work:
+        print(f"\n  Recomputing {total_work} tickers ({n_workers} workers)...")
+        max_in_flight = n_workers * 2
+        pending = {}
+        work_idx = 0
+        first_errors = []
+
         with ProcessPoolExecutor(
             max_workers=n_workers,
             initializer=_init_worker,
             initargs=(expressions,)
         ) as pool:
-            futures = {pool.submit(_append_ticker, item): item[0]
-                       for item in work_append}
 
-            for future in as_completed(futures):
-                ticker = futures[future]
-                try:
-                    ticker_out, new_dates, new_data = future.result()
-                    if new_dates is not None and new_data is not None:
-                        # Load existing, concatenate, save
-                        old_dates, old_data = load_ticker_cache(ticker_out)
-                        if old_dates is not None:
-                            merged_dates = np.concatenate([old_dates, new_dates])
-                            merged_data = np.vstack([old_data, new_data])
-                            save_ticker_cache(ticker_out, merged_dates, merged_data)
-                            cached_tickers[ticker_out] = {
-                                "n_bars": len(merged_dates),
-                                "last_date": str(merged_dates[-1]),
-                            }
-                            updated += 1
-                        else:
-                            failed += 1
-                    else:
-                        # No new bars (might be same length)
-                        pass
-                except:
-                    failed += 1
+            def _submit_next():
+                nonlocal work_idx
+                if work_idx < total_work:
+                    item = all_work[work_idx]
+                    future = pool.submit(_compute_ticker_full, item)
+                    pending[future] = item[0]
+                    work_idx += 1
+                    return True
+                return False
 
-                if (updated + failed) % 200 == 0:
-                    elapsed = time.time() - t0
-                    print(f"    Appended: {updated}/{len(work_append)} "
-                          f"[{elapsed:.0f}s]")
-
-    # Process new tickers (full compute)
-    if work_new:
-        print(f"\n  Computing {len(work_new)} new tickers...")
-        with ProcessPoolExecutor(
-            max_workers=n_workers,
-            initializer=_init_worker,
-            initargs=(expressions,)
-        ) as pool:
-            futures = {pool.submit(_compute_ticker_full, item): item[0]
-                       for item in work_new}
-
-            for future in as_completed(futures):
-                ticker = futures[future]
+            def _collect_one(future):
+                nonlocal updated, failed
+                ticker = pending.pop(future)
                 try:
                     ticker_out, dates, data = future.result()
                     if dates is not None and data is not None:
@@ -944,8 +928,37 @@ def append_new_bars():
                         updated += 1
                     else:
                         failed += 1
-                except:
+                        if len(first_errors) < 5:
+                            first_errors.append(f"{ticker}: returned None")
+                except Exception as e:
                     failed += 1
+                    if len(first_errors) < 5:
+                        first_errors.append(f"{ticker}: {type(e).__name__}: {str(e)[:200]}")
+                del future
+                completed = updated + failed
+                if completed % 200 == 0 or completed == total_work:
+                    elapsed = time.time() - t0
+                    rate = completed / elapsed if elapsed > 0 else 0
+                    eta = (total_work - completed) / rate if rate > 0 else 0
+                    print(f"    {completed:,}/{total_work:,} "
+                          f"[{elapsed:.0f}s elapsed, ~{eta:.0f}s left] "
+                          f"({updated} ok, {failed} failed)")
+
+            # Seed initial batch
+            for _ in range(min(max_in_flight, total_work)):
+                _submit_next()
+
+            # Process as completed, submit replacements
+            while pending:
+                done_iter = as_completed(pending)
+                future = next(done_iter)
+                _collect_one(future)
+                _submit_next()
+
+        if first_errors:
+            print(f"\n  First errors:")
+            for e in first_errors:
+                print(f"    ✗ {e}")
 
     total_time = time.time() - t0
 
