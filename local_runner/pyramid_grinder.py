@@ -2490,8 +2490,8 @@ def _gather_raw_signal_clusters(setup_type):
     from signal_filter import scan_all_signals as _scan_all, _build_slim_cache
 
     slim = _build_slim_cache(universe_cache)
-    # Keep universe_cache — needed for exit classification below
-    # (previously deleted here and reloaded, wasting ~1s)
+    del universe_cache
+    gc.collect()
 
     # ── Scan ──
     n_workers = max(cpu_count() - 1, 1)
@@ -2587,7 +2587,9 @@ def _gather_raw_signal_clusters(setup_type):
         return False, None, None
 
     print(f"\n  Applying exit condition on rightmost bars...")
-    # universe_cache already loaded above (not freed after slim build)
+
+    # Reload 5yr cache for exit evaluation (freed earlier to save RAM during scan)
+    universe_cache = load_5yr_cache()
 
     exit_expr = exit_cond["expression"]
     exit_thresh = exit_cond["threshold"]
@@ -3233,6 +3235,11 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
     if win_dfs is None:
         print("  ABORT: Could not load refinement piles.")
         return None
+
+    # Free 5yr cache — no longer needed (win_dfs have their own df copies,
+    # everything else is bar indices and metadata)
+    del universe_cache
+    import gc as _gc; _gc.collect()
 
     # ── Load expression cache ──
     print(f"\n  Loading expression cache...")
