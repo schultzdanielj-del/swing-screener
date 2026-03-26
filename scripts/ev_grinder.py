@@ -1810,7 +1810,7 @@ def run(setup_type):
     if not cp:
         print(f"\n  ERROR: No raw clusters"); return None
     print(f"\n  Raw clusters: {cf}")
-    all_signals, _ = load_clusters(cp)
+    all_signals, clusters_data = load_clusters(cp)
     nw = sum(1 for s in all_signals if "WIN" in s["classification"])
     nl = sum(1 for s in all_signals if "LOSS" in s["classification"])
     ne = sum(1 for s in all_signals if s["is_example"])
@@ -1820,7 +1820,7 @@ def run(setup_type):
     if not rp:
         print(f"\n  ERROR: No refinement"); return None
     print(f"\n  Refinement: {rf}")
-    rc, ps, _, _ = load_refinement(rp)
+    rc, ps, _, ref_data = load_refinement(rp)
     npw = sum(1 for s in ps if "WIN" in s.get("classification", ""))
     npl = sum(1 for s in ps if "LOSS" in s.get("classification", ""))
     print(f"  Post: {len(ps)} ({npw}W+{npl}L), Conditions: {len(rc)}")
@@ -2195,7 +2195,7 @@ def run(setup_type):
         "signals": signals_out,
         "signals_post": post_signals_out,
         "scan_config": {
-            "signal_conditions_count": 87,
+            "signal_conditions_count": len(ref_data.get("signal_conditions", [])),
             "refinement_conditions_count": len(rc),
             "default_refinement_depth": len(rc),
             "quality_score_range": {
