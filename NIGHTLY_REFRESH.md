@@ -100,25 +100,25 @@ Each ticker makes ~15,681 individual `compute_series()` Python function calls, e
 
 The remaining time is spread across ~15,277 non-vectorized `compute_series()` calls per ticker. Each call is fast individually (pandas rolling ops on 60-1,200 bars), but the sheer volume adds up. There is no single bottleneck left to fix — it's death by 15,000 cuts.
 
-### Directions NOT yet explored:
+### What's been done:
 
-1. **Skip unchanged tickers.** On a normal trading day, virtually all tickers get 1 new bar, so all ~4,114 need recomputing. But on weekends/holidays, 0 tickers need updating. The code already handles this (checks bar counts against manifest). This doesn't help for normal days.
+- **HTF skip on non-rebalance days (2026-03-26).** Weekly HTF (5,233 expressions) only recomputed on Mondays. Monthly HTF (5,233) only on first trading day of the month. Other days copy HTF columns from previous cache. Skips ~66% of expressions on Tue-Fri. Expected: ~91 min → ~30-35 min on most days. Mondays stay full.
 
-2. **Reduce expression count.** 10,466 of 15,805 are HTF (weekly + monthly). If HTF expressions don't contribute meaningfully to EV grinder scoring, dropping them cuts compute by 66%. This is a pipeline design question, not a code optimization.
+### Directions NOT yet explored (future optimization):
 
-3. **Cache intermediate indicators.** `ExpressionEngine._cache` already caches MAs, ATR, RSI etc. within one ticker. But the cache is rebuilt per ticker. If many expressions share the same base indicator (e.g., hundreds use `adr14`), it's already cached. The overhead is in the per-expression Python function dispatch + pandas Series creation.
+1. **Vectorize `since_true` and `true_in_row`.** These 1,397 boolean expressions use `.apply(lambda)` — Python callbacks on every rolling window. Replacing with numpy loops gives 4-10x speedup per call. Benchmarked at ~6 min savings. Low risk, low effort, same pattern as the CCI/trendline vectorization that already shipped.
 
-4. **Numpy-only computation.** Replace pandas Series operations with raw numpy arrays throughout `compute_series()` and `ExpressionEngine`. Pandas rolling operations have significant per-call overhead (index alignment, NaN handling, Series construction). Numpy equivalents would be faster but would require rewriting ~90 ops in `backtest_conditions.py` and all of `ExpressionEngine`. Major effort.
+2. **Numpy-ify `profiling_engine.py` base indicators.** Rewrite the ~15 core indicator functions (sma, ema, atr, rsi, etc.) to accept/return numpy arrays instead of pandas Series. Smaller surface area than rewriting all 90 ops in `compute_series()` — everything upstream benefits automatically. Estimated 2-3× speedup across the board. Medium risk, medium effort.
 
-5. **Batch HTF computation.** Instead of calling `compute_series()` 5,233 times for weekly, batch similar ops. E.g., compute all `extension` ops at once since they share the same MA computation. The `ExpressionEngine` cache partially handles this, but the Python for-loop dispatch is still 5,233 iterations.
+3. **Batch batchable expression families.** 1,323 daily expressions fall into families sharing the same formula with different parameters (240 ma_slope, 174 distance_to_maxh, 114 distance_to_minl, etc.). Could compute each family as one matrix operation instead of hundreds of individual `compute_series()` calls. Estimated 5-8 min savings. Medium risk, high effort.
 
-6. **C extension / Cython / Numba.** Compile the hot loop. Would require significant rework but could get 10-50x speedup on the per-expression computation.
+4. **Incremental append for simple ops.** Instead of full-series recompute, derive the new bar's value from the previous bar's value + the new data point. Works for SMA, EMA, rolling max/min. Tricky for RSI, ADX. Eliminates full recompute entirely for supported ops. High risk (numerical drift), high effort.
 
-7. **Incremental computation for simple ops.** Some expressions (simple ratios, single-bar calculations, slopes) could theoretically be computed from just the last N bars of history rather than the full series. But the `ExpressionEngine` is designed around full-series computation with pandas, and the HTF resampling step needs full history. Partial solution at best.
+5. **C extension / Cython / Numba.** Compile the hot loop. 10-50x potential. Major rework.
 
-8. **Parallel within-ticker.** Currently each worker handles one ticker sequentially (all 15,805 expressions). Could split expressions across workers for a single ticker. But the `ExpressionEngine` cache is per-ticker, and cross-process sharing of the cache would be complex.
+6. **Reduce expression count.** If HTF expressions don't contribute to EV scoring, drop them entirely. Design decision, not code optimization.
 
-9. **Accept the time and start earlier.** If the nightly runs at 3:00pm ET instead of 4:30pm, a 91-minute expr cache step finishes by ~4:30pm, leaving time for the consensus pipeline overnight. Doesn't fix the problem but unblocks the workflow. The market_cache_builder already fetches from yfinance before market close with no issues — partial-day data gets overwritten the next day.
+7. **Accept the time and start earlier.** Run nightly at 3:00pm ET. Market cache already handles partial-day data.
 
 ---
 

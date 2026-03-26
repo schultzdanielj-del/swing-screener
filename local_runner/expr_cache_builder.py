@@ -265,17 +265,22 @@ _w_htf_weekly_indices = None  # indices of weekly HTF expressions
 _w_htf_monthly_indices = None # indices of monthly HTF expressions
 _w_htf_weekly_base = None    # base compute specs for weekly HTF expressions
 _w_htf_monthly_base = None   # base compute specs for monthly HTF expressions
+_w_skip_htf_weekly = False   # if True, copy weekly HTF from previous cache
+_w_skip_htf_monthly = False  # if True, copy monthly HTF from previous cache
 
 
-def _init_worker(expressions):
+def _init_worker(expressions, skip_htf_weekly=False, skip_htf_monthly=False):
     """Initialize worker with expression list and pre-classify indices."""
     global _w_expressions, _w_daily_indices, _w_ext_struct_indices
     global _w_ext_series_name_to_idx
     global _w_lsp_indices, _w_algo_indices
     global _w_htf_weekly_indices, _w_htf_monthly_indices
     global _w_htf_weekly_base, _w_htf_monthly_base
+    global _w_skip_htf_weekly, _w_skip_htf_monthly
 
     _w_expressions = expressions
+    _w_skip_htf_weekly = skip_htf_weekly
+    _w_skip_htf_monthly = skip_htf_monthly
 
     _w_daily_indices = []
     _w_ext_struct_indices = []
@@ -397,11 +402,44 @@ def _compute_ticker_full(args):
                 pass  # Algo lines fail silently — columns stay NaN
 
         # ── 3. HTF expressions (weekly + monthly) ──
-        for tf_freq, tf_indices, tf_base_computes in [
-            ("W", _w_htf_weekly_indices, _w_htf_weekly_base),
-            ("ME", _w_htf_monthly_indices, _w_htf_monthly_base),
+        # On non-rebalance days, copy HTF columns from previous cache instead
+        # of recomputing. Weekly only changes on Monday, monthly on 1st of month.
+        _htf_copied_from_prev = False
+        if (_w_skip_htf_weekly or _w_skip_htf_monthly):
+            try:
+                prev_dates, prev_data = load_ticker_cache(ticker)
+                if prev_dates is not None and prev_data is not None:
+                    prev_n = len(prev_dates)
+                    # Previous cache should have 1 fewer bar (we're appending today)
+                    # or same count if ticker had no new data
+                    if prev_n >= n_bars - 5 and prev_data.shape[1] == n_exprs:
+                        # Copy rows that overlap, extend last value for new bars
+                        overlap = min(prev_n, n_bars)
+                        if _w_skip_htf_weekly and _w_htf_weekly_indices:
+                            for j in _w_htf_weekly_indices:
+                                data[:overlap, j] = prev_data[:overlap, j]
+                                # Forward-fill: new bars get the last known value
+                                if overlap < n_bars and overlap > 0:
+                                    data[overlap:, j] = prev_data[overlap - 1, j]
+                        if _w_skip_htf_monthly and _w_htf_monthly_indices:
+                            for j in _w_htf_monthly_indices:
+                                data[:overlap, j] = prev_data[:overlap, j]
+                                if overlap < n_bars and overlap > 0:
+                                    data[overlap:, j] = prev_data[overlap - 1, j]
+                        _htf_copied_from_prev = True
+            except Exception:
+                _htf_copied_from_prev = False
+
+        # Compute HTF for timeframes that weren't skipped (or if skip failed)
+        for tf_freq, tf_indices, tf_base_computes, should_skip in [
+            ("W", _w_htf_weekly_indices, _w_htf_weekly_base, _w_skip_htf_weekly),
+            ("ME", _w_htf_monthly_indices, _w_htf_monthly_base, _w_skip_htf_monthly),
         ]:
             if not tf_indices:
+                continue
+
+            # Skip if we successfully copied from previous cache
+            if should_skip and _htf_copied_from_prev:
                 continue
 
             htf_df = resample_ohlcv(df, tf_freq)
@@ -759,6 +797,43 @@ def append_new_bars():
     updated = 0
     failed = 0
 
+    # ── HTF skip logic ──
+    # Weekly HTF expressions only change when a new weekly bar closes (Monday).
+    # Monthly HTF expressions only change on the first trading day of a new month.
+    # On other days, copy HTF columns from previous cache instead of recomputing.
+    # This skips ~10,466 of 15,805 expressions (~66%) on most days.
+    today = datetime.now()
+    is_monday = today.weekday() == 0
+
+    # Check if this is the first trading day of the month by looking at
+    # the latest dates in the OHLCV data — if the newest bar's month differs
+    # from the previous bar's month, monthly HTF needs recomputing.
+    is_month_start = False
+    try:
+        # Sample a ticker to check dates
+        sample_ticker = next(iter(universe_cache))
+        sample_df = universe_cache[sample_ticker]
+        if len(sample_df) >= 2:
+            last_date = pd.Timestamp(sample_df["date"].iloc[-1])
+            prev_date = pd.Timestamp(sample_df["date"].iloc[-2])
+            is_month_start = last_date.month != prev_date.month
+    except Exception:
+        is_month_start = True  # safe fallback — recompute if unsure
+
+    skip_htf_weekly = not is_monday
+    skip_htf_monthly = not is_month_start
+
+    if skip_htf_weekly or skip_htf_monthly:
+        skipped = []
+        if skip_htf_weekly:
+            skipped.append("weekly (not Monday)")
+        if skip_htf_monthly:
+            skipped.append("monthly (not 1st of month)")
+        print(f"\n  HTF skip: {', '.join(skipped)}")
+        print(f"  (copying from previous cache — values unchanged)")
+    else:
+        print(f"\n  HTF: full recompute (Monday={is_monday}, month_start={is_month_start})")
+
     # Combine both lists — all tickers use full recompute + direct save.
     # _compute_ticker_full recomputes the entire series and returns it.
     # The worker saves compressed to disk (parallel I/O across all cores).
@@ -772,7 +847,7 @@ def append_new_bars():
         with ProcessPoolExecutor(
             max_workers=n_workers,
             initializer=_init_worker,
-            initargs=(expressions,)
+            initargs=(expressions, skip_htf_weekly, skip_htf_monthly)
         ) as pool:
             pending = {}
             work_idx = 0
