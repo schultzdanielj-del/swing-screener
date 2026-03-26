@@ -1172,17 +1172,18 @@ class ClusterAwareRefinementSearch:
         sort_order = np.argsort(seed_scores)
         n_seeds = min(beam_width, n_valid)
 
-        # current_level: list of (conditions_tuple, surviving_bool_array)
+        # current_level: list of (conditions_tuple, surviving_bool_array, used_set)
         current_level = []
         for rank in range(n_seeds):
             idx = int(sort_order[rank])
             ci = self.valid_cands[idx]
             surviving = self.cand_surviving_bool[idx].copy()
-            current_level.append(((ci,), surviving))
+            current_level.append(((ci,), surviving, {ci}))
 
         best_conditions = current_level[0][0]
         best_surviving = current_level[0][1]
         best_score = int(np.sum(best_surviving))
+        # (used set is current_level[0][2] but not needed here)
 
         levels = [self._level_summary_np(1, current_level, time.time() - t0)]
         self._print_level_np(1, current_level, base_cluster_score, nodes_explored, time.time() - t0)
@@ -1197,12 +1198,7 @@ class ClusterAwareRefinementSearch:
             next_candidates = []  # (score, conditions_tuple, surviving_array)
             seen = set()
 
-            for conditions, surviving in current_level:
-                node_score = int(np.sum(surviving))
-                if node_score == 0:
-                    continue
-
-                used = set(conditions)
+            for conditions, surviving, used in current_level:
 
                 # BATCHED: AND this node's surviving array with ALL candidates at once
                 # surviving is (n_clusters,), cand_surviving_bool is (n_valid, n_clusters)
@@ -1215,16 +1211,15 @@ class ClusterAwareRefinementSearch:
                     ci = self.valid_cands[idx]
                     if ci in used:
                         continue
-                    combo_key = frozenset(conditions + (ci,))
-                    if combo_key in seen:
+                    combo = tuple(sorted(conditions + (ci,)))
+                    if combo in seen:
                         continue
-                    seen.add(combo_key)
+                    seen.add(combo)
                     nodes_explored += 1
 
                     score = int(scores[idx])
-                    combo = tuple(sorted(conditions + (ci,)))
-                    # Store the intersected row (already computed)
-                    next_candidates.append((score, combo, intersected[idx].copy()))
+                    # Store the intersected row + updated used set
+                    next_candidates.append((score, combo, intersected[idx].copy(), used | {ci}))
 
                 if len(next_candidates) >= beam_width * 8:
                     break
@@ -1233,11 +1228,23 @@ class ClusterAwareRefinementSearch:
                 print(f"\n    \u2593 Ceiling at level {lv}")
                 break
 
-            # Sort by score, keep top beam_width
-            next_candidates.sort(key=lambda x: x[0])
-            next_candidates = next_candidates[:beam_width]
+            # Partial sort: argpartition finds top-K without fully sorting
+            if len(next_candidates) > beam_width:
+                nc_scores = np.array([c[0] for c in next_candidates], dtype=np.int32)
+                part_idx = np.argpartition(nc_scores, beam_width)[:beam_width]
+                sub_order = np.argsort(nc_scores[part_idx])
+                order = part_idx[sub_order]
+                next_candidates = [next_candidates[i] for i in order]
+            else:
+                next_candidates.sort(key=lambda x: x[0])
 
-            current_level = [(conds, surv) for score, conds, surv in next_candidates]
+            # Filter dead nodes (score=0) and build current_level with stored used sets
+            current_level = [(conds, surv, u) for score, conds, surv, u in next_candidates
+                             if score > 0]
+            # Keep at least the best node even if score=0 (all losers eliminated)
+            if not current_level and next_candidates:
+                c = next_candidates[0]
+                current_level = [(c[1], c[2], c[3])]
 
             new_best_score = int(np.sum(current_level[0][1]))
             if new_best_score < best_score:
@@ -1280,8 +1287,8 @@ class ClusterAwareRefinementSearch:
         return Node(conditions=conditions, row_mask=mask, cluster_score=cluster_score)
 
     def _level_summary_np(self, level, nodes, elapsed):
-        """Level summary using (conditions, surviving_bool) tuples."""
-        best_conds, best_surviving = nodes[0]
+        """Level summary using (conditions, surviving_bool, used_set) tuples."""
+        best_conds, best_surviving = nodes[0][0], nodes[0][1]
         return {
             "level": level,
             "best_cluster_score": int(np.sum(best_surviving)),
@@ -1293,8 +1300,8 @@ class ClusterAwareRefinementSearch:
         }
 
     def _print_level_np(self, level, nodes, baseline_clusters, nodes_explored, elapsed):
-        """Print level using (conditions, surviving_bool) tuples."""
-        best_conds, best_surviving = nodes[0]
+        """Print level using (conditions, surviving_bool, used_set) tuples."""
+        best_conds, best_surviving = nodes[0][0], nodes[0][1]
         score = int(np.sum(best_surviving))
         eliminated = baseline_clusters - score
         print(f"    Level {level:2d}: {score:>5} clusters remaining  "
@@ -3087,11 +3094,6 @@ def _load_refinement_piles(setup_type):
             skipped_win.append(f"{ticker} (not in 5yr cache)")
             continue
 
-        df = df.copy()
-        if not pd.api.types.is_datetime64_any_dtype(df["date"]):
-            df["date"] = pd.to_datetime(df["date"])
-        df = df.sort_values("date").reset_index(drop=True)
-
         if bar_idx >= len(df):
             skipped_win.append(f"{ticker} (bar_idx {bar_idx} >= {len(df)} bars)")
             continue
@@ -3100,7 +3102,6 @@ def _load_refinement_piles(setup_type):
             "ticker": ticker,
             "entry_date": c["rightmost"].get("date"),
             "scan_idx": bar_idx,
-            "df": df,
         })
 
     if skipped_win:
@@ -3199,7 +3200,7 @@ def _load_refinement_piles(setup_type):
     return win_example_dfs, whitelist_map, raw_winners, raw_losers, universe_cache, adr_threshold, losing_cluster_bars, win_leftward_bars
 
 
-def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
+def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3, skip_gather=False):
     """Refinement grind: cluster-aware beam search, winners must-pass, minimize losing clusters.
 
     Gathers raw signal clusters (Phase 1), loads full expendable set,
@@ -3218,12 +3219,33 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
     # ── Phase 1: Gather raw signal clusters (pre-dedup) ──
     # Scans the universe, groups consecutive bars into clusters,
     # applies exit + classifies. Output saved and used by Phase 2 below.
-    cluster_path = _gather_raw_signal_clusters(setup_type)
-    if cluster_path:
-        print(f"  Raw signal clusters saved: {os.path.basename(cluster_path)}")
-    else:
-        print(f"  WARNING: Raw signal cluster gathering failed")
-        return None
+    cluster_file = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
+    if skip_gather and os.path.exists(cluster_file):
+        try:
+            with open(cluster_file) as f:
+                _check = json.load(f)
+            n_cl = len(_check.get("clusters", []))
+            if n_cl == 0:
+                print(f"  --skip-gather: Existing file has no clusters. Running gather.")
+                skip_gather = False
+            else:
+                ts = _check.get("timestamp", "unknown")
+                print(f"  --skip-gather: Using existing clusters ({n_cl} clusters, created {ts})")
+            del _check
+        except (json.JSONDecodeError, KeyError):
+            print(f"  --skip-gather: Existing file corrupt. Running gather.")
+            skip_gather = False
+    elif skip_gather:
+        print(f"  --skip-gather: No existing file. Running gather.")
+        skip_gather = False
+
+    if not skip_gather:
+        cluster_path = _gather_raw_signal_clusters(setup_type)
+        if cluster_path:
+            print(f"  Raw signal clusters saved: {os.path.basename(cluster_path)}")
+        else:
+            print(f"  WARNING: Raw signal cluster gathering failed")
+            return None
 
     # ── Load classified signals ──
     win_dfs, loser_whitelist, raw_winners, raw_losers, universe_cache, adr_threshold, losing_cluster_bars, win_leftward_bars = _load_refinement_piles(setup_type)
@@ -3635,6 +3657,8 @@ def main():
     parser.add_argument("--blackout", action="store_true",
                         help="Refinement grind: winners as must-pass, losers as universe "
                              "(Step 4 — loads classified signals from step 3)")
+    parser.add_argument("--skip-gather", action="store_true",
+                        help="Skip re-scanning universe (reuse existing raw_signal_clusters file)")
     args = parser.parse_args()
 
     # ── Refinement grind: separate path ──
@@ -3648,6 +3672,7 @@ def main():
             beam_width=ref_beam,
             depth=ref_depth,
             peak_target=ref_peak,
+            skip_gather=getattr(args, 'skip_gather', False),
         )
         if result is None:
             sys.exit(1)
