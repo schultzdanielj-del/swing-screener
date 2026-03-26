@@ -264,7 +264,7 @@ The entry candle scorer is not a pipeline step -- it is a standalone vetting uti
 - **Expression cache:** 15,805 expressions, ~21 GB
 - **5yr OHLCV cache:** ~4,167 tickers
 - **File mirror:** All grind results → Railway via `file_mirror.py`
-- **Nightly refresh:** 4:30pm ET, 9 steps, fully automated
+- **Nightly refresh:** 4:30pm ET, 8 steps, fully automated (yfinance → local, no Railway for OHLCV)
 - **DB schema:** See `DATA_CONTRACT.md` for full Local SQLite schema
 - **Pipeline spec:** See `PIPELINE_V2.md` for authoritative architecture
 - **Task list:** See `TODO.md` for current work items

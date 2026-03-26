@@ -66,7 +66,7 @@ Everything runs locally on Dan's desktop. Railway is seed vault only.
 
 ## Seed Vault (Daily Backup)
 
-Runs as step 9 of nightly refresh (4:30pm ET).
+Runs as step 8 of nightly refresh (4:30pm ET).
 
 Backs up to Railway:
 - All SQLite tables (examples, setups, earnings, pending, rejected, etc.)
