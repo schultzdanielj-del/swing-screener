@@ -1107,11 +1107,18 @@ def compute_on_series(series, inner_op):
     elif op == "cci":
         p = inner_op["period"]
         # CCI on single series: typical = series itself (no H/L)
-        sma = s.rolling(p, min_periods=1).mean()
-        mad = s.rolling(p, min_periods=1).apply(
-            lambda x: np.mean(np.abs(x - np.mean(x))), raw=True
-        )
-        return ((s - sma) / (0.015 * mad).replace(0, np.nan)).values
+        sma_s = s.rolling(p, min_periods=1).mean()
+        # MAD must use each window's own mean, not the per-element rolling mean.
+        arr = s.values.astype(np.float64)
+        result_mad = np.full(n, np.nan)
+        if p <= n:
+            from numpy.lib.stride_tricks import sliding_window_view
+            windows = sliding_window_view(arr, p)
+            wmeans = windows.mean(axis=1, keepdims=True)
+            mads = np.mean(np.abs(windows - wmeans), axis=1)
+            result_mad[p - 1:] = mads
+        mad = pd.Series(result_mad, index=s.index)
+        return ((s - sma_s) / (0.015 * mad).replace(0, np.nan)).values
 
     elif op == "adx":
         p = inner_op["period"]
@@ -1170,39 +1177,89 @@ def compute_on_series(series, inner_op):
 
     elif op == "trendline_deviation":
         lb = inner_op["lookback"]
-        # Linear regression residual over lookback window
-        arr = s.values
+        # Vectorized linear regression residual using rolling sums.
+        arr = s.values.astype(np.float64)
         result = np.full(n, np.nan)
-        for i in range(lb - 1, n):
-            window = arr[i - lb + 1:i + 1]
-            if np.any(np.isnan(window)):
-                continue
-            x = np.arange(lb, dtype=np.float64)
-            slope_val = (np.mean(x * window) - np.mean(x) * np.mean(window)) / \
-                        (np.mean(x * x) - np.mean(x) ** 2 + 1e-10)
-            intercept = np.mean(window) - slope_val * np.mean(x)
-            projected = slope_val * (lb - 1) + intercept
-            result[i] = arr[i] - projected
+        if lb > n:
+            return result
+        x = np.arange(lb, dtype=np.float64)
+        sum_x = x.sum()
+        sum_x2 = (x * x).sum()
+        mean_x = sum_x / lb
+        denom = sum_x2 - sum_x * sum_x / lb
+
+        # Rolling Σy via cumsum
+        cs = np.nancumsum(arr)
+        cs = np.insert(cs, 0, 0.0)
+        sum_y = cs[lb:] - cs[:-lb]
+
+        # Rolling Σxy via convolution: for window ending at i,
+        # positions 0..lb-1 map to arr[i-lb+1..i], so weight arr[k] by (k - (i-lb+1))
+        # Equivalent to convolving arr with reversed x weights
+        x_weights = x[::-1].copy()
+        sum_xy_full = np.convolve(arr, x_weights, mode='full')
+        # Valid entries start at index lb-1
+        sum_xy = sum_xy_full[lb - 1: lb - 1 + n - lb + 1]
+
+        slope_val = (sum_xy - sum_x * sum_y / lb) / (denom + 1e-10)
+        intercept = sum_y / lb - slope_val * mean_x
+        projected = slope_val * (lb - 1) + intercept
+        # y at window end = arr[lb-1], arr[lb], ..., arr[n-1]
+        y_end = arr[lb - 1:]
+        result[lb - 1:] = y_end - projected
+        # NaN out windows that had NaN input
+        nan_count = np.convolve(np.isnan(s.values).astype(float), np.ones(lb), mode='full')
+        nan_count = nan_count[lb - 1: lb - 1 + n - lb + 1]
+        result[lb - 1:][nan_count > 0] = np.nan
         return result
 
     elif op == "channel_position":
         lb = inner_op["lookback"]
-        # Position within linear regression channel
-        arr = s.values
+        # Vectorized: position within linear regression channel
+        arr = s.values.astype(np.float64)
         result = np.full(n, np.nan)
-        for i in range(lb - 1, n):
-            window = arr[i - lb + 1:i + 1]
-            if np.any(np.isnan(window)):
-                continue
-            x = np.arange(lb, dtype=np.float64)
-            slope_val = (np.mean(x * window) - np.mean(x) * np.mean(window)) / \
-                        (np.mean(x * x) - np.mean(x) ** 2 + 1e-10)
-            intercept = np.mean(window) - slope_val * np.mean(x)
-            projected_line = slope_val * x + intercept
-            residuals = window - projected_line
-            std_resid = np.std(residuals)
-            if std_resid > 0:
-                result[i] = (arr[i] - (slope_val * (lb - 1) + intercept)) / std_resid
+        if lb > n:
+            return result
+        x = np.arange(lb, dtype=np.float64)
+        sum_x = x.sum()
+        sum_x2 = (x * x).sum()
+        mean_x = sum_x / lb
+        denom = sum_x2 - sum_x * sum_x / lb
+
+        # Rolling Σy via cumsum
+        cs = np.nancumsum(arr)
+        cs = np.insert(cs, 0, 0.0)
+        sum_y = cs[lb:] - cs[:-lb]
+
+        # Rolling Σxy via convolution
+        x_weights = x[::-1].copy()
+        sum_xy_full = np.convolve(arr, x_weights, mode='full')
+        sum_xy = sum_xy_full[lb - 1: lb - 1 + n - lb + 1]
+
+        slope_val = (sum_xy - sum_x * sum_y / lb) / (denom + 1e-10)
+        intercept = sum_y / lb - slope_val * mean_x
+
+        # Rolling Σy² for std of residuals: var(resid) = var(y) - slope²·var(x)
+        # var(y) = Σy²/n - (Σy/n)²
+        cs2 = np.nancumsum(arr * arr)
+        cs2 = np.insert(cs2, 0, 0.0)
+        sum_y2 = cs2[lb:] - cs2[:-lb]
+        var_y = sum_y2 / lb - (sum_y / lb) ** 2
+        var_x = denom / lb  # constant
+        var_resid = var_y - slope_val ** 2 * var_x
+        # Clamp negative (numerical noise)
+        var_resid = np.maximum(var_resid, 0.0)
+        std_resid = np.sqrt(var_resid)
+
+        y_end = arr[lb - 1:]
+        projected = slope_val * (lb - 1) + intercept
+        valid = std_resid > 0
+        vals = np.where(valid, (y_end - projected) / std_resid, np.nan)
+        result[lb - 1:] = vals
+        # NaN out windows with NaN input
+        nan_count = np.convolve(np.isnan(s.values).astype(float), np.ones(lb), mode='full')
+        nan_count = nan_count[lb - 1: lb - 1 + n - lb + 1]
+        result[lb - 1:][nan_count > 0] = np.nan
         return result
 
     elif op == "bollinger_pctb":

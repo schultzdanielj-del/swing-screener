@@ -184,9 +184,26 @@ def cci(df: pd.DataFrame, period: int) -> pd.Series:
     """Commodity Channel Index."""
     tp = (df['high'] + df['low'] + df['close']) / 3
     tp_sma = sma(tp, period)
-    mean_dev = tp.rolling(window=period, min_periods=period).apply(
-        lambda x: np.mean(np.abs(x - np.mean(x))), raw=True
-    )
+    # MAD = mean(|x_i - window_mean|) for each rolling window.
+    # |tp - tp_sma| gives |x_i - mean_of_window_centered_at_i|, but CCI needs
+    # |x_i - mean_of_THIS_window| where all elements share the same window mean.
+    # For a fixed-size rolling window, tp_sma[i] IS the mean of window ending at i,
+    # and the MAD lambda gets that same window. So:
+    # mad[i] = mean(|tp[j] - tp_sma[i]| for j in [i-p+1..i])
+    # We need tp_sma[i] broadcast across the window — can't do with simple rolling.
+    # Use: var proxy. For CCI accuracy, keep the apply but use raw numpy for speed.
+    arr = tp.values.astype(np.float64)
+    n = len(arr)
+    result_mad = np.full(n, np.nan)
+    if period <= n:
+        # Vectorized: for each window, mad = mean(|x - mean(x)|)
+        # = mean(|x|) - ... no closed form. Use stride tricks for batch compute.
+        from numpy.lib.stride_tricks import sliding_window_view
+        windows = sliding_window_view(arr, period)  # (n-period+1, period)
+        wmeans = windows.mean(axis=1, keepdims=True)  # (n-period+1, 1)
+        mads = np.mean(np.abs(windows - wmeans), axis=1)  # (n-period+1,)
+        result_mad[period - 1:] = mads
+    mean_dev = pd.Series(result_mad, index=tp.index)
     return (tp - tp_sma) / (0.015 * mean_dev.replace(0, np.nan))
 
 
