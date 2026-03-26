@@ -66,12 +66,14 @@ Everything runs locally on Dan's desktop. Railway is seed vault only.
 
 ## Seed Vault (Daily Backup)
 
-Runs as step 9 of nightly refresh (4:30pm ET).
+Step 8 of nightly refresh (4:30pm ET). Runs every night regardless of whether there's new market data.
 
-Backs up to Railway:
+Backs up to Railway file mirror (JSON files only — no Railway DB sync):
 - All SQLite tables (examples, setups, earnings, pending, rejected, etc.)
 - Vetting decision files
 - Grind result JSONs
+
+**Known legacy issue:** Several active scripts still read examples from Railway's DB API (`/api/examples/`) instead of local SQLite. These include `matrix_builder.py`, `exit_grinder.py`, `cycle_health.py`, `signal_filter.py`, `signal_exit_grinder.py`. Future cleanup task — switch all to local SQLite.
 
 Recovery (new machine):
 1. Clone repo from GitHub
@@ -88,5 +90,5 @@ Recovery (new machine):
 
 - All grinder scripts — unchanged, they read local caches
 - Expression engine — unchanged
-- Nightly refresh steps 1-8 — unchanged (step 9 = seed vault)
+- Nightly refresh steps 1-7 — unchanged (step 8 = seed vault, always runs)
 - Grind result mirroring to Railway — unchanged (backup)

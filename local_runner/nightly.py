@@ -320,7 +320,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Nightly data refresh")
     parser.add_argument("--force", action="store_true",
-                        help="Skip Railway append check, run steps 2-8 regardless")
+                        help="Skip Railway append check, run steps 2-7 + seed vault regardless")
     args = parser.parse_args()
 
     print(f"\n{'═'*60}")
@@ -331,25 +331,29 @@ def main():
     total_start = time.time()
 
     if args.force:
-        print("\n  --force: skipping Railway append, running steps 2-8")
+        print("\n  --force: skipping Railway append, running steps 2-7")
     else:
         # Step 1: Railway append (gate — stops if already current)
         has_new_data = step_1_railway_append()
 
         if not has_new_data:
+            # No new market data, but still run seed vault backup
+            step_8_seed_vault()
             print(f"\n{'═'*60}")
-            print(f"  Done — no updates needed")
+            print(f"  Done — no data updates needed, seed vault backed up")
             print(f"  {ts()}")
             print(f"{'═'*60}\n")
             return
 
-    # Steps 2-8: refresh all local data + backup
+    # Steps 2-7: refresh all local data
     step_2_5yr_cache()
     step_3_expr_cache()
     step_4_matrix()
     step_5_earnings()
     step_6_market_cache()
     step_7_fundamentals()
+
+    # Step 8: seed vault always runs (not gated by new market data)
     step_8_seed_vault()
 
     total_elapsed = time.time() - total_start
