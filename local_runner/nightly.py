@@ -7,8 +7,8 @@ Usage:
 What it does (in order):
     1. Checks yfinance (SPY) for new trading data since last cache update
        - If cache is already current → stops here, prints "up to date"
-    2. Appends new bars to local 5yr OHLCV cache (fetches from yfinance)
-    3. Rebuilds tradable_universe table from fresh 5yr cache data
+    2. Rebuilds tradable_universe table from existing 5yr cache data
+    3. Appends new bars to local 5yr OHLCV cache (fetches from yfinance)
     4. Appends expression series cache (new bars + new tickers)
     5. Rebuilds D1 universe matrix
     6. Refreshes earnings dates
@@ -113,9 +113,9 @@ def step_1_freshness_check():
     return True
 
 
-def step_2_5yr_cache():
+def step_3_5yr_cache():
     """Append new bars to local 5yr OHLCV cache. Never rebuilds, never touches old bars."""
-    step_header(2, TOTAL_STEPS, "5yr OHLCV Cache — Append from yfinance")
+    step_header(3, TOTAL_STEPS, "5yr OHLCV Cache — Append from yfinance")
 
     from cache_builder import append_5yr_cache
     t0 = time.time()
@@ -124,9 +124,9 @@ def step_2_5yr_cache():
     print(f"  ✓ {len(data)} tickers in cache ({elapsed:.1f}s)")
 
 
-def step_3_tradable_universe():
+def step_2_tradable_universe():
     """Rebuild tradable_universe table from fresh 5yr cache data."""
-    step_header(3, TOTAL_STEPS, "Tradable Universe Rebuild")
+    step_header(2, TOTAL_STEPS, "Tradable Universe Rebuild")
 
     try:
         from scripts.build_tradable import build_tradable_universe
@@ -373,8 +373,8 @@ def main():
             return
 
     # Steps 2-9: refresh all local data + backup
-    step_2_5yr_cache()
-    step_3_tradable_universe()
+    step_2_tradable_universe()
+    step_3_5yr_cache()
     step_4_expr_cache()
     step_5_matrix()
     step_6_earnings()
