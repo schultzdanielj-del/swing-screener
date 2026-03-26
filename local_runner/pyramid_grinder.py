@@ -2686,14 +2686,15 @@ def _gather_raw_signal_clusters(setup_type):
     # ── Classify each cluster ──
     # Pass 2: use forward_window as match distance for ALL example matching.
     # For each cluster:
-    #   1. Find highest high across all signal bars in cluster
-    #   2. From rightmost bar, look forward by forward_window → find max high → ceiling
-    #   3. After rightmost + forward_window, scan forward:
-    #      - close > ceiling → AUTO_LOSS
-    #      - exit condition fires → AUTO_WIN
-    #      - end of data → AUTO_WIN
-    #   4. Example clusters → AUTO_WIN
-    print(f"\n  Classifying clusters (ceiling + exit race, match distance={forward_window})...")
+    #   1. Compute direction-aware stop level from signal + entry window
+    #      Shorts: highest high (price above = failed)
+    #      Longs: lowest low (price below = failed)
+    #   2. After forward window, race exit vs stop breach:
+    #      Shorts: close > stop → LOSS, exit fires → WIN
+    #      Longs: close < stop → LOSS, exit fires above entry zone high → WIN
+    #   3. End of data without either → WIN
+    #   4. Example clusters → WIN regardless
+    print(f"\n  Classifying clusters (stop + exit race, match distance={forward_window})...")
     tcache = {}
     prev_tk = None
     n_win = 0
@@ -2741,22 +2742,39 @@ def _gather_raw_signal_clusters(setup_type):
                 continue
 
             highs = df["high"].values
+            lows = df["low"].values
             closes = df["close"].values
 
-            # Step 1: highest high across all signal bars in cluster
-            cluster_high = max(float(highs[bi]) for bi in all_bar_idxs if bi < len(highs))
-
-            # Step 2: from rightmost bar, look forward by forward_window, find max high → ceiling
+            # Step 1: Compute direction-aware stop level from signal + entry window
+            # Shorts: stop = highest high (price above entry zone = failed)
+            # Longs:  stop = lowest low (price below entry zone = failed)
             fw_end = min(bar_idx + forward_window, len(df) - 1)
-            if fw_end > bar_idx:
-                entry_window_high = float(np.max(highs[bar_idx + 1:fw_end + 1]))
-                ceiling = max(cluster_high, entry_window_high)
-            else:
-                ceiling = cluster_high
 
-            c["ceiling"] = round(ceiling, 4)
+            if direction == "short":
+                cluster_extreme = max(float(highs[bi]) for bi in all_bar_idxs if bi < len(highs))
+                if fw_end > bar_idx:
+                    window_extreme = float(np.max(highs[bar_idx + 1:fw_end + 1]))
+                    stop_level = max(cluster_extreme, window_extreme)
+                else:
+                    stop_level = cluster_extreme
+            else:  # long
+                cluster_extreme = min(float(lows[bi]) for bi in all_bar_idxs if bi < len(lows))
+                if fw_end > bar_idx:
+                    window_extreme = float(np.min(lows[bar_idx + 1:fw_end + 1]))
+                    stop_level = min(cluster_extreme, window_extreme)
+                else:
+                    stop_level = cluster_extreme
 
-            # Step 3: after forward window, race exit vs ceiling breach
+            c["stop_level"] = round(stop_level, 4)
+            # Also store the entry zone high/low for win classification (longs need high)
+            if direction == "long":
+                if fw_end > bar_idx:
+                    entry_zone_high = float(np.max(highs[bar_idx:fw_end + 1]))
+                else:
+                    entry_zone_high = float(highs[bar_idx])
+                c["entry_zone_high"] = round(entry_zone_high, 4)
+
+            # Step 2: after forward window, race exit vs stop breach
             scan_start = fw_end + 1
             remaining = len(df) - scan_start
             if remaining < 1:
@@ -2769,17 +2787,17 @@ def _gather_raw_signal_clusters(setup_type):
             es = cdata[:, exit_col]
             classified = False
             for f_i in range(scan_start, len(df)):
-                # Check ceiling breach (close above ceiling for shorts)
-                if direction == "short" and float(closes[f_i]) > ceiling:
+                # Check stop breach
+                if direction == "short" and float(closes[f_i]) > stop_level:
                     c["classification"] = "AUTO_LOSS"
-                    c["classification_reason"] = "ceiling_breach"
+                    c["classification_reason"] = "stop_breach"
                     c["breach_bar"] = f_i - bar_idx
                     n_loss += 1
                     classified = True
                     break
-                elif direction == "long" and float(closes[f_i]) < ceiling:
+                elif direction == "long" and float(closes[f_i]) < stop_level:
                     c["classification"] = "AUTO_LOSS"
-                    c["classification_reason"] = "ceiling_breach"
+                    c["classification_reason"] = "stop_breach"
                     c["breach_bar"] = f_i - bar_idx
                     n_loss += 1
                     classified = True
@@ -2788,23 +2806,37 @@ def _gather_raw_signal_clusters(setup_type):
                 # Check exit condition
                 v = es[f_i]
                 if not np.isnan(v):
+                    exit_fired = False
                     if exit_dir in (">=", "above") and v >= exit_thresh:
-                        c["classification"] = "AUTO_WIN"
-                        c["classification_reason"] = "exit_fired"
-                        c["exit_bar"] = f_i - bar_idx
-                        n_win += 1
-                        classified = True
-                        break
+                        exit_fired = True
                     elif exit_dir in ("<=", "below") and v <= exit_thresh:
-                        c["classification"] = "AUTO_WIN"
-                        c["classification_reason"] = "exit_fired"
+                        exit_fired = True
+
+                    if exit_fired:
                         c["exit_bar"] = f_i - bar_idx
-                        n_win += 1
+                        exit_close = float(closes[f_i])
+
+                        if direction == "short":
+                            # Short: exit fired, price is below entry — win
+                            c["classification"] = "AUTO_WIN"
+                            c["classification_reason"] = "exit_fired"
+                            n_win += 1
+                        else:
+                            # Long: exit must fire ABOVE entry zone high to be a win
+                            if exit_close > entry_zone_high:
+                                c["classification"] = "AUTO_WIN"
+                                c["classification_reason"] = "exit_fired"
+                                n_win += 1
+                            else:
+                                c["classification"] = "AUTO_LOSS"
+                                c["classification_reason"] = "exit_below_entry"
+                                n_loss += 1
+
                         classified = True
                         break
 
             if not classified:
-                # Never breached ceiling, exit never fired — setup held
+                # Never breached stop, exit never fired — setup held
                 c["classification"] = "AUTO_WIN"
                 c["classification_reason"] = "held_to_end"
                 n_win += 1
@@ -3248,19 +3280,38 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
 
     print(f"  {len(example_ranges)} expressions with valid ranges across all {len(win_dfs)} winners (exact min/max, no margin)")
 
-    # ── Build loser matrix from expr cache (vectorized) ──
+    # ── Build loser matrix from expr cache (candidate columns only) ──
+    # Only build columns for expressions with valid winner ranges.
+    # This cuts RAM in half (e.g. 7,419 columns vs 15,805) since the
+    # discarded columns can never be used as refinement conditions.
     print(f"\n  Building loser matrix...")
     t_lm = time.time()
     cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
     expr_names = [e["name"] for e in all_expressions]
-    expr_col_map = [cache_name_to_idx.get(n) for n in expr_names]
 
-    # Build vectorized column remapping array
-    valid_cache_cols = np.array(
-        [c if c is not None else -1 for c in expr_col_map], dtype=np.int32)
-    has_mapping = valid_cache_cols >= 0
-    mapped_our_indices = np.where(has_mapping)[0]
-    mapped_cache_indices = valid_cache_cols[has_mapping]
+    # Determine candidate expressions first (have valid winner ranges)
+    candidate_indices = []
+    for i, name in enumerate(expr_names):
+        if name in example_ranges:
+            candidate_indices.append(i)
+
+    candidate_names = [expr_names[i] for i in candidate_indices]
+    candidate_categories = [all_expressions[i].get("category", "unknown") for i in candidate_indices]
+    candidate_ranges = {name: example_ranges[name] for name in candidate_names if name in example_ranges}
+    n_cand = len(candidate_indices)
+    print(f"  Candidates: {n_cand} expressions with valid winner ranges")
+
+    # Build column mapping: candidate index → expr cache column
+    cand_expr_col_map = []
+    for ci in candidate_indices:
+        name = expr_names[ci]
+        cand_expr_col_map.append(cache_name_to_idx.get(name))
+
+    valid_cand_cache_cols = np.array(
+        [c if c is not None else -1 for c in cand_expr_col_map], dtype=np.int32)
+    has_mapping = valid_cand_cache_cols >= 0
+    mapped_cand_indices = np.where(has_mapping)[0]
+    mapped_cache_indices = valid_cand_cache_cols[has_mapping]
 
     # Build reverse lookup: (ticker, bar_idx) → losing cluster index
     _bar_to_cluster = {}
@@ -3268,9 +3319,9 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
         for (tk, bi) in cluster_bars:
             _bar_to_cluster[(tk, bi)] = ci
 
-    # Pre-allocate output arrays — we know the upper bound is total whitelist bars
+    # Pre-allocate output — only candidate columns, not all 15,805
     total_bars = sum(len(v) for v in loser_whitelist.values())
-    loser_matrix = np.full((total_bars, len(all_expressions)), np.nan, dtype=np.float32)
+    candidate_values = np.full((total_bars, n_cand), np.nan, dtype=np.float32)
     loser_dates = []
     loser_tickers = []
     row_cluster_ids = []  # >=0 = losing cluster index, -1 = winning leftward bar
@@ -3286,15 +3337,15 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
         n_cache_cols = data.shape[1]
         # Filter column mapping to what exists in this ticker's cache
         col_mask = mapped_cache_indices < n_cache_cols
-        our_idx = mapped_our_indices[col_mask]
+        cand_idx = mapped_cand_indices[col_mask]
         cache_idx = mapped_cache_indices[col_mask]
 
         for bar_idx in bar_indices:
             if bar_idx >= len(data):
                 skipped += 1
                 continue
-            # Vectorized row extraction — one numpy fancy index instead of 15K Python iterations
-            loser_matrix[row_idx, our_idx] = data[bar_idx, cache_idx]
+            # Vectorized row extraction — only candidate columns
+            candidate_values[row_idx, cand_idx] = data[bar_idx, cache_idx]
             loser_dates.append(str(dates[bar_idx])[:10])
             loser_tickers.append(ticker)
             row_cluster_ids.append(_bar_to_cluster.get((ticker, bar_idx), -1))
@@ -3305,23 +3356,10 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
         return None
 
     # Trim pre-allocated matrix to actual row count
-    loser_matrix = loser_matrix[:row_idx]
-    print(f"  Loser matrix: {loser_matrix.shape[0]} bars x {loser_matrix.shape[1]} expressions ({time.time()-t_lm:.1f}s)")
+    candidate_values = candidate_values[:row_idx]
+    print(f"  Loser matrix: {candidate_values.shape[0]} bars x {candidate_values.shape[1]} candidate expressions ({time.time()-t_lm:.1f}s)")
     if skipped:
         print(f"  Skipped {skipped} loser bars (not in cache)")
-
-    # ── Filter to candidate expressions (have valid winner ranges) ──
-    candidate_indices = []
-    for i, name in enumerate(expr_names):
-        if name in example_ranges:
-            candidate_indices.append(i)
-
-    candidate_names = [expr_names[i] for i in candidate_indices]
-    candidate_categories = [all_expressions[i].get("category", "unknown") for i in candidate_indices]
-    candidate_values = loser_matrix[:, candidate_indices]
-    candidate_ranges = {name: example_ranges[name] for name in candidate_names if name in example_ranges}
-
-    print(f"  Candidates: {len(candidate_indices)} expressions with valid winner ranges")
 
     # ── Run cluster-aware beam search ──
     print(f"\n  Running cluster-aware beam search...")
