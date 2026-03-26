@@ -610,6 +610,7 @@ class FlowchartCanvas(QWidget):
     Two feedback loops drawn with dashed arcs
     """
     node_clicked = Signal(str)
+    card_expanded = Signal(bool)  # True when a card opens, False when all closed
 
     NW, NH = 210, 72  # fallback minimums
     COL_GAP = 120
@@ -811,6 +812,7 @@ class FlowchartCanvas(QWidget):
             if nid in self._detail_widgets:
                 self._detail_widgets[nid].setVisible(True)
             self._anim_timer.start()
+            self.card_expanded.emit(True)
 
     def _anim_step(self):
         """Animate expand/collapse one frame — both dimensions."""
@@ -841,6 +843,7 @@ class FlowchartCanvas(QWidget):
                 if self._expanded_id in self._detail_widgets:
                     self._detail_widgets[self._expanded_id].setVisible(False)
                 self._expanded_id = None
+                self.card_expanded.emit(False)
             self._layout()
             self._position_detail()
             self.update()
@@ -1435,6 +1438,7 @@ class ScanTuningWorkspace(QFrame):
     # ── Data loading ──
     def set_setup(self, setup):
         self._setup = setup
+        self._spy_chart._setup = setup
 
     def showEvent(self, ev):
         super().showEvent(ev)
@@ -2265,7 +2269,7 @@ class ExamplesWorkspace(QFrame):
                 continue
             candles = _prepare_candles(tk, ed, lookback=80, forward=40)
             if candles:
-                exit_dt = _compute_exit_date(candles, ed)
+                exit_dt = _compute_exit_date(candles, ed, setup=self._setup)
                 profit_dt = getattr(self, "_profit_exit_lookup", {}).get("%s_%s" % (tk, ed))
                 chart.set_data(candles, ed, exit_date=exit_dt, profit_exit_date=profit_dt)
             chart._deferred_ticker = ""
@@ -2502,12 +2506,42 @@ def _compute_sma(data, period):
     return result
 
 
-def _compute_exit_date(candles, entry_date):
-    """Find exit date by applying the DTSS exit condition to OHLCV data.
-    Exit condition: slope_xavgc21_off7_adr14 <= -1.128826
-    i.e. (EMA21[i] - EMA21[i-7]) / ADR14[i] <= -1.128826
-    Scans forward from entry bar. Returns date string or None.
+_exit_condition_cache = {}  # setup -> (expression, direction, threshold) or None
+
+def _get_exit_condition(setup):
+    """Load the top exit condition from signal_exit_{setup}.json. Cached per setup."""
+    if setup in _exit_condition_cache:
+        return _exit_condition_cache[setup]
+    exit_path = REPO_ROOT / "data" / "signal_exit_grind" / ("signal_exit_%s.json" % setup)
+    result = None
+    if exit_path.exists():
+        try:
+            data = json.loads(exit_path.read_text())
+            conds = data.get("top_conditions", [])
+            if conds:
+                c = conds[0]
+                result = (c.get("expression", ""), c.get("direction", ""), c.get("threshold", 0))
+        except Exception:
+            pass
+    _exit_condition_cache[setup] = result
+    return result
+
+def _compute_exit_date(candles, entry_date, setup=None):
+    """Find exit date by applying the exit condition from the exit grind output.
+    Reads condition from signal_exit_{setup}.json. Currently only supports
+    the slope_xavgc21_off7_adr14 expression inline; returns None for other
+    expressions (the exit dates are already in filtered_{setup}.json anyway).
     """
+    if not setup:
+        return None
+    cond = _get_exit_condition(setup)
+    if not cond:
+        return None
+    expr, direction, threshold = cond
+    # Only support the slope expression inline — other expressions need the expr cache
+    if expr != "slope_xavgc21_off7_adr14":
+        return None
+
     closes = [c["close"] for c in candles]
     ranges = [c["high"] - c["low"] for c in candles]
     ema21 = _compute_ema(closes, 21)
@@ -2532,7 +2566,9 @@ def _compute_exit_date(candles, entry_date):
         if e21_now is None or e21_ago is None or adr is None or adr < 0.001:
             continue
         slope = (e21_now - e21_ago) / adr
-        if slope <= -1.128826:
+        if direction == "<=" and slope <= threshold:
+            return candles[i]["date"]
+        elif direction == ">=" and slope >= threshold:
             return candles[i]["date"]
     return None
 
@@ -2691,6 +2727,7 @@ class SpyBubbleChart(QWidget):
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumHeight(200)
+        self._setup = None
 
         self._candles = []
         self._date_index = {}     # date_str -> candle index
@@ -2778,7 +2815,7 @@ class SpyBubbleChart(QWidget):
             return self._candle_cache[key]
         # Load fresh — short lookback/forward for thumbnail
         candles = _prepare_candles(ticker, date, lookback=80, forward=40)
-        exit_date = _compute_exit_date(candles, date) if candles else None
+        exit_date = _compute_exit_date(candles, date, setup=self._setup) if candles else None
         entry = (candles, exit_date)
         self._candle_cache[key] = entry
         self._candle_cache_order.append(key)
@@ -4349,6 +4386,7 @@ class VettingWorkspace(QFrame):
 # ============================================================
 
 class PipelineTab(QWidget):
+    card_expanded = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -4364,6 +4402,7 @@ class PipelineTab(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._canvas = FlowchartCanvas()
         self._canvas.node_clicked.connect(self._on_node_click)
+        self._canvas.card_expanded.connect(self._fwd_card_expanded)
 
         # Create detail widgets for ALL expandable nodes
         for nd in FLOW_NODES:
@@ -4404,6 +4443,9 @@ class PipelineTab(QWidget):
         win = self.window()
         if hasattr(win, "stop_pipeline_step"):
             win.stop_pipeline_step(step_id)
+
+    def _fwd_card_expanded(self, expanded):
+        self.card_expanded.emit(expanded)
 
     def get_node(self, step_id):
         for gid, subs in GRINDER_SUB_STEPS.items():
@@ -4554,11 +4596,13 @@ class ScanPerfectWindow(QMainWindow):
         add_setup_btn.setToolTip("Create new setup type")
         add_setup_btn.clicked.connect(self._add_setup_dialog)
         tl.addWidget(add_setup_btn)
+        self._add_setup_btn = add_setup_btn
 
         ml.addWidget(top)
 
         # Pipeline flowchart is the entire UI
         self._pipeline = PipelineTab()
+        self._pipeline.card_expanded.connect(self._on_card_expanded)
         ml.addWidget(self._pipeline)
 
         # Init
@@ -4586,6 +4630,10 @@ class ScanPerfectWindow(QMainWindow):
             self._setup_type = data
             self._pipeline.set_setup(data)
             self._pipeline.refresh()
+
+    def _on_card_expanded(self, expanded):
+        self._setup_combo.setDisabled(expanded)
+        self._add_setup_btn.setDisabled(expanded)
 
     def _add_setup_dialog(self):
         dlg = QDialog(self)

@@ -438,7 +438,8 @@ def generate_chart_png(df, ticker, entry_date, at_entry=False, setup_type=None):
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
     df = add_indicators(df)
-    cfg = {"dtss": {"at_entry_before": 100, "default_before": 100, "default_after": 30, "min_total": 130}}.get(setup_type, {})
+    cfg = {"dtss": {"at_entry_before": 100, "default_before": 100, "default_after": 30, "min_total": 130}}.get(
+        setup_type, {"at_entry_before": 100, "default_before": 100, "default_after": 30, "min_total": 130})
     at_entry_before = cfg.get("at_entry_before", 50)
     default_before = cfg.get("default_before", 30)
     default_after = cfg.get("default_after", 30)
