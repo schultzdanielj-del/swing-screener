@@ -201,29 +201,39 @@ def compute_example_ranges(example_dfs, expressions, expr_cache=None):
     mapped_our_indices = np.where(has_mapping)[0]
     mapped_cache_indices = valid_cache_cols[has_mapping]
 
+    # Threaded I/O: overlap disk reads for expr cache .npz files
+    # Each ticker's .npz is loaded from disk — threads pipeline the reads
+    from concurrent.futures import ThreadPoolExecutor as _ThreadPool
+
+    def _load_example_row(args):
+        """Load one example's scan bar values from expr cache."""
+        i, ticker, scan_idx = args
+        dates, data = expr_cache.get_ticker(ticker)
+        if dates is None or data is None:
+            return i, ticker, scan_idx, None, f"not in expr cache"
+        if scan_idx >= len(data):
+            return i, ticker, scan_idx, None, f"scan_idx {scan_idx} >= {len(data)}"
+        return i, ticker, scan_idx, data[scan_idx, :], None
+
+    # Build work list
+    work = []
     for i, ex in enumerate(example_dfs):
         if ex["scan_idx"] is None:
             continue
-        ticker = ex["ticker"]
-        scan_idx = ex["scan_idx"]
+        work.append((i, ex["ticker"], ex["scan_idx"]))
 
-        dates, data = expr_cache.get_ticker(ticker)
-        if dates is None or data is None:
-            raise RuntimeError(f"{ticker}: not in expr cache — cannot compute example ranges")
-        if scan_idx >= len(data):
-            raise RuntimeError(f"{ticker}: scan_idx {scan_idx} >= cached bars {len(data)}")
-
-        # Extract scan bar row and remap columns in one numpy operation
-        cached_row = data[scan_idx, :]
-        n_cache_cols = len(cached_row)
-        # Filter to columns that exist in this ticker's cache
-        col_mask = mapped_cache_indices < n_cache_cols
-        our_idx = mapped_our_indices[col_mask]
-        cache_idx = mapped_cache_indices[col_mask]
-        vals = cached_row[cache_idx]
-        # Only assign non-NaN values
-        valid_mask = ~np.isnan(vals)
-        example_matrix[i, our_idx[valid_mask]] = vals[valid_mask]
+    # Load in parallel (I/O bound — threads overlap disk reads)
+    with _ThreadPool(max_workers=4) as pool:
+        for i, ticker, scan_idx, cached_row, err in pool.map(_load_example_row, work):
+            if err is not None:
+                raise RuntimeError(f"{ticker}: {err} — cannot compute example ranges")
+            n_cache_cols = len(cached_row)
+            col_mask = mapped_cache_indices < n_cache_cols
+            our_idx = mapped_our_indices[col_mask]
+            cache_idx = mapped_cache_indices[col_mask]
+            vals = cached_row[cache_idx]
+            valid_mask = ~np.isnan(vals)
+            example_matrix[i, our_idx[valid_mask]] = vals[valid_mask]
 
     n_valid_total = int(np.sum(~np.isnan(example_matrix)))
     print(f"  Loaded from expr cache: {n_valid_total:,} values "
@@ -3320,28 +3330,36 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
     skipped = 0
     row_idx = 0
 
-    for ticker, bar_indices in loser_whitelist.items():
+    # Threaded I/O: overlap disk reads for loser matrix
+    from concurrent.futures import ThreadPoolExecutor as _ThreadPool2
+
+    def _load_loser_ticker(ticker):
+        """Load one ticker's expr cache data."""
         dates, data = expr_cache.get_ticker(ticker)
-        if dates is None:
-            skipped += len(bar_indices)
-            continue
+        return ticker, dates, data
 
-        n_cache_cols = data.shape[1]
-        # Filter column mapping to what exists in this ticker's cache
-        col_mask = mapped_cache_indices < n_cache_cols
-        cand_idx = mapped_cand_indices[col_mask]
-        cache_idx = mapped_cache_indices[col_mask]
-
-        for bar_idx in bar_indices:
-            if bar_idx >= len(data):
-                skipped += 1
+    ticker_list = list(loser_whitelist.keys())
+    with _ThreadPool2(max_workers=4) as pool:
+        for ticker, dates, data in pool.map(_load_loser_ticker, ticker_list):
+            bar_indices = loser_whitelist[ticker]
+            if dates is None:
+                skipped += len(bar_indices)
                 continue
-            # Vectorized row extraction — only candidate columns
-            candidate_values[row_idx, cand_idx] = data[bar_idx, cache_idx]
-            loser_dates.append(str(dates[bar_idx])[:10])
-            loser_tickers.append(ticker)
-            row_cluster_ids.append(_bar_to_cluster.get((ticker, bar_idx), -1))
-            row_idx += 1
+
+            n_cache_cols = data.shape[1]
+            col_mask = mapped_cache_indices < n_cache_cols
+            cand_idx = mapped_cand_indices[col_mask]
+            cache_idx_local = mapped_cache_indices[col_mask]
+
+            for bar_idx in bar_indices:
+                if bar_idx >= len(data):
+                    skipped += 1
+                    continue
+                candidate_values[row_idx, cand_idx] = data[bar_idx, cache_idx_local]
+                loser_dates.append(str(dates[bar_idx])[:10])
+                loser_tickers.append(ticker)
+                row_cluster_ids.append(_bar_to_cluster.get((ticker, bar_idx), -1))
+                row_idx += 1
 
     if row_idx == 0:
         print("  ABORT: No loser bars loaded from expr cache.")
