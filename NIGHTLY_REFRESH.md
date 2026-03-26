@@ -70,15 +70,17 @@ Each ticker makes ~15,681 individual `compute_series()` Python function calls, e
 **Fix 1: Eliminate serial I/O bottleneck (commit `1f54e5e`)** ✅ PUSHED TO v2-consensus
 - Old append path: worker computes full series → returns only new rows → main thread serially loads old .npz, concatenates, saves. The serial load/concat/save was 3.2s × 4,100 tickers = 219 min of main-thread I/O.
 - Fix: Both append and new-ticker work use `_compute_ticker_full` with the same chunked submission pattern as `build_full()`. Worker does full recompute, returns complete result, main thread saves directly. No load, no concat.
-- Result: Reduced from 2+ hours to ~109 minutes. The I/O bottleneck was real but compute is still ~91 min.
+- Result: Reduced from 2+ hours to ~109 minutes (318s for first 200 tickers at 15 workers). The I/O bottleneck was real but compute is still ~91 min.
 
 **Fix 2: Vectorize Python for-loop bottlenecks (commit `427d3c1`)** ✅ PUSHED TO v2-consensus
-- `trendline_deviation`: Python for-loop over every bar → numpy convolution. 215x faster per call.
+- `trendline_deviation`: Python for-loop over every bar → numpy convolution. 215x faster per call (benchmarked in sandbox).
 - `channel_position`: Same vectorization. Similar speedup.
-- `CCI` (both `compute_on_series` and `profiling_engine`): `.apply(lambda)` → `sliding_window_view`. 19x faster per call.
+- `CCI` (both `compute_on_series` and `profiling_engine`): `.apply(lambda)` → `sliding_window_view`. 19x faster per call (benchmarked in sandbox).
 - These 3 ops affect 404 expressions per ticker (60 trendline/channel + 284 CCI).
-- Result: ~12% faster (279s vs 318s for first 200 tickers). Not enough.
+- Result on Dan's machine: 279s for first 200 tickers (vs 318s before). ~12% faster. **Not enough.**
+- Projected total: ~91 minutes at 15 workers. Still way over 30-minute target.
 - All outputs verified numerically identical to originals (max diff < 1e-10).
+- Produces numpy RuntimeWarnings (divide by zero, invalid value in subtract) in terminal — these are cosmetic, not errors. 0 tickers failed. The warnings come from NaN/zero edge cases in OHLCV data that were always present but previously swallowed silently.
 
 **What was tried on v2 (not v2-consensus) and failed:**
 - Commit `9eadbcd` (2026-03-25): "chunked submission for expr cache append to prevent memory blowup" — buggy, never ran successfully.
@@ -184,6 +186,8 @@ The consensus pipeline orchestrator (`scripts/run_consensus_pipeline.py`) checks
 The bat file (`nightly_refresh.bat`) writes this line after `nightly.py` finishes. The nightly needs to complete before the consensus pipeline's 8-10 hour overnight run starts.
 
 **Also noted:** `pyramid_grinder.py` line 109 still loads examples from Railway API (`requests.get(f"{API_BASE}/api/examples/{setup_type}")`). This is NOT a nightly issue — it's a grinder dependency. The refinement grinder already loads from local SQLite. Separate fix needed.
+
+**Cannot run consensus pipeline while nightly is running.** The consensus pipeline checks for "Nightly refresh complete" in the log, AND the grinders read from the expr cache .npz files while the nightly append is actively writing them. Running both simultaneously = corrupted reads.
 
 ---
 
