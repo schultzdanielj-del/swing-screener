@@ -193,6 +193,14 @@ def compute_example_ranges(example_dfs, expressions, expr_cache=None):
     for j, name in enumerate(expr_name_list):
         expr_to_cache_col.append(cache_name_to_idx.get(name))
 
+    # Build vectorized column remapping array once
+    # valid_cache_cols[j] = cache column index for expression j, or -1 if unmapped
+    valid_cache_cols = np.array(
+        [c if c is not None else -1 for c in expr_to_cache_col], dtype=np.int32)
+    has_mapping = valid_cache_cols >= 0
+    mapped_our_indices = np.where(has_mapping)[0]
+    mapped_cache_indices = valid_cache_cols[has_mapping]
+
     for i, ex in enumerate(example_dfs):
         if ex["scan_idx"] is None:
             continue
@@ -205,13 +213,17 @@ def compute_example_ranges(example_dfs, expressions, expr_cache=None):
         if scan_idx >= len(data):
             raise RuntimeError(f"{ticker}: scan_idx {scan_idx} >= cached bars {len(data)}")
 
-        # Extract the scan bar row and map to our expression order
+        # Extract scan bar row and remap columns in one numpy operation
         cached_row = data[scan_idx, :]
-        for j, cache_col in enumerate(expr_to_cache_col):
-            if cache_col is not None and cache_col < len(cached_row):
-                val = cached_row[cache_col]
-                if not np.isnan(val):
-                    example_matrix[i, j] = val
+        n_cache_cols = len(cached_row)
+        # Filter to columns that exist in this ticker's cache
+        col_mask = mapped_cache_indices < n_cache_cols
+        our_idx = mapped_our_indices[col_mask]
+        cache_idx = mapped_cache_indices[col_mask]
+        vals = cached_row[cache_idx]
+        # Only assign non-NaN values
+        valid_mask = ~np.isnan(vals)
+        example_matrix[i, our_idx[valid_mask]] = vals[valid_mask]
 
     n_valid_total = int(np.sum(~np.isnan(example_matrix)))
     print(f"  Loaded from expr cache: {n_valid_total:,} values "
@@ -1100,25 +1112,27 @@ class ClusterAwareRefinementSearch:
               f"{n_losing_clusters} losing clusters, "
               f"{len(self.valid_cands)} useful candidates out of {self.n_cands}")
 
-        # ── Pre-compute per-candidate surviving cluster sets ──
-        # For each valid candidate, compute which clusters survive when that
-        # candidate's filter is applied. A cluster survives if ANY of its
-        # member rows pass the candidate's range check.
-        # This converts the hot-loop scoring from O(n_rows × n_clusters)
-        # numpy matrix ops to O(1) set intersections.
+        # ── Pre-compute per-candidate surviving cluster sets (vectorized) ──
+        # Matrix multiply: cand_passes (n_valid × n_rows) @ cluster_membership (n_rows × n_clusters)
+        # Result: (n_valid × n_clusters) — nonzero means that cluster has at least one surviving row.
+        # Then convert each row to a frozenset of surviving cluster indices.
         t_pre = time.time()
         all_clusters = frozenset(range(n_losing_clusters))
         self.cand_surviving_clusters = {}
 
-        for ci in self.valid_cands:
-            # For each cluster, check if ANY member row passes this candidate
-            surviving = set()
-            cand_pass_row = self.cand_passes[ci]  # bool array (n_rows,)
-            for cl_idx in range(n_losing_clusters):
-                member_rows = self.cluster_row_indices[cl_idx]
-                if len(member_rows) > 0 and np.any(cand_pass_row[member_rows]):
-                    surviving.add(cl_idx)
-            self.cand_surviving_clusters[ci] = frozenset(surviving)
+        if self.valid_cands and n_losing_clusters > 0:
+            # Extract valid candidate pass rows as a contiguous matrix
+            valid_indices = np.array(self.valid_cands, dtype=np.int32)
+            valid_passes = self.cand_passes[valid_indices]  # (n_valid, n_rows) bool
+
+            # Matrix multiply: bool @ bool → int. Nonzero = cluster has surviving rows.
+            # Use float32 to avoid bool multiplication issues, then threshold
+            survival_matrix = valid_passes.astype(np.float32) @ self.cluster_membership.astype(np.float32)
+            # survival_matrix[i, j] > 0 means candidate i leaves cluster j alive
+
+            for idx, ci in enumerate(self.valid_cands):
+                surviving_mask = survival_matrix[idx] > 0
+                self.cand_surviving_clusters[ci] = frozenset(np.where(surviving_mask)[0].tolist())
 
         # Also store the full set for baseline
         self.all_clusters = all_clusters
@@ -2495,8 +2509,8 @@ def _gather_raw_signal_clusters(setup_type):
     from signal_filter import scan_all_signals as _scan_all, _build_slim_cache
 
     slim = _build_slim_cache(universe_cache)
-    del universe_cache
-    gc.collect()
+    # Keep universe_cache — needed for exit classification below
+    # (previously deleted here and reloaded, wasting ~1s)
 
     # ── Scan ──
     n_workers = max(cpu_count() - 1, 1)
@@ -2592,9 +2606,7 @@ def _gather_raw_signal_clusters(setup_type):
         return False, None, None
 
     print(f"\n  Applying exit condition on rightmost bars...")
-
-    # Reload 5yr cache for exit evaluation
-    universe_cache = load_5yr_cache()
+    # universe_cache already loaded above (not freed after slim build)
 
     exit_expr = exit_cond["expression"]
     exit_thresh = exit_cond["threshold"]
@@ -3255,17 +3267,19 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
 
     print(f"  {len(example_ranges)} expressions with valid ranges across all {len(win_dfs)} winners (exact min/max, no margin)")
 
-    # ── Build loser matrix from expr cache ──
+    # ── Build loser matrix from expr cache (vectorized) ──
     print(f"\n  Building loser matrix...")
+    t_lm = time.time()
     cache_name_to_idx = dict(expr_cache._expr_name_to_idx)
     expr_names = [e["name"] for e in all_expressions]
     expr_col_map = [cache_name_to_idx.get(n) for n in expr_names]
 
-    loser_rows = []
-    loser_dates = []
-    loser_tickers = []
-    row_cluster_ids = []  # >=0 = losing cluster index, -1 = winning leftward bar
-    skipped = 0
+    # Build vectorized column remapping array
+    valid_cache_cols = np.array(
+        [c if c is not None else -1 for c in expr_col_map], dtype=np.int32)
+    has_mapping = valid_cache_cols >= 0
+    mapped_our_indices = np.where(has_mapping)[0]
+    mapped_cache_indices = valid_cache_cols[has_mapping]
 
     # Build reverse lookup: (ticker, bar_idx) → losing cluster index
     _bar_to_cluster = {}
@@ -3273,30 +3287,45 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3):
         for (tk, bi) in cluster_bars:
             _bar_to_cluster[(tk, bi)] = ci
 
+    # Pre-allocate output arrays — we know the upper bound is total whitelist bars
+    total_bars = sum(len(v) for v in loser_whitelist.values())
+    loser_matrix = np.full((total_bars, len(all_expressions)), np.nan, dtype=np.float32)
+    loser_dates = []
+    loser_tickers = []
+    row_cluster_ids = []  # >=0 = losing cluster index, -1 = winning leftward bar
+    skipped = 0
+    row_idx = 0
+
     for ticker, bar_indices in loser_whitelist.items():
         dates, data = expr_cache.get_ticker(ticker)
         if dates is None:
             skipped += len(bar_indices)
             continue
+
+        n_cache_cols = data.shape[1]
+        # Filter column mapping to what exists in this ticker's cache
+        col_mask = mapped_cache_indices < n_cache_cols
+        our_idx = mapped_our_indices[col_mask]
+        cache_idx = mapped_cache_indices[col_mask]
+
         for bar_idx in bar_indices:
             if bar_idx >= len(data):
                 skipped += 1
                 continue
-            row = np.full(len(all_expressions), np.nan, dtype=np.float32)
-            for j, cache_col in enumerate(expr_col_map):
-                if cache_col is not None and cache_col < data.shape[1]:
-                    row[j] = data[bar_idx, cache_col]
-            loser_rows.append(row)
+            # Vectorized row extraction — one numpy fancy index instead of 15K Python iterations
+            loser_matrix[row_idx, our_idx] = data[bar_idx, cache_idx]
             loser_dates.append(str(dates[bar_idx])[:10])
             loser_tickers.append(ticker)
             row_cluster_ids.append(_bar_to_cluster.get((ticker, bar_idx), -1))
+            row_idx += 1
 
-    if not loser_rows:
+    if row_idx == 0:
         print("  ABORT: No loser bars loaded from expr cache.")
         return None
 
-    loser_matrix = np.array(loser_rows, dtype=np.float32)
-    print(f"  Loser matrix: {loser_matrix.shape[0]} bars x {loser_matrix.shape[1]} expressions")
+    # Trim pre-allocated matrix to actual row count
+    loser_matrix = loser_matrix[:row_idx]
+    print(f"  Loser matrix: {loser_matrix.shape[0]} bars x {loser_matrix.shape[1]} expressions ({time.time()-t_lm:.1f}s)")
     if skipped:
         print(f"  Skipped {skipped} loser bars (not in cache)")
 
