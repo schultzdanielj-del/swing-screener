@@ -5,10 +5,10 @@ Usage:
     python local_runner/nightly.py
 
 What it does (in order):
-    1. Checks yfinance (SPY) for new trading data since last cache update
-       - If cache is already current → stops here, prints "up to date"
-    2. Rebuilds tradable_universe table from existing 5yr cache data
-    3. Appends new bars to local 5yr OHLCV cache (fetches from yfinance)
+    1. Triggers Railway /api/universe/append-daily (fetches missing trading days)
+       - If DB is already up to date → stops here, prints "up to date"
+    2. Refreshes local daily OHLCV cache (pulls from Railway)
+    3. Refreshes local 5yr OHLCV cache (pulls from Railway)
     4. Appends expression series cache (new bars + new tickers)
     5. Rebuilds D1 universe matrix
     6. Refreshes earnings dates
@@ -49,73 +49,76 @@ def step_header(num, total, title):
     print(f"{'─'*60}")
 
 
-TOTAL_STEPS = 9
+def step_1_railway_append():
+    """Trigger Railway to append missing trading days."""
+    step_header(1, 9, "Railway — Append Missing Days")
 
+    print("  Calling POST /api/universe/append-daily ...")
+    print("  (This fetches new bars from yfinance for all tradable tickers)")
+    print("  (May take 5-15 minutes for a full trading day)")
+    print()
 
-def step_1_freshness_check():
-    """Check if yfinance has new trading data since last 5yr cache update."""
-    step_header(1, TOTAL_STEPS, "Freshness Check — yfinance vs local cache")
-
-    import pickle
-    import pandas as pd
-
-    cache_file = os.path.join(LOCAL_DIR, "cache", "universe_ohlcv_5yr.pkl")
-    cache_meta = os.path.join(LOCAL_DIR, "cache", "cache_5yr_meta.txt")
-
-    # Find the last date in the 5yr cache by checking a few tickers
-    cache_last_date = None
-    if os.path.exists(cache_file):
-        try:
-            with open(cache_file, "rb") as f:
-                universe = pickle.load(f)
-            # Sample a few liquid tickers to find latest cached date
-            for probe in ["SPY", "AAPL", "MSFT", "QQQ"]:
-                if probe in universe and len(universe[probe]) > 0:
-                    d = str(universe[probe]["date"].iloc[-1])[:10]
-                    if cache_last_date is None or d > cache_last_date:
-                        cache_last_date = d
-            del universe  # free memory
-            print(f"  Cache last date: {cache_last_date}")
-        except Exception as e:
-            print(f"  ⚠ Could not read cache: {e}")
-    else:
-        print("  No 5yr cache found — will do full build")
-        return True
-
-    if cache_last_date is None:
-        print("  ⚠ Could not determine cache last date — continuing")
-        return True
-
-    # Check what yfinance has available (use SPY as reference)
     try:
-        import yfinance as yf
-        spy = yf.download("SPY", period="5d", progress=False, timeout=15)
-        if spy is None or spy.empty:
-            print("  ⚠ Could not fetch SPY from yfinance — continuing anyway")
-            return True
-        if isinstance(spy.columns, pd.MultiIndex):
-            spy.columns = spy.columns.droplevel(1)
-        yf_last_date = str(spy.index[-1])[:10]
-        print(f"  yfinance last date: {yf_last_date}")
+        r = requests.post(f"{API_BASE}/api/universe/append-daily", timeout=1800)  # 30 min max
+        r.raise_for_status()
+        result = r.json()
+    except requests.exceptions.Timeout:
+        print("  X Request timed out after 30 minutes.")
+        print("  The append may still be running on Railway.")
+        print("  Continuing with cache refreshes using existing data...")
+        return True  # Continue anyway — caches may still benefit from refresh
     except Exception as e:
-        print(f"  ⚠ yfinance check failed: {e}")
-        print("  Continuing with cache refresh anyway...")
-        return True
+        print(f"  X Failed to reach Railway: {e}")
+        print("  Continuing with cache refreshes using existing data...")
+        return True  # Don't block local updates because Railway is flaky
 
-    if cache_last_date >= yf_last_date:
-        print(f"\n  ✓ Cache is current (cache: {cache_last_date}, yfinance: {yf_last_date})")
+    status = result.get("status")
+
+    if status == "up_to_date":
+        db_date = result.get("db_last_date", "?")
+        yf_date = result.get("yf_latest", "?")
+        print(f"  OK Already up to date (DB: {db_date}, yfinance: {yf_date})")
+        print()
         print("  Nothing to do — all data is current.")
-        return False
+        return False  # Signal to stop: no new data
 
-    diff_days = (pd.Timestamp(yf_last_date) - pd.Timestamp(cache_last_date)).days
-    print(f"\n  New data available: {diff_days} calendar day(s) behind")
-    print(f"  Cache: {cache_last_date} → yfinance: {yf_last_date}")
-    return True
+    elif status == "complete":
+        print(f"  OK Append complete!")
+        print(f"    DB was at:       {result.get('db_last_date_was', '?')}")
+        print(f"    Now current to:  {result.get('yf_latest', '?')}")
+        print(f"    Tickers updated: {result.get('tickers_processed', '?')}")
+        print(f"    New rows:        {result.get('new_rows', '?')}")
+        if result.get("failed", 0) > 0:
+            print(f"    Failed:          {result.get('failed')}")
+        if result.get("tradable_rebuilt"):
+            print(f"    Tradable count:  {result.get('tradable_count', '?')}")
+        return True  # New data — continue with cache refreshes
+
+    elif status == "error":
+        print(f"  X Railway append error: {result.get('error', '?')}")
+        print("  Continuing with cache refreshes using existing data...")
+        return True  # Don't block local updates
+
+    else:
+        print(f"  WARNING: Unexpected response: {result}")
+        print("  Continuing with cache refreshes in case data was updated...")
+        return True  # Continue anyway — don't block the whole pipeline
+
+
+def step_2_daily_cache():
+    """Refresh local daily OHLCV cache (300 bars)."""
+    step_header(2, 9, "Local Daily OHLCV Cache")
+
+    from cache_builder import build_cache
+    t0 = time.time()
+    data = build_cache(force=True)
+    elapsed = time.time() - t0
+    print(f"  ✓ {len(data)} tickers cached in {elapsed:.1f}s")
 
 
 def step_3_5yr_cache():
     """Append new bars to local 5yr OHLCV cache. Never rebuilds, never touches old bars."""
-    step_header(3, TOTAL_STEPS, "5yr OHLCV Cache — Append from yfinance")
+    step_header(3, 9, "Local 5yr OHLCV Cache — Append")
 
     from cache_builder import append_5yr_cache
     t0 = time.time()
@@ -124,29 +127,9 @@ def step_3_5yr_cache():
     print(f"  ✓ {len(data)} tickers in cache ({elapsed:.1f}s)")
 
 
-def step_2_tradable_universe():
-    """Rebuild tradable_universe table from fresh 5yr cache data."""
-    step_header(2, TOTAL_STEPS, "Tradable Universe Rebuild")
-
-    try:
-        from scripts.build_tradable import build_tradable_universe
-    except ImportError:
-        try:
-            sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
-            from build_tradable import build_tradable_universe
-        except ImportError:
-            print("  ✗ build_tradable.py not found — skipping")
-            return
-
-    t0 = time.time()
-    count = build_tradable_universe()
-    elapsed = time.time() - t0
-    print(f"  ✓ {count} tradable tickers ({elapsed:.1f}s)")
-
-
 def step_4_expr_cache():
     """Append new bars to expression series cache."""
-    step_header(4, TOTAL_STEPS, "Expression Series Cache — Append")
+    step_header(4, 9, "Expression Series Cache — Append")
 
     cache_dir = os.path.join(LOCAL_DIR, "cache", "expr_series")
     if not os.path.exists(cache_dir):
@@ -163,7 +146,7 @@ def step_4_expr_cache():
 
 def step_5_matrix():
     """Rebuild D1 universe matrix."""
-    step_header(5, TOTAL_STEPS, "Universe Matrix Rebuild")
+    step_header(5, 9, "Universe Matrix Rebuild")
 
     from matrix_builder import get_universe_matrix
 
@@ -178,7 +161,7 @@ def step_5_matrix():
 
 def step_6_earnings():
     """Refresh earnings dates for all tradable tickers."""
-    step_header(6, TOTAL_STEPS, "Earnings Dates Refresh")
+    step_header(6, 9, "Earnings Dates Refresh")
 
     print("  Calling POST /api/universe/refresh-earnings ...")
     print("  (Scrapes Yahoo Finance for all tradable tickers)")
@@ -219,7 +202,7 @@ def step_6_earnings():
 
 def step_7_market_cache():
     """Append new bars to market context cache (266 instruments) and recompute."""
-    step_header(7, TOTAL_STEPS, "Market Context Cache — Append")
+    step_header(7, 9, "Market Context Cache — Append")
 
     try:
         from market_cache_builder import append_new_bars
@@ -235,7 +218,7 @@ def step_7_market_cache():
 
 def step_8_fundamentals():
     """Refresh fundamentals cache — fetch new tickers, periodic full re-fetch."""
-    step_header(8, TOTAL_STEPS, "Fundamentals Cache — Incremental")
+    step_header(8, 9, "Fundamentals Cache — Incremental")
 
     try:
         from scripts.fetch_fundamentals import (
@@ -327,7 +310,7 @@ def step_8_fundamentals():
 
 def step_9_seed_vault():
     """Push seed vault backup to Railway."""
-    step_header(9, TOTAL_STEPS, "Seed Vault — Backup to Railway")
+    step_header(9, 9, "Seed Vault — Backup to Railway")
 
     try:
         from scripts.seed_vault import backup
@@ -349,7 +332,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Nightly data refresh")
     parser.add_argument("--force", action="store_true",
-                        help="Skip freshness check, run all steps regardless")
+                        help="Skip Railway append check, run steps 2-9 regardless")
     args = parser.parse_args()
 
     print(f"\n{'═'*60}")
@@ -360,10 +343,10 @@ def main():
     total_start = time.time()
 
     if args.force:
-        print("\n  --force: skipping freshness check, running all steps")
+        print("\n  --force: skipping Railway append, running steps 2-9")
     else:
-        # Step 1: freshness check (gate — stops if already current)
-        has_new_data = step_1_freshness_check()
+        # Step 1: Railway append (gate — stops if already current)
+        has_new_data = step_1_railway_append()
 
         if not has_new_data:
             print(f"\n{'═'*60}")
@@ -373,7 +356,7 @@ def main():
             return
 
     # Steps 2-9: refresh all local data + backup
-    step_2_tradable_universe()
+    step_2_daily_cache()
     step_3_5yr_cache()
     step_4_expr_cache()
     step_5_matrix()

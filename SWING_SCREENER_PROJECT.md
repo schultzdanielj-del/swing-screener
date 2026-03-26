@@ -58,7 +58,7 @@ scanperfect.py             # PySide6 native desktop app (THE interface)
 local_runner/              # Grinder system
 ├── nightly.py             # 9-step nightly pipeline (4:30pm ET)
 ├── pyramid_grinder.py     # Signal grind + refinement grind (--blackout)
-├── cache_builder.py       # OHLCV cache (5yr, fetches from yfinance)
+├── cache_builder.py       # OHLCV caches (daily + 5yr)
 ├── expr_cache_builder.py  # Expression series cache (~21 GB)
 ├── market_cache_builder.py # 256 instrument expression series
 ├── file_mirror.py         # Railway backup mirror

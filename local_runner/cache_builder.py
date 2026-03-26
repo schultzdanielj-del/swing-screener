@@ -33,23 +33,13 @@ LOOKBACK_5YR = 1260  # ~5 years of trading days
 
 
 def get_tradable_tickers():
-    """Fetch all tickers from local tradable_universe table."""
-    import sqlite3
-    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                           "..", "data", "scanperfect.db")
-    if not os.path.exists(db_path):
-        raise FileNotFoundError(
-            f"Local DB not found at {db_path}. "
-            "Run build_tradable.py first."
-        )
-    conn = sqlite3.connect(db_path, timeout=10)
-    rows = conn.execute(
-        "SELECT ticker FROM tradable_universe ORDER BY ticker"
-    ).fetchall()
-    conn.close()
-    if not rows:
-        raise RuntimeError("tradable_universe table is empty in local DB.")
-    return [r[0] for r in rows]
+    """Fetch all tickers from tradable_universe table."""
+    r = requests.post(f"{API_BASE}/api/query/bulk", json={
+        "sql": "SELECT ticker FROM tradable_universe ORDER BY ticker",
+        "limit": 5000
+    }, timeout=30)
+    r.raise_for_status()
+    return [row["ticker"] for row in r.json()["results"]]
 
 
 def compute_dvol_20d(df):
@@ -188,30 +178,27 @@ def load_cache():
 # ══════════════════════════════════════════════════════════════
 
 def fetch_one_ticker_5yr(ticker):
-    """Fetch ALL OHLCV for a single ticker from yfinance (~8yr history)."""
+    """Fetch ALL OHLCV for a single ticker from Railway. No bar limit."""
     try:
-        import yfinance as yf
-        raw = yf.download(ticker, period="8y", progress=False, timeout=60)
-        if raw is None or raw.empty:
+        sql = (
+            f"SELECT date, open, high, low, close, volume "
+            f"FROM universe_ohlcv WHERE ticker = '{ticker}' "
+            f"ORDER BY date DESC"
+        )
+        r = requests.post(f"{API_BASE}/api/query/bulk", json={
+            "sql": sql, "limit": 10000
+        }, timeout=60)
+        if r.status_code != 200:
             return ticker, None
 
-        df = raw.copy()
-        # Handle MultiIndex columns (newer yfinance versions)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.droplevel(1)
-        # Normalize column names to lowercase
-        df.columns = [c.lower() for c in df.columns]
-        df = df.dropna(subset=["close"])
-        if len(df) == 0:
+        rows = r.json().get("results", [])
+        if not rows:
             return ticker, None
 
-        # Move index (Date) into a column
-        df = df.reset_index()
-        df.rename(columns={df.columns[0]: "date"}, inplace=True)
-        df["date"] = pd.to_datetime(df["date"])
+        df = pd.DataFrame(rows)
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-        df = df[["date", "open", "high", "low", "close", "volume"]]
+        df["date"] = pd.to_datetime(df["date"])
         df = df.sort_values("date").reset_index(drop=True)
         compute_dvol_20d(df)
         return ticker, df
@@ -314,31 +301,26 @@ def load_5yr_cache():
 
 
 def _fetch_ticker_after_date(ticker, after_date):
-    """Fetch OHLCV bars for a ticker after a given date from yfinance."""
+    """Fetch OHLCV bars for a ticker after a given date from Railway."""
     try:
-        import yfinance as yf
-        # yfinance start is inclusive, so add one day to get bars AFTER after_date
-        start = (pd.Timestamp(after_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-        # end is exclusive in yfinance, use tomorrow to include today
-        end = (pd.Timestamp.now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-        raw = yf.download(ticker, start=start, end=end, progress=False, timeout=30)
-        if raw is None or raw.empty:
+        sql = (
+            f"SELECT date, open, high, low, close, volume "
+            f"FROM universe_ohlcv WHERE ticker = '{ticker}' "
+            f"AND date > '{after_date}' "
+            f"ORDER BY date ASC"
+        )
+        r = requests.post(f"{API_BASE}/api/query/bulk", json={
+            "sql": sql, "limit": 500
+        }, timeout=30)
+        if r.status_code != 200:
             return ticker, None
-
-        df = raw.copy()
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.droplevel(1)
-        df.columns = [c.lower() for c in df.columns]
-        df = df.dropna(subset=["close"])
-        if len(df) == 0:
+        rows = r.json().get("results", [])
+        if not rows:
             return ticker, None
-
-        df = df.reset_index()
-        df.rename(columns={df.columns[0]: "date"}, inplace=True)
-        df["date"] = pd.to_datetime(df["date"])
+        df = pd.DataFrame(rows)
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-        df = df[["date", "open", "high", "low", "close", "volume"]]
+        df["date"] = pd.to_datetime(df["date"])
         df = df.sort_values("date").reset_index(drop=True)
         return ticker, df
     except Exception:
@@ -349,7 +331,7 @@ def append_5yr_cache():
     """Append new bars to existing 5yr cache. Never touches old bars.
 
     For each ticker already in the cache, fetches only bars after the last
-    cached date from yfinance and appends them. New tickers (in tradable
+    cached date from Railway and appends them. New tickers (in tradable
     universe but not in cache) get a full fetch. Old bars are never modified.
     """
     os.makedirs(CACHE_DIR, exist_ok=True)

@@ -410,7 +410,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 4. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
 
 ### Infrastructure
-5. ~~**Remove Railway from nightly data flow**~~ — ✅ DONE. Railway OHLCV dependency fully eliminated. `cache_builder.py` fetches from yfinance directly (ticker list from local `scanperfect.db`, OHLCV from `yf.download`). Nightly pipeline reduced from 9 steps to 8: old Step 1 (Railway append) replaced with yfinance freshness check (SPY), old Step 2 (daily cache rebuild) removed (dead weight — everything uses 5yr cache). Earnings refresh still uses Railway endpoint (separate concern). Daily cache file (`universe_ohlcv.pkl`) left on disk but no longer refreshed.
+5. **Remove Railway from nightly data flow** — currently yfinance → Railway → local (round trip). Should be yfinance → local directly, Railway gets a backup copy. The nightly refresh should not depend on Railway for any compute or data. Railway is seed vault only. **Partially fixed 2026-03-20:** 5yr cache `LIMIT 1260` removed (was dropping old bars causing OHLCV/expr cache date drift). Nightly step 3 changed from full rebuild to append-only. OHLCV and expr cache now stay in sync permanently. **Fixed 2026-03-25:** Railway errors (502, timeout, connection) no longer kill the pipeline — Steps 2-9 continue regardless. Expr cache append switched to chunked submission (n_workers×2 in flight) matching the full build pattern — was firing all ~4000 futures at once causing memory thrashing (2.5hrs → expected ~15min). **Remaining:** Steps 1-2 still go through Railway. Rewire `cache_builder.py` to fetch from yfinance directly, eliminate Railway as OHLCV middleman entirely.
 
 ### Phase 3 — EV Grinder
 5. ~~**EV Grinder increments 5-6**~~ — ✅ DONE.
@@ -459,13 +459,11 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - **Expression cache:** 16,051 expressions, ~21 GB
 - **5yr OHLCV cache:** ~4,169 tickers (all available history, no bar limit)
 - **File mirror:** Grind results → Railway via `file_mirror.py` (stays post-localization for Claude access)
-- **Nightly refresh:** 4:30pm ET, 9 steps, fully automated
-  - Step 1: yfinance freshness check (SPY) — gates pipeline if cache is current
-  - Step 2 (5yr cache) **appends** new bars from yfinance — never rebuilds, never drops old bars
-  - Step 3: rebuilds tradable_universe table from fresh 5yr cache
+- **Nightly refresh:** 4:30pm ET, 9 steps + seed vault push, fully automated
+  - Railway errors in Step 1 no longer block Steps 2-9
+  - Step 3 (5yr cache) now **appends** new bars only — never rebuilds, never drops old bars
   - Step 4 (expr cache) appends new bars to match — chunked submission to prevent memory blowup
   - OHLCV and expr cache stay permanently in sync
-  - No Railway dependency for OHLCV data (earnings refresh still uses Railway)
 - **UI:** DM Sans, grayscale design system. PySide6 desktop app (`scanperfect.py`)
 
 ---
