@@ -2807,12 +2807,12 @@ def _gather_raw_signal_clusters(setup_type):
                     # Stop hit first — loss
                     c["classification"] = "AUTO_LOSS"
                     c["classification_reason"] = "stop_breach"
-                    c["breach_bar"] = first_stop + (scan_start - bar_idx)
+                    c["breach_bar"] = int(first_stop + (scan_start - bar_idx))
                     n_loss += 1
                 elif first_exit < len(fwd_exit):
                     # Exit fired first
                     abs_exit_bar = scan_start + first_exit
-                    c["exit_bar"] = abs_exit_bar - bar_idx
+                    c["exit_bar"] = int(abs_exit_bar - bar_idx)
                     exit_close = float(closes[abs_exit_bar])
 
                     if direction == "short":
