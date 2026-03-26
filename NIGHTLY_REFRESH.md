@@ -28,13 +28,15 @@
 
 ### Railway dependencies that need removing:
 
-1. **`cache_builder.py` → `get_tradable_tickers()`** (line 35): Calls Railway's `/api/query/bulk` to `SELECT ticker FROM tradable_universe`. No local equivalent exists. **TODO.**
-2. **`cache_builder.py` → `fetch_one_ticker_5yr()`** (line 180): Fetches ALL OHLCV per ticker from Railway. **TODO.**
-3. **`cache_builder.py` → `_fetch_ticker_after_date()`** (line 303): Fetches new bars per ticker from Railway. **TODO.**
-4. **`build_tradable.py`** (line 56): Only runs on Railway's SQLite DB. Filters: close ≥ $1, APTR ≥ 1.5%, avg dollar volume ≥ $5M over 20 days. Needs a local equivalent. **TODO.**
-5. **`nightly.py` step 1**: Calls Railway to trigger yfinance fetch. **TODO** — replace with local yfinance fetch.
+1. **`cache_builder.py` → `get_tradable_tickers()`** (line 35): Calls Railway's `/api/query/bulk` to `SELECT ticker FROM tradable_universe`. No local equivalent exists. **DEPRIORITIZED.**
+2. **`cache_builder.py` → `fetch_one_ticker_5yr()`** (line 180): Fetches ALL OHLCV per ticker from Railway. **DEPRIORITIZED.**
+3. **`cache_builder.py` → `_fetch_ticker_after_date()`** (line 303): Fetches new bars per ticker from Railway. **DEPRIORITIZED.**
+4. **`build_tradable.py`** (line 56): Only runs on Railway's SQLite DB. Filters: close ≥ $1, APTR ≥ 1.5%, avg dollar volume ≥ $5M over 20 days. Needs a local equivalent. **DEPRIORITIZED.**
+5. **`nightly.py` step 1**: Calls Railway to trigger yfinance fetch. **DEPRIORITIZED.**
 6. **`nightly.py` step 5 (was 6)**: Calls non-existent Railway endpoints. **BROKEN** — replace with local Yahoo Finance scraper.
 7. **`nightly.py` step 7 (was 8)**: Mirrors fundamentals cache to Railway (redundant — seed vault handles backup). **TODO** — remove dead mirror call.
+
+**Railway removal deprioritized (2026-03-25).** Steps 1+2 account for ~15-25 min combined, but the expr cache bottleneck (step 3, ~91 min) is 75% of total runtime. Removing Railway only matters once the expr cache is under control. A previous attempt to remove Railway dependencies resulted in cascading errors across cache_builder.py and had to be fully reverted (commit `d16d3a3` on v2). The risk areas are real: yfinance rate limiting at 4,167 tickers, DataFrame format quirks (MultiIndex columns, timezone-aware dates), and the pickle format must be byte-compatible since ~12 scripts read it. Do not reattempt without isolated per-function testing.
 
 ### What's been done:
 
