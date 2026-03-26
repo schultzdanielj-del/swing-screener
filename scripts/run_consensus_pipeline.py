@@ -1,18 +1,20 @@
 """
-Consensus Pipeline Orchestrator — Overnight Unattended Run.
+Consensus Pipeline Orchestrator — Parallel Batch Execution.
 
-Chains the full consensus pipeline as one overnight run:
-  Steps 1A+1B: Signal grinds (15 real + 15 permuted, interleaved)
+Chains the full consensus pipeline:
+  Steps 1A+1B: Signal grinds (15 real + 15 permuted, parallel batches)
   Step 2:      Signal consensus engine (z-score gate)
   Step 3:      Deterministic scan with locked conditions
   Step 3.5:    Re-grind exit condition on consensus population
-  Step 4:      Refinement grinds (10 runs with loser subsampling)
+  Step 4:      Refinement grinds (10 runs, parallel batches)
   Step 5:      Refinement consensus engine
   Step 6:      EV grinder
   Step 7:      Profit grinder
 
 Usage:
     python scripts/run_consensus_pipeline.py --setup dtss
+    python scripts/run_consensus_pipeline.py --setup dtss --parallel 4
+    python scripts/run_consensus_pipeline.py --setup dtss --smoke-test --skip-nightly-check
     python scripts/run_consensus_pipeline.py --setup dtss --test-mode --skip-nightly-check
 """
 
@@ -20,6 +22,7 @@ import os
 import sys
 import json
 import time
+import glob
 import subprocess
 import argparse
 from datetime import datetime, timezone, date
@@ -32,7 +35,7 @@ CONSENSUS_DIR = os.path.join(CACHE_DIR, "consensus")
 LOG_PATH = os.path.join(CACHE_DIR, "nightly_log.txt")
 
 # Timeout for individual signal grind subprocesses (seconds).
-# Prevents outlier permuted runs from blowing the overnight timeline.
+# Prevents outlier permuted runs from blowing the timeline.
 # A timed-out run is excluded from consensus, not fatal.
 SIGNAL_GRIND_TIMEOUT = 45 * 60  # 45 minutes
 
@@ -74,17 +77,100 @@ def run_cmd(args_list, label, cwd=REPO_ROOT, timeout=None):
         return False, elapsed, True
 
 
+def run_parallel_batch(jobs, max_parallel, cwd=REPO_ROOT, timeout=None):
+    """Run a list of grind jobs in parallel batches.
+
+    Launches up to max_parallel subprocesses simultaneously.
+    Each subprocess writes stdout/stderr to its own log file.
+    Waits for all in a batch to finish before starting the next.
+
+    Args:
+        jobs: list of dicts with 'cmd', 'label', 'log_path' keys
+        max_parallel: max concurrent subprocesses
+        cwd: working directory
+        timeout: per-subprocess timeout in seconds
+
+    Returns:
+        list of result dicts (same order as input jobs)
+    """
+    results = [None] * len(jobs)
+    n_batches = (len(jobs) + max_parallel - 1) // max_parallel
+
+    for batch_i in range(n_batches):
+        start = batch_i * max_parallel
+        end = min(start + max_parallel, len(jobs))
+        batch = jobs[start:end]
+
+        batch_labels = [j["label"] for j in batch]
+        print(f"\n  \u2500\u2500 Batch {batch_i+1}/{n_batches}: launching {len(batch)} "
+              f"parallel runs \u2500\u2500")
+        print(f"     {', '.join(batch_labels)}")
+
+        t_batch = time.time()
+
+        # Launch all subprocesses in this batch simultaneously
+        processes = []
+        for j in batch:
+            log_f = open(j["log_path"], "w")
+            proc = subprocess.Popen(
+                j["cmd"], cwd=cwd,
+                stdout=log_f, stderr=subprocess.STDOUT,
+            )
+            processes.append({
+                "proc": proc, "log_f": log_f,
+                "label": j["label"], "log_path": j["log_path"],
+                "t0": time.time(),
+            })
+
+        # Wait for all processes in this batch to complete
+        for p in processes:
+            timed_out = False
+            try:
+                p["proc"].wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                p["proc"].kill()
+                p["proc"].wait()
+                timed_out = True
+            finally:
+                p["log_f"].close()
+
+            elapsed = time.time() - p["t0"]
+            ok = (p["proc"].returncode == 0) and not timed_out
+
+            status = "\u2713" if ok else ("\u26a0 TIMEOUT" if timed_out else "\u2717 FAIL")
+            print(f"     {status} {p['label']} \u2014 {elapsed:.0f}s")
+
+            results[start + processes.index(p)] = {
+                "label": p["label"], "ok": ok, "elapsed": elapsed,
+                "timed_out": timed_out, "log": p["log_path"],
+            }
+
+        batch_wall = time.time() - t_batch
+
+        # Print ETA after each batch
+        completed_batches = batch_i + 1
+        remaining_batches = n_batches - completed_batches
+        if remaining_batches > 0:
+            # Use this batch's wall time as estimate for remaining
+            eta_s = batch_wall * remaining_batches
+            eta_finish = datetime.now().timestamp() + eta_s
+            eta_str = datetime.fromtimestamp(eta_finish).strftime("%I:%M %p")
+            print(f"\n  \u2500\u2500 Batch took {batch_wall/60:.1f} min. "
+                  f"{remaining_batches} batches left. "
+                  f"ETA ~{eta_str} \u2500\u2500")
+
+    return results
+
+
 def check_nightly_refresh():
     """Check if today's nightly refresh completed."""
     if not os.path.exists(LOG_PATH):
         return False, "Nightly log file not found"
     today_str = date.today().strftime("%m/%d/%Y")
-    # Also check YYYY-MM-DD format
     today_iso = date.today().isoformat()
     try:
         with open(LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
-        # Look for completion line with today's date
         for line in content.split("\n"):
             if "Nightly refresh complete" in line:
                 if today_str in line or today_iso in line:
@@ -110,37 +196,40 @@ def count_conditions_in_file(path):
         return 0
 
 
-def print_eta(run_times, total_runs, runs_done):
-    """Print estimated completion time based on average run duration so far."""
-    if not run_times:
-        return
-    avg_time = sum(run_times) / len(run_times)
-    remaining = total_runs - runs_done
-    eta_s = avg_time * remaining
-    eta_finish = datetime.now().timestamp() + eta_s
-    eta_str = datetime.fromtimestamp(eta_finish).strftime("%I:%M %p")
-    print(f"\n  \u2500\u2500 ETA: {avg_time:.0f}s avg/run \u00d7 {remaining} remaining = "
-          f"{eta_s/60:.0f} min. Finish ~{eta_str} \u2500\u2500")
-
-
 # ══════════════════════════════════════════════════════════════
 # MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════
 
 def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
-                 beam=10000, depth=100, threshold=0.7):
+                 beam=10000, depth=100, threshold=0.7, max_parallel=4,
+                 smoke_test=False):
     """Run the full consensus pipeline."""
-    n_signal_runs = 1 if test_mode else 15
-    n_refinement_runs = 1 if test_mode else 10
-    grind_timeout = None if test_mode else SIGNAL_GRIND_TIMEOUT
+    if smoke_test:
+        n_signal_runs = 2
+        n_refinement_runs = 0
+    elif test_mode:
+        n_signal_runs = 1
+        n_refinement_runs = 1
+    else:
+        n_signal_runs = 15
+        n_refinement_runs = 10
+
+    grind_timeout = None if (test_mode or smoke_test) else SIGNAL_GRIND_TIMEOUT
 
     print("\n" + "\u2550" * 70)
     print("  CONSENSUS PIPELINE ORCHESTRATOR")
     print("\u2550" * 70)
     print(f"  Setup: {setup_type.upper()}")
-    print(f"  Mode: {'TEST (1+1 signal, 1 refinement)' if test_mode else f'FULL ({n_signal_runs}+{n_signal_runs} signal, {n_refinement_runs} refinement)'}")
+    if smoke_test:
+        print(f"  Mode: SMOKE TEST (2+2 signal, parallel={max_parallel})")
+    elif test_mode:
+        print(f"  Mode: TEST (1+1 signal, 1 refinement)")
+    else:
+        print(f"  Mode: FULL ({n_signal_runs}+{n_signal_runs} signal, "
+              f"{n_refinement_runs} refinement, parallel={max_parallel})")
     print(f"  Beam: {beam}, Depth: {depth}")
     print(f"  Consensus threshold: {threshold}")
+    print(f"  Max parallel: {max_parallel}")
     print(f"  Output dir: {CONSENSUS_DIR}")
     if grind_timeout:
         print(f"  Signal grind timeout: {grind_timeout // 60} minutes per run")
@@ -158,31 +247,32 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
     else:
         print(f"\n  Skipping nightly refresh check")
 
-    # ── Setup consensus directory ──
+    # ── Setup directories ──
     os.makedirs(CONSENSUS_DIR, exist_ok=True)
+    logs_dir = os.path.join(CONSENSUS_DIR, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
 
-    # ── Steps 1A + 1B: Signal grinds (interleaved real/permuted) ──
-    print(f"\n{'\u2550'*70}")
-    print(f"  STEP 1: Signal grinds ({n_signal_runs} real + {n_signal_runs} permuted)")
-    print(f"{'\u2550'*70}")
+    # ══════════════════════════════════════════════════════════
+    # Steps 1A + 1B: Signal grinds (parallel batches)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 70}")
+    print(f"  STEP 1: Signal grinds ({n_signal_runs} real + {n_signal_runs} "
+          f"permuted, {max_parallel} parallel)")
+    print(f"{'=' * 70}")
 
     pass_orderings = get_pass_orderings(n_signal_runs)
-    real_counts = []
-    perm_counts = []
-    all_run_times = []  # for ETA calculation
-    timed_out_runs = []
-    failed_runs = []
 
+    # Build all jobs upfront (interleaved: real, perm, real, perm...)
+    signal_jobs = []
     total_runs = n_signal_runs * 2
     for run_i in range(total_runs):
         is_permuted = (run_i % 2 == 1)
-        run_num = run_i // 2 + 1  # 1-indexed within real or permuted
+        run_num = run_i // 2 + 1
         seed = run_i + 1
         ordering = pass_orderings[(run_num - 1) % len(pass_orderings)]
         pass_order_str = ",".join(str(x) for x in ordering)
 
-        label = f"{'Permuted' if is_permuted else 'Real'} {run_num}/{n_signal_runs}"
-        print(f"\n  \u2500\u2500 Run {run_i+1}/{total_runs}: {label} (seed={seed}, order={pass_order_str}) \u2500\u2500")
+        label = f"{'Perm' if is_permuted else 'Real'} {run_num}/{n_signal_runs}"
 
         cmd = [
             sys.executable, "local_runner/pyramid_grinder.py",
@@ -199,26 +289,46 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
         if is_permuted:
             cmd.append("--permute")
 
-        ok, elapsed, timed_out = run_cmd(cmd, label, timeout=grind_timeout)
+        tag = f"{'perm' if is_permuted else 'real'}_{run_num:02d}"
+        log_path = os.path.join(logs_dir, f"signal_{tag}.log")
+        signal_jobs.append({
+            "cmd": cmd, "label": label, "log_path": log_path,
+            "is_permuted": is_permuted,
+        })
 
-        if timed_out:
-            timed_out_runs.append(label)
-            all_run_times.append(elapsed)
-            print(f"  Run excluded from consensus (timed out).")
-            print_eta(all_run_times, total_runs, run_i + 1)
+    # Run in parallel batches (or sequential for test mode)
+    if test_mode:
+        signal_results = []
+        for job in signal_jobs:
+            ok, elapsed, timed_out = run_cmd(
+                job["cmd"], job["label"], timeout=grind_timeout)
+            signal_results.append({
+                "label": job["label"], "ok": ok, "elapsed": elapsed,
+                "timed_out": timed_out, "log": None,
+            })
+    else:
+        signal_results = run_parallel_batch(
+            signal_jobs, max_parallel=max_parallel,
+            timeout=grind_timeout)
+
+    # ── Collect condition counts ──
+    real_counts = []
+    perm_counts = []
+    timed_out_runs = []
+    failed_runs = []
+
+    for i, r in enumerate(signal_results):
+        is_permuted = signal_jobs[i]["is_permuted"]
+        if r["timed_out"]:
+            timed_out_runs.append(r["label"])
+            continue
+        if not r["ok"]:
+            failed_runs.append(r["label"])
             continue
 
-        if not ok:
-            failed_runs.append(label)
-            print(f"\n  \u26a0 Run failed but continuing (non-fatal for signal grinds).")
-            all_run_times.append(elapsed)
-            print_eta(all_run_times, total_runs, run_i + 1)
-            continue
-
-        # Count conditions in the output
-        import glob
         prefix = "permuted" if is_permuted else "pyramid"
-        pattern = os.path.join(CONSENSUS_DIR, f"{prefix}_{setup_type}_mp_*.json")
+        pattern = os.path.join(CONSENSUS_DIR,
+                               f"{prefix}_{setup_type}_mp_*.json")
         files = sorted(glob.glob(pattern), key=os.path.getmtime)
         if files:
             n_conds = count_conditions_in_file(files[-1])
@@ -226,15 +336,11 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
                 perm_counts.append(n_conds)
             else:
                 real_counts.append(n_conds)
-            print(f"  Conditions: {n_conds}")
-
-        all_run_times.append(elapsed)
-        print_eta(all_run_times, total_runs, run_i + 1)
 
     # ── Step 1 summary ──
-    print(f"\n{'\u2500'*70}")
+    print(f"\n{'-' * 70}")
     print(f"  STEP 1 COMPLETE")
-    print(f"{'\u2500'*70}")
+    print(f"{'-' * 70}")
     print(f"  Real runs completed: {len(real_counts)}/{n_signal_runs}")
     print(f"  Permuted runs completed: {len(perm_counts)}/{n_signal_runs}")
     if real_counts:
@@ -244,22 +350,55 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
         print(f"  Permuted conditions: mean={sum(perm_counts)/len(perm_counts):.1f}, "
               f"range={min(perm_counts)}-{max(perm_counts)}")
     if timed_out_runs:
-        print(f"  Timed out: {len(timed_out_runs)} runs ({', '.join(timed_out_runs)})")
+        print(f"  Timed out: {len(timed_out_runs)} runs "
+              f"({', '.join(timed_out_runs)})")
     if failed_runs:
-        print(f"  Failed: {len(failed_runs)} runs ({', '.join(failed_runs)})")
+        print(f"  Failed: {len(failed_runs)} runs "
+              f"({', '.join(failed_runs)})")
+
+    # ── Smoke test: stop here ──
+    if smoke_test:
+        total_time = time.time() - t_pipeline
+        print(f"\n{'=' * 70}")
+        print(f"  SMOKE TEST COMPLETE \u2014 {total_time/60:.1f} min")
+        print(f"{'=' * 70}")
+        print(f"  {len(real_counts)} real + {len(perm_counts)} permuted "
+              f"completed successfully")
+        if real_counts and perm_counts:
+            print(f"  Real avg: {sum(real_counts)/len(real_counts):.1f} conditions")
+            print(f"  Perm avg: {sum(perm_counts)/len(perm_counts):.1f} conditions")
+            # Extrapolate full run time
+            successful = [r for r in signal_results if r["ok"]]
+            if successful:
+                max_elapsed = max(r["elapsed"] for r in successful)
+                full_runs = 30
+                full_batches = (full_runs + max_parallel - 1) // max_parallel
+                est_full = max_elapsed * full_batches
+                print(f"\n  Full run estimate: {full_batches} batches x "
+                      f"{max_elapsed/60:.1f} min = ~{est_full/60:.0f} min "
+                      f"({est_full/3600:.1f} hours)")
+        if failed_runs or timed_out_runs:
+            print(f"\n  ISSUES: {len(failed_runs)} failed, "
+                  f"{len(timed_out_runs)} timed out")
+            print(f"  Check logs in: {logs_dir}")
+        return len(failed_runs) == 0 and len(timed_out_runs) == 0
 
     # Minimum viable data check
     if len(real_counts) < 3:
-        print(f"\n  PIPELINE STOPPED: Only {len(real_counts)} real runs completed (need >= 3).")
+        print(f"\n  PIPELINE STOPPED: Only {len(real_counts)} real runs "
+              f"completed (need >= 3).")
         return False
     if len(perm_counts) < 3:
-        print(f"\n  PIPELINE STOPPED: Only {len(perm_counts)} permuted runs completed (need >= 3).")
+        print(f"\n  PIPELINE STOPPED: Only {len(perm_counts)} permuted runs "
+              f"completed (need >= 3).")
         return False
 
-    # ── Step 2: Signal consensus engine ──
-    print(f"\n{'\u2550'*70}")
+    # ══════════════════════════════════════════════════════════
+    # Step 2: Signal consensus engine
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 70}")
     print(f"  STEP 2: Signal consensus engine")
-    print(f"{'\u2550'*70}")
+    print(f"{'=' * 70}")
 
     consensus_cmd = [
         sys.executable, "scripts/consensus_engine.py",
@@ -277,18 +416,19 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
         return False
 
     # Check gate decision
-    consensus_path = os.path.join(CACHE_DIR, f"consensus_signal_{setup_type}.json")
+    consensus_path = os.path.join(CACHE_DIR,
+                                   f"consensus_signal_{setup_type}.json")
     if not os.path.exists(consensus_path):
-        # Check for gate report
-        gate_path = os.path.join(CONSENSUS_DIR, f"consensus_gate_{setup_type}.json")
+        gate_path = os.path.join(CONSENSUS_DIR,
+                                  f"consensus_gate_{setup_type}.json")
         if os.path.exists(gate_path):
             with open(gate_path) as f:
-                gate = json.load(f)
-            z = gate.get("z_score", 0)
+                gate_data = json.load(f)
+            z = gate_data.get("z_score", 0)
             print(f"\n  \u2717 z-score gate FAILED (z = {z:.2f})")
             print(f"    Vet more examples and re-run.")
             return False
-        print(f"\n  \u2717 No consensus output found. Check consensus engine output above.")
+        print(f"\n  \u2717 No consensus output found. Check output above.")
         return False
 
     with open(consensus_path) as f:
@@ -302,10 +442,12 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
         print(f"  PIPELINE STOPPED: z < 2. Vet more examples.")
         return False
 
-    # ── Step 3: Deterministic scan ──
-    print(f"\n{'\u2550'*70}")
+    # ══════════════════════════════════════════════════════════
+    # Step 3: Deterministic scan
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 70}")
     print(f"  STEP 3: Deterministic scan with consensus conditions")
-    print(f"{'\u2550'*70}")
+    print(f"{'=' * 70}")
 
     ok, _, _ = run_cmd([
         sys.executable, "local_runner/pyramid_grinder.py",
@@ -317,10 +459,12 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
         print(f"\n  PIPELINE STOPPED: Scan failed.")
         return False
 
-    # ── Step 3.5: Re-grind exit condition ──
-    print(f"\n{'\u2550'*70}")
+    # ══════════════════════════════════════════════════════════
+    # Step 3.5: Re-grind exit condition
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 70}")
     print(f"  STEP 3.5: Re-grind exit condition on consensus population")
-    print(f"{'\u2550'*70}")
+    print(f"{'=' * 70}")
 
     ok, _, _ = run_cmd([
         sys.executable, "scripts/signal_exit_grinder.py",
@@ -331,15 +475,19 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
         print(f"\n  PIPELINE STOPPED: Exit re-grind failed.")
         return False
 
-    # ── Step 4: Refinement grinds ──
-    print(f"\n{'\u2550'*70}")
-    print(f"  STEP 4: Refinement grinds ({n_refinement_runs} runs)")
-    print(f"{'\u2550'*70}")
+    # ══════════════════════════════════════════════════════════
+    # Step 4: Refinement grinds (parallel batches)
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 70}")
+    print(f"  STEP 4: Refinement grinds ({n_refinement_runs} runs, "
+          f"{max_parallel} parallel)")
+    print(f"{'=' * 70}")
 
+    ref_jobs = []
     for ref_i in range(n_refinement_runs):
         seed = ref_i + 1
-        label = f"Refinement {ref_i+1}/{n_refinement_runs}"
-        ok, _, _ = run_cmd([
+        label = f"Refine {ref_i+1}/{n_refinement_runs}"
+        cmd = [
             sys.executable, "local_runner/pyramid_grinder.py",
             "--setup", setup_type,
             "--blackout",
@@ -348,33 +496,50 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
             "--seed", str(seed),
             "--conditions-file", consensus_path,
             "--output-dir", CONSENSUS_DIR + "/",
-        ], label)
+        ]
+        log_path = os.path.join(logs_dir, f"refinement_{ref_i+1:02d}.log")
+        ref_jobs.append({"cmd": cmd, "label": label, "log_path": log_path})
+
+    if n_refinement_runs == 1:
+        ok, _, _ = run_cmd(ref_jobs[0]["cmd"], ref_jobs[0]["label"])
         if not ok:
-            print(f"\n  PIPELINE STOPPED: Refinement run {ref_i+1} failed.")
+            print(f"\n  PIPELINE STOPPED: Refinement run failed.")
+            return False
+    elif n_refinement_runs > 1:
+        ref_results = run_parallel_batch(
+            ref_jobs, max_parallel=max_parallel)
+        ref_failed = [r for r in ref_results if not r["ok"]]
+        if ref_failed:
+            print(f"\n  PIPELINE STOPPED: {len(ref_failed)} refinement "
+                  f"run(s) failed.")
+            for r in ref_failed:
+                print(f"    \u2717 {r['label']} \u2014 check {r['log']}")
             return False
 
-    # ── Step 5: Refinement consensus ──
-    print(f"\n{'\u2550'*70}")
+    # ══════════════════════════════════════════════════════════
+    # Step 5: Refinement consensus
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 70}")
     print(f"  STEP 5: Refinement consensus engine")
-    print(f"{'\u2550'*70}")
+    print(f"{'=' * 70}")
 
-    ref_consensus_cmd = [
+    ok, _, _ = run_cmd([
         sys.executable, "scripts/consensus_engine.py",
         "--setup", setup_type,
         "--stage", "refinement",
         "--threshold", str(threshold),
         "--input-dir", CONSENSUS_DIR + "/",
-    ]
-
-    ok, _, _ = run_cmd(ref_consensus_cmd, "Refinement consensus")
+    ], "Refinement consensus")
     if not ok:
         print(f"\n  PIPELINE STOPPED: Refinement consensus failed.")
         return False
 
-    # ── Step 6: EV grinder ──
-    print(f"\n{'\u2550'*70}")
+    # ══════════════════════════════════════════════════════════
+    # Step 6: EV grinder
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 70}")
     print(f"  STEP 6: EV grinder")
-    print(f"{'\u2550'*70}")
+    print(f"{'=' * 70}")
 
     ok, _, _ = run_cmd([
         sys.executable, "scripts/ev_grinder.py",
@@ -384,10 +549,12 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
         print(f"\n  PIPELINE STOPPED: EV grinder failed.")
         return False
 
-    # ── Step 7: Profit grinder ──
-    print(f"\n{'\u2550'*70}")
+    # ══════════════════════════════════════════════════════════
+    # Step 7: Profit grinder
+    # ══════════════════════════════════════════════════════════
+    print(f"\n{'=' * 70}")
     print(f"  STEP 7: Profit grinder")
-    print(f"{'\u2550'*70}")
+    print(f"{'=' * 70}")
 
     ok, _, _ = run_cmd([
         sys.executable, "scripts/profit_grinder.py",
@@ -397,20 +564,24 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
         print(f"\n  PIPELINE STOPPED: Profit grinder failed.")
         return False
 
-    # ── Summary report ──
+    # ══════════════════════════════════════════════════════════
+    # Summary report
+    # ══════════════════════════════════════════════════════════
     total_time = time.time() - t_pipeline
-    print(f"\n{'\u2550'*70}")
+    print(f"\n{'=' * 70}")
     print(f"  CONSENSUS PIPELINE COMPLETE")
-    print(f"{'\u2550'*70}")
-    print(f"  Total time: {total_time/60:.0f} minutes ({total_time/3600:.1f} hours)")
+    print(f"{'=' * 70}")
+    print(f"  Total time: {total_time/60:.0f} minutes "
+          f"({total_time/3600:.1f} hours)")
     print(f"  z-score: {z:.2f}")
     print(f"  Signal conditions: {n_locked}")
     if timed_out_runs:
-        print(f"  Timed out runs: {len(timed_out_runs)} ({', '.join(timed_out_runs)})")
+        print(f"  Timed out: {len(timed_out_runs)} "
+              f"({', '.join(timed_out_runs)})")
     if failed_runs:
-        print(f"  Failed runs: {len(failed_runs)} ({', '.join(failed_runs)})")
+        print(f"  Failed: {len(failed_runs)} "
+              f"({', '.join(failed_runs)})")
 
-    # Write summary
     summary = {
         "setup_type": setup_type,
         "status": "COMPLETE",
@@ -422,13 +593,15 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
         "n_signal_runs_real": len(real_counts),
         "n_signal_runs_permuted": len(perm_counts),
         "n_refinement_runs": n_refinement_runs,
+        "max_parallel": max_parallel,
         "timed_out_runs": timed_out_runs,
         "failed_runs": failed_runs,
         "real_condition_counts": real_counts,
         "perm_condition_counts": perm_counts,
         "test_mode": test_mode,
     }
-    summary_path = os.path.join(CACHE_DIR, f"consensus_complete_{setup_type}.json")
+    summary_path = os.path.join(CACHE_DIR,
+                                 f"consensus_complete_{setup_type}.json")
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"\n  Summary: {summary_path}")
@@ -443,10 +616,15 @@ def run_pipeline(setup_type, test_mode=False, skip_nightly_check=False,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Consensus Pipeline Orchestrator — Overnight Unattended Run")
-    parser.add_argument("--setup", default="dtss", help="Setup type (default: dtss)")
+        description="Consensus Pipeline Orchestrator \u2014 Parallel Batch Execution")
+    parser.add_argument("--setup", default="dtss",
+                        help="Setup type (default: dtss)")
     parser.add_argument("--test-mode", action="store_true",
-                        help="Mini run: 1+1 signal + 1 refinement (instead of 15+15+10)")
+                        help="Mini run: 1+1 signal + 1 refinement "
+                             "(sequential, not parallel)")
+    parser.add_argument("--smoke-test", action="store_true",
+                        help="Quick verify: 2+2 signal grinds in one "
+                             "parallel batch, then stop. ~2 min.")
     parser.add_argument("--skip-nightly-check", action="store_true",
                         help="Skip the nightly refresh completion check")
     parser.add_argument("--beam", type=int, default=10000,
@@ -455,6 +633,9 @@ if __name__ == "__main__":
                         help="Search depth for signal grinds (default: 100)")
     parser.add_argument("--threshold", type=float, default=0.7,
                         help="Consensus threshold (default: 0.7)")
+    parser.add_argument("--parallel", type=int, default=4,
+                        help="Max parallel grind subprocesses (default: 4). "
+                             "Each needs ~3-4 GB RAM.")
     args = parser.parse_args()
 
     success = run_pipeline(
@@ -464,5 +645,7 @@ if __name__ == "__main__":
         beam=args.beam,
         depth=args.depth,
         threshold=args.threshold,
+        max_parallel=args.parallel,
+        smoke_test=args.smoke_test,
     )
     sys.exit(0 if success else 1)
