@@ -4638,22 +4638,22 @@ class ScanPerfectWindow(QMainWindow):
     def _add_setup_dialog(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("Create New Setup")
-        dlg.setFixedSize(360, 240)
+        dlg.setFixedSize(520, 380)
         dlg.setStyleSheet(
             "QDialog { background:#111; }"
-            "QLabel { color:#E0E0E0; font-size:12px; background:transparent; border:none; }"
+            "QLabel { color:#E0E0E0; font-size:15px; background:transparent; border:none; }"
             "QLineEdit { background:#000; color:#E0E0E0; border:1px solid #333; "
-            "border-radius:4px; padding:6px; font-size:12px; }"
+            "border-radius:4px; padding:10px; font-size:15px; min-height:22px; }"
             "QLineEdit:focus { border:1px solid #666; }"
             "QComboBox { background:#000; color:#E0E0E0; border:1px solid #333; "
-            "border-radius:4px; padding:6px; font-size:12px; }"
+            "border-radius:4px; padding:10px; font-size:15px; min-height:22px; }"
             "QComboBox QAbstractItemView { background:#111; color:#E0E0E0; "
-            "selection-background-color:#333; }"
-            "QComboBox::drop-down { border:none; width:20px; }"
-            "QComboBox::down-arrow { image:none; border-left:4px solid transparent; "
-            "border-right:4px solid transparent; border-top:5px solid #888; }"
+            "selection-background-color:#333; font-size:15px; }"
+            "QComboBox::drop-down { border:none; width:24px; }"
+            "QComboBox::down-arrow { image:none; border-left:5px solid transparent; "
+            "border-right:5px solid transparent; border-top:6px solid #888; }"
             "QPushButton { background:#E0E0E0; color:#000; border:none; "
-            "border-radius:4px; padding:8px 24px; font-size:12px; font-weight:600; }"
+            "border-radius:4px; padding:12px 32px; font-size:15px; font-weight:600; }"
             "QPushButton:hover { background:#fff; }"
         )
         lay = QVBoxLayout(dlg)
