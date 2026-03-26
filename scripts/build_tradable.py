@@ -43,6 +43,13 @@ def get_db(db_path=None):
 
 
 def init_tradable_table(db):
+    # Check if existing table has the right schema
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tradable_universe'"
+    ).fetchone()
+    if row and "last_close" not in row[0]:
+        db.execute("DROP TABLE tradable_universe")
+        db.commit()
     db.executescript("""
         CREATE TABLE IF NOT EXISTS tradable_universe (
             ticker TEXT PRIMARY KEY,
