@@ -459,10 +459,11 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - **Expression cache:** 16,051 expressions, ~21 GB
 - **5yr OHLCV cache:** ~4,169 tickers (all available history, no bar limit)
 - **File mirror:** Grind results → Railway via `file_mirror.py` (stays post-localization for Claude access)
-- **Nightly refresh:** 4:30pm ET, 8 steps, fully automated
+- **Nightly refresh:** 4:30pm ET, 9 steps, fully automated
   - Step 1: yfinance freshness check (SPY) — gates pipeline if cache is current
   - Step 2 (5yr cache) **appends** new bars from yfinance — never rebuilds, never drops old bars
-  - Step 3 (expr cache) appends new bars to match — chunked submission to prevent memory blowup
+  - Step 3: rebuilds tradable_universe table from fresh 5yr cache
+  - Step 4 (expr cache) appends new bars to match — chunked submission to prevent memory blowup
   - OHLCV and expr cache stay permanently in sync
   - No Railway dependency for OHLCV data (earnings refresh still uses Railway)
 - **UI:** DM Sans, grayscale design system. PySide6 desktop app (`scanperfect.py`)

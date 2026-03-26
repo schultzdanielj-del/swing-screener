@@ -1,7 +1,7 @@
 """
 Tradable Universe Builder
 
-Filters the full universe_ohlcv down to stocks meeting minimum liquidity
+Filters the 5yr OHLCV cache down to stocks meeting minimum liquidity
 and volatility standards. Designed to run nightly after OHLCV refresh.
 
 Criteria (based on most recent 20 trading days):
@@ -15,6 +15,7 @@ APTR = average of daily (TrueRange / Close * 100) over 20 days
 
 import sqlite3
 import logging
+import pickle
 from datetime import datetime
 from pathlib import Path
 import os
@@ -22,8 +23,9 @@ import os
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("tradable")
 
-DB_DIR = Path(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/app/data"))
-DB_PATH = DB_DIR / "scanperfect.db"
+REPO_ROOT = Path(os.path.dirname(os.path.abspath(__file__))).parent
+DB_PATH = REPO_ROOT / "data" / "scanperfect.db"
+CACHE_5YR = REPO_ROOT / "local_runner" / "cache" / "universe_ohlcv_5yr.pkl"
 
 # --- Filters ---
 MIN_PRICE = 1.0
@@ -54,39 +56,35 @@ def init_tradable_table(db):
 
 
 def build_tradable_universe(db_path=None):
-    """Main entry point. Rebuilds the tradable_universe table from scratch."""
+    """Main entry point. Rebuilds the tradable_universe table from 5yr OHLCV cache."""
     db = get_db(db_path)
     init_tradable_table(db)
 
     log.info("Building tradable universe...")
 
-    # Get all tickers that have data
-    tickers = [r[0] for r in db.execute(
-        "SELECT DISTINCT ticker FROM universe_ohlcv"
-    ).fetchall()]
+    # Load 5yr OHLCV cache
+    cache_path = str(CACHE_5YR)
+    if not os.path.exists(cache_path):
+        log.error(f"5yr cache not found at {cache_path}")
+        db.close()
+        return 0
 
-    log.info(f"Evaluating {len(tickers)} tickers against tradable filters")
+    log.info(f"Loading 5yr cache...")
+    with open(cache_path, "rb") as f:
+        universe = pickle.load(f)
+    log.info(f"Evaluating {len(universe)} tickers against tradable filters")
 
     qualified = []
     now = datetime.utcnow().isoformat()
 
-    for ticker in tickers:
-        # Get last 21 rows (need 21 for 20 days of true range with prev close)
-        rows = db.execute("""
-            SELECT date, open, high, low, close, volume
-            FROM universe_ohlcv
-            WHERE ticker = ?
-            ORDER BY date DESC
-            LIMIT 21
-        """, (ticker,)).fetchall()
-
-        if len(rows) < 21:
+    for ticker, df in universe.items():
+        if len(df) < 21:
             continue
 
-        # Rows are newest-first, reverse for chronological
-        rows = list(reversed(rows))
+        # Last 21 bars (chronological — df is already sorted by date)
+        tail = df.iloc[-21:]
 
-        last_close = rows[-1]["close"]
+        last_close = tail.iloc[-1]["close"]
         if last_close is None or last_close < MIN_PRICE:
             continue
 
@@ -96,13 +94,13 @@ def build_tradable_universe(db_path=None):
         valid_days = 0
 
         for i in range(1, 21):
-            h = rows[i]["high"]
-            l = rows[i]["low"]
-            c = rows[i]["close"]
-            prev_c = rows[i - 1]["close"]
-            vol = rows[i]["volume"]
+            h = tail.iloc[i]["high"]
+            l = tail.iloc[i]["low"]
+            c = tail.iloc[i]["close"]
+            prev_c = tail.iloc[i - 1]["close"]
+            vol = tail.iloc[i]["volume"]
 
-            if None in (h, l, c, prev_c, vol) or c <= 0:
+            if any(v is None for v in (h, l, c, prev_c, vol)) or c <= 0:
                 continue
 
             # True Range
@@ -120,6 +118,9 @@ def build_tradable_universe(db_path=None):
         if aptr_pct >= MIN_APTR_PCT and avg_dvol >= MIN_AVG_DOLLAR_VOL:
             qualified.append((ticker, last_close, round(aptr_pct, 2), round(avg_dvol, 0), now))
 
+    total_evaluated = len(universe)
+    del universe  # free memory
+
     # Rebuild table
     db.execute("DELETE FROM tradable_universe")
     if qualified:
@@ -129,7 +130,7 @@ def build_tradable_universe(db_path=None):
         )
     db.commit()
 
-    log.info(f"Tradable universe: {len(qualified)} tickers qualify out of {len(tickers)}")
+    log.info(f"Tradable universe: {len(qualified)} tickers qualify out of {total_evaluated}")
     db.close()
     return len(qualified)
 
