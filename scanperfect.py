@@ -2360,12 +2360,13 @@ class ExamplesWorkspace(QFrame):
             rej.clicked.connect(lambda c, d=data: self._reject_one(d))
             lr.addWidget(rej)
         elif section == "banked":
-            del_btn = QPushButton("\u00d7")
-            del_btn.setFixedSize(18, 18)
+            del_btn = QPushButton("DEL")
+            del_btn.setFixedHeight(22)
             del_btn.setStyleSheet(
-                "QPushButton { background:transparent; color:#555; border:none;"
-                "font-size:14px; font-weight:700; }"
-                "QPushButton:hover { color:#f87171; }")
+                "QPushButton { background:transparent; color:#666; border:1px solid #333;"
+                "%s font-size:10px; font-weight:600; padding:0px 8px; }"
+                "QPushButton:hover { background:rgba(255,80,80,0.15); color:#f87171;"
+                "border-color:#f87171; }" % mono)
             del_btn.clicked.connect(lambda c, d=data: self._delete_example(d))
             lr.addWidget(del_btn)
 
