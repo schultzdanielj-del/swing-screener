@@ -622,14 +622,24 @@ def benchmark_original(ticker, df, expressions):
     data = np.full((n_bars, n_exprs), np.nan, dtype=np.float32)
     arith_indices = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") not in BOOL_OPS]
     t0 = time.perf_counter()
+    op_times = {}
     for j in arith_indices:
+        op = expressions[j]["compute"]["op"]
+        t_before = time.perf_counter()
         try:
             s = compute_series(engine, expressions[j]["compute"])
             if s is not None:
                 arr = np.asarray(s, dtype=np.float32)
                 if len(arr) == n_bars: data[:, j] = arr
         except: pass
+        elapsed = time.perf_counter() - t_before
+        op_times[op] = op_times.get(op, 0.0) + elapsed
     results["daily_arith"] = time.perf_counter() - t0
+    # Print top 10 slowest ops
+    print(f"\n  Daily arith breakdown (top 15 by time):")
+    for op, t in sorted(op_times.items(), key=lambda x: -x[1])[:15]:
+        cnt = sum(1 for j in arith_indices if expressions[j]["compute"]["op"] == op)
+        print(f"    {op:<30} {t*1000:>7.1f}ms  ({cnt} exprs, {t/cnt*1000:.1f}ms each)")
     bool_indices = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") in BOOL_OPS]
     t0 = time.perf_counter()
     for j in bool_indices:
@@ -712,32 +722,18 @@ def benchmark_optimized(ticker, df, expressions):
     engine = ExpressionEngine(df)
     data = np.full((n_bars, n_exprs), np.nan, dtype=np.float32)
 
-    # ── Daily arithmetic: precompute intermediates, dispatch numpy ──
+    # ── Daily arithmetic: same as original (compute_series with engine cache) ──
     arith_indices = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") not in BOOL_OPS]
     
     t0 = time.perf_counter()
-    im = build_numpy_intermediates(engine)
-    t_im = time.perf_counter() - t0
-    
-    t0 = time.perf_counter()
-    arith_ok = 0
-    arith_fallback = 0
     for j in arith_indices:
-        comp = expressions[j]["compute"]
-        arr = dispatch_arith_numpy(comp, im)
-        if arr is not None:
-            data[:, j] = arr.astype(np.float32)
-            arith_ok += 1
-        else:
-            # Fallback to compute_series for ops not yet in dispatch
-            try:
-                s = compute_series(engine, comp)
-                if s is not None:
-                    a = np.asarray(s, dtype=np.float32)
-                    if len(a) == n_bars: data[:, j] = a
-                    arith_fallback += 1
-            except: pass
-    results["daily_arith"] = t_im + (time.perf_counter() - t0)
+        try:
+            s = compute_series(engine, expressions[j]["compute"])
+            if s is not None:
+                arr = np.asarray(s, dtype=np.float32)
+                if len(arr) == n_bars: data[:, j] = arr
+        except: pass
+    results["daily_arith"] = time.perf_counter() - t0
 
     # ── Daily booleans: numpy optimized ──
     ct = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") == "count_true"]
@@ -860,7 +856,7 @@ def benchmark_optimized(ticker, df, expressions):
     results["ext_struct"] = time.perf_counter() - t0
 
     total = sum(results.values())
-    return data, results, total, {"arith_ok": arith_ok, "arith_fallback": arith_fallback}
+    return data, results, total
 
 
 # ══════════════════════════════════════════════════════════════
@@ -898,7 +894,7 @@ def compare_outputs(data_orig, data_opt, expressions, indices):
 
 def main():
     print("\n" + "=" * 70)
-    print("  EXPRESSION CACHE — BENCHMARK v6 (batch numpy dispatch)")
+    print("  EXPRESSION CACHE — BENCHMARK v7 (daily arith profiling + v5 optimizations)")
     print("=" * 70)
     expressions = _load_expressions()
     _init_worker(expressions)
@@ -932,14 +928,13 @@ def main():
     print(f"\n  {'─' * 60}")
     print(f"  OPTIMIZED (batch numpy dispatch + all prior optimizations)")
     print(f"  {'─' * 60}")
-    data_opt, res_opt, total_opt, stats = benchmark_optimized(ticker, df, expressions)
+    data_opt, res_opt, total_opt = benchmark_optimized(ticker, df, expressions)
     print(f"\n  Phase                     Time (s)    %")
     print(f"  {'─' * 50}")
     for phase, secs in res_opt.items():
         print(f"  {phase:<25} {secs:>7.3f}   {secs/total_opt*100:>5.1f}%")
     print(f"  {'─' * 50}")
     print(f"  {'TOTAL':<25} {total_opt:>7.3f}   100.0%")
-    print(f"  Numpy dispatch: {stats['arith_ok']} ok, {stats['arith_fallback']} fallback to compute_series")
 
     # ═══ COMPARISON ═══
     print(f"\n  {'─' * 60}")
