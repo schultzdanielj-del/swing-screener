@@ -99,7 +99,8 @@ app/                       # HTML UI (LEGACY — replaced by scanperfect.py)
 
 | Setup | Status | Examples | Phase 2 Result |
 |-------|--------|----------|----------------|
-| **DTSS** | Phase 2+3 complete, Phase 6 UI in progress | 66 | 182 conditions, 78% WR, 6.4 ADR median |
+| **DTSS** | Phase 2+3 complete, Phase 4 done | 68 | 182 conditions, 78% WR, 6.4 ADR median |
+| **BRKO** | Phase 3 (EV Grinder running) | 51 | 54.9% WR post-refinement, thin — edge in market context |
 | **3-4DB** | Examples loaded | 21 | Not yet ground |
 | **HTF** | Scaffolded | None | — |
 
