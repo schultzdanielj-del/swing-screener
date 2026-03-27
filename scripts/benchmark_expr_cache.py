@@ -1,17 +1,13 @@
 """
-Benchmark: Per-Ticker Expression Cache Build Cost
+Benchmark v3: Targeted Optimization Test
 
-Measures time spent in each phase of _compute_ticker_full() to identify
-where optimization effort should go.
-
-Phase A: Run current path (compute_series per expression)
-Phase B: Run vectorized path (build_intermediates + compute_expr_2d)
-Compare: timing + output correctness
+Tests specific optimizations against the original path:
+1. numpy since_true / true_in_row (replacing pandas rolling().apply())  
+2. Vectorized trendline_deviation / channel_position (replacing per-bar Python loops)
+3. HTF: use vectorized_indicators 2D functions on resampled arrays
 
 Usage:
     python scripts/benchmark_expr_cache.py
-
-Output: Per-phase timing breakdown, vectorized comparison, correctness check.
 """
 
 import os
@@ -39,15 +35,156 @@ from expr_cache_builder import (
 from scripts.expression_engine import ExpressionEngine
 from scripts.backtest_conditions import compute_series
 
-
 BOOL_OPS = {"count_true", "since_true", "true_in_row"}
 
 
-def benchmark_original(ticker, df, expressions):
-    """Run the current compute_series path — same as _compute_ticker_full."""
+# ══════════════════════════════════════════════════════════════
+# OPTIMIZED NUMPY REPLACEMENTS
+# ══════════════════════════════════════════════════════════════
 
+def np_count_true(bool_arr, period):
+    """count_true: rolling sum of boolean array. Pure numpy."""
+    n = len(bool_arr)
+    f = bool_arr.astype(np.float64)
+    result = np.full(n, np.nan)
+    cs = np.cumsum(f)
+    result[period - 1] = cs[period - 1]
+    result[period:] = cs[period:] - cs[:-period]
+    return result
+
+
+def np_since_true(bool_arr, period):
+    """since_true: bars since last True within window. Pure numpy.
+    Returns float array. -1 if never true in window."""
+    n = len(bool_arr)
+    result = np.full(n, np.nan)
+    
+    # Build "bars since last True" running counter
+    bars_since = np.full(n, n, dtype=np.float64)  # large default = never seen
+    for i in range(n):
+        if bool_arr[i]:
+            bars_since[i] = 0.0
+        elif i > 0:
+            bars_since[i] = bars_since[i - 1] + 1.0
+    
+    # Apply window constraint
+    for i in range(period - 1, n):
+        bs = bars_since[i]
+        if bs < period:
+            result[i] = bs
+        else:
+            result[i] = -1.0
+    
+    return result
+
+
+def np_true_in_row(bool_arr, max_look):
+    """true_in_row: consecutive True count from current bar back. Pure numpy."""
+    n = len(bool_arr)
+    result = np.zeros(n, dtype=np.float64)
+    
+    for i in range(n):
+        if bool_arr[i]:
+            count = 1
+            limit = min(max_look, i + 1)
+            for j in range(1, limit):
+                if bool_arr[i - j]:
+                    count += 1
+                else:
+                    break
+            result[i] = float(count)
+    
+    return result
+
+
+def np_trendline_deviation(series, lookback):
+    """Vectorized trendline deviation using numpy stride tricks."""
+    n = len(series)
+    result = np.full(n, np.nan)
+    
+    if n < lookback:
+        return result
+    
+    # Precompute x constants (same for all windows)
+    x = np.arange(lookback, dtype=np.float64)
+    x_mean = np.mean(x)
+    x_var = np.mean(x * x) - x_mean ** 2 + 1e-10
+    
+    # Create sliding windows using stride tricks
+    from numpy.lib.stride_tricks import sliding_window_view
+    windows = sliding_window_view(series, lookback)  # shape: (n - lookback + 1, lookback)
+    
+    # Check for NaN windows
+    has_nan = np.any(np.isnan(windows), axis=1)
+    
+    # Vectorized linear regression across ALL windows at once
+    w_mean = np.mean(windows, axis=1)  # (n_windows,)
+    xw_mean = np.mean(x[np.newaxis, :] * windows, axis=1)  # (n_windows,)
+    slope = (xw_mean - x_mean * w_mean) / x_var
+    intercept = w_mean - slope * x_mean
+    projected = slope * (lookback - 1) + intercept
+    
+    # trendline deviation = actual - projected
+    actual = windows[:, -1]
+    dev = actual - projected
+    
+    # Apply NaN mask
+    dev[has_nan] = np.nan
+    
+    # Place results at correct indices
+    result[lookback - 1:] = dev
+    
+    return result
+
+
+def np_channel_position(series, lookback):
+    """Vectorized channel position using numpy stride tricks."""
+    n = len(series)
+    result = np.full(n, np.nan)
+    
+    if n < lookback:
+        return result
+    
+    x = np.arange(lookback, dtype=np.float64)
+    x_mean = np.mean(x)
+    x_var = np.mean(x * x) - x_mean ** 2 + 1e-10
+    
+    from numpy.lib.stride_tricks import sliding_window_view
+    windows = sliding_window_view(series, lookback)
+    
+    has_nan = np.any(np.isnan(windows), axis=1)
+    
+    w_mean = np.mean(windows, axis=1)
+    xw_mean = np.mean(x[np.newaxis, :] * windows, axis=1)
+    slope = (xw_mean - x_mean * w_mean) / x_var
+    intercept = w_mean - slope * x_mean
+    
+    # Compute residual std for each window
+    projected_lines = slope[:, np.newaxis] * x[np.newaxis, :] + intercept[:, np.newaxis]
+    residuals = windows - projected_lines
+    std_resid = np.std(residuals, axis=1)
+    
+    # Channel position = (actual - projected) / std_resid
+    actual = windows[:, -1]
+    projected = slope * (lookback - 1) + intercept
+    
+    with np.errstate(divide='ignore', invalid='ignore'):
+        pos = np.where(std_resid > 0, (actual - projected) / std_resid, np.nan)
+    
+    pos[has_nan] = np.nan
+    result[lookback - 1:] = pos
+    
+    return result
+
+
+# ══════════════════════════════════════════════════════════════
+# BENCHMARK: ORIGINAL PATH
+# ══════════════════════════════════════════════════════════════
+
+def benchmark_original(ticker, df, expressions):
+    """Run current path, with sub-phase timing for booleans and ext_struct."""
     from expr_cache_builder import (
-        _w_expressions, _w_daily_indices, _w_ext_struct_indices,
+        _w_daily_indices, _w_ext_struct_indices,
         _w_ext_series_name_to_idx,
         _w_lsp_indices, _w_algo_indices,
         _w_htf_weekly_indices, _w_htf_monthly_indices,
@@ -58,115 +195,90 @@ def benchmark_original(ticker, df, expressions):
     n_exprs = len(expressions)
     results = {}
 
-    # Phase 0: Engine init
-    t0 = time.perf_counter()
     engine = ExpressionEngine(df)
     data = np.full((n_bars, n_exprs), np.nan, dtype=np.float32)
-    results["0_engine_init"] = time.perf_counter() - t0
 
-    # Phase 1a: Daily arithmetic
+    # Daily arithmetic
     arith_indices = [j for j in _w_daily_indices
                      if expressions[j]["compute"].get("op") not in BOOL_OPS]
-    bool_indices = [j for j in _w_daily_indices
-                    if expressions[j]["compute"].get("op") in BOOL_OPS]
-
     t0 = time.perf_counter()
     for j in arith_indices:
         try:
-            series = compute_series(engine, expressions[j]["compute"])
-            if series is not None:
-                arr = np.asarray(series, dtype=np.float32)
+            s = compute_series(engine, expressions[j]["compute"])
+            if s is not None:
+                arr = np.asarray(s, dtype=np.float32)
                 if len(arr) == n_bars:
                     data[:, j] = arr
-                elif len(arr) < n_bars:
-                    data[n_bars - len(arr):, j] = arr
         except:
             pass
-    results["1a_daily_arithmetic"] = time.perf_counter() - t0
+    results["1_daily_arith"] = time.perf_counter() - t0
 
-    # Phase 1b: Daily booleans
-    t0 = time.perf_counter()
-    for j in bool_indices:
-        try:
-            series = compute_series(engine, expressions[j]["compute"])
-            if series is not None:
-                arr = np.asarray(series, dtype=np.float32)
-                if len(arr) == n_bars:
-                    data[:, j] = arr
-                elif len(arr) < n_bars:
-                    data[n_bars - len(arr):, j] = arr
-        except:
-            pass
-    results["1b_daily_booleans"] = time.perf_counter() - t0
+    # Daily booleans — split by op type
+    ct_indices = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") == "count_true"]
+    st_indices = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") == "since_true"]
+    tir_indices = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") == "true_in_row"]
 
-    # Phase 2a: LSP
+    for label, indices in [("2a_count_true", ct_indices), ("2b_since_true", st_indices), ("2c_true_in_row", tir_indices)]:
+        t0 = time.perf_counter()
+        for j in indices:
+            try:
+                s = compute_series(engine, expressions[j]["compute"])
+                if s is not None:
+                    arr = np.asarray(s, dtype=np.float32)
+                    if len(arr) == n_bars:
+                        data[:, j] = arr
+            except:
+                pass
+        results[label] = time.perf_counter() - t0
+
+    # LSP + Algo
     t0 = time.perf_counter()
     if _w_lsp_indices:
         try:
             from scripts.lsp_detector_v2 import compute_all_lsp_series
             lsp_dict = compute_all_lsp_series(df)
             for j in _w_lsp_indices:
-                col_name = expressions[j]["compute"]["column"]
-                if col_name in lsp_dict:
-                    arr = lsp_dict[col_name]
-                    if len(arr) == n_bars:
-                        data[:, j] = arr.astype(np.float32)
-        except Exception:
+                col = expressions[j]["compute"]["column"]
+                if col in lsp_dict and len(lsp_dict[col]) == n_bars:
+                    data[:, j] = lsp_dict[col].astype(np.float32)
+        except:
             pass
-    results["2a_lsp"] = time.perf_counter() - t0
-
-    # Phase 2b: Algo
-    t0 = time.perf_counter()
     if _w_algo_indices:
         try:
             from scripts.algo_line_detector import compute_all_algo_series
             algo_dict = compute_all_algo_series(df)
             for j in _w_algo_indices:
-                col_name = expressions[j]["compute"]["column"]
-                if col_name in algo_dict:
-                    arr = algo_dict[col_name]
-                    if len(arr) == n_bars:
-                        data[:, j] = arr.astype(np.float32)
-        except Exception:
+                col = expressions[j]["compute"]["column"]
+                if col in algo_dict and len(algo_dict[col]) == n_bars:
+                    data[:, j] = algo_dict[col].astype(np.float32)
+        except:
             pass
-    results["2b_algo"] = time.perf_counter() - t0
+    results["3_lsp_algo"] = time.perf_counter() - t0
 
-    # Phase 3a: HTF weekly
-    t0 = time.perf_counter()
-    if _w_htf_weekly_indices:
-        htf_df = resample_ohlcv(df, "W")
-        if htf_df is not None and len(htf_df) >= 5:
-            htf_map = build_htf_to_daily_map(df["date"], htf_df, "W")
-            htf_engine = ExpressionEngine(htf_df)
-            for k, j in enumerate(_w_htf_weekly_indices):
-                try:
-                    htf_series = compute_series(htf_engine, _w_htf_weekly_base[k])
-                    if htf_series is not None:
-                        htf_arr = np.asarray(htf_series, dtype=np.float32)
-                        data[:, j] = map_htf_series_to_daily(htf_arr, htf_map)
-                except:
-                    pass
-    results["3a_htf_weekly"] = time.perf_counter() - t0
+    # HTF
+    for freq, label, htf_indices, htf_base in [
+        ("W", "4a_htf_weekly", _w_htf_weekly_indices, _w_htf_weekly_base),
+        ("ME", "4b_htf_monthly", _w_htf_monthly_indices, _w_htf_monthly_base),
+    ]:
+        t0 = time.perf_counter()
+        if htf_indices:
+            htf_df = resample_ohlcv(df, freq)
+            if htf_df is not None and len(htf_df) >= 5:
+                htf_map = build_htf_to_daily_map(df["date"], htf_df, freq)
+                htf_engine = ExpressionEngine(htf_df)
+                for k, j in enumerate(htf_indices):
+                    try:
+                        s = compute_series(htf_engine, htf_base[k])
+                        if s is not None:
+                            data[:, j] = map_htf_series_to_daily(
+                                np.asarray(s, dtype=np.float32), htf_map)
+                    except:
+                        pass
+        results[label] = time.perf_counter() - t0
 
-    # Phase 3b: HTF monthly
-    t0 = time.perf_counter()
-    if _w_htf_monthly_indices:
-        htf_df = resample_ohlcv(df, "ME")
-        if htf_df is not None and len(htf_df) >= 5:
-            htf_map = build_htf_to_daily_map(df["date"], htf_df, "ME")
-            htf_engine = ExpressionEngine(htf_df)
-            for k, j in enumerate(_w_htf_monthly_indices):
-                try:
-                    htf_series = compute_series(htf_engine, _w_htf_monthly_base[k])
-                    if htf_series is not None:
-                        htf_arr = np.asarray(htf_series, dtype=np.float32)
-                        data[:, j] = map_htf_series_to_daily(htf_arr, htf_map)
-                except:
-                    pass
-    results["3b_htf_monthly"] = time.perf_counter() - t0
-
-    # Phase 4: Extension structure
-    t0 = time.perf_counter()
+    # Extension structure — split trendline/channel from the rest
+    t0_ext_fast = time.perf_counter()
+    t_ext_linreg = 0.0
     if _w_ext_struct_indices and _w_ext_series_name_to_idx:
         series_registry = {}
         for sname, sidx in _w_ext_series_name_to_idx.items():
@@ -174,183 +286,278 @@ def benchmark_original(ticker, df, expressions):
             if not np.all(np.isnan(col_data)):
                 series_registry[sname] = col_data.astype(np.float64)
         if series_registry:
+            LINREG_OPS = {"trendline_deviation", "channel_position"}
             for j in _w_ext_struct_indices:
+                comp = expressions[j]["compute"]
+                inner_op = comp.get("inner_op", {}).get("op", "")
+                is_linreg = inner_op in LINREG_OPS
+                t_before = time.perf_counter()
                 try:
-                    series = compute_series(
-                        engine, expressions[j]["compute"],
-                        series_registry=series_registry
-                    )
-                    if series is not None:
-                        arr = np.asarray(series, dtype=np.float32)
+                    s = compute_series(engine, comp, series_registry=series_registry)
+                    if s is not None:
+                        arr = np.asarray(s, dtype=np.float32)
                         if len(arr) == n_bars:
                             data[:, j] = arr
                 except:
                     pass
-    results["4_ext_structure"] = time.perf_counter() - t0
+                if is_linreg:
+                    t_ext_linreg += time.perf_counter() - t_before
+
+    total_ext = time.perf_counter() - t0_ext_fast
+    results["5a_ext_linreg"] = t_ext_linreg
+    results["5b_ext_other"] = total_ext - t_ext_linreg
 
     total = sum(results.values())
     return data, results, total
 
 
-def benchmark_vectorized(ticker, df, expressions):
-    """Run the vectorized path: build_intermediates + compute_expr_2d.
+# ══════════════════════════════════════════════════════════════
+# BENCHMARK: OPTIMIZED PATH
+# ══════════════════════════════════════════════════════════════
 
-    Treats one ticker as a (1, n_bars) 2D array so we can reuse
-    the existing vectorized_dispatch.py functions directly.
-    """
-    from vectorized_dispatch import build_intermediates, compute_expr_2d
+def benchmark_optimized(ticker, df, expressions):
+    """Run optimized path: same engine + compute_series for arithmetic,
+    but numpy replacements for booleans and ext_struct linreg."""
     from expr_cache_builder import (
         _w_daily_indices, _w_ext_struct_indices,
+        _w_ext_series_name_to_idx,
+        _w_lsp_indices, _w_algo_indices,
         _w_htf_weekly_indices, _w_htf_monthly_indices,
         _w_htf_weekly_base, _w_htf_monthly_base,
     )
-    from vectorized_cache_builder import _resample_2d, _build_htf_map
 
     n_bars = len(df)
     n_exprs = len(expressions)
     results = {}
 
-    # Reshape OHLCV to (1, n_bars) for 2D dispatch
-    O = df["open"].values.astype(np.float64).reshape(1, -1)
-    H = df["high"].values.astype(np.float64).reshape(1, -1)
-    L = df["low"].values.astype(np.float64).reshape(1, -1)
-    C = df["close"].values.astype(np.float64).reshape(1, -1)
-    V = df["volume"].values.astype(np.float64).reshape(1, -1)
-
+    engine = ExpressionEngine(df)
     data = np.full((n_bars, n_exprs), np.nan, dtype=np.float32)
 
-    # ── Phase 0: Build intermediates ──
+    # Daily arithmetic — SAME AS ORIGINAL (no change)
+    arith_indices = [j for j in _w_daily_indices
+                     if expressions[j]["compute"].get("op") not in BOOL_OPS]
     t0 = time.perf_counter()
-    im = build_intermediates(O, H, L, C, V)
-    im["_close"] = C
-    results["0_intermediates"] = time.perf_counter() - t0
-
-    # ── Phase 1: Daily arithmetic + booleans + ext structure ──
-    # All of these go through compute_expr_2d which handles all ops
-    all_daily_indices = list(_w_daily_indices) + list(_w_ext_struct_indices)
-
-    t0 = time.perf_counter()
-    ok = 0
-    fail = 0
-    for j in all_daily_indices:
+    for j in arith_indices:
         try:
-            r = compute_expr_2d(expressions[j]["compute"], im, O, H, L, C, V)
-            arr = r.squeeze(axis=0).astype(np.float32)  # (1, n_bars) -> (n_bars,)
-            if len(arr) == n_bars:
-                data[:, j] = arr
-                ok += 1
-        except Exception:
-            fail += 1
-    results["1_daily_all"] = time.perf_counter() - t0
+            s = compute_series(engine, expressions[j]["compute"])
+            if s is not None:
+                arr = np.asarray(s, dtype=np.float32)
+                if len(arr) == n_bars:
+                    data[:, j] = arr
+        except:
+            pass
+    results["1_daily_arith"] = time.perf_counter() - t0
 
-    # ── Phase 2: HTF weekly (vectorized) ──
-    t0 = time.perf_counter()
-    if _w_htf_weekly_indices:
-        dates = pd.to_datetime(df["date"]).values
-        Ow, Hw, Lw, Cw, Vw, w_dates = _resample_2d(O, H, L, C, V, dates, "W")
-        if Cw.shape[1] >= 5:
-            im_w = build_intermediates(Ow, Hw, Lw, Cw, Vw)
-            im_w["_close"] = Cw
-            htf_w_map = _build_htf_map(dates, w_dates)
-            for k, j in enumerate(_w_htf_weekly_indices):
-                try:
-                    wr = compute_expr_2d(_w_htf_weekly_base[k], im_w, Ow, Hw, Lw, Cw, Vw)
-                    mapped = wr[0, htf_w_map].astype(np.float32)
-                    data[:, j] = mapped
-                except Exception:
-                    pass
-    results["2_htf_weekly"] = time.perf_counter() - t0
+    # Daily booleans — OPTIMIZED: compute bool conditions via engine (cached),
+    # then use numpy count/since/true_in_row instead of pandas rolling
+    ct_indices = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") == "count_true"]
+    st_indices = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") == "since_true"]
+    tir_indices = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") == "true_in_row"]
 
-    # ── Phase 3: HTF monthly (vectorized) ──
+    # Pre-compute all unique boolean conditions via the engine (uses its cache)
     t0 = time.perf_counter()
-    if _w_htf_monthly_indices:
-        dates = pd.to_datetime(df["date"]).values
-        Om, Hm, Lm, Cm, Vm, m_dates = _resample_2d(O, H, L, C, V, dates, "ME")
-        if Cm.shape[1] >= 5:
-            im_m = build_intermediates(Om, Hm, Lm, Cm, Vm)
-            im_m["_close"] = Cm
-            htf_m_map = _build_htf_map(dates, m_dates)
-            for k, j in enumerate(_w_htf_monthly_indices):
-                try:
-                    mr = compute_expr_2d(_w_htf_monthly_base[k], im_m, Om, Hm, Lm, Cm, Vm)
-                    mapped = mr[0, htf_m_map].astype(np.float32)
-                    data[:, j] = mapped
-                except Exception:
-                    pass
-    results["3_htf_monthly"] = time.perf_counter() - t0
+    bool_cache = {}
+    all_bool_indices = ct_indices + st_indices + tir_indices
+    for j in all_bool_indices:
+        cond = expressions[j]["compute"]["condition"]
+        if cond not in bool_cache:
+            try:
+                b = engine._bool_series(cond)
+                bool_cache[cond] = b.values.astype(bool)
+            except:
+                bool_cache[cond] = np.zeros(n_bars, dtype=bool)
+    results["2a_bool_conditions"] = time.perf_counter() - t0
+
+    # count_true — numpy cumsum
+    t0 = time.perf_counter()
+    for j in ct_indices:
+        comp = expressions[j]["compute"]
+        cond = comp["condition"]
+        period = comp["period"]
+        b = bool_cache[cond]
+        data[:, j] = np_count_true(b, period).astype(np.float32)
+    results["2b_count_true"] = time.perf_counter() - t0
+
+    # since_true — numpy loop (still a loop but no pandas overhead)
+    t0 = time.perf_counter()
+    # Pre-compute "bars_since" for each unique condition (reusable across periods)
+    bars_since_cache = {}
+    for j in st_indices:
+        cond = expressions[j]["compute"]["condition"]
+        if cond not in bars_since_cache:
+            b = bool_cache[cond]
+            bs = np.full(n_bars, n_bars, dtype=np.float64)
+            for i in range(n_bars):
+                if b[i]:
+                    bs[i] = 0.0
+                elif i > 0:
+                    bs[i] = bs[i - 1] + 1.0
+            bars_since_cache[cond] = bs
+    
+    for j in st_indices:
+        comp = expressions[j]["compute"]
+        cond = comp["condition"]
+        period = comp["period"]
+        bs = bars_since_cache[cond]
+        result = np.full(n_bars, np.nan)
+        for i in range(period - 1, n_bars):
+            if bs[i] < period:
+                result[i] = bs[i]
+            else:
+                result[i] = -1.0
+        data[:, j] = result.astype(np.float32)
+    results["2c_since_true"] = time.perf_counter() - t0
+
+    # true_in_row — numpy loop
+    t0 = time.perf_counter()
+    for j in tir_indices:
+        comp = expressions[j]["compute"]
+        cond = comp["condition"]
+        period = comp["period"]
+        b = bool_cache[cond]
+        data[:, j] = np_true_in_row(b, period).astype(np.float32)
+    results["2d_true_in_row"] = time.perf_counter() - t0
+
+    # LSP + Algo — SAME AS ORIGINAL
+    t0 = time.perf_counter()
+    if _w_lsp_indices:
+        try:
+            from scripts.lsp_detector_v2 import compute_all_lsp_series
+            lsp_dict = compute_all_lsp_series(df)
+            for j in _w_lsp_indices:
+                col = expressions[j]["compute"]["column"]
+                if col in lsp_dict and len(lsp_dict[col]) == n_bars:
+                    data[:, j] = lsp_dict[col].astype(np.float32)
+        except:
+            pass
+    if _w_algo_indices:
+        try:
+            from scripts.algo_line_detector import compute_all_algo_series
+            algo_dict = compute_all_algo_series(df)
+            for j in _w_algo_indices:
+                col = expressions[j]["compute"]["column"]
+                if col in algo_dict and len(algo_dict[col]) == n_bars:
+                    data[:, j] = algo_dict[col].astype(np.float32)
+        except:
+            pass
+    results["3_lsp_algo"] = time.perf_counter() - t0
+
+    # HTF — SAME AS ORIGINAL (optimize in next increment)
+    for freq, label, htf_indices, htf_base in [
+        ("W", "4a_htf_weekly", _w_htf_weekly_indices, _w_htf_weekly_base),
+        ("ME", "4b_htf_monthly", _w_htf_monthly_indices, _w_htf_monthly_base),
+    ]:
+        t0 = time.perf_counter()
+        if htf_indices:
+            htf_df = resample_ohlcv(df, freq)
+            if htf_df is not None and len(htf_df) >= 5:
+                htf_map = build_htf_to_daily_map(df["date"], htf_df, freq)
+                htf_engine = ExpressionEngine(htf_df)
+                for k, j in enumerate(htf_indices):
+                    try:
+                        s = compute_series(htf_engine, htf_base[k])
+                        if s is not None:
+                            data[:, j] = map_htf_series_to_daily(
+                                np.asarray(s, dtype=np.float32), htf_map)
+                    except:
+                        pass
+        results[label] = time.perf_counter() - t0
+
+    # Extension structure — OPTIMIZED: numpy linreg for trendline/channel
+    t0_ext = time.perf_counter()
+    t_linreg = 0.0
+    if _w_ext_struct_indices and _w_ext_series_name_to_idx:
+        series_registry = {}
+        for sname, sidx in _w_ext_series_name_to_idx.items():
+            col_data = data[:, sidx]
+            if not np.all(np.isnan(col_data)):
+                series_registry[sname] = col_data.astype(np.float64)
+        
+        if series_registry:
+            LINREG_OPS = {"trendline_deviation", "channel_position"}
+            for j in _w_ext_struct_indices:
+                comp = expressions[j]["compute"]
+                inner_op_spec = comp.get("inner_op", {})
+                inner_op_name = inner_op_spec.get("op", "")
+                
+                if inner_op_name in LINREG_OPS:
+                    # Use vectorized numpy version
+                    t_before = time.perf_counter()
+                    try:
+                        # Get the extension series this operates on
+                        series_name = comp.get("series", "")
+                        if series_name in series_registry:
+                            s = series_registry[series_name]
+                            lb = inner_op_spec["lookback"]
+                            if inner_op_name == "trendline_deviation":
+                                arr = np_trendline_deviation(s, lb)
+                            else:
+                                arr = np_channel_position(s, lb)
+                            data[:, j] = arr.astype(np.float32)
+                    except:
+                        pass
+                    t_linreg += time.perf_counter() - t_before
+                else:
+                    # Use original compute_series for non-linreg ops
+                    try:
+                        s = compute_series(engine, comp, series_registry=series_registry)
+                        if s is not None:
+                            arr = np.asarray(s, dtype=np.float32)
+                            if len(arr) == n_bars:
+                                data[:, j] = arr
+                    except:
+                        pass
+
+    total_ext = time.perf_counter() - t0_ext
+    results["5a_ext_linreg"] = t_linreg
+    results["5b_ext_other"] = total_ext - t_linreg
 
     total = sum(results.values())
-    return data, results, total, {"ok": ok, "fail": fail}
+    return data, results, total
 
 
-def compare_outputs(data_orig, data_vec, expressions, indices_to_check):
-    """Compare two output arrays, report mismatches."""
-    n_checked = 0
+# ══════════════════════════════════════════════════════════════
+# COMPARISON
+# ══════════════════════════════════════════════════════════════
+
+def compare_outputs(data_orig, data_opt, expressions, indices):
+    """Compare outputs, report mismatches."""
     n_match = 0
-    n_both_nan = 0
     n_mismatch = 0
     max_diff = 0.0
-    worst_expr = ""
-    mismatch_examples = []
+    worst = ""
+    examples = []
 
-    for j in indices_to_check:
+    for j in indices:
         orig = data_orig[:, j]
-        vec = data_vec[:, j]
-
-        # Both NaN = match
-        both_nan = np.isnan(orig) & np.isnan(vec)
-        # One NaN, other not = mismatch
-        one_nan = np.isnan(orig) != np.isnan(vec)
-        # Both have values = compare
-        both_val = ~np.isnan(orig) & ~np.isnan(vec)
-
-        nan_mismatches = one_nan.sum()
-
+        opt = data_opt[:, j]
+        one_nan = np.isnan(orig) != np.isnan(opt)
+        both_val = ~np.isnan(orig) & ~np.isnan(opt)
+        nan_mm = one_nan.sum()
+        val_mm = 0
         if both_val.any():
-            diffs = np.abs(orig[both_val] - vec[both_val])
-            # float32 tolerance: values can differ by up to ~1e-6 relative
-            # Use absolute tolerance scaled by value magnitude
-            magnitudes = np.maximum(np.abs(orig[both_val]), np.abs(vec[both_val]))
-            magnitudes = np.maximum(magnitudes, 1e-8)  # floor for near-zero
-            rel_diffs = diffs / magnitudes
-            val_mismatches = (rel_diffs > 1e-4).sum()  # 0.01% relative tolerance
-            if diffs.max() > max_diff:
-                max_diff = diffs.max()
-                worst_expr = expressions[j]["name"]
-        else:
-            val_mismatches = 0
-
-        total_mismatches = nan_mismatches + val_mismatches
-
-        if total_mismatches == 0:
+            d = np.abs(orig[both_val] - opt[both_val])
+            mag = np.maximum(np.abs(orig[both_val]), np.abs(opt[both_val]))
+            mag = np.maximum(mag, 1e-8)
+            val_mm = (d / mag > 1e-4).sum()
+            if d.max() > max_diff:
+                max_diff = d.max()
+                worst = expressions[j]["name"]
+        if nan_mm + val_mm == 0:
             n_match += 1
         else:
             n_mismatch += 1
-            if len(mismatch_examples) < 10:
-                mismatch_examples.append(
-                    f"{expressions[j]['name']}: {nan_mismatches} NaN mismatches, "
-                    f"{val_mismatches} value mismatches"
-                )
+            if len(examples) < 10:
+                examples.append(f"{expressions[j]['name']}: {nan_mm} NaN, {val_mm} val")
 
-        n_checked += 1
-
-    return {
-        "checked": n_checked,
-        "match": n_match,
-        "mismatch": n_mismatch,
-        "max_abs_diff": max_diff,
-        "worst_expr": worst_expr,
-        "examples": mismatch_examples,
-    }
+    return n_match, n_mismatch, max_diff, worst, examples
 
 
 def main():
     print("\n" + "=" * 70)
-    print("  EXPRESSION CACHE — VECTORIZED vs ORIGINAL BENCHMARK")
+    print("  EXPRESSION CACHE — TARGETED OPTIMIZATION BENCHMARK")
     print("=" * 70)
 
-    # Load expressions and init worker
-    print("\n  Loading expressions...")
     expressions = _load_expressions()
     _init_worker(expressions)
 
@@ -359,17 +566,13 @@ def main():
         _w_htf_weekly_indices, _w_htf_monthly_indices,
     )
 
-    n_arith = sum(1 for j in _w_daily_indices
-                  if expressions[j]["compute"].get("op") not in BOOL_OPS)
-    n_bool = sum(1 for j in _w_daily_indices
-                 if expressions[j]["compute"].get("op") in BOOL_OPS)
-
-    print(f"  {len(expressions)} expressions")
-    print(f"    Daily arithmetic:    {n_arith}")
-    print(f"    Daily booleans:      {n_bool}")
-    print(f"    Extension structure: {len(_w_ext_struct_indices)}")
-    print(f"    HTF weekly:          {len(_w_htf_weekly_indices)}")
-    print(f"    HTF monthly:         {len(_w_htf_monthly_indices)}")
+    ct = sum(1 for j in _w_daily_indices if expressions[j]["compute"].get("op") == "count_true")
+    st = sum(1 for j in _w_daily_indices if expressions[j]["compute"].get("op") == "since_true")
+    tir = sum(1 for j in _w_daily_indices if expressions[j]["compute"].get("op") == "true_in_row")
+    
+    print(f"\n  {len(expressions)} expressions")
+    print(f"  Booleans: {ct} count_true + {st} since_true + {tir} true_in_row = {ct+st+tir}")
+    print(f"  Extension structure: {len(_w_ext_struct_indices)}")
 
     # Load OHLCV
     print("\n  Loading 5yr OHLCV cache...")
@@ -378,147 +581,97 @@ def main():
         cache_path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
     with open(cache_path, "rb") as f:
         universe = pickle.load(f)
-    print(f"  {len(universe)} tickers loaded")
 
-    # Pick the longest ticker for worst-case benchmark
     valid = {t: df for t, df in universe.items() if df is not None and len(df) >= 50}
     by_bars = sorted(valid.items(), key=lambda x: len(x[1]))
     ticker, df = by_bars[-1]
-
     del universe, valid, by_bars
     import gc; gc.collect()
 
-    print(f"\n  Benchmark ticker: {ticker} ({len(df)} bars)")
+    print(f"  Benchmark ticker: {ticker} ({len(df)} bars)")
 
-    # ════════════════════════════════════════════════════════
-    # RUN A: Original path
-    # ════════════════════════════════════════════════════════
+    # ═══ ORIGINAL ═══
     print(f"\n  {'─' * 60}")
-    print(f"  ORIGINAL PATH (compute_series per expression)")
+    print(f"  ORIGINAL")
     print(f"  {'─' * 60}")
-
-    data_orig, results_orig, total_orig = benchmark_original(
-        ticker, df, expressions
-    )
+    data_orig, res_orig, total_orig = benchmark_original(ticker, df, expressions)
 
     print(f"\n  Phase                     Time (s)    %")
-    print(f"  {'─' * 45}")
-    for phase, secs in results_orig.items():
-        pct = secs / total_orig * 100 if total_orig > 0 else 0
+    print(f"  {'─' * 50}")
+    for phase, secs in res_orig.items():
+        pct = secs / total_orig * 100
         phase_name = phase.split("_", 1)[1]
         print(f"  {phase_name:<25} {secs:>7.3f}   {pct:>5.1f}%")
-    print(f"  {'─' * 45}")
+    print(f"  {'─' * 50}")
     print(f"  {'TOTAL':<25} {total_orig:>7.3f}   100.0%")
 
-    # ════════════════════════════════════════════════════════
-    # RUN B: Vectorized path
-    # ════════════════════════════════════════════════════════
+    # ═══ OPTIMIZED ═══
     print(f"\n  {'─' * 60}")
-    print(f"  VECTORIZED PATH (build_intermediates + compute_expr_2d)")
+    print(f"  OPTIMIZED (numpy bools + vectorized linreg)")
     print(f"  {'─' * 60}")
-
-    data_vec, results_vec, total_vec, vec_stats = benchmark_vectorized(
-        ticker, df, expressions
-    )
+    data_opt, res_opt, total_opt = benchmark_optimized(ticker, df, expressions)
 
     print(f"\n  Phase                     Time (s)    %")
-    print(f"  {'─' * 45}")
-    for phase, secs in results_vec.items():
-        pct = secs / total_vec * 100 if total_vec > 0 else 0
+    print(f"  {'─' * 50}")
+    for phase, secs in res_opt.items():
+        pct = secs / total_opt * 100
         phase_name = phase.split("_", 1)[1]
         print(f"  {phase_name:<25} {secs:>7.3f}   {pct:>5.1f}%")
-    print(f"  {'─' * 45}")
-    print(f"  {'TOTAL':<25} {total_vec:>7.3f}   100.0%")
-    print(f"  Dispatch: {vec_stats['ok']} ok, {vec_stats['fail']} failed")
+    print(f"  {'─' * 50}")
+    print(f"  {'TOTAL':<25} {total_opt:>7.3f}   100.0%")
 
-    # ════════════════════════════════════════════════════════
-    # COMPARISON
-    # ════════════════════════════════════════════════════════
+    # ═══ COMPARISON ═══
     print(f"\n  {'─' * 60}")
     print(f"  COMPARISON")
     print(f"  {'─' * 60}")
-
-    speedup = total_orig / total_vec if total_vec > 0 else 0
+    speedup = total_orig / total_opt if total_opt > 0 else 0
     print(f"\n  Original:   {total_orig:.3f}s")
-    print(f"  Vectorized: {total_vec:.3f}s")
+    print(f"  Optimized:  {total_opt:.3f}s")
     print(f"  Speedup:    {speedup:.2f}x")
 
-    # Compare per-phase where possible
-    orig_daily = (results_orig.get("1a_daily_arithmetic", 0) +
-                  results_orig.get("1b_daily_booleans", 0) +
-                  results_orig.get("4_ext_structure", 0))
-    vec_daily = results_vec.get("1_daily_all", 0)
-    if vec_daily > 0:
-        print(f"\n  Daily+Bool+ExtStruct:")
-        print(f"    Original:   {orig_daily:.3f}s")
-        print(f"    Vectorized: {vec_daily:.3f}s")
-        print(f"    Speedup:    {orig_daily / vec_daily:.2f}x")
+    # Per-phase comparison
+    phases = [
+        ("Booleans (ct+st+tir)", 
+         sum(res_orig.get(k, 0) for k in ["2a_count_true", "2b_since_true", "2c_true_in_row"]),
+         sum(res_opt.get(k, 0) for k in ["2a_bool_conditions", "2b_count_true", "2c_since_true", "2d_true_in_row"])),
+        ("Ext linreg",
+         res_orig.get("5a_ext_linreg", 0),
+         res_opt.get("5a_ext_linreg", 0)),
+    ]
+    for name, orig_t, opt_t in phases:
+        sp = orig_t / opt_t if opt_t > 0 else 0
+        print(f"\n  {name}:")
+        print(f"    Original:  {orig_t:.3f}s")
+        print(f"    Optimized: {opt_t:.3f}s")
+        print(f"    Speedup:   {sp:.2f}x")
 
-    orig_htf = (results_orig.get("3a_htf_weekly", 0) +
-                results_orig.get("3b_htf_monthly", 0))
-    vec_htf = (results_vec.get("2_htf_weekly", 0) +
-               results_vec.get("3_htf_monthly", 0))
-    if vec_htf > 0:
-        print(f"\n  HTF (weekly + monthly):")
-        print(f"    Original:   {orig_htf:.3f}s")
-        print(f"    Vectorized: {vec_htf:.3f}s")
-        print(f"    Speedup:    {orig_htf / vec_htf:.2f}x")
-
-    # ════════════════════════════════════════════════════════
-    # CORRECTNESS CHECK
-    # ════════════════════════════════════════════════════════
+    # ═══ CORRECTNESS ═══
     print(f"\n  {'─' * 60}")
-    print(f"  CORRECTNESS CHECK")
+    print(f"  CORRECTNESS")
     print(f"  {'─' * 60}")
 
-    # Check daily + bool + ext struct
-    check_indices = list(_w_daily_indices) + list(_w_ext_struct_indices)
-    daily_cmp = compare_outputs(data_orig, data_vec, expressions, check_indices)
-    print(f"\n  Daily+Bool+ExtStruct ({daily_cmp['checked']} expressions):")
-    print(f"    Match:     {daily_cmp['match']}")
-    print(f"    Mismatch:  {daily_cmp['mismatch']}")
-    print(f"    Max diff:  {daily_cmp['max_abs_diff']:.6f} ({daily_cmp['worst_expr']})")
-    if daily_cmp['examples']:
-        print(f"    Examples:")
-        for ex in daily_cmp['examples']:
-            print(f"      {ex}")
+    # Check booleans
+    bool_indices = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") in BOOL_OPS]
+    m, mm, md, w, ex = compare_outputs(data_orig, data_opt, expressions, bool_indices)
+    print(f"\n  Booleans ({len(bool_indices)}):")
+    print(f"    Match: {m}, Mismatch: {mm}, Max diff: {md:.6f} ({w})")
+    for e in ex[:5]:
+        print(f"      {e}")
 
-    # Check HTF
-    htf_indices = list(_w_htf_weekly_indices) + list(_w_htf_monthly_indices)
-    htf_cmp = compare_outputs(data_orig, data_vec, expressions, htf_indices)
-    print(f"\n  HTF weekly+monthly ({htf_cmp['checked']} expressions):")
-    print(f"    Match:     {htf_cmp['match']}")
-    print(f"    Mismatch:  {htf_cmp['mismatch']}")
-    print(f"    Max diff:  {htf_cmp['max_abs_diff']:.6f} ({htf_cmp['worst_expr']})")
-    if htf_cmp['examples']:
-        print(f"    Examples:")
-        for ex in htf_cmp['examples'][:5]:
-            print(f"      {ex}")
+    # Check ext struct
+    m, mm, md, w, ex = compare_outputs(data_orig, data_opt, expressions, list(_w_ext_struct_indices))
+    print(f"\n  ExtStruct ({len(_w_ext_struct_indices)}):")
+    print(f"    Match: {m}, Mismatch: {mm}, Max diff: {md:.6f} ({w})")
+    for e in ex[:5]:
+        print(f"      {e}")
 
-    # ════════════════════════════════════════════════════════
-    # FULL BUILD ESTIMATE
-    # ════════════════════════════════════════════════════════
+    # ═══ FULL BUILD ESTIMATE ═══
     print(f"\n  {'=' * 60}")
-    print(f"  FULL BUILD ESTIMATE (8 workers)")
+    print(f"  FULL BUILD ESTIMATE (8 workers, {4100} tickers)")
     print(f"  {'=' * 60}")
-
-    # Original estimate (without LSP/algo — those stay the same)
-    orig_compute = total_orig - results_orig.get("2a_lsp", 0) - results_orig.get("2b_algo", 0)
-    vec_compute = total_vec
-
-    est_tickers = 4100
-    lsp_algo_per_ticker = results_orig.get("2a_lsp", 0) + results_orig.get("2b_algo", 0)
-
-    orig_total_est = (orig_compute + lsp_algo_per_ticker) * est_tickers / 8
-    vec_total_est = (vec_compute + lsp_algo_per_ticker) * est_tickers / 8
-
-    print(f"  Per ticker (compute only, no LSP/algo):")
-    print(f"    Original:   {orig_compute:.1f}s")
-    print(f"    Vectorized: {vec_compute:.1f}s")
-    print(f"  LSP+Algo per ticker: {lsp_algo_per_ticker:.1f}s")
-    print(f"\n  Full build ({est_tickers} tickers, 8 workers):")
-    print(f"    Original:   {orig_total_est:.0f}s ({orig_total_est/60:.1f} min)")
-    print(f"    Vectorized: {vec_total_est:.0f}s ({vec_total_est/60:.1f} min)")
+    est = 4100
+    print(f"  Original:   {total_orig * est / 8:.0f}s ({total_orig * est / 8 / 60:.1f} min)")
+    print(f"  Optimized:  {total_opt * est / 8:.0f}s ({total_opt * est / 8 / 60:.1f} min)")
 
 
 if __name__ == "__main__":
