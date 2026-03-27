@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Optimize the expression cache builder so that the nightly rebuild runs fast while producing **identical output** to the current builder. The cache is additive — each nightly run appends new bars to every ticker's existing cache file. Old bars are never dropped or trimmed. The full historical series from the 5yr OHLCV cache is preserved in every .npz file.
+Every night: Fetch fresh OHLCV for all ~10,856 tickers via yfinance, then do a full expression cache rebuild for all of them. No skipping, no shortcuts. Because any ticker could become tradable tomorrow, and historical examples need complete data for tickers that were tradable in the past.
 
-**Two modes:**
-- **Full build** (\`--build --force\`): Recomputes all 16,051 expressions for all ~4,100 tickers from scratch. Only needed when expression definitions change (e.g., new AVWAP formula, new expression category added). Produces ~65 GB of .npz files.
-- **Nightly append** (\`--append\`, runs at 4:30pm ET via Task Scheduler): Recomputes the full series for every ticker that has new bars (which is all ~4,100 tickers every trading day) and overwrites the .npz file. On non-Mondays, weekly HTF columns are copied from the previous cache instead of recomputed. On non-month-start days, monthly HTF columns are copied. This skips ~66% of expressions on most days.
+The output must be **identical** to what the current builder produces. Same .npz files, same float32 values, same date arrays. The cache is additive — old bars are never dropped or trimmed. The full historical series from the 5yr OHLCV cache is preserved in every .npz file.
 
-Both modes produce the same output format: one .npz per ticker with \`data\` (float32 array, n_bars × 16,051) and \`dates\` (date strings). Grinders, matrix builder, and all downstream pipeline stages read these files identically regardless of which mode produced them.
+**Ticker count:** ~10,856 tickers in the 5yr OHLCV cache. ~4,118 are currently active (getting new D1 candles). ~6,738 are dead/delisted (no new bars, but their historical data must remain in the cache for pipeline analysis). On a normal trading day, all ~10,856 get processed — the ~4,118 active ones have new bars to compute, and the ~6,738 dead ones get skipped automatically because their bar count hasn't changed (existing .npz is already correct).
+
+**Output format:** One .npz per ticker with `data` (float32 array, n_bars × 16,051) and `dates` (date strings). Grinders, matrix builder, and all downstream pipeline stages read these files identically.
 
 ## What's In The Expression Library
 
@@ -138,16 +138,20 @@ See git history for full implementation details of Tasks A-G.
 
 ## Performance Summary
 
-| Component | Before V2 | After V2 (current) | After Task H (optimized) |
-|-----------|-----------|--------------------|-----------------------|
-| Expression count | 4,017 | 16,051 | 16,051 (unchanged) |
-| Cache size (disk) | ~21 GB | ~65 GB | ~65 GB (unchanged) |
-| Full rebuild (all tickers from scratch) | ~40 min | ~95-107 min | ~56 min (estimated) |
-| Nightly append (all tickers, non-Monday) | ~5-8 min | ~70-80 min | ~40-45 min (estimated, HTF skip saves ~30%) |
-| Nightly append (Monday — recompute weekly HTF) | — | ~95-107 min | ~56 min (estimated, same as full) |
-| Matrix rebuild | ~5 min | ~30s | ~30s (unchanged) |
-| Grinder runtime | ~2-3 min | ~4-8 min | ~4-8 min (unchanged) |
-| Output format | Same | Same | Same — identical .npz files, additive, no old bars dropped |
+**Ticker count:** ~10,856 in 5yr OHLCV cache. ~4,118 active (new bars daily). ~6,738 dead (auto-skipped by nightly, .npz already exists).
+
+| Component | Before V2 | After V2 (current) | After Task H (optimized) | Target |
+|-----------|-----------|--------------------|-----------------------|--------|
+| Expression count | 4,017 | 16,051 | 16,051 | — |
+| Tickers | ~4,100 | ~10,856 | ~10,856 | ~10,856 |
+| Cache size (disk) | ~21 GB | ~65 GB | ~65 GB | — |
+| Full rebuild (10,856 tickers) | ~40 min | ~252 min | ~148 min | <60 min |
+| Nightly (~4,118 active tickers) | ~5-8 min | ~95 min | ~56 min | <30 min |
+| Per ticker (worst case) | — | 11.14s | 6.56s | <2.65s |
+| Matrix rebuild | ~5 min | ~30s | ~30s | — |
+| Output format | — | — | Identical, additive, no bars dropped | — |
+
+**Target:** Nightly expression cache step under 30 minutes. Requires per-ticker time under 2.65s (currently 6.56s). Remaining optimization work needed on daily_arith (2.5s) and HTF dispatch (2.7s).
 
 ## Decisions (Resolved)
 
