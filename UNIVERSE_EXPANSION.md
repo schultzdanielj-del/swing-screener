@@ -237,42 +237,47 @@ Not an expression — computed on the fly from OHLCV (close × volume, 20-bar SM
 
 ### Phase 2: Vectorized expression cache builder
 
-#### What works (correctness verified)
-- [x] **Increment 1:** Numpy 2D base indicators (28 functions: SMA, EMA, HMA, ATR, ADR, RSI, ADX, DI+/-, CCI, MACD, Bollinger, OBV, BOP, Aroon, CMF, Kaufman, count_true, since_true, true_in_row). File: `vectorized_indicators.py`
-- [x] **Increment 2:** Daily expression dispatcher (1,604 expressions, 86 op types). File: `vectorized_dispatch.py`
-- [x] **Increment 3:** Boolean conditions + aggregates (2,413 expressions, 127 conditions). Added to `vectorized_dispatch.py`
-- [x] **Increment 4:** Extension structure ops — on_series + on_series_bool_agg (1,198 expressions). Added to `vectorized_dispatch.py`
-- [x] **Increment 5:** HTF weekly + monthly (10,466 expressions). No new code — same `build_intermediates` + `compute_expr_2d` on resampled OHLCV matrices.
-- [x] **Validation gate:** All 5,215 non-precomputed expressions match pandas within float64 precision (tested with synthetic data, 2–3 tickers × 300 bars). HTF: 90/90 weekly + 90/90 monthly base ops match.
-- [x] `vectorized_cache_builder.py` produces **correct output** — .npz files match the existing format. Correctness is not the issue.
+#### Correctness: DONE
+All expression computation logic is verified correct against the pandas reference:
+- **5,215 daily expressions** (1,604 daily ops + 2,413 boolean aggregates + 1,198 extension structure): 100% match within float64 precision. Tested with synthetic data (2–3 tickers × 300 bars).
+- **10,466 HTF expressions** (5,233 weekly + 5,233 monthly): 90/90 unique base ops match for both weekly and monthly. Same `build_intermediates()` + `compute_expr_2d()` on resampled OHLCV — no new code needed.
+- **124 per-ticker expressions** (80 LSP + 44 algo lines): unchanged from original builder, run in separate ProcessPoolExecutor pass.
+- `vectorized_cache_builder.py` produces correct .npz files matching the existing format.
 
-#### What does NOT work (performance)
-- The current builder is **~11 hours for 10,542 tickers** — SLOWER than the old per-ticker pandas builder (~4.5 hours).
-- **Root cause:** Single-threaded Python dispatch overhead. `compute_expr_2d` is called 15,805 times per output batch (422 batches of 25 tickers). Each call costs ~18ms in Python function dispatch + numpy array allocation. The actual numpy compute is trivial.
-- **CPU utilization was 8% throughout the entire 11-hour run.** The machine's 10 cores (i5-12600K) sat idle. The numpy operations are fast — Python's single-threaded interpreter is the bottleneck, not compute.
-- **What was tried:** (1) Per-batch intermediates + per-expression dispatch = ~11 hours. (2) Global intermediates computed once for all 10,542 tickers (174 arrays, ~20GB), sliced per batch = still ~11 hours. The intermediates-once approach eliminated redundant computation but the per-expression dispatch loop within each batch is identical.
+#### Performance: FAILED — needs parallelization
+- Current builder: **~11 hours for 10,542 tickers.** Slower than old pandas builder (~4.5 hours).
+- **CPU utilization: 8% for the entire run.** i5-12600K (10 cores) sat idle.
+- **Root cause:** Single-threaded Python dispatch. `compute_expr_2d()` called 15,805 times per output batch × 422 batches = 6.7M Python function calls. Each call costs ~18ms in interpreter overhead + numpy array allocation. The actual numpy math is trivial.
+- **What was tried:** (1) Per-batch intermediates = ~11 hours. (2) Global intermediates for all 10,542 tickers computed once (174 arrays, ~20GB), sliced per batch = still ~11 hours. Intermediates-once eliminated redundant MA/RSI/etc. computation but the per-expression dispatch loop is the bottleneck.
+- **RAM at peak:** 26.4 GB (83% of 32GB). Intermediates ~20GB, OHLCV ~0.5GB, batch output ~2GB.
 
 #### Next step: parallelize the expression loop
-The expression loop is embarrassingly parallel — each expression is independent. The fix is to parallelize expression computation across CPU cores using `ProcessPoolExecutor` or `multiprocessing.Pool`. Each worker computes a subset of expressions for the current batch.
+The expression loop is embarrassingly parallel — each expression is independent, intermediates are read-only. Fix: split expressions across CPU cores using `ProcessPoolExecutor` or `multiprocessing.Pool`.
 
-**RAM constraint:** 26.4 GB used at peak (83% of 32GB). Intermediates consume ~20GB. Each worker needs access to the intermediates (read-only) plus one output array per expression (~109MB for 10,542 × 1,297 float64). With fork-based multiprocessing, the intermediates are shared via copy-on-write. Workers only allocate the per-expression output (~109MB each).
+**RAM strategy for parallelization:** With fork-based multiprocessing (Linux/macOS), intermediates are shared via copy-on-write — no duplication. On **Windows (Dan's machine), fork is not available.** Options:
+1. **SharedMemory (multiprocessing.shared_memory):** Allocate intermediates in shared memory segments. Workers attach read-only. No copy overhead.
+2. **Chunked single-process with pre-allocated output:** Process expressions in groups (all ma_slope together, all extension together, etc.) to reduce per-call overhead. No multiprocessing needed if bulk operations eliminate the dispatch loop.
+3. **multiprocessing with pickle:** Workers receive intermediate slices. RAM doubles. Won't fit in 32GB.
+4. **ThreadPoolExecutor:** Python threads share memory but GIL blocks parallel numpy. Only useful if numpy releases GIL (some ops do, some don't).
 
-**Estimated speedup:** i5-12600K has 10 cores (6P + 4E). At 8% single-threaded → ~80% utilization with 10 workers = ~10x theoretical. Realistic with overhead: 5–8x. Current 11 hours → **1.5–2.5 hours** for full rebuild. This is a realistic target, not the original 30-minute estimate which was wrong.
+**Estimated performance at full CPU utilization:**
+- Current: 11 hours at 8% CPU = ~53 CPU-minutes of actual work
+- At 80% utilization (10 workers): ~1.5–2.5 hours realistic
+- Target: full rebuild under 2.5 hours
 
-**Alternative approaches (if parallelization alone isn't enough):**
-- Numba JIT: compile the expression dispatch to machine code, eliminating Python interpreter overhead entirely
-- Bulk 3D ops: compute all parameter variants of an op simultaneously (e.g., all 240 ma_slope expressions in one operation). More complex but eliminates the per-expression loop
-- Hybrid: parallelize + bulk the top 5 op types by count (ma_slope 240, distance_to_maxh 174, distance_to_minl 114, extension 78, spread_slope 64 = 670 expressions, ~40% of daily)
+**Alternative if parallelization alone isn't enough:**
+- Numba JIT: compile expression dispatch to machine code
+- Bulk 3D ops: compute all parameter variants simultaneously (e.g., all 240 ma_slope in one operation)
 
 #### Backups (2026-03-27)
-- `local_runner/cache/expr_series_backup/` — 4,133 files, expression cache snapshot from before this work
-- `local_runner/cache/universe_ohlcv_5yr_pre_phase2.pkl` — 10,856-ticker OHLCV cache
-- `local_runner/cache/universe_ohlcv_5yr_backup.pkl` — pre-expansion 4,169-ticker OHLCV cache
-- **Restore:** copy `expr_series_backup/` back to `expr_series/`, copy `*_pre_phase2.pkl` back to `universe_ohlcv_5yr.pkl`
+- `local_runner/cache/expr_series_backup/` — 4,133 files, pre-Phase 2 expression cache snapshot
+- `local_runner/cache/universe_ohlcv_5yr_pre_phase2.pkl` — 10,856-ticker OHLCV
+- `local_runner/cache/universe_ohlcv_5yr_backup.pkl` — pre-expansion 4,169-ticker OHLCV
+- **Restore:** copy `expr_series_backup/` → `expr_series/`, copy `*_pre_phase2.pkl` → `universe_ohlcv_5yr.pkl`
 
 #### Files
-- `local_runner/vectorized_indicators.py` — 28 numpy 2D base indicator functions (CORRECT, tested)
-- `local_runner/vectorized_dispatch.py` — expression dispatcher, `build_intermediates()`, `compute_expr_2d()` (CORRECT, used for validation and as reference)
+- `local_runner/vectorized_indicators.py` — 28 numpy 2D base indicator functions (CORRECT)
+- `local_runner/vectorized_dispatch.py` — `build_intermediates()`, `compute_expr_2d()`, `_eval_bool_condition_2d()` (CORRECT, reference implementation)
 - `local_runner/vectorized_cache_builder.py` — batched pipeline (CORRECT output, needs parallelization)
 
 ### Phase 3: Per-bar tradable filters in grinder
