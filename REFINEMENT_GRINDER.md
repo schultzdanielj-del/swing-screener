@@ -2,7 +2,7 @@
 
 **Created:** 2026-03-22
 **Script:** `local_runner/pyramid_grinder.py` → `run_refinement()`
-**Status:** Current state documented 2026-03-22. Proposed changes not yet implemented.
+**Status:** Updated 2026-03-26 with optimization rules and BRKO findings.
 **Prerequisite:** Signal grind z > 3 (see `SIGNAL_GRINDER.md`)
 
 ---
@@ -663,6 +663,43 @@ If zero conditions survive both tests: output still writes with empty `refinemen
 10. **Exit condition re-ground before refinement.** Step 3.5 ensures classification uses an exit condition matched to the consensus signal population.
 
 ---
+
+
+## CRITICAL IMPLEMENTATION RULES — DO NOT VIOLATE
+
+These rules were learned through crashes, RAM overloads, and broken runs. They are non-negotiable.
+
+### RAM Management
+
+1. **`del universe_cache + gc.collect()` between phases is INTENTIONAL.** The 5yr OHLCV cache (~2-3GB) must be freed before allocating the loser matrix, cluster membership arrays, cand_passes, and beam search data structures. Removing this "redundancy" crashes 32GB RAM. The free-reload pattern in `_gather_raw_signal_clusters` is the same: free before scan, reload for classification. Not redundant — deliberate RAM staging.
+
+2. **ProcessPoolExecutor copies data to every worker.** Using it for the beam search inner loop created 11 copies of `cand_surviving_bool` and crashed RAM. ThreadPoolExecutor shares memory but doesn't parallelize CPU work (GIL). The beam search runs single-threaded with numpy vectorization — that's fast enough.
+
+3. **The `.df` field in refinement `win_example_dfs` is dead weight.** Neither `compute_example_ranges` nor `validate_examples` reads it — both use expr cache via `ticker` + `scan_idx` only. The `.df` field IS used in the signal grind path (`_run_single_pass` line 2250) so do not remove it from `load_example_data`. Only the refinement path (`_load_refinement_piles`) omits it.
+
+### Data Type Safety
+
+4. **`np.where()` returns numpy int64, not Python int.** Any value from numpy operations that gets stored on cluster dicts (which are later JSON-serialized) MUST be wrapped in `int()` or `float()`. `json.dump()` cannot serialize numpy types. This applies to `exit_bar`, `breach_bar`, and any future fields derived from numpy indexing.
+
+5. **`round()` on a numpy float returns a Python float** — that's safe for JSON. But bare numpy array indexing (e.g., `highs[idx]`) returns numpy float64 — wrap in `float()` before storing on dicts.
+
+### Beam Search
+
+6. **Beam search is non-deterministic.** Ties in candidate scores are broken by processing order, which depends on dict iteration order and numpy sort stability. This is fine — consensus runs are supposed to produce different results. Do not try to make it deterministic.
+
+7. **`--skip-gather` is safe for consensus runs.** The gather output is deterministic (same signal conditions + same data = same clusters). The beam search is the non-deterministic part. `_load_refinement_piles` reads the cluster file independently by filename — it never uses the return value from `_gather_raw_signal_clusters`. No in-memory state crosses from gather to beam search.
+
+### Testing
+
+8. **Test the full data lifecycle, not just computation.** An optimization that produces correct WR numbers can still crash at JSON save (int64), crash at RAM allocation (ProcessPoolExecutor copies), or crash at cleanup (stale variable references). Always run through the save step before declaring an optimization working.
+
+9. **Sandbox-test every optimization before pushing to the live file.** Reproduce the old behavior, apply the change, verify identical results, verify no new failure modes (serialization, RAM, missing variables).
+
+### Classification
+
+10. **Direction-aware stop logic:** Shorts use highest high as stop (close above = loss). Longs use lowest low as stop (close below = loss). Longs additionally require exit to fire ABOVE entry zone high to count as WIN — exit below entry zone = LOSS. This is implemented in the vectorized classification section of `_gather_raw_signal_clusters`.
+
+11. **NEVER use bar_idx or scan_idx to match examples to clusters.** Always use the hardcoded `entry_date` from the examples table. Bar indices shift when OHLCV or expr caches rebuild. Dates are stable.
 
 ## OPEN QUESTIONS FOR IMPLEMENTATION
 
