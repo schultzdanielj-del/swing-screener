@@ -22,7 +22,6 @@ import sys
 import time
 import json
 import pickle
-import sqlite3
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -36,7 +35,6 @@ from itertools import product as iter_product
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
-DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
 
@@ -58,7 +56,9 @@ def load_5yr_cache():
 
 def load_setup_direction(setup_type):
     """Get trade direction from setups table."""
-    conn = sqlite3.connect(DB_PATH)
+    import sqlite3
+    db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
     row = conn.execute(
         "SELECT direction FROM setups WHERE setup_type=?", (setup_type,)
     ).fetchone()
@@ -82,45 +82,24 @@ def load_exit_condition(setup_type):
     raise ValueError(f"Invalid exit condition file: {exit_path}")
 
 
-def load_forward_window(setup_type):
-    """Load forward_window from raw_signal_clusters file header."""
+def load_clusters(setup_type):
+    """Load raw signal clusters file."""
     cluster_path = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
     if not os.path.exists(cluster_path):
-        raise FileNotFoundError(
-            f"No cluster file: {cluster_path}\n"
-            f"Run: python local_runner/pyramid_grinder.py --setup {setup_type} --refine"
-        )
+        raise FileNotFoundError(f"No cluster file: {cluster_path}")
     with open(cluster_path) as f:
         data = json.load(f)
-    fw = data.get("forward_window")
-    if fw is None:
-        raise ValueError(f"No forward_window in cluster file: {cluster_path}")
-    return fw
+    return data
 
 
-def load_examples_from_db(setup_type):
-    """Load examples directly from the examples table in SQLite."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        "SELECT ticker, entry_date FROM examples WHERE setup_type=? ORDER BY ticker, entry_date",
-        (setup_type,)
-    ).fetchall()
-    conn.close()
-    return [{"ticker": r["ticker"], "entry_date": r["entry_date"]} for r in rows]
-
-
-def date_to_idx(df_dates_str, target_date_str):
+def date_to_idx(df, target_date_str):
     """Find the OHLCV row index for a given date string.
-
-    Args:
-        df_dates_str: list of date strings (pre-computed, YYYY-MM-DD)
-        target_date_str: target date string
 
     Returns index or None if not found.
     """
     target = str(target_date_str)[:10]
-    for i, d in enumerate(df_dates_str):
+    dates_str = [str(d)[:10] for d in df["date"].values]
+    for i, d in enumerate(dates_str):
         if d == target:
             return i
     return None
@@ -141,23 +120,25 @@ def compute_adr14(highs, lows, bar_idx):
 # EXAMPLE EXTRACTION
 # ══════════════════════════════════════════════════════════════
 
-def extract_examples(db_examples, universe_cache, exit_cond, direction, forward_window):
-    """Extract per-example data from SQLite examples + OHLCV.
+def extract_examples(cluster_data, universe_cache, exit_cond, direction):
+    """Extract per-example data from clusters + OHLCV.
 
-    Signal bar = bar immediately before entry_date (the scan candle).
-    Pre-signal bar = bar before signal bar.
-
-    For each example:
-      - Resolve entry bar, signal bar, pre-signal bar by DATE
+    For each example cluster:
+      - Resolve signal bar, entry bar, pre-signal bar by DATE
+      - Validate signal_date < entry_date
       - Extract reference bar prices
       - Compute ADR at entry bar
       - Find exit bar by walking forward and evaluating exit condition
 
-    Returns list of example dicts.
+    Returns list of example dicts, each containing all data needed for Parts 1-3.
     """
     from expr_cache_builder import ExprSeriesCache
 
-    print(f"  Examples in DB: {len(db_examples)}")
+    forward_window = cluster_data["forward_window"]
+    clusters = cluster_data["clusters"]
+    example_clusters = [c for c in clusters if c.get("is_example") == 1]
+
+    print(f"  Example clusters in file: {len(example_clusters)}")
 
     # Load expr cache for exit condition evaluation
     expr_cache = ExprSeriesCache()
@@ -174,14 +155,24 @@ def extract_examples(db_examples, universe_cache, exit_cond, direction, forward_
     examples = []
     skipped = []
 
-    for ex_raw in db_examples:
-        ticker = ex_raw["ticker"]
-        entry_date = str(ex_raw["entry_date"])[:10]
+    for c in example_clusters:
+        ticker = c["ticker"]
+        signal_date = str(c["rightmost"]["date"])[:10]
+        entry_date = str(c.get("example_entry_date", ""))[:10]
+
+        if not entry_date:
+            skipped.append(f"{ticker}: no entry_date on cluster")
+            continue
+
+        # Filter: signal must be BEFORE entry
+        if signal_date >= entry_date:
+            skipped.append(f"{ticker} {entry_date}: signal_date {signal_date} >= entry_date")
+            continue
 
         # Load OHLCV
         df = universe_cache.get(ticker)
         if df is None:
-            skipped.append(f"{ticker} {entry_date}: not in OHLCV cache")
+            skipped.append(f"{ticker}: not in OHLCV cache")
             continue
 
         df = df.copy()
@@ -192,22 +183,23 @@ def extract_examples(db_examples, universe_cache, exit_cond, direction, forward_
         highs = df["high"].values.astype(np.float64)
         lows = df["low"].values.astype(np.float64)
         closes = df["close"].values.astype(np.float64)
-        dates_str = [str(d)[:10] for d in df["date"].values]
 
-        # Resolve entry bar by date
-        entry_idx = date_to_idx(dates_str, entry_date)
+        # Resolve bar indices by date
+        signal_idx = date_to_idx(df, signal_date)
+        entry_idx = date_to_idx(df, entry_date)
+
+        if signal_idx is None:
+            skipped.append(f"{ticker} {entry_date}: signal_date {signal_date} not in OHLCV")
+            continue
         if entry_idx is None:
             skipped.append(f"{ticker} {entry_date}: entry_date not in OHLCV")
             continue
 
-        # Signal bar = bar immediately before entry bar
-        signal_idx = entry_idx - 1
-        if signal_idx < 0:
-            skipped.append(f"{ticker} {entry_date}: no bar before entry")
+        # Double-check with resolved indices
+        if signal_idx >= entry_idx:
+            skipped.append(f"{ticker} {entry_date}: signal_idx {signal_idx} >= entry_idx {entry_idx}")
             continue
-        signal_date = dates_str[signal_idx]
 
-        # Pre-signal bar
         pre_signal_idx = signal_idx - 1
         if pre_signal_idx < 0:
             skipped.append(f"{ticker} {entry_date}: no bar before signal")
@@ -222,7 +214,7 @@ def extract_examples(db_examples, universe_cache, exit_cond, direction, forward_
         fw_highs = highs[signal_idx:fw_end_idx + 1]  # signal bar through fw end
         fw_lows = lows[signal_idx:fw_end_idx + 1]
 
-        # Reference bars: 4 bars, each with high and low
+        # Reference bars
         fw_highest_high_offset = int(np.argmax(fw_highs))
         fw_lowest_low_offset = int(np.argmin(fw_lows))
         fw_hh_idx = signal_idx + fw_highest_high_offset
@@ -250,16 +242,16 @@ def extract_examples(db_examples, universe_cache, exit_cond, direction, forward_
         # Find exit bar: walk forward from signal bar, evaluate exit expression
         cached_dates, cached_data = expr_cache.get_ticker(ticker)
         if cached_dates is None or len(cached_dates) != len(df):
-            skipped.append(f"{ticker} {entry_date}: expr cache mismatch (cache={len(cached_dates) if cached_dates is not None else 'None'}, ohlcv={len(df)})")
+            skipped.append(f"{ticker} {entry_date}: expr cache mismatch")
             continue
 
         exit_series = cached_data[:, exit_col]
         exit_bar_idx = None
-        max_search_idx = len(df) - 1
+        max_search = len(df) - 1
 
-        for fi in range(1, max_search_idx - signal_idx + 1):
+        for fi in range(1, max_search - signal_idx + 1):
             check_idx = signal_idx + fi
-            if check_idx > max_search_idx:
+            if check_idx > max_search:
                 break
             v = exit_series[check_idx]
             if np.isnan(v):
@@ -277,6 +269,10 @@ def extract_examples(db_examples, universe_cache, exit_cond, direction, forward_
 
         exit_bars_from_signal = exit_bar_idx - signal_idx
 
+        # Store complete OHLCV slice from pre-signal through exit
+        slice_start = pre_signal_idx
+        slice_end = exit_bar_idx + 1  # exclusive
+
         examples.append({
             "ticker": ticker,
             "entry_date": entry_date,
@@ -292,7 +288,7 @@ def extract_examples(db_examples, universe_cache, exit_cond, direction, forward_
             "exit_bars_from_signal": exit_bars_from_signal,
             # Reference bars
             "ref_bars": ref_bars,
-            # OHLCV arrays (full ticker)
+            # OHLCV arrays (full ticker, not sliced — indices are absolute)
             "highs": highs,
             "lows": lows,
             "closes": closes,
@@ -351,6 +347,7 @@ def run_static_stop_test(examples, direction, forward_window):
         risk_adrs = []
 
         for ex in examples:
+            # Stop level for this example
             stop_level = ex["ref_bars"][ref_bar_name][price_field]
 
             signal_idx = ex["signal_idx"]
@@ -361,11 +358,13 @@ def run_static_stop_test(examples, direction, forward_window):
             check_closes = closes[signal_idx:exit_bar_idx + 1]
 
             if direction == "long":
+                # Breach = close below stop
                 min_close = float(np.min(check_closes))
                 if min_close >= stop_level:
                     n_survive += 1
                 margin = (min_close - stop_level) / stop_level if stop_level != 0 else float("inf")
             else:
+                # Breach = close above stop
                 max_close = float(np.max(check_closes))
                 if max_close <= stop_level:
                     n_survive += 1
@@ -373,7 +372,9 @@ def run_static_stop_test(examples, direction, forward_window):
 
             worst_margin_pct = min(worst_margin_pct, margin)
 
-            # Risk-ADR: distance from worst-case entry to stop, in ADR
+            # Risk-ADR scoring: distance from worst-case entry to stop, in ADR
+            # Computed across forward window only (signal through fw end)
+            fw_end_idx = ex["fw_end_idx"]
             if direction == "long":
                 risk = (ex["worst_entry"] - stop_level) / ex["adr_at_entry"]
             else:
@@ -412,6 +413,7 @@ def run_static_stop_test(examples, direction, forward_window):
 # PART 2: RATCHETING STOP TEST
 # ══════════════════════════════════════════════════════════════
 
+# 10 stop level functions
 RATCHET_LABELS = [
     "pre_signal_low", "pre_signal_high",
     "signal_low", "signal_high",
@@ -421,16 +423,18 @@ RATCHET_LABELS = [
 ]
 
 
-def _compute_stop_level(func_label, ex, position_idx):
+def _compute_stop_level(func_label, ex, position_idx, direction):
     """Compute the stop price for a given function label at a given position.
 
     position_idx: 0 = signal bar, 1 = signal+1, ..., fw = signal+fw
+    The bar at this position is signal_idx + position_idx.
     """
     signal_idx = ex["signal_idx"]
     cur_idx = signal_idx + position_idx
     highs = ex["highs"]
     lows = ex["lows"]
 
+    # Bounds check
     max_idx = len(highs) - 1
     cur_idx = min(cur_idx, max_idx)
 
@@ -464,15 +468,20 @@ def run_ratchet_stop_test(examples, direction, forward_window):
     """Part 2: Test all ratcheting stop paths across all examples.
 
     10 functions × (fw+1) positions = 10^(fw+1) combos.
-    Monotonic constraint: stop can only move favorably per example.
+    Monotonic constraint: stop can only move favorably (up for long, down for short).
     100% survival required.
+
+    Vectorized approach:
+      1. Pre-compute a (n_examples, n_positions, 10) price matrix
+      2. Enumerate all combos, check monotonicity, check survival
+      3. Score survivors by risk-ADR
 
     Returns (top50_list, total_valid, total_tested).
     """
     print(f"\n  ── PART 2: RATCHETING STOP TEST ──")
 
     n_ex = len(examples)
-    n_positions = forward_window + 1
+    n_positions = forward_window + 1  # 0=signal bar, 1..fw
     n_funcs = len(RATCHET_LABELS)
     total_combos = n_funcs ** n_positions
 
@@ -485,16 +494,20 @@ def run_ratchet_stop_test(examples, direction, forward_window):
     for ei, ex in enumerate(examples):
         for pos in range(n_positions):
             for fi, label in enumerate(RATCHET_LABELS):
-                price_matrix[ei, pos, fi] = _compute_stop_level(label, ex, pos)
+                price_matrix[ei, pos, fi] = _compute_stop_level(label, ex, pos, direction)
 
-    # Close at each position per example: (n_examples, n_positions)
+    # Pre-compute closes at each position for each example (for breach check)
+    # Shape: (n_examples, n_positions)
     close_at_pos = np.zeros((n_ex, n_positions), dtype=np.float64)
     for ei, ex in enumerate(examples):
         for pos in range(n_positions):
-            bar_idx = min(ex["signal_idx"] + pos, len(ex["closes"]) - 1)
+            bar_idx = ex["signal_idx"] + pos
+            bar_idx = min(bar_idx, len(ex["closes"]) - 1)
             close_at_pos[ei, pos] = ex["closes"][bar_idx]
 
-    # Post-fw worst close per example (for final stop hold-through check)
+    # Pre-compute: for post-fw survival, we need closes from fw_end+1 through exit
+    # For each example, check if the FINAL stop level holds through exit
+    # We'll store the worst close (min for long, max for short) post-fw
     post_fw_worst = np.zeros(n_ex, dtype=np.float64)
     has_post_fw = np.ones(n_ex, dtype=bool)
     for ei, ex in enumerate(examples):
@@ -512,32 +525,47 @@ def run_ratchet_stop_test(examples, direction, forward_window):
         else:
             post_fw_worst[ei] = float(np.max(post_closes))
 
-    # Scoring arrays
+    # Pre-compute worst-case entry and ADR arrays for scoring
     worst_entries = np.array([ex["worst_entry"] for ex in examples], dtype=np.float64)
     adrs = np.array([ex["adr_at_entry"] for ex in examples], dtype=np.float64)
 
-    # Step 2: Generate all combos and test
+    # Step 2: Enumerate combos in batches
+    # For fw=3: 10^4 = 10,000 combos — small enough to do all at once
     print(f"  Testing {total_combos:,} combos...")
     t0 = time.time()
 
+    # Generate all combos as array of shape (total_combos, n_positions)
+    # Each value is a function index 0..9
     combo_indices = np.array(list(iter_product(range(n_funcs), repeat=n_positions)),
                              dtype=np.int32)
+    # Shape: (total_combos, n_positions)
 
-    # Gather stop levels: (total_combos, n_examples, n_positions)
+    # For each combo, extract stop levels per example per position
+    # stop_levels shape: (total_combos, n_examples, n_positions)
+    # price_matrix shape: (n_examples, n_positions, n_funcs)
+    # combo_indices shape: (total_combos, n_positions)
+
+    # Vectorized gather: for each combo c and position p, select function combo_indices[c, p]
+    # from price_matrix[:, p, :]
     stop_levels = np.zeros((len(combo_indices), n_ex, n_positions), dtype=np.float64)
     for pos in range(n_positions):
         func_indices = combo_indices[:, pos]  # (total_combos,)
+        # price_matrix[:, pos, :] shape: (n_ex, n_funcs)
+        # Gather: for each combo, pick the func_index column
         pos_prices = price_matrix[:, pos, :]  # (n_ex, n_funcs)
         stop_levels[:, :, pos] = pos_prices[:, func_indices].T
+        # pos_prices[:, func_indices] shape: (n_ex, total_combos) → transpose
 
-    # Step 3: Monotonicity — per example, per combo
+    # Step 3: Monotonicity check
+    # For longs: each step must be >= previous (stop moves up or stays flat)
+    # For shorts: each step must be <= previous (stop moves down or stays flat)
     if n_positions > 1:
         diffs = np.diff(stop_levels, axis=2)  # (total_combos, n_ex, n_positions-1)
         if direction == "long":
-            mono_per_example = np.all(diffs >= -1e-10, axis=2)  # (total_combos, n_ex)
+            # Every diff must be >= 0 for ALL examples
+            mono_ok = np.all(diffs >= -1e-10, axis=(1, 2))  # (total_combos,)
         else:
-            mono_per_example = np.all(diffs <= 1e-10, axis=2)
-        mono_ok = np.all(mono_per_example, axis=1)  # (total_combos,)
+            mono_ok = np.all(diffs <= 1e-10, axis=(1, 2))
     else:
         mono_ok = np.ones(len(combo_indices), dtype=bool)
 
@@ -548,62 +576,53 @@ def run_ratchet_stop_test(examples, direction, forward_window):
         print(f"  WARNING: No monotonic paths found")
         return [], 0, total_combos
 
-    mono_idx = np.where(mono_ok)[0]
-    mono_stops = stop_levels[mono_idx]
-    mono_combos = combo_indices[mono_idx]
+    # Filter to monotonic only
+    mono_indices = np.where(mono_ok)[0]
+    mono_stops = stop_levels[mono_indices]  # (n_mono, n_ex, n_positions)
+    mono_combos = combo_indices[mono_indices]  # (n_mono, n_positions)
 
-    # Step 4: Survival — breach at each position during fw
+    # Step 4: Survival check — breach at each position
+    # close_at_pos shape: (n_ex, n_positions)
+    # mono_stops shape: (n_mono, n_ex, n_positions)
     close_expanded = close_at_pos[np.newaxis, :, :]  # (1, n_ex, n_positions)
+
     if direction == "long":
-        breach_mask = close_expanded < mono_stops
+        # Breach = close < stop at any position for any example
+        breach_mask = close_expanded < mono_stops  # (n_mono, n_ex, n_positions)
     else:
         breach_mask = close_expanded > mono_stops
-    fw_survive = ~np.any(breach_mask, axis=(1, 2))
 
-    # Post-fw survival
-    final_stops = mono_stops[:, :, -1]
+    # Any breach at any position for any example → fail
+    fw_survive = ~np.any(breach_mask, axis=(1, 2))  # (n_mono,)
+
+    # Post-fw survival: final stop must hold through exit
+    final_stops = mono_stops[:, :, -1]  # (n_mono, n_ex)
     if direction == "long":
-        post_breach = post_fw_worst[np.newaxis, :] < final_stops
+        post_breach = post_fw_worst[np.newaxis, :] < final_stops  # (n_mono, n_ex)
     else:
         post_breach = post_fw_worst[np.newaxis, :] > final_stops
-    post_breach[:, ~has_post_fw] = False
-    post_survive = ~np.any(post_breach, axis=1)
 
+    # Only check examples that have post-fw data
+    post_breach[:, ~has_post_fw] = False
+    post_survive = ~np.any(post_breach, axis=1)  # (n_mono,)
+
+    # Combined survival
     full_survive = fw_survive & post_survive
     n_valid = int(np.sum(full_survive))
     print(f"  100% survival paths: {n_valid:,} / {n_mono:,} monotonic")
 
     if n_valid == 0:
-        # Report best near-miss
-        if n_mono > 0:
-            if direction == "long":
-                per_ex_fw = ~np.any(close_expanded < mono_stops, axis=2)
-                per_ex_post = ~(post_fw_worst[np.newaxis, :] < final_stops)
-            else:
-                per_ex_fw = ~np.any(close_expanded > mono_stops, axis=2)
-                per_ex_post = ~(post_fw_worst[np.newaxis, :] > final_stops)
-            per_ex_post[:, ~has_post_fw] = True
-            per_ex_total = per_ex_fw & per_ex_post
-            survive_counts = np.sum(per_ex_total, axis=1)
-            best_idx = np.argmax(survive_counts)
-            best_count = int(survive_counts[best_idx])
-            best_combo = mono_combos[best_idx]
-            best_path = [RATCHET_LABELS[best_combo[p]] for p in range(n_positions)]
-            print(f"  Best near-miss: {best_path} survives {best_count}/{n_ex}")
-
-            if best_count < n_ex:
-                failed_mask = ~per_ex_total[best_idx]
-                for ei in np.where(failed_mask)[0]:
-                    ex = examples[ei]
-                    print(f"    FAIL: {ex['ticker']} {ex['entry_date']}")
-
+        print(f"  WARNING: No paths with 100% survival")
         return [], 0, total_combos
 
-    # Step 5: Score by risk-ADR
-    valid_idx = np.where(full_survive)[0]
-    valid_stops = mono_stops[valid_idx]
-    valid_combos = mono_combos[valid_idx]
+    # Step 5: Score surviving paths by risk-ADR
+    valid_indices = np.where(full_survive)[0]
+    valid_stops = mono_stops[valid_indices]  # (n_valid, n_ex, n_positions)
+    valid_combos = mono_combos[valid_indices]  # (n_valid, n_positions)
 
+    # Risk = distance from worst-case entry to stop, in ADR
+    # worst_entries shape: (n_ex,), adrs shape: (n_ex,)
+    # valid_stops shape: (n_valid, n_ex, n_positions)
     if direction == "long":
         risk_per_bar = (worst_entries[np.newaxis, :, np.newaxis] -
                         valid_stops) / adrs[np.newaxis, :, np.newaxis]
@@ -611,16 +630,20 @@ def run_ratchet_stop_test(examples, direction, forward_window):
         risk_per_bar = (valid_stops -
                         worst_entries[np.newaxis, :, np.newaxis]) / adrs[np.newaxis, :, np.newaxis]
 
-    avg_risk = np.mean(risk_per_bar, axis=(1, 2))
-    median_risk = np.median(risk_per_bar.reshape(n_valid, -1), axis=1)
+    # Average risk across all examples and all positions
+    avg_risk = np.mean(risk_per_bar, axis=(1, 2))  # (n_valid,)
+    median_risk = np.median(risk_per_bar.reshape(n_valid, -1), axis=1)  # (n_valid,)
 
+    # Worst margin: minimum margin across all examples at all positions
     if direction == "long":
-        margins = (close_at_pos[np.newaxis, :, :] - valid_stops) / np.maximum(np.abs(valid_stops), 1e-10)
+        margins = (close_at_pos[np.newaxis, :, :] - valid_stops) / valid_stops
     else:
-        margins = (valid_stops - close_at_pos[np.newaxis, :, :]) / np.maximum(np.abs(valid_stops), 1e-10)
-    worst_margins = np.min(margins, axis=(1, 2))
+        margins = (valid_stops - close_at_pos[np.newaxis, :, :]) / valid_stops
+    worst_margins = np.min(margins, axis=(1, 2))  # (n_valid,)
 
+    # Sort by avg_risk ascending (tightest stop = lowest risk)
     sort_idx = np.argsort(avg_risk)
+
     top_n = min(50, n_valid)
     top50 = []
     for rank in range(top_n):
@@ -656,8 +679,8 @@ def run_breakeven_window(examples, direction):
     For each example:
       1. Breakeven level = entry bar low + 1 ADR (long) or entry bar high - 1 ADR (short)
          Using ADR at entry bar.
-      2. Walk forward from signal bar. Find the last bar where close revisits
-         the breakeven level (below for long, above for short).
+      2. Walk forward from signal bar. Find the first bar after which price
+         never revisits the breakeven level.
       3. Breakeven window = max across all examples.
 
     Returns (breakeven_window_bars, per_example_details).
@@ -679,7 +702,9 @@ def run_breakeven_window(examples, direction):
         else:
             breakeven = ex["entry_high"] - adr
 
-        last_revisit = signal_idx
+        # Walk forward from signal bar to exit bar
+        # Find the LAST bar where close revisits the breakeven level
+        last_revisit = signal_idx  # default: signal bar itself
         for bi in range(signal_idx, exit_bar_idx + 1):
             if direction == "long":
                 if closes[bi] < breakeven:
@@ -688,6 +713,7 @@ def run_breakeven_window(examples, direction):
                 if closes[bi] > breakeven:
                     last_revisit = bi
 
+        # Breakeven window = bars from signal to last revisit
         be_window = last_revisit - signal_idx
 
         per_example.append({
@@ -737,11 +763,10 @@ def main():
     exit_cond = load_exit_condition(setup_type)
     print(f"  Exit condition: {exit_cond['expression']} {exit_cond['direction']} {exit_cond['threshold']}")
 
-    forward_window = load_forward_window(setup_type)
+    cluster_data = load_clusters(setup_type)
+    forward_window = cluster_data["forward_window"]
     print(f"  Forward window: {forward_window}")
-
-    db_examples = load_examples_from_db(setup_type)
-    print(f"  Examples in DB: {len(db_examples)}")
+    print(f"  Total clusters: {len(cluster_data['clusters'])}")
 
     print(f"\n  Loading OHLCV cache...")
     universe_cache = load_5yr_cache()
@@ -749,7 +774,7 @@ def main():
 
     # ── Extract examples ──
     print(f"\n  Extracting examples...")
-    examples = extract_examples(db_examples, universe_cache, exit_cond, direction, forward_window)
+    examples = extract_examples(cluster_data, universe_cache, exit_cond, direction)
 
     if not examples:
         print(f"  ERROR: No valid examples extracted. Cannot proceed.")
@@ -759,7 +784,7 @@ def main():
     del universe_cache
 
     # ── Print example summary ──
-    print(f"\n  ── EXAMPLE SUMMARY ({len(examples)} examples) ──")
+    print(f"\n  ── EXAMPLE SUMMARY ──")
     print(f"  {'Ticker':6s} {'Entry':12s} {'Signal':12s} {'ADR':>8s} "
           f"{'EntryLow':>10s} {'WrstEntry':>10s} {'ExitBars':>8s}")
     for ex in examples:
@@ -798,16 +823,19 @@ def main():
     os.makedirs(CACHE_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    # Timestamped
     ts_path = os.path.join(CACHE_DIR, f"entry_grinder_{setup_type}_{ts}.json")
     with open(ts_path, "w") as f:
         json.dump(output, f, indent=2)
     print(f"\n  Saved: {ts_path}")
 
+    # Latest
     latest_path = os.path.join(CACHE_DIR, f"entry_grinder_{setup_type}.json")
     with open(latest_path, "w") as f:
         json.dump(output, f, indent=2)
     print(f"  Saved: {latest_path}")
 
+    # Mirror to Railway
     try:
         from file_mirror import mirror_file
         mirror_file(ts_path)

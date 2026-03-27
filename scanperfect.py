@@ -3869,12 +3869,19 @@ class VettingWorkspace(QFrame):
 
     def _sort_and_refresh(self):
         """Re-sort signals based on current sort key and rebuild list."""
+        if self._signals:
+            first_before = self._signals[0]["ticker"] if self._signals else "none"
+        else:
+            first_before = "none"
         if self._vet_sort == "adr":
             self._signals.sort(key=lambda x: x.get("move_adr") or 0, reverse=True)
         elif self._vet_sort == "entry":
             self._signals.sort(key=lambda x: x.get("entry_candle_pct") or 0, reverse=True)
         elif self._vet_sort == "combined":
             self._signals.sort(key=lambda x: x.get("combined_score") or 0, reverse=True)
+        first_after = self._signals[0]["ticker"] if self._signals else "none"
+        print("[SORT] Sorted by %s: first was %s, now %s (%d signals)" % (
+            self._vet_sort, first_before, first_after, len(self._signals)))
         self._current_idx = 0
         self._apply_filter()
         self._update_stats()
@@ -4235,8 +4242,11 @@ class VettingWorkspace(QFrame):
                     (sig["ticker"],)
                 ).fetchall()
             earnings = [r[0] for r in rows]
-        except Exception:
-            pass
+        except Exception as e:
+            print("[CHART] Earnings query failed for %s: %s" % (sig["ticker"], e))
+        print("[CHART] Loading %s %s — %d candles, %d earnings dates" % (
+            sig["ticker"], sig["signal_date"],
+            len(candles) if candles else 0, len(earnings)))
         self._chart.set_data(candles, sig["ticker"], sig["signal_date"],
                              exit_date=sig.get("exit_date"),
                              profit_exit_date=sig.get("profit_exit_date"),
