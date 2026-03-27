@@ -55,6 +55,7 @@ BACKUP_TABLES = [
 # JSON file patterns to back up (relative to data/)
 BACKUP_FILE_PATTERNS = [
     "signal_filter/filtered_*.json",
+    "signal_exit_grind/signal_exit_*.json",
     "vetting/vetting_*.json",
     "setup_refiner/refined_*.json",
 ]
