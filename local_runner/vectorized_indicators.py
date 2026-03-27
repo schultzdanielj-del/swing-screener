@@ -48,45 +48,40 @@ def ema_2d(arr, period):
     """EMA via sequential loop over bars, vectorized across tickers.
     
     Matches pandas ewm(span=period, adjust=False, min_periods=period).
+    Seed: ema[first_valid] = x[first_valid], then apply formula.
+    Output NaN until min_periods valid bars have been seen.
     """
     n_t, n_b = arr.shape
     alpha = 2.0 / (period + 1)
     result = np.full_like(arr, np.nan)
     
-    # Find first valid bar per ticker for seeding
     valid = ~np.isnan(arr)
     
-    # We need to accumulate a running sum for the seed (first SMA)
-    # Then switch to EMA after period bars of valid data
-    count = np.zeros(n_t)
-    running_sum = np.zeros(n_t)
     ema_val = np.zeros(n_t)
-    started = np.zeros(n_t, dtype=bool)
+    started = np.zeros(n_t, dtype=bool)  # have we seen first valid bar?
+    count = np.zeros(n_t, dtype=np.int64)  # valid bars seen so far
     
     for j in range(n_b):
         v = valid[:, j]
         vals = arr[:, j]
         
-        # Tickers not yet started: accumulate for seed SMA
-        accumulating = v & ~started
-        count[accumulating] += 1
-        running_sum[accumulating] += vals[accumulating]
+        # First valid bar: seed EMA
+        just_starting = v & ~started
+        ema_val[just_starting] = vals[just_starting]
+        started[just_starting] = True
+        count[just_starting] = 1
         
-        # Check if we've hit period valid bars
-        just_seeded = accumulating & (count >= period)
-        ema_val[just_seeded] = running_sum[just_seeded] / period
-        started[just_seeded] = True
-        result[just_seeded, j] = ema_val[just_seeded]
+        # Already started and current bar is valid: apply formula
+        continuing = v & started & ~just_starting
+        ema_val[continuing] = alpha * vals[continuing] + (1 - alpha) * ema_val[continuing]
+        count[continuing] += 1
         
-        # Tickers already started: apply EMA formula
-        running = started & ~just_seeded
-        if np.any(running):
-            # If current bar is NaN, carry forward previous EMA
-            has_val = running & v
-            no_val = running & ~v
-            ema_val[has_val] = alpha * vals[has_val] + (1 - alpha) * ema_val[has_val]
-            # no_val: ema_val stays the same (carry forward)
-            result[running, j] = ema_val[running]
+        # Already started and current bar is NaN: carry forward
+        # (ema_val stays the same, count doesn't increment)
+        
+        # Output where we've seen >= min_periods valid bars
+        output_mask = started & (count >= period)
+        result[output_mask, j] = ema_val[output_mask]
     
     return result
 
@@ -223,20 +218,23 @@ def adr_2d(h, l, period):
 # ══════════════════════════════════════════════════════════════
 
 def rsi_2d(c, period):
-    """RSI using SMA of gains/losses. Matches profiling_engine.rsi()."""
+    """RSI using SMA of gains/losses. Matches profiling_engine.rsi().
+    
+    delta = close.diff(). First bar of valid data produces NaN diff.
+    gains = max(delta, 0), losses = max(-delta, 0).
+    RSI = 100 - 100/(1 + SMA(gains)/SMA(losses)).
+    """
     delta = np.full_like(c, np.nan)
     delta[:, 1:] = c[:, 1:] - c[:, :-1]
     
-    gains = np.where(delta > 0, delta, 0.0)
-    gains[:, 0] = np.nan
-    losses = np.where(delta < 0, -delta, 0.0)
-    losses[:, 0] = np.nan
+    gains = np.where(np.isnan(delta), np.nan, np.maximum(delta, 0.0))
+    losses = np.where(np.isnan(delta), np.nan, np.maximum(-delta, 0.0))
     
     avg_gain = sma_2d(gains, period)
     avg_loss = sma_2d(losses, period)
     
     with np.errstate(divide='ignore', invalid='ignore'):
-        rs = np.where(avg_loss != 0, avg_gain / avg_loss, np.nan)
+        rs = np.where((avg_loss != 0) & ~np.isnan(avg_loss), avg_gain / avg_loss, np.nan)
         result = 100.0 - (100.0 / (1.0 + rs))
     
     result[np.isnan(avg_gain) | np.isnan(avg_loss)] = np.nan
@@ -271,11 +269,14 @@ def _di_plus_minus_2d(h, l, c, period):
     up[:, 1:] = h[:, 1:] - h[:, :-1]
     down[:, 1:] = l[:, :-1] - l[:, 1:]
     
-    dm_plus = np.where((up > down) & (up > 0), up, 0.0)
-    dm_minus = np.where((down > up) & (down > 0), down, 0.0)
-    # First bar is NaN
-    dm_plus[:, 0] = np.nan
-    dm_minus[:, 0] = np.nan
+    # Pandas behavior: np.where with NaN comparisons yields 0.0 (condition is False).
+    # The resulting pd.Series keeps 0.0 at bar 0, not NaN.
+    # We must match this so EMA seeds at the same bar.
+    up_safe = np.nan_to_num(up, nan=0.0)
+    down_safe = np.nan_to_num(down, nan=0.0)
+    
+    dm_plus = np.where((up_safe > down_safe) & (up_safe > 0), up_safe, 0.0)
+    dm_minus = np.where((down_safe > up_safe) & (down_safe > 0), down_safe, 0.0)
     
     atr_val = atr_2d(h, l, c, period)
     with np.errstate(divide='ignore', invalid='ignore'):
@@ -370,10 +371,23 @@ def bollinger_bot_2d(c, period, nstd=2.0):
 # ══════════════════════════════════════════════════════════════
 
 def obv_2d(c, v):
-    """On Balance Volume. Matches profiling_engine.obv()."""
-    sign = np.zeros_like(c)
-    sign[:, 1:] = np.sign(c[:, 1:] - c[:, :-1])
-    return np.cumsum(sign * v, axis=1)
+    """On Balance Volume. Matches profiling_engine.obv().
+    
+    sign = sign(close.diff()), then cumsum(sign * volume).
+    Pandas cumsum skips NaN (treats as 0 for accumulation, preserves NaN in output).
+    """
+    diff = np.full_like(c, np.nan)
+    diff[:, 1:] = c[:, 1:] - c[:, :-1]
+    sign = np.sign(diff)
+    sv = sign * v
+    
+    # Match pandas cumsum: NaN positions get 0 contribution, output stays NaN
+    nan_mask = np.isnan(sv)
+    safe_sv = np.where(nan_mask, 0.0, sv)
+    result = np.cumsum(safe_sv, axis=1)
+    result[nan_mask] = np.nan
+    
+    return result
 
 
 # ══════════════════════════════════════════════════════════════
