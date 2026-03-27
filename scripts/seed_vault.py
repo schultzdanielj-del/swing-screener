@@ -1,18 +1,18 @@
 """
-Seed Vault — Backup critical data to Railway file mirror.
+Seed Vault — Verify, backup, and restore from Railway.
 
 Usage:
-    python scripts/seed_vault.py              # Backup to Railway
-    python scripts/seed_vault.py --restore    # Restore from Railway into local DB
+    python scripts/seed_vault.py              # Verify Railway has everything
+    python scripts/seed_vault.py --backup     # Upload any local grind files missing from Railway
+    python scripts/seed_vault.py --restore    # Restore from Railway to local machine
 
-Backs up everything needed to rebuild a fully operational system:
-  - SQLite tables: examples, setups, earnings, pending, rejected, grind cycles,
-    conditions, signals, exit conditions, health, regime model, scores, watchlist
-  - Vetting JSON files: signal filter outputs, vetting decisions, setup refiner outputs
+Railway is the authority. Grinders mirror their output to Railway automatically
+via file_mirror.py, and structured data is written to Railway's DB via API.
+The --backup flag catches any files where mirror_file() silently failed.
 
 Recovery process (new machine):
   1. Clone repo from GitHub
-  2. python scripts/seed_vault.py --restore
+  2. python scripts/seed_vault.py --restore        (~5 min)
   3. python local_runner/cache_builder.py --5yr --force   (~30 min)
   4. python local_runner/expr_cache_builder.py --build     (~2 hrs)
   5. python local_runner/nightly.py --force                (~20 min)
@@ -32,59 +32,66 @@ sys.path.insert(0, PROJECT_ROOT)
 
 RAILWAY_API = "https://web-production-e3025.up.railway.app"
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "scanperfect.db")
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 
-# Tables to back up — every table with recoverable state
-BACKUP_TABLES = [
-    "examples",
-    "setups",
-    "earnings_dates",
-    "pending_examples",
-    "rejected_signals",
-    "grind_cycles",
-    "cycle_conditions",
-    "cycle_signals",
-    "cycle_sacrificial_signals",
-    "exit_conditions",
-    "cycle_health",
-    "regime_model",
-    "signal_regime_scores",
-    "nightly_watchlist",
-]
+# Tables that are rebuilt by morning cache scripts or are infrastructure.
+# Everything NOT in this list gets backed up and restored.
+EXCLUDE_TABLES = {
+    "ohlcv", "universe_ohlcv",                          # cache_builder rebuilds
+    "tradable_universe", "universe_tickers",             # fetch_universe rebuilds
+    "universe_fetch_status", "ticker_sectors",           # fetch_universe rebuilds
+    "file_mirror",                                       # mirror storage itself
+    "task_queue", "research_jobs",                       # transient job queues
+    "sqlite_sequence",                                   # SQLite internal
+}
 
-# JSON file patterns to back up (relative to data/)
-BACKUP_FILE_PATTERNS = [
-    "signal_filter/filtered_*.json",
-    "signal_exit_grind/signal_exit_*.json",
-    "vetting/vetting_*.json",
-    "setup_refiner/refined_*.json",
+# Local directories containing grind outputs that must be on Railway.
+# These are the dirs where grinders write JSON files.
+# New setup types write to the same dirs, so no per-setup config needed.
+LOCAL_GRIND_DIRS = [
+    os.path.join(PROJECT_ROOT, "local_runner", "cache"),
+    os.path.join(PROJECT_ROOT, "data", "exit_grind"),
+    os.path.join(PROJECT_ROOT, "data", "signal_exit_grind"),
+    os.path.join(PROJECT_ROOT, "data", "signal_filter"),
+    os.path.join(PROJECT_ROOT, "data", "profit_grind"),
 ]
 
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def upload_to_railway(path, data_str):
-    """Upload a file to Railway's file mirror."""
+def railway_query(sql, limit=50000):
+    """Run a SELECT against Railway's DB. Returns list of dicts."""
     try:
-        r = requests.post(f"{RAILWAY_API}/api/v2/files", json={
-            "path": path,
-            "data": data_str,
-        }, timeout=30)
+        r = requests.post(f"{RAILWAY_API}/api/query/bulk",
+                          json={"sql": sql, "limit": limit}, timeout=120)
         r.raise_for_status()
-        return True
+        return r.json().get("results", [])
     except Exception as e:
-        print(f"  ✗ Upload {path} failed: {e}")
-        return False
+        print(f"  ✗ Query failed: {e}")
+        return []
 
 
-def download_from_railway(path):
+def discover_tables():
+    """Get all table names from Railway, minus the exclude list."""
+    all_tables = railway_query(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    )
+    return [r["name"] for r in all_tables if r["name"] not in EXCLUDE_TABLES]
+
+
+def list_mirrored_files():
+    """List all non-seed files on Railway's file mirror."""
+    try:
+        r = requests.get(f"{RAILWAY_API}/api/v2/files", timeout=30)
+        r.raise_for_status()
+        all_files = r.json().get("files", [])
+        return [f for f in all_files if not f["path"].startswith("seed/")]
+    except Exception as e:
+        print(f"  ✗ Failed to list files: {e}")
+        return []
+
+
+def download_file(path):
     """Download a file from Railway's file mirror. Returns string or None."""
     try:
-        r = requests.get(f"{RAILWAY_API}/api/v2/files/{path}", timeout=30)
+        r = requests.get(f"{RAILWAY_API}/api/v2/files/{path}", timeout=60)
         if r.status_code == 404:
             return None
         r.raise_for_status()
@@ -94,85 +101,131 @@ def download_from_railway(path):
         return None
 
 
-def list_railway_files(prefix):
-    """List files on Railway with a given prefix."""
+def upload_file(rel_path, data_str):
+    """Upload a file to Railway's file mirror. Returns True on success."""
     try:
-        r = requests.get(f"{RAILWAY_API}/api/v2/files", params={"prefix": prefix}, timeout=15)
+        r = requests.post(f"{RAILWAY_API}/api/v2/files", json={
+            "path": rel_path,
+            "data": data_str,
+        }, timeout=60)
         r.raise_for_status()
-        return [f["path"] for f in r.json().get("files", [])]
+        return True
     except Exception as e:
-        print(f"  ✗ List {prefix} failed: {e}")
-        return []
+        print(f"  ✗ Upload {rel_path} failed: {e}")
+        return False
 
 
 # ════════════════════════════════════════════════════════════
-# BACKUP
+# BACKUP — catch failed mirrors
 # ════════════════════════════════════════════════════════════
 
 def backup():
     print("=" * 60)
-    print("  Seed Vault — Backup to Railway")
+    print("  Seed Vault — Backup (catch failed mirrors)")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
-    if not os.path.exists(DB_PATH):
-        print(f"\n  ✗ DB not found: {DB_PATH}")
-        sys.exit(1)
+    # Get set of paths already on Railway
+    mirrored = list_mirrored_files()
+    railway_paths = set()
+    for f in mirrored:
+        # Normalize to forward slashes for comparison
+        railway_paths.add(f["path"].replace("\\", "/"))
 
-    db = get_db()
-    total_uploaded = 0
+    print(f"\n  Railway has {len(railway_paths)} mirrored files")
 
-    # ── Back up SQLite tables ──
-    print("\n── SQLite Tables ──")
-    for table in BACKUP_TABLES:
-        try:
-            rows = db.execute(f"SELECT * FROM {table}").fetchall()
-            data = [dict(r) for r in rows]
-            data_str = json.dumps(data, indent=2, default=str)
-            path = f"seed/{table}.json"
-            if upload_to_railway(path, data_str):
-                print(f"  ✓ {table}: {len(data)} rows ({len(data_str)} bytes)")
-                total_uploaded += 1
-            else:
-                print(f"  ✗ {table}: upload failed")
-        except Exception as e:
-            print(f"  ✗ {table}: {e}")
-
-    # ── Back up JSON files ──
-    print("\n── JSON Files ──")
-    for pattern in BACKUP_FILE_PATTERNS:
-        full_pattern = os.path.join(DATA_DIR, pattern)
-        files = glob.glob(full_pattern)
-        if not files:
-            print(f"  · {pattern}: no files")
+    # Scan local grind dirs for JSON files missing from Railway
+    missing = []
+    for grind_dir in LOCAL_GRIND_DIRS:
+        if not os.path.isdir(grind_dir):
             continue
-        for filepath in files:
-            try:
-                with open(filepath) as f:
-                    data_str = f.read()
-                # Store relative to data/
-                rel_path = os.path.relpath(filepath, DATA_DIR)
-                seed_path = f"seed/files/{rel_path}"
-                if upload_to_railway(seed_path, data_str):
-                    size_kb = len(data_str) / 1024
-                    print(f"  ✓ {rel_path} ({size_kb:.0f} KB)")
-                    total_uploaded += 1
-            except Exception as e:
-                print(f"  ✗ {filepath}: {e}")
+        for fname in os.listdir(grind_dir):
+            if not fname.endswith(".json"):
+                continue
+            local_path = os.path.join(grind_dir, fname)
+            rel_path = os.path.relpath(local_path, PROJECT_ROOT).replace("\\", "/")
+            if rel_path not in railway_paths:
+                missing.append((rel_path, local_path))
 
-    # ── Upload manifest ──
-    manifest = {
-        "backed_up_at": datetime.now().isoformat(),
-        "tables": BACKUP_TABLES,
-        "file_patterns": BACKUP_FILE_PATTERNS,
-        "db_path": DB_PATH,
-    }
-    upload_to_railway("seed/manifest.json", json.dumps(manifest, indent=2))
+    if not missing:
+        print("  ✓ All local grind files are on Railway — nothing to upload")
+        print(f"\n{'=' * 60}\n")
+        return
 
-    db.close()
+    print(f"  Found {len(missing)} local files missing from Railway\n")
+
+    uploaded = 0
+    failed = 0
+    for rel_path, local_path in missing:
+        try:
+            with open(local_path, "r", encoding="utf-8") as f:
+                data_str = f.read()
+            if upload_file(rel_path, data_str):
+                size_kb = len(data_str) / 1024
+                print(f"  ✓ {rel_path} ({size_kb:.0f} KB)")
+                uploaded += 1
+            else:
+                failed += 1
+        except Exception as e:
+            print(f"  ✗ {rel_path}: {e}")
+            failed += 1
 
     print(f"\n{'=' * 60}")
-    print(f"  Done — {total_uploaded} items backed up")
+    print(f"  Uploaded: {uploaded} files")
+    if failed:
+        print(f"  Failed: {failed} files")
+    print(f"{'=' * 60}\n")
+
+
+# ════════════════════════════════════════════════════════════
+# VERIFY
+# ════════════════════════════════════════════════════════════
+
+def verify():
+    print("=" * 60)
+    print("  Seed Vault — Verify Railway")
+    print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+
+    # ── Check DB tables ──
+    print("\n── DB Tables ──")
+    tables = discover_tables()
+    if not tables:
+        print("  ✗ Could not discover tables from Railway")
+        return
+
+    total_rows = 0
+    empty_tables = []
+    for table in tables:
+        rows = railway_query(f"SELECT COUNT(*) as n FROM {table}")
+        n = rows[0]["n"] if rows else 0
+        total_rows += n
+        if n > 0:
+            print(f"  ✓ {table}: {n} rows")
+        else:
+            empty_tables.append(table)
+
+    if empty_tables:
+        print(f"  · Empty: {', '.join(empty_tables)}")
+
+    # ── Check mirrored files ──
+    print("\n── Mirrored Grind Files ──")
+    files = list_mirrored_files()
+    total_bytes = sum(f["size_bytes"] for f in files)
+
+    # Group by directory
+    dirs = {}
+    for f in files:
+        clean = f["path"].replace("\\", "/")
+        d = os.path.dirname(clean)
+        dirs[d] = dirs.get(d, 0) + 1
+
+    for d in sorted(dirs):
+        print(f"  ✓ {d}/: {dirs[d]} files")
+
+    print(f"\n{'=' * 60}")
+    print(f"  DB: {total_rows} rows across {len(tables)} tables")
+    print(f"  Files: {len(files)} files ({total_bytes / 1024 / 1024:.1f} MB)")
     print(f"{'=' * 60}\n")
 
 
@@ -186,88 +239,112 @@ def restore():
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
-    # Ensure DB exists (init_db creates tables)
+    # ── Ensure local DB exists ──
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     if not os.path.exists(DB_PATH):
         print(f"\n  DB not found — creating via server init...")
         import server  # triggers init_db()
         print(f"  ✓ DB created at {DB_PATH}")
 
-    db = get_db()
-    db.execute("PRAGMA foreign_keys=OFF")  # Disable during bulk import
-    total_restored = 0
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute("PRAGMA journal_mode=WAL")
 
-    # ── Check manifest ──
-    manifest_str = download_from_railway("seed/manifest.json")
-    if manifest_str:
-        manifest = json.loads(manifest_str)
-        print(f"\n  Last backup: {manifest.get('backed_up_at', '?')}")
-    else:
-        print("\n  ⚠ No manifest found — attempting restore anyway")
+    # ── Discover and restore tables ──
+    print("\n── DB Tables ──")
+    tables = discover_tables()
+    if not tables:
+        print("  ✗ Could not discover tables from Railway")
+        db.close()
+        return
 
-    # ── Restore SQLite tables ──
-    print("\n── SQLite Tables ──")
-    for table in BACKUP_TABLES:
-        path = f"seed/{table}.json"
-        data_str = download_from_railway(path)
-        if data_str is None:
-            print(f"  · {table}: not found on Railway")
+    total_rows_restored = 0
+    for table in tables:
+        rows = railway_query(f"SELECT * FROM {table}")
+        if not rows:
+            print(f"  · {table}: empty")
             continue
-        try:
-            rows = json.loads(data_str)
-            if not rows:
-                print(f"  · {table}: empty")
-                continue
-            # Get column names from first row
-            cols = list(rows[0].keys())
-            # Skip auto-increment id columns for tables that have them
-            if "id" in cols and table not in ("setups", "exit_conditions", "regime_model", "cycle_health"):
-                cols_no_id = [c for c in cols if c != "id"]
-            else:
-                cols_no_id = cols
-            placeholders = ",".join("?" for _ in cols_no_id)
-            col_names = ",".join(cols_no_id)
-            inserted = 0
-            for row in rows:
-                try:
-                    vals = [row.get(c) for c in cols_no_id]
-                    db.execute(f"INSERT OR IGNORE INTO {table} ({col_names}) VALUES ({placeholders})", vals)
-                    if db.execute("SELECT changes()").fetchone()[0] > 0:
-                        inserted += 1
-                except Exception as e:
-                    pass  # Skip duplicates silently
-            db.commit()
-            print(f"  ✓ {table}: {inserted} inserted ({len(rows)} in backup)")
-            total_restored += inserted
-        except Exception as e:
-            print(f"  ✗ {table}: {e}")
 
-    # ── Restore JSON files ──
-    print("\n── JSON Files ──")
-    seed_files = list_railway_files("seed/files/")
-    if not seed_files:
-        print("  · No JSON files in seed vault")
-    for seed_path in seed_files:
-        data_str = download_from_railway(seed_path)
-        if data_str is None:
+        # Check table exists locally
+        local_tables = [r[0] for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()]
+        if table not in local_tables:
+            print(f"  ⚠ {table}: not in local schema, skipping")
             continue
-        # seed/files/signal_filter/filtered_dtss.json → data/signal_filter/filtered_dtss.json
-        rel_path = seed_path.replace("seed/files/", "", 1)
-        local_path = os.path.join(DATA_DIR, rel_path)
+
+        # Get local column names to match against
+        local_cols = [r[1] for r in db.execute(f"PRAGMA table_info({table})").fetchall()]
+
+        # Use only columns that exist in both Railway data and local schema
+        railway_cols = list(rows[0].keys())
+        cols = [c for c in railway_cols if c in local_cols]
+        if not cols:
+            print(f"  ⚠ {table}: no matching columns, skipping")
+            continue
+
+        placeholders = ",".join("?" for _ in cols)
+        col_names = ",".join(cols)
+        inserted = 0
+
+        for row in rows:
+            try:
+                vals = [row.get(c) for c in cols]
+                db.execute(
+                    f"INSERT OR REPLACE INTO {table} ({col_names}) VALUES ({placeholders})",
+                    vals
+                )
+                inserted += 1
+            except Exception:
+                pass  # skip rows that fail constraints
+
+        db.commit()
+        total_rows_restored += inserted
+        print(f"  ✓ {table}: {inserted} rows")
+
+    # ── Restore mirrored grind files ──
+    print("\n── Mirrored Grind Files ──")
+    files = list_mirrored_files()
+    if not files:
+        print("  · No mirrored files on Railway")
+
+    files_restored = 0
+    files_failed = 0
+    total_bytes = 0
+
+    for entry in files:
+        path = entry["path"]
+        clean_path = path.replace("\\", "/")
+        local_path = os.path.join(PROJECT_ROOT, clean_path)
+
+        data_str = download_file(path)
+        if data_str is None:
+            files_failed += 1
+            continue
+
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         try:
             with open(local_path, "w") as f:
                 f.write(data_str)
-            print(f"  ✓ {rel_path}")
-            total_restored += 1
+            size_kb = len(data_str) / 1024
+            total_bytes += len(data_str)
+            print(f"  ✓ {clean_path} ({size_kb:.0f} KB)")
+            files_restored += 1
         except Exception as e:
-            print(f"  ✗ {rel_path}: {e}")
+            print(f"  ✗ {clean_path}: {e}")
+            files_failed += 1
 
     db.execute("PRAGMA foreign_keys=ON")
     db.close()
 
     print(f"\n{'=' * 60}")
-    print(f"  Done — {total_restored} items restored")
-    print(f"  Next steps:")
+    print(f"  Restored:")
+    print(f"    DB: {total_rows_restored} rows across {len(tables)} tables")
+    print(f"    Files: {files_restored} files ({total_bytes / 1024 / 1024:.1f} MB)")
+    if files_failed:
+        print(f"    Failed: {files_failed} files")
+    print(f"\n  Next steps:")
     print(f"    python local_runner/cache_builder.py --5yr --force")
     print(f"    python local_runner/expr_cache_builder.py --build")
     print(f"    python local_runner/nightly.py --force")
@@ -278,8 +355,10 @@ def restore():
 def main():
     if "--restore" in sys.argv:
         restore()
-    else:
+    elif "--backup" in sys.argv:
         backup()
+    else:
+        verify()
 
 
 if __name__ == "__main__":
