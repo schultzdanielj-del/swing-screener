@@ -701,6 +701,36 @@ These rules were learned through crashes, RAM overloads, and broken runs. They a
 
 11. **NEVER use bar_idx or scan_idx to match examples to clusters.** Always use the hardcoded `entry_date` from the examples table. Bar indices shift when OHLCV or expr caches rebuild. Dates are stable.
 
+
+## OPTIMIZATION CHANGELOG
+
+### 2026-03-26 — BRKO session (beam search + data pipeline)
+
+All changes in `local_runner/pyramid_grinder.py`, branch `v2`.
+
+**Bug fixes:**
+- **Removed stale `tcache` reference** (line 2967). The vectorize commit (`f75f37a8`) replaced the per-ticker incremental expr cache loader (`tcache` dict) with inline per-ticker loading in the classification loop, but left `del universe_cache, tcache` referencing the now-gone variable. Caused `UnboundLocalError` on every refinement run.
+- **Cast numpy int64 to Python int** for `exit_bar` and `breach_bar` (lines 2810, 2815). The vectorize commit replaced Python `for`-loop bar scanning with `np.where()`, which returns numpy int64 indices. These got stored on cluster dicts that are later passed to `json.dump()`, which cannot serialize numpy types. Wrapped both in `int()`.
+
+**Beam search optimizations (ClusterAwareRefinementSearch.run):**
+- **Numpy bool arrays replace frozensets** for cluster tracking. Each candidate's surviving clusters stored as bool array of length `n_clusters`. Intersection = numpy bitwise AND. Per-node batching: one node ANDed against ALL candidates in a single broadcast operation. 37x faster, 97% less RAM.
+- **Sorted tuple dedup replaces frozenset** for the `seen` set in beam expansion. The sorted tuple is already computed for the result — using it as the dedup key eliminates building a separate frozenset. 1.7x faster, 8x less memory per key. Safe because the `ci in used` guard ensures ci is never already in conditions, so frozenset dedup and tuple dedup agree.
+- **Partial sort via `np.argpartition`** replaces full `list.sort()` on `next_candidates`. Only needs the top `beam_width` from up to `beam_width * 8` candidates — `argpartition` finds them without sorting the rest. 3.5x faster on the sort step.
+- **Stored `used` set alongside each node.** Previously `used = set(conditions)` was rebuilt from the conditions tuple for every node at every level. Now `used` is created once at seed and updated incrementally (`used | {ci}`) when a candidate is added. Saves ~1.4s over 100 levels. Node tuples changed from `(conditions, surviving)` to `(conditions, surviving, used_set)`. `_level_summary_np` and `_print_level_np` updated to handle 3-tuples.
+- **Dead node filter at level boundary.** Previously nodes with score=0 (all losers eliminated) were checked and skipped inside the expansion loop every level. Now they're filtered out when building `current_level` at the end of each level: `if score > 0`. The best node is preserved even if score=0 (all losers eliminated — search complete).
+- **Matrix-multiply cluster set pre-computation.** `cand_passes @ cluster_membership` (bool→float32 matmul) computes all candidates' surviving cluster sets in one operation. Replaced a Python double loop over candidates × clusters. 17s → 0.6s.
+
+**Data pipeline optimizations:**
+- **`--skip-gather` flag** added to CLI. When set, `run_refinement()` checks if `raw_signal_clusters_{setup}.json` already exists on disk. If valid (parseable, has clusters), skips the entire `_gather_raw_signal_clusters()` call (~5 min for BRKO). Falls back to running gather if file is missing, corrupt, or empty. Safe for consensus runs because gather output is deterministic and the beam search (the non-deterministic part) is what consensus needs to vary. `_load_refinement_piles` reads the cluster file independently by filename — no in-memory state crosses from gather to beam search.
+- **Dropped `.df` from refinement `win_example_dfs`** in `_load_refinement_piles`. The `df` field (full OHLCV dataframe copy per winner cluster) is never read by `compute_example_ranges` or `validate_examples` — both use expr cache via `ticker` + `scan_idx` only. Also removed the `df.copy()` + date conversion that produced it. Saves 190-570MB RAM depending on number of unique tickers. The `.df` field is still present in `load_example_data` (signal grind path) where it IS used by `_run_single_pass`.
+- **ThreadPoolExecutor(4) for .npz I/O** in both winner range computation (`compute_example_ranges`) and loser matrix building. Overlaps disk reads across 4 threads — I/O bound work where the GIL doesn't matter.
+- **Candidate-column-only loser matrix.** Only builds columns for expressions with valid winner ranges (have both min and max across all winners). Halves the matrix size (e.g., 7,419 columns instead of 15,805 for BRKO).
+
+**Classification optimizations:**
+- **Vectorized classification** via `np.where`. Replaced Python for-loop that scanned bar-by-bar for stop breach and exit fire with two numpy calls: `np.where(closes > stop_level)` and `np.where(exit_series >= thresh)`. Compare indices to determine winner.
+- **Batched by ticker.** Group clusters by ticker, load OHLCV + expr cache once per ticker instead of per-cluster. Cuts disk I/O from ~4,685 to ~2,012 loads for BRKO.
+- **Direction-aware stop logic.** Shorts: stop = highest high, close above = loss. Longs: stop = lowest low, close below = loss. Longs require exit to fire ABOVE entry zone high to count as WIN.
+
 ## OPEN QUESTIONS FOR IMPLEMENTATION
 
 1. ~~The loser subsampling seed — passed as a parameter to `run_refinement()`, or generated internally per run?~~ **RESOLVED:** `--seed` passed as CLI arg, but subsampling only happens when `--subsample-losers` is also set. Manual runs omit `--subsample-losers` and use all losers (today's behavior). The orchestrator always passes both flags.
