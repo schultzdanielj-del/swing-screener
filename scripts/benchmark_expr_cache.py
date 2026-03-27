@@ -174,20 +174,51 @@ def _rolling_mean(arr, period):
 
 
 def np_percentile_rank(arr, period):
-    """Vectorized percentile rank using sliding_window_view."""
+    """Vectorized percentile rank matching pandas rolling().apply(pct_rank, raw=False).
+    Original uses min_periods=2, returns (count <= current) / window_size * 100."""
     from numpy.lib.stride_tricks import sliding_window_view
     n = len(arr)
     result = np.full(n, np.nan)
-    if n < period or period < 2:
+    if n < 2:
         return result
-    windows = sliding_window_view(arr, period)  # (n - period + 1, period)
-    # For each window, count how many values <= the last value
-    last_vals = windows[:, -1:]  # (n_windows, 1)
-    counts = np.sum(windows <= last_vals, axis=1)  # (n_windows,)
-    result[period - 1:] = counts / period * 100.0
-    # Handle NaN: if last value is NaN, result should be NaN
-    nan_mask = np.any(np.isnan(windows), axis=1)
-    result[period - 1:][nan_mask] = np.nan
+    # Use min_periods=2 to match original — start producing values at index 1
+    # For bars before full window: use available bars
+    for i in range(1, min(period - 1, n)):
+        window = arr[:i + 1]
+        if np.any(np.isnan(window)):
+            continue
+        result[i] = np.sum(window <= arr[i]) / len(window) * 100.0
+    # For bars with full window: vectorized
+    if n >= period:
+        windows = sliding_window_view(arr, period)
+        last_vals = windows[:, -1:]
+        counts = np.sum(windows <= last_vals, axis=1).astype(np.float64)
+        vals = counts / period * 100.0
+        nan_mask = np.any(np.isnan(windows), axis=1)
+        vals[nan_mask] = np.nan
+        result[period - 1:] = vals
+    return result
+
+
+def np_roc_percentile_rank(close, roc_period, lookback):
+    """Vectorized roc_percentile_rank matching pandas rolling().rank(pct=True)."""
+    n = len(close)
+    result = np.full(n, np.nan)
+    # Compute ROC series
+    roc = np.full(n, np.nan)
+    roc[roc_period:] = (close[roc_period:] / close[:-roc_period] - 1.0) * 100.0
+    # Rolling rank (pct=True) = rank within window / window_size
+    # pandas rank(pct=True) returns rank/count where rank uses average method
+    for i in range(roc_period + lookback - 1, n):
+        window = roc[i - lookback + 1:i + 1]
+        if np.any(np.isnan(window)):
+            continue
+        # rank of last element: count of values < current + 0.5 * count of values == current
+        val = window[-1]
+        lt = np.sum(window < val)
+        eq = np.sum(window == val)
+        rank = lt + (eq + 1) / 2.0  # average rank (1-based)
+        result[i] = rank / lookback
     return result
 
 
@@ -838,9 +869,7 @@ def benchmark_optimized(ticker, df, expressions):
         elif op == "roc_percentile_rank":
             roc_p = comp["roc_period"]
             lb = comp["lookback"]
-            roc_s = np.full_like(c_vals, np.nan)
-            roc_s[roc_p:] = (c_vals[roc_p:] / c_vals[:-roc_p] - 1.0) * 100.0
-            data[:, j] = np_percentile_rank(roc_s, lb).astype(np.float32)
+            data[:, j] = np_roc_percentile_rank(c_vals, roc_p, lb).astype(np.float32)
         
         elif op == "bars_since_ma_cross":
             ma = engine._ma(comp["ma"]).values.astype(np.float64)
@@ -921,7 +950,7 @@ def benchmark_optimized(ticker, df, expressions):
         except: pass
     results["lsp_algo"] = time.perf_counter() - t0
 
-    # ── HTF: build intermediates on HTF data, dispatch numpy + bool optimization ──
+    # ── HTF: targeted slow-op interception + bool optimization ──
     ON_SERIES_OPS = {"on_series", "on_series_bool_agg"}
     for freq, label, htf_indices, htf_base in [
         ("W", "htf_weekly", _w_htf_weekly_indices, _w_htf_weekly_base),
@@ -933,34 +962,105 @@ def benchmark_optimized(ticker, df, expressions):
             if htf_df is not None and len(htf_df) >= 5:
                 htf_map = build_htf_to_daily_map(df["date"], htf_df, freq)
                 htf_engine = ExpressionEngine(htf_df)
-                htf_im = build_numpy_intermediates(htf_engine)
                 htf_n = len(htf_df)
                 
+                # Extract HTF numpy arrays for slow-op replacements
+                htf_c = htf_df["close"].values.astype(np.float64)
+                htf_h = htf_df["high"].values.astype(np.float64)
+                htf_l = htf_df["low"].values.astype(np.float64)
+                htf_v = htf_df["volume"].values.astype(np.float64)
+                
                 # Classify HTF expressions
-                htf_arith = []
                 htf_ct = []
                 htf_st = []
                 htf_tir = []
                 htf_ext = []
+                htf_slow = []  # slow ops that get numpy replacement
+                htf_fast = []  # everything else → compute_series
+                
                 for k, j in enumerate(htf_indices):
                     base_op = htf_base[k].get("op", "")
                     if base_op == "count_true": htf_ct.append((k, j))
                     elif base_op == "since_true": htf_st.append((k, j))
                     elif base_op == "true_in_row": htf_tir.append((k, j))
                     elif base_op in ON_SERIES_OPS: htf_ext.append((k, j))
-                    else: htf_arith.append((k, j))
+                    elif base_op in SLOW_OPS: htf_slow.append((k, j))
+                    else: htf_fast.append((k, j))
                 
-                # HTF arithmetic — numpy dispatch
-                for k, j in htf_arith:
-                    arr = dispatch_arith_numpy(htf_base[k], htf_im)
-                    if arr is not None:
-                        data[:, j] = map_htf_series_to_daily(arr.astype(np.float32), htf_map)
-                    else:
-                        try:
-                            s = compute_series(htf_engine, htf_base[k])
+                # HTF slow ops — numpy replacements
+                htf_pct_cache = {}
+                htf_swing_high = None
+                htf_swing_low = None
+                
+                for k, j in htf_slow:
+                    comp = htf_base[k]
+                    op = comp["op"]
+                    try:
+                        if op == "percentile_rank":
+                            source = comp["source"]
+                            period = comp["period"]
+                            if source not in htf_pct_cache:
+                                if source == "close": htf_pct_cache[source] = htf_c
+                                elif source == "volume": htf_pct_cache[source] = htf_v
+                                elif source == "range": htf_pct_cache[source] = htf_h - htf_l
+                                elif source == "atr14": htf_pct_cache[source] = htf_engine._atr(14).values.astype(np.float64)
+                                elif source == "rsi14": htf_pct_cache[source] = htf_engine._rsi(14).values.astype(np.float64)
+                                else: htf_pct_cache[source] = htf_c
+                            arr = np_percentile_rank(htf_pct_cache[source], period)
+                            data[:, j] = map_htf_series_to_daily(arr.astype(np.float32), htf_map)
+                        elif op == "roc_percentile_rank":
+                            arr = np_roc_percentile_rank(htf_c, comp["roc_period"], comp["lookback"])
+                            data[:, j] = map_htf_series_to_daily(arr.astype(np.float32), htf_map)
+                        elif op == "bars_since_ma_cross":
+                            ma = htf_engine._ma(comp["ma"]).values.astype(np.float64)
+                            arr = np_bars_since_cross(htf_c, ma, comp.get("max_lookback", 120))
+                            data[:, j] = map_htf_series_to_daily(arr.astype(np.float32), htf_map)
+                        elif op in ("swing_high_count", "swing_low_count"):
+                            p = comp["period"]
+                            if op == "swing_high_count":
+                                if htf_swing_high is None:
+                                    htf_swing_high = np.zeros(htf_n, dtype=bool)
+                                    for i in range(1, htf_n - 1):
+                                        htf_swing_high[i] = htf_h[i] > htf_h[i-1] and htf_h[i] > htf_h[i+1]
+                                arr = np_swing_count_rolling(htf_swing_high, p, htf_n)
+                            else:
+                                if htf_swing_low is None:
+                                    htf_swing_low = np.zeros(htf_n, dtype=bool)
+                                    for i in range(1, htf_n - 1):
+                                        htf_swing_low[i] = htf_l[i] < htf_l[i-1] and htf_l[i] < htf_l[i+1]
+                                arr = np_swing_count_rolling(htf_swing_low, p, htf_n)
+                            data[:, j] = map_htf_series_to_daily(arr.astype(np.float32), htf_map)
+                        elif op in ("higher_high_count", "lower_high_count"):
+                            p = comp["period"]
+                            if htf_swing_high is None:
+                                htf_swing_high = np.zeros(htf_n, dtype=bool)
+                                for i in range(1, htf_n - 1):
+                                    htf_swing_high[i] = htf_h[i] > htf_h[i-1] and htf_h[i] > htf_h[i+1]
+                            direction = "higher" if op == "higher_high_count" else "lower"
+                            arr = np_trend_swing_count(htf_swing_high, htf_h, p, direction, htf_n)
+                            data[:, j] = map_htf_series_to_daily(arr.astype(np.float32), htf_map)
+                        elif op in ("higher_low_count", "lower_low_count"):
+                            p = comp["period"]
+                            if htf_swing_low is None:
+                                htf_swing_low = np.zeros(htf_n, dtype=bool)
+                                for i in range(1, htf_n - 1):
+                                    htf_swing_low[i] = htf_l[i] < htf_l[i-1] and htf_l[i] < htf_l[i+1]
+                            direction = "higher" if op == "higher_low_count" else "lower"
+                            arr = np_trend_swing_count(htf_swing_low, htf_l, p, direction, htf_n)
+                            data[:, j] = map_htf_series_to_daily(arr.astype(np.float32), htf_map)
+                        else:
+                            s = compute_series(htf_engine, comp)
                             if s is not None:
                                 data[:, j] = map_htf_series_to_daily(np.asarray(s, dtype=np.float32), htf_map)
-                        except: pass
+                    except: pass
+                
+                # HTF fast ops — compute_series (already fast with engine cache)
+                for k, j in htf_fast:
+                    try:
+                        s = compute_series(htf_engine, htf_base[k])
+                        if s is not None:
+                            data[:, j] = map_htf_series_to_daily(np.asarray(s, dtype=np.float32), htf_map)
+                    except: pass
                 
                 # HTF booleans — numpy
                 htf_bool_cache = {}
@@ -995,7 +1095,7 @@ def benchmark_optimized(ticker, df, expressions):
                     b = htf_bool_cache[htf_base[k]["condition"]]
                     data[:, j] = map_htf_series_to_daily(np_true_in_row(b, htf_base[k]["period"]).astype(np.float32), htf_map)
                 
-                # HTF ext struct — compute_series fallback (small arrays)
+                # HTF ext struct — compute_series (small arrays, not worth optimizing)
                 for k, j in htf_ext:
                     try:
                         s = compute_series(htf_engine, htf_base[k])
@@ -1050,7 +1150,7 @@ def compare_outputs(data_orig, data_opt, expressions, indices):
 
 def main():
     print("\n" + "=" * 70)
-    print("  EXPRESSION CACHE — BENCHMARK v8 (slow op replacements)")
+    print("  EXPRESSION CACHE — BENCHMARK v8b (slow op fix + HTF slow ops)")
     print("=" * 70)
     expressions = _load_expressions()
     _init_worker(expressions)
