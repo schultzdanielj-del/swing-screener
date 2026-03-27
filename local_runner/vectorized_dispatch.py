@@ -711,9 +711,286 @@ def compute_expr_2d(comp, im, O, H, L, C, V):
         bool_arr = _eval_bool_condition_2d(comp["condition"], im, O, H, L, C, V)
         return true_in_row_2d(bool_arr, comp["period"])
     
+    elif op == "on_series":
+        series_2d = _get_ext_series_2d(comp["series"], im, C)
+        return _compute_on_series_2d(series_2d, comp["inner_op"])
+    
+    elif op == "on_series_bool_agg":
+        series_2d = _get_ext_series_2d(comp["series"], im, C)
+        indicator = _compute_on_series_2d(series_2d, comp["bool_op"])
+        threshold = comp["bool_op"].get("threshold", 0)
+        direction = comp["bool_op"].get("direction", "gt")
+        if direction == "gt":
+            bool_arr = indicator > threshold
+        elif direction == "lt":
+            bool_arr = indicator < threshold
+        elif direction == "positive":
+            bool_arr = indicator > 0
+        elif direction == "negative":
+            bool_arr = indicator < 0
+        else:
+            bool_arr = indicator > threshold
+        # NaN → False
+        bool_arr = np.where(np.isnan(indicator), False, bool_arr)
+        agg_op = comp["agg_op"]
+        agg_period = comp["agg_period"]
+        if agg_op == "count_true":
+            return count_true_2d(bool_arr, agg_period)
+        elif agg_op == "since_true":
+            return since_true_2d(bool_arr, agg_period)
+        elif agg_op == "true_in_row":
+            return true_in_row_2d(bool_arr, agg_period)
+        return np.full_like(C, np.nan)
+    
     else:
         # Unknown op — return NaN
         return np.full_like(C, np.nan)
+
+
+# ══════════════════════════════════════════════════════════════
+# EXTENSION STRUCTURE (on_series) HELPERS
+# ══════════════════════════════════════════════════════════════
+
+def _get_ext_series_2d(series_name, im, C):
+    """Get extension series as 2D array. ext_avgc50_adr14 = (C - avgc50) / adr14."""
+    if series_name == "ext_avgc50_adr14":
+        return _safe_div(C - im["avgc50"], im["adr14"])
+    elif series_name == "ext_avgc200_adr14":
+        return _safe_div(C - im["avgc200"], im["adr14"])
+    else:
+        return np.full_like(C, np.nan)
+
+
+def _compute_on_series_2d(s, inner_op):
+    """Apply an inner op to a 2D series treated as 'close price'.
+    
+    Matches backtest_conditions.compute_on_series() exactly.
+    """
+    op = inner_op["op"]
+    
+    if op == "slope":
+        offset = inner_op["offset"]
+        return s - _shift(s, offset)
+    
+    elif op == "roc":
+        p = inner_op["period"]
+        shifted = _shift(s, p)
+        return _safe_div(s, shifted) * 100.0 - 100.0
+    
+    elif op == "rsi":
+        p = inner_op["period"]
+        # RSI on series: uses ewm(span=p, adjust=False) with NO min_periods
+        delta = np.full_like(s, np.nan)
+        delta[:, 1:] = s[:, 1:] - s[:, :-1]
+        # clip preserves NaN (unlike np.where which turns NaN→0)
+        gain = np.where(np.isnan(delta), np.nan, np.maximum(delta, 0.0))
+        loss = np.where(np.isnan(delta), np.nan, np.maximum(-delta, 0.0))
+        avg_gain = _ema_immediate_2d(gain, p)
+        avg_loss = _ema_immediate_2d(loss, p)
+        rs = _safe_div(avg_gain, avg_loss)
+        result = 100.0 - _safe_div(100.0, 1.0 + rs)
+        result[np.isnan(avg_gain) | np.isnan(avg_loss)] = np.nan
+        return result
+    
+    elif op == "rsi_slope":
+        p = inner_op["period"]
+        offset = inner_op["offset"]
+        rsi_s = _compute_on_series_2d(s, {"op": "rsi", "period": p})
+        return rsi_s - _shift(rsi_s, offset)
+    
+    elif op == "stochastic":
+        p = inner_op["period"]
+        min_s = _rolling_min_minperiods1(s, p)
+        max_s = _rolling_max_minperiods1(s, p)
+        rng = max_s - min_s
+        return _safe_div(s - min_s, rng) * 100.0
+    
+    elif op == "cci":
+        p = inner_op["period"]
+        # CCI on single series: typical = series itself
+        s_sma = _rolling_mean_minperiods1(s, p)
+        n_t, n_b = s.shape
+        mad = np.full_like(s, np.nan)
+        for j in range(p - 1, n_b):
+            start = max(0, j - p + 1)
+            window = s[:, start:j + 1]
+            w_mean = np.nanmean(window, axis=1, keepdims=True)
+            md = np.mean(np.abs(window - w_mean), axis=1)
+            mad[:, j] = md
+        return _safe_div(s - s_sma, 0.015 * mad)
+    
+    elif op == "adx":
+        p = inner_op["period"]
+        diff = np.full_like(s, np.nan)
+        diff[:, 1:] = s[:, 1:] - s[:, :-1]
+        plus_dm = np.where(np.isnan(diff), np.nan, np.maximum(diff, 0.0))
+        minus_dm = np.where(np.isnan(diff), np.nan, np.maximum(-diff, 0.0))
+        diff_abs = np.where(np.isnan(diff), np.nan, np.abs(diff))
+        atr_proxy = _ema_immediate_2d(diff_abs, p)
+        plus_di = _safe_div(100 * _ema_immediate_2d(plus_dm, p), atr_proxy)
+        minus_di = _safe_div(100 * _ema_immediate_2d(minus_dm, p), atr_proxy)
+        dx = _safe_div(np.abs(plus_di - minus_di), plus_di + minus_di) * 100
+        return _ema_immediate_2d(dx, p)
+    
+    elif op == "adx_slope":
+        p = inner_op["period"]
+        offset = inner_op["offset"]
+        adx_s = _compute_on_series_2d(s, {"op": "adx", "period": p})
+        return adx_s - _shift(adx_s, offset)
+    
+    elif op == "range_position":
+        p = inner_op["period"]
+        max_s = _rolling_max_minperiods1(s, p)
+        min_s = _rolling_min_minperiods1(s, p)
+        rng = max_s - min_s
+        return _safe_div(s - min_s, rng)
+    
+    elif op == "pullback":
+        p = inner_op["period"]
+        max_s = _rolling_max_minperiods1(s, p)
+        return max_s - s
+    
+    elif op == "floor_ratio":
+        lb = inner_op["lookback"]
+        min_s = _rolling_min_minperiods1(s, lb)
+        rng = _rolling_max_minperiods1(s, lb) - min_s
+        return _safe_div(s - min_s, rng)
+    
+    elif op == "peak_ratio":
+        lb = inner_op["lookback"]
+        max_s = _rolling_max_minperiods1(s, lb)
+        return _safe_div(s, max_s)
+    
+    elif op == "ceiling_ratio":
+        lb = inner_op["lookback"]
+        max_s = _rolling_max_minperiods1(s, lb)
+        min_s = _rolling_min_minperiods1(s, lb)
+        rng = max_s - min_s
+        return _safe_div(max_s - s, rng)
+    
+    elif op == "smoothed_ma":
+        p = inner_op["period"]
+        return _rolling_mean_minperiods1(s, p)
+    
+    elif op == "ma_cross":
+        fast_p = inner_op["fast_period"]
+        slow_p = inner_op["slow_period"]
+        fast = _rolling_mean_minperiods1(s, fast_p)
+        slow = _rolling_mean_minperiods1(s, slow_p)
+        return fast - slow
+    
+    elif op == "roc_delta":
+        p = inner_op["period"]
+        co = inner_op["compare_offset"]
+        shifted = _shift(s, p)
+        roc_now = _safe_div(s, shifted) - 1.0
+        s_co = _shift(s, co)
+        s_cop = _shift(s, co + p)
+        roc_prev = _safe_div(s_co, s_cop) - 1.0
+        return 100.0 * (roc_now - roc_prev)
+    
+    elif op == "roc_acceleration":
+        outer = inner_op["outer_period"]
+        inner_p = inner_op["inner_period"]
+        roc_s = (_safe_div(s, _shift(s, outer)) - 1.0) * 100.0
+        return roc_s - _shift(roc_s, inner_p)
+    
+    elif op == "bollinger_pctb":
+        p = inner_op["period"]
+        std_mult = inner_op.get("std_mult", 2.0)
+        s_sma = _rolling_mean_minperiods1(s, p)
+        s_std = _rolling_std_minperiods1(s, p)
+        upper = s_sma + std_mult * s_std
+        lower = s_sma - std_mult * s_std
+        bw = upper - lower
+        return _safe_div(s - lower, bw)
+    
+    elif op == "trendline_deviation":
+        lb = inner_op["lookback"]
+        n_t, n_b = s.shape
+        result = np.full_like(s, np.nan)
+        for j in range(lb - 1, n_b):
+            window = s[:, j - lb + 1:j + 1]
+            has_nan = np.any(np.isnan(window), axis=1)
+            x = np.arange(lb, dtype=np.float64)
+            x_mean = np.mean(x)
+            x_var = np.mean(x * x) - x_mean ** 2 + 1e-10
+            for t in range(n_t):
+                if has_nan[t]:
+                    continue
+                w = window[t]
+                w_mean = np.mean(w)
+                slope_val = (np.mean(x * w) - x_mean * w_mean) / x_var
+                intercept = w_mean - slope_val * x_mean
+                projected = slope_val * (lb - 1) + intercept
+                result[t, j] = w[-1] - projected
+        return result
+    
+    elif op == "channel_position":
+        lb = inner_op["lookback"]
+        n_t, n_b = s.shape
+        result = np.full_like(s, np.nan)
+        for j in range(lb - 1, n_b):
+            window = s[:, j - lb + 1:j + 1]
+            has_nan = np.any(np.isnan(window), axis=1)
+            x = np.arange(lb, dtype=np.float64)
+            x_mean = np.mean(x)
+            x_var = np.mean(x * x) - x_mean ** 2 + 1e-10
+            for t in range(n_t):
+                if has_nan[t]:
+                    continue
+                w = window[t]
+                w_mean = np.mean(w)
+                slope_val = (np.mean(x * w) - x_mean * w_mean) / x_var
+                intercept = w_mean - slope_val * x_mean
+                projected_line = slope_val * x + intercept
+                residuals = w - projected_line
+                std_resid = np.std(residuals)
+                if std_resid > 0:
+                    result[t, j] = (w[-1] - (slope_val * (lb - 1) + intercept)) / std_resid
+        return result
+    
+    else:
+        return np.full_like(s, np.nan)
+
+
+def _rolling_std_minperiods1(arr, period):
+    """Rolling std with min_periods=1."""
+    n_t, n_b = arr.shape
+    result = np.full_like(arr, np.nan)
+    for j in range(n_b):
+        start = max(0, j - period + 1)
+        window = arr[:, start:j + 1]
+        if window.shape[1] < 2:
+            continue
+        result[:, j] = np.nanstd(window, axis=1, ddof=1)
+    return result
+
+
+def _ema_immediate_2d(arr, period):
+    """EMA that starts producing values immediately (min_periods=1).
+    
+    Matches pandas ewm(span=period, adjust=False) with default min_periods=0.
+    First non-NaN value seeds the EMA; subsequent bars apply alpha smoothing.
+    """
+    n_t, n_b = arr.shape
+    alpha = 2.0 / (period + 1)
+    result = np.full_like(arr, np.nan)
+    ema_val = np.full(n_t, np.nan)
+    
+    for j in range(n_b):
+        valid = ~np.isnan(arr[:, j])
+        # Seed: first valid value starts the EMA
+        not_started = np.isnan(ema_val) & valid
+        ema_val[not_started] = arr[not_started, j]
+        # Update: apply EMA formula
+        running = ~np.isnan(ema_val) & valid & ~not_started
+        ema_val[running] = alpha * arr[running, j] + (1 - alpha) * ema_val[running]
+        # Write result where started
+        started = ~np.isnan(ema_val)
+        result[started, j] = ema_val[started]
+    
+    return result
 
 
 # ══════════════════════════════════════════════════════════════
