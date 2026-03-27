@@ -1,8 +1,8 @@
 # Entry Grinder — Specification
 
 **Created:** 2026-03-27
-**Script:** `scripts/entry_grinder.py` (not yet built)
-**Status:** Spec only. Awaiting approval before implementation.
+**Script:** `scripts/entry_grinder.py`
+**Status:** v1 built. Runs, produces output. Needs validation and seed vault fix before next iteration.
 
 ---
 
@@ -30,10 +30,11 @@ The output defines the stop rule and breakeven window used by the classification
 
 ## INPUTS
 
-1. **Raw signal clusters file** — `local_runner/cache/raw_signal_clusters_{setup}.json`. Provides example cluster data (signal bar index, forward window, matched entry dates).
+1. **Examples table** — `data/scanperfect.db` → `examples` table. Source of truth for ticker + entry_date. Signal bar = bar immediately before entry_date in the OHLCV (the scan candle). All bar lookups use dates, not raw indices.
 2. **5yr OHLCV cache** — `local_runner/cache/universe_ohlcv_5yr.pkl`. Provides price data (highs, lows, closes) for each example ticker.
 3. **Setup direction** — from `setups` table in `data/scanperfect.db`.
 4. **Exit condition** — from `data/signal_exit_grind/signal_exit_{setup}.json`. Provides the expression, threshold, and direction. Used to determine each example's exit bar so the stop survival check has an endpoint.
+5. **Forward window** — from `local_runner/cache/raw_signal_clusters_{setup}.json` (header only, not example data). This is the only value read from the cluster file.
 
 ---
 
@@ -43,12 +44,12 @@ For each example, 4 bars define the candidate stop levels:
 
 | Bar | Description |
 |-----|-------------|
-| Pre-signal bar | The bar immediately before the rightmost signal bar |
-| Signal bar | The rightmost signal bar in the cluster |
+| Pre-signal bar | The bar immediately before the signal bar (2 bars before entry) |
+| Signal bar | The bar immediately before the entry bar (the scan candle) |
 | FW highest-high bar | The bar within the forward window that has the highest high |
 | FW lowest-low bar | The bar within the forward window that has the lowest low |
 
-Each bar contributes 2 candidate price levels (its high and its low) = 8 static candidates.
+Signal bar is always entry_date - 1 bar in the OHLCV. This is the scan candle — the last bar you see before deciding to enter. All bar identification uses dates, never raw indices across data sources.
 
 ---
 
@@ -207,3 +208,25 @@ No ambiguous category. Binary win/loss.
 - **Runs independently per setup type.** No assumption of symmetry between breakout long and breakdown short stop placements.
 - **Direction-aware within a run.** Monotonicity direction, breach direction, and risk measurement adjust for long vs short.
 - **Standalone first, pipeline later.** Build and test as `scripts/entry_grinder.py`, graft into pipeline once validated.
+
+---
+
+## IMPLEMENTATION NOTES (from first build)
+
+**v1 built 2026-03-27.** Commit `4bf27a57`. Runs in ~6s on 51 BRKO examples.
+
+### First run results (42 examples after fixing source)
+- Static: only `fw_lowest_low_low` achieved 100% survival (1/8)
+- Ratchet: 300 monotonic paths out of 10,000, 0 with 100% survival
+- Breakeven window: 5 bars
+
+### Bugs fixed during session
+1. **Cluster file dependency removed.** v0 loaded examples from `raw_signal_clusters_{setup}.json` — stale, missed new examples, skipped 4 examples where cluster rightmost bar was on/after entry date. Fixed: load directly from `examples` table in SQLite.
+2. **Signal bar definition fixed.** Signal bar = bar immediately before entry_date (the scan candle). Resolved by date lookup in OHLCV, not raw index comparison across data sources.
+3. **Date-based bar identification.** All bar lookups go date → OHLCV index. No cross-source index comparisons.
+
+### Open issues for next session
+1. **Seed vault incomplete.** `scripts/seed_vault.py` doesn't back up `local_runner/cache/` JSON files (pyramid outputs, cluster files, entry grinder outputs). Also doesn't back up `signal_exit_grind/` files for non-DTSS setups. Must be fixed before entry grinder data is available on Railway for validation.
+2. **Signal condition validation needed.** Must verify that the signal grinder's conditions actually fire on the scan bar (signal_idx = entry_idx - 1) for every example. If conditions don't fire on some examples' scan bars, those examples were matched by the cluster system's proximity logic, not by actual signal firing — meaning the signal grinder may have conditions that miss initial examples.
+3. **Ratchet 0 survivors.** May be legitimate (no monotonic path holds all examples) or may indicate the example set includes edge cases that prevent any tight stop from working. The near-miss diagnostic (added in v1) will show which examples cause failures.
+4. **Forward window source.** Currently reads from cluster file header. Should this be stored in the `setups` table instead to eliminate the cluster file dependency entirely?
