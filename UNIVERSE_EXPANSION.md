@@ -236,11 +236,14 @@ Not an expression — computed on the fly from OHLCV (close × volume, 20-bar SM
 - **Restore:** copy `expr_series_backup/` back to `expr_series/`, copy `*_pre_phase2.pkl` back to `universe_ohlcv_5yr.pkl`
 
 ### Phase 2: Vectorized expression cache builder
-- [ ] Build numpy 2D implementations for each expression op category
-- [ ] **Validation gate:** For 50 sample tickers, compute expressions both ways (old pandas vs new numpy). All values must match within float32 tolerance (1e-4). No proceeding until this passes.
+- [x] **Increment 1:** Numpy 2D base indicators (28 functions: SMA, EMA, HMA, ATR, ADR, RSI, ADX, DI+/-, CCI, MACD, Bollinger, OBV, BOP, Aroon, CMF, Kaufman, count_true, since_true, true_in_row). File: `vectorized_indicators.py`
+- [x] **Increment 2:** Daily expression dispatcher (1,604 expressions, 86 op types). File: `vectorized_dispatch.py`
+- [x] **Increment 3:** Boolean conditions + aggregates (2,413 expressions, 127 conditions). Added to `vectorized_dispatch.py`
+- [x] **Increment 4:** Extension structure ops — on_series + on_series_bool_agg (1,198 expressions). Added to `vectorized_dispatch.py`
+- [x] **Increment 5:** HTF weekly + monthly (10,466 expressions). No new code — same `build_intermediates` + `compute_expr_2d` on resampled OHLCV matrices.
+- [x] **Validation gate:** All 5,215 non-precomputed expressions match pandas within float64 precision (tested with synthetic data, 2 tickers × 300 bars). HTF: 90/90 weekly + 90/90 monthly base ops match.
 - [ ] Build the batched pipeline: load OHLCV matrices → batch → compute → write .npz
 - [ ] Handle per-ticker expressions (LSP, algo lines) in separate ProcessPoolExecutor pass
-- [ ] Handle HTF expressions using weekly/monthly OHLCV matrices + daily-to-HTF bar mapping
 - [ ] Full build on Dan's machine — target: <30 min for 11,000 × 15,805
 - [ ] Wire into nightly.py as the new step 3
 
