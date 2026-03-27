@@ -173,6 +173,81 @@ def _rolling_mean(arr, period):
     return s / period
 
 
+def np_percentile_rank(arr, period):
+    """Vectorized percentile rank using sliding_window_view."""
+    from numpy.lib.stride_tricks import sliding_window_view
+    n = len(arr)
+    result = np.full(n, np.nan)
+    if n < period or period < 2:
+        return result
+    windows = sliding_window_view(arr, period)  # (n - period + 1, period)
+    # For each window, count how many values <= the last value
+    last_vals = windows[:, -1:]  # (n_windows, 1)
+    counts = np.sum(windows <= last_vals, axis=1)  # (n_windows,)
+    result[period - 1:] = counts / period * 100.0
+    # Handle NaN: if last value is NaN, result should be NaN
+    nan_mask = np.any(np.isnan(windows), axis=1)
+    result[period - 1:][nan_mask] = np.nan
+    return result
+
+
+def np_bars_since_cross(close, ma, max_lb):
+    """Bars since close crossed above/below MA. Pure numpy."""
+    n = len(close)
+    above = close > ma
+    result = np.full(n, float(max_lb))
+    for i in range(1, n):
+        above_now = above[i]
+        limit = min(max_lb, i)
+        for back in range(1, limit + 1):
+            if above[i - back] != above_now:
+                result[i] = float(back)
+                break
+    return result
+
+
+def np_swing_count_rolling(swing_arr, period, n_bars):
+    """Count swing points in rolling window. Precompute swing bool, then cumsum."""
+    result = np.full(n_bars, np.nan)
+    swing_f = swing_arr.astype(np.float64)
+    cs = np.cumsum(swing_f)
+    # Window is [i-p+2, i) exclusive of endpoints — matches original
+    # Original: for j in range(i - p + 2, i) means indices i-p+2 to i-1 inclusive
+    # That's a window of size p-2 starting at i-p+2
+    win_size = period - 2
+    if win_size <= 0:
+        return result
+    for i in range(period + 1, n_bars):
+        start = i - period + 2
+        end = i  # exclusive (range doesn't include i)
+        result[i] = cs[end - 1] - (cs[start - 1] if start > 0 else 0)
+    return result
+
+
+def np_trend_swing_count(swing_arr, values, period, direction, n_bars):
+    """Count consecutive higher-highs / lower-lows etc in rolling window."""
+    result = np.full(n_bars, np.nan)
+    for i in range(period + 1, n_bars):
+        # Find swing points in window
+        points = []
+        for j in range(i - period + 2, i):
+            if swing_arr[j]:
+                points.append(values[j])
+        if len(points) < 2:
+            result[i] = 0.0
+            continue
+        count = 0
+        for k in range(len(points) - 1, 0, -1):
+            if direction == "higher" and points[k] > points[k - 1]:
+                count += 1
+            elif direction == "lower" and points[k] < points[k - 1]:
+                count += 1
+            else:
+                break
+        result[i] = float(count)
+    return result
+
+
 def build_numpy_intermediates(engine):
     """Extract all cached intermediates from ExpressionEngine as numpy arrays.
     
@@ -722,17 +797,98 @@ def benchmark_optimized(ticker, df, expressions):
     engine = ExpressionEngine(df)
     data = np.full((n_bars, n_exprs), np.nan, dtype=np.float32)
 
-    # ── Daily arithmetic: same as original (compute_series with engine cache) ──
+    # ── Daily arithmetic: numpy replacements for slow ops, compute_series for rest ──
     arith_indices = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") not in BOOL_OPS]
     
+    SLOW_OPS = {"percentile_rank", "roc_percentile_rank", "bars_since_ma_cross",
+                "swing_high_count", "swing_low_count",
+                "higher_high_count", "higher_low_count", "lower_high_count", "lower_low_count"}
+    
     t0 = time.perf_counter()
+    
+    # Pre-extract numpy arrays for slow op replacements
+    c_vals = engine.c.values.astype(np.float64)
+    h_vals = engine.h.values.astype(np.float64)
+    l_vals = engine.l.values.astype(np.float64)
+    v_vals = engine.v.values.astype(np.float64)
+    
+    # Cache for percentile_rank sources and swing point arrays
+    pct_rank_cache = {}
+    swing_high_arr = None  # bool array: is this bar a swing high?
+    swing_low_arr = None
+    
     for j in arith_indices:
-        try:
-            s = compute_series(engine, expressions[j]["compute"])
-            if s is not None:
-                arr = np.asarray(s, dtype=np.float32)
-                if len(arr) == n_bars: data[:, j] = arr
-        except: pass
+        comp = expressions[j]["compute"]
+        op = comp["op"]
+        
+        if op == "percentile_rank":
+            source = comp["source"]
+            period = comp["period"]
+            # Get source array (cached)
+            if source not in pct_rank_cache:
+                if source == "close": pct_rank_cache[source] = c_vals
+                elif source == "volume": pct_rank_cache[source] = v_vals
+                elif source == "range": pct_rank_cache[source] = h_vals - l_vals
+                elif source == "atr14": pct_rank_cache[source] = engine._atr(14).values.astype(np.float64)
+                elif source == "rsi14": pct_rank_cache[source] = engine._rsi(14).values.astype(np.float64)
+                else: pct_rank_cache[source] = c_vals
+            s = pct_rank_cache[source]
+            data[:, j] = np_percentile_rank(s, period).astype(np.float32)
+        
+        elif op == "roc_percentile_rank":
+            roc_p = comp["roc_period"]
+            lb = comp["lookback"]
+            roc_s = np.full_like(c_vals, np.nan)
+            roc_s[roc_p:] = (c_vals[roc_p:] / c_vals[:-roc_p] - 1.0) * 100.0
+            data[:, j] = np_percentile_rank(roc_s, lb).astype(np.float32)
+        
+        elif op == "bars_since_ma_cross":
+            ma = engine._ma(comp["ma"]).values.astype(np.float64)
+            max_lb = comp.get("max_lookback", 120)
+            data[:, j] = np_bars_since_cross(c_vals, ma, max_lb).astype(np.float32)
+        
+        elif op in ("swing_high_count", "swing_low_count"):
+            p = comp["period"]
+            if op == "swing_high_count":
+                if swing_high_arr is None:
+                    swing_high_arr = np.zeros(n_bars, dtype=bool)
+                    for i in range(1, n_bars - 1):
+                        swing_high_arr[i] = h_vals[i] > h_vals[i-1] and h_vals[i] > h_vals[i+1]
+                data[:, j] = np_swing_count_rolling(swing_high_arr, p, n_bars).astype(np.float32)
+            else:
+                if swing_low_arr is None:
+                    swing_low_arr = np.zeros(n_bars, dtype=bool)
+                    for i in range(1, n_bars - 1):
+                        swing_low_arr[i] = l_vals[i] < l_vals[i-1] and l_vals[i] < l_vals[i+1]
+                data[:, j] = np_swing_count_rolling(swing_low_arr, p, n_bars).astype(np.float32)
+        
+        elif op in ("higher_high_count", "lower_high_count"):
+            p = comp["period"]
+            if swing_high_arr is None:
+                swing_high_arr = np.zeros(n_bars, dtype=bool)
+                for i in range(1, n_bars - 1):
+                    swing_high_arr[i] = h_vals[i] > h_vals[i-1] and h_vals[i] > h_vals[i+1]
+            direction = "higher" if op == "higher_high_count" else "lower"
+            data[:, j] = np_trend_swing_count(swing_high_arr, h_vals, p, direction, n_bars).astype(np.float32)
+        
+        elif op in ("higher_low_count", "lower_low_count"):
+            p = comp["period"]
+            if swing_low_arr is None:
+                swing_low_arr = np.zeros(n_bars, dtype=bool)
+                for i in range(1, n_bars - 1):
+                    swing_low_arr[i] = l_vals[i] < l_vals[i-1] and l_vals[i] < l_vals[i+1]
+            direction = "higher" if op == "higher_low_count" else "lower"
+            data[:, j] = np_trend_swing_count(swing_low_arr, l_vals, p, direction, n_bars).astype(np.float32)
+        
+        else:
+            # All other ops: use original compute_series (still fast with engine cache)
+            try:
+                s = compute_series(engine, comp)
+                if s is not None:
+                    arr = np.asarray(s, dtype=np.float32)
+                    if len(arr) == n_bars: data[:, j] = arr
+            except: pass
+    
     results["daily_arith"] = time.perf_counter() - t0
 
     # ── Daily booleans: numpy optimized ──
@@ -894,7 +1050,7 @@ def compare_outputs(data_orig, data_opt, expressions, indices):
 
 def main():
     print("\n" + "=" * 70)
-    print("  EXPRESSION CACHE — BENCHMARK v7 (daily arith profiling + v5 optimizations)")
+    print("  EXPRESSION CACHE — BENCHMARK v8 (slow op replacements)")
     print("=" * 70)
     expressions = _load_expressions()
     _init_worker(expressions)
