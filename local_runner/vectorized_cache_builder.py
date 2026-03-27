@@ -375,11 +375,19 @@ def build_vectorized(batch_size=25, n_lsp_workers=8):
         elapsed = time.time() - t0
         rate = total_completed / elapsed if elapsed > 0 else 0
         eta = (len(tickers) - total_completed) / rate if rate > 0 else 0
-        print(f"    Batch {batch_idx+1}/{n_batches}: {total_completed}/{len(tickers)} "
-              f"[{elapsed:.0f}s elapsed, ~{eta:.0f}s left]")
+        pct = total_completed / len(tickers) * 100
+        bar_len = 30
+        filled = int(bar_len * total_completed / len(tickers))
+        bar = "█" * filled + "░" * (bar_len - filled)
+        print(f"\r    [{bar}] {pct:5.1f}%  {total_completed:,}/{len(tickers):,}  "
+              f"{elapsed:.0f}s elapsed  ETA {eta:.0f}s", end="", flush=True)
+        
+        # Full line every 10 batches
+        if (batch_idx + 1) % 10 == 0 or batch_idx == n_batches - 1:
+            print()
     
     batch_time = time.time() - t0
-    print(f"\n  Vectorized batch phase: {batch_time:.0f}s ({batch_time/60:.1f} min)")
+    print(f"\n  Vectorized batch phase complete: {batch_time:.0f}s ({batch_time/60:.1f} min)")
     
     # ── 6. Per-ticker pass: LSP + algo lines ──
     lsp_indices = groups["lsp"]
