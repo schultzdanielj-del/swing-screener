@@ -16,6 +16,7 @@ from local_runner.vectorized_indicators import (
     adx_2d, di_plus_2d, di_minus_2d, cci_2d, macd_2d,
     bollinger_top_2d, bollinger_bot_2d, obv_2d, bop_2d,
     aroon_up_2d, aroon_down_2d, cmf_2d, kaufman_eff_2d,
+    count_true_2d, since_true_2d, true_in_row_2d,
 )
 
 
@@ -698,9 +699,208 @@ def compute_expr_2d(comp, im, O, H, L, C, V):
     elif op in ("higher_high_count", "higher_low_count", "lower_high_count", "lower_low_count"):
         return _trend_swing_count_2d(H, L, comp["period"], op)
     
+    elif op == "count_true":
+        bool_arr = _eval_bool_condition_2d(comp["condition"], im, O, H, L, C, V)
+        return count_true_2d(bool_arr, comp["period"])
+    
+    elif op == "since_true":
+        bool_arr = _eval_bool_condition_2d(comp["condition"], im, O, H, L, C, V)
+        return since_true_2d(bool_arr, comp["period"])
+    
+    elif op == "true_in_row":
+        bool_arr = _eval_bool_condition_2d(comp["condition"], im, O, H, L, C, V)
+        return true_in_row_2d(bool_arr, comp["period"])
+    
     else:
         # Unknown op — return NaN
         return np.full_like(C, np.nan)
+
+
+# ══════════════════════════════════════════════════════════════
+# BOOLEAN CONDITION EVALUATOR
+# ══════════════════════════════════════════════════════════════
+
+def _eval_bool_condition_2d(cond_name, im, O, H, L, C, V):
+    """Evaluate a named boolean condition into a 2D bool array.
+    
+    Matches ExpressionEngine._bool_series() exactly.
+    NaN comparisons produce False (matches pandas behavior).
+    """
+    n = cond_name
+    
+    def _gt(a, b):
+        """a > b, NaN → False."""
+        with np.errstate(invalid='ignore'):
+            return np.where(np.isnan(a) | np.isnan(b), False, a > b)
+    
+    def _lt(a, b):
+        with np.errstate(invalid='ignore'):
+            return np.where(np.isnan(a) | np.isnan(b), False, a < b)
+    
+    def _ma(name):
+        return im[name]
+    
+    def _shift1(arr):
+        r = np.full_like(arr, np.nan)
+        r[:, 1:] = arr[:, :-1]
+        return r
+    
+    # --- Price vs MA ---
+    if   n == "c_gt_xavgc8":       return _gt(C, _ma("xavgc8"))
+    elif n == "c_gt_xavgc13":      return _gt(C, _ma("xavgc13"))
+    elif n == "c_gt_xavgc21":      return _gt(C, _ma("xavgc21"))
+    elif n == "c_gt_xavgc50":      return _gt(C, _ma("xavgc50"))
+    elif n == "c_gt_xavgc100":     return _gt(C, _ma("xavgc100"))
+    elif n == "c_gt_xavgc200":     return _gt(C, _ma("xavgc200"))
+    elif n == "c_gt_avgc50":       return _gt(C, _ma("avgc50"))
+    elif n == "c_gt_avgc100":      return _gt(C, _ma("avgc100"))
+    elif n == "c_gt_avgc200":      return _gt(C, _ma("avgc200"))
+    elif n == "c_lt_xavgc8":       return _lt(C, _ma("xavgc8"))
+    elif n == "c_lt_xavgc13":      return _lt(C, _ma("xavgc13"))
+    elif n == "c_lt_xavgc21":      return _lt(C, _ma("xavgc21"))
+    elif n == "c_lt_xavgc50":      return _lt(C, _ma("xavgc50"))
+    elif n == "c_lt_avgc50":       return _lt(C, _ma("avgc50"))
+    elif n == "c_lt_avgc100":      return _lt(C, _ma("avgc100"))
+    elif n == "c_lt_avgc200":      return _lt(C, _ma("avgc200"))
+    # --- Wick vs MA ---
+    elif n == "l_gt_xavgc8":       return _gt(L, _ma("xavgc8"))
+    elif n == "l_gt_xavgc21":      return _gt(L, _ma("xavgc21"))
+    elif n == "l_gt_avgc50":       return _gt(L, _ma("avgc50"))
+    elif n == "l_gt_avgc200":      return _gt(L, _ma("avgc200"))
+    elif n == "h_lt_xavgc8":       return _lt(H, _ma("xavgc8"))
+    elif n == "h_lt_xavgc21":      return _lt(H, _ma("xavgc21"))
+    elif n == "h_lt_avgc50":       return _lt(H, _ma("avgc50"))
+    elif n == "h_lt_avgc200":      return _lt(H, _ma("avgc200"))
+    # --- Price vs prior bar ---
+    elif n == "c_gt_c1":           return _gt(C, _shift1(C))
+    elif n == "c_lt_c1":           return _lt(C, _shift1(C))
+    elif n == "h_gt_h1":           return _gt(H, _shift1(H))
+    elif n == "l_lt_l1":           return _lt(L, _shift1(L))
+    elif n == "c_gt_o":            return _gt(C, O)
+    # --- Volume ---
+    elif n == "v_gt_avgv10":       return _gt(V, _ma("avgv10"))
+    elif n == "v_gt_avgv20":       return _gt(V, _ma("avgv20"))
+    elif n == "v_gt_1_5x_avgv20":  return _gt(V, 1.5 * _ma("avgv20"))
+    elif n == "v_gt_2x_avgv20":    return _gt(V, 2 * _ma("avgv20"))
+    elif n == "v_gt_3x_avgv20":    return _gt(V, 3 * _ma("avgv20"))
+    elif n == "v_gt_avgv50":       return _gt(V, _ma("avgv50"))
+    elif n == "v_lt_avgv20":       return _lt(V, _ma("avgv20"))
+    elif n == "v_lt_half_avgv20":  return _lt(V, 0.5 * _ma("avgv20"))
+    # --- MA vs MA ---
+    elif n == "xavgc8_gt_xavgc21": return _gt(_ma("xavgc8"), _ma("xavgc21"))
+    elif n == "xavgc13_gt_xavgc21":return _gt(_ma("xavgc13"), _ma("xavgc21"))
+    elif n == "xavgc8_gt_xavgc50": return _gt(_ma("xavgc8"), _ma("xavgc50"))
+    elif n == "xavgc8_gt_avgc50":  return _gt(_ma("xavgc8"), _ma("avgc50"))
+    elif n == "xavgc21_gt_avgc50": return _gt(_ma("xavgc21"), _ma("avgc50"))
+    elif n == "xavgc21_gt_xavgc50":return _gt(_ma("xavgc21"), _ma("xavgc50"))
+    elif n == "xavgc21_gt_xavgc100":return _gt(_ma("xavgc21"), _ma("xavgc100"))
+    elif n == "xavgc50_gt_xavgc200":return _gt(_ma("xavgc50"), _ma("xavgc200"))
+    elif n == "avgc50_gt_avgc100":  return _gt(_ma("avgc50"), _ma("avgc100"))
+    elif n == "avgc50_gt_avgc200":  return _gt(_ma("avgc50"), _ma("avgc200"))
+    elif n == "avgc100_gt_avgc200": return _gt(_ma("avgc100"), _ma("avgc200"))
+    # --- MA direction ---
+    elif n == "xavgc8_rising":     return _gt(_ma("xavgc8"), _shift1(_ma("xavgc8")))
+    elif n == "xavgc8_falling":    return _lt(_ma("xavgc8"), _shift1(_ma("xavgc8")))
+    elif n == "xavgc13_rising":    return _gt(_ma("xavgc13"), _shift1(_ma("xavgc13")))
+    elif n == "xavgc13_falling":   return _lt(_ma("xavgc13"), _shift1(_ma("xavgc13")))
+    elif n == "xavgc21_rising":    return _gt(_ma("xavgc21"), _shift1(_ma("xavgc21")))
+    elif n == "xavgc21_falling":   return _lt(_ma("xavgc21"), _shift1(_ma("xavgc21")))
+    elif n == "xavgc50_rising":    return _gt(_ma("xavgc50"), _shift1(_ma("xavgc50")))
+    elif n == "xavgc50_falling":   return _lt(_ma("xavgc50"), _shift1(_ma("xavgc50")))
+    elif n == "xavgc100_rising":   return _gt(_ma("xavgc100"), _shift1(_ma("xavgc100")))
+    elif n == "xavgc100_falling":  return _lt(_ma("xavgc100"), _shift1(_ma("xavgc100")))
+    elif n == "avgc50_rising":     return _gt(_ma("avgc50"), _shift1(_ma("avgc50")))
+    elif n == "avgc50_falling":    return _lt(_ma("avgc50"), _shift1(_ma("avgc50")))
+    elif n == "avgc100_rising":    return _gt(_ma("avgc100"), _shift1(_ma("avgc100")))
+    elif n == "avgc100_falling":   return _lt(_ma("avgc100"), _shift1(_ma("avgc100")))
+    elif n == "avgc200_rising":    return _gt(_ma("avgc200"), _shift1(_ma("avgc200")))
+    elif n == "avgc200_falling":   return _lt(_ma("avgc200"), _shift1(_ma("avgc200")))
+    # --- Breakout/breakdown ---
+    elif n == "h_gt_maxh5_1":      return _gt(H, _shift1(im["maxh5"]))
+    elif n == "h_gt_maxh10_1":     return _gt(H, _shift1(im["maxh10"]))
+    elif n == "h_gt_maxh20_1":     return _gt(H, _shift1(im["maxh20"]))
+    elif n == "h_gt_maxh50_1":     return _gt(H, _shift1(im["maxh50"]))
+    elif n == "h_gt_maxh65_1":     return _gt(H, _shift1(im["maxh65"]))
+    elif n == "l_lt_minl5_1":      return _lt(L, _shift1(im["minl5"]))
+    elif n == "l_lt_minl10_1":     return _lt(L, _shift1(im["minl10"]))
+    elif n == "l_lt_minl20_1":     return _lt(L, _shift1(im["minl20"]))
+    elif n == "l_lt_minl50_1":     return _lt(L, _shift1(im["minl50"]))
+    elif n == "l_lt_minl65_1":     return _lt(L, _shift1(im.get("minl65", rolling_min_2d(L, 65))))
+    elif n == "c_gt_maxc10_1":     return _gt(C, _shift1(im.get("maxc10", rolling_max_2d(C, 10))))
+    elif n == "c_gt_maxc20_1":     return _gt(C, _shift1(rolling_max_2d(C, 20)))
+    elif n == "c_gt_maxc50_1":     return _gt(C, _shift1(rolling_max_2d(C, 50)))
+    # --- Range/candle ---
+    elif n == "range_gt_atr":      return _gt(H - L, im["atr14"])
+    elif n == "range_gt_1_5_atr":  return _gt(H - L, 1.5 * im["atr14"])
+    elif n == "range_lt_half_atr": return _lt(H - L, 0.5 * im["atr14"])
+    elif n == "narrow_range":      return _lt(H - L, 0.5 * im["atr14"])
+    elif n == "wide_range":        return _gt(H - L, 1.5 * im["atr14"])
+    elif n == "body_gt_half_range":return _gt(np.abs(C - O), 0.5 * (H - L))
+    elif n == "c_upper_half":      return _gt(C, (H + L) / 2)
+    elif n == "c_lower_half":      return _lt(C, (H + L) / 2)
+    elif n == "close_near_high":   return _lt(H - C, 0.25 * (H - L))
+    elif n == "close_near_low":    return _lt(C - L, 0.25 * (H - L))
+    elif n == "inside_bar":        return _lt(H, _shift1(H)) & _gt(L, _shift1(L))
+    elif n == "outside_bar":       return _gt(H, _shift1(H)) & _lt(L, _shift1(L))
+    # --- Gap ---
+    elif n == "gap_up":            return _gt(O, _shift1(C))
+    elif n == "gap_down":          return _lt(O, _shift1(C))
+    elif n == "big_gap_up":        return _gt(O - _shift1(C), im["atr14"])
+    elif n == "big_gap_down":      return _gt(_shift1(C) - O, im["atr14"])
+    elif n == "gap_up_half_atr":   return _gt(O - _shift1(C), 0.5 * im["atr14"])
+    elif n == "gap_down_half_atr": return _gt(_shift1(C) - O, 0.5 * im["atr14"])
+    # --- Momentum ---
+    elif n == "diplus_gt_diminus": return _gt(im["diplus14"], im["diminus14"])
+    elif n == "rsi14_gt_50":       return _gt(im["rsi14"], 50)
+    elif n == "rsi14_gt_60":       return _gt(im["rsi14"], 60)
+    elif n == "rsi14_gt_70":       return _gt(im["rsi14"], 70)
+    elif n == "rsi14_gt_80":       return _gt(im["rsi14"], 80)
+    elif n == "rsi14_lt_20":       return _lt(im["rsi14"], 20)
+    elif n == "rsi14_lt_30":       return _lt(im["rsi14"], 30)
+    elif n == "rsi14_lt_40":       return _lt(im["rsi14"], 40)
+    elif n == "rsi14_lt_50":       return _lt(im["rsi14"], 50)
+    elif n == "adx14_gt_20":       return _gt(im["adx14"], 20)
+    elif n == "adx14_gt_25":       return _gt(im["adx14"], 25)
+    elif n == "adx14_gt_30":       return _gt(im["adx14"], 30)
+    elif n == "adx14_lt_20":       return _lt(im["adx14"], 20)
+    elif n == "stoch14_gt_50":     return _gt(im["stoch14"], 50)
+    elif n == "stoch14_gt_80":     return _gt(im["stoch14"], 80)
+    elif n == "stoch14_lt_20":     return _lt(im["stoch14"], 20)
+    elif n == "stoch14_lt_50":     return _lt(im["stoch14"], 50)
+    elif n == "cci14_gt_100":      return _gt(im["cci14"], 100)
+    elif n == "cci14_lt_neg100":   return _lt(im["cci14"], -100)
+    # --- Bollinger ---
+    elif n == "c_gt_bbtop":        return _gt(C, im.get("bbtop_20", bollinger_top_2d(C, 20)))
+    elif n == "c_lt_bbbot":        return _lt(C, im.get("bbbot_20", bollinger_bot_2d(C, 20)))
+    elif n == "bb_squeeze":
+        bw = rolling_std_2d(C, 20)
+        mid = im.get("avgc20", sma_2d(C, 20))
+        bw_norm = _safe_div(bw, mid)
+        bw_rank = _rolling_rank_2d(bw_norm, 120)
+        return _lt(bw_rank, 0.2)
+    # --- CMF ---
+    elif n == "cmf20_positive":    return _gt(im["cmf_20"], 0)
+    elif n == "cmf20_negative":    return _lt(im["cmf_20"], 0)
+    # --- MACD ---
+    elif n == "macd_positive":     return _gt(im.get("macd_12_26", macd_2d(C, 12, 26)), 0)
+    elif n == "macd_negative":     return _lt(im.get("macd_12_26", macd_2d(C, 12, 26)), 0)
+    # --- OBV ---
+    elif n == "obv_rising":
+        o = im["obv"]
+        o5 = _shift(o, 5)
+        return _gt(o, o5)
+    elif n == "obv_falling":
+        o = im["obv"]
+        o5 = _shift(o, 5)
+        return _lt(o, o5)
+    # --- BOP ---
+    elif n == "bop14_positive":    return _gt(im["bop14"], 0)
+    elif n == "bop14_negative":    return _lt(im["bop14"], 0)
+    # --- Aroon ---
+    elif n == "aroon_up14_gt_70":  return _gt(im.get("aroon_up_14", aroon_up_2d(H, 14)), 70)
+    elif n == "aroon_down14_gt_70":return _gt(im.get("aroon_down_14", aroon_down_2d(L, 14)), 70)
+    else:
+        raise ValueError(f"Unknown boolean condition: {cond_name}")
 
 
 # ══════════════════════════════════════════════════════════════
