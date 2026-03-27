@@ -1,4 +1,4 @@
-# ScanPerfect Pipeline (2026-03-25, setup-agnostic pipeline fix, Profit Grinder Inc 1-4 done)
+# ScanPerfect Pipeline (2026-03-26, BRKO Phase 3 in progress, refinement optimizations)
 
 ## The Goal
 
@@ -396,9 +396,43 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 
 ---
 
+---
+
+## BRKO (Breakout) — Current State
+
+| Step | Status | Key Numbers |
+|------|--------|-------------|
+| Phase 1: Vetting | ✅ 51 examples (46 matched) | Direction: long |
+| Phase 2a: Signal Grind | ✅ Done | Conditions found, raw signals clustered |
+| Phase 2b: Exit Grind | ✅ Done | Exit condition set |
+| Phase 2c: Refinement Grind | ✅ Done | 54.9% WR post (beam 10000, depth 100). Thin — breakout W/L look similar on expressions |
+| Phase 3: EV Grinder | ⏳ Running | — |
+| Phase 4: Profit Grind | ⏸ Not started | |
+| Phase 5: Live Watchlist | ⏸ Not built | |
+
+**Key BRKO metrics:**
+- 4,685 clusters: 2,385 WIN, 2,300 LOSS (50.9% WR pre-refinement)
+- Refinement only killed 340 losers (54.9% post) — beam 500 and beam 10000 gave same result
+- Winner move_adr: median 2.7, mean 4.8, floor 0.0, ceiling 353.7 (2,364 winners with data)
+- Direction-aware classification: longs use lowest-low stop, exit must fire ABOVE entry zone high
+- Thin refinement is expected — edge is in market context (EV grinder), not expression-level conditions
+
+### Refinement Grind Optimizations (2026-03-26)
+- Beam search: numpy bool arrays (37x faster, 97% less RAM vs frozensets)
+- Classification: vectorized np.where race + batched by ticker
+- Loser matrix: candidate-columns only (halves RAM), ThreadPoolExecutor(4) for .npz I/O
+- Matrix-multiply cluster set pre-computation (17s → 0.6s)
+- `--skip-gather` flag: reuse existing raw_signal_clusters file for consensus runs (~5 min saved per run)
+- Sorted tuple dedup replaces frozenset (1.7x faster, 8x less memory per key)
+- Partial sort via np.argpartition (3.5x faster on sort step)
+- Stored used set alongside beam nodes (saves 1.4s/run)
+- Dead node filter at level boundary
+- Dropped unused .df copies from refinement win_example_dfs (saves 190-570MB RAM)
+- CRITICAL: `del universe_cache + gc.collect()` between phases is INTENTIONAL RAM management — NEVER remove it
+
 ## Immediate Tasks
 
-### NEXT: Phase 5 (Live Watchlist) or Vet Winner Pile
+### NEXT: BRKO EV Grinder (running), then DTSS Phase 5 or Vet Winner Pile
 0. **Profit Grinder** — ✅ COMPLETE (Inc 1-4). 1-stage brute-force (12,878 exprs, ~3 min), 2-stage trim search (top 300 exprs × 50 final exits, ~8 min). ProcessPoolExecutor + numpy mmap. Output saved to profit_{setup}_{ts}.json + Railway mirror. DTSS finding: 2-stage trim adds marginal value for shorts (+0.038 ADR best).
 
 ### Localization
