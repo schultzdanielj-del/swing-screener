@@ -1,7 +1,7 @@
 # Nightly Refresh — Overhaul Spec
 
 **Created:** 2026-03-25
-**Updated:** 2026-03-25
+**Updated:** 2026-03-26
 **Branch:** `v2`
 **Goal:** Nightly refresh finishes in under 30 minutes with zero Railway dependency for data. Railway stays for seed vault backup only.
 
@@ -20,9 +20,26 @@
 | 5 | Refreshes earnings dates via Railway | Fails silently | **BROKEN.** `POST /api/universe/refresh-earnings` and `GET /api/universe/earnings-status` don't exist in `server.py`. Has been failing silently every night. Vetting UI reads from local SQLite `earnings_dates` table — data is stale. Replace with local Yahoo Finance scraper. |
 | 6 | Appends market context cache (266 instruments) | ~2-3 min | **OK.** Uses yfinance directly, no Railway dependency. |
 | 7 | Refreshes fundamentals cache | ~10 min (Mon) / <1 min | **OK** but has a dead Railway mirror call at the end. Remove it. |
-| 8 | Seed vault backup to Railway | ~1-2 min | **OK.** Intentional Railway dependency. Keep. |
+| 8 | Seed vault backup to Railway | ~1-2 min | **FIXED 2026-03-26.** Now runs every night regardless of step 1 gate. Previously skipped when step 1 said "already up to date", causing stale backups. Removed legacy `sync_examples_to_railway()` — seed vault JSON files on file mirror are the only backup. Railway's actual SQLite DB is legacy (several scripts still read from it — see below). |
 
 **Killed:** Old step 2 (300-bar daily OHLCV cache rebuild from Railway). Nothing reads this cache — everything uses the 5yr pickle. Removed 2026-03-25.
+
+### Legacy Railway examples API (`/api/examples/`) — cleanup needed
+
+Railway's SQLite DB has an examples table that several active scripts still read from instead of local SQLite. The seed vault no longer syncs to it (removed 2026-03-26), so it will go stale. These scripts need switching to local SQLite (`data/scanperfect.db`):
+
+| Script | Line | What it does |
+|--------|------|-------------|
+| `local_runner/matrix_builder.py` | 412 | Checks Railway examples for cache freshness |
+| `scripts/exit_grinder.py` | 118 | Loads examples from Railway |
+| `scripts/cycle_health.py` | 73 | Loads examples from Railway |
+| `scripts/entry_candle_weight_diagnostic.py` | 53 | Diagnostic — loads examples from Railway |
+| `scripts/entry_candle_sanity_check.py` | 38 | Diagnostic — loads examples from Railway |
+| `scripts/debug_example_conditions.py` | 26 | Debug — hardcoded Railway URL |
+| `scripts/signal_filter.py` | 180 | Loads examples from Railway (v2-consensus) |
+| `scripts/signal_exit_grinder.py` | 150 | Loads examples from Railway (v2-consensus) |
+
+**Not urgent** — these scripts still work because Railway's DB happens to have data. But as new examples are added locally (e.g. BRKO's 51), Railway won't have them. Fix by replacing `requests.get(f"{API_BASE}/api/examples/{setup_type}")` with a local SQLite query in each script.
 
 **Total current runtime: ~2-2.5 hours.** Target: under 30 minutes.
 
@@ -40,6 +57,7 @@
 
 ### What's been done:
 
+- **Seed vault gate fix** (2026-03-26): Step 8 now runs every night even when step 1 gates early ("no updates needed"). Removed `sync_examples_to_railway()` — Railway DB is legacy, seed vault JSON on file mirror is the only backup copy. Documented legacy scripts that still hit Railway's examples API.
 - **Old step 2 killed** (2026-03-25): 300-bar daily OHLCV cache rebuild. Nothing used it. Pipeline now 8 steps.
 - **Expr cache vectorization** (v2-consensus): `trendline_deviation`, `channel_position`, `CCI` vectorized. Brought append from 2+ hrs to ~91 min.
 - **Expr cache I/O fix** (v2-consensus): Eliminated serial load/concat/save bottleneck. Workers do full recompute + direct save.
@@ -212,5 +230,5 @@ The bat file (`nightly_refresh.bat`) writes this line after `nightly.py` finishe
 | `local_runner/market_cache_builder.py` | Market context cache | No Railway dependency (uses yfinance directly) |
 | `scripts/build_tradable.py` | Tradable universe filter | Runs on Railway SQLite only |
 | `scripts/fetch_fundamentals.py` | Fundamentals cache | No Railway dependency (uses Yahoo Finance API). Has dead Railway mirror at end. |
-| `scripts/seed_vault.py` | Backup to Railway | Intentional Railway dependency. Keep. |
+| `scripts/seed_vault.py` | Backup to Railway | Intentional Railway dependency (file mirror only). No longer syncs to Railway DB. |
 | `nightly_refresh.bat` | Windows Task Scheduler trigger | No changes needed |
