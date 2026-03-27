@@ -202,23 +202,35 @@ def np_percentile_rank(arr, period):
 
 def np_roc_percentile_rank(close, roc_period, lookback):
     """Vectorized roc_percentile_rank matching pandas rolling().rank(pct=True)."""
+    from numpy.lib.stride_tricks import sliding_window_view
     n = len(close)
     result = np.full(n, np.nan)
     # Compute ROC series
     roc = np.full(n, np.nan)
     roc[roc_period:] = (close[roc_period:] / close[:-roc_period] - 1.0) * 100.0
-    # Rolling rank (pct=True) = rank within window / window_size
-    # pandas rank(pct=True) returns rank/count where rank uses average method
-    for i in range(roc_period + lookback - 1, n):
-        window = roc[i - lookback + 1:i + 1]
-        if np.any(np.isnan(window)):
-            continue
-        # rank of last element: count of values < current + 0.5 * count of values == current
-        val = window[-1]
-        lt = np.sum(window < val)
-        eq = np.sum(window == val)
-        rank = lt + (eq + 1) / 2.0  # average rank (1-based)
-        result[i] = rank / lookback
+    # Need lookback window of non-NaN roc values
+    # Start index: roc_period + lookback - 1
+    start = roc_period + lookback - 1
+    if start >= n:
+        return result
+    # Use sliding_window_view on the roc array starting from roc_period
+    roc_valid = roc[roc_period:]
+    if len(roc_valid) < lookback:
+        return result
+    windows = sliding_window_view(roc_valid, lookback)
+    # For each window, compute rank of last element (average method, pct=True)
+    last_vals = windows[:, -1:]
+    # rank = (count_less + 0.5 * count_equal) / n  ... but pandas rank(pct=True) uses
+    # rank/count where rank is 1-based average. Simplify: for each window,
+    # sort and find position
+    lt_count = np.sum(windows < last_vals, axis=1).astype(np.float64)
+    eq_count = np.sum(windows == last_vals, axis=1).astype(np.float64)
+    rank = lt_count + (eq_count + 1.0) / 2.0  # 1-based average rank
+    pct = rank / lookback
+    # Handle NaN windows
+    nan_mask = np.any(np.isnan(windows), axis=1)
+    pct[nan_mask] = np.nan
+    result[start:] = pct
     return result
 
 
@@ -848,9 +860,12 @@ def benchmark_optimized(ticker, df, expressions):
     swing_high_arr = None  # bool array: is this bar a swing high?
     swing_low_arr = None
     
+    opt_op_times = {}
+    
     for j in arith_indices:
         comp = expressions[j]["compute"]
         op = comp["op"]
+        t_op = time.perf_counter()
         
         if op == "percentile_rank":
             source = comp["source"]
@@ -917,8 +932,16 @@ def benchmark_optimized(ticker, df, expressions):
                     arr = np.asarray(s, dtype=np.float32)
                     if len(arr) == n_bars: data[:, j] = arr
             except: pass
+        
+        opt_op_times[op] = opt_op_times.get(op, 0.0) + (time.perf_counter() - t_op)
     
     results["daily_arith"] = time.perf_counter() - t0
+    
+    # Print optimized daily arith breakdown
+    print(f"\n  Optimized daily arith breakdown (top 15 by time):")
+    for opn, t in sorted(opt_op_times.items(), key=lambda x: -x[1])[:15]:
+        cnt = sum(1 for j in arith_indices if expressions[j]["compute"]["op"] == opn)
+        print(f"    {opn:<30} {t*1000:>7.1f}ms  ({cnt} exprs, {t/cnt*1000:.1f}ms each)")
 
     # ── Daily booleans: numpy optimized ──
     ct = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") == "count_true"]
