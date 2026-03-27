@@ -207,15 +207,9 @@ Three separate pickle files:
 - `universe_ohlcv_weekly.pkl` (new)
 - `universe_ohlcv_monthly.pkl` (new)
 
-### The dvol_20d expression
+### The dvol_20d filter
 
-Not currently in the expression library. Needed for per-bar dollar volume floor check. Add to `brute_expressions.py`:
-```
-name: "dvol_20d"
-category: "volume_character"  
-compute: {"op": "dollar_volume_avg", "period": 20}
-```
-This is SMA(close × volume, 20). Available in the expression cache like `adr14`. Must be added before the full rebuild.
+Not an expression — computed on the fly from OHLCV (close × volume, 20-bar SMA) at scan time in the per-bar tradable filter. No expression slot needed. `cache_builder.py` already computes `dvol_20d` as a column in each ticker's DataFrame.
 
 ---
 
@@ -236,7 +230,6 @@ This is SMA(close × volume, 20). Available in the expression cache like `adr14`
 - [ ] Store as three .pkl files
 
 ### Phase 2: Vectorized expression cache builder
-- [ ] Add `dvol_20d` expression to `brute_expressions.py`
 - [ ] Build numpy 2D implementations for each expression op category
 - [ ] **Validation gate:** For 50 sample tickers, compute expressions both ways (old pandas vs new numpy). All values must match within float32 tolerance (1e-4). No proceeding until this passes.
 - [ ] Build the batched pipeline: load OHLCV matrices → batch → compute → write .npz
@@ -252,7 +245,7 @@ This is SMA(close × volume, 20). Available in the expression cache like `adr14`
 - [ ] Per-bar ADR check in `_build_tier_batch()` after pass_mask, before surviving_indices
 - [ ] Per-bar ADR check in `_scan_batch()` (signal_filter.py) same insertion point
 - [ ] Per-bar close price check (same locations, from OHLCV or expression cache)
-- [ ] Per-bar dollar volume check (same locations, from `dvol_20d` in expression cache)
+- [ ] Per-bar dollar volume check (same locations, computed from OHLCV close × volume)
 - [ ] Thread all parameters through CLI → run_pyramid() → worker init
 - [ ] Validate: all existing examples (DTSS 68, BRKO) still pass filters
 
