@@ -10,7 +10,7 @@
 
 The grinder's data is bad in two directions:
 
-1. **Contaminated signals:** 42.5% of BRKO signals (1,677 / 3,946) have ADR below $1.00. Bond ETFs (FTSM $0.025 ADR), fixed-income funds, and micro-ADR stocks produce garbage signals with inflated move_adr values (FTSM showing a "353.7 ADR move"). The `tradable_universe` table on Railway was supposed to filter these out but **never actually filtered anything** — `server.py` line 1441 inserts every ticker with OHLCV data directly into `tradable_universe` with zero checks. The `build_tradable.py` script with proper filters (price ≥ $1, APTR ≥ 1.5%, avg dollar volume ≥ $5M) was never wired into the Railway pipeline.
+1. **Contaminated signals:** 42.5% of BRKO signals (1,677 / 3,946) have ADR below $3.00. Bond ETFs (FTSM $0.025 ADR), fixed-income funds, and micro-ADR stocks produce garbage signals with inflated move_adr values (FTSM showing a "353.7 ADR move"). The `tradable_universe` table on Railway was supposed to filter these out but **never actually filtered anything** — `server.py` line 1441 inserts every ticker with OHLCV data directly into `tradable_universe` with zero checks. The `build_tradable.py` script with proper filters (price ≥ $1, APTR ≥ 1.5%, avg dollar volume ≥ $5M) was never wired into the Railway pipeline.
 
 2. **Missing signals:** 6,857 tickers have OHLCV data on Railway but are not in `tradable_universe`. These tickers — including stocks that were liquid and volatile historically but have since delisted, faded, or fallen below current thresholds — are completely invisible to the grinder. Valid historical setups from these tickers are lost.
 
@@ -29,7 +29,7 @@ Three components:
 Instead of a ticker-level gate, check tradability at each bar index during the grind scan. A ticker can be tradable in 2022 and untradable in 2024, or vice versa. The per-bar check is the only correct approach for historical scanning.
 
 Filters (checked per bar from expression cache / OHLCV):
-- `adr14 >= $1.00` (dollar ADR floor — catches bond ETFs, money markets, micro-ADR)
+- `adr14 >= $3.00` (dollar ADR floor — catches bond ETFs, money markets, micro-ADR, low-volatility)
 - `close >= $1.00` (price floor — catches sub-penny, near-delisting)
 - `avg_dollar_volume_20d >= $5,000,000` (liquidity floor — catches illiquid)
 
@@ -246,7 +246,7 @@ This is SMA(close × volume, 20). Available in the expression cache like `adr14`
 - [ ] Wire into nightly.py as the new step 3
 
 ### Phase 3: Per-bar tradable filters in grinder
-- [ ] Add `--min-adr-dollars` CLI arg (default $1.00)
+- [ ] Add `--min-adr-dollars` CLI arg (default $3.00)
 - [ ] Add `--min-price` CLI arg (default $1.00)
 - [ ] Add `--min-dollar-vol` CLI arg (default $5,000,000)
 - [ ] Per-bar ADR check in `_build_tier_batch()` after pass_mask, before surviving_indices
@@ -315,7 +315,7 @@ This is SMA(close × volume, 20). Available in the expression cache like `adr14`
 2. Full expression cache build completes in <30 minutes on Dan's i5-12600K
 3. Nightly expression cache rebuild completes in <20 minutes
 4. Total nightly pipeline completes in <60 minutes
-5. BRKO signal contamination (ADR < $1.00) drops from 42.5% to 0%
+5. BRKO signal contamination (ADR < $3.00) drops from 42.5% to 0%
 6. All existing examples still pass signal conditions
 7. No Railway dependency in operational pipeline (seed vault only)
 8. Vectorized expression values match pandas values within float32 tolerance
