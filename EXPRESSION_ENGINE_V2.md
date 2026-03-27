@@ -1,8 +1,16 @@
 # Expression Engine V2 — Build Plan
 
-## What's Being Added
+## Purpose
 
-Three new TA capabilities, all precomputed into the expression cache so grinders see them as regular expressions:
+Optimize the expression cache builder so that the nightly rebuild runs fast while producing **identical output** to the current builder. The cache is additive — each nightly run appends new bars to every ticker's existing cache file. Old bars are never dropped or trimmed. The full historical series from the 5yr OHLCV cache is preserved in every .npz file.
+
+**Two modes:**
+- **Full build** (\`--build --force\`): Recomputes all 16,051 expressions for all ~4,100 tickers from scratch. Only needed when expression definitions change (e.g., new AVWAP formula, new expression category added). Produces ~65 GB of .npz files.
+- **Nightly append** (\`--append\`, runs at 4:30pm ET via Task Scheduler): Recomputes the full series for every ticker that has new bars (which is all ~4,100 tickers every trading day) and overwrites the .npz file. On non-Mondays, weekly HTF columns are copied from the previous cache instead of recomputed. On non-month-start days, monthly HTF columns are copied. This skips ~66% of expressions on most days.
+
+Both modes produce the same output format: one .npz per ticker with \`data\` (float32 array, n_bars × 16,051) and \`dates\` (date strings). Grinders, matrix builder, and all downstream pipeline stages read these files identically regardless of which mode produced them.
+
+## What's In The Expression Library
 
 ### 1. LSP Detection (Left Side Pivots)
 - Find all pivot highs and pivot lows across multiple window sizes (5, 10, 15, 20, 30, 40)
@@ -68,7 +76,9 @@ See git history for full implementation details of Tasks A-G.
 
 ### Task H: Cache Builder Performance Optimization — ✅ COMPLETE (2026-03-27)
 
-**Problem:** Full cache rebuild (16,051 expressions × ~4,100 tickers) took ~95-107 minutes with 8 workers. The per-ticker `_compute_ticker_full()` worker was spending too much time in three areas: pandas `rolling().apply()` with Python callbacks for boolean aggregates, per-bar Python for-loops for extension structure linear regression, and redundant indicator recomputation inside `on_series_bool_agg` expressions.
+**Problem:** The nightly append recomputes the full expression series for every ticker that got a new bar (~4,100 tickers every trading day). At ~11s per ticker with 8 workers, this took ~95 minutes. Too slow for a nightly process.
+
+**Constraint:** Output must be byte-identical. Same .npz files, same float32 values, same date arrays. No trailing cutoff window, no dropping old bars, no approximations. Every downstream consumer (grinders, matrix builder, EV grinder, signal filter) must see the same data it always has.
 
 **Benchmark-driven approach:** Built `scripts/benchmark_expr_cache.py` to measure per-phase timing for a single ticker, then iteratively applied targeted optimizations with correctness verification after each change. No production code modified until all optimizations were validated.
 
@@ -132,10 +142,12 @@ See git history for full implementation details of Tasks A-G.
 |-----------|-----------|--------------------|-----------------------|
 | Expression count | 4,017 | 16,051 | 16,051 (unchanged) |
 | Cache size (disk) | ~21 GB | ~65 GB | ~65 GB (unchanged) |
-| Full cache build | ~40 min | ~95-107 min | ~56 min (estimated) |
-| Nightly append | ~5-8 min | ~15-20 min | ~10-12 min (estimated) |
+| Full rebuild (all tickers from scratch) | ~40 min | ~95-107 min | ~56 min (estimated) |
+| Nightly append (all tickers, non-Monday) | ~5-8 min | ~70-80 min | ~40-45 min (estimated, HTF skip saves ~30%) |
+| Nightly append (Monday — recompute weekly HTF) | — | ~95-107 min | ~56 min (estimated, same as full) |
 | Matrix rebuild | ~5 min | ~30s | ~30s (unchanged) |
 | Grinder runtime | ~2-3 min | ~4-8 min | ~4-8 min (unchanged) |
+| Output format | Same | Same | Same — identical .npz files, additive, no old bars dropped |
 
 ## Decisions (Resolved)
 
@@ -149,6 +161,18 @@ See git history for full implementation details of Tasks A-G.
 
 ## Build Order
 
+```
+Tasks A-G (expression library + infrastructure) — ✅ ALL COMPLETE (2026-02-27)
+    ↓
+Task H (cache builder optimization)             — ✅ BENCHMARKED (2026-03-27)
+                                                   1.70x speedup, output verified identical
+                                                   Optimizations in benchmark script only
+    ↓
+Wire optimizations into expr_cache_builder.py   — NEXT
+    ↓
+Full cache rebuild on Dan's machine             — verify ~56 min estimate
+    ↓
+Nightly append test                             — verify additive, no bar loss
+```
 
-
-**STATUS: Tasks A-G complete. Task H benchmarked and validated — 1.70x speedup confirmed. Ready to wire into production.**
+**STATUS:** Tasks A-G complete. Task H benchmarked and validated — 1.70x speedup, 15,937/16,051 expressions produce identical output (114 `obv_rising` NaN boundary differences, zero value errors). Ready to wire into production `_compute_ticker_full()`.
