@@ -8,7 +8,13 @@ These must produce identical results to the pandas implementations in
 scripts/profiling_engine.py (within float32 tolerance).
 """
 
+import warnings
 import numpy as np
+
+# All-NaN slices are expected (NaN-padded tickers) and produce NaN correctly
+warnings.filterwarnings("ignore", message=".*All-NaN slice.*", category=RuntimeWarning)
+warnings.filterwarnings("ignore", message=".*Mean of empty slice.*", category=RuntimeWarning)
+warnings.filterwarnings("ignore", message=".*Degrees of freedom.*", category=RuntimeWarning)
 
 
 # ══════════════════════════════════════════════════════════════

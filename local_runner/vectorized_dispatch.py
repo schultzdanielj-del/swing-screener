@@ -9,7 +9,14 @@ Usage:
     result = compute_expr_2d(comp, intermediates, O, H, L, C, V)
 """
 
+import warnings
 import numpy as np
+
+warnings.filterwarnings("ignore", message=".*All-NaN slice.*", category=RuntimeWarning)
+warnings.filterwarnings("ignore", message=".*Mean of empty slice.*", category=RuntimeWarning)
+warnings.filterwarnings("ignore", message=".*Degrees of freedom.*", category=RuntimeWarning)
+warnings.filterwarnings("ignore", message=".*invalid value.*", category=RuntimeWarning)
+
 from local_runner.vectorized_indicators import (
     sma_2d, ema_2d, hma_2d, rolling_max_2d, rolling_min_2d, rolling_sum_2d,
     rolling_std_2d, true_range_2d, atr_2d, adr_2d, rsi_2d, stochastic_2d,
