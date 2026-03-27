@@ -967,7 +967,7 @@ def main():
     print(f"  FULL BUILD + NIGHTLY ESTIMATES")
     print(f"  {'=' * 60}")
     print(f"  Per ticker: {total_orig:.1f}s original, {total_opt:.1f}s optimized")
-    for label, n_tickers in [("Full rebuild (10,856)", 10856), ("Nightly (~4,118 active)", 4118)]:
+    for label, n_tickers in [("Nightly (10,856 tickers)", 10856)]:
         orig_est = total_orig * n_tickers / 8
         opt_est = total_opt * n_tickers / 8
         print(f"\n  {label}:")
