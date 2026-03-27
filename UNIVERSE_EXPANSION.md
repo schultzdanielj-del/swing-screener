@@ -248,6 +248,7 @@ Not an expression — computed on the fly from OHLCV (close × volume, 20-bar SM
 #### What does NOT work (performance failure)
 - [x] `vectorized_cache_builder.py` exists and produces correct output but is **~11 hours for 10,542 tickers** — SLOWER than the old per-ticker pandas builder (~4.5 hours). Two attempts were made and both failed at production scale.
 - **Root cause:** The per-expression Python function call overhead dominates. `compute_expr_2d` is called 15,805 times per output batch. Each call has ~18ms of Python dispatch + numpy array allocation overhead. With 422 batches of 25 tickers, that's 15,805 × 422 = 6.7M function calls. Computing intermediates once for all tickers (second attempt) eliminated recomputation but did not fix the per-expression call overhead within each batch.
+- **CPU utilization: 8% throughout the entire run.** The numpy compute is trivial — the CPU is idle waiting on Python interpreter overhead between function calls. This confirms the fix must either parallelize the expression loop across cores or eliminate the Python dispatch layer entirely.
 - **What was tried:** (1) Per-batch intermediates + per-expression dispatch = ~11 hours. (2) Global intermediates with per-batch slicing + per-expression dispatch = still ~11 hours (intermediates phase faster but expression loop identical).
 - **What was NOT tried:** Numba JIT compilation of expression loops, bulk 3D array operations (computing all parameter variants of an op simultaneously), or restructuring to eliminate the per-expression Python dispatch entirely.
 
