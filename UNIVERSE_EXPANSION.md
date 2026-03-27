@@ -215,19 +215,25 @@ Not an expression — computed on the fly from OHLCV (close × volume, 20-bar SM
 
 ## EXECUTION PLAN
 
-### Phase 0: Preparation (no code changes)
-- [ ] Check what's in local SQLite — how many tickers have daily OHLCV locally vs only on Railway
-- [ ] Benchmark yfinance weekly + monthly pull for 100 tickers — verify data quality and rate limits
-- [ ] Confirm RAM on Dan's machine (expect 32GB) and decide batch size
-- [ ] Confirm disk space available for expanded expression cache (~110GB)
-- [ ] Verify: sample 10 tickers, compare yfinance weekly OHLCV vs pandas resample('W') on daily data — document differences
+### Phase 0: Preparation (no code changes) ✅ COMPLETE
+- [x] Check what's in local SQLite — 4,169 tickers locally vs 11,026 on Railway (6,857 gap)
+- [x] Confirm RAM on Dan's machine — 32GB confirmed
+- [x] Confirm disk space available for expanded expression cache — 480GB free
+- [x] Verified server.py line 1441 blind insert, build_tradable.py never wired, cache_builder.py gates on tradable_universe
 
-### Phase 1: OHLCV expansion (one-time, run overnight)
-- [ ] Pull all ~11,000 tickers' daily OHLCV into local 5yr cache (from Railway bulk query, not per-ticker)
+### Phase 1: OHLCV expansion ✅ COMPLETE
+- [x] Pulled 6,857 missing tickers from Railway into local 5yr cache (178 failed — delisted/minimal data)
+- [x] Local cache now: 10,856 tickers (99.5% of Railway's 11,026)
 - [ ] Pull weekly OHLCV for all ~11,000 tickers from yfinance
 - [ ] Pull monthly OHLCV for all ~11,000 tickers from yfinance
 - [ ] Verify bar counts and date alignment across all three timeframes
 - [ ] Store as three .pkl files
+
+### Pre-Phase 2 Backups (2026-03-27)
+- `local_runner/cache/expr_series_backup/` — 4,133 files, full expression cache snapshot
+- `local_runner/cache/universe_ohlcv_5yr_pre_phase2.pkl` — expanded 10,856-ticker OHLCV cache
+- `local_runner/cache/universe_ohlcv_5yr_backup.pkl` — pre-expansion 4,169-ticker OHLCV cache
+- **Restore:** copy `expr_series_backup/` back to `expr_series/`, copy `*_pre_phase2.pkl` back to `universe_ohlcv_5yr.pkl`
 
 ### Phase 2: Vectorized expression cache builder
 - [ ] Build numpy 2D implementations for each expression op category
