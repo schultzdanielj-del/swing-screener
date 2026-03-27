@@ -983,8 +983,12 @@ def benchmark_optimized(ticker, df, expressions):
         if htf_indices:
             htf_df = resample_ohlcv(df, freq)
             if htf_df is not None and len(htf_df) >= 5:
+                t_resample = time.perf_counter() - t0
+                
                 htf_map = build_htf_to_daily_map(df["date"], htf_df, freq)
+                t_eng0 = time.perf_counter()
                 htf_engine = ExpressionEngine(htf_df)
+                t_eng = time.perf_counter() - t_eng0
                 htf_n = len(htf_df)
                 
                 # Extract HTF numpy arrays for slow-op replacements
@@ -1125,6 +1129,14 @@ def benchmark_optimized(ticker, df, expressions):
                         if s is not None:
                             data[:, j] = map_htf_series_to_daily(np.asarray(s, dtype=np.float32), htf_map)
                     except: pass
+                
+                print(f"\n  HTF {freq} sub-phases:")
+                print(f"    resample+map:  {t_resample*1000:.0f}ms")
+                print(f"    engine init:   {t_eng*1000:.0f}ms")
+                print(f"    slow ops:      {len(htf_slow)} exprs")
+                print(f"    fast ops:      {len(htf_fast)} exprs")
+                print(f"    bools:         {len(htf_ct)+len(htf_st)+len(htf_tir)} exprs")
+                print(f"    ext struct:    {len(htf_ext)} exprs")
         results[label] = time.perf_counter() - t0
 
     # ── Extension structure ──
