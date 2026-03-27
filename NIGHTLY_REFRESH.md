@@ -20,7 +20,7 @@
 | 5 | Refreshes earnings dates via Railway | Fails silently | **BROKEN.** `POST /api/universe/refresh-earnings` and `GET /api/universe/earnings-status` don't exist in `server.py`. Has been failing silently every night. Vetting UI reads from local SQLite `earnings_dates` table — data is stale. Replace with local Yahoo Finance scraper. |
 | 6 | Appends market context cache (266 instruments) | ~2-3 min | **OK.** Uses yfinance directly, no Railway dependency. |
 | 7 | Refreshes fundamentals cache | ~10 min (Mon) / <1 min | **OK** but has a dead Railway mirror call at the end. Remove it. |
-| 8 | Seed vault backup to Railway | ~1-2 min | **FIXED 2026-03-26.** Now runs every night regardless of step 1 gate. Previously skipped when step 1 said "already up to date", causing stale backups. Removed legacy `sync_examples_to_railway()` — seed vault JSON files on file mirror are the only backup. Railway's actual SQLite DB is legacy (several scripts still read from it — see below). |
+| 8 | Seed vault backup to Railway | ~1-2 min | **REWRITTEN 2026-03-27.** Now scans local grind dirs and uploads any files missing from Railway (catches failed `mirror_file()` calls). No longer dumps local SQLite tables — Railway DB is the authority. Verify: `python scripts/seed_vault.py`. Restore: `python scripts/seed_vault.py --restore`. |
 
 **Killed:** Old step 2 (300-bar daily OHLCV cache rebuild from Railway). Nothing reads this cache — everything uses the 5yr pickle. Removed 2026-03-25.
 

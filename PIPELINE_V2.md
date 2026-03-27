@@ -658,8 +658,11 @@ from current.
 delete the bad cycle. One operation. No manual reconstruction. The previous cycle's
 conditions, signals, locked settings, and health metrics become current instantly.
 
-**Local files are the authoritative store. Railway is seed vault only.
-to Railway on completion. The PySide6 app reads from local files and local SQLite.
+**Railway DB is the authoritative store. Local files are working copies.**
+Grinders write structured data to Railway via API and mirror output files via
+`file_mirror.py`. The seed vault (`scripts/seed_vault.py`) verifies Railway has
+everything (`--backup` catches failed mirrors) and restores to a new machine
+(`--restore`). Recovery: clone repo → restore → morning cache rebuilds → operational.
 
 ---
 
