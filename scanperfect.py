@@ -3383,7 +3383,7 @@ class CandlestickChart(QWidget):
         draw_ma("sma50", self.SMA50_COLOR)
         draw_ma("sma200", self.SMA200_COLOR)
 
-        # Earnings markers (behind candles)
+        # Earnings markers (behind candles) — dashed vertical lines
         if self._earnings_dates:
             for i, c in enumerate(visible):
                 prev_date = visible[i - 1]["date"] if i > 0 else (
@@ -3392,14 +3392,19 @@ class CandlestickChart(QWidget):
                 is_reaction = prev_date and prev_date in self._earnings_dates
                 if is_report or is_reaction:
                     x = candle_x(i)
-                    alpha = 30 if is_reaction else 15
-                    p.fillRect(QRectF(x - candle_w / 2, self.MARGIN_TOP, candle_w, chart_h),
-                               QColor(239, 68, 68, alpha))
-                    p.setPen(QColor(self.EARNINGS_COLOR))
-                    f.setPixelSize(9)
+                    # Dashed line — brighter for report day, dimmer for reaction day
+                    alpha = 180 if is_report else 100
+                    pen = QPen(QColor(239, 68, 68, alpha), 1, Qt.DashLine)
+                    p.setPen(pen)
+                    p.drawLine(int(x), self.MARGIN_TOP, int(x), self.MARGIN_TOP + chart_h)
+                    # Label at top
+                    label = "E" if is_report else "E+1"
+                    p.setPen(QColor(239, 68, 68, alpha))
+                    f.setPixelSize(10)
                     f.setWeight(QFont.Bold)
                     p.setFont(f)
-                    p.drawText(QRectF(x - 6, self.MARGIN_TOP, 12, 12), Qt.AlignCenter, "E")
+                    lw = 14 if is_report else 24
+                    p.drawText(QRectF(x - lw / 2, self.MARGIN_TOP + 2, lw, 14), Qt.AlignCenter, label)
 
         # Signal / Entry / Exit / Profit Exit markers
         has_profit_exit = self._profit_exit_date is not None
@@ -3840,6 +3845,7 @@ class VettingWorkspace(QFrame):
                 )
 
     def _set_vet_sort(self, sort_key):
+        print("[SORT] Sort button clicked: %s (was %s), %d signals" % (sort_key, self._vet_sort, len(self._signals)))
         self._vet_sort = sort_key
         self._style_vet_sort_btns()
         self._sort_and_refresh()
@@ -3941,84 +3947,102 @@ class VettingWorkspace(QFrame):
         filtered_{setup}.json has exit_date, exit_bar, move_adr, capture_eff on every signal.
         """
         setup = self._setup
-        decisions, rejected_set, example_set = self._load_vetting_decisions(setup)
-        signals = []
-
-        # Primary source: filtered_{setup}.json (produced by signal_filter.py)
-        filtered_path = REPO_ROOT / "data" / "signal_filter" / ("filtered_%s.json" % setup)
-        if not filtered_path.exists():
-            self._signals = []
-            self._apply_filter()
-            self._update_stats()
-            return
         try:
-            filt_data = json.loads(filtered_path.read_text())
-        except Exception:
+            print("[CAUS] Loading causative signals for setup=%s" % setup)
+            decisions, rejected_set, example_set = self._load_vetting_decisions(setup)
+            print("[CAUS] Decisions=%d, rejected=%d, examples=%d" % (
+                len(decisions), len(rejected_set), len(example_set)))
+            signals = []
+
+            # Primary source: filtered_{setup}.json (produced by signal_filter.py)
+            filtered_path = REPO_ROOT / "data" / "signal_filter" / ("filtered_%s.json" % setup)
+            print("[CAUS] Filtered path: %s  exists=%s" % (filtered_path, filtered_path.exists()))
+            if not filtered_path.exists():
+                print("[CAUS] BAIL: file not found")
+                self._signals = []
+                self._apply_filter()
+                self._update_stats()
+                return
+            try:
+                filt_data = json.loads(filtered_path.read_text())
+                print("[CAUS] JSON parsed OK, %d signals in file" % len(filt_data.get("signals", [])))
+            except Exception as e:
+                print("[CAUS] BAIL: JSON parse error: %s" % e)
+                self._signals = []
+                self._apply_filter()
+                self._update_stats()
+                return
+
+            for s in filt_data.get("signals", []):
+                tk = s.get("ticker", "")
+                sd = s.get("date", "")  # filtered file uses "date", not "signal_date"
+                if any("%s_%s" % (tk, sd) == ex for ex in example_set):
+                    continue
+                sig = self._make_signal_dict(tk, sd,
+                    move_adr=s.get("move_adr"), adr_at_signal=s.get("adr_at_signal"),
+                    exit_date=s.get("exit_date"), exit_bar=s.get("exit_bar"),
+                    mfe_adr=s.get("mfe_adr"), capture_eff=s.get("capture_eff"),
+                    move_pct=s.get("move_pct"))
+                self._apply_verdict(sig, decisions, rejected_set)
+                signals.append(sig)
+
+            print("[CAUS] Signals after example exclusion: %d" % len(signals))
+            if not signals:
+                print("[CAUS] BAIL: no signals after filtering")
+                self._signals = []
+                self._apply_filter()
+                self._update_stats()
+                return
+
+            # Join profit grind exit dates if available
+            profit_path = REPO_ROOT / "data" / "profit_grind" / ("profit_%s.json" % setup)
+            if profit_path.exists():
+                try:
+                    profit_data = json.loads(profit_path.read_text())
+                    profit_exits = profit_data.get("exit_dates", {})
+                    for sig in signals:
+                        pk1 = "%s|%s" % (sig["ticker"], sig["signal_date"])
+                        pk2 = "%s|%s" % (sig["ticker"], sig.get("entry_date", ""))
+                        ped = profit_exits.get(pk1) or profit_exits.get(pk2)
+                        if ped:
+                            sig["profit_exit_date"] = ped
+                except Exception:
+                    pass
+
+            # Join entry candle scores if available
+            entry_scores_path = REPO_ROOT / "local_runner" / "cache" / ("entry_scores_%s.json" % setup)
+            has_entry_scores = False
+            if entry_scores_path.exists():
+                try:
+                    es_data = json.loads(entry_scores_path.read_text())
+                    score_lookup = {
+                        "%s_%s" % (sc.get("ticker", ""), sc.get("signal_date", "")): sc
+                        for sc in es_data.get("scored_signals", [])
+                    }
+                    for sig in signals:
+                        sc = score_lookup.get("%s_%s" % (sig["ticker"], sig["signal_date"]))
+                        if sc:
+                            sig["combined_score"] = sc.get("combined_score")
+                            sig["entry_candle_score"] = sc.get("entry_candle_score")
+                            sig["entry_candle_date"] = sc.get("entry_candle_date")
+                            sig["entry_candle_pct"] = sc.get("entry_candle_pct")
+                            sig["move_adr_pct"] = sc.get("move_adr_pct")
+                            has_entry_scores = True
+                except Exception:
+                    pass
+
+            self._has_entry_scores = has_entry_scores
+            self._signals = signals
+            self._style_vet_sort_btns()
+            self._sort_and_refresh()
+            print("[CAUS] SUCCESS: %d signals loaded, %d filtered" % (len(self._signals), len(self._filtered)))
+        except Exception as e:
+            import traceback
+            print("[CAUS] UNHANDLED EXCEPTION: %s" % e)
+            traceback.print_exc()
             self._signals = []
             self._apply_filter()
             self._update_stats()
-            return
-
-        for s in filt_data.get("signals", []):
-            tk = s.get("ticker", "")
-            sd = s.get("date", "")  # filtered file uses "date", not "signal_date"
-            if any("%s_%s" % (tk, sd) == ex for ex in example_set):
-                continue
-            sig = self._make_signal_dict(tk, sd,
-                move_adr=s.get("move_adr"), adr_at_signal=s.get("adr_at_signal"),
-                exit_date=s.get("exit_date"), exit_bar=s.get("exit_bar"),
-                mfe_adr=s.get("mfe_adr"), capture_eff=s.get("capture_eff"),
-                move_pct=s.get("move_pct"))
-            self._apply_verdict(sig, decisions, rejected_set)
-            signals.append(sig)
-
-        if not signals:
-            self._signals = []
-            self._apply_filter()
-            self._update_stats()
-            return
-
-        # Join profit grind exit dates if available
-        profit_path = REPO_ROOT / "data" / "profit_grind" / ("profit_%s.json" % setup)
-        if profit_path.exists():
-            try:
-                profit_data = json.loads(profit_path.read_text())
-                profit_exits = profit_data.get("exit_dates", {})
-                for sig in signals:
-                    pk1 = "%s|%s" % (sig["ticker"], sig["signal_date"])
-                    pk2 = "%s|%s" % (sig["ticker"], sig.get("entry_date", ""))
-                    ped = profit_exits.get(pk1) or profit_exits.get(pk2)
-                    if ped:
-                        sig["profit_exit_date"] = ped
-            except Exception:
-                pass
-
-        # Join entry candle scores if available
-        entry_scores_path = REPO_ROOT / "local_runner" / "cache" / ("entry_scores_%s.json" % setup)
-        has_entry_scores = False
-        if entry_scores_path.exists():
-            try:
-                es_data = json.loads(entry_scores_path.read_text())
-                score_lookup = {
-                    "%s_%s" % (sc.get("ticker", ""), sc.get("signal_date", "")): sc
-                    for sc in es_data.get("scored_signals", [])
-                }
-                for sig in signals:
-                    sc = score_lookup.get("%s_%s" % (sig["ticker"], sig["signal_date"]))
-                    if sc:
-                        sig["combined_score"] = sc.get("combined_score")
-                        sig["entry_candle_score"] = sc.get("entry_candle_score")
-                        sig["entry_candle_date"] = sc.get("entry_candle_date")
-                        sig["entry_candle_pct"] = sc.get("entry_candle_pct")
-                        sig["move_adr_pct"] = sc.get("move_adr_pct")
-                        has_entry_scores = True
-            except Exception:
-                pass
-
-        self._has_entry_scores = has_entry_scores
-        self._signals = signals
-        self._style_vet_sort_btns()
-        self._sort_and_refresh()
 
     def _load_correlative_signals(self):
         """Load EV-scored signals from latest ev_{setup}_*.json."""
