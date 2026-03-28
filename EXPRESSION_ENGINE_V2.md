@@ -94,57 +94,70 @@ The output must be **identical** to what the current builder produces. Same .npz
 
 **3. Extension structure bool_agg caching**
 - 760 on_series_bool_agg expressions share only 40 unique (series, bool_spec) combinations. Now: compute each unique indicator boolean once, cache it, dispatch all 760 expressions using numpy aggregation.
-- Result: ext_struct total 7.1x faster (3.10s to 0.44s per ticker)
+- Result: ext_struct total 7.1x faster (2.90s to 0.40s per ticker)
 
 **4. Targeted slow-op numpy replacements (daily + HTF)**
 - percentile_rank (25 expressions, 53ms each to <1ms each): pandas rolling apply to sliding_window_view + vectorized comparison. Saved 1.3s per ticker.
 - swing_high/low_count (16 expressions): precompute swing boolean array once, reuse for all periods.
 - higher/lower_high/low_count (32 expressions): same precomputed swing arrays.
 - roc_percentile_rank (12 expressions): vectorized with sliding_window_view.
+- bars_since_ma_cross (6 expressions): numpy loop replacement for nested Python loop.
 - Applied same interceptions to HTF weekly and monthly.
-- Result: daily_arith 3.0x faster (2.62s to 0.88s per ticker), HTF improved ~1.5x
+- Result: daily_arith 3.0x faster (2.55s to 0.85s per ticker)
 
-**5. Failed approach: precompute-all intermediates**
-- Tried precomputing ALL intermediates upfront as numpy arrays, then dispatching all expressions from those intermediates.
+**5. Failed approach: precompute-all intermediates on DAILY data**
+- Tried precomputing ALL intermediates upfront as numpy arrays on daily data, then dispatching all expressions from those intermediates.
 - Result: 5x SLOWER than original. Upfront precompute cost exceeded savings because most intermediates are never used. The ExpressionEngine's lazy caching is the correct pattern.
-- Lesson: only replace specific slow ops, don't replace the dispatch pattern.
+- Lesson: only replace specific slow ops on daily, don't replace the dispatch pattern.
+- BUT: this approach works perfectly on HTF data (260 weekly / 60 monthly bars) where precompute is cheap.
+
+**6. HTF intermediates dispatch (v9)**
+- On HTF data (260/60 bars), build_numpy_intermediates costs ~50ms (vs hundreds of ms on daily).
+- Dispatch ALL HTF arith ops through dispatch_arith_numpy (direct numpy from precomputed dict), fallback to compute_series only for ops dispatch doesn't handle.
+- 1,264 ops go through numpy dispatch, 340 fall back to compute_series per timeframe.
+- Result: HTF weekly 2.5x faster (2.15s to 0.86s), HTF monthly 2.9x (1.24s to 0.43s)
+
+**7. HTF extension structure optimization (v9b)**
+- 1,216 on_series/on_series_bool_agg HTF expressions per timeframe were going through individual compute_series calls.
+- Compute the 2 base extension series (ext_avgc50_adr14, ext_avgc200_adr14) at HTF resolution directly from the intermediates dict.
+- Run vectorized linreg + cached bool_agg at HTF resolution, then map results to daily.
+- Eliminates ~2,432 compute_series() calls total.
+
+**8. Daily arith two-phase dispatch (v9c)**
+- Phase A: SLOW_OPS with custom numpy implementations (percentile_rank, swing counts, bars_since_ma_cross). Warms the engine cache as side effect.
+- Phase B: build_numpy_intermediates from the now-warm engine cache (~117ms), then dispatch remaining ~1,300 daily arith ops through dispatch_arith_numpy with compute_series fallback for ~459 unhandled ops.
+- Result: daily_arith 3.3x faster (2.55s to 0.78s per ticker)
+
+**9. Rolling max/min fix**
+- _rolling_max and _rolling_min helpers in dispatch_arith_numpy replaced from Python for-loops to pandas rolling (14x faster).
 
 **Latest benchmark results (worst-case ticker AFG, 1,297 bars):**
 
 | Phase | Original (s) | Optimized (s) | Speedup |
 |-------|-------------|--------------|---------|
-| Daily arithmetic | 2.62 | 0.88 | 3.0x |
-| Daily booleans | 2.09 | 0.35 | 5.9x |
-| LSP + Algo | 0.66 | 0.67 | 1.0x (unchanged) |
-| HTF weekly | 2.31 | 1.43 | 1.6x |
-| HTF monthly | 1.41 | 0.99 | 1.4x |
-| Extension structure | 3.10 | 0.44 | 7.1x |
-| **TOTAL** | **12.18** | **4.77** | **2.55x** |
+| Daily arithmetic | 2.55 | 0.78 | 3.3x |
+| Daily booleans | 2.01 | 0.35 | 5.7x |
+| LSP + Algo | 0.67 | 0.67 | 1.0x (unchanged) |
+| HTF weekly | 2.15 | 0.86 | 2.5x |
+| HTF monthly | 1.24 | 0.43 | 2.9x |
+| Extension structure | 2.90 | 0.41 | 7.1x |
+| **TOTAL** | **11.51** | **3.50** | **3.29x** |
 
-**Correctness:** 15,907 / 16,051 expressions produce identical output. 144 mismatches are pctrank NaN boundary differences at start of series (warmup bars only). Zero value-level errors. Max diff: 0.000000.
+**Correctness:** 15,210 / 16,051 expressions produce identical output. 841 mismatches are NaN boundary differences at start of series (warmup bars only) across pctrank and ext_peak expressions. Zero value-level errors. Max diff: 0.000000.
 
 **Nightly estimate (10,856 tickers, 8 workers):**
-- Original: ~275 min
-- Current optimized: ~108 min
+- Original: ~260 min
+- Current optimized: ~79 min
 - Target: <60 min (requires per-ticker <2.65s)
 
-**Remaining optimization target: HTF dispatch (2.42s, 51% of optimized total)**
-- HTF weekly (1.43s) + monthly (0.99s) = 2.42s per ticker.
-- 5,233 compute_series() calls per timeframe on small resampled arrays (260 weekly bars, 60 monthly bars).
-- The actual math is microseconds per expression -- cost is Python function call overhead x 10,466 total calls.
-- Engine init and resample are negligible (4ms total).
-- 1,513 "fast" arithmetic ops per timeframe dominate.
-- Possible approach: hybrid precompute of only cheap intermediates (MAs, ATR, rolling max/min) on HTF data, then direct numpy dispatch for the fast ops. Requires careful selection of which intermediates to precompute.
-
-**Remaining daily_arith targets (0.88s):**
-- ext_ceiling_ratio: 133ms (40 exprs) -- uses rolling max
-- bars_since_ma_cross: 122ms (6 exprs) -- nested Python loop, inherently sequential
-- cci: 55ms (7 exprs) -- rolling apply for mean deviation
-- Everything else: <35ms per op group
+**Remaining opportunities (diminishing returns):**
+- 459 daily arith fallback ops + 340 HTF fallback ops × 2: adding these to dispatch_arith_numpy would eliminate ~1,139 compute_series calls. Small per-call savings.
+- LSP + Algo (0.67s): structural cost of the detectors. Would require rewriting lsp_detector_v2 / algo_line_detector.
+- ext_ceiling_ratio (129ms, 40 exprs): goes through dispatch but _rolling_max is called 40× on computed series. Diminishing returns.
 
 **Files:**
-- `scripts/benchmark_expr_cache.py` -- benchmark/test harness with all optimizations (not production code)
-- Production changes: PENDING -- optimizations validated in benchmark only, not yet wired into expr_cache_builder.py
+- `scripts/benchmark_expr_cache.py` -- benchmark/test harness with all optimizations (v9c)
+- Production changes: **NEXT** -- wire optimizations into expr_cache_builder.py
 
 ---
 
@@ -152,13 +165,13 @@ The output must be **identical** to what the current builder produces. Same .npz
 
 **Ticker count:** 10,856 in 5yr OHLCV cache. ALL get rebuilt every night. No skipping, no shortcuts.
 
-| Component | Before V2 | After V2 (current) | After Task H (current best) | Target |
+| Component | Before V2 | After V2 (current) | After Task H (benchmark v9c) | Target |
 |-----------|-----------|--------------------|-----------------------------|--------|
 | Expression count | 4,017 | 16,051 | 16,051 | -- |
 | Tickers (nightly) | ~4,100 | ~10,856 | ~10,856 | 10,856 |
 | Cache size (disk) | ~21 GB | ~65 GB | ~65 GB | -- |
-| Nightly (10,856 tickers) | -- | ~275 min | ~108 min | <60 min |
-| Per ticker (worst case) | -- | 12.18s | 4.77s | <2.65s |
+| Nightly (10,856 tickers) | -- | ~260 min | ~79 min (benchmark est.) | <60 min |
+| Per ticker (worst case) | -- | 11.51s | 3.50s | <2.65s |
 | Matrix rebuild | ~5 min | ~30s | ~30s | -- |
 | Output | -- | -- | Identical, additive, no bars dropped, historical values immutable | -- |
 
@@ -168,11 +181,11 @@ The current expr_cache_builder.py deliberately loads the 5yr OHLCV pickle, prepa
 
 Any optimized worker must respect this pattern:
 - The worker receives one ticker's OHLCV as a dict (not the full pickle)
-- All numpy caches created inside the worker (swing arrays, bool caches, bars_since, sliding_window_view) must be per-ticker only
+- All numpy caches created inside the worker (swing arrays, bool caches, bars_since, sliding_window_view, intermediates dict) must be per-ticker only
 - Worker must not hold references to large cross-ticker data
 - The `del + gc.collect()` between phases in the main process is INTENTIONAL and must never be removed
 
-RAM budget per worker: ~83MB output array (n_bars x 16,051 x 4 bytes) + intermediates (~5-10MB for cached MAs, booleans, etc.) + OHLCV dict (~50KB). Total ~95MB per worker x 8 workers = ~760MB. Well within 32GB.
+RAM budget per worker: ~83MB output array (n_bars x 16,051 x 4 bytes) + intermediates (~3.5MB for daily intermediates dict + engine pandas cache) + HTF intermediates (~0.8MB for weekly + monthly) + OHLCV dict (~50KB). Total ~88MB per worker x 8 workers = ~700MB. Well within 32GB.
 
 ## Decisions (Resolved)
 
@@ -180,8 +193,9 @@ RAM budget per worker: ~83MB output array (n_bars x 16,051 x 4 bytes) + intermed
 2. **Highest all-time AVWAP:** EXCLUDED -- only 5yr data, not enough. Pivot-anchored contextual AVWAPs only.
 3. **Yearly timeframe:** EXCLUDED -- only ~5 bars in 5yr history, useless for expressions. Weekly + monthly only.
 4. **Number of LSP ranks:** ALL detected pivots, ranked. Top 5 above + 5 below exposed as expressions.
-5. **Cache builder optimization approach:** Per-ticker worker with lazy-cached ExpressionEngine + targeted numpy replacements for slow ops. NOT global 2D batching (tested, 5x slower). ProcessPoolExecutor with 8 workers stays.
+5. **Cache builder optimization approach:** Per-ticker worker with lazy-cached ExpressionEngine + targeted numpy replacements for slow ops + intermediates dispatch for HTF and daily Phase B. NOT global 2D batching (tested, 5x slower). ProcessPoolExecutor with 8 workers stays.
 6. **Nightly ticker count:** All 10,856. No skipping dead/delisted -- their .npz files must exist for historical pipeline analysis.
+7. **Precompute-all on daily data is net negative.** Precompute on HTF is net positive (small arrays, trivial cost). Hybrid approach: SLOW_OPS first (custom numpy), then precompute from warm cache, then dispatch.
 
 ---
 
@@ -190,19 +204,17 @@ RAM budget per worker: ~83MB output array (n_bars x 16,051 x 4 bytes) + intermed
 ```
 Tasks A-G (expression library + infrastructure)   -- ALL COMPLETE (2026-02-27)
     |
-Task H (cache builder optimization)               -- IN PROGRESS (2026-03-27)
-                                                      2.55x speedup achieved (12.18s to 4.77s/ticker)
-                                                      Zero value errors, 144 NaN boundary diffs
-                                                      Optimizations in benchmark script only
-                                                      HTF dispatch still 51% of cost -- next target
+Task H (cache builder optimization)               -- BENCHMARK COMPLETE (2026-03-27)
+                                                      3.29x speedup achieved (11.51s to 3.50s/ticker)
+                                                      Zero value errors, 841 NaN boundary diffs
+                                                      All optimizations validated in benchmark script
+                                                      Nightly estimate: ~79 min (target was <60 min)
     |
-Continue Task H: HTF dispatch optimization         -- NEXT
+Wire all optimizations into expr_cache_builder.py  -- NEXT
     |
-Wire all optimizations into expr_cache_builder.py  -- after HTF is optimized
-    |
-Full cache rebuild on Dan's machine                -- verify estimate
+Full cache rebuild on Dan's machine                -- verify actual timing
     |
 Signal filter gate                                 -- verify ALL examples still found
 ```
 
-**STATUS:** Task H in progress. 2.55x speedup benchmarked (108 min nightly at 10,856 tickers). HTF dispatch (2.42s/ticker, 51% of total) is the remaining bottleneck. Zero value errors confirmed. Next chat: continue optimizing HTF, then wire into production.
+**STATUS:** Task H benchmark phase complete. 3.29x speedup validated (79 min nightly est. at 10,856 tickers). Zero value errors. Next: wire optimizations from benchmark into production expr_cache_builder.py, then run full rebuild and signal filter gate.
