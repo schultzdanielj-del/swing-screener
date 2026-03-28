@@ -444,7 +444,7 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 4. **Earnings proximity filter** — filter out signals/entries that are too close to earnings date to take safely. Needs to be applied in multiple spots: signal grind output, refinement grind classification, and live nightly scan.
 
 ### Infrastructure
-5. **Remove Railway from nightly data flow** — currently yfinance → Railway → local (round trip). Should be yfinance → local directly, Railway gets a backup copy. The nightly refresh should not depend on Railway for any compute or data. Railway is seed vault only. **Partially fixed 2026-03-20:** 5yr cache `LIMIT 1260` removed (was dropping old bars causing OHLCV/expr cache date drift). Nightly step 3 changed from full rebuild to append-only. OHLCV and expr cache now stay in sync permanently. **Fixed 2026-03-25:** Railway errors (502, timeout, connection) no longer kill the pipeline — Steps 2-9 continue regardless. Expr cache append switched to chunked submission (n_workers×2 in flight) matching the full build pattern — was firing all ~4000 futures at once causing memory thrashing (2.5hrs → expected ~15min). **Remaining:** Steps 1-2 still go through Railway. Rewire `cache_builder.py` to fetch from yfinance directly, eliminate Railway as OHLCV middleman entirely.
+5. **Remove Railway from nightly data flow** — ~~currently yfinance → Railway → local (round trip). Should be yfinance → local directly, Railway gets a backup copy. The nightly refresh should not depend on Railway for any compute or data. Railway is seed vault only.~~ **IN PROGRESS (2026-03-27):** Task H Phase 3 Increment 1 rewires all OHLCV fetching to yfinance. `cache_builder.py` no longer calls Railway (uses `yf.download` directly). New `htf_cache_builder.py` creates weekly + monthly OHLCV pickles from yfinance. `nightly.py` step 1 replaced with local yfinance freshness check. `expr_cache_builder.py` uses HTF pickles instead of resampling. **Partially fixed 2026-03-20:** 5yr cache `LIMIT 1260` removed (was dropping old bars causing OHLCV/expr cache date drift). Nightly step 3 changed from full rebuild to append-only. OHLCV and expr cache now stay in sync permanently. **Fixed 2026-03-25:** Railway errors (502, timeout, connection) no longer kill the pipeline — Steps 2-9 continue regardless. Expr cache append switched to chunked submission (n_workers×2 in flight) matching the full build pattern — was firing all ~4000 futures at once causing memory thrashing (2.5hrs → expected ~15min). **Remaining:** Earnings step still calls Railway (broken endpoints). Need local Yahoo Finance scraper.
 
 ### Phase 3 — EV Grinder
 5. ~~**EV Grinder increments 5-6**~~ — ✅ DONE.
@@ -493,10 +493,13 @@ This is the ultimate use of the system — find the optimal entry and exit condi
 - **Expression cache:** 16,051 expressions, ~21 GB
 - **5yr OHLCV cache:** ~4,169 tickers (all available history, no bar limit)
 - **File mirror:** Grind results → Railway via `file_mirror.py` (stays post-localization for Claude access)
-- **Nightly refresh:** 4:30pm ET, 9 steps + seed vault push, fully automated
-  - Railway errors in Step 1 no longer block Steps 2-9
-  - Step 3 (5yr cache) now **appends** new bars only — never rebuilds, never drops old bars
-  - Step 4 (expr cache) appends new bars to match — chunked submission to prevent memory blowup
+- **Nightly refresh:** 4:30pm ET, 10 steps, fully automated
+  - Step 1: yfinance freshness check (local, no Railway)
+  - Step 2: 5yr daily OHLCV append (yfinance direct)
+  - Steps 3-4: Weekly + Monthly OHLCV cache append (yfinance, NEW)
+  - Step 5: Expression cache append
+  - Steps 6-10: matrix, earnings, market cache, fundamentals, seed vault
+  - Railway only used for earnings (step 7, broken) and seed vault backup (step 10)
   - OHLCV and expr cache stay permanently in sync
 - **UI:** DM Sans, grayscale design system. PySide6 desktop app (`scanperfect.py`)
 
