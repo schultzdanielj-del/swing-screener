@@ -7,20 +7,22 @@
 
 ---
 
-## CURRENT STATE (8 steps, was 9)
+## CURRENT STATE (10 steps, was 8)
 
 ### The nightly pipeline (`local_runner/nightly.py`):
 
 | Step | What it does | Time | Status |
 |------|-------------|------|--------|
-| 1 | Calls Railway `POST /api/universe/append-daily` | 5-15 min | **NEEDS FIX.** Railway dependency — if Railway is down, nothing runs. Replace with local yfinance fetch. |
-| 2 | Appends new bars to 5yr OHLCV pickle from Railway | ~10 min | **NEEDS FIX.** Railway dependency. Calls `_fetch_ticker_after_date()` per ticker via Railway's `/api/query/bulk`. Replace with local yfinance fetch (merge with step 1). |
-| 3 | Appends expression cache | **~91 min** | **THE BOTTLENECK.** See section below. Two vectorization fixes pushed (v2-consensus), brought it from 2+ hrs to ~91 min. Still way over target. |
-| 4 | Rebuilds universe matrix | ~30s | **OK.** No changes needed. |
-| 5 | Refreshes earnings dates via Railway | Fails silently | **BROKEN.** `POST /api/universe/refresh-earnings` and `GET /api/universe/earnings-status` don't exist in `server.py`. Has been failing silently every night. Vetting UI reads from local SQLite `earnings_dates` table — data is stale. Replace with local Yahoo Finance scraper. |
-| 6 | Appends market context cache (266 instruments) | ~2-3 min | **OK.** Uses yfinance directly, no Railway dependency. |
-| 7 | Refreshes fundamentals cache | ~10 min (Mon) / <1 min | **OK** but has a dead Railway mirror call at the end. Remove it. |
-| 8 | Seed vault backup to Railway | ~1-2 min | **REWRITTEN 2026-03-27.** Now scans local grind dirs and uploads any files missing from Railway (catches failed `mirror_file()` calls). No longer dumps local SQLite tables — Railway DB is the authority. Verify: `python scripts/seed_vault.py`. Restore: `python scripts/seed_vault.py --restore`. |
+| 1 | yfinance freshness check — download 1 SPY bar, compare to cache | <5s | **DONE (2026-03-27).** Replaced Railway `POST /api/universe/append-daily`. Local only, no Railway dependency. |
+| 2 | Appends new bars to 5yr OHLCV pickle from yfinance | ~2-5 min | **DONE (2026-03-27).** Rewired from Railway to `yf.download()` directly. `_yf_append_after_date()` replaces `_fetch_ticker_after_date()`. |
+| 3 | Appends weekly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-27).** `htf_cache_builder.py --append`. Overwrites partial week bar, appends closed weeks. |
+| 4 | Appends monthly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-27).** Same pattern as weekly. Overwrites partial month bar. |
+| 5 | Appends expression cache | **~80-90 min** | **THE BOTTLENECK.** Now uses HTF pickles instead of resampling. HTF skip logic removed — always computes from pickle data. Incremental append (compute only new bar) is Increment 2. |
+| 6 | Rebuilds universe matrix | ~30s | **OK.** No changes needed. |
+| 7 | Refreshes earnings dates via Railway | Fails silently | **BROKEN.** Railway endpoints don't exist. Replace with local Yahoo Finance scraper (separate task). |
+| 8 | Appends market context cache (266 instruments) | ~2-3 min | **OK.** Uses yfinance directly. |
+| 9 | Refreshes fundamentals cache | ~10 min (Mon) / <1 min | **OK** but has a dead Railway mirror call at the end. |
+| 10 | Seed vault backup to Railway | ~1-2 min | **OK.** Intentional Railway dependency. |
 
 **Killed:** Old step 2 (300-bar daily OHLCV cache rebuild from Railway). Nothing reads this cache — everything uses the 5yr pickle. Removed 2026-03-25.
 
@@ -43,29 +45,31 @@ Railway's SQLite DB has an examples table that several active scripts still read
 
 **Total current runtime: ~2-2.5 hours.** Target: under 30 minutes.
 
-### Railway dependencies that need removing:
+### Railway dependencies — status:
 
-1. **`cache_builder.py` → `get_tradable_tickers()`** (line 35): Calls Railway's `/api/query/bulk` to `SELECT ticker FROM tradable_universe`. No local equivalent exists. **DEPRIORITIZED.**
-2. **`cache_builder.py` → `fetch_one_ticker_5yr()`** (line 180): Fetches ALL OHLCV per ticker from Railway. **DEPRIORITIZED.**
-3. **`cache_builder.py` → `_fetch_ticker_after_date()`** (line 303): Fetches new bars per ticker from Railway. **DEPRIORITIZED.**
-4. **`build_tradable.py`** (line 56): Only runs on Railway's SQLite DB. Filters: close ≥ $1, APTR ≥ 1.5%, avg dollar volume ≥ $5M over 20 days. Needs a local equivalent. **DEPRIORITIZED.**
-5. **`nightly.py` step 1**: Calls Railway to trigger yfinance fetch. **DEPRIORITIZED.**
-6. **`nightly.py` step 5 (was 6)**: Calls non-existent Railway endpoints. **BROKEN** — replace with local Yahoo Finance scraper.
-7. **`nightly.py` step 7 (was 8)**: Mirrors fundamentals cache to Railway (redundant — seed vault handles backup). **TODO** — remove dead mirror call.
+1. **`cache_builder.py` → `get_tradable_tickers()`** (line 35): ~~Calls Railway.~~ **DONE (2026-03-27).** Replaced with `get_tradable_tickers_local()` reading from local SQLite.
+2. **`cache_builder.py` → `fetch_one_ticker_5yr()`** (line 180): ~~Fetches from Railway.~~ **DONE (2026-03-27).** Replaced with `_yf_download_daily()` using yfinance.
+3. **`cache_builder.py` → `_fetch_ticker_after_date()`** (line 303): ~~Fetches from Railway.~~ **DONE (2026-03-27).** Replaced with `_yf_append_after_date()` using yfinance.
+4. **`build_tradable.py`** (line 56): Only runs on Railway's SQLite DB. Needs a local equivalent. **DEPRIORITIZED.**
+5. **`nightly.py` step 1**: ~~Calls Railway to trigger yfinance fetch.~~ **DONE (2026-03-27).** Replaced with local `check_yfinance_freshness()`.
+6. **`nightly.py` step 7 (earnings)**: Calls non-existent Railway endpoints. **BROKEN** — replace with local Yahoo Finance scraper.
+7. **`nightly.py` step 9 (fundamentals)**: Mirrors fundamentals cache to Railway (redundant). **TODO** — remove dead mirror call.
 
-**Railway removal deprioritized (2026-03-25).** Steps 1+2 account for ~15-25 min combined, but the expr cache bottleneck (step 3, ~91 min) is 75% of total runtime. Removing Railway only matters once the expr cache is under control. A previous attempt to remove Railway dependencies resulted in cascading errors across cache_builder.py and had to be fully reverted (commit `d16d3a3` on v2). The risk areas are real: yfinance rate limiting at 4,167 tickers, DataFrame format quirks (MultiIndex columns, timezone-aware dates), and the pickle format must be byte-compatible since ~12 scripts read it. Do not reattempt without isolated per-function testing.
+**Railway removal DONE for OHLCV (2026-03-27).** `cache_builder.py` fully rewired to yfinance. New `htf_cache_builder.py` creates weekly + monthly pickles from yfinance. `nightly.py` step 1 uses local freshness check. `expr_cache_builder.py` uses HTF pickles instead of resampling from daily. Railway is now only used for earnings (broken, needs local scraper) and seed vault backup (intentional).
 
 ### What's been done:
 
-- **Seed vault gate fix** (2026-03-26): Step 8 now runs every night even when step 1 gates early ("no updates needed"). Removed `sync_examples_to_railway()` — Railway DB is legacy, seed vault JSON on file mirror is the only backup copy. Documented legacy scripts that still hit Railway's examples API.
-- **Old step 2 killed** (2026-03-25): 300-bar daily OHLCV cache rebuild. Nothing used it. Pipeline now 8 steps.
-- **Expr cache vectorization** (v2-consensus): `trendline_deviation`, `channel_position`, `CCI` vectorized. Brought append from 2+ hrs to ~91 min.
-- **Expr cache I/O fix** (v2-consensus): Eliminated serial load/concat/save bottleneck. Workers do full recompute + direct save.
+- **Railway OHLCV removal** (2026-03-27): `cache_builder.py` fully rewired — all Railway HTTP calls replaced with yfinance. New `htf_cache_builder.py` creates weekly + monthly pickles from yfinance. `expr_cache_builder.py` uses HTF pickles instead of resampling. `nightly.py` expanded to 10 steps. Railway removed from OHLCV path entirely.
+- **Expr cache Task H Phase 2** (2026-03-27): SLOW_OPS numpy, numpy bools, ext struct vectorization, HTF intermediates dispatch, fast compression (compresslevel=1), worker-side saves. 1.8 tickers/s for full rebuild.
+- **Seed vault gate fix** (2026-03-26): Step 10 (was 8) now runs every night even when step 1 gates early.
+- **Old step 2 killed** (2026-03-25): 300-bar daily OHLCV cache rebuild. Nothing used it.
+- **Expr cache vectorization** (v2-consensus): `trendline_deviation`, `channel_position`, `CCI` vectorized.
+- **Expr cache I/O fix** (v2-consensus): Eliminated serial load/concat/save bottleneck.
 
 ### What does NOT need changing:
 
-- Steps 3, 4, 6 (expr cache, matrix, market cache) — work locally already
-- Step 8 (seed vault) — Railway dependency is intentional
+- Steps 5, 6, 8 (expr cache, matrix, market cache) — work locally already
+- Step 10 (seed vault) — Railway dependency is intentional
 - All downstream consumers (scanperfect.py, grinders, EV grinder, profit grinder, consensus pipeline) — read same pickle/cache format
 
 ---
@@ -223,12 +227,13 @@ The bat file (`nightly_refresh.bat`) writes this line after `nightly.py` finishe
 
 | File | Role | Railway dependency? |
 |------|------|-------------------|
-| `local_runner/nightly.py` | Orchestrator (8 steps, was 9) | Steps 1, 5 call Railway |
-| `local_runner/cache_builder.py` | OHLCV cache management | `get_tradable_tickers()`, `fetch_one_ticker_5yr()`, `_fetch_ticker_after_date()` all call Railway |
-| `local_runner/expr_cache_builder.py` | Expression cache | No Railway dependency. THE BOTTLENECK. |
+| `local_runner/nightly.py` | Orchestrator (10 steps) | Steps 7, 10 call Railway |
+| `local_runner/cache_builder.py` | Daily OHLCV cache management | **NO** — fully rewired to yfinance (2026-03-27) |
+| `local_runner/htf_cache_builder.py` | Weekly + Monthly OHLCV caches | **NO** — yfinance direct (NEW 2026-03-27) |
+| `local_runner/expr_cache_builder.py` | Expression cache | **NO** — uses HTF pickles, no Railway. THE BOTTLENECK. |
 | `local_runner/matrix_builder.py` | Universe matrix | No Railway dependency |
 | `local_runner/market_cache_builder.py` | Market context cache | No Railway dependency (uses yfinance directly) |
-| `scripts/build_tradable.py` | Tradable universe filter | Runs on Railway SQLite only |
-| `scripts/fetch_fundamentals.py` | Fundamentals cache | No Railway dependency (uses Yahoo Finance API). Has dead Railway mirror at end. |
-| `scripts/seed_vault.py` | Backup to Railway | Intentional Railway dependency (file mirror only). No longer syncs to Railway DB. |
+| `scripts/build_tradable.py` | Tradable universe filter | Runs on Railway SQLite only (needs local equivalent) |
+| `scripts/fetch_fundamentals.py` | Fundamentals cache | No Railway dependency. Has dead Railway mirror at end. |
+| `scripts/seed_vault.py` | Backup to Railway | Intentional Railway dependency (file mirror only). |
 | `nightly_refresh.bat` | Windows Task Scheduler trigger | No changes needed |
