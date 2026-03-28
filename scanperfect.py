@@ -3498,7 +3498,7 @@ class CandlestickChart(QWidget):
                 p.drawText(QRectF(x - 18, self.MARGIN_TOP + 2, 36, 12),
                            Qt.AlignCenter, "PROFIT")
 
-        # Other signal markers — small "S" at top of chart
+        # Other signal markers — small "S" above the candle
         if self._other_signal_dates:
             f.setPixelSize(10)
             f.setWeight(QFont.Bold)
@@ -3506,8 +3506,9 @@ class CandlestickChart(QWidget):
             for i, c in enumerate(visible):
                 if c["date"] in self._other_signal_dates:
                     x = candle_x(i)
+                    y = price_y(c["high"]) - 14
                     p.setPen(QColor(255, 255, 255, 100))
-                    p.drawText(QRectF(x - 6, self.MARGIN_TOP + 4, 12, 12),
+                    p.drawText(QRectF(x - 6, y, 12, 12),
                                Qt.AlignCenter, "S")
 
         # Volume bars
