@@ -1,13 +1,13 @@
 """
-Benchmark v9b: HTF intermediates dispatch + HTF ext struct optimization
+Benchmark v9c: Daily arith dispatch + HTF intermediates + HTF ext struct
 
 All prior optimizations PLUS:
-- HTF arith: build_numpy_intermediates on HTF engine, dispatch through
-  dispatch_arith_numpy, fallback for unhandled ops.
-- HTF ext struct: compute base extension series at HTF resolution from
-  intermediates, run vectorized linreg + cached bool_agg at HTF resolution,
-  map results to daily. Eliminates ~2,432 compute_series() calls.
-- _rolling_max/_rolling_min: pandas rolling (14x faster than for-loops).
+- Daily arith two-phase: (A) SLOW_OPS custom numpy, (B) build intermediates
+  from warm engine cache then dispatch_arith_numpy for remaining ~1200 ops.
+  Catches ext_ceiling_ratio, cci, and eliminates Python dispatch overhead.
+- HTF arith: intermediates dispatch with compute_series fallback.
+- HTF ext struct: vectorized linreg + cached bool_agg at HTF resolution.
+- _rolling_max/_rolling_min: pandas rolling.
 
 Usage:
     python scripts/benchmark_expr_cache.py
@@ -835,7 +835,9 @@ def benchmark_optimized(ticker, df, expressions):
     engine = ExpressionEngine(df)
     data = np.full((n_bars, n_exprs), np.nan, dtype=np.float32)
 
-    # ── Daily arithmetic: numpy replacements for slow ops, compute_series for rest ──
+    # ── Daily arithmetic: two-phase dispatch ──
+    # Phase A: SLOW_OPS with custom numpy implementations
+    # Phase B: build intermediates from warm engine, dispatch_arith_numpy for rest
     arith_indices = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") not in BOOL_OPS]
     
     SLOW_OPS = {"percentile_rank", "roc_percentile_rank", "bars_since_ma_cross",
@@ -857,7 +859,11 @@ def benchmark_optimized(ticker, df, expressions):
     
     opt_op_times = {}
     
-    for j in arith_indices:
+    # Phase A: SLOW_OPS — custom numpy implementations
+    slow_indices = [j for j in arith_indices if expressions[j]["compute"]["op"] in SLOW_OPS]
+    rest_indices = [j for j in arith_indices if expressions[j]["compute"]["op"] not in SLOW_OPS]
+    
+    for j in slow_indices:
         comp = expressions[j]["compute"]
         op = comp["op"]
         t_op = time.perf_counter()
@@ -865,7 +871,6 @@ def benchmark_optimized(ticker, df, expressions):
         if op == "percentile_rank":
             source = comp["source"]
             period = comp["period"]
-            # Get source array (cached)
             if source not in pct_rank_cache:
                 if source == "close": pct_rank_cache[source] = c_vals
                 elif source == "volume": pct_rank_cache[source] = v_vals
@@ -919,14 +924,39 @@ def benchmark_optimized(ticker, df, expressions):
             direction = "higher" if op == "higher_low_count" else "lower"
             data[:, j] = np_trend_swing_count(swing_low_arr, l_vals, p, direction, n_bars).astype(np.float32)
         
-        else:
-            # All other ops: use original compute_series (still fast with engine cache)
+        opt_op_times[op] = opt_op_times.get(op, 0.0) + (time.perf_counter() - t_op)
+    
+    # Phase B: build intermediates from warm engine cache, then dispatch
+    t_im0 = time.perf_counter()
+    daily_im = build_numpy_intermediates(engine)
+    t_daily_im = time.perf_counter() - t_im0
+    
+    n_daily_dispatched = 0
+    n_daily_fallback = 0
+    for j in rest_indices:
+        comp = expressions[j]["compute"]
+        op = comp["op"]
+        t_op = time.perf_counter()
+        
+        try:
+            result = dispatch_arith_numpy(comp, daily_im)
+            if result is not None:
+                data[:, j] = result.astype(np.float32)
+                n_daily_dispatched += 1
+            else:
+                s = compute_series(engine, comp)
+                if s is not None:
+                    arr = np.asarray(s, dtype=np.float32)
+                    if len(arr) == n_bars: data[:, j] = arr
+                n_daily_fallback += 1
+        except:
             try:
                 s = compute_series(engine, comp)
                 if s is not None:
                     arr = np.asarray(s, dtype=np.float32)
                     if len(arr) == n_bars: data[:, j] = arr
             except: pass
+            n_daily_fallback += 1
         
         opt_op_times[op] = opt_op_times.get(op, 0.0) + (time.perf_counter() - t_op)
     
@@ -937,6 +967,8 @@ def benchmark_optimized(ticker, df, expressions):
     for opn, t in sorted(opt_op_times.items(), key=lambda x: -x[1])[:15]:
         cnt = sum(1 for j in arith_indices if expressions[j]["compute"]["op"] == opn)
         print(f"    {opn:<30} {t*1000:>7.1f}ms  ({cnt} exprs, {t/cnt*1000:.1f}ms each)")
+    print(f"\n  Daily arith dispatch: intermediates={t_daily_im*1000:.0f}ms, "
+          f"numpy={n_daily_dispatched}, fallback={n_daily_fallback}")
 
     # ── Daily booleans: numpy optimized ──
     ct = [j for j in _w_daily_indices if expressions[j]["compute"].get("op") == "count_true"]
@@ -1237,7 +1269,7 @@ def compare_outputs(data_orig, data_opt, expressions, indices):
 
 def main():
     print("\n" + "=" * 70)
-    print("  EXPRESSION CACHE — BENCHMARK v9b (HTF intermediates + HTF ext struct)")
+    print("  EXPRESSION CACHE — BENCHMARK v9c (daily dispatch + HTF ext struct)")
     print("=" * 70)
     expressions = _load_expressions()
     _init_worker(expressions)
