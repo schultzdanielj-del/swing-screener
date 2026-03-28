@@ -1474,7 +1474,7 @@ def _ticker_cache_path(ticker):
 def save_ticker_cache(ticker, dates, data):
     """Save one ticker's expression series to disk."""
     path = _ticker_cache_path(ticker)
-    np.savez(path, data=data, dates=dates)
+    np.savez_compressed(path, data=data, dates=dates)
 
 
 def load_ticker_cache(ticker):
