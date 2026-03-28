@@ -1474,7 +1474,7 @@ def _ticker_cache_path(ticker):
 def save_ticker_cache(ticker, dates, data):
     """Save one ticker's expression series to disk."""
     path = _ticker_cache_path(ticker)
-    np.savez_compressed(path, data=data, dates=dates)
+    np.savez(path, data=data, dates=dates)
 
 
 def load_ticker_cache(ticker):
@@ -1550,8 +1550,8 @@ def build_full(force=False):
     # Create output directory
     os.makedirs(EXPR_CACHE_DIR, exist_ok=True)
 
-    # Parallel computation — 12 workers to push CPU utilization higher
-    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 12))
+    # Parallel computation — 14 workers, uncompressed saves reduce CPU pressure
+    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 14))
     print(f"\n  Computing {len(work_items)} tickers × {len(expressions)} expressions")
     print(f"  Workers: {n_workers}")
 
@@ -1740,7 +1740,7 @@ def append_new_bars():
         return manifest
 
     t0 = time.time()
-    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 12))
+    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 14))
     updated = 0
     failed = 0
 
