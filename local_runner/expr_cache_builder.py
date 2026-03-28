@@ -1472,9 +1472,15 @@ def _ticker_cache_path(ticker):
 
 
 def save_ticker_cache(ticker, dates, data):
-    """Save one ticker's expression series to disk."""
+    """Save one ticker's expression series to disk. Uses fast compression (level 1)."""
+    import zipfile
+    import io
     path = _ticker_cache_path(ticker)
-    np.savez_compressed(path, data=data, dates=dates)
+    with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+        for name, arr in [("data", data), ("dates", dates)]:
+            buf = io.BytesIO()
+            np.save(buf, arr)
+            zf.writestr(name + ".npy", buf.getvalue())
 
 
 def load_ticker_cache(ticker):
@@ -1550,7 +1556,7 @@ def build_full(force=False):
     # Create output directory
     os.makedirs(EXPR_CACHE_DIR, exist_ok=True)
 
-    # Parallel computation — 14 workers, uncompressed saves reduce CPU pressure
+    # Parallel computation — 14 workers, fast compression frees CPU headroom
     n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 14))
     print(f"\n  Computing {len(work_items)} tickers × {len(expressions)} expressions")
     print(f"  Workers: {n_workers}")
