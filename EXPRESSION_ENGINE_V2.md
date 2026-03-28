@@ -267,11 +267,11 @@ Task H Phase 2 (production wiring — full rebuild) -- DONE (2026-03-27)
                                                       Reverted: daily intermediates dispatch (slower)
                                                       Result: 1.8 tickers/s, ~80-90 min for 10.5K tickers
     |
-Task H Phase 3 (incremental append)               -- IN PROGRESS (2026-03-27)
-                                                      Increment 1: OHLCV infrastructure
+Task H Phase 3 (incremental append)               -- IN PROGRESS (2026-03-28)
+                                                      Increment 1: OHLCV infrastructure — DONE
                                                         - Rewire cache_builder.py: Railway → yfinance
-                                                        - New htf_cache_builder.py: weekly + monthly
-                                                          OHLCV pickles from yfinance
+                                                        - HTF caches merged into cache_builder.py
+                                                          (weekly + monthly OHLCV, 10yr from yfinance)
                                                         - Wire HTF pickles into expr_cache_builder.py
                                                           (full rebuild uses HTF pickles, not resample)
                                                         - Rewire nightly.py: yfinance freshness check,
@@ -290,41 +290,45 @@ Signal filter / regrind gate                       -- verify ALL examples still 
 Switch nightly to incremental append               -- after verification passes
 ```
 
-### Task H Phase 3, Increment 1: OHLCV Infrastructure (2026-03-27)
+### Task H Phase 3, Increment 1: OHLCV Infrastructure — DONE (2026-03-28)
 
-**Problem:** The expr cache builder resamples daily OHLCV to weekly/monthly inside each worker via `resample_ohlcv()`. This works for full rebuilds but blocks true incremental: you'd need the full daily history to resample, defeating the purpose. Additionally, `cache_builder.py` pulls OHLCV from Railway (round-trip through HTTP), adding a fragile dependency.
+**Problem:** The expr cache builder resampled daily OHLCV to weekly/monthly inside each worker via `resample_ohlcv()`. This blocked true incremental (need full daily history to resample). Additionally, `cache_builder.py` pulled OHLCV from Railway (fragile HTTP dependency).
 
-**Solution:** Three changes:
+**Solution:** Four changes, all shipped:
 
 **1. Rewire `cache_builder.py` — Railway → yfinance**
-- `_fetch_ticker_after_date()` → `_yf_append_after_date()` (yfinance `start=` param)
-- `fetch_one_ticker_5yr()` → `_yf_download_daily()` (yfinance `period="5y"`)
-- `get_tradable_tickers()` → `get_tradable_tickers_local()` (local SQLite)
+- All Railway HTTP calls removed. `requests` and `API_BASE` deleted.
+- `_yf_download(ticker, period, interval)` — unified download function for daily/weekly/monthly
+- `_yf_append_after_date(ticker, after_date)` — fetches only new bars via yfinance `start=` param
+- `get_tradable_tickers_local()` — reads from local SQLite `data/scanperfect.db`
 - `append_5yr_cache()` reads ticker list from existing pickle keys
-- Added `check_yfinance_freshness()` — downloads 1 SPY bar, compares to cache
-- Removed `requests` import, `API_BASE` constant
+- `check_yfinance_freshness()` — downloads 1 SPY bar, compares to cache
 - Output format identical — same pickle, same DataFrame structure
 
-**2. New `local_runner/htf_cache_builder.py` — weekly + monthly OHLCV**
+**2. HTF caches merged into `cache_builder.py` (no separate file)**
 - `universe_ohlcv_weekly.pkl` and `universe_ohlcv_monthly.pkl`
 - Same dict-of-DataFrames format as daily 5yr cache
-- Pulled from yfinance (`interval='1wk'`, `interval='1mo'`), NOT resampled
-- Full build: batched with rate limit safety
-- Nightly append: overwrite partial bar if same date, append if new date, freeze history
-- Ticker list from 5yr daily pickle keys
+- Pulled from yfinance (`interval='1wk'`, `interval='1mo'`), NOT resampled from daily
+- **10yr lookback** (not 5yr) — weekly expressions need ~4yr of bars for 200-period lookbacks plus warmup. 10yr gives 522 weekly bars, 120 monthly bars.
+- Full build: `cache_builder.py --htf`. Batches of 50 tickers with 2s sleep (rate limit safety).
+- Nightly append: `_merge_htf_bars()` — overwrite partial bar if same date, append if new date, freeze history
+- Status: `cache_builder.py --htf-status`
 
 **3. Wire HTF pickles into `expr_cache_builder.py`**
 - `_compute_ticker_full()` now receives `(ticker, df_dict, weekly_df_dict, monthly_df_dict)`
 - Uses HTF pickle data instead of `resample_ohlcv()` (fallback to resample if None)
-- Removed HTF skip logic (Monday/month-start checks, copy from previous cache)
-- `build_full()` and `append_new_bars()` load HTF pickles, pass to workers
-- Ensures full rebuild and incremental produce identical HTF values
+- Removed HTF skip logic entirely (Monday/month-start checks, copy from previous cache — no longer needed with pre-fetched HTF data)
+- Removed `_w_skip_htf_weekly`, `_w_skip_htf_monthly` globals
+- `_init_worker()` simplified — no skip params
+- `build_full()` and `append_new_bars()` load HTF pickles, pass per-ticker data to workers
+- Added `_load_htf_cache(timeframe)` and `_df_to_dict(df)` helpers
+- RAM: HTF dicts ~15KB per ticker (small). Freed after work item prep alongside daily cache.
 
 **4. Rewire `nightly.py` — 10 steps (was 8)**
-- Step 1: yfinance freshness check (replaces Railway gate)
+- Step 1: yfinance freshness check (replaces Railway `POST /api/universe/append-daily`)
 - Step 2: daily 5yr append (yfinance)
 - Steps 3-4: NEW — weekly + monthly cache appends
 - Steps 5-10: expr cache, matrix, earnings, market, fundamentals, seed vault
-- Railway only for earnings (step 7) and seed vault (step 10)
+- Railway only for earnings (step 7, broken) and seed vault (step 10)
 
-**STATUS:** Increment 1 in progress. Code written for cache_builder.py, htf_cache_builder.py, nightly.py. expr_cache_builder.py HTF wiring partially complete (build_full done, append_new_bars in progress).
+**STATUS:** Increment 1 DONE. HTF cache build running. Next: run full expr cache rebuild with HTF pickles (`expr_cache_builder.py --build --force`), verify examples pass, then build Increment 2 (true incremental append).

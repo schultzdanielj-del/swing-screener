@@ -15,7 +15,7 @@
 |------|-------------|------|--------|
 | 1 | yfinance freshness check — download 1 SPY bar, compare to cache | <5s | **DONE (2026-03-27).** Replaced Railway `POST /api/universe/append-daily`. Local only, no Railway dependency. |
 | 2 | Appends new bars to 5yr OHLCV pickle from yfinance | ~2-5 min | **DONE (2026-03-27).** Rewired from Railway to `yf.download()` directly. `_yf_append_after_date()` replaces `_fetch_ticker_after_date()`. |
-| 3 | Appends weekly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-27).** `htf_cache_builder.py --append`. Overwrites partial week bar, appends closed weeks. |
+| 3 | Appends weekly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-28).** `cache_builder.py` → `append_weekly()`. 10yr lookback, overwrites partial week bar, appends closed weeks. |
 | 4 | Appends monthly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-27).** Same pattern as weekly. Overwrites partial month bar. |
 | 5 | Appends expression cache | **~80-90 min** | **THE BOTTLENECK.** Now uses HTF pickles instead of resampling. HTF skip logic removed — always computes from pickle data. Incremental append (compute only new bar) is Increment 2. |
 | 6 | Rebuilds universe matrix | ~30s | **OK.** No changes needed. |
@@ -55,11 +55,11 @@ Railway's SQLite DB has an examples table that several active scripts still read
 6. **`nightly.py` step 7 (earnings)**: Calls non-existent Railway endpoints. **BROKEN** — replace with local Yahoo Finance scraper.
 7. **`nightly.py` step 9 (fundamentals)**: Mirrors fundamentals cache to Railway (redundant). **TODO** — remove dead mirror call.
 
-**Railway removal DONE for OHLCV (2026-03-27).** `cache_builder.py` fully rewired to yfinance. New `htf_cache_builder.py` creates weekly + monthly pickles from yfinance. `nightly.py` step 1 uses local freshness check. `expr_cache_builder.py` uses HTF pickles instead of resampling from daily. Railway is now only used for earnings (broken, needs local scraper) and seed vault backup (intentional).
+**Railway removal DONE for OHLCV (2026-03-28).** `cache_builder.py` fully rewired to yfinance. HTF caches (weekly + monthly, 10yr lookback) merged into `cache_builder.py` (`--htf` to build, `--htf-status` to check). `nightly.py` step 1 uses local freshness check. `expr_cache_builder.py` uses HTF pickles instead of resampling from daily. Railway is now only used for earnings (broken, needs local scraper) and seed vault backup (intentional).
 
 ### What's been done:
 
-- **Railway OHLCV removal** (2026-03-27): `cache_builder.py` fully rewired — all Railway HTTP calls replaced with yfinance. New `htf_cache_builder.py` creates weekly + monthly pickles from yfinance. `expr_cache_builder.py` uses HTF pickles instead of resampling. `nightly.py` expanded to 10 steps. Railway removed from OHLCV path entirely.
+- **Railway OHLCV removal** (2026-03-28): `cache_builder.py` fully rewired — all Railway HTTP calls replaced with yfinance. HTF caches (weekly + monthly, 10yr) merged into `cache_builder.py`. `expr_cache_builder.py` uses HTF pickles instead of resampling. `nightly.py` expanded to 10 steps. Railway removed from OHLCV path entirely.
 - **Expr cache Task H Phase 2** (2026-03-27): SLOW_OPS numpy, numpy bools, ext struct vectorization, HTF intermediates dispatch, fast compression (compresslevel=1), worker-side saves. 1.8 tickers/s for full rebuild.
 - **Seed vault gate fix** (2026-03-26): Step 10 (was 8) now runs every night even when step 1 gates early.
 - **Old step 2 killed** (2026-03-25): 300-bar daily OHLCV cache rebuild. Nothing used it.
@@ -228,8 +228,7 @@ The bat file (`nightly_refresh.bat`) writes this line after `nightly.py` finishe
 | File | Role | Railway dependency? |
 |------|------|-------------------|
 | `local_runner/nightly.py` | Orchestrator (10 steps) | Steps 7, 10 call Railway |
-| `local_runner/cache_builder.py` | Daily OHLCV cache management | **NO** — fully rewired to yfinance (2026-03-27) |
-| `local_runner/htf_cache_builder.py` | Weekly + Monthly OHLCV caches | **NO** — yfinance direct (NEW 2026-03-27) |
+| `local_runner/cache_builder.py` | Daily + Weekly + Monthly OHLCV cache management | **NO** — fully rewired to yfinance (2026-03-28). HTF caches merged in. |
 | `local_runner/expr_cache_builder.py` | Expression cache | **NO** — uses HTF pickles, no Railway. THE BOTTLENECK. |
 | `local_runner/matrix_builder.py` | Universe matrix | No Railway dependency |
 | `local_runner/market_cache_builder.py` | Market context cache | No Railway dependency (uses yfinance directly) |
