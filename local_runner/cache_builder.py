@@ -44,7 +44,7 @@ MAX_WORKERS = 20
 LOOKBACK = 300  # bars per ticker (daily matrix)
 LOOKBACK_5YR = 1260  # ~5 years of trading days
 HTF_BATCH_SIZE = 50  # tickers per batch for HTF full build (rate limit safety)
-HTF_BATCH_SLEEP = 1.0  # seconds between batches
+HTF_BATCH_SLEEP = 2.0  # seconds between batches
 
 
 # ══════════════════════════════════════════════════════════════
@@ -530,8 +530,9 @@ def _merge_htf_bars(existing_df, new_df):
 def _build_htf_cache(interval, output_file, meta_file, label):
     """Full build for one HTF timeframe.
 
-    Downloads 5yr of data for all tickers in batches to avoid rate limiting.
-    Ticker list comes from existing 5yr daily cache keys.
+    Downloads 10yr of data for all tickers in batches to avoid rate limiting.
+    10yr gives enough lookback for weekly expressions (200-period SMA needs
+    ~4yr of weekly bars, plus warmup). Ticker list from 5yr daily cache keys.
     """
     print(f"\n  {'=' * 50}")
     print(f"  {label} OHLCV CACHE — Full Build")
@@ -560,7 +561,7 @@ def _build_htf_cache(interval, output_file, meta_file, label):
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             futures = {
-                pool.submit(_yf_download, t, "5y", interval): t
+                pool.submit(_yf_download, t, "10y", interval): t
                 for t in batch
             }
             for future in as_completed(futures):
@@ -689,7 +690,7 @@ def _append_htf_cache(interval, output_file, meta_file, label, recent_period):
             batch = new_tickers[batch_start:batch_start + HTF_BATCH_SIZE]
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
                 futures = {
-                    pool.submit(_yf_download, t, "5y", interval): t
+                    pool.submit(_yf_download, t, "10y", interval): t
                     for t in batch
                 }
                 for future in as_completed(futures):
