@@ -3235,6 +3235,7 @@ class CandlestickChart(QWidget):
         self._exit_date = None
         self._profit_exit_date = None
         self._earnings_dates = set()
+        self._other_signal_dates = set()
         self._hover_idx = None
         self._scroll_offset = 0
         self._visible_count = 200  # how many bars to show (zoom)
@@ -3249,13 +3250,14 @@ class CandlestickChart(QWidget):
         )
         self._yes_btn.clicked.connect(lambda: self.candle_clicked.emit("__yes__"))
 
-    def set_data(self, candles, ticker, signal_date, exit_date=None, profit_exit_date=None, earnings_dates=None):
+    def set_data(self, candles, ticker, signal_date, exit_date=None, profit_exit_date=None, earnings_dates=None, other_signal_dates=None):
         self._candles = candles or []
         self._ticker = ticker
         self._signal_date = signal_date
         self._exit_date = exit_date
         self._profit_exit_date = profit_exit_date
         self._earnings_dates = set(earnings_dates or [])
+        self._other_signal_dates = set(other_signal_dates or [])
         self._entry_date = None
         self._hover_idx = None
         self._yes_btn.setVisible(False)
@@ -3495,6 +3497,18 @@ class CandlestickChart(QWidget):
                 p.setPen(QColor("#A855F7"))
                 p.drawText(QRectF(x - 18, self.MARGIN_TOP + 2, 36, 12),
                            Qt.AlignCenter, "PROFIT")
+
+        # Other signal markers — small "S" at top of chart
+        if self._other_signal_dates:
+            f.setPixelSize(10)
+            f.setWeight(QFont.Bold)
+            p.setFont(f)
+            for i, c in enumerate(visible):
+                if c["date"] in self._other_signal_dates:
+                    x = candle_x(i)
+                    p.setPen(QColor(255, 255, 255, 100))
+                    p.drawText(QRectF(x - 6, self.MARGIN_TOP + 4, 12, 12),
+                               Qt.AlignCenter, "S")
 
         # Volume bars
         vol_top = h - self.VOL_H
@@ -4247,10 +4261,16 @@ class VettingWorkspace(QFrame):
         print("[CHART] Loading %s %s — %d candles, %d earnings dates" % (
             sig["ticker"], sig["signal_date"],
             len(candles) if candles else 0, len(earnings)))
+        # Collect other signal dates for the same ticker
+        other_sig_dates = set()
+        for s in self._signals:
+            if s["ticker"] == sig["ticker"] and s["signal_date"] != sig["signal_date"]:
+                other_sig_dates.add(s["signal_date"])
         self._chart.set_data(candles, sig["ticker"], sig["signal_date"],
                              exit_date=sig.get("exit_date"),
                              profit_exit_date=sig.get("profit_exit_date"),
-                             earnings_dates=earnings)
+                             earnings_dates=earnings,
+                             other_signal_dates=other_sig_dates)
         # Restore entry if previously set
         if sig.get("entry_date"):
             self._chart.set_entry_date(sig["entry_date"])
