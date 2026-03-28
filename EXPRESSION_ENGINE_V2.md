@@ -267,16 +267,64 @@ Task H Phase 2 (production wiring — full rebuild) -- DONE (2026-03-27)
                                                       Reverted: daily intermediates dispatch (slower)
                                                       Result: 1.8 tickers/s, ~80-90 min for 10.5K tickers
     |
-Task H Phase 3 (incremental append)               -- NEXT
-                                                      Load existing .npz, compute only the new bar,
-                                                      append. Recompute current HTF period (not full
-                                                      history). Target: 2-5 min nightly for 10.5K tickers.
+Task H Phase 3 (incremental append)               -- IN PROGRESS (2026-03-27)
+                                                      Increment 1: OHLCV infrastructure
+                                                        - Rewire cache_builder.py: Railway → yfinance
+                                                        - New htf_cache_builder.py: weekly + monthly
+                                                          OHLCV pickles from yfinance
+                                                        - Wire HTF pickles into expr_cache_builder.py
+                                                          (full rebuild uses HTF pickles, not resample)
+                                                        - Rewire nightly.py: yfinance freshness check,
+                                                          new weekly/monthly cache steps (10 steps total)
+                                                      Increment 2: True incremental expr cache append
+                                                        - Load existing .npz, compute only new bar(s)
+                                                        - Truncated daily window (~504 bars)
+                                                        - HTF from pickles (not resampled)
+                                                        - Overwrite current week/month HTF columns
+                                                        - Target: 2-5 min nightly for 10.5K tickers
     |
-First full rebuild with current code               -- run once to establish baseline cache
+First full rebuild with HTF pickles                -- run once to establish baseline cache
     |
 Signal filter / regrind gate                       -- verify ALL examples still found
     |
 Switch nightly to incremental append               -- after verification passes
 ```
 
-**STATUS:** Task H Phase 2 complete. Full rebuild runs at 1.8 tickers/s (~80-90 min). This is acceptable for occasional full rebuilds but too slow for nightly. Next: build incremental append mode (Task H Phase 3) that computes only the new bar per ticker. Every ticker still goes through the pipeline every night — just computing 1 bar instead of 1,200. Target: 2-5 minutes nightly. Run one full rebuild first to establish baseline cache, verify with signal filter/regrind, then switch nightly to incremental.
+### Task H Phase 3, Increment 1: OHLCV Infrastructure (2026-03-27)
+
+**Problem:** The expr cache builder resamples daily OHLCV to weekly/monthly inside each worker via `resample_ohlcv()`. This works for full rebuilds but blocks true incremental: you'd need the full daily history to resample, defeating the purpose. Additionally, `cache_builder.py` pulls OHLCV from Railway (round-trip through HTTP), adding a fragile dependency.
+
+**Solution:** Three changes:
+
+**1. Rewire `cache_builder.py` — Railway → yfinance**
+- `_fetch_ticker_after_date()` → `_yf_append_after_date()` (yfinance `start=` param)
+- `fetch_one_ticker_5yr()` → `_yf_download_daily()` (yfinance `period="5y"`)
+- `get_tradable_tickers()` → `get_tradable_tickers_local()` (local SQLite)
+- `append_5yr_cache()` reads ticker list from existing pickle keys
+- Added `check_yfinance_freshness()` — downloads 1 SPY bar, compares to cache
+- Removed `requests` import, `API_BASE` constant
+- Output format identical — same pickle, same DataFrame structure
+
+**2. New `local_runner/htf_cache_builder.py` — weekly + monthly OHLCV**
+- `universe_ohlcv_weekly.pkl` and `universe_ohlcv_monthly.pkl`
+- Same dict-of-DataFrames format as daily 5yr cache
+- Pulled from yfinance (`interval='1wk'`, `interval='1mo'`), NOT resampled
+- Full build: batched with rate limit safety
+- Nightly append: overwrite partial bar if same date, append if new date, freeze history
+- Ticker list from 5yr daily pickle keys
+
+**3. Wire HTF pickles into `expr_cache_builder.py`**
+- `_compute_ticker_full()` now receives `(ticker, df_dict, weekly_df_dict, monthly_df_dict)`
+- Uses HTF pickle data instead of `resample_ohlcv()` (fallback to resample if None)
+- Removed HTF skip logic (Monday/month-start checks, copy from previous cache)
+- `build_full()` and `append_new_bars()` load HTF pickles, pass to workers
+- Ensures full rebuild and incremental produce identical HTF values
+
+**4. Rewire `nightly.py` — 10 steps (was 8)**
+- Step 1: yfinance freshness check (replaces Railway gate)
+- Step 2: daily 5yr append (yfinance)
+- Steps 3-4: NEW — weekly + monthly cache appends
+- Steps 5-10: expr cache, matrix, earnings, market, fundamentals, seed vault
+- Railway only for earnings (step 7) and seed vault (step 10)
+
+**STATUS:** Increment 1 in progress. Code written for cache_builder.py, htf_cache_builder.py, nightly.py. expr_cache_builder.py HTF wiring partially complete (build_full done, append_new_bars in progress).
