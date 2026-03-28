@@ -4,10 +4,13 @@ Cache Builder — Pull all tradable universe OHLCV data and store locally.
 Usage:
     python local_runner/cache_builder.py [--force]
     python local_runner/cache_builder.py --5yr [--force]
+    python local_runner/cache_builder.py --htf [--force]
 
 Stores:
   - local_runner/cache/universe_ohlcv.pkl — 300-bar daily cache (legacy)
   - local_runner/cache/universe_ohlcv_5yr.pkl — full 5yr daily cache
+  - local_runner/cache/universe_ohlcv_weekly.pkl — 5yr weekly cache
+  - local_runner/cache/universe_ohlcv_monthly.pkl — 5yr monthly cache
 
 All data pulled from yfinance. No Railway dependency.
 
@@ -32,10 +35,16 @@ CACHE_FILE = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
 CACHE_META = os.path.join(CACHE_DIR, "cache_meta.txt")
 CACHE_5YR_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
 CACHE_5YR_META = os.path.join(CACHE_DIR, "cache_5yr_meta.txt")
+WEEKLY_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_weekly.pkl")
+WEEKLY_META = os.path.join(CACHE_DIR, "cache_weekly_meta.txt")
+MONTHLY_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_monthly.pkl")
+MONTHLY_META = os.path.join(CACHE_DIR, "cache_monthly_meta.txt")
 DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
 MAX_WORKERS = 20
 LOOKBACK = 300  # bars per ticker (daily matrix)
 LOOKBACK_5YR = 1260  # ~5 years of trading days
+HTF_BATCH_SIZE = 50  # tickers per batch for HTF full build (rate limit safety)
+HTF_BATCH_SLEEP = 1.0  # seconds between batches
 
 
 # ══════════════════════════════════════════════════════════════
@@ -63,14 +72,19 @@ def get_tradable_tickers_local():
 # YFINANCE HELPERS
 # ══════════════════════════════════════════════════════════════
 
-def _yf_download_daily(ticker, period="5y"):
-    """Download daily OHLCV for one ticker from yfinance.
+def _yf_download(ticker, period="5y", interval="1d"):
+    """Download OHLCV for one ticker from yfinance.
+
+    Args:
+        ticker: stock symbol
+        period: yfinance period string ('5y', '1y', '1mo', etc.)
+        interval: '1d', '1wk', or '1mo'
 
     Returns (ticker, DataFrame) or (ticker, None) on failure.
     DataFrame has columns: date, open, high, low, close, volume
     """
     try:
-        raw = yf.download(ticker, period=period, interval="1d", progress=False)
+        raw = yf.download(ticker, period=period, interval=interval, progress=False)
         if raw.empty:
             return ticker, None
 
@@ -97,7 +111,8 @@ def _yf_download_daily(ticker, period="5y"):
         # Drop rows with NaN close (bad data)
         df = df.dropna(subset=["close"]).reset_index(drop=True)
 
-        if len(df) < 5:
+        min_bars = 3 if interval in ("1wk", "1mo") else 5
+        if len(df) < min_bars:
             return ticker, None
 
         return ticker, df
@@ -204,7 +219,7 @@ def build_cache(force=False):
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         # Use 1y period for 300-bar cache
-        futures = {pool.submit(_yf_download_daily, t, "1y"): t for t in tickers}
+        futures = {pool.submit(_yf_download, t, "1y"): t for t in tickers}
         done = 0
         for future in as_completed(futures):
             ticker, df = future.result()
@@ -295,7 +310,7 @@ def build_5yr_cache(force=False):
     failed = []
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        futures = {pool.submit(_yf_download_daily, t, "5y"): t for t in tickers}
+        futures = {pool.submit(_yf_download, t, "5y"): t for t in tickers}
         done = 0
         for future in as_completed(futures):
             ticker, df = future.result()
@@ -436,7 +451,7 @@ def append_5yr_cache():
     if to_fetch_full:
         print(f"\n  Fetching {len(to_fetch_full)} new tickers via yfinance...")
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {pool.submit(_yf_download_daily, t, "5y"): t for t in to_fetch_full}
+            futures = {pool.submit(_yf_download, t, "5y"): t for t in to_fetch_full}
             for future in as_completed(futures):
                 ticker = futures[future]
                 try:
@@ -467,6 +482,323 @@ def append_5yr_cache():
     print(f"  Time: {elapsed:.0f}s")
 
     return universe
+
+
+# ══════════════════════════════════════════════════════════════
+# HTF CACHES — Weekly + Monthly OHLCV from yfinance
+# ══════════════════════════════════════════════════════════════
+
+def _merge_htf_bars(existing_df, new_df):
+    """Merge new HTF bars into existing cache.
+
+    Rules:
+    - If new bar's date matches last cached bar: overwrite (partial period updated)
+    - If new bar's date is after last cached bar: append (new period started)
+    - Bars before last cached bar: ignore (frozen history)
+
+    Returns updated DataFrame.
+    """
+    if existing_df is None or len(existing_df) == 0:
+        return new_df
+    if new_df is None or len(new_df) == 0:
+        return existing_df
+
+    last_cached_date = existing_df["date"].iloc[-1]
+    rows_to_append = []
+
+    for _, row in new_df.iterrows():
+        row_date = row["date"]
+
+        if row_date == last_cached_date:
+            # Overwrite last bar (partial period — close/high/low may have changed)
+            for col in ["open", "high", "low", "close", "volume"]:
+                existing_df.at[existing_df.index[-1], col] = row[col]
+        elif row_date > last_cached_date:
+            # New period — collect for append
+            rows_to_append.append(row)
+            last_cached_date = row_date
+        # else: row_date < last_cached_date → frozen, skip
+
+    if rows_to_append:
+        append_df = pd.DataFrame(rows_to_append)
+        existing_df = pd.concat([existing_df, append_df], ignore_index=True)
+        existing_df = existing_df.sort_values("date").reset_index(drop=True)
+
+    return existing_df
+
+
+def _build_htf_cache(interval, output_file, meta_file, label):
+    """Full build for one HTF timeframe.
+
+    Downloads 5yr of data for all tickers in batches to avoid rate limiting.
+    Ticker list comes from existing 5yr daily cache keys.
+    """
+    print(f"\n  {'=' * 50}")
+    print(f"  {label} OHLCV CACHE — Full Build")
+    print(f"  {'=' * 50}")
+
+    if not os.path.exists(CACHE_5YR_FILE):
+        raise FileNotFoundError(
+            f"Daily 5yr cache not found: {CACHE_5YR_FILE}\n"
+            "  Run cache_builder.py --5yr first."
+        )
+    with open(CACHE_5YR_FILE, "rb") as f:
+        daily_cache = pickle.load(f)
+    tickers = list(daily_cache.keys())
+    del daily_cache
+    print(f"  {len(tickers)} tickers to fetch")
+
+    t0 = time.time()
+    universe = {}
+    failed = []
+    n_batches = (len(tickers) + HTF_BATCH_SIZE - 1) // HTF_BATCH_SIZE
+
+    for batch_idx in range(n_batches):
+        batch_start = batch_idx * HTF_BATCH_SIZE
+        batch_end = min(batch_start + HTF_BATCH_SIZE, len(tickers))
+        batch = tickers[batch_start:batch_end]
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(_yf_download, t, "5y", interval): t
+                for t in batch
+            }
+            for future in as_completed(futures):
+                ticker, df = future.result()
+                if df is not None:
+                    universe[ticker] = df
+                else:
+                    failed.append(ticker)
+
+        done = batch_end
+        elapsed = time.time() - t0
+        rate = done / elapsed if elapsed > 0 else 0
+        eta = (len(tickers) - done) / rate if rate > 0 else 0
+        print(f"    {done:,}/{len(tickers):,} "
+              f"({len(universe):,} ok, {len(failed)} failed) "
+              f"[{elapsed/60:.1f}m elapsed, ~{eta/60:.1f}m left]")
+
+        # Sleep between batches to avoid rate limiting
+        if batch_idx < n_batches - 1:
+            time.sleep(HTF_BATCH_SLEEP)
+
+    elapsed = time.time() - t0
+
+    # Save
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(output_file, "wb") as f:
+        pickle.dump(universe, f, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(meta_file, "w") as f:
+        f.write(datetime.now().isoformat())
+
+    size_mb = os.path.getsize(output_file) / 1024 / 1024
+    print(f"\n  {label} build complete:")
+    print(f"    Tickers: {len(universe):,} ok, {len(failed)} failed")
+    print(f"    File: {output_file} ({size_mb:.1f} MB)")
+    print(f"    Time: {elapsed:.0f}s ({elapsed/60:.1f} min)")
+
+    if failed and len(failed) <= 20:
+        print(f"    Failed: {', '.join(failed[:20])}")
+
+    return universe
+
+
+def _append_htf_cache(interval, output_file, meta_file, label, recent_period):
+    """Nightly append for one HTF timeframe.
+
+    For each ticker in the existing cache:
+    - Fetch recent bars from yfinance
+    - Merge: overwrite partial period, append new closed periods
+
+    New tickers (in 5yr daily but not in HTF cache) get full 5yr fetch.
+    """
+    print(f"\n  {label} OHLCV Cache — Append")
+
+    if not os.path.exists(output_file):
+        print(f"  No existing {label.lower()} cache. Running full build...")
+        return _build_htf_cache(interval, output_file, meta_file, label)
+
+    # Load existing
+    with open(output_file, "rb") as f:
+        universe = pickle.load(f)
+    print(f"  {len(universe)} tickers in cache")
+
+    # Check for new tickers from 5yr daily cache
+    try:
+        if os.path.exists(CACHE_5YR_FILE):
+            with open(CACHE_5YR_FILE, "rb") as f:
+                daily_cache = pickle.load(f)
+            all_tickers = list(daily_cache.keys())
+            del daily_cache
+            new_tickers = [t for t in all_tickers if t not in universe]
+        else:
+            new_tickers = []
+    except Exception:
+        new_tickers = []
+
+    to_update = list(universe.keys())
+
+    print(f"  Tickers to update: {len(to_update)}")
+    if new_tickers:
+        print(f"  New tickers (full fetch): {len(new_tickers)}")
+
+    t0 = time.time()
+    updated = 0
+    no_change = 0
+    failed = 0
+
+    # Update existing tickers — fetch recent bars
+    if to_update:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(_yf_download, t, recent_period, interval): t
+                for t in to_update
+            }
+            done = 0
+            for future in as_completed(futures):
+                ticker = futures[future]
+                done += 1
+                try:
+                    _, new_df = future.result()
+                    if new_df is not None and len(new_df) > 0:
+                        old_len = len(universe[ticker])
+                        old_last = str(universe[ticker]["date"].iloc[-1])[:10]
+                        universe[ticker] = _merge_htf_bars(universe[ticker], new_df)
+                        new_len = len(universe[ticker])
+                        new_last = str(universe[ticker]["date"].iloc[-1])[:10]
+                        if new_len != old_len or new_last != old_last:
+                            updated += 1
+                        else:
+                            no_change += 1
+                    else:
+                        no_change += 1
+                except Exception:
+                    failed += 1
+
+                if done % 500 == 0 or done == len(to_update):
+                    elapsed = time.time() - t0
+                    print(f"    {done:,}/{len(to_update):,} checked "
+                          f"({updated} updated, {no_change} current, {failed} failed) "
+                          f"[{elapsed:.0f}s]")
+
+    # Full fetch for new tickers
+    new_added = 0
+    if new_tickers:
+        print(f"\n  Fetching {len(new_tickers)} new tickers...")
+        for batch_start in range(0, len(new_tickers), HTF_BATCH_SIZE):
+            batch = new_tickers[batch_start:batch_start + HTF_BATCH_SIZE]
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+                futures = {
+                    pool.submit(_yf_download, t, "5y", interval): t
+                    for t in batch
+                }
+                for future in as_completed(futures):
+                    ticker = futures[future]
+                    try:
+                        _, df = future.result()
+                        if df is not None and len(df) >= 3:
+                            universe[ticker] = df
+                            new_added += 1
+                        else:
+                            failed += 1
+                    except Exception:
+                        failed += 1
+            if batch_start + HTF_BATCH_SIZE < len(new_tickers):
+                time.sleep(HTF_BATCH_SLEEP)
+
+    elapsed = time.time() - t0
+
+    # Save
+    with open(output_file, "wb") as f:
+        pickle.dump(universe, f, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(meta_file, "w") as f:
+        f.write(datetime.now().isoformat())
+
+    size_mb = os.path.getsize(output_file) / 1024 / 1024
+    print(f"  {label} append: {updated} updated, {new_added} new, "
+          f"{no_change} unchanged, {failed} failed ({elapsed:.0f}s, {size_mb:.1f} MB)")
+
+    return universe
+
+
+def build_htf_caches():
+    """Full build of both weekly and monthly OHLCV caches."""
+    print("\n" + "=" * 60)
+    print("  HTF CACHE BUILDER — Weekly + Monthly OHLCV from yfinance")
+    print("=" * 60)
+
+    _build_htf_cache("1wk", WEEKLY_FILE, WEEKLY_META, "WEEKLY")
+    _build_htf_cache("1mo", MONTHLY_FILE, MONTHLY_META, "MONTHLY")
+
+
+def append_weekly():
+    """Nightly append for weekly cache."""
+    return _append_htf_cache(
+        interval="1wk",
+        output_file=WEEKLY_FILE,
+        meta_file=WEEKLY_META,
+        label="Weekly",
+        recent_period="1mo"  # last month covers current + recently closed weeks
+    )
+
+
+def append_monthly():
+    """Nightly append for monthly cache."""
+    return _append_htf_cache(
+        interval="1mo",
+        output_file=MONTHLY_FILE,
+        meta_file=MONTHLY_META,
+        label="Monthly",
+        recent_period="3mo"  # last 3 months covers current + recently closed months
+    )
+
+
+def append_htf_caches():
+    """Nightly append for both weekly and monthly caches."""
+    append_weekly()
+    append_monthly()
+
+
+def htf_status():
+    """Show HTF cache status."""
+    print("\n  HTF OHLCV Cache Status")
+    print("  " + "─" * 40)
+
+    for label, pkl_file, meta_file in [
+        ("Weekly", WEEKLY_FILE, WEEKLY_META),
+        ("Monthly", MONTHLY_FILE, MONTHLY_META),
+    ]:
+        if not os.path.exists(pkl_file):
+            print(f"\n  {label}: not built")
+            continue
+
+        with open(pkl_file, "rb") as f:
+            data = pickle.load(f)
+
+        size_mb = os.path.getsize(pkl_file) / 1024 / 1024
+        bar_counts = [len(df) for df in data.values()]
+
+        meta_ts = "unknown"
+        if os.path.exists(meta_file):
+            with open(meta_file) as f:
+                meta_ts = f.read().strip()
+
+        print(f"\n  {label}:")
+        print(f"    Tickers: {len(data):,}")
+        print(f"    File: {size_mb:.1f} MB")
+        print(f"    Updated: {meta_ts}")
+        if bar_counts:
+            print(f"    Bars: min={min(bar_counts)}, "
+                  f"avg={sum(bar_counts)/len(bar_counts):.0f}, "
+                  f"max={max(bar_counts)}")
+
+        # Sample last dates
+        for t in ["SPY", "AAPL", "MSFT"]:
+            if t in data and len(data[t]) > 0:
+                last = str(data[t]["date"].iloc[-1])[:10]
+                print(f"    {t} last bar: {last} ({len(data[t])} bars)")
+
+        del data
 
 
 # ══════════════════════════════════════════════════════════════
@@ -530,8 +862,14 @@ def check_yfinance_freshness():
 if __name__ == "__main__":
     force = "--force" in sys.argv
     mode_5yr = "--5yr" in sys.argv
+    mode_htf = "--htf" in sys.argv
+    mode_htf_status = "--htf-status" in sys.argv
 
-    if mode_5yr:
+    if mode_htf_status:
+        htf_status()
+    elif mode_htf:
+        build_htf_caches()
+    elif mode_5yr:
         data = build_5yr_cache(force=force)
         print(f"5yr cache ready: {len(data)} tickers")
     else:

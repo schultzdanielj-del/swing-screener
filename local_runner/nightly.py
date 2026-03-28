@@ -84,14 +84,14 @@ def step_3_weekly_cache():
     step_header(3, TOTAL_STEPS, "Weekly OHLCV Cache — Append (yfinance)")
 
     try:
-        from htf_cache_builder import append_weekly
+        from cache_builder import append_weekly
         t0 = time.time()
         data = append_weekly()
         elapsed = time.time() - t0
         print(f"  ✓ Weekly cache updated ({elapsed:.1f}s)")
     except FileNotFoundError as e:
         print(f"  ⚠ {e}")
-        print("  (Run 'python local_runner/htf_cache_builder.py --build' first)")
+        print("  (Run 'python local_runner/cache_builder.py --htf' first)")
     except Exception as e:
         print(f"  ✗ Weekly cache append failed: {e}")
         print("  (Non-fatal — expr cache will resample from daily as fallback)")
@@ -102,14 +102,14 @@ def step_4_monthly_cache():
     step_header(4, TOTAL_STEPS, "Monthly OHLCV Cache — Append (yfinance)")
 
     try:
-        from htf_cache_builder import append_monthly
+        from cache_builder import append_monthly
         t0 = time.time()
         data = append_monthly()
         elapsed = time.time() - t0
         print(f"  ✓ Monthly cache updated ({elapsed:.1f}s)")
     except FileNotFoundError as e:
         print(f"  ⚠ {e}")
-        print("  (Run 'python local_runner/htf_cache_builder.py --build' first)")
+        print("  (Run 'python local_runner/cache_builder.py --htf' first)")
     except Exception as e:
         print(f"  ✗ Monthly cache append failed: {e}")
         print("  (Non-fatal — expr cache will resample from daily as fallback)")
