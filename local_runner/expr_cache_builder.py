@@ -37,11 +37,14 @@ import json
 import pickle
 import hashlib
 import argparse
+import warnings
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
+
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(LOCAL_DIR)
@@ -1489,8 +1492,8 @@ def build_full(force=False):
     # Create output directory
     os.makedirs(EXPR_CACHE_DIR, exist_ok=True)
 
-    # Parallel computation
-    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", max(cpu_count() - 1, 1)))
+    # Parallel computation — 8 workers matches benchmark tuning
+    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 8))
     print(f"\n  Computing {len(work_items)} tickers × {len(expressions)} expressions")
     print(f"  Workers: {n_workers}")
 
@@ -1545,14 +1548,16 @@ def build_full(force=False):
                     first_errors.append(f"{ticker}: {type(e).__name__}: {str(e)[:200]}")
             del future  # free the result memory immediately
             completed += 1
-            if completed % 100 == 0 or completed == len(work_items):
+            if completed % 25 == 0 or completed == len(work_items):
                 elapsed = time.time() - t0
                 rate = completed / elapsed if elapsed > 0 else 0
                 eta = (len(work_items) - completed) / rate if rate > 0 else 0
                 pct = completed / len(work_items) * 100
+                per_ticker = elapsed * n_workers / completed if completed > 0 else 0
                 print(f"    {completed:,}/{len(work_items):,} ({pct:.0f}%) "
-                      f"[{elapsed:.0f}s elapsed, ~{eta:.0f}s left] "
-                      f"({len(ticker_info)} ok, {failed} failed)")
+                      f"[{elapsed/60:.1f}m elapsed, ~{eta/60:.1f}m left] "
+                      f"({len(ticker_info)} ok, {failed} failed) "
+                      f"[{per_ticker:.1f}s/ticker, {rate:.1f} tickers/s]")
 
         # Seed the initial batch
         for _ in range(min(max_in_flight, len(work_items))):
@@ -1679,7 +1684,7 @@ def append_new_bars():
         return manifest
 
     t0 = time.time()
-    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", max(cpu_count() - 1, 1)))
+    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 8))
     updated = 0
     failed = 0
 
@@ -1764,11 +1769,17 @@ def append_new_bars():
                 except:
                     failed += 1
                 del future
-                if (updated + failed) % 200 == 0:
+                total_done = updated + failed
+                if total_done % 25 == 0 or total_done == len(all_work):
                     elapsed = time.time() - t0
-                    pct = (updated + failed) / len(all_work) * 100
-                    print(f"    {updated + failed}/{len(all_work)} ({pct:.0f}%) "
-                          f"[{elapsed:.0f}s]")
+                    rate = total_done / elapsed if elapsed > 0 else 0
+                    eta = (len(all_work) - total_done) / rate if rate > 0 else 0
+                    pct = total_done / len(all_work) * 100
+                    per_ticker = elapsed * n_workers / total_done if total_done > 0 else 0
+                    print(f"    {total_done}/{len(all_work)} ({pct:.0f}%) "
+                          f"[{elapsed/60:.1f}m elapsed, ~{eta/60:.1f}m left] "
+                          f"({updated} ok, {failed} failed) "
+                          f"[{per_ticker:.1f}s/ticker, {rate:.1f} tickers/s]")
 
             # Seed initial batch
             for _ in range(min(max_in_flight, len(all_work))):
