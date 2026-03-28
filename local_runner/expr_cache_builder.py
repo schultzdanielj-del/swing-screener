@@ -1384,6 +1384,9 @@ def _compute_ticker_full(args):
         return (ticker, dates, data)
 
     except Exception as e:
+        import traceback
+        print(f"  FAIL {ticker}: {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
         return (ticker, None, None)
 
 
