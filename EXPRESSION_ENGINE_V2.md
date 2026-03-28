@@ -242,12 +242,13 @@ RAM budget per worker: ~83MB output array (n_bars x 16,051 x 4 bytes) + intermed
 2. **Highest all-time AVWAP:** EXCLUDED -- only 5yr data, not enough. Pivot-anchored contextual AVWAPs only.
 3. **Yearly timeframe:** EXCLUDED -- only ~5 bars in 5yr history, useless for expressions. Weekly + monthly only.
 4. **Number of LSP ranks:** ALL detected pivots, ranked. Top 5 above + 5 below exposed as expressions.
-5. **Cache builder optimization approach:** Per-ticker worker with lazy-cached ExpressionEngine + targeted numpy replacements for slow ops + intermediates dispatch for HTF only (NOT daily — tested and reverted, net negative). ProcessPoolExecutor with 14 workers, worker-side .npz saves.
-6. **Nightly ticker count:** All ~10,542 valid tickers (≥50 bars). EVERY ticker must be fully computed from scratch. No skipping, no incremental appends, no reusing old cache. Non-negotiable.
+5. **Cache builder optimization approach:** Two modes — full rebuild (current, ~80-90 min) and incremental append (NEXT, target 2-5 min). Full rebuild uses per-ticker worker with lazy-cached ExpressionEngine + targeted numpy replacements. Incremental loads existing .npz, computes only the new bar's values, appends.
+6. **Nightly ticker count:** All ~10,542 valid tickers (≥50 bars). Every ticker must go through the pipeline every night. For incremental mode, every ticker still gets processed — it's just computing 1 new bar instead of all bars.
 7. **Precompute-all on daily data is net negative.** Tested in benchmark AND in production — both confirmed slower. Precompute on HTF is net positive (small arrays, trivial cost). Daily uses SLOW_OPS numpy + compute_series for everything else.
-8. **Compression:** zipfile compresslevel=1 instead of np.savez_compressed default. 4.2x faster saves, 5% larger files. Uncompressed saves tested but disk space doesn't allow ~250-330 GB cache.
-9. **Worker count:** 14 on i5-12600K (10 cores / 16 logical). 8 workers = 39% CPU (too low). 15 workers = contention collapse when IPC was bottleneck. 12 workers = 67% CPU. 14 workers = 80% CPU with worker-side saves.
-10. **IPC:** Workers save .npz in-process, return only small metadata (ticker, n_bars, last_date). NEVER return the 83MB numpy array through IPC — this was the original bottleneck causing 39% CPU utilization.
+8. **Compression:** zipfile compresslevel=1 instead of np.savez_compressed default. 4.2x faster saves, 5% larger files.
+9. **Worker count:** 14 on i5-12600K for full rebuild. Incremental may need different tuning.
+10. **IPC:** Workers save .npz in-process, return only small metadata. NEVER return 83MB numpy arrays through IPC.
+11. **HTF on incremental:** Cannot just copy forward on non-boundary days. Weekly/monthly candles are partial (current week/month in progress) — today's close, this week's high/low so far, etc. Must recompute the current HTF period's expressions every day, but only 1 HTF bar of computation. Full HTF history stays cached.
 
 ---
 
@@ -260,16 +261,22 @@ Task H Phase 1 (benchmark optimization)           -- COMPLETE (2026-03-27)
                                                       3.29x speedup on single ticker
                                                       Zero value errors
     |
-Task H Phase 2 (production wiring)                -- IN PROGRESS (2026-03-27)
+Task H Phase 2 (production wiring — full rebuild) -- DONE (2026-03-27)
                                                       Wired: SLOW_OPS, numpy bools, ext struct,
                                                       HTF dispatch, fast compression, worker saves
                                                       Reverted: daily intermediates dispatch (slower)
-                                                      Current: 1.8 tickers/s, ~80-90 min est.
-                                                      Target: <60 min (>3 tickers/s)
+                                                      Result: 1.8 tickers/s, ~80-90 min for 10.5K tickers
     |
-Full cache rebuild verification                   -- BLOCKED on build completing
+Task H Phase 3 (incremental append)               -- NEXT
+                                                      Load existing .npz, compute only the new bar,
+                                                      append. Recompute current HTF period (not full
+                                                      history). Target: 2-5 min nightly for 10.5K tickers.
     |
-Signal filter / regrind gate                      -- verify ALL examples still found
+First full rebuild with current code               -- run once to establish baseline cache
+    |
+Signal filter / regrind gate                       -- verify ALL examples still found
+    |
+Switch nightly to incremental append               -- after verification passes
 ```
 
-**STATUS:** Task H Phase 2 in progress. Production build running at 1.8 tickers/s with 14 workers, 80% CPU. ETA ~80-90 min for 10,542 tickers. Target is <60 min. The remaining bottleneck is daily compute_series calls through the pandas-based ExpressionEngine (~3-4s/ticker) plus level-1 compression (~1.6s/ticker). Need to find ways to further reduce per-ticker compute time. EVERY ticker must be fully computed — no incremental, no skipping.
+**STATUS:** Task H Phase 2 complete. Full rebuild runs at 1.8 tickers/s (~80-90 min). This is acceptable for occasional full rebuilds but too slow for nightly. Next: build incremental append mode (Task H Phase 3) that computes only the new bar per ticker. Every ticker still goes through the pipeline every night — just computing 1 bar instead of 1,200. Target: 2-5 minutes nightly. Run one full rebuild first to establish baseline cache, verify with signal filter/regrind, then switch nightly to incremental.
