@@ -270,6 +270,12 @@ _w_htf_weekly_base = None    # base compute specs for weekly HTF expressions
 _w_htf_monthly_base = None   # base compute specs for monthly HTF expressions
 _w_skip_htf_weekly = False   # if True, copy weekly HTF from previous cache
 _w_skip_htf_monthly = False  # if True, copy monthly HTF from previous cache
+_w_daily_slow_indices = None     # SLOW_OPS (custom numpy)
+_w_daily_dispatch_indices = None # ops dispatch_arith_numpy handles
+_w_daily_fallback_indices = None # ops that go through compute_series
+_w_daily_bool_ct = None          # count_true indices
+_w_daily_bool_st = None          # since_true indices
+_w_daily_bool_tir = None         # true_in_row indices
 
 
 def _init_worker(expressions, skip_htf_weekly=False, skip_htf_monthly=False):
@@ -280,6 +286,8 @@ def _init_worker(expressions, skip_htf_weekly=False, skip_htf_monthly=False):
     global _w_htf_weekly_indices, _w_htf_monthly_indices
     global _w_htf_weekly_base, _w_htf_monthly_base
     global _w_skip_htf_weekly, _w_skip_htf_monthly
+    global _w_daily_slow_indices, _w_daily_dispatch_indices, _w_daily_fallback_indices
+    global _w_daily_bool_ct, _w_daily_bool_st, _w_daily_bool_tir
 
     _w_expressions = expressions
     _w_skip_htf_weekly = skip_htf_weekly
@@ -327,6 +335,42 @@ def _init_worker(expressions, skip_htf_weekly=False, skip_htf_monthly=False):
             _w_ext_struct_indices.append(j)
         else:
             _w_daily_indices.append(j)
+
+    # Pre-classify daily indices into slow/dispatch/fallback/bool
+    # This runs once per worker init, not per ticker
+    DISPATCH_OPS = {
+        "ma_slope", "ma_spread", "extension", "distance_to_maxh", "ratio_c_maxh",
+        "distance_to_minl", "ratio_c_minl", "extension_slope", "extension_peak_ratio",
+        "extension_ceiling_ratio", "ext_adr_multiples", "spread_slope", "pullback",
+        "range_position", "range_width", "roc", "roc_delta", "adx", "adx_slope",
+        "rsi", "rsi_slope", "stochastic", "cci", "di_spread", "volume_ratio",
+        "candle_range_ratio", "body_range_ratio", "upper_wick_ratio", "lower_wick_ratio",
+        "bop", "obv_slope", "macd_histogram", "macd_histogram_slope", "macd_line_norm",
+        "bollinger_pctb", "bollinger_bandwidth", "bollinger_bandwidth_rank",
+        "aroon_up_val", "aroon_down_val", "aroon_oscillator", "cmf", "cmf_slope",
+        "kaufman_efficiency_ratio", "atr_ratio", "slope_ratio", "ma_undercut_depth",
+        "channel_slope", "retrace_high", "retrace_low",
+    }
+
+    _w_daily_slow_indices = []
+    _w_daily_dispatch_indices = []
+    _w_daily_fallback_indices = []
+    _w_daily_bool_ct = []
+    _w_daily_bool_st = []
+    _w_daily_bool_tir = []
+
+    for j in _w_daily_indices:
+        op = expressions[j]["compute"].get("op", "")
+        if op in SLOW_OPS:
+            _w_daily_slow_indices.append(j)
+        elif op in BOOL_OPS:
+            if op == "count_true": _w_daily_bool_ct.append(j)
+            elif op == "since_true": _w_daily_bool_st.append(j)
+            elif op == "true_in_row": _w_daily_bool_tir.append(j)
+        elif op in DISPATCH_OPS:
+            _w_daily_dispatch_indices.append(j)
+        else:
+            _w_daily_fallback_indices.append(j)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1015,12 +1059,10 @@ def _compute_ticker_full(args):
         data = np.full((n_bars, n_exprs), np.nan, dtype=np.float32)
 
         # ── 1. Daily expressions ──
-        # Split into: SLOW_OPS (custom numpy), regular arith (compute_series), bools (numpy)
-        arith_indices = [j for j in _w_daily_indices if _w_expressions[j]["compute"].get("op") not in BOOL_OPS]
-        slow_indices = [j for j in arith_indices if _w_expressions[j]["compute"]["op"] in SLOW_OPS]
-        rest_indices = [j for j in arith_indices if _w_expressions[j]["compute"]["op"] not in SLOW_OPS]
+        # Order: SLOW_OPS (numpy) → fallback ops via compute_series (warms engine)
+        #      → build intermediates from warm cache → dispatch remaining arith → bools
 
-        # SLOW_OPS — custom numpy replacements (biggest per-expression wins)
+        # SLOW_OPS — custom numpy replacements
         c_vals = engine.c.values.astype(np.float64)
         h_vals = engine.h.values.astype(np.float64)
         l_vals = engine.l.values.astype(np.float64)
@@ -1030,7 +1072,7 @@ def _compute_ticker_full(args):
         swing_high_arr = None
         swing_low_arr = None
 
-        for j in slow_indices:
+        for j in _w_daily_slow_indices:
             comp = _w_expressions[j]["compute"]
             op = comp["op"]
             try:
@@ -1083,8 +1125,8 @@ def _compute_ticker_full(args):
             except:
                 pass
 
-        # Regular arith — original compute_series with engine lazy caching
-        for j in rest_indices:
+        # Fallback ops — compute_series (warms engine cache for intermediates build)
+        for j in _w_daily_fallback_indices:
             try:
                 series = compute_series(engine, _w_expressions[j]["compute"])
                 if series is not None:
@@ -1096,11 +1138,21 @@ def _compute_ticker_full(args):
             except:
                 pass
 
+        # Dispatch ops — build intermediates from now-warm engine, pure numpy
+        daily_im = build_numpy_intermediates(engine)
+        for j in _w_daily_dispatch_indices:
+            try:
+                result = dispatch_arith_numpy(_w_expressions[j]["compute"], daily_im)
+                if result is not None:
+                    data[:, j] = result.astype(np.float32)
+            except:
+                pass
+        del daily_im
+
         # Daily booleans — numpy optimized
-        ct = [j for j in _w_daily_indices if _w_expressions[j]["compute"].get("op") == "count_true"]
-        st = [j for j in _w_daily_indices if _w_expressions[j]["compute"].get("op") == "since_true"]
-        tir = [j for j in _w_daily_indices if _w_expressions[j]["compute"].get("op") == "true_in_row"]
-        run_optimized_bools(engine, _w_expressions, (ct, st, tir), n_bars, data)
+        run_optimized_bools(engine, _w_expressions,
+                           (_w_daily_bool_ct, _w_daily_bool_st, _w_daily_bool_tir),
+                           n_bars, data)
 
         # ── 2. LSP expressions (precomputed by lsp_detector_v2) ──
         if _w_lsp_indices:
