@@ -1498,8 +1498,8 @@ def build_full(force=False):
     # Create output directory
     os.makedirs(EXPR_CACHE_DIR, exist_ok=True)
 
-    # Parallel computation — 8 workers optimal on i5-12600K (15 causes contention)
-    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 8))
+    # Parallel computation — 10 workers = 1 per physical core (6P + 4E)
+    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 10))
     print(f"\n  Computing {len(work_items)} tickers × {len(expressions)} expressions")
     print(f"  Workers: {n_workers}")
 
@@ -1513,9 +1513,9 @@ def build_full(force=False):
         initializer=_init_worker,
         initargs=(expressions,)
     ) as pool:
-        # TRUE chunked submission: only n_workers*2 items in flight at a time.
-        # Workers save to disk in-process — no 83MB array transfer through IPC.
-        max_in_flight = n_workers * 2
+        # Workers save to disk in-process — only small metadata returns through IPC.
+        # Higher in-flight keeps workers busy without waiting for dispatch.
+        max_in_flight = n_workers * 4
         pending = {}
         work_idx = 0
         first_errors = []
@@ -1688,7 +1688,7 @@ def append_new_bars():
         return manifest
 
     t0 = time.time()
-    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 8))
+    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 10))
     updated = 0
     failed = 0
 
@@ -1738,7 +1738,7 @@ def append_new_bars():
     if all_work:
         label = "Recomputing" if work_append else "Computing"
         print(f"\n  {label} {len(all_work)} tickers ({n_workers} workers)...")
-        max_in_flight = n_workers * 2
+        max_in_flight = n_workers * 4
         with ProcessPoolExecutor(
             max_workers=n_workers,
             initializer=_init_worker,
