@@ -342,6 +342,8 @@ SLOW_OPS = {"percentile_rank", "roc_percentile_rank", "bars_since_ma_cross",
 
 def np_count_true(bool_arr, period):
     n = len(bool_arr)
+    if period > n:
+        return np.full(n, np.nan)
     f = bool_arr.astype(np.float64)
     result = np.full(n, np.nan)
     cs = np.cumsum(f)
@@ -352,6 +354,8 @@ def np_count_true(bool_arr, period):
 
 def np_since_true(bool_arr, period):
     n = len(bool_arr)
+    if period > n:
+        return np.full(n, np.nan)
     result = np.full(n, np.nan)
     bars_since = np.full(n, n, dtype=np.float64)
     for i in range(n):
@@ -369,6 +373,8 @@ def np_since_true(bool_arr, period):
 
 def np_true_in_row(bool_arr, max_look):
     n = len(bool_arr)
+    if n == 0:
+        return np.zeros(0, dtype=np.float64)
     result = np.zeros(n, dtype=np.float64)
     for i in range(n):
         if bool_arr[i]:
@@ -530,6 +536,8 @@ def np_bars_since_cross(close, ma, max_lb):
 
 def np_swing_count_rolling(swing_arr, period, n_bars):
     result = np.full(n_bars, np.nan)
+    if period + 1 >= n_bars:
+        return result
     swing_f = swing_arr.astype(np.float64)
     cs = np.cumsum(swing_f)
     win_size = period - 2
@@ -544,6 +552,8 @@ def np_swing_count_rolling(swing_arr, period, n_bars):
 
 def np_trend_swing_count(swing_arr, values, period, direction, n_bars):
     result = np.full(n_bars, np.nan)
+    if period + 1 >= n_bars:
+        return result
     for i in range(period + 1, n_bars):
         points = []
         for j in range(i - period + 2, i):
