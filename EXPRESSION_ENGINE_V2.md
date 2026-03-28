@@ -162,6 +162,18 @@ The output must be **identical** to what the current builder produces. Same .npz
 | Matrix rebuild | ~5 min | ~30s | ~30s | -- |
 | Output | -- | -- | Identical, additive, no bars dropped, historical values immutable | -- |
 
+## RAM Management (Critical)
+
+The current expr_cache_builder.py deliberately loads the 5yr OHLCV pickle, prepares work items as dicts, then does `del universe_cache` + `gc.collect()` BEFORE spawning ProcessPoolExecutor workers. This is intentional -- ProcessPoolExecutor copies data to each worker process. Without freeing the pickle first, 8 workers x ~250MB pickle = 2GB wasted RAM on top of each worker's own allocations. On Dan's 32GB machine this has crashed before.
+
+Any optimized worker must respect this pattern:
+- The worker receives one ticker's OHLCV as a dict (not the full pickle)
+- All numpy caches created inside the worker (swing arrays, bool caches, bars_since, sliding_window_view) must be per-ticker only
+- Worker must not hold references to large cross-ticker data
+- The `del + gc.collect()` between phases in the main process is INTENTIONAL and must never be removed
+
+RAM budget per worker: ~83MB output array (n_bars x 16,051 x 4 bytes) + intermediates (~5-10MB for cached MAs, booleans, etc.) + OHLCV dict (~50KB). Total ~95MB per worker x 8 workers = ~760MB. Well within 32GB.
+
 ## Decisions (Resolved)
 
 1. **HTF expression scope:** Full library on weekly + monthly. ~65 GB cache is fine.
