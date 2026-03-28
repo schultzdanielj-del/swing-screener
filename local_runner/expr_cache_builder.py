@@ -235,6 +235,39 @@ def _load_5yr_cache():
         return pickle.load(f)
 
 
+def _load_htf_cache(timeframe):
+    """Load weekly or monthly HTF OHLCV cache.
+
+    Args:
+        timeframe: 'weekly' or 'monthly'
+
+    Returns: dict of {ticker: DataFrame} or None if cache doesn't exist.
+    """
+    filename = f"universe_ohlcv_{timeframe}.pkl"
+    path = os.path.join(CACHE_DIR, filename)
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+def _df_to_dict(df):
+    """Convert a DataFrame to a dict of arrays for IPC serialization.
+
+    Returns None if df is None or too short.
+    """
+    if df is None or len(df) < 5:
+        return None
+    return {
+        "date": df["date"].values,
+        "open": df["open"].values,
+        "high": df["high"].values,
+        "low": df["low"].values,
+        "close": df["close"].values,
+        "volume": df["volume"].values,
+    }
+
+
 # ══════════════════════════════════════════════════════════════
 # MANIFEST
 # ══════════════════════════════════════════════════════════════
@@ -268,8 +301,7 @@ _w_htf_weekly_indices = None  # indices of weekly HTF expressions
 _w_htf_monthly_indices = None # indices of monthly HTF expressions
 _w_htf_weekly_base = None    # base compute specs for weekly HTF expressions
 _w_htf_monthly_base = None   # base compute specs for monthly HTF expressions
-_w_skip_htf_weekly = False   # if True, copy weekly HTF from previous cache
-_w_skip_htf_monthly = False  # if True, copy monthly HTF from previous cache
+
 _w_daily_slow_indices = None     # SLOW_OPS (custom numpy)
 _w_daily_dispatch_indices = None # ops dispatch_arith_numpy handles
 _w_daily_fallback_indices = None # ops that go through compute_series
@@ -278,20 +310,17 @@ _w_daily_bool_st = None          # since_true indices
 _w_daily_bool_tir = None         # true_in_row indices
 
 
-def _init_worker(expressions, skip_htf_weekly=False, skip_htf_monthly=False):
+def _init_worker(expressions):
     """Initialize worker with expression list and pre-classify indices."""
     global _w_expressions, _w_daily_indices, _w_ext_struct_indices
     global _w_ext_series_name_to_idx
     global _w_lsp_indices, _w_algo_indices
     global _w_htf_weekly_indices, _w_htf_monthly_indices
     global _w_htf_weekly_base, _w_htf_monthly_base
-    global _w_skip_htf_weekly, _w_skip_htf_monthly
     global _w_daily_slow_indices, _w_daily_dispatch_indices, _w_daily_fallback_indices
     global _w_daily_bool_ct, _w_daily_bool_st, _w_daily_bool_tir
 
     _w_expressions = expressions
-    _w_skip_htf_weekly = skip_htf_weekly
-    _w_skip_htf_monthly = skip_htf_monthly
 
     _w_daily_indices = []
     _w_ext_struct_indices = []
@@ -1027,11 +1056,14 @@ def run_optimized_ext_struct(engine, expressions, ext_indices, ext_name_to_idx, 
 def _compute_ticker_full(args):
     """Compute all expression series for one ticker (daily + LSP + algo + HTF).
 
-    Args: (ticker, df_dict) where df_dict has OHLCV columns + date
+    Args: (ticker, df_dict, weekly_df_dict, monthly_df_dict)
+        df_dict: daily OHLCV columns + date
+        weekly_df_dict: weekly OHLCV from HTF pickle (or None to resample)
+        monthly_df_dict: monthly OHLCV from HTF pickle (or None to resample)
 
     Returns: (ticker, dates_array, data_array) or (ticker, None, None)
     """
-    ticker, df_dict = args
+    ticker, df_dict, weekly_df_dict, monthly_df_dict = args
     global _w_expressions, _w_daily_indices, _w_ext_struct_indices
     global _w_ext_series_name_to_idx
     global _w_lsp_indices, _w_algo_indices
@@ -1183,48 +1215,46 @@ def _compute_ticker_full(args):
                 pass  # Algo lines fail silently — columns stay NaN
 
         # ── 3. HTF expressions (weekly + monthly) ──
-        # On non-rebalance days, copy HTF columns from previous cache instead
-        # of recomputing. Weekly only changes on Monday, monthly on 1st of month.
-        _htf_copied_from_prev = False
-        if (_w_skip_htf_weekly or _w_skip_htf_monthly):
-            try:
-                prev_dates, prev_data = load_ticker_cache(ticker)
-                if prev_dates is not None and prev_data is not None:
-                    prev_n = len(prev_dates)
-                    # Previous cache should have 1 fewer bar (we're appending today)
-                    # or same count if ticker had no new data
-                    if prev_n >= n_bars - 5 and prev_data.shape[1] == n_exprs:
-                        # Copy rows that overlap, extend last value for new bars
-                        overlap = min(prev_n, n_bars)
-                        if _w_skip_htf_weekly and _w_htf_weekly_indices:
-                            for j in _w_htf_weekly_indices:
-                                data[:overlap, j] = prev_data[:overlap, j]
-                                # Forward-fill: new bars get the last known value
-                                if overlap < n_bars and overlap > 0:
-                                    data[overlap:, j] = prev_data[overlap - 1, j]
-                        if _w_skip_htf_monthly and _w_htf_monthly_indices:
-                            for j in _w_htf_monthly_indices:
-                                data[:overlap, j] = prev_data[:overlap, j]
-                                if overlap < n_bars and overlap > 0:
-                                    data[overlap:, j] = prev_data[overlap - 1, j]
-                        _htf_copied_from_prev = True
-            except Exception:
-                _htf_copied_from_prev = False
-
-        # Compute HTF for timeframes that weren't skipped (or if skip failed)
+        # Use pre-fetched HTF OHLCV from pickles when available.
+        # Fall back to resampling from daily if HTF data not provided.
         _ON_SERIES_OPS = {"on_series", "on_series_bool_agg"}
-        for tf_freq, tf_indices, tf_base_computes, should_skip in [
-            ("W", _w_htf_weekly_indices, _w_htf_weekly_base, _w_skip_htf_weekly),
-            ("ME", _w_htf_monthly_indices, _w_htf_monthly_base, _w_skip_htf_monthly),
+
+        # Build HTF DataFrames from provided dicts (or resample as fallback)
+        _htf_sources = {}
+        if weekly_df_dict is not None:
+            try:
+                wdf = pd.DataFrame(weekly_df_dict)
+                wdf["date"] = pd.to_datetime(wdf["date"])
+                for col in ["open", "high", "low", "close", "volume"]:
+                    wdf[col] = pd.to_numeric(wdf[col], errors="coerce")
+                if len(wdf) >= 5:
+                    _htf_sources["W"] = wdf
+            except Exception:
+                pass
+        if "W" not in _htf_sources:
+            _htf_sources["W"] = resample_ohlcv(df, "W")
+
+        if monthly_df_dict is not None:
+            try:
+                mdf = pd.DataFrame(monthly_df_dict)
+                mdf["date"] = pd.to_datetime(mdf["date"])
+                for col in ["open", "high", "low", "close", "volume"]:
+                    mdf[col] = pd.to_numeric(mdf[col], errors="coerce")
+                if len(mdf) >= 5:
+                    _htf_sources["ME"] = mdf
+            except Exception:
+                pass
+        if "ME" not in _htf_sources:
+            _htf_sources["ME"] = resample_ohlcv(df, "ME")
+
+        for tf_freq, tf_indices, tf_base_computes in [
+            ("W", _w_htf_weekly_indices, _w_htf_weekly_base),
+            ("ME", _w_htf_monthly_indices, _w_htf_monthly_base),
         ]:
             if not tf_indices:
                 continue
 
-            # Skip if we successfully copied from previous cache
-            if should_skip and _htf_copied_from_prev:
-                continue
-
-            htf_df = resample_ohlcv(df, tf_freq)
+            htf_df = _htf_sources.get(tf_freq)
             if htf_df is None or len(htf_df) < 5:
                 continue  # too few bars — HTF columns stay NaN
 
@@ -1449,10 +1479,10 @@ def _compute_and_save_ticker(args):
     so compression is parallelized across all workers instead of
     bottlenecking on the main thread.
 
-    Args: (ticker, df_dict)
+    Args: (ticker, df_dict, weekly_df_dict, monthly_df_dict)
     Returns: (ticker, n_bars, last_date) or (None, None, None)
     """
-    ticker, df_dict = args
+    ticker = args[0]
     ticker_out, dates, data = _compute_ticker_full(args)
     if dates is not None and data is not None:
         save_ticker_cache(ticker_out, dates, data)
@@ -1528,6 +1558,18 @@ def build_full(force=False):
     universe_cache = _load_5yr_cache()
     print(f"  {len(universe_cache)} tickers loaded")
 
+    # Load HTF OHLCV caches (weekly + monthly from yfinance)
+    weekly_cache = _load_htf_cache("weekly")
+    monthly_cache = _load_htf_cache("monthly")
+    if weekly_cache:
+        print(f"  Weekly HTF cache: {len(weekly_cache)} tickers")
+    else:
+        print(f"  Weekly HTF cache: not found (will resample from daily)")
+    if monthly_cache:
+        print(f"  Monthly HTF cache: {len(monthly_cache)} tickers")
+    else:
+        print(f"  Monthly HTF cache: not found (will resample from daily)")
+
     # Filter valid tickers
     valid_tickers = {t: df for t, df in universe_cache.items() if len(df) >= 50}
     print(f"  {len(valid_tickers)} tickers with ≥50 bars")
@@ -1544,13 +1586,15 @@ def build_full(force=False):
             "close": df["close"].values,
             "volume": df["volume"].values,
         }
-        work_items.append((ticker, df_dict))
+        weekly_df_dict = _df_to_dict(weekly_cache.get(ticker)) if weekly_cache else None
+        monthly_df_dict = _df_to_dict(monthly_cache.get(ticker)) if monthly_cache else None
+        work_items.append((ticker, df_dict, weekly_df_dict, monthly_df_dict))
 
     # Sort by bar count descending — big tickers first, short ones fill gaps
     work_items.sort(key=lambda x: len(x[1]["date"]), reverse=True)
 
     # Free the large caches — work_items has everything we need now
-    del universe_cache, valid_tickers
+    del universe_cache, valid_tickers, weekly_cache, monthly_cache
     import gc; gc.collect()
 
     # Create output directory
@@ -1713,6 +1757,18 @@ def append_new_bars():
     universe_cache = _load_5yr_cache()
     print(f"  {len(universe_cache)} tickers in OHLCV cache")
 
+    # Load HTF OHLCV caches (weekly + monthly from yfinance)
+    weekly_cache = _load_htf_cache("weekly")
+    monthly_cache = _load_htf_cache("monthly")
+    if weekly_cache:
+        print(f"  Weekly HTF cache: {len(weekly_cache)} tickers")
+    else:
+        print(f"  Weekly HTF cache: not found (will resample from daily)")
+    if monthly_cache:
+        print(f"  Monthly HTF cache: {len(monthly_cache)} tickers")
+    else:
+        print(f"  Monthly HTF cache: not found (will resample from daily)")
+
     # Find tickers that need updating
     cached_tickers = manifest.get("tickers", {})
     work_append = []  # (ticker, df_dict, existing_n_bars) — extend
@@ -1743,6 +1799,8 @@ def append_new_bars():
 
     if not work_append and not work_new:
         print("  Nothing to do — cache is up to date.")
+        del universe_cache, weekly_cache, monthly_cache
+        import gc; gc.collect()
         return manifest
 
     t0 = time.time()
@@ -1750,48 +1808,23 @@ def append_new_bars():
     updated = 0
     failed = 0
 
-    # ── HTF skip logic ──
-    # Weekly HTF expressions only change when a new weekly bar closes (Monday).
-    # Monthly HTF expressions only change on the first trading day of a new month.
-    # On other days, copy HTF columns from previous cache instead of recomputing.
-    # This skips ~10,466 of 15,805 expressions (~66%) on most days.
-    today = datetime.now()
-    is_monday = today.weekday() == 0
-
-    # Check if this is the first trading day of the month by looking at
-    # the latest dates in the OHLCV data — if the newest bar's month differs
-    # from the previous bar's month, monthly HTF needs recomputing.
-    is_month_start = False
-    try:
-        # Sample a ticker to check dates
-        sample_ticker = next(iter(universe_cache))
-        sample_df = universe_cache[sample_ticker]
-        if len(sample_df) >= 2:
-            last_date = pd.Timestamp(sample_df["date"].iloc[-1])
-            prev_date = pd.Timestamp(sample_df["date"].iloc[-2])
-            is_month_start = last_date.month != prev_date.month
-    except Exception:
-        is_month_start = True  # safe fallback — recompute if unsure
-
-    skip_htf_weekly = not is_monday
-    skip_htf_monthly = not is_month_start
-
-    if skip_htf_weekly or skip_htf_monthly:
-        skipped = []
-        if skip_htf_weekly:
-            skipped.append("weekly (not Monday)")
-        if skip_htf_monthly:
-            skipped.append("monthly (not 1st of month)")
-        print(f"\n  HTF skip: {', '.join(skipped)}")
-        print(f"  (copying from previous cache — values unchanged)")
-    else:
-        print(f"\n  HTF: full recompute (Monday={is_monday}, month_start={is_month_start})")
-
-    # Combine both lists — all tickers use full recompute + direct save.
+    # Build work items with HTF data from pickles
+    # All tickers use full recompute + direct save.
     # _compute_ticker_full recomputes the entire series and returns it.
     # The worker saves compressed to disk (parallel I/O across all cores).
-    # No load+concat needed — the full recompute produces identical output.
-    all_work = [(t, d) for t, d, _ in work_append] + list(work_new)
+    all_work = []
+    for t, d, _ in work_append:
+        weekly_df_dict = _df_to_dict(weekly_cache.get(t)) if weekly_cache else None
+        monthly_df_dict = _df_to_dict(monthly_cache.get(t)) if monthly_cache else None
+        all_work.append((t, d, weekly_df_dict, monthly_df_dict))
+    for t, d in work_new:
+        weekly_df_dict = _df_to_dict(weekly_cache.get(t)) if weekly_cache else None
+        monthly_df_dict = _df_to_dict(monthly_cache.get(t)) if monthly_cache else None
+        all_work.append((t, d, weekly_df_dict, monthly_df_dict))
+
+    # Free the large caches
+    del universe_cache, weekly_cache, monthly_cache
+    import gc; gc.collect()
 
     if all_work:
         label = "Recomputing" if work_append else "Computing"
@@ -1800,7 +1833,7 @@ def append_new_bars():
         with ProcessPoolExecutor(
             max_workers=n_workers,
             initializer=_init_worker,
-            initargs=(expressions, skip_htf_weekly, skip_htf_monthly)
+            initargs=(expressions,)
         ) as pool:
             pending = {}
             work_idx = 0
