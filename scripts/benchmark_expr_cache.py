@@ -1,14 +1,13 @@
 """
-Benchmark v9: HTF intermediates dispatch + pandas rolling_max fix
+Benchmark v9b: HTF intermediates dispatch + HTF ext struct optimization
 
-All prior optimizations (numpy bools, vectorized linreg, ext bool_agg cache,
-targeted slow-op numpy replacements) PLUS:
-- HTF arith: build_numpy_intermediates on HTF engine (cheap on 260/60 bars),
-  dispatch ALL HTF arith ops through dispatch_arith_numpy, fallback to
-  compute_series only for unhandled ops.
-- _rolling_max/_rolling_min: replaced Python for-loops with pandas rolling
-  (14x faster). Fixes ext_ceiling_ratio (133ms → ~10ms) and any HTF ops
-  that need rolling max/min on computed series.
+All prior optimizations PLUS:
+- HTF arith: build_numpy_intermediates on HTF engine, dispatch through
+  dispatch_arith_numpy, fallback for unhandled ops.
+- HTF ext struct: compute base extension series at HTF resolution from
+  intermediates, run vectorized linreg + cached bool_agg at HTF resolution,
+  map results to daily. Eliminates ~2,432 compute_series() calls.
+- _rolling_max/_rolling_min: pandas rolling (14x faster than for-loops).
 
 Usage:
     python scripts/benchmark_expr_cache.py
@@ -1065,13 +1064,123 @@ def benchmark_optimized(ticker, df, expressions):
                     b = htf_bool_cache[htf_base[k]["condition"]]
                     data[:, j] = map_htf_series_to_daily(np_true_in_row(b, htf_base[k]["period"]).astype(np.float32), htf_map)
                 
-                # HTF ext struct — compute_series (small arrays, not worth optimizing)
-                for k, j in htf_ext:
-                    try:
-                        s = compute_series(htf_engine, htf_base[k])
-                        if s is not None:
-                            data[:, j] = map_htf_series_to_daily(np.asarray(s, dtype=np.float32), htf_map)
-                    except: pass
+                # HTF ext struct — optimized at HTF resolution, then mapped to daily
+                if htf_ext:
+                    import json as _json
+                    LINREG_OPS = {"trendline_deviation", "channel_position"}
+                    
+                    # Build HTF-resolution extension series from intermediates
+                    htf_ext_registry = {}
+                    for sname, comp_spec in [
+                        ("ext_avgc50_adr14", {"op": "extension", "ma": "avgc50", "normalizer": "adr14"}),
+                        ("ext_avgc200_adr14", {"op": "extension", "ma": "avgc200", "normalizer": "adr14"}),
+                    ]:
+                        result = dispatch_arith_numpy(comp_spec, htf_im)
+                        if result is not None and not np.all(np.isnan(result)):
+                            htf_ext_registry[sname] = result.astype(np.float64)
+                    
+                    if htf_ext_registry:
+                        # Classify HTF ext struct expressions
+                        ext_linreg = []
+                        ext_bool_agg = []
+                        ext_other = []
+                        for k, j in htf_ext:
+                            comp = htf_base[k]
+                            if comp.get("op") == "on_series":
+                                if comp.get("inner_op", {}).get("op", "") in LINREG_OPS:
+                                    ext_linreg.append((k, j))
+                                else:
+                                    ext_other.append((k, j))
+                            elif comp.get("op") == "on_series_bool_agg":
+                                ext_bool_agg.append((k, j))
+                            else:
+                                ext_other.append((k, j))
+                        
+                        # Linreg — vectorized numpy at HTF resolution
+                        for k, j in ext_linreg:
+                            try:
+                                comp = htf_base[k]
+                                sn = comp.get("series", "")
+                                if sn in htf_ext_registry:
+                                    s = htf_ext_registry[sn]
+                                    lb = comp["inner_op"]["lookback"]
+                                    fn = np_trendline_deviation if comp["inner_op"]["op"] == "trendline_deviation" else np_channel_position
+                                    htf_result = fn(s, lb).astype(np.float32)
+                                    data[:, j] = map_htf_series_to_daily(htf_result, htf_map)
+                            except: pass
+                        
+                        # Bool agg — numpy at HTF resolution
+                        htf_ind_bool_cache = {}
+                        for k, j in ext_bool_agg:
+                            comp = htf_base[k]
+                            ck = (comp["series"], _json.dumps(comp["bool_op"], sort_keys=True))
+                            if ck not in htf_ind_bool_cache:
+                                try:
+                                    sd = htf_ext_registry.get(comp["series"])
+                                    if sd is None:
+                                        htf_ind_bool_cache[ck] = None
+                                        continue
+                                    indicator = compute_on_series(np.asarray(sd, dtype=np.float64), comp["bool_op"])
+                                    threshold = comp["bool_op"].get("threshold", 0)
+                                    direction = comp["bool_op"].get("direction", "gt")
+                                    if direction == "gt": b = indicator > threshold
+                                    elif direction == "lt": b = indicator < threshold
+                                    elif direction == "positive": b = indicator > 0
+                                    elif direction == "negative": b = indicator < 0
+                                    else: b = indicator > threshold
+                                    b[np.isnan(indicator)] = False
+                                    htf_ind_bool_cache[ck] = b.astype(bool)
+                                except:
+                                    htf_ind_bool_cache[ck] = None
+                        
+                        htf_ba_bs_cache = {}
+                        for k, j in ext_bool_agg:
+                            comp = htf_base[k]
+                            if comp["agg_op"] != "since_true": continue
+                            ck = (comp["series"], _json.dumps(comp["bool_op"], sort_keys=True))
+                            if ck in htf_ba_bs_cache or htf_ind_bool_cache.get(ck) is None: continue
+                            b = htf_ind_bool_cache[ck]
+                            bs = np.full(htf_n, htf_n, dtype=np.float64)
+                            for i in range(htf_n):
+                                if b[i]: bs[i] = 0.0
+                                elif i > 0: bs[i] = bs[i-1] + 1.0
+                            htf_ba_bs_cache[ck] = bs
+                        
+                        for k, j in ext_bool_agg:
+                            comp = htf_base[k]
+                            ck = (comp["series"], _json.dumps(comp["bool_op"], sort_keys=True))
+                            b = htf_ind_bool_cache.get(ck)
+                            if b is None: continue
+                            ap = comp["agg_period"]
+                            if comp["agg_op"] == "count_true":
+                                htf_result = np_count_true(b, ap).astype(np.float32)
+                                data[:, j] = map_htf_series_to_daily(htf_result, htf_map)
+                            elif comp["agg_op"] == "since_true":
+                                bs = htf_ba_bs_cache.get(ck)
+                                if bs is not None:
+                                    r = np.full(htf_n, np.nan)
+                                    for i in range(ap - 1, htf_n):
+                                        r[i] = bs[i] if bs[i] < ap else -1.0
+                                    data[:, j] = map_htf_series_to_daily(r.astype(np.float32), htf_map)
+                            elif comp["agg_op"] == "true_in_row":
+                                htf_result = np_true_in_row(b, ap).astype(np.float32)
+                                data[:, j] = map_htf_series_to_daily(htf_result, htf_map)
+                        
+                        # Other on_series ops — compute_series fallback at HTF resolution
+                        for k, j in ext_other:
+                            try:
+                                s = compute_series(htf_engine, htf_base[k], series_registry=htf_ext_registry)
+                                if s is not None:
+                                    data[:, j] = map_htf_series_to_daily(np.asarray(s, dtype=np.float32), htf_map)
+                            except: pass
+                    else:
+                        # No base series available — fallback all to compute_series
+                        for k, j in htf_ext:
+                            try:
+                                s = compute_series(htf_engine, htf_base[k])
+                                if s is not None:
+                                    data[:, j] = map_htf_series_to_daily(np.asarray(s, dtype=np.float32), htf_map)
+                            except: pass
                 
                 print(f"\n  HTF {freq} sub-phases:")
                 print(f"    resample+map:  {t_resample*1000:.0f}ms")
@@ -1128,7 +1237,7 @@ def compare_outputs(data_orig, data_opt, expressions, indices):
 
 def main():
     print("\n" + "=" * 70)
-    print("  EXPRESSION CACHE — BENCHMARK v9 (HTF intermediates dispatch)")
+    print("  EXPRESSION CACHE — BENCHMARK v9b (HTF intermediates + HTF ext struct)")
     print("=" * 70)
     expressions = _load_expressions()
     _init_worker(expressions)
