@@ -277,11 +277,13 @@ Task H Phase 3 (incremental append)               -- IN PROGRESS (2026-03-28)
                                                         - Rewire nightly.py: yfinance freshness check,
                                                           new weekly/monthly cache steps (10 steps total)
                                                       Increment 2: True incremental expr cache append
-                                                        - Load existing .npz, compute only new bar(s)
-                                                        - Truncated daily window (~504 bars)
-                                                        - HTF from pickles (not resampled)
-                                                        - Overwrite current week/month HTF columns
-                                                        - Target: 2-5 min nightly for 10.5K tickers
+                                                        - Load existing .npz + full daily OHLCV
+                                                        - Build ExpressionEngine, set_target to last bar
+                                                        - engine.compute(expr) for each expression → one value
+                                                        - LSP + algo detectors on full OHLCV → last bar values
+                                                        - HTF from pickles: overwrite current week/month columns
+                                                        - Append one row to existing .npz, save
+                                                        - Target: 2-5 min nightly
     |
 First full rebuild with HTF pickles                -- run once to establish baseline cache
     |
@@ -331,4 +333,19 @@ Switch nightly to incremental append               -- after verification passes
 - Steps 5-10: expr cache, matrix, earnings, market, fundamentals, seed vault
 - Railway only for earnings (step 7, broken) and seed vault (step 10)
 
-**STATUS:** Increment 1 DONE. HTF cache build running. Next: run full expr cache rebuild with HTF pickles (`expr_cache_builder.py --build --force`), verify examples pass, then build Increment 2 (true incremental append).
+**STATUS:** Increment 1 DONE.
+
+**HTF cache initial build results (2026-03-28):**
+- Weekly: 9,621 ok, 1,235 failed
+- Monthly: 8,541 ok, 2,315 failed
+- Failures are tickers yfinance can't return weekly/monthly data for (delisted, thin, etc.)
+
+**HTF cache refactor (2026-03-28):**
+Unified `_build_htf_cache` + `_append_htf_cache` into single `_sync_htf_cache(full_sweep)`.
+- `full_sweep=True` (CLI `--htf`): updates stale tickers AND fetches missing ones (10yr)
+- `full_sweep=False` (nightly steps 3-4): only updates existing tickers with recent bars
+- Skips already-current tickers (compares last date to SPY's last date)
+- Eliminates the old three-mode problem (build/append/retry were separate code paths)
+- `build_htf_caches()` → `full_sweep=True`. `append_weekly()`/`append_monthly()` → `full_sweep=False`.
+
+**NEXT:** Run `--htf` to fill the 1,235/2,315 gaps. Then full expr cache rebuild (`--build --force`), verify examples pass, then Increment 2 (true incremental append).
