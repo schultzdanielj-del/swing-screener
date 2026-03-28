@@ -1014,23 +1014,22 @@ def _compute_ticker_full(args):
         # Allocate output array
         data = np.full((n_bars, n_exprs), np.nan, dtype=np.float32)
 
-        # ── 1. Daily expressions (optimized two-phase dispatch) ──
-        # Split daily indices into arith vs bool
+        # ── 1. Daily expressions ──
+        # Split into: SLOW_OPS (custom numpy), regular arith (compute_series), bools (numpy)
         arith_indices = [j for j in _w_daily_indices if _w_expressions[j]["compute"].get("op") not in BOOL_OPS]
-        
-        # Phase A: SLOW_OPS — custom numpy implementations (warms engine cache)
         slow_indices = [j for j in arith_indices if _w_expressions[j]["compute"]["op"] in SLOW_OPS]
         rest_indices = [j for j in arith_indices if _w_expressions[j]["compute"]["op"] not in SLOW_OPS]
-        
+
+        # SLOW_OPS — custom numpy replacements (biggest per-expression wins)
         c_vals = engine.c.values.astype(np.float64)
         h_vals = engine.h.values.astype(np.float64)
         l_vals = engine.l.values.astype(np.float64)
         v_vals = engine.v.values.astype(np.float64)
-        
+
         pct_rank_cache = {}
         swing_high_arr = None
         swing_low_arr = None
-        
+
         for j in slow_indices:
             comp = _w_expressions[j]["compute"]
             op = comp["op"]
@@ -1083,29 +1082,20 @@ def _compute_ticker_full(args):
                     data[:, j] = np_trend_swing_count(swing_low_arr, l_vals, p, direction, n_bars).astype(np.float32)
             except:
                 pass
-        
-        # Phase B: build intermediates from warm engine cache, dispatch remaining arith
-        daily_im = build_numpy_intermediates(engine)
+
+        # Regular arith — original compute_series with engine lazy caching
         for j in rest_indices:
-            comp = _w_expressions[j]["compute"]
             try:
-                result = dispatch_arith_numpy(comp, daily_im)
-                if result is not None:
-                    data[:, j] = result.astype(np.float32)
-                else:
-                    s = compute_series(engine, comp)
-                    if s is not None:
-                        arr = np.asarray(s, dtype=np.float32)
-                        if len(arr) == n_bars: data[:, j] = arr
+                series = compute_series(engine, _w_expressions[j]["compute"])
+                if series is not None:
+                    arr = np.asarray(series, dtype=np.float32)
+                    if len(arr) == n_bars:
+                        data[:, j] = arr
+                    elif len(arr) < n_bars:
+                        data[n_bars - len(arr):, j] = arr
             except:
-                try:
-                    s = compute_series(engine, comp)
-                    if s is not None:
-                        arr = np.asarray(s, dtype=np.float32)
-                        if len(arr) == n_bars: data[:, j] = arr
-                except: pass
-        del daily_im  # free intermediates
-        
+                pass
+
         # Daily booleans — numpy optimized
         ct = [j for j in _w_daily_indices if _w_expressions[j]["compute"].get("op") == "count_true"]
         st = [j for j in _w_daily_indices if _w_expressions[j]["compute"].get("op") == "since_true"]
