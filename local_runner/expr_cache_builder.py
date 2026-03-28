@@ -1488,6 +1488,9 @@ def build_full(force=False):
         }
         work_items.append((ticker, df_dict))
 
+    # Sort by bar count descending — big tickers first, short ones fill gaps
+    work_items.sort(key=lambda x: len(x[1]["date"]), reverse=True)
+
     # Free the large caches — work_items has everything we need now
     del universe_cache, valid_tickers
     import gc; gc.collect()
@@ -1511,8 +1514,7 @@ def build_full(force=False):
         initargs=(expressions,)
     ) as pool:
         # TRUE chunked submission: only n_workers*2 items in flight at a time.
-        # Each result is saved to disk and discarded immediately to minimize memory.
-        # This prevents OOM from queued futures holding large numpy arrays.
+        # Workers save to disk in-process — no 83MB array transfer through IPC.
         max_in_flight = n_workers * 2
         pending = {}
         work_idx = 0
@@ -1523,23 +1525,22 @@ def build_full(force=False):
             nonlocal work_idx
             if work_idx < len(work_items):
                 item = work_items[work_idx]
-                future = pool.submit(_compute_ticker_full, item)
+                future = pool.submit(_compute_and_save_ticker, item)
                 pending[future] = item[0]  # ticker name
                 work_idx += 1
                 return True
             return False
 
         def _collect_one(future):
-            """Collect one result, save to disk, free memory."""
+            """Collect one result metadata, free memory."""
             nonlocal completed, failed
             ticker = pending.pop(future)
             try:
-                ticker_out, dates, data = future.result()
-                if dates is not None and data is not None:
-                    save_ticker_cache(ticker_out, dates, data)
+                ticker_out, n_bars, last_date = future.result()
+                if ticker_out is not None:
                     ticker_info[ticker_out] = {
-                        "n_bars": len(dates),
-                        "last_date": str(dates[-1]),
+                        "n_bars": n_bars,
+                        "last_date": last_date,
                     }
                 else:
                     failed += 1
