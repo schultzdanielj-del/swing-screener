@@ -527,128 +527,71 @@ def _merge_htf_bars(existing_df, new_df):
     return existing_df
 
 
-def _build_htf_cache(interval, output_file, meta_file, label):
-    """Full build for one HTF timeframe.
+def _sync_htf_cache(interval, output_file, meta_file, label, recent_period,
+                    full_sweep=False):
+    """Unified HTF cache sync.
 
-    Downloads 10yr of data for all tickers in batches to avoid rate limiting.
-    10yr gives enough lookback for weekly expressions (200-period SMA needs
-    ~4yr of weekly bars, plus warmup). Ticker list from 5yr daily cache keys.
+    full_sweep=False (nightly): only update existing tickers with recent bars.
+    full_sweep=True  (--htf CLI): also fetch missing tickers (full 10yr).
     """
-    print(f"\n  {'=' * 50}")
-    print(f"  {label} OHLCV CACHE — Full Build")
-    print(f"  {'=' * 50}")
+    mode = "Full Sweep" if full_sweep else "Append"
+    print(f"\n  {label} OHLCV Cache — {mode}")
 
     if not os.path.exists(CACHE_5YR_FILE):
         raise FileNotFoundError(
             f"Daily 5yr cache not found: {CACHE_5YR_FILE}\n"
             "  Run cache_builder.py --5yr first."
         )
+
+    # Load existing HTF cache (empty dict if first build)
+    universe = {}
+    if os.path.exists(output_file):
+        with open(output_file, "rb") as f:
+            universe = pickle.load(f)
+        print(f"  Existing cache: {len(universe)} tickers")
+    else:
+        if not full_sweep:
+            print(f"  No existing cache. Run --htf first.")
+            return {}
+        print(f"  No existing cache — building from scratch")
+
+    # Get full ticker list from 5yr daily cache
     with open(CACHE_5YR_FILE, "rb") as f:
         daily_cache = pickle.load(f)
-    tickers = list(daily_cache.keys())
+    all_tickers = list(daily_cache.keys())
     del daily_cache
-    print(f"  {len(tickers)} tickers to fetch")
 
-    t0 = time.time()
-    universe = {}
-    failed = []
-    n_batches = (len(tickers) + HTF_BATCH_SIZE - 1) // HTF_BATCH_SIZE
+    # Classify tickers
+    # Only update existing tickers that are stale (last date < reference date)
+    to_update = []
+    skipped = 0
+    if universe:
+        ref_ticker = "SPY" if "SPY" in universe else next(iter(universe))
+        ref_last = str(universe[ref_ticker]["date"].iloc[-1])[:10]
+        for t in all_tickers:
+            if t not in universe:
+                continue
+            t_last = str(universe[t]["date"].iloc[-1])[:10]
+            if t_last < ref_last:
+                to_update.append(t)
+            else:
+                skipped += 1
 
-    for batch_idx in range(n_batches):
-        batch_start = batch_idx * HTF_BATCH_SIZE
-        batch_end = min(batch_start + HTF_BATCH_SIZE, len(tickers))
-        batch = tickers[batch_start:batch_end]
+    to_fetch = [t for t in all_tickers if t not in universe] if full_sweep else []
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {
-                pool.submit(_yf_download, t, "10y", interval): t
-                for t in batch
-            }
-            for future in as_completed(futures):
-                ticker, df = future.result()
-                if df is not None:
-                    universe[ticker] = df
-                else:
-                    failed.append(ticker)
-
-        done = batch_end
-        elapsed = time.time() - t0
-        rate = done / elapsed if elapsed > 0 else 0
-        eta = (len(tickers) - done) / rate if rate > 0 else 0
-        print(f"    {done:,}/{len(tickers):,} "
-              f"({len(universe):,} ok, {len(failed)} failed) "
-              f"[{elapsed/60:.1f}m elapsed, ~{eta/60:.1f}m left]")
-
-        # Sleep between batches to avoid rate limiting
-        if batch_idx < n_batches - 1:
-            time.sleep(HTF_BATCH_SLEEP)
-
-    elapsed = time.time() - t0
-
-    # Save
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    with open(output_file, "wb") as f:
-        pickle.dump(universe, f, protocol=pickle.HIGHEST_PROTOCOL)
-    with open(meta_file, "w") as f:
-        f.write(datetime.now().isoformat())
-
-    size_mb = os.path.getsize(output_file) / 1024 / 1024
-    print(f"\n  {label} build complete:")
-    print(f"    Tickers: {len(universe):,} ok, {len(failed)} failed")
-    print(f"    File: {output_file} ({size_mb:.1f} MB)")
-    print(f"    Time: {elapsed:.0f}s ({elapsed/60:.1f} min)")
-
-    if failed and len(failed) <= 20:
-        print(f"    Failed: {', '.join(failed[:20])}")
-
-    return universe
-
-
-def _append_htf_cache(interval, output_file, meta_file, label, recent_period):
-    """Nightly append for one HTF timeframe.
-
-    For each ticker in the existing cache:
-    - Fetch recent bars from yfinance
-    - Merge: overwrite partial period, append new closed periods
-
-    New tickers (in 5yr daily but not in HTF cache) get full 5yr fetch.
-    """
-    print(f"\n  {label} OHLCV Cache — Append")
-
-    if not os.path.exists(output_file):
-        print(f"  No existing {label.lower()} cache. Running full build...")
-        return _build_htf_cache(interval, output_file, meta_file, label)
-
-    # Load existing
-    with open(output_file, "rb") as f:
-        universe = pickle.load(f)
-    print(f"  {len(universe)} tickers in cache")
-
-    # Check for new tickers from 5yr daily cache
-    try:
-        if os.path.exists(CACHE_5YR_FILE):
-            with open(CACHE_5YR_FILE, "rb") as f:
-                daily_cache = pickle.load(f)
-            all_tickers = list(daily_cache.keys())
-            del daily_cache
-            new_tickers = [t for t in all_tickers if t not in universe]
-        else:
-            new_tickers = []
-    except Exception:
-        new_tickers = []
-
-    to_update = list(universe.keys())
-
-    print(f"  Tickers to update: {len(to_update)}")
-    if new_tickers:
-        print(f"  New tickers (full fetch): {len(new_tickers)}")
+    print(f"  Total tickers: {len(all_tickers)}")
+    print(f"  Already current: {skipped}")
+    print(f"  To update (stale): {len(to_update)}")
+    if full_sweep:
+        print(f"  To fetch (missing): {len(to_fetch)}")
 
     t0 = time.time()
     updated = 0
     no_change = 0
+    new_added = 0
     failed = 0
 
-    # Update existing tickers — fetch recent bars
+    # Update stale existing tickers — fetch recent bars
     if to_update:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             futures = {
@@ -678,16 +621,20 @@ def _append_htf_cache(interval, output_file, meta_file, label, recent_period):
 
                 if done % 500 == 0 or done == len(to_update):
                     elapsed = time.time() - t0
-                    print(f"    {done:,}/{len(to_update):,} checked "
+                    print(f"    Update: {done:,}/{len(to_update):,} "
                           f"({updated} updated, {no_change} current, {failed} failed) "
                           f"[{elapsed:.0f}s]")
 
-    # Full fetch for new tickers
-    new_added = 0
-    if new_tickers:
-        print(f"\n  Fetching {len(new_tickers)} new tickers...")
-        for batch_start in range(0, len(new_tickers), HTF_BATCH_SIZE):
-            batch = new_tickers[batch_start:batch_start + HTF_BATCH_SIZE]
+    # Full 10yr fetch for missing tickers (only in full_sweep mode)
+    fetch_failed = 0
+    if to_fetch:
+        print(f"\n  Fetching {len(to_fetch)} missing tickers (10yr)...")
+        n_batches = (len(to_fetch) + HTF_BATCH_SIZE - 1) // HTF_BATCH_SIZE
+        for batch_idx in range(n_batches):
+            batch_start = batch_idx * HTF_BATCH_SIZE
+            batch_end = min(batch_start + HTF_BATCH_SIZE, len(to_fetch))
+            batch = to_fetch[batch_start:batch_end]
+
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
                 futures = {
                     pool.submit(_yf_download, t, "10y", interval): t
@@ -701,56 +648,75 @@ def _append_htf_cache(interval, output_file, meta_file, label, recent_period):
                             universe[ticker] = df
                             new_added += 1
                         else:
-                            failed += 1
+                            fetch_failed += 1
                     except Exception:
-                        failed += 1
-            if batch_start + HTF_BATCH_SIZE < len(new_tickers):
+                        fetch_failed += 1
+
+            done = batch_end
+            elapsed = time.time() - t0
+            rate = done / elapsed if elapsed > 0 else 0
+            eta = (len(to_fetch) - done) / rate if rate > 0 else 0
+            print(f"    Fetch: {done:,}/{len(to_fetch):,} "
+                  f"({new_added} ok, {fetch_failed} failed) "
+                  f"[{elapsed/60:.1f}m elapsed, ~{eta/60:.1f}m left]")
+
+            if batch_idx < n_batches - 1:
                 time.sleep(HTF_BATCH_SLEEP)
+    failed += fetch_failed
 
     elapsed = time.time() - t0
 
     # Save
+    os.makedirs(CACHE_DIR, exist_ok=True)
     with open(output_file, "wb") as f:
         pickle.dump(universe, f, protocol=pickle.HIGHEST_PROTOCOL)
     with open(meta_file, "w") as f:
         f.write(datetime.now().isoformat())
 
     size_mb = os.path.getsize(output_file) / 1024 / 1024
-    print(f"  {label} append: {updated} updated, {new_added} new, "
-          f"{no_change} unchanged, {failed} failed ({elapsed:.0f}s, {size_mb:.1f} MB)")
+    print(f"\n  {label} sync complete:")
+    print(f"    Total in cache: {len(universe):,}")
+    print(f"    Updated: {updated}, New: {new_added}, "
+          f"Unchanged: {no_change}, Failed: {failed}")
+    print(f"    File: {output_file} ({size_mb:.1f} MB)")
+    print(f"    Time: {elapsed:.0f}s ({elapsed/60:.1f} min)")
 
     return universe
 
 
 def build_htf_caches():
-    """Full build of both weekly and monthly OHLCV caches."""
+    """Full sweep of both weekly and monthly OHLCV caches."""
     print("\n" + "=" * 60)
-    print("  HTF CACHE BUILDER — Weekly + Monthly OHLCV from yfinance")
+    print("  HTF CACHE — Weekly + Monthly OHLCV from yfinance")
     print("=" * 60)
 
-    _build_htf_cache("1wk", WEEKLY_FILE, WEEKLY_META, "WEEKLY")
-    _build_htf_cache("1mo", MONTHLY_FILE, MONTHLY_META, "MONTHLY")
+    _sync_htf_cache("1wk", WEEKLY_FILE, WEEKLY_META, "WEEKLY", "1mo",
+                    full_sweep=True)
+    _sync_htf_cache("1mo", MONTHLY_FILE, MONTHLY_META, "MONTHLY", "3mo",
+                    full_sweep=True)
 
 
 def append_weekly():
     """Nightly append for weekly cache."""
-    return _append_htf_cache(
+    return _sync_htf_cache(
         interval="1wk",
         output_file=WEEKLY_FILE,
         meta_file=WEEKLY_META,
         label="Weekly",
-        recent_period="1mo"  # last month covers current + recently closed weeks
+        recent_period="1mo",
+        full_sweep=False,
     )
 
 
 def append_monthly():
     """Nightly append for monthly cache."""
-    return _append_htf_cache(
+    return _sync_htf_cache(
         interval="1mo",
         output_file=MONTHLY_FILE,
         meta_file=MONTHLY_META,
         label="Monthly",
-        recent_period="3mo"  # last 3 months covers current + recently closed months
+        recent_period="3mo",
+        full_sweep=False,
     )
 
 
