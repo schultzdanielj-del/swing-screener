@@ -1495,8 +1495,8 @@ def build_full(force=False):
     # Create output directory
     os.makedirs(EXPR_CACHE_DIR, exist_ok=True)
 
-    # Parallel computation — 8 workers matches benchmark tuning
-    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 8))
+    # Parallel computation
+    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", max(cpu_count() - 1, 1)))
     print(f"\n  Computing {len(work_items)} tickers × {len(expressions)} expressions")
     print(f"  Workers: {n_workers}")
 
@@ -1687,7 +1687,7 @@ def append_new_bars():
         return manifest
 
     t0 = time.time()
-    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 8))
+    n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", max(cpu_count() - 1, 1)))
     updated = 0
     failed = 0
 
