@@ -48,8 +48,10 @@ $(cat "$REPO_ROOT/$file")
     fi
 done <<< "$CHANGED"
 
-# Run the audit
-RESULT=$(claude -p "You are a code auditor for ScanPerfect, a quantitative swing trading screener.
+# Write the prompt to a temp file to avoid "argument list too long" errors
+PROMPT_FILE="$(mktemp)"
+cat > "$PROMPT_FILE" << PROMPT_END
+You are a code auditor for ScanPerfect, a quantitative swing trading screener.
 
 YOUR ROLE: You evaluate code. You do NOT write code. You do NOT suggest fixes. You do NOT say 'consider doing X.' You ONLY evaluate and report PASS or FAIL with evidence.
 
@@ -139,7 +141,13 @@ $FULL_FILES
 
 SPECIFICATION DOCUMENTS:
 $SPEC_CONTENT
-")
+PROMPT_END
+
+# Run the audit by piping the prompt file to claude
+RESULT=$(cat "$PROMPT_FILE" | claude -p)
+
+# Clean up temp file
+rm -f "$PROMPT_FILE"
 
 # Output
 echo ""
