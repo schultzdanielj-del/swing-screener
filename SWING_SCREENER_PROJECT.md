@@ -54,7 +54,7 @@ Everything runs locally on Dan's desktop (i5-12600k, 32GB RAM, Windows).
 
 ```
 scanperfect.py             # PySide6 native desktop app (THE interface)
-audit.sh                   # Code auditor — separate Claude instance reviews every change
+audit.py                   # Code auditor — separate Claude instance reviews every change
 
 local_runner/              # Grinder system
 ├── nightly.py             # 9-step nightly pipeline (4:30pm ET)
@@ -100,7 +100,7 @@ app/                       # HTML UI (LEGACY — replaced by scanperfect.py)
 
 ## CODE AUDITOR
 
-`audit.sh` — runs a separate Claude Code instance (`claude -p`) that evaluates every code change against spec docs and project-wide rules. Checks four criteria: purpose, spec compliance, regression safety, and code quality. Returns PASS or FAIL with evidence.
+`audit.py` — runs a separate Claude Code instance (`claude -p`) that evaluates every code change against spec docs and project-wide rules. Checks four criteria: purpose, spec compliance, regression safety, and code quality. Returns PASS or FAIL with evidence.
 
 Git hooks (local, not in repo):
 - **post-commit** — fires on every local commit (Claude Code workflow)
