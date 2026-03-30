@@ -638,15 +638,19 @@ def _merge_htf_bars(existing_df, new_df):
     return existing_df
 
 
-def _sync_htf_cache(interval, output_file, meta_file, label, recent_start,
+def _sync_htf_cache(interval, output_file, meta_file, label,
                     full_sweep=False):
     """Unified HTF cache sync.
 
-    full_sweep=False (nightly): only update existing tickers with recent bars.
-    full_sweep=True  (--htf CLI): also fetch missing tickers (from HISTORY_START).
+    full_sweep=False (nightly append): fetch new bars for each ticker starting
+        from the day after its own last cached bar. Uses _merge_htf_bars to
+        append only — history is known-good in this path.
+    full_sweep=True  (--htf CLI): fetch full history from HISTORY_START for
+        every stale or missing ticker. Fully replaces existing data — no merge.
+        Eliminates any gaps or corrupted history.
 
-    Args:
-        recent_start: explicit start date for stale ticker updates (e.g. 30 days ago)
+    No arbitrary lookback windows. All fetches are anchored to HISTORY_START
+    or to each ticker's own last cached bar date.
     """
     mode = "Full Sweep" if full_sweep else "Append"
     print(f"\n  {label} OHLCV Cache — {mode}")
@@ -679,28 +683,28 @@ def _sync_htf_cache(interval, output_file, meta_file, label, recent_start,
     del daily_cache
 
     # Classify tickers
-    # Only update existing tickers that are stale (last date < reference date)
-    to_update = []
+    to_work = []  # tickers that need fetching
     skipped = 0
     if universe:
         ref_ticker = "SPY" if "SPY" in universe else next(iter(universe))
         ref_last = str(universe[ref_ticker]["date"].iloc[-1])[:10]
         for t in all_tickers:
             if t not in universe:
-                continue
-            t_last = str(universe[t]["date"].iloc[-1])[:10]
-            if t_last < ref_last:
-                to_update.append(t)
+                if full_sweep:
+                    to_work.append(t)  # missing — fetch from HISTORY_START
             else:
-                skipped += 1
-
-    to_fetch = [t for t in all_tickers if t not in universe] if full_sweep else []
+                t_last = str(universe[t]["date"].iloc[-1])[:10]
+                if t_last < ref_last:
+                    to_work.append(t)  # stale — needs update
+                else:
+                    skipped += 1
+    else:
+        # No existing cache — all tickers need fetching
+        to_work = list(all_tickers)
 
     print(f"  Total tickers: {len(all_tickers)}")
     print(f"  Already current: {skipped}")
-    print(f"  To update (stale): {len(to_update)}")
-    if full_sweep:
-        print(f"  To fetch (missing): {len(to_fetch)}")
+    print(f"  To fetch: {len(to_work)}")
 
     t0 = time.time()
     updated = 0
@@ -708,46 +712,57 @@ def _sync_htf_cache(interval, output_file, meta_file, label, recent_start,
     new_added = 0
     failed = 0
 
-    # Update stale existing tickers — fetch recent bars using explicit start date
-    if to_update:
-        def _update_one(ticker):
-            return _yf_download(ticker, recent_start, interval)
+    if to_work:
+        if full_sweep:
+            # Full sweep: fetch from HISTORY_START, fully replace existing data
+            def _fetch_full(ticker):
+                return _yf_download(ticker, HISTORY_START, interval)
 
-        update_results, update_failed = _batched_fetch(
-            to_update, fetch_fn=_update_one, label=f"{label} update",
-        )
-        failed += len(update_failed)
+            results, failed_list = _batched_fetch(
+                to_work, fetch_fn=_fetch_full, label=f"{label} fetch",
+            )
+            failed += len(failed_list)
 
-        for ticker, new_df in update_results.items():
-            if len(new_df) > 0:
-                old_len = len(universe[ticker])
-                old_last = str(universe[ticker]["date"].iloc[-1])[:10]
-                universe[ticker] = _merge_htf_bars(universe[ticker], new_df)
-                new_len = len(universe[ticker])
-                new_last = str(universe[ticker]["date"].iloc[-1])[:10]
-                if new_len != old_len or new_last != old_last:
-                    updated += 1
+            for ticker, df in results.items():
+                if len(df) >= 3:
+                    if ticker in universe:
+                        universe[ticker] = df
+                        updated += 1
+                    else:
+                        universe[ticker] = df
+                        new_added += 1
+
+        else:
+            # Nightly append: fetch from day after each ticker's own last bar
+            # History is known-good — use _merge_htf_bars to append only
+            last_dates = {
+                t: str(universe[t]["date"].iloc[-1])[:10]
+                for t in to_work if t in universe
+            }
+
+            def _append_one(ticker):
+                after = last_dates.get(ticker, HISTORY_START)
+                start = (pd.Timestamp(after) + timedelta(days=1)).strftime("%Y-%m-%d")
+                return _yf_download(ticker, start, interval)
+
+            results, failed_list = _batched_fetch(
+                to_work, fetch_fn=_append_one, label=f"{label} append",
+            )
+            failed += len(failed_list)
+
+            for ticker, new_df in results.items():
+                if len(new_df) > 0:
+                    old_len = len(universe[ticker])
+                    old_last = str(universe[ticker]["date"].iloc[-1])[:10]
+                    universe[ticker] = _merge_htf_bars(universe[ticker], new_df)
+                    new_len = len(universe[ticker])
+                    new_last = str(universe[ticker]["date"].iloc[-1])[:10]
+                    if new_len != old_len or new_last != old_last:
+                        updated += 1
+                    else:
+                        no_change += 1
                 else:
                     no_change += 1
-            else:
-                no_change += 1
-
-    # Full fetch for missing tickers (only in full_sweep mode)
-    if to_fetch:
-        print(f"\n  Fetching {len(to_fetch)} missing tickers (start={HISTORY_START})...")
-
-        def _fetch_htf(ticker):
-            return _yf_download(ticker, HISTORY_START, interval)
-
-        fetch_results, fetch_failed_list = _batched_fetch(
-            to_fetch, fetch_fn=_fetch_htf, label=f"{label} fetch",
-        )
-        failed += len(fetch_failed_list)
-
-        for ticker, df in fetch_results.items():
-            if len(df) >= 3:
-                universe[ticker] = df
-                new_added += 1
 
     elapsed = time.time() - t0
 
@@ -770,43 +785,47 @@ def _sync_htf_cache(interval, output_file, meta_file, label, recent_start,
 
 
 def build_htf_caches():
-    """Full sweep of both weekly and monthly OHLCV caches."""
+    """Full sweep of both weekly and monthly OHLCV caches.
+
+    Fetches full history from HISTORY_START for all stale or missing tickers.
+    Fully replaces existing data — no windows, no arbitrary lookbacks.
+    """
     print("\n" + "=" * 60)
     print("  HTF CACHE — Weekly + Monthly OHLCV from yfinance")
     print("=" * 60)
 
-    # For stale updates during full sweep, fetch last 60 days
-    recent = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
-    _sync_htf_cache("1wk", WEEKLY_FILE, WEEKLY_META, "WEEKLY", recent,
+    _sync_htf_cache("1wk", WEEKLY_FILE, WEEKLY_META, "WEEKLY",
                     full_sweep=True)
-    _sync_htf_cache("1mo", MONTHLY_FILE, MONTHLY_META, "MONTHLY", recent,
+    _sync_htf_cache("1mo", MONTHLY_FILE, MONTHLY_META, "MONTHLY",
                     full_sweep=True)
 
 
 def append_weekly():
-    """Nightly append for weekly cache."""
-    # Fetch last 60 days to catch any missed bars
-    recent = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
+    """Nightly append for weekly cache.
+
+    Fetches new bars for each ticker from the day after its own last cached bar.
+    No windows — anchored entirely to each ticker's own data.
+    """
     return _sync_htf_cache(
         interval="1wk",
         output_file=WEEKLY_FILE,
         meta_file=WEEKLY_META,
         label="Weekly",
-        recent_start=recent,
         full_sweep=False,
     )
 
 
 def append_monthly():
-    """Nightly append for monthly cache."""
-    # Fetch last 120 days to catch any missed bars
-    recent = (datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d")
+    """Nightly append for monthly cache.
+
+    Fetches new bars for each ticker from the day after its own last cached bar.
+    No windows — anchored entirely to each ticker's own data.
+    """
     return _sync_htf_cache(
         interval="1mo",
         output_file=MONTHLY_FILE,
         meta_file=MONTHLY_META,
         label="Monthly",
-        recent_start=recent,
         full_sweep=False,
     )
 
