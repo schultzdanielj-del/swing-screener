@@ -359,12 +359,13 @@ SPECIFICATION DOCUMENTS:
 
         # shell=True needed on Windows to find claude.cmd
         # Read from file instead of stdin to avoid encoding issues
-        result = subprocess.run(
         cmd = "claude -p < " + chr(34) + prompt_file + chr(34)
+        result = subprocess.run(
             cmd,
             capture_output=True, text=True, cwd=REPO_ROOT, timeout=300,
             shell=True, env=env
         )
+        output = result.stdout.strip()
         output = result.stdout.strip()
     except FileNotFoundError:
         print("  ERROR: 'claude' command not found.")
