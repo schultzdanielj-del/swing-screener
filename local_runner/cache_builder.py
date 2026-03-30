@@ -5,6 +5,7 @@ Usage:
     python local_runner/cache_builder.py [--force]
     python local_runner/cache_builder.py --daily [--force]
     python local_runner/cache_builder.py --htf [--force]
+    python local_runner/cache_builder.py --all [--force]    # daily + weekly + monthly
 
 Stores:
   - local_runner/cache/universe_ohlcv.pkl — 300-bar daily cache (legacy)
@@ -864,12 +865,19 @@ def check_yfinance_freshness():
 
 if __name__ == "__main__":
     force = "--force" in sys.argv
+    mode_all = "--all" in sys.argv
     mode_daily = "--daily" in sys.argv or "--5yr" in sys.argv  # accept legacy flag
     mode_htf = "--htf" in sys.argv
     mode_htf_status = "--htf-status" in sys.argv
 
     if mode_htf_status:
         htf_status()
+    elif mode_all:
+        data = build_daily_cache(force=force)
+        print(f"Daily cache ready: {len(data)} tickers")
+        del data  # free memory before HTF
+        import gc; gc.collect()
+        build_htf_caches()
     elif mode_htf:
         build_htf_caches()
     elif mode_daily:
