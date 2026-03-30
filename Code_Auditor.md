@@ -46,26 +46,26 @@ Log in via browser, then close.
 From any terminal (Command Prompt, PowerShell, or Git Bash) in the repo directory:
 
 ```
-python audit.py
+python audit.py          # audit just the last commit (default)
+python audit.py --all    # audit everything since last audit
 ```
 
-That's it. No flags, no arguments. Works from any terminal.
+Default mode audits the most recent commit only — fast, cheap, use it on anything you're not sure about.
 
-### First run
-No audit history exists, so it diffs HEAD~1 (just the last commit). After that, it tracks state.
+Batch mode (`--all`) diffs from the last audited commit to HEAD. Use it after a big block of work to catch everything at once.
 
 ### After Claude pushes code from chat
 Pull first, then audit:
 ```
-git pull origin v2
+git pull
 python audit.py
 ```
 
 ### If it FAILs
-The auditor does NOT advance its bookmark on FAIL. Fix the issues, commit, and run `python audit.py` again. It will re-audit from the same starting point, catching both the original problems and your fixes.
+The auditor does NOT advance its bookmark on FAIL. Fix the issues, commit, and run `python audit.py` again.
 
-### Force re-audit
-Delete the state file to start fresh:
+### Force re-audit from scratch
+Delete the state file:
 ```
 del local_runner\cache\last_audited_commit.txt
 python audit.py
