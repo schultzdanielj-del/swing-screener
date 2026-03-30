@@ -102,39 +102,63 @@ def find_downstream_consumers(changed_files, depmap_content):
 
 
 def map_to_specs(changed_files):
-    """Map changed files to their spec documents."""
+    """Map changed files to their governing spec documents.
+    
+    Each component maps to EVERY spec that defines contracts it participates in:
+    - The spec that describes its own behavior
+    - Specs that define formats it reads (input contracts)
+    - Specs that define formats it writes (output contracts)
+    
+    DATA_CONTRACT.md is always included (sent separately in the prompt).
+    """
     changed_str = "\n".join(changed_files)
     specs = set()
 
-    mappings = [
-        (r"expr_cache_builder|vectorized_cache_builder|vectorized_dispatch|vectorized_indicators", "EXPRESSION_ENGINE_V2.md"),
-        (r"scanperfect\.py", "UI_FLOW.md"),
-        (r"nightly\.py", "NIGHTLY_REFRESH.md"),
-        (r"nightly\.py", "LOCALIZE.md"),
-        (r"seed_vault", "LOCALIZE.md"),
-        (r"pyramid_grinder|signal_grinder|spiderweb", "SIGNAL_GRINDER.md"),
-        (r"refinement", "REFINEMENT_GRINDER.md"),
-        (r"ev_grinder|ev_tree_scorer", "EV_GRINDER.md"),
-        (r"cache_builder\.py", "LOCALIZE.md"),
-        (r"cache_builder\.py", "NIGHTLY_REFRESH.md"),
-        (r"matrix_builder", "LOCALIZE.md"),
-        (r"signal_filter|signal_exit", "PIPELINE_V2.md"),
-        (r"entry_candle|entry_grinder", "ENTRY_GRINDER.md"),
-        (r"profit_grinder", "PROFIT_GRINDER.md"),
-        (r"market_cache_builder|fetch_missing_market", "LOCALIZE.md"),
-        (r"consensus_engine", "CONSENSUS_SPEC.md"),
-        (r"exit_grinder|exit_compute|exit_expressions", "PIPELINE_V2.md"),
-        (r"fetch_fundamentals|fetch_universe|build_tradable", "NIGHTLY_REFRESH.md"),
-        (r"lsp_detector|algo_line_detector", "EXPRESSION_ENGINE_V2.md"),
-        (r"brute_expressions", "EXPRESSION_ENGINE_V2.md"),
-        (r"server\.py", "DATA_CONTRACT.md"),
-        (r"local_db|analysis_api", "DATA_CONTRACT.md"),
-    ]
+    # EXPRESSION_ENGINE_V2.md — governs expression library, npz format, pickle→cache data flow
+    if re.search(r"cache_builder\.py|expr_cache_builder|vectorized_cache_builder|vectorized_dispatch|vectorized_indicators|brute_expressions|expression_engine|backtest_conditions|lsp_detector|algo_line_detector|market_cache_builder|profiling_engine", changed_str):
+        specs.add("EXPRESSION_ENGINE_V2.md")
 
-    for pattern, spec in mappings:
-        if re.search(pattern, changed_str):
-            specs.add(spec)
+    # SIGNAL_GRINDER.md — governs signal grind + consensus
+    if re.search(r"pyramid_grinder|spiderweb|consensus_engine", changed_str):
+        specs.add("SIGNAL_GRINDER.md")
 
+    # REFINEMENT_GRINDER.md — governs refinement grind + cluster classification
+    if re.search(r"pyramid_grinder", changed_str):
+        specs.add("REFINEMENT_GRINDER.md")
+
+    # EV_GRINDER.md — governs correlative scoring
+    if re.search(r"ev_grinder|ev_tree_scorer", changed_str):
+        specs.add("EV_GRINDER.md")
+
+    # PROFIT_GRINDER.md — governs exit optimization
+    if re.search(r"profit_grinder", changed_str):
+        specs.add("PROFIT_GRINDER.md")
+
+    # ENTRY_GRINDER.md — governs stop placement
+    if re.search(r"entry_grinder|entry_candle_scorer", changed_str):
+        specs.add("ENTRY_GRINDER.md")
+
+    # PIPELINE_V2.md — governs overall pipeline flow and phase ordering
+    if re.search(r"nightly\.py|signal_filter|signal_exit_grinder|exit_grinder|exit_compute|exit_expressions|pipeline_agent", changed_str):
+        specs.add("PIPELINE_V2.md")
+
+    # NIGHTLY_REFRESH.md — governs the 10-step nightly pipeline
+    if re.search(r"nightly\.py|cache_builder\.py|expr_cache_builder|market_cache_builder|fetch_fundamentals|fetch_universe|build_tradable|seed_vault|matrix_builder", changed_str):
+        specs.add("NIGHTLY_REFRESH.md")
+
+    # UI_FLOW.md — governs the PySide6 desktop app
+    if re.search(r"scanperfect\.py", changed_str):
+        specs.add("UI_FLOW.md")
+
+    # GRIND_STORAGE.md — governs file naming, storage locations, Railway mirror
+    if re.search(r"pyramid_grinder|signal_filter|signal_exit_grinder|entry_grinder|entry_candle_scorer|ev_grinder|profit_grinder|consensus_engine|exit_grinder|file_mirror|grind_uploader|seed_vault|bulk_mirror", changed_str):
+        specs.add("GRIND_STORAGE.md")
+
+    # LOCALIZE.md — governs local vs Railway architecture
+    if re.search(r"server\.py|seed_vault|file_mirror|grind_uploader|bulk_mirror|agent\.py|pipeline_agent|fetch_universe|build_tradable", changed_str):
+        specs.add("LOCALIZE.md")
+
+    # If nothing matched, fall back to PIPELINE_V2
     if not specs:
         specs.add("PIPELINE_V2.md")
 
