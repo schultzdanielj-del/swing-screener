@@ -346,13 +346,23 @@ SPECIFICATION DOCUMENTS:
 
     # ── Run claude -p ──
 
+    # Force UTF-8 encoding on Windows (avoids cp1252 errors from unicode in diffs)
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+
     try:
+        # Write prompt to temp file to avoid stdin encoding issues on Windows
+        import tempfile
+        prompt_file = os.path.join(REPO_ROOT, "local_runner", "cache", "_audit_prompt.txt")
+        with open(prompt_file, "w", encoding="utf-8") as pf:
+            pf.write(prompt)
+
         # shell=True needed on Windows to find claude.cmd
+        # Read from file instead of stdin to avoid encoding issues
         result = subprocess.run(
-            "claude -p -",
-            input=prompt,
+            f"claude -p < "{prompt_file}"",
             capture_output=True, text=True, cwd=REPO_ROOT, timeout=300,
-            shell=True
+            shell=True, env=env
         )
         output = result.stdout.strip()
     except FileNotFoundError:
