@@ -10,13 +10,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def main():
     from scripts.setup_grinder import (
-        load_5yr_ohlcv, build_rs_lookup, _resample_to_weekly,
+        load_daily_ohlcv, build_rs_lookup, _resample_to_weekly,
         find_latest_refinement, load_signals_from_refinement,
         compute_adr_14, compute_dollar_volume_20d, _find_bar_idx
     )
 
     print("Loading OHLCV cache...")
-    ohlcv = load_5yr_ohlcv()
+    ohlcv = load_daily_ohlcv()
     print(f"  {len(ohlcv)} tickers")
 
     # Compute RS for just MSFT and SPY (no parallelism needed)

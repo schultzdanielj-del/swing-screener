@@ -1,7 +1,7 @@
 """
 ScanPerfect — Native Desktop App (PySide6)
 Phase 6 of localization. Replaces browser-based HTML UI entirely.
-Reads directly from SQLite + 5yr OHLCV pickle. No server process needed.
+Reads directly from SQLite + daily OHLCV pickle. No server process needed.
 """
 
 import json
@@ -149,19 +149,21 @@ def init_db():
 
 
 # ============================================================
-# OHLCV CACHE — 5yr pickle loaded into memory at startup
+# OHLCV CACHE — daily pickle loaded into memory at startup
 # ============================================================
 
 _ohlcv_cache = {}  # {ticker: DataFrame}
 
 
 def _load_ohlcv_cache():
-    """Load the 5yr OHLCV pickle into memory."""
+    """Load the daily OHLCV pickle into memory."""
     global _ohlcv_cache
-    cache_path = REPO_ROOT / "local_runner" / "cache" / "universe_ohlcv_5yr.pkl"
+    cache_path = REPO_ROOT / "local_runner" / "cache" / "universe_ohlcv_daily.pkl"
     if not cache_path.exists():
-        print("WARNING: 5yr OHLCV cache not found at %s" % cache_path)
-        print("  Charts will not work. Run: python local_runner/cache_builder.py --5yr --force")
+        cache_path = REPO_ROOT / "local_runner" / "cache" / "universe_ohlcv_5yr.pkl"
+    if not cache_path.exists():
+        print("WARNING: daily OHLCV cache not found at %s" % cache_path)
+        print("  Charts will not work. Run: python local_runner/cache_builder.py --daily --force")
         return
     t0 = time.time()
     with open(cache_path, "rb") as f:

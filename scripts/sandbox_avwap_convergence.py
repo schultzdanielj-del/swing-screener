@@ -11,7 +11,7 @@ trendlines, pivots, or any other detection system.
 Run locally:
     python -m scripts.sandbox_avwap_convergence
 
-Requires: local_runner/cache/universe_ohlcv_5yr.pkl
+Requires: local_runner/cache/universe_ohlcv_daily.pkl
 """
 
 import os
@@ -140,7 +140,9 @@ def test_ticker(ticker, df):
 
 
 def main():
-    cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
+    cache_path = "local_runner/cache/universe_ohlcv_daily.pkl"
+    if not os.path.exists(cache_path):
+        cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
     if not os.path.exists(cache_path):
         cache_path = "local_runner/cache/universe_ohlcv.pkl"
     if not os.path.exists(cache_path):

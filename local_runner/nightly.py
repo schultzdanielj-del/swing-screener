@@ -8,7 +8,7 @@ Usage:
 What it does (in order):
     1. yfinance freshness check (downloads 1 bar SPY, compares to cache)
        - If cache is already current → stops here (runs seed vault only)
-    2. Appends local 5yr daily OHLCV cache (yfinance)
+    2. Appends local daily OHLCV cache (yfinance)
     3. Appends weekly OHLCV cache (yfinance)
     4. Appends monthly OHLCV cache (yfinance)
     5. Appends expression series cache (new bars + new tickers)
@@ -68,13 +68,13 @@ def step_1_freshness_check():
     return check_yfinance_freshness()
 
 
-def step_2_5yr_cache():
-    """Append new bars to local 5yr OHLCV cache via yfinance."""
-    step_header(2, TOTAL_STEPS, "Local 5yr OHLCV Cache — Append (yfinance)")
+def step_2_daily_cache():
+    """Append new bars to local daily OHLCV cache via yfinance."""
+    step_header(2, TOTAL_STEPS, "Local daily OHLCV Cache — Append (yfinance)")
 
-    from cache_builder import append_5yr_cache
+    from cache_builder import append_daily_cache
     t0 = time.time()
-    data = append_5yr_cache()
+    data = append_daily_cache()
     elapsed = time.time() - t0
     print(f"  ✓ {len(data)} tickers in cache ({elapsed:.1f}s)")
 
@@ -348,7 +348,7 @@ def main():
             return
 
     # Steps 2-9: refresh all local data
-    step_2_5yr_cache()
+    step_2_daily_cache()
     step_3_weekly_cache()
     step_4_monthly_cache()
     step_5_expr_cache()

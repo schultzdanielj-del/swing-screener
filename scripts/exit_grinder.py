@@ -99,14 +99,16 @@ class ExitCandidate:
 # Data Loading
 # ============================================================
 
-def load_5yr_cache():
-    """Load 5-year OHLCV cache from local disk."""
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+def load_daily_cache():
+    """Load daily OHLCV cache from local disk."""
+    path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(path):
+        path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
     if not os.path.exists(path):
         path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
     if not os.path.exists(path):
         raise FileNotFoundError("No OHLCV cache found. Run cache_builder.py first.")
-    print(f"Loading 5yr OHLCV cache from {path}...")
+    print(f"Loading daily OHLCV cache from {path}...")
     with open(path, "rb") as f:
         cache = pickle.load(f)
     print(f"  {len(cache)} tickers loaded")
@@ -125,14 +127,14 @@ def load_examples(setup_type: str) -> list:
 
 def build_example_data(example: dict, direction: str, max_forward: int,
                        universe_cache: dict, spy_df: pd.DataFrame = None) -> Optional[ExampleData]:
-    """Build ExampleData using local 5yr OHLCV cache."""
+    """Build ExampleData using local daily OHLCV cache."""
     ticker = example["ticker"]
     entry_date = example["entryDate"]
 
     try:
         df = universe_cache.get(ticker)
         if df is None:
-            print(f"  SKIP {ticker} — not in 5yr cache")
+            print(f"  SKIP {ticker} — not in daily cache")
             return None
 
         df = df.copy()
@@ -799,8 +801,8 @@ def main():
     # 1. Load examples
     raw_examples = load_examples(args.setup)
 
-    # 2. Load 5yr OHLCV cache
-    universe_cache = load_5yr_cache()
+    # 2. Load daily OHLCV cache
+    universe_cache = load_daily_cache()
 
     # 3. Get SPY from cache
     spy_df = universe_cache.get("SPY")

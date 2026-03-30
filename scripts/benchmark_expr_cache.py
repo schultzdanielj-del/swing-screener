@@ -1274,8 +1274,10 @@ def main():
     expressions = _load_expressions()
     _init_worker(expressions)
     print(f"\n  {len(expressions)} expressions")
-    print("  Loading 5yr OHLCV cache...")
-    cache_path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+    print("  Loading daily OHLCV cache...")
+    cache_path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(cache_path):
+        cache_path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
     if not os.path.exists(cache_path):
         cache_path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
     with open(cache_path, "rb") as f:

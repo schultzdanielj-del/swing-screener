@@ -7,7 +7,7 @@ Produces identical .npz files (dates + data arrays) and manifest.
 Usage:
     python local_runner/vectorized_cache_builder.py --build [--batch-size 25] [--workers 8]
 
-Requires: universe_ohlcv_5yr.pkl in local_runner/cache/
+Requires: universe_ohlcv_daily.pkl in local_runner/cache/
 """
 
 import os
@@ -27,7 +27,8 @@ REPO_ROOT = os.path.dirname(LOCAL_DIR)
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 EXPR_CACHE_DIR = os.path.join(CACHE_DIR, "expr_series")
 MANIFEST_PATH = os.path.join(EXPR_CACHE_DIR, "_manifest.json")
-CACHE_5YR_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+CACHE_DAILY_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+CACHE_LEGACY_5YR = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
 
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
@@ -223,7 +224,8 @@ def build_vectorized(batch_size=25, n_lsp_workers=8):
     
     # Load OHLCV
     print(f"\n  Loading OHLCV cache...")
-    with open(CACHE_5YR_FILE, "rb") as f:
+    _cache_file = CACHE_DAILY_FILE if os.path.exists(CACHE_DAILY_FILE) else CACHE_LEGACY_5YR
+    with open(_cache_file, "rb") as f:
         cache = pickle.load(f)
     
     valid = {t: df for t, df in cache.items() if df is not None and len(df) >= 50}
@@ -448,7 +450,8 @@ def build_vectorized(batch_size=25, n_lsp_workers=8):
         print(f"  Workers: {n_lsp_workers}")
         
         # Reload OHLCV for per-ticker pass (needed for LSP/algo)
-        with open(CACHE_5YR_FILE, "rb") as f:
+        _cache_file = CACHE_DAILY_FILE if os.path.exists(CACHE_DAILY_FILE) else CACHE_LEGACY_5YR
+        with open(_cache_file, "rb") as f:
             cache = pickle.load(f)
         
         work_items = []

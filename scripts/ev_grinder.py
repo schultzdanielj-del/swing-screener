@@ -103,13 +103,13 @@ def load_refinement(path):
     return refinement_conditions, winners + losers, eliminated, data
 
 
-def load_5yr_cache():
-    for name in ("universe_ohlcv_5yr.pkl", "universe_ohlcv.pkl"):
+def load_daily_cache():
+    for name in ("universe_ohlcv_daily.pkl", "universe_ohlcv_5yr.pkl", "universe_ohlcv.pkl"):
         path = os.path.join(CACHE_DIR, name)
         if os.path.exists(path):
             with open(path, "rb") as f:
                 return pickle.load(f)
-    raise FileNotFoundError("No 5yr OHLCV cache found")
+    raise FileNotFoundError("No daily OHLCV cache found")
 
 
 def load_fundamentals_cache():
@@ -252,8 +252,8 @@ def compute_setup_features(all_signals):
     print("\n  ── SETUP FEATURE COMPUTATION ──")
     t0 = time.time()
 
-    print("  Loading 5yr OHLCV cache...")
-    ohlcv = load_5yr_cache()
+    print("  Loading daily OHLCV cache...")
+    ohlcv = load_daily_cache()
     print(f"  {len(ohlcv)} tickers")
 
     print("  Loading fundamentals cache...")

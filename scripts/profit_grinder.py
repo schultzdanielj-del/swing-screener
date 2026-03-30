@@ -68,11 +68,11 @@ def print_ram(label=""):
     if a is not None: print(f"  RAM available: {a:.1f} GB {label}")
 
 # ── Data Loading ──
-def load_5yr_cache():
-    for n in ("universe_ohlcv_5yr.pkl","universe_ohlcv.pkl"):
+def load_daily_cache():
+    for n in ("universe_ohlcv_daily.pkl","universe_ohlcv_5yr.pkl","universe_ohlcv.pkl"):
         p = os.path.join(CACHE_DIR, n)
         if os.path.exists(p):
-            print(f"  Loading 5yr OHLCV from {n}...")
+            print(f"  Loading daily OHLCV from {n}...")
             with open(p,"rb") as f: c = pickle.load(f)
             print(f"  {len(c)} tickers"); return c
     raise FileNotFoundError("No OHLCV cache.")
@@ -850,7 +850,7 @@ def main():
 
     print(f"\n  ── FORWARD MATRIX CONSTRUCTION ──")
     print(f"  Entry window: {entry_window} bars  Exit horizon: {exit_horizon} bars")
-    check_ram("(pre-OHLCV)",min_gb=3.0); oc=load_5yr_cache(); print_ram("(OHLCV loaded)")
+    check_ram("(pre-OHLCV)",min_gb=3.0); oc=load_daily_cache(); print_ram("(OHLCV loaded)")
     fwd_expr,fwd_closes,entry_high_bar_expr,entry_high_offset,entry_prices,adr_values,signal_meta,valid_mask,bs=\
         build_forward_data(signals,oc,ec,ecm,direction,exit_horizon,entry_window,example_entry_dates)
     del oc; gc.collect()

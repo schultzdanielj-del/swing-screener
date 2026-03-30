@@ -109,11 +109,13 @@ class ExitCandidate:
 # ============================================================
 # Data Loading
 # ============================================================
-def load_5yr_cache():
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+def load_daily_cache():
+    path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(path):
+        path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
     if not os.path.exists(path):
         path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
-    print(f"  Loading 5yr cache from {path}...")
+    print(f"  Loading daily cache from {path}...")
     with open(path, "rb") as f:
         cache = pickle.load(f)
     print(f"  Loaded {len(cache):,} tickers")
@@ -637,7 +639,7 @@ def main():
     print(f"  Expression cache: {n_expressions:,} expressions")
 
     # Load data
-    ohlcv_cache = load_5yr_cache()
+    ohlcv_cache = load_daily_cache()
     conditions = load_pyramid_conditions(setup)
     examples = load_examples(setup)
 

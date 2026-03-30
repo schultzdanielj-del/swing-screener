@@ -320,7 +320,9 @@ def _build_universe_live(expressions, save_path, progress_fn=None):
     # Load OHLCV
     cache_file = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
     if not os.path.exists(cache_file):
-        # Try 5yr cache
+        # Try daily cache
+        cache_file = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(cache_file):
         cache_file = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
     if not os.path.exists(cache_file):
         from cache_builder import build_cache

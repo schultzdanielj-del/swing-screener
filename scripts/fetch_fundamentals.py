@@ -115,8 +115,8 @@ def fetch_ticker_data(opener, crumb, ticker):
 # ══════════════════════════════════════════════════════════════
 
 def load_universe_tickers():
-    """Load ticker list from the 5yr OHLCV cache."""
-    for name in ("universe_ohlcv_5yr.pkl", "universe_ohlcv.pkl"):
+    """Load ticker list from the daily OHLCV cache."""
+    for name in ("universe_ohlcv_daily.pkl", "universe_ohlcv_5yr.pkl", "universe_ohlcv.pkl"):
         path = os.path.join(CACHE_DIR, name)
         if os.path.exists(path):
             with open(path, "rb") as f:
@@ -127,7 +127,7 @@ def load_universe_tickers():
 
     raise FileNotFoundError(
         "No OHLCV cache found in local_runner/cache/. "
-        "Run cache_builder.py --5yr first."
+        "Run cache_builder.py --daily first."
     )
 
 

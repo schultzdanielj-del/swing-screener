@@ -8,7 +8,9 @@ from scripts.expression_engine import ExpressionEngine
 from scripts.backtest_conditions import compute_series
 
 # Load cache
-cache_path = os.path.join(REPO_ROOT, "local_runner", "cache", "universe_ohlcv_5yr.pkl")
+cache_path = os.path.join(REPO_ROOT, "local_runner", "cache", "universe_ohlcv_daily.pkl")
+if not os.path.exists(cache_path):
+    cache_path = os.path.join(REPO_ROOT, "local_runner", "cache", "universe_ohlcv_5yr.pkl")
 print(f"Loading cache from {cache_path}...")
 with open(cache_path, "rb") as f:
     cache = pickle.load(f)

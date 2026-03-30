@@ -36,7 +36,7 @@ Usage:
     python local_runner/pyramid_grinder.py --setup dtss --single-pass --beam 10000 --depth 100
 
 Requires:
-  - 5-year OHLCV cache (local_runner/cache/universe_ohlcv_5yr.pkl)
+  - daily OHLCV cache (local_runner/cache/universe_ohlcv_daily.pkl)
   - Expression series cache (local_runner/cache/expr_series/)
   - Example data (via Railway API)
   - Expression library (brute_expressions.py)
@@ -87,9 +87,9 @@ TIERS = [
 # DATA LOADING
 # ══════════════════════════════════════════════════════════════
 
-def load_5yr_cache():
-    """Load 5-year OHLCV cache."""
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+def load_daily_cache():
+    """Load daily OHLCV cache."""
+    path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
     if not os.path.exists(path):
         path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
     if not os.path.exists(path):
@@ -99,10 +99,10 @@ def load_5yr_cache():
 
 
 def load_example_data(setup_type, universe_cache):
-    """Load example data using the 5yr universe cache for OHLCV.
+    """Load example data using the daily universe cache for OHLCV.
 
     Examples metadata (ticker, entry_date) comes from local SQLite.
-    OHLCV data comes from the same 5yr cache used by the backtest scanner,
+    OHLCV data comes from the same daily cache used by the backtest scanner,
     ensuring identical indicator values and history depth.
     """
     import sqlite3
@@ -125,10 +125,10 @@ def load_example_data(setup_type, universe_cache):
         ticker = ex["ticker"]
         entry_date = ex.get("entry_date")
 
-        # Use 5yr cache — same data source as backtest scanner
+        # Use daily cache — same data source as backtest scanner
         df = universe_cache.get(ticker)
         if df is None:
-            skipped.append(f"{ticker} (not in 5yr cache)")
+            skipped.append(f"{ticker} (not in daily cache)")
             continue
 
         # Ensure proper types
@@ -1949,7 +1949,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 
     # ── Load data ──
     print(f"\n  Loading OHLCV cache...")
-    universe_cache = load_5yr_cache()
+    universe_cache = load_daily_cache()
     print(f"  {len(universe_cache)} tickers loaded")
 
     print(f"\n  Loading examples...")
@@ -2462,9 +2462,9 @@ def _gather_raw_signal_clusters(setup_type):
         return None
     print(f"  Expression cache: {expr_cache.n_expressions} expressions")
 
-    # ── Load 5yr cache → build slim → free full cache → scan ──
-    print(f"  Loading 5yr cache...")
-    universe_cache = load_5yr_cache()
+    # ── Load daily cache → build slim → free full cache → scan ──
+    print(f"  Loading daily cache...")
+    universe_cache = load_daily_cache()
 
     # Build example lookup: {ticker: list of entry_date strings}
     # Used to tag clusters as examples by date proximity.
@@ -2593,8 +2593,8 @@ def _gather_raw_signal_clusters(setup_type):
 
     print(f"\n  Applying exit condition on rightmost bars...")
 
-    # Reload 5yr cache for exit evaluation (freed earlier to save RAM during scan)
-    universe_cache = load_5yr_cache()
+    # Reload daily cache for exit evaluation (freed earlier to save RAM during scan)
+    universe_cache = load_daily_cache()
 
     exit_expr = exit_cond["expression"]
     exit_thresh = exit_cond["threshold"]
@@ -3079,8 +3079,8 @@ def _load_refinement_piles(setup_type):
         print(f"  WARNING: No losing clusters — nothing to filter. Refinement is a no-op.")
         return None, None, None, None, None, None, None, None
 
-    # Load 5yr cache
-    universe_cache = load_5yr_cache()
+    # Load daily cache
+    universe_cache = load_daily_cache()
 
     # Build win_example_dfs from winning cluster rightmost bars
     win_example_dfs = []
@@ -3091,7 +3091,7 @@ def _load_refinement_piles(setup_type):
 
         df = universe_cache.get(ticker)
         if df is None:
-            skipped_win.append(f"{ticker} (not in 5yr cache)")
+            skipped_win.append(f"{ticker} (not in daily cache)")
             continue
 
         if bar_idx >= len(df):
@@ -3253,7 +3253,7 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3, skip_
         print("  ABORT: Could not load refinement piles.")
         return None
 
-    # Free 5yr cache — no longer needed (win_dfs have their own df copies,
+    # Free daily cache — no longer needed (win_dfs have their own df copies,
     # everything else is bar indices and metadata)
     del universe_cache
     import gc as _gc; _gc.collect()

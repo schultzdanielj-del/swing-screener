@@ -3,16 +3,17 @@ Cache Builder — Pull all tradable universe OHLCV data and store locally.
 
 Usage:
     python local_runner/cache_builder.py [--force]
-    python local_runner/cache_builder.py --5yr [--force]
+    python local_runner/cache_builder.py --daily [--force]
     python local_runner/cache_builder.py --htf [--force]
 
 Stores:
   - local_runner/cache/universe_ohlcv.pkl — 300-bar daily cache (legacy)
-  - local_runner/cache/universe_ohlcv_5yr.pkl — full 5yr daily cache
-  - local_runner/cache/universe_ohlcv_weekly.pkl — 5yr weekly cache
-  - local_runner/cache/universe_ohlcv_monthly.pkl — 5yr monthly cache
+  - local_runner/cache/universe_ohlcv_daily.pkl — full daily cache (10yr from HISTORY_START)
+  - local_runner/cache/universe_ohlcv_weekly.pkl — weekly cache (from HISTORY_START)
+  - local_runner/cache/universe_ohlcv_monthly.pkl — monthly cache (from HISTORY_START)
 
-All data pulled from yfinance. No Railway dependency.
+All data pulled from yfinance using explicit start date (not period parameter).
+No Railway dependency.
 
 Requires: pip install yfinance pandas
 """
@@ -33,8 +34,10 @@ REPO_ROOT = os.path.dirname(LOCAL_DIR)
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 CACHE_FILE = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
 CACHE_META = os.path.join(CACHE_DIR, "cache_meta.txt")
-CACHE_5YR_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
-CACHE_5YR_META = os.path.join(CACHE_DIR, "cache_5yr_meta.txt")
+CACHE_DAILY_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+CACHE_DAILY_META = os.path.join(CACHE_DIR, "cache_daily_meta.txt")
+# Legacy path — checked as fallback when loading
+CACHE_LEGACY_5YR = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
 WEEKLY_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_weekly.pkl")
 WEEKLY_META = os.path.join(CACHE_DIR, "cache_weekly_meta.txt")
 MONTHLY_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_monthly.pkl")
@@ -42,7 +45,7 @@ MONTHLY_META = os.path.join(CACHE_DIR, "cache_monthly_meta.txt")
 DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
 MAX_WORKERS = 20
 LOOKBACK = 300  # bars per ticker (daily matrix)
-LOOKBACK_5YR = 1260  # ~5 years of trading days
+HISTORY_START = "2016-01-01"  # explicit start date for all caches (daily + HTF)
 HTF_BATCH_SIZE = 50  # tickers per batch for HTF full build (rate limit safety)
 HTF_BATCH_SLEEP = 2.0  # seconds between batches
 
@@ -72,19 +75,24 @@ def get_tradable_tickers_local():
 # YFINANCE HELPERS
 # ══════════════════════════════════════════════════════════════
 
-def _yf_download(ticker, period="5y", interval="1d"):
+def _yf_download(ticker, start=None, interval="1d"):
     """Download OHLCV for one ticker from yfinance.
+
+    Uses explicit start date instead of period parameter to avoid
+    silent truncation from Yahoo's unreliable period interpretation.
 
     Args:
         ticker: stock symbol
-        period: yfinance period string ('5y', '1y', '1mo', etc.)
+        start: start date string 'YYYY-MM-DD' (defaults to HISTORY_START)
         interval: '1d', '1wk', or '1mo'
 
     Returns (ticker, DataFrame) or (ticker, None) on failure.
     DataFrame has columns: date, open, high, low, close, volume
     """
+    if start is None:
+        start = HISTORY_START
     try:
-        raw = yf.download(ticker, period=period, interval=interval, progress=False)
+        raw = yf.download(ticker, start=start, interval=interval, progress=False)
         if raw.empty:
             return ticker, None
 
@@ -218,8 +226,10 @@ def build_cache(force=False):
     failed = []
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        # Use 1y period for 300-bar cache
-        futures = {pool.submit(_yf_download, t, "1y"): t for t in tickers}
+        # Use ~1yr lookback for 300-bar cache
+        from datetime import date
+        one_yr_ago = (date.today() - timedelta(days=400)).strftime("%Y-%m-%d")
+        futures = {pool.submit(_yf_download, t, one_yr_ago): t for t in tickers}
         done = 0
         for future in as_completed(futures):
             ticker, df = future.result()
@@ -274,43 +284,43 @@ def load_cache():
 # 5-YEAR CACHE — For historical scorer (Phase 2)
 # ══════════════════════════════════════════════════════════════
 
-def cache_5yr_is_fresh():
-    """Check if 5yr cache exists and is less than 7 days old."""
-    if not os.path.exists(CACHE_5YR_FILE) or not os.path.exists(CACHE_5YR_META):
+def cache_daily_is_fresh():
+    """Check if daily cache exists and is less than 7 days old."""
+    if not os.path.exists(CACHE_DAILY_FILE) or not os.path.exists(CACHE_DAILY_META):
         return False
     try:
-        with open(CACHE_5YR_META) as f:
+        with open(CACHE_DAILY_META) as f:
             ts = datetime.fromisoformat(f.read().strip())
         return datetime.now() - ts < timedelta(days=7)
     except:
         return False
 
 
-def build_5yr_cache(force=False):
-    """Build the 5-year OHLCV cache from yfinance."""
+def build_daily_cache(force=False):
+    """Build the daily OHLCV cache from yfinance using HISTORY_START."""
     os.makedirs(CACHE_DIR, exist_ok=True)
 
-    if not force and cache_5yr_is_fresh():
-        with open(CACHE_5YR_FILE, "rb") as f:
+    if not force and cache_daily_is_fresh():
+        with open(CACHE_DAILY_FILE, "rb") as f:
             data = pickle.load(f)
-        print(f"5yr cache is fresh ({len(data)} tickers). Use --force to rebuild.")
+        print(f"Daily cache is fresh ({len(data)} tickers). Use --force to rebuild.")
         return data
 
     print("=" * 60)
-    print("  5-YEAR CACHE BUILDER — Full history via yfinance")
+    print("  DAILY CACHE BUILDER — Full history via yfinance")
     print("=" * 60)
 
     print("\nFetching ticker list from local DB...")
     tickers = get_tradable_tickers_local()
-    print(f"  {len(tickers)} tradable tickers × ~{LOOKBACK_5YR} bars max")
+    print(f"  {len(tickers)} tradable tickers (start={HISTORY_START})")
 
-    print(f"\nFetching 5yr OHLCV data via yfinance ({MAX_WORKERS} concurrent workers)...")
+    print(f"\nFetching daily OHLCV data via yfinance ({MAX_WORKERS} concurrent workers)...")
     t0 = time.time()
     universe = {}
     failed = []
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        futures = {pool.submit(_yf_download, t, "5y"): t for t in tickers}
+        futures = {pool.submit(_yf_download, t, HISTORY_START): t for t in tickers}
         done = 0
         for future in as_completed(futures):
             ticker, df = future.result()
@@ -334,15 +344,15 @@ def build_5yr_cache(force=False):
     if failed:
         print(f"  Failed: {len(failed)} tickers (too short or no data)")
 
-    print(f"\nSaving 5yr cache...")
-    with open(CACHE_5YR_FILE, "wb") as f:
+    print(f"\nSaving daily cache...")
+    with open(CACHE_DAILY_FILE, "wb") as f:
         pickle.dump(universe, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    with open(CACHE_5YR_META, "w") as f:
+    with open(CACHE_DAILY_META, "w") as f:
         f.write(datetime.now().isoformat())
 
-    size_mb = os.path.getsize(CACHE_5YR_FILE) / 1024 / 1024
-    print(f"  Saved: {CACHE_5YR_FILE} ({size_mb:.1f} MB)")
+    size_mb = os.path.getsize(CACHE_DAILY_FILE) / 1024 / 1024
+    print(f"  Saved: {CACHE_DAILY_FILE} ({size_mb:.1f} MB)")
 
     total_rows = sum(len(df) for df in universe.values())
     avg_bars = total_rows / len(universe) if universe else 0
@@ -356,30 +366,39 @@ def build_5yr_cache(force=False):
     return universe
 
 
-def load_5yr_cache():
-    """Load the 5yr cache, building if needed."""
-    if not os.path.exists(CACHE_5YR_FILE):
-        return build_5yr_cache()
-    with open(CACHE_5YR_FILE, "rb") as f:
-        return pickle.load(f)
+def load_daily_cache():
+    """Load the daily cache, building if needed. Checks legacy filename as fallback."""
+    if os.path.exists(CACHE_DAILY_FILE):
+        with open(CACHE_DAILY_FILE, "rb") as f:
+            return pickle.load(f)
+    if os.path.exists(CACHE_LEGACY_5YR):
+        with open(CACHE_LEGACY_5YR, "rb") as f:
+            return pickle.load(f)
+    return build_daily_cache()
 
 
-def append_5yr_cache():
-    """Append new bars to existing 5yr cache via yfinance. Never touches old bars.
+def append_daily_cache():
+    """Append new bars to existing daily cache via yfinance. Never touches old bars.
 
     For each ticker already in the cache, fetches only bars after the last
     cached date from yfinance and appends them. New tickers (in tradable
-    universe but not in cache) get a full 5yr fetch. Old bars are never modified.
+    universe but not in cache) get a full fetch from HISTORY_START.
+    Old bars are never modified.
     """
     os.makedirs(CACHE_DIR, exist_ok=True)
 
-    if not os.path.exists(CACHE_5YR_FILE):
-        print("  No existing 5yr cache. Running full build...")
-        return build_5yr_cache()
+    # Check both new and legacy filenames
+    cache_file = CACHE_DAILY_FILE
+    if not os.path.exists(cache_file):
+        if os.path.exists(CACHE_LEGACY_5YR):
+            cache_file = CACHE_LEGACY_5YR
+        else:
+            print("  No existing daily cache. Running full build...")
+            return build_daily_cache()
 
     # Load existing cache
-    print("  Loading existing 5yr cache...")
-    with open(CACHE_5YR_FILE, "rb") as f:
+    print("  Loading existing daily cache...")
+    with open(cache_file, "rb") as f:
         universe = pickle.load(f)
     print(f"  {len(universe)} tickers in cache")
 
@@ -451,7 +470,7 @@ def append_5yr_cache():
     if to_fetch_full:
         print(f"\n  Fetching {len(to_fetch_full)} new tickers via yfinance...")
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {pool.submit(_yf_download, t, "5y"): t for t in to_fetch_full}
+            futures = {pool.submit(_yf_download, t, HISTORY_START): t for t in to_fetch_full}
             for future in as_completed(futures):
                 ticker = futures[future]
                 try:
@@ -467,16 +486,16 @@ def append_5yr_cache():
 
     elapsed = time.time() - t0
 
-    # Save
-    print(f"\n  Saving 5yr cache...")
-    with open(CACHE_5YR_FILE, "wb") as f:
+    # Save (always to new filename)
+    print(f"\n  Saving daily cache...")
+    with open(CACHE_DAILY_FILE, "wb") as f:
         pickle.dump(universe, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    with open(CACHE_5YR_META, "w") as f:
+    with open(CACHE_DAILY_META, "w") as f:
         f.write(datetime.now().isoformat())
 
-    size_mb = os.path.getsize(CACHE_5YR_FILE) / 1024 / 1024
-    print(f"  Saved: {CACHE_5YR_FILE} ({size_mb:.1f} MB)")
+    size_mb = os.path.getsize(CACHE_DAILY_FILE) / 1024 / 1024
+    print(f"  Saved: {CACHE_DAILY_FILE} ({size_mb:.1f} MB)")
     print(f"  Appended: {appended}, New: {new_added}, "
           f"No change: {no_new}, Failed: {failed}")
     print(f"  Time: {elapsed:.0f}s")
@@ -527,20 +546,26 @@ def _merge_htf_bars(existing_df, new_df):
     return existing_df
 
 
-def _sync_htf_cache(interval, output_file, meta_file, label, recent_period,
+def _sync_htf_cache(interval, output_file, meta_file, label, recent_start,
                     full_sweep=False):
     """Unified HTF cache sync.
 
     full_sweep=False (nightly): only update existing tickers with recent bars.
-    full_sweep=True  (--htf CLI): also fetch missing tickers (full 10yr).
+    full_sweep=True  (--htf CLI): also fetch missing tickers (from HISTORY_START).
+
+    Args:
+        recent_start: explicit start date for stale ticker updates (e.g. 30 days ago)
     """
     mode = "Full Sweep" if full_sweep else "Append"
     print(f"\n  {label} OHLCV Cache — {mode}")
 
-    if not os.path.exists(CACHE_5YR_FILE):
+    # Find daily cache (new or legacy filename)
+    daily_file = CACHE_DAILY_FILE
+    if not os.path.exists(daily_file):
+        daily_file = CACHE_LEGACY_5YR
+    if not os.path.exists(daily_file):
         raise FileNotFoundError(
-            f"Daily 5yr cache not found: {CACHE_5YR_FILE}\n"
-            "  Run cache_builder.py --5yr first."
+            f"Daily cache not found. Run cache_builder.py --daily first."
         )
 
     # Load existing HTF cache (empty dict if first build)
@@ -555,8 +580,8 @@ def _sync_htf_cache(interval, output_file, meta_file, label, recent_period,
             return {}
         print(f"  No existing cache — building from scratch")
 
-    # Get full ticker list from 5yr daily cache
-    with open(CACHE_5YR_FILE, "rb") as f:
+    # Get full ticker list from daily cache
+    with open(daily_file, "rb") as f:
         daily_cache = pickle.load(f)
     all_tickers = list(daily_cache.keys())
     del daily_cache
@@ -591,11 +616,11 @@ def _sync_htf_cache(interval, output_file, meta_file, label, recent_period,
     new_added = 0
     failed = 0
 
-    # Update stale existing tickers — fetch recent bars
+    # Update stale existing tickers — fetch recent bars using explicit start date
     if to_update:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             futures = {
-                pool.submit(_yf_download, t, recent_period, interval): t
+                pool.submit(_yf_download, t, recent_start, interval): t
                 for t in to_update
             }
             done = 0
@@ -625,10 +650,10 @@ def _sync_htf_cache(interval, output_file, meta_file, label, recent_period,
                           f"({updated} updated, {no_change} current, {failed} failed) "
                           f"[{elapsed:.0f}s]")
 
-    # Full 10yr fetch for missing tickers (only in full_sweep mode)
+    # Full fetch for missing tickers (only in full_sweep mode)
     fetch_failed = 0
     if to_fetch:
-        print(f"\n  Fetching {len(to_fetch)} missing tickers (10yr)...")
+        print(f"\n  Fetching {len(to_fetch)} missing tickers (start={HISTORY_START})...")
         n_batches = (len(to_fetch) + HTF_BATCH_SIZE - 1) // HTF_BATCH_SIZE
         for batch_idx in range(n_batches):
             batch_start = batch_idx * HTF_BATCH_SIZE
@@ -637,7 +662,7 @@ def _sync_htf_cache(interval, output_file, meta_file, label, recent_period,
 
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
                 futures = {
-                    pool.submit(_yf_download, t, "10y", interval): t
+                    pool.submit(_yf_download, t, HISTORY_START, interval): t
                     for t in batch
                 }
                 for future in as_completed(futures):
@@ -690,32 +715,38 @@ def build_htf_caches():
     print("  HTF CACHE — Weekly + Monthly OHLCV from yfinance")
     print("=" * 60)
 
-    _sync_htf_cache("1wk", WEEKLY_FILE, WEEKLY_META, "WEEKLY", "1mo",
+    # For stale updates during full sweep, fetch last 60 days
+    recent = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
+    _sync_htf_cache("1wk", WEEKLY_FILE, WEEKLY_META, "WEEKLY", recent,
                     full_sweep=True)
-    _sync_htf_cache("1mo", MONTHLY_FILE, MONTHLY_META, "MONTHLY", "3mo",
+    _sync_htf_cache("1mo", MONTHLY_FILE, MONTHLY_META, "MONTHLY", recent,
                     full_sweep=True)
 
 
 def append_weekly():
     """Nightly append for weekly cache."""
+    # Fetch last 60 days to catch any missed bars
+    recent = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
     return _sync_htf_cache(
         interval="1wk",
         output_file=WEEKLY_FILE,
         meta_file=WEEKLY_META,
         label="Weekly",
-        recent_period="1mo",
+        recent_start=recent,
         full_sweep=False,
     )
 
 
 def append_monthly():
     """Nightly append for monthly cache."""
+    # Fetch last 120 days to catch any missed bars
+    recent = (datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d")
     return _sync_htf_cache(
         interval="1mo",
         output_file=MONTHLY_FILE,
         meta_file=MONTHLY_META,
         label="Monthly",
-        recent_period="3mo",
+        recent_start=recent,
         full_sweep=False,
     )
 
@@ -781,12 +812,16 @@ def check_yfinance_freshness():
         True if new data available (should continue pipeline)
         False if cache is already current (skip pipeline)
     """
-    if not os.path.exists(CACHE_5YR_FILE):
-        print("  No 5yr cache exists — new data available by default")
+    # Check both new and legacy filenames
+    cache_file = CACHE_DAILY_FILE
+    if not os.path.exists(cache_file):
+        cache_file = CACHE_LEGACY_5YR
+    if not os.path.exists(cache_file):
+        print("  No daily cache exists — new data available by default")
         return True
 
     # Get last cached date from SPY (or first ticker in cache)
-    with open(CACHE_5YR_FILE, "rb") as f:
+    with open(cache_file, "rb") as f:
         universe = pickle.load(f)
 
     if "SPY" in universe:
@@ -800,7 +835,8 @@ def check_yfinance_freshness():
 
     # Download latest bar from yfinance
     try:
-        raw = yf.download("SPY", period="5d", interval="1d", progress=False)
+        recent = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
+        raw = yf.download("SPY", start=recent, interval="1d", progress=False)
         if raw.empty:
             print("  Could not fetch SPY from yfinance — assuming new data")
             return True
@@ -828,7 +864,7 @@ def check_yfinance_freshness():
 
 if __name__ == "__main__":
     force = "--force" in sys.argv
-    mode_5yr = "--5yr" in sys.argv
+    mode_daily = "--daily" in sys.argv or "--5yr" in sys.argv  # accept legacy flag
     mode_htf = "--htf" in sys.argv
     mode_htf_status = "--htf-status" in sys.argv
 
@@ -836,9 +872,9 @@ if __name__ == "__main__":
         htf_status()
     elif mode_htf:
         build_htf_caches()
-    elif mode_5yr:
-        data = build_5yr_cache(force=force)
-        print(f"5yr cache ready: {len(data)} tickers")
+    elif mode_daily:
+        data = build_daily_cache(force=force)
+        print(f"Daily cache ready: {len(data)} tickers")
     else:
         data = build_cache(force=force)
         print(f"Cache ready: {len(data)} tickers")

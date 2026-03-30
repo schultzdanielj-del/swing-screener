@@ -13,7 +13,7 @@ The --backup flag catches any files where mirror_file() silently failed.
 Recovery process (new machine):
   1. Clone repo from GitHub
   2. python scripts/seed_vault.py --restore        (~5 min)
-  3. python local_runner/cache_builder.py --5yr --force   (~30 min)
+  3. python local_runner/cache_builder.py --daily --force   (~30 min)
   4. python local_runner/expr_cache_builder.py --build     (~2 hrs)
   5. python local_runner/nightly.py --force                (~20 min)
   6. python -m uvicorn server:app --port 8000              (done)
@@ -345,7 +345,7 @@ def restore():
     if files_failed:
         print(f"    Failed: {files_failed} files")
     print(f"\n  Next steps:")
-    print(f"    python local_runner/cache_builder.py --5yr --force")
+    print(f"    python local_runner/cache_builder.py --daily --force")
     print(f"    python local_runner/expr_cache_builder.py --build")
     print(f"    python local_runner/nightly.py --force")
     print(f"    python -m uvicorn server:app --port 8000")

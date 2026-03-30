@@ -15,7 +15,7 @@ cached as flat columns alongside all other expressions.
 Design constraints (from EXPRESSION_ENGINE_V2.md):
 - Single computation path: all expressions via ExpressionEngine → compute_series()
 - Precomputed in expr_cache_builder: grinders never compute LSP live
-- No network calls: all data from local 5yr OHLCV cache
+- No network calls: all data from local daily OHLCV cache
 - Parallel via ProcessPoolExecutor: same worker pattern as current cache builder
 - 100% example pass rule: expressions either pass all examples or get auto-excluded
 - Grinders unchanged: just more columns in the expression cache
@@ -850,7 +850,7 @@ def validate_against_labeled(daily_cache: dict, labeled_path: str = "data/dtss_l
     with break_count=0 at the signal bar.
 
     Args:
-        daily_cache: dict of ticker → DataFrame (from 5yr OHLCV cache)
+        daily_cache: dict of ticker → DataFrame (from daily OHLCV cache)
         labeled_path: path to labeled LSP JSON
     """
     import json
@@ -951,8 +951,10 @@ if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     if len(sys.argv) > 1 and sys.argv[1] == "validate":
-        # Load 5yr cache
-        cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
+        # Load daily cache
+        cache_path = "local_runner/cache/universe_ohlcv_daily.pkl"
+        if not os.path.exists(cache_path):
+            cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
         if not os.path.exists(cache_path):
             cache_path = "local_runner/cache/universe_ohlcv.pkl"
         print(f"Loading OHLCV cache from {cache_path}...")
@@ -970,7 +972,9 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "bench":
         # Benchmark: compute LSP series for one ticker
         ticker = sys.argv[2] if len(sys.argv) > 2 else "AAPL"
-        cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
+        cache_path = "local_runner/cache/universe_ohlcv_daily.pkl"
+        if not os.path.exists(cache_path):
+            cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
         if not os.path.exists(cache_path):
             cache_path = "local_runner/cache/universe_ohlcv.pkl"
         print(f"Loading cache...")

@@ -27,7 +27,7 @@ sys.path.insert(0, LOCAL_DIR)
 
 from brute_expressions import generate_all
 from expr_cache_builder import ExprSeriesCache
-from pyramid_grinder import load_5yr_cache, load_example_data, compute_example_ranges
+from pyramid_grinder import load_daily_cache, load_example_data, compute_example_ranges
 
 
 def main():
@@ -41,7 +41,7 @@ def main():
 
     # Load data
     print("Loading OHLCV cache...")
-    universe_cache = load_5yr_cache()
+    universe_cache = load_daily_cache()
     print(f"  {len(universe_cache)} tickers")
 
     print("Loading examples...")
@@ -86,7 +86,7 @@ def main():
     # Map expression names to universe matrix columns
     uni_name_to_col = {name: i for i, name in enumerate(uni_expr_names)}
 
-    # Also compute pass rate on the FULL 5yr history (all ticker-day rows)
+    # Also compute pass rate on the FULL full history (all ticker-day rows)
     # This is what historical tiers see.
     # Too expensive to do for all 15k expressions on full history.
     # Instead, sample: use the last bar per ticker (same as D1 matrix).

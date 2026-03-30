@@ -111,7 +111,7 @@ PIPELINE_STEPS = [
     {
         "id": "backtest",
         "name": "5. Backtest Runner",
-        "description": "Scan full 5yr history with signal conditions, generate charts per signal, upload to Railway for gallery view.",
+        "description": "Scan full full history with signal conditions, generate charts per signal, upload to Railway for gallery view.",
         "command": [
             sys.executable, str(PROJECT_ROOT / "scripts" / "backtest_runner.py"),
             "--setup", "dtss"

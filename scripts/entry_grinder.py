@@ -43,9 +43,11 @@ sys.path.insert(0, LOCAL_DIR)
 # DATA LOADING
 # ══════════════════════════════════════════════════════════════
 
-def load_5yr_cache():
-    """Load 5-year OHLCV cache."""
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+def load_daily_cache():
+    """Load daily OHLCV cache."""
+    path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(path):
+        path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
     if not os.path.exists(path):
         path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
     if not os.path.exists(path):
@@ -769,7 +771,7 @@ def main():
     print(f"  Total clusters: {len(cluster_data['clusters'])}")
 
     print(f"\n  Loading OHLCV cache...")
-    universe_cache = load_5yr_cache()
+    universe_cache = load_daily_cache()
     print(f"  OHLCV cache: {len(universe_cache)} tickers")
 
     # ── Extract examples ──

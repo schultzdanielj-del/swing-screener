@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "local_runner"))
 
 from brute_expressions import generate_all
 from expr_cache_builder import ExprSeriesCache
-from pyramid_grinder import load_example_data, load_5yr_cache
+from pyramid_grinder import load_example_data, load_daily_cache
 from file_mirror import mirror_file
 
 API_BASE = "https://web-production-e3025.up.railway.app"
@@ -96,8 +96,8 @@ def run_outlier_analysis(setup_type, grind_path=None):
     print(f"Unique expressions in conditions: {len(cond_names)}")
     
     # 2. Load examples + expression cache
-    print("\nLoading 5yr cache...")
-    universe_cache = load_5yr_cache()
+    print("\nLoading daily cache...")
+    universe_cache = load_daily_cache()
     print(f"  {len(universe_cache)} tickers")
     
     print("Loading examples...")

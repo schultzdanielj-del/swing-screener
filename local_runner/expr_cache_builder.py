@@ -27,7 +27,7 @@ Usage:
     # Check status:
     python local_runner/expr_cache_builder.py --status
 
-Requires: 5yr OHLCV cache (universe_ohlcv_5yr.pkl)
+Requires: daily OHLCV cache (universe_ohlcv_daily.pkl)
 """
 
 import os
@@ -224,13 +224,15 @@ def _load_expressions():
     return signal_exprs
 
 
-def _load_5yr_cache():
-    """Load 5yr OHLCV cache."""
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+def _load_daily_cache():
+    """Load daily OHLCV cache."""
+    path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(path):
+        path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
     if not os.path.exists(path):
         path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
     if not os.path.exists(path):
-        raise FileNotFoundError("No OHLCV cache found. Run cache_builder.py --5yr first.")
+        raise FileNotFoundError("No OHLCV cache found. Run cache_builder.py --daily first.")
     with open(path, "rb") as f:
         return pickle.load(f)
 
@@ -1554,8 +1556,8 @@ def build_full(force=False):
             return manifest
 
     # Load OHLCV
-    print("\n  Loading 5yr OHLCV cache...")
-    universe_cache = _load_5yr_cache()
+    print("\n  Loading daily OHLCV cache...")
+    universe_cache = _load_daily_cache()
     print(f"  {len(universe_cache)} tickers loaded")
 
     # Load HTF OHLCV caches (weekly + monthly from yfinance)
@@ -1753,8 +1755,8 @@ def append_new_bars():
     print(f"  Cached tickers: {manifest['n_tickers']}")
 
     # Load OHLCV
-    print("\n  Loading 5yr OHLCV cache...")
-    universe_cache = _load_5yr_cache()
+    print("\n  Loading daily OHLCV cache...")
+    universe_cache = _load_daily_cache()
     print(f"  {len(universe_cache)} tickers in OHLCV cache")
 
     # Load HTF OHLCV caches (weekly + monthly from yfinance)

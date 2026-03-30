@@ -306,16 +306,18 @@ init_db()
 # LOCAL OHLCV CACHE (replaces universe_ohlcv SQL table locally)
 # ============================================================
 
-_ohlcv_cache = {}  # {ticker: DataFrame} — loaded from 5yr pickle
+_ohlcv_cache = {}  # {ticker: DataFrame} — loaded from daily pickle
 
 def _load_ohlcv_cache():
-    """Load the 5yr OHLCV pickle into memory. Only in local mode."""
+    """Load the daily OHLCV pickle into memory. Only in local mode."""
     global _ohlcv_cache
-    cache_path = Path("local_runner/cache/universe_ohlcv_5yr.pkl")
+    cache_path = Path("local_runner/cache/universe_ohlcv_daily.pkl")
     if not cache_path.exists():
-        print(f"  WARNING: 5yr OHLCV cache not found at {cache_path}")
+        cache_path = Path("local_runner/cache/universe_ohlcv_5yr.pkl")
+    if not cache_path.exists():
+        print(f"  WARNING: daily OHLCV cache not found at {cache_path}")
         print(f"  Vetting charts and ADR calculations will not work.")
-        print(f"  Run: python local_runner/cache_builder.py --5yr --force")
+        print(f"  Run: python local_runner/cache_builder.py --daily --force")
         return
     import pickle
     t0 = _time.time()

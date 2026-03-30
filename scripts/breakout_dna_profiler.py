@@ -10,7 +10,7 @@ Usage (on Dan's desktop):
     python scripts/breakout_dna_profiler.py
 
 Requires:
-    - 5yr OHLCV cache (local_runner/cache/universe_ohlcv_5yr.pkl)
+    - daily OHLCV cache (local_runner/cache/universe_ohlcv_daily.pkl)
     - Expression series cache (local_runner/cache/expr_series/)
     - breakouts_test01.txt in repo root (or scripts/ dir)
 """
@@ -134,7 +134,7 @@ def load_example_expr_values(examples, universe_cache, expr_cache):
         # Get OHLCV data
         df = universe_cache.get(ticker)
         if df is None:
-            skipped.append((ticker, entry_date, ex["subtype"], "not in 5yr cache"))
+            skipped.append((ticker, entry_date, ex["subtype"], "not in daily cache"))
             continue
         
         # Find scan bar: last bar before entry_date
@@ -153,7 +153,7 @@ def load_example_expr_values(examples, universe_cache, expr_cache):
         
         # Map scan_idx to expr cache row
         # The expr cache dates are strings like "2024-01-15"
-        # The 5yr cache df has a date column. scan_idx is the df index.
+        # The daily cache df has a date column. scan_idx is the df index.
         scan_date = df.iloc[scan_idx]["date"]
         if hasattr(scan_date, "strftime"):
             scan_date_str = scan_date.strftime("%Y-%m-%d")
@@ -401,9 +401,11 @@ def main():
         print(f"  Removed {dupes} duplicates → {len(unique_examples)} unique examples")
     examples = unique_examples
     
-    # ── Load 5yr cache ──
-    print("\n  Loading 5yr OHLCV cache...")
-    cache_path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+    # ── Load daily cache ──
+    print("\n  Loading daily OHLCV cache...")
+    cache_path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(cache_path):
+        cache_path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
     if not os.path.exists(cache_path):
         cache_path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
     if not os.path.exists(cache_path):

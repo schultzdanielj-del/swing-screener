@@ -1,7 +1,7 @@
 """
 Signal Filter -- Deduplicate, apply exit, classify, upload to v2 cycle.
 
-Scans all 5yr history for signal conditions, then:
+Scans all full history for signal conditions, then:
   1. Deduplicates: consecutive signal bars for same ticker -> keep rightmost
   2. Applies exit condition: run each signal forward, check if exit fires
   3. Measures exit distance: signal close -> exit close (in ADR)
@@ -63,9 +63,11 @@ def _get_setup_direction(setup_type):
 # ============================================================
 # Data Loading
 # ============================================================
-def load_5yr_cache():
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
-    print(f"  Loading 5yr cache from {path}...")
+def load_daily_cache():
+    path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(path):
+        path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+    print(f"  Loading daily cache from {path}...")
     with open(path, "rb") as f:
         cache = pickle.load(f)
     print(f"  Loaded {len(cache):,} tickers")
@@ -1080,7 +1082,7 @@ def main():
     t0 = time.time()
 
     # Load data
-    cache = load_5yr_cache()
+    cache = load_daily_cache()
     conditions = load_pyramid_conditions(setup, conditions_file=args.conditions_file)
     exit_cond = load_exit_condition(setup)
     examples = load_examples(setup)
@@ -1126,7 +1128,7 @@ def main():
     deduped = deduplicate_signals(raw_signals)
 
     # Reload full cache — needed for exit close prices, ADR, MFE
-    cache = load_5yr_cache()
+    cache = load_daily_cache()
 
     # Phase 5: Apply exit + measure
     print(f"\n  PHASE 5: Apply exit condition + measure distance")

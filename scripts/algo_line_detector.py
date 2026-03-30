@@ -665,7 +665,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "bench":
         # Benchmark: detect algo lines + compute series for one ticker
         ticker = sys.argv[2] if len(sys.argv) > 2 else "AAPL"
-        cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
+        cache_path = "local_runner/cache/universe_ohlcv_daily.pkl"
+        if not os.path.exists(cache_path):
+            cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
         if not os.path.exists(cache_path):
             cache_path = "local_runner/cache/universe_ohlcv.pkl"
         print(f"Loading cache...")
@@ -719,7 +721,9 @@ if __name__ == "__main__":
 
     elif len(sys.argv) > 1 and sys.argv[1] == "count":
         # Count total lines across a sample of tickers
-        cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
+        cache_path = "local_runner/cache/universe_ohlcv_daily.pkl"
+        if not os.path.exists(cache_path):
+            cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
         if not os.path.exists(cache_path):
             cache_path = "local_runner/cache/universe_ohlcv.pkl"
         print(f"Loading cache...")

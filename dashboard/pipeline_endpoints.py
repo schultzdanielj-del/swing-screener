@@ -28,7 +28,7 @@ PIPELINE_STEPS = [
      "prerequisites": ["signal_grind", "exit_grind"],
      "result_files": ["data/outcome_grind/outcome_signals_dtss.json"]},
     {"id": "backtest", "name": "5. Backtest Runner", "category": "analysis",
-     "description": "Scan 5yr history, generate charts per signal.",
+     "description": "Scan full history, generate charts per signal.",
      "prerequisites": ["signal_grind"], "result_files": []},
 ]
 

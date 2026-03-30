@@ -16,7 +16,9 @@ from scripts.outcome_grinder import _compute_exit_series
 
 def test_parity(setup="dtss", n_tickers=20):
     # Load cache
-    cache_path = os.path.join("local_runner", "cache", "universe_ohlcv_5yr.pkl")
+    cache_path = os.path.join("local_runner", "cache", "universe_ohlcv_daily.pkl")
+    if not os.path.exists(cache_path):
+        cache_path = os.path.join("local_runner", "cache", "universe_ohlcv_5yr.pkl")
     cache = pickle.load(open(cache_path, "rb"))
     
     # Load exit grind — GrindStorage was removed in V2
