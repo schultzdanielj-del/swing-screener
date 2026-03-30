@@ -120,8 +120,7 @@ def _yf_download(ticker, start=None, interval="1d"):
         # Drop rows with NaN close (bad data)
         df = df.dropna(subset=["close"]).reset_index(drop=True)
 
-        min_bars = 3 if interval in ("1wk", "1mo") else 5
-        if len(df) < min_bars:
+        if len(df) == 0:
             return ticker, None
 
         return ticker, df
