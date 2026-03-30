@@ -358,11 +358,12 @@ Unified `_build_htf_cache` + `_append_htf_cache` into single `_sync_htf_cache(fu
 - Eliminates the old three-mode problem (build/append/retry were separate code paths)
 - `build_htf_caches()` → `full_sweep=True`. `append_weekly()`/`append_monthly()` → `full_sweep=False`.
 
-**NEXT:** `--all --force` rebuild in progress (2026-03-30). After it completes: full expr cache rebuild (`--build --force`), verify examples pass, then Increment 2 (true incremental append).
+**NEXT:** Full expr cache rebuild (`--build --force`), verify all examples pass, then Increment 2 (true incremental append).
 
-**Known issues (2026-03-30):**
+**Known issues (deferred):**
 - ETA display in `_batched_fetch` inflates over time — rate calculation includes sleep time, making ETA grow even at constant per-batch speed. Cosmetic only.
 - Empty cache save guard needed — `build_daily_cache` can save a 0-ticker pickle if ticker list is empty, which then blocks the fallback chain on next run. Needs a guard: don't save if universe is empty.
+- Failed counter in `_sync_htf_cache` summary overcounts — reports first-attempt failures even when retry sweep succeeds. Cosmetic only.
 
 ### Task H Phase 3, Increment 2: True Incremental Append — DESIGN (2026-03-29)
 
