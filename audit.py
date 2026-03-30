@@ -366,7 +366,6 @@ SPECIFICATION DOCUMENTS:
             shell=True, env=env
         )
         output = result.stdout.strip()
-        output = result.stdout.strip()
     except FileNotFoundError:
         print("  ERROR: 'claude' command not found.")
         print("  Install Claude Code: npm install -g @anthropic-ai/claude-code")
