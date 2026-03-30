@@ -311,9 +311,26 @@ def build_daily_cache(force=False):
     print("  DAILY CACHE BUILDER — Full history via yfinance")
     print("=" * 60)
 
-    print("\nFetching ticker list from local DB...")
-    tickers = get_tradable_tickers_local()
-    print(f"  {len(tickers)} tradable tickers (start={HISTORY_START})")
+    # Get ticker list from existing cache (has all ~10,856 tickers).
+    # Only fall back to SQLite tradable_universe if no cache exists at all.
+    print("\nGetting ticker list...")
+    tickers = []
+    for pkl in [CACHE_DAILY_FILE, CACHE_LEGACY_5YR]:
+        if os.path.exists(pkl):
+            with open(pkl, "rb") as f:
+                existing = pickle.load(f)
+            tickers = sorted(existing.keys())
+            del existing
+            print(f"  {len(tickers)} tickers from existing cache")
+            break
+    if not tickers:
+        try:
+            tickers = get_tradable_tickers_local()
+            print(f"  {len(tickers)} tickers from local DB")
+        except FileNotFoundError:
+            print("  ERROR: No existing cache and no local DB. Nothing to build from.")
+            return {}
+    print(f"  Start date: {HISTORY_START}")
 
     print(f"\nFetching daily OHLCV data via yfinance ({MAX_WORKERS} workers, batches of {HTF_BATCH_SIZE})...")
     t0 = time.time()
@@ -367,7 +384,8 @@ def build_daily_cache(force=False):
     bar_counts = [len(df) for df in universe.values()]
     print(f"  Total rows: {total_rows:,}")
     print(f"  Avg bars/ticker: {avg_bars:.0f}")
-    print(f"  Min/Max bars: {min(bar_counts)}/{max(bar_counts)}")
+    if bar_counts:
+        print(f"  Min/Max bars: {min(bar_counts)}/{max(bar_counts)}")
     print(f"  File size: {size_mb:.0f} MB")
     print()
 
