@@ -289,17 +289,23 @@ Task H Phase 3 (incremental append)               -- IN PROGRESS (2026-03-29)
                                                         - --all flag: daily + weekly + monthly in one command
                                                         - _batched_fetch(): adaptive rate limiting (scales workers
                                                           + sleep based on failure rate) with retry sweeps
-                                                        - Full --all --force rebuild in progress
+                                                        - Full --all --force rebuild — DONE (2026-03-30)
                                                       Increment 2: True incremental expr cache append
                                                         - See detailed design below
     |
+OHLCV --all --force rebuild                        -- DONE (2026-03-30)
+    |
 First full rebuild with HTF pickles                -- run once to establish baseline cache
+                                                      (--build --force on Dan's machine)
     |
-Signal filter / regrind gate                       -- verify ALL examples still found
+Clean consensus filter grind                       -- all setups need full regrind,
+                                                      signal filter verifies baseline cache
     |
-Code auditor                                       -- run audit.sh on all changes
+Increment 2: True incremental expr cache append    -- next code task after baseline is verified
     |
-Switch nightly to incremental append               -- after verification passes
+Signal filter recheck                              -- confirm incremental results match baseline
+    |
+Switch nightly to incremental append               -- after recheck passes
 ```
 
 ### Task H Phase 3, Increment 1: OHLCV Infrastructure — DONE (2026-03-28)
