@@ -200,6 +200,10 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=50,
                    min_sleep=1.0, max_sleep=30.0, max_retries=3):
     """Fetch data for a list of tickers with adaptive rate limiting and retry.
 
+    Adapts both sleep time AND concurrent workers based on failure rate.
+    When rate limited: fewer threads + longer sleep.
+    When clean: ramps back up.
+
     Args:
         tickers: list of ticker symbols to fetch
         fetch_fn: callable(ticker) → (ticker, result_or_None)
@@ -219,12 +223,19 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=50,
     results = {}
     remaining = list(tickers)
     sleep_time = min_sleep
+    workers = MAX_WORKERS  # starts at 20
+    min_workers = 3
     consecutive_clean = 0  # batches with 0 failures in a row
 
     for attempt in range(1 + max_retries):
         if attempt > 0:
+            # Reset to moderate settings for retry
+            sleep_time = 3.0
+            workers = max(min_workers, MAX_WORKERS // 2)
+            consecutive_clean = 0
             print(f"\n  {label} retry {attempt}/{max_retries} — "
-                  f"{len(remaining)} tickers to retry...")
+                  f"{len(remaining)} tickers to retry "
+                  f"({workers} workers, {sleep_time:.0f}s sleep)...")
 
         batch_failed = []
         t0 = time.time()
@@ -237,7 +248,7 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=50,
 
             batch_ok = 0
             batch_fail = 0
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {pool.submit(fetch_fn, t): t for t in batch}
                 for future in as_completed(futures):
                     ticker = futures[future]
@@ -253,15 +264,17 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=50,
                         batch_failed.append(ticker)
                         batch_fail += 1
 
-            # Adaptive backoff
+            # Adaptive backoff — adjust both workers and sleep
             fail_rate = batch_fail / len(batch) if batch else 0
             if fail_rate > 0.1:
-                sleep_time = min(sleep_time * 2, max_sleep)
+                sleep_time = min(sleep_time * 1.5, max_sleep)
+                workers = max(workers - 2, min_workers)
                 consecutive_clean = 0
             else:
                 consecutive_clean += 1
-                if consecutive_clean >= 3 and sleep_time > min_sleep:
-                    sleep_time = max(sleep_time / 2, min_sleep)
+                if consecutive_clean >= 3:
+                    sleep_time = max(sleep_time * 0.7, min_sleep)
+                    workers = min(workers + 1, MAX_WORKERS)
 
             done = b_end
             elapsed = time.time() - t0
@@ -269,7 +282,7 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=50,
             eta = (len(remaining) - done) / rate if rate > 0 else 0
             print(f"    {label}: {done:,}/{len(remaining):,} "
                   f"({len(results):,} ok, {len(batch_failed)} failed, "
-                  f"sleep={sleep_time:.0f}s) "
+                  f"w={workers} sleep={sleep_time:.0f}s) "
                   f"[{elapsed/60:.1f}m elapsed, ~{eta/60:.1f}m left]")
 
             if batch_idx < n_batches - 1:
