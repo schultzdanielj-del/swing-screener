@@ -946,6 +946,8 @@ if __name__ == "__main__":
     mode_all = "--all" in sys.argv
     mode_daily = "--daily" in sys.argv or "--5yr" in sys.argv  # accept legacy flag
     mode_htf = "--htf" in sys.argv
+    mode_weekly = "--weekly" in sys.argv
+    mode_monthly = "--monthly" in sys.argv
     mode_htf_status = "--htf-status" in sys.argv
 
     if mode_htf_status:
@@ -958,6 +960,10 @@ if __name__ == "__main__":
         build_htf_caches()
     elif mode_htf:
         build_htf_caches()
+    elif mode_weekly:
+        _sync_htf_cache("1wk", WEEKLY_FILE, WEEKLY_META, "WEEKLY", full_sweep=True)
+    elif mode_monthly:
+        _sync_htf_cache("1mo", MONTHLY_FILE, MONTHLY_META, "MONTHLY", full_sweep=True)
     elif mode_daily:
         data = build_daily_cache(force=force)
         print(f"Daily cache ready: {len(data)} tickers")
