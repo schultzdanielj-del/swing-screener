@@ -191,6 +191,100 @@ def compute_dvol_20d(df):
 # 300-BAR CACHE (legacy — kept for backward compat)
 # ══════════════════════════════════════════════════════════════
 
+
+# ══════════════════════════════════════════════════════════════
+# BATCHED FETCH — Adaptive backoff + retry sweeps
+# ══════════════════════════════════════════════════════════════
+
+def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=50,
+                   min_sleep=1.0, max_sleep=30.0, max_retries=3):
+    """Fetch data for a list of tickers with adaptive rate limiting and retry.
+
+    Args:
+        tickers: list of ticker symbols to fetch
+        fetch_fn: callable(ticker) → (ticker, result_or_None)
+        label: display label for progress
+        batch_size: tickers per batch
+        min_sleep: minimum sleep between batches (seconds)
+        max_sleep: maximum sleep between batches (seconds)
+        max_retries: how many full retry sweeps on failed tickers
+
+    Returns:
+        results: dict {ticker: result} for successful fetches
+        permanently_failed: list of tickers that failed all retries
+    """
+    if not tickers:
+        return {}, []
+
+    results = {}
+    remaining = list(tickers)
+    sleep_time = min_sleep
+    consecutive_clean = 0  # batches with 0 failures in a row
+
+    for attempt in range(1 + max_retries):
+        if attempt > 0:
+            print(f"\n  {label} retry {attempt}/{max_retries} — "
+                  f"{len(remaining)} tickers to retry...")
+
+        batch_failed = []
+        t0 = time.time()
+        n_batches = (len(remaining) + batch_size - 1) // batch_size
+
+        for batch_idx in range(n_batches):
+            b_start = batch_idx * batch_size
+            b_end = min(b_start + batch_size, len(remaining))
+            batch = remaining[b_start:b_end]
+
+            batch_ok = 0
+            batch_fail = 0
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+                futures = {pool.submit(fetch_fn, t): t for t in batch}
+                for future in as_completed(futures):
+                    ticker = futures[future]
+                    try:
+                        _, result = future.result()
+                        if result is not None:
+                            results[ticker] = result
+                            batch_ok += 1
+                        else:
+                            batch_failed.append(ticker)
+                            batch_fail += 1
+                    except Exception:
+                        batch_failed.append(ticker)
+                        batch_fail += 1
+
+            # Adaptive backoff
+            fail_rate = batch_fail / len(batch) if batch else 0
+            if fail_rate > 0.1:
+                sleep_time = min(sleep_time * 2, max_sleep)
+                consecutive_clean = 0
+            else:
+                consecutive_clean += 1
+                if consecutive_clean >= 3 and sleep_time > min_sleep:
+                    sleep_time = max(sleep_time / 2, min_sleep)
+
+            done = b_end
+            elapsed = time.time() - t0
+            rate = done / elapsed if elapsed > 0 else 0
+            eta = (len(remaining) - done) / rate if rate > 0 else 0
+            print(f"    {label}: {done:,}/{len(remaining):,} "
+                  f"({len(results):,} ok, {len(batch_failed)} failed, "
+                  f"sleep={sleep_time:.0f}s) "
+                  f"[{elapsed/60:.1f}m elapsed, ~{eta/60:.1f}m left]")
+
+            if batch_idx < n_batches - 1:
+                time.sleep(sleep_time)
+
+        # Check if retry made progress
+        if not batch_failed:
+            break  # all succeeded
+        if attempt > 0 and len(batch_failed) >= len(remaining):
+            break  # retry made zero progress — stop
+
+        remaining = batch_failed
+
+    return results, remaining
+
 def cache_is_fresh():
     """Check if cache exists and is less than 24h old."""
     if not os.path.exists(CACHE_FILE) or not os.path.exists(CACHE_META):
@@ -221,38 +315,27 @@ def build_cache(force=False):
     tickers = get_tradable_tickers_local()
     print(f"  {len(tickers)} tradable tickers")
 
-    print(f"\nFetching OHLCV data via yfinance ({MAX_WORKERS} concurrent workers)...")
+    print(f"\nFetching OHLCV data via yfinance...")
     t0 = time.time()
+
+    from datetime import date
+    one_yr_ago = (date.today() - timedelta(days=400)).strftime("%Y-%m-%d")
+
+    results, permanently_failed = _batched_fetch(
+        tickers,
+        fetch_fn=lambda t: _yf_download(t, one_yr_ago),
+        label="Legacy",
+    )
+
     universe = {}
-    failed = []
-
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        # Use ~1yr lookback for 300-bar cache
-        from datetime import date
-        one_yr_ago = (date.today() - timedelta(days=400)).strftime("%Y-%m-%d")
-        futures = {pool.submit(_yf_download, t, one_yr_ago): t for t in tickers}
-        done = 0
-        for future in as_completed(futures):
-            ticker, df = future.result()
-            done += 1
-            if df is not None:
-                compute_dvol_20d(df)
-                universe[ticker] = df
-            else:
-                failed.append(ticker)
-
-            if done % 100 == 0 or done == len(tickers):
-                elapsed = time.time() - t0
-                rate = done / elapsed if elapsed > 0 else 0
-                eta = (len(tickers) - done) / rate if rate > 0 else 0
-                print(f"  {done:,}/{len(tickers):,} fetched "
-                      f"({len(universe):,} ok, {len(failed)} failed) "
-                      f"[{elapsed:.0f}s elapsed, ~{eta:.0f}s remaining]")
+    for ticker, df in results.items():
+        compute_dvol_20d(df)
+        universe[ticker] = df
 
     elapsed = time.time() - t0
     print(f"\nFetch complete: {len(universe):,} tickers in {elapsed:.0f}s ({elapsed/60:.1f} min)")
-    if failed:
-        print(f"  Failed: {len(failed)} tickers (too short or no data)")
+    if permanently_failed:
+        print(f"  Permanently failed: {len(permanently_failed)} tickers")
 
     print(f"\nSaving cache...")
     with open(CACHE_FILE, "wb") as f:
@@ -332,42 +415,24 @@ def build_daily_cache(force=False):
             return {}
     print(f"  Start date: {HISTORY_START}")
 
-    print(f"\nFetching daily OHLCV data via yfinance ({MAX_WORKERS} workers, batches of {HTF_BATCH_SIZE})...")
+    print(f"\nFetching daily OHLCV data via yfinance...")
     t0 = time.time()
+
+    results, permanently_failed = _batched_fetch(
+        tickers,
+        fetch_fn=lambda t: _yf_download(t, HISTORY_START),
+        label="Daily",
+    )
+
     universe = {}
-    failed = []
-
-    n_batches = (len(tickers) + HTF_BATCH_SIZE - 1) // HTF_BATCH_SIZE
-    for batch_idx in range(n_batches):
-        batch_start = batch_idx * HTF_BATCH_SIZE
-        batch_end = min(batch_start + HTF_BATCH_SIZE, len(tickers))
-        batch = tickers[batch_start:batch_end]
-
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {pool.submit(_yf_download, t, HISTORY_START): t for t in batch}
-            for future in as_completed(futures):
-                ticker, df = future.result()
-                if df is not None:
-                    compute_dvol_20d(df)
-                    universe[ticker] = df
-                else:
-                    failed.append(ticker)
-
-        done = batch_end
-        elapsed = time.time() - t0
-        rate = done / elapsed if elapsed > 0 else 0
-        eta = (len(tickers) - done) / rate if rate > 0 else 0
-        print(f"  {done:,}/{len(tickers):,} fetched "
-              f"({len(universe):,} ok, {len(failed)} failed) "
-              f"[{elapsed/60:.1f}m elapsed, ~{eta/60:.1f}m left]")
-
-        if batch_idx < n_batches - 1:
-            time.sleep(HTF_BATCH_SLEEP)
+    for ticker, df in results.items():
+        compute_dvol_20d(df)
+        universe[ticker] = df
 
     elapsed = time.time() - t0
     print(f"\nFetch complete: {len(universe):,} tickers in {elapsed:.0f}s ({elapsed/60:.1f} min)")
-    if failed:
-        print(f"  Failed: {len(failed)} tickers (too short or no data)")
+    if permanently_failed:
+        print(f"  Permanently failed: {len(permanently_failed)} tickers")
 
     print(f"\nSaving daily cache...")
     with open(CACHE_DAILY_FILE, "wb") as f:
@@ -458,57 +523,45 @@ def append_daily_cache():
 
     # Append new bars for existing tickers
     if to_append:
-        print(f"\n  Appending new bars via yfinance ({MAX_WORKERS} workers)...")
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {
-                pool.submit(_yf_append_after_date, t, last_dates.get(t, "2020-01-01")): t
-                for t in to_append
-            }
-            done = 0
-            for future in as_completed(futures):
-                ticker = futures[future]
-                done += 1
-                try:
-                    _, new_df = future.result()
-                    if new_df is not None and len(new_df) > 0:
-                        existing = universe[ticker]
-                        # Recompute dvol_20d on combined data
-                        combined = pd.concat([existing, new_df], ignore_index=True)
-                        combined = combined.sort_values("date").reset_index(drop=True)
-                        # Deduplicate by date (in case of overlap)
-                        combined = combined.drop_duplicates(subset=["date"], keep="last")
-                        combined = combined.reset_index(drop=True)
-                        compute_dvol_20d(combined)
-                        universe[ticker] = combined
-                        appended += 1
-                    else:
-                        no_new += 1
-                except Exception:
-                    failed += 1
+        print(f"\n  Appending new bars via yfinance...")
 
-                if done % 500 == 0 or done == len(to_append):
-                    elapsed = time.time() - t0
-                    print(f"    {done:,}/{len(to_append):,} checked "
-                          f"({appended} appended, {no_new} current, {failed} failed) "
-                          f"[{elapsed:.0f}s]")
+        def _append_one(ticker):
+            return _yf_append_after_date(ticker, last_dates.get(ticker, "2020-01-01"))
+
+        append_results, append_failed = _batched_fetch(
+            to_append, fetch_fn=_append_one, label="Append",
+        )
+        failed += len(append_failed)
+
+        for ticker, new_df in append_results.items():
+            if len(new_df) > 0:
+                existing = universe[ticker]
+                combined = pd.concat([existing, new_df], ignore_index=True)
+                combined = combined.sort_values("date").reset_index(drop=True)
+                combined = combined.drop_duplicates(subset=["date"], keep="last")
+                combined = combined.reset_index(drop=True)
+                compute_dvol_20d(combined)
+                universe[ticker] = combined
+                appended += 1
+            else:
+                no_new += 1
 
     # Full fetch for new tickers
     if to_fetch_full:
         print(f"\n  Fetching {len(to_fetch_full)} new tickers via yfinance...")
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {pool.submit(_yf_download, t, HISTORY_START): t for t in to_fetch_full}
-            for future in as_completed(futures):
-                ticker = futures[future]
-                try:
-                    _, df = future.result()
-                    if df is not None and len(df) >= 50:
-                        compute_dvol_20d(df)
-                        universe[ticker] = df
-                        new_added += 1
-                    else:
-                        failed += 1
-                except Exception:
-                    failed += 1
+
+        new_results, new_failed = _batched_fetch(
+            to_fetch_full,
+            fetch_fn=lambda t: _yf_download(t, HISTORY_START),
+            label="New tickers",
+        )
+        failed += len(new_failed)
+
+        for ticker, df in new_results.items():
+            if len(df) >= 50:
+                compute_dvol_20d(df)
+                universe[ticker] = df
+                new_added += 1
 
     elapsed = time.time() - t0
 
@@ -644,76 +697,44 @@ def _sync_htf_cache(interval, output_file, meta_file, label, recent_start,
 
     # Update stale existing tickers — fetch recent bars using explicit start date
     if to_update:
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {
-                pool.submit(_yf_download, t, recent_start, interval): t
-                for t in to_update
-            }
-            done = 0
-            for future in as_completed(futures):
-                ticker = futures[future]
-                done += 1
-                try:
-                    _, new_df = future.result()
-                    if new_df is not None and len(new_df) > 0:
-                        old_len = len(universe[ticker])
-                        old_last = str(universe[ticker]["date"].iloc[-1])[:10]
-                        universe[ticker] = _merge_htf_bars(universe[ticker], new_df)
-                        new_len = len(universe[ticker])
-                        new_last = str(universe[ticker]["date"].iloc[-1])[:10]
-                        if new_len != old_len or new_last != old_last:
-                            updated += 1
-                        else:
-                            no_change += 1
-                    else:
-                        no_change += 1
-                except Exception:
-                    failed += 1
+        def _update_one(ticker):
+            return _yf_download(ticker, recent_start, interval)
 
-                if done % 500 == 0 or done == len(to_update):
-                    elapsed = time.time() - t0
-                    print(f"    Update: {done:,}/{len(to_update):,} "
-                          f"({updated} updated, {no_change} current, {failed} failed) "
-                          f"[{elapsed:.0f}s]")
+        update_results, update_failed = _batched_fetch(
+            to_update, fetch_fn=_update_one, label=f"{label} update",
+        )
+        failed += len(update_failed)
+
+        for ticker, new_df in update_results.items():
+            if len(new_df) > 0:
+                old_len = len(universe[ticker])
+                old_last = str(universe[ticker]["date"].iloc[-1])[:10]
+                universe[ticker] = _merge_htf_bars(universe[ticker], new_df)
+                new_len = len(universe[ticker])
+                new_last = str(universe[ticker]["date"].iloc[-1])[:10]
+                if new_len != old_len or new_last != old_last:
+                    updated += 1
+                else:
+                    no_change += 1
+            else:
+                no_change += 1
 
     # Full fetch for missing tickers (only in full_sweep mode)
-    fetch_failed = 0
     if to_fetch:
         print(f"\n  Fetching {len(to_fetch)} missing tickers (start={HISTORY_START})...")
-        n_batches = (len(to_fetch) + HTF_BATCH_SIZE - 1) // HTF_BATCH_SIZE
-        for batch_idx in range(n_batches):
-            batch_start = batch_idx * HTF_BATCH_SIZE
-            batch_end = min(batch_start + HTF_BATCH_SIZE, len(to_fetch))
-            batch = to_fetch[batch_start:batch_end]
 
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-                futures = {
-                    pool.submit(_yf_download, t, HISTORY_START, interval): t
-                    for t in batch
-                }
-                for future in as_completed(futures):
-                    ticker = futures[future]
-                    try:
-                        _, df = future.result()
-                        if df is not None and len(df) >= 3:
-                            universe[ticker] = df
-                            new_added += 1
-                        else:
-                            fetch_failed += 1
-                    except Exception:
-                        fetch_failed += 1
+        def _fetch_htf(ticker):
+            return _yf_download(ticker, HISTORY_START, interval)
 
-            done = batch_end
-            elapsed = time.time() - t0
-            rate = done / elapsed if elapsed > 0 else 0
-            eta = (len(to_fetch) - done) / rate if rate > 0 else 0
-            print(f"    Fetch: {done:,}/{len(to_fetch):,} "
-                  f"({new_added} ok, {fetch_failed} failed) "
-                  f"[{elapsed/60:.1f}m elapsed, ~{eta/60:.1f}m left]")
+        fetch_results, fetch_failed_list = _batched_fetch(
+            to_fetch, fetch_fn=_fetch_htf, label=f"{label} fetch",
+        )
+        failed += len(fetch_failed_list)
 
-            if batch_idx < n_batches - 1:
-                time.sleep(HTF_BATCH_SLEEP)
-    failed += fetch_failed
+        for ticker, df in fetch_results.items():
+            if len(df) >= 3:
+                universe[ticker] = df
+                new_added += 1
 
     elapsed = time.time() - t0
 
