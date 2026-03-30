@@ -267,7 +267,7 @@ Task H Phase 2 (production wiring — full rebuild) -- DONE (2026-03-27)
                                                       Reverted: daily intermediates dispatch (slower)
                                                       Result: 1.8 tickers/s, ~80-90 min for 10.5K tickers
     |
-Task H Phase 3 (incremental append)               -- IN PROGRESS (2026-03-28)
+Task H Phase 3 (incremental append)               -- IN PROGRESS (2026-03-29)
                                                       Increment 1: OHLCV infrastructure — DONE
                                                         - Rewire cache_builder.py: Railway → yfinance
                                                         - HTF caches merged into cache_builder.py
@@ -276,18 +276,21 @@ Task H Phase 3 (incremental append)               -- IN PROGRESS (2026-03-28)
                                                           (full rebuild uses HTF pickles, not resample)
                                                         - Rewire nightly.py: yfinance freshness check,
                                                           new weekly/monthly cache steps (10 steps total)
+                                                      Increment 1b: Fill HTF gaps — IN PROGRESS
+                                                        - Run --htf to retry 1,235 weekly / 2,315 monthly failures
+                                                        - Must complete BEFORE full rebuild so all tickers use
+                                                          pickle data as HTF source (not resample fallback)
+                                                        - Tickers that genuinely can't get HTF from yfinance
+                                                          will always use resample — same path in full rebuild
+                                                          AND incremental, so values stay consistent
                                                       Increment 2: True incremental expr cache append
-                                                        - Load existing .npz + full daily OHLCV
-                                                        - Build ExpressionEngine, set_target to last bar
-                                                        - engine.compute(expr) for each expression → one value
-                                                        - LSP + algo detectors on full OHLCV → last bar values
-                                                        - HTF from pickles: overwrite current week/month columns
-                                                        - Append one row to existing .npz, save
-                                                        - Target: 2-5 min nightly
+                                                        - See detailed design below
     |
 First full rebuild with HTF pickles                -- run once to establish baseline cache
     |
 Signal filter / regrind gate                       -- verify ALL examples still found
+    |
+Code auditor                                       -- run audit.sh on all changes
     |
 Switch nightly to incremental append               -- after verification passes
 ```
@@ -349,3 +352,64 @@ Unified `_build_htf_cache` + `_append_htf_cache` into single `_sync_htf_cache(fu
 - `build_htf_caches()` → `full_sweep=True`. `append_weekly()`/`append_monthly()` → `full_sweep=False`.
 
 **NEXT:** Run `--htf` to fill the 1,235/2,315 gaps. Then full expr cache rebuild (`--build --force`), verify examples pass, then Increment 2 (true incremental append).
+
+### Task H Phase 3, Increment 2: True Incremental Append — DESIGN (2026-03-29)
+
+**Problem:** Current `append_new_bars()` does a full recompute of every ticker with new bars — same as `build_full`, just scoped. Takes ~80-90 min. Nightly only adds 1 new bar per active ticker (~4,118 active out of 10,542 total). Dead/delisted tickers have no new bars and can be skipped entirely.
+
+**Critical constraint — HTF source consistency:** Every ticker must use the SAME HTF data source (pickle vs resample) in both full rebuild and incremental. If the full rebuild used pickle data for ticker X, incremental must also use pickle data. If pickle wasn't available and full rebuild resampled, incremental must also resample. Mixing sources = different HTF values for the same bar = broken immutability. This is why HTF gaps must be filled BEFORE the baseline full rebuild.
+
+**Design — per-ticker incremental worker:**
+
+1. Load existing .npz (dates + data array from previous build)
+2. Load full daily OHLCV from 5yr pickle (needed for indicator lookbacks)
+3. Compare: if OHLCV has no new bars beyond cached dates, skip ticker
+4. Build ExpressionEngine on full daily OHLCV
+5. `engine.set_target(len(df) - 1)` — point to last bar
+
+**Daily expressions (~5,600):**
+6. For each daily arithmetic expression: `engine.compute(expr)` → single float. Engine lazily caches indicator series (RSI, MA, ATR, etc.) on first access, subsequent expressions reuse cached values. 16,051 `.iloc[i]` calls, not 16,051 full series computations.
+7. Boolean aggregates (count_true, since_true, true_in_row): `engine.compute(expr)` handles these — internally calls `_bool_series()` which computes full series, then indexes at target. Cached per unique condition (127 conditions).
+8. Extension structure (on_series, on_series_bool_agg — ~1,198 expressions): `engine.compute()` does NOT handle these. Must use `compute_series()` on the 2 base extension series (ext_avgc50_adr14, ext_avgc200_adr14), then compute derived indicators (trendline_deviation, channel_position, bool_agg), take `[-1]` value. Full series computation but only 2 base series + ~40 unique derived indicators.
+
+**LSP + Algo (124 precomputed):**
+9. Run `compute_all_lsp_series(df)` on full daily OHLCV → dict of arrays, extract last-bar values for each LSP expression
+10. Run `compute_all_algo_series(df)` → same pattern
+
+**HTF (weekly ~5,233 + monthly ~5,233):**
+11. Load weekly/monthly DataFrames from HTF pickles (nightly steps 3-4 already updated these with `_merge_htf_bars` — partial candle overwritten)
+12. Build HTF ExpressionEngine on HTF DataFrame (~520 weekly / ~120 monthly bars — trivially fast)
+13. `htf_engine.set_target(len(htf_df) - 1)` — last HTF bar
+14. For each HTF arith/bool expression: `htf_engine.compute(base_expr)` → single float
+15. HTF ext struct: `compute_series()` on HTF base extension series, compute derived indicators at HTF resolution, take `[-1]`
+16. No daily-to-HTF mapping needed — last HTF bar IS the current period, maps to today's daily bar directly
+
+**Save:**
+17. Allocate new row: 1D array of 16,051 float32 values
+18. `np.vstack([existing_data, new_row])` → append
+19. Append new date string to dates array
+20. Save with fast compression (zipfile level 1)
+
+**Performance estimates:**
+- Active tickers only: ~4,118 (dead tickers skipped — no new bar)
+- Per-ticker compute: ~2-3s (engine.compute is fast — lazy cache + single index)
+- LSP + algo: ~0.67s (unchanged, runs full detection)
+- HTF: ~0.3s (tiny arrays)
+- Load existing .npz: ~0.3s
+- Save: ~1.6s (compression on full array — same cost as full rebuild)
+- Total per-ticker: ~5s
+- 14 workers, 4,118 tickers: ~5 × 4,118 / 14 ≈ 1,471s ≈ 25 min
+- Target: <30 min (3x faster than full rebuild's 80-90 min)
+- Stretch goal: <15 min if save can be optimized (e.g., delta compression)
+
+**What engine.compute() handles vs doesn't:**
+- HANDLES: all daily arithmetic ops (extension, ma_slope, rsi, adx, percentile_rank, swing counts, bollinger, macd, aroon, cmf, etc.), all boolean aggregates (count_true, since_true, true_in_row)
+- DOES NOT HANDLE: on_series, on_series_bool_agg (extension structure), precomputed (LSP, algo, HTF)
+- The unhandled ops have dedicated code paths in the worker (steps 8-15 above)
+
+**New tickers:** Tickers in 5yr cache but not in expr cache get full compute via existing `_compute_and_save_ticker`. Rare after baseline build (only new IPOs/listings).
+
+**Decisions:**
+- Full rebuild stays as-is. Incremental is a NEW code path in `append_new_bars()`, not a modification of `build_full()`.
+- The resample fallback for HTF stays in the incremental worker for tickers without HTF pickle data — same as full rebuild, preserving consistency.
+- 2-5 min target from original spec was optimistic. Realistic target is <30 min. Still 3x improvement over full rebuild, and the gap widens as more tickers become dead (fewer active tickers to process).
