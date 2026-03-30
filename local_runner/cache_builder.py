@@ -315,30 +315,37 @@ def build_daily_cache(force=False):
     tickers = get_tradable_tickers_local()
     print(f"  {len(tickers)} tradable tickers (start={HISTORY_START})")
 
-    print(f"\nFetching daily OHLCV data via yfinance ({MAX_WORKERS} concurrent workers)...")
+    print(f"\nFetching daily OHLCV data via yfinance ({MAX_WORKERS} workers, batches of {HTF_BATCH_SIZE})...")
     t0 = time.time()
     universe = {}
     failed = []
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        futures = {pool.submit(_yf_download, t, HISTORY_START): t for t in tickers}
-        done = 0
-        for future in as_completed(futures):
-            ticker, df = future.result()
-            done += 1
-            if df is not None:
-                compute_dvol_20d(df)
-                universe[ticker] = df
-            else:
-                failed.append(ticker)
+    n_batches = (len(tickers) + HTF_BATCH_SIZE - 1) // HTF_BATCH_SIZE
+    for batch_idx in range(n_batches):
+        batch_start = batch_idx * HTF_BATCH_SIZE
+        batch_end = min(batch_start + HTF_BATCH_SIZE, len(tickers))
+        batch = tickers[batch_start:batch_end]
 
-            if done % 200 == 0 or done == len(tickers):
-                elapsed = time.time() - t0
-                rate = done / elapsed if elapsed > 0 else 0
-                eta = (len(tickers) - done) / rate if rate > 0 else 0
-                print(f"  {done:,}/{len(tickers):,} fetched "
-                      f"({len(universe):,} ok, {len(failed)} failed) "
-                      f"[{elapsed:.0f}s elapsed, ~{eta:.0f}s remaining]")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {pool.submit(_yf_download, t, HISTORY_START): t for t in batch}
+            for future in as_completed(futures):
+                ticker, df = future.result()
+                if df is not None:
+                    compute_dvol_20d(df)
+                    universe[ticker] = df
+                else:
+                    failed.append(ticker)
+
+        done = batch_end
+        elapsed = time.time() - t0
+        rate = done / elapsed if elapsed > 0 else 0
+        eta = (len(tickers) - done) / rate if rate > 0 else 0
+        print(f"  {done:,}/{len(tickers):,} fetched "
+              f"({len(universe):,} ok, {len(failed)} failed) "
+              f"[{elapsed/60:.1f}m elapsed, ~{eta/60:.1f}m left]")
+
+        if batch_idx < n_batches - 1:
+            time.sleep(HTF_BATCH_SLEEP)
 
     elapsed = time.time() - t0
     print(f"\nFetch complete: {len(universe):,} tickers in {elapsed:.0f}s ({elapsed/60:.1f} min)")
