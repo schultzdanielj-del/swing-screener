@@ -23,7 +23,7 @@ These are the only components that make network calls for market data.
 ### cache_builder.py
 **Location:** `local_runner/cache_builder.py`
 **Spec:** `NIGHTLY_REFRESH.md`, `LOCALIZE.md`
-**What it does:** Downloads OHLCV from yfinance, stores as pickles. Append-only — never drops old bars. All fetches use explicit `start=HISTORY_START` (2016-01-01), never yfinance `period=` parameter.
+**What it does:** Downloads OHLCV from yfinance, stores as pickles. Append-only — never drops old bars. All fetches use explicit `start=HISTORY_START` (2016-01-01), never yfinance `period=` parameter. No arbitrary lookback windows — full sweep uses HISTORY_START, nightly append uses each ticker's own last cached bar date.
 
 **Inputs:**
 - yfinance API (network) — via `_yf_download(ticker, start, interval)` using explicit start dates
@@ -48,7 +48,9 @@ These are the only components that make network calls for market data.
 
 **CLI:**
 - `--daily [--force]` — build/rebuild daily cache
-- `--htf [--force]` — build/rebuild weekly + monthly caches
+- `--htf [--force]` — build/rebuild weekly + monthly caches (full sweep from HISTORY_START)
+- `--weekly` — build/rebuild weekly cache only (full sweep from HISTORY_START)
+- `--monthly` — build/rebuild monthly cache only (full sweep from HISTORY_START)
 - `--all [--force]` — daily + weekly + monthly in one command
 - `--htf-status` — show HTF cache status
 
