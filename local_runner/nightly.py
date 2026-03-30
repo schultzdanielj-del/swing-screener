@@ -323,7 +323,10 @@ def main():
     parser = argparse.ArgumentParser(description="Nightly data refresh")
     parser.add_argument("--force", action="store_true",
                         help="Skip freshness check, run all steps regardless")
+    parser.add_argument("--skip", type=int, nargs="+", default=[],
+                        help="Step numbers to skip (e.g. --skip 5 to skip expr cache)")
     args = parser.parse_args()
+    skip_steps = set(args.skip)
 
     print(f"\n{'═'*60}")
     print(f"  Nightly Update")
@@ -334,7 +337,10 @@ def main():
 
     if args.force:
         print("\n  --force: skipping freshness check, running all steps")
-    else:
+    if skip_steps:
+        print(f"\n  --skip: will skip step(s) {', '.join(str(s) for s in sorted(skip_steps))}")
+
+    if not args.force:
         # Step 1: yfinance freshness check (gate)
         has_new_data = step_1_freshness_check()
 
@@ -348,14 +354,21 @@ def main():
             return
 
     # Steps 2-9: refresh all local data
-    step_2_daily_cache()
-    step_3_weekly_cache()
-    step_4_monthly_cache()
-    step_5_expr_cache()
-    step_6_matrix()
-    step_7_earnings()
-    step_8_market_cache()
-    step_9_fundamentals()
+    steps = [
+        (2, step_2_daily_cache),
+        (3, step_3_weekly_cache),
+        (4, step_4_monthly_cache),
+        (5, step_5_expr_cache),
+        (6, step_6_matrix),
+        (7, step_7_earnings),
+        (8, step_8_market_cache),
+        (9, step_9_fundamentals),
+    ]
+    for num, fn in steps:
+        if num in skip_steps:
+            print(f"\n  ⏭ Skipping step {num} (--skip)")
+            continue
+        fn()
 
     # Step 10: seed vault always runs
     step_10_seed_vault()
