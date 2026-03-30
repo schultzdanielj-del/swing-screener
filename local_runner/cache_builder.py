@@ -131,9 +131,9 @@ def build_ticker_reference(tickers, force=False):
         to_fetch,
         fetch_fn=_get_first_trade_date,
         label="Reference",
-        batch_size=100,
-        min_sleep=0.5,
-        max_retries=2,
+        batch_size=20,
+        min_sleep=3.0,
+        max_retries=5,
     )
 
     for ticker, date_str in results.items():
