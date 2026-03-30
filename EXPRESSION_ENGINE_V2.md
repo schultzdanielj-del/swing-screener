@@ -4,9 +4,9 @@
 
 Every night: Fetch fresh OHLCV for all ~10,856 tickers via yfinance, then do a full expression cache rebuild for all of them. No skipping, no shortcuts. Because any ticker could become tradable tomorrow, and historical examples need complete data for tickers that were tradable in the past.
 
-The output must be **identical** to what the current builder produces. Same .npz files, same float32 values, same date arrays. The cache is additive — old bars are never dropped or trimmed. The full historical series from the 5yr OHLCV cache is preserved in every .npz file. Historical expression values are immutable — bar 500 of AAPL must produce the exact same 16,051 values today that it produced yesterday.
+The output must be **identical** to what the current builder produces. Same .npz files, same float32 values, same date arrays. The cache is additive — old bars are never dropped or trimmed. The full historical series from the daily OHLCV cache is preserved in every .npz file. Historical expression values are immutable — bar 500 of AAPL must produce the exact same 16,051 values today that it produced yesterday.
 
-**Ticker count:** ~10,856 tickers in the 5yr OHLCV cache. ~4,118 are currently active (getting new D1 candles). ~6,738 are dead/delisted (no new bars, but their historical data must remain in the cache for pipeline analysis).
+**Ticker count:** ~10,856 tickers in the daily OHLCV cache. ~4,118 are currently active (getting new D1 candles). ~6,738 are dead/delisted (no new bars, but their historical data must remain in the cache for pipeline analysis).
 
 **Output format:** One .npz per ticker with `data` (float32 array, n_bars x 16,051) and `dates` (date strings). Grinders, matrix builder, and all downstream pipeline stages read these files identically.
 
@@ -27,7 +27,7 @@ The output must be **identical** to what the current builder produces. Same .npz
 
 ### 3. Contextual AVWAPs
 - Per-pivot contextual AVWAP: For each detected LSP pivot, search bars before the pivot for the anchor that produces the highest (or lowest) AVWAP at the current bar.
-- "Highest all-time AVWAP" excluded -- only 5yr of data, not enough.
+- "Highest all-time AVWAP" excluded -- only 10yr of data, not enough.
 
 ---
 
@@ -35,7 +35,7 @@ The output must be **identical** to what the current builder produces. Same .npz
 
 1. **Single computation path:** All expressions go through `ExpressionEngine` then `compute_series()`. No separate code paths for LSP/HTF/AVWAP.
 2. **Precomputed in expr_cache_builder:** LSP detection, HTF resampling, and AVWAP computation happen during cache build. Grinders never compute these live.
-3. **No network calls in pipeline:** All data from local 5yr OHLCV cache.
+3. **No network calls in pipeline:** All data from local daily OHLCV cache.
 4. **Parallel via ProcessPoolExecutor:** Same worker pattern as current cache builder. CPU-bound work spread across all cores. 8 workers.
 5. **100% example pass rule:** New expressions either pass all examples or get auto-excluded from ranges.
 6. **Grinders unchanged:** Pyramid, exit, outcome grinders see a bigger expression library. Same beam search, same matrix operations. Just more columns.
@@ -210,7 +210,7 @@ Wired benchmark optimizations into production `expr_cache_builder.py`. Multiple 
 
 ## Performance Summary
 
-**Ticker count:** 10,542 valid tickers (≥50 bars) out of 10,856 in 5yr OHLCV cache. ALL get rebuilt every time. No skipping, no incremental, no shortcuts. Non-negotiable.
+**Ticker count:** 10,542 valid tickers (≥50 bars) out of 10,856 in daily OHLCV cache. ALL get rebuilt every time. No skipping, no incremental, no shortcuts. Non-negotiable.
 
 | Component | Before V2 | After V2 (pre-Task H) | After Task H (production) | Target |
 |-----------|-----------|----------------------|--------------------------|--------|
@@ -226,7 +226,7 @@ Wired benchmark optimizations into production `expr_cache_builder.py`. Multiple 
 
 ## RAM Management (Critical)
 
-The current expr_cache_builder.py deliberately loads the 5yr OHLCV pickle, prepares work items as dicts, then does `del universe_cache` + `gc.collect()` BEFORE spawning ProcessPoolExecutor workers. This is intentional -- ProcessPoolExecutor copies data to each worker process. Without freeing the pickle first, workers × ~250MB pickle = multi-GB wasted RAM on top of each worker's own allocations. On Dan's 32GB machine this has crashed before.
+The current expr_cache_builder.py deliberately loads the daily OHLCV pickle, prepares work items as dicts, then does `del universe_cache` + `gc.collect()` BEFORE spawning ProcessPoolExecutor workers. This is intentional -- ProcessPoolExecutor copies data to each worker process. Without freeing the pickle first, workers × ~250MB pickle = multi-GB wasted RAM on top of each worker's own allocations. On Dan's 32GB machine this has crashed before.
 
 Any optimized worker must respect this pattern:
 - The worker receives one ticker's OHLCV as a dict (not the full pickle)
@@ -239,8 +239,8 @@ RAM budget per worker: ~83MB output array (n_bars x 16,051 x 4 bytes) + intermed
 ## Decisions (Resolved)
 
 1. **HTF expression scope:** Full library on weekly + monthly. ~112 GB cache is fine.
-2. **Highest all-time AVWAP:** EXCLUDED -- only 5yr data, not enough. Pivot-anchored contextual AVWAPs only.
-3. **Yearly timeframe:** EXCLUDED -- only ~5 bars in 5yr history, useless for expressions. Weekly + monthly only.
+2. **Highest all-time AVWAP:** EXCLUDED -- only historical data, not enough. Pivot-anchored contextual AVWAPs only.
+3. **Yearly timeframe:** EXCLUDED -- only ~5 bars in full history, useless for expressions. Weekly + monthly only.
 4. **Number of LSP ranks:** ALL detected pivots, ranked. Top 5 above + 5 below exposed as expressions.
 5. **Cache builder optimization approach:** Two modes — full rebuild (current, ~80-90 min) and incremental append (NEXT, target 2-5 min). Full rebuild uses per-ticker worker with lazy-cached ExpressionEngine + targeted numpy replacements. Incremental loads existing .npz, computes only the new bar's values, appends.
 6. **Nightly ticker count:** All ~10,542 valid tickers (≥50 bars). Every ticker must go through the pipeline every night. For incremental mode, every ticker still gets processed — it's just computing 1 new bar instead of all bars.
@@ -306,15 +306,15 @@ Switch nightly to incremental append               -- after verification passes
 - `_yf_download(ticker, period, interval)` — unified download function for daily/weekly/monthly
 - `_yf_append_after_date(ticker, after_date)` — fetches only new bars via yfinance `start=` param
 - `get_tradable_tickers_local()` — reads from local SQLite `data/scanperfect.db`
-- `append_5yr_cache()` reads ticker list from existing pickle keys
+- `append_daily_cache()` reads ticker list from existing pickle keys
 - `check_yfinance_freshness()` — downloads 1 SPY bar, compares to cache
 - Output format identical — same pickle, same DataFrame structure
 
 **2. HTF caches merged into `cache_builder.py` (no separate file)**
 - `universe_ohlcv_weekly.pkl` and `universe_ohlcv_monthly.pkl`
-- Same dict-of-DataFrames format as daily 5yr cache
+- Same dict-of-DataFrames format as daily cache
 - Pulled from yfinance (`interval='1wk'`, `interval='1mo'`), NOT resampled from daily
-- **10yr lookback** (not 5yr) — weekly expressions need ~4yr of bars for 200-period lookbacks plus warmup. 10yr gives 522 weekly bars, 120 monthly bars.
+- **10yr lookback** (10yr from HISTORY_START) — weekly expressions need ~4yr of bars for 200-period lookbacks plus warmup. 10yr gives 522 weekly bars, 120 monthly bars.
 - Full build: `cache_builder.py --htf`. Batches of 50 tickers with 2s sleep (rate limit safety).
 - Nightly append: `_merge_htf_bars()` — overwrite partial bar if same date, append if new date, freeze history
 - Status: `cache_builder.py --htf-status`
@@ -331,7 +331,7 @@ Switch nightly to incremental append               -- after verification passes
 
 **4. Rewire `nightly.py` — 10 steps (was 8)**
 - Step 1: yfinance freshness check (replaces Railway `POST /api/universe/append-daily`)
-- Step 2: daily 5yr append (yfinance)
+- Step 2: daily append (yfinance)
 - Steps 3-4: NEW — weekly + monthly cache appends
 - Steps 5-10: expr cache, matrix, earnings, market, fundamentals, seed vault
 - Railway only for earnings (step 7, broken) and seed vault (step 10)
@@ -362,7 +362,7 @@ Unified `_build_htf_cache` + `_append_htf_cache` into single `_sync_htf_cache(fu
 **Design — per-ticker incremental worker:**
 
 1. Load existing .npz (dates + data array from previous build)
-2. Load full daily OHLCV from 5yr pickle (needed for indicator lookbacks)
+2. Load full daily OHLCV from daily pickle (needed for indicator lookbacks)
 3. Compare: if OHLCV has no new bars beyond cached dates, skip ticker
 4. Build ExpressionEngine on full daily OHLCV
 5. `engine.set_target(len(df) - 1)` — point to last bar
@@ -407,7 +407,7 @@ Unified `_build_htf_cache` + `_append_htf_cache` into single `_sync_htf_cache(fu
 - DOES NOT HANDLE: on_series, on_series_bool_agg (extension structure), precomputed (LSP, algo, HTF)
 - The unhandled ops have dedicated code paths in the worker (steps 8-15 above)
 
-**New tickers:** Tickers in 5yr cache but not in expr cache get full compute via existing `_compute_and_save_ticker`. Rare after baseline build (only new IPOs/listings).
+**New tickers:** Tickers in daily cache but not in expr cache get full compute via existing `_compute_and_save_ticker`. Rare after baseline build (only new IPOs/listings).
 
 **Decisions:**
 - Full rebuild stays as-is. Incremental is a NEW code path in `append_new_bars()`, not a modification of `build_full()`.

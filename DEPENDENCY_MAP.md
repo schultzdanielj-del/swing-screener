@@ -31,33 +31,33 @@ These are the only components that make network calls for market data.
 
 **Outputs:**
 - `local_runner/cache/universe_ohlcv.pkl` — 300-bar daily (legacy)
-- `local_runner/cache/universe_ohlcv_5yr.pkl` — full history daily
+- `local_runner/cache/universe_ohlcv_daily.pkl` — full history daily
 - `local_runner/cache/universe_ohlcv_weekly.pkl` — 10yr weekly
 - `local_runner/cache/universe_ohlcv_monthly.pkl` — 10yr monthly
-- `local_runner/cache/cache_meta.txt`, `cache_5yr_meta.txt`, `cache_weekly_meta.txt`, `cache_monthly_meta.txt`
+- `local_runner/cache/cache_meta.txt`, `cache_daily_meta.txt`, `cache_weekly_meta.txt`, `cache_monthly_meta.txt`
 
 **Key functions called by others:**
 - `check_yfinance_freshness()` — called by `nightly.py` step 1
-- `append_5yr_cache()` — called by `nightly.py` step 2
+- `append_daily_cache()` — called by `nightly.py` step 2
 - `append_weekly()` — called by `nightly.py` step 3
 - `append_monthly()` — called by `nightly.py` step 4
-- `load_cache()`, `load_5yr_cache()` — called by `matrix_builder.py` fallback path
+- `load_cache()`, `load_daily_cache()` — called by `matrix_builder.py` fallback path
 - `get_tradable_tickers_local()` — reads SQLite, used internally
 
 **Downstream Consumers (if you change pickle format or file paths, these break):**
-- `expr_cache_builder.py` — reads 5yr + weekly + monthly pickles
-- `vectorized_cache_builder.py` — reads 5yr pickle
-- `matrix_builder.py` — reads 5yr pickle (fallback path)
-- `pyramid_grinder.py` — reads 5yr pickle
-- `signal_filter.py` — reads 5yr pickle
-- `signal_exit_grinder.py` — reads 5yr pickle
-- `entry_grinder.py` — reads 5yr pickle
-- `exit_grinder.py` — reads 5yr pickle
-- `ev_grinder.py` — reads 5yr pickle
-- `profit_grinder.py` — reads 5yr pickle
-- `scanperfect.py` — reads 5yr pickle into memory
-- `server.py` — reads 5yr pickle (local mode)
-- `fetch_fundamentals.py` — reads 5yr pickle for ticker list
+- `expr_cache_builder.py` — reads daily + weekly + monthly pickles
+- `vectorized_cache_builder.py` — reads daily pickle
+- `matrix_builder.py` — reads daily pickle (fallback path)
+- `pyramid_grinder.py` — reads daily pickle
+- `signal_filter.py` — reads daily pickle
+- `signal_exit_grinder.py` — reads daily pickle
+- `entry_grinder.py` — reads daily pickle
+- `exit_grinder.py` — reads daily pickle
+- `ev_grinder.py` — reads daily pickle
+- `profit_grinder.py` — reads daily pickle
+- `scanperfect.py` — reads daily pickle into memory
+- `server.py` — reads daily pickle (local mode)
+- `fetch_fundamentals.py` — reads daily pickle for ticker list
 
 ---
 
@@ -68,7 +68,7 @@ These are the only components that make network calls for market data.
 
 **Inputs:**
 - Yahoo Finance API (network — custom urllib session with crumb auth)
-- 5yr OHLCV pickle (for ticker list)
+- daily OHLCV pickle (for ticker list)
 
 **Outputs:**
 - `local_runner/cache/fundamentals_cache.json`
@@ -172,7 +172,7 @@ These are the only components that make network calls for market data.
 **What it does:** Computes all expression values for every ticker across daily/weekly/monthly timeframes. One `.npz` file per ticker. Uses ProcessPoolExecutor.
 
 **Inputs:**
-- `local_runner/cache/universe_ohlcv_5yr.pkl` (daily OHLCV)
+- `local_runner/cache/universe_ohlcv_daily.pkl` (daily OHLCV)
 - `local_runner/cache/universe_ohlcv_weekly.pkl` (weekly OHLCV, optional — resamples from daily if missing)
 - `local_runner/cache/universe_ohlcv_monthly.pkl` (monthly OHLCV, optional — resamples from daily if missing)
 - `brute_expressions.py` — `generate_all()` for expression list
@@ -250,7 +250,7 @@ These are the only components that make network calls for market data.
 **Inputs:**
 - `local_runner/cache/expr_series/*.npz` via `ExprSeriesCache`
 - `brute_expressions.py` — `generate_all()` for expression list
-- `local_runner/cache/universe_ohlcv.pkl` or `universe_ohlcv_5yr.pkl` (fallback path only)
+- `local_runner/cache/universe_ohlcv.pkl` or `universe_ohlcv_daily.pkl` (fallback path only)
 - Railway API (for example matrices — fetches example metadata)
 
 **Outputs:**
@@ -276,7 +276,7 @@ These are the only components that make network calls for market data.
 **What it does:** The main grinder. Three jobs: (1) signal grind — beam search for conditions, (2) raw signal cluster gathering — classify signals into winners/losers, (3) refinement grind — eliminate losing clusters.
 
 **Inputs:**
-- `local_runner/cache/universe_ohlcv_5yr.pkl`
+- `local_runner/cache/universe_ohlcv_daily.pkl`
 - `local_runner/cache/expr_series/*.npz` via `ExprSeriesCache`
 - `local_runner/cache/universe_matrix.pkl` via `matrix_builder.get_universe_matrix()`
 - `brute_expressions.py` — `generate_all()`
@@ -321,7 +321,7 @@ These are the only components that make network calls for market data.
 **What it does:** Brute-forces exit conditions from the signal bar (not entry bar). Finds when signals resolve.
 
 **Inputs:**
-- `local_runner/cache/universe_ohlcv_5yr.pkl`
+- `local_runner/cache/universe_ohlcv_daily.pkl`
 - `local_runner/cache/expr_series/*.npz` via `ExprSeriesCache`
 - `local_runner/cache/pyramid_{setup}_*.json` (signal conditions)
 - SQLite `examples` table
@@ -347,7 +347,7 @@ These are the only components that make network calls for market data.
 **What it does:** Scans full universe with locked conditions, applies exit, classifies signals, filters by ADR.
 
 **Inputs:**
-- `local_runner/cache/universe_ohlcv_5yr.pkl`
+- `local_runner/cache/universe_ohlcv_daily.pkl`
 - `local_runner/cache/expr_series/*.npz` via `ExprSeriesCache`
 - `local_runner/cache/pyramid_{setup}_*.json` (signal conditions)
 - `data/signal_exit_grind/signal_exit_{setup}.json` (exit condition)
@@ -373,7 +373,7 @@ These are the only components that make network calls for market data.
 **What it does:** Tests stop placement strategies and entry timing for classified signals.
 
 **Inputs:**
-- `local_runner/cache/universe_ohlcv_5yr.pkl`
+- `local_runner/cache/universe_ohlcv_daily.pkl`
 - `local_runner/cache/expr_series/*.npz` via `ExprSeriesCache`
 - `local_runner/cache/raw_signal_clusters_{setup}.json`
 - `data/signal_exit_grind/signal_exit_{setup}.json`
@@ -421,7 +421,7 @@ These are the only components that make network calls for market data.
 **Inputs:**
 - `local_runner/cache/refinement_{setup}_*.json`
 - `local_runner/cache/raw_signal_clusters_{setup}.json`
-- `local_runner/cache/universe_ohlcv_5yr.pkl`
+- `local_runner/cache/universe_ohlcv_daily.pkl`
 - `local_runner/cache/fundamentals_cache.json`
 - `local_runner/cache/market_series/*.npz` + `_manifest.json`
 - `local_runner/cache/expr_series/*.npz` via `ExprSeriesCache`
@@ -457,7 +457,7 @@ These are the only components that make network calls for market data.
 **What it does:** Brute-forces TA-expression-based exit conditions to capture optimal MFE.
 
 **Inputs:**
-- `local_runner/cache/universe_ohlcv_5yr.pkl`
+- `local_runner/cache/universe_ohlcv_daily.pkl`
 - `local_runner/cache/ev_{setup}_*.json` (latest EV output)
 - `local_runner/cache/entry_scores_{setup}.json`
 - `local_runner/cache/raw_signal_clusters_{setup}.json` (for entry window)
@@ -510,7 +510,7 @@ These are the only components that make network calls for market data.
 **What it does:** Trade management exit optimizer (runs from entry bar, not signal bar). Uses `exit_expressions.py` library (6,410 expressions).
 
 **Inputs:**
-- `local_runner/cache/universe_ohlcv_5yr.pkl`
+- `local_runner/cache/universe_ohlcv_daily.pkl`
 - Railway API (for example list — still uses API, not local SQLite)
 - `scripts/exit_expressions.py` — `generate_exit_expressions()`
 - `scripts/exit_compute.py` — `ExitExprEngine` class
@@ -534,7 +534,7 @@ These are the only components that make network calls for market data.
 
 **Calls (in order):**
 1. `cache_builder.check_yfinance_freshness()` — gate
-2. `cache_builder.append_5yr_cache()` — daily OHLCV
+2. `cache_builder.append_daily_cache()` — daily OHLCV
 3. `cache_builder.append_weekly()` — weekly OHLCV
 4. `cache_builder.append_monthly()` — monthly OHLCV
 5. `expr_cache_builder.append_new_bars()` — expression cache
@@ -719,7 +719,7 @@ These are the only components that make network calls for market data.
 
 **Reads:**
 - SQLite `scanperfect.db` — setups, examples, pending_examples, rejected_signals, earnings_dates
-- `local_runner/cache/universe_ohlcv_5yr.pkl` — OHLCV for charts
+- `local_runner/cache/universe_ohlcv_daily.pkl` — OHLCV for charts
 - `local_runner/cache/pyramid_{setup}_*.json` — not directly, but via cluster files
 - `local_runner/cache/raw_signal_clusters_{setup}.json` — cluster data
 - `local_runner/cache/refinement_{setup}_*.json` — depth progression
@@ -746,7 +746,7 @@ These are the only components that make network calls for market data.
 **What it does:** FastAPI server. Runs on Railway (production) and locally (development). Manages SQLite, serves APIs for examples, vetting, pipeline control.
 
 **Reads/Writes:** SQLite `scanperfect.db`, `data/pipeline_state.json`, `data/pipeline_logs.json`, vetting JSONs, grind result JSONs
-**Local mode:** Loads 5yr OHLCV pickle into memory
+**Local mode:** Loads daily OHLCV pickle into memory
 
 ---
 
@@ -780,7 +780,7 @@ brute_expressions.py (expression list)
 
 ### Chain 2: OHLCV Pickle → Cache → Grinders
 ```
-cache_builder.py (5yr .pkl)
+cache_builder.py (daily .pkl)
   → expr_cache_builder.py (.npz files)
   → pyramid_grinder.py
   → signal_filter.py
@@ -818,7 +818,7 @@ scanperfect.db
 
 | Path | Format | Producer | Key Consumers |
 |------|--------|----------|---------------|
-| `local_runner/cache/universe_ohlcv_5yr.pkl` | pickle dict | cache_builder | expr_cache_builder, all grinders, scanperfect |
+| `local_runner/cache/universe_ohlcv_daily.pkl` | pickle dict | cache_builder | expr_cache_builder, all grinders, scanperfect |
 | `local_runner/cache/universe_ohlcv_weekly.pkl` | pickle dict | cache_builder | expr_cache_builder |
 | `local_runner/cache/universe_ohlcv_monthly.pkl` | pickle dict | cache_builder | expr_cache_builder |
 | `local_runner/cache/expr_series/{TICKER}.npz` | float32 npz | expr_cache_builder | all grinders |

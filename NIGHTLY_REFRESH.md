@@ -14,7 +14,7 @@
 | Step | What it does | Time | Status |
 |------|-------------|------|--------|
 | 1 | yfinance freshness check — download 1 SPY bar, compare to cache | <5s | **DONE (2026-03-27).** Replaced Railway `POST /api/universe/append-daily`. Local only, no Railway dependency. |
-| 2 | Appends new bars to 5yr OHLCV pickle from yfinance | ~2-5 min | **DONE (2026-03-27).** Rewired from Railway to `yf.download()` directly. `_yf_append_after_date()` replaces `_fetch_ticker_after_date()`. |
+| 2 | Appends new bars to daily OHLCV pickle from yfinance | ~2-5 min | **DONE (2026-03-27).** Rewired from Railway to `yf.download()` directly. `_yf_append_after_date()` replaces `_fetch_ticker_after_date()`. |
 | 3 | Appends weekly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-28).** `cache_builder.py` → `append_weekly()`. 10yr lookback, overwrites partial week bar, appends closed weeks. |
 | 4 | Appends monthly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-27).** Same pattern as weekly. Overwrites partial month bar. |
 | 5 | Appends expression cache | **~80-90 min** | **THE BOTTLENECK.** Now uses HTF pickles instead of resampling. HTF skip logic removed — always computes from pickle data. Incremental append (compute only new bar) is Increment 2. |
@@ -24,7 +24,7 @@
 | 9 | Refreshes fundamentals cache | ~10 min (Mon) / <1 min | **OK** but has a dead Railway mirror call at the end. |
 | 10 | Seed vault backup to Railway | ~1-2 min | **OK.** Intentional Railway dependency. |
 
-**Killed:** Old step 2 (300-bar daily OHLCV cache rebuild from Railway). Nothing reads this cache — everything uses the 5yr pickle. Removed 2026-03-25.
+**Killed:** Old step 2 (300-bar daily OHLCV cache rebuild from Railway). Nothing reads this cache — everything uses the daily pickle. Removed 2026-03-25.
 
 ### Legacy Railway examples API (`/api/examples/`) — cleanup needed
 
@@ -48,7 +48,7 @@ Railway's SQLite DB has an examples table that several active scripts still read
 ### Railway dependencies — status:
 
 1. **`cache_builder.py` → `get_tradable_tickers()`** (line 35): ~~Calls Railway.~~ **DONE (2026-03-27).** Replaced with `get_tradable_tickers_local()` reading from local SQLite.
-2. **`cache_builder.py` → `fetch_one_ticker_5yr()`** (line 180): ~~Fetches from Railway.~~ **DONE (2026-03-27).** Replaced with `_yf_download_daily()` using yfinance.
+2. **`cache_builder.py` → `fetch_one_ticker_daily()`** (line 180): ~~Fetches from Railway.~~ **DONE (2026-03-27).** Replaced with `_yf_download_daily()` using yfinance.
 3. **`cache_builder.py` → `_fetch_ticker_after_date()`** (line 303): ~~Fetches from Railway.~~ **DONE (2026-03-27).** Replaced with `_yf_append_after_date()` using yfinance.
 4. **`build_tradable.py`** (line 56): Only runs on Railway's SQLite DB. Needs a local equivalent. **DEPRIORITIZED.**
 5. **`nightly.py` step 1**: ~~Calls Railway to trigger yfinance fetch.~~ **DONE (2026-03-27).** Replaced with local `check_yfinance_freshness()`.
@@ -161,11 +161,11 @@ This is separate from the expr cache speed problem. Even if the cache takes 91 m
 
 ### Step 1 details (not yet implemented):
 
-**Freshness check:** Load 5yr pickle → find latest date across all tickers → compare to yfinance SPY latest bar → if same, "up to date", stop.
+**Freshness check:** Load daily pickle → find latest date across all tickers → compare to yfinance SPY latest bar → if same, "up to date", stop.
 
-**yfinance fetch:** Batch tickers into groups of ~500 using `yf.download(ticker_list, start=last_date+1day, auto_adjust=True)`. Sleep 5-10s between batches. Append new bars directly to 5yr pickle. Recompute `dvol_20d` on combined data.
+**yfinance fetch:** Batch tickers into groups of ~500 using `yf.download(ticker_list, start=last_date+1day, auto_adjust=True)`. Sleep 5-10s between batches. Append new bars directly to daily pickle. Recompute `dvol_20d` on combined data.
 
-**Tradable universe rebuild:** New function in `cache_builder.py`. Reads the 5yr pickle, applies same 3 filters as `build_tradable.py`:
+**Tradable universe rebuild:** New function in `cache_builder.py`. Reads the daily pickle, applies same 3 filters as `build_tradable.py`:
 - Last close ≥ $1.00
 - 20-day avg APTR ≥ 1.5%
 - 20-day avg dollar volume ≥ $5,000,000
@@ -187,7 +187,7 @@ The Railway endpoints don't exist. The vetting UI reads earnings dates from loca
 
 ## CRITICAL FORMAT CONSTRAINTS
 
-The 5yr pickle (`universe_ohlcv_5yr.pkl`) must maintain identical format:
+The daily pickle (`universe_ohlcv_daily.pkl`) must maintain identical format:
 
 ```python
 # Dict of {ticker_str: pd.DataFrame}

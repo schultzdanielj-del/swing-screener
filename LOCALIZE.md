@@ -11,7 +11,7 @@ Everything runs locally on Dan's desktop. Railway is seed vault only.
 **Local (desktop):**
 - Native PySide6 desktop app (`scanperfect.py`) — no browser, no server process
 - SQLite DB (`data/scanperfect.db`): examples, setups, vetting decisions, earnings, pending reviews, rejected signals
-- 5yr OHLCV pickle loaded into memory at startup (~4,169 tickers in 0.5s) — all chart data instant
+- daily OHLCV pickle loaded into memory at startup (~4,169 tickers in 0.5s) — all chart data instant
 - All caches: expression cache, market cache, fundamentals — local files
 - Grind results: local JSON files in `local_runner/cache/` and `data/`
 - Pipeline runs as subprocesses launched from PySide6 app via QProcess with auto-chaining
@@ -37,7 +37,7 @@ Everything runs locally on Dan's desktop. Railway is seed vault only.
 - `pipeline_agent.py` is LEGACY — no longer used
 
 **Phase 3 — Wire Local OHLCV** ✅
-- 5yr pickle loaded into memory at startup (~4,169 tickers in 0.5s)
+- daily pickle loaded into memory at startup (~4,169 tickers in 0.5s)
 - All chart data served from in-memory cache — instant browsing
 
 **Phase 4 — Seed Vault** ✅
@@ -114,7 +114,7 @@ Recovery (new machine):
 1. Clone repo from GitHub
 2. `pip install -r requirements.txt`
 3. `python scripts/seed_vault.py --restore`
-4. `python local_runner/cache_builder.py --5yr --force` (~30 min)
+4. `python local_runner/cache_builder.py --daily --force` (~30 min)
 5. `python local_runner/expr_cache_builder.py --build` (~2 hrs)
 6. `python local_runner/nightly.py --force` (~20 min)
 7. `python scanperfect.py` — done
