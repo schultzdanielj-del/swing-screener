@@ -91,6 +91,7 @@ app/                       # HTML UI (LEGACY — replaced by scanperfect.py)
 - **`EV_GRINDER.md`** — EV grinder spec
 - **`ANALYSIS_SYSTEM.md`** — repeatable process for building any setup
 - **`DATA_CONTRACT.md`** — schema + data flow
+- **`DEPENDENCY_MAP.md`** — per-component inputs, outputs, upstream callers, downstream consumers. Check before changing any component.
 - **`ta_knowledge.md`** — TA concepts reference
 - **`pcf.md`** — TC2000 PCF language reference
 - **`Code_Auditor`** — code auditor setup and spec
