@@ -54,6 +54,7 @@ Everything runs locally on Dan's desktop (i5-12600k, 32GB RAM, Windows).
 
 ```
 scanperfect.py             # PySide6 native desktop app (THE interface)
+audit.sh                   # Code auditor — separate Claude instance reviews every change
 
 local_runner/              # Grinder system
 ├── nightly.py             # 9-step nightly pipeline (4:30pm ET)
@@ -92,6 +93,19 @@ app/                       # HTML UI (LEGACY — replaced by scanperfect.py)
 - **`DATA_CONTRACT.md`** — schema + data flow
 - **`ta_knowledge.md`** — TA concepts reference
 - **`pcf.md`** — TC2000 PCF language reference
+- **`Code_Auditor`** — code auditor setup and spec
+
+---
+
+## CODE AUDITOR
+
+`audit.sh` — runs a separate Claude Code instance (`claude -p`) that evaluates every code change against spec docs and project-wide rules. Checks four criteria: purpose, spec compliance, regression safety, and code quality. Returns PASS or FAIL with evidence.
+
+Git hooks (local, not in repo):
+- **post-commit** — fires on every local commit (Claude Code workflow)
+- **post-merge** — fires on every `git pull`. Auto-reverts on FAIL. Paste failure output into Claude chat to fix.
+
+The auditor maps changed files to their spec docs automatically (e.g. `ev_grinder.py` → `EV_GRINDER.md`). Project-wide rules (no yfinance outside cache_builder, ProcessPoolExecutor only, del+gc patterns, etc.) are hardcoded in the auditor prompt.
 
 ---
 
