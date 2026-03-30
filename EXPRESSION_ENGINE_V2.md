@@ -276,13 +276,20 @@ Task H Phase 3 (incremental append)               -- IN PROGRESS (2026-03-29)
                                                           (full rebuild uses HTF pickles, not resample)
                                                         - Rewire nightly.py: yfinance freshness check,
                                                           new weekly/monthly cache steps (10 steps total)
-                                                      Increment 1b: Fill HTF gaps — IN PROGRESS
-                                                        - Run --htf to retry 1,235 weekly / 2,315 monthly failures
-                                                        - Must complete BEFORE full rebuild so all tickers use
-                                                          pickle data as HTF source (not resample fallback)
-                                                        - Tickers that genuinely can't get HTF from yfinance
-                                                          will always use resample — same path in full rebuild
-                                                          AND incremental, so values stay consistent
+                                                      Increment 1b: Fill HTF gaps — DONE (2026-03-29)
+                                                        - Ran --htf, filled to 10,822 weekly / 10,837 monthly
+                                                        - ~34 weekly / ~19 monthly permanently unavailable (delisted)
+                                                        - Found 2,152 weekly tickers with only 5 bars (bad prior fetch)
+                                                        - Purged and refetched
+                                                      Increment 1c: Data quality + harmonization — DONE (2026-03-30)
+                                                        - HISTORY_START = "2016-01-01" — all caches use same start
+                                                        - _yf_download switched from period= to start= (no silent truncation)
+                                                        - Renamed 5yr→daily across 32 files + 5 docs
+                                                        - File: universe_ohlcv_daily.pkl (fallback to 5yr.pkl)
+                                                        - --all flag: daily + weekly + monthly in one command
+                                                        - _batched_fetch(): adaptive rate limiting (scales workers
+                                                          + sleep based on failure rate) with retry sweeps
+                                                        - Full --all --force rebuild in progress
                                                       Increment 2: True incremental expr cache append
                                                         - See detailed design below
     |
@@ -303,7 +310,7 @@ Switch nightly to incremental append               -- after verification passes
 
 **1. Rewire `cache_builder.py` — Railway → yfinance**
 - All Railway HTTP calls removed. `requests` and `API_BASE` deleted.
-- `_yf_download(ticker, period, interval)` — unified download function for daily/weekly/monthly
+- `_yf_download(ticker, start, interval)` — unified download function using explicit start date (HISTORY_START). Never uses yfinance period= parameter.
 - `_yf_append_after_date(ticker, after_date)` — fetches only new bars via yfinance `start=` param
 - `get_tradable_tickers_local()` — reads from local SQLite `data/scanperfect.db`
 - `append_daily_cache()` reads ticker list from existing pickle keys
@@ -315,7 +322,7 @@ Switch nightly to incremental append               -- after verification passes
 - Same dict-of-DataFrames format as daily cache
 - Pulled from yfinance (`interval='1wk'`, `interval='1mo'`), NOT resampled from daily
 - **10yr lookback** (10yr from HISTORY_START) — weekly expressions need ~4yr of bars for 200-period lookbacks plus warmup. 10yr gives 522 weekly bars, 120 monthly bars.
-- Full build: `cache_builder.py --htf`. Batches of 50 tickers with 2s sleep (rate limit safety).
+- Full build: `cache_builder.py --htf` or `--all`. Uses `_batched_fetch()` with adaptive rate limiting.
 - Nightly append: `_merge_htf_bars()` — overwrite partial bar if same date, append if new date, freeze history
 - Status: `cache_builder.py --htf-status`
 
@@ -351,7 +358,11 @@ Unified `_build_htf_cache` + `_append_htf_cache` into single `_sync_htf_cache(fu
 - Eliminates the old three-mode problem (build/append/retry were separate code paths)
 - `build_htf_caches()` → `full_sweep=True`. `append_weekly()`/`append_monthly()` → `full_sweep=False`.
 
-**NEXT:** Run `--htf` to fill the 1,235/2,315 gaps. Then full expr cache rebuild (`--build --force`), verify examples pass, then Increment 2 (true incremental append).
+**NEXT:** `--all --force` rebuild in progress (2026-03-30). After it completes: full expr cache rebuild (`--build --force`), verify examples pass, then Increment 2 (true incremental append).
+
+**Known issues (2026-03-30):**
+- ETA display in `_batched_fetch` inflates over time — rate calculation includes sleep time, making ETA grow even at constant per-batch speed. Cosmetic only.
+- Empty cache save guard needed — `build_daily_cache` can save a 0-ticker pickle if ticker list is empty, which then blocks the fallback chain on next run. Needs a guard: don't save if universe is empty.
 
 ### Task H Phase 3, Increment 2: True Incremental Append — DESIGN (2026-03-29)
 

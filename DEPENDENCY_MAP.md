@@ -23,17 +23,18 @@ These are the only components that make network calls for market data.
 ### cache_builder.py
 **Location:** `local_runner/cache_builder.py`
 **Spec:** `NIGHTLY_REFRESH.md`, `LOCALIZE.md`
-**What it does:** Downloads OHLCV from yfinance, stores as pickles. Append-only — never drops old bars.
+**What it does:** Downloads OHLCV from yfinance, stores as pickles. Append-only — never drops old bars. All fetches use explicit `start=HISTORY_START` (2016-01-01), never yfinance `period=` parameter.
 
 **Inputs:**
-- yfinance API (network)
-- SQLite `tradable_universe` table (for ticker list)
+- yfinance API (network) — via `_yf_download(ticker, start, interval)` using explicit start dates
+- SQLite `tradable_universe` table (for ticker list on first build only)
+- Existing pickle (for ticker list on rebuilds — reads keys from prior cache)
 
 **Outputs:**
 - `local_runner/cache/universe_ohlcv.pkl` — 300-bar daily (legacy)
-- `local_runner/cache/universe_ohlcv_daily.pkl` — full history daily
-- `local_runner/cache/universe_ohlcv_weekly.pkl` — 10yr weekly
-- `local_runner/cache/universe_ohlcv_monthly.pkl` — 10yr monthly
+- `local_runner/cache/universe_ohlcv_daily.pkl` — full history daily (from HISTORY_START)
+- `local_runner/cache/universe_ohlcv_weekly.pkl` — weekly (from HISTORY_START)
+- `local_runner/cache/universe_ohlcv_monthly.pkl` — monthly (from HISTORY_START)
 - `local_runner/cache/cache_meta.txt`, `cache_daily_meta.txt`, `cache_weekly_meta.txt`, `cache_monthly_meta.txt`
 
 **Key functions called by others:**
@@ -43,6 +44,13 @@ These are the only components that make network calls for market data.
 - `append_monthly()` — called by `nightly.py` step 4
 - `load_cache()`, `load_daily_cache()` — called by `matrix_builder.py` fallback path
 - `get_tradable_tickers_local()` — reads SQLite, used internally
+- `_batched_fetch()` — shared adaptive rate limiter (scales workers + sleep based on failure rate, retry sweeps). Used by all fetch paths.
+
+**CLI:**
+- `--daily [--force]` — build/rebuild daily cache
+- `--htf [--force]` — build/rebuild weekly + monthly caches
+- `--all [--force]` — daily + weekly + monthly in one command
+- `--htf-status` — show HTF cache status
 
 **Downstream Consumers (if you change pickle format or file paths, these break):**
 - `expr_cache_builder.py` — reads daily + weekly + monthly pickles
