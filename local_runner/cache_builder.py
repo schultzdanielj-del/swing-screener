@@ -22,6 +22,7 @@ Requires: pip install yfinance pandas
 import os
 import sys
 import time
+import json
 import pickle
 import sqlite3
 import numpy as np
@@ -43,6 +44,7 @@ WEEKLY_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_weekly.pkl")
 WEEKLY_META = os.path.join(CACHE_DIR, "cache_weekly_meta.txt")
 MONTHLY_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_monthly.pkl")
 MONTHLY_META = os.path.join(CACHE_DIR, "cache_monthly_meta.txt")
+TICKER_REF_FILE = os.path.join(CACHE_DIR, "ticker_reference.json")
 DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
 MAX_WORKERS = 20
 LOOKBACK = 300  # bars per ticker (daily matrix)
@@ -75,6 +77,192 @@ def get_tradable_tickers_local():
 # ══════════════════════════════════════════════════════════════
 # YFINANCE HELPERS
 # ══════════════════════════════════════════════════════════════
+
+# ── Ticker Reference File ──
+# Stores firstTradeDateMilliseconds for every ticker. Built once,
+# updated only when new tickers appear. Used to calculate expected
+# bar counts for validation.
+
+def load_ticker_reference():
+    """Load the ticker reference file. Returns dict {ticker: first_trade_date_str}."""
+    if not os.path.exists(TICKER_REF_FILE):
+        return {}
+    with open(TICKER_REF_FILE, "r") as f:
+        return json.load(f)
+
+
+def save_ticker_reference(ref):
+    """Save the ticker reference file."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(TICKER_REF_FILE, "w") as f:
+        json.dump(ref, f, indent=2)
+
+
+def build_ticker_reference(tickers, force=False):
+    """Fetch firstTradeDateMilliseconds for all tickers, save as JSON.
+
+    Only fetches tickers not already in the reference (unless force=True).
+    Returns dict {ticker: 'YYYY-MM-DD'} for tickers with valid first trade dates.
+    Tickers where yfinance returns no data get value None.
+    """
+    ref = {} if force else load_ticker_reference()
+    to_fetch = [t for t in tickers if t not in ref] if not force else list(tickers)
+
+    if not to_fetch:
+        print(f"  Ticker reference: {len(ref)} tickers, all current")
+        return ref
+
+    print(f"\n  Building ticker reference ({len(to_fetch)} to fetch, "
+          f"{len(ref)} already cached)...")
+
+    def _get_first_trade_date(ticker):
+        try:
+            info = yf.Ticker(ticker).info
+            ftd_ms = info.get("firstTradeDateMilliseconds")
+            if ftd_ms is not None:
+                dt = datetime.fromtimestamp(ftd_ms / 1000)
+                return ticker, dt.strftime("%Y-%m-%d")
+            return ticker, None
+        except Exception:
+            return ticker, None
+
+    t0 = time.time()
+    results, _ = _batched_fetch(
+        to_fetch,
+        fetch_fn=_get_first_trade_date,
+        label="Reference",
+        batch_size=100,
+        min_sleep=0.5,
+        max_retries=2,
+    )
+
+    for ticker, date_str in results.items():
+        ref[ticker] = date_str
+
+    # Mark tickers that failed as None (yfinance has no data for them)
+    for t in to_fetch:
+        if t not in ref:
+            ref[t] = None
+
+    save_ticker_reference(ref)
+    elapsed = time.time() - t0
+    valid = sum(1 for v in ref.values() if v is not None)
+    print(f"  Reference built: {len(ref)} tickers ({valid} with valid dates) "
+          f"in {elapsed:.0f}s")
+
+    return ref
+
+
+# ── SPY Reference ──
+# SPY's date array is the ground truth for how many trading days
+# exist in any date range. Every ticker's expected bar count is
+# determined by counting SPY dates in the ticker's valid range.
+
+def fetch_spy_reference():
+    """Fetch SPY full daily history from HISTORY_START.
+
+    Returns SPY DataFrame. If fetch fails, raises — pipeline must stop.
+    SPY is always fetched first, alone, with no concurrency.
+    """
+    print("  Fetching SPY reference (ground truth)...")
+    _, spy_df = _yf_download("SPY", HISTORY_START)
+    if spy_df is None or len(spy_df) == 0:
+        raise RuntimeError(
+            "FATAL: Cannot fetch SPY data from yfinance. "
+            "Pipeline cannot proceed without SPY as reference."
+        )
+    print(f"  SPY: {len(spy_df)} bars, "
+          f"{str(spy_df['date'].iloc[0])[:10]} → {str(spy_df['date'].iloc[-1])[:10]}")
+    return spy_df
+
+
+def build_spy_date_set(spy_df):
+    """Build a set of SPY date strings for fast lookup.
+
+    Returns sorted list of 'YYYY-MM-DD' strings.
+    """
+    return sorted(str(d)[:10] for d in spy_df["date"].values)
+
+
+def expected_bar_count(spy_dates, ticker, ticker_ref):
+    """Calculate expected bar count for a ticker using SPY dates.
+
+    Expected = number of SPY trading dates on or after
+    max(ticker's first trade date, HISTORY_START).
+
+    Returns int, or None if ticker has no reference data.
+    """
+    ftd = ticker_ref.get(ticker)
+    if ftd is None:
+        return None  # no reference — can't validate
+
+    start = max(ftd, HISTORY_START)
+    return sum(1 for d in spy_dates if d >= start)
+
+
+def validate_daily_fetch(results, spy_dates, ticker_ref):
+    """Validate fetched daily data against SPY reference.
+
+    Returns:
+        valid: dict {ticker: df} — tickers that pass exact bar count match
+        invalid: list of tickers that failed validation (for retry)
+        unvalidatable: dict {ticker: df} — tickers with no reference (accepted as-is)
+    """
+    valid = {}
+    invalid = []
+    unvalidatable = {}
+
+    for ticker, df in results.items():
+        expected = expected_bar_count(spy_dates, ticker, ticker_ref)
+        if expected is None:
+            # No reference data — accept as-is (can't validate)
+            unvalidatable[ticker] = df
+            continue
+
+        actual = len(df)
+        if actual == expected:
+            valid[ticker] = df
+        else:
+            invalid.append(ticker)
+
+    return valid, invalid, unvalidatable
+
+
+# ── Split Detection ──
+# On nightly append, check if any ticker split today. Tickers that
+# split need full refetch (all historical prices changed) instead
+# of a 1-bar append.
+
+def detect_splits(tickers, after_date):
+    """Check which tickers have splits after a given date.
+
+    Args:
+        tickers: list of ticker symbols
+        after_date: 'YYYY-MM-DD' — check for splits AFTER this date
+
+    Returns list of tickers that split.
+    """
+    split_tickers = []
+    after_ts = pd.Timestamp(after_date)
+
+    # Check in batches to avoid hammering yfinance
+    for i in range(0, len(tickers), 50):
+        batch = tickers[i:i+50]
+        for t in batch:
+            try:
+                splits = yf.Ticker(t).splits
+                if splits is not None and len(splits) > 0:
+                    # Check if any split date is after our reference date
+                    for split_date in splits.index:
+                        if split_date.tz_localize(None) > after_ts:
+                            split_tickers.append(t)
+                            break
+            except Exception:
+                pass  # can't check splits — not a split
+        if i + 50 < len(tickers):
+            time.sleep(0.5)
+
+    return split_tickers
 
 def _yf_download(ticker, start=None, interval="1d"):
     """Download OHLCV for one ticker from yfinance.
@@ -393,7 +581,17 @@ def cache_daily_is_fresh():
 
 
 def build_daily_cache(force=False):
-    """Build the daily OHLCV cache from yfinance using HISTORY_START."""
+    """Build the daily OHLCV cache from yfinance using HISTORY_START.
+
+    Validated build:
+    1. Fetch SPY first — its date array is ground truth
+    2. Build/load ticker reference (firstTradeDateMilliseconds)
+    3. Fetch all tickers
+    4. Validate: each ticker's bar count must exactly match SPY's
+       count from max(firstTradeDate, HISTORY_START)
+    5. Mismatches retry until they pass or return None
+    6. Only saves when all tickers are validated
+    """
     os.makedirs(CACHE_DIR, exist_ok=True)
 
     if not force and cache_daily_is_fresh():
@@ -406,8 +604,12 @@ def build_daily_cache(force=False):
     print("  DAILY CACHE BUILDER — Full history via yfinance")
     print("=" * 60)
 
-    # Get ticker list from existing cache (has all ~10,856 tickers).
-    # Only fall back to SQLite tradable_universe if no cache exists at all.
+    # ── Step 1: SPY first ──
+    spy_df = fetch_spy_reference()
+    spy_dates = build_spy_date_set(spy_df)
+
+    # ── Step 2: Ticker reference ──
+    # Get ticker list from existing cache or DB
     print("\nGetting ticker list...")
     tickers = []
     for pkl in [CACHE_DAILY_FILE, CACHE_LEGACY_5YR]:
@@ -425,19 +627,75 @@ def build_daily_cache(force=False):
         except FileNotFoundError:
             print("  ERROR: No existing cache and no local DB. Nothing to build from.")
             return {}
+
+    # Build/update reference for any tickers not already in it
+    ticker_ref = build_ticker_reference(tickers)
+
     print(f"  Start date: {HISTORY_START}")
+
+    # ── Step 3: Fetch all tickers ──
+    # Remove SPY from fetch list (already fetched)
+    fetch_tickers = [t for t in tickers if t != "SPY"]
 
     print(f"\nFetching daily OHLCV data via yfinance...")
     t0 = time.time()
 
     results, permanently_failed = _batched_fetch(
-        tickers,
+        fetch_tickers,
         fetch_fn=lambda t: _yf_download(t, HISTORY_START),
         label="Daily",
     )
 
+    # Add SPY to results
+    results["SPY"] = spy_df
+
+    # ── Step 4: Validate ──
+    print(f"\n  Validating bar counts against SPY reference...")
+    valid, invalid, unvalidatable = validate_daily_fetch(results, spy_dates, ticker_ref)
+
+    print(f"  Validated: {len(valid)}")
+    print(f"  Failed validation: {len(invalid)}")
+    print(f"  No reference (accepted): {len(unvalidatable)}")
+
+    # ── Step 5: Retry invalid tickers ──
+    retry_round = 0
+    max_validation_retries = 5
+    while invalid and retry_round < max_validation_retries:
+        retry_round += 1
+        print(f"\n  Validation retry {retry_round}/{max_validation_retries} — "
+              f"{len(invalid)} tickers...")
+
+        retry_results, retry_failed = _batched_fetch(
+            invalid,
+            fetch_fn=lambda t: _yf_download(t, HISTORY_START),
+            label=f"Retry {retry_round}",
+            min_sleep=3.0,
+            max_retries=2,
+        )
+        permanently_failed.extend(retry_failed)
+
+        new_valid, still_invalid, new_unvalidatable = validate_daily_fetch(
+            retry_results, spy_dates, ticker_ref)
+
+        valid.update(new_valid)
+        unvalidatable.update(new_unvalidatable)
+
+        print(f"  Retry {retry_round}: {len(new_valid)} passed, "
+              f"{len(still_invalid)} still failing")
+
+        if len(still_invalid) == len(invalid):
+            print(f"  No progress — stopping retries")
+            permanently_failed.extend(still_invalid)
+            break
+
+        invalid = still_invalid
+
+    # ── Step 6: Build universe and save ──
     universe = {}
-    for ticker, df in results.items():
+    for ticker, df in valid.items():
+        compute_dvol_20d(df)
+        universe[ticker] = df
+    for ticker, df in unvalidatable.items():
         compute_dvol_20d(df)
         universe[ticker] = df
 
@@ -445,6 +703,8 @@ def build_daily_cache(force=False):
     print(f"\nFetch complete: {len(universe):,} tickers in {elapsed:.0f}s ({elapsed/60:.1f} min)")
     if permanently_failed:
         print(f"  Permanently failed: {len(permanently_failed)} tickers")
+        if len(permanently_failed) <= 20:
+            print(f"    {permanently_failed}")
 
     print(f"\nSaving daily cache...")
     with open(CACHE_DAILY_FILE, "wb") as f:
@@ -481,12 +741,15 @@ def load_daily_cache():
 
 
 def append_daily_cache():
-    """Append new bars to existing daily cache via yfinance. Never touches old bars.
+    """Append new bars to existing daily cache via yfinance.
 
-    For each ticker already in the cache, fetches only bars after the last
-    cached date from yfinance and appends them. New tickers (in tradable
-    universe but not in cache) get a full fetch from HISTORY_START.
-    Old bars are never modified.
+    Validated append:
+    1. Fetch SPY first — confirm new trading day, get ground truth
+    2. Check for stock splits — tickers that split get full refetch
+    3. Append new bars for all tickers
+    4. Validate: every ticker's bar count must match SPY's expected count
+    5. Retry until all pass or genuinely unavailable
+    6. Only saves when all tickers are validated
     """
     os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -505,14 +768,44 @@ def append_daily_cache():
         universe = pickle.load(f)
     print(f"  {len(universe)} tickers in cache")
 
+    # ── Step 1: SPY first ──
+    spy_df = fetch_spy_reference()
+    spy_dates = build_spy_date_set(spy_df)
+
+    # Check if SPY has a new bar vs what's cached
+    cached_spy_last = str(universe.get("SPY", pd.DataFrame({"date": [""]}))["date"].iloc[-1])[:10]
+    spy_last = str(spy_df["date"].iloc[-1])[:10]
+    if spy_last <= cached_spy_last:
+        print(f"  SPY last bar: {spy_last} (same as cache). No new data.")
+        return universe
+
+    print(f"  SPY new bar: {spy_last} (cache was {cached_spy_last})")
+
+    # Load ticker reference
+    ticker_ref = load_ticker_reference()
+    if not ticker_ref:
+        print("  WARNING: No ticker reference file. Run --build-reference first.")
+        print("  Proceeding without validation.")
+
+    # ── Step 2: Split detection ──
+    print(f"\n  Checking for stock splits after {cached_spy_last}...")
+    split_tickers = detect_splits(list(universe.keys()), cached_spy_last)
+    if split_tickers:
+        print(f"  ⚠ {len(split_tickers)} tickers split: {split_tickers}")
+        print(f"    These will get full refetch (historical prices changed)")
+    else:
+        print(f"  No splits detected")
+
     # Get current tradable tickers from local DB for new ticker detection
     try:
-        tickers = get_tradable_tickers_local()
-        print(f"  {len(tickers)} tradable tickers in DB")
+        db_tickers = get_tradable_tickers_local()
     except FileNotFoundError:
-        # No local DB yet — just append to existing tickers
-        tickers = list(universe.keys())
-        print(f"  No local DB — appending to {len(tickers)} cached tickers")
+        db_tickers = list(universe.keys())
+
+    # Categorize work
+    to_append = [t for t in universe.keys() if t not in split_tickers and t != "SPY"]
+    to_full_refetch = list(split_tickers)
+    to_fetch_new = [t for t in db_tickers if t not in universe]
 
     # Find last date per cached ticker
     last_dates = {}
@@ -520,20 +813,22 @@ def append_daily_cache():
         if len(df) > 0:
             last_dates[ticker] = str(df["date"].iloc[-1])[:10]
 
-    # Categorize work
-    to_append = list(universe.keys())  # all existing tickers get checked
-    to_fetch_full = [t for t in tickers if t not in universe]  # new tickers
-
-    print(f"  Tickers to check for new bars: {len(to_append)}")
-    print(f"  New tickers (full fetch): {len(to_fetch_full)}")
+    print(f"  Tickers to append: {len(to_append)}")
+    print(f"  Tickers to full refetch (split): {len(to_full_refetch)}")
+    print(f"  New tickers (full fetch): {len(to_fetch_new)}")
 
     t0 = time.time()
     appended = 0
     new_added = 0
     no_new = 0
     failed = 0
+    split_refetched = 0
 
-    # Append new bars for existing tickers
+    # Update SPY in universe first
+    compute_dvol_20d(spy_df)
+    universe["SPY"] = spy_df
+
+    # ── Step 3a: Append new bars for existing tickers ──
     if to_append:
         print(f"\n  Appending new bars via yfinance...")
 
@@ -558,12 +853,32 @@ def append_daily_cache():
             else:
                 no_new += 1
 
-    # Full fetch for new tickers
-    if to_fetch_full:
-        print(f"\n  Fetching {len(to_fetch_full)} new tickers via yfinance...")
+    # ── Step 3b: Full refetch for split tickers ──
+    if to_full_refetch:
+        print(f"\n  Full refetch for {len(to_full_refetch)} split tickers...")
+
+        refetch_results, refetch_failed = _batched_fetch(
+            to_full_refetch,
+            fetch_fn=lambda t: _yf_download(t, HISTORY_START),
+            label="Split refetch",
+        )
+        failed += len(refetch_failed)
+
+        for ticker, df in refetch_results.items():
+            compute_dvol_20d(df)
+            universe[ticker] = df
+            split_refetched += 1
+
+    # ── Step 3c: Full fetch for new tickers ──
+    if to_fetch_new:
+        print(f"\n  Fetching {len(to_fetch_new)} new tickers via yfinance...")
+
+        # Update reference for new tickers
+        if ticker_ref:
+            ticker_ref = build_ticker_reference(to_fetch_new)
 
         new_results, new_failed = _batched_fetch(
-            to_fetch_full,
+            to_fetch_new,
             fetch_fn=lambda t: _yf_download(t, HISTORY_START),
             label="New tickers",
         )
@@ -574,6 +889,55 @@ def append_daily_cache():
                 compute_dvol_20d(df)
                 universe[ticker] = df
                 new_added += 1
+
+    # ── Step 4: Validate all tickers ──
+    if ticker_ref:
+        print(f"\n  Validating all {len(universe)} tickers against SPY reference...")
+        all_valid, all_invalid, all_unvalidatable = validate_daily_fetch(
+            universe, spy_dates, ticker_ref)
+
+        print(f"  Validated: {len(all_valid)}")
+        print(f"  Failed validation: {len(all_invalid)}")
+        print(f"  No reference (accepted): {len(all_unvalidatable)}")
+
+        # Retry invalid tickers with full refetch
+        retry_round = 0
+        max_validation_retries = 5
+        while all_invalid and retry_round < max_validation_retries:
+            retry_round += 1
+            print(f"\n  Validation retry {retry_round}/{max_validation_retries} — "
+                  f"{len(all_invalid)} tickers...")
+
+            retry_results, retry_failed = _batched_fetch(
+                all_invalid,
+                fetch_fn=lambda t: _yf_download(t, HISTORY_START),
+                label=f"Retry {retry_round}",
+                min_sleep=3.0,
+                max_retries=2,
+            )
+
+            # Update universe with retried data
+            for ticker, df in retry_results.items():
+                compute_dvol_20d(df)
+                universe[ticker] = df
+
+            new_valid, still_invalid, new_unvalidatable = validate_daily_fetch(
+                {t: universe[t] for t in all_invalid if t in universe},
+                spy_dates, ticker_ref)
+
+            print(f"  Retry {retry_round}: {len(new_valid)} passed, "
+                  f"{len(still_invalid)} still failing")
+
+            if len(still_invalid) == len(all_invalid):
+                print(f"  No progress — stopping retries")
+                break
+
+            all_invalid = still_invalid
+
+        if all_invalid:
+            print(f"\n  ⚠ {len(all_invalid)} tickers could not be validated:")
+            if len(all_invalid) <= 20:
+                print(f"    {all_invalid}")
 
     elapsed = time.time() - t0
 
@@ -587,8 +951,8 @@ def append_daily_cache():
 
     size_mb = os.path.getsize(CACHE_DAILY_FILE) / 1024 / 1024
     print(f"  Saved: {CACHE_DAILY_FILE} ({size_mb:.1f} MB)")
-    print(f"  Appended: {appended}, New: {new_added}, "
-          f"No change: {no_new}, Failed: {failed}")
+    print(f"  Appended: {appended}, Split refetched: {split_refetched}, "
+          f"New: {new_added}, No change: {no_new}, Failed: {failed}")
     print(f"  Time: {elapsed:.0f}s")
 
     return universe
@@ -948,8 +1312,26 @@ if __name__ == "__main__":
     mode_weekly = "--weekly" in sys.argv
     mode_monthly = "--monthly" in sys.argv
     mode_htf_status = "--htf-status" in sys.argv
+    mode_build_ref = "--build-reference" in sys.argv
 
-    if mode_htf_status:
+    if mode_build_ref:
+        # Build ticker reference from existing cache ticker list
+        tickers = []
+        for pkl in [CACHE_DAILY_FILE, CACHE_LEGACY_5YR]:
+            if os.path.exists(pkl):
+                with open(pkl, "rb") as f:
+                    existing = pickle.load(f)
+                tickers = sorted(existing.keys())
+                del existing
+                break
+        if not tickers:
+            try:
+                tickers = get_tradable_tickers_local()
+            except FileNotFoundError:
+                print("ERROR: No cache or DB to get ticker list from.")
+                sys.exit(1)
+        build_ticker_reference(tickers, force=force)
+    elif mode_htf_status:
         htf_status()
     elif mode_all:
         data = build_daily_cache(force=force)
