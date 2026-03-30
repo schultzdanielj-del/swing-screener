@@ -1,131 +1,172 @@
-# Swing Screener Project — State Document
+# ScanPerfect — Project Document
 
-**Last updated:** 2026-03-17
-**GitHub repo:** https://github.com/schultzdanielj-del/swing-screener (branch: v2)
-**Railway:** https://web-production-e3025.up.railway.app (seed vault / file mirror only)
-
----
-
-## RULES — READ THESE FIRST
-
-1. **NEVER proceed with work until user gives EXPLICIT go-ahead.** Wait for "go", "yes", "do it".
-2. **If you need credentials, access, tokens — STOP and ask immediately.**
-3. **Push all work to GitHub before ending a chat.**
-4. **Don't repeat context the user already knows.** Be concise.
-5. **NEVER dump large data (CSV, JSON) into context.** Process via scripts.
-6. **GitHub token for bash git push:** Stored in Claude memory. Use bash `git push`.
-7. **Before ANY TA work — READ `ta_knowledge.md` FIRST.**
-8. **All data from local files.** SQLite (`data/scanperfect.db`), OHLCV pickle, local cache JSONs. Never Railway. Never yfinance.
-9. **Break work into small tasks.** Update docs when finishing tasks that alter them.
-10. **READ THE ACTUAL CODE before making claims.** Verify, don't guess.
-11. **At session start:** Read the full codebase before proposing anything.
+**Last updated:** 2026-03-30
+**GitHub repo:** https://github.com/schultzdanielj-del/swing-screener (branch `v2`)
+**Railway:** https://web-production-e3025.up.railway.app (seed vault + file mirror only)
 
 ---
 
-## WHAT THIS PROJECT IS
+## WHAT THIS IS
 
-Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds the handful that match validated setup patterns with mathematically optimal conditions. Qullamaggie-style, 3-day to multi-week holds.
+Fully automated nightly swing trade screener. Screens ~4,000 tradable tickers, finds the handful matching validated setup patterns, ranks by expected value, produces a watchlist of the mathematically strongest positions. Qullamaggie-style, 3-day to multi-week holds.
 
-**Cost:** $0 additional — runs on existing Claude Max + TC2000 + Railway + GitHub.
+Runs entirely on Dan's local machine (i5-12600k, 32GB RAM, Windows). $0 additional cost — Claude Max + TC2000 + Railway + GitHub.
 
 ---
 
-## CURRENT STATE (2026-03-17)
+## HOW IT WORKS
 
-### DTSS (Double Top Short Sell) — first setup:
-- **Examples:** 66 (65 with valid scan bars in clusters, out of ~365 winner clusters)
-- **Causative (Phase 2):** Complete — 87 signal conditions + 100 refinement conditions, 182 combined, 78% WR, median winner 6.4 ADR
-- **Correlative (Phase 3):** Complete — EV Grinder inc 1-6 done. 1,816 pre / 1,940 post features. D1→D10 spread +45pp WR. RMSE 0.090
-- **Profit (Phase 4):** ✅ Inc 1-4 done (835 1-stage, 7703 2-stage, ~12 min)
-- **Live Watchlist (Phase 5):** Not built
+Upload example trades for a setup type. Automated brute-force methods discover which technical conditions separate those examples from the full market, gated by anti-curve-fit statistical validation. Signal conditions are correlated against broad market conditions and ticker attributes to score expected value. A daily watchlist ranks signals highest EV to lowest. Exit management is optimized by the same brute-force algorithm.
 
-### Native Desktop UI (Phase 6):
-- PySide6 app (`scanperfect.py`) — IN PROGRESS
-- Pipeline flowchart with 7 color-coded nodes, two feedback loops, unlock progression
-- Animated card expansion with Run/Stop/Log for grind nodes
-- Replaces browser-based HTML UI (server.py + app/*.html)
-- Next: expand DO nodes (Examples, Vetting) into full workspaces within the flowchart
+### Pipeline Phases
+1. **Causative filtering** — Signal grind finds conditions where all examples pass but most of the market fails. Entry/exit grind classifies winners and losers. Refinement grind eliminates losing clusters. Can run in EDA mode (manual, fast) or Consensus mode (overnight, anti-curve-fit).
+2. **Correlative scoring** — EV grinder tests every market condition and ticker attribute against the signal set. Signals aren't removed, they're ranked by predicted WR, MFE, and EV.
+3. **Profit optimization** — Brute-forces TA-expression-based exit conditions to capture optimal MFE.
+4. **Live watchlist** — Updated nightly. Signals ranked by historical EV.
+
+### Principles
+- **Anti curve-fit:** Consensus pipeline runs on real and permuted data. Only conditions scoring z > 3 survive.
+- **Consistency:** Same conditions produce same signals at every pipeline stage.
+- **Reproducibility:** Same inputs → same outputs. Caches are append-only.
+- **Self-referencing:** All conditions normalized by each ticker's own characteristics (ADR, percentile ranks). Never absolute prices.
 
 ---
 
 ## ARCHITECTURE
 
-Everything runs locally on Dan's desktop (i5-12600k, 32GB RAM, Windows).
-
 ```
-scanperfect.py             # PySide6 native desktop app (THE interface)
-audit.sh                   # Code auditor — separate Claude instance reviews every change
+scanperfect.py             # PySide6 desktop app — pipeline controls, vetting, charts
+audit.sh                   # Code auditor — manual, dependency-aware (see Code_Auditor.md)
 
-local_runner/              # Grinder system
-├── nightly.py             # 9-step nightly pipeline (4:30pm ET)
-├── pyramid_grinder.py     # Signal grind + refinement grind (--blackout)
-├── cache_builder.py       # OHLCV caches (daily + 5yr)
-├── expr_cache_builder.py  # Expression series cache (~21 GB)
-├── market_cache_builder.py # 256 instrument expression series
-├── file_mirror.py         # Railway backup mirror
+local_runner/
+├── nightly.py             # 10-step nightly pipeline (4:30pm ET via Task Scheduler)
+├── cache_builder.py       # OHLCV caches — daily/weekly/monthly pickles (yfinance)
+├── expr_cache_builder.py  # Expression series cache — per-ticker .npz (~21 GB)
+├── vectorized_cache_builder.py  # Alternative fast expr cache builder (same output)
+├── market_cache_builder.py      # 266 market instrument expression series
+├── matrix_builder.py      # Universe matrix — last bar of every ticker
+├── pyramid_grinder.py     # Signal grind + cluster gathering + refinement grind
+├── brute_expressions.py   # Expression library generator (~15,805 expressions)
+├── spiderweb.py           # Beam search algorithm (pure compute)
+├── agent.py               # Polling agent for Railway job queue
+├── pipeline_agent.py      # Pipeline step executor (Railway jobs)
+├── file_mirror.py         # Mirrors files to Railway backup
+├── grind_uploader.py      # Uploads grind results to Railway v2 cycles
 └── cache/                 # All local caches + grind output JSONs
 
-scripts/                   # Analysis scripts
-├── ev_grinder.py          # EV grinder (Phase 3) — COMPLETE
-├── exit_grinder.py        # Exit condition optimizer
-├── entry_candle_scorer.py # Vetting sort utility
-├── seed_vault.py          # Backup/restore to Railway
-├── fetch_fundamentals.py  # Yahoo Finance fundamentals
-└── signal_filter.py       # Signal scan (standalone analysis)
+scripts/
+├── signal_exit_grinder.py # Exit condition from signal bar (cache-compatible)
+├── signal_filter.py       # Full universe scan with locked conditions
+├── entry_grinder.py       # Stop placement + entry timing
+├── entry_candle_scorer.py # Entry candle similarity scoring
+├── ev_grinder.py          # Correlative EV scoring (setup + market features)
+├── ev_tree_scorer.py      # XGBoost alternative scorer (called by ev_grinder)
+├── profit_grinder.py      # Exit expression optimizer
+├── profit_grinder_2stage.py  # 2-stage helper (called by profit_grinder)
+├── consensus_engine.py    # Cross-run consensus analysis
+├── exit_grinder.py        # Trade management exit (entry-relative, separate from signal exit)
+├── expression_engine.py   # Core expression computation engine
+├── backtest_conditions.py # Series computation from ExpressionEngine
+├── profiling_engine.py    # TA indicator library (pandas)
+├── exit_expressions.py    # Exit expression library (~6,410 expressions)
+├── exit_compute.py        # Exit expression engine (entry-relative)
+├── lsp_detector_v2.py     # Liquidity/structure pivot detection
+├── algo_line_detector.py  # H-/L+ trendline detection
+├── seed_vault.py          # Backup/restore SQLite + JSONs to Railway
+├── fetch_fundamentals.py  # Yahoo Finance fundamentals (sector, float)
+├── fetch_universe.py      # NASDAQ ticker list fetch (Railway-side)
+├── build_tradable.py      # Tradable universe table builder
+├── local_db.py            # SQLite helper functions
+├── bulk_mirror.py         # Bulk upload all JSONs to Railway
+└── analysis_api.py        # Profiling/discovery orchestration (legacy)
 
-data/                      # Local data
-├── scanperfect.db         # SQLite DB (examples, setups, etc.)
-├── pipeline_state.json    # Grinder run status
-├── pipeline_logs.json     # Grinder log output
-└── vetting/               # Vetting decision files
+data/
+├── scanperfect.db         # SQLite — examples, setups, earnings, vetting
+├── signal_exit_grind/     # Exit condition outputs
+├── signal_filter/         # Filtered signal outputs
+├── exit_grind/            # Trade management exit outputs
+├── profit_grind/          # Profit grinder outputs
+├── vetting/               # Vetting decision JSONs
+├── pipeline_state.json    # Pipeline step statuses
+└── pipeline_logs.json     # Pipeline log output
 
-server.py                  # FastAPI (Railway deploy only — seed vault endpoints)
-app/                       # HTML UI (LEGACY — replaced by scanperfect.py)
+server.py                  # FastAPI — Railway deployment + local dev server
 ```
 
-### Key docs:
-- **`TODO.md`** — task list, pipeline status, immediate work items
-- **`LOCALIZE.md`** — local migration (complete) + UI status
-- **`UI_FLOW.md`** — PySide6 flowchart UI design
-- **`PIPELINE_V2.md`** — pipeline architecture
-- **`EV_GRINDER.md`** — EV grinder spec
-- **`ANALYSIS_SYSTEM.md`** — repeatable process for building any setup
-- **`DATA_CONTRACT.md`** — schema + data flow
-- **`DEPENDENCY_MAP.md`** — per-component inputs, outputs, upstream callers, downstream consumers. Check before changing any component.
-- **`ta_knowledge.md`** — TA concepts reference
-- **`pcf.md`** — TC2000 PCF language reference
-- **`Code_Auditor`** — code auditor setup and spec
+### Nightly Pipeline (10 steps, 4:30pm ET)
+1. yfinance freshness check (gate)
+2. Daily OHLCV cache append
+3. Weekly OHLCV cache append
+4. Monthly OHLCV cache append
+5. Expression cache append (blocker — CPU intensive)
+6. Universe matrix rebuild
+7. Earnings dates refresh (via Railway)
+8. Market cache append (266 instruments)
+9. Fundamentals cache refresh
+10. Seed vault backup to Railway
+
+### Data Storage
+- **Daily OHLCV:** Full available history, append-only pickle. Source of truth for all price data.
+- **Weekly/Monthly OHLCV:** 10yr lookback, append-only pickles.
+- **Expression cache:** ~15,805 expressions per ticker. Per-ticker .npz files (~21 GB total).
+- **Market cache:** 266 broad market instruments with same expression set.
+- **SQLite:** Examples, setups, vetting decisions, earnings dates, tradable universe.
+
+---
+
+## KEY DOCS
+
+| Document | Purpose |
+|----------|---------|
+| `DEPENDENCY_MAP.md` | Per-component inputs, outputs, callers, consumers. **Check before changing any component.** |
+| `DATA_CONTRACT.md` | Schemas, file formats, data flow rules |
+| `Code_Auditor.md` | Auditor setup and usage |
+| `PIPELINE_V2.md` | Pipeline architecture |
+| `SIGNAL_GRINDER.md` | Signal + refinement grind spec |
+| `ENTRY_GRINDER.md` | Entry/stop grind spec |
+| `EV_GRINDER.md` | EV grinder spec |
+| `PROFIT_GRINDER.md` | Profit grinder spec |
+| `EXPRESSION_ENGINE_V2.md` | Expression cache + computation spec |
+| `NIGHTLY_REFRESH.md` | Nightly pipeline spec |
+| `LOCALIZE.md` | Local migration spec |
+| `CONSENSUS_SPEC.md` | Consensus pipeline spec |
+| `UI_FLOW.md` | PySide6 desktop app spec |
+| `ANALYSIS_SYSTEM.md` | Repeatable process for building any setup |
+| `ta_knowledge.md` | TA concepts reference — read before any TA work |
+| `pcf.md` | TC2000 PCF language reference |
 
 ---
 
 ## CODE AUDITOR
 
-`audit.sh` — runs a separate Claude Code instance (`claude -p`) that evaluates every code change against spec docs and project-wide rules. Checks four criteria: purpose, spec compliance, regression safety, and code quality. Returns PASS or FAIL with evidence.
+`audit.sh` — manual code review tool. Run `./audit.sh` in Git Bash when ready. Uses Claude Code (`claude -p`) as a separate instance.
 
-Git hooks (local, not in repo):
-- **post-commit** — fires on every local commit (Claude Code workflow)
-- **post-merge** — fires on every `git pull`. Auto-reverts on FAIL. Paste failure output into Claude chat to fix.
+- **Manual trigger only** — no git hooks, no auto-fire
+- **Batch diffing** — diffs from last audited commit to current HEAD
+- **Dependency-aware** — reads DEPENDENCY_MAP.md, pulls downstream consumer files
+- **Four criteria:** purpose, spec compliance, regression safety, code quality
+- **On PASS:** advances bookmark to current commit
+- **On FAIL:** bookmark stays put, re-audits same block on next run
 
-The auditor maps changed files to their spec docs automatically (e.g. `ev_grinder.py` → `EV_GRINDER.md`). Project-wide rules (no yfinance outside cache_builder, ProcessPoolExecutor only, del+gc patterns, etc.) are hardcoded in the auditor prompt.
+See `Code_Auditor.md` for full details.
 
 ---
 
 ## SETUP TYPES
 
-| Setup | Status | Examples | Phase 2 Result |
-|-------|--------|----------|----------------|
-| **DTSS** | Phase 2+3 complete, Phase 4 done | 68 | 182 conditions, 78% WR, 6.4 ADR median |
-| **BRKO** | Phase 3 (EV Grinder running) | 51 | 54.9% WR post-refinement, thin — edge in market context |
-| **3-4DB** | Examples loaded | 21 | Not yet ground |
-| **HTF** | Scaffolded | None | — |
+| Setup | Direction | Status |
+|-------|-----------|--------|
+| **DTSS** | Short | Phase 2-4 complete. Primary setup. |
+| **BRKO** | Long | Phase 3 in progress. |
+| **3-4DB** | Long | Examples loaded. Not yet ground. |
+| **HTF** | — | Scaffolded. No examples. |
 
 ---
 
-## SUBSCRIPTIONS / TOOLS
+## SHELVED / LEGACY (do not modify or reference as active)
 
-- Claude Max — this + other projects
-- TC2000 — scanning platform
-- GitHub — code hosting
-- Railway — seed vault / file mirror only
-- Discord — trading community
-- PySide6 — desktop UI framework (installed, in use)
+**Scripts:** `dartboard_grinder.py`, `hybrid_grinder.py`, `setup_refiner.py`, `outcome_grinder.py`, `outcome_engine.py`, `multistage_exit_grinder.py`, `classify_universe.py`, `condition_pruner.py`, `proximity_grinder.py`, `market_grinder.py`, `setup_grinder.py`, `pipeline_agent.py`, `run_nightly.py`
+
+**Docs:** `DARTBOARD_DESIGN.md`, `MULTISTAGE_EXIT_GRINDER.md`
+
+**UI:** `app/index.html`, `app/vetting.html` — legacy browser UI, replaced by `scanperfect.py`
