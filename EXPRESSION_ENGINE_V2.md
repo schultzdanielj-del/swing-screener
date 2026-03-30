@@ -293,13 +293,29 @@ Task H Phase 3 (incremental append)               -- IN PROGRESS (2026-03-29)
                                                       Increment 2: True incremental expr cache append
                                                         - See detailed design below
     |
-OHLCV --all --force rebuild                        -- DONE (2026-03-30)
+OHLCV --all --force rebuild                        -- DONE (2026-03-30) — but 3,081 tickers truncated
+                                                      by yfinance rate limiting (silent partial data)
+    |
+Data validation infrastructure                     -- DONE (2026-03-30)
+                                                      - ticker_reference.json: firstTradeDateMilliseconds
+                                                        for all tickers (one-time, from yfinance .info)
+                                                      - SPY fetched first on every run — date array is
+                                                        ground truth for expected bar counts
+                                                      - Exact match validation: ticker bars == SPY bars
+                                                        from max(firstTradeDate, HISTORY_START). No tolerance.
+                                                      - Mismatch = failed fetch → retry until pass or None
+                                                      - Don't save cache until all tickers validated
+                                                      - Split detection: tickers that split get full refetch
+                                                        (historical prices changed by yfinance adjustment)
+    |
+Validated OHLCV rebuild (--daily --force)           -- IN PROGRESS
+                                                      Reference file building (--build-reference)
+                                                      Then daily rebuild with validation
     |
 First full rebuild with HTF pickles                -- run once to establish baseline cache
                                                       (--build --force on Dan's machine)
     |
-Clean consensus filter grind                       -- all setups need full regrind,
-                                                      signal filter verifies baseline cache
+Pyramid grind on DTSS                              -- verify baseline cache produces correct data
     |
 Increment 2: True incremental expr cache append    -- next code task after baseline is verified
     |

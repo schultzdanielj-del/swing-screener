@@ -23,18 +23,21 @@ These are the only components that make network calls for market data.
 ### cache_builder.py
 **Location:** `local_runner/cache_builder.py`
 **Spec:** `NIGHTLY_REFRESH.md`, `LOCALIZE.md`
-**What it does:** Downloads OHLCV from yfinance, stores as pickles. Append-only — never drops old bars. All fetches use explicit `start=HISTORY_START` (2016-01-01), never yfinance `period=` parameter. No arbitrary lookback windows — full sweep uses HISTORY_START, nightly append uses each ticker's own last cached bar date.
+**What it does:** Downloads OHLCV from yfinance, stores as pickles. All fetches use explicit `start=HISTORY_START` (2016-01-01), never yfinance `period=` parameter. Validated: SPY fetched first as ground truth, every ticker's bar count must exactly match SPY's count from `max(firstTradeDate, HISTORY_START)`. Mismatches retry until pass. Split detection on nightly append — tickers that split get full refetch.
 
 **Inputs:**
 - yfinance API (network) — via `_yf_download(ticker, start, interval)` using explicit start dates
+- yfinance `.info` API (network) — for `firstTradeDateMilliseconds` (reference file build only)
 - SQLite `tradable_universe` table (for ticker list on first build only)
 - Existing pickle (for ticker list on rebuilds — reads keys from prior cache)
+- `local_runner/cache/ticker_reference.json` (for validation — expected bar counts)
 
 **Outputs:**
 - `local_runner/cache/universe_ohlcv.pkl` — 300-bar daily (legacy)
 - `local_runner/cache/universe_ohlcv_daily.pkl` — full history daily (from HISTORY_START)
 - `local_runner/cache/universe_ohlcv_weekly.pkl` — weekly (from HISTORY_START)
 - `local_runner/cache/universe_ohlcv_monthly.pkl` — monthly (from HISTORY_START)
+- `local_runner/cache/ticker_reference.json` — firstTradeDateMilliseconds per ticker (for validation)
 - `local_runner/cache/cache_meta.txt`, `cache_daily_meta.txt`, `cache_weekly_meta.txt`, `cache_monthly_meta.txt`
 
 **Key functions called by others:**
@@ -47,7 +50,8 @@ These are the only components that make network calls for market data.
 - `_batched_fetch()` — shared adaptive rate limiter (scales workers + sleep based on failure rate, retry sweeps). Used by all fetch paths.
 
 **CLI:**
-- `--daily [--force]` — build/rebuild daily cache
+- `--build-reference [--force]` — build/rebuild ticker_reference.json (firstTradeDateMilliseconds)
+- `--daily [--force]` — build/rebuild daily cache (validated against SPY + reference)
 - `--htf [--force]` — build/rebuild weekly + monthly caches (full sweep from HISTORY_START)
 - `--weekly` — build/rebuild weekly cache only (full sweep from HISTORY_START)
 - `--monthly` — build/rebuild monthly cache only (full sweep from HISTORY_START)
