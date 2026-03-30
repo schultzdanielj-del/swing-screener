@@ -347,9 +347,12 @@ SPECIFICATION DOCUMENTS:
     # ── Run claude -p ──
 
     try:
+        # shell=True needed on Windows to find claude.cmd
         result = subprocess.run(
-            ["claude", "-p", prompt],
-            capture_output=True, text=True, cwd=REPO_ROOT, timeout=300
+            "claude -p -",
+            input=prompt,
+            capture_output=True, text=True, cwd=REPO_ROOT, timeout=300,
+            shell=True
         )
         output = result.stdout.strip()
     except FileNotFoundError:
