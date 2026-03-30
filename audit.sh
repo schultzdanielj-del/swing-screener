@@ -1,32 +1,99 @@
 #!/bin/bash
 # ScanPerfect Code Auditor
-# Runs automatically after every commit via git hook
+# Manual trigger only. Run: ./audit.sh
+# Diffs from last audited commit to current HEAD.
+# Uses DEPENDENCY_MAP.md to check downstream consumers.
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-DIFF="$(git diff HEAD~1 HEAD)"
-CHANGED="$(git diff --name-only HEAD~1 HEAD)"
-COMMIT_MSG="$(git log -1 --pretty=%s)"
+STATE_FILE="$REPO_ROOT/local_runner/cache/last_audited_commit.txt"
+DEP_MAP="$REPO_ROOT/DEPENDENCY_MAP.md"
+DATA_CONTRACT="$REPO_ROOT/DATA_CONTRACT.md"
 
-# Map changed files to their spec docs
+# ── Determine diff range ──
+
+if [ -f "$STATE_FILE" ]; then
+    LAST_AUDITED=$(cat "$STATE_FILE" | tr -d '[:space:]')
+    # Verify the commit still exists (could have been rebased away)
+    if ! git cat-file -e "$LAST_AUDITED" 2>/dev/null; then
+        echo "  Warning: last audited commit $LAST_AUDITED no longer exists. Diffing HEAD~1."
+        LAST_AUDITED=$(git rev-parse HEAD~1)
+    fi
+else
+    echo "  First run — no audit history. Diffing HEAD~1."
+    LAST_AUDITED=$(git rev-parse HEAD~1)
+fi
+
+CURRENT=$(git rev-parse HEAD)
+
+if [ "$LAST_AUDITED" = "$CURRENT" ]; then
+    echo ""
+    echo "  Nothing to audit — HEAD is the same as last audited commit."
+    echo "  ($CURRENT)"
+    echo ""
+    exit 0
+fi
+
+# How many commits in this batch
+N_COMMITS=$(git rev-list --count "$LAST_AUDITED".."$CURRENT")
+SHORT_FROM=$(git rev-parse --short "$LAST_AUDITED")
+SHORT_TO=$(git rev-parse --short "$CURRENT")
+
+echo ""
+echo "═══════════════════════════════════════════════════════════"
+echo "  ScanPerfect Code Auditor"
+echo "  Auditing $N_COMMITS commit(s): $SHORT_FROM → $SHORT_TO"
+echo "═══════════════════════════════════════════════════════════"
+echo ""
+
+# ── Gather diff and changed files ──
+
+DIFF="$(git diff "$LAST_AUDITED" "$CURRENT")"
+CHANGED="$(git diff --name-only "$LAST_AUDITED" "$CURRENT")"
+COMMIT_MSGS="$(git log --oneline "$LAST_AUDITED".."$CURRENT")"
+
+if [ -z "$CHANGED" ]; then
+    echo "  No files changed. Nothing to audit."
+    echo "$CURRENT" > "$STATE_FILE"
+    exit 0
+fi
+
+echo "  Changed files:"
+echo "$CHANGED" | sed 's/^/    /'
+echo ""
+
+# ── Map changed files to spec docs ──
+
 SPECS=""
-echo "$CHANGED" | grep -q "expr_cache_builder" && SPECS="$SPECS EXPRESSION_ENGINE_V2.md"
+echo "$CHANGED" | grep -q "expr_cache_builder\|vectorized_cache_builder\|vectorized_dispatch\|vectorized_indicators" && SPECS="$SPECS EXPRESSION_ENGINE_V2.md"
 echo "$CHANGED" | grep -q "scanperfect.py" && SPECS="$SPECS UI_FLOW.md"
 echo "$CHANGED" | grep -q "nightly.py" && SPECS="$SPECS NIGHTLY_REFRESH.md LOCALIZE.md"
 echo "$CHANGED" | grep -q "seed_vault" && SPECS="$SPECS LOCALIZE.md"
-echo "$CHANGED" | grep -q "pyramid_grinder\|signal_grinder" && SPECS="$SPECS SIGNAL_GRINDER.md"
+echo "$CHANGED" | grep -q "pyramid_grinder\|signal_grinder\|spiderweb" && SPECS="$SPECS SIGNAL_GRINDER.md"
 echo "$CHANGED" | grep -q "refinement" && SPECS="$SPECS REFINEMENT_GRINDER.md"
-echo "$CHANGED" | grep -q "ev_grinder" && SPECS="$SPECS EV_GRINDER.md"
+echo "$CHANGED" | grep -q "ev_grinder\|ev_tree_scorer" && SPECS="$SPECS EV_GRINDER.md"
 echo "$CHANGED" | grep -q "cache_builder.py" && SPECS="$SPECS LOCALIZE.md NIGHTLY_REFRESH.md"
 echo "$CHANGED" | grep -q "matrix_builder" && SPECS="$SPECS LOCALIZE.md"
 echo "$CHANGED" | grep -q "signal_filter\|signal_exit" && SPECS="$SPECS PIPELINE_V2.md"
-echo "$CHANGED" | grep -q "entry_candle" && SPECS="$SPECS ENTRY_GRINDER.md"
-echo "$CHANGED" | grep -q "profit_grinder" && SPECS="$SPECS PIPELINE_V2.md"
-echo "$CHANGED" | grep -q "market_cache" && SPECS="$SPECS LOCALIZE.md"
+echo "$CHANGED" | grep -q "entry_candle\|entry_grinder" && SPECS="$SPECS ENTRY_GRINDER.md"
+echo "$CHANGED" | grep -q "profit_grinder" && SPECS="$SPECS PROFIT_GRINDER.md"
+echo "$CHANGED" | grep -q "market_cache_builder\|fetch_missing_market" && SPECS="$SPECS LOCALIZE.md"
+echo "$CHANGED" | grep -q "consensus_engine" && SPECS="$SPECS CONSENSUS_SPEC.md"
+echo "$CHANGED" | grep -q "exit_grinder\|exit_compute\|exit_expressions" && SPECS="$SPECS PIPELINE_V2.md"
+echo "$CHANGED" | grep -q "fetch_fundamentals\|fetch_universe\|build_tradable" && SPECS="$SPECS NIGHTLY_REFRESH.md"
+echo "$CHANGED" | grep -q "lsp_detector\|algo_line_detector" && SPECS="$SPECS EXPRESSION_ENGINE_V2.md"
+echo "$CHANGED" | grep -q "brute_expressions" && SPECS="$SPECS EXPRESSION_ENGINE_V2.md"
+echo "$CHANGED" | grep -q "server.py" && SPECS="$SPECS DATA_CONTRACT.md"
+echo "$CHANGED" | grep -q "local_db\|analysis_api" && SPECS="$SPECS DATA_CONTRACT.md"
 
-# If no spec matched, use PIPELINE_V2.md as fallback
+# Deduplicate specs
+SPECS=$(echo "$SPECS" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+
 [ -z "$SPECS" ] && SPECS="PIPELINE_V2.md"
 
-# Read the spec docs
+echo "  Spec docs: $SPECS"
+
+# ── Read spec doc contents ──
+
 SPEC_CONTENT=""
 for spec in $SPECS; do
     if [ -f "$REPO_ROOT/$spec" ]; then
@@ -37,7 +104,8 @@ $(cat "$REPO_ROOT/$spec")
     fi
 done
 
-# Read the full content of every changed file (not just the diff)
+# ── Read full content of every changed file ──
+
 FULL_FILES=""
 while IFS= read -r file; do
     if [ -f "$REPO_ROOT/$file" ]; then
@@ -48,69 +116,144 @@ $(cat "$REPO_ROOT/$file")
     fi
 done <<< "$CHANGED"
 
-# Write the prompt to a temp file to avoid "argument list too long" errors
-PROMPT_FILE="$(mktemp)"
-cat > "$PROMPT_FILE" << PROMPT_END
-You are a code auditor for ScanPerfect, a quantitative swing trading screener.
+# ── Find downstream consumers from DEPENDENCY_MAP.md ──
+# For each changed .py file, find its "Downstream Consumers" section
+# and pull those files too.
 
-YOUR ROLE: You evaluate code. You do NOT write code. You do NOT suggest fixes. You do NOT say 'consider doing X.' You ONLY evaluate and report PASS or FAIL with evidence.
+DOWNSTREAM_FILES=""
+DOWNSTREAM_NAMES=""
+
+if [ -f "$DEP_MAP" ]; then
+    while IFS= read -r file; do
+        # Only care about .py files
+        echo "$file" | grep -q "\.py$" || continue
+
+        basename=$(basename "$file" .py)
+
+        # Search DEPENDENCY_MAP.md for downstream consumer filenames
+        # Look for lines like "- `some_script.py` —" under Downstream Consumers sections
+        # that appear after a heading matching our changed file
+        consumers=$(awk -v target="$basename" '
+            BEGIN { in_section=0; in_downstream=0 }
+            /^### / {
+                if (index(tolower($0), tolower(target))) { in_section=1; in_downstream=0 }
+                else { in_section=0; in_downstream=0 }
+            }
+            in_section && /Downstream Consumers/ { in_downstream=1; next }
+            in_section && in_downstream && /^$/ { in_downstream=0 }
+            in_section && in_downstream && /^##/ { in_downstream=0 }
+            in_section && in_downstream && /`[a-z_]+\.py`/ {
+                match($0, /`([a-z_]+\.py)`/, arr)
+                if (arr[1] != "") print arr[1]
+            }
+        ' "$DEP_MAP" 2>/dev/null)
+
+        if [ -n "$consumers" ]; then
+            DOWNSTREAM_NAMES="$DOWNSTREAM_NAMES
+  $file impacts: $consumers"
+            for consumer in $consumers; do
+                # Skip if this file is already in the changed set
+                echo "$CHANGED" | grep -q "$consumer" && continue
+                # Find the actual path
+                for search_dir in "local_runner" "scripts" "."; do
+                    candidate="$REPO_ROOT/$search_dir/$consumer"
+                    if [ -f "$candidate" ]; then
+                        rel_path="$search_dir/$consumer"
+                        # Don't add duplicates
+                        echo "$DOWNSTREAM_FILES" | grep -q "$rel_path" && break
+                        DOWNSTREAM_FILES="$DOWNSTREAM_FILES
+========== DOWNSTREAM: $rel_path ==========
+$(cat "$candidate")
+"
+                        break
+                    fi
+                done
+            done
+        fi
+    done <<< "$CHANGED"
+fi
+
+if [ -n "$DOWNSTREAM_NAMES" ]; then
+    echo ""
+    echo "  Downstream consumers pulled:"
+    echo "$DOWNSTREAM_NAMES" | sed 's/^/  /'
+fi
+
+# ── Read DATA_CONTRACT.md and DEPENDENCY_MAP.md ──
+
+CONTRACT_CONTENT=""
+if [ -f "$DATA_CONTRACT" ]; then
+    CONTRACT_CONTENT="$(cat "$DATA_CONTRACT")"
+fi
+
+DEPMAP_CONTENT=""
+if [ -f "$DEP_MAP" ]; then
+    DEPMAP_CONTENT="$(cat "$DEP_MAP")"
+fi
+
+echo ""
+echo "  Running audit via claude -p ..."
+echo ""
+
+# ── Run the audit ──
+
+RESULT=$(claude -p "You are a code auditor for ScanPerfect, a quantitative swing trading screener.
+
+YOUR ROLE: You evaluate code changes. You do NOT write code. You do NOT suggest fixes. You ONLY evaluate and report PASS or FAIL with evidence.
 
 You have been given:
-- A git diff (what changed)
-- The full content of every changed file (so you can see context beyond the diff)
+- A git diff (what changed across $N_COMMITS commits)
+- The full content of every changed file
+- The full content of downstream consumer files (files that read output from the changed files)
 - The relevant specification documents
-- A list of project-wide rules below
+- DATA_CONTRACT.md (schemas, file formats, data flow rules)
+- DEPENDENCY_MAP.md (per-component inputs, outputs, downstream consumers)
 
-PROJECT-WIDE RULES (violations of any of these are automatic SPEC COMPLIANCE FAILs):
-- NEVER use bar_idx or scan_idx to match examples. ALWAYS use entry_date.
-- NEVER use yfinance outside of cache_builder.py. All other scripts use local caches.
-- ProcessPoolExecutor for CPU-bound parallel work. NEVER ThreadPoolExecutor for CPU work.
-- del + gc.collect() between phases is intentional RAM management. Must be preserved.
-- Every grinder must produce results where 100% of setup examples pass.
-- No API or network calls in grinder/scorer pipelines. All data from local caches.
-- Output .npz files must be float32, np.load compatible.
-- Expression fingerprint system must be preserved (triggers full rebuild on library changes).
-- All exit/entry conditions must be self-referential and normalized (divided by ADR), never absolute price targets.
-- Railway is seed vault + file mirror ONLY. No OHLCV dependency on Railway.
-
-EVALUATE THESE THREE CRITERIA:
+EVALUATE THESE FOUR CRITERIA:
 
 1. PURPOSE
-Read the spec doc for the component being changed. What does the spec say this component should do? Does the code change achieve that purpose? Does it do what it's supposed to do, or does it do something else that might look similar but isn't what was specified?
-FAIL examples: spec says 'incremental append of one new bar' but code rebuilds the full expression engine. Spec says 'backup all non-rebuildable data' but code only backs up 3 of 8 file patterns.
+Read the spec doc for each changed component. What does the spec say this component should do?
+Does the code change still achieve that purpose? Does it do what the spec says, or has it drifted
+to do something else?
+
+FAIL if the code no longer fulfills the purpose defined in its spec doc.
 
 2. SPEC COMPLIANCE
-Go through the spec requirements one by one. For each requirement, check whether the code satisfies it. Check:
-- File paths: are inputs read from and outputs written to the correct directories?
-- Data flow: is data coming from the right source (local cache vs network vs database)?
-- Function signatures: do they match what callers expect?
+Go through the spec requirements for each changed component. For each requirement, check whether
+the code satisfies it:
+- File paths: inputs read from and outputs written to the correct locations?
+- Data flow: data coming from the right source (local cache vs network vs database)?
+- Function signatures: match what callers expect?
 - Worker patterns: correct executor type, correct parallelism?
 - RAM management: del + gc.collect patterns present where required?
 - Output formats: correct types, schemas, file extensions?
-- Constants and thresholds: do hardcoded values match the spec?
-FAIL if ANY spec requirement is not met. Cite the specific spec line and what the code does differently.
+- Constants and thresholds: hardcoded values match the spec?
+
+FAIL if ANY spec requirement is not met. Cite the specific spec requirement and what the code does differently.
 
 3. REGRESSION SAFETY
-Does this change break or conflict with anything else in the project?
-- If function signatures changed, will existing callers break?
-- If output file paths or names changed, will downstream readers find them?
-- If data formats changed, will consumers handle the new format?
-- If nightly pipeline steps changed, is the ordering still correct?
-- If imports were added, are all dependencies available in the environment?
-- Does this change affect other scripts that read the same files?
-- Could this change cause silent wrong numbers (plausible-looking output that is actually incorrect)?
-FAIL if any regression risk exists. The most dangerous failure mode is code that produces plausible wrong numbers with no errors — flag anything that could cause this.
+Use DATA_CONTRACT.md and DEPENDENCY_MAP.md to check:
+- If output file paths or names changed, will downstream consumers (listed in DEPENDENCY_MAP.md) find them?
+- If output data format changed, will downstream consumers handle the new format?
+- If function signatures changed, will callers (listed in DEPENDENCY_MAP.md) break?
+- If file schemas changed, does DATA_CONTRACT.md still describe them accurately?
+- Could this change cause silent wrong numbers — plausible-looking output that is actually incorrect?
+
+You have been given the full source of downstream consumer files. CHECK THEM. Verify that the
+changed code's outputs are still compatible with how downstream files read them.
+
+FAIL if any regression risk exists. The most dangerous failure is code that produces plausible
+wrong numbers with no errors.
 
 4. CODE QUALITY
-Is this a clean, minimal implementation? Or is it bloated, patched-together, or working around a problem instead of solving it properly?
-- Does the code do the job in the fewest lines and simplest logic possible?
-- Are there unnecessary layers of abstraction, wrapper functions, or indirection?
-- Is there dead code, commented-out code, or redundant checks?
-- Does it copy-paste logic that already exists elsewhere instead of reusing it?
-- Does it add special cases or if-else chains that paper over a design problem?
-- Is it solving the symptom instead of the root cause?
-- Would a senior engineer look at this and say 'this should be rewritten' or 'this is clean'?
-FAIL if the code is unnecessarily complex, patched together, or avoids a proper solution in favor of a shortcut. This project has to be maintained long-term by someone who cannot read code — every line of unnecessary complexity is a liability.
+- Is there dead code, commented-out code, or unused imports?
+- Is there redundant logic or copy-pasted code that should be shared?
+- Are there unnecessary layers of abstraction or wrapper functions?
+- Is the code efficient — no obvious performance problems?
+- Would a senior engineer say this is clean and maintainable?
+
+FAIL if there is dead code that should be cleaned up, or if the implementation is unnecessarily
+complex when a simpler approach would work.
 
 OUTPUT FORMAT:
 
@@ -123,12 +266,15 @@ FAIL: [which criteria failed] — [one sentence why]
 Examples:
 PASS
 FAIL: purpose — builds full engine instead of incremental append
-FAIL: spec, quality — wrong ticker count (4,167 vs 10,542), bandaid architecture
-FAIL: regression — changes output path, downstream matrix_builder won't find files
+FAIL: spec, quality — wrong ticker count, 40 lines of dead code
+FAIL: regression — changes output dict keys, ev_grinder reads old keys
+FAIL: quality — 3 commented-out functions, unused imports
 
-Be pedantic. Be thorough. A false PASS is catastrophic — the project owner cannot read code and relies entirely on this audit to catch problems. When in doubt, FAIL.
+Be thorough. A false PASS is dangerous — the project owner cannot read code and relies
+entirely on this audit to catch problems. When in doubt, FAIL.
 
-COMMIT: $COMMIT_MSG
+COMMITS ($N_COMMITS):
+$COMMIT_MSGS
 
 CHANGED FILES:
 $CHANGED
@@ -139,21 +285,40 @@ $DIFF
 FULL FILE CONTENTS:
 $FULL_FILES
 
+DOWNSTREAM CONSUMER FILES:
+$DOWNSTREAM_FILES
+
+DATA_CONTRACT.md:
+$CONTRACT_CONTENT
+
+DEPENDENCY_MAP.md:
+$DEPMAP_CONTENT
+
 SPECIFICATION DOCUMENTS:
 $SPEC_CONTENT
-PROMPT_END
+")
 
-# Run the audit by piping the prompt file to claude
-RESULT=$(cat "$PROMPT_FILE" | claude -p)
+# ── Output ──
 
-# Clean up temp file
-rm -f "$PROMPT_FILE"
-
-# Output
 echo ""
+echo "═══════════════════════════════════════════════════════════"
 echo "$RESULT"
+echo "═══════════════════════════════════════════════════════════"
 echo ""
 
-# Save to log
+# Save result
+mkdir -p "$REPO_ROOT/local_runner/cache"
 echo "$RESULT" > "$REPO_ROOT/local_runner/cache/last_audit.txt"
-echo "Audit saved to local_runner/cache/last_audit.txt"
+echo "  Audit saved to local_runner/cache/last_audit.txt"
+
+# ── Update last audited commit ──
+
+if echo "$RESULT" | head -1 | grep -q "^PASS"; then
+    echo "$CURRENT" > "$STATE_FILE"
+    echo "  Last audited commit updated to $SHORT_TO"
+else
+    echo "  FAIL — last audited commit NOT updated (stays at $SHORT_FROM)"
+    echo "  Fix the issues and re-run ./audit.sh"
+fi
+
+echo ""
