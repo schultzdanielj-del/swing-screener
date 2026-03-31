@@ -1536,6 +1536,122 @@ def check_freshness():
 check_yfinance_freshness = check_freshness
 
 
+# ══════════════════════════════════════════════════════════════
+# UNIVERSE SYNC — Add missing tickers, remove delisted ones
+# ══════════════════════════════════════════════════════════════
+
+def sync_universe():
+    """Sync all caches against EODHD exchange symbol list.
+
+    1. Loads existing daily pickle
+    2. Fetches EODHD universe (Common Stock + ETF on major exchanges)
+    3. Adds new tickers (full fetch from HISTORY_START) — no bar minimum
+    4. Removes delisted tickers
+    5. Saves daily pickle
+    6. Runs full_sweep on weekly + monthly so they pick up new tickers too
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+    print("=" * 60)
+    print("  UNIVERSE SYNC — Add new tickers, remove delisted")
+    print("=" * 60)
+
+    # ── Load existing daily cache ──
+    cache_file = CACHE_DAILY_FILE
+    if not os.path.exists(cache_file):
+        if os.path.exists(CACHE_LEGACY_5YR):
+            cache_file = CACHE_LEGACY_5YR
+        else:
+            print("  No existing daily cache. Run --daily --force first.")
+            return
+    with open(cache_file, "rb") as f:
+        universe = pickle.load(f)
+    print(f"\n  Existing daily cache: {len(universe)} tickers")
+
+    # ── Fetch EODHD universe ──
+    eodhd_tickers = set(fetch_eodhd_universe())
+    cached_tickers = set(universe.keys())
+
+    new_tickers = sorted(eodhd_tickers - cached_tickers)
+    delisted = sorted(cached_tickers - eodhd_tickers)
+
+    print(f"\n  New tickers to add: {len(new_tickers)}")
+    if new_tickers:
+        if len(new_tickers) <= 20:
+            print(f"    {new_tickers}")
+        else:
+            print(f"    {new_tickers[:20]} ... and {len(new_tickers) - 20} more")
+
+    print(f"  Delisted tickers to remove: {len(delisted)}")
+    if delisted:
+        if len(delisted) <= 20:
+            print(f"    {delisted}")
+        else:
+            print(f"    {delisted[:20]} ... and {len(delisted) - 20} more")
+
+    if not new_tickers and not delisted:
+        print("\n  Universe is already in sync. Nothing to do.")
+        return
+
+    # ── Remove delisted ──
+    for t in delisted:
+        del universe[t]
+    if delisted:
+        print(f"\n  Removed {len(delisted)} delisted tickers")
+
+    # ── Fetch new tickers ──
+    if new_tickers:
+        print(f"\n  Fetching {len(new_tickers)} new tickers from {HISTORY_START}...")
+
+        # Build ticker reference for new tickers
+        build_ticker_reference(new_tickers)
+
+        t0 = time.time()
+        results, permanently_failed = _batched_fetch(
+            new_tickers,
+            fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
+            label="New tickers",
+        )
+
+        added = 0
+        for ticker, df in results.items():
+            compute_dvol_20d(df)
+            universe[ticker] = df
+            added += 1
+
+        elapsed = time.time() - t0
+        print(f"\n  Fetched: {added} tickers in {elapsed:.0f}s")
+        if permanently_failed:
+            print(f"  Failed: {len(permanently_failed)} tickers")
+
+    # ── Save daily cache ──
+    print(f"\n  Saving daily cache...")
+    with open(CACHE_DAILY_FILE, "wb") as f:
+        pickle.dump(universe, f, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(CACHE_DAILY_META, "w") as f:
+        f.write(datetime.now().isoformat())
+
+    size_mb = os.path.getsize(CACHE_DAILY_FILE) / 1024 / 1024
+    print(f"  Saved: {CACHE_DAILY_FILE} ({size_mb:.1f} MB)")
+    print(f"  Total tickers: {len(universe)}")
+    del universe
+    import gc; gc.collect()
+
+    # ── Sync HTF caches (weekly + monthly) ──
+    # full_sweep=True makes _sync_htf_cache fetch any tickers
+    # that are in the daily pickle but missing from the HTF cache
+    print()
+    _sync_htf_cache("w", WEEKLY_FILE, WEEKLY_META, "WEEKLY",
+                    full_sweep=True, force_rebuild=False)
+    _sync_htf_cache("m", MONTHLY_FILE, MONTHLY_META, "MONTHLY",
+                    full_sweep=True, force_rebuild=False)
+
+    print(f"\n  {'=' * 50}")
+    print(f"  UNIVERSE SYNC COMPLETE")
+    print(f"  {'=' * 50}")
+    print(f"  Added: {len(new_tickers)}, Removed: {len(delisted)}")
+
+
 if __name__ == "__main__":
     force = "--force" in sys.argv
     mode_all = "--all" in sys.argv
@@ -1547,6 +1663,7 @@ if __name__ == "__main__":
     mode_daily_status = "--daily-status" in sys.argv
     mode_status = "--status" in sys.argv  # show all
     mode_build_ref = "--build-reference" in sys.argv
+    mode_sync = "--sync" in sys.argv
 
     if mode_htf_status or mode_daily_status or mode_status:
         pass  # no API calls needed
@@ -1556,7 +1673,9 @@ if __name__ == "__main__":
         print("  Or:      export EODHD_API_TOKEN=your_token_here  (bash)")
         sys.exit(1)
 
-    if mode_build_ref:
+    if mode_sync:
+        sync_universe()
+    elif mode_build_ref:
         # Build ticker reference from EODHD universe
         tickers = fetch_eodhd_universe()
         build_ticker_reference(tickers, force=force)
