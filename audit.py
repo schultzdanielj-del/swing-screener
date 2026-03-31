@@ -10,7 +10,8 @@ import subprocess
 import sys
 
 REPO_ROOT = subprocess.check_output(
-    ["git", "rev-parse", "--show-toplevel"], text=True
+    ["git", "rev-parse", "--show-toplevel"],
+    text=True, encoding="utf-8", errors="replace"
 ).strip()
 
 STATE_FILE = os.path.join(REPO_ROOT, "local_runner", "cache", "last_audited_commit.txt")
@@ -20,13 +21,15 @@ DATA_CONTRACT = os.path.join(REPO_ROOT, "DATA_CONTRACT.md")
 
 def git(cmd):
     return subprocess.run(
-        ["git"] + cmd, capture_output=True, text=True, cwd=REPO_ROOT
+        ["git"] + cmd, capture_output=True,
+        text=True, encoding="utf-8", errors="replace", cwd=REPO_ROOT
     ).stdout.strip()
 
 
 def git_ok(cmd):
     return subprocess.run(
-        ["git"] + cmd, capture_output=True, text=True, cwd=REPO_ROOT
+        ["git"] + cmd, capture_output=True,
+        text=True, encoding="utf-8", errors="replace", cwd=REPO_ROOT
     ).returncode == 0
 
 
