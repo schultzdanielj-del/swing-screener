@@ -53,8 +53,12 @@ HTF_BATCH_SIZE = 50  # tickers per batch for HTF full build (rate limit safety)
 HTF_BATCH_SLEEP = 2.0  # seconds between batches
 
 # EODHD API
-EODHD_API_TOKEN = "69caeae1b24de8.25880244"
+EODHD_API_TOKEN = os.environ.get("EODHD_API_TOKEN", "")
 EODHD_BASE = "https://eodhd.com/api"
+
+def _eodhd_end_date():
+    """Dynamic end date — always 1 year from today. Never stale."""
+    return (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -137,7 +141,7 @@ def build_ticker_reference(tickers, force=False):
                 return ticker, data[0]["date"]
 
             # Widen: ticker may have started after HISTORY_START
-            data = _eodhd_fetch_json(ticker, HISTORY_START, "2027-01-01", "d")
+            data = _eodhd_fetch_json(ticker, HISTORY_START, _eodhd_end_date(), "d")
             if data and len(data) > 0:
                 return ticker, data[0]["date"]
 
@@ -396,7 +400,7 @@ def _eodhd_download(ticker, start=None, interval="d"):
     if start is None:
         start = HISTORY_START
 
-    data = _eodhd_fetch_json(ticker, start, "2027-01-01", interval)
+    data = _eodhd_fetch_json(ticker, start, _eodhd_end_date(), interval)
     if data is None:
         return ticker, None
 
@@ -416,7 +420,7 @@ def _eodhd_append_after_date(ticker, after_date):
     # Start from the day after last cached date
     start = (pd.Timestamp(after_date) + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    data = _eodhd_fetch_json(ticker, start, "2027-01-01", "d")
+    data = _eodhd_fetch_json(ticker, start, _eodhd_end_date(), "d")
     if data is None:
         return ticker, None
 
@@ -1372,7 +1376,7 @@ def check_freshness():
     # Download latest bar from EODHD
     try:
         recent = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
-        data = _eodhd_fetch_json("SPY", recent, "2027-01-01", "d")
+        data = _eodhd_fetch_json("SPY", recent, _eodhd_end_date(), "d")
         if not data or len(data) == 0:
             print("  Could not fetch SPY from EODHD — assuming new data")
             return True
@@ -1408,6 +1412,14 @@ if __name__ == "__main__":
     mode_monthly = "--monthly" in sys.argv
     mode_htf_status = "--htf-status" in sys.argv
     mode_build_ref = "--build-reference" in sys.argv
+
+    if mode_htf_status:
+        pass  # no API calls needed
+    elif not EODHD_API_TOKEN:
+        print("ERROR: EODHD_API_TOKEN environment variable not set.")
+        print("  Set it:  set EODHD_API_TOKEN=your_token_here  (Windows)")
+        print("  Or:      export EODHD_API_TOKEN=your_token_here  (bash)")
+        sys.exit(1)
 
     if mode_build_ref:
         # Build ticker reference from existing cache ticker list
