@@ -2,6 +2,8 @@
 ScanPerfect Code Auditor
 Run: python audit.py           (audits last commit only)
      python audit.py --all     (audits everything since last audit)
+     python audit.py --2       (audits last 2 commits)
+     python audit.py --5       (audits last 5 commits)
 """
 
 import os
@@ -214,8 +216,18 @@ def main():
     # ── Parse args ──
     batch_mode = "--all" in sys.argv
 
+    # Check for --N modifier (e.g. --2, --5) to audit last N commits
+    n_back = None
+    for arg in sys.argv[1:]:
+        if re.match(r"^--(\d+)$", arg):
+            n_back = int(arg[2:])
+            break
+
     # ── Determine diff range ──
-    if batch_mode:
+    if n_back is not None:
+        diff_from = git(["rev-parse", f"HEAD~{n_back}"])
+        label = f"last {n_back} commit(s)"
+    elif batch_mode:
         if os.path.exists(STATE_FILE):
             last = read_file(STATE_FILE).strip()
             if not git_ok(["cat-file", "-e", last]):
