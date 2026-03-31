@@ -23,11 +23,12 @@ These are the only components that make network calls for market data.
 ### cache_builder.py
 **Location:** `local_runner/cache_builder.py`
 **Spec:** `NIGHTLY_REFRESH.md`, `LOCALIZE.md`
-**What it does:** Downloads OHLCV from yfinance, stores as pickles. All fetches use explicit `start=HISTORY_START` (2016-01-01), never yfinance `period=` parameter. Validated: SPY fetched first as ground truth, every ticker's bar count must exactly match SPY's count from `max(firstTradeDate, HISTORY_START)`. Mismatches retry until pass. Split detection on nightly append — tickers that split get full refetch.
+**What it does:** Downloads OHLCV from EODHD API, stores as pickles. All fetches use explicit `start=HISTORY_START` (2016-01-01). OHLCV adjustment: `ratio = adjusted_close / close` applied to O/H/L/C (split + dividend adjusted). Validated: SPY fetched first as ground truth, every ticker's bar count must exactly match SPY's count from `max(firstTradeDate, HISTORY_START)`. Mismatches retry until pass. Split detection on nightly append via adjusted_close comparison — tickers whose adjustment changed get full refetch.
 
 **Inputs:**
-- yfinance API (network) — via `_yf_download(ticker, start, interval)` using explicit start dates
-- yfinance `.info` API (network) — for `firstTradeDateMilliseconds` (reference file build only)
+- EODHD API (network) — via `_eodhd_download(ticker, start, interval)` using explicit start dates
+- EODHD API (network) — for first trade date (first bar date from narrow range fetch)
+- `EODHD_API_TOKEN` environment variable (required)
 - SQLite `tradable_universe` table (for ticker list on first build only)
 - Existing pickle (for ticker list on rebuilds — reads keys from prior cache)
 - `local_runner/cache/ticker_reference.json` (for validation — expected bar counts)
@@ -37,11 +38,11 @@ These are the only components that make network calls for market data.
 - `local_runner/cache/universe_ohlcv_daily.pkl` — full history daily (from HISTORY_START)
 - `local_runner/cache/universe_ohlcv_weekly.pkl` — weekly (from HISTORY_START)
 - `local_runner/cache/universe_ohlcv_monthly.pkl` — monthly (from HISTORY_START)
-- `local_runner/cache/ticker_reference.json` — firstTradeDateMilliseconds per ticker (for validation)
+- `local_runner/cache/ticker_reference.json` — first trade date per ticker (for validation)
 - `local_runner/cache/cache_meta.txt`, `cache_daily_meta.txt`, `cache_weekly_meta.txt`, `cache_monthly_meta.txt`
 
 **Key functions called by others:**
-- `check_yfinance_freshness()` — called by `nightly.py` step 1
+- `check_freshness()` — called by `nightly.py` step 1 (alias `check_yfinance_freshness` for compat)
 - `append_daily_cache()` — called by `nightly.py` step 2
 - `append_weekly()` — called by `nightly.py` step 3
 - `append_monthly()` — called by `nightly.py` step 4
@@ -50,13 +51,20 @@ These are the only components that make network calls for market data.
 - `_batched_fetch()` — shared adaptive rate limiter (scales workers + sleep based on failure rate, retry sweeps). Used by all fetch paths.
 
 **CLI:**
-- `--build-reference [--force]` — build/rebuild ticker_reference.json (firstTradeDateMilliseconds)
+- `--build-reference [--force]` — build/rebuild ticker_reference.json (first trade dates from EODHD)
 - `--daily [--force]` — build/rebuild daily cache (validated against SPY + reference)
-- `--htf [--force]` — build/rebuild weekly + monthly caches (full sweep from HISTORY_START)
-- `--weekly` — build/rebuild weekly cache only (full sweep from HISTORY_START)
-- `--monthly` — build/rebuild monthly cache only (full sweep from HISTORY_START)
+- `--htf [--force]` — build/rebuild weekly + monthly caches (full sweep; --force discards existing)
+- `--weekly [--force]` — build/rebuild weekly cache only (full sweep; --force discards existing)
+- `--monthly [--force]` — build/rebuild monthly cache only (full sweep; --force discards existing)
 - `--all [--force]` — daily + weekly + monthly in one command
-- `--htf-status` — show HTF cache status
+- `--status` — show daily + HTF cache status
+- `--daily-status` — show daily cache status only
+- `--htf-status` — show HTF cache status only
+
+**--force behavior (consistent across all timeframes):**
+- With `--force`: discard existing cache, fetch all tickers from scratch
+- Without `--force`: load existing cache, fetch only stale/missing tickers
+- Nightly append paths (called by nightly.py) never use force — always load + append
 
 **Downstream Consumers (if you change pickle format or file paths, these break):**
 - `expr_cache_builder.py` — reads daily + weekly + monthly pickles

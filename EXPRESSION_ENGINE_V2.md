@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Every night: Fetch fresh OHLCV for all ~10,856 tickers via yfinance, then do a full expression cache rebuild for all of them. No skipping, no shortcuts. Because any ticker could become tradable tomorrow, and historical examples need complete data for tickers that were tradable in the past.
+Every night: Fetch fresh OHLCV for all ~8,962 tickers via EODHD, then do a full expression cache rebuild for all of them. No skipping, no shortcuts. Because any ticker could become tradable tomorrow, and historical examples need complete data for tickers that were tradable in the past.
 
 The output must be **identical** to what the current builder produces. Same .npz files, same float32 values, same date arrays. The cache is additive — old bars are never dropped or trimmed. The full historical series from the daily OHLCV cache is preserved in every .npz file. Historical expression values are immutable — bar 500 of AAPL must produce the exact same 16,051 values today that it produced yesterday.
 
-**Ticker count:** ~10,856 tickers in the daily OHLCV cache. ~4,118 are currently active (getting new D1 candles). ~6,738 are dead/delisted (no new bars, but their historical data must remain in the cache for pipeline analysis).
+**Ticker count:** ~8,962 tickers in the daily OHLCV cache (from EODHD). Down from ~10,856 under yfinance — ~1,900 tickers EODHD doesn't cover (under investigation). Weekly cache matches daily at 8,962. Monthly at 8,935 (27 tickers too new for 3 monthly bars).
 
 **Output format:** One .npz per ticker with `data` (float32 array, n_bars x 16,051) and `dates` (date strings). Grinders, matrix builder, and all downstream pipeline stages read these files identically.
 
@@ -308,11 +308,27 @@ Data validation infrastructure                     -- DONE (2026-03-30)
                                                       - Split detection: tickers that split get full refetch
                                                         (historical prices changed by yfinance adjustment)
     |
-Validated OHLCV rebuild (--daily --force)           -- IN PROGRESS
-                                                      Reference file building (--build-reference)
-                                                      Then daily rebuild with validation
+EODHD migration (cache_builder.py)              -- DONE (2026-03-31)
+                                                      - Replaced yfinance entirely with EODHD API
+                                                      - OHLCV adjustment: ratio = adjusted_close / close
+                                                        applied to O/H/L/C (split + dividend adjusted)
+                                                      - EODHD_API_TOKEN from environment variable
+                                                      - Ticker reference built from first-bar dates
+                                                      - Split detection via adjusted_close comparison
+                                                      - Adaptive rate limiting (~80 workers, backoff
+                                                        settles at ~64w/4s under EODHD 1000/min limit)
+                                                      - --force flag consistent: discard + rebuild
+                                                        for daily, weekly, monthly, htf, all
+                                                      - HTF full_sweep loads existing + fetches stale;
+                                                        force_rebuild discards and starts fresh
+                                                      - Daily: 8,962 tickers (down from 10,856 yfinance)
+                                                        ~1,900 tickers EODHD doesn't cover — INVESTIGATING
+                                                      - Weekly: 8,962 tickers (matches daily)
+                                                      - Monthly: 8,935 tickers (27 too new for 3 bars)
+                                                      - Still pending: nightly.py alignment,
+                                                        market_cache_builder.py EODHD switch
     |
-First full rebuild with HTF pickles                -- run once to establish baseline cache
+Full expr cache rebuild on EODHD data            -- NEXT
                                                       (--build --force on Dan's machine)
     |
 Pyramid grind on DTSS                              -- verify baseline cache produces correct data
