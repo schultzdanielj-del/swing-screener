@@ -49,8 +49,8 @@ DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
 MAX_WORKERS = 40
 LOOKBACK = 300  # bars per ticker (daily matrix)
 HISTORY_START = "2016-01-01"  # explicit start date for all caches (daily + HTF)
-HTF_BATCH_SIZE = 100  # tickers per batch for HTF full build
-HTF_BATCH_SLEEP = 0.5  # seconds between batches
+HTF_BATCH_SIZE = 40  # tickers per batch for HTF full build
+HTF_BATCH_SLEEP = 2.0  # seconds between batches
 
 # EODHD API
 EODHD_API_TOKEN = os.environ.get("EODHD_API_TOKEN", "")
@@ -154,8 +154,6 @@ def build_ticker_reference(tickers, force=False):
         to_fetch,
         fetch_fn=_get_first_trade_date,
         label="Reference",
-        batch_size=20,
-        min_sleep=0.5,
         max_retries=5,
     )
 
@@ -451,8 +449,8 @@ def compute_dvol_20d(df):
 # BATCHED FETCH — Adaptive backoff + retry sweeps
 # ══════════════════════════════════════════════════════════════
 
-def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=100,
-                   min_sleep=0.2, max_sleep=10.0, max_retries=3):
+def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=40,
+                   min_sleep=2.0, max_sleep=10.0, max_retries=3):
     """Fetch data for a list of tickers with adaptive rate limiting and retry.
 
     Adapts both sleep time AND concurrent workers based on failure rate.
@@ -751,7 +749,7 @@ def build_daily_cache(force=False):
             invalid,
             fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
             label=f"Retry {retry_round}",
-            min_sleep=0.5,
+            min_sleep=2.0,
             max_retries=2,
         )
         permanently_failed.extend(retry_failed)
@@ -1008,7 +1006,7 @@ def append_daily_cache():
                 all_invalid,
                 fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
                 label=f"Retry {retry_round}",
-                min_sleep=0.5,
+                min_sleep=2.0,
                 max_retries=2,
             )
 
