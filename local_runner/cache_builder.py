@@ -1125,15 +1125,19 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
 
     # Load existing HTF cache (empty dict if first build)
     universe = {}
-    if os.path.exists(output_file):
+    if full_sweep:
+        # Force rebuild: start fresh, ignore old cache entirely
+        if os.path.exists(output_file):
+            print(f"  Discarding existing cache — full rebuild from EODHD")
+        else:
+            print(f"  No existing cache — building from scratch")
+    elif os.path.exists(output_file):
         with open(output_file, "rb") as f:
             universe = pickle.load(f)
         print(f"  Existing cache: {len(universe)} tickers")
     else:
-        if not full_sweep:
-            print(f"  No existing cache. Run --htf first.")
-            return {}
-        print(f"  No existing cache — building from scratch")
+        print(f"  No existing cache. Run --htf first.")
+        return {}
 
     # Get full ticker list from daily cache
     with open(daily_file, "rb") as f:
