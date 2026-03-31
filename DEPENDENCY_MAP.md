@@ -23,14 +23,13 @@ These are the only components that make network calls for market data.
 ### cache_builder.py
 **Location:** `local_runner/cache_builder.py`
 **Spec:** `NIGHTLY_REFRESH.md`, `LOCALIZE.md`
-**What it does:** Downloads OHLCV from EODHD API, stores as pickles. All fetches use explicit `start=HISTORY_START` (2016-01-01). OHLCV adjustment: `ratio = adjusted_close / close` applied to O/H/L/C (split + dividend adjusted). Validated: SPY fetched first as ground truth, every ticker's bar count must exactly match SPY's count from `max(firstTradeDate, HISTORY_START)`. Mismatches retry until pass. Split detection on nightly append via adjusted_close comparison — tickers whose adjustment changed get full refetch.
+**What it does:** Downloads OHLCV from EODHD API, stores as pickles. Universe sourced from EODHD exchange symbol list: Common Stock + ETF on NYSE/NASDAQ/NYSE ARCA/BATS. No local DB dependency for ticker list. Nightly append detects IPOs (new tickers) and delistings (removed tickers) automatically. All fetches use explicit `start=HISTORY_START` (2016-01-01). OHLCV adjustment: `ratio = adjusted_close / close` applied to O/H/L/C (split + dividend adjusted). Validated: SPY fetched first as ground truth, every ticker's bar count must exactly match SPY's count from `max(firstTradeDate, HISTORY_START)`. Mismatches retry until pass. Split detection on nightly append via adjusted_close comparison — tickers whose adjustment changed get full refetch. No bar minimum — new IPOs included immediately regardless of history length.
 
 **Inputs:**
+- EODHD API (network) — `exchange-symbol-list/US` endpoint for universe (1 call)
 - EODHD API (network) — via `_eodhd_download(ticker, start, interval)` using explicit start dates
 - EODHD API (network) — for first trade date (first bar date from narrow range fetch)
 - `EODHD_API_TOKEN` environment variable (required)
-- SQLite `tradable_universe` table (for ticker list on first build only)
-- Existing pickle (for ticker list on rebuilds — reads keys from prior cache)
 - `local_runner/cache/ticker_reference.json` (for validation — expected bar counts)
 
 **Outputs:**
@@ -47,7 +46,8 @@ These are the only components that make network calls for market data.
 - `append_weekly()` — called by `nightly.py` step 3
 - `append_monthly()` — called by `nightly.py` step 4
 - `load_cache()`, `load_daily_cache()` — called by `matrix_builder.py` fallback path
-- `get_tradable_tickers_local()` — reads SQLite, used internally
+- `fetch_eodhd_universe()` — hits EODHD exchange-symbol-list, returns sorted ticker list (source of truth)
+- `get_tradable_tickers_local()` — DEPRECATED, reads SQLite, kept for backward compat only
 - `_batched_fetch()` — shared adaptive rate limiter (scales workers + sleep based on failure rate, retry sweeps). Used by all fetch paths.
 
 **CLI:**
