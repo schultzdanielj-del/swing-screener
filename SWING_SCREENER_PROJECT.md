@@ -129,3 +129,4 @@ The auditor maps changed files to their spec docs automatically (e.g. `ev_grinde
 - Railway — seed vault / file mirror only
 - Discord — trading community
 - PySide6 — desktop UI framework (installed, in use)
+- EODHD — EOD Historical Data API ($19.99/mo). OHLCV pulls + ticker reference. Limits: 100K API calls/day (EOD = 1 call/ticker, fundamentals = 10x, intraday/technical = 5x, bulk exchange = 100 flat). 1,000 HTTP requests/min — spread evenly, read X-RateLimit-Remaining header. Daily counter resets on first request after midnight GMT. API key in Claude memory.
