@@ -9,14 +9,14 @@ Usage:
 
 Stores:
   - local_runner/cache/universe_ohlcv.pkl — 300-bar daily cache (legacy)
-  - local_runner/cache/universe_ohlcv_daily.pkl — full daily cache (10yr from HISTORY_START)
+  - local_runner/cache/universe_ohlcv_daily.pkl — full daily cache (from HISTORY_START)
   - local_runner/cache/universe_ohlcv_weekly.pkl — weekly cache (from HISTORY_START)
   - local_runner/cache/universe_ohlcv_monthly.pkl — monthly cache (from HISTORY_START)
 
-All data pulled from yfinance using explicit start date (not period parameter).
-No Railway dependency.
+All data pulled from EODHD using explicit start date.
+No Railway dependency. No yfinance dependency.
 
-Requires: pip install yfinance pandas
+Requires: pip install pandas numpy
 """
 
 import os
@@ -25,9 +25,9 @@ import time
 import json
 import pickle
 import sqlite3
+import urllib.request
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -52,6 +52,10 @@ HISTORY_START = "2016-01-01"  # explicit start date for all caches (daily + HTF)
 HTF_BATCH_SIZE = 50  # tickers per batch for HTF full build (rate limit safety)
 HTF_BATCH_SLEEP = 2.0  # seconds between batches
 
+# EODHD API
+EODHD_API_TOKEN = "69caeae1b24de8.25880244"
+EODHD_BASE = "https://eodhd.com/api"
+
 
 # ══════════════════════════════════════════════════════════════
 # TICKER LIST — from local SQLite (no Railway)
@@ -75,13 +79,13 @@ def get_tradable_tickers_local():
 
 
 # ══════════════════════════════════════════════════════════════
-# YFINANCE HELPERS
+# EODHD HELPERS
 # ══════════════════════════════════════════════════════════════
 
 # ── Ticker Reference File ──
-# Stores firstTradeDateMilliseconds for every ticker. Built once,
-# updated only when new tickers appear. Used to calculate expected
-# bar counts for validation.
+# Stores first trade date for every ticker. Built as a byproduct
+# of daily cache builds (first bar date from EODHD). Used to
+# calculate expected bar counts for validation.
 
 def load_ticker_reference():
     """Load the ticker reference file. Returns dict {ticker: first_trade_date_str}."""
@@ -99,11 +103,16 @@ def save_ticker_reference(ref):
 
 
 def build_ticker_reference(tickers, force=False):
-    """Fetch firstTradeDateMilliseconds for all tickers, save as JSON.
+    """Fetch first trade date for all tickers from EODHD, save as JSON.
+
+    Fetches a small date range (HISTORY_START to HISTORY_START + 10 days)
+    for each ticker. If data exists, the first bar's date is the first
+    trade date (within our window). If no data in that range, widens
+    the search.
 
     Only fetches tickers not already in the reference (unless force=True).
     Returns dict {ticker: 'YYYY-MM-DD'} for tickers with valid first trade dates.
-    Tickers where yfinance returns no data get value None.
+    Tickers where EODHD returns no data get value None.
     """
     ref = {} if force else load_ticker_reference()
     to_fetch = [t for t in tickers if t not in ref] if not force else list(tickers)
@@ -116,12 +125,22 @@ def build_ticker_reference(tickers, force=False):
           f"{len(ref)} already cached)...")
 
     def _get_first_trade_date(ticker):
+        """Get first available bar date from EODHD.
+
+        Tries HISTORY_START first. If empty, fetches full range to find
+        when the ticker actually started trading.
+        """
         try:
-            info = yf.Ticker(ticker).info
-            ftd_ms = info.get("firstTradeDateMilliseconds")
-            if ftd_ms is not None:
-                dt = datetime.fromtimestamp(ftd_ms / 1000)
-                return ticker, dt.strftime("%Y-%m-%d")
+            # Try narrow range first (most tickers started before HISTORY_START)
+            data = _eodhd_fetch_json(ticker, HISTORY_START, "2016-02-01", "d")
+            if data and len(data) > 0:
+                return ticker, data[0]["date"]
+
+            # Widen: ticker may have started after HISTORY_START
+            data = _eodhd_fetch_json(ticker, HISTORY_START, "2027-01-01", "d")
+            if data and len(data) > 0:
+                return ticker, data[0]["date"]
+
             return ticker, None
         except Exception:
             return ticker, None
@@ -132,14 +151,14 @@ def build_ticker_reference(tickers, force=False):
         fetch_fn=_get_first_trade_date,
         label="Reference",
         batch_size=20,
-        min_sleep=3.0,
+        min_sleep=1.0,
         max_retries=5,
     )
 
     for ticker, date_str in results.items():
         ref[ticker] = date_str
 
-    # Mark tickers that failed as None (yfinance has no data for them)
+    # Mark tickers that failed as None (EODHD has no data for them)
     for t in to_fetch:
         if t not in ref:
             ref[t] = None
@@ -159,16 +178,16 @@ def build_ticker_reference(tickers, force=False):
 # determined by counting SPY dates in the ticker's valid range.
 
 def fetch_spy_reference():
-    """Fetch SPY full daily history from HISTORY_START.
+    """Fetch SPY full daily history from HISTORY_START via EODHD.
 
     Returns SPY DataFrame. If fetch fails, raises — pipeline must stop.
     SPY is always fetched first, alone, with no concurrency.
     """
     print("  Fetching SPY reference (ground truth)...")
-    _, spy_df = _yf_download("SPY", HISTORY_START)
+    _, spy_df = _eodhd_download("SPY", HISTORY_START)
     if spy_df is None or len(spy_df) == 0:
         raise RuntimeError(
-            "FATAL: Cannot fetch SPY data from yfinance. "
+            "FATAL: Cannot fetch SPY data from EODHD. "
             "Pipeline cannot proceed without SPY as reference."
         )
     print(f"  SPY: {len(spy_df)} bars, "
@@ -229,95 +248,164 @@ def validate_daily_fetch(results, spy_dates, ticker_ref):
 
 
 # ── Split Detection ──
-# On nightly append, check if any ticker split today. Tickers that
-# split need full refetch (all historical prices changed) instead
-# of a 1-bar append.
+# On nightly append, detect splits by comparing the cached close price
+# for the last bar to what EODHD returns for that same date. If the
+# adjustment ratio changed, a split (or dividend ex-date) happened
+# and the ticker needs a full refetch.
 
-def detect_splits(tickers, after_date):
-    """Check which tickers have splits after a given date.
+def detect_splits(tickers, cache_dict, after_date):
+    """Check which tickers had a split/adjustment change since last cache.
+
+    Compares cached close for the last bar to EODHD's adjusted_close
+    for that same date. If they differ by more than 0.5%, the ticker's
+    historical adjustment changed (split or dividend) and needs full refetch.
 
     Args:
         tickers: list of ticker symbols
-        after_date: 'YYYY-MM-DD' — check for splits AFTER this date
+        cache_dict: {ticker: DataFrame} — current cache
+        after_date: 'YYYY-MM-DD' — the last cached date
 
-    Returns list of tickers that split.
+    Returns list of tickers that need full refetch.
     """
     split_tickers = []
-    after_ts = pd.Timestamp(after_date)
 
-    # Check in batches to avoid hammering yfinance
+    # Fetch the bulk last-day data for comparison
+    # We actually need the specific date's data, not last day
+    # Check in batches
     for i in range(0, len(tickers), 50):
         batch = tickers[i:i+50]
         for t in batch:
             try:
-                splits = yf.Ticker(t).splits
-                if splits is not None and len(splits) > 0:
-                    # Check if any split date is after our reference date
-                    for split_date in splits.index:
-                        if split_date.tz_localize(None) > after_ts:
-                            split_tickers.append(t)
-                            break
+                cached_df = cache_dict.get(t)
+                if cached_df is None or len(cached_df) == 0:
+                    continue
+
+                # Get the last cached close (this is already adjusted)
+                cached_close = float(cached_df["close"].iloc[-1])
+                cached_date = str(cached_df["date"].iloc[-1])[:10]
+
+                # Fetch that same date from EODHD
+                data = _eodhd_fetch_json(t, cached_date, cached_date, "d")
+                if not data or len(data) == 0:
+                    continue
+
+                # EODHD returns unadjusted close + adjusted_close
+                # Our cache has the adjusted value. Compare to EODHD's adjusted_close.
+                eodhd_adj_close = float(data[0]["adjusted_close"])
+
+                # If they differ by more than 0.5%, adjustment changed
+                if cached_close > 0 and abs(eodhd_adj_close - cached_close) / cached_close > 0.005:
+                    split_tickers.append(t)
+
             except Exception:
-                pass  # can't check splits — not a split
+                pass  # can't check — not a split
         if i + 50 < len(tickers):
             time.sleep(0.5)
 
     return split_tickers
 
-def _yf_download(ticker, start=None, interval="1d"):
-    """Download OHLCV for one ticker from yfinance.
 
-    Uses explicit start date instead of period parameter to avoid
-    silent truncation from Yahoo's unreliable period interpretation.
+# ── EODHD API Functions ──
+
+def _eodhd_fetch_json(ticker, from_date, to_date, period="d"):
+    """Raw EODHD API call. Returns list of dicts or None on failure.
+
+    Args:
+        ticker: stock symbol (without .US suffix)
+        from_date: 'YYYY-MM-DD' start date (inclusive)
+        to_date: 'YYYY-MM-DD' end date (exclusive per EODHD behavior)
+        period: 'd' (daily), 'w' (weekly), 'm' (monthly)
+
+    Returns list of bar dicts, or None on failure.
+    """
+    url = (f"{EODHD_BASE}/eod/{ticker}.US"
+           f"?from={from_date}&to={to_date}"
+           f"&period={period}"
+           f"&api_token={EODHD_API_TOKEN}&fmt=json")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ScanPerfect/1.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+
+        # EODHD returns "Ticker Not Found." for invalid tickers (not JSON)
+        if not raw.startswith("["):
+            return None
+
+        data = json.loads(raw)
+        return data if data else None
+    except Exception:
+        return None
+
+
+def _eodhd_to_dataframe(data):
+    """Convert EODHD JSON response to adjusted OHLCV DataFrame.
+
+    EODHD returns unadjusted OHLC + adjusted_close. We compute:
+        ratio = adjusted_close / close
+    and apply it to O, H, L, C to get fully-adjusted prices.
+    Volume stays raw.
+
+    Returns DataFrame with columns: date, open, high, low, close, volume
+    or None if data is invalid.
+    """
+    if not data or len(data) == 0:
+        return None
+
+    df = pd.DataFrame(data)
+
+    # Compute adjustment ratio
+    close_raw = pd.to_numeric(df["close"], errors="coerce")
+    adj_close = pd.to_numeric(df["adjusted_close"], errors="coerce")
+
+    # Avoid division by zero
+    ratio = np.where(close_raw > 0, adj_close / close_raw, 1.0)
+
+    # Apply ratio to OHLC
+    df["open"] = pd.to_numeric(df["open"], errors="coerce") * ratio
+    df["high"] = pd.to_numeric(df["high"], errors="coerce") * ratio
+    df["low"] = pd.to_numeric(df["low"], errors="coerce") * ratio
+    df["close"] = adj_close  # adjusted_close IS the adjusted close
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
+    df["date"] = pd.to_datetime(df["date"])
+
+    df = df[["date", "open", "high", "low", "close", "volume"]]
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # Drop rows with NaN close (bad data)
+    df = df.dropna(subset=["close"]).reset_index(drop=True)
+
+    if len(df) == 0:
+        return None
+
+    return df
+
+
+def _eodhd_download(ticker, start=None, interval="d"):
+    """Download OHLCV for one ticker from EODHD.
+
+    Returns fully-adjusted OHLCV (split + dividend adjusted OHLC).
 
     Args:
         ticker: stock symbol
         start: start date string 'YYYY-MM-DD' (defaults to HISTORY_START)
-        interval: '1d', '1wk', or '1mo'
+        interval: 'd' (daily), 'w' (weekly), 'm' (monthly)
 
     Returns (ticker, DataFrame) or (ticker, None) on failure.
     DataFrame has columns: date, open, high, low, close, volume
     """
     if start is None:
         start = HISTORY_START
-    try:
-        raw = yf.download(ticker, start=start, interval=interval, progress=False)
-        if raw.empty:
-            return ticker, None
 
-        # Handle MultiIndex columns (yfinance sometimes returns these)
-        if isinstance(raw.columns, pd.MultiIndex):
-            raw.columns = raw.columns.get_level_values(0)
-
-        df = raw.reset_index()
-        df.columns = [c.lower() for c in df.columns]
-
-        # Ensure standard column names
-        if "adj close" in df.columns:
-            df = df.drop(columns=["adj close"], errors="ignore")
-
-        for col in ["open", "high", "low", "close", "volume"]:
-            if col not in df.columns:
-                return ticker, None
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        df["date"] = pd.to_datetime(df["date"])
-        df = df[["date", "open", "high", "low", "close", "volume"]]
-        df = df.sort_values("date").reset_index(drop=True)
-
-        # Drop rows with NaN close (bad data)
-        df = df.dropna(subset=["close"]).reset_index(drop=True)
-
-        if len(df) == 0:
-            return ticker, None
-
-        return ticker, df
-    except Exception:
+    data = _eodhd_fetch_json(ticker, start, "2027-01-01", interval)
+    if data is None:
         return ticker, None
 
+    df = _eodhd_to_dataframe(data)
+    return ticker, df
 
-def _yf_append_after_date(ticker, after_date):
-    """Download daily bars after a given date from yfinance.
+
+def _eodhd_append_after_date(ticker, after_date):
+    """Download daily bars after a given date from EODHD.
 
     Args:
         ticker: stock symbol
@@ -325,39 +413,15 @@ def _yf_append_after_date(ticker, after_date):
 
     Returns (ticker, DataFrame of new bars) or (ticker, None)
     """
-    try:
-        # Start from the day after last cached date
-        start = (pd.Timestamp(after_date) + timedelta(days=1)).strftime("%Y-%m-%d")
+    # Start from the day after last cached date
+    start = (pd.Timestamp(after_date) + timedelta(days=1)).strftime("%Y-%m-%d")
 
-        raw = yf.download(ticker, start=start, interval="1d", progress=False)
-        if raw.empty:
-            return ticker, None
-
-        if isinstance(raw.columns, pd.MultiIndex):
-            raw.columns = raw.columns.get_level_values(0)
-
-        df = raw.reset_index()
-        df.columns = [c.lower() for c in df.columns]
-
-        if "adj close" in df.columns:
-            df = df.drop(columns=["adj close"], errors="ignore")
-
-        for col in ["open", "high", "low", "close", "volume"]:
-            if col not in df.columns:
-                return ticker, None
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        df["date"] = pd.to_datetime(df["date"])
-        df = df[["date", "open", "high", "low", "close", "volume"]]
-        df = df.sort_values("date").reset_index(drop=True)
-        df = df.dropna(subset=["close"]).reset_index(drop=True)
-
-        if len(df) == 0:
-            return ticker, None
-
-        return ticker, df
-    except Exception:
+    data = _eodhd_fetch_json(ticker, start, "2027-01-01", "d")
+    if data is None:
         return ticker, None
+
+    df = _eodhd_to_dataframe(data)
+    return ticker, df
 
 
 # ══════════════════════════════════════════════════════════════
@@ -498,7 +562,7 @@ def cache_is_fresh():
 
 
 def build_cache(force=False):
-    """Build the 300-bar OHLCV cache from yfinance."""
+    """Build the 300-bar OHLCV cache from EODHD."""
     os.makedirs(CACHE_DIR, exist_ok=True)
 
     if not force and cache_is_fresh():
@@ -515,7 +579,7 @@ def build_cache(force=False):
     tickers = get_tradable_tickers_local()
     print(f"  {len(tickers)} tradable tickers")
 
-    print(f"\nFetching OHLCV data via yfinance...")
+    print(f"\nFetching OHLCV data via EODHD...")
     t0 = time.time()
 
     from datetime import date
@@ -523,7 +587,7 @@ def build_cache(force=False):
 
     results, permanently_failed = _batched_fetch(
         tickers,
-        fetch_fn=lambda t: _yf_download(t, one_yr_ago),
+        fetch_fn=lambda t: _eodhd_download(t, one_yr_ago),
         label="Legacy",
     )
 
@@ -565,7 +629,7 @@ def load_cache():
 
 
 # ══════════════════════════════════════════════════════════════
-# 5-YEAR CACHE — For historical scorer (Phase 2)
+# DAILY CACHE — Full history from HISTORY_START
 # ══════════════════════════════════════════════════════════════
 
 def cache_daily_is_fresh():
@@ -581,16 +645,17 @@ def cache_daily_is_fresh():
 
 
 def build_daily_cache(force=False):
-    """Build the daily OHLCV cache from yfinance using HISTORY_START.
+    """Build the daily OHLCV cache from EODHD using HISTORY_START.
 
     Validated build:
     1. Fetch SPY first — its date array is ground truth
-    2. Build/load ticker reference (firstTradeDateMilliseconds)
+    2. Build/load ticker reference (first trade dates)
     3. Fetch all tickers
     4. Validate: each ticker's bar count must exactly match SPY's
        count from max(firstTradeDate, HISTORY_START)
     5. Mismatches retry until they pass or return None
     6. Only saves when all tickers are validated
+    7. Updates ticker_reference.json with first trade dates from fetched data
     """
     os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -601,7 +666,7 @@ def build_daily_cache(force=False):
         return data
 
     print("=" * 60)
-    print("  DAILY CACHE BUILDER — Full history via yfinance")
+    print("  DAILY CACHE BUILDER — Full history via EODHD")
     print("=" * 60)
 
     # ── Step 1: SPY first ──
@@ -637,17 +702,30 @@ def build_daily_cache(force=False):
     # Remove SPY from fetch list (already fetched)
     fetch_tickers = [t for t in tickers if t != "SPY"]
 
-    print(f"\nFetching daily OHLCV data via yfinance...")
+    print(f"\nFetching daily OHLCV data via EODHD...")
     t0 = time.time()
 
     results, permanently_failed = _batched_fetch(
         fetch_tickers,
-        fetch_fn=lambda t: _yf_download(t, HISTORY_START),
+        fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
         label="Daily",
     )
 
     # Add SPY to results
     results["SPY"] = spy_df
+
+    # ── Step 3b: Update ticker reference from fetched data ──
+    # Extract first trade dates from the data we just fetched
+    ref_updated = False
+    for ticker, df in results.items():
+        if df is not None and len(df) > 0:
+            first_date = str(df["date"].iloc[0])[:10]
+            if ticker_ref.get(ticker) != first_date:
+                ticker_ref[ticker] = first_date
+                ref_updated = True
+    if ref_updated:
+        save_ticker_reference(ticker_ref)
+        print(f"  Ticker reference updated with first trade dates from fetched data")
 
     # ── Step 4: Validate ──
     print(f"\n  Validating bar counts against SPY reference...")
@@ -667,12 +745,19 @@ def build_daily_cache(force=False):
 
         retry_results, retry_failed = _batched_fetch(
             invalid,
-            fetch_fn=lambda t: _yf_download(t, HISTORY_START),
+            fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
             label=f"Retry {retry_round}",
             min_sleep=3.0,
             max_retries=2,
         )
         permanently_failed.extend(retry_failed)
+
+        # Update reference from retry data
+        for ticker, df in retry_results.items():
+            if df is not None and len(df) > 0:
+                first_date = str(df["date"].iloc[0])[:10]
+                if ticker_ref.get(ticker) != first_date:
+                    ticker_ref[ticker] = first_date
 
         new_valid, still_invalid, new_unvalidatable = validate_daily_fetch(
             retry_results, spy_dates, ticker_ref)
@@ -689,6 +774,9 @@ def build_daily_cache(force=False):
             break
 
         invalid = still_invalid
+
+    # Save updated reference
+    save_ticker_reference(ticker_ref)
 
     # ── Step 6: Build universe and save ──
     universe = {}
@@ -741,7 +829,7 @@ def load_daily_cache():
 
 
 def append_daily_cache():
-    """Append new bars to existing daily cache via yfinance.
+    """Append new bars to existing daily cache via EODHD.
 
     Validated append:
     1. Fetch SPY first — confirm new trading day, get ground truth
@@ -773,7 +861,8 @@ def append_daily_cache():
     spy_dates = build_spy_date_set(spy_df)
 
     # Check if SPY has a new bar vs what's cached
-    cached_spy_last = str(universe.get("SPY", pd.DataFrame({"date": [""]}))["date"].iloc[-1])[:10]
+    cached_spy_last = str(universe.get("SPY", pd.DataFrame({"date": [""]}))[
+        "date"].iloc[-1])[:10]
     spy_last = str(spy_df["date"].iloc[-1])[:10]
     if spy_last <= cached_spy_last:
         print(f"  SPY last bar: {spy_last} (same as cache). No new data.")
@@ -788,13 +877,15 @@ def append_daily_cache():
         print("  Proceeding without validation.")
 
     # ── Step 2: Split detection ──
-    print(f"\n  Checking for stock splits after {cached_spy_last}...")
-    split_tickers = detect_splits(list(universe.keys()), cached_spy_last)
+    print(f"\n  Checking for adjustment changes after {cached_spy_last}...")
+    split_tickers = detect_splits(list(universe.keys()), universe, cached_spy_last)
     if split_tickers:
-        print(f"  ⚠ {len(split_tickers)} tickers split: {split_tickers}")
+        print(f"  ⚠ {len(split_tickers)} tickers need full refetch: {split_tickers[:20]}")
+        if len(split_tickers) > 20:
+            print(f"    ... and {len(split_tickers) - 20} more")
         print(f"    These will get full refetch (historical prices changed)")
     else:
-        print(f"  No splits detected")
+        print(f"  No adjustment changes detected")
 
     # Get current tradable tickers from local DB for new ticker detection
     try:
@@ -803,7 +894,8 @@ def append_daily_cache():
         db_tickers = list(universe.keys())
 
     # Categorize work
-    to_append = [t for t in universe.keys() if t not in split_tickers and t != "SPY"]
+    to_append = [t for t in universe.keys()
+                 if t not in split_tickers and t != "SPY"]
     to_full_refetch = list(split_tickers)
     to_fetch_new = [t for t in db_tickers if t not in universe]
 
@@ -830,10 +922,10 @@ def append_daily_cache():
 
     # ── Step 3a: Append new bars for existing tickers ──
     if to_append:
-        print(f"\n  Appending new bars via yfinance...")
+        print(f"\n  Appending new bars via EODHD...")
 
         def _append_one(ticker):
-            return _yf_append_after_date(ticker, last_dates.get(ticker, "2020-01-01"))
+            return _eodhd_append_after_date(ticker, last_dates.get(ticker, "2020-01-01"))
 
         append_results, append_failed = _batched_fetch(
             to_append, fetch_fn=_append_one, label="Append",
@@ -859,7 +951,7 @@ def append_daily_cache():
 
         refetch_results, refetch_failed = _batched_fetch(
             to_full_refetch,
-            fetch_fn=lambda t: _yf_download(t, HISTORY_START),
+            fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
             label="Split refetch",
         )
         failed += len(refetch_failed)
@@ -871,7 +963,7 @@ def append_daily_cache():
 
     # ── Step 3c: Full fetch for new tickers ──
     if to_fetch_new:
-        print(f"\n  Fetching {len(to_fetch_new)} new tickers via yfinance...")
+        print(f"\n  Fetching {len(to_fetch_new)} new tickers via EODHD...")
 
         # Update reference for new tickers
         if ticker_ref:
@@ -879,7 +971,7 @@ def append_daily_cache():
 
         new_results, new_failed = _batched_fetch(
             to_fetch_new,
-            fetch_fn=lambda t: _yf_download(t, HISTORY_START),
+            fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
             label="New tickers",
         )
         failed += len(new_failed)
@@ -910,7 +1002,7 @@ def append_daily_cache():
 
             retry_results, retry_failed = _batched_fetch(
                 all_invalid,
-                fetch_fn=lambda t: _yf_download(t, HISTORY_START),
+                fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
                 label=f"Retry {retry_round}",
                 min_sleep=3.0,
                 max_retries=2,
@@ -959,7 +1051,7 @@ def append_daily_cache():
 
 
 # ══════════════════════════════════════════════════════════════
-# HTF CACHES — Weekly + Monthly OHLCV from yfinance
+# HTF CACHES — Weekly + Monthly OHLCV from EODHD
 # ══════════════════════════════════════════════════════════════
 
 def _merge_htf_bars(existing_df, new_df):
@@ -1079,7 +1171,7 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
         if full_sweep:
             # Full sweep: fetch from HISTORY_START, fully replace existing data
             def _fetch_full(ticker):
-                return _yf_download(ticker, HISTORY_START, interval)
+                return _eodhd_download(ticker, HISTORY_START, interval)
 
             results, failed_list = _batched_fetch(
                 to_work, fetch_fn=_fetch_full, label=f"{label} fetch",
@@ -1105,8 +1197,9 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
 
             def _append_one(ticker):
                 after = last_dates.get(ticker, HISTORY_START)
-                start = (pd.Timestamp(after) + timedelta(days=1)).strftime("%Y-%m-%d")
-                return _yf_download(ticker, start, interval)
+                start = (pd.Timestamp(after) + timedelta(days=1)).strftime(
+                    "%Y-%m-%d")
+                return _eodhd_download(ticker, start, interval)
 
             results, failed_list = _batched_fetch(
                 to_work, fetch_fn=_append_one, label=f"{label} append",
@@ -1117,7 +1210,8 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
                 if len(new_df) > 0:
                     old_len = len(universe[ticker])
                     old_last = str(universe[ticker]["date"].iloc[-1])[:10]
-                    universe[ticker] = _merge_htf_bars(universe[ticker], new_df)
+                    universe[ticker] = _merge_htf_bars(universe[ticker],
+                                                       new_df)
                     new_len = len(universe[ticker])
                     new_last = str(universe[ticker]["date"].iloc[-1])[:10]
                     if new_len != old_len or new_last != old_last:
@@ -1154,12 +1248,12 @@ def build_htf_caches():
     Fully replaces existing data — no windows, no arbitrary lookbacks.
     """
     print("\n" + "=" * 60)
-    print("  HTF CACHE — Weekly + Monthly OHLCV from yfinance")
+    print("  HTF CACHE — Weekly + Monthly OHLCV from EODHD")
     print("=" * 60)
 
-    _sync_htf_cache("1wk", WEEKLY_FILE, WEEKLY_META, "WEEKLY",
+    _sync_htf_cache("w", WEEKLY_FILE, WEEKLY_META, "WEEKLY",
                     full_sweep=True)
-    _sync_htf_cache("1mo", MONTHLY_FILE, MONTHLY_META, "MONTHLY",
+    _sync_htf_cache("m", MONTHLY_FILE, MONTHLY_META, "MONTHLY",
                     full_sweep=True)
 
 
@@ -1170,7 +1264,7 @@ def append_weekly():
     No windows — anchored entirely to each ticker's own data.
     """
     return _sync_htf_cache(
-        interval="1wk",
+        interval="w",
         output_file=WEEKLY_FILE,
         meta_file=WEEKLY_META,
         label="Weekly",
@@ -1185,7 +1279,7 @@ def append_monthly():
     No windows — anchored entirely to each ticker's own data.
     """
     return _sync_htf_cache(
-        interval="1mo",
+        interval="m",
         output_file=MONTHLY_FILE,
         meta_file=MONTHLY_META,
         label="Monthly",
@@ -1245,8 +1339,8 @@ def htf_status():
 # FRESHNESS CHECK — Is there new market data today?
 # ══════════════════════════════════════════════════════════════
 
-def check_yfinance_freshness():
-    """Check if yfinance has newer data than our cache.
+def check_freshness():
+    """Check if EODHD has newer data than our cache.
 
     Downloads 1 bar for SPY and compares to last cached date.
 
@@ -1275,23 +1369,20 @@ def check_yfinance_freshness():
 
     del universe  # free memory
 
-    # Download latest bar from yfinance
+    # Download latest bar from EODHD
     try:
         recent = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
-        raw = yf.download("SPY", start=recent, interval="1d", progress=False)
-        if raw.empty:
-            print("  Could not fetch SPY from yfinance — assuming new data")
+        data = _eodhd_fetch_json("SPY", recent, "2027-01-01", "d")
+        if not data or len(data) == 0:
+            print("  Could not fetch SPY from EODHD — assuming new data")
             return True
 
-        if isinstance(raw.columns, pd.MultiIndex):
-            raw.columns = raw.columns.get_level_values(0)
-
-        yf_last = str(raw.index[-1])[:10]
+        eodhd_last = data[-1]["date"]
 
         print(f"  Cache last date: {last_cached}")
-        print(f"  yfinance last:   {yf_last}")
+        print(f"  EODHD last:      {eodhd_last}")
 
-        if yf_last > last_cached:
+        if eodhd_last > last_cached:
             print(f"  → New trading day detected")
             return True
         else:
@@ -1299,9 +1390,13 @@ def check_yfinance_freshness():
             return False
 
     except Exception as e:
-        print(f"  Could not check yfinance: {e}")
+        print(f"  Could not check EODHD: {e}")
         print("  → Assuming new data (safe fallback)")
         return True
+
+
+# Keep old name as alias for backward compatibility with nightly.py
+check_yfinance_freshness = check_freshness
 
 
 if __name__ == "__main__":
@@ -1342,9 +1437,11 @@ if __name__ == "__main__":
     elif mode_htf:
         build_htf_caches()
     elif mode_weekly:
-        _sync_htf_cache("1wk", WEEKLY_FILE, WEEKLY_META, "WEEKLY", full_sweep=True)
+        _sync_htf_cache("w", WEEKLY_FILE, WEEKLY_META, "WEEKLY",
+                        full_sweep=True)
     elif mode_monthly:
-        _sync_htf_cache("1mo", MONTHLY_FILE, MONTHLY_META, "MONTHLY", full_sweep=True)
+        _sync_htf_cache("m", MONTHLY_FILE, MONTHLY_META, "MONTHLY",
+                        full_sweep=True)
     elif mode_daily:
         data = build_daily_cache(force=force)
         print(f"Daily cache ready: {len(data)} tickers")
