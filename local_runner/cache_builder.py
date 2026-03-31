@@ -46,7 +46,7 @@ MONTHLY_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_monthly.pkl")
 MONTHLY_META = os.path.join(CACHE_DIR, "cache_monthly_meta.txt")
 TICKER_REF_FILE = os.path.join(CACHE_DIR, "ticker_reference.json")
 DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
-MAX_WORKERS = 80
+MAX_WORKERS = 40
 LOOKBACK = 300  # bars per ticker (daily matrix)
 HISTORY_START = "2016-01-01"  # explicit start date for all caches (daily + HTF)
 HTF_BATCH_SIZE = 100  # tickers per batch for HTF full build
@@ -478,8 +478,8 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=100,
     results = {}
     remaining = list(tickers)
     sleep_time = min_sleep
-    workers = MAX_WORKERS  # starts at 80
-    min_workers = 20
+    workers = MAX_WORKERS  # starts at 40
+    min_workers = 10
     consecutive_clean = 0  # batches with 0 failures in a row
 
     for attempt in range(1 + max_retries):
