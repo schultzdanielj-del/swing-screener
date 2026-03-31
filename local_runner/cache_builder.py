@@ -1098,20 +1098,28 @@ def _merge_htf_bars(existing_df, new_df):
 
 
 def _sync_htf_cache(interval, output_file, meta_file, label,
-                    full_sweep=False):
+                    full_sweep=False, force_rebuild=False):
     """Unified HTF cache sync.
 
     full_sweep=False (nightly append): fetch new bars for each ticker starting
         from the day after its own last cached bar. Uses _merge_htf_bars to
         append only — history is known-good in this path.
-    full_sweep=True  (--htf CLI): fetch full history from HISTORY_START for
-        every stale or missing ticker. Fully replaces existing data — no merge.
-        Eliminates any gaps or corrupted history.
+    full_sweep=True  (--htf / --weekly / --monthly): fetch full history from
+        HISTORY_START for stale or missing tickers. Loads existing cache and
+        updates in place.
+    force_rebuild=True (--force flag): discard existing cache entirely, fetch
+        all tickers from scratch. Guarantees no stale data from previous
+        data sources.
 
     No arbitrary lookback windows. All fetches are anchored to HISTORY_START
     or to each ticker's own last cached bar date.
     """
-    mode = "Full Sweep" if full_sweep else "Append"
+    if force_rebuild:
+        mode = "Force Rebuild"
+    elif full_sweep:
+        mode = "Full Sweep"
+    else:
+        mode = "Append"
     print(f"\n  {label} OHLCV Cache — {mode}")
 
     # Find daily cache (new or legacy filename)
@@ -1125,7 +1133,7 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
 
     # Load existing HTF cache (empty dict if first build)
     universe = {}
-    if full_sweep:
+    if force_rebuild:
         # Force rebuild: start fresh, ignore old cache entirely
         if os.path.exists(output_file):
             print(f"  Discarding existing cache — full rebuild from EODHD")
@@ -1136,8 +1144,10 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
             universe = pickle.load(f)
         print(f"  Existing cache: {len(universe)} tickers")
     else:
-        print(f"  No existing cache. Run --htf first.")
-        return {}
+        if not full_sweep:
+            print(f"  No existing cache. Run --htf first.")
+            return {}
+        print(f"  No existing cache — building from scratch")
 
     # Get full ticker list from daily cache
     with open(daily_file, "rb") as f:
@@ -1268,20 +1278,20 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
     return universe
 
 
-def build_htf_caches():
+def build_htf_caches(force=False):
     """Full sweep of both weekly and monthly OHLCV caches.
 
     Fetches full history from HISTORY_START for all stale or missing tickers.
-    Fully replaces existing data — no windows, no arbitrary lookbacks.
+    With force=True, discards existing caches and rebuilds from scratch.
     """
     print("\n" + "=" * 60)
     print("  HTF CACHE — Weekly + Monthly OHLCV from EODHD")
     print("=" * 60)
 
     _sync_htf_cache("w", WEEKLY_FILE, WEEKLY_META, "WEEKLY",
-                    full_sweep=True)
+                    full_sweep=True, force_rebuild=force)
     _sync_htf_cache("m", MONTHLY_FILE, MONTHLY_META, "MONTHLY",
-                    full_sweep=True)
+                    full_sweep=True, force_rebuild=force)
 
 
 def append_weekly():
@@ -1518,15 +1528,15 @@ if __name__ == "__main__":
         print(f"Daily cache ready: {len(data)} tickers")
         del data  # free memory before HTF
         import gc; gc.collect()
-        build_htf_caches()
+        build_htf_caches(force=force)
     elif mode_htf:
-        build_htf_caches()
+        build_htf_caches(force=force)
     elif mode_weekly:
         _sync_htf_cache("w", WEEKLY_FILE, WEEKLY_META, "WEEKLY",
-                        full_sweep=True)
+                        full_sweep=True, force_rebuild=force)
     elif mode_monthly:
         _sync_htf_cache("m", MONTHLY_FILE, MONTHLY_META, "MONTHLY",
-                        full_sweep=True)
+                        full_sweep=True, force_rebuild=force)
     elif mode_daily:
         data = build_daily_cache(force=force)
         print(f"Daily cache ready: {len(data)} tickers")
