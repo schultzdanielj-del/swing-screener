@@ -1,5 +1,10 @@
 """
-Cache Builder — Pull all tradable universe OHLCV data and store locally.
+Cache Builder — Pull all universe OHLCV data and store locally.
+
+Universe sourced from EODHD exchange symbol list: Common Stock + ETF
+on NYSE, NASDAQ, NYSE ARCA, BATS. No local DB dependency for ticker list.
+Nightly append detects IPOs (new tickers) and delistings (removed tickers)
+automatically via the EODHD symbol list.
 
 Usage:
     python local_runner/cache_builder.py [--force]
@@ -62,11 +67,52 @@ def _eodhd_end_date():
 
 
 # ══════════════════════════════════════════════════════════════
-# TICKER LIST — from local SQLite (no Railway)
+# TICKER LIST — from EODHD exchange symbol list (source of truth)
 # ══════════════════════════════════════════════════════════════
 
+# Exchanges we pull from EODHD. NYSE ARCA and BATS are needed
+# because most ETFs (SPY, IWM, GLD, ARKK, etc.) trade there.
+EODHD_EXCHANGES = {"NASDAQ", "NYSE", "NYSE ARCA", "BATS"}
+EODHD_SECURITY_TYPES = {"Common Stock", "ETF"}
+
+
+def fetch_eodhd_universe():
+    """Fetch the full tradable universe from EODHD exchange symbol list.
+
+    Hits the exchange-symbol-list endpoint (1 API call), filters to
+    Common Stock + ETF on NYSE/NASDAQ/NYSE ARCA/BATS.
+
+    Returns sorted list of ticker symbols.
+    """
+    url = (f"{EODHD_BASE}/exchange-symbol-list/US"
+           f"?api_token={EODHD_API_TOKEN}&fmt=json")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ScanPerfect/1.0"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        raise RuntimeError(
+            f"FATAL: Cannot fetch EODHD exchange symbol list: {e}\n"
+            "  Pipeline cannot proceed without knowing the universe."
+        )
+
+    tickers = sorted(set(
+        d["Code"] for d in data
+        if d.get("Type") in EODHD_SECURITY_TYPES
+        and d.get("Exchange") in EODHD_EXCHANGES
+    ))
+
+    print(f"  EODHD universe: {len(tickers)} tickers "
+          f"(Common Stock + ETF on {', '.join(sorted(EODHD_EXCHANGES))})")
+    return tickers
+
+
 def get_tradable_tickers_local():
-    """Read tradable tickers from local SQLite database."""
+    """DEPRECATED — reads from SQLite tradable_universe table.
+
+    Kept only for backward compatibility with scripts that still import it.
+    New code should use fetch_eodhd_universe() instead.
+    """
     if not os.path.exists(DB_PATH):
         raise FileNotFoundError(
             f"Local database not found: {DB_PATH}\n"
@@ -576,12 +622,11 @@ def build_cache(force=False):
         return data
 
     print("=" * 60)
-    print("  CACHE BUILDER — Fetching tradable universe OHLCV")
+    print("  CACHE BUILDER — Fetching universe OHLCV")
     print("=" * 60)
 
-    print("\nFetching ticker list from local DB...")
-    tickers = get_tradable_tickers_local()
-    print(f"  {len(tickers)} tradable tickers")
+    print("\nFetching ticker list from EODHD...")
+    tickers = fetch_eodhd_universe()
 
     print(f"\nFetching OHLCV data via EODHD...")
     t0 = time.time()
@@ -678,24 +723,9 @@ def build_daily_cache(force=False):
     spy_dates = build_spy_date_set(spy_df)
 
     # ── Step 2: Ticker reference ──
-    # Get ticker list from existing cache or DB
-    print("\nGetting ticker list...")
-    tickers = []
-    for pkl in [CACHE_DAILY_FILE, CACHE_LEGACY_5YR]:
-        if os.path.exists(pkl):
-            with open(pkl, "rb") as f:
-                existing = pickle.load(f)
-            tickers = sorted(existing.keys())
-            del existing
-            print(f"  {len(tickers)} tickers from existing cache")
-            break
-    if not tickers:
-        try:
-            tickers = get_tradable_tickers_local()
-            print(f"  {len(tickers)} tickers from local DB")
-        except FileNotFoundError:
-            print("  ERROR: No existing cache and no local DB. Nothing to build from.")
-            return {}
+    # Get ticker list from EODHD exchange symbol list (source of truth)
+    print("\nGetting ticker list from EODHD...")
+    tickers = fetch_eodhd_universe()
 
     # Build/update reference for any tickers not already in it
     ticker_ref = build_ticker_reference(tickers)
@@ -880,7 +910,40 @@ def append_daily_cache():
         print("  WARNING: No ticker reference file. Run --build-reference first.")
         print("  Proceeding without validation.")
 
-    # ── Step 2: Split detection ──
+    # ── Step 2: Universe sync — IPOs and delistings ──
+    print(f"\n  Syncing universe against EODHD exchange symbol list...")
+    try:
+        eodhd_tickers = set(fetch_eodhd_universe())
+    except RuntimeError as e:
+        print(f"  WARNING: {e}")
+        print(f"  Proceeding with existing ticker list only.")
+        eodhd_tickers = set(universe.keys())
+
+    cached_tickers = set(universe.keys())
+    new_ipos = sorted(eodhd_tickers - cached_tickers)
+    delisted = sorted(cached_tickers - eodhd_tickers)
+
+    if new_ipos:
+        print(f"  New tickers (IPOs/launches): {len(new_ipos)}")
+        if len(new_ipos) <= 20:
+            print(f"    {new_ipos}")
+        else:
+            print(f"    {new_ipos[:20]} ... and {len(new_ipos) - 20} more")
+    if delisted:
+        print(f"  Delisted tickers to remove: {len(delisted)}")
+        if len(delisted) <= 20:
+            print(f"    {delisted}")
+        else:
+            print(f"    {delisted[:20]} ... and {len(delisted) - 20} more")
+
+    # Remove delisted tickers from universe
+    for t in delisted:
+        del universe[t]
+
+    if not new_ipos and not delisted:
+        print(f"  No universe changes")
+
+    # ── Step 3: Split detection ──
     print(f"\n  Checking for adjustment changes after {cached_spy_last}...")
     split_tickers = detect_splits(list(universe.keys()), universe, cached_spy_last)
     if split_tickers:
@@ -891,17 +954,11 @@ def append_daily_cache():
     else:
         print(f"  No adjustment changes detected")
 
-    # Get current tradable tickers from local DB for new ticker detection
-    try:
-        db_tickers = get_tradable_tickers_local()
-    except FileNotFoundError:
-        db_tickers = list(universe.keys())
-
     # Categorize work
     to_append = [t for t in universe.keys()
                  if t not in split_tickers and t != "SPY"]
     to_full_refetch = list(split_tickers)
-    to_fetch_new = [t for t in db_tickers if t not in universe]
+    to_fetch_new = list(new_ipos)
 
     # Find last date per cached ticker
     last_dates = {}
@@ -981,10 +1038,9 @@ def append_daily_cache():
         failed += len(new_failed)
 
         for ticker, df in new_results.items():
-            if len(df) >= 50:
-                compute_dvol_20d(df)
-                universe[ticker] = df
-                new_added += 1
+            compute_dvol_20d(df)
+            universe[ticker] = df
+            new_added += 1
 
     # ── Step 4: Validate all tickers ──
     if ticker_ref:
@@ -1048,7 +1104,8 @@ def append_daily_cache():
     size_mb = os.path.getsize(CACHE_DAILY_FILE) / 1024 / 1024
     print(f"  Saved: {CACHE_DAILY_FILE} ({size_mb:.1f} MB)")
     print(f"  Appended: {appended}, Split refetched: {split_refetched}, "
-          f"New: {new_added}, No change: {no_new}, Failed: {failed}")
+          f"New: {new_added}, Delisted: {len(delisted)}, "
+          f"No change: {no_new}, Failed: {failed}")
     print(f"  Time: {elapsed:.0f}s")
 
     return universe
@@ -1500,21 +1557,8 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if mode_build_ref:
-        # Build ticker reference from existing cache ticker list
-        tickers = []
-        for pkl in [CACHE_DAILY_FILE, CACHE_LEGACY_5YR]:
-            if os.path.exists(pkl):
-                with open(pkl, "rb") as f:
-                    existing = pickle.load(f)
-                tickers = sorted(existing.keys())
-                del existing
-                break
-        if not tickers:
-            try:
-                tickers = get_tradable_tickers_local()
-            except FileNotFoundError:
-                print("ERROR: No cache or DB to get ticker list from.")
-                sys.exit(1)
+        # Build ticker reference from EODHD universe
+        tickers = fetch_eodhd_universe()
         build_ticker_reference(tickers, force=force)
     elif mode_status:
         daily_status()
