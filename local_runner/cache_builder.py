@@ -46,11 +46,11 @@ MONTHLY_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_monthly.pkl")
 MONTHLY_META = os.path.join(CACHE_DIR, "cache_monthly_meta.txt")
 TICKER_REF_FILE = os.path.join(CACHE_DIR, "ticker_reference.json")
 DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
-MAX_WORKERS = 50
+MAX_WORKERS = 80
 LOOKBACK = 300  # bars per ticker (daily matrix)
 HISTORY_START = "2016-01-01"  # explicit start date for all caches (daily + HTF)
-HTF_BATCH_SIZE = 50  # tickers per batch for HTF full build
-HTF_BATCH_SLEEP = 5.0  # seconds between batches
+HTF_BATCH_SIZE = 100  # tickers per batch for HTF full build
+HTF_BATCH_SLEEP = 0.5  # seconds between batches
 
 # EODHD API
 EODHD_API_TOKEN = os.environ.get("EODHD_API_TOKEN", "")
@@ -154,6 +154,8 @@ def build_ticker_reference(tickers, force=False):
         to_fetch,
         fetch_fn=_get_first_trade_date,
         label="Reference",
+        batch_size=20,
+        min_sleep=0.5,
         max_retries=5,
     )
 
@@ -449,8 +451,8 @@ def compute_dvol_20d(df):
 # BATCHED FETCH — Adaptive backoff + retry sweeps
 # ══════════════════════════════════════════════════════════════
 
-def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=50,
-                   min_sleep=5.0, max_sleep=10.0, max_retries=3):
+def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=100,
+                   min_sleep=0.2, max_sleep=10.0, max_retries=3):
     """Fetch data for a list of tickers with adaptive rate limiting and retry.
 
     Adapts both sleep time AND concurrent workers based on failure rate.
@@ -476,7 +478,7 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=50,
     results = {}
     remaining = list(tickers)
     sleep_time = min_sleep
-    workers = MAX_WORKERS  # starts at 50
+    workers = MAX_WORKERS  # starts at 80
     min_workers = 20
     consecutive_clean = 0  # batches with 0 failures in a row
 
@@ -749,7 +751,7 @@ def build_daily_cache(force=False):
             invalid,
             fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
             label=f"Retry {retry_round}",
-            min_sleep=5.0,
+            min_sleep=0.5,
             max_retries=2,
         )
         permanently_failed.extend(retry_failed)
@@ -1006,7 +1008,7 @@ def append_daily_cache():
                 all_invalid,
                 fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
                 label=f"Retry {retry_round}",
-                min_sleep=5.0,
+                min_sleep=0.5,
                 max_retries=2,
             )
 
