@@ -1305,6 +1305,49 @@ def append_htf_caches():
     append_monthly()
 
 
+def daily_status():
+    """Show daily cache status."""
+    print("\n  Daily OHLCV Cache Status")
+    print("  " + "─" * 40)
+
+    for label, pkl_file, meta_file in [
+        ("Daily", CACHE_DAILY_FILE, CACHE_DAILY_META),
+        ("Legacy (daily)", CACHE_LEGACY_5YR, None),
+        ("Legacy (300-bar)", CACHE_FILE, CACHE_META),
+    ]:
+        if not os.path.exists(pkl_file):
+            print(f"\n  {label}: not built")
+            continue
+
+        with open(pkl_file, "rb") as f:
+            data = pickle.load(f)
+
+        size_mb = os.path.getsize(pkl_file) / 1024 / 1024
+        bar_counts = [len(df) for df in data.values()]
+
+        meta_ts = "unknown"
+        if meta_file and os.path.exists(meta_file):
+            with open(meta_file) as f:
+                meta_ts = f.read().strip()
+
+        print(f"\n  {label}:")
+        print(f"    Tickers: {len(data):,}")
+        print(f"    File: {size_mb:.1f} MB")
+        print(f"    Updated: {meta_ts}")
+        if bar_counts:
+            print(f"    Bars: min={min(bar_counts)}, "
+                  f"avg={sum(bar_counts)/len(bar_counts):.0f}, "
+                  f"max={max(bar_counts)}")
+
+        # Sample last dates
+        for t in ["SPY", "AAPL", "MSFT"]:
+            if t in data and len(data[t]) > 0:
+                last = str(data[t]["date"].iloc[-1])[:10]
+                print(f"    {t} last bar: {last} ({len(data[t])} bars)")
+
+        del data
+
+
 def htf_status():
     """Show HTF cache status."""
     print("\n  HTF OHLCV Cache Status")
@@ -1419,9 +1462,11 @@ if __name__ == "__main__":
     mode_weekly = "--weekly" in sys.argv
     mode_monthly = "--monthly" in sys.argv
     mode_htf_status = "--htf-status" in sys.argv
+    mode_daily_status = "--daily-status" in sys.argv
+    mode_status = "--status" in sys.argv  # show all
     mode_build_ref = "--build-reference" in sys.argv
 
-    if mode_htf_status:
+    if mode_htf_status or mode_daily_status or mode_status:
         pass  # no API calls needed
     elif not EODHD_API_TOKEN:
         print("ERROR: EODHD_API_TOKEN environment variable not set.")
@@ -1446,6 +1491,11 @@ if __name__ == "__main__":
                 print("ERROR: No cache or DB to get ticker list from.")
                 sys.exit(1)
         build_ticker_reference(tickers, force=force)
+    elif mode_status:
+        daily_status()
+        htf_status()
+    elif mode_daily_status:
+        daily_status()
     elif mode_htf_status:
         htf_status()
     elif mode_all:
