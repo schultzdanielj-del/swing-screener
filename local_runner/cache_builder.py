@@ -1154,6 +1154,17 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
     skipped = 0
     if universe:
         ref_ticker = "SPY" if "SPY" in universe else next(iter(universe))
+
+        # On full_sweep, always re-fetch SPY first so its date reflects
+        # the current data source. Without this, SPY's stale date from
+        # a previous provider causes every re-fetched ticker to look stale.
+        if full_sweep and ref_ticker in universe:
+            _, fresh_spy = _eodhd_download(ref_ticker, HISTORY_START, interval)
+            if fresh_spy is not None and len(fresh_spy) >= 3:
+                universe[ref_ticker] = fresh_spy
+                print(f"  Refreshed {ref_ticker}: last bar "
+                      f"{str(fresh_spy['date'].iloc[-1])[:10]}")
+
         ref_last = str(universe[ref_ticker]["date"].iloc[-1])[:10]
         for t in all_tickers:
             if t not in universe:
