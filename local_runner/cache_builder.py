@@ -1141,6 +1141,14 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
     all_tickers = list(daily_cache.keys())
     del daily_cache
 
+    # Trim orphans — drop HTF tickers not in daily cache
+    daily_set = set(all_tickers)
+    orphans = [t for t in universe if t not in daily_set]
+    if orphans:
+        for t in orphans:
+            del universe[t]
+        print(f"  Trimmed {len(orphans)} orphan tickers not in daily cache")
+
     # Classify tickers
     to_work = []  # tickers that need fetching
     skipped = 0
