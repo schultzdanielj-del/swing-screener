@@ -1120,39 +1120,15 @@ def append_daily_cache():
                     if day_idx < len(gap_days) - 1:
                         time.sleep(1.0)
 
-                # After bulk, check if any stale tickers were missed
-                # (ticker in our universe but not in bulk response)
-                still_stale = [t for t in to_append
-                               if str(universe.get(t, pd.DataFrame(
-                                   {"date": [""]}))["date"].iloc[-1])[:10]
-                               < spy_last]
-                if still_stale:
-                    print(f"\n  {len(still_stale)} tickers missed by bulk "
-                          f"— falling back to per-ticker fetch...")
-
-                    def _append_one(ticker):
-                        return _eodhd_append_after_date(
-                            ticker, last_dates.get(ticker, "2020-01-01"))
-
-                    fallback_results, fallback_failed = _batched_fetch(
-                        still_stale, fetch_fn=_append_one, label="Fallback",
-                        batch_size=50, min_sleep=2.0, max_workers=20,
-                    )
-                    failed += len(fallback_failed)
-
-                    for ticker, new_df in fallback_results.items():
-                        if new_df is not None and len(new_df) > 0:
-                            existing = universe[ticker]
-                            combined = pd.concat([existing, new_df],
-                                                 ignore_index=True)
-                            combined = combined.sort_values("date").reset_index(
-                                drop=True)
-                            combined = combined.drop_duplicates(
-                                subset=["date"], keep="last")
-                            combined = combined.reset_index(drop=True)
-                            compute_dvol_20d(combined)
-                            universe[ticker] = combined
-                            appended += 1
+                # Count tickers not in bulk response — these simply
+                # didn't trade today, not an error
+                not_in_bulk = len([t for t in to_append
+                                   if str(universe.get(t, pd.DataFrame(
+                                       {"date": [""]}))["date"].iloc[-1])[:10]
+                                   < spy_last])
+                if not_in_bulk:
+                    print(f"  {not_in_bulk} tickers had no bar today "
+                          f"(no trading activity — normal)")
             else:
                 print(f"\n  No new trading days in gap — nothing to append")
 
