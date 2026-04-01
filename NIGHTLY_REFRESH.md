@@ -17,7 +17,7 @@
 | 2 | Appends new bars to daily OHLCV pickle from yfinance | ~2-5 min | **DONE (2026-03-27).** Rewired from Railway to `yf.download()` directly. `_yf_append_after_date()` replaces `_fetch_ticker_after_date()`. |
 | 3 | Appends weekly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-28).** `cache_builder.py` → `append_weekly()`. 10yr lookback, overwrites partial week bar, appends closed weeks. |
 | 4 | Appends monthly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-27).** Same pattern as weekly. Overwrites partial month bar. |
-| 5 | Appends expression cache | **~80-90 min** | **THE BOTTLENECK.** Now uses HTF pickles instead of resampling. HTF skip logic removed — always computes from pickle data. Incremental append (compute only new bar) is Increment 2. |
+| 5 | Appends expression cache | **~100 min** | **INCREMENTAL INFRA DONE (2026-04-01).** `_append_one_ticker` writes raw float16 .append files instead of rewriting .npz. `load_ticker_cache` reads .npz + .append transparently. Still runs `_compute_ticker_full` internally — save-phase savings only. Next: forward-propagation phases 0-4 → target ~13 min. |
 | 6 | Rebuilds universe matrix | ~30s | **OK.** No changes needed. |
 | 7 | Refreshes earnings dates via Railway | Fails silently | **BROKEN.** Railway endpoints don't exist. Replace with local Yahoo Finance scraper (separate task). |
 | 8 | Appends market context cache (266 instruments) | ~2-3 min | **OK.** Uses yfinance directly. |

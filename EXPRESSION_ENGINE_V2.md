@@ -535,9 +535,15 @@ LSP + algo is 73% of per-ticker cost. The actual incremental work (state + lookb
 
 #### What's Next
 
-1. Build the actual forward-propagation engine for state-only expressions (replace simulated scalar math with real EMA/SMA/RSI update logic)
-2. Build the lookback window dispatch (read column slices from .npz tail, run real window ops)
-3. Wire into `append_new_bars()` — new worker function `_append_one_ticker()`
-4. Correctness gate: for every ticker, compare append result vs `_compute_ticker_full` last row. Zero mismatches required.
-5. Integrate into nightly pipeline (step 5)
+1. ~~Build `_append_one_ticker()` worker~~ — **DONE (2026-04-01).** Infrastructure shipped and validated (50/50 tickers, zero mismatches). Currently runs `_compute_ticker_full` internally — save-phase savings only (~1.6s/ticker).
+2. ~~Correctness gate~~ — **DONE (2026-04-01).** `scripts/validate_append_infra.py` — fakes new bar by pretending last .npz row doesn't exist, verifies appended row matches fresh `_compute_ticker_full` output after float16 round-trip. Also tests `load_ticker_cache` vstack, `signal_filter._load_ticker_npz`, file sizes, cleanup.
+3. Replace `_compute_ticker_full` inside `_append_one_ticker` with real phase 0-4 forward-propagation (state, lookback, HTF, LSP+algo). That drops per-ticker cost from ~3-7s to ~0.87s → ~13 min total.
+4. Integrate into nightly pipeline (step 5) — already wired, just needs real nightly run to confirm end-to-end.
+
+#### Bugs Found and Fixed During Increment 2 Build (2026-04-01)
+
+1. **Missing HTF truncation in `append_new_bars()`:** `build_full()` truncates weekly/monthly pickles to `EXPR_CACHE_START` (2020-01-02) before passing to workers. `append_new_bars()` did not — passed untruncated HTF data back to `HISTORY_START` (2016-01-01). Extra historical HTF bars shifted the partial candle engine's `lci` (last closed index) mapping, producing different expression values for the same daily bar. Immutability violation. Fixed.
+2. **Missing OHLCV truncation in `append_new_bars()`:** Same issue for daily OHLCV — existing tickers were not truncated to `EXPR_CACHE_START`, getting ~2,500 bars instead of ~1,500. Caused ~2x compute slowdown. Fixed.
+3. **Missing work item sorting in `append_new_bars()`:** `build_full()` sorts by bar count descending for load balancing. `append_new_bars()` did not. Fixed.
+
 

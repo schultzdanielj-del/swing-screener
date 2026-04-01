@@ -42,7 +42,7 @@ Automated swing trade screener. Screens ~11,500 tickers nightly (Common Stock + 
   - yfinance handles: same-day bars not yet published by EODHD, fundamentals, earnings dates
 - **Step 2 (expression cache full rebuild):** ✅ Complete — 11,201 tickers, 0 failures, 111 GB, 124 min. Float16 storage + 6yr window (2020-01-02). HTF look-ahead bias FIXED via partial candle engine.
 - **Step 3 (universe matrix):** ✅ Complete — 11,201 tickers × 15,805 expressions, 1.35 GB, 148s. Reads last bar from expr cache .npz files.
-- **Step 4 (expression cache incremental append):** Not started — next major code task
+- **Step 4 (expression cache incremental append):** Infrastructure DONE (2026-04-01). `_append_one_ticker` worker, `.append`/`.append_dates` binary storage, `load_ticker_cache` vstack, `signal_filter._load_ticker_npz` updated. Validated 50/50 tickers zero mismatches. Currently still runs `_compute_ticker_full` internally (~100 min). Next: replace with forward-propagation phases 0-4 to reach ~13 min target.
 - **Market cache:** Still uses yfinance for all 266 instruments. ~200 are US ETFs already in OHLCV universe. ~60 are non-equity (futures, indices, Stooq breadth, FRED macro, BTC). Needs EODHD migration — separate task.
 
 ### DTSS (Double Top Short Sell) — first setup:

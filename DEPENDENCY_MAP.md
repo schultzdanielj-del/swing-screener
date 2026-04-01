@@ -218,12 +218,14 @@ These are the only components that make network calls for market data.
 
 **Outputs:**
 - `local_runner/cache/expr_series/{TICKER}.npz` — per-ticker expression values (float16 on disk, float32 on load)
+- `local_runner/cache/expr_series/{TICKER}.append` — incremental append rows (raw float16 binary, one row per nightly append)
+- `local_runner/cache/expr_series/{TICKER}.append_dates` — date strings for appended rows (one per line)
 - `local_runner/cache/expr_series/_manifest.json` — metadata (expression fingerprint, dates, counts)
 
 **Key functions called by others:**
-- `append_new_bars()` — called by `nightly.py` step 5
-- `build_full()` — full rebuild from scratch
-- `load_ticker_cache(ticker)` — called by grinders to load individual ticker data
+- `append_new_bars()` — called by `nightly.py` step 5. Uses `_append_one_ticker` for existing tickers (writes .append file), `_compute_and_save_ticker` for new tickers (writes .npz).
+- `build_full()` — full rebuild from scratch. Clears all .append/.append_dates files before computing.
+- `load_ticker_cache(ticker)` — called by grinders to load individual ticker data. Reads .npz + .append file if present, vstacks, returns combined (dates, data) float32 array. Consumers see no API change.
 - `save_ticker_cache(ticker, dates, data)` — saves one ticker's npz
 - `ExprSeriesCache` class — high-level accessor used by grinders
 
@@ -408,7 +410,7 @@ These are the only components that make network calls for market data.
 
 **Inputs:**
 - `local_runner/cache/universe_ohlcv_daily.pkl`
-- `local_runner/cache/expr_series/*.npz` via `ExprSeriesCache`
+- `local_runner/cache/expr_series/*.npz` + `*.append` — has its own `_load_ticker_npz()` that reads .npz + .append files (mirrors `load_ticker_cache()` logic). Exit batch path also calls `load_ticker_cache()` directly.
 - `local_runner/cache/pyramid_{setup}_*.json` (signal conditions)
 - `data/signal_exit_grind/signal_exit_{setup}.json` (exit condition)
 - SQLite `examples` table
