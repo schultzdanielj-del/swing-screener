@@ -626,7 +626,7 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=100,
     remaining = list(tickers)
     sleep_time = min_sleep
     workers = start_workers
-    min_workers = 20
+    min_workers = min(20, start_workers)
     consecutive_clean = 0  # batches with 0 failures in a row
 
     for attempt in range(1 + max_retries):
