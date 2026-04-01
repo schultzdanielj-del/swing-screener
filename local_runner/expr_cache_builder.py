@@ -1748,10 +1748,23 @@ def append_new_bars():
     weekly_cache = _load_htf_cache("weekly")
     monthly_cache = _load_htf_cache("monthly")
     if weekly_cache:
+        # Truncate HTF caches to same window as build_full
+        for ticker in list(weekly_cache.keys()):
+            df = _truncate_to_cache_window(weekly_cache[ticker])
+            if df is not None and len(df) >= 5:
+                weekly_cache[ticker] = df
+            else:
+                del weekly_cache[ticker]
         print(f"  Weekly HTF cache: {len(weekly_cache)} tickers")
     else:
         print(f"  Weekly HTF cache: not found (will resample from daily)")
     if monthly_cache:
+        for ticker in list(monthly_cache.keys()):
+            df = _truncate_to_cache_window(monthly_cache[ticker])
+            if df is not None and len(df) >= 5:
+                monthly_cache[ticker] = df
+            else:
+                del monthly_cache[ticker]
         print(f"  Monthly HTF cache: {len(monthly_cache)} tickers")
     else:
         print(f"  Monthly HTF cache: not found (will resample from daily)")

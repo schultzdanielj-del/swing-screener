@@ -70,6 +70,21 @@ def main():
 
     weekly_cache = _load_htf_cache("weekly")
     monthly_cache = _load_htf_cache("monthly")
+    if weekly_cache:
+        # Truncate HTF to EXPR_CACHE_START — must match build_full
+        for t in list(weekly_cache.keys()):
+            tdf = _truncate_to_cache_window(weekly_cache[t])
+            if tdf is not None and len(tdf) >= 5:
+                weekly_cache[t] = tdf
+            else:
+                del weekly_cache[t]
+    if monthly_cache:
+        for t in list(monthly_cache.keys()):
+            tdf = _truncate_to_cache_window(monthly_cache[t])
+            if tdf is not None and len(tdf) >= 5:
+                monthly_cache[t] = tdf
+            else:
+                del monthly_cache[t]
     print(f"  Weekly HTF: {len(weekly_cache) if weekly_cache else 0} tickers")
     print(f"  Monthly HTF: {len(monthly_cache) if monthly_cache else 0} tickers")
 
