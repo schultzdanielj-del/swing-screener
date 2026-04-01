@@ -28,7 +28,7 @@
 
 ### Legacy Railway examples API (`/api/examples/`) — cleanup needed
 
-Railway's SQLite DB has an examples table that several active scripts still read from instead of local SQLite. The seed vault no longer syncs to it (removed 2026-03-26), so it will go stale. These scripts need switching to local SQLite (`data/scanperfect.db`):
+Railway's SQLite DB has an examples table that several active scripts still read from instead of local SQLite. The seed vault syncs setups + examples to Railway nightly (re-added 2026-04-01), so Railway stays current. These scripts should still be switched to local SQLite (`data/scanperfect.db`) to eliminate the Railway dependency:
 
 | Script | Line | What it does |
 |--------|------|-------------|
@@ -41,7 +41,7 @@ Railway's SQLite DB has an examples table that several active scripts still read
 | `scripts/signal_filter.py` | 180 | Loads examples from Railway (v2-consensus) |
 | `scripts/signal_exit_grinder.py` | 150 | Loads examples from Railway (v2-consensus) |
 
-**Not urgent** — these scripts still work because Railway's DB happens to have data. But as new examples are added locally (e.g. BRKO's 51), Railway won't have them. Fix by replacing `requests.get(f"{API_BASE}/api/examples/{setup_type}")` with a local SQLite query in each script.
+**Not urgent** — Railway's DB is synced nightly by seed vault so these scripts work. But switching to local SQLite removes an unnecessary network dependency. Fix by replacing `requests.get(f"{API_BASE}/api/examples/{setup_type}")` with a local SQLite query in each script.
 
 **Total current runtime: ~2-2.5 hours.** Target: under 30 minutes.
 

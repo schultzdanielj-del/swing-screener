@@ -3,12 +3,12 @@ Seed Vault — Verify, backup, and restore from Railway.
 
 Usage:
     python scripts/seed_vault.py              # Verify Railway has everything
-    python scripts/seed_vault.py --backup     # Upload any local grind files missing from Railway
+    python scripts/seed_vault.py --backup     # Sync DB tables + upload missing grind files
     python scripts/seed_vault.py --restore    # Restore from Railway to local machine
 
-Railway is the authority. Grinders mirror their output to Railway automatically
-via file_mirror.py, and structured data is written to Railway's DB via API.
-The --backup flag catches any files where mirror_file() silently failed.
+Local is authoritative (DATA_CONTRACT.md). Railway is a seed vault for disaster
+recovery. The --backup flag syncs setups + examples to Railway's DB, then catches
+any grind result JSON files where mirror_file() silently failed.
 
 Recovery process (new machine):
   1. Clone repo from GitHub
@@ -16,13 +16,14 @@ Recovery process (new machine):
   3. python local_runner/cache_builder.py --daily --force   (~30 min)
   4. python local_runner/expr_cache_builder.py --build     (~2 hrs)
   5. python local_runner/nightly.py --force                (~20 min)
-  6. python -m uvicorn server:app --port 8000              (done)
+  6. python scanperfect.py                                 (done)
 """
 
 import os
 import sys
 import json
 import glob
+import re
 import sqlite3
 import requests
 from datetime import datetime
@@ -116,14 +117,172 @@ def upload_file(rel_path, data_str):
 
 
 # ════════════════════════════════════════════════════════════
-# BACKUP — catch failed mirrors
+# DB SYNC — push local setups + examples to Railway
+# ════════════════════════════════════════════════════════════
+
+def railway_query_params(sql, params=None, limit=50000):
+    """Run a parameterized SELECT against Railway's DB.
+
+    Railway's /api/query/bulk only accepts raw SQL strings (no bind params),
+    so we safely interpolate values here with strict type/character checks.
+    """
+    if params:
+        safe = []
+        for p in params:
+            s = str(p)
+            # Reject anything that could be injection
+            if any(c in s for c in ("'", '"', ";", "--", "/*")):
+                print(f"  ✗ Unsafe parameter rejected: {s}")
+                return []
+            safe.append(f"'{s}'")
+        sql = sql.format(*safe)
+    return railway_query(sql, limit)
+
+
+def sync_db_tables():
+    """Push any locally-created setups and examples missing from Railway.
+
+    DATA_CONTRACT.md: "Nightly seed vault pushes SQLite tables to Railway
+    (backup only)." The desktop app creates setups and examples in local
+    SQLite. This sync ensures Railway has a backup copy for disaster recovery.
+    """
+    if not os.path.exists(DB_PATH):
+        print("  · No local DB — skipping DB sync")
+        return
+
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    try:
+        _sync_setups(db)
+        _sync_examples(db)
+    finally:
+        db.close()
+
+
+def _sync_setups(db):
+    """Push locally-created setups missing from Railway."""
+    print("\n── Syncing setups ──")
+    local_setups = db.execute(
+        "SELECT setup_type, name, description, direction FROM setups"
+    ).fetchall()
+
+    if not local_setups:
+        print("  · No local setups")
+        return
+
+    try:
+        r = requests.get(f"{RAILWAY_API}/api/setups", timeout=30)
+        r.raise_for_status()
+        railway_setups = set(r.json().keys())
+    except Exception as e:
+        print(f"  ✗ Could not fetch Railway setups: {e}")
+        return
+
+    synced = 0
+    for row in local_setups:
+        if row["setup_type"] in railway_setups:
+            continue
+        # /api/setups derives setup_type from name — verify it matches
+        derived = re.sub(r"[^a-z0-9]+", "-", row["name"].lower()).strip("-")
+        if derived != row["setup_type"]:
+            print(f"  ⚠ Setup '{row['setup_type']}' — name '{row['name']}' "
+                  f"would derive '{derived}', skipping (needs manual fix)")
+            continue
+        try:
+            resp = requests.post(f"{RAILWAY_API}/api/setups", json={
+                "name": row["name"],
+                "description": row["description"] or "",
+                "direction": row["direction"],
+            }, timeout=30)
+            if resp.status_code == 409:
+                continue
+            resp.raise_for_status()
+            print(f"  ✓ Setup '{row['setup_type']}' pushed to Railway")
+            synced += 1
+        except Exception as e:
+            print(f"  ✗ Setup '{row['setup_type']}': {e}")
+
+    if synced == 0:
+        print(f"  ✓ All {len(local_setups)} setups already on Railway")
+    else:
+        print(f"  ✓ Pushed {synced} new setup(s)")
+
+
+def _sync_examples(db):
+    """Push locally-created examples missing from Railway."""
+    print("\n── Syncing examples ──")
+    local_setup_types = [r["setup_type"] for r in db.execute(
+        "SELECT DISTINCT setup_type FROM examples"
+    ).fetchall()]
+
+    total_synced = 0
+
+    for setup_type in local_setup_types:
+        local_examples = db.execute(
+            "SELECT ticker, chart_date, entry_date FROM examples WHERE setup_type=?",
+            (setup_type,)
+        ).fetchall()
+
+        if not local_examples:
+            continue
+
+        # Parameterized query via safe interpolation
+        railway_rows = railway_query_params(
+            "SELECT ticker, entry_date FROM examples WHERE setup_type={0}",
+            [setup_type]
+        )
+        railway_examples = set()
+        for row in railway_rows:
+            railway_examples.add((row["ticker"], row["entry_date"]))
+
+        missing = [ex for ex in local_examples
+                   if (ex["ticker"], ex["entry_date"]) not in railway_examples]
+
+        if not missing:
+            continue
+
+        pushed = 0
+        for ex in missing:
+            try:
+                resp = requests.post(
+                    f"{RAILWAY_API}/api/examples/{setup_type}",
+                    json={
+                        "ticker": ex["ticker"],
+                        "chart_date": ex["chart_date"] or ex["entry_date"],
+                        "entry_date": ex["entry_date"],
+                    },
+                    timeout=30,
+                )
+                if resp.status_code == 409:
+                    continue
+                resp.raise_for_status()
+                pushed += 1
+            except Exception as e:
+                print(f"  ✗ {setup_type}/{ex['ticker']} {ex['entry_date']}: {e}")
+
+        if pushed:
+            print(f"  ✓ {setup_type}: pushed {pushed} example(s)")
+            total_synced += pushed
+
+    if total_synced == 0:
+        total_local = db.execute("SELECT COUNT(*) FROM examples").fetchone()[0]
+        print(f"  ✓ All {total_local} examples already on Railway")
+    else:
+        print(f"  ✓ Pushed {total_synced} new example(s) total")
+
+
+# ════════════════════════════════════════════════════════════
+# BACKUP — DB sync + catch failed file mirrors
 # ════════════════════════════════════════════════════════════
 
 def backup():
     print("=" * 60)
-    print("  Seed Vault — Backup (catch failed mirrors)")
+    print("  Seed Vault — Backup (DB sync + catch failed mirrors)")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
+
+    # Sync setups + examples to Railway first
+    sync_db_tables()
 
     # Get set of paths already on Railway
     mirrored = list_mirrored_files()
