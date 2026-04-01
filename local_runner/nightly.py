@@ -6,11 +6,11 @@ Usage:
     python local_runner/nightly.py --force
 
 What it does (in order):
-    1. yfinance freshness check (downloads 1 bar SPY, compares to cache)
+    1. EODHD freshness check (downloads 1 bar SPY, compares to cache)
        - If cache is already current → stops here (runs seed vault only)
-    2. Appends local daily OHLCV cache (yfinance)
-    3. Appends weekly OHLCV cache (yfinance)
-    4. Appends monthly OHLCV cache (yfinance)
+    2. Appends local daily OHLCV cache (EODHD)
+    3. Appends weekly OHLCV cache (EODHD)
+    4. Appends monthly OHLCV cache (EODHD)
     5. Appends expression series cache (new bars + new tickers)
     6. Rebuilds D1 universe matrix
     7. Refreshes earnings dates
@@ -57,20 +57,20 @@ def step_header(num, total, title):
 
 
 def step_1_freshness_check():
-    """Check if yfinance has new data since last cache update.
+    """Check if EODHD has new data since last cache update.
 
     Downloads 1 bar for SPY, compares to last cached date.
     Returns True if new data (continue pipeline), False if current (skip).
     """
-    step_header(1, TOTAL_STEPS, "yfinance Freshness Check")
+    step_header(1, TOTAL_STEPS, "EODHD Freshness Check")
 
-    from cache_builder import check_yfinance_freshness
-    return check_yfinance_freshness()
+    from cache_builder import check_freshness
+    return check_freshness()
 
 
 def step_2_daily_cache():
-    """Append new bars to local daily OHLCV cache via yfinance."""
-    step_header(2, TOTAL_STEPS, "Local daily OHLCV Cache — Append (yfinance)")
+    """Append new bars to local daily OHLCV cache via EODHD."""
+    step_header(2, TOTAL_STEPS, "Local daily OHLCV Cache — Append (EODHD)")
 
     from cache_builder import append_daily_cache
     t0 = time.time()
@@ -80,8 +80,8 @@ def step_2_daily_cache():
 
 
 def step_3_weekly_cache():
-    """Append new bars to weekly OHLCV cache via yfinance."""
-    step_header(3, TOTAL_STEPS, "Weekly OHLCV Cache — Append (yfinance)")
+    """Append new bars to weekly OHLCV cache via EODHD."""
+    step_header(3, TOTAL_STEPS, "Weekly OHLCV Cache — Append (EODHD)")
 
     try:
         from cache_builder import append_weekly
@@ -98,8 +98,8 @@ def step_3_weekly_cache():
 
 
 def step_4_monthly_cache():
-    """Append new bars to monthly OHLCV cache via yfinance."""
-    step_header(4, TOTAL_STEPS, "Monthly OHLCV Cache — Append (yfinance)")
+    """Append new bars to monthly OHLCV cache via EODHD."""
+    step_header(4, TOTAL_STEPS, "Monthly OHLCV Cache — Append (EODHD)")
 
     try:
         from cache_builder import append_monthly
@@ -341,7 +341,7 @@ def main():
         print(f"\n  --skip: will skip step(s) {', '.join(str(s) for s in sorted(skip_steps))}")
 
     if not args.force:
-        # Step 1: yfinance freshness check (gate)
+        # Step 1: EODHD freshness check (gate)
         has_new_data = step_1_freshness_check()
 
         if not has_new_data:

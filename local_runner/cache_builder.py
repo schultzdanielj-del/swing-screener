@@ -1532,10 +1532,6 @@ def check_freshness():
         return True
 
 
-# Keep old name as alias for backward compatibility with nightly.py
-check_yfinance_freshness = check_freshness
-
-
 # ══════════════════════════════════════════════════════════════
 # UNIVERSE SYNC — Add missing tickers, remove delisted ones
 # ══════════════════════════════════════════════════════════════

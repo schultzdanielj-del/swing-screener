@@ -1560,7 +1560,7 @@ def build_full(force=False):
     universe_cache = _load_daily_cache()
     print(f"  {len(universe_cache)} tickers loaded")
 
-    # Load HTF OHLCV caches (weekly + monthly from yfinance)
+    # Load HTF OHLCV caches (weekly + monthly from EODHD)
     weekly_cache = _load_htf_cache("weekly")
     monthly_cache = _load_htf_cache("monthly")
     if weekly_cache:
@@ -1759,7 +1759,7 @@ def append_new_bars():
     universe_cache = _load_daily_cache()
     print(f"  {len(universe_cache)} tickers in OHLCV cache")
 
-    # Load HTF OHLCV caches (weekly + monthly from yfinance)
+    # Load HTF OHLCV caches (weekly + monthly from EODHD)
     weekly_cache = _load_htf_cache("weekly")
     monthly_cache = _load_htf_cache("monthly")
     if weekly_cache:
