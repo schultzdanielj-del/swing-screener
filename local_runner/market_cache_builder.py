@@ -14,9 +14,11 @@ PHASE 1 — FETCH  (network, threaded I/O parallelism)
     4. FRED — macro series (yield spreads, credit spreads, NFCI, ...)
 
   After all fetches, derived instruments are computed from raw components:
-    NYMO_CALC  = McClellan Oscillator = 19-EMA(ADVN-DECN) - 39-EMA(ADVN-DECN)
-    NYUD_CALC  = NYSE up/down volume ratio = AVVN / DVCN
+    NYMO_CALC   = McClellan Oscillator = 19-EMA(ADVN-DECN) - 39-EMA(ADVN-DECN)
+    NYUD_CALC   = NYSE up/down volume ratio = AVVN / DVCN
     NDXADP_CALC = NASDAQ A/D percent = (ADVQ-DECQ)/(ADVQ+DECQ+UNCQ)*100
+    T10Y2Y_CALC = 10-Year minus 2-Year Treasury spread = US10Y - US2Y
+    T10Y3M_CALC = 10-Year minus 3-Month Treasury spread = US10Y - US3M
 
 PHASE 2 — COMPUTE  (CPU, ProcessPoolExecutor, EXPR_CACHE_WORKERS=8)
   Reads market_ohlcv.pkl — no network calls ever.
@@ -94,11 +96,14 @@ PRICE_ONLY = {
     "ADVQ.INDX", "DECQ.INDX", "UNCQ.INDX",
     # Breadth internals — computed
     "NYMO_CALC", "NYUD_CALC", "NDXADP_CALC",
-    # FRED macro
+    # Macro — EODHD INDX (raw components for yield spreads + direct replacements)
+    "US10Y.INDX", "US2Y.INDX", "US3M.INDX",
+    "DXY.INDX", "BCOMCL.INDX",
+    # Macro — computed yield spreads
+    "T10Y2Y_CALC", "T10Y3M_CALC",
+    # FRED macro (remaining — no EODHD equivalent)
     "FRED:BAMLH0A0HYM2", "FRED:BAMLC0A0CM",
-    "FRED:T10Y2Y", "FRED:T10Y3M",
     "FRED:NFCI", "FRED:ANFCI",
-    "FRED:DTWEXBGS", "FRED:DCOILWTICO",
 }
 
 INSTRUMENTS = {
@@ -219,20 +224,29 @@ INSTRUMENTS = {
         # Computed from raw components after fetch
         "NYMO_CALC", "NYUD_CALC", "NDXADP_CALC",
     ],
+    "macro_eodhd": [
+        # Raw yield components (for computed spreads)
+        "US10Y.INDX", "US2Y.INDX", "US3M.INDX",
+        # Direct replacements
+        "DXY.INDX",       # US Dollar Index (was FRED:DTWEXBGS)
+        "BCOMCL.INDX",    # Bloomberg WTI Crude (was FRED:DCOILWTICO)
+        # Computed yield spreads
+        "T10Y2Y_CALC",    # 10yr minus 2yr (was FRED:T10Y2Y)
+        "T10Y3M_CALC",    # 10yr minus 3mo (was FRED:T10Y3M)
+    ],
     "macro_fred": [
-        "FRED:BAMLH0A0HYM2",
-        "FRED:BAMLC0A0CM",
-        "FRED:T10Y2Y",
-        "FRED:T10Y3M",
-        "FRED:NFCI",
-        "FRED:ANFCI",
-        "FRED:DTWEXBGS",
-        "FRED:DCOILWTICO",
+        "FRED:BAMLH0A0HYM2",   # HY credit spread (OAS) — no EODHD equivalent
+        "FRED:BAMLC0A0CM",      # IG credit spread (OAS) — no EODHD equivalent
+        "FRED:NFCI",            # Financial Conditions Index — no EODHD equivalent
+        "FRED:ANFCI",           # Adjusted NFCI — no EODHD equivalent
     ],
 }
 
 # Instruments that are computed from other fetched instruments (not fetched directly)
-DERIVED_INSTRUMENTS = {"NYMO_CALC", "NYUD_CALC", "NDXADP_CALC"}
+DERIVED_INSTRUMENTS = {
+    "NYMO_CALC", "NYUD_CALC", "NDXADP_CALC",
+    "T10Y2Y_CALC", "T10Y3M_CALC",
+}
 
 
 def all_instruments():
@@ -411,11 +425,13 @@ def _fetch_one(instrument_id, daily_cache=None):
 # ══════════════════════════════════════════════════════════════
 
 def _compute_derived_instruments(results):
-    """Compute derived breadth instruments from raw components.
+    """Compute derived instruments from raw components.
 
     NYMO_CALC:   McClellan Oscillator = EMA19(A-D) - EMA39(A-D)
     NYUD_CALC:   NYSE up/down volume  = AVVN / DVCN
     NDXADP_CALC: NASDAQ A/D percent   = (ADVQ-DECQ)/(ADVQ+DECQ+UNCQ)*100
+    T10Y2Y_CALC: 10yr-2yr spread      = US10Y - US2Y
+    T10Y3M_CALC: 10yr-3mo spread      = US10Y - US3M
 
     Modifies results dict in place.
     """
@@ -485,6 +501,43 @@ def _compute_derived_instruments(results):
                 "volume": 0.0,
             })
             results["NDXADP_CALC"] = df
+            computed += 1
+
+    # --- T10Y2Y_CALC: 10-Year minus 2-Year Treasury spread ---
+    us10y = results.get("US10Y.INDX")
+    us2y  = results.get("US2Y.INDX")
+    if us10y is not None and us2y is not None:
+        merged = pd.merge(
+            us10y[["date", "close"]].rename(columns={"close": "y10"}),
+            us2y[["date", "close"]].rename(columns={"close": "y2"}),
+            on="date", how="inner"
+        ).sort_values("date").reset_index(drop=True)
+        if len(merged) >= 50:
+            spread = merged["y10"] - merged["y2"]
+            df = pd.DataFrame({
+                "date": merged["date"],
+                "open": spread, "high": spread, "low": spread, "close": spread,
+                "volume": 0.0,
+            })
+            results["T10Y2Y_CALC"] = df
+            computed += 1
+
+    # --- T10Y3M_CALC: 10-Year minus 3-Month Treasury spread ---
+    us3m = results.get("US3M.INDX")
+    if us10y is not None and us3m is not None:
+        merged = pd.merge(
+            us10y[["date", "close"]].rename(columns={"close": "y10"}),
+            us3m[["date", "close"]].rename(columns={"close": "m3"}),
+            on="date", how="inner"
+        ).sort_values("date").reset_index(drop=True)
+        if len(merged) >= 50:
+            spread = merged["y10"] - merged["m3"]
+            df = pd.DataFrame({
+                "date": merged["date"],
+                "open": spread, "high": spread, "low": spread, "close": spread,
+                "volume": 0.0,
+            })
+            results["T10Y3M_CALC"] = df
             computed += 1
 
     return computed
@@ -1083,6 +1136,8 @@ def append_new_bars(n_threads=16):
         "NYMO_CALC":   {"ADVN.INDX", "DECN.INDX"},
         "NYUD_CALC":   {"AVVN.INDX", "DVCN.INDX"},
         "NDXADP_CALC": {"ADVQ.INDX", "DECQ.INDX", "UNCQ.INDX"},
+        "T10Y2Y_CALC": {"US10Y.INDX", "US2Y.INDX"},
+        "T10Y3M_CALC": {"US10Y.INDX", "US3M.INDX"},
     }
     updated_set = set(updated)
     for derived, components in derived_components.items():
