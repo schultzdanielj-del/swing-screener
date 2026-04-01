@@ -34,18 +34,13 @@ from collections import Counter, defaultdict
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-LOCAL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_runner")
-REPO_ROOT = os.path.dirname(LOCAL_DIR)
-if os.path.exists(LOCAL_DIR):
-    # Running from repo root
-    pass
-else:
-    # Running from local_runner/
-    LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
-    REPO_ROOT = os.path.dirname(LOCAL_DIR)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)  # scripts/ -> repo root
+LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
 
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
+sys.path.insert(0, SCRIPT_DIR)
 
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 EXPR_CACHE_DIR = os.path.join(CACHE_DIR, "expr_series")
