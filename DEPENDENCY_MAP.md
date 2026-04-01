@@ -139,25 +139,34 @@ These are the only components that make network calls for market data.
 ### market_cache_builder.py
 **Location:** `local_runner/market_cache_builder.py`
 **Spec:** `LOCALIZE.md`
-**What it does:** Downloads OHLCV for 266 market instruments (indices, bonds, commodities, currencies, sector ETFs) from yfinance/Stooq/FRED. Then computes expression series for each.
+**What it does:** Fetches OHLCV for ~264 market instruments from four sources, then computes expression series for each. Data sources: (1) local daily pickle for ~227 US ETFs/stocks, (2) EODHD INDX/CC for indices, crypto, and breadth internals, (3) yfinance for futures only, (4) FRED for macro series. Three derived instruments (NYMO_CALC, NYUD_CALC, NDXADP_CALC) are computed from fetched breadth components after all fetches complete.
 
 **Inputs:**
-- yfinance, Stooq, FRED APIs (network — Phase 1 fetch)
+- `local_runner/cache/universe_ohlcv_daily.pkl` — for ~227 ETF/stock instruments (Phase 1 pickle reads)
+- EODHD API (network) — INDX exchange for indices + breadth, CC exchange for crypto (Phase 1 fetch)
+- yfinance (network) — futures only: ES=F, NQ=F, etc. (Phase 1 fetch)
+- FRED API (network) — macro series: yield spreads, credit spreads, NFCI, etc. (Phase 1 fetch)
+- `EODHD_API_TOKEN` environment variable (required for EODHD instruments)
 - `brute_expressions.py` — expression library (Phase 2 compute)
 - `scripts/expression_engine.py` — ExpressionEngine class
 - `scripts/backtest_conditions.py` — compute_series()
 - `expr_cache_builder.py` — numpy helper functions
 
 **Outputs:**
-- `local_runner/cache/market_ohlcv.pkl` — raw OHLCV for all 266 instruments
+- `local_runner/cache/market_ohlcv.pkl` — raw OHLCV for all ~264 instruments
 - `local_runner/cache/market_series/*.npz` — per-instrument expression series
 - `local_runner/cache/market_series/_manifest.json`
 
 **Called by:** `nightly.py` step 8 (via `append_new_bars`)
 
+**Key functions called by others:**
+- `instrument_filename()` — used by `ev_grinder.py` (duplicated there as `_instrument_filename`, must stay in sync)
+- `all_instruments()` — used by `fetch_missing_market.py`
+- `_fetch_one()` — used by `fetch_missing_market.py`
+
 **Downstream Consumers:**
-- `ev_grinder.py` — reads `market_series/*.npz` + `_manifest.json` for correlative screening
-- `fetch_missing_market.py` — reads/writes `market_ohlcv.pkl`
+- `ev_grinder.py` — reads `market_series/*.npz` + `_manifest.json` for correlative screening; has its own copy of `_instrument_filename()` that MUST match
+- `fetch_missing_market.py` — reads/writes `market_ohlcv.pkl`, imports `_fetch_one` and `all_instruments`
 
 ---
 

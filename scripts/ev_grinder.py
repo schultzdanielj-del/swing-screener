@@ -731,7 +731,8 @@ def _instrument_filename(instrument_id):
             .replace("=", "eq_")
             .replace(":", "col_")
             .replace("$", "dol_")
-            .replace("-", "dash_"))
+            .replace("-", "dash_")
+            .replace(".", "dot_"))
     return f"{safe}.npz"
 
 

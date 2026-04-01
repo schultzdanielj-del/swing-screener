@@ -2,9 +2,21 @@
 Market Context Cache Builder — Two-phase: fetch then compute.
 
 PHASE 1 — FETCH  (network, threaded I/O parallelism)
-  Downloads OHLCV for all 266 market instruments from yfinance / Stooq / FRED.
+  Downloads OHLCV for all market instruments from local pickle / EODHD / yfinance / FRED.
   Stores everything in a single pickle: local_runner/cache/market_ohlcv.pkl
-  Zero computation in this phase. Pure data collection.
+  Zero computation in this phase (except derived breadth instruments).
+
+  Data source priority:
+    1. Local daily pickle (universe_ohlcv_daily.pkl) — ~227 US ETFs/stocks
+    2. EODHD INDX/CC exchanges — indices (VIX, TNX, ...), crypto (BTC-USD),
+       breadth internals (ADVN, DECN, TRIN, ...)
+    3. yfinance — futures only (ES=F, NQ=F, CL=F, ...)
+    4. FRED — macro series (yield spreads, credit spreads, NFCI, ...)
+
+  After all fetches, derived instruments are computed from raw components:
+    NYMO_CALC  = McClellan Oscillator = 19-EMA(ADVN-DECN) - 39-EMA(ADVN-DECN)
+    NYUD_CALC  = NYSE up/down volume ratio = AVVN / DVCN
+    NDXADP_CALC = NASDAQ A/D percent = (ADVQ-DECQ)/(ADVQ+DECQ+UNCQ)*100
 
 PHASE 2 — COMPUTE  (CPU, ProcessPoolExecutor, EXPR_CACHE_WORKERS=8)
   Reads market_ohlcv.pkl — no network calls ever.
@@ -45,8 +57,14 @@ LOCAL_DIR     = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT     = os.path.dirname(LOCAL_DIR)
 CACHE_DIR     = os.path.join(LOCAL_DIR, "cache")
 OHLCV_PATH    = os.path.join(CACHE_DIR, "market_ohlcv.pkl")
+DAILY_PKL     = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
 MKT_DIR       = os.path.join(CACHE_DIR, "market_series")
 MANIFEST_PATH = os.path.join(MKT_DIR, "_manifest.json")
+
+HISTORY_START = "2016-01-01"
+
+EODHD_API_TOKEN = os.environ.get("EODHD_API_TOKEN", "")
+EODHD_BASE      = "https://eodhd.com/api"
 
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
@@ -56,15 +74,27 @@ sys.path.insert(0, LOCAL_DIR)
 # INSTRUMENT REGISTRY
 # ══════════════════════════════════════════════════════════════
 
+# PRICE_ONLY instruments have no meaningful volume data.
+# Phase 2 skips volume-based expressions for these.
+# This also prevents them from being read from the daily pickle
+# (even if the ticker exists there) — we want the index/futures
+# close series, not the equity OHLCV.
 PRICE_ONLY = {
-    "^VIX", "^VIX3M", "^VVIX", "^SKEW",
-    "^TNX", "^TYX", "^FVX", "^IRX",
+    # Indices (EODHD INDX)
+    "VIX.INDX", "VIX3M.INDX", "VVIX.INDX", "SKEW.INDX",
+    "TNX.INDX", "TYX.INDX", "FVX.INDX", "IRX.INDX",
+    # Futures (yfinance)
     "ES=F", "NQ=F", "RTY=F", "YM=F",
     "ZB=F", "ZN=F", "ZF=F", "ZT=F",
     "CL=F", "GC=F", "SI=F", "HG=F",
-    "$nymo", "$tick", "$nyadv", "$nydec",
-    "$trin", "$nyhl", "$nahl", "$nyud",
-    "$spxadp", "$ndxadp",
+    # Breadth internals — direct EODHD (close-only meaningful)
+    "ADVN.INDX", "DECN.INDX", "HIGN.INDX", "LOWN.INDX", "TRIN.INDX",
+    # Breadth internals — raw components for derived instruments
+    "AVVN.INDX", "DVCN.INDX",
+    "ADVQ.INDX", "DECQ.INDX", "UNCQ.INDX",
+    # Breadth internals — computed
+    "NYMO_CALC", "NYUD_CALC", "NDXADP_CALC",
+    # FRED macro
     "FRED:BAMLH0A0HYM2", "FRED:BAMLC0A0CM",
     "FRED:T10Y2Y", "FRED:T10Y3M",
     "FRED:NFCI", "FRED:ANFCI",
@@ -83,14 +113,14 @@ INSTRUMENTS = {
         "MTUM", "QUAL", "VLUE", "SIZE", "USMV", "SPLV", "SPHB", "XMLV", "XSLV",
     ],
     "volatility": [
-        "^VIX", "^VIX3M", "^VVIX", "^SKEW",
+        "VIX.INDX", "VIX3M.INDX", "VVIX.INDX", "SKEW.INDX",
         "VIXM", "VXZ", "VXX", "UVXY", "VIXY", "SVXY", "SVOL",
     ],
     "index_futures": [
         "ES=F", "NQ=F", "RTY=F", "YM=F",
     ],
     "rates_yields": [
-        "^TNX", "^TYX", "^FVX", "^IRX",
+        "TNX.INDX", "TYX.INDX", "FVX.INDX", "IRX.INDX",
     ],
     "treasury_etfs": [
         "SHY", "IEF", "TLT", "TLH", "EDV", "ZROZ",
@@ -159,7 +189,7 @@ INSTRUMENTS = {
         "ARKK", "BITO", "MARA", "RIOT", "WGMI", "GME", "BUZZ", "IPO", "FPX",
     ],
     "bitcoin": [
-        "BTC-USD",
+        "BTC-USD.CC",
     ],
     "leveraged_sentiment": [
         "TQQQ", "UPRO", "TNA", "SPXU", "TZA", "SQQQ",
@@ -180,10 +210,14 @@ INSTRUMENTS = {
     "closed_end_other": [
         "PCEF", "FTSD", "GURU",
     ],
-    "breadth_internals_stooq": [
-        "$nymo", "$tick", "$nyadv", "$nydec",
-        "$trin", "$nyhl", "$nahl", "$nyud",
-        "$spxadp", "$ndxadp",
+    "breadth_internals": [
+        # Direct EODHD replacements
+        "ADVN.INDX", "DECN.INDX", "HIGN.INDX", "LOWN.INDX", "TRIN.INDX",
+        # Raw components (fetched, used to compute derived instruments)
+        "AVVN.INDX", "DVCN.INDX",
+        "ADVQ.INDX", "DECQ.INDX", "UNCQ.INDX",
+        # Computed from raw components after fetch
+        "NYMO_CALC", "NYUD_CALC", "NDXADP_CALC",
     ],
     "macro_fred": [
         "FRED:BAMLH0A0HYM2",
@@ -197,6 +231,9 @@ INSTRUMENTS = {
     ],
 }
 
+# Instruments that are computed from other fetched instruments (not fetched directly)
+DERIVED_INSTRUMENTS = {"NYMO_CALC", "NYUD_CALC", "NDXADP_CALC"}
+
 
 def all_instruments():
     result = []
@@ -205,15 +242,106 @@ def all_instruments():
     return result
 
 
+def _is_pickle_instrument(symbol):
+    """True if this instrument should be read from the daily OHLCV pickle.
+
+    Pickle instruments are plain US ETFs/stocks that exist in
+    universe_ohlcv_daily.pkl. Everything else uses a network source.
+    """
+    if symbol in PRICE_ONLY:
+        return False
+    if symbol in DERIVED_INSTRUMENTS:
+        return False
+    if symbol.endswith(".INDX") or symbol.endswith(".CC"):
+        return False
+    if symbol.startswith("FRED:"):
+        return False
+    if "=" in symbol:    # futures like ES=F
+        return False
+    # Plain ticker — should be in daily pickle
+    return True
+
+
 # ══════════════════════════════════════════════════════════════
-# PHASE 1 — FETCHERS  (called from threads)
+# PHASE 1 — FETCHERS
 # ══════════════════════════════════════════════════════════════
 
-def _fetch_yfinance(symbol, period="10y"):
+def _standard_df(df, min_bars=50):
+    """Ensure standard columns, trim to HISTORY_START, validate min bars."""
+    if df is None or len(df) == 0:
+        return None
+    df = df[["date", "open", "high", "low", "close", "volume"]].copy()
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+    for col in ["open", "high", "low", "close"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
+    df = df.dropna(subset=["close"])
+    df = df[df["close"] > 0]
+    cutoff = pd.Timestamp(HISTORY_START)
+    df = df[df["date"] >= cutoff].sort_values("date").reset_index(drop=True)
+    return df if len(df) >= min_bars else None
+
+
+def _read_from_daily_pickle(symbol, daily_cache):
+    """Read one ticker from the pre-loaded daily OHLCV pickle."""
+    if daily_cache is None or symbol not in daily_cache:
+        return None
+    df = daily_cache[symbol].copy()
+    # Daily pickle already has date/open/high/low/close/volume columns
+    return _standard_df(df)
+
+
+def _fetch_eodhd(eodhd_symbol):
+    """Fetch OHLCV from EODHD for non-US-equity instruments.
+
+    eodhd_symbol: full EODHD symbol like 'VIX.INDX' or 'BTC-USD.CC'
+    The exchange suffix is already in the symbol name.
+    """
+    import urllib.request
+
+    # EODHD API expects the symbol as the path, e.g. /eod/VIX.INDX
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    url = (f"{EODHD_BASE}/eod/{eodhd_symbol}"
+           f"?from={HISTORY_START}&to={end_date}"
+           f"&period=d"
+           f"&api_token={EODHD_API_TOKEN}&fmt=json")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ScanPerfect/1.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+        if not raw.startswith("["):
+            return None
+        data = json.loads(raw)
+        if not data:
+            return None
+
+        df = pd.DataFrame(data)
+        # EODHD INDX instruments: adjusted_close == close (no splits),
+        # but apply the adjustment pattern for consistency
+        close_raw = pd.to_numeric(df["close"], errors="coerce")
+        adj_close = pd.to_numeric(df["adjusted_close"], errors="coerce")
+        ratio = np.where(close_raw > 0, adj_close / close_raw, 1.0)
+
+        df["open"]   = pd.to_numeric(df["open"], errors="coerce") * ratio
+        df["high"]   = pd.to_numeric(df["high"], errors="coerce") * ratio
+        df["low"]    = pd.to_numeric(df["low"], errors="coerce") * ratio
+        df["close"]  = adj_close
+        df["volume"] = pd.to_numeric(df.get("volume", 0), errors="coerce").fillna(0.0)
+        df["date"]   = pd.to_datetime(df["date"])
+
+        return _standard_df(df)
+    except Exception:
+        return None
+
+
+def _fetch_yfinance(symbol):
+    """Fetch OHLCV from yfinance. Used only for futures (ES=F, etc.)."""
     import yfinance as yf
 
-    def _try_download(p):
-        df = yf.download(symbol, period=p, progress=False, auto_adjust=True)
+    try:
+        df = yf.download(
+            symbol, start=HISTORY_START, progress=False, auto_adjust=True
+        )
         if df is None or len(df) == 0:
             return None
         if isinstance(df.columns, pd.MultiIndex):
@@ -222,59 +350,20 @@ def _fetch_yfinance(symbol, period="10y"):
             df.columns = [c.lower() for c in df.columns]
         df = df.reset_index()
         df = df.rename(columns={"Date": "date"})
-        df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
         for col in ["open", "high", "low", "close"]:
             if col not in df.columns:
                 return None
-            df[col] = pd.to_numeric(df[col], errors="coerce")
         if "volume" not in df.columns:
             df["volume"] = 0.0
-        df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
-        df = df[["date", "open", "high", "low", "close", "volume"]].dropna(subset=["close"])
-        cutoff = pd.Timestamp.now() - pd.DateOffset(years=8)
-        df = df[(df["close"] > 0) & (df["date"] >= cutoff)].sort_values("date").reset_index(drop=True)
-        return df if len(df) >= 50 else None
-
-    # Try 10y first for maximum history, fall back to 5y
-    result = _try_download("10y")
-    if result is not None:
-        return result
-    return _try_download("5y")
-
-
-def _fetch_stooq(symbol):
-    import urllib.request, io
-    sym_clean = symbol.lower().lstrip("$")
-    url = f"https://stooq.com/q/d/l/?s=${sym_clean}&i=d"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=20) as r:
-            raw = r.read().decode("utf-8")
-        if "No data" in raw or len(raw.strip().splitlines()) < 5:
-            return None
-        df = pd.read_csv(io.StringIO(raw))
-        df.columns = [c.lower() for c in df.columns]
-        df["date"] = pd.to_datetime(df["date"])
-        for col in ["open", "high", "low", "close"]:
-            if col not in df.columns:
-                num_cols = [c for c in df.columns
-                            if c != "date" and pd.api.types.is_numeric_dtype(df[c])]
-                if num_cols:
-                    df[col] = df[num_cols[0]]
-                else:
-                    return None
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        df["volume"] = 0.0
-        df = df[["date", "open", "high", "low", "close", "volume"]].dropna(subset=["close"])
-        cutoff = pd.Timestamp.now() - pd.DateOffset(years=8)
-        df = df[df["date"] >= cutoff].sort_values("date").reset_index(drop=True)
-        return df if len(df) >= 50 else None
+        return _standard_df(df)
     except Exception:
         return None
 
 
 def _fetch_fred(series_id):
+    """Fetch macro series from FRED CSV endpoint."""
     import urllib.request, io
+
     url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -290,24 +379,115 @@ def _fetch_fred(series_id):
         df["open"] = df["high"] = df["low"] = df["close"] = df["value"]
         df["volume"] = 0.0
         df = df[["date", "open", "high", "low", "close", "volume"]]
-        cutoff = pd.Timestamp.now() - pd.DateOffset(years=8)
-        df = df[df["date"] >= cutoff].sort_values("date").reset_index(drop=True)
-        return df if len(df) >= 50 else None
+        return _standard_df(df)
     except Exception:
         return None
 
 
-def _fetch_one(instrument_id):
+def _fetch_one(instrument_id, daily_cache=None):
+    """Route an instrument to the correct fetcher.
+
+    Returns (instrument_id, DataFrame_or_None).
+    """
     try:
-        if instrument_id.startswith("FRED:"):
+        if instrument_id in DERIVED_INSTRUMENTS:
+            return instrument_id, None  # computed later, not fetched
+        elif instrument_id.startswith("FRED:"):
             df = _fetch_fred(instrument_id[5:])
-        elif instrument_id.startswith("$"):
-            df = _fetch_stooq(instrument_id)
+        elif instrument_id.endswith(".INDX") or instrument_id.endswith(".CC"):
+            df = _fetch_eodhd(instrument_id)
+        elif _is_pickle_instrument(instrument_id):
+            df = _read_from_daily_pickle(instrument_id, daily_cache)
         else:
+            # Futures and anything else — yfinance
             df = _fetch_yfinance(instrument_id)
         return instrument_id, df
     except Exception:
         return instrument_id, None
+
+
+# ══════════════════════════════════════════════════════════════
+# DERIVED INSTRUMENTS (computed from fetched components)
+# ══════════════════════════════════════════════════════════════
+
+def _compute_derived_instruments(results):
+    """Compute derived breadth instruments from raw components.
+
+    NYMO_CALC:   McClellan Oscillator = EMA19(A-D) - EMA39(A-D)
+    NYUD_CALC:   NYSE up/down volume  = AVVN / DVCN
+    NDXADP_CALC: NASDAQ A/D percent   = (ADVQ-DECQ)/(ADVQ+DECQ+UNCQ)*100
+
+    Modifies results dict in place.
+    """
+    computed = 0
+
+    # --- NYMO_CALC: McClellan Oscillator ---
+    advn = results.get("ADVN.INDX")
+    decn = results.get("DECN.INDX")
+    if advn is not None and decn is not None:
+        # Align on date
+        merged = pd.merge(
+            advn[["date", "close"]].rename(columns={"close": "adv"}),
+            decn[["date", "close"]].rename(columns={"close": "dec"}),
+            on="date", how="inner"
+        ).sort_values("date").reset_index(drop=True)
+        if len(merged) >= 50:
+            ad_diff = merged["adv"] - merged["dec"]
+            ema19 = ad_diff.ewm(span=19, adjust=False).mean()
+            ema39 = ad_diff.ewm(span=39, adjust=False).mean()
+            nymo = ema19 - ema39
+            df = pd.DataFrame({
+                "date": merged["date"],
+                "open": nymo, "high": nymo, "low": nymo, "close": nymo,
+                "volume": 0.0,
+            })
+            results["NYMO_CALC"] = df
+            computed += 1
+
+    # --- NYUD_CALC: NYSE up/down volume ratio ---
+    avvn = results.get("AVVN.INDX")
+    dvcn = results.get("DVCN.INDX")
+    if avvn is not None and dvcn is not None:
+        merged = pd.merge(
+            avvn[["date", "close"]].rename(columns={"close": "up_vol"}),
+            dvcn[["date", "close"]].rename(columns={"close": "dn_vol"}),
+            on="date", how="inner"
+        ).sort_values("date").reset_index(drop=True)
+        if len(merged) >= 50:
+            ratio = merged["up_vol"] / merged["dn_vol"].replace(0, np.nan)
+            df = pd.DataFrame({
+                "date": merged["date"],
+                "open": ratio, "high": ratio, "low": ratio, "close": ratio,
+                "volume": 0.0,
+            })
+            results["NYUD_CALC"] = df
+            computed += 1
+
+    # --- NDXADP_CALC: NASDAQ advance-decline percent ---
+    advq = results.get("ADVQ.INDX")
+    decq = results.get("DECQ.INDX")
+    uncq = results.get("UNCQ.INDX")
+    if advq is not None and decq is not None and uncq is not None:
+        merged = advq[["date", "close"]].rename(columns={"close": "adv"})
+        merged = pd.merge(merged,
+                          decq[["date", "close"]].rename(columns={"close": "dec"}),
+                          on="date", how="inner")
+        merged = pd.merge(merged,
+                          uncq[["date", "close"]].rename(columns={"close": "unc"}),
+                          on="date", how="inner")
+        merged = merged.sort_values("date").reset_index(drop=True)
+        if len(merged) >= 50:
+            total = merged["adv"] + merged["dec"] + merged["unc"]
+            pct = ((merged["adv"] - merged["dec"]) / total.replace(0, np.nan)) * 100
+            df = pd.DataFrame({
+                "date": merged["date"],
+                "open": pct, "high": pct, "low": pct, "close": pct,
+                "volume": 0.0,
+            })
+            results["NDXADP_CALC"] = df
+            computed += 1
+
+    return computed
 
 
 # ══════════════════════════════════════════════════════════════
@@ -320,7 +500,7 @@ def fetch_all(force=False, n_threads=16):
     print("=" * 70)
 
     instruments = all_instruments()
-    print(f"\n  {len(instruments)} instruments  |  {n_threads} threads")
+    print(f"\n  {len(instruments)} instruments")
 
     if not force and os.path.exists(OHLCV_PATH):
         print(f"\n  market_ohlcv.pkl already exists. Use --force to re-fetch.")
@@ -330,24 +510,86 @@ def fetch_all(force=False, n_threads=16):
         return existing
 
     os.makedirs(CACHE_DIR, exist_ok=True)
-    t0        = time.time()
-    results   = {}
-    failed    = []
+
+    # Load daily pickle for ETF/stock instruments
+    daily_cache = None
+    if os.path.exists(DAILY_PKL):
+        print(f"\n  Loading daily pickle for ETF reads...")
+        with open(DAILY_PKL, "rb") as f:
+            daily_cache = pickle.load(f)
+        print(f"  {len(daily_cache)} tickers in daily pickle")
+    else:
+        print(f"\n  WARNING: {DAILY_PKL} not found — ETF instruments will fail")
+
+    # Split instruments into fetch paths
+    pickle_insts  = []
+    network_insts = []
+    derived_insts = []
+
+    for inst in instruments:
+        if inst in DERIVED_INSTRUMENTS:
+            derived_insts.append(inst)
+        elif _is_pickle_instrument(inst):
+            pickle_insts.append(inst)
+        else:
+            network_insts.append(inst)
+
+    print(f"\n  Pickle reads:  {len(pickle_insts)}")
+    print(f"  Network fetch: {len(network_insts)} "
+          f"(EODHD + yfinance + FRED)")
+    print(f"  Derived:       {len(derived_insts)} "
+          f"(computed after fetch)")
+
+    t0      = time.time()
+    results = {}
+    failed  = []
+
+    # 1. Pickle reads (instant, no threading needed)
+    print(f"\n  Reading {len(pickle_insts)} instruments from daily pickle...")
+    for inst in pickle_insts:
+        df = _read_from_daily_pickle(inst, daily_cache)
+        if df is not None:
+            results[inst] = df
+        else:
+            failed.append(inst)
+            print(f"    MISS {inst} (not in daily pickle)")
+
+    pickle_time = time.time() - t0
+    print(f"  Pickle: {len(results)} OK, {len(failed)} missing  [{pickle_time:.1f}s]")
+
+    # 2. Network fetches (threaded)
+    print(f"\n  Fetching {len(network_insts)} instruments from network "
+          f"({n_threads} threads)...")
+    t1        = time.time()
     completed = 0
 
     with ThreadPoolExecutor(max_workers=n_threads) as pool:
-        futures = {pool.submit(_fetch_one, inst): inst for inst in instruments}
+        futures = {
+            pool.submit(_fetch_one, inst, None): inst
+            for inst in network_insts
+        }
         for future in as_completed(futures):
             inst_id, df = future.result()
             completed += 1
             if df is not None:
                 results[inst_id] = df
-                print(f"  [{completed:3d}/{len(instruments)}] OK   {inst_id:25s} "
-                      f"{len(df)} bars  "
-                      f"({df['date'].iloc[0].date()} – {df['date'].iloc[-1].date()})")
+                print(f"    [{completed:3d}/{len(network_insts)}] OK   "
+                      f"{inst_id:25s} {len(df)} bars  "
+                      f"({df['date'].iloc[0].date()} – "
+                      f"{df['date'].iloc[-1].date()})")
             else:
                 failed.append(inst_id)
-                print(f"  [{completed:3d}/{len(instruments)}] FAIL {inst_id}")
+                print(f"    [{completed:3d}/{len(network_insts)}] FAIL "
+                      f"{inst_id}")
+
+    net_time = time.time() - t1
+    print(f"  Network: {completed - len([f for f in failed if f in network_insts])} OK  "
+          f"[{net_time:.1f}s]")
+
+    # 3. Compute derived instruments
+    print(f"\n  Computing derived instruments...")
+    n_derived = _compute_derived_instruments(results)
+    print(f"  Computed: {n_derived} derived instruments")
 
     elapsed = time.time() - t0
 
@@ -395,7 +637,8 @@ def instrument_filename(instrument_id):
             .replace("=", "eq_")
             .replace(":", "col_")
             .replace("$", "dol_")
-            .replace("-", "dash_"))
+            .replace("-", "dash_")
+            .replace(".", "dot_"))
     return f"{safe}.npz"
 
 
@@ -754,48 +997,97 @@ def append_new_bars(n_threads=16):
     with open(OHLCV_PATH, "rb") as f:
         ohlcv_cache = pickle.load(f)
 
+    # Load daily pickle for ETF reads (already refreshed by nightly steps 1-4)
+    daily_cache = None
+    if os.path.exists(DAILY_PKL):
+        with open(DAILY_PKL, "rb") as f:
+            daily_cache = pickle.load(f)
+
     instruments = all_instruments()
     updated     = []
     today       = pd.Timestamp.now().normalize()
 
-    def _append_one(inst_id):
+    # Split: pickle instruments vs network instruments vs derived
+    pickle_insts  = [i for i in instruments
+                     if _is_pickle_instrument(i)]
+    network_insts = [i for i in instruments
+                     if i not in DERIVED_INSTRUMENTS
+                     and not _is_pickle_instrument(i)]
+
+    # 1. Pickle instruments — compare dates, merge if newer bars exist
+    print(f"\n  Checking {len(pickle_insts)} pickle instruments...")
+    for inst_id in pickle_insts:
+        existing = ohlcv_cache.get(inst_id)
+        if daily_cache is None or inst_id not in daily_cache:
+            continue
+        fresh_df = _standard_df(daily_cache[inst_id].copy())
+        if fresh_df is None:
+            continue
+        if existing is not None:
+            last_existing = pd.Timestamp(existing["date"].iloc[-1])
+            last_fresh    = pd.Timestamp(fresh_df["date"].iloc[-1])
+            if last_fresh <= last_existing:
+                continue
+            # Merge: keep existing + append new bars from pickle
+            new_bars = fresh_df[fresh_df["date"] > last_existing]
+            if len(new_bars) == 0:
+                continue
+            merged = pd.concat([existing, new_bars], ignore_index=True)
+            merged = (merged.drop_duplicates("date")
+                      .sort_values("date").reset_index(drop=True))
+            ohlcv_cache[inst_id] = merged
+        else:
+            ohlcv_cache[inst_id] = fresh_df
+        updated.append(inst_id)
+        print(f"    {inst_id:25s} → {len(ohlcv_cache[inst_id])} bars")
+
+    # 2. Network instruments — threaded fetch
+    def _append_one_network(inst_id):
         existing = ohlcv_cache.get(inst_id)
         if existing is not None:
             last = pd.Timestamp(existing["date"].iloc[-1])
             if last >= today:
                 return inst_id, None
-        try:
-            if inst_id.startswith("FRED:"):
-                df_new = _fetch_fred(inst_id[5:])
-            elif inst_id.startswith("$"):
-                df_new = _fetch_stooq(inst_id)
-            else:
-                df_new = _fetch_yfinance(inst_id, period="1mo")
-            if df_new is None:
-                return inst_id, None
-            if existing is not None:
-                last  = pd.Timestamp(existing["date"].iloc[-1])
-                new   = df_new[df_new["date"] > last]
-                if len(new) == 0:
-                    return inst_id, None
-                merged = pd.concat([existing, new], ignore_index=True)
-                merged = (merged.drop_duplicates("date")
-                          .sort_values("date").reset_index(drop=True))
-                return inst_id, merged
-            return inst_id, df_new
-        except Exception:
+
+        _, df_new = _fetch_one(inst_id, daily_cache=None)
+        if df_new is None:
             return inst_id, None
 
-    print(f"\n  Fetching new bars ({n_threads} threads)...")
+        if existing is not None:
+            last  = pd.Timestamp(existing["date"].iloc[-1])
+            new   = df_new[df_new["date"] > last]
+            if len(new) == 0:
+                return inst_id, None
+            merged = pd.concat([existing, new], ignore_index=True)
+            merged = (merged.drop_duplicates("date")
+                      .sort_values("date").reset_index(drop=True))
+            return inst_id, merged
+        return inst_id, df_new
+
+    print(f"\n  Fetching {len(network_insts)} network instruments "
+          f"({n_threads} threads)...")
     with ThreadPoolExecutor(max_workers=n_threads) as pool:
-        futures = {pool.submit(_append_one, inst): inst for inst in instruments}
+        futures = {pool.submit(_append_one_network, inst): inst
+                   for inst in network_insts}
         for future in as_completed(futures):
             inst_id, df_merged = future.result()
             if df_merged is not None:
                 ohlcv_cache[inst_id] = df_merged
                 updated.append(inst_id)
-                n_new = len(df_merged) - len(ohlcv_cache.get(inst_id, df_merged))
-                print(f"  {inst_id:25s} → {len(df_merged)} bars")
+                print(f"    {inst_id:25s} → {len(df_merged)} bars")
+
+    # 3. Recompute derived instruments (always — cheap operation)
+    n_derived = _compute_derived_instruments(ohlcv_cache)
+    # Mark derived as updated if any component was updated
+    derived_components = {
+        "NYMO_CALC":   {"ADVN.INDX", "DECN.INDX"},
+        "NYUD_CALC":   {"AVVN.INDX", "DVCN.INDX"},
+        "NDXADP_CALC": {"ADVQ.INDX", "DECQ.INDX", "UNCQ.INDX"},
+    }
+    updated_set = set(updated)
+    for derived, components in derived_components.items():
+        if updated_set & components and derived in ohlcv_cache:
+            updated.append(derived)
 
     with open(OHLCV_PATH, "wb") as f:
         pickle.dump(ohlcv_cache, f, protocol=4)
@@ -867,6 +1159,17 @@ def print_status():
         last = max(df["date"].iloc[-1] for df in cache.values())
         print(f"  market_ohlcv.pkl   {len(cache)} instruments  "
               f"{size_mb:.0f} MB  last bar: {last.date()}")
+
+        # Show source breakdown
+        pickle_count = sum(1 for k in cache if _is_pickle_instrument(k))
+        eodhd_count  = sum(1 for k in cache
+                          if k.endswith(".INDX") or k.endswith(".CC"))
+        yf_count     = sum(1 for k in cache if "=" in k)
+        fred_count   = sum(1 for k in cache if k.startswith("FRED:"))
+        derived_count = sum(1 for k in cache if k in DERIVED_INSTRUMENTS)
+        print(f"  Sources: {pickle_count} pickle, {eodhd_count} EODHD, "
+              f"{yf_count} yfinance, {fred_count} FRED, "
+              f"{derived_count} derived")
     else:
         print("  market_ohlcv.pkl   NOT FOUND — run --fetch")
 

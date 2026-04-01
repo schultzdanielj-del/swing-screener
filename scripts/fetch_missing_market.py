@@ -3,7 +3,7 @@ import os, sys, pickle, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from local_runner.market_cache_builder import (
-    all_instruments, _fetch_one, OHLCV_PATH, CACHE_DIR
+    all_instruments, _fetch_one, OHLCV_PATH, CACHE_DIR, DERIVED_INSTRUMENTS
 )
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -13,11 +13,11 @@ if __name__ == "__main__":
         cache = pickle.load(f)
     print(f"Existing pickle: {len(cache)} instruments")
 
-    # Find missing
+    # Find missing (skip derived — those are computed, not fetched)
     all_inst = all_instruments()
-    stooq = [i for i in all_inst if i.startswith("$")]
-    missing = [i for i in all_inst if i not in cache and i not in stooq]
-    print(f"Missing (non-Stooq): {len(missing)}")
+    missing = [i for i in all_inst
+               if i not in cache and i not in DERIVED_INSTRUMENTS]
+    print(f"Missing: {len(missing)}")
     if not missing:
         print("Nothing to fetch.")
         sys.exit(0)
