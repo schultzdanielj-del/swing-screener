@@ -217,14 +217,21 @@ def _init_scan_worker(cache, conditions, expr_cache_dir, cond_col_indices):
 
 
 def _load_ticker_npz(ticker):
-    """Load expression cache .npz for a ticker."""
+    """Load expression cache .npz for a ticker.
+
+    Casts float16 data to float32 for consistent precision.
+    Mirrors the cast in expr_cache_builder.load_ticker_cache().
+    """
     safe = ticker.replace("/", "_").replace("\\", "_")
     path = os.path.join(_worker_expr_cache, f"{safe}.npz")
     if not os.path.exists(path):
         return None, None
     try:
         loaded = np.load(path, allow_pickle=True)
-        return loaded["dates"], loaded["data"]
+        data = loaded["data"]
+        if data.dtype != np.float32:
+            data = data.astype(np.float32)
+        return loaded["dates"], data
     except:
         return None, None
 
