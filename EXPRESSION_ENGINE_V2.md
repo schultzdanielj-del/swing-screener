@@ -537,8 +537,166 @@ LSP + algo is 73% of per-ticker cost. The actual incremental work (state + lookb
 
 1. ~~Build `_append_one_ticker()` worker~~ — **DONE (2026-04-01).** Infrastructure shipped and validated (50/50 tickers, zero mismatches). Currently runs `_compute_ticker_full` internally — save-phase savings only (~1.6s/ticker).
 2. ~~Correctness gate~~ — **DONE (2026-04-01).** `scripts/validate_append_infra.py` — fakes new bar by pretending last .npz row doesn't exist, verifies appended row matches fresh `_compute_ticker_full` output after float16 round-trip. Also tests `load_ticker_cache` vstack, `signal_filter._load_ticker_npz`, file sizes, cleanup.
-3. Replace `_compute_ticker_full` inside `_append_one_ticker` with real phase 0-4 forward-propagation (state, lookback, HTF, LSP+algo). That drops per-ticker cost from ~3-7s to ~0.87s → ~13 min total.
-4. Integrate into nightly pipeline (step 5) — already wired, just needs real nightly run to confirm end-to-end.
+3. Replace `_compute_ticker_full` inside `_append_one_ticker` with real forward-propagation using the four-file design below. Target: ~10ms/ticker → under 5 minutes total.
+4. One-time setup: generate .lookback and .state files from existing cache (~33 min).
+5. Integrate into nightly pipeline (step 5) — already wired, just needs real nightly run to confirm end-to-end.
+
+#### Forward-Propagation Design — Four Files Per Ticker
+
+**Core principle: Zero lookback.** Each new bar is computed from:
+1. Today's daily OHLCV candle (1 bar: O, H, L, C, V)
+2. The previous bar's expression values (already in the cache)
+3. A small state file per ticker (~3 KB) with intermediate values for forward computation
+4. A lookback file (~179 KB) with trailing window of intermediate columns from the base .npz
+
+No ExpressionEngine. No full indicator series. No pandas. Pure numpy scalar math.
+
+**File layout per ticker:**
+
+| File | Size per ticker | Total | Written when | Purpose |
+|------|----------------|-------|-------------|---------|
+| `.npz` | ~10 MB | 111 GB | Full rebuild only | Base historical data (15,805 expression cols). Never modified by append. |
+| `.append` | 31 KB/day | ~0.3 GB/month | Nightly | New rows: 15,805 expression cols + intermediate cols. `load_ticker_cache` strips intermediates — consumers see 15,805. |
+| `.lookback` | ~179 KB | ~2 GB | Setup + nightly | Last MAX_LOOKBACK (504) rows of intermediate columns from base .npz tail. Sliding window shifted nightly. |
+| `.state` | ~3 KB | ~34 MB | Nightly (overwritten) | Forward computation state: cumsums, EMA values, RSI internals, ADX chain, MACD signals, stochastic raw_k, rolling max/min indices, HTF partial candle, LSP/algo pivot state. |
+| `.append_dates` | ~10 bytes/day | tiny | Nightly | Date strings for appended rows. |
+
+**Consumer impact:** `load_ticker_cache()` and `signal_filter._load_ticker_npz()` read base .npz + .append file (first 15,805 columns only) and concatenate. All downstream consumers unchanged.
+
+**Disk:** starts at 112 GB, grows ~0.3 GB/month from .append files. Quarterly consolidation optional (merge .append into new .npz, ~33 min).
+
+##### State File Contents (~212 float64 values)
+
+**Cumulative sums (for SMA-based indicators):**
+- `cumsum_close` — running sum of all closes from bar 0
+- `cumsum_volume` — running sum of all volumes
+- `cumsum_hl` — running sum of (high - low), for ADR
+- `cumsum_tr` — running sum of true range, for ATR
+- `cumsum_bop_raw` — for BOP SMA
+- `cumsum_mfv` — money flow volume, for CMF
+- `cumsum_abs_diff` — for Kaufman efficiency
+- `cumsum_tp` — typical price, for CCI
+- `cumsum_c2` — close squared, for Bollinger stddev
+
+**EMA states:**
+- `xavgc{p}` for p in [5,8,9,10,12,13,20,21,30,50,65,100,150,200] — 14 values
+
+**RSI internals:**
+- `rsi_avg_gain_{p}`, `rsi_avg_loss_{p}` for p in [5,7,9,14,21,28] — 12 values
+  (Wilder smoothing: avg_gain[i] = (avg_gain[i-1]*(p-1) + gain) / p)
+
+**ADX chain:**
+- `ema_dmp_{p}`, `ema_dmm_{p}`, `ema_dx_{p}` for p in [7,10,14,20] — 12 values
+
+**MACD signal line:**
+- `macd_signal_{fast}_{slow}` for 5 MACD pairs — 5 values
+
+**Stochastic raw_k:**
+- `raw_k_{p}` prev 2 values for p in [3,5,7,9,10,14,21,28,50] — 18 values
+
+**Rolling max/min tracking:**
+- `maxh_idx_{p}` for 29 maxH periods — bar index where current max occurred
+- `minl_idx_{p}` for 19 minL periods — bar index where current min occurred
+- `maxc_idx_{p}` for 3 maxC periods — bar index where current max close occurred
+- Total: 51 values
+- Update rule: if new value >= current max, update index. If old max drops off window, rescan from loaded data (rare, tiny scan).
+
+**Aroon tracking:**
+- `aroon_maxh_idx_{p}`, `aroon_minl_idx_{p}` for 7 periods — 14 values
+
+**OBV:**
+- `obv` — cumulative, just previous value
+
+**HTF partial candle state (weekly + monthly):**
+- `htf_{w,m}_partial_{open,high,low,close,volume}` — 10 values
+- `htf_{w,m}_period_id` — 2 values (which week/month we're in)
+- `htf_{w,m}_xavgc{p}` — 14 x 2 = 28 EMA states
+- `htf_{w,m}_ema_dmp/dmm/dx_{p}` — 12 x 2 = 24 ADX states
+- `htf_{w,m}_obv` — 2 values
+- `htf_{w,m}_cumsum_*` — 11 cumsums x 2 = 22 values
+- `htf_{w,m}_macd_signal_*` — 5 x 2 = 10 values
+- Total HTF state: ~98 values
+
+**LSP state:** serialized pivot data — active pivot prices, break counts, bar indices, AVWAP state. Variable-length blob in .state file.
+
+**Algo line state:** serialized trendline data — slope, intercept, volume, bar index. Variable-length blob in .state file.
+
+##### 1-Bar Forward Computation — By Expression Type
+
+**Extension/MA/EMA expressions (~1,850 daily arithmetic):**
+- SMA: `avgc50[i] = (cumsum_close[i] - cumsum_close[i-50]) / 50` where cumsum_close[i] = cumsum_close[i-1] + close[today] (from .state), cumsum_close[i-50] is the intermediate column at row (current_bar - 50) in .lookback or .append
+- EMA: `xavgc20[i] = alpha * close[today] + (1-alpha) * xavgc20[i-1]` from .state
+- Extension: `(close[today] - avgc50[i]) / atr14[i]` — pure arithmetic from computed intermediates
+- MA slope: `(ma[i] - ma[i-offset]) / norm[i]` — ma[i-offset] is intermediate column value at row (current_bar - offset)
+- RSI: `avg_gain[i] = (avg_gain[i-1]*(p-1) + max(0, close[today]-close[yesterday])) / p` from .state
+- ADX: chain of 3 EMAs (DM+, DM-, DX) updated from .state
+- All others follow same pattern: today's OHLCV + .state intermediates -> new values
+
+**Boolean aggregate expressions (~2,413):**
+- count_true: `count[i] = count[i-1] + bool[today] - bool[i-period]` where bool[i-period] read from .lookback/.append intermediate columns
+- since_true: `if bool[today]: 0 else: since[i-1] + 1` — prev value from .append/.npz
+- true_in_row: `if bool[today]: tir[i-1] + 1 else: 0`
+
+**Extension structure (~1,198 on_series/on_series_bool_agg):**
+- Computed from extension series intermediate columns using same lookback window ops
+
+**Lookback expressions (percentile_rank, rolling max/min, aroon, CCI, stochastic, etc.):**
+- percentile_rank: read last N expression values from .npz tail + .append, count how many <= today's value
+- rolling max/min: tracked via indices in .state, rescan from loaded data only when old max drops off
+- aroon: same index tracking as rolling max/min
+- CCI: typical price SMA (from cumsum) + mean deviation (need window — read from .lookback/.append)
+- stochastic: rolling max(H)/min(L) tracked like maxH/minL
+
+**LSP expressions (80 precomputed):**
+- 1-bar forward: check if new pivot formed, update break counts, update distances, increment bars_back, update AVWAP.
+- LSP state is variable-length serialized blob in .state file.
+
+**Algo line expressions (44 precomputed):**
+- 1-bar forward: check if today forms new trendline anchor, update distances/touches/breaks.
+- Variable-length serialized blob in .state file.
+
+**HTF expressions (~10,466: 5,233 weekly + 5,233 monthly):**
+- Load partial candle state from .state
+- Same period as yesterday? Update partial (high=max, low=min, close=today, volume+=today)
+- New period? Close prior partial -> update all HTF closed intermediates (EMA, cumsums roll forward) -> start new partial
+- Compute all HTF expression values using same 1-bar-forward formulas on HTF intermediates
+
+##### MAX_LOOKBACK
+
+**Two distinct lookback requirements:**
+
+1. **Intermediate lookback (for .lookback file): 504 bars.** This is how far back the forward-propagation formulas need to reach into intermediate columns (cumsums, raw OHLCV). Driven by extension_ceiling_ratio (504), percentile_rank (252), roc_percentile_rank (302), avgc200 (200).
+
+2. **Expression-value lookback: 1,260 bars.** Some expressions (10 exit `ext_ceiling_ratio` variants) need rolling max over 1,260 prior EXPRESSION values. These read directly from the loaded .npz tail + .append data — NOT from .lookback. The append worker loads the .npz tail (last 1,260 rows of expression columns) for these ops.
+
+Stored in manifest. Expression library change (fingerprint mismatch) triggers full rebuild which recalculates this.
+
+.lookback file size: 504 x ~178 intermediates x 2 bytes = ~179 KB per ticker. ~2 GB total.
+
+##### One-Time Setup (~33 minutes)
+
+For each of ~11,200 tickers:
+1. Load .npz (dates + data)
+2. Load ticker's OHLCV from daily pickle
+3. Build ExpressionEngine on full OHLCV
+4. Run `build_numpy_intermediates()` -> all intermediate arrays
+5. Extract cumulative sums, EMA states, RSI internals, etc.
+6. Write `.state` file with last-bar values of all ~212 state variables
+7. Compute intermediate columns for last MAX_LOOKBACK (504) rows
+8. Write `.lookback` file with those 504 rows of intermediate columns
+9. Delete any existing `.append` and `.append_dates` files (clean start)
+
+No full expression cache rebuild needed. Existing .npz files stay as-is.
+
+##### Nightly Append Timing
+
+Per ticker: read .state (<1ms), read lookback values (<1ms), compute intermediates (<1ms), compute 15,805 expressions (<1ms), compute HTF expressions (<1ms), compute LSP/algo updates (<5ms), write .append row (<1ms), write .state (<1ms), update .lookback (<1ms).
+
+**Total per ticker: ~10ms. 11,200 tickers / 14 workers = ~8 seconds + overhead = under 5 minutes.**
+
+##### Consolidation (Optional, Quarterly)
+
+Merge base .npz + .append into new base .npz. Regenerate .lookback from new base. Delete old .append. Takes ~33 minutes. Resets growth to zero.
 
 #### Bugs Found and Fixed During Increment 2 Build (2026-04-01)
 
