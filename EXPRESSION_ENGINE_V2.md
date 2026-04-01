@@ -416,62 +416,128 @@ Unified `_build_htf_cache` + `_append_htf_cache` into single `_sync_htf_cache(fu
 - Empty cache save guard needed — `build_daily_cache` can save a 0-ticker pickle if ticker list is empty, which then blocks the fallback chain on next run. Needs a guard: don't save if universe is empty.
 - Failed counter in `_sync_htf_cache` summary overcounts — reports first-attempt failures even when retry sweep succeeds. Cosmetic only.
 
-### Task H Phase 3, Increment 2: True Incremental Append — DESIGN (2026-03-29)
+### Task H Phase 3, Increment 2: True Incremental Append — DESIGN (2026-04-01)
 
-**Problem:** Current `append_new_bars()` does a full recompute of every ticker with new bars — same as `build_full`, just scoped. Takes ~80-90 min. Nightly only adds 1 new bar per ticker. Every ticker in the daily OHLCV cache gets a new bar on each trading day.
+**Problem:** Current `append_new_bars()` does a full recompute of every ticker with new bars — same as `build_full`, just scoped. Takes ~124 min. Nightly only adds 1 new bar per ticker. Every ticker in the daily OHLCV cache gets a new bar on each trading day.
 
 **Critical constraint — HTF source consistency:** Every ticker must use the SAME HTF data source (pickle vs resample) in both full rebuild and incremental. If the full rebuild used pickle data for ticker X, incremental must also use pickle data. If pickle wasn't available and full rebuild resampled, incremental must also resample. Mixing sources = different HTF values for the same bar = broken immutability. This is why HTF gaps must be filled BEFORE the baseline full rebuild.
 
-**Design — per-ticker incremental worker:**
+#### Expression Dependency Audit (2026-04-01)
 
-1. Load existing .npz (dates + data array from previous build)
-2. Load full daily OHLCV from daily pickle (needed for indicator lookbacks)
-3. Compare: if OHLCV has no new bars beyond cached dates, skip ticker
-4. Build ExpressionEngine on full daily OHLCV
-5. `engine.set_target(len(df) - 1)` — point to last bar
+Ran `scripts/validate_incremental_append.py` — classifies all 16,051 expressions by what each needs to compute a single new bar's value.
 
-**Daily expressions (~5,600):**
-6. For each daily arithmetic expression: `engine.compute(expr)` → single float. Engine lazily caches indicator series (RSI, MA, ATR, etc.) on first access, subsequent expressions reuse cached values. 16,051 `.iloc[i]` calls, not 16,051 full series computations.
-7. Boolean aggregates (count_true, since_true, true_in_row): `engine.compute(expr)` handles these — internally calls `_bool_series()` which computes full series, then indexes at target. Cached per unique condition (127 conditions).
-8. Extension structure (on_series, on_series_bool_agg — ~1,198 expressions): `engine.compute()` does NOT handle these. Must use `compute_series()` on the 2 base extension series (ext_avgc50_adr14, ext_avgc200_adr14), then compute derived indicators (trendline_deviation, channel_position, bool_agg), take `[-1]` value. Full series computation but only 2 base series + ~40 unique derived indicators.
+**Results (16,051 total):**
 
-**LSP + Algo (124 precomputed):**
-9. Run `compute_all_lsp_series(df)` on full daily OHLCV → dict of arrays, extract last-bar values for each LSP expression
-10. Run `compute_all_algo_series(df)` → same pattern
+| Category | Count | Description |
+|----------|-------|-------------|
+| state_only | 1,177 | Prev expression row + today's OHLCV. Scalar math: EMA updates, slope diffs, ratios from today's bar. |
+| lookback | 4,284 | Needs historical window of prior expression values. Rolling max, percentile rank, boolean scans, aroon argmax, CCI mean deviation, trendline regression. Max depth: 1,260 bars. |
+| htf | 10,466 | Needs HTF OHLCV pickles (weekly + monthly). Partial candle engine builds intermediates on closed HTF series, extends to today's partial candle. |
+| precomputed_lsp | 80 | LSP detector — runs `compute_all_lsp_series(df)` on full daily OHLCV. |
+| precomputed_algo | 44 | Algo line detector — runs `compute_all_algo_series(df)` on full daily OHLCV. |
 
-**HTF (weekly ~5,233 + monthly ~5,233):**
-11. Load weekly/monthly DataFrames from HTF pickles (nightly steps 3-4 already updated these with `_merge_htf_bars` — partial candle overwritten)
-12. Build HTF ExpressionEngine on HTF DataFrame (~520 weekly / ~120 monthly bars — trivially fast)
-13. `htf_engine.set_target(len(htf_df) - 1)` — last HTF bar
-14. For each HTF arith/bool expression: `htf_engine.compute(base_expr)` → single float
-15. HTF ext struct: `compute_series()` on HTF base extension series, compute derived indicators at HTF resolution, take `[-1]`
-16. No daily-to-HTF mapping needed — last HTF bar IS the current period, maps to today's daily bar directly
+**Lookback depth distribution:**
 
-**Save:**
-17. Allocate new row: 1D array of 16,051 float32 values
-18. `np.vstack([existing_data, new_row])` → append
-19. Append new date string to dates array
-20. Save with fast compression (zipfile level 1)
+| Depth | Count |
+|-------|-------|
+| 1-10 bars | 1,895 |
+| 11-50 bars | 2,177 |
+| 51-126 bars | 143 |
+| 127-252 bars | 35 |
+| 253-504 bars | 24 |
+| 505-1260 bars | 10 |
 
-**Performance estimates:**
-- All tickers in cache: ~11,201
-- Per-ticker compute: ~2-3s (engine.compute is fast — lazy cache + single index)
-- LSP + algo: ~0.67s (unchanged, runs full detection)
-- HTF: ~0.3s (tiny arrays)
-- Load existing .npz: ~0.3s
-- Save: ~1.6s (compression on full array — same cost as full rebuild)
-- Total per-ticker: ~5s
-- 14 workers, 11,201 tickers: ~5 × 11,201 / 14 ≈ 4,000s ≈ 67 min
-- Target: <30 min — this design does NOT meet it. Replaced by Increment 2 revised design.
+The 10 deepest are all `ext_ceiling_ratio` from exit expressions with lookback=1260 (5 years).
 
-**What engine.compute() handles vs doesn't:**
-- HANDLES: all daily arithmetic ops (extension, ma_slope, rsi, adx, percentile_rank, swing counts, bollinger, macd, aroon, cmf, etc.), all boolean aggregates (count_true, since_true, true_in_row)
-- DOES NOT HANDLE: on_series, on_series_bool_agg (extension structure), precomputed (LSP, algo, HTF)
-- The unhandled ops have dedicated code paths in the worker (steps 8-15 above)
+**Immutability gate — PASSED:** Running `_compute_ticker_full` on N bars vs N-1 bars produces identical values for bar N-1. Zero mismatches across all 16,051 expressions. The computation is deterministic — same data, same bar, identical output regardless of how many bars follow.
 
-**New tickers:** Tickers in daily cache but not in expr cache get full compute via existing `_compute_and_save_ticker`. Rare after baseline build (only new IPOs/listings).
+**Incremental feasibility:** 15,927 expressions (99.2%) are incrementally computable without full OHLCV scan. Only 124 (0.8%) need full daily DataFrame (LSP + algo detectors).
 
-**Decisions:**
-- Full rebuild stays as-is. Incremental is a NEW code path in `append_new_bars()`, not a modification of `build_full()`.
-- The resample fallback for HTF stays in the incremental worker for tickers without HTF pickle data — same as full rebuild, preserving consistency.
-- 2-5 min target from original spec was optimistic. This ExpressionEngine-based design estimates ~67 min for all 11,201 tickers — barely faster than full rebuild. Replaced by the forward-propagation design below.
+#### Design — Per-Ticker Incremental Worker
+
+**Phase 0: Load existing data**
+1. Load existing .npz — get prev row (last row of cached data) and lookback buffer (last 1,260 rows)
+2. Load today's OHLCV from daily pickle (one row)
+3. Load weekly/monthly HTF DataFrames from HTF pickles (already updated in nightly steps 3-4)
+4. Load full daily OHLCV DataFrame (needed only for LSP + algo)
+
+**Phase 1: State-only expressions (1,177)**
+5. Scalar math: prev row values + today's OHLCV → new values. EMA updates, MA slope diffs, RSI from prev avg_gain/avg_loss, extension ratios, candle ratios. No loops, no windows.
+
+**Phase 2: Lookback expressions (4,284)**
+6. Window operations on the lookback buffer (last 1,260 rows of expression values from cache). Rolling max, percentile rank, boolean count/scan, aroon argmax, CCI mean deviation, trendline regression. Each expression reads its own column from the buffer.
+
+**Phase 3: HTF expressions (10,466)**
+7. Build ExpressionEngine on closed HTF series (weekly ~300 bars, monthly ~75 bars — trivially fast)
+8. `extract_closed_state()` — get intermediates + raw arrays from closed HTF
+9. Build partial candle for today from daily OHLCV (one bar accumulated into current week/month)
+10. `build_partial_intermediates()` — extend closed intermediates with today's partial candle
+11. Dispatch all HTF arith/bool/ext_struct expressions from partial intermediates
+12. Same partial candle engine code path as full rebuild — identical values guaranteed
+
+**Phase 4: LSP + Algo (124)**
+13. Run `compute_all_lsp_series(df)` on full daily OHLCV → extract last-bar values (80 expressions)
+14. Run `compute_all_algo_series(df)` on full daily OHLCV → extract last-bar values (44 expressions)
+15. These are the expensive phases (~0.64s combined per ticker) but only 124 expressions
+
+**Phase 5: Save**
+16. Write one row as raw binary float16 to .append file (~31 KB). NOT rewriting the full .npz — that's 1.6s/ticker saved.
+
+#### Storage Layout
+
+| File | Per ticker | Total (~11,201) | Description |
+|------|-----------|-----------------|-------------|
+| .npz | ~10 MB avg | ~111 GB | Frozen from last full rebuild. Never modified by append. |
+| .append | ~31 KB/night | grows ~31 KB/night | Raw binary float16. One row per nightly append. |
+
+**`load_ticker_cache()` change:** Read base .npz, then if .append file exists, read raw binary rows and vstack. Return combined array. Consumers see the same (n_bars, 16,051) float32 array — no API change.
+
+**Full rebuild:** Deletes all .append files and regenerates .npz from scratch (same as today).
+
+#### Benchmark Results (2026-04-01)
+
+Ran `scripts/benchmark_incremental_append.py` on 100 randomly sampled tickers. HTF and LSP/algo phases are real computation. State and lookback phases are simulated with representative ops (actual forward-propagation engine not yet built — measured cost is a lower bound but these phases are <0.04s combined, so even 5x underestimate doesn't change the projection).
+
+**Per-ticker cost breakdown (100-ticker average):**
+
+| Phase | Mean (s) | Description |
+|-------|----------|-------------|
+| Load .npz | 0.07 | Read + decompress existing cache |
+| State-only | <0.001 | 1,177 scalar math ops |
+| Lookback | 0.03 | 4,284 window ops on buffer |
+| HTF | 0.13 | Partial candle engine on weekly + monthly |
+| LSP + Algo | 0.64 | Full detectors on daily OHLCV |
+| Save | <0.001 | Write 31 KB raw binary |
+| **TOTAL** | **0.87** | |
+
+**Projected wall time (14 workers, 11,201 tickers):**
+
+| Metric | Time |
+|--------|------|
+| Mean projection | 11.6 min |
+| Median projection | 13.3 min |
+| Without LSP+algo | 3.1 min |
+| **Current full rebuild** | **~124 min** |
+
+**Speedup: ~10x over full rebuild.**
+
+LSP + algo is 73% of per-ticker cost. The actual incremental work (state + lookback + HTF + save) is 0.23s/ticker → 3.1 min projected. If LSP/algo detectors are ever optimized, the append drops toward 3 min.
+
+#### Decisions
+
+1. **Full rebuild stays as-is.** Incremental is a NEW code path in `append_new_bars()`, not a modification of `build_full()`.
+2. **The resample fallback for HTF stays** in the incremental worker for tickers without HTF pickle data — same as full rebuild, preserving consistency.
+3. **.npz files are never modified by append.** Raw binary .append files grow nightly. Full rebuild clears them.
+4. **LSP + algo run on full daily OHLCV per ticker.** No incremental shortcut exists for pivot/algo detection — they scan the entire price history. This is the performance floor.
+5. **Lookback buffer is 1,260 rows** (not 504 as originally estimated). 10 exit expressions have `ext_ceiling_ratio` with lookback=1260. Buffer size per ticker: 1,260 × 16,051 × 2 bytes (float16) ≈ 38 MB on disk, ~76 MB in float32 memory. Loaded from existing .npz tail.
+6. **New tickers** (in daily cache but not in expr cache) get full compute via existing `_compute_and_save_ticker`. Rare after baseline build (only new IPOs/listings).
+7. **No increase in grind times.** `load_ticker_cache()` returns the same (n_bars, 16,051) float32 array. Grinders don't know whether a row came from full rebuild or append.
+
+#### What's Next
+
+1. Build the actual forward-propagation engine for state-only expressions (replace simulated scalar math with real EMA/SMA/RSI update logic)
+2. Build the lookback window dispatch (read column slices from .npz tail, run real window ops)
+3. Wire into `append_new_bars()` — new worker function `_append_one_ticker()`
+4. Correctness gate: for every ticker, compare append result vs `_compute_ticker_full` last row. Zero mismatches required.
+5. Integrate into nightly pipeline (step 5)
+
