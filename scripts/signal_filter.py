@@ -221,6 +221,8 @@ def _load_ticker_npz(ticker):
 
     Casts float16 data to float32 for consistent precision.
     Mirrors the cast in expr_cache_builder.load_ticker_cache().
+    If an .append file exists (from incremental nightly appends),
+    its rows are vstacked onto the base .npz data.
     """
     safe = ticker.replace("/", "_").replace("\\", "_")
     path = os.path.join(_worker_expr_cache, f"{safe}.npz")
@@ -231,7 +233,29 @@ def _load_ticker_npz(ticker):
         data = loaded["data"]
         if data.dtype != np.float32:
             data = data.astype(np.float32)
-        return loaded["dates"], data
+        dates = loaded["dates"]
+
+        # Check for incremental append file
+        append_path = os.path.join(_worker_expr_cache, f"{safe}.append")
+        append_dates_path = os.path.join(_worker_expr_cache, f"{safe}.append_dates")
+        if os.path.exists(append_path) and os.path.exists(append_dates_path):
+            try:
+                n_exprs = data.shape[1]
+                row_bytes = n_exprs * 2  # float16 = 2 bytes per value
+                file_size = os.path.getsize(append_path)
+                if file_size > 0 and file_size % row_bytes == 0:
+                    n_appended = file_size // row_bytes
+                    raw = np.fromfile(append_path, dtype=np.float16)
+                    appended = raw.reshape(n_appended, n_exprs).astype(np.float32)
+                    with open(append_dates_path, "r") as f:
+                        appended_dates = np.array([line.strip() for line in f if line.strip()])
+                    if len(appended_dates) == n_appended:
+                        data = np.vstack([data, appended])
+                        dates = np.concatenate([dates, appended_dates])
+            except Exception:
+                pass  # Corrupt append file — return base .npz only
+
+        return dates, data
     except:
         return None, None
 

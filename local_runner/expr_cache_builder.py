@@ -1324,6 +1324,68 @@ def _compute_and_save_ticker(args):
     return (None, None, None)
 
 
+def _append_one_ticker(args):
+    """Incremental append worker — compute new bars and write raw binary.
+
+    Runs _compute_ticker_full on the full OHLCV (same as full rebuild),
+    but instead of rewriting the compressed .npz (~1.6s), writes only
+    the NEW rows as raw float16 binary to a .append file (~<1ms).
+
+    The .npz file is never modified. New rows accumulate in .append
+    until the next full rebuild clears them.
+
+    Future optimization: replace _compute_ticker_full with per-phase
+    forward-propagation (state, lookback, HTF, LSP+algo) to compute
+    only the last bar. That drops per-ticker cost from ~3-7s to ~0.87s.
+
+    Args: (ticker, df_dict, weekly_df_dict, monthly_df_dict, existing_n_bars)
+        existing_n_bars: number of bars already in .npz + any prior .append rows.
+                         New rows = total computed bars - existing_n_bars.
+
+    Returns: (ticker, total_n_bars, last_date) or (None, None, None)
+    """
+    ticker = args[0]
+    existing_n_bars = args[4]
+
+    try:
+        # Full compute — same code path as full rebuild for correctness.
+        # Future: replace with forward-propagation phases 1-4.
+        compute_args = (args[0], args[1], args[2], args[3])
+        ticker_out, dates, data = _compute_ticker_full(compute_args)
+        if dates is None or data is None:
+            return (None, None, None)
+
+        total_bars = len(dates)
+        n_new = total_bars - existing_n_bars
+        if n_new <= 0:
+            # No new bars — shouldn't happen but defensive
+            return (ticker_out, existing_n_bars, str(dates[-1]))
+
+        # Extract only the new rows
+        new_data = data[existing_n_bars:, :]  # shape: (n_new, n_exprs)
+        new_dates = dates[existing_n_bars:]   # shape: (n_new,)
+
+        # Write new rows as raw float16 binary — APPEND to existing .append file
+        append_path = _ticker_append_path(ticker_out)
+        new_f16 = new_data.astype(np.float16)
+        with open(append_path, "ab") as f:  # append binary
+            f.write(new_f16.tobytes())
+
+        # Write new dates — APPEND to existing .append_dates file
+        append_dates_path = _ticker_append_dates_path(ticker_out)
+        with open(append_dates_path, "a") as f:  # append text
+            for d in new_dates:
+                f.write(str(d) + "\n")
+
+        return (ticker_out, total_bars, str(dates[-1]))
+
+    except Exception as e:
+        import traceback
+        print(f"  APPEND FAIL {ticker}: {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
+        return (None, None, None)
+
+
 # ══════════════════════════════════════════════════════════════
 # CACHE I/O
 # ══════════════════════════════════════════════════════════════
@@ -1333,6 +1395,18 @@ def _ticker_cache_path(ticker):
     # Handle tickers with special chars
     safe = ticker.replace("/", "_").replace(".", "_")
     return os.path.join(EXPR_CACHE_DIR, f"{safe}.npz")
+
+
+def _ticker_append_path(ticker):
+    """Path for a ticker's incremental append file (raw float16 binary rows)."""
+    safe = ticker.replace("/", "_").replace(".", "_")
+    return os.path.join(EXPR_CACHE_DIR, f"{safe}.append")
+
+
+def _ticker_append_dates_path(ticker):
+    """Path for a ticker's appended date strings (one per line)."""
+    safe = ticker.replace("/", "_").replace(".", "_")
+    return os.path.join(EXPR_CACHE_DIR, f"{safe}.append_dates")
 
 
 def save_ticker_cache(ticker, dates, data):
@@ -1357,6 +1431,8 @@ def load_ticker_cache(ticker):
     """Load one ticker's cached expression series.
 
     Data is stored as float16 on disk, cast to float32 on load.
+    If an .append file exists (from incremental nightly appends),
+    its rows are vstacked onto the base .npz data.
     All consumers see float32 transparently.
 
     Returns: (dates, data) or (None, None)
@@ -1371,7 +1447,30 @@ def load_ticker_cache(ticker):
         # Also handles legacy float32 files (astype is a no-op if already float32).
         if data.dtype != np.float32:
             data = data.astype(np.float32)
-        return loaded["dates"], data
+        dates = loaded["dates"]
+
+        # Check for incremental append file
+        append_path = _ticker_append_path(ticker)
+        append_dates_path = _ticker_append_dates_path(ticker)
+        if os.path.exists(append_path) and os.path.exists(append_dates_path):
+            try:
+                n_exprs = data.shape[1]
+                row_bytes = n_exprs * 2  # float16 = 2 bytes per value
+                file_size = os.path.getsize(append_path)
+                if file_size > 0 and file_size % row_bytes == 0:
+                    n_appended = file_size // row_bytes
+                    raw = np.fromfile(append_path, dtype=np.float16)
+                    appended = raw.reshape(n_appended, n_exprs).astype(np.float32)
+                    # Read appended dates
+                    with open(append_dates_path, "r") as f:
+                        appended_dates = np.array([line.strip() for line in f if line.strip()])
+                    if len(appended_dates) == n_appended:
+                        data = np.vstack([data, appended])
+                        dates = np.concatenate([dates, appended_dates])
+            except Exception:
+                pass  # Corrupt append file — return base .npz only
+
+        return dates, data
     except:
         return None, None
 
@@ -1469,6 +1568,16 @@ def build_full(force=False):
 
     # Create output directory
     os.makedirs(EXPR_CACHE_DIR, exist_ok=True)
+
+    # Clean up any .append / .append_dates files from prior incremental appends.
+    # Full rebuild produces complete .npz files — append files become stale.
+    append_cleaned = 0
+    for fname in os.listdir(EXPR_CACHE_DIR):
+        if fname.endswith(".append") or fname.endswith(".append_dates"):
+            os.remove(os.path.join(EXPR_CACHE_DIR, fname))
+            append_cleaned += 1
+    if append_cleaned:
+        print(f"  Cleaned {append_cleaned} incremental append files")
 
     # Parallel computation — 14 workers, fast compression frees CPU headroom
     n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 14))
@@ -1594,11 +1703,17 @@ def build_full(force=False):
 # ══════════════════════════════════════════════════════════════
 
 def append_new_bars():
-    """Append new bars to existing cache.
+    """Append new bars to existing cache (incremental).
 
-    Compares current OHLCV cache bar counts against manifest,
-    then computes and appends only new bars for each ticker.
-    Also handles brand new tickers (full compute).
+    For existing tickers: runs _append_one_ticker which computes the full
+    expression set but saves only NEW rows as raw float16 binary (.append file)
+    instead of rewriting the compressed .npz (~1.6s saved per ticker).
+
+    For brand-new tickers: runs _compute_and_save_ticker (full .npz).
+
+    The .npz files are never modified by this function. Accumulated .append
+    rows are merged into the base data by load_ticker_cache() transparently.
+    Full rebuild (--build --force) clears all .append files.
     """
     print("\n" + "=" * 70)
     print("  EXPRESSION SERIES CACHE — NIGHTLY APPEND")
@@ -1641,16 +1756,18 @@ def append_new_bars():
     else:
         print(f"  Monthly HTF cache: not found (will resample from daily)")
 
-    # Delisting cleanup — remove .npz files for tickers no longer in OHLCV cache
+    # Delisting cleanup — remove .npz + .append + .append_dates for tickers
+    # no longer in OHLCV cache
     cached_tickers = manifest.get("tickers", {})
     ohlcv_tickers = set(universe_cache.keys())
     delisted = [t for t in cached_tickers if t not in ohlcv_tickers]
     if delisted:
         print(f"\n  Removing {len(delisted)} delisted tickers from expr cache...")
         for ticker in delisted:
-            path = _ticker_cache_path(ticker)
-            if os.path.exists(path):
-                os.remove(path)
+            for path_fn in [_ticker_cache_path, _ticker_append_path, _ticker_append_dates_path]:
+                path = path_fn(ticker)
+                if os.path.exists(path):
+                    os.remove(path)
             del cached_tickers[ticker]
         manifest["tickers"] = cached_tickers
         manifest["n_tickers"] = len(cached_tickers)
@@ -1658,8 +1775,8 @@ def append_new_bars():
         print(f"  Removed: {', '.join(delisted[:10])}{'...' if len(delisted) > 10 else ''}")
 
     # Find tickers that need updating
-    work_append = []  # (ticker, df_dict, existing_n_bars) — extend
-    work_new = []     # (ticker, df_dict) — full compute
+    work_append = []  # (ticker, df_dict, existing_n_bars) — incremental
+    work_new = []     # (ticker, df_dict) — full compute (new tickers)
 
     for ticker, df in universe_cache.items():
         # Truncate to EXPR_CACHE_START for new tickers
@@ -1687,7 +1804,7 @@ def append_new_bars():
         else:
             work_new.append((ticker, df_dict))
 
-    print(f"\n  Tickers to append: {len(work_append)}")
+    print(f"\n  Tickers to append (incremental): {len(work_append)}")
     print(f"  New tickers (full compute): {len(work_new)}")
 
     if not work_append and not work_new:
@@ -1701,27 +1818,29 @@ def append_new_bars():
     updated = 0
     failed = 0
 
-    # Build work items with HTF data from pickles
-    # All tickers use full recompute + direct save.
-    # _compute_ticker_full recomputes the entire series and returns it.
-    # The worker saves compressed to disk (parallel I/O across all cores).
-    all_work = []
-    for t, d, _ in work_append:
+    # Build work items with HTF data from pickles.
+    # Append items: 5-tuple (ticker, df_dict, weekly, monthly, existing_n_bars)
+    # New items: 4-tuple (ticker, df_dict, weekly, monthly) — full compute + save .npz
+    append_work = []
+    for t, d, existing_n in work_append:
         weekly_df_dict = _df_to_dict(weekly_cache.get(t)) if weekly_cache else None
         monthly_df_dict = _df_to_dict(monthly_cache.get(t)) if monthly_cache else None
-        all_work.append((t, d, weekly_df_dict, monthly_df_dict))
+        append_work.append((t, d, weekly_df_dict, monthly_df_dict, existing_n))
+
+    new_work = []
     for t, d in work_new:
         weekly_df_dict = _df_to_dict(weekly_cache.get(t)) if weekly_cache else None
         monthly_df_dict = _df_to_dict(monthly_cache.get(t)) if monthly_cache else None
-        all_work.append((t, d, weekly_df_dict, monthly_df_dict))
+        new_work.append((t, d, weekly_df_dict, monthly_df_dict))
 
     # Free the large caches
     del universe_cache, weekly_cache, monthly_cache
     import gc; gc.collect()
 
-    if all_work:
-        label = "Recomputing" if work_append else "Computing"
-        print(f"\n  {label} {len(all_work)} tickers ({n_workers} workers)...")
+    total_work = len(append_work) + len(new_work)
+
+    if total_work:
+        print(f"\n  Processing {total_work} tickers ({n_workers} workers)...")
         max_in_flight = n_workers * 4
         with ProcessPoolExecutor(
             max_workers=n_workers,
@@ -1729,13 +1848,21 @@ def append_new_bars():
             initargs=(expressions,)
         ) as pool:
             pending = {}
+            # Interleave: append work first (bulk), then new tickers
+            all_items = append_work + new_work
             work_idx = 0
+            n_append_items = len(append_work)
 
             def _submit_next():
                 nonlocal work_idx
-                if work_idx < len(all_work):
-                    item = all_work[work_idx]
-                    future = pool.submit(_compute_and_save_ticker, item)
+                if work_idx < len(all_items):
+                    item = all_items[work_idx]
+                    if work_idx < n_append_items:
+                        # Incremental append — 5-tuple
+                        future = pool.submit(_append_one_ticker, item)
+                    else:
+                        # New ticker — 4-tuple, full compute + .npz save
+                        future = pool.submit(_compute_and_save_ticker, item)
                     pending[future] = item[0]
                     work_idx += 1
                     return True
@@ -1758,19 +1885,19 @@ def append_new_bars():
                     failed += 1
                 del future
                 total_done = updated + failed
-                if total_done % 25 == 0 or total_done == len(all_work):
+                if total_done % 25 == 0 or total_done == total_work:
                     elapsed = time.time() - t0
                     rate = total_done / elapsed if elapsed > 0 else 0
-                    eta = (len(all_work) - total_done) / rate if rate > 0 else 0
-                    pct = total_done / len(all_work) * 100
+                    eta = (total_work - total_done) / rate if rate > 0 else 0
+                    pct = total_done / total_work * 100
                     per_ticker = elapsed * n_workers / total_done if total_done > 0 else 0
-                    print(f"    {total_done}/{len(all_work)} ({pct:.0f}%) "
+                    print(f"    {total_done}/{total_work} ({pct:.0f}%) "
                           f"[{elapsed/60:.1f}m elapsed, ~{eta/60:.1f}m left] "
                           f"({updated} ok, {failed} failed) "
                           f"[{per_ticker:.1f}s/ticker, {rate:.1f} tickers/s]")
 
             # Seed initial batch
-            for _ in range(min(max_in_flight, len(all_work))):
+            for _ in range(min(max_in_flight, len(all_items))):
                 _submit_next()
 
             # Process as completed, submit replacements
