@@ -51,6 +51,7 @@ These are the only components that make network calls for market data.
 - `_batched_fetch()` — shared adaptive rate limiter (scales workers + sleep based on failure rate, retry sweeps). Used by all fetch paths.
 
 **CLI:**
+- `--sync` — sync universe against EODHD: add new tickers, remove delisted, across daily + weekly + monthly
 - `--build-reference [--force]` — build/rebuild ticker_reference.json (first trade dates from EODHD)
 - `--daily [--force]` — build/rebuild daily cache (validated against SPY + reference)
 - `--htf [--force]` — build/rebuild weekly + monthly caches (full sweep; --force discards existing)
@@ -113,7 +114,7 @@ These are the only components that make network calls for market data.
 - SQLite `tradable_universe` table
 
 **Downstream Consumers:**
-- `cache_builder.py` — reads `tradable_universe` for ticker list
+- `cache_builder.py` — NO LONGER reads `tradable_universe` (uses EODHD exchange-symbol-list instead)
 - `nightly.py` step 6 (matrix rebuild uses universe)
 
 ---
@@ -555,7 +556,7 @@ These are the only components that make network calls for market data.
 **What it does:** Orchestrates the 10-step nightly data refresh pipeline. Runs via Windows Task Scheduler at 4:30pm ET.
 
 **Calls (in order):**
-1. `cache_builder.check_yfinance_freshness()` — gate
+1. `cache_builder.check_freshness()` — gate (alias `check_yfinance_freshness` for compat)
 2. `cache_builder.append_daily_cache()` — daily OHLCV
 3. `cache_builder.append_weekly()` — weekly OHLCV
 4. `cache_builder.append_monthly()` — monthly OHLCV
@@ -829,7 +830,7 @@ pyramid_grinder.py (signal conditions → pyramid_*.json)
 scanperfect.db
   ├── examples table → pyramid_grinder, signal_filter, signal_exit_grinder, entry_grinder, entry_candle_scorer, consensus_engine, profit_grinder
   ├── setups table → pyramid_grinder, signal_filter, signal_exit_grinder, entry_grinder (for direction)
-  ├── tradable_universe table → cache_builder (for ticker list)
+  ├── EODHD exchange-symbol-list → cache_builder (for ticker list)
   ├── rejected_signals table → profit_grinder, scanperfect.py
   └── pending_examples table → scanperfect.py, agent.py
 ```

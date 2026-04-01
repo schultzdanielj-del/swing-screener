@@ -13,7 +13,7 @@
 - **The PySide6 app reads local files directly.** No HTTP layer, no server process, no API calls. SQLite for structured data (examples, setups, earnings). Local JSON files for grind outputs. 5yr OHLCV pickle loaded into memory.
 - All timestamps are UTC ISO-8601 strings: `"2026-03-06T14:30:22Z"`.
 - All dates (signal dates, entry dates) are `"YYYY-MM-DD"` strings.
-- **OHLCV and expr cache must stay in sync.** Both use append-only nightly updates — never rebuild from scratch, never drop old bars. If they drift (different bar counts for the same ticker), signal bar indices between the two point to different dates, breaking example matching and condition checking. Fixed 2026-03-20.
+- **OHLCV and expr cache must stay in sync.** Both use append-only nightly updates. If they drift (different bar counts for the same ticker), signal bar indices between the two point to different dates, breaking example matching and condition checking. Fixed 2026-03-20. Delisted tickers are removed from the OHLCV pickle on nightly sync; the expr cache should follow suit.
 - **Example matching uses hardcoded entry_date, never bar indices.** Bar indices shift when caches rebuild. Dates are stable.
 
 ---
@@ -89,7 +89,7 @@ These are the authoritative grind outputs. The PySide6 app reads them directly.
 | `profit_{setup}_*.json` | Profit grinder | Exit expression candidates + weighted stats + equity curves + per-trade detail |
 | `profit_{setup}.json` | Profit grinder | Latest pointer (symlink-style copy of most recent timestamped file) |
 | `scan_settings_{setup}.json` | Scan Tuning UI | Locked slider settings: setup/market score floors, refinement depth, WR floor, exit objective, trim %. Read by nightly scan. |
-| `universe_ohlcv_5yr.pkl` | cache_builder.py | All available OHLCV history for ~4,169 tickers (no bar limit). Nightly append-only — never rebuilds, never drops old bars. |
+| `universe_ohlcv_daily.pkl` | cache_builder.py | All available OHLCV history for ~11,500 tickers (Common Stock + ETF from EODHD). Universe synced nightly — new IPOs added, delisted tickers removed. |
 | `market_cache_*.npz` | market_cache_builder.py | 256 instrument expression series |
 | `expr_cache/*.npz` | expr_cache_builder.py | Per-ticker expression series (~21 GB). Nightly append-only. |
 | `fundamentals_cache.json` | fetch_fundamentals.py | Per-ticker sector, shares outstanding, float |

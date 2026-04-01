@@ -24,7 +24,7 @@
 
 ## WHAT THIS PROJECT IS
 
-Automated swing trade screener. Screens ~4,000 tradable tickers nightly, finds the handful that match validated setup patterns with mathematically optimal conditions. Qullamaggie-style, 3-day to multi-week holds.
+Automated swing trade screener. Screens ~11,500 tickers nightly (Common Stock + ETF on NYSE/NASDAQ/NYSE ARCA/BATS, sourced from EODHD), finds the handful that match validated setup patterns with mathematically optimal conditions. Qullamaggie-style, 3-day to multi-week holds.
 
 **Cost:** $0 additional — runs on existing Claude Max + TC2000 + Railway + GitHub.
 
@@ -106,7 +106,7 @@ Git hooks (local, not in repo):
 - **post-commit** — fires on every local commit (Claude Code workflow)
 - **post-merge** — fires on every `git pull`. Auto-reverts on FAIL. Paste failure output into Claude chat to fix.
 
-The auditor maps changed files to their spec docs automatically (e.g. `ev_grinder.py` → `EV_GRINDER.md`). Project-wide rules (no yfinance outside cache_builder, ProcessPoolExecutor only, del+gc patterns, etc.) are hardcoded in the auditor prompt.
+The auditor maps changed files to their spec docs automatically (e.g. `ev_grinder.py` → `EV_GRINDER.md`). Project-wide rules (no yfinance for OHLCV — EODHD only, ProcessPoolExecutor only, del+gc patterns, etc.) are hardcoded in the auditor prompt.
 
 ---
 
