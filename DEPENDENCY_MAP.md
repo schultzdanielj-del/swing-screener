@@ -205,6 +205,7 @@ These are the only components that make network calls for market data.
 - `scripts/lsp_detector_v2.py` — `compute_all_lsp_series()`
 - `scripts/algo_line_detector.py` — `compute_all_algo_series()`
 - `scripts/profiling_engine.py` — TA indicator functions
+- `local_runner/partial_candle_engine.py` — HTF partial candle computation (no look-ahead bias)
 
 **Outputs:**
 - `local_runner/cache/expr_series/{TICKER}.npz` — per-ticker expression values (float16 on disk, float32 on load)
@@ -228,6 +229,33 @@ These are the only components that make network calls for market data.
 - `profit_grinder.py` — reads `.npz` via `ExprSeriesCache`
 
 **CRITICAL:** If `.npz` format changes (column order, expression count, data type), every grinder breaks silently — they'll read wrong values with no error.
+
+---
+
+### partial_candle_engine.py
+**Location:** `local_runner/partial_candle_engine.py`
+**Spec:** `EXPRESSION_ENGINE_V2.md`
+**What it does:** Eliminates HTF look-ahead bias in expression cache. For each daily bar, computes weekly/monthly expression values using partial candles that reflect only data available on that day. Called by `expr_cache_builder.py` section 3 of `_compute_ticker_full`.
+
+**Inputs:**
+- Daily OHLCV DataFrame (from `expr_cache_builder.py` worker)
+- Closed HTF OHLCV DataFrame (from weekly/monthly pickle or resample)
+- `scripts/expression_engine.py` — ExpressionEngine class (for closed series intermediates)
+- `scripts/backtest_conditions.py` — `compute_series()`, `compute_on_series()`
+- `local_runner/expr_cache_builder.py` — `build_numpy_intermediates()`, `build_htf_to_daily_map()`, `map_htf_series_to_daily()` (fallback)
+
+**Outputs:**
+- Fills HTF columns in the per-ticker data array (in-memory, no I/O)
+
+**Key functions:**
+- `compute_htf_partial()` — main entry point called by `_compute_ticker_full`
+- `build_partial_candle_mapping()` — daily→HTF period mapping + partial candle OHLCV
+- `extract_closed_state()` — intermediates + raw arrays from closed HTF series
+- `build_partial_intermediates()` — daily-resolution intermediate arrays
+- `dispatch_partial_arith()` — HTF-aware expression dispatch
+
+**Downstream Consumers:**
+- None (internal to expr cache build pipeline)
 
 ---
 

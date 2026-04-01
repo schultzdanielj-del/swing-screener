@@ -12,7 +12,7 @@ The output must be **identical** to what the current builder produces. Same .npz
 
 **History window:** EXPR_CACHE_START = 2020-01-02. OHLCV data before this date is truncated before computing expressions. ~6 years of history. This keeps cache size manageable and grinder scan times reasonable for the consensus pipeline (10-15 passes overnight).
 
-**HTF look-ahead bias (known issue, fix planned):** Weekly/monthly expressions currently use closed-candle mapping — each daily bar within a week sees the final closed weekly candle, including future price action. This introduces look-ahead bias of up to 4 days (weekly) or 20 days (monthly). A partial candle reconstruction engine is planned to fix this. Until then, HTF conditions found by the grinder may not fire identically in live forward testing.
+**HTF look-ahead bias — FIXED (2026-04-01):** The partial candle engine (`local_runner/partial_candle_engine.py`) computes HTF expression values using only data available on each day. Monday of a week sees only Monday's partial weekly candle; Friday sees the full closed week. All prior completed periods use final closed values. Fallback to closed-candle mapping retained for unhandled ops. Requires full expression cache rebuild to take effect.
 
 **Critical correctness gate:** After any rebuild with optimized code, the signal filter must still find ALL examples. If it doesn't, the optimization is broken and we don't ship it.
 
