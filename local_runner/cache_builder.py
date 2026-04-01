@@ -484,6 +484,168 @@ def _apply_bulk_bar(universe, bulk_data, tickers_to_append):
     return appended, no_new
 
 
+def _yfinance_fill_gaps(universe, stale_tickers, spy_last):
+    """Fill tickers missed by EODHD bulk using yfinance batch downloads.
+
+    Uses yf.download() with auto_adjust=False to get raw OHLC + Adj Close,
+    then applies the same adjustment ratio as the EODHD pipeline:
+        ratio = adj_close / close → applied to O, H, L, C
+
+    Fetches in small batches (80 tickers) with generous sleep to stay
+    well under Yahoo's rate limits. 15-minute budget for ~600 tickers.
+
+    Args:
+        universe: dict {ticker: DataFrame} — cache to update in-place
+        stale_tickers: list of ticker symbols missing from bulk
+        spy_last: 'YYYY-MM-DD' — the date we need bars for
+
+    Returns (appended, no_data, failed) counts.
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        print("    WARNING: yfinance not installed — skipping gap fill")
+        print("    Install with: pip install yfinance")
+        return 0, 0, len(stale_tickers)
+
+    appended = 0
+    no_data = 0
+    yf_failed = 0
+    batch_size = 80
+    n_batches = (len(stale_tickers) + batch_size - 1) // batch_size
+
+    # Fetch period: day before spy_last through day after (yfinance end is exclusive)
+    fetch_start = (pd.Timestamp(spy_last) - timedelta(days=3)).strftime("%Y-%m-%d")
+    fetch_end = (pd.Timestamp(spy_last) + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    print(f"    yfinance: {len(stale_tickers)} tickers in {n_batches} batches "
+          f"(batch={batch_size}, ~6s pause)...")
+
+    for batch_idx in range(n_batches):
+        b_start = batch_idx * batch_size
+        b_end = min(b_start + batch_size, len(stale_tickers))
+        batch = stale_tickers[b_start:b_end]
+
+        # Convert ticker format: some EODHD tickers use - where yfinance uses -
+        # (e.g. BRK-B is the same in both, but ALL-P-J needs ALL-PJ)
+        # yfinance also chokes on tickers with multiple dashes sometimes
+        yf_symbols = []
+        ticker_map = {}  # yf_symbol → original ticker
+        for t in batch:
+            yf_sym = t  # most are identical
+            yf_symbols.append(yf_sym)
+            ticker_map[yf_sym] = t
+
+        try:
+            raw = yf.download(
+                yf_symbols,
+                start=fetch_start,
+                end=fetch_end,
+                auto_adjust=False,
+                progress=False,
+                threads=True,
+            )
+
+            if raw is None or raw.empty:
+                no_data += len(batch)
+            elif len(yf_symbols) == 1:
+                # Single ticker: raw is a flat DataFrame
+                t = batch[0]
+                _yf_apply_one(universe, t, raw, spy_last)
+                result = _yf_check_applied(universe, t, spy_last)
+                if result:
+                    appended += 1
+                else:
+                    no_data += 1
+            else:
+                # Multiple tickers: raw has MultiIndex columns (field, ticker)
+                for yf_sym in yf_symbols:
+                    t = ticker_map[yf_sym]
+                    try:
+                        ticker_df = raw.xs(yf_sym, axis=1, level=1)
+                        _yf_apply_one(universe, t, ticker_df, spy_last)
+                        if _yf_check_applied(universe, t, spy_last):
+                            appended += 1
+                        else:
+                            no_data += 1
+                    except (KeyError, TypeError):
+                        no_data += 1
+
+        except Exception as e:
+            print(f"    Batch {batch_idx+1} error: {e}")
+            yf_failed += len(batch)
+
+        done = b_end
+        print(f"    yfinance: {done}/{len(stale_tickers)} "
+              f"({appended} appended, {no_data} no data)")
+
+        # Generous pause between batches
+        if batch_idx < n_batches - 1:
+            time.sleep(6)
+
+    return appended, no_data, yf_failed
+
+
+def _yf_apply_one(universe, ticker, df, target_date):
+    """Apply a single yfinance DataFrame row to the universe cache.
+
+    Uses the same adjustment logic as EODHD: ratio = Adj Close / Close.
+    """
+    if df is None or df.empty:
+        return
+
+    # Reset index so Date is a column
+    if "Date" not in df.columns:
+        df = df.reset_index()
+
+    # Find the row matching target_date
+    df["_date_str"] = df["Date"].astype(str).str[:10]
+    row = df[df["_date_str"] == target_date]
+    if row.empty:
+        return
+
+    row = row.iloc[0]
+    close_raw = float(row.get("Close", 0) or 0)
+    adj_close = float(row.get("Adj Close", 0) or 0)
+    if close_raw <= 0 or adj_close <= 0:
+        return
+
+    ratio = adj_close / close_raw
+
+    existing = universe.get(ticker)
+    if existing is None or len(existing) == 0:
+        return
+
+    # Check if already current
+    last_cached = str(existing["date"].iloc[-1])[:10]
+    if target_date <= last_cached:
+        return
+
+    new_row = pd.DataFrame([{
+        "date": pd.Timestamp(target_date),
+        "open": float(row.get("Open", 0) or 0) * ratio,
+        "high": float(row.get("High", 0) or 0) * ratio,
+        "low": float(row.get("Low", 0) or 0) * ratio,
+        "close": adj_close,
+        "volume": float(row.get("Volume", 0) or 0),
+    }])
+
+    combined = pd.concat([existing, new_row], ignore_index=True)
+    combined = combined.sort_values("date").reset_index(drop=True)
+    combined = combined.drop_duplicates(subset=["date"], keep="last")
+    combined = combined.reset_index(drop=True)
+    compute_dvol_20d(combined)
+    universe[ticker] = combined
+
+
+def _yf_check_applied(universe, ticker, target_date):
+    """Check if a ticker's cache now has the target date."""
+    df = universe.get(ticker)
+    if df is None or len(df) == 0:
+        return False
+    return str(df["date"].iloc[-1])[:10] >= target_date
+
+
 def _eodhd_to_dataframe(data):
     """Convert EODHD JSON response to adjusted OHLCV DataFrame.
 
@@ -1121,17 +1283,20 @@ def append_daily_cache():
                         time.sleep(1.0)
 
                 # Bulk endpoint for the current day is often incomplete
-                # (EODHD publishes over hours after close — even at 9pm
-                # ~600 tickers may be missing). These tickers don't have
-                # data on the per-ticker endpoint either. The stale filter
-                # will pick them up on the next run once EODHD publishes.
+                # (EODHD publishes over hours after close). Fill gaps
+                # with yfinance — same adjustment math, gentle rate.
                 still_stale = [t for t in to_append
                                if str(universe.get(t, pd.DataFrame(
                                    {"date": [""]}))["date"].iloc[-1])[:10]
                                < spy_last]
                 if still_stale:
-                    print(f"  {len(still_stale)} tickers not yet published "
-                          f"by EODHD — will be picked up next run")
+                    print(f"\n  {len(still_stale)} tickers not in EODHD bulk "
+                          f"— filling with yfinance...")
+                    yf_appended, yf_no_data, yf_failed = _yfinance_fill_gaps(
+                        universe, still_stale, spy_last)
+                    appended += yf_appended
+                    print(f"    yfinance done: {yf_appended} appended, "
+                          f"{yf_no_data} no data, {yf_failed} failed")
             else:
                 print(f"\n  No new trading days in gap — nothing to append")
 
