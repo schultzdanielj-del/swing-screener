@@ -340,19 +340,19 @@ For each of 11,200 tickers:
    — Actually NO. The .append file only stores rows AFTER the base .npz.
    Historical intermediate values for rows IN the base .npz are NOT accessible
    during append. This is a problem for SMA (need cumsum[i-50]) and 
-   percentile_rank (need last 252 values) and count_true (need bool[i-period]).
+   percentile_rank (need last MAX_LOOKBACK values) and count_true (need bool[i-period]).
 
    RESOLUTION: During setup, also write a `.history` file containing the 
    intermediate columns for the LAST N rows of the base .npz (where N = max 
    lookback period, ~252). This is ~252 × intermediates × 2 bytes per ticker.
-   That's 252 × 178 × 2 = ~90 KB per ticker, ~1 GB total. Negligible.
+   That's 252 × 178 × 2 = ~179 KB per ticker, ~2 GB total. Negligible.
    
    On append: the worker reads the .history file to get intermediate values
    for rows that are in the base .npz. As new rows accumulate in .append,
    the .history window slides forward and old rows in .history become unused.
    Eventually all lookback rows are in .append and .history is no longer needed.
 
-   Actually simpler: the .history file just stores the last 252 rows of 
+   Actually simpler: the .history file just stores the last MAX_LOOKBACK rows of 
    intermediate columns from the base .npz. Fixed size, written once during setup.
    The append worker reads from .history OR .append depending on which row it needs.
 
@@ -365,7 +365,7 @@ The .append file stores 15,805 expression columns + N intermediate columns per r
 During the one-time setup:
 1. Load .npz
 2. Compute intermediates for ALL historical bars  
-3. Write the LAST 252 rows (expressions + intermediates) to a .lookback file
+3. Write the LAST MAX_LOOKBACK rows (expressions + intermediates) to a .lookback file
 4. Write .state file (last-bar values only)
 
 Nightly append:
@@ -397,7 +397,7 @@ This means:
 |------|----------------|-------|-------------|---------|
 | `{T}.npz` | ~10 MB | 111 GB | Full rebuild only | Base historical data (15,805 cols) |
 | `{T}.append` | 31 KB/day | ~0.3 GB/month | Nightly | New expression rows (15,805 + intermediates) |
-| `{T}.lookback` | ~90 KB | ~1 GB | Setup + nightly | Last 252 rows of intermediates (sliding window) |
+| `{T}.lookback` | ~179 KB | ~2 GB | Setup + nightly | Last MAX_LOOKBACK rows of intermediates (sliding window) |
 | `{T}.state` | ~3 KB | ~34 MB | Nightly | Forward computation state (HTF, LSP, algo, EMA, cumsums) |
 | `{T}.dates` | ~10 bytes/day | tiny | Nightly | Date strings for appended rows |
 
@@ -431,3 +431,35 @@ Add overhead (pickle load, process spawning, manifest update): ~2-3 minutes
 
 **Total nightly append: under 5 minutes.**
 
+
+## MAX_LOOKBACK Computation
+
+The lookback window is computed from the expression library at setup time:
+
+```
+MAX_LOOKBACK = max across all expressions of their window/lookback parameter
+```
+
+Current value: **504 bars** (from extension_ceiling_ratio lookback=504).
+
+Other large lookbacks:
+- extension_ceiling_ratio: 504
+- extension_peak_ratio: 252
+- percentile_rank: 252
+- roc_percentile_rank: 252 (+ roc_period 50 = 302 total)
+- bollinger_bandwidth_rank: 252
+- SMA close (avgc200): 200
+- maxH (126-bar rolling max): 126
+
+This value is stored in the manifest at setup time. If the expression library
+changes (fingerprint mismatch), a full rebuild is triggered anyway, which
+recalculates MAX_LOOKBACK and regenerates all .lookback files.
+
+The .lookback file stores MAX_LOOKBACK rows of intermediate columns from the
+end of the base .npz. Size per ticker: 504 × 178 intermediates × 2 bytes = ~179 KB.
+Total: ~2 GB across all tickers.
+
+As nightly appends accumulate, the .append file grows and eventually contains
+enough rows that the lookback window is entirely within .append data (after
+504 trading days ≈ 2 years). At that point .lookback is redundant but harmless.
+Consolidation before then keeps .lookback relevant.
