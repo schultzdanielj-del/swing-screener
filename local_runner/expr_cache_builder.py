@@ -1779,13 +1779,11 @@ def append_new_bars():
     work_new = []     # (ticker, df_dict) — full compute (new tickers)
 
     for ticker, df in universe_cache.items():
-        # Truncate to EXPR_CACHE_START for new tickers
-        if ticker not in cached_tickers:
-            df = _truncate_to_cache_window(df)
-            if df is None:
-                continue
-
-        if len(df) < 50:
+        # Truncate to EXPR_CACHE_START — same window as build_full.
+        # Without this, existing tickers get full OHLCV back to HISTORY_START
+        # (2016), ~2500 bars vs ~1500 bars the cache was built with = ~2x slower.
+        df = _truncate_to_cache_window(df)
+        if df is None or len(df) < 50:
             continue
 
         df_dict = {
@@ -1832,6 +1830,11 @@ def append_new_bars():
         weekly_df_dict = _df_to_dict(weekly_cache.get(t)) if weekly_cache else None
         monthly_df_dict = _df_to_dict(monthly_cache.get(t)) if monthly_cache else None
         new_work.append((t, d, weekly_df_dict, monthly_df_dict))
+
+    # Sort by bar count descending — big tickers first, short ones fill gaps
+    # Same load balancing strategy as build_full.
+    append_work.sort(key=lambda x: len(x[1]["date"]), reverse=True)
+    new_work.sort(key=lambda x: len(x[1]["date"]), reverse=True)
 
     # Free the large caches
     del universe_cache, weekly_cache, monthly_cache
