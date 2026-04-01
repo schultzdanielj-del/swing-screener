@@ -40,7 +40,7 @@ Automated swing trade screener. Screens ~11,500 tickers nightly (Common Stock + 
   - Nightly append: EODHD bulk (~95% in seconds) + yfinance gap fill (~5% in ~30s)
   - EODHD handles: universe sync (IPOs/delistings), bulk splits detection, full historical backfill
   - yfinance handles: same-day bars not yet published by EODHD, fundamentals, earnings dates
-- **Step 2 (incremental append for expr cache):** Next — blocked on expr_cache_builder work
+- **Step 2 (expression cache rebuild):** Next — float16 storage + 6yr window (2020-01-02) ready, needs full rebuild. HTF partial candle reconstruction planned as follow-up.
 - **Step 3:** Not started
 - **Step 4:** Not started
 
@@ -72,7 +72,7 @@ local_runner/              # Grinder system
 ├── nightly.py             # 10-step nightly pipeline (5:00pm ET)
 ├── pyramid_grinder.py     # Signal grind + refinement grind (--blackout)
 ├── cache_builder.py       # OHLCV caches (daily + HTF) — EODHD bulk + yfinance hybrid
-├── expr_cache_builder.py  # Expression series cache (~21 GB)
+├── expr_cache_builder.py  # Expression series cache (~163 GB, float16, 6yr)
 ├── market_cache_builder.py # 256 instrument expression series
 ├── file_mirror.py         # Railway backup mirror
 └── cache/                 # All local caches + grind output JSONs

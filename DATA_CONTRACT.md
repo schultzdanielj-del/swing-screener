@@ -91,7 +91,7 @@ These are the authoritative grind outputs. The PySide6 app reads them directly.
 | `scan_settings_{setup}.json` | Scan Tuning UI | Locked slider settings: setup/market score floors, refinement depth, WR floor, exit objective, trim %. Read by nightly scan. |
 | `universe_ohlcv_daily.pkl` | cache_builder.py | All available OHLCV history for ~11,500 tickers (Common Stock + ETF from EODHD). Universe synced nightly — new IPOs added, delisted tickers removed. |
 | `market_cache_*.npz` | market_cache_builder.py | 256 instrument expression series |
-| `expr_cache/*.npz` | expr_cache_builder.py | Per-ticker expression series (~21 GB). Nightly append-only. |
+| `expr_cache/*.npz` | expr_cache_builder.py | Per-ticker expression series (~163 GB est). Float16 on disk, float32 on load. 6yr window from 2020-01-02. Nightly append-only. |
 | `fundamentals_cache.json` | fetch_fundamentals.py | Per-ticker sector, shares outstanding, float |
 
 ---

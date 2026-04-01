@@ -6,16 +6,21 @@ After building, the grinder loads pre-computed arrays instead of running
 compute_series() from scratch.
 
 Storage: One .npz file per ticker in local_runner/cache/expr_series/
-  - "data": float32 array (n_bars, n_expressions)
+  - "data": float16 array (n_bars, n_expressions) — computed in float32, stored as float16
   - "dates": date strings array
+  Data is cast back to float32 on load — all consumers see float32 transparently.
+
+  History window: EXPR_CACHE_START (2020-01-02) onward. OHLCV data before this date
+  is truncated before computing. ~6 years of history.
 
 Manifest: local_runner/cache/expr_series/_manifest.json
   - expression names + order (to verify cache matches current library)
   - per-ticker bar counts
   - build timestamp
+  - dtype and start_date for auditability
 
 Usage:
-    # First build (full, ~40 min):
+    # First build (full, ~90 min):
     python local_runner/expr_cache_builder.py --build
 
     # Nightly append (1 bar per ticker, ~5-8 min):
@@ -51,6 +56,12 @@ REPO_ROOT = os.path.dirname(LOCAL_DIR)
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 EXPR_CACHE_DIR = os.path.join(CACHE_DIR, "expr_series")
 MANIFEST_PATH = os.path.join(EXPR_CACHE_DIR, "_manifest.json")
+
+# Expression cache only stores data from this date onward (~6 years).
+# OHLCV data before this is truncated before computing expressions.
+# This keeps cache size manageable (~163 GB at float16) and grinder
+# scan times reasonable for consensus pipeline (10-15 passes overnight).
+EXPR_CACHE_START = "2020-01-02"
 
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
@@ -222,6 +233,22 @@ def _load_expressions():
         pass  # exit_expressions not available
 
     return signal_exprs
+
+
+def _truncate_to_cache_window(df):
+    """Truncate a DataFrame to EXPR_CACHE_START onward.
+
+    Returns the truncated DataFrame, or the original if it starts after
+    EXPR_CACHE_START. Returns None if no bars remain after truncation.
+    """
+    if df is None or len(df) == 0:
+        return None
+    start = pd.Timestamp(EXPR_CACHE_START)
+    dates = pd.to_datetime(df["date"])
+    mask = dates >= start
+    if not mask.any():
+        return None
+    return df[mask].reset_index(drop=True)
 
 
 def _load_daily_cache():
@@ -1504,12 +1531,18 @@ def _ticker_cache_path(ticker):
 
 
 def save_ticker_cache(ticker, dates, data):
-    """Save one ticker's expression series to disk. Uses fast compression (level 1)."""
+    """Save one ticker's expression series to disk.
+
+    Data is computed in float32, stored as float16 to halve disk usage.
+    load_ticker_cache() casts back to float32 — consumers see float32.
+    Uses fast compression (level 1).
+    """
     import zipfile
     import io
     path = _ticker_cache_path(ticker)
+    data_f16 = data.astype(np.float16)
     with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
-        for name, arr in [("data", data), ("dates", dates)]:
+        for name, arr in [("data", data_f16), ("dates", dates)]:
             buf = io.BytesIO()
             np.save(buf, arr)
             zf.writestr(name + ".npy", buf.getvalue())
@@ -1518,6 +1551,9 @@ def save_ticker_cache(ticker, dates, data):
 def load_ticker_cache(ticker):
     """Load one ticker's cached expression series.
 
+    Data is stored as float16 on disk, cast to float32 on load.
+    All consumers see float32 transparently.
+
     Returns: (dates, data) or (None, None)
     """
     path = _ticker_cache_path(ticker)
@@ -1525,7 +1561,12 @@ def load_ticker_cache(ticker):
         return None, None
     try:
         loaded = np.load(path, allow_pickle=True)
-        return loaded["dates"], loaded["data"]
+        data = loaded["data"]
+        # Cast float16 → float32 for consumer compatibility.
+        # Also handles legacy float32 files (astype is a no-op if already float32).
+        if data.dtype != np.float32:
+            data = data.astype(np.float32)
+        return loaded["dates"], data
     except:
         return None, None
 
@@ -1560,26 +1601,48 @@ def build_full(force=False):
     universe_cache = _load_daily_cache()
     print(f"  {len(universe_cache)} tickers loaded")
 
+    # Truncate daily data to EXPR_CACHE_START
+    truncated = 0
+    for ticker in list(universe_cache.keys()):
+        df = _truncate_to_cache_window(universe_cache[ticker])
+        if df is None or len(df) < 50:
+            del universe_cache[ticker]
+        else:
+            if len(df) < len(universe_cache[ticker]):
+                truncated += 1
+            universe_cache[ticker] = df
+    print(f"  After truncation to {EXPR_CACHE_START}: {len(universe_cache)} tickers "
+          f"({truncated} truncated, ≥50 bars required)")
+
     # Load HTF OHLCV caches (weekly + monthly from EODHD)
     weekly_cache = _load_htf_cache("weekly")
     monthly_cache = _load_htf_cache("monthly")
     if weekly_cache:
+        # Truncate HTF caches to same window
+        for ticker in list(weekly_cache.keys()):
+            df = _truncate_to_cache_window(weekly_cache[ticker])
+            if df is not None and len(df) >= 5:
+                weekly_cache[ticker] = df
+            else:
+                del weekly_cache[ticker]
         print(f"  Weekly HTF cache: {len(weekly_cache)} tickers")
     else:
         print(f"  Weekly HTF cache: not found (will resample from daily)")
     if monthly_cache:
+        for ticker in list(monthly_cache.keys()):
+            df = _truncate_to_cache_window(monthly_cache[ticker])
+            if df is not None and len(df) >= 5:
+                monthly_cache[ticker] = df
+            else:
+                del monthly_cache[ticker]
         print(f"  Monthly HTF cache: {len(monthly_cache)} tickers")
     else:
         print(f"  Monthly HTF cache: not found (will resample from daily)")
 
-    # Filter valid tickers
-    valid_tickers = {t: df for t, df in universe_cache.items() if len(df) >= 50}
-    print(f"  {len(valid_tickers)} tickers with ≥50 bars")
-
     # Prepare work items — convert DataFrames to dicts for cheaper serialization
     print("\n  Preparing work items...")
     work_items = []
-    for ticker, df in valid_tickers.items():
+    for ticker, df in universe_cache.items():
         df_dict = {
             "date": df["date"].values,
             "open": df["open"].values,
@@ -1596,7 +1659,7 @@ def build_full(force=False):
     work_items.sort(key=lambda x: len(x[1]["date"]), reverse=True)
 
     # Free the large caches — work_items has everything we need now
-    del universe_cache, valid_tickers, weekly_cache, monthly_cache
+    del universe_cache, weekly_cache, monthly_cache
     import gc; gc.collect()
 
     # Create output directory
@@ -1696,6 +1759,8 @@ def build_full(force=False):
         "tickers": ticker_info,
         "built_at": datetime.now(timezone.utc).isoformat(),
         "build_time_s": round(total_time, 1),
+        "dtype": "float16",
+        "start_date": EXPR_CACHE_START,
     }
     save_manifest(manifest)
 
@@ -1771,12 +1836,33 @@ def append_new_bars():
     else:
         print(f"  Monthly HTF cache: not found (will resample from daily)")
 
-    # Find tickers that need updating
+    # Delisting cleanup — remove .npz files for tickers no longer in OHLCV cache
     cached_tickers = manifest.get("tickers", {})
+    ohlcv_tickers = set(universe_cache.keys())
+    delisted = [t for t in cached_tickers if t not in ohlcv_tickers]
+    if delisted:
+        print(f"\n  Removing {len(delisted)} delisted tickers from expr cache...")
+        for ticker in delisted:
+            path = _ticker_cache_path(ticker)
+            if os.path.exists(path):
+                os.remove(path)
+            del cached_tickers[ticker]
+        manifest["tickers"] = cached_tickers
+        manifest["n_tickers"] = len(cached_tickers)
+        save_manifest(manifest)
+        print(f"  Removed: {', '.join(delisted[:10])}{'...' if len(delisted) > 10 else ''}")
+
+    # Find tickers that need updating
     work_append = []  # (ticker, df_dict, existing_n_bars) — extend
     work_new = []     # (ticker, df_dict) — full compute
 
     for ticker, df in universe_cache.items():
+        # Truncate to EXPR_CACHE_START for new tickers
+        if ticker not in cached_tickers:
+            df = _truncate_to_cache_window(df)
+            if df is None:
+                continue
+
         if len(df) < 50:
             continue
 
@@ -1919,6 +2005,8 @@ def show_status():
     print(f"  Expressions: {manifest['n_expressions']}")
     print(f"  Fingerprint: {manifest['fingerprint']}")
     print(f"  Tickers: {manifest['n_tickers']}")
+    print(f"  Dtype: {manifest.get('dtype', 'float32 (legacy)')}")
+    print(f"  Start date: {manifest.get('start_date', 'unknown (legacy)')}")
     print(f"  Built: {manifest.get('built_at', 'unknown')}")
     print(f"  Build time: {manifest.get('build_time_s', '?')}s")
 

@@ -4,11 +4,15 @@
 
 Every night: Fetch fresh OHLCV for all ~8,962 tickers via EODHD, then do a full expression cache rebuild for all of them. No skipping, no shortcuts. Because any ticker could become tradable tomorrow, and historical examples need complete data for tickers that were tradable in the past.
 
-The output must be **identical** to what the current builder produces. Same .npz files, same float32 values, same date arrays. The cache is additive — old bars are never dropped or trimmed. The full historical series from the daily OHLCV cache is preserved in every .npz file. Historical expression values are immutable — bar 500 of AAPL must produce the exact same 16,051 values today that it produced yesterday.
+The output must be **identical** to what the current builder produces. Same .npz files, same date arrays. The cache is additive — old bars are never dropped or trimmed. The full historical series from EXPR_CACHE_START (2020-01-02) onward is preserved in every .npz file. Historical expression values are immutable — bar 500 of AAPL must produce the exact same 16,051 values today that it produced yesterday.
 
-**Ticker count:** ~8,962 tickers in the daily OHLCV cache (from EODHD). Down from ~10,856 under yfinance — ~1,900 tickers EODHD doesn't cover (under investigation). Weekly cache matches daily at 8,962. Monthly at 8,935 (27 tickers too new for 3 monthly bars).
+**Ticker count:** ~11,523 tickers in the daily OHLCV cache (from EODHD). Weekly cache matches daily. Monthly at ~11,239.
 
-**Output format:** One .npz per ticker with `data` (float32 array, n_bars x 16,051) and `dates` (date strings). Grinders, matrix builder, and all downstream pipeline stages read these files identically.
+**Output format:** One .npz per ticker with `data` (float16 array on disk, n_bars x ~15,805) and `dates` (date strings). Data is cast to float32 on load via `load_ticker_cache()` — all consumers see float32 transparently. Storage dtype is float16 to halve disk usage (~163 GB total vs ~326 GB at float32).
+
+**History window:** EXPR_CACHE_START = 2020-01-02. OHLCV data before this date is truncated before computing expressions. ~6 years of history. This keeps cache size manageable and grinder scan times reasonable for the consensus pipeline (10-15 passes overnight).
+
+**HTF look-ahead bias (known issue, fix planned):** Weekly/monthly expressions currently use closed-candle mapping — each daily bar within a week sees the final closed weekly candle, including future price action. This introduces look-ahead bias of up to 4 days (weekly) or 20 days (monthly). A partial candle reconstruction engine is planned to fix this. Until then, HTF conditions found by the grinder may not fire identically in live forward testing.
 
 **Critical correctness gate:** After any rebuild with optimized code, the signal filter must still find ALL examples. If it doesn't, the optimization is broken and we don't ship it.
 
@@ -55,7 +59,7 @@ The output must be **identical** to what the current builder produces. Same .npz
 - 5,233 HTF weekly (w_ prefix on all daily expressions)
 - 5,233 HTF monthly (m_ prefix on all daily expressions)
 
-**Cache:** ~65 GB on disk. One .npz file per ticker (~10,856 tickers). Float32 arrays (n_bars x 16,051).
+**Cache:** ~163 GB on disk (estimated). One .npz file per ticker (~11,523 tickers). Float16 arrays on disk (n_bars x ~15,805), cast to float32 on load. 6-year history window from 2020-01-02.
 
 ---
 

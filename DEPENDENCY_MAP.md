@@ -185,7 +185,7 @@ These are the only components that make network calls for market data.
 - `matrix_builder.py` — calls `generate_all` via `_load_expressions()`
 - `pyramid_grinder.py` — imports `generate_all`
 
-**CRITICAL:** Changing the expression library triggers a full rebuild of expr cache (~21 GB), market cache, and universe matrix. The fingerprint system in expr_cache_builder detects this automatically.
+**CRITICAL:** Changing the expression library triggers a full rebuild of expr cache (~163 GB), market cache, and universe matrix. The fingerprint system in expr_cache_builder detects this automatically.
 
 ---
 
@@ -207,7 +207,7 @@ These are the only components that make network calls for market data.
 - `scripts/profiling_engine.py` — TA indicator functions
 
 **Outputs:**
-- `local_runner/cache/expr_series/{TICKER}.npz` — per-ticker expression values (float32)
+- `local_runner/cache/expr_series/{TICKER}.npz` — per-ticker expression values (float16 on disk, float32 on load)
 - `local_runner/cache/expr_series/_manifest.json` — metadata (expression fingerprint, dates, counts)
 
 **Key functions called by others:**
@@ -799,7 +799,7 @@ brute_expressions.py (expression list)
   → market_cache_builder.py (market .npz)
     → ev_grinder.py
 ```
-**If expression list changes:** Full expr cache rebuild (~21 GB), market cache rebuild, matrix rebuild, then all grinders must re-run. Fingerprint system detects this automatically.
+**If expression list changes:** Full expr cache rebuild (~163 GB), market cache rebuild, matrix rebuild, then all grinders must re-run. Fingerprint system detects this automatically.
 
 ### Chain 2: OHLCV Pickle → Cache → Grinders
 ```
@@ -844,7 +844,7 @@ scanperfect.db
 | `local_runner/cache/universe_ohlcv_daily.pkl` | pickle dict | cache_builder | expr_cache_builder, all grinders, scanperfect |
 | `local_runner/cache/universe_ohlcv_weekly.pkl` | pickle dict | cache_builder | expr_cache_builder |
 | `local_runner/cache/universe_ohlcv_monthly.pkl` | pickle dict | cache_builder | expr_cache_builder |
-| `local_runner/cache/expr_series/{TICKER}.npz` | float32 npz | expr_cache_builder | all grinders |
+| `local_runner/cache/expr_series/{TICKER}.npz` | float16 npz (float32 on load) | expr_cache_builder | all grinders |
 | `local_runner/cache/expr_series/_manifest.json` | JSON | expr_cache_builder | expr_cache_builder (self) |
 | `local_runner/cache/market_ohlcv.pkl` | pickle dict | market_cache_builder | market_cache_builder (self), fetch_missing_market |
 | `local_runner/cache/market_series/{INST}.npz` | float32 npz | market_cache_builder | ev_grinder |
