@@ -8,7 +8,7 @@ The output must be **identical** to what the current builder produces. Same .npz
 
 **Ticker count:** ~11,523 tickers in the daily OHLCV cache (from EODHD). Weekly cache matches daily. Monthly at ~11,239.
 
-**Output format:** One .npz per ticker with `data` (float16 array on disk, n_bars x ~15,805) and `dates` (date strings). Data is cast to float32 on load via `load_ticker_cache()` — all consumers see float32 transparently. Storage dtype is float16 to halve disk usage (~163 GB total vs ~326 GB at float32).
+**Output format:** One .npz per ticker with `data` (float16 array on disk, n_bars x ~15,805) and `dates` (date strings). Data is cast to float32 on load via `load_ticker_cache()` — all consumers see float32 transparently. Storage dtype is float16 to halve disk usage (~111 GB total).
 
 **History window:** EXPR_CACHE_START = 2020-01-02. OHLCV data before this date is truncated before computing expressions. ~6 years of history. This keeps cache size manageable and grinder scan times reasonable for the consensus pipeline (10-15 passes overnight).
 
@@ -59,7 +59,7 @@ The output must be **identical** to what the current builder produces. Same .npz
 - 5,233 HTF weekly (w_ prefix on all daily expressions)
 - 5,233 HTF monthly (m_ prefix on all daily expressions)
 
-**Cache:** ~163 GB on disk (estimated). One .npz file per ticker (~11,523 tickers). Float16 arrays on disk (n_bars x ~15,805), cast to float32 on load. 6-year history window from 2020-01-02.
+**Cache:** ~111 GB on disk. One .npz file per ticker (~11,201 tickers). Float16 arrays on disk (n_bars x ~15,805), cast to float32 on load. 6-year history window from 2020-01-02. Full rebuild: 124 min, 0 failures.
 
 ---
 
@@ -332,8 +332,17 @@ EODHD migration (cache_builder.py)              -- DONE (2026-03-31)
                                                       - Still pending: nightly.py alignment,
                                                         market_cache_builder.py EODHD switch
     |
-Full expr cache rebuild on EODHD data            -- NEXT
-                                                      (--build --force on Dan's machine)
+Full expr cache rebuild on EODHD data            -- DONE (2026-04-01)
+                                                      11,201 tickers, 0 failures, 111 GB, 124 min
+    |
+Universe matrix rebuild                            -- DONE (2026-04-01)
+                                                      11,201 tickers × 15,805 expressions
+                                                      1.35 GB, 148s (parallel .npz file reads)
+    |
+Market cache EODHD migration                       -- NOT STARTED (separate task)
+                                                      ~200 US ETFs can read from OHLCV daily pickle
+                                                      ~60 non-equity instruments need original sources
+                                                      (futures, ^VIX, Stooq breadth, FRED, BTC)
     |
 Pyramid grind on DTSS                              -- verify baseline cache produces correct data
     |
@@ -400,7 +409,7 @@ Unified `_build_htf_cache` + `_append_htf_cache` into single `_sync_htf_cache(fu
 - Eliminates the old three-mode problem (build/append/retry were separate code paths)
 - `build_htf_caches()` → `full_sweep=True`. `append_weekly()`/`append_monthly()` → `full_sweep=False`.
 
-**NEXT:** Full expr cache rebuild (`--build --force`), verify all examples pass, then Increment 2 (true incremental append).
+**NEXT:** Increment 2 (true incremental append) and market cache EODHD migration (separate task).
 
 **Known issues (deferred):**
 - ETA display in `_batched_fetch` inflates over time — rate calculation includes sleep time, making ETA grow even at constant per-batch speed. Cosmetic only.

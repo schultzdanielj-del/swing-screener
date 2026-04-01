@@ -1,6 +1,6 @@
 # Swing Screener Project — State Document
 
-**Last updated:** 2026-04-01
+**Last updated:** 2026-04-01 (session 2)
 **GitHub repo:** https://github.com/schultzdanielj-del/swing-screener (branch: v2)
 **Railway:** https://web-production-e3025.up.railway.app (seed vault / file mirror only)
 
@@ -30,7 +30,7 @@ Automated swing trade screener. Screens ~11,500 tickers nightly (Common Stock + 
 
 ---
 
-## CURRENT STATE (2026-03-31)
+## CURRENT STATE (2026-04-01)
 
 ### Expression Engine V2 — four-step plan:
 - **Step 1 (OHLCV caches):** ✅ Complete — daily/weekly/monthly caches built and nightly append working
@@ -40,9 +40,10 @@ Automated swing trade screener. Screens ~11,500 tickers nightly (Common Stock + 
   - Nightly append: EODHD bulk (~95% in seconds) + yfinance gap fill (~5% in ~30s)
   - EODHD handles: universe sync (IPOs/delistings), bulk splits detection, full historical backfill
   - yfinance handles: same-day bars not yet published by EODHD, fundamentals, earnings dates
-- **Step 2 (expression cache rebuild):** 🔄 In progress — full rebuild running (~3hrs). Float16 storage + 6yr window (2020-01-02). HTF look-ahead bias FIXED via partial candle engine (`partial_candle_engine.py`). After rebuild: verify examples pass, then all setups need regrinding (DTSS, BRKO conditions were built on biased HTF data).
-- **Step 3:** Not started
-- **Step 4:** Not started
+- **Step 2 (expression cache full rebuild):** ✅ Complete — 11,201 tickers, 0 failures, 111 GB, 124 min. Float16 storage + 6yr window (2020-01-02). HTF look-ahead bias FIXED via partial candle engine.
+- **Step 3 (universe matrix):** ✅ Complete — 11,201 tickers × 15,805 expressions, 1.35 GB, 148s. Reads last bar from expr cache .npz files.
+- **Step 4 (expression cache incremental append):** Not started — next major code task
+- **Market cache:** Still uses yfinance for all 266 instruments. ~200 are US ETFs already in OHLCV universe. ~60 are non-equity (futures, indices, Stooq breadth, FRED macro, BTC). Needs EODHD migration — separate task.
 
 ### DTSS (Double Top Short Sell) — first setup:
 - **Examples:** 66 (65 with valid scan bars in clusters, out of ~365 winner clusters)
@@ -72,7 +73,7 @@ local_runner/              # Grinder system
 ├── nightly.py             # 10-step nightly pipeline (5:00pm ET)
 ├── pyramid_grinder.py     # Signal grind + refinement grind (--blackout)
 ├── cache_builder.py       # OHLCV caches (daily + HTF) — EODHD bulk + yfinance hybrid
-├── expr_cache_builder.py  # Expression series cache (~163 GB, float16, 6yr)
+├── expr_cache_builder.py  # Expression series cache (~111 GB, float16, 6yr)
 ├── market_cache_builder.py # 256 instrument expression series
 ├── file_mirror.py         # Railway backup mirror
 └── cache/                 # All local caches + grind output JSONs
