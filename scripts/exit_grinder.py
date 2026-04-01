@@ -26,7 +26,7 @@ import json
 import numpy as np
 import pandas as pd
 import pickle
-import requests
+import sqlite3
 from dataclasses import dataclass, field
 from typing import Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -47,7 +47,6 @@ from scripts.exit_expressions import (
 # ============================================================
 # Config
 # ============================================================
-RAILWAY_URL = "https://web-production-e3025.up.railway.app"
 MAX_FORWARD_DEFAULT = 120  # bars after entry to analyze (~1 quarter)
 DEFAULT_WORKERS = os.cpu_count() or 8
 
@@ -116,12 +115,19 @@ def load_daily_cache():
 
 
 def load_examples(setup_type: str) -> list:
-    """Load examples from Railway API (metadata only — ticker + entry date)."""
-    r = requests.get(f"{RAILWAY_URL}/api/examples/{setup_type}")
-    r.raise_for_status()
-    data = r.json()
-    examples = data["examples"]
-    print(f"Loaded {len(examples)} {setup_type.upper()} examples")
+    """Load examples from local SQLite (metadata only — ticker + entry date)."""
+    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT id, ticker, chart_date, entry_date FROM examples WHERE setup_type=? ORDER BY ticker",
+        (setup_type,)
+    ).fetchall()
+    conn.close()
+    examples = [{"id": r["id"], "ticker": r["ticker"], "chartDate": r["chart_date"],
+                 "entryDate": r["entry_date"]} for r in rows]
+    print(f"Loaded {len(examples)} {setup_type.upper()} examples from local DB")
     return examples
 
 

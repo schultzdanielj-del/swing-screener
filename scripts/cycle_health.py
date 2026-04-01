@@ -1,7 +1,7 @@
 """
 cycle_health.py  —  V2 health check. Run after scan_signals.py completes.
 
-Reads all data from Railway (cycle_signals, grind_cycles, examples).
+Reads all data from Railway (cycle_signals, grind_cycles) and local SQLite (examples).
 Computes all cycle_health metrics per DATA_CONTRACT.md.
 Uploads a single cycle_health row to Railway.
 Prints a human-readable health report.
@@ -69,9 +69,19 @@ def load_signals(cycle_id):
 
 
 def load_examples(setup_type):
-    """Load validated examples."""
-    data = _get(f"/api/examples/{setup_type}")
-    return data.get("examples", [])
+    """Load validated examples from local SQLite."""
+    import os, sqlite3
+    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT id, ticker, chart_date, entry_date FROM examples WHERE setup_type=? ORDER BY ticker",
+        (setup_type,)
+    ).fetchall()
+    conn.close()
+    return [{"id": r["id"], "ticker": r["ticker"], "chartDate": r["chart_date"],
+             "entryDate": r["entry_date"]} for r in rows]
 
 
 # ── Metric helpers ────────────────────────────────────────────────────────────

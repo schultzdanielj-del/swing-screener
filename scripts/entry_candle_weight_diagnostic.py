@@ -17,7 +17,7 @@ import sys
 import json
 import glob
 import numpy as np
-import requests
+import sqlite3
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
@@ -27,7 +27,6 @@ sys.path.insert(0, LOCAL_DIR)
 
 from expr_cache_builder import ExprSeriesCache
 
-API_BASE = "https://web-production-e3025.up.railway.app"
 MIN_VALID_FRACTION = 0.5
 
 
@@ -49,10 +48,16 @@ def main():
     print(f"  {n_exprs} expressions")
 
     # ── Load examples and build entry candle matrix ──
-    print("\n  Loading examples from Railway API...")
-    resp = requests.get(f"{API_BASE}/api/examples/{setup}", timeout=30)
-    resp.raise_for_status()
-    examples = resp.json().get("examples", [])
+    print("\n  Loading examples from local DB...")
+    db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT ticker, entry_date FROM examples WHERE setup_type=? ORDER BY ticker",
+        (setup,)
+    ).fetchall()
+    conn.close()
+    examples = [{"ticker": r["ticker"], "entryDate": r["entry_date"]} for r in rows]
     print(f"  {len(examples)} examples loaded")
 
     print("  Building entry candle matrix...")

@@ -2,7 +2,7 @@
 Entry Candle Scorer — Sanity Check
 
 Verifies all data paths needed for the entry candle scorer:
-1. Examples from Railway API (ticker + entry_date)
+1. Examples from local SQLite (ticker + entry_date)
 2. Refinement output (winner_signals + bar_idx)
 3. Raw signal clusters (forward_window)
 4. Expr cache lookups at entry candle bars and forward window bars
@@ -14,7 +14,7 @@ import os
 import sys
 import json
 import numpy as np
-import requests
+import sqlite3
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
@@ -24,7 +24,6 @@ sys.path.insert(0, LOCAL_DIR)
 
 from expr_cache_builder import ExprSeriesCache
 
-API_BASE = "https://web-production-e3025.up.railway.app"
 SETUP = "dtss"
 
 
@@ -33,11 +32,17 @@ def main():
     print("  ENTRY CANDLE SCORER — SANITY CHECK")
     print("=" * 60)
 
-    # ── 1. Load examples from Railway API ──
-    print("\n  1. Loading examples from Railway API...")
-    resp = requests.get(f"{API_BASE}/api/examples/{SETUP}", timeout=30)
-    resp.raise_for_status()
-    examples = resp.json().get("examples", [])
+    # ── 1. Load examples from local DB ──
+    print("\n  1. Loading examples from local DB...")
+    db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT ticker, entry_date FROM examples WHERE setup_type=? ORDER BY ticker",
+        (SETUP,)
+    ).fetchall()
+    conn.close()
+    examples = [{"ticker": r["ticker"], "entryDate": r["entry_date"]} for r in rows]
     print(f"     {len(examples)} examples loaded")
     if examples:
         ex = examples[0]

@@ -23,10 +23,16 @@ with open(cond_path) as f:
 conditions = data.get("all_conditions", [])
 print(f"Loaded {len(conditions)} conditions")
 
-# Load examples from Railway
-import requests
-r = requests.get("https://web-production-e3025.up.railway.app/api/examples/dtss", timeout=30)
-examples = r.json().get("examples", [])
+# Load examples from local SQLite
+import sqlite3
+db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+rows = conn.execute(
+    "SELECT ticker, entry_date FROM examples WHERE setup_type='dtss' ORDER BY ticker"
+).fetchall()
+conn.close()
+examples = [{"ticker": r["ticker"], "entryDate": r["entry_date"]} for r in rows]
 print(f"Loaded {len(examples)} examples\n")
 
 # Check first few examples

@@ -29,7 +29,7 @@ import pickle
 import json
 import numpy as np
 import pandas as pd
-import requests
+import sqlite3
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
@@ -39,8 +39,6 @@ REPO_ROOT = os.path.dirname(LOCAL_DIR)
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
-
-API_BASE = "https://web-production-e3025.up.railway.app"
 
 
 def _load_expressions(setup_type=None, force=False):
@@ -409,11 +407,20 @@ def get_example_matrix(setup_type, progress_fn=None):
     """
     path = os.path.join(CACHE_DIR, f"example_matrix_{setup_type}.pkl")
 
-    # Get current example IDs from API to check freshness
+    # Get current example IDs from local SQLite to check freshness
+    db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+    raw_examples = []
     try:
-        r = requests.get(f"{API_BASE}/api/examples/{setup_type}", timeout=15)
-        raw_examples = r.json().get("examples", []) if r.status_code == 200 else []
-    except:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, ticker, chart_date, entry_date FROM examples WHERE setup_type=? ORDER BY id",
+            (setup_type,)
+        ).fetchall()
+        conn.close()
+        raw_examples = [{"id": r["id"], "ticker": r["ticker"], "chartDate": r["chart_date"],
+                         "entryDate": r["entry_date"]} for r in rows]
+    except Exception:
         raw_examples = []
 
     current_ids = sorted([str(e.get("id", "")) for e in raw_examples])
@@ -434,36 +441,51 @@ def get_example_matrix(setup_type, progress_fn=None):
     if progress_fn:
         progress_fn("examples", 10, f"Computing {len(raw_examples)} examples ({len(expressions)} expressions)...")
 
+    # Load daily OHLCV pickle for local lookups
+    ohlcv_cache = None
+    for candidate in ["universe_ohlcv_daily.pkl", "universe_ohlcv_5yr.pkl", "universe_ohlcv.pkl"]:
+        p = os.path.join(CACHE_DIR, candidate)
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                ohlcv_cache = pickle.load(f)
+            break
+    if ohlcv_cache is None:
+        print("  ✗ No OHLCV cache found — cannot build example matrix")
+        return {"example_matrix": np.array([]), "example_tickers": [], "example_ids": [],
+                "expr_names": [], "expr_categories": [], "n_exprs": 0, "n_examples": 0,
+                "computed_at": datetime.now(timezone.utc).isoformat()}
+
     example_matrix = np.full((len(raw_examples), len(expressions)), np.nan)
     example_tickers = []
     example_ids = []
 
-    def _process_example(i_ex_tuple):
-        """Fetch OHLCV + compute expressions for one example."""
-        i, ex = i_ex_tuple
+    from scripts.expression_engine import ExpressionEngine
+
+    completed = 0
+    for i, ex in enumerate(raw_examples):
         ticker = ex.get("ticker", "?")
         entry_date = ex.get("entryDate") or ex.get("chartDate")
         ex_id = str(ex.get("id", ""))
+
+        df = ohlcv_cache.get(ticker)
+        if df is None or len(df) == 0:
+            print(f"    ✗ {ticker:8s} ({entry_date}) — not in OHLCV cache")
+            completed += 1
+            continue
+
+        df = df.copy()
+        if "date" not in df.columns and df.index.name == "date":
+            df = df.reset_index()
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date").reset_index(drop=True)
+
+        target_idx = len(df) - 1
+        if entry_date:
+            matches = df[df["date"].dt.strftime("%Y-%m-%d") == entry_date]
+            if len(matches) > 0:
+                target_idx = matches.index[0] - 1
+
         try:
-            r2 = requests.get(f"{API_BASE}/api/ohlcv/local/{setup_type}/{ex.get('id')}", timeout=15)
-            if r2.status_code != 200:
-                return (i, ticker, ex_id, entry_date, None, "HTTP " + str(r2.status_code))
-            candles = r2.json().get("candles", [])
-            if not candles:
-                return (i, ticker, ex_id, entry_date, None, "no candles")
-            df = pd.DataFrame(candles)
-            for col in ["open", "high", "low", "close", "volume"]:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-            df["date"] = pd.to_datetime(df["date"])
-            df = df.sort_values("date").reset_index(drop=True)
-
-            target_idx = len(df) - 1
-            if entry_date:
-                matches = df[df["date"].dt.strftime("%Y-%m-%d") == entry_date]
-                if len(matches) > 0:
-                    target_idx = matches.index[0] - 1
-
-            from scripts.expression_engine import ExpressionEngine
             engine = ExpressionEngine(df)
             engine.set_target(target_idx)
             values = np.full(len(expressions), np.nan)
@@ -472,35 +494,18 @@ def get_example_matrix(setup_type, progress_fn=None):
                     val = engine.compute(expr)
                     if val is not None and not np.isnan(val):
                         values[j] = val
-                except:
+                except Exception:
                     pass
             n_valid = int(np.sum(~np.isnan(values)))
-            return (i, ticker, ex_id, entry_date, values, f"{n_valid}/{len(expressions)}")
+            example_matrix[i] = values
+            print(f"    ✓ {ticker:8s} ({entry_date}) — {n_valid}/{len(expressions)}")
         except Exception as e:
-            return (i, ticker, ex_id, entry_date, None, str(e))
+            print(f"    ✗ {ticker:8s} ({entry_date}) — {e}")
 
-    # Run all examples concurrently (I/O-bound: API fetch)
-    from concurrent.futures import ThreadPoolExecutor
-    n_threads = min(10, len(raw_examples))
-    completed = 0
-
-    with ThreadPoolExecutor(max_workers=n_threads) as executor:
-        futures = {executor.submit(_process_example, (i, ex)): i
-                   for i, ex in enumerate(raw_examples)}
-
-        for future in as_completed(futures):
-            i, ticker, ex_id, entry_date, values, msg = future.result()
-            if values is not None:
-                example_matrix[i] = values
-                symbol = "✓"
-            else:
-                symbol = "✗"
-            print(f"    {symbol} {ticker:8s} ({entry_date}) — {msg}")
-
-            completed += 1
-            if progress_fn:
-                pct = 10 + int(90 * completed / len(raw_examples))
-                progress_fn("examples", pct, f"Examples: {completed}/{len(raw_examples)} ({ticker})")
+        completed += 1
+        if progress_fn:
+            pct = 10 + int(90 * completed / len(raw_examples))
+            progress_fn("examples", pct, f"Examples: {completed}/{len(raw_examples)} ({ticker})")
 
     # Build ticker/id lists in original order
     for i, ex in enumerate(raw_examples):
