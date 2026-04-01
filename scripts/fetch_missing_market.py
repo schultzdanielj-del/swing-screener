@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from local_runner.market_cache_builder import (
     all_instruments, _fetch_one, _is_pickle_instrument, _read_from_daily_pickle,
-    _compute_derived_instruments, _standard_df,
+    _compute_derived_instruments,
     OHLCV_PATH, DAILY_PKL, CACHE_DIR, DERIVED_INSTRUMENTS
 )
 from concurrent.futures import ThreadPoolExecutor, as_completed
