@@ -1249,6 +1249,7 @@ def append_daily_cache():
     failed = 0
     split_refetched = 0
     interrupted = False
+    yf_filled_tickers = set()
 
     # Update SPY in universe first
     compute_dvol_20d(spy_df)
@@ -1295,6 +1296,10 @@ def append_daily_cache():
                     yf_appended, yf_no_data, yf_failed = _yfinance_fill_gaps(
                         universe, still_stale, spy_last)
                     appended += yf_appended
+                    # Track yfinance-filled tickers so we skip them in validation.
+                    # Their history is already validated — we only added 1 bar.
+                    # EODHD may not have today's bar yet, so bar count won't match.
+                    yf_filled_tickers.update(still_stale)
                     print(f"    yfinance done: {yf_appended} appended, "
                           f"{yf_no_data} no data, {yf_failed} failed")
             else:
@@ -1338,9 +1343,19 @@ def append_daily_cache():
 
         # ── Step 4: Validate all tickers ──
         if ticker_ref:
-            print(f"\n  Validating all {len(universe)} tickers against SPY reference...")
+            # Exclude tickers filled by yfinance — their history is already
+            # validated, we only appended today's bar. EODHD may not have
+            # today's data yet so bar count won't match SPY.
+            validate_universe = {t: df for t, df in universe.items()
+                                 if t not in yf_filled_tickers}
+            if yf_filled_tickers:
+                print(f"\n  Validating {len(validate_universe)} tickers "
+                      f"({len(yf_filled_tickers)} yfinance-filled skipped)...")
+            else:
+                print(f"\n  Validating all {len(validate_universe)} tickers "
+                      f"against SPY reference...")
             all_valid, all_invalid, all_unvalidatable = validate_daily_fetch(
-                universe, spy_dates, ticker_ref)
+                validate_universe, spy_dates, ticker_ref)
 
             print(f"  Validated: {len(all_valid)}")
             print(f"  Failed validation: {len(all_invalid)}")
