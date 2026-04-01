@@ -1,6 +1,6 @@
 # Swing Screener Project — State Document
 
-**Last updated:** 2026-03-31
+**Last updated:** 2026-04-01
 **GitHub repo:** https://github.com/schultzdanielj-del/swing-screener (branch: v2)
 **Railway:** https://web-production-e3025.up.railway.app (seed vault / file mirror only)
 
@@ -40,7 +40,7 @@ Automated swing trade screener. Screens ~11,500 tickers nightly (Common Stock + 
   - Nightly append: EODHD bulk (~95% in seconds) + yfinance gap fill (~5% in ~30s)
   - EODHD handles: universe sync (IPOs/delistings), bulk splits detection, full historical backfill
   - yfinance handles: same-day bars not yet published by EODHD, fundamentals, earnings dates
-- **Step 2 (expression cache rebuild):** Next — float16 storage + 6yr window (2020-01-02) ready, needs full rebuild. HTF partial candle reconstruction planned as follow-up.
+- **Step 2 (expression cache rebuild):** 🔄 In progress — full rebuild running (~3hrs). Float16 storage + 6yr window (2020-01-02). HTF look-ahead bias FIXED via partial candle engine (`partial_candle_engine.py`). After rebuild: verify examples pass, then all setups need regrinding (DTSS, BRKO conditions were built on biased HTF data).
 - **Step 3:** Not started
 - **Step 4:** Not started
 
