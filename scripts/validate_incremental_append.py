@@ -241,17 +241,18 @@ def classify_expression(expr):
 
     # Simple arithmetic from today's bar + MA/EMA intermediates
     STATE_ONLY_OPS = {
-        "extension",          # C - MA / norm — MA is EMA or SMA (state-updatable)
-        "ma_slope",           # MA - shift(MA, offset) / norm — needs prev MA values
+        # Signal expressions
+        "extension",          # C - MA / norm
+        "ma_slope",           # MA - shift(MA, offset) / norm
         "ma_spread",          # MA_fast - MA_slow / norm
         "extension_slope",    # ext - shift(ext, offset) / norm
         "ext_adr_multiples",  # (C - MA) / ADR
         "spread_slope",       # spread - shift(spread, offset)
         "roc",                # C / shift(C, period) - 1
         "roc_delta",          # roc_now - roc_prev
-        "adx",                # EMA chain — state-propagatable
+        "adx",                # EMA chain
         "adx_slope",          # ADX - shift(ADX, offset)
-        "rsi",                # EMA of gains/losses — state-propagatable
+        "rsi",                # EMA of gains/losses
         "rsi_slope",          # RSI - shift(RSI, offset)
         "di_spread",          # DI+ - DI-
         "volume_ratio",       # V / avgV
@@ -259,45 +260,95 @@ def classify_expression(expr):
         "body_range_ratio",   # |C-O| / (H-L)
         "upper_wick_ratio",   # (H - max(C,O)) / (H-L)
         "lower_wick_ratio",   # (min(C,O) - L) / (H-L)
-        "bop",                # SMA of (C-O)/(H-L) — state-propagatable
+        "bop",                # SMA of (C-O)/(H-L)
         "obv_slope",          # OBV diff / volume
         "macd_histogram",     # MACD line - signal (both EMAs)
         "macd_histogram_slope", # hist - shift(hist)
         "macd_line_norm",     # MACD / norm
         "bollinger_pctb",     # (C - BB_bot) / (BB_top - BB_bot)
         "bollinger_bandwidth", # (BB_top - BB_bot) / MA
-        "cmf",                # SMA-based — needs rolling sum of MFV and V
+        "cmf",                # SMA-based rolling sum of MFV and V
         "cmf_slope",          # CMF - shift(CMF, offset)
-        "kaufman_efficiency_ratio", # |C-C[p]| / sum(|C-C[1]|) — needs lookback actually!
+        "kaufman_efficiency_ratio", # |C-C[p]| / sum(|C-C[1]|)
         "atr_ratio",          # ATR / shift(ATR, offset)
         "slope_ratio",        # slope_fast / slope_slow
         "gap_size",           # (O - prev_C) / norm
+        # Exit expressions — today's bar only
+        "bar_range",          # (H-L) / ATR or similar
+        "close_above_ma",     # C > MA — boolean-like
+        "closed_below_ma",    # C < MA — boolean-like
+        "is_doji",            # |C-O| / (H-L) < threshold
+        "is_green",           # C > O
+        "gap_from_prior",     # (O - prev_C) / norm
+        "distance_from_ma",   # (C - MA) / norm
+        "rvol",               # V / avgV
+        "touched_ma",         # L <= MA or H >= MA
+        # Exit expressions — need prev bar state (small shift)
+        "ext_accel",          # ext - 2*ext[-1] + ext[-2] — needs 2 prev
+        "ext_slope",          # ext - ext[-offset]
     }
 
     if op in STATE_ONLY_OPS:
-        # Most of these need shift(X, offset) which means storing a few prior values
-        # But that's just state — the offset is small (1-10 bars typically)
         offset = comp.get("offset", 0)
         period = comp.get("period", 0)
         max_shift = max(offset, period, 1)
         return ("state_only", 0, f"{op} — intermediates + shift({max_shift})")
 
-    # Ops that go through compute_series fallback — need to classify individually
-    FALLBACK_OPS = {
-        "avg_candle_body_ratio", "close_position_in_bar", "close_vs_open_ratio",
-        "cumulative_rvol", "gap_count", "high_volume_bar_pct", "high_vs_ma",
-        "inside_bar_count", "low_vs_ma", "ma_cross", "ma_cross_count",
-        "ma_stack_score", "nr_ratio", "outside_bar_count", "roc_acceleration",
-        "rvol_continuous", "slope", "smoothed_ma", "unfilled_gap_up_count",
-        "up_volume_ratio", "volume_price_divergence", "vwap_distance", "vwap_slope",
-        "range_contraction_ratio",
+    # ── Lookback ops (need rolling window of raw data) ──
+    LOOKBACK_OPS = {
+        # Signal expressions — already handled above by name, but these go
+        # through compute_series and need rolling windows
+        "ma_cross_count",     # count MA crosses in period
+        "vwap_slope",         # VWAP change — needs cumulative price*vol
+        "rvol_continuous",    # rolling vol ratio
+        "cumulative_rvol",    # cumulative vol ratio
+        "gap_count",          # count gaps in period
+        "high_volume_bar_pct", # pct high-vol bars in period
+        "vwap_distance",      # C - VWAP / norm
+        "low_vs_ma",          # L - MA / norm
+        "high_vs_ma",         # H - MA / norm
+        "roc_acceleration",   # roc - roc[-offset]
+        "close_position_in_bar", # (C-L)/(H-L) rolling
+        "inside_bar_count",   # count inside bars in period
+        "outside_bar_count",  # count outside bars in period
+        "nr_ratio",           # narrowest range ratio
+        "ma_stack_score",     # count of ordered MAs
+        "up_volume_ratio",    # up-vol / total-vol in period
+        "range_contraction_ratio", # range vs prior range
+        "avg_candle_body_ratio", # avg |C-O|/(H-L) in period
+        "unfilled_gap_up_count", # count unfilled gaps
+        "close_vs_open_ratio", # rolling C vs O ratio
+        "volume_price_divergence", # vol vs price divergence
+        "slope",              # linear regression slope
+        "smoothed_ma",        # double-smoothed MA
+        "ma_cross",           # MA cross detection
+        # Exit expressions — rolling windows
+        "consecutive_down_days",  # scan back for consecutive
+        "consecutive_down_roc",
+        "consecutive_green",
+        "consecutive_red",
+        "consecutive_up_days",
+        "consecutive_up_roc",
+        "lower_low_sequence",     # count consecutive lower lows
+        "higher_low_formed",      # scan back for pattern
+        "new_high_count",         # count new highs in period
+        "new_low_count",          # count new lows in period
+        "avg_bar_range_rolling",  # avg (H-L) in period
+        "avg_body_ratio_rolling", # avg |C-O|/(H-L) in period
+        "avg_rvol_rolling",       # avg rvol in period
+        "down_vol_ratio_rolling", # down-vol ratio in period
+        "up_vol_ratio_rolling",   # up-vol ratio in period
+        "pct_green_rolling",      # pct green bars in period
+        "vol_trend_rolling",      # vol trend in period
+        "range_contracting",      # range contraction detection
+        "ext_ceiling_ratio",      # rolling max of ext (exit version)
+        "ext_retrace_from_peak",  # retrace from rolling max
+        "retracement_level",      # retrace level in range
     }
 
-    if op in FALLBACK_OPS:
-        # These go through compute_series — need to check each one
-        # For now, classify as needing lookback (conservative)
-        period = comp.get("period", comp.get("lookback", 0))
-        return ("fallback_needs_audit", period, f"{op} — goes through compute_series, period={period}")
+    if op in LOOKBACK_OPS:
+        period = comp.get("period", comp.get("lookback", comp.get("max_lookback", 50)))
+        return ("lookback", period, f"{op} period={period}")
 
     # Unknown op
     return ("unknown", 0, f"unknown op: {op}")
