@@ -977,7 +977,16 @@ def append_daily_cache():
         if len(df) > 0:
             last_dates[ticker] = str(df["date"].iloc[-1])[:10]
 
+    # Filter to only tickers that are actually stale (behind SPY).
+    # This makes partial runs resumable — if a previous run saved
+    # partway through, already-updated tickers are skipped.
+    stale = [t for t in to_append if last_dates.get(t, "") < spy_last]
+    already_current = len(to_append) - len(stale)
+    to_append = stale
+
     print(f"  Tickers to append: {len(to_append)}")
+    if already_current > 0:
+        print(f"  Already current (skipped): {already_current}")
     print(f"  Tickers to full refetch (split): {len(to_full_refetch)}")
     print(f"  New tickers (full fetch): {len(to_fetch_new)}")
 
@@ -987,125 +996,133 @@ def append_daily_cache():
     no_new = 0
     failed = 0
     split_refetched = 0
+    interrupted = False
 
     # Update SPY in universe first
     compute_dvol_20d(spy_df)
     universe["SPY"] = spy_df
 
-    # ── Step 3a: Append new bars for existing tickers ──
-    if to_append:
-        print(f"\n  Appending new bars via EODHD...")
+    try:
+        # ── Step 3a: Append new bars for existing tickers ──
+        if to_append:
+            print(f"\n  Appending new bars via EODHD...")
 
-        def _append_one(ticker):
-            return _eodhd_append_after_date(ticker, last_dates.get(ticker, "2020-01-01"))
+            def _append_one(ticker):
+                return _eodhd_append_after_date(ticker, last_dates.get(ticker, "2020-01-01"))
 
-        append_results, append_failed = _batched_fetch(
-            to_append, fetch_fn=_append_one, label="Append",
-            batch_size=50, min_sleep=2.0, max_workers=20,
-        )
-        failed += len(append_failed)
-
-        for ticker, new_df in append_results.items():
-            if len(new_df) > 0:
-                existing = universe[ticker]
-                combined = pd.concat([existing, new_df], ignore_index=True)
-                combined = combined.sort_values("date").reset_index(drop=True)
-                combined = combined.drop_duplicates(subset=["date"], keep="last")
-                combined = combined.reset_index(drop=True)
-                compute_dvol_20d(combined)
-                universe[ticker] = combined
-                appended += 1
-            else:
-                no_new += 1
-
-    # ── Step 3b: Full refetch for split tickers ──
-    if to_full_refetch:
-        print(f"\n  Full refetch for {len(to_full_refetch)} split tickers...")
-
-        refetch_results, refetch_failed = _batched_fetch(
-            to_full_refetch,
-            fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
-            label="Split refetch",
-        )
-        failed += len(refetch_failed)
-
-        for ticker, df in refetch_results.items():
-            compute_dvol_20d(df)
-            universe[ticker] = df
-            split_refetched += 1
-
-    # ── Step 3c: Full fetch for new tickers ──
-    if to_fetch_new:
-        print(f"\n  Fetching {len(to_fetch_new)} new tickers via EODHD...")
-
-        # Update reference for new tickers
-        if ticker_ref:
-            ticker_ref = build_ticker_reference(to_fetch_new)
-
-        new_results, new_failed = _batched_fetch(
-            to_fetch_new,
-            fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
-            label="New tickers",
-        )
-        failed += len(new_failed)
-
-        for ticker, df in new_results.items():
-            compute_dvol_20d(df)
-            universe[ticker] = df
-            new_added += 1
-
-    # ── Step 4: Validate all tickers ──
-    if ticker_ref:
-        print(f"\n  Validating all {len(universe)} tickers against SPY reference...")
-        all_valid, all_invalid, all_unvalidatable = validate_daily_fetch(
-            universe, spy_dates, ticker_ref)
-
-        print(f"  Validated: {len(all_valid)}")
-        print(f"  Failed validation: {len(all_invalid)}")
-        print(f"  No reference (accepted): {len(all_unvalidatable)}")
-
-        # Retry invalid tickers with full refetch
-        retry_round = 0
-        max_validation_retries = 5
-        while all_invalid and retry_round < max_validation_retries:
-            retry_round += 1
-            print(f"\n  Validation retry {retry_round}/{max_validation_retries} — "
-                  f"{len(all_invalid)} tickers...")
-
-            retry_results, retry_failed = _batched_fetch(
-                all_invalid,
-                fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
-                label=f"Retry {retry_round}",
-                min_sleep=0.5,
-                max_retries=2,
+            append_results, append_failed = _batched_fetch(
+                to_append, fetch_fn=_append_one, label="Append",
+                batch_size=50, min_sleep=2.0, max_workers=20,
             )
+            failed += len(append_failed)
 
-            # Update universe with retried data
-            for ticker, df in retry_results.items():
+            for ticker, new_df in append_results.items():
+                if len(new_df) > 0:
+                    existing = universe[ticker]
+                    combined = pd.concat([existing, new_df], ignore_index=True)
+                    combined = combined.sort_values("date").reset_index(drop=True)
+                    combined = combined.drop_duplicates(subset=["date"], keep="last")
+                    combined = combined.reset_index(drop=True)
+                    compute_dvol_20d(combined)
+                    universe[ticker] = combined
+                    appended += 1
+                else:
+                    no_new += 1
+
+        # ── Step 3b: Full refetch for split tickers ──
+        if to_full_refetch:
+            print(f"\n  Full refetch for {len(to_full_refetch)} split tickers...")
+
+            refetch_results, refetch_failed = _batched_fetch(
+                to_full_refetch,
+                fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
+                label="Split refetch",
+            )
+            failed += len(refetch_failed)
+
+            for ticker, df in refetch_results.items():
                 compute_dvol_20d(df)
                 universe[ticker] = df
+                split_refetched += 1
 
-            new_valid, still_invalid, new_unvalidatable = validate_daily_fetch(
-                {t: universe[t] for t in all_invalid if t in universe},
-                spy_dates, ticker_ref)
+        # ── Step 3c: Full fetch for new tickers ──
+        if to_fetch_new:
+            print(f"\n  Fetching {len(to_fetch_new)} new tickers via EODHD...")
 
-            print(f"  Retry {retry_round}: {len(new_valid)} passed, "
-                  f"{len(still_invalid)} still failing")
+            # Update reference for new tickers
+            if ticker_ref:
+                ticker_ref = build_ticker_reference(to_fetch_new)
 
-            if len(still_invalid) == len(all_invalid):
-                print(f"  No progress — stopping retries")
-                break
+            new_results, new_failed = _batched_fetch(
+                to_fetch_new,
+                fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
+                label="New tickers",
+            )
+            failed += len(new_failed)
 
-            all_invalid = still_invalid
+            for ticker, df in new_results.items():
+                compute_dvol_20d(df)
+                universe[ticker] = df
+                new_added += 1
 
-        if all_invalid:
-            print(f"\n  ⚠ {len(all_invalid)} tickers could not be validated:")
-            if len(all_invalid) <= 20:
-                print(f"    {all_invalid}")
+        # ── Step 4: Validate all tickers ──
+        if ticker_ref:
+            print(f"\n  Validating all {len(universe)} tickers against SPY reference...")
+            all_valid, all_invalid, all_unvalidatable = validate_daily_fetch(
+                universe, spy_dates, ticker_ref)
+
+            print(f"  Validated: {len(all_valid)}")
+            print(f"  Failed validation: {len(all_invalid)}")
+            print(f"  No reference (accepted): {len(all_unvalidatable)}")
+
+            # Retry invalid tickers with full refetch
+            retry_round = 0
+            max_validation_retries = 5
+            while all_invalid and retry_round < max_validation_retries:
+                retry_round += 1
+                print(f"\n  Validation retry {retry_round}/{max_validation_retries} — "
+                      f"{len(all_invalid)} tickers...")
+
+                retry_results, retry_failed = _batched_fetch(
+                    all_invalid,
+                    fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
+                    label=f"Retry {retry_round}",
+                    min_sleep=0.5,
+                    max_retries=2,
+                )
+
+                # Update universe with retried data
+                for ticker, df in retry_results.items():
+                    compute_dvol_20d(df)
+                    universe[ticker] = df
+
+                new_valid, still_invalid, new_unvalidatable = validate_daily_fetch(
+                    {t: universe[t] for t in all_invalid if t in universe},
+                    spy_dates, ticker_ref)
+
+                print(f"  Retry {retry_round}: {len(new_valid)} passed, "
+                      f"{len(still_invalid)} still failing")
+
+                if len(still_invalid) == len(all_invalid):
+                    print(f"  No progress — stopping retries")
+                    break
+
+                all_invalid = still_invalid
+
+            if all_invalid:
+                print(f"\n  ⚠ {len(all_invalid)} tickers could not be validated:")
+                if len(all_invalid) <= 20:
+                    print(f"    {all_invalid}")
+
+    except KeyboardInterrupt:
+        interrupted = True
+        print(f"\n\n  ⚠ Interrupted! Saving partial progress...")
+        print(f"    {appended} tickers appended before interrupt")
+        print(f"    Re-run to resume — already-updated tickers will be skipped")
 
     elapsed = time.time() - t0
 
-    # Save (always to new filename)
+    # Save (always to new filename) — runs even on interrupt
     print(f"\n  Saving daily cache...")
     with open(CACHE_DAILY_FILE, "wb") as f:
         pickle.dump(universe, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -1119,6 +1136,8 @@ def append_daily_cache():
           f"New: {new_added}, Delisted: {len(delisted)}, "
           f"No change: {no_new}, Failed: {failed}")
     print(f"  Time: {elapsed:.0f}s")
+    if interrupted:
+        print(f"  ⚠ Partial save — re-run to finish remaining tickers")
 
     return universe
 
