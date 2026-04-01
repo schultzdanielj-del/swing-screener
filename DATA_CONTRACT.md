@@ -10,7 +10,7 @@
 - **Local is authoritative.** SQLite DB (`data/scanperfect.db`) and local cache files (`local_runner/cache/`) are the single source of truth. All compute runs locally, all results write locally.
 - **Railway is a seed vault.** Daily backup of DB tables + grind result JSONs to Railway via `scripts/seed_vault.py`. Railway has no compute, no UI, no pipeline logic. It exists for disaster recovery and for Claude to read grind results during chat sessions.
 - **Grind results are local JSON files.** The grinders write timestamped JSON to `local_runner/cache/`. These are the authoritative outputs. They are also mirrored to Railway's `file_mirror` table as a backup copy.
-- **The PySide6 app reads local files directly.** No HTTP layer, no server process, no API calls. SQLite for structured data (examples, setups, earnings). Local JSON files for grind outputs. 5yr OHLCV pickle loaded into memory.
+- **The PySide6 app reads local files directly.** No HTTP layer, no server process, no API calls. SQLite for structured data (examples, setups, earnings). Local JSON files for grind outputs. Full daily OHLCV pickle loaded into memory.
 - All timestamps are UTC ISO-8601 strings: `"2026-03-06T14:30:22Z"`.
 - All dates (signal dates, entry dates) are `"YYYY-MM-DD"` strings.
 - **OHLCV and expr cache must stay in sync.** Both use append-only nightly updates. If they drift (different bar counts for the same ticker), signal bar indices between the two point to different dates, breaking example matching and condition checking. Fixed 2026-03-20. Delisted tickers are removed from the OHLCV pickle on nightly sync; the expr cache should follow suit.
