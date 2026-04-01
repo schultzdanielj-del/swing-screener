@@ -298,61 +298,68 @@ def validate_daily_fetch(results, spy_dates, ticker_ref):
 
 
 # ── Split Detection ──
-# On nightly append, detect splits by comparing the cached close price
-# for the last bar to what EODHD returns for that same date. If the
-# adjustment ratio changed, a split (or dividend ex-date) happened
-# and the ticker needs a full refetch.
+# On nightly append, use EODHD's bulk splits endpoint to find which
+# tickers split since the last cached date. One API call per trading
+# day in the gap (typically 1). Any ticker that split needs a full
+# refetch because its historical adjusted prices changed.
 
-def detect_splits(tickers, cache_dict, after_date):
-    """Check which tickers had a split/adjustment change since last cache.
+def detect_splits(tickers, cache_dict, after_date, spy_dates=None):
+    """Check which tickers had a split since last cache via EODHD bulk API.
 
-    Compares cached close for the last bar to EODHD's adjusted_close
-    for that same date. If they differ by more than 0.5%, the ticker's
-    historical adjustment changed (split or dividend) and needs full refetch.
+    Uses the bulk splits endpoint (eod-bulk-last-day/US?type=splits) which
+    returns all US tickers that split on a given date in a single call.
+    One call per trading day in the gap between after_date and today.
 
     Args:
         tickers: list of ticker symbols
         cache_dict: {ticker: DataFrame} — current cache
         after_date: 'YYYY-MM-DD' — the last cached date
+        spy_dates: sorted list of SPY date strings (trading calendar)
 
     Returns list of tickers that need full refetch.
     """
-    split_tickers = []
+    cached_set = set(tickers)
+    split_tickers = set()
 
-    # Fetch the bulk last-day data for comparison
-    # We actually need the specific date's data, not last day
-    # Check in batches
-    for i in range(0, len(tickers), 50):
-        batch = tickers[i:i+50]
-        for t in batch:
-            try:
-                cached_df = cache_dict.get(t)
-                if cached_df is None or len(cached_df) == 0:
-                    continue
+    # Find trading days after after_date using SPY dates as calendar
+    if spy_dates:
+        gap_days = [d for d in spy_dates if d > after_date]
+    else:
+        # Fallback: just check today
+        gap_days = [datetime.now().strftime("%Y-%m-%d")]
 
-                # Get the last cached close (this is already adjusted)
-                cached_close = float(cached_df["close"].iloc[-1])
-                cached_date = str(cached_df["date"].iloc[-1])[:10]
+    if not gap_days:
+        return []
 
-                # Fetch that same date from EODHD
-                data = _eodhd_fetch_json(t, cached_date, cached_date, "d")
-                if not data or len(data) == 0:
-                    continue
+    print(f"    Checking {len(gap_days)} trading day(s) via bulk splits API...")
 
-                # EODHD returns unadjusted close + adjusted_close
-                # Our cache has the adjusted value. Compare to EODHD's adjusted_close.
-                eodhd_adj_close = float(data[0]["adjusted_close"])
+    for day in gap_days:
+        try:
+            url = (f"{EODHD_BASE}/eod-bulk-last-day/US"
+                   f"?type=splits&date={day}"
+                   f"&api_token={EODHD_API_TOKEN}&fmt=json")
+            req = urllib.request.Request(url, headers={"User-Agent": "ScanPerfect/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read().decode("utf-8")
 
-                # If they differ by more than 0.5%, adjustment changed
-                if cached_close > 0 and abs(eodhd_adj_close - cached_close) / cached_close > 0.005:
-                    split_tickers.append(t)
+            if not raw.startswith("["):
+                continue
 
-            except Exception:
-                pass  # can't check — not a split
-        if i + 50 < len(tickers):
+            data = json.loads(raw)
+            for entry in data:
+                code = entry.get("code", "")
+                if code in cached_set:
+                    split_tickers.add(code)
+                    print(f"    Split: {code} on {day} ({entry.get('split', '?')})")
+
+        except Exception as e:
+            print(f"    WARNING: Could not check splits for {day}: {e}")
+
+        # Gentle pacing between days (only matters for multi-day gaps)
+        if len(gap_days) > 1:
             time.sleep(0.5)
 
-    return split_tickers
+    return list(split_tickers)
 
 
 # ── EODHD API Functions ──
@@ -498,7 +505,8 @@ def compute_dvol_20d(df):
 # ══════════════════════════════════════════════════════════════
 
 def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=100,
-                   min_sleep=0.2, max_sleep=10.0, max_retries=3):
+                   min_sleep=0.2, max_sleep=10.0, max_retries=3,
+                   max_workers=None):
     """Fetch data for a list of tickers with adaptive rate limiting and retry.
 
     Adapts both sleep time AND concurrent workers based on failure rate.
@@ -513,6 +521,7 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=100,
         min_sleep: minimum sleep between batches (seconds)
         max_sleep: maximum sleep between batches (seconds)
         max_retries: how many full retry sweeps on failed tickers
+        max_workers: starting worker count (default: MAX_WORKERS)
 
     Returns:
         results: dict {ticker: result} for successful fetches
@@ -521,10 +530,12 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=100,
     if not tickers:
         return {}, []
 
+    start_workers = max_workers if max_workers is not None else MAX_WORKERS
+
     results = {}
     remaining = list(tickers)
     sleep_time = min_sleep
-    workers = MAX_WORKERS  # starts at 80
+    workers = start_workers
     min_workers = 20
     consecutive_clean = 0  # batches with 0 failures in a row
 
@@ -532,7 +543,7 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=100,
         if attempt > 0:
             # Reset to moderate settings for retry
             sleep_time = 1.0
-            workers = max(min_workers, MAX_WORKERS // 2)
+            workers = max(min_workers, start_workers // 2)
             consecutive_clean = 0
             print(f"\n  {label} retry {attempt}/{max_retries} — "
                   f"{len(remaining)} tickers to retry "
@@ -575,7 +586,7 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=100,
                 consecutive_clean += 1
                 if consecutive_clean >= 3:
                     sleep_time = max(sleep_time * 0.7, min_sleep)
-                    workers = min(workers + 1, MAX_WORKERS)
+                    workers = min(workers + 1, start_workers)
 
             done = b_end
             elapsed = time.time() - t0
@@ -944,8 +955,8 @@ def append_daily_cache():
         print(f"  No universe changes")
 
     # ── Step 3: Split detection ──
-    print(f"\n  Checking for adjustment changes after {cached_spy_last}...")
-    split_tickers = detect_splits(list(universe.keys()), universe, cached_spy_last)
+    print(f"\n  Checking for splits after {cached_spy_last}...")
+    split_tickers = detect_splits(list(universe.keys()), universe, cached_spy_last, spy_dates)
     if split_tickers:
         print(f"  ⚠ {len(split_tickers)} tickers need full refetch: {split_tickers[:20]}")
         if len(split_tickers) > 20:
@@ -990,6 +1001,7 @@ def append_daily_cache():
 
         append_results, append_failed = _batched_fetch(
             to_append, fetch_fn=_append_one, label="Append",
+            batch_size=100, min_sleep=0.5, max_workers=40,
         )
         failed += len(append_failed)
 
