@@ -1,9 +1,10 @@
 """
 ScanPerfect Code Auditor
-Run: python audit.py           (audits last commit only)
-     python audit.py --all     (audits everything since last audit)
-     python audit.py --2       (audits last 2 commits)
-     python audit.py --5       (audits last 5 commits)
+Run: python audit.py                    (audits last commit only)
+     python audit.py --all              (audits everything since last audit)
+     python audit.py --2                (audits last 2 commits)
+     python audit.py --5                (audits last 5 commits)
+     python audit.py --commit abc123    (audits one specific commit)
 """
 
 import os
@@ -216,6 +217,13 @@ def main():
     # ── Parse args ──
     batch_mode = "--all" in sys.argv
 
+    # Check for --commit <hash> to audit a specific commit
+    target_commit = None
+    for i, arg in enumerate(sys.argv[1:], 1):
+        if arg == "--commit" and i < len(sys.argv) - 1:
+            target_commit = sys.argv[i + 1]
+            break
+
     # Check for --N modifier (e.g. --2, --5) to audit last N commits
     n_back = None
     for arg in sys.argv[1:]:
@@ -224,7 +232,20 @@ def main():
             break
 
     # ── Determine diff range ──
-    if n_back is not None:
+    if target_commit is not None:
+        # Resolve to full hash, then diff parent..commit
+        full_hash = git(["rev-parse", target_commit])
+        if not full_hash:
+            print(f"\n  ERROR: Could not resolve commit '{target_commit}'\n")
+            return
+        parent = git(["rev-parse", f"{full_hash}~1"])
+        diff_from = parent
+        current = full_hash
+        n_commits = "1"
+        short_from = git(["rev-parse", "--short", diff_from])
+        short_to = git(["rev-parse", "--short", current])
+        label = f"specific commit {short_to}"
+    elif n_back is not None:
         diff_from = git(["rev-parse", f"HEAD~{n_back}"])
         label = f"last {n_back} commit(s)"
     elif batch_mode:
@@ -242,15 +263,16 @@ def main():
         diff_from = git(["rev-parse", "HEAD~1"])
         label = "last commit"
 
-    current = git(["rev-parse", "HEAD"])
+    if target_commit is None:
+        current = git(["rev-parse", "HEAD"])
 
-    if diff_from == current:
-        print(f"\n  Nothing to audit — HEAD matches {label} reference.\n")
-        return
+        if diff_from == current:
+            print(f"\n  Nothing to audit — HEAD matches {label} reference.\n")
+            return
 
-    n_commits = git(["rev-list", "--count", f"{diff_from}..{current}"])
-    short_from = git(["rev-parse", "--short", diff_from])
-    short_to = git(["rev-parse", "--short", current])
+        n_commits = git(["rev-list", "--count", f"{diff_from}..{current}"])
+        short_from = git(["rev-parse", "--short", diff_from])
+        short_to = git(["rev-parse", "--short", current])
 
     print()
     print("=" * 60)
@@ -427,9 +449,14 @@ SPEC DOCS:
         f.write(output)
     print("  Audit saved to local_runner/cache/last_audit.txt")
 
-    # ── Update state ──
+    # ── Update state (skip for --commit mode — don't move pointer for historical audits) ──
     first_line = output.split("\n")[0].strip()
-    if first_line.startswith("PASS"):
+    if target_commit is not None:
+        if first_line.startswith("PASS"):
+            print(f"  PASS (--commit mode — state pointer unchanged)")
+        else:
+            print(f"  FAIL (--commit mode — state pointer unchanged)")
+    elif first_line.startswith("PASS"):
         with open(STATE_FILE, "w") as f:
             f.write(current)
         print(f"  Last audited commit updated to {short_to}")
