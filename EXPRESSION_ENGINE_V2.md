@@ -418,7 +418,7 @@ Unified `_build_htf_cache` + `_append_htf_cache` into single `_sync_htf_cache(fu
 
 ### Task H Phase 3, Increment 2: True Incremental Append — DESIGN (2026-03-29)
 
-**Problem:** Current `append_new_bars()` does a full recompute of every ticker with new bars — same as `build_full`, just scoped. Takes ~80-90 min. Nightly only adds 1 new bar per active ticker (~4,118 active out of 10,542 total). Dead/delisted tickers have no new bars and can be skipped entirely.
+**Problem:** Current `append_new_bars()` does a full recompute of every ticker with new bars — same as `build_full`, just scoped. Takes ~80-90 min. Nightly only adds 1 new bar per ticker. Every ticker in the daily OHLCV cache gets a new bar on each trading day.
 
 **Critical constraint — HTF source consistency:** Every ticker must use the SAME HTF data source (pickle vs resample) in both full rebuild and incremental. If the full rebuild used pickle data for ticker X, incremental must also use pickle data. If pickle wasn't available and full rebuild resampled, incremental must also resample. Mixing sources = different HTF values for the same bar = broken immutability. This is why HTF gaps must be filled BEFORE the baseline full rebuild.
 
@@ -454,16 +454,15 @@ Unified `_build_htf_cache` + `_append_htf_cache` into single `_sync_htf_cache(fu
 20. Save with fast compression (zipfile level 1)
 
 **Performance estimates:**
-- Active tickers only: ~4,118 (dead tickers skipped — no new bar)
+- All tickers in cache: ~11,201
 - Per-ticker compute: ~2-3s (engine.compute is fast — lazy cache + single index)
 - LSP + algo: ~0.67s (unchanged, runs full detection)
 - HTF: ~0.3s (tiny arrays)
 - Load existing .npz: ~0.3s
 - Save: ~1.6s (compression on full array — same cost as full rebuild)
 - Total per-ticker: ~5s
-- 14 workers, 4,118 tickers: ~5 × 4,118 / 14 ≈ 1,471s ≈ 25 min
-- Target: <30 min (3x faster than full rebuild's 80-90 min)
-- Stretch goal: <15 min if save can be optimized (e.g., delta compression)
+- 14 workers, 11,201 tickers: ~5 × 11,201 / 14 ≈ 4,000s ≈ 67 min
+- Target: <30 min — this design does NOT meet it. Replaced by Increment 2 revised design.
 
 **What engine.compute() handles vs doesn't:**
 - HANDLES: all daily arithmetic ops (extension, ma_slope, rsi, adx, percentile_rank, swing counts, bollinger, macd, aroon, cmf, etc.), all boolean aggregates (count_true, since_true, true_in_row)
@@ -475,4 +474,4 @@ Unified `_build_htf_cache` + `_append_htf_cache` into single `_sync_htf_cache(fu
 **Decisions:**
 - Full rebuild stays as-is. Incremental is a NEW code path in `append_new_bars()`, not a modification of `build_full()`.
 - The resample fallback for HTF stays in the incremental worker for tickers without HTF pickle data — same as full rebuild, preserving consistency.
-- 2-5 min target from original spec was optimistic. Realistic target is <30 min. Still 3x improvement over full rebuild, and the gap widens as more tickers become dead (fewer active tickers to process).
+- 2-5 min target from original spec was optimistic. This ExpressionEngine-based design estimates ~67 min for all 11,201 tickers — barely faster than full rebuild. Replaced by the forward-propagation design below.
