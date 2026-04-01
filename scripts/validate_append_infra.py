@@ -207,18 +207,29 @@ def main():
                     f"Combined dtype {combined_data.dtype} != expected float32")
 
         # ── Test 4: Correctness gate ──
-        # The appended row was computed fresh by _compute_ticker_full.
-        # The expected row is from the .npz (built in a prior session).
-        # Both go through float16. Compare via float16 round-trip.
-        if combined_data is not None and len(combined_data) >= 1:
-            appended_row = combined_data[-1, :]
+        # Compare appended row to a FRESH _compute_ticker_full run.
+        # Both use the same current HTF pickle data, so must match exactly.
+        # (We do NOT compare to the old .npz row — the HTF pickles may have
+        # been updated since the full rebuild, producing different values.)
+        compute_args = (ticker, df_dict, weekly_df_dict, monthly_df_dict)
+        _, full_dates, full_data = _compute_ticker_full(compute_args)
 
+        if full_dates is None:
+            ticker_errors.append("_compute_ticker_full returned None")
+        elif combined_data is not None and len(combined_data) >= 1:
+            appended_row = combined_data[-1, :]  # the row from .append file
+
+            # _append_one_ticker writes data[existing_n:] as float16.
+            # _compute_ticker_full returns float32. The appended row went through
+            # float32 → float16 → float32. So compare fresh output after same
+            # round-trip.
+            fresh_last_row = full_data[-1, :]
+            fresh_f16 = fresh_last_row.astype(np.float16).astype(np.float32)
             appended_f16 = appended_row.astype(np.float16).astype(np.float32)
-            expected_f16 = expected_last_row.astype(np.float16).astype(np.float32)
 
             mismatches = np.where(
-                ~(np.isnan(appended_f16) & np.isnan(expected_f16)) &
-                (appended_f16 != expected_f16)
+                ~(np.isnan(appended_f16) & np.isnan(fresh_f16)) &
+                (appended_f16 != fresh_f16)
             )[0]
 
             if len(mismatches) > 0:
@@ -227,7 +238,7 @@ def main():
                 for m in first_few:
                     details.append(
                         f"col {m} ({expressions[m]['name']}): "
-                        f"appended={appended_f16[m]:.6f} vs expected={expected_f16[m]:.6f}")
+                        f"appended={appended_f16[m]:.6f} vs fresh={fresh_f16[m]:.6f}")
                 ticker_errors.append(
                     f"Value mismatches: {len(mismatches)}/{n_exprs} cols. "
                     f"First: {'; '.join(details)}")
