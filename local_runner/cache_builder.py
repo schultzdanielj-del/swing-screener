@@ -1001,7 +1001,7 @@ def append_daily_cache():
 
         append_results, append_failed = _batched_fetch(
             to_append, fetch_fn=_append_one, label="Append",
-            batch_size=100, min_sleep=0.5, max_workers=40,
+            batch_size=50, min_sleep=2.0, max_workers=20,
         )
         failed += len(append_failed)
 
