@@ -394,6 +394,96 @@ def _eodhd_fetch_json(ticker, from_date, to_date, period="d"):
         return None
 
 
+def _eodhd_bulk_last_day(date=None):
+    """Fetch all US tickers' OHLCV for a single date via bulk endpoint.
+
+    One API call (costs 100 API calls in EODHD quota) returns every
+    US ticker's bar for the given date.
+
+    Args:
+        date: 'YYYY-MM-DD' string, or None for today
+
+    Returns dict {ticker: {date, open, high, low, close, adjusted_close, volume}}
+    or empty dict on failure.
+    """
+    url = (f"{EODHD_BASE}/eod-bulk-last-day/US"
+           f"?api_token={EODHD_API_TOKEN}&fmt=json")
+    if date:
+        url += f"&date={date}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ScanPerfect/1.0"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode("utf-8")
+
+        if not raw.startswith("["):
+            return {}
+
+        data = json.loads(raw)
+        result = {}
+        for entry in data:
+            code = entry.get("code", "")
+            if code:
+                result[code] = entry
+        return result
+    except Exception as e:
+        print(f"    WARNING: Bulk fetch failed: {e}")
+        return {}
+
+
+def _apply_bulk_bar(universe, bulk_data, tickers_to_append):
+    """Apply bulk endpoint bars to the universe cache.
+
+    For each ticker in tickers_to_append, if bulk_data has a bar for it,
+    compute adjusted OHLC, append to existing data, recompute dvol.
+
+    Returns (appended_count, no_new_count).
+    """
+    appended = 0
+    no_new = 0
+
+    for ticker in tickers_to_append:
+        bar = bulk_data.get(ticker)
+        if bar is None:
+            no_new += 1
+            continue
+
+        existing = universe.get(ticker)
+        if existing is None or len(existing) == 0:
+            no_new += 1
+            continue
+
+        # Compute adjusted OHLC from bulk data (same logic as _eodhd_to_dataframe)
+        close_raw = float(bar["close"]) if bar["close"] else 0
+        adj_close = float(bar["adjusted_close"]) if bar["adjusted_close"] else 0
+        ratio = adj_close / close_raw if close_raw > 0 else 1.0
+
+        new_row = pd.DataFrame([{
+            "date": pd.Timestamp(bar["date"]),
+            "open": float(bar["open"]) * ratio if bar["open"] else 0,
+            "high": float(bar["high"]) * ratio if bar["high"] else 0,
+            "low": float(bar["low"]) * ratio if bar["low"] else 0,
+            "close": adj_close,
+            "volume": float(bar["volume"]) if bar["volume"] else 0,
+        }])
+
+        # Check if this bar is actually new
+        last_cached = str(existing["date"].iloc[-1])[:10]
+        bar_date = bar["date"][:10]
+        if bar_date <= last_cached:
+            no_new += 1
+            continue
+
+        combined = pd.concat([existing, new_row], ignore_index=True)
+        combined = combined.sort_values("date").reset_index(drop=True)
+        combined = combined.drop_duplicates(subset=["date"], keep="last")
+        combined = combined.reset_index(drop=True)
+        compute_dvol_20d(combined)
+        universe[ticker] = combined
+        appended += 1
+
+    return appended, no_new
+
+
 def _eodhd_to_dataframe(data):
     """Convert EODHD JSON response to adjusted OHLCV DataFrame.
 
@@ -1005,29 +1095,66 @@ def append_daily_cache():
     try:
         # ── Step 3a: Append new bars for existing tickers ──
         if to_append:
-            print(f"\n  Appending new bars via EODHD...")
+            # Find how many trading days we're behind
+            gap_days = [d for d in spy_dates if d > cached_spy_last]
 
-            def _append_one(ticker):
-                return _eodhd_append_after_date(ticker, last_dates.get(ticker, "2020-01-01"))
+            if gap_days:
+                # Use bulk endpoint: 1 API call per day in the gap
+                # vs 11.5K per-ticker calls. Even a 10-day gap is only
+                # 10 calls (1,000 API quota) instead of 115,000.
+                print(f"\n  Appending via bulk endpoint "
+                      f"({len(gap_days)} trading day(s))...")
+                for day_idx, day in enumerate(gap_days):
+                    print(f"    Fetching bulk data for {day}...")
+                    bulk = _eodhd_bulk_last_day(day)
+                    if not bulk:
+                        print(f"    WARNING: No bulk data for {day}")
+                        continue
+                    day_appended, day_no_new = _apply_bulk_bar(
+                        universe, bulk, to_append)
+                    appended += day_appended
+                    no_new = day_no_new  # overwritten each day, final count is last day
+                    print(f"    {day}: {day_appended:,} appended, "
+                          f"{len(bulk):,} tickers in bulk response")
+                    # Gentle pacing between days
+                    if day_idx < len(gap_days) - 1:
+                        time.sleep(1.0)
 
-            append_results, append_failed = _batched_fetch(
-                to_append, fetch_fn=_append_one, label="Append",
-                batch_size=50, min_sleep=2.0, max_workers=20,
-            )
-            failed += len(append_failed)
+                # After bulk, check if any stale tickers were missed
+                # (ticker in our universe but not in bulk response)
+                still_stale = [t for t in to_append
+                               if str(universe.get(t, pd.DataFrame(
+                                   {"date": [""]}))["date"].iloc[-1])[:10]
+                               < spy_last]
+                if still_stale:
+                    print(f"\n  {len(still_stale)} tickers missed by bulk "
+                          f"— falling back to per-ticker fetch...")
 
-            for ticker, new_df in append_results.items():
-                if len(new_df) > 0:
-                    existing = universe[ticker]
-                    combined = pd.concat([existing, new_df], ignore_index=True)
-                    combined = combined.sort_values("date").reset_index(drop=True)
-                    combined = combined.drop_duplicates(subset=["date"], keep="last")
-                    combined = combined.reset_index(drop=True)
-                    compute_dvol_20d(combined)
-                    universe[ticker] = combined
-                    appended += 1
-                else:
-                    no_new += 1
+                    def _append_one(ticker):
+                        return _eodhd_append_after_date(
+                            ticker, last_dates.get(ticker, "2020-01-01"))
+
+                    fallback_results, fallback_failed = _batched_fetch(
+                        still_stale, fetch_fn=_append_one, label="Fallback",
+                        batch_size=50, min_sleep=2.0, max_workers=20,
+                    )
+                    failed += len(fallback_failed)
+
+                    for ticker, new_df in fallback_results.items():
+                        if new_df is not None and len(new_df) > 0:
+                            existing = universe[ticker]
+                            combined = pd.concat([existing, new_df],
+                                                 ignore_index=True)
+                            combined = combined.sort_values("date").reset_index(
+                                drop=True)
+                            combined = combined.drop_duplicates(
+                                subset=["date"], keep="last")
+                            combined = combined.reset_index(drop=True)
+                            compute_dvol_20d(combined)
+                            universe[ticker] = combined
+                            appended += 1
+            else:
+                print(f"\n  No new trading days in gap — nothing to append")
 
         # ── Step 3b: Full refetch for split tickers ──
         if to_full_refetch:
