@@ -346,7 +346,7 @@ def build_partial_intermediates(closed_im, closed_raw, lci, partial, prev_close)
     im['pct'] = pc / 100.0
 
     # ── SMA of close ──
-    for p in [5, 8, 10, 13, 20, 21, 30, 50, 65, 100, 150, 200]:
+    for p in [5, 8, 10, 13, 15, 20, 21, 30, 50, 65, 100, 150, 200]:
         im[f'avgc{p}'] = _partial_sma(closed_raw['cumsum_c'], lci, p, pc)
 
     # ── EMA of close ──
