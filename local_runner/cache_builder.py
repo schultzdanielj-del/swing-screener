@@ -1120,49 +1120,18 @@ def append_daily_cache():
                     if day_idx < len(gap_days) - 1:
                         time.sleep(1.0)
 
-                # Bulk endpoint for the current day may be incomplete
-                # (EODHD takes hours to publish all tickers). Fetch
-                # remaining tickers individually at a gentle rate.
+                # Bulk endpoint for the current day is often incomplete
+                # (EODHD publishes over hours after close — even at 9pm
+                # ~600 tickers may be missing). These tickers don't have
+                # data on the per-ticker endpoint either. The stale filter
+                # will pick them up on the next run once EODHD publishes.
                 still_stale = [t for t in to_append
                                if str(universe.get(t, pd.DataFrame(
                                    {"date": [""]}))["date"].iloc[-1])[:10]
                                < spy_last]
                 if still_stale:
-                    print(f"\n  {len(still_stale)} tickers not yet in bulk "
-                          f"— per-ticker fetch...")
-                    # Cooldown after bulk call to avoid rate limit
-                    print(f"    Waiting 60s for rate limit cooldown...")
-                    time.sleep(60)
-
-                    def _append_one(ticker):
-                        return _eodhd_append_after_date(
-                            ticker, last_dates.get(ticker, "2020-01-01"))
-
-                    fallback_results, fallback_failed = _batched_fetch(
-                        still_stale, fetch_fn=_append_one, label="Remaining",
-                        batch_size=10, min_sleep=4.0, max_workers=5,
-                        max_retries=1,
-                    )
-
-                    fallback_appended = 0
-                    for ticker, new_df in fallback_results.items():
-                        if new_df is not None and len(new_df) > 0:
-                            existing = universe[ticker]
-                            combined = pd.concat([existing, new_df],
-                                                 ignore_index=True)
-                            combined = combined.sort_values("date").reset_index(
-                                drop=True)
-                            combined = combined.drop_duplicates(
-                                subset=["date"], keep="last")
-                            combined = combined.reset_index(drop=True)
-                            compute_dvol_20d(combined)
-                            universe[ticker] = combined
-                            fallback_appended += 1
-                    no_data = len(still_stale) - fallback_appended - len(fallback_failed)
-                    appended += fallback_appended
-                    print(f"    Done: {fallback_appended} appended, "
-                          f"{no_data} no new data, "
-                          f"{len(fallback_failed)} unavailable")
+                    print(f"  {len(still_stale)} tickers not yet published "
+                          f"by EODHD — will be picked up next run")
             else:
                 print(f"\n  No new trading days in gap — nothing to append")
 
