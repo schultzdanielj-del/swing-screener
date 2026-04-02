@@ -15,6 +15,10 @@ Any optimization that compromises the above is rejected. No exceptions.
 
 Current `_append_one_ticker()` calls `_compute_ticker_full()` — the full rebuild path. For ~11,200 tickers adding 1 new bar each, this takes ~124 minutes because it recomputes ALL ~1,500 bars × 15,805 expressions per ticker. Only the last row is new.
 
+## Expression Count Clarification
+
+The full expression library (`brute_expressions.generate_all()` + generic exit expressions) has **16,051** expressions. After filtering in `_load_expressions()` (excluding entry-relative and context-dependent exit ops), **15,805** end up in the .npz files. The audit in `validate_incremental_append.py` classified all 16,051. The .npz column count is 15,805. All file layout math in this spec uses 15,805 as the expression column count. EXPRESSION_ENGINE_V2.md decision #7 says "16,051" — that's the library count, not the cache column count.
+
 ## Solution: Four-File Forward-Propagation
 
 Compute only the new bar's values using stored intermediate state + lookback buffers. No ExpressionEngine, no pandas, no full indicator series. Pure numpy scalar math for the vast majority of expressions.
