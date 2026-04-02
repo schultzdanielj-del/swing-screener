@@ -1130,9 +1130,8 @@ def generate_all():
     # to grab these from the LSP precompute dict, not run them through
     # the expression engine.
     #
-    # 80 expressions total:
+    # 70 expressions total:
     #   7 metrics × 5 ranks × 2 directions = 70 level expressions
-    #   1 ctx_avwap × 5 ranks × 2 directions = 10 AVWAP expressions
 
     try:
         import sys as _sys
@@ -1149,9 +1148,6 @@ def generate_all():
             for _r in range(1, 6):
                 for _m in _metrics:
                     lsp_names.append(f"level_{_d}{_r}_{_m}")
-        for _d in ['above', 'below']:
-            for _r in range(1, 6):
-                lsp_names.append(f"level_{_d}{_r}_ctx_avwap_distance")
 
     for name in lsp_names:
         exprs.append({
@@ -1167,9 +1163,9 @@ def generate_all():
     # Produced by compute_all_algo_series() during cache build.
     # Daily timeframe only — algo lines skip weekly/monthly grinder passes.
     #
-    # 44 expressions total:
+    # 42 expressions total:
     #   6 metrics × 3 ranks × 2 directions = 36 ranked expressions
-    #   4 shallowest metrics × 2 directions = 8 contextual expressions
+    #   3 shallowest metrics × 2 directions = 6 contextual expressions
 
     try:
         import sys as _sys2
@@ -1183,7 +1179,7 @@ def generate_all():
         _algo_metrics = ['distance', 'touch_count', 'hivol_touch_count',
                          'slope', 'broken', 'retest_distance']
         _algo_shallowest = ['shallowest_distance', 'shallowest_slope',
-                            'shallowest_touch_count', 'shallowest_avwap_convergence']
+                            'shallowest_touch_count']
         for _dir in ['hminus', 'lplus']:
             for _r in range(1, 4):
                 for _m in _algo_metrics:

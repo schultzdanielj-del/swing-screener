@@ -466,8 +466,6 @@ def _find_shallowest_line(active_lines: list, is_hminus: bool,
 
 
 def compute_all_algo_series(daily_df: pd.DataFrame,
-                            cum_tpv: np.ndarray = None,
-                            cum_v: np.ndarray = None,
                             n_ranks: int = 3) -> dict:
     """Compute ALL algo line expression series for one ticker.
 
@@ -475,8 +473,6 @@ def compute_all_algo_series(daily_df: pd.DataFrame,
 
     Args:
         daily_df: Daily OHLCV DataFrame
-        cum_tpv: Precomputed cumulative TP*V (for AVWAP convergence)
-        cum_v: Precomputed cumulative V (for AVWAP convergence)
         n_ranks: Number of proximity-ranked lines per direction
 
     Returns:
@@ -500,7 +496,7 @@ def compute_all_algo_series(daily_df: pd.DataFrame,
     directions = [('hminus', hminus_lines, True), ('lplus', lplus_lines, False)]
     metrics = ['distance', 'touch_count', 'hivol_touch_count', 'slope', 'broken', 'retest_distance']
     shallowest_metrics = ['shallowest_distance', 'shallowest_slope',
-                          'shallowest_touch_count', 'shallowest_avwap_convergence']
+                          'shallowest_touch_count']
 
     for dir_name, _, _ in directions:
         for rank in range(1, n_ranks + 1):
@@ -511,18 +507,6 @@ def compute_all_algo_series(daily_df: pd.DataFrame,
             name = f"algo_{dir_name}_{metric}"
             series[name] = np.full(n_bars, np.nan, dtype=np.float64)
 
-    # Compute AVWAP arrays if not provided (for convergence metric)
-    compute_avwap = cum_tpv is not None and cum_v is not None
-    if not compute_avwap:
-        try:
-            tp = (highs + lows + closes) / 3.0
-            tpv = tp * daily_df['volume'].values.astype(np.float64)
-            cum_tpv = np.cumsum(tpv)
-            cum_v = np.cumsum(daily_df['volume'].values.astype(np.float64))
-            compute_avwap = True
-        except:
-            pass
-
     # Bar-by-bar computation
     # Start from bar 60 (need 50 bars for volume SMA + some history for lines)
     for bar_idx in range(60, n_bars):
@@ -531,11 +515,6 @@ def compute_all_algo_series(daily_df: pd.DataFrame,
 
         if np.isnan(atr_val) or atr_val <= 0 or close <= 0:
             continue
-
-        # Compute highest AVWAP once per bar (independent of algo lines)
-        highest_avwap = np.nan
-        if compute_avwap:
-            highest_avwap = find_highest_avwap(bar_idx, cum_tpv, cum_v)
 
         for dir_name, line_list, is_hminus in directions:
             # Get active lines at this bar, sorted by proximity
@@ -569,58 +548,9 @@ def compute_all_algo_series(daily_df: pd.DataFrame,
                 series[shal_prefix + "slope"][bar_idx] = s_line.slope_per_bar / atr_val if atr_val > 0 else 0.0
                 series[shal_prefix + "touch_count"][bar_idx] = s_line.touch_count
 
-                # AVWAP convergence: distance between shallowest line price
-                # and the highest contextual AVWAP at this bar
-                if not np.isnan(highest_avwap) and atr_val > 0:
-                    convergence = (s_line_price - highest_avwap) / atr_val
-                    series[shal_prefix + "avwap_convergence"][bar_idx] = convergence
-
     return series
 
 
-def find_highest_avwap(bar_idx: int, cum_tpv: np.ndarray,
-                      cum_v: np.ndarray) -> float:
-    """Find the highest possible AVWAP at bar_idx from any prior anchor.
-
-    Sweeps every prior bar as a potential AVWAP anchor, picks the one
-    producing the highest value at the current bar. Pure vectorized numpy.
-
-    This is a standalone contextual AVWAP computation. It has nothing to
-    do with algo lines — it only depends on cumulative TP*V and V arrays.
-
-    Returns AVWAP value, or np.nan if none valid.
-    """
-    if bar_idx < 1 or bar_idx >= len(cum_tpv):
-        return np.nan
-
-    anchors = np.arange(0, bar_idx)
-
-    tpv_at_bar = cum_tpv[bar_idx]
-    v_at_bar = cum_v[bar_idx]
-
-    prev_tpv = np.empty(len(anchors))
-    prev_v = np.empty(len(anchors))
-    prev_tpv[0] = 0.0
-    prev_v[0] = 0.0
-    if len(anchors) > 1:
-        prev_tpv[1:] = cum_tpv[anchors[1:] - 1]
-        prev_v[1:] = cum_v[anchors[1:] - 1]
-
-    total_tpv = tpv_at_bar - prev_tpv
-    total_v = v_at_bar - prev_v
-
-    valid = total_v > 0
-    if not valid.any():
-        return np.nan
-
-    avwaps = np.full(len(anchors), -np.inf)
-    avwaps[valid] = total_tpv[valid] / total_v[valid]
-
-    best_avwap = avwaps.max()
-    if best_avwap == -np.inf:
-        return np.nan
-
-    return best_avwap
 
 
 # ══════════════════════════════════════════════════════════════
@@ -636,7 +566,7 @@ def get_algo_expression_names(n_ranks: int = 3) -> list:
     metrics = ['distance', 'touch_count', 'hivol_touch_count',
                'slope', 'broken', 'retest_distance']
     shallowest_metrics = ['shallowest_distance', 'shallowest_slope',
-                          'shallowest_touch_count', 'shallowest_avwap_convergence']
+                          'shallowest_touch_count']
 
     for dir_name in ['hminus', 'lplus']:
         for rank in range(1, n_ranks + 1):

@@ -544,18 +544,10 @@ class LSPDetectorV2:
 
         return levels
 
-    def compute_all_series(self, cum_tpv: np.ndarray = None,
-                           cum_v: np.ndarray = None,
-                           n_above: int = 5, n_below: int = 5) -> dict:
-        """Compute ALL level + contextual AVWAP series in a SINGLE pass.
-
-        This avoids the redundant get_levels_at_bar() call that happens when
-        compute_level_series() and compute_ctx_avwap_series() are called separately.
-        ~2x faster than separate computation.
+    def compute_all_series(self, n_above: int = 5, n_below: int = 5) -> dict:
+        """Compute ALL level series in a SINGLE pass.
 
         Args:
-            cum_tpv: Precomputed cumulative TP*V (optional, for ctx AVWAP)
-            cum_v: Precomputed cumulative V (optional, for ctx AVWAP)
             n_above: Number of levels above to track
             n_below: Number of levels below to track
 
@@ -563,7 +555,6 @@ class LSPDetectorV2:
             dict mapping expression name to float64 array of length n_bars
         """
         n_bars = self.n_bars
-        compute_avwap = cum_tpv is not None and cum_v is not None
         directions = ['above', 'below']
         metrics = [
             'distance', 'pivot_count', 'timeframe_count', 'break_count',
@@ -577,9 +568,6 @@ class LSPDetectorV2:
             for rank in range(1, n_ranks + 1):
                 for metric in metrics:
                     name = f"level_{d}{rank}_{metric}"
-                    series[name] = np.full(n_bars, np.nan, dtype=np.float64)
-                if compute_avwap:
-                    name = f"level_{d}{rank}_ctx_avwap_distance"
                     series[name] = np.full(n_bars, np.nan, dtype=np.float64)
 
         # Single pass: compute bar by bar
@@ -599,17 +587,12 @@ class LSPDetectorV2:
                     series[prefix + "bars_back_nearest"][bar_idx] = level.bars_back_nearest
                     series[prefix + "volume_ratio"][bar_idx] = level.volume_ratio
 
-                    if compute_avwap:
-                        avwap_val = compute_contextual_avwap_for_level(
-                            level, self, cum_tpv, cum_v, bar_idx
-                        )
-                        series[prefix + "ctx_avwap_distance"][bar_idx] = avwap_val
-
         return series
 
 
 # ══════════════════════════════════════════════════════════════
-# CONTEXTUAL AVWAP
+# ══════════════════════════════════════════════════════════════
+# AVWAP UTILITY FUNCTIONS (used by exit_compute.py, not by LSP detection)
 # ══════════════════════════════════════════════════════════════
 
 def precompute_avwap_arrays(daily_df: pd.DataFrame) -> tuple:
@@ -663,112 +646,6 @@ def avwap_from_anchor(cum_tpv: np.ndarray, cum_v: np.ndarray,
     return total_tpv / total_v
 
 
-def compute_contextual_avwap_for_level(
-    level: Level, detector: 'LSPDetectorV2',
-    cum_tpv: np.ndarray, cum_v: np.ndarray,
-    bar_idx: int, search_range: int = 25
-) -> float:
-    """Compute contextual AVWAP distance for a level at a specific bar.
-
-    Searches ~25 bars before the level's nearest pivot for the anchor that
-    produces the highest AVWAP at bar_idx. Returns distance from close to
-    that AVWAP, normalized by ATR.
-
-    Vectorized: computes all anchor AVWAPs at once using numpy slicing.
-    """
-    if not level.pivot_indices:
-        return np.nan
-
-    # Find the most prominent pivot in the cluster (largest window)
-    best_pi = max(level.pivot_indices,
-                  key=lambda pi: detector.pivots[pi].max_window)
-    pivot_idx = detector.pivots[best_pi].idx
-
-    # Search range: bars before the pivot
-    search_start = max(0, pivot_idx - search_range)
-    search_end = pivot_idx  # exclusive
-
-    if search_start >= search_end or bar_idx >= len(cum_tpv):
-        return np.nan
-
-    # Vectorized: compute AVWAP for all anchors at once
-    # AVWAP(anchor, bar) = (cum_tpv[bar] - cum_tpv[anchor-1]) / (cum_v[bar] - cum_v[anchor-1])
-    # For anchor=0: AVWAP = cum_tpv[bar] / cum_v[bar]
-    anchors = np.arange(search_start, search_end)
-
-    tpv_at_bar = cum_tpv[bar_idx]
-    v_at_bar = cum_v[bar_idx]
-
-    # Handle anchor=0 case
-    if anchors[0] == 0:
-        prev_tpv = np.empty(len(anchors))
-        prev_v = np.empty(len(anchors))
-        prev_tpv[0] = 0.0
-        prev_v[0] = 0.0
-        if len(anchors) > 1:
-            prev_tpv[1:] = cum_tpv[anchors[1:] - 1]
-            prev_v[1:] = cum_v[anchors[1:] - 1]
-    else:
-        prev_tpv = cum_tpv[anchors - 1]
-        prev_v = cum_v[anchors - 1]
-
-    total_tpv = tpv_at_bar - prev_tpv
-    total_v = v_at_bar - prev_v
-
-    # Compute AVWAPs, mask out zero-volume
-    valid = total_v > 0
-    if not valid.any():
-        return np.nan
-
-    avwaps = np.full(len(anchors), -np.inf)
-    avwaps[valid] = total_tpv[valid] / total_v[valid]
-
-    best_avwap = avwaps.max()
-    if best_avwap == -np.inf:
-        return np.nan
-
-    current_close = detector.closes[bar_idx]
-    current_atr = detector.atr[bar_idx]
-
-    if np.isnan(current_atr) or current_atr <= 0:
-        return np.nan
-
-    return (best_avwap - current_close) / current_atr
-
-
-def compute_ctx_avwap_series(detector: 'LSPDetectorV2',
-                             cum_tpv: np.ndarray, cum_v: np.ndarray,
-                             n_above: int = 5, n_below: int = 5) -> dict:
-    """Compute contextual AVWAP distance series for all levels.
-
-    Returns dict of expression_name → np.ndarray(n_bars).
-
-    Expression naming: level_{dir}{rank}_ctx_avwap_distance
-    """
-    n_bars = detector.n_bars
-    series = {}
-
-    for d in ['above', 'below']:
-        n_ranks = n_above if d == 'above' else n_below
-        for rank in range(1, n_ranks + 1):
-            name = f"level_{d}{rank}_ctx_avwap_distance"
-            series[name] = np.full(n_bars, np.nan, dtype=np.float64)
-
-    for bar_idx in range(50, n_bars):
-        levels = detector.get_levels_at_bar(bar_idx, n_above=n_above, n_below=n_below)
-
-        for d in ['above', 'below']:
-            level_list = levels[d]
-            for rank_idx, level in enumerate(level_list):
-                rank = rank_idx + 1
-                name = f"level_{d}{rank}_ctx_avwap_distance"
-                val = compute_contextual_avwap_for_level(
-                    level, detector, cum_tpv, cum_v, bar_idx
-                )
-                series[name][bar_idx] = val
-
-    return series
-
 
 # ══════════════════════════════════════════════════════════════
 # COMBINED COMPUTATION — Single entry point for cache builder
@@ -778,14 +655,12 @@ def compute_all_lsp_series(daily_df: pd.DataFrame,
                            weekly_df: pd.DataFrame = None,
                            monthly_df: pd.DataFrame = None,
                            n_above: int = 5, n_below: int = 5) -> dict:
-    """Compute ALL LSP + contextual AVWAP expression series for one ticker.
+    """Compute ALL LSP expression series for one ticker.
 
     This is the main entry point called by expr_cache_builder.py.
     Returns a dict of expression_name → np.ndarray(n_bars, dtype=float64).
 
     Total expressions: 7 metrics × 5 ranks × 2 directions = 70 LSP expressions
-                     + 1 ctx_avwap × 5 ranks × 2 directions = 10 AVWAP expressions
-                     = 80 expressions total
 
     Args:
         daily_df: Daily OHLCV DataFrame (must have date, open, high, low, close, volume)
@@ -806,11 +681,8 @@ def compute_all_lsp_series(daily_df: pd.DataFrame,
     # Detect all pivots + precompute breaks
     detector = LSPDetectorV2(daily_df, weekly_df, monthly_df)
 
-    # Precompute AVWAP lookup arrays
-    cum_tpv, cum_v = precompute_avwap_arrays(daily_df)
-
-    # Single-pass: level metrics + contextual AVWAP together
-    return detector.compute_all_series(cum_tpv, cum_v, n_above=n_above, n_below=n_below)
+    # Single-pass: level metrics
+    return detector.compute_all_series(n_above=n_above, n_below=n_below)
 
 
 def get_lsp_expression_names(n_above: int = 5, n_below: int = 5) -> list[str]:
@@ -829,12 +701,6 @@ def get_lsp_expression_names(n_above: int = 5, n_below: int = 5) -> list[str]:
         for rank in range(1, n_ranks + 1):
             for metric in metrics:
                 names.append(f"level_{d}{rank}_{metric}")
-
-    # Contextual AVWAP
-    for d in ['above', 'below']:
-        n_ranks = n_above if d == 'above' else n_below
-        for rank in range(1, n_ranks + 1):
-            names.append(f"level_{d}{rank}_ctx_avwap_distance")
 
     return names
 
