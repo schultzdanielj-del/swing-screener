@@ -142,15 +142,16 @@ Values stored at float64 precision. These are scalars (not historical arrays) �
 | Category | Values | Count | Forward-prop formula |
 |----------|--------|-------|---------------------|
 | EMA close | xavgc{p} for 14 periods | 14 | xavgc[i] = alpha * close + (1-alpha) * xavgc[i-1] |
-| MACD signal | macd_signal_{fast}_{slow} for 5 pairs | 5 | signal[i] = alpha9 * macd_line + (1-alpha9) * signal[i-1] |
-| ADX EMA chain | ema_dmp_{p}, ema_dmm_{p}, ema_dx_{p} for p in [7,10,14,20] | 12 | Standard EMA update |
+| MACD signal | macd_signal_{fast}_{slow} for 4 configs: (12,26,9),(8,17,9),(5,13,8),(6,19,9) | 4 | signal[i] = alpha * macd_line + (1-alpha) * signal[i-1]. Note: (5,35) MACD line exists as intermediate but has no signal line expression. |
+| ADX EMA chain | ema_dmp_{p}, ema_dmm_{p}, ema_dx_{p} for p in [7,10,14,20] | 12 | Standard EMA update. ADX(P) uses ATR(P) for normalization, NOT always ATR(14). |
 | Rolling max/min idx | maxh_idx_{p} (29), minl_idx_{p} (19), maxc_idx_{p} (3) | 51 | Track bar index of current max/min. If new value beats it, update. If old index exits window, rescan from lookback/append. |
 | Aroon tracking | aroon_maxh_idx_{p}, aroon_minl_idx_{p} for 7 periods | 14 | Same as rolling max/min tracking |
-| Stochastic raw_k | raw_k_{p}_prev1, raw_k_{p}_prev2 for 9 periods | 18 | stoch = SMA(3) of raw_k. Need 2 prior raw_k values. |
+| Stochastic raw_k | raw_k_{p}_prev1, raw_k_{p}_prev2 for 9 periods | 18 | stoch = SMA(3) of raw_k. Need 2 prior raw_k values. raw_k computed from rolling_max(high,p)/rolling_min(low,p) directly — stoch periods [3,9] are NOT in the maxh/minl intermediates. |
 | OBV | obv_prev | 1 | obv[i] = obv[i-1] + sign(close_change) * volume |
 | Yesterday's OHLCV | prev_close, prev_high, prev_low | 3 | For true range calc and DM+/DM- |
 | Current bar index | bar_index | 1 | Absolute bar number since EXPR_CACHE_START for rolling max/min window tracking |
-| **Daily subtotal** | | **119** |
+| Cumsums | cumsum_close, cumsum_volume, cumsum_hl, cumsum_tr, cumsum_bop_raw, cumsum_mfv, cumsum_abs_diff, cumsum_tp, cumsum_c2, cumsum_gains, cumsum_losses | 11 | Running totals for SMA forward-prop via cumsum[i] - cumsum[i-P] / P |
+| **Daily subtotal** | | **129** |
 
 ### HTF state (per timeframe — weekly + monthly = ×2)
 
@@ -160,12 +161,12 @@ Values stored at float64 precision. These are scalars (not historical arrays) �
 | Period ID | period_id | 2 | year*100 + week_number (or month). Detect boundary. |
 | EMA close | xavgc{p} for 14 periods | 28 | HTF EMA state for partial candle engine |
 | ADX EMA chain | ema_dmp, ema_dmm, ema_dx for 4 periods | 24 | Same |
-| MACD signal | macd_signal for 5 pairs | 10 | Same |
+| MACD signal | macd_signal for 4 configs | 8 | Same |
 | OBV | obv | 2 | Same |
 | Cumsums | cumsum_close, cumsum_volume, cumsum_hl, cumsum_tr, cumsum_bop_raw, cumsum_mfv, cumsum_abs_diff, cumsum_tp, cumsum_c2, cumsum_gains, cumsum_losses | 22 | For HTF SMA forward-prop |
 | Stochastic raw_k | raw_k prev1, prev2 for 9 periods | 36 | For HTF stochastic smoothing |
 | Previous HTF bar | prev_high, prev_low, prev_close | 6 | For HTF TR and DM+/DM- on period boundaries |
-| **HTF subtotal** | | **140** |
+| **HTF subtotal** | | **138** |
 
 ### Extension structure on_series state (per extension series — 2 series = ×2)
 
@@ -192,7 +193,9 @@ The LSP detector (`lsp_detector_v2.py`) and algo line detector (`algo_line_detec
 
 The .state file does NOT store LSP or algo state.
 
-### Total .state: 119 daily + 140 HTF + 50 ext_struct = **309 values** ≈ ~2.5 KB per ticker, ~28 MB total
+### Total .state: 129 daily + 138 HTF + 50 ext_struct = **317 values** ≈ ~2.5 KB per ticker, ~28 MB total
+
+**Validated (2026-04-02):** `setup_forward_prop.py` produces exactly 317 state keys per ticker. Confirmed on AAPL (single) and 100 random tickers (0 failures, 0.9s/ticker).
 
 ---
 
@@ -257,18 +260,22 @@ dm_minus = down if (down > up and down > 0) else 0
 alpha = 2 / (P + 1)
 ema_dmp[i] = alpha * dm_plus + (1 - alpha) * state.ema_dmp{P}
 ema_dmm[i] = alpha * dm_minus + (1 - alpha) * state.ema_dmm{P}
-// NOTE: ADX uses ATR for normalization. profiling_engine uses SMA-based ATR.
-// ATR is already computed above as an SMA intermediate.
-di_plus = 100 * ema_dmp / atr14
-di_minus = 100 * ema_dmm / atr14
+// NOTE: ADX(P) uses ATR(P) for normalization — period-matched, NOT always ATR(14).
+// profiling_engine._di_plus_minus calls atr(df, period). ATR is SMA-based.
+// ATR(P) = (cumsum_tr[i] - cumsum_tr[i-P]) / P — computed from cumsums.
+atr_p = (cumsum_tr[i] - cumsum_tr[i-P]) / P
+di_plus = 100 * ema_dmp / atr_p
+di_minus = 100 * ema_dmm / atr_p
 dx = |di_plus - di_minus| / (di_plus + di_minus) * 100
 adx[i] = alpha * dx + (1 - alpha) * state.ema_dx{P}
 ```
 
-**Stochastic:**
+**Stochastic (raw_k computed from rolling max/min, NOT from maxh/minl intermediates):**
 ```
-maxh_p = maxh{P} intermediate (computed below)
-minl_p = minl{P} intermediate (computed below)
+// Stoch periods [3,9] do NOT exist in maxh/minl intermediate columns.
+// Must compute rolling_max(high, P) and rolling_min(low, P) directly.
+maxh_p = rolling_max(high, P)  // from .lookback/.append H values
+minl_p = rolling_min(low, P)   // from .lookback/.append L values
 raw_k = (today_close - minl_p) / (maxh_p - minl_p) * 100
 stoch[i] = (state.raw_k_prev2 + state.raw_k_prev1 + raw_k) / 3
 // Update state: prev2 = prev1, prev1 = raw_k
@@ -546,30 +553,40 @@ ExprSeriesCache.get_ticker() calls load_ticker_cache(). Transparent.
 
 ---
 
-## One-Time Setup Script
+## One-Time Setup Script — IMPLEMENTED
+
+**File:** `scripts/setup_forward_prop.py`
+**Status:** Validated 2026-04-02 — 100/100 random tickers, 0 failures, 0.9s/ticker
 
 Generates .lookback and .state files from existing .npz + OHLCV data.
 
-For each of ~11,200 tickers:
+**Usage:**
+```
+python scripts/setup_forward_prop.py --ticker AAPL       # single ticker test
+python scripts/setup_forward_prop.py --limit 100          # 100 random tickers (seed=42)
+python scripts/setup_forward_prop.py                      # all ~11,200 tickers
+python scripts/setup_forward_prop.py --workers 8          # custom worker count
+```
 
-1. Load .npz → data (n_bars × 15,805), dates
-2. Load ticker's OHLCV from daily pickle, truncate to EXPR_CACHE_START
-3. Build ExpressionEngine on full OHLCV
-4. Call `build_numpy_intermediates(engine)` → 178 intermediate arrays
-5. Call `extract_closed_state(engine, htf_df)` → closed_raw dict (cumsums, raw arrays)
-6. Compute the 18 additional intermediate columns (cumsums of gains, losses, etc.) from the raw arrays
-7. Build .lookback: last 504 rows of all 196 intermediate columns, cast to float16, write raw binary
-8. Build .state:
-   a. Extract last-bar EMA values at float64 from engine cache
-   b. Extract last-bar ADX chain, MACD signal, stochastic raw_k history
-   c. Extract rolling max/min indices (scan last window of each period to find current max position)
-   d. Extract OBV, cumsums, previous OHLCV
-   e. For HTF: load HTF pickle, build engine on closed HTF, extract all HTF state
-   f. For extension structure: compute on_series indicator states from full extension series history
-   g. Write .state file
-9. Verify: load .lookback, check dimensions match expected (504 × 196)
+For each ticker:
 
-Estimated time: ~3s/ticker (engine build + intermediate extraction + HTF state) × 11,200 / 14 workers ≈ ~40 minutes. One-time cost.
+1. Load .npz → get bar count. Load daily OHLCV, **truncate to .npz bar count** (OHLCV may have bars appended since last full rebuild)
+2. Build ExpressionEngine on truncated OHLCV
+3. Call `build_numpy_intermediates(engine)` → 178 intermediate arrays
+4. Compute 18 additional intermediate columns (11 cumsums + 7 raw per-bar values) from OHLCV
+5. Build .lookback: last 504 rows of all 196 intermediate columns, cast to float16, write raw binary
+6. Build .state (317 keys, float64 JSON):
+   a. Daily: 14 EMA, 4 MACD signal, 12 ADX chain, 51 rolling max/min idx, 14 Aroon, 18 stochastic raw_k, 1 OBV, 3 prev OHLCV, 1 bar_index, 11 cumsums
+   b. HTF (×2): partial candle OHLCV + period_id from HTF pickle, closed intermediate states (EMA, ADX, MACD signal, OBV, cumsums, stochastic raw_k, prev bar) from HTF pickle's closed bars
+   c. Ext struct (×2): on_series RSI EMA pairs (6 periods) + ADX chain (4 periods) + prev_ext from .npz expression columns
+7. Validate: check .lookback dimensions, .state key count, spot-check for inf/NaN
+
+**Known behaviors:**
+- .lookback cumsum columns overflow to inf in float16 for tickers with many bars — expected, forward-prop reads cumsums from .state at float64
+- Short-history tickers may have all-NaN columns in .lookback for indicators needing long warmup (e.g., SMA200)
+- Stochastic raw_k computed from `rolling_max(high,p)` / `rolling_min(low,p)` directly — stoch periods [3,9] do NOT exist in the pre-built maxh/minl intermediates
+
+**Measured timing:** 0.9s/ticker × 11,200 / 14 workers ≈ **12 minutes**. One-time cost.
 
 ---
 
@@ -622,20 +639,21 @@ Estimated time: ~3s/ticker (engine build + intermediate extraction + HTF state) 
 
 ---
 
-## Build Order for Next Chat Session
+## Build Order
 
 1. ~~**Resolve open question #1**~~ — DONE: Bollinger uses ddof=1 (sample std)
 2. ~~**Resolve open question #2**~~ — DONE: on_series RSI [5,7,9,14,21,28], ADX [7,10,14,20], 50 total ext_struct state
-3. **Build one-time setup script** — generate .lookback + .state for all tickers
-4. **Build forward-prop engine** — `_forward_prop_one_ticker()`, one phase at a time
-5. **Gate 1** — single-ticker correctness test
-6. **Gate 2** — 100-ticker correctness test
-7. **Update load_ticker_cache + signal_filter._load_ticker_npz** — wider .append handling
+3. ~~**Build one-time setup script**~~ — DONE: `scripts/setup_forward_prop.py`, validated 100/100 random tickers, 0.9s/ticker
+4. **Build forward-prop engine** — `_forward_prop_one_ticker()`, one phase at a time ← NEXT
+5. **Gate 1** — single-ticker correctness test (script on 1 ticker)
+6. **Gate 2** — 100-ticker correctness test (script on 100 tickers)
+7. **Update load_ticker_cache + signal_filter._load_ticker_npz** — wider .append handling (16,001 cols → slice to 15,805)
 8. **Update build_full()** — clear .lookback/.state files
 9. **Push to repo**
 10. **Dan runs audit.py** on the push
 11. **Dan runs signal filter** locally → Gate 3
 12. **Dan runs test grind** → Gate 4
+13. **One fresh full rebuild** — correct HTF (no look-ahead bias), then setup_forward_prop.py to bootstrap .lookback/.state
 
 ---
 
