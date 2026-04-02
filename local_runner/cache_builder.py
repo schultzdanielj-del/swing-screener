@@ -253,48 +253,65 @@ def build_spy_date_set(spy_df):
     return sorted(str(d)[:10] for d in spy_df["date"].values)
 
 
-def expected_bar_count(spy_dates, ticker, ticker_ref):
-    """Calculate expected bar count for a ticker using SPY dates.
-
-    Expected = number of SPY trading dates on or after
-    max(ticker's first trade date, HISTORY_START).
-
-    Returns int, or None if ticker has no reference data.
-    """
-    ftd = ticker_ref.get(ticker)
-    if ftd is None:
-        return None  # no reference — can't validate
-
-    start = max(ftd, HISTORY_START)
-    return sum(1 for d in spy_dates if d >= start)
-
-
 def validate_daily_fetch(results, spy_dates, ticker_ref):
     """Validate fetched daily data against SPY reference.
 
+    Checks:
+    1. First bar date within 5 trading days of max(firstTradeDate, HISTORY_START)
+    2. Last bar date equals SPY's last date (stale if not)
+    3. No duplicate dates in DataFrame
+
     Returns:
-        valid: dict {ticker: df} — tickers that pass exact bar count match
-        invalid: list of tickers that failed validation (for retry)
-        unvalidatable: dict {ticker: df} — tickers with no reference (accepted as-is)
+        valid: dict {ticker: df} — passes all checks
+        stale: list of tickers whose last date is behind SPY (need refetch)
+        unvalidatable: dict {ticker: df} — no reference (accepted as-is)
     """
     valid = {}
-    invalid = []
+    stale = []
     unvalidatable = {}
 
+    spy_last = spy_dates[-1]
+
     for ticker, df in results.items():
-        expected = expected_bar_count(spy_dates, ticker, ticker_ref)
-        if expected is None:
-            # No reference data — accept as-is (can't validate)
+        if df is None or len(df) == 0:
+            stale.append(ticker)
+            continue
+
+        ftd = ticker_ref.get(ticker)
+        if ftd is None:
             unvalidatable[ticker] = df
             continue
 
-        actual = len(df)
-        if actual == expected:
-            valid[ticker] = df
-        else:
-            invalid.append(ticker)
+        dates = [str(d)[:10] for d in df["date"].values]
 
-    return valid, invalid, unvalidatable
+        # Check 3: no duplicate dates
+        if len(dates) != len(set(dates)):
+            stale.append(ticker)
+            continue
+
+        # Check 1: first bar date within 5 trading days of expected start
+        expected_start = max(ftd, HISTORY_START)
+        # Find the expected start's position in spy_dates
+        start_idx = None
+        for i, d in enumerate(spy_dates):
+            if d >= expected_start:
+                start_idx = i
+                break
+        if start_idx is not None:
+            # Allow first bar to be within 5 SPY trading days of expected
+            window_end = spy_dates[min(start_idx + 5, len(spy_dates) - 1)]
+            if dates[0] > window_end:
+                stale.append(ticker)
+                continue
+
+        # Check 2: last bar date equals SPY last date
+        if dates[-1] != spy_last:
+            stale.append(ticker)
+            continue
+
+        valid[ticker] = df
+
+    return valid, stale, unvalidatable
 
 
 # ── Split Detection ──
@@ -1025,23 +1042,32 @@ def build_daily_cache(force=False):
         print(f"  Ticker reference updated with first trade dates from fetched data")
 
     # ── Step 4: Validate ──
-    print(f"\n  Validating bar counts against SPY reference...")
-    valid, invalid, unvalidatable = validate_daily_fetch(results, spy_dates, ticker_ref)
+    print(f"\n  Validating against SPY reference...")
+    valid, stale, unvalidatable = validate_daily_fetch(results, spy_dates, ticker_ref)
 
     print(f"  Validated: {len(valid)}")
-    print(f"  Failed validation: {len(invalid)}")
+    print(f"  Stale (last date behind SPY): {len(stale)}")
     print(f"  No reference (accepted): {len(unvalidatable)}")
 
-    # ── Step 5: Retry invalid tickers ──
+    # ── Step 5: Retry stale tickers ──
+    # Track last dates before refetch so we can detect "no change = accept"
     retry_round = 0
-    max_validation_retries = 5
-    while invalid and retry_round < max_validation_retries:
+    max_validation_retries = 3
+    while stale and retry_round < max_validation_retries:
         retry_round += 1
+
+        # Record last dates before refetch
+        pre_retry_last = {}
+        for t in stale:
+            df = results.get(t)
+            if df is not None and len(df) > 0:
+                pre_retry_last[t] = str(df["date"].iloc[-1])[:10]
+
         print(f"\n  Validation retry {retry_round}/{max_validation_retries} — "
-              f"{len(invalid)} tickers...")
+              f"{len(stale)} tickers...")
 
         retry_results, retry_failed = _batched_fetch(
-            invalid,
+            stale,
             fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
             label=f"Retry {retry_round}",
             min_sleep=0.5,
@@ -1055,22 +1081,37 @@ def build_daily_cache(force=False):
                 first_date = str(df["date"].iloc[0])[:10]
                 if ticker_ref.get(ticker) != first_date:
                     ticker_ref[ticker] = first_date
+            results[ticker] = df
 
-        new_valid, still_invalid, new_unvalidatable = validate_daily_fetch(
-            retry_results, spy_dates, ticker_ref)
+        new_valid, still_stale, new_unvalidatable = validate_daily_fetch(
+            {t: results.get(t) for t in stale}, spy_dates, ticker_ref)
+
+        # Accept tickers whose last date didn't change after refetch —
+        # they genuinely don't trade on recent days (not rate limited,
+        # since rate limiting returns None which _batched_fetch retries)
+        accepted = 0
+        for t in list(still_stale):
+            df = results.get(t)
+            if df is not None and len(df) > 0:
+                post_last = str(df["date"].iloc[-1])[:10]
+                if post_last == pre_retry_last.get(t):
+                    still_stale.remove(t)
+                    new_valid[t] = df
+                    accepted += 1
 
         valid.update(new_valid)
         unvalidatable.update(new_unvalidatable)
 
-        print(f"  Retry {retry_round}: {len(new_valid)} passed, "
-              f"{len(still_invalid)} still failing")
+        print(f"  Retry {retry_round}: {len(new_valid)} passed "
+              f"({accepted} accepted as non-trading), "
+              f"{len(still_stale)} still stale")
 
-        if len(still_invalid) == len(invalid):
+        if len(still_stale) == len(stale):
             print(f"  No progress — stopping retries")
-            permanently_failed.extend(still_invalid)
+            permanently_failed.extend(still_stale)
             break
 
-        invalid = still_invalid
+        stale = still_stale
 
     # Save updated reference
     save_ticker_reference(ticker_ref)
@@ -1354,23 +1395,31 @@ def append_daily_cache():
             else:
                 print(f"\n  Validating all {len(validate_universe)} tickers "
                       f"against SPY reference...")
-            all_valid, all_invalid, all_unvalidatable = validate_daily_fetch(
+            all_valid, all_stale, all_unvalidatable = validate_daily_fetch(
                 validate_universe, spy_dates, ticker_ref)
 
             print(f"  Validated: {len(all_valid)}")
-            print(f"  Failed validation: {len(all_invalid)}")
+            print(f"  Stale (last date behind SPY): {len(all_stale)}")
             print(f"  No reference (accepted): {len(all_unvalidatable)}")
 
-            # Retry invalid tickers with full refetch
+            # Retry stale tickers with full refetch
             retry_round = 0
-            max_validation_retries = 5
-            while all_invalid and retry_round < max_validation_retries:
+            max_validation_retries = 3
+            while all_stale and retry_round < max_validation_retries:
                 retry_round += 1
+
+                # Record last dates before refetch
+                pre_retry_last = {}
+                for t in all_stale:
+                    df = universe.get(t)
+                    if df is not None and len(df) > 0:
+                        pre_retry_last[t] = str(df["date"].iloc[-1])[:10]
+
                 print(f"\n  Validation retry {retry_round}/{max_validation_retries} — "
-                      f"{len(all_invalid)} tickers...")
+                      f"{len(all_stale)} tickers...")
 
                 retry_results, retry_failed = _batched_fetch(
-                    all_invalid,
+                    all_stale,
                     fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
                     label=f"Retry {retry_round}",
                     min_sleep=0.5,
@@ -1382,23 +1431,35 @@ def append_daily_cache():
                     compute_dvol_20d(df)
                     universe[ticker] = df
 
-                new_valid, still_invalid, new_unvalidatable = validate_daily_fetch(
-                    {t: universe[t] for t in all_invalid if t in universe},
+                new_valid, still_stale, new_unvalidatable = validate_daily_fetch(
+                    {t: universe[t] for t in all_stale if t in universe},
                     spy_dates, ticker_ref)
 
-                print(f"  Retry {retry_round}: {len(new_valid)} passed, "
-                      f"{len(still_invalid)} still failing")
+                # Accept tickers whose last date didn't change after refetch
+                accepted = 0
+                for t in list(still_stale):
+                    df = universe.get(t)
+                    if df is not None and len(df) > 0:
+                        post_last = str(df["date"].iloc[-1])[:10]
+                        if post_last == pre_retry_last.get(t):
+                            still_stale.remove(t)
+                            new_valid[t] = df
+                            accepted += 1
 
-                if len(still_invalid) == len(all_invalid):
+                print(f"  Retry {retry_round}: {len(new_valid)} passed "
+                      f"({accepted} accepted as non-trading), "
+                      f"{len(still_stale)} still stale")
+
+                if len(still_stale) == len(all_stale):
                     print(f"  No progress — stopping retries")
                     break
 
-                all_invalid = still_invalid
+                all_stale = still_stale
 
-            if all_invalid:
-                print(f"\n  ⚠ {len(all_invalid)} tickers could not be validated:")
-                if len(all_invalid) <= 20:
-                    print(f"    {all_invalid}")
+            if all_stale:
+                print(f"\n  ⚠ {len(all_stale)} tickers could not be validated:")
+                if len(all_stale) <= 20:
+                    print(f"    {all_stale}")
 
     except KeyboardInterrupt:
         interrupted = True
