@@ -26,8 +26,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-LOCAL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_runner")
-REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)  # scripts/ -> repo root
+LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
 EXPR_CACHE_DIR = os.path.join(CACHE_DIR, "expr_series")
 
@@ -790,7 +791,6 @@ def main():
     print("=" * 70)
 
     # Load expression library to get extension series column indices
-    sys.path.insert(0, LOCAL_DIR)
     from local_runner.expr_cache_builder import _load_expressions
     expressions = _load_expressions()
     print(f"\n  {len(expressions)} expressions loaded")
