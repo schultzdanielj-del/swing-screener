@@ -30,7 +30,8 @@ The output must be **identical** to what the current builder produces. Same .npz
 - Expression naming: `w_rsi_14` (weekly RSI 14), `m_ext_above_avgc50` (monthly extension above 50 SMA), etc.
 
 ### 3. Contextual AVWAPs
-- Independent of LSP and algo lines. AVWAP finds the highest presenting AVWAP on the chart at the current bar by sweeping every prior bar as a potential anchor and returning the one producing the highest AVWAP value.
+- AVWAP finds the highest presenting AVWAP on the chart at the current bar. It sweeps prior bars as potential anchors and returns the highest AVWAP value. It is conceptually independent of LSP and algo lines.
+- **KNOWN ISSUE:** AVWAP computation is currently tangled into `lsp_detector_v2.py` (constrains search to near pivot bars) and `algo_line_detector.py` (correctly sweeps all bars). Needs to be extracted into a standalone module. Deferred — not blocking the forward-prop build.
 - "Highest all-time AVWAP" excluded -- only 10yr of data, not enough.
 
 ---
@@ -812,7 +813,6 @@ Both are regular daily arithmetic expressions — computed as part of step above
 
 LSP detects pivot highs/lows and computes: distance, pivot_count, timeframe_count, break_count, 
 max_window, bars_back_nearest, volume_ratio for top 5 levels above and below.
-Contextual AVWAP distance is also computed per level but AVWAP itself is an independent system.
 
 **1-bar forward update:**
 - Did today's bar create a new pivot? Check if H[today] > H[yesterday] and 
