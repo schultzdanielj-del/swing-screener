@@ -20,7 +20,7 @@
 | 5 | Appends expression cache | **~80-90 min** | **THE BOTTLENECK.** Now uses HTF pickles instead of resampling. HTF skip logic removed — always computes from pickle data. Incremental append (compute only new bar) is Increment 2. |
 | 6 | Rebuilds universe matrix | ~30s | **OK.** No changes needed. |
 | 7 | Refreshes earnings dates via Railway | Fails silently | **BROKEN.** Railway endpoints don't exist. Replace with local Yahoo Finance scraper (separate task). |
-| 8 | Appends market context cache (266 instruments) | ~2-3 min | **OK.** Uses yfinance directly. |
+| 8 | Appends market context cache (272 instruments) | ~12 min | **DONE (2026-04-01).** Fully migrated: ~227 ETFs from daily pickle, indices/crypto/breadth from EODHD, futures yfinance, 4 FRED remaining. Stooq replaced. |
 | 9 | Refreshes fundamentals cache | ~10 min (Mon) / <1 min | **OK** but has a dead Railway mirror call at the end. |
 | 10 | Seed vault backup to Railway | ~1-2 min | **OK.** Intentional Railway dependency. |
 
@@ -53,7 +53,7 @@ All 8 scripts that loaded examples from Railway have been switched to local SQLi
 6. **`nightly.py` step 7 (earnings)**: Calls non-existent Railway endpoints. **BROKEN** — replace with local Yahoo Finance scraper.
 7. **`nightly.py` step 9 (fundamentals)**: Mirrors fundamentals cache to Railway (redundant). **TODO** — remove dead mirror call.
 
-**Railway removal DONE for OHLCV (2026-03-28).** `cache_builder.py` fully rewired to yfinance. HTF caches (weekly + monthly, 10yr lookback) merged into `cache_builder.py` (`--htf` to build, `--htf-status` to check). `nightly.py` step 1 uses local freshness check. `expr_cache_builder.py` uses HTF pickles instead of resampling from daily. Railway is now only used for earnings (broken, needs local scraper) and seed vault backup (intentional).
+**Railway removal DONE for OHLCV (2026-03-28).** `cache_builder.py` fully rewired to yfinance. HTF caches (weekly + monthly, 10yr lookback) merged into `cache_builder.py` (`--htf` to build, `--htf-status` to check). `nightly.py` step 1 uses local freshness check. `expr_cache_builder.py` uses HTF pickles instead of resampling from daily. **Market cache EODHD migration DONE (2026-04-01).** Railway is now only used for earnings (broken, needs local scraper) and seed vault backup (intentional).
 
 ### What's been done:
 
@@ -66,7 +66,7 @@ All 8 scripts that loaded examples from Railway have been switched to local SQLi
 
 ### What does NOT need changing:
 
-- Steps 5, 6, 8 (expr cache, matrix, market cache) — work locally already
+- Steps 5, 6, 8 (expr cache, matrix, market cache) — work locally already. Market cache fully migrated to EODHD/pickle/FRED (2026-04-01).
 - Step 10 (seed vault) — Railway dependency is intentional
 - All downstream consumers (scanperfect.py, grinders, EV grinder, profit grinder, consensus pipeline) — read same pickle/cache format
 
@@ -229,7 +229,7 @@ The bat file (`nightly_refresh.bat`) writes this line after `nightly.py` finishe
 | `local_runner/cache_builder.py` | Daily + Weekly + Monthly OHLCV cache management | **NO** — fully rewired to yfinance (2026-03-28). HTF caches merged in. |
 | `local_runner/expr_cache_builder.py` | Expression cache | **NO** — uses HTF pickles, no Railway. THE BOTTLENECK. |
 | `local_runner/matrix_builder.py` | Universe matrix | No Railway dependency |
-| `local_runner/market_cache_builder.py` | Market context cache | No Railway dependency (uses yfinance directly) |
+| `local_runner/market_cache_builder.py` | Market context cache | No Railway dependency. Migrated to EODHD/pickle/yfinance/FRED (2026-04-01) |
 | `scripts/build_tradable.py` | Tradable universe filter | Runs on Railway SQLite only (needs local equivalent) |
 | `scripts/fetch_fundamentals.py` | Fundamentals cache | No Railway dependency. Has dead Railway mirror at end. |
 | `scripts/seed_vault.py` | Backup to Railway | Intentional Railway dependency (file mirror only). |

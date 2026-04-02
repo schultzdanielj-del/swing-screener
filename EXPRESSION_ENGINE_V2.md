@@ -329,8 +329,7 @@ EODHD migration (cache_builder.py)              -- DONE (2026-03-31)
                                                         ~1,900 tickers EODHD doesn't cover — INVESTIGATING
                                                       - Weekly: 8,962 tickers (matches daily)
                                                       - Monthly: 8,935 tickers (27 too new for 3 bars)
-                                                      - Still pending: nightly.py alignment,
-                                                        market_cache_builder.py EODHD switch
+                                                      - Still pending: nightly.py alignment
     |
 Full expr cache rebuild on EODHD data            -- DONE (2026-04-01)
                                                       11,201 tickers, 0 failures, 111 GB, 124 min
@@ -339,10 +338,15 @@ Universe matrix rebuild                            -- DONE (2026-04-01)
                                                       11,201 tickers × 15,805 expressions
                                                       1.35 GB, 148s (parallel .npz file reads)
     |
-Market cache EODHD migration                       -- NOT STARTED (separate task)
-                                                      ~200 US ETFs can read from OHLCV daily pickle
-                                                      ~60 non-equity instruments need original sources
-                                                      (futures, ^VIX, Stooq breadth, FRED, BTC)
+Market cache EODHD migration                       -- DONE (2026-04-01)
+                                                      272 instruments (268/272 fetched, 4 FRED still down)
+                                                      ~227 US ETFs from daily OHLCV pickle
+                                                      Indices/crypto/breadth from EODHD
+                                                      Futures from yfinance
+                                                      4 FRED macro series remaining
+                                                      5 derived: NYMO_CALC, NYUD_CALC, NDXADP_CALC,
+                                                        T10Y2Y_CALC, T10Y3M_CALC
+                                                      Stooq dead, replaced by EODHD
     |
 Pyramid grind on DTSS                              -- verify baseline cache produces correct data
     |

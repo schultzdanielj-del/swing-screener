@@ -43,7 +43,7 @@ Automated swing trade screener. Screens ~11,500 tickers nightly (Common Stock + 
 - **Step 2 (expression cache full rebuild):** ✅ Complete — 11,201 tickers, 0 failures, 111 GB, 124 min. Float16 storage + 6yr window (2020-01-02). HTF look-ahead bias FIXED via partial candle engine.
 - **Step 3 (universe matrix):** ✅ Complete — 11,201 tickers × 15,805 expressions, 1.35 GB, 148s. Reads last bar from expr cache .npz files.
 - **Step 4 (expression cache incremental append):** Infrastructure DONE (2026-04-01). `_append_one_ticker` worker, `.append`/`.append_dates` binary storage, `load_ticker_cache` vstack, `signal_filter._load_ticker_npz` updated. Validated 50/50 tickers zero mismatches. Currently still runs `_compute_ticker_full` internally (~100 min). Next: replace with forward-propagation phases 0-4 to reach ~13 min target.
-- **Market cache:** Still uses yfinance for all 266 instruments. ~200 are US ETFs already in OHLCV universe. ~60 are non-equity (futures, indices, Stooq breadth, FRED macro, BTC). Needs EODHD migration — separate task.
+- **Market cache:** ✅ EODHD migration DONE (2026-04-01). 272 instruments (268 fetched successfully, 4 FRED series still down). ~227 US ETFs read from daily OHLCV pickle, indices/crypto/breadth from EODHD, futures from yfinance, 4 FRED macro series remaining. 5 derived instruments computed locally (NYMO_CALC, NYUD_CALC, NDXADP_CALC, T10Y2Y_CALC, T10Y3M_CALC). Stooq replaced by EODHD.
 
 ### DTSS (Double Top Short Sell) — first setup:
 - **Examples:** 66 (65 with valid scan bars in clusters, out of ~365 winner clusters)
@@ -74,7 +74,7 @@ local_runner/              # Grinder system
 ├── pyramid_grinder.py     # Signal grind + refinement grind (--blackout)
 ├── cache_builder.py       # OHLCV caches (daily + HTF) — EODHD bulk + yfinance hybrid
 ├── expr_cache_builder.py  # Expression series cache (~111 GB, float16, 6yr)
-├── market_cache_builder.py # 256 instrument expression series
+├── market_cache_builder.py # 272 instrument expression series (EODHD + pickle + yfinance + FRED)
 ├── file_mirror.py         # Railway backup mirror
 └── cache/                 # All local caches + grind output JSONs
 
