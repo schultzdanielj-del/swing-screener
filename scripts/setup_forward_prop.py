@@ -374,10 +374,11 @@ def _setup_one_ticker(args):
 
         # --- Stochastic raw_k history (18) ---
         # Need prev1 and prev2 raw_k values for each stochastic period
-        # raw_k = (close - minl_p) / (maxh_p - minl_p) * 100
+        # raw_k = (close - rolling_min(low,p)) / (rolling_max(high,p) - rolling_min(low,p)) * 100
+        # Stochastic periods don't all exist in maxh/minl intermediates, so compute directly
         for p in STOCH_PERIODS:
-            maxh_arr = im[f"maxh{p}"]
-            minl_arr = im[f"minl{p}"]
+            maxh_arr = pd_rolling_max(pd.Series(high), p).values
+            minl_arr = pd_rolling_min(pd.Series(low), p).values
             denom = maxh_arr - minl_arr
             denom_safe = np.where(denom == 0, np.nan, denom)
             raw_k_all = (close - minl_arr) / denom_safe * 100.0
