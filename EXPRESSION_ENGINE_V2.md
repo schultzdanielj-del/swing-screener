@@ -22,7 +22,7 @@ The output must be **identical** to what the current builder produces. Same .npz
 - Find all pivot highs and pivot lows across multiple window sizes (5, 10, 15, 20, 30, 40)
 - For each pivot: track price, bars back, break count (how many times subsequent bars exceeded it)
 - Return top N pivots ranked by prominence
-- Expose per-pivot expressions: `lsp1_distance`, `lsp1_break_count`, `lsp1_bars_back`, `lsp1_avwap_distance`, `lsp2_distance`, etc.
+- Expose per-level expressions: `level_above1_distance`, `level_above1_break_count`, `level_above1_bars_back_nearest`, etc.
 
 ### 2. Multi-Timeframe OHLCV
 - Resample daily data to weekly (W), monthly (ME) using pandas
@@ -30,7 +30,7 @@ The output must be **identical** to what the current builder produces. Same .npz
 - Expression naming: `w_rsi_14` (weekly RSI 14), `m_ext_above_avgc50` (monthly extension above 50 SMA), etc.
 
 ### 3. Contextual AVWAPs
-- Per-pivot contextual AVWAP: For each detected LSP pivot, search bars before the pivot for the anchor that produces the highest (or lowest) AVWAP at the current bar.
+- Independent of LSP and algo lines. AVWAP finds the highest presenting AVWAP on the chart at the current bar by sweeping every prior bar as a potential anchor and returning the one producing the highest AVWAP value.
 - "Highest all-time AVWAP" excluded -- only 10yr of data, not enough.
 
 ---
@@ -38,7 +38,7 @@ The output must be **identical** to what the current builder produces. Same .npz
 ## Architecture Constraints (Non-Negotiable)
 
 1. **Single computation path:** All expressions go through `ExpressionEngine` then `compute_series()`. No separate code paths for LSP/HTF/AVWAP.
-2. **Precomputed in expr_cache_builder:** LSP detection, HTF resampling, and AVWAP computation happen during cache build. Grinders never compute these live.
+2. **Precomputed in expr_cache_builder:** LSP detection, HTF resampling, algo line detection, and AVWAP computation happen during cache build. They are independent systems. Grinders never compute these live.
 3. **No network calls in pipeline:** All data from local daily OHLCV cache.
 4. **Parallel via ProcessPoolExecutor:** Same worker pattern as current cache builder. CPU-bound work spread across all cores. 8 workers.
 5. **100% example pass rule:** New expressions either pass all examples or get auto-excluded from ranges.
@@ -70,7 +70,7 @@ The output must be **identical** to what the current builder produces. Same .npz
 - **Task A:** LSP Detector refactor (`scripts/lsp_detector_v2.py`) -- 80 expressions, ~0.5s/ticker
 - **Task B:** LSP expression registration in `brute_expressions.py`
 - **Task C:** HTF resampling + integration -- weekly/monthly resampled OHLCV, HTF engine per timeframe
-- **Task D:** Contextual AVWAPs -- built into Task A
+- **Task D:** Contextual AVWAPs -- independent system, computed during cache build (not part of LSP or algo detection)
 - **Task E:** Cache builder integration -- built into Task C
 - **Task F:** Matrix builder + example flow -- all grinders use expr cache
 - **Task G:** Expression library registry -- HTF names auto-generated with w_/m_ prefix
@@ -243,7 +243,7 @@ RAM budget per worker: ~83MB output array (n_bars x 16,051 x 4 bytes) + intermed
 ## Decisions (Resolved)
 
 1. **HTF expression scope:** Full library on weekly + monthly. ~112 GB cache is fine.
-2. **Highest all-time AVWAP:** EXCLUDED -- only historical data, not enough. Pivot-anchored contextual AVWAPs only.
+2. **Highest all-time AVWAP:** EXCLUDED -- only historical data, not enough. Contextual AVWAPs find the highest presenting AVWAP at the current bar from any anchor.
 3. **Yearly timeframe:** EXCLUDED -- only ~5 bars in full history, useless for expressions. Weekly + monthly only.
 4. **Number of LSP ranks:** ALL detected pivots, ranked. Top 5 above + 5 below exposed as expressions.
 5. **Cache builder optimization approach:** Two modes — full rebuild (current, ~80-90 min) and incremental append (NEXT, target 2-5 min). Full rebuild uses per-ticker worker with lazy-cached ExpressionEngine + targeted numpy replacements. Incremental loads existing .npz, computes only the new bar's values, appends.
@@ -810,8 +810,9 @@ Both are regular daily arithmetic expressions — computed as part of step above
 
 ### LSP Expressions (80 precomputed)
 
-LSP detects pivot highs/lows and computes: distance, bars_back, break_count, 
-AVWAP distance for top 5 above and below.
+LSP detects pivot highs/lows and computes: distance, pivot_count, timeframe_count, break_count, 
+max_window, bars_back_nearest, volume_ratio for top 5 levels above and below.
+Contextual AVWAP distance is also computed per level but AVWAP itself is an independent system.
 
 **1-bar forward update:**
 - Did today's bar create a new pivot? Check if H[today] > H[yesterday] and 
@@ -824,7 +825,6 @@ AVWAP distance for top 5 above and below.
   Compare today's H/L against level prices.
 - Update distances: (level_price - close[today]) / ATR14[today]
 - Update bars_back: increment by 1 for all levels.
-- Update AVWAP: rolling VWAP from pivot bar to today.
 
 LSP state is variable-length (depends on how many pivots are active).
 Stored as a serialized blob in the .state file.
