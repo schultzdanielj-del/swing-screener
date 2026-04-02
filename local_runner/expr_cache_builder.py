@@ -1243,9 +1243,9 @@ def _compute_ticker_full(args):
                 pass  # Algo lines fail silently — columns stay NaN
 
         # ── 3. HTF expressions (weekly + monthly) ──
-        # Partial candle engine: for each daily bar, HTF expression values
-        # reflect only data available on that day (no look-ahead bias).
-        from partial_candle_engine import compute_htf_partial
+        # Use pre-fetched HTF OHLCV from pickles when available.
+        # Fall back to resampling from daily if HTF data not provided.
+        _ON_SERIES_OPS = {"on_series", "on_series_bool_agg"}
 
         # Build HTF DataFrames from provided dicts (or resample as fallback)
         _htf_sources = {}
@@ -1281,12 +1281,207 @@ def _compute_ticker_full(args):
         ]:
             if not tf_indices:
                 continue
+
             htf_df = _htf_sources.get(tf_freq)
             if htf_df is None or len(htf_df) < 5:
-                continue
-            compute_htf_partial(df, htf_df, tf_freq, tf_indices,
-                                tf_base_computes, n_bars, data,
-                                _w_expressions)
+                continue  # too few bars — HTF columns stay NaN
+
+            # Build daily→HTF mapping once per timeframe
+            htf_map = build_htf_to_daily_map(df["date"], htf_df, tf_freq)
+
+            # Create engine for HTF data
+            htf_engine = ExpressionEngine(htf_df)
+            htf_n = len(htf_df)
+
+            # Build numpy intermediates from HTF engine (cheap on small arrays)
+            htf_im = build_numpy_intermediates(htf_engine)
+
+            # Classify HTF expressions
+            htf_ct = []
+            htf_st = []
+            htf_tir = []
+            htf_ext = []
+            htf_arith = []
+
+            for k, j in enumerate(tf_indices):
+                base_op = tf_base_computes[k].get("op", "")
+                if base_op == "count_true": htf_ct.append((k, j))
+                elif base_op == "since_true": htf_st.append((k, j))
+                elif base_op == "true_in_row": htf_tir.append((k, j))
+                elif base_op in _ON_SERIES_OPS: htf_ext.append((k, j))
+                else: htf_arith.append((k, j))
+
+            # HTF arith — dispatch through numpy intermediates, fallback to compute_series
+            for k, j in htf_arith:
+                comp = tf_base_computes[k]
+                try:
+                    result = dispatch_arith_numpy(comp, htf_im)
+                    if result is not None:
+                        data[:, j] = map_htf_series_to_daily(result.astype(np.float32), htf_map)
+                    else:
+                        s = compute_series(htf_engine, comp)
+                        if s is not None:
+                            data[:, j] = map_htf_series_to_daily(np.asarray(s, dtype=np.float32), htf_map)
+                except:
+                    try:
+                        s = compute_series(htf_engine, comp)
+                        if s is not None:
+                            data[:, j] = map_htf_series_to_daily(np.asarray(s, dtype=np.float32), htf_map)
+                    except: pass
+
+            # HTF booleans — numpy
+            htf_bool_cache = {}
+            for k, j in htf_ct + htf_st + htf_tir:
+                cond = tf_base_computes[k]["condition"]
+                if cond not in htf_bool_cache:
+                    try:
+                        htf_bool_cache[cond] = htf_engine._bool_series(cond).values.astype(bool)
+                    except:
+                        htf_bool_cache[cond] = np.zeros(htf_n, dtype=bool)
+            for k, j in htf_ct:
+                b = htf_bool_cache[tf_base_computes[k]["condition"]]
+                data[:, j] = map_htf_series_to_daily(np_count_true(b, tf_base_computes[k]["period"]).astype(np.float32), htf_map)
+            htf_bs = {}
+            for k, j in htf_st:
+                cond = tf_base_computes[k]["condition"]
+                if cond not in htf_bs:
+                    b = htf_bool_cache[cond]
+                    bs = np.full(htf_n, htf_n, dtype=np.float64)
+                    for i in range(htf_n):
+                        if b[i]: bs[i] = 0.0
+                        elif i > 0: bs[i] = bs[i-1] + 1.0
+                    htf_bs[cond] = bs
+            for k, j in htf_st:
+                bs = htf_bs[tf_base_computes[k]["condition"]]
+                p = tf_base_computes[k]["period"]
+                r = np.full(htf_n, np.nan)
+                for i in range(p-1, htf_n):
+                    r[i] = bs[i] if bs[i] < p else -1.0
+                data[:, j] = map_htf_series_to_daily(r.astype(np.float32), htf_map)
+            for k, j in htf_tir:
+                b = htf_bool_cache[tf_base_computes[k]["condition"]]
+                data[:, j] = map_htf_series_to_daily(np_true_in_row(b, tf_base_computes[k]["period"]).astype(np.float32), htf_map)
+
+            # HTF ext struct — optimized at HTF resolution, then mapped to daily
+            if htf_ext:
+                import json as _json
+                from scripts.backtest_conditions import compute_on_series
+                LINREG_OPS = {"trendline_deviation", "channel_position"}
+
+                # Build HTF-resolution extension series from intermediates
+                htf_ext_registry = {}
+                for sname, comp_spec in [
+                    ("ext_avgc50_adr14", {"op": "extension", "ma": "avgc50", "normalizer": "adr14"}),
+                    ("ext_avgc200_adr14", {"op": "extension", "ma": "avgc200", "normalizer": "adr14"}),
+                ]:
+                    result = dispatch_arith_numpy(comp_spec, htf_im)
+                    if result is not None and not np.all(np.isnan(result)):
+                        htf_ext_registry[sname] = result.astype(np.float64)
+
+                if htf_ext_registry:
+                    # Classify HTF ext struct expressions
+                    ext_linreg = []
+                    ext_bool_agg = []
+                    ext_other = []
+                    for k, j in htf_ext:
+                        comp = tf_base_computes[k]
+                        if comp.get("op") == "on_series":
+                            if comp.get("inner_op", {}).get("op", "") in LINREG_OPS:
+                                ext_linreg.append((k, j))
+                            else:
+                                ext_other.append((k, j))
+                        elif comp.get("op") == "on_series_bool_agg":
+                            ext_bool_agg.append((k, j))
+                        else:
+                            ext_other.append((k, j))
+
+                    # Linreg — vectorized numpy at HTF resolution
+                    for k, j in ext_linreg:
+                        try:
+                            comp = tf_base_computes[k]
+                            sn = comp.get("series", "")
+                            if sn in htf_ext_registry:
+                                s = htf_ext_registry[sn]
+                                lb = comp["inner_op"]["lookback"]
+                                fn = np_trendline_deviation if comp["inner_op"]["op"] == "trendline_deviation" else np_channel_position
+                                htf_result = fn(s, lb).astype(np.float32)
+                                data[:, j] = map_htf_series_to_daily(htf_result, htf_map)
+                        except: pass
+
+                    # Bool agg — numpy at HTF resolution
+                    htf_ind_bool_cache = {}
+                    for k, j in ext_bool_agg:
+                        comp = tf_base_computes[k]
+                        ck = (comp["series"], _json.dumps(comp["bool_op"], sort_keys=True))
+                        if ck not in htf_ind_bool_cache:
+                            try:
+                                sd = htf_ext_registry.get(comp["series"])
+                                if sd is None:
+                                    htf_ind_bool_cache[ck] = None
+                                    continue
+                                indicator = compute_on_series(np.asarray(sd, dtype=np.float64), comp["bool_op"])
+                                threshold = comp["bool_op"].get("threshold", 0)
+                                direction = comp["bool_op"].get("direction", "gt")
+                                if direction == "gt": b = indicator > threshold
+                                elif direction == "lt": b = indicator < threshold
+                                elif direction == "positive": b = indicator > 0
+                                elif direction == "negative": b = indicator < 0
+                                else: b = indicator > threshold
+                                b[np.isnan(indicator)] = False
+                                htf_ind_bool_cache[ck] = b.astype(bool)
+                            except:
+                                htf_ind_bool_cache[ck] = None
+
+                    htf_ba_bs_cache = {}
+                    for k, j in ext_bool_agg:
+                        comp = tf_base_computes[k]
+                        if comp["agg_op"] != "since_true": continue
+                        ck = (comp["series"], _json.dumps(comp["bool_op"], sort_keys=True))
+                        if ck in htf_ba_bs_cache or htf_ind_bool_cache.get(ck) is None: continue
+                        b = htf_ind_bool_cache[ck]
+                        bs = np.full(htf_n, htf_n, dtype=np.float64)
+                        for i in range(htf_n):
+                            if b[i]: bs[i] = 0.0
+                            elif i > 0: bs[i] = bs[i-1] + 1.0
+                        htf_ba_bs_cache[ck] = bs
+
+                    for k, j in ext_bool_agg:
+                        comp = tf_base_computes[k]
+                        ck = (comp["series"], _json.dumps(comp["bool_op"], sort_keys=True))
+                        b = htf_ind_bool_cache.get(ck)
+                        if b is None: continue
+                        ap = comp["agg_period"]
+                        if comp["agg_op"] == "count_true":
+                            htf_result = np_count_true(b, ap).astype(np.float32)
+                            data[:, j] = map_htf_series_to_daily(htf_result, htf_map)
+                        elif comp["agg_op"] == "since_true":
+                            bs = htf_ba_bs_cache.get(ck)
+                            if bs is not None:
+                                r = np.full(htf_n, np.nan)
+                                for i in range(ap - 1, htf_n):
+                                    r[i] = bs[i] if bs[i] < ap else -1.0
+                                data[:, j] = map_htf_series_to_daily(r.astype(np.float32), htf_map)
+                        elif comp["agg_op"] == "true_in_row":
+                            htf_result = np_true_in_row(b, ap).astype(np.float32)
+                            data[:, j] = map_htf_series_to_daily(htf_result, htf_map)
+
+                    # Other on_series ops — compute_series fallback at HTF resolution
+                    for k, j in ext_other:
+                        try:
+                            s = compute_series(htf_engine, tf_base_computes[k], series_registry=htf_ext_registry)
+                            if s is not None:
+                                data[:, j] = map_htf_series_to_daily(np.asarray(s, dtype=np.float32), htf_map)
+                        except: pass
+                else:
+                    # No base series available — fallback all to compute_series
+                    for k, j in htf_ext:
+                        try:
+                            s = compute_series(htf_engine, tf_base_computes[k])
+                            if s is not None:
+                                data[:, j] = map_htf_series_to_daily(np.asarray(s, dtype=np.float32), htf_map)
+                        except: pass
+
+            del htf_im  # free HTF intermediates
 
         # ── 4. Extension structure (on_series — optimized) ──
         # These require the extension series (ext_avgc50_adr14, ext_avgc200_adr14)
@@ -1323,68 +1518,6 @@ def _compute_and_save_ticker(args):
     return (None, None, None)
 
 
-def _append_one_ticker(args):
-    """Incremental append worker — compute new bars and write raw binary.
-
-    Runs _compute_ticker_full on the full OHLCV (same as full rebuild),
-    but instead of rewriting the compressed .npz (~1.6s), writes only
-    the NEW rows as raw float16 binary to a .append file (~<1ms).
-
-    The .npz file is never modified. New rows accumulate in .append
-    until the next full rebuild clears them.
-
-    Future optimization: replace _compute_ticker_full with per-phase
-    forward-propagation (state, lookback, HTF, LSP+algo) to compute
-    only the last bar. That drops per-ticker cost from ~3-7s to ~0.87s.
-
-    Args: (ticker, df_dict, weekly_df_dict, monthly_df_dict, existing_n_bars)
-        existing_n_bars: number of bars already in .npz + any prior .append rows.
-                         New rows = total computed bars - existing_n_bars.
-
-    Returns: (ticker, total_n_bars, last_date) or (None, None, None)
-    """
-    ticker = args[0]
-    existing_n_bars = args[4]
-
-    try:
-        # Full compute — same code path as full rebuild for correctness.
-        # Future: replace with forward-propagation phases 1-4.
-        compute_args = (args[0], args[1], args[2], args[3])
-        ticker_out, dates, data = _compute_ticker_full(compute_args)
-        if dates is None or data is None:
-            return (None, None, None)
-
-        total_bars = len(dates)
-        n_new = total_bars - existing_n_bars
-        if n_new <= 0:
-            # No new bars — shouldn't happen but defensive
-            return (ticker_out, existing_n_bars, str(dates[-1]))
-
-        # Extract only the new rows
-        new_data = data[existing_n_bars:, :]  # shape: (n_new, n_exprs)
-        new_dates = dates[existing_n_bars:]   # shape: (n_new,)
-
-        # Write new rows as raw float16 binary — APPEND to existing .append file
-        append_path = _ticker_append_path(ticker_out)
-        new_f16 = new_data.astype(np.float16)
-        with open(append_path, "ab") as f:  # append binary
-            f.write(new_f16.tobytes())
-
-        # Write new dates — APPEND to existing .append_dates file
-        append_dates_path = _ticker_append_dates_path(ticker_out)
-        with open(append_dates_path, "a") as f:  # append text
-            for d in new_dates:
-                f.write(str(d) + "\n")
-
-        return (ticker_out, total_bars, str(dates[-1]))
-
-    except Exception as e:
-        import traceback
-        print(f"  APPEND FAIL {ticker}: {type(e).__name__}: {e}", flush=True)
-        traceback.print_exc()
-        return (None, None, None)
-
-
 # ══════════════════════════════════════════════════════════════
 # CACHE I/O
 # ══════════════════════════════════════════════════════════════
@@ -1394,18 +1527,6 @@ def _ticker_cache_path(ticker):
     # Handle tickers with special chars
     safe = ticker.replace("/", "_").replace(".", "_")
     return os.path.join(EXPR_CACHE_DIR, f"{safe}.npz")
-
-
-def _ticker_append_path(ticker):
-    """Path for a ticker's incremental append file (raw float16 binary rows)."""
-    safe = ticker.replace("/", "_").replace(".", "_")
-    return os.path.join(EXPR_CACHE_DIR, f"{safe}.append")
-
-
-def _ticker_append_dates_path(ticker):
-    """Path for a ticker's appended date strings (one per line)."""
-    safe = ticker.replace("/", "_").replace(".", "_")
-    return os.path.join(EXPR_CACHE_DIR, f"{safe}.append_dates")
 
 
 def save_ticker_cache(ticker, dates, data):
@@ -1430,8 +1551,6 @@ def load_ticker_cache(ticker):
     """Load one ticker's cached expression series.
 
     Data is stored as float16 on disk, cast to float32 on load.
-    If an .append file exists (from incremental nightly appends),
-    its rows are vstacked onto the base .npz data.
     All consumers see float32 transparently.
 
     Returns: (dates, data) or (None, None)
@@ -1446,30 +1565,7 @@ def load_ticker_cache(ticker):
         # Also handles legacy float32 files (astype is a no-op if already float32).
         if data.dtype != np.float32:
             data = data.astype(np.float32)
-        dates = loaded["dates"]
-
-        # Check for incremental append file
-        append_path = _ticker_append_path(ticker)
-        append_dates_path = _ticker_append_dates_path(ticker)
-        if os.path.exists(append_path) and os.path.exists(append_dates_path):
-            try:
-                n_exprs = data.shape[1]
-                row_bytes = n_exprs * 2  # float16 = 2 bytes per value
-                file_size = os.path.getsize(append_path)
-                if file_size > 0 and file_size % row_bytes == 0:
-                    n_appended = file_size // row_bytes
-                    raw = np.fromfile(append_path, dtype=np.float16)
-                    appended = raw.reshape(n_appended, n_exprs).astype(np.float32)
-                    # Read appended dates
-                    with open(append_dates_path, "r") as f:
-                        appended_dates = np.array([line.strip() for line in f if line.strip()])
-                    if len(appended_dates) == n_appended:
-                        data = np.vstack([data, appended])
-                        dates = np.concatenate([dates, appended_dates])
-            except Exception:
-                pass  # Corrupt append file — return base .npz only
-
-        return dates, data
+        return loaded["dates"], data
     except:
         return None, None
 
@@ -1567,16 +1663,6 @@ def build_full(force=False):
 
     # Create output directory
     os.makedirs(EXPR_CACHE_DIR, exist_ok=True)
-
-    # Clean up any .append / .append_dates files from prior incremental appends.
-    # Full rebuild produces complete .npz files — append files become stale.
-    append_cleaned = 0
-    for fname in os.listdir(EXPR_CACHE_DIR):
-        if fname.endswith(".append") or fname.endswith(".append_dates"):
-            os.remove(os.path.join(EXPR_CACHE_DIR, fname))
-            append_cleaned += 1
-    if append_cleaned:
-        print(f"  Cleaned {append_cleaned} incremental append files")
 
     # Parallel computation — 14 workers, fast compression frees CPU headroom
     n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 14))
@@ -1702,17 +1788,11 @@ def build_full(force=False):
 # ══════════════════════════════════════════════════════════════
 
 def append_new_bars():
-    """Append new bars to existing cache (incremental).
+    """Append new bars to existing cache.
 
-    For existing tickers: runs _append_one_ticker which computes the full
-    expression set but saves only NEW rows as raw float16 binary (.append file)
-    instead of rewriting the compressed .npz (~1.6s saved per ticker).
-
-    For brand-new tickers: runs _compute_and_save_ticker (full .npz).
-
-    The .npz files are never modified by this function. Accumulated .append
-    rows are merged into the base data by load_ticker_cache() transparently.
-    Full rebuild (--build --force) clears all .append files.
+    Compares current OHLCV cache bar counts against manifest,
+    then computes and appends only new bars for each ticker.
+    Also handles brand new tickers (full compute).
     """
     print("\n" + "=" * 70)
     print("  EXPRESSION SERIES CACHE — NIGHTLY APPEND")
@@ -1747,39 +1827,24 @@ def append_new_bars():
     weekly_cache = _load_htf_cache("weekly")
     monthly_cache = _load_htf_cache("monthly")
     if weekly_cache:
-        # Truncate HTF caches to same window as build_full
-        for ticker in list(weekly_cache.keys()):
-            df = _truncate_to_cache_window(weekly_cache[ticker])
-            if df is not None and len(df) >= 5:
-                weekly_cache[ticker] = df
-            else:
-                del weekly_cache[ticker]
         print(f"  Weekly HTF cache: {len(weekly_cache)} tickers")
     else:
         print(f"  Weekly HTF cache: not found (will resample from daily)")
     if monthly_cache:
-        for ticker in list(monthly_cache.keys()):
-            df = _truncate_to_cache_window(monthly_cache[ticker])
-            if df is not None and len(df) >= 5:
-                monthly_cache[ticker] = df
-            else:
-                del monthly_cache[ticker]
         print(f"  Monthly HTF cache: {len(monthly_cache)} tickers")
     else:
         print(f"  Monthly HTF cache: not found (will resample from daily)")
 
-    # Delisting cleanup — remove .npz + .append + .append_dates for tickers
-    # no longer in OHLCV cache
+    # Delisting cleanup — remove .npz files for tickers no longer in OHLCV cache
     cached_tickers = manifest.get("tickers", {})
     ohlcv_tickers = set(universe_cache.keys())
     delisted = [t for t in cached_tickers if t not in ohlcv_tickers]
     if delisted:
         print(f"\n  Removing {len(delisted)} delisted tickers from expr cache...")
         for ticker in delisted:
-            for path_fn in [_ticker_cache_path, _ticker_append_path, _ticker_append_dates_path]:
-                path = path_fn(ticker)
-                if os.path.exists(path):
-                    os.remove(path)
+            path = _ticker_cache_path(ticker)
+            if os.path.exists(path):
+                os.remove(path)
             del cached_tickers[ticker]
         manifest["tickers"] = cached_tickers
         manifest["n_tickers"] = len(cached_tickers)
@@ -1787,15 +1852,17 @@ def append_new_bars():
         print(f"  Removed: {', '.join(delisted[:10])}{'...' if len(delisted) > 10 else ''}")
 
     # Find tickers that need updating
-    work_append = []  # (ticker, df_dict, existing_n_bars) — incremental
-    work_new = []     # (ticker, df_dict) — full compute (new tickers)
+    work_append = []  # (ticker, df_dict, existing_n_bars) — extend
+    work_new = []     # (ticker, df_dict) — full compute
 
     for ticker, df in universe_cache.items():
-        # Truncate to EXPR_CACHE_START — same window as build_full.
-        # Without this, existing tickers get full OHLCV back to HISTORY_START
-        # (2016), ~2500 bars vs ~1500 bars the cache was built with = ~2x slower.
-        df = _truncate_to_cache_window(df)
-        if df is None or len(df) < 50:
+        # Truncate to EXPR_CACHE_START for new tickers
+        if ticker not in cached_tickers:
+            df = _truncate_to_cache_window(df)
+            if df is None:
+                continue
+
+        if len(df) < 50:
             continue
 
         df_dict = {
@@ -1814,7 +1881,7 @@ def append_new_bars():
         else:
             work_new.append((ticker, df_dict))
 
-    print(f"\n  Tickers to append (incremental): {len(work_append)}")
+    print(f"\n  Tickers to append: {len(work_append)}")
     print(f"  New tickers (full compute): {len(work_new)}")
 
     if not work_append and not work_new:
@@ -1828,34 +1895,27 @@ def append_new_bars():
     updated = 0
     failed = 0
 
-    # Build work items with HTF data from pickles.
-    # Append items: 5-tuple (ticker, df_dict, weekly, monthly, existing_n_bars)
-    # New items: 4-tuple (ticker, df_dict, weekly, monthly) — full compute + save .npz
-    append_work = []
-    for t, d, existing_n in work_append:
+    # Build work items with HTF data from pickles
+    # All tickers use full recompute + direct save.
+    # _compute_ticker_full recomputes the entire series and returns it.
+    # The worker saves compressed to disk (parallel I/O across all cores).
+    all_work = []
+    for t, d, _ in work_append:
         weekly_df_dict = _df_to_dict(weekly_cache.get(t)) if weekly_cache else None
         monthly_df_dict = _df_to_dict(monthly_cache.get(t)) if monthly_cache else None
-        append_work.append((t, d, weekly_df_dict, monthly_df_dict, existing_n))
-
-    new_work = []
+        all_work.append((t, d, weekly_df_dict, monthly_df_dict))
     for t, d in work_new:
         weekly_df_dict = _df_to_dict(weekly_cache.get(t)) if weekly_cache else None
         monthly_df_dict = _df_to_dict(monthly_cache.get(t)) if monthly_cache else None
-        new_work.append((t, d, weekly_df_dict, monthly_df_dict))
-
-    # Sort by bar count descending — big tickers first, short ones fill gaps
-    # Same load balancing strategy as build_full.
-    append_work.sort(key=lambda x: len(x[1]["date"]), reverse=True)
-    new_work.sort(key=lambda x: len(x[1]["date"]), reverse=True)
+        all_work.append((t, d, weekly_df_dict, monthly_df_dict))
 
     # Free the large caches
     del universe_cache, weekly_cache, monthly_cache
     import gc; gc.collect()
 
-    total_work = len(append_work) + len(new_work)
-
-    if total_work:
-        print(f"\n  Processing {total_work} tickers ({n_workers} workers)...")
+    if all_work:
+        label = "Recomputing" if work_append else "Computing"
+        print(f"\n  {label} {len(all_work)} tickers ({n_workers} workers)...")
         max_in_flight = n_workers * 4
         with ProcessPoolExecutor(
             max_workers=n_workers,
@@ -1863,21 +1923,13 @@ def append_new_bars():
             initargs=(expressions,)
         ) as pool:
             pending = {}
-            # Interleave: append work first (bulk), then new tickers
-            all_items = append_work + new_work
             work_idx = 0
-            n_append_items = len(append_work)
 
             def _submit_next():
                 nonlocal work_idx
-                if work_idx < len(all_items):
-                    item = all_items[work_idx]
-                    if work_idx < n_append_items:
-                        # Incremental append — 5-tuple
-                        future = pool.submit(_append_one_ticker, item)
-                    else:
-                        # New ticker — 4-tuple, full compute + .npz save
-                        future = pool.submit(_compute_and_save_ticker, item)
+                if work_idx < len(all_work):
+                    item = all_work[work_idx]
+                    future = pool.submit(_compute_and_save_ticker, item)
                     pending[future] = item[0]
                     work_idx += 1
                     return True
@@ -1900,19 +1952,19 @@ def append_new_bars():
                     failed += 1
                 del future
                 total_done = updated + failed
-                if total_done % 25 == 0 or total_done == total_work:
+                if total_done % 25 == 0 or total_done == len(all_work):
                     elapsed = time.time() - t0
                     rate = total_done / elapsed if elapsed > 0 else 0
-                    eta = (total_work - total_done) / rate if rate > 0 else 0
-                    pct = total_done / total_work * 100
+                    eta = (len(all_work) - total_done) / rate if rate > 0 else 0
+                    pct = total_done / len(all_work) * 100
                     per_ticker = elapsed * n_workers / total_done if total_done > 0 else 0
-                    print(f"    {total_done}/{total_work} ({pct:.0f}%) "
+                    print(f"    {total_done}/{len(all_work)} ({pct:.0f}%) "
                           f"[{elapsed/60:.1f}m elapsed, ~{eta/60:.1f}m left] "
                           f"({updated} ok, {failed} failed) "
                           f"[{per_ticker:.1f}s/ticker, {rate:.1f} tickers/s]")
 
             # Seed initial batch
-            for _ in range(min(max_in_flight, len(all_items))):
+            for _ in range(min(max_in_flight, len(all_work))):
                 _submit_next()
 
             # Process as completed, submit replacements
