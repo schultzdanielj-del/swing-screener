@@ -5,9 +5,11 @@
 **Location in build:** Task H Phase 3, Increment 2 (replaces _compute_ticker_full inside _append_one_ticker)
 **Authoritative spec:** This file. EXPRESSION_ENGINE_V2.md has the original four-file design under "Forward-Propagation Design — Four Files Per Ticker".
 
-## Purpose of the Expression Cache
+## Purpose of the Expression Cache (Non-Negotiable)
 
-The expression cache must provide the ability to find a historical signal and calculate the exact daily, weekly, AND monthly expressions for all ~15,805 expressions. The weekly and monthly expressions on any historical day must reflect the exact partial candle state for that day — before the week/month has closed. It cannot require an increase in any grind times, and the nightly refresh needs to be fast (under ~30 minutes).
+The expression cache must provide the ability to find a historical signal and calculate the exact daily, weekly, AND monthly expressions for all ~16K expressions. The weekly and monthly expressions on any historical day must reflect the exact partial candle state for that day — before the week/month has closed. It cannot require an increase in any grind times, and the nightly refresh needs to be fast
+
+Any optimization that compromises the above is rejected. No exceptions.
 
 ## Problem
 
