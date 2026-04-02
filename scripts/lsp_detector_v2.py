@@ -590,62 +590,6 @@ class LSPDetectorV2:
         return series
 
 
-# ══════════════════════════════════════════════════════════════
-# ══════════════════════════════════════════════════════════════
-# AVWAP UTILITY FUNCTIONS (used by exit_compute.py, not by LSP detection)
-# ══════════════════════════════════════════════════════════════
-
-def precompute_avwap_arrays(daily_df: pd.DataFrame) -> tuple:
-    """Precompute cumulative TP×V and V arrays for O(1) AVWAP computation.
-
-    AVWAP from anchor to bar = (cum_tpv[bar] - cum_tpv[anchor-1]) / (cum_v[bar] - cum_v[anchor-1])
-
-    Returns:
-        (cum_tpv, cum_v) — both float64 arrays of length n_bars
-    """
-    highs = daily_df['high'].values.astype(np.float64)
-    lows = daily_df['low'].values.astype(np.float64)
-    closes = daily_df['close'].values.astype(np.float64)
-    volumes = daily_df['volume'].values.astype(np.float64)
-
-    tp = (highs + lows + closes) / 3.0
-    tpv = tp * volumes
-
-    cum_tpv = np.cumsum(tpv)
-    cum_v = np.cumsum(volumes)
-
-    return cum_tpv, cum_v
-
-
-def avwap_from_anchor(cum_tpv: np.ndarray, cum_v: np.ndarray,
-                      anchor: int, bar: int) -> float:
-    """Compute AVWAP from anchor bar to target bar. O(1).
-
-    Args:
-        cum_tpv: Cumulative TP*V array
-        cum_v: Cumulative volume array
-        anchor: Anchor bar index (inclusive)
-        bar: Target bar index (inclusive)
-
-    Returns:
-        AVWAP value, or NaN if invalid
-    """
-    if anchor < 0 or bar < anchor or bar >= len(cum_tpv):
-        return np.nan
-
-    if anchor == 0:
-        total_tpv = cum_tpv[bar]
-        total_v = cum_v[bar]
-    else:
-        total_tpv = cum_tpv[bar] - cum_tpv[anchor - 1]
-        total_v = cum_v[bar] - cum_v[anchor - 1]
-
-    if total_v <= 0:
-        return np.nan
-
-    return total_tpv / total_v
-
-
 
 # ══════════════════════════════════════════════════════════════
 # COMBINED COMPUTATION — Single entry point for cache builder

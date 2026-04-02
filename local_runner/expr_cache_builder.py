@@ -211,8 +211,7 @@ def _load_expressions():
         CONTEXT_OPS = {
             'algo_broken', 'algo_distance', 'algo_shallowest_distance',
             'algo_shallowest_slope', 'algo_touch_count',
-            'avwap_entry_distance', 'avwap_lsp_crossed', 'avwap_lsp_distance',
-            'avwap_lsp_slope', 'lsp_broken', 'lsp_congestion', 'lsp_distance',
+            'lsp_broken', 'lsp_congestion', 'lsp_distance',
             'lsp_nearest_unbroken', 'rs_vs_spy', 'rs_vs_spy_slope',
         }
         EXCLUDE_OPS = ENTRY_RELATIVE_OPS | CONTEXT_OPS

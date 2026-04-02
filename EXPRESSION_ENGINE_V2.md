@@ -29,17 +29,16 @@ The output must be **identical** to what the current builder produces. Same .npz
 - Run the FULL existing expression library on each timeframe
 - Expression naming: `w_rsi_14` (weekly RSI 14), `m_ext_above_avgc50` (monthly extension above 50 SMA), etc.
 
-### 3. Contextual AVWAPs
-- AVWAP finds the highest presenting AVWAP on the chart at the current bar. It sweeps prior bars as potential anchors and returns the highest AVWAP value. It is conceptually independent of LSP and algo lines.
-- **KNOWN ISSUE:** AVWAP computation is currently tangled into `lsp_detector_v2.py` (constrains search to near pivot bars) and `algo_line_detector.py` (correctly sweeps all bars). Needs to be extracted into a standalone module. Deferred — not blocking the forward-prop build.
-- "Highest all-time AVWAP" excluded -- only 10yr of data, not enough.
+### 3. Contextual AVWAPs — REMOVED
+- AVWAP computation has been removed from the project. Dan handles AVWAP manually at trade entry.
+- All AVWAP code was removed from lsp_detector_v2.py, algo_line_detector.py, exit_compute.py, exit_expressions.py, and expression_engine.py (2026-04-02).
 
 ---
 
 ## Architecture Constraints (Non-Negotiable)
 
-1. **Single computation path:** All expressions go through `ExpressionEngine` then `compute_series()`. No separate code paths for LSP/HTF/AVWAP.
-2. **Precomputed in expr_cache_builder:** LSP detection, HTF resampling, algo line detection, and AVWAP computation happen during cache build. They are independent systems. Grinders never compute these live.
+1. **Single computation path:** All expressions go through `ExpressionEngine` then `compute_series()`. No separate code paths for LSP/HTF.
+2. **Precomputed in expr_cache_builder:** LSP detection, HTF resampling, and algo line detection happen during cache build. They are independent systems. Grinders never compute these live.
 3. **No network calls in pipeline:** All data from local daily OHLCV cache.
 4. **Parallel via ProcessPoolExecutor:** Same worker pattern as current cache builder. CPU-bound work spread across all cores. 8 workers.
 5. **100% example pass rule:** New expressions either pass all examples or get auto-excluded from ranges.
@@ -71,7 +70,7 @@ The output must be **identical** to what the current builder produces. Same .npz
 - **Task A:** LSP Detector refactor (`scripts/lsp_detector_v2.py`) -- 80 expressions, ~0.5s/ticker
 - **Task B:** LSP expression registration in `brute_expressions.py`
 - **Task C:** HTF resampling + integration -- weekly/monthly resampled OHLCV, HTF engine per timeframe
-- **Task D:** Contextual AVWAPs -- independent system, computed during cache build (not part of LSP or algo detection)
+- **Task D:** Contextual AVWAPs -- REMOVED from project (2026-04-02)
 - **Task E:** Cache builder integration -- built into Task C
 - **Task F:** Matrix builder + example flow -- all grinders use expr cache
 - **Task G:** Expression library registry -- HTF names auto-generated with w_/m_ prefix
@@ -244,7 +243,7 @@ RAM budget per worker: ~83MB output array (n_bars x 16,051 x 4 bytes) + intermed
 ## Decisions (Resolved)
 
 1. **HTF expression scope:** Full library on weekly + monthly. ~112 GB cache is fine.
-2. **Highest all-time AVWAP:** EXCLUDED -- only historical data, not enough. Contextual AVWAPs find the highest presenting AVWAP at the current bar from any anchor.
+2. **Contextual AVWAPs:** REMOVED from project (2026-04-02). Dan handles AVWAP manually at trade entry.
 3. **Yearly timeframe:** EXCLUDED -- only ~5 bars in full history, useless for expressions. Weekly + monthly only.
 4. **Number of LSP ranks:** ALL detected pivots, ranked. Top 5 above + 5 below exposed as expressions.
 5. **Cache builder optimization approach:** Two modes — full rebuild (current, ~80-90 min) and incremental append (NEXT, target 2-5 min). Full rebuild uses per-ticker worker with lazy-cached ExpressionEngine + targeted numpy replacements. Incremental loads existing .npz, computes only the new bar's values, appends.
