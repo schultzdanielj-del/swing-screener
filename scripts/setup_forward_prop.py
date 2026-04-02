@@ -184,6 +184,23 @@ def _setup_one_ticker(args):
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
+        # Load .npz to get its bar count — state must reflect the .npz end,
+        # not the daily OHLCV end (which may have extra bars appended since last rebuild)
+        safe_ticker = ticker.replace("/", "_").replace(".", "_")
+        npz_path = os.path.join(EXPR_CACHE_DIR, f"{safe_ticker}.npz")
+        if not os.path.exists(npz_path):
+            return (ticker, False, "no .npz file")
+
+        loaded_npz = np.load(npz_path, allow_pickle=True)
+        npz_n_bars = loaded_npz["data"].shape[0]
+        npz_dates = loaded_npz["dates"]
+
+        # Truncate daily OHLCV to match .npz bar count
+        if len(df) > npz_n_bars:
+            df = df.iloc[:npz_n_bars].reset_index(drop=True)
+        elif len(df) < npz_n_bars:
+            return (ticker, False, f"OHLCV has {len(df)} bars but .npz has {npz_n_bars}")
+
         n_bars = len(df)
         if n_bars < 50:
             return (ticker, False, "too few bars")
@@ -282,7 +299,6 @@ def _setup_one_ticker(args):
         lb_rows = min(LOOKBACK_ROWS, n_bars)
         lookback_data = im_array[-lb_rows:, :].astype(np.float16)
 
-        safe_ticker = ticker.replace("/", "_").replace(".", "_")
         lookback_path = os.path.join(EXPR_CACHE_DIR, f"{safe_ticker}.lookback")
         lookback_data.tofile(lookback_path)
 
@@ -431,71 +447,61 @@ def _setup_one_ticker(args):
         # ════════════════════════════════════════════════════
         # EXTENSION STRUCTURE STATE
         # ════════════════════════════════════════════════════
-        # Load the two extension series from the .npz expression columns
-        npz_path = os.path.join(EXPR_CACHE_DIR, f"{safe_ticker}.npz")
-        if os.path.exists(npz_path):
-            loaded = np.load(npz_path, allow_pickle=True)
-            npz_data = loaded["data"].astype(np.float32)
+        # Use the .npz already loaded above for extension series columns
+        npz_data = loaded_npz["data"].astype(np.float32)
+        npz_last = npz_data.shape[0] - 1  # same as last since we truncated df to match
 
-            for ext_series_name in EXT_SERIES_NAMES:
-                ext_idx = _w_ext_name_to_idx.get(ext_series_name)
-                if ext_idx is None:
-                    continue
+        for ext_series_name in EXT_SERIES_NAMES:
+            ext_idx = _w_ext_name_to_idx.get(ext_series_name)
+            if ext_idx is None:
+                continue
 
-                ext_values = npz_data[:, ext_idx].astype(np.float64)
-                ext_label = "ext50" if "50" in ext_series_name else "ext200"
+            ext_values = npz_data[:, ext_idx].astype(np.float64)
+            ext_label = "ext50" if "50" in ext_series_name else "ext200"
 
-                # Previous extension value
-                state[f"ext_prev_{ext_label}"] = float(ext_values[last]) if not np.isnan(ext_values[last]) else 0.0
+            # Previous extension value
+            state[f"ext_prev_{ext_label}"] = float(ext_values[npz_last]) if not np.isnan(ext_values[npz_last]) else 0.0
 
-                # On-series RSI EMA states (12 per series)
-                delta_ext = np.diff(ext_values, prepend=np.nan)
-                gain_ext = np.maximum(0.0, delta_ext)
-                loss_ext = np.maximum(0.0, -delta_ext)
+            # On-series RSI EMA states (12 per series)
+            delta_ext = np.diff(ext_values, prepend=np.nan)
+            gain_ext = np.maximum(0.0, delta_ext)
+            loss_ext = np.maximum(0.0, -delta_ext)
 
-                for p in ON_SERIES_RSI_PERIODS:
-                    # EMA smoothing: ewm(span=p, adjust=False)
-                    avg_gain = pd.Series(gain_ext).ewm(span=p, adjust=False).mean().values
-                    avg_loss = pd.Series(loss_ext).ewm(span=p, adjust=False).mean().values
-                    state[f"ext_{ext_label}_rsi_avg_gain_{p}"] = float(avg_gain[last]) if not np.isnan(avg_gain[last]) else 0.0
-                    state[f"ext_{ext_label}_rsi_avg_loss_{p}"] = float(avg_loss[last]) if not np.isnan(avg_loss[last]) else 0.0
+            for p in ON_SERIES_RSI_PERIODS:
+                # EMA smoothing: ewm(span=p, adjust=False)
+                avg_gain = pd.Series(gain_ext).ewm(span=p, adjust=False).mean().values
+                avg_loss = pd.Series(loss_ext).ewm(span=p, adjust=False).mean().values
+                state[f"ext_{ext_label}_rsi_avg_gain_{p}"] = float(avg_gain[npz_last]) if not np.isnan(avg_gain[npz_last]) else 0.0
+                state[f"ext_{ext_label}_rsi_avg_loss_{p}"] = float(avg_loss[npz_last]) if not np.isnan(avg_loss[npz_last]) else 0.0
 
-                # On-series ADX EMA states (12 per series)
-                # on_series ADX: treat ext_values as "close" and also as H/L
-                # DM+/DM- computed from the extension series itself
-                ext_up = np.diff(ext_values, prepend=np.nan)
-                ext_down = -ext_up  # since H=L=close=ext_value, down = shift(1) - current
-                # Actually for on_series, H=L=close=series. So:
-                # up = H[i] - H[i-1] = ext[i] - ext[i-1]
-                # down = L[i-1] - L[i] = ext[i-1] - ext[i] = -up
-                ext_dm_plus = np.where((ext_up > ext_down) & (ext_up > 0), ext_up, 0.0)
-                ext_dm_minus = np.where((ext_down > ext_up) & (ext_down > 0), ext_down, 0.0)
-                ext_dm_plus[0] = np.nan
-                ext_dm_minus[0] = np.nan
+            # On-series ADX EMA states (12 per series)
+            ext_up = np.diff(ext_values, prepend=np.nan)
+            ext_down = -ext_up
+            ext_dm_plus = np.where((ext_up > ext_down) & (ext_up > 0), ext_up, 0.0)
+            ext_dm_minus = np.where((ext_down > ext_up) & (ext_down > 0), ext_down, 0.0)
+            ext_dm_plus[0] = np.nan
+            ext_dm_minus[0] = np.nan
 
-                for p in ON_SERIES_ADX_PERIODS:
-                    ema_dmp_ext = pd_ema(pd.Series(ext_dm_plus), p).values
-                    ema_dmm_ext = pd_ema(pd.Series(ext_dm_minus), p).values
+            for p in ON_SERIES_ADX_PERIODS:
+                ema_dmp_ext = pd_ema(pd.Series(ext_dm_plus), p).values
+                ema_dmm_ext = pd_ema(pd.Series(ext_dm_minus), p).values
 
-                    # For ADX: need ATR of the extension series
-                    # Since H=L=C=ext, TR = max(H-L, |H-prev_C|, |L-prev_C|)
-                    # = max(0, |ext-prev_ext|, |ext-prev_ext|) = |ext-prev_ext|
-                    ext_tr = np.abs(ext_up)
-                    ext_tr[0] = 0.0
-                    from scripts.profiling_engine import sma as pd_sma
-                    ext_atr = pd_sma(pd.Series(ext_tr), p).values
+                ext_tr = np.abs(ext_up)
+                ext_tr[0] = 0.0
+                from scripts.profiling_engine import sma as pd_sma
+                ext_atr = pd_sma(pd.Series(ext_tr), p).values
 
-                    ext_atr_safe = np.where(ext_atr == 0, np.nan, ext_atr)
-                    di_plus_ext = 100.0 * ema_dmp_ext / ext_atr_safe
-                    di_minus_ext = 100.0 * ema_dmm_ext / ext_atr_safe
-                    di_sum = di_plus_ext + di_minus_ext
-                    di_sum_safe = np.where(di_sum == 0, np.nan, di_sum)
-                    dx_ext = np.abs(di_plus_ext - di_minus_ext) / di_sum_safe * 100.0
-                    adx_ext = pd_ema(pd.Series(dx_ext), p).values
+                ext_atr_safe = np.where(ext_atr == 0, np.nan, ext_atr)
+                di_plus_ext = 100.0 * ema_dmp_ext / ext_atr_safe
+                di_minus_ext = 100.0 * ema_dmm_ext / ext_atr_safe
+                di_sum = di_plus_ext + di_minus_ext
+                di_sum_safe = np.where(di_sum == 0, np.nan, di_sum)
+                dx_ext = np.abs(di_plus_ext - di_minus_ext) / di_sum_safe * 100.0
+                adx_ext = pd_ema(pd.Series(dx_ext), p).values
 
-                    state[f"ext_{ext_label}_adx_ema_dmp_{p}"] = float(ema_dmp_ext[last]) if not np.isnan(ema_dmp_ext[last]) else 0.0
-                    state[f"ext_{ext_label}_adx_ema_dmm_{p}"] = float(ema_dmm_ext[last]) if not np.isnan(ema_dmm_ext[last]) else 0.0
-                    state[f"ext_{ext_label}_adx_ema_dx_{p}"] = float(adx_ext[last]) if not np.isnan(adx_ext[last]) else 0.0
+                state[f"ext_{ext_label}_adx_ema_dmp_{p}"] = float(ema_dmp_ext[npz_last]) if not np.isnan(ema_dmp_ext[npz_last]) else 0.0
+                state[f"ext_{ext_label}_adx_ema_dmm_{p}"] = float(ema_dmm_ext[npz_last]) if not np.isnan(ema_dmm_ext[npz_last]) else 0.0
+                state[f"ext_{ext_label}_adx_ema_dx_{p}"] = float(adx_ext[npz_last]) if not np.isnan(adx_ext[npz_last]) else 0.0
 
         # ── Write .state file ──
         state_path = os.path.join(EXPR_CACHE_DIR, f"{safe_ticker}.state")
