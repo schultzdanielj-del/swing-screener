@@ -173,12 +173,12 @@ The two driving series are `ext_avgc50_adr14` and `ext_avgc200_adr14`. The on_se
 
 | Category | Values per series | Count ×2 | Notes |
 |----------|------------------|----------|-------|
-| EMA avg_gain/loss for RSI | Per RSI period used in on_series ops | TBD at setup | on_series RSI uses ewm(span=p), need avg_gain and avg_loss EMA states |
-| ADX EMA chain | Per ADX period used in on_series ops | TBD at setup | on_series ADX uses ewm for all internal EMAs |
+| EMA avg_gain/loss for RSI | 6 periods [5,7,9,14,21,28] × 2 (avg_gain + avg_loss) = 12 | 24 | on_series RSI uses ewm(span=p, adjust=False). Confirmed in backtest_conditions.compute_on_series(). |
+| ADX EMA chain | 4 periods [7,10,14,20] × 3 (ema_dmp + ema_dmm + ema_dx) = 12 | 24 | on_series ADX uses ewm for all internal EMAs |
 | Previous extension value | prev_ext | 2 | For delta/diff calculations |
-| **Ext struct subtotal** | | **~30 est** |
+| **Ext struct subtotal** | | **50** |
 
-Note: Exact count depends on which RSI/ADX periods appear in the expression library's on_series ops. The setup script introspects the library at runtime to determine this.
+**RESOLVED (2026-04-02):** Scanned `brute_expressions.generate_all()` — on_series RSI uses periods [5,7,9,14,21,28], on_series ADX uses periods [7,10,14,20]. These match daily RSI/ADX periods but use EMA smoothing (ewm) not SMA.
 
 ### LSP + Algo: NO STATE, NO FORWARD-PROP
 
@@ -192,7 +192,7 @@ The LSP detector (`lsp_detector_v2.py`) and algo line detector (`algo_line_detec
 
 The .state file does NOT store LSP or algo state.
 
-### Total .state estimate: ~289 fixed + ~30 ext_struct ≈ ~2.5 KB per ticker, ~28 MB total
+### Total .state: 119 daily + 140 HTF + 50 ext_struct = **309 values** ≈ ~2.5 KB per ticker, ~28 MB total
 
 ---
 
@@ -319,12 +319,12 @@ sum_sq = cumsum_c2[i] - cumsum_c2[i-P]
 sum_c = cumsum_close[i] - cumsum_c[i-P]
 mean_sq = (sum_sq + today_close^2 is already in sum_sq) ... 
 
-Actually: variance = sum_sq/P - (sum_c/P)^2
+Actually: variance = (sum_sq - sum_c^2 / P) / (P - 1)   // ddof=1, matches pandas .std()
 stddev = sqrt(max(0, variance))
 bbtop = avgc{P} + 2 * stddev
 bbbot = avgc{P} - 2 * stddev
 ```
-NOTE: pandas .std() uses ddof=1 (sample std). The cumsum trick computes population std (ddof=0). Must verify which one the production code uses and match. This is an open item — see Open Questions section.
+NOTE: **RESOLVED (2026-04-02):** `profiling_engine.stddev()` uses `pandas .rolling().std()` which defaults to ddof=1 (sample standard deviation). Forward-prop must use ddof=1 to match: `variance = (sum_sq - sum²/P) / (P - 1)`. The cumsum formula `sum_sq/P - mean²` is population variance (ddof=0) and would NOT match — must use the sample variance formula.
 
 **OBV:**
 ```
@@ -604,28 +604,28 @@ Estimated time: ~3s/ticker (engine build + intermediate extraction + HTF state) 
 
 ---
 
-## Open Questions (Must Resolve During Build)
+## Open Questions — All Resolved
 
-1. **Bollinger stddev precision:** pandas `.std()` uses ddof=1 (sample standard deviation). The cumsum trick `sqrt(sum_sq/P - mean^2)` computes population stddev (ddof=0). Must verify which one the partial_candle_engine uses (it uses the cumsum trick → population) and match. If daily full rebuild uses pandas `.std()` (sample) but forward-prop uses cumsum (population), values will differ. Resolution: check profiling_engine.stddev() and partial_candle_engine Bollinger computation.
+1. **Bollinger stddev precision: RESOLVED (2026-04-02).** `profiling_engine.stddev()` uses `pandas .rolling().std()` → ddof=1 (sample std). Forward-prop cumsum formula must use `variance = (sum_sq - sum²/P) / (P - 1)` to match. The naive `sum_sq/P - mean²` is population variance and would mismatch.
 
-2. **Exact on_series RSI/ADX periods:** Which periods are used in on_series ops? Scan `brute_expressions.generate_all()` at setup time. The setup script must introspect the expression library to determine exact state requirements.
+2. **Exact on_series RSI/ADX periods: RESOLVED (2026-04-02).** Scanned `brute_expressions.generate_all()`. On-series RSI uses periods [5,7,9,14,21,28] with EMA smoothing (ewm(span=p, adjust=False)), confirmed in `backtest_conditions.compute_on_series()`. On-series ADX uses periods [7,10,14,20]. Per extension series: 12 RSI EMA pairs + 12 ADX chain + 1 prev_ext = 25 values × 2 series = **50 total ext_struct state values**.
 
-3. **LSP/algo: full scan confirmed.** Cannot extract serializable state from `compute_all_lsp_series` or `compute_all_algo_series`. These always run on full daily OHLCV. 0.64s/ticker is the performance floor. Not an open question — resolved.
+3. **LSP/algo: RESOLVED.** Full scan confirmed. 0.64s/ticker performance floor.
 
-4. **New tickers:** Tickers that appear in daily OHLCV but not in expr cache get full compute via `_compute_and_save_ticker` (writes .npz). No .lookback/.state needed — they start fresh. This is already handled by `append_new_bars()`.
+4. **New tickers: RESOLVED.** Full compute via `_compute_and_save_ticker` → .npz. No .lookback/.state needed.
 
-5. **Expression library changes:** If fingerprint mismatches → full rebuild. build_full() clears all .append/.lookback/.state files. The four-file system is only active when the expression library hasn't changed since last full rebuild.
+5. **Expression library changes: RESOLVED.** Fingerprint mismatch → full rebuild. build_full() clears all .append/.lookback/.state files.
 
-6. **Truncation consistency:** `append_new_bars()` must truncate daily OHLCV and HTF pickles to EXPR_CACHE_START before passing to workers — same as `build_full()`. This bug was found and fixed in the broken-era build but the fix applies to the orchestration, not the forward-prop engine itself.
+6. **Truncation consistency: RESOLVED.** `append_new_bars()` must truncate to EXPR_CACHE_START.
 
-7. **Period boundary edge case for HTF:** What if a week has only 1 trading day (holiday-shortened)? The period ID comparison handles this correctly — it uses ISO week number / year+month, not day-of-week. But verify with a concrete example during validation.
+7. **Period boundary edge case for HTF: RESOLVED.** Period ID comparison (ISO week/month) handles holiday-shortened weeks correctly. Verify during Gate 1.
 
 ---
 
 ## Build Order for Next Chat Session
 
-1. **Resolve open question #1** — Bollinger stddev precision
-2. **Resolve open question #2** — scan expression library for on_series periods
+1. ~~**Resolve open question #1**~~ — DONE: Bollinger uses ddof=1 (sample std)
+2. ~~**Resolve open question #2**~~ — DONE: on_series RSI [5,7,9,14,21,28], ADX [7,10,14,20], 50 total ext_struct state
 3. **Build one-time setup script** — generate .lookback + .state for all tickers
 4. **Build forward-prop engine** — `_forward_prop_one_ticker()`, one phase at a time
 5. **Gate 1** — single-ticker correctness test
