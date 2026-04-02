@@ -184,7 +184,8 @@ Note: Exact count depends on which RSI/ADX periods appear in the expression libr
 
 The LSP detector (`lsp_detector_v2.py`) and algo line detector (`algo_line_detector.py`) scan the FULL daily OHLCV history every time. They cannot be forward-propagated because:
 
-- **LSP** detects pivots with lag (a pivot at bar X with window 40 is confirmed 40 bars later). Adding bar N+1 can form new pivots at bar N+1-window. Break counts are precomputed across the full series using cumulative break arrays. AVWAP is computed from cumulative TP*V arrays anchored at each pivot bar. `get_levels_at_bar()` clusters all active pivots and ranks by proximity — the ranking changes as new pivots form and existing ones get broken.
+- **LSP** detects pivots with lag (a pivot at bar X with window 40 is confirmed 40 bars later). Adding bar N+1 can form new pivots at bar N+1-window. Break counts are precomputed across the full series using cumulative break arrays. `get_levels_at_bar()` clusters all active pivots and ranks by proximity — the ranking changes as new pivots form and existing ones get broken.
+- **Contextual AVWAP** is an independent system — finds the highest presenting AVWAP on the chart at the current bar by sweeping every prior bar as anchor. It is called from within the LSP and algo detector loops for convenience but has zero dependency on pivots or trendlines.
 - **Algo lines** use O(n²) pair scanning for trendline origination from high-volume bars. A new bar can extend lines, break them, create new origination points, or change touch counts. The violation checking is vectorized across the full series.
 - Neither detector exposes internal state in a serializable/resumable form. Rewriting them for forward-prop would be a major effort with high regression risk.
 
