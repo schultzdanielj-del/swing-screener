@@ -74,7 +74,8 @@ Projected time: ~0.87s/ticker × 11,200 tickers / 14 workers ≈ ~12 minutes.
 
 ### 4. `{T}.state` — Forward computation state (OVERWRITTEN nightly)
 - Float64 values for intermediate state that is NOT historical (not an array across bars)
-- Contains: EMA states, ADX chain, MACD signal lines, rolling max/min tracking indices, HTF partial candle accumulators, stochastic raw_k history, OBV, extension-structure on_series EMA states, serialized LSP/algo state
+- Contains: EMA states, ADX chain, MACD signal lines, rolling max/min tracking indices, HTF partial candle accumulators, stochastic raw_k history, OBV, extension-structure on_series EMA states
+- Does NOT contain LSP or algo state (those run full scan every time)
 - Size per ticker: ~2-3 KB
 - Total: ~30 MB
 
@@ -179,16 +180,19 @@ The two driving series are `ext_avgc50_adr14` and `ext_avgc200_adr14`. The on_se
 
 Note: Exact count depends on which RSI/ADX periods appear in the expression library's on_series ops. The setup script introspects the library at runtime to determine this.
 
-### LSP state (variable length)
-- Serialized pivot data: active pivot prices, break counts, bar indices, AVWAP accumulators
-- Stored as JSON or msgpack blob appended to the .state file after the fixed-size section
-- Updated each bar: check if new pivot formed at (bar - window_size), update break counts, distances
+### LSP + Algo: NO STATE, NO FORWARD-PROP
 
-### Algo line state (variable length)
-- Serialized trendline data: slope, intercept, anchor bar, touch count
-- Same serialization approach as LSP
+The LSP detector (`lsp_detector_v2.py`) and algo line detector (`algo_line_detector.py`) scan the FULL daily OHLCV history every time. They cannot be forward-propagated because:
 
-### Total .state estimate: ~289 fixed + variable LSP/algo ≈ ~3 KB per ticker, ~34 MB total
+- **LSP** detects pivots with lag (a pivot at bar X with window 40 is confirmed 40 bars later). Adding bar N+1 can form new pivots at bar N+1-window. Break counts are precomputed across the full series using cumulative break arrays. AVWAP is computed from cumulative TP*V arrays anchored at each pivot bar. `get_levels_at_bar()` clusters all active pivots and ranks by proximity — the ranking changes as new pivots form and existing ones get broken.
+- **Algo lines** use O(n²) pair scanning for trendline origination from high-volume bars. A new bar can extend lines, break them, create new origination points, or change touch counts. The violation checking is vectorized across the full series.
+- Neither detector exposes internal state in a serializable/resumable form. Rewriting them for forward-prop would be a major effort with high regression risk.
+
+**Decision: LSP + algo run `compute_all_lsp_series(df)` and `compute_all_algo_series(df)` on the full daily OHLCV every append. Extract last-bar values for 80 + 44 expression columns. This is ~0.64s/ticker — 73% of total append cost. It is the performance floor.**
+
+The .state file does NOT store LSP or algo state.
+
+### Total .state estimate: ~289 fixed + ~30 ext_struct ≈ ~2.5 KB per ticker, ~28 MB total
 
 ---
 
@@ -502,7 +506,6 @@ This is ~0.64s/ticker — 73% of total append cost. It's the performance floor.
 5. Append date string to .append_dates file
 6. Update .lookback: drop oldest row, append new intermediate-only row (sliding window)
 7. Overwrite .state with all updated state values
-8. Update .state's LSP/algo serialized blobs
 
 ---
 
@@ -563,11 +566,10 @@ For each of ~11,200 tickers:
    d. Extract OBV, cumsums, previous OHLCV
    e. For HTF: load HTF pickle, build engine on closed HTF, extract all HTF state
    f. For extension structure: compute on_series indicator states from full extension series history
-   g. For LSP/algo: run detectors on full OHLCV, serialize final state
-   h. Write .state file
+   g. Write .state file
 9. Verify: load .lookback, check dimensions match expected (504 × 196)
 
-Estimated time: ~3s/ticker (engine build + intermediate extraction + HTF + LSP/algo for state) × 11,200 / 14 workers ≈ ~40 minutes. One-time cost.
+Estimated time: ~3s/ticker (engine build + intermediate extraction + HTF state) × 11,200 / 14 workers ≈ ~40 minutes. One-time cost.
 
 ---
 
@@ -608,7 +610,7 @@ Estimated time: ~3s/ticker (engine build + intermediate extraction + HTF + LSP/a
 
 2. **Exact on_series RSI/ADX periods:** Which periods are used in on_series ops? Scan `brute_expressions.generate_all()` at setup time. The setup script must introspect the expression library to determine exact state requirements.
 
-3. **LSP/algo state extractability:** Can we extract serializable state from `compute_all_lsp_series` and `compute_all_algo_series`? Or must we always run the full detectors? If no extractable state → these are always full-scan (0.64s/ticker). If extractable → could potentially forward-prop and drop to ~5ms, but that's optimization for later.
+3. **LSP/algo: full scan confirmed.** Cannot extract serializable state from `compute_all_lsp_series` or `compute_all_algo_series`. These always run on full daily OHLCV. 0.64s/ticker is the performance floor. Not an open question — resolved.
 
 4. **New tickers:** Tickers that appear in daily OHLCV but not in expr cache get full compute via `_compute_and_save_ticker` (writes .npz). No .lookback/.state needed — they start fresh. This is already handled by `append_new_bars()`.
 
