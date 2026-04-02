@@ -781,6 +781,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate .lookback and .state files")
     parser.add_argument("--workers", type=int, default=14)
     parser.add_argument("--ticker", type=str, default=None, help="Single ticker for testing")
+    parser.add_argument("--limit", type=int, default=None, help="Process only first N tickers")
     parser.add_argument("--verify", action="store_true", help="Verify existing files")
     args = parser.parse_args()
 
@@ -851,6 +852,10 @@ def main():
         work_items.append((ticker, df_dict, weekly_df_dict, monthly_df_dict))
 
     print(f"\n  Tickers to process: {len(work_items)}")
+
+    if args.limit and not args.ticker:
+        work_items = work_items[:args.limit]
+        print(f"  Limited to first {args.limit}: {len(work_items)} tickers")
 
     if not work_items:
         print("  Nothing to do.")
@@ -959,6 +964,76 @@ def main():
     print(f"  .lookback files: {lb_bytes / (1024**3):.2f} GB")
     print(f"  .state files: {state_bytes / (1024**2):.1f} MB")
     print(f"  Time: {total_time:.0f}s ({total_time/60:.1f} min)")
+
+    # ── Validation spot-check ──
+    # Pick up to 3 tickers from what we just processed and validate
+    check_tickers = [t for t, _, _, _ in work_items[:3]]
+    if check_tickers:
+        print(f"\n  Validating {len(check_tickers)} tickers...")
+        issues = []
+        for ticker in check_tickers:
+            safe = ticker.replace("/", "_").replace(".", "_")
+            lb_path = os.path.join(EXPR_CACHE_DIR, f"{safe}.lookback")
+            st_path = os.path.join(EXPR_CACHE_DIR, f"{safe}.state")
+
+            if not os.path.exists(lb_path):
+                issues.append(f"{ticker}: .lookback missing")
+                continue
+            if not os.path.exists(st_path):
+                issues.append(f"{ticker}: .state missing")
+                continue
+
+            # Check .lookback dimensions
+            lb_size = os.path.getsize(lb_path)
+            row_bytes = N_INTERMEDIATES * 2  # float16
+            if lb_size % row_bytes != 0:
+                issues.append(f"{ticker}: .lookback size {lb_size} not divisible by row size {row_bytes}")
+                continue
+            lb_rows = lb_size // row_bytes
+            if lb_rows > LOOKBACK_ROWS:
+                issues.append(f"{ticker}: .lookback has {lb_rows} rows, expected <= {LOOKBACK_ROWS}")
+                continue
+
+            # Load and check for all-NaN columns
+            lb_data = np.fromfile(lb_path, dtype=np.float16).reshape(lb_rows, N_INTERMEDIATES)
+            nan_cols = np.all(np.isnan(lb_data), axis=0).sum()
+            inf_cols = np.any(np.isinf(lb_data), axis=0).sum()
+
+            # Check .state keys
+            with open(st_path) as f:
+                state = json.load(f)
+            n_keys = len(state)
+
+            # Check critical state keys exist
+            missing_keys = []
+            for k in ["xavgc50", "prev_close", "bar_index", "cumsum_close",
+                       "obv_prev", "w_period_id", "m_period_id"]:
+                if k not in state:
+                    missing_keys.append(k)
+
+            status = "OK"
+            details = []
+            if nan_cols > 0:
+                details.append(f"{nan_cols} all-NaN cols in .lookback")
+            if inf_cols > 0:
+                details.append(f"{inf_cols} inf cols in .lookback")
+                status = "WARN"
+            if missing_keys:
+                details.append(f"missing state keys: {missing_keys}")
+                status = "FAIL"
+
+            detail_str = f" ({', '.join(details)})" if details else ""
+            print(f"    {ticker}: {status} — {lb_rows} lb rows, {n_keys} state keys{detail_str}")
+
+            if missing_keys:
+                issues.append(f"{ticker}: missing keys {missing_keys}")
+
+        if issues:
+            print(f"\n  VALIDATION ISSUES:")
+            for issue in issues:
+                print(f"    ✗ {issue}")
+        else:
+            print(f"  All validation checks passed.")
 
 
 if __name__ == "__main__":
