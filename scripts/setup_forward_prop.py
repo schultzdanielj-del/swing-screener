@@ -855,8 +855,11 @@ def main():
     print(f"\n  Tickers to process: {len(work_items)}")
 
     if args.limit and not args.ticker:
-        work_items = work_items[:args.limit]
-        print(f"  Limited to first {args.limit}: {len(work_items)} tickers")
+        import random
+        random.seed(42)  # reproducible sample
+        if args.limit < len(work_items):
+            work_items = random.sample(work_items, args.limit)
+        print(f"  Random sample of {len(work_items)} tickers (seed=42)")
 
     if not work_items:
         print("  Nothing to do.")
