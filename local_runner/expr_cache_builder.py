@@ -625,13 +625,20 @@ def np_bars_since_cross(close, ma, max_lb):
     n = len(close)
     above = close > ma
     result = np.full(n, float(max_lb))
-    for i in range(1, n):
-        above_now = above[i]
-        limit = min(max_lb, i)
-        for back in range(1, limit + 1):
-            if above[i - back] != above_now:
-                result[i] = float(back)
-                break
+    # Find state-change points
+    change_mask = np.empty(n, dtype=bool)
+    change_mask[0] = False
+    change_mask[1:] = above[1:] != above[:-1]
+    change_indices = np.where(change_mask)[0]
+    if len(change_indices) > 0:
+        last_change = np.full(n, -1, dtype=np.intp)
+        for cp in change_indices:
+            last_change[cp:] = cp
+        mask = last_change >= 0
+        result[mask] = np.minimum(
+            np.arange(n, dtype=np.float64)[mask] - last_change[mask] + 1,
+            float(max_lb)
+        )
     return result
 
 
@@ -644,10 +651,12 @@ def np_swing_count_rolling(swing_arr, period, n_bars):
     win_size = period - 2
     if win_size <= 0:
         return result
-    for i in range(period + 1, n_bars):
-        start = i - period + 2
-        end = i
-        result[i] = cs[end - 1] - (cs[start - 1] if start > 0 else 0)
+    # Vectorized: rolling sum via cumsum difference
+    # result[i] = cs[i-1] - cs[i-period+1] for i in [period+1, n_bars)
+    idx = np.arange(period + 1, n_bars)
+    ends = idx - 1           # cs[end-1] = cs[i-1]
+    starts = idx - period + 2 - 1  # cs[start-1] = cs[i-period+1]
+    result[idx] = cs[ends] - np.where(starts >= 0, cs[starts], 0)
     return result
 
 
