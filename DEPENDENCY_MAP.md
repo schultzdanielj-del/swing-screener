@@ -225,7 +225,7 @@ These are the only components that make network calls for market data.
 - `local_runner/cache/expr_series/_manifest.json` — metadata (expression fingerprint, dates, counts)
 
 **Key functions called by others:**
-- `append_new_bars()` — called by `nightly.py` step 5. Uses `_forward_prop_one_ticker` for existing tickers with .state files (writes .append, updates .lookback + .state), falls back to `_compute_and_save_ticker` for new tickers (writes .npz).
+- `append_new_bars()` — called by `nightly.py` step 5. Uses `forward_prop_engine._forward_prop_one_ticker` for existing tickers with .state files (writes .append, updates .lookback + .state), falls back to `_compute_and_save_ticker` for new tickers (writes .npz). Engine built 2026-04-07, Gate 1 passes (AAPL, zero mismatches), ~19 min projected runtime.
 - `build_full()` — full rebuild from scratch. Clears all .append/.append_dates/.lookback/.state files before computing.
 - `load_ticker_cache(ticker)` — called by grinders to load individual ticker data. Reads .npz + .append file if present, vstacks, returns combined (dates, data) float32 array. .append is wider (16,001 cols) — sliced to first 15,805 before return. Consumers see no API change.
 - `save_ticker_cache(ticker, dates, data)` — saves one ticker's npz
@@ -270,7 +270,7 @@ These are the only components that make network calls for market data.
 - `--workers N` — worker count (default 14)
 
 **Downstream Consumers:**
-- `expr_cache_builder.py` — `_forward_prop_one_ticker()` reads .lookback + .state (not yet built)
+- `forward_prop_engine.py` — `_forward_prop_one_ticker()` reads .lookback + .state (engine built 2026-04-07, Gate 1 passes)
 - `build_full()` — must delete .lookback + .state files alongside .append/.append_dates on full rebuild
 
 ---

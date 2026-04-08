@@ -1551,7 +1551,10 @@ def load_ticker_cache(ticker):
     """Load one ticker's cached expression series.
 
     Data is stored as float16 on disk, cast to float32 on load.
-    All consumers see float32 transparently.
+    If .append file exists (from forward-prop nightly appends), its rows are
+    vstacked onto the base .npz data. The .append file may be wider than .npz
+    (16,001 cols vs 15,805) — only the first 15,805 expression columns are
+    returned to consumers.
 
     Returns: (dates, data) or (None, None)
     """
@@ -1561,11 +1564,47 @@ def load_ticker_cache(ticker):
     try:
         loaded = np.load(path, allow_pickle=True)
         data = loaded["data"]
-        # Cast float16 → float32 for consumer compatibility.
-        # Also handles legacy float32 files (astype is a no-op if already float32).
+        dates = loaded["dates"]
         if data.dtype != np.float32:
             data = data.astype(np.float32)
-        return loaded["dates"], data
+        n_exprs = data.shape[1]
+
+        # Check for .append file (forward-prop appended rows)
+        safe = ticker.replace("/", "_").replace(".", "_")
+        append_path = os.path.join(EXPR_CACHE_DIR, f"{safe}.append")
+        dates_path = os.path.join(EXPR_CACHE_DIR, f"{safe}.append_dates")
+
+        if os.path.exists(append_path):
+            file_size = os.path.getsize(append_path)
+            if file_size > 0:
+                # Detect width: forward-prop format (16,001) or legacy narrow (15,805)
+                from scripts.setup_forward_prop import N_INTERMEDIATES
+                wide_cols = n_exprs + N_INTERMEDIATES  # 16,001
+                narrow_cols = n_exprs  # 15,805
+
+                if file_size % (wide_cols * 2) == 0:
+                    total_cols = wide_cols
+                elif file_size % (narrow_cols * 2) == 0:
+                    total_cols = narrow_cols
+                else:
+                    return dates, data  # Corrupt .append — skip
+
+                raw = np.fromfile(append_path, dtype=np.float16)
+                append_data = raw.reshape(-1, total_cols)
+                # Slice to expression columns only
+                append_exprs = append_data[:, :n_exprs].astype(np.float32)
+
+                # Vstack with base
+                data = np.vstack([data, append_exprs])
+
+                # Load append dates
+                if os.path.exists(dates_path):
+                    with open(dates_path, "r") as f:
+                        append_dates = np.array([line.strip() for line in f if line.strip()])
+                    if len(append_dates) == append_exprs.shape[0]:
+                        dates = np.concatenate([dates, append_dates])
+
+        return dates, data
     except:
         return None, None
 
@@ -1663,6 +1702,16 @@ def build_full(force=False):
 
     # Create output directory
     os.makedirs(EXPR_CACHE_DIR, exist_ok=True)
+
+    # Clean up forward-prop files — full rebuild makes them stale
+    _fp_extensions = [".append", ".append_dates", ".lookback", ".state"]
+    fp_cleaned = 0
+    for fname in os.listdir(EXPR_CACHE_DIR):
+        if any(fname.endswith(ext) for ext in _fp_extensions):
+            os.remove(os.path.join(EXPR_CACHE_DIR, fname))
+            fp_cleaned += 1
+    if fp_cleaned:
+        print(f"  Cleaned {fp_cleaned} forward-prop files (.append/.lookback/.state)")
 
     # Parallel computation — 14 workers, fast compression frees CPU headroom
     n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", 14))
@@ -1895,24 +1944,93 @@ def append_new_bars():
     updated = 0
     failed = 0
 
-    # Build work items with HTF data from pickles
-    # All tickers use full recompute + direct save.
-    # _compute_ticker_full recomputes the entire series and returns it.
-    # The worker saves compressed to disk (parallel I/O across all cores).
-    all_work = []
-    for t, d, _ in work_append:
+    # Route tickers: forward-prop (fast) vs full recompute (slow)
+    # Forward-prop requires .state + .lookback files to exist.
+    fp_work = []     # Forward-prop tickers
+    full_work = []   # Full recompute tickers (no .state/.lookback, or new)
+
+    for t, d, existing_n in work_append:
+        safe = t.replace("/", "_").replace(".", "_")
+        state_exists = os.path.exists(os.path.join(EXPR_CACHE_DIR, f"{safe}.state"))
+        lb_exists = os.path.exists(os.path.join(EXPR_CACHE_DIR, f"{safe}.lookback"))
         weekly_df_dict = _df_to_dict(weekly_cache.get(t)) if weekly_cache else None
         monthly_df_dict = _df_to_dict(monthly_cache.get(t)) if monthly_cache else None
-        all_work.append((t, d, weekly_df_dict, monthly_df_dict))
+
+        if state_exists and lb_exists:
+            # Forward-prop: extract today's OHLCV as single bar
+            n_bars = len(d["date"])
+            today_ohlcv = {
+                "open": float(d["open"][n_bars - 1]),
+                "high": float(d["high"][n_bars - 1]),
+                "low": float(d["low"][n_bars - 1]),
+                "close": float(d["close"][n_bars - 1]),
+                "volume": float(d["volume"][n_bars - 1]),
+                "date": d["date"][n_bars - 1],
+            }
+            fp_work.append((t, today_ohlcv, d, weekly_df_dict, monthly_df_dict))
+        else:
+            full_work.append((t, d, weekly_df_dict, monthly_df_dict))
+
     for t, d in work_new:
         weekly_df_dict = _df_to_dict(weekly_cache.get(t)) if weekly_cache else None
         monthly_df_dict = _df_to_dict(monthly_cache.get(t)) if monthly_cache else None
-        all_work.append((t, d, weekly_df_dict, monthly_df_dict))
+        full_work.append((t, d, weekly_df_dict, monthly_df_dict))
+
+    print(f"  Forward-prop: {len(fp_work)} tickers")
+    print(f"  Full recompute: {len(full_work)} tickers")
 
     # Free the large caches
     del universe_cache, weekly_cache, monthly_cache
     import gc; gc.collect()
 
+    # ── Forward-prop batch ──
+    if fp_work:
+        from forward_prop_engine import _init_fp_worker, _forward_prop_one_ticker
+        print(f"\n  Forward-prop {len(fp_work)} tickers ({n_workers} workers)...")
+        fp_t0 = time.time()
+        max_in_flight = n_workers * 4
+        with ProcessPoolExecutor(
+            max_workers=n_workers,
+            initializer=_init_fp_worker,
+            initargs=(expressions,)
+        ) as pool:
+            pending = {}
+            idx = 0
+            for _ in range(min(max_in_flight, len(fp_work))):
+                if idx < len(fp_work):
+                    f = pool.submit(_forward_prop_one_ticker, fp_work[idx])
+                    pending[f] = fp_work[idx][0]
+                    idx += 1
+            while pending:
+                done = next(iter(as_completed(pending)))
+                ticker_name = pending.pop(done)
+                try:
+                    t_out, n_bars_out, last_date_out = done.result()
+                    if t_out is not None:
+                        cached_tickers[t_out] = {
+                            "n_bars": n_bars_out,
+                            "last_date": last_date_out,
+                        }
+                        updated += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+                if idx < len(fp_work):
+                    f = pool.submit(_forward_prop_one_ticker, fp_work[idx])
+                    pending[f] = fp_work[idx][0]
+                    idx += 1
+                total_done = updated + failed
+                if total_done % 100 == 0 or total_done == len(fp_work):
+                    elapsed = time.time() - fp_t0
+                    rate = total_done / elapsed if elapsed > 0 else 0
+                    print(f"    FP: {total_done}/{len(fp_work)} "
+                          f"[{elapsed:.0f}s, {rate:.1f}/s]")
+        fp_elapsed = time.time() - fp_t0
+        print(f"  Forward-prop done: {fp_elapsed:.0f}s")
+
+    # ── Full recompute batch ──
+    all_work = full_work
     if all_work:
         label = "Recomputing" if work_append else "Computing"
         print(f"\n  {label} {len(all_work)} tickers ({n_workers} workers)...")

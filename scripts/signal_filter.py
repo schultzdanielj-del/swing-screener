@@ -236,22 +236,36 @@ def _load_ticker_npz(ticker):
         dates = loaded["dates"]
 
         # Check for incremental append file
+        # The .append file may be wider than .npz if produced by forward-prop
+        # (16,001 cols = 15,805 expressions + 196 intermediates).
+        # Only the first n_exprs columns are expression values for consumers.
         append_path = os.path.join(_worker_expr_cache, f"{safe}.append")
         append_dates_path = os.path.join(_worker_expr_cache, f"{safe}.append_dates")
         if os.path.exists(append_path) and os.path.exists(append_dates_path):
             try:
                 n_exprs = data.shape[1]
-                row_bytes = n_exprs * 2  # float16 = 2 bytes per value
                 file_size = os.path.getsize(append_path)
-                if file_size > 0 and file_size % row_bytes == 0:
-                    n_appended = file_size // row_bytes
-                    raw = np.fromfile(append_path, dtype=np.float16)
-                    appended = raw.reshape(n_appended, n_exprs).astype(np.float32)
-                    with open(append_dates_path, "r") as f:
-                        appended_dates = np.array([line.strip() for line in f if line.strip()])
-                    if len(appended_dates) == n_appended:
-                        data = np.vstack([data, appended])
-                        dates = np.concatenate([dates, appended_dates])
+                if file_size > 0:
+                    # Detect width: forward-prop wide (n_exprs + 196) or legacy narrow (n_exprs)
+                    N_INTERMEDIATES = 196
+                    wide_cols = n_exprs + N_INTERMEDIATES
+                    narrow_cols = n_exprs
+                    if file_size % (wide_cols * 2) == 0:
+                        total_cols = wide_cols
+                    elif file_size % (narrow_cols * 2) == 0:
+                        total_cols = narrow_cols
+                    else:
+                        total_cols = 0  # Corrupt
+
+                    if total_cols > 0:
+                        raw = np.fromfile(append_path, dtype=np.float16)
+                        appended_full = raw.reshape(-1, total_cols)
+                        appended = appended_full[:, :n_exprs].astype(np.float32)
+                        with open(append_dates_path, "r") as f:
+                            appended_dates = np.array([line.strip() for line in f if line.strip()])
+                        if len(appended_dates) == appended.shape[0]:
+                            data = np.vstack([data, appended])
+                            dates = np.concatenate([dates, appended_dates])
             except Exception:
                 pass  # Corrupt append file — return base .npz only
 

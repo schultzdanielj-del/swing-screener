@@ -1,7 +1,8 @@
 # Forward-Propagation Spec — Expression Cache Incremental Append
 
 **Date:** 2026-04-02
-**Status:** SPEC ONLY — no code exists for this yet
+**Updated:** 2026-04-07
+**Status:** ENGINE BUILT — Gate 1 passes (AAPL, zero mismatches). Awaiting OHLCV refresh → full expression cache rebuild → Gate 2 (all tickers).
 **Location in build:** Task H Phase 3, Increment 2 (replaces _compute_ticker_full inside _append_one_ticker)
 **Authoritative spec:** This file. EXPRESSION_ENGINE_V2.md has the original four-file design under "Forward-Propagation Design — Four Files Per Ticker".
 
@@ -21,9 +22,11 @@ The full expression library (`brute_expressions.generate_all()` + generic exit e
 
 ## Solution: Four-File Forward-Propagation
 
-Compute only the new bar's values using stored intermediate state + lookback buffers. No ExpressionEngine, no pandas, no full indicator series. Pure numpy scalar math for the vast majority of expressions.
+Compute only the new bar's values using stored intermediate state + lookback buffers.
 
-Projected time: ~0.87s/ticker × 11,200 tickers / 14 workers ≈ ~12 minutes.
+**Original projection:** ~0.87s/ticker × 11,200 tickers / 14 workers ≈ ~12 minutes (pure scalar math, no ExpressionEngine).
+
+**Actual implementation (2026-04-07):** ~1.43s/ticker × 11,200 / 14 ≈ **~19 minutes**. Uses ExpressionEngine + `build_numpy_intermediates` on full OHLCV for float64-precision intermediate arrays, then dispatches via `dispatch_arith_numpy` (truth path). This is slower than pure scalar but guarantees exact float16 match with `_compute_ticker_full` output. The 19-minute runtime is acceptable (vs 124-minute full rebuild). See "Implementation Notes" section at end of file.
 
 ---
 
@@ -644,16 +647,19 @@ For each ticker:
 1. ~~**Resolve open question #1**~~ — DONE: Bollinger uses ddof=1 (sample std)
 2. ~~**Resolve open question #2**~~ — DONE: on_series RSI [5,7,9,14,21,28], ADX [7,10,14,20], 50 total ext_struct state
 3. ~~**Build one-time setup script**~~ — DONE: `scripts/setup_forward_prop.py`, validated 100/100 random tickers, 0.9s/ticker
-4. **Build forward-prop engine** — `_forward_prop_one_ticker()`, one phase at a time ← NEXT
-5. **Gate 1** — single-ticker correctness test (script on 1 ticker)
-6. **Gate 2** — 100-ticker correctness test (script on 100 tickers)
-7. **Update load_ticker_cache + signal_filter._load_ticker_npz** — wider .append handling (16,001 cols → slice to 15,805)
-8. **Update build_full()** — clear .lookback/.state files
-9. **Push to repo**
-10. **Dan runs audit.py** on the push
-11. **Dan runs signal filter** locally → Gate 3
-12. **Dan runs test grind** → Gate 4
-13. **One fresh full rebuild** — correct HTF (no look-ahead bias), then setup_forward_prop.py to bootstrap .lookback/.state
+4. ~~**Build forward-prop engine**~~ — DONE: `local_runner/forward_prop_engine.py` (2765 lines), on v2 branch
+5. ~~**Build test harness**~~ — DONE: `scripts/test_forward_prop.py`, exact float16 match, zero tolerance
+6. ~~**Gate 1**~~ — DONE: AAPL passes with zero mismatches (started at 7,674, debugged to 0)
+7. **Refresh OHLCV cache** — `cache_builder.py --daily` then `--htf --force` ← NEXT
+8. **Full expression cache rebuild** — regenerate all .npz files (~124 min)
+9. **One-time setup** — `setup_forward_prop.py` to bootstrap .lookback/.state for all tickers
+10. **Gate 2** — `test_forward_prop.py --all --workers 14` (~24 min) — all-ticker correctness
+11. **Update load_ticker_cache + signal_filter._load_ticker_npz** — wider .append handling (16,001 cols → slice to 15,805)
+12. **Update build_full()** — clear .lookback/.state files
+13. **Push to repo**
+14. **Dan runs audit.py** on the push
+15. **Dan runs signal filter** locally → Gate 3
+16. **Dan runs test grind** → Gate 4
 
 ---
 
@@ -670,3 +676,64 @@ For each ticker:
 | **After 1 year** | | **~117 GB** | |
 
 Consolidation (optional, quarterly): merge .npz + .append → new .npz. Regenerate .lookback/.state. Delete .append. ~40 min. Resets growth.
+
+---
+
+## Implementation Notes (2026-04-07)
+
+### Architecture: Hybrid ExpressionEngine + Scalar
+
+The original spec envisioned pure scalar math for Phase 2 (daily expressions) — O(1) per expression using state + float16 lookback for shifted reads. During implementation, float16 precision in the lookback caused ~2,500 expression mismatches: shifted intermediate reads (e.g., yesterday's `avgc50` at ~$200) lose sub-penny precision in float16, producing different final float16 expression values than the float64 truth path.
+
+**Resolution:** Phase 2 builds `ExpressionEngine` on the full daily OHLCV and calls `build_numpy_intermediates()` to get float64 intermediate arrays (`full_im`). Expression dispatch then routes through the same truth-path functions used by `_compute_ticker_full`:
+- `dispatch_arith_numpy(comp, full_im)` for dispatch ops
+- `compute_series(fp_engine, comp)` for SLOW_OPS and fallback ops
+- `fp_engine._bool_series(cond)` for boolean aggregates
+- `dispatch_arith_numpy` + `compute_on_series` for extension structure
+
+This guarantees exact float16 match with `_compute_ticker_full` output at the cost of O(n_bars) computation instead of O(1). The forward-prop still saves ~6x vs full rebuild because it doesn't write compressed .npz files (it appends one uncompressed row to `.append`).
+
+### Per-Ticker Timing Breakdown
+
+| Phase | Time | What |
+|-------|------|------|
+| Load files (.state, .lookback, .append, .npz tail) | ~0.03s | File I/O |
+| Phase 1: Scalar intermediates (196 values) | ~0.01s | Redundant but validates state math |
+| ExpressionEngine + build_numpy_intermediates | ~0.30s | Full indicator build on OHLCV |
+| Phase 2: Daily expressions (dispatch + slow + fallback + bools) | ~0.25s | dispatch_arith_numpy, compute_series, _bool_series |
+| Phase 3: HTF (weekly + monthly) | ~0.13s | ExpressionEngine on small W/ME DataFrames |
+| Phase 4: Extension structure | ~0.05s | dispatch_arith_numpy + compute_on_series |
+| Phase 5: LSP + Algo | ~0.64s | Full scan, irreducible |
+| Phase 6: Save (.append, .state, .lookback) | ~0.02s | File writes |
+| **Total** | **~1.43s** | |
+
+**Projected nightly: 11,200 × 1.43 / 14 workers ≈ 19 minutes** (vs 124 min full rebuild)
+
+### Key Files
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `local_runner/forward_prop_engine.py` | 2765 | The engine — `_forward_prop_one_ticker()` entry point |
+| `scripts/setup_forward_prop.py` | ~600 | One-time .lookback + .state generator |
+| `scripts/test_forward_prop.py` | ~250 | Gate 1/2 test — exact float16 match, zero tolerance |
+
+### Expression Count
+
+The filtered expression library produces **16,039** expressions (after `_load_expressions()` filtering). This differs from the 15,805 in earlier spec versions due to expression library updates. The .npz column count matches the current `_load_expressions()` output. All file layout math uses the runtime `n_exprs` value, not a hardcoded constant.
+
+### State File: Additional Keys (vs original spec)
+
+The implementation adds two extra keys to `.state` beyond the original 317:
+- `prev_im`: dict of all 196 intermediates at float64 from the previous bar. Used by `_ri_for_dispatch` for shift(1) reads when `full_im` is not available.
+- `src_history`: dict of 12 source arrays (close, volume, true_range, etc.) at float64, last 200 bars. Used for float64 SMA computation when lookback cumsums overflow in float16.
+
+### Debug History
+
+Gate 1 debugging on AAPL progressed through 7,674 → 0 mismatches. Root causes fixed:
+1. **HTF DataFrame truncation** (~4,749): HTF pickles not truncated to cache window. Fixed by importing and applying `_truncate_to_cache_window`.
+2. **Float16 lookback precision** (~1,500): Shifted intermediate reads degraded by float16. Fixed by routing through `dispatch_arith_numpy(comp, full_im)` on float64 arrays.
+3. **Extension series precision** (~919): Extension history read from float16 .npz columns. Fixed by computing from `dispatch_arith_numpy` on `full_im`.
+4. **Incomplete `_eval_bool_at_bar`** (~282): Only 30/90 conditions handled. Fixed by routing through `_bool_series()` vectorized path.
+5. **`_dispatch_scalar` missing params** (~50): `state`/`new_state` not in function signature. Fixed.
+6. **HTF on_series silently skipped**: `pass` in classifier loop. Fixed to process all HTF extension ops.
+7. **Stale .npz column count**: AAPL .npz had 16,051 columns (old library). Rebuilt with current `_compute_ticker_full` (16,039 columns).

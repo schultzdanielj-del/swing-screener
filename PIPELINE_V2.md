@@ -76,8 +76,9 @@ Seven nodes in the UI flowchart. The vetting loop (Examples → Causative Proces
 examples found). After convergence: Correlative Targeting → Scan Tuning ↔ Optimal Management → Summary.
 
 **Nightly auto-refresh (4:30pm ET, fully automated):**
-  OHLCV append → daily cache → 5yr cache (append-only) → expr cache (append) → matrix → earnings → market cache (256 instruments)
+  OHLCV append → daily cache → 5yr cache (append-only) → expr cache (forward-prop, ~19 min) → matrix → earnings → market cache (256 instruments)
   5yr cache and expr cache never rebuild from scratch — only new bars appended.
+  Expr cache uses forward-prop engine (`forward_prop_engine.py`) — computes one new bar per ticker using state + lookback, ~6x faster than full rebuild.
   When you sit down, all data is current. No manual refresh needed.
 
 ```

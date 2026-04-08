@@ -311,6 +311,20 @@ def _setup_one_ticker(args):
             val = im[f"xavgc{p}"][last]
             state[f"xavgc{p}"] = float(val) if not np.isnan(val) else 0.0
 
+        # --- MACD EMA states for periods not in EMA_CLOSE_PERIODS ---
+        # MACD line = EMA(close, fast) - EMA(close, slow). Some MACD periods
+        # (6, 17, 19, 26, 35) are not in EMA_CLOSE_PERIODS and need separate state.
+        _macd_extra_periods = set()
+        for fast, slow in MACD_PAIRS:
+            if fast not in EMA_CLOSE_PERIODS:
+                _macd_extra_periods.add(fast)
+            if slow not in EMA_CLOSE_PERIODS:
+                _macd_extra_periods.add(slow)
+        close_series = pd.Series(im["close"])
+        for p in sorted(_macd_extra_periods):
+            ema_vals = pd_ema(close_series, p).values
+            state[f"macd_ema_{p}"] = float(ema_vals[last]) if not np.isnan(ema_vals[last]) else 0.0
+
         # --- MACD signal line EMA states (4) ---
         for fast, slow, sig_period in MACD_SIGNAL_CONFIGS:
             macd_line = im[f"macd_{fast}_{slow}"]
@@ -418,6 +432,37 @@ def _setup_one_ticker(args):
         # --- Bar index (1) ---
         state["bar_index"] = int(last)
 
+        # --- Previous bar intermediates at float64 (196) ---
+        # Stored so forward-prop can read shift(1) at full precision
+        # instead of reading float16 from .lookback
+        prev_im = {}
+        for col_name in INTERMEDIATE_COLUMNS:
+            idx = INTERMEDIATE_COL_INDEX[col_name]
+            val = float(im_array[last, idx])
+            prev_im[col_name] = val if not np.isnan(val) else 0.0
+        state["prev_im"] = prev_im
+
+        # --- Float64 source history for SMA computation (last 200 bars) ---
+        # Avoids float16 precision loss when computing SMAs from lookback.
+        # Stores source values used by cumsum-based SMAs at full precision.
+        _src_len = min(200, n_bars)
+        _src_start = n_bars - _src_len
+        state["src_history"] = {
+            "close": [float(x) for x in close[_src_start:]],
+            "volume": [float(x) for x in volume[_src_start:]],
+            "true_range": [float(x) for x in tr[_src_start:]],
+            "hl": [float(high[i] - low[i]) for i in range(_src_start, n_bars)],
+            "gains": [float(x) for x in gains[_src_start:]],
+            "losses": [float(x) for x in losses[_src_start:]],
+            "bop_raw": [float(x) if not np.isnan(x) else 0.0 for x in np.nan_to_num(bop_raw[_src_start:], nan=0.0)],
+            "mfv": [float(x) if not np.isnan(x) else 0.0 for x in np.nan_to_num(mfv[_src_start:], nan=0.0)],
+            "abs_diff": [float(x) for x in abs_diff[_src_start:]],
+            "tp": [float(x) for x in tp[_src_start:]],
+            "c2": [float(x) for x in c2[_src_start:]],
+            "high": [float(x) for x in high[_src_start:]],
+            "low": [float(x) for x in low[_src_start:]],
+        }
+
         # --- Cumsum states (11) at last bar ---
         state["cumsum_close"] = float(cumsum_close[last])
         state["cumsum_volume"] = float(cumsum_volume[last])
@@ -474,22 +519,24 @@ def _setup_one_ticker(args):
                 state[f"ext_{ext_label}_rsi_avg_gain_{p}"] = float(avg_gain[npz_last]) if not np.isnan(avg_gain[npz_last]) else 0.0
                 state[f"ext_{ext_label}_rsi_avg_loss_{p}"] = float(avg_loss[npz_last]) if not np.isnan(avg_loss[npz_last]) else 0.0
 
-            # On-series ADX EMA states (12 per series)
-            ext_up = np.diff(ext_values, prepend=np.nan)
-            ext_down = -ext_up
-            ext_dm_plus = np.where((ext_up > ext_down) & (ext_up > 0), ext_up, 0.0)
-            ext_dm_minus = np.where((ext_down > ext_up) & (ext_down > 0), ext_down, 0.0)
+            # On-series ADX EMA states (12 per series + 4 ATR proxy EMA per series)
+            # Must match compute_on_series() in backtest_conditions.py:1119-1126
+            # DM+/DM- use simple clip (NOT traditional mutual-exclusion formula)
+            # ATR proxy uses EMA (NOT SMA)
+            ext_diff = np.diff(ext_values, prepend=np.nan)
+            ext_dm_plus = np.clip(ext_diff, 0, None)    # backtest_conditions.py:1120
+            ext_dm_minus = np.clip(-ext_diff, 0, None)   # backtest_conditions.py:1121
             ext_dm_plus[0] = np.nan
             ext_dm_minus[0] = np.nan
+            ext_tr = np.abs(ext_diff)                    # backtest_conditions.py:1122
+            ext_tr[0] = np.nan
 
             for p in ON_SERIES_ADX_PERIODS:
                 ema_dmp_ext = pd_ema(pd.Series(ext_dm_plus), p).values
                 ema_dmm_ext = pd_ema(pd.Series(ext_dm_minus), p).values
 
-                ext_tr = np.abs(ext_up)
-                ext_tr[0] = 0.0
-                from scripts.profiling_engine import sma as pd_sma
-                ext_atr = pd_sma(pd.Series(ext_tr), p).values
+                # ATR proxy: EMA, matching backtest_conditions.py:1122
+                ext_atr = pd_ema(pd.Series(ext_tr), p).values
 
                 ext_atr_safe = np.where(ext_atr == 0, np.nan, ext_atr)
                 di_plus_ext = 100.0 * ema_dmp_ext / ext_atr_safe
@@ -502,6 +549,8 @@ def _setup_one_ticker(args):
                 state[f"ext_{ext_label}_adx_ema_dmp_{p}"] = float(ema_dmp_ext[npz_last]) if not np.isnan(ema_dmp_ext[npz_last]) else 0.0
                 state[f"ext_{ext_label}_adx_ema_dmm_{p}"] = float(ema_dmm_ext[npz_last]) if not np.isnan(ema_dmm_ext[npz_last]) else 0.0
                 state[f"ext_{ext_label}_adx_ema_dx_{p}"] = float(adx_ext[npz_last]) if not np.isnan(adx_ext[npz_last]) else 0.0
+                # ATR proxy EMA state — needed for forward-prop DI normalization
+                state[f"ext_{ext_label}_adx_atr_proxy_{p}"] = float(ext_atr[npz_last]) if not np.isnan(ext_atr[npz_last]) else 0.0
 
         # ── Write .state file ──
         state_path = os.path.join(EXPR_CACHE_DIR, f"{safe_ticker}.state")

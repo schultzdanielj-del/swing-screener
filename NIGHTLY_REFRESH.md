@@ -17,7 +17,7 @@
 | 2 | Appends new bars to daily OHLCV pickle from yfinance | ~2-5 min | **DONE (2026-03-27).** Rewired from Railway to `yf.download()` directly. `_yf_append_after_date()` replaces `_fetch_ticker_after_date()`. |
 | 3 | Appends weekly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-28).** `cache_builder.py` → `append_weekly()`. 10yr lookback, overwrites partial week bar, appends closed weeks. |
 | 4 | Appends monthly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-27).** Same pattern as weekly. Overwrites partial month bar. |
-| 5 | Appends expression cache | **~80-90 min** | **THE BOTTLENECK.** Now uses HTF pickles instead of resampling. HTF skip logic removed — always computes from pickle data. Incremental append (compute only new bar) is Increment 2. |
+| 5 | Appends expression cache | **~19 min** | **Forward-prop engine built (2026-04-07).** `forward_prop_engine.py` replaces `_compute_ticker_full` for existing tickers. Uses ExpressionEngine + truth-path dispatch for exact float16 match. Gate 1 passes (AAPL, zero mismatches). Gate 2 pending (awaiting OHLCV refresh → expr cache rebuild → full validation). |
 | 6 | Rebuilds universe matrix | ~30s | **OK.** No changes needed. |
 | 7 | Refreshes earnings dates via Railway | Fails silently | **BROKEN.** Railway endpoints don't exist. Replace with local Yahoo Finance scraper (separate task). |
 | 8 | Appends market context cache (272 instruments) | ~12 min | **DONE (2026-04-01).** Fully migrated: ~227 ETFs from daily pickle, indices/crypto/breadth from EODHD, futures yfinance, 4 FRED remaining. Stooq replaced. |
@@ -41,7 +41,7 @@ All 8 scripts that loaded examples from Railway have been switched to local SQLi
 | `scripts/signal_filter.py` | ✅ Already local (pre-existing) |
 | `scripts/signal_exit_grinder.py` | ✅ Already local (pre-existing) |
 
-**Total current runtime: ~2-2.5 hours.** Target: under 30 minutes.
+**Total current runtime: ~2-2.5 hours.** Target: under 30 minutes. With forward-prop engine (step 5: ~19 min vs ~80-90 min), projected total drops to **~50-60 min**. Remaining bottleneck: market context cache (step 8: ~12 min) and fundamentals (step 9: ~10 min Mon).
 
 ### Railway dependencies — status:
 
