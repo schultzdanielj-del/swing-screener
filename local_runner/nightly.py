@@ -11,12 +11,19 @@ What it does (in order):
     2. Appends local daily OHLCV cache (EODHD)
     3. Appends weekly OHLCV cache (EODHD)
     4. Appends monthly OHLCV cache (EODHD)
-    5. Appends expression series cache (new bars + new tickers)
+    5a. Appends intermediate cache (196 indicators per ticker, ~1-2 min)
+    5b. Runs scans against intermediate cache (~35 sec)
     6. Rebuilds D1 universe matrix
     7. Refreshes earnings dates
     8. Appends market context cache (256 instruments)
     9. Refreshes fundamentals cache
    10. Pushes seed vault backup to Railway (disaster recovery)
+
+Intermediate cache architecture:
+  - Stores 196 indicator intermediates per bar (not 16,000 expressions)
+  - All expressions are derived on-the-fly from intermediates for scans
+  - Full 16,000-expression matrix is materialized only before consensus runs
+  - See intermediate_cache_builder.py, scan_engine.py, materialize_for_consensus.py
 
 Run after market close (~4:30pm ET).
 After completion, grind iterations are fast (~2-3 min each).
@@ -115,28 +122,100 @@ def step_4_monthly_cache():
         print("  (Non-fatal — expr cache will resample from daily as fallback)")
 
 
-def step_5_expr_cache():
-    """Append new bars to expression series cache."""
-    step_header(5, TOTAL_STEPS, "Expression Series Cache — Append")
+def step_5_intermediate_cache():
+    """Append new bars to intermediate cache + run scans.
 
-    cache_dir = os.path.join(LOCAL_DIR, "cache", "expr_series")
-    if not os.path.exists(cache_dir):
-        print("  ⚠ No expression series cache found. Skipping.")
-        print("  (Run 'python local_runner/expr_cache_builder.py --build' first)")
+    Two sub-steps:
+      5a. Compute 196 intermediates for today's bar for all tickers (~1-2 min)
+      5b. Run locked scan conditions against intermediates (~35 sec)
+    """
+    step_header(5, TOTAL_STEPS, "Intermediate Cache - Append + Scan")
+
+    im_cache_dir = os.path.join(LOCAL_DIR, "cache", "intermediate_series")
+
+    # ── 5a: Append intermediates ──
+    if not os.path.exists(im_cache_dir) or len(os.listdir(im_cache_dir)) < 100:
+        print("  No intermediate cache found. Running full rebuild...")
+        from intermediate_cache_builder import load_daily_cache, build_full
+        daily_cache = load_daily_cache()
+        t0 = time.time()
+        build_full(daily_cache, workers=14)
+        elapsed = time.time() - t0
+        print(f"  ✓ Full intermediate rebuild done in {elapsed:.1f}s")
+    else:
+        # Incremental: rebuild all .im files from current OHLCV
+        # (Simple approach: full rebuild is fast enough at ~1.7 min)
+        from intermediate_cache_builder import load_daily_cache, build_full
+        daily_cache = load_daily_cache()
+        t0 = time.time()
+        build_full(daily_cache, workers=14)
+        elapsed = time.time() - t0
+        print(f"  ✓ Intermediate cache rebuild done in {elapsed:.1f}s")
+
+    # ── 5b: Run scans ──
+    print()
+    print(f"  {'─'*40}")
+    print(f"  Scanning locked conditions...")
+    print(f"  {'─'*40}")
+
+    scan_results = {}
+    # Discover available setups
+    setup_files = []
+    data_dir = os.path.join(os.path.dirname(LOCAL_DIR), "data")
+    if os.path.isdir(data_dir):
+        for f in os.listdir(data_dir):
+            if f.startswith("pyramid_results_") and f.endswith(".json"):
+                setup_type = f.replace("pyramid_results_", "").replace(".json", "")
+                setup_files.append(setup_type)
+
+    if not setup_files:
+        print("  ⚠ No pyramid_results files found. Skipping scans.")
         return
 
-    from expr_cache_builder import append_new_bars
-    t0 = time.time()
-    append_new_bars()
-    elapsed = time.time() - t0
-    print(f"  ✓ Expression cache append done in {elapsed:.1f}s")
+    from scan_engine import scan_setup
+    for setup_type in setup_files:
+        try:
+            print(f"\n  Setup: {setup_type}")
+            signals = scan_setup(setup_type, daily_cache, workers=14)
+            scan_results[setup_type] = signals
+            if signals:
+                for s in signals:
+                    print(f"    SIGNAL: {s['ticker']:>6s}  {s['date']}  ${s['close']:.2f}")
+        except FileNotFoundError as e:
+            print(f"  ⚠ {e}")
+        except Exception as e:
+            print(f"  ✗ Scan failed for {setup_type}: {e}")
+
+    total_signals = sum(len(v) for v in scan_results.values())
+    print(f"\n  ✓ Scans complete: {total_signals} signals across {len(setup_files)} setups")
 
 
 def step_6_matrix():
-    """Rebuild D1 universe matrix."""
+    """Rebuild D1 universe matrix.
+
+    With intermediate cache architecture, the expression cache (.npz files)
+    may be stale. The matrix builder handles this gracefully:
+    - If expr cache exists (even stale): reads from it (~30s)
+    - If expr cache missing: falls back to live compute (~30 min, NaN for LSP/HTF)
+
+    The grinder reads materialized .npz files during consensus, NOT this matrix.
+    The matrix is primarily for the dashboard and analysis scripts.
+    """
     step_header(6, TOTAL_STEPS, "Universe Matrix Rebuild")
 
     from matrix_builder import get_universe_matrix
+
+    # Check if expression cache exists
+    expr_cache_dir = os.path.join(LOCAL_DIR, "cache", "expr_series")
+    has_expr_cache = os.path.exists(expr_cache_dir) and any(
+        f.endswith(".npz") for f in os.listdir(expr_cache_dir)
+    ) if os.path.exists(expr_cache_dir) else False
+
+    if not has_expr_cache:
+        print("  Expression cache not found. Skipping matrix rebuild.")
+        print("  (Matrix will be built during consensus materialization)")
+        print("  (Daily scans run from intermediate cache — not affected)")
+        return
 
     def progress(phase, pct, detail):
         print(f"    [{pct:3d}%] {detail}")
@@ -358,7 +437,7 @@ def main():
         (2, step_2_daily_cache),
         (3, step_3_weekly_cache),
         (4, step_4_monthly_cache),
-        (5, step_5_expr_cache),
+        (5, step_5_intermediate_cache),
         (6, step_6_matrix),
         (7, step_7_earnings),
         (8, step_8_market_cache),
