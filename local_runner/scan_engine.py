@@ -189,18 +189,25 @@ def _scan_ticker(ticker):
 
     n_bars = len(im_dates)
     last_idx = n_bars - 1
+    df = None  # Initialized here so LSP block can reference it even if other_conds is empty
 
     # ── Pass 1: Dispatch conditions (from intermediates, fast) ──
+    # If dispatch fails for a condition (returns None), defer it to Pass 2
+    # rather than failing the ticker. This handles dispatch gaps (e.g. volume_ratio
+    # with avg_period=3 when only avgv10/avgv20/avgv50 intermediates exist).
+    deferred_dispatch = []
     for cond in _w_dispatch_conds:
         values = derive_expression_from_im(im_dict, cond["compute"], n_bars)
         if values is None:
-            return None  # Can't compute → fail
+            deferred_dispatch.append(cond)  # Defer to ExpressionEngine
+            continue
         val = values[last_idx]
         if np.isnan(val) or val < cond["low"] or val > cond["high"]:
             return None  # Failed condition
 
-    # ── Pass 2: Other conditions (ExpressionEngine, slower) ──
-    if _w_other_conds:
+    # ── Pass 2: Other conditions + deferred dispatch (ExpressionEngine, slower) ──
+    combined_other = list(_w_other_conds) + deferred_dispatch
+    if combined_other:
         df = _w_daily_cache.get(ticker)
         if df is None:
             return None
@@ -214,7 +221,7 @@ def _scan_ticker(ticker):
         engine = ExpressionEngine(df)
         series_registry = {}
 
-        for cond in _w_other_conds:
+        for cond in combined_other:
             compute = cond["compute"]
             op = compute.get("op", "")
 
@@ -306,8 +313,9 @@ def scan_setup(setup_type, daily_cache=None, workers=14):
     im_tickers = [f[:-3] for f in os.listdir(IM_CACHE_DIR) if f.endswith(".im")]
     print(f"  Scanning {len(im_tickers)} tickers...")
 
-    # Load daily cache if needed for other/LSP conditions
-    if daily_cache is None and (other_conds or lsp_conds):
+    # Always load daily cache — dispatch conditions may defer to ExpressionEngine
+    # when intermediates don't cover the required period (e.g. volume_ratio avg_period=3)
+    if daily_cache is None:
         from intermediate_cache_builder import load_daily_cache
         daily_cache = load_daily_cache()
 
@@ -364,31 +372,28 @@ def validate_scan(setup_type, daily_cache=None):
     sys.path.insert(0, os.path.join(main_repo, "scripts"))
     from signal_filter import scan_all_signals, _build_slim_cache
 
-    expr_cache = ExprSeriesCache(expr_cache_dir=os.path.join(main_cache_dir, "expr_series"))
+    expr_cache = ExprSeriesCache()
     if not expr_cache.is_valid():
         print("  WARNING: expression cache not valid, can't validate")
         return
 
     slim_cache = _build_slim_cache(daily_cache)
 
-    # Map condition names to column indices
-    from brute_expressions import generate_all
-    all_exprs = generate_all()
-    name_to_idx = {e["name"]: i for i, e in enumerate(all_exprs)}
-    cond_col_indices = [name_to_idx.get(c["name"]) for c in conditions]
-
-    signals_old = scan_all_signals(slim_cache, conditions, 1,
-                                    os.path.join(main_cache_dir, "expr_series"))
+    signals_old = scan_all_signals(slim_cache, conditions, 1, expr_cache)
 
     old_today = {(s["ticker"], s["date"]) for s in signals_old
                  if s["date"] == signals_new[0]["date"]} if signals_new else set()
 
+    old_today_tickers = {t for t, d in old_today}
+    only_scan = new_tickers - old_today_tickers
+    only_filter = old_today_tickers - new_tickers
+
     print(f"\n  Validation results:")
     print(f"    Scan engine signals (last bar): {len(new_tickers)} tickers")
-    print(f"    Signal filter signals (last bar): {len(old_today)} tickers")
-    print(f"    In both: {len(new_tickers & {t for t, d in old_today})} tickers")
-    print(f"    Only in scan engine: {new_tickers - {t for t, d in old_today}}")
-    print(f"    Only in signal filter: {{t for t, d in old_today}} - {new_tickers}")
+    print(f"    Signal filter signals (last bar): {len(old_today_tickers)} tickers")
+    print(f"    In both: {len(new_tickers & old_today_tickers)} tickers")
+    print(f"    Only in scan engine: {only_scan}")
+    print(f"    Only in signal filter: {only_filter}")
     print(f"    Elapsed: {time.time() - t0:.2f}s")
 
 

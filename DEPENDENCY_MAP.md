@@ -309,6 +309,93 @@ These are the only components that make network calls for market data.
 
 ---
 
+### intermediate_cache_builder.py
+**Location:** `local_runner/intermediate_cache_builder.py`
+**What it does:** Computes 196 indicator intermediates per ticker (pure numpy), writes compact `.im` binary files. Full rebuild is ~1.7 min for all tickers (14 workers). Replaces the 16,000-column expression cache for daily nightly use — expressions are derived on-the-fly from intermediates by `scan_engine.py`.
+
+**Inputs:**
+- `local_runner/cache/universe_ohlcv_daily.pkl` (daily OHLCV — read via `load_daily_cache()`)
+
+**Outputs:**
+- `local_runner/cache/intermediate_series/{TICKER}.im` — binary file: 4-byte uint32 header (row count), then `n_rows x 196 x float16` data, then `n_rows x 10` bytes of date strings (YYYY-MM-DD)
+
+**Key functions called by others:**
+- `build_full(daily_cache, workers=14)` — called by `nightly.py` step 5a
+- `read_im_as_dict(filepath)` — returns `({col_name: float32 array}, date_list)`, called by `scan_engine.py`
+- `load_daily_cache()` — worktree-aware OHLCV loader, called by `scan_engine.py`
+- `compute_intermediates(close, open_, high, low, volume)` — returns dict of 196 float64 arrays
+- `build_intermediate_column_order()` — returns ordered list of 196 column names
+
+**CLI:**
+- `--build` — full rebuild of all tickers
+- `--validate AAPL` — spot-check one ticker
+- `--compare AAPL` — compare numpy vs pandas ExpressionEngine
+
+**Downstream Consumers (if .im format or column order changes, these break):**
+- `scan_engine.py` — reads `.im` files via `read_im_as_dict()`
+- `materialize_for_consensus.py` — imports validation helpers (does NOT read .im files for materialization)
+
+---
+
+### scan_engine.py
+**Location:** `local_runner/scan_engine.py`
+**What it does:** Evaluates locked scan conditions against intermediate cache for daily signal detection. Classifies conditions into dispatch (fast, from intermediates), other (ExpressionEngine fallback), and LSP (expensive, late-eval). Dispatch conditions that fail automatically defer to ExpressionEngine.
+
+**Inputs:**
+- `local_runner/cache/intermediate_series/{TICKER}.im` — via `read_im_as_dict()`
+- `data/pyramid_results_{setup_type}.json` — locked conditions from grinder
+- `local_runner/cache/universe_ohlcv_daily.pkl` — for ExpressionEngine fallback + LSP conditions
+
+**Outputs:**
+- Signal list (in-memory): `[{ticker, date, close}, ...]`
+- Printed to stdout by `nightly.py` step 5b
+
+**Key functions called by others:**
+- `scan_setup(setup_type, daily_cache, workers=14)` — called by `nightly.py` step 5b
+- `load_conditions(setup_type)` — loads from pyramid_results JSON
+- `classify_conditions(conditions)` — splits into dispatch/other/LSP buckets
+- `validate_scan(setup_type, daily_cache)` — compares results vs `signal_filter.py`
+
+**CLI:**
+- `--setup dtss` — scan one setup type
+- `--all` — scan all discovered setups
+- `--validate dtss` — validate against signal_filter.py (requires valid expr cache)
+
+**Downstream Consumers:**
+- `nightly.py` — reads signal output for step 5b logging
+
+---
+
+### materialize_for_consensus.py
+**Location:** `local_runner/materialize_for_consensus.py`
+**What it does:** Derives all ~16,000 expressions from OHLCV and saves as `.npz` files for quarterly consensus grinding. Uses the same computation pipeline as `expr_cache_builder.py` — the `--all` path delegates to `expr_cache_builder.build_full(force=True)`. The `--ticker` path has an independent per-ticker implementation for testing.
+
+**Inputs:**
+- `local_runner/cache/universe_ohlcv_daily.pkl`, `universe_ohlcv_weekly.pkl`, `universe_ohlcv_monthly.pkl`
+- `brute_expressions.py` — `generate_all()` for expression list
+- `scripts/exit_expressions.py` — `generate_exit_expressions()` for extension expressions
+- `expr_cache_builder.py` — `build_full()`, `dispatch_arith_numpy()`, numpy helper functions
+- `scripts/expression_engine.py`, `scripts/backtest_conditions.py`, `scripts/lsp_detector_v2.py`, `scripts/algo_line_detector.py`
+
+**Outputs:**
+- `local_runner/cache/expr_series/{TICKER}.npz` — same format as `expr_cache_builder.py` output
+- `local_runner/cache/expr_series/_manifest.json` — ExprSeriesCache-compatible manifest
+
+**Key functions called by others:**
+- `materialize_all()` — delegates to `expr_cache_builder.build_full(force=True)`
+- `materialize_one_ticker()` — per-ticker computation (for `--ticker` and `--validate` modes)
+- `validate_against_existing(ticker, daily_cache, expressions)` — compares materialized vs existing `.npz`
+
+**CLI:**
+- `--all` — materialize all tickers (delegates to expr_cache_builder)
+- `--ticker AAPL` — materialize one ticker
+- `--validate AAPL` — compare against existing .npz at float16 precision
+
+**Downstream Consumers:**
+- All grinders that read `.npz` via `ExprSeriesCache` (unchanged — same file format)
+
+---
+
 ### matrix_builder.py
 **Location:** `local_runner/matrix_builder.py`
 **Spec:** `LOCALIZE.md`
@@ -597,15 +684,16 @@ These are the only components that make network calls for market data.
 ### nightly.py
 **Location:** `local_runner/nightly.py`
 **Spec:** `NIGHTLY_REFRESH.md`
-**What it does:** Orchestrates the 10-step nightly data refresh pipeline. Runs via Windows Task Scheduler at 4:30pm ET.
+**What it does:** Orchestrates the 10-step nightly data refresh pipeline. Runs via Windows Task Scheduler at 4:30pm ET. Step 5 uses intermediate cache architecture — full rebuild of 196-column .im files (~1.7 min) then scans locked conditions (~35 sec), replacing the previous 19-min forward-prop expression cache append.
 
 **Calls (in order):**
 1. `cache_builder.check_freshness()` — gate (alias `check_yfinance_freshness` for compat)
 2. `cache_builder.append_daily_cache()` — daily OHLCV
 3. `cache_builder.append_weekly()` — weekly OHLCV
 4. `cache_builder.append_monthly()` — monthly OHLCV
-5. `expr_cache_builder.append_new_bars()` — expression cache
-6. `matrix_builder.get_universe_matrix()` — universe matrix rebuild
+5a. `intermediate_cache_builder.build_full()` — intermediate cache rebuild (196 intermediates per ticker)
+5b. `scan_engine.scan_setup()` — scan locked conditions against intermediates (per discovered setup)
+6. `matrix_builder.get_universe_matrix()` — universe matrix rebuild (graceful skip if expr cache missing)
 7. Railway API `/api/universe/refresh-earnings` — earnings dates
 8. `market_cache_builder.append_new_bars()` — market cache
 9. `fetch_fundamentals` functions — fundamentals cache
