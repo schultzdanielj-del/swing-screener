@@ -35,8 +35,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
 LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(LOCAL_DIR)
-CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
+REPO_ROOT = os.environ.get("SCANPERFECT_REPO_ROOT", os.path.dirname(LOCAL_DIR))
+CACHE_DIR = os.environ.get("SCANPERFECT_CACHE_DIR", os.path.join(REPO_ROOT, "local_runner", "cache"))
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
 

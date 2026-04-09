@@ -48,6 +48,7 @@ import time
 import json
 import pickle
 import argparse
+import random
 
 # Force UTF-8 output on Windows (cp1252 can't handle ≤, ✓, etc.)
 if sys.platform == 'win32':
@@ -61,8 +62,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
 LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(LOCAL_DIR)
-CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
+REPO_ROOT = os.environ.get("SCANPERFECT_REPO_ROOT", os.path.dirname(LOCAL_DIR))
+CACHE_DIR = os.environ.get("SCANPERFECT_CACHE_DIR", os.path.join(REPO_ROOT, "local_runner", "cache"))
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
 
@@ -1433,6 +1434,14 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
     full_expr_names = uni_data["expr_names"]
     full_expr_categories = uni_data["expr_categories"]
 
+    # ── Filter rows to universe_cache tickers (supports consensus subsampling) ──
+    universe_ticker_set = set(universe_cache.keys())
+    row_mask = np.array([t in universe_ticker_set for t in tickers])
+    if not row_mask.all():
+        full_uni_matrix = full_uni_matrix[row_mask]
+        tickers = [t for t, m in zip(tickers, row_mask) if m]
+        print(f"  D1 matrix filtered to {len(tickers)} tickers (matching universe_cache)")
+
     # Build column subset: only the expressions in our pass
     pass_expr_names = [e["name"] for e in expressions]
     pass_expr_set = set(pass_expr_names)
@@ -1757,7 +1766,8 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
                      example_ranges_full, example_matrix_full,
                      locked_conditions, expr_cache,
                      beam_width, depth, peak_target,
-                     d1_beam, d1_depth, blackout_map=None, whitelist_map=None):
+                     d1_beam, d1_depth, blackout_map=None, whitelist_map=None,
+                     zero_margin=False):
     """Run one pass of the multi-pass pyramid.
 
     Args:
@@ -1792,7 +1802,21 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
     # existing locked conditions to still work via the full ranges)
     pass_ranges, pass_matrix = compute_example_ranges(
         example_dfs, pass_expressions, expr_cache=expr_cache)
-    print(f"  {len(pass_ranges)} expressions have valid ranges for this pass")
+
+    # ── Consensus: zero-margin override ──
+    if zero_margin:
+        expr_name_list = [e["name"] for e in pass_expressions]
+        for j, name in enumerate(expr_name_list):
+            if name not in pass_ranges:
+                continue
+            vals = pass_matrix[:, j]
+            valid = vals[~np.isnan(vals)]
+            if len(valid) == 0:
+                continue
+            pass_ranges[name] = (float(np.min(valid)), float(np.max(valid)))
+        print(f"  {len(pass_ranges)} expressions have valid ranges for this pass (exact min/max, no margin)")
+    else:
+        print(f"  {len(pass_ranges)} expressions have valid ranges for this pass")
 
     new_conditions = []
     tier_results = {}
@@ -1914,7 +1938,9 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
 def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 d1_depth=None, d1_beam=None, multi_pass=True,
                 blackout_map=None, whitelist_map=None,
-                override_example_dfs=None):
+                override_example_dfs=None, output_dir=None,
+                seed=None, subsample=None, pass_order=None,
+                zero_margin=False, no_peak_target=False):
     """Run the full pyramid grinder.
 
     Args:
@@ -1924,26 +1950,50 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         depth: search depth for historical tiers
         d1_depth: override depth for D1 tier (default: same as depth)
         d1_beam: override beam for D1 tier (default: same as beam_width)
-        multi_pass: if True, run 3-pass pyramid (daily→weekly→monthly).
+        multi_pass: if True, run 3-pass pyramid (daily->weekly->monthly).
                     if False, run single-pass with all expressions (legacy mode).
-        blackout_map: {ticker: [(entry_idx, exit_idx), ...]} — post-entry bars to exclude
+        blackout_map: {ticker: [(entry_idx, exit_idx), ...]} -- post-entry bars to exclude
                       from universe matrix. Pass None to disable (default).
-        whitelist_map: {ticker: set(bar_idx)} — if set, only these bars count as signals.
+        whitelist_map: {ticker: set(bar_idx)} -- if set, only these bars count as signals.
         override_example_dfs: if set, use these instead of load_example_data.
+        output_dir: write grind output here instead of CACHE_DIR.
+        seed: RNG seed for reproducible subsampling and pass ordering.
+        subsample: fraction of tradable universe to include (e.g. 0.5).
+        pass_order: list of ints like [2,1,3] to reorder multi-pass defs.
+        zero_margin: use exact min/max bounds (no 5% margin).
+        no_peak_target: disable peak target, run to natural ceiling.
     """
     d1_depth = d1_depth or depth
     d1_depth = min(d1_depth, 15)  # Cap D1 — more than 15 overfits to today's snapshot
     d1_beam = d1_beam or beam_width
 
+    # ── Consensus: seed-based RNG ──
+    rng = random.Random(seed) if seed is not None else None
+
+    # ── Consensus: no-peak-target override ──
+    if no_peak_target:
+        peak_target = 0  # 0 = never satisfied, search runs to ceiling
+
     print("\n" + "=" * 70)
-    print("  PYRAMIDAL GRINDER" + (" — MULTI-PASS" if multi_pass else " — SINGLE-PASS"))
+    print("  PYRAMIDAL GRINDER" + (" -- MULTI-PASS" if multi_pass else " -- SINGLE-PASS"))
     print("=" * 70)
     print(f"  Setup: {setup_type.upper()}")
-    print(f"  Peak target: ≤{peak_target} signals/day")
+    if no_peak_target:
+        print(f"  Peak target: DISABLED (run to ceiling)")
+    else:
+        print(f"  Peak target: <={peak_target} signals/day")
     print(f"  D1: beam={d1_beam}, depth={d1_depth}")
     print(f"  Historical tiers: beam={beam_width}, depth={depth}")
     if multi_pass:
-        print(f"  Mode: 3-pass (daily→weekly→monthly)")
+        print(f"  Mode: 3-pass (daily->weekly->monthly)")
+    if seed is not None:
+        print(f"  Seed: {seed}")
+    if subsample is not None:
+        print(f"  Subsample: {subsample:.0%} of universe")
+    if zero_margin:
+        print(f"  Margin: 0% (exact min/max)")
+    if pass_order:
+        print(f"  Pass order: {pass_order}")
 
     t_total = time.time()
 
@@ -1951,6 +2001,14 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     print(f"\n  Loading OHLCV cache...")
     universe_cache = load_daily_cache()
     print(f"  {len(universe_cache)} tickers loaded")
+
+    # ── Consensus: universe subsampling ──
+    if subsample is not None and rng is not None:
+        all_tickers = sorted(universe_cache.keys())
+        n_keep = max(1, int(len(all_tickers) * subsample))
+        sampled = rng.sample(all_tickers, n_keep)
+        universe_cache = {t: universe_cache[t] for t in sampled}
+        print(f"  Subsampled to {len(universe_cache)} tickers ({subsample:.0%} of {len(all_tickers)})")
 
     print(f"\n  Loading examples...")
     if override_example_dfs is not None:
@@ -2014,7 +2072,19 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         all_tier_results = {}
         pass_summaries = []
 
-        for pass_def in MULTI_PASS_DEFS:
+        # ── Consensus: reorder passes ──
+        ordered_passes = list(MULTI_PASS_DEFS)
+        if pass_order is not None:
+            # pass_order is a list like [2, 1, 3] — 1-indexed
+            ordered_passes = [MULTI_PASS_DEFS[i - 1] for i in pass_order]
+            print(f"  Pass order: {' -> '.join(p[0] for p in ordered_passes)}")
+        elif rng is not None:
+            # Seed-based random shuffle when no explicit order
+            ordered_passes = list(MULTI_PASS_DEFS)
+            rng.shuffle(ordered_passes)
+            print(f"  Pass order (seed-shuffled): {' -> '.join(p[0] for p in ordered_passes)}")
+
+        for pass_def in ordered_passes:
             pass_name, timeframe, pass_tier_defs = pass_def
             pass_exprs = _filter_expressions_by_timeframe(all_expressions, timeframe)
 
@@ -2037,6 +2107,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 d1_depth=d1_depth,
                 blackout_map=blackout_map,
                 whitelist_map=whitelist_map,
+                zero_margin=zero_margin,
             )
 
             if new_conds is None:
@@ -2078,7 +2149,21 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         t0 = time.time()
         example_ranges, example_matrix = compute_example_ranges(
             example_dfs, expressions, expr_cache=expr_cache)
-        print(f"  {len(example_ranges)} expressions have valid ranges ({time.time()-t0:.0f}s)")
+
+        # ── Consensus: zero-margin override ──
+        if zero_margin:
+            expr_name_list = [e["name"] for e in expressions]
+            for j, name in enumerate(expr_name_list):
+                if name not in example_ranges:
+                    continue
+                vals = example_matrix[:, j]
+                valid = vals[~np.isnan(vals)]
+                if len(valid) == 0:
+                    continue
+                example_ranges[name] = (float(np.min(valid)), float(np.max(valid)))
+            print(f"  {len(example_ranges)} expressions have valid ranges ({time.time()-t0:.0f}s, exact min/max, no margin)")
+        else:
+            print(f"  {len(example_ranges)} expressions have valid ranges ({time.time()-t0:.0f}s)")
 
         all_conditions = []
         tier_results = {}
@@ -2302,6 +2387,11 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "multi_pass": multi_pass,
             "refinement": is_refinement,
             "source": "pyramid_grinder",
+            "seed": seed,
+            "subsample": subsample,
+            "pass_order": pass_order,
+            "zero_margin": zero_margin,
+            "no_peak_target": no_peak_target,
         },
         "summary": {
             "final_total": final_total,
@@ -2313,33 +2403,33 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         "examples_failing": examples_failing,
     }
 
-    os.makedirs(CACHE_DIR, exist_ok=True)
+    save_dir = output_dir if output_dir else CACHE_DIR
+    os.makedirs(save_dir, exist_ok=True)
 
     # Timestamped archive — always unique, never overwrites anything
-    # This is the local backup. Railway is the permanent record.
-    out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
+    out_path = os.path.join(save_dir, f"{desc_name}.json")
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
 
-    # ── Mirror to Railway ──
-    from file_mirror import mirror_file
-    mirror_file(out_path)
+    # ── Mirror + upload to Railway (skip when output_dir is set) ──
+    if not output_dir:
+        from file_mirror import mirror_file
+        mirror_file(out_path)
 
-    # ── Upload to Railway ──
-    step_type = "refinement_grind" if is_refinement else "signal_grind"
-    try:
-        from grind_uploader import upload as railway_upload
-        railway_upload(
-            result=result,
-            result_path=out_path,
-            step_type=step_type,
-            setup_type=setup_type,
-            activate=True,
-        )
-    except Exception as e:
-        print(f"\n  [pyramid_grinder] WARNING: Railway upload failed: {e}")
-        print(f"  [pyramid_grinder] Local files are saved. Upload manually or retry later.")
+        step_type = "refinement_grind" if is_refinement else "signal_grind"
+        try:
+            from grind_uploader import upload as railway_upload
+            railway_upload(
+                result=result,
+                result_path=out_path,
+                step_type=step_type,
+                setup_type=setup_type,
+                activate=True,
+            )
+        except Exception as e:
+            print(f"\n  [pyramid_grinder] WARNING: Railway upload failed: {e}")
+            print(f"  [pyramid_grinder] Local files are saved. Upload manually or retry later.")
 
     return result
 
@@ -3200,7 +3290,8 @@ def _load_refinement_piles(setup_type):
     return win_example_dfs, whitelist_map, raw_winners, raw_losers, universe_cache, adr_threshold, losing_cluster_bars, win_leftward_bars
 
 
-def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3, skip_gather=False):
+def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3,
+                   skip_gather=False, output_dir=None):
     """Refinement grind: cluster-aware beam search, winners must-pass, minimize losing clusters.
 
     Gathers raw signal clusters (Phase 1), loads full expendable set,
@@ -3610,29 +3701,30 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3, skip_
         "depth_progression": depth_progression,
     }
 
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    out_path = os.path.join(CACHE_DIR, f"{desc_name}.json")
+    save_dir = output_dir if output_dir else CACHE_DIR
+    os.makedirs(save_dir, exist_ok=True)
+    out_path = os.path.join(save_dir, f"{desc_name}.json")
     with open(out_path, "w") as f:
         json.dump(result_data, f, indent=2)
     print(f"\n  Saved: {out_path}")
 
-    # Mirror to Railway
-    from file_mirror import mirror_file
-    mirror_file(out_path)
+    # Mirror + upload to Railway (skip when output_dir is set)
+    if not output_dir:
+        from file_mirror import mirror_file
+        mirror_file(out_path)
 
-    # Upload to Railway cycle
-    try:
-        from grind_uploader import upload as railway_upload
-        railway_upload(
-            result=result_data,
-            result_path=out_path,
-            step_type="refinement_grind",
-            setup_type=setup_type,
-            activate=True,
-        )
-    except Exception as e:
-        print(f"\n  WARNING: Railway upload failed: {e}")
-        print(f"  Local file saved. Upload manually or retry later.")
+        try:
+            from grind_uploader import upload as railway_upload
+            railway_upload(
+                result=result_data,
+                result_path=out_path,
+                step_type="refinement_grind",
+                setup_type=setup_type,
+                activate=True,
+            )
+        except Exception as e:
+            print(f"\n  WARNING: Railway upload failed: {e}")
+            print(f"  Local file saved. Upload manually or retry later.")
 
     return result_data
 
@@ -3659,7 +3751,61 @@ def main():
                              "(Step 4 — loads classified signals from step 3)")
     parser.add_argument("--skip-gather", action="store_true",
                         help="Skip re-scanning universe (reuse existing raw_signal_clusters file)")
+
+    # ── Consensus pipeline arguments ──
+    parser.add_argument("--seed", type=int, default=None,
+                        help="RNG seed for reproducible subsampling, pass ordering, and permutation")
+    parser.add_argument("--subsample", type=float, default=None,
+                        help="Fraction of tradable universe to include per run (e.g. 0.5)")
+    parser.add_argument("--pass-order", type=str, default=None,
+                        help="Explicit pass ordering as comma-separated ints (e.g. '2,1,3')")
+    parser.add_argument("--zero-margin", action="store_true",
+                        help="Use exact min/max bounds (0%% margin) instead of default 5%%")
+    parser.add_argument("--no-peak-target", action="store_true",
+                        help="Disable peak target — run every tier to natural ceiling")
+    parser.add_argument("--permute", action="store_true",
+                        help="Generate fake examples from tradable universe (permutation test)")
+    parser.add_argument("--scan-only", action="store_true",
+                        help="Deterministic scan with --conditions-file, no beam search")
+    parser.add_argument("--conditions-file", type=str, default=None,
+                        help="Path to JSON with pre-supplied conditions (for scan-only or refinement)")
+    parser.add_argument("--output-dir", type=str, default=None,
+                        help="Write grind output JSONs here instead of CACHE_DIR")
+    parser.add_argument("--subsample-losers", action="store_true",
+                        help="50%% subsample of losing clusters for refinement consensus")
     args = parser.parse_args()
+
+    # ── CLI validation ──
+    if args.scan_only:
+        if not args.conditions_file:
+            parser.error("--scan-only requires --conditions-file")
+        conflicts = []
+        if args.blackout:
+            conflicts.append("--blackout")
+        if args.permute:
+            conflicts.append("--permute")
+        if args.subsample is not None:
+            conflicts.append("--subsample")
+        if args.no_peak_target:
+            conflicts.append("--no-peak-target")
+        if args.zero_margin:
+            conflicts.append("--zero-margin")
+        if conflicts:
+            parser.error(f"--scan-only is mutually exclusive with {', '.join(conflicts)}")
+
+    if args.skip_gather and not args.blackout:
+        parser.error("--skip-gather requires --blackout (only applies to refinement)")
+
+    if args.subsample_losers and not args.blackout:
+        parser.error("--subsample-losers requires --blackout (only applies to refinement)")
+
+    if args.pass_order is not None:
+        try:
+            parts = [int(x.strip()) for x in args.pass_order.split(",")]
+        except ValueError:
+            parser.error("--pass-order must be comma-separated integers (e.g. '2,1,3')")
+        if sorted(parts) != [1, 2, 3]:
+            parser.error("--pass-order must be a permutation of 1,2,3")
 
     # ── Refinement grind: separate path ──
     if args.blackout:
@@ -3673,6 +3819,7 @@ def main():
             depth=ref_depth,
             peak_target=ref_peak,
             skip_gather=getattr(args, 'skip_gather', False),
+            output_dir=args.output_dir,
         )
         if result is None:
             sys.exit(1)
@@ -3689,6 +3836,11 @@ def main():
             print(f"  RUN {run_i + 1} of {n_runs}")
             print(f"{'#'*70}")
 
+        # Parse pass_order from string to list of ints
+        parsed_pass_order = None
+        if args.pass_order is not None:
+            parsed_pass_order = [int(x.strip()) for x in args.pass_order.split(",")]
+
         result = run_pyramid(
             setup_type=args.setup,
             peak_target=args.peak_target,
@@ -3697,6 +3849,12 @@ def main():
             d1_depth=args.d1_depth,
             d1_beam=args.d1_beam,
             multi_pass=multi_pass,
+            output_dir=args.output_dir,
+            seed=args.seed,
+            subsample=args.subsample,
+            pass_order=parsed_pass_order,
+            zero_margin=args.zero_margin,
+            no_peak_target=args.no_peak_target,
         )
         results.append(result)
 

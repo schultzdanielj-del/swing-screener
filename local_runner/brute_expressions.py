@@ -13,7 +13,8 @@ Generates: local_runner/cache/brute_expressions.json
 import json
 import os
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+_LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR = os.environ.get("SCANPERFECT_CACHE_DIR", os.path.join(_LOCAL_DIR, "cache"))
 
 
 def generate_all():

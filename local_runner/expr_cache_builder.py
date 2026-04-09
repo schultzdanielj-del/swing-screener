@@ -52,8 +52,8 @@ from multiprocessing import cpu_count
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 LOCAL_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(LOCAL_DIR)
-CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
+REPO_ROOT = os.environ.get("SCANPERFECT_REPO_ROOT", os.path.dirname(LOCAL_DIR))
+CACHE_DIR = os.environ.get("SCANPERFECT_CACHE_DIR", os.path.join(REPO_ROOT, "local_runner", "cache"))
 EXPR_CACHE_DIR = os.path.join(CACHE_DIR, "expr_series")
 MANIFEST_PATH = os.path.join(EXPR_CACHE_DIR, "_manifest.json")
 

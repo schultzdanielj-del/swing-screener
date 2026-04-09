@@ -616,6 +616,9 @@ def main():
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     parser.add_argument("--top-n", type=int, default=50,
                         help="Top N results to save")
+    parser.add_argument("--conditions-file", type=str, default=None,
+                        help="Path to JSON with pre-supplied signal conditions "
+                             "(bypasses internal load_pyramid_conditions)")
     args = parser.parse_args()
 
     setup = args.setup
