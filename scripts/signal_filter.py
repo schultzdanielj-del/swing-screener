@@ -239,14 +239,30 @@ def _classify_conditions(conditions):
     return dispatch_idx, fallback_idx
 
 
+def _truncate_to_cache_window(df):
+    """Truncate DataFrame to EXPR_CACHE_START onward.
+
+    OHLCV daily cache keeps 10 years (from 2016) so long-period indicators
+    (200-SMA, etc.) are warm by 2020-01-02.  Expression and intermediate
+    caches only store 2020-01-02 onward.  Scan workers must use the same
+    window so bar counts and indices align with .im files.
+    """
+    start = pd.Timestamp(EXPR_CACHE_START)
+    mask = pd.to_datetime(df["date"]) >= start
+    return df[mask].reset_index(drop=True) if mask.any() else None
+
+
 def _build_slim_cache(cache):
     """Build lightweight cache for scan workers: {ticker: (n_bars, dates_strs, closes)}.
 
     Workers only need bar count, date strings, and close prices.
-    Full DataFrames with open/high/low/volume/dvol are not needed for scanning.
+    Truncated to EXPR_CACHE_START to align with .im file bar counts.
     """
     slim = {}
     for ticker, df in cache.items():
+        if df is None:
+            continue
+        df = _truncate_to_cache_window(df)
         if df is not None and len(df) >= 100:
             slim[ticker] = (
                 len(df),
@@ -260,10 +276,14 @@ def _build_ohlcv_cache(cache):
     """Build OHLCV arrays for ExpressionEngine fallback in scan workers.
 
     Returns {ticker: (opens, highs, lows, volumes)} as float64 numpy arrays.
+    Truncated to EXPR_CACHE_START to align with .im file bar counts.
     Only needed when some conditions require ExpressionEngine (bool_aggs, SLOW_OPS, etc.).
     """
     ohlcv = {}
     for ticker, df in cache.items():
+        if df is None:
+            continue
+        df = _truncate_to_cache_window(df)
         if df is not None and len(df) >= 100:
             ohlcv[ticker] = (
                 df["open"].values.astype(np.float64),
