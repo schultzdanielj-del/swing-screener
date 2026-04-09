@@ -50,10 +50,12 @@ EXCLUDE_TABLES = {
 # New setup types write to the same dirs, so no per-setup config needed.
 LOCAL_GRIND_DIRS = [
     os.path.join(PROJECT_ROOT, "local_runner", "cache"),
+    os.path.join(PROJECT_ROOT, "data"),
     os.path.join(PROJECT_ROOT, "data", "exit_grind"),
     os.path.join(PROJECT_ROOT, "data", "signal_exit_grind"),
     os.path.join(PROJECT_ROOT, "data", "signal_filter"),
     os.path.join(PROJECT_ROOT, "data", "profit_grind"),
+    os.path.join(PROJECT_ROOT, "data", "vetting"),
 ]
 
 
@@ -65,7 +67,7 @@ def railway_query(sql, limit=50000):
         r.raise_for_status()
         return r.json().get("results", [])
     except Exception as e:
-        print(f"  ✗ Query failed: {e}")
+        print(f"  FAIL Query failed: {e}")
         return []
 
 
@@ -85,7 +87,7 @@ def list_mirrored_files():
         all_files = r.json().get("files", [])
         return [f for f in all_files if not f["path"].startswith("seed/")]
     except Exception as e:
-        print(f"  ✗ Failed to list files: {e}")
+        print(f"  FAIL Failed to list files: {e}")
         return []
 
 
@@ -98,7 +100,7 @@ def download_file(path):
         r.raise_for_status()
         return r.text
     except Exception as e:
-        print(f"  ✗ Download {path} failed: {e}")
+        print(f"  FAIL Download {path} failed: {e}")
         return None
 
 
@@ -112,7 +114,7 @@ def upload_file(rel_path, data_str):
         r.raise_for_status()
         return True
     except Exception as e:
-        print(f"  ✗ Upload {rel_path} failed: {e}")
+        print(f"  FAIL Upload {rel_path} failed: {e}")
         return False
 
 
@@ -132,7 +134,7 @@ def railway_query_params(sql, params=None, limit=50000):
             s = str(p)
             # Reject anything that could be injection
             if any(c in s for c in ("'", '"', ";", "--", "/*")):
-                print(f"  ✗ Unsafe parameter rejected: {s}")
+                print(f"  FAIL Unsafe parameter rejected: {s}")
                 return []
             safe.append(f"'{s}'")
         sql = sql.format(*safe)
@@ -147,7 +149,7 @@ def sync_db_tables():
     SQLite. This sync ensures Railway has a backup copy for disaster recovery.
     """
     if not os.path.exists(DB_PATH):
-        print("  · No local DB — skipping DB sync")
+        print("  - No local DB -- skipping DB sync")
         return
 
     db = sqlite3.connect(DB_PATH)
@@ -161,13 +163,13 @@ def sync_db_tables():
 
 def _sync_setups(db):
     """Push locally-created setups missing from Railway."""
-    print("\n── Syncing setups ──")
+    print("\n-- Syncing setups --")
     local_setups = db.execute(
         "SELECT setup_type, name, description, direction FROM setups"
     ).fetchall()
 
     if not local_setups:
-        print("  · No local setups")
+        print("  - No local setups")
         return
 
     try:
@@ -175,7 +177,7 @@ def _sync_setups(db):
         r.raise_for_status()
         railway_setups = set(r.json().keys())
     except Exception as e:
-        print(f"  ✗ Could not fetch Railway setups: {e}")
+        print(f"  FAIL Could not fetch Railway setups: {e}")
         return
 
     synced = 0
@@ -185,7 +187,7 @@ def _sync_setups(db):
         # /api/setups derives setup_type from name — verify it matches
         derived = re.sub(r"[^a-z0-9]+", "-", row["name"].lower()).strip("-")
         if derived != row["setup_type"]:
-            print(f"  ⚠ Setup '{row['setup_type']}' — name '{row['name']}' "
+            print(f"  WARNING: Setup '{row['setup_type']}' -- name '{row['name']}' "
                   f"would derive '{derived}', skipping (needs manual fix)")
             continue
         try:
@@ -197,20 +199,20 @@ def _sync_setups(db):
             if resp.status_code == 409:
                 continue
             resp.raise_for_status()
-            print(f"  ✓ Setup '{row['setup_type']}' pushed to Railway")
+            print(f"  OK Setup '{row['setup_type']}' pushed to Railway")
             synced += 1
         except Exception as e:
-            print(f"  ✗ Setup '{row['setup_type']}': {e}")
+            print(f"  FAIL Setup '{row['setup_type']}': {e}")
 
     if synced == 0:
-        print(f"  ✓ All {len(local_setups)} setups already on Railway")
+        print(f"  OK All {len(local_setups)} setups already on Railway")
     else:
-        print(f"  ✓ Pushed {synced} new setup(s)")
+        print(f"  OK Pushed {synced} new setup(s)")
 
 
 def _sync_examples(db):
     """Push locally-created examples missing from Railway."""
-    print("\n── Syncing examples ──")
+    print("\n-- Syncing examples --")
     local_setup_types = [r["setup_type"] for r in db.execute(
         "SELECT DISTINCT setup_type FROM examples"
     ).fetchall()]
@@ -258,17 +260,17 @@ def _sync_examples(db):
                 resp.raise_for_status()
                 pushed += 1
             except Exception as e:
-                print(f"  ✗ {setup_type}/{ex['ticker']} {ex['entry_date']}: {e}")
+                print(f"  FAIL {setup_type}/{ex['ticker']} {ex['entry_date']}: {e}")
 
         if pushed:
-            print(f"  ✓ {setup_type}: pushed {pushed} example(s)")
+            print(f"  OK {setup_type}: pushed {pushed} example(s)")
             total_synced += pushed
 
     if total_synced == 0:
         total_local = db.execute("SELECT COUNT(*) FROM examples").fetchone()[0]
-        print(f"  ✓ All {total_local} examples already on Railway")
+        print(f"  OK All {total_local} examples already on Railway")
     else:
-        print(f"  ✓ Pushed {total_synced} new example(s) total")
+        print(f"  OK Pushed {total_synced} new example(s) total")
 
 
 # ════════════════════════════════════════════════════════════
@@ -277,7 +279,7 @@ def _sync_examples(db):
 
 def backup():
     print("=" * 60)
-    print("  Seed Vault — Backup (DB sync + catch failed mirrors)")
+    print("  Seed Vault -- Backup (DB sync + catch failed mirrors)")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
@@ -307,7 +309,7 @@ def backup():
                 missing.append((rel_path, local_path))
 
     if not missing:
-        print("  ✓ All local grind files are on Railway — nothing to upload")
+        print("  OK All local grind files are on Railway -- nothing to upload")
         print(f"\n{'=' * 60}\n")
         return
 
@@ -321,12 +323,12 @@ def backup():
                 data_str = f.read()
             if upload_file(rel_path, data_str):
                 size_kb = len(data_str) / 1024
-                print(f"  ✓ {rel_path} ({size_kb:.0f} KB)")
+                print(f"  OK {rel_path} ({size_kb:.0f} KB)")
                 uploaded += 1
             else:
                 failed += 1
         except Exception as e:
-            print(f"  ✗ {rel_path}: {e}")
+            print(f"  FAIL {rel_path}: {e}")
             failed += 1
 
     print(f"\n{'=' * 60}")
@@ -342,15 +344,15 @@ def backup():
 
 def verify():
     print("=" * 60)
-    print("  Seed Vault — Verify Railway")
+    print("  Seed Vault -- Verify Railway")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
     # ── Check DB tables ──
-    print("\n── DB Tables ──")
+    print("\n-- DB Tables --")
     tables = discover_tables()
     if not tables:
-        print("  ✗ Could not discover tables from Railway")
+        print("  FAIL Could not discover tables from Railway")
         return
 
     total_rows = 0
@@ -360,15 +362,15 @@ def verify():
         n = rows[0]["n"] if rows else 0
         total_rows += n
         if n > 0:
-            print(f"  ✓ {table}: {n} rows")
+            print(f"  OK {table}: {n} rows")
         else:
             empty_tables.append(table)
 
     if empty_tables:
-        print(f"  · Empty: {', '.join(empty_tables)}")
+        print(f"  - Empty: {', '.join(empty_tables)}")
 
     # ── Check mirrored files ──
-    print("\n── Mirrored Grind Files ──")
+    print("\n-- Mirrored Grind Files --")
     files = list_mirrored_files()
     total_bytes = sum(f["size_bytes"] for f in files)
 
@@ -380,7 +382,7 @@ def verify():
         dirs[d] = dirs.get(d, 0) + 1
 
     for d in sorted(dirs):
-        print(f"  ✓ {d}/: {dirs[d]} files")
+        print(f"  OK {d}/: {dirs[d]} files")
 
     print(f"\n{'=' * 60}")
     print(f"  DB: {total_rows} rows across {len(tables)} tables")
@@ -394,16 +396,16 @@ def verify():
 
 def restore():
     print("=" * 60)
-    print("  Seed Vault — Restore from Railway")
+    print("  Seed Vault -- Restore from Railway")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
     # ── Ensure local DB exists ──
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     if not os.path.exists(DB_PATH):
-        print(f"\n  DB not found — creating via server init...")
+        print(f"\n  DB not found -- creating via server init...")
         import server  # triggers init_db()
-        print(f"  ✓ DB created at {DB_PATH}")
+        print(f"  OK DB created at {DB_PATH}")
 
     db = sqlite3.connect(DB_PATH)
     db.row_factory = sqlite3.Row
@@ -411,10 +413,10 @@ def restore():
     db.execute("PRAGMA journal_mode=WAL")
 
     # ── Discover and restore tables ──
-    print("\n── DB Tables ──")
+    print("\n-- DB Tables --")
     tables = discover_tables()
     if not tables:
-        print("  ✗ Could not discover tables from Railway")
+        print("  FAIL Could not discover tables from Railway")
         db.close()
         return
 
@@ -422,7 +424,7 @@ def restore():
     for table in tables:
         rows = railway_query(f"SELECT * FROM {table}")
         if not rows:
-            print(f"  · {table}: empty")
+            print(f"  - {table}: empty")
             continue
 
         # Check table exists locally
@@ -430,7 +432,7 @@ def restore():
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()]
         if table not in local_tables:
-            print(f"  ⚠ {table}: not in local schema, skipping")
+            print(f"  WARNING: {table}: not in local schema, skipping")
             continue
 
         # Get local column names to match against
@@ -440,7 +442,7 @@ def restore():
         railway_cols = list(rows[0].keys())
         cols = [c for c in railway_cols if c in local_cols]
         if not cols:
-            print(f"  ⚠ {table}: no matching columns, skipping")
+            print(f"  WARNING: {table}: no matching columns, skipping")
             continue
 
         placeholders = ",".join("?" for _ in cols)
@@ -460,13 +462,13 @@ def restore():
 
         db.commit()
         total_rows_restored += inserted
-        print(f"  ✓ {table}: {inserted} rows")
+        print(f"  OK {table}: {inserted} rows")
 
     # ── Restore mirrored grind files ──
-    print("\n── Mirrored Grind Files ──")
+    print("\n-- Mirrored Grind Files --")
     files = list_mirrored_files()
     if not files:
-        print("  · No mirrored files on Railway")
+        print("  - No mirrored files on Railway")
 
     files_restored = 0
     files_failed = 0
@@ -488,10 +490,10 @@ def restore():
                 f.write(data_str)
             size_kb = len(data_str) / 1024
             total_bytes += len(data_str)
-            print(f"  ✓ {clean_path} ({size_kb:.0f} KB)")
+            print(f"  OK {clean_path} ({size_kb:.0f} KB)")
             files_restored += 1
         except Exception as e:
-            print(f"  ✗ {clean_path}: {e}")
+            print(f"  FAIL {clean_path}: {e}")
             files_failed += 1
 
     db.execute("PRAGMA foreign_keys=ON")

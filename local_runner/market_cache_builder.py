@@ -549,7 +549,7 @@ def _compute_derived_instruments(results):
 
 def fetch_all(force=False, n_threads=16):
     print("\n" + "=" * 70)
-    print("  MARKET CACHE — PHASE 1: FETCH")
+    print("  MARKET CACHE -- PHASE 1: FETCH")
     print("=" * 70)
 
     instruments = all_instruments()
@@ -572,7 +572,7 @@ def fetch_all(force=False, n_threads=16):
             daily_cache = pickle.load(f)
         print(f"  {len(daily_cache)} tickers in daily pickle")
     else:
-        print(f"\n  WARNING: {DAILY_PKL} not found — ETF instruments will fail")
+        print(f"\n  WARNING: {DAILY_PKL} not found -- ETF instruments will fail")
 
     # Split instruments into fetch paths
     pickle_insts  = []
@@ -868,7 +868,7 @@ def _compute_one(args):
 
 def compute_all(ohlcv_cache=None, force=False):
     print("\n" + "=" * 70)
-    print("  MARKET CACHE — PHASE 2: COMPUTE")
+    print("  MARKET CACHE -- PHASE 2: COMPUTE")
     print("=" * 70)
 
     if ohlcv_cache is None:
@@ -910,7 +910,7 @@ def compute_all(ohlcv_cache=None, force=False):
         work_items.append((inst_id, df_dict, inst_id in PRICE_ONLY))
 
     n_workers = int(os.environ.get("EXPR_CACHE_WORKERS", max(cpu_count() - 1, 1)))
-    print(f"\n  Computing {len(work_items)} instruments × {len(expressions)} expressions")
+    print(f"\n  Computing {len(work_items)} instruments x {len(expressions)} expressions")
     print(f"  Workers: {n_workers}  (set EXPR_CACHE_WORKERS to override)")
 
     t0              = time.time()
@@ -985,7 +985,7 @@ def compute_all(ohlcv_cache=None, force=False):
     if first_errors:
         print(f"\n  First errors:")
         for e in first_errors:
-            print(f"    ✗ {e}")
+            print(f"    FAIL {e}")
 
     manifest = {
         "fingerprint":   fingerprint,
@@ -1035,7 +1035,7 @@ def save_manifest(manifest):
 
 def append_new_bars(n_threads=16):
     print("\n" + "=" * 70)
-    print("  MARKET CACHE — NIGHTLY APPEND")
+    print("  MARKET CACHE -- NIGHTLY APPEND")
     print("=" * 70)
 
     manifest = load_manifest()
@@ -1092,7 +1092,7 @@ def append_new_bars(n_threads=16):
         else:
             ohlcv_cache[inst_id] = fresh_df
         updated.append(inst_id)
-        print(f"    {inst_id:25s} → {len(ohlcv_cache[inst_id])} bars")
+        print(f"    {inst_id:25s} -> {len(ohlcv_cache[inst_id])} bars")
 
     # 2. Network instruments — threaded fetch
     def _append_one_network(inst_id):
@@ -1127,7 +1127,7 @@ def append_new_bars(n_threads=16):
             if df_merged is not None:
                 ohlcv_cache[inst_id] = df_merged
                 updated.append(inst_id)
-                print(f"    {inst_id:25s} → {len(df_merged)} bars")
+                print(f"    {inst_id:25s} -> {len(df_merged)} bars")
 
     # 3. Recompute derived instruments (always — cheap operation)
     n_derived = _compute_derived_instruments(ohlcv_cache)
@@ -1191,7 +1191,7 @@ def append_new_bars(n_threads=16):
                     "price_only":    inst_id in PRICE_ONLY,
                 }
                 recomputed += 1
-                print(f"  ✓ {inst_id}")
+                print(f"  OK {inst_id}")
 
     manifest["instruments"] = cached_info
     manifest["fingerprint"] = fingerprint
@@ -1226,7 +1226,7 @@ def print_status():
               f"{yf_count} yfinance, {fred_count} FRED, "
               f"{derived_count} derived")
     else:
-        print("  market_ohlcv.pkl   NOT FOUND — run --fetch")
+        print("  market_ohlcv.pkl   NOT FOUND -- run --fetch")
 
     manifest = load_manifest()
     if manifest:
@@ -1240,7 +1240,7 @@ def print_status():
             )
             print(f"  Disk: {total / 1024**3:.2f} GB")
     else:
-        print("  market_series/     NOT FOUND — run --compute")
+        print("  market_series/     NOT FOUND -- run --compute")
 
 
 # ══════════════════════════════════════════════════════════════

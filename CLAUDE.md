@@ -19,10 +19,14 @@ Repo: schultzdanielj-del/swing-screener, branch v2. Railway: https://web-product
 - Expression cache: C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\expr_series\
 - OHLCV cache: C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\
 - Before any multi-ticker job: print the cache path, count tickers, confirm ~11,200+ before proceeding. STOP if count is wrong.
-- Railway is NEVER a data source for OHLCV or expression cache. Local only.
+- Railway is NEVER a data source for OHLCV or expression cache. Local only. If a command fetches from Railway, it is the wrong command.
 - OHLCV source: EODHD bulk + yfinance gap fill. Never Railway.
 - Expected ticker counts: OHLCV daily ~11,523, expr cache ~11,201.
 - Never trigger a full expression cache rebuild without auditing every change to the compute path since the last known-good rebuild.
+- NEVER create junction links, symlinks, hard links, or any filesystem link that points to a live cache or data directory. Worktrees are isolated — keep them that way. If a script needs cache data, pass the real path as a read-only argument.
+- NEVER run rmdir, rd, del, or git worktree remove on any path that touches cache or data directories. Check for links first.
+- NEVER run --force on any cache builder (cache_builder.py, expr_cache_builder.py, market_cache_builder.py) without presenting what it will overwrite, the target path, and the ticker count. Wait for explicit go-ahead.
+- Before any command that writes files, verify the resolved target path. If it resolves outside the worktree to the main repo's local_runner/cache/, STOP immediately.
 
 ## COMMUNICATION
 Dan is sole developer, doesn't write code, can't read code fluently. No sycophantic language. Honest assessments over optimistic ones. Dan is direct, corrects errors immediately. Pseudocode and plain language only, no raw code blocks. Names OK but must be simple enough for Dan to spot problems.

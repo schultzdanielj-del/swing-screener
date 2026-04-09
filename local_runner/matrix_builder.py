@@ -161,31 +161,31 @@ def get_universe_matrix(progress_fn=None, force=False):
 
     # Check cache freshness
     if not force and _universe_matrix_fresh():
-        log("Matrix is fresh — loading from cache...")
+        log("Matrix is fresh -- loading from cache...")
         with open(path, "rb") as f:
             data = pickle.load(f)
         cached_n = data.get("n_exprs")
         current_n = len(expressions)
         if cached_n == current_n:
-            log(f"Cache OK: {data['n_universe']} tickers × {current_n} expressions "
+            log(f"Cache OK: {data['n_universe']} tickers x {current_n} expressions "
                 f"(built {data.get('computed_at', 'unknown')})")
             if progress_fn:
                 progress_fn("matrix", 10, f"Universe matrix cached: {data['n_universe']} tickers")
             return data
-        log(f"Expression count changed ({cached_n} → {current_n}) — rebuilding...")
+        log(f"Expression count changed ({cached_n} -> {current_n}) -- rebuilding...")
     elif force:
         log("Force rebuild requested.")
     else:
         if not os.path.exists(path):
-            log("No matrix cache found — building from scratch...")
+            log("No matrix cache found -- building from scratch...")
         else:
             try:
                 with open(path, "rb") as f:
                     data = pickle.load(f)
                 built = data.get("computed_at", "unknown")
-                log(f"Matrix stale (built {built}, ET date mismatch) — rebuilding...")
+                log(f"Matrix stale (built {built}, ET date mismatch) -- rebuilding...")
             except:
-                log("Matrix cache unreadable — rebuilding...")
+                log("Matrix cache unreadable -- rebuilding...")
 
     # ── Try loading from expression series cache (fast path) ──
     from expr_cache_builder import ExprSeriesCache
@@ -197,11 +197,11 @@ def get_universe_matrix(progress_fn=None, force=False):
         our_names = [e["name"] for e in expressions]
         missing = [n for n in our_names if n not in cache_names]
         if missing:
-            log(f"⚠ {len(missing)} expressions not in cache. Falling back to live computation.")
+            log(f"WARNING: {len(missing)} expressions not in cache. Falling back to live computation.")
             return _build_universe_live(expressions, path, progress_fn)
         return _build_universe_from_cache(expr_cache, expressions, path, progress_fn)
     else:
-        log("⚠ Expression series cache not available.")
+        log("WARNING: Expression series cache not available.")
         log("  Run: python local_runner/expr_cache_builder.py --build")
         log("  Falling back to live computation (slow)...")
         return _build_universe_live(expressions, path, progress_fn)
@@ -234,7 +234,7 @@ def _build_universe_from_cache(expr_cache, expressions, save_path, progress_fn=N
     cache_name_set = set(cache_names)
     missing = [n for n in current_names if n not in cache_name_set]
     if missing:
-        log(f"⚠ {len(missing)} expressions not in cache. Cannot build from cache.")
+        log(f"WARNING: {len(missing)} expressions not in cache. Cannot build from cache.")
         raise RuntimeError(f"Missing expressions in cache: {missing[:5]}")
 
     # Build column index mapping: our expression index -> cache column index
@@ -294,8 +294,8 @@ def _build_universe_from_cache(expr_cache, expressions, save_path, progress_fn=N
 
     size_mb = os.path.getsize(save_path) / 1024 / 1024
     elapsed = time.time() - t0
-    log(f"Universe matrix saved: {size_mb:.1f} MB ({elapsed:.0f}s) — "
-        f"{n_tickers} tickers × {n_exprs} expressions [from expr cache]")
+    log(f"Universe matrix saved: {size_mb:.1f} MB ({elapsed:.0f}s) -- "
+        f"{n_tickers} tickers x {n_exprs} expressions [from expr cache]")
     if progress_fn:
         progress_fn("matrix", 95, f"Universe matrix built: {size_mb:.1f} MB in {elapsed:.0f}s")
 
@@ -313,7 +313,7 @@ def _build_universe_live(expressions, save_path, progress_fn=None):
             progress_fn("matrix", 5, msg)
 
     log("Building universe matrix via live computation (NO expr cache)...")
-    log("⚠ LSP, weekly, and monthly expressions will be NaN (precomputed-only).")
+    log("WARNING: LSP, weekly, and monthly expressions will be NaN (precomputed-only).")
 
     # Load OHLCV
     cache_file = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
@@ -334,7 +334,7 @@ def _build_universe_live(expressions, save_path, progress_fn=None):
     universe_matrix = np.full((len(uni_tickers), n_exprs), np.nan)
 
     if progress_fn:
-        progress_fn("matrix", 10, f"Computing {len(uni_tickers)} tickers × {n_exprs} expressions...")
+        progress_fn("matrix", 10, f"Computing {len(uni_tickers)} tickers x {n_exprs} expressions...")
 
     t0 = time.time()
 
@@ -386,7 +386,7 @@ def _build_universe_live(expressions, save_path, progress_fn=None):
 
     size_mb = os.path.getsize(save_path) / 1024 / 1024
     elapsed = time.time() - t0
-    log(f"Universe matrix saved: {size_mb:.1f} MB ({elapsed:.0f}s) [LIVE — some expressions NaN]")
+    log(f"Universe matrix saved: {size_mb:.1f} MB ({elapsed:.0f}s) [LIVE -- some expressions NaN]")
     if progress_fn:
         progress_fn("matrix", 95, f"Universe matrix built: {size_mb:.1f} MB in {elapsed/60:.1f} min")
 
@@ -450,7 +450,7 @@ def get_example_matrix(setup_type, progress_fn=None):
                 ohlcv_cache = pickle.load(f)
             break
     if ohlcv_cache is None:
-        print("  ✗ No OHLCV cache found — cannot build example matrix")
+        print("  FAIL No OHLCV cache found -- cannot build example matrix")
         return {"example_matrix": np.array([]), "example_tickers": [], "example_ids": [],
                 "expr_names": [], "expr_categories": [], "n_exprs": 0, "n_examples": 0,
                 "computed_at": datetime.now(timezone.utc).isoformat()}
@@ -469,7 +469,7 @@ def get_example_matrix(setup_type, progress_fn=None):
 
         df = ohlcv_cache.get(ticker)
         if df is None or len(df) == 0:
-            print(f"    ✗ {ticker:8s} ({entry_date}) — not in OHLCV cache")
+            print(f"    FAIL {ticker:8s} ({entry_date}) -- not in OHLCV cache")
             completed += 1
             continue
 
@@ -498,9 +498,9 @@ def get_example_matrix(setup_type, progress_fn=None):
                     pass
             n_valid = int(np.sum(~np.isnan(values)))
             example_matrix[i] = values
-            print(f"    ✓ {ticker:8s} ({entry_date}) — {n_valid}/{len(expressions)}")
+            print(f"    OK {ticker:8s} ({entry_date}) -- {n_valid}/{len(expressions)}")
         except Exception as e:
-            print(f"    ✗ {ticker:8s} ({entry_date}) — {e}")
+            print(f"    FAIL {ticker:8s} ({entry_date}) -- {e}")
 
         completed += 1
         if progress_fn:

@@ -177,7 +177,7 @@ def save_cache(tickers_data):
 
 def run(delay=DEFAULT_DELAY, max_tickers=None, retry_failed=False):
     print("\n" + "=" * 70)
-    print("  FUNDAMENTALS FETCHER — Yahoo Finance")
+    print("  FUNDAMENTALS FETCHER -- Yahoo Finance")
     print("=" * 70)
 
     # Load ticker list
@@ -206,7 +206,7 @@ def run(delay=DEFAULT_DELAY, max_tickers=None, retry_failed=False):
         print(f"  Limited to {max_tickers} tickers")
 
     if not to_fetch:
-        print("\n  Nothing to fetch — cache is complete!")
+        print("\n  Nothing to fetch -- cache is complete!")
         return existing
 
     # Authenticate
@@ -233,7 +233,7 @@ def run(delay=DEFAULT_DELAY, max_tickers=None, retry_failed=False):
             n_ok += 1
         elif data and data.get("error") == "rate_limited":
             # Back off and retry once
-            print(f"  ⚠ Rate limited at {ticker}. Sleeping 30s...")
+            print(f"  WARNING: Rate limited at {ticker}. Sleeping 30s...")
             time.sleep(30)
             # Re-authenticate (crumb may have expired)
             try:

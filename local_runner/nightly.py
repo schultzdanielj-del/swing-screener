@@ -1,5 +1,5 @@
 """
-Nightly Update — Single command to refresh all data before grinding.
+Nightly Update -- Single command to refresh all data before grinding.
 
 Usage:
     python local_runner/nightly.py
@@ -57,10 +57,10 @@ def ts():
 
 
 def step_header(num, total, title):
-    print(f"\n{'─'*60}")
+    print(f"\n{'-'*60}")
     print(f"  Step {num}/{total}: {title}")
     print(f"  {ts()}")
-    print(f"{'─'*60}")
+    print(f"{'-'*60}")
 
 
 def step_1_freshness_check():
@@ -77,49 +77,49 @@ def step_1_freshness_check():
 
 def step_2_daily_cache():
     """Append new bars to local daily OHLCV cache via EODHD."""
-    step_header(2, TOTAL_STEPS, "Local daily OHLCV Cache — Append (EODHD)")
+    step_header(2, TOTAL_STEPS, "Local daily OHLCV Cache -- Append (EODHD)")
 
     from cache_builder import append_daily_cache
     t0 = time.time()
     data = append_daily_cache()
     elapsed = time.time() - t0
-    print(f"  ✓ {len(data)} tickers in cache ({elapsed:.1f}s)")
+    print(f"  OK {len(data)} tickers in cache ({elapsed:.1f}s)")
 
 
 def step_3_weekly_cache():
     """Append new bars to weekly OHLCV cache via EODHD."""
-    step_header(3, TOTAL_STEPS, "Weekly OHLCV Cache — Append (EODHD)")
+    step_header(3, TOTAL_STEPS, "Weekly OHLCV Cache -- Append (EODHD)")
 
     try:
         from cache_builder import append_weekly
         t0 = time.time()
         data = append_weekly()
         elapsed = time.time() - t0
-        print(f"  ✓ Weekly cache updated ({elapsed:.1f}s)")
+        print(f"  OK Weekly cache updated ({elapsed:.1f}s)")
     except FileNotFoundError as e:
-        print(f"  ⚠ {e}")
+        print(f"  WARN {e}")
         print("  (Run 'python local_runner/cache_builder.py --htf' first)")
     except Exception as e:
-        print(f"  ✗ Weekly cache append failed: {e}")
-        print("  (Non-fatal — expr cache will resample from daily as fallback)")
+        print(f"  FAIL Weekly cache append failed: {e}")
+        print("  (Non-fatal -- expr cache will resample from daily as fallback)")
 
 
 def step_4_monthly_cache():
     """Append new bars to monthly OHLCV cache via EODHD."""
-    step_header(4, TOTAL_STEPS, "Monthly OHLCV Cache — Append (EODHD)")
+    step_header(4, TOTAL_STEPS, "Monthly OHLCV Cache -- Append (EODHD)")
 
     try:
         from cache_builder import append_monthly
         t0 = time.time()
         data = append_monthly()
         elapsed = time.time() - t0
-        print(f"  ✓ Monthly cache updated ({elapsed:.1f}s)")
+        print(f"  OK Monthly cache updated ({elapsed:.1f}s)")
     except FileNotFoundError as e:
-        print(f"  ⚠ {e}")
+        print(f"  WARN {e}")
         print("  (Run 'python local_runner/cache_builder.py --htf' first)")
     except Exception as e:
-        print(f"  ✗ Monthly cache append failed: {e}")
-        print("  (Non-fatal — expr cache will resample from daily as fallback)")
+        print(f"  FAIL Monthly cache append failed: {e}")
+        print("  (Non-fatal -- expr cache will resample from daily as fallback)")
 
 
 def step_5_intermediate_cache():
@@ -141,7 +141,7 @@ def step_5_intermediate_cache():
         t0 = time.time()
         build_full(daily_cache, workers=14)
         elapsed = time.time() - t0
-        print(f"  ✓ Full intermediate rebuild done in {elapsed:.1f}s")
+        print(f"  OK Full intermediate rebuild done in {elapsed:.1f}s")
     else:
         # Incremental: rebuild all .im files from current OHLCV
         # (Simple approach: full rebuild is fast enough at ~1.7 min)
@@ -150,13 +150,13 @@ def step_5_intermediate_cache():
         t0 = time.time()
         build_full(daily_cache, workers=14)
         elapsed = time.time() - t0
-        print(f"  ✓ Intermediate cache rebuild done in {elapsed:.1f}s")
+        print(f"  OK Intermediate cache rebuild done in {elapsed:.1f}s")
 
     # ── 5b: Run scans ──
     print()
-    print(f"  {'─'*40}")
+    print(f"  {'-'*40}")
     print(f"  Scanning locked conditions...")
-    print(f"  {'─'*40}")
+    print(f"  {'-'*40}")
 
     scan_results = {}
     # Discover available setups
@@ -169,7 +169,7 @@ def step_5_intermediate_cache():
                 setup_files.append(setup_type)
 
     if not setup_files:
-        print("  ⚠ No pyramid_results files found. Skipping scans.")
+        print("  WARN No pyramid_results files found. Skipping scans.")
         return
 
     from scan_engine import scan_setup
@@ -182,12 +182,12 @@ def step_5_intermediate_cache():
                 for s in signals:
                     print(f"    SIGNAL: {s['ticker']:>6s}  {s['date']}  ${s['close']:.2f}")
         except FileNotFoundError as e:
-            print(f"  ⚠ {e}")
+            print(f"  WARN {e}")
         except Exception as e:
-            print(f"  ✗ Scan failed for {setup_type}: {e}")
+            print(f"  FAIL Scan failed for {setup_type}: {e}")
 
     total_signals = sum(len(v) for v in scan_results.values())
-    print(f"\n  ✓ Scans complete: {total_signals} signals across {len(setup_files)} setups")
+    print(f"\n  OK Scans complete: {total_signals} signals across {len(setup_files)} setups")
 
 
 def step_6_matrix():
@@ -214,7 +214,7 @@ def step_6_matrix():
     if not has_expr_cache:
         print("  Expression cache not found. Skipping matrix rebuild.")
         print("  (Matrix will be built during consensus materialization)")
-        print("  (Daily scans run from intermediate cache — not affected)")
+        print("  (Daily scans run from intermediate cache -- not affected)")
         return
 
     def progress(phase, pct, detail):
@@ -223,7 +223,7 @@ def step_6_matrix():
     t0 = time.time()
     result = get_universe_matrix(progress_fn=progress, force=True)
     elapsed = time.time() - t0
-    print(f"  ✓ {result['n_universe']} tickers × {result['n_exprs']} expressions in {elapsed:.1f}s")
+    print(f"  OK {result['n_universe']} tickers x {result['n_exprs']} expressions in {elapsed:.1f}s")
 
 
 def step_7_earnings():
@@ -256,38 +256,38 @@ def step_7_earnings():
                     print(f"    {count} tickers, {total} dates...")
                     last_count = count
                 elif count == last_count and count > 0:
-                    # No change for 30s — probably done
-                    print(f"  ✓ Earnings refresh complete: {count} tickers, {total} dates")
+                    # No change for 30s -- probably done
+                    print(f"  OK Earnings refresh complete: {count} tickers, {total} dates")
                     return
             except:
                 pass
 
-        print("  ✓ Earnings refresh sent (may still be running in background)")
+        print("  OK Earnings refresh sent (may still be running in background)")
 
     except Exception as e:
-        print(f"  ✗ Failed: {e}")
-        print("  (Non-fatal — vetting will work without earnings dates)")
+        print(f"  FAIL Failed: {e}")
+        print("  (Non-fatal -- vetting will work without earnings dates)")
 
 
 def step_8_market_cache():
     """Append new bars to market context cache (266 instruments) and recompute."""
-    step_header(8, TOTAL_STEPS, "Market Context Cache — Append")
+    step_header(8, TOTAL_STEPS, "Market Context Cache -- Append")
 
     try:
         from market_cache_builder import append_new_bars
         append_new_bars(n_threads=16)
-        print("  ✓ Market cache updated")
+        print("  OK Market cache updated")
     except ImportError:
-        print("  ✗ market_cache_builder.py not found — skipping")
+        print("  FAIL market_cache_builder.py not found -- skipping")
         print("  (Market regime data will be stale until cache is built)")
     except Exception as e:
-        print(f"  ✗ Market cache append failed: {e}")
-        print("  (Non-fatal — regime model will use stale data)")
+        print(f"  FAIL Market cache append failed: {e}")
+        print("  (Non-fatal -- regime model will use stale data)")
 
 
 def step_9_fundamentals():
-    """Refresh fundamentals cache — fetch new tickers, periodic full re-fetch."""
-    step_header(9, TOTAL_STEPS, "Fundamentals Cache — Incremental")
+    """Refresh fundamentals cache -- fetch new tickers, periodic full re-fetch."""
+    step_header(9, TOTAL_STEPS, "Fundamentals Cache -- Incremental")
 
     try:
         from scripts.fetch_fundamentals import (
@@ -305,7 +305,7 @@ def step_9_fundamentals():
                 DEFAULT_DELAY
             )
         except ImportError:
-            print("  ✗ fetch_fundamentals.py not found — skipping")
+            print("  FAIL fetch_fundamentals.py not found -- skipping")
             return
 
     try:
@@ -319,14 +319,14 @@ def step_9_fundamentals():
         from datetime import datetime as _dt
         is_monday = _dt.now().weekday() == 0
         if is_monday:
-            # Re-fetch everything — shares outstanding and float drift over time
+            # Re-fetch everything -- shares outstanding and float drift over time
             to_fetch = all_tickers
-            print(f"  Monday — full re-fetch of {len(to_fetch)} tickers")
+            print(f"  Monday -- full re-fetch of {len(to_fetch)} tickers")
         elif new_tickers:
             to_fetch = new_tickers
             print(f"  {len(new_tickers)} new tickers to fetch")
         else:
-            print(f"  ✓ Fundamentals cache current ({len(existing)} tickers, no new)")
+            print(f"  OK Fundamentals cache current ({len(existing)} tickers, no new)")
             return
 
         opener, crumb = create_yahoo_session()
@@ -340,7 +340,7 @@ def step_9_fundamentals():
                 results[ticker] = data
                 n_ok += 1
             elif data and data.get("error") == "rate_limited":
-                print(f"  ⚠ Rate limited at {ticker}. Sleeping 30s...")
+                print(f"  WARN Rate limited at {ticker}. Sleeping 30s...")
                 time.sleep(30)
                 try:
                     opener, crumb = create_yahoo_session()
@@ -363,7 +363,7 @@ def step_9_fundamentals():
             time.sleep(DEFAULT_DELAY)
 
         save_cache(results)
-        print(f"  ✓ Fundamentals: {n_ok} fetched, {n_err} errors, {len(results)} total")
+        print(f"  OK Fundamentals: {n_ok} fetched, {n_err} errors, {len(results)} total")
 
         try:
             from file_mirror import mirror_file
@@ -373,13 +373,13 @@ def step_9_fundamentals():
             pass
 
     except Exception as e:
-        print(f"  ✗ Fundamentals refresh failed: {e}")
-        print("  (Non-fatal — EV grinder will use existing cache)")
+        print(f"  FAIL Fundamentals refresh failed: {e}")
+        print("  (Non-fatal -- EV grinder will use existing cache)")
 
 
 def step_10_seed_vault():
     """Push seed vault backup to Railway."""
-    step_header(10, TOTAL_STEPS, "Seed Vault — Backup to Railway")
+    step_header(10, TOTAL_STEPS, "Seed Vault -- Backup to Railway")
 
     try:
         from scripts.seed_vault import backup
@@ -390,11 +390,11 @@ def step_10_seed_vault():
             from seed_vault import backup
             backup()
         except ImportError:
-            print("  ✗ seed_vault.py not found — skipping")
+            print("  FAIL seed_vault.py not found -- skipping")
             return
     except Exception as e:
-        print(f"  ✗ Seed vault backup failed: {e}")
-        print("  (Non-fatal — data is safe locally)")
+        print(f"  FAIL Seed vault backup failed: {e}")
+        print("  (Non-fatal -- data is safe locally)")
 
 
 def main():
@@ -407,10 +407,10 @@ def main():
     args = parser.parse_args()
     skip_steps = set(args.skip)
 
-    print(f"\n{'═'*60}")
+    print(f"\n{'='*60}")
     print(f"  Nightly Update")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S ET')}")
-    print(f"{'═'*60}")
+    print(f"{'='*60}")
 
     total_start = time.time()
 
@@ -426,10 +426,10 @@ def main():
         if not has_new_data:
             # No new market data, but still run seed vault backup
             step_10_seed_vault()
-            print(f"\n{'═'*60}")
-            print(f"  Done — no data updates needed, seed vault backed up")
+            print(f"\n{'='*60}")
+            print(f"  Done -- no data updates needed, seed vault backed up")
             print(f"  {ts()}")
-            print(f"{'═'*60}\n")
+            print(f"{'='*60}\n")
             return
 
     # Steps 2-9: refresh all local data
@@ -445,7 +445,7 @@ def main():
     ]
     for num, fn in steps:
         if num in skip_steps:
-            print(f"\n  ⏭ Skipping step {num} (--skip)")
+            print(f"\n  SKIP Skipping step {num} (--skip)")
             continue
         fn()
 
@@ -455,12 +455,12 @@ def main():
     total_elapsed = time.time() - total_start
     minutes = total_elapsed / 60
 
-    print(f"\n{'═'*60}")
+    print(f"\n{'='*60}")
     print(f"  Nightly Update Complete")
     print(f"  Total time: {minutes:.1f} min")
     print(f"  {ts()}")
     print(f"  Ready to grind!")
-    print(f"{'═'*60}\n")
+    print(f"{'='*60}\n")
 
 
 if __name__ == "__main__":
