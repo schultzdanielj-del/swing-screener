@@ -241,7 +241,7 @@ def fetch_spy_reference():
             "Pipeline cannot proceed without SPY as reference."
         )
     print(f"  SPY: {len(spy_df)} bars, "
-          f"{str(spy_df['date'].iloc[0])[:10]} → {str(spy_df['date'].iloc[-1])[:10]}")
+          f"{str(spy_df['date'].iloc[0])[:10]} -> {str(spy_df['date'].iloc[-1])[:10]}")
     return spy_df
 
 
@@ -506,7 +506,7 @@ def _yfinance_fill_gaps(universe, stale_tickers, spy_last):
 
     Uses yf.download() with auto_adjust=False to get raw OHLC + Adj Close,
     then applies the same adjustment ratio as the EODHD pipeline:
-        ratio = adj_close / close → applied to O, H, L, C
+        ratio = adj_close / close -> applied to O, H, L, C
 
     Fetches in small batches (80 tickers) with generous sleep to stay
     well under Yahoo's rate limits. 15-minute budget for ~600 tickers.
@@ -547,7 +547,7 @@ def _yfinance_fill_gaps(universe, stale_tickers, spy_last):
         # (e.g. BRK-B is the same in both, but ALL-P-J needs ALL-PJ)
         # yfinance also chokes on tickers with multiple dashes sometimes
         yf_symbols = []
-        ticker_map = {}  # yf_symbol → original ticker
+        ticker_map = {}  # yf_symbol -> original ticker
         for t in batch:
             yf_sym = t  # most are identical
             yf_symbols.append(yf_sym)
@@ -784,7 +784,7 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=100,
 
     Args:
         tickers: list of ticker symbols to fetch
-        fetch_fn: callable(ticker) → (ticker, result_or_None)
+        fetch_fn: callable(ticker) -> (ticker, result_or_None)
         label: display label for progress
         batch_size: tickers per batch
         min_sleep: minimum sleep between batches (seconds)
@@ -1251,7 +1251,7 @@ def append_daily_cache():
     print(f"\n  Checking for splits after {cached_spy_last}...")
     split_tickers = detect_splits(list(universe.keys()), universe, cached_spy_last, spy_dates)
     if split_tickers:
-        print(f"  ⚠ {len(split_tickers)} tickers need full refetch: {split_tickers[:20]}")
+        print(f"  WARNING: {len(split_tickers)} tickers need full refetch: {split_tickers[:20]}")
         if len(split_tickers) > 20:
             print(f"    ... and {len(split_tickers) - 20} more")
         print(f"    These will get full refetch (historical prices changed)")
@@ -1457,13 +1457,13 @@ def append_daily_cache():
                 all_stale = still_stale
 
             if all_stale:
-                print(f"\n  ⚠ {len(all_stale)} tickers could not be validated:")
+                print(f"\n  WARNING: {len(all_stale)} tickers could not be validated:")
                 if len(all_stale) <= 20:
                     print(f"    {all_stale}")
 
     except KeyboardInterrupt:
         interrupted = True
-        print(f"\n\n  ⚠ Interrupted! Saving partial progress...")
+        print(f"\n\n  WARNING: Interrupted! Saving partial progress...")
         print(f"    {appended} tickers appended before interrupt")
         print(f"    Re-run to resume — already-updated tickers will be skipped")
 
@@ -1484,7 +1484,7 @@ def append_daily_cache():
           f"No change: {no_new}, Failed: {failed}")
     print(f"  Time: {elapsed:.0f}s")
     if interrupted:
-        print(f"  ⚠ Partial save — re-run to finish remaining tickers")
+        print(f"  WARNING: Partial save -- re-run to finish remaining tickers")
 
     return universe
 
@@ -1522,7 +1522,7 @@ def _merge_htf_bars(existing_df, new_df):
             # New period — collect for append
             rows_to_append.append(row)
             last_cached_date = row_date
-        # else: row_date < last_cached_date → frozen, skip
+        # else: row_date < last_cached_date -> frozen, skip
 
     if rows_to_append:
         append_df = pd.DataFrame(rows_to_append)
@@ -1768,7 +1768,7 @@ def append_htf_caches():
 def daily_status():
     """Show daily cache status."""
     print("\n  Daily OHLCV Cache Status")
-    print("  " + "─" * 40)
+    print("  " + "-" * 40)
 
     for label, pkl_file, meta_file in [
         ("Daily", CACHE_DAILY_FILE, CACHE_DAILY_META),
@@ -1811,7 +1811,7 @@ def daily_status():
 def htf_status():
     """Show HTF cache status."""
     print("\n  HTF OHLCV Cache Status")
-    print("  " + "─" * 40)
+    print("  " + "-" * 40)
 
     for label, pkl_file, meta_file in [
         ("Weekly", WEEKLY_FILE, WEEKLY_META),
@@ -1898,15 +1898,15 @@ def check_freshness():
         print(f"  EODHD last:      {eodhd_last}")
 
         if eodhd_last > last_cached:
-            print(f"  → New trading day detected")
+            print(f"  -> New trading day detected")
             return True
         else:
-            print(f"  → Already up to date")
+            print(f"  -> Already up to date")
             return False
 
     except Exception as e:
         print(f"  Could not check EODHD: {e}")
-        print("  → Assuming new data (safe fallback)")
+        print("  -> Assuming new data (safe fallback)")
         return True
 
 
