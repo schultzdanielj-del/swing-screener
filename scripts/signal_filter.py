@@ -36,16 +36,35 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, os.path.join(REPO_ROOT, "local_runner"))
 
-from expr_cache_builder import ExprSeriesCache
+from expr_cache_builder import ExprSeriesCache, dispatch_arith_numpy
+from intermediate_cache_builder import read_im_as_dict
 
 # ============================================================
 # Config
 # ============================================================
 LOCAL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "local_runner")
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
+IM_CACHE_DIR = os.path.join(CACHE_DIR, "intermediate_series")
 RAILWAY_URL = "https://web-production-e3025.up.railway.app"
 MAX_FORWARD = 120
 DEFAULT_WORKERS = os.cpu_count() or 8
+EXPR_CACHE_START = "2020-01-02"
+
+# Ops that dispatch_arith_numpy handles from intermediates (fast path).
+# Everything else falls back to ExpressionEngine via compute_series.
+_DISPATCH_OPS = {
+    "ma_slope", "ma_spread", "extension", "distance_to_maxh", "ratio_c_maxh",
+    "distance_to_minl", "ratio_c_minl", "extension_slope", "extension_peak_ratio",
+    "extension_ceiling_ratio", "ext_adr_multiples", "spread_slope", "pullback",
+    "range_position", "range_width", "roc", "roc_delta", "adx", "adx_slope",
+    "rsi", "rsi_slope", "stochastic", "cci", "di_spread", "volume_ratio",
+    "candle_range_ratio", "body_range_ratio", "upper_wick_ratio", "lower_wick_ratio",
+    "bop", "obv_slope", "macd_histogram", "macd_histogram_slope", "macd_line_norm",
+    "bollinger_pctb", "bollinger_bandwidth", "bollinger_bandwidth_rank",
+    "aroon_up_val", "aroon_down_val", "aroon_oscillator", "cmf", "cmf_slope",
+    "kaufman_efficiency_ratio", "atr_ratio", "slope_ratio", "ma_undercut_depth",
+    "channel_slope", "retrace_high", "retrace_low",
+}
 
 def _get_setup_direction(setup_type):
     """Look up trade direction from the local setups table."""
@@ -200,130 +219,24 @@ def load_examples(setup_type):
 
 
 # ============================================================
-# Phase 1: Scan all signals (parallel)
+# Phase 1: Scan all signals (parallel) — intermediate cache
 # ============================================================
-_worker_cache = None
-_worker_conditions = None
-_worker_expr_cache = None
-_worker_cond_col_indices = None
 
+def _classify_conditions(conditions):
+    """Split conditions into dispatch-able (from intermediates) vs fallback.
 
-def _init_scan_worker(cache, conditions, expr_cache_dir, cond_col_indices):
-    global _worker_cache, _worker_conditions, _worker_expr_cache, _worker_cond_col_indices
-    _worker_cache = cache
-    _worker_conditions = conditions
-    _worker_expr_cache = expr_cache_dir
-    _worker_cond_col_indices = cond_col_indices
-
-
-def _load_ticker_npz(ticker):
-    """Load expression cache .npz for a ticker.
-
-    Casts float16 data to float32 for consistent precision.
-    Mirrors the cast in expr_cache_builder.load_ticker_cache().
-    If an .append file exists (from incremental nightly appends),
-    its rows are vstacked onto the base .npz data.
+    Returns (dispatch_indices, fallback_indices) — lists of int indices
+    into the conditions list.
     """
-    safe = ticker.replace("/", "_").replace("\\", "_")
-    path = os.path.join(_worker_expr_cache, f"{safe}.npz")
-    if not os.path.exists(path):
-        return None, None
-    try:
-        loaded = np.load(path, allow_pickle=True)
-        data = loaded["data"]
-        if data.dtype != np.float32:
-            data = data.astype(np.float32)
-        dates = loaded["dates"]
-
-        # Check for incremental append file
-        # The .append file may be wider than .npz if produced by forward-prop
-        # (16,001 cols = 15,805 expressions + 196 intermediates).
-        # Only the first n_exprs columns are expression values for consumers.
-        append_path = os.path.join(_worker_expr_cache, f"{safe}.append")
-        append_dates_path = os.path.join(_worker_expr_cache, f"{safe}.append_dates")
-        if os.path.exists(append_path) and os.path.exists(append_dates_path):
-            try:
-                n_exprs = data.shape[1]
-                file_size = os.path.getsize(append_path)
-                if file_size > 0:
-                    # Detect width: forward-prop wide (n_exprs + 196) or legacy narrow (n_exprs)
-                    N_INTERMEDIATES = 196
-                    wide_cols = n_exprs + N_INTERMEDIATES
-                    narrow_cols = n_exprs
-                    if file_size % (wide_cols * 2) == 0:
-                        total_cols = wide_cols
-                    elif file_size % (narrow_cols * 2) == 0:
-                        total_cols = narrow_cols
-                    else:
-                        total_cols = 0  # Corrupt
-
-                    if total_cols > 0:
-                        raw = np.fromfile(append_path, dtype=np.float16)
-                        appended_full = raw.reshape(-1, total_cols)
-                        appended = appended_full[:, :n_exprs].astype(np.float32)
-                        with open(append_dates_path, "r") as f:
-                            appended_dates = np.array([line.strip() for line in f if line.strip()])
-                        if len(appended_dates) == appended.shape[0]:
-                            data = np.vstack([data, appended])
-                            dates = np.concatenate([dates, appended_dates])
-            except Exception:
-                pass  # Corrupt append file — return base .npz only
-
-        return dates, data
-    except:
-        return None, None
-
-
-def _scan_batch(tickers):
-    """Scan a batch of tickers using expression cache. Returns list of signals.
-
-    _worker_cache is a slim dict: {ticker: (n_bars, dates_array, closes_array)}
-    """
-    signals = []
-    skipped = 0
-    for ticker in tickers:
-        entry = _worker_cache.get(ticker)
-        if entry is None:
-            skipped += 1
-            continue
-        n_bars, dates, closes = entry
-        try:
-            dates_cache, data_cache = _load_ticker_npz(ticker)
-            if dates_cache is None:
-                skipped += 1
-                continue
-
-            # Verify bar count matches
-            if len(dates_cache) != n_bars:
-                skipped += 1
-                continue
-
-            pass_mask = np.ones(n_bars, dtype=bool)
-            pass_mask[:50] = False  # warmup
-
-            for i, cond in enumerate(_worker_conditions):
-                col_idx = _worker_cond_col_indices[i]
-                if col_idx is None:
-                    pass_mask[:] = False
-                    break
-                series = data_cache[:, col_idx]
-                low, high = cond["low"], cond["high"]
-                in_range = (series >= low) & (series <= high)
-                in_range[np.isnan(series)] = False
-                pass_mask &= in_range
-
-            signal_indices = np.where(pass_mask)[0]
-            if len(signal_indices) > 0:
-                for idx in signal_indices:
-                    signals.append({
-                        "ticker": ticker,
-                        "date": dates[idx],
-                        "bar_idx": int(idx),
-                        "close": float(closes[idx]),
-                    })
-        except Exception:
-            skipped += 1
-    return signals, skipped
+    dispatch_idx = []
+    fallback_idx = []
+    for i, cond in enumerate(conditions):
+        op = cond.get("compute", {}).get("op", "")
+        if op in _DISPATCH_OPS:
+            dispatch_idx.append(i)
+        else:
+            fallback_idx.append(i)
+    return dispatch_idx, fallback_idx
 
 
 def _build_slim_cache(cache):
@@ -343,36 +256,180 @@ def _build_slim_cache(cache):
     return slim
 
 
-def scan_all_signals(slim_cache, conditions, workers, expr_cache):
-    """Scan full universe for signal conditions using expression cache.
+def _build_ohlcv_cache(cache):
+    """Build OHLCV arrays for ExpressionEngine fallback in scan workers.
 
-    slim_cache: {ticker: (n_bars, dates_strs, closes)} — lightweight, no DataFrames.
+    Returns {ticker: (opens, highs, lows, volumes)} as float64 numpy arrays.
+    Only needed when some conditions require ExpressionEngine (bool_aggs, SLOW_OPS, etc.).
+    """
+    ohlcv = {}
+    for ticker, df in cache.items():
+        if df is not None and len(df) >= 100:
+            ohlcv[ticker] = (
+                df["open"].values.astype(np.float64),
+                df["high"].values.astype(np.float64),
+                df["low"].values.astype(np.float64),
+                df["volume"].values.astype(np.float64),
+            )
+    return ohlcv
+
+
+# Worker globals
+_w_slim = None
+_w_ohlcv = None
+_w_conditions = None
+_w_dispatch_idx = None
+_w_fallback_idx = None
+_w_im_dir = None
+
+
+def _init_scan_worker_im(slim, conds, im_dir, dispatch_idx, fallback_idx, ohlcv):
+    global _w_slim, _w_ohlcv, _w_conditions, _w_dispatch_idx, _w_fallback_idx, _w_im_dir
+    _w_slim = slim
+    _w_ohlcv = ohlcv
+    _w_conditions = conds
+    _w_dispatch_idx = dispatch_idx
+    _w_fallback_idx = fallback_idx
+    _w_im_dir = im_dir
+
+
+def _scan_batch_im(tickers):
+    """Scan a batch of tickers against all conditions using intermediate cache.
+
+    For each ticker:
+      1. Load .im file (196 intermediates) — fast
+      2. Evaluate dispatch conditions via dispatch_arith_numpy — fast
+      3. If any condition needs fallback, build ExpressionEngine from OHLCV — slower
+      4. Combine all condition masks, extract signal bars for ALL bars (not just last)
+
+    Returns (signals_list, skipped_count).
+    """
+    signals = []
+    skipped = 0
+    for ticker in tickers:
+        entry = _w_slim.get(ticker)
+        if entry is None:
+            skipped += 1
+            continue
+        n_bars, dates, closes = entry
+
+        try:
+            # Load .im file
+            safe = ticker.replace("/", "_").replace("\\", "_")
+            im_path = os.path.join(_w_im_dir, f"{safe}.im")
+            im_dict, im_dates = read_im_as_dict(im_path)
+            if im_dict is None or len(im_dates) < 50:
+                skipped += 1
+                continue
+
+            n_im = len(im_dates)
+            if n_im != n_bars:
+                skipped += 1
+                continue
+
+            pass_mask = np.ones(n_im, dtype=bool)
+            pass_mask[:50] = False  # warmup
+
+            # Track dispatch conditions that returned None (defer to fallback)
+            deferred = []
+
+            # ── Dispatch conditions (fast path from intermediates) ──
+            for i in _w_dispatch_idx:
+                cond = _w_conditions[i]
+                series = dispatch_arith_numpy(cond["compute"], im_dict)
+                if series is None:
+                    deferred.append(i)
+                    continue
+                series = np.asarray(series, dtype=np.float64)[:n_im]
+                low, high = cond["low"], cond["high"]
+                in_range = (series >= low) & (series <= high)
+                in_range[np.isnan(series)] = False
+                pass_mask &= in_range
+                if not pass_mask.any():
+                    break
+
+            # ── Fallback conditions + deferred dispatch failures ──
+            all_fallback = list(_w_fallback_idx) + deferred
+            if all_fallback and pass_mask.any():
+                ohlcv_entry = _w_ohlcv.get(ticker) if _w_ohlcv is not None else None
+                if ohlcv_entry is None:
+                    # No OHLCV available — cannot evaluate fallback conditions
+                    pass_mask[:] = False
+                else:
+                    opens, highs, lows, volumes = ohlcv_entry
+                    df = pd.DataFrame({
+                        "date": pd.to_datetime(dates),
+                        "open": opens[:n_im],
+                        "high": highs[:n_im],
+                        "low": lows[:n_im],
+                        "close": closes[:n_im],
+                        "volume": volumes[:n_im],
+                    })
+                    from scripts.expression_engine import ExpressionEngine
+                    from scripts.backtest_conditions import compute_series
+                    engine = ExpressionEngine(df)
+
+                    for i in all_fallback:
+                        if not pass_mask.any():
+                            break
+                        cond = _w_conditions[i]
+                        series = compute_series(engine, cond["compute"])
+                        if series is None:
+                            pass_mask[:] = False
+                            break
+                        series = np.asarray(series, dtype=np.float64)[:n_im]
+                        low, high = cond["low"], cond["high"]
+                        in_range = (series >= low) & (series <= high)
+                        in_range[np.isnan(series)] = False
+                        pass_mask &= in_range
+
+            # Extract signals from all passing bars
+            signal_indices = np.where(pass_mask)[0]
+            for idx in signal_indices:
+                signals.append({
+                    "ticker": ticker,
+                    "date": dates[idx],
+                    "bar_idx": int(idx),
+                    "close": float(closes[idx]),
+                })
+        except Exception:
+            skipped += 1
+
+    return signals, skipped
+
+
+def scan_all_signals(slim_cache, conditions, workers, ohlcv_cache=None):
+    """Scan full universe for signal conditions using intermediate cache.
+
+    Derives expression values on-the-fly from .im files (196 intermediates)
+    via dispatch_arith_numpy. Falls back to ExpressionEngine for ops that
+    dispatch cannot handle (bool_aggs, SLOW_OPS, etc.).
+
+    Evaluates ALL bars per ticker — signal_filter feeds classification cycles.
+
+    slim_cache: {ticker: (n_bars, dates_strs, closes)} — lightweight.
+    ohlcv_cache: {ticker: (opens, highs, lows, volumes)} — for fallback conditions.
     """
     tickers = list(slim_cache.keys())
     batch_size = max(1, len(tickers) // (workers * 4))
     batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
 
-    # Map condition names to expression cache column indices
-    cond_col_indices = []
-    for cond in conditions:
-        col_idx = expr_cache.expr_index(cond["name"])
-        if col_idx is None:
-            print(f"  WARNING: condition '{cond['name']}' not in expression cache!")
-        cond_col_indices.append(col_idx)
-
-    expr_cache_dir = os.path.join(REPO_ROOT, "local_runner", "cache", "expr_series")
+    dispatch_idx, fallback_idx = _classify_conditions(conditions)
+    n_dispatch = len(dispatch_idx)
+    n_fallback = len(fallback_idx)
 
     print(f"\n  Scanning {len(tickers):,} tickers x {len(conditions)} conditions...")
-    print(f"  {workers} workers, {len(batches)} batches (using expression cache)")
+    print(f"  {n_dispatch} dispatch + {n_fallback} fallback conditions")
+    print(f"  {workers} workers, {len(batches)} batches (using intermediate cache)")
     t0 = time.time()
 
     all_signals = []
     with ProcessPoolExecutor(
         max_workers=workers,
-        initializer=_init_scan_worker,
-        initargs=(slim_cache, conditions, expr_cache_dir, cond_col_indices)
+        initializer=_init_scan_worker_im,
+        initargs=(slim_cache, conditions, IM_CACHE_DIR, dispatch_idx, fallback_idx, ohlcv_cache)
     ) as pool:
-        futures = [pool.submit(_scan_batch, batch) for batch in batches]
+        futures = [pool.submit(_scan_batch_im, batch) for batch in batches]
         done = 0
         for future in futures:
             batch_signals, _ = future.result()
@@ -1159,14 +1216,15 @@ def main():
     print(f"  Using filter threshold: {min_adr:.1f} ADR (90% of floor)")
 
     # Phase 3: Scan all backtest signals
-    # Build slim cache (bar count + dates + closes only), then free full cache
-    # to make room for worker processes. Each worker gets a copy of the slim cache.
+    # Build slim cache + OHLCV arrays (if fallback conditions exist), then free full cache.
     print(f"\n  PHASE 3: Scan all signals")
     slim_cache = _build_slim_cache(cache)
+    _, fallback_idx = _classify_conditions(conditions)
+    ohlcv_cache = _build_ohlcv_cache(cache) if fallback_idx else None
     del cache
     import gc; gc.collect()
-    raw_signals = scan_all_signals(slim_cache, conditions, args.workers, expr_cache)
-    del slim_cache; gc.collect()
+    raw_signals = scan_all_signals(slim_cache, conditions, args.workers, ohlcv_cache)
+    del slim_cache, ohlcv_cache; gc.collect()
 
     # Phase 4: Deduplicate backtest signals
     print(f"\n  PHASE 4: Deduplicate (consecutive -> rightmost)")
