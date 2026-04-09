@@ -56,11 +56,16 @@ MAX_FORWARD_DEFAULT = 120
 DEFAULT_WORKERS = os.cpu_count() or 8
 N_THRESHOLDS = 20
 
-SETUP_CONFIGS = {
-    "dtss": {"direction": "short"},
-    "3-4db": {"direction": "short"},
-    "htf": {"direction": "long"},
-}
+def _get_setup_direction(setup_type):
+    """Look up trade direction from the local setups table."""
+    import sqlite3
+    db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT direction FROM setups WHERE setup_type=?", (setup_type,)).fetchone()
+    conn.close()
+    if not row:
+        raise ValueError(f"Setup '{setup_type}' not found in setups table")
+    return row[0]
 
 
 # ============================================================
@@ -104,11 +109,13 @@ class ExitCandidate:
 # ============================================================
 # Data Loading
 # ============================================================
-def load_5yr_cache():
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+def load_daily_cache():
+    path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(path):
+        path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
     if not os.path.exists(path):
         path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
-    print(f"  Loading 5yr cache from {path}...")
+    print(f"  Loading daily cache from {path}...")
     with open(path, "rb") as f:
         cache = pickle.load(f)
     print(f"  Loaded {len(cache):,} tickers")
@@ -145,12 +152,18 @@ def load_pyramid_conditions(setup_type):
 
 
 def load_examples(setup_type):
-    """Load validated examples from Railway."""
-    import requests
-    r = requests.get(f"{RAILWAY_URL}/api/examples/{setup_type}", timeout=30)
-    r.raise_for_status()
-    examples = r.json().get("examples", [])
-    print(f"  Loaded {len(examples)} examples from Railway")
+    """Load validated examples from local SQLite."""
+    import sqlite3
+    db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT ticker, entry_date FROM examples WHERE setup_type=? ORDER BY ticker",
+        (setup_type,)
+    ).fetchall()
+    conn.close()
+    examples = [{"ticker": r["ticker"], "entry_date": r["entry_date"]} for r in rows]
+    print(f"  Loaded {len(examples)} examples from local DB")
     return examples
 
 
@@ -176,7 +189,7 @@ def resolve_example_signals(examples, cache, conditions, expr_cache, direction,
     results = []
     for ex in examples:
         ticker = ex.get("ticker")
-        entry_date = ex.get("entryDate", ex.get("entry_date"))
+        entry_date = ex.get("entry_date")
         df = cache.get(ticker)
         if df is None:
             print(f"    {ticker}: not in OHLCV cache, skipping")
@@ -536,7 +549,57 @@ def save_results(candidates, example_signals, setup_type, meta):
         json.dump(output, f, indent=2, default=str)
     print(f"  Saved: {latest_path}")
 
+    from file_mirror import mirror_file
+    mirror_file(ts_path)
+    mirror_file(latest_path)
+
+    # Upload to Railway
+    if best:
+        _upload_exit_to_railway(setup_type, best, args_max_forward=meta.get("max_forward", MAX_FORWARD_DEFAULT))
+
     return latest_path
+
+
+def _upload_exit_to_railway(setup_type, best_candidate, args_max_forward=MAX_FORWARD_DEFAULT):
+    """Upload best exit condition to Railway exit_conditions table."""
+    import requests
+
+    # Map direction format: ">=" -> "above", "<=" -> "below"
+    dir_map = {">=": "above", "<=": "below"}
+    railway_dir = dir_map.get(best_candidate.direction, best_candidate.direction)
+
+    payload = {
+        "setup_type": setup_type,
+        "expression_name": best_candidate.expression,
+        "direction": railway_dir,
+        "threshold": best_candidate.threshold,
+        "max_forward_bars": args_max_forward,
+        "adr_threshold_multiplier": 1.0,
+    }
+
+    print(f"\n  ── EXIT UPLOAD TO RAILWAY ──")
+    print(f"  {payload['expression_name']} {railway_dir} {payload['threshold']}")
+    print(f"  max_forward_bars: {args_max_forward}")
+
+    try:
+        r = requests.post(f"{RAILWAY_URL}/api/v2/exit_conditions", json=payload, timeout=30)
+        r.raise_for_status()
+        print(f"  ✓ Railway exit condition updated")
+
+        # Verify
+        r2 = requests.get(f"{RAILWAY_URL}/api/v2/exit_conditions/{setup_type}", timeout=30)
+        r2.raise_for_status()
+        stored = r2.json().get("exit_condition", {})
+        if stored.get("expression_name") == payload["expression_name"] and \
+           stored.get("direction") == railway_dir and \
+           abs(stored.get("threshold", 0) - payload["threshold"]) < 1e-4:
+            print(f"  ✓ Verified: Railway matches local")
+        else:
+            print(f"  ⚠ MISMATCH — Railway: {stored}")
+            print(f"           Local:   {payload}")
+    except Exception as e:
+        print(f"  ⚠ Railway upload failed: {e}")
+        print(f"  Local file saved — manual upload needed")
 
 
 # ============================================================
@@ -545,7 +608,7 @@ def save_results(candidates, example_signals, setup_type, meta):
 def main():
     parser = argparse.ArgumentParser(
         description="Signal Exit Grinder — cache-compatible exit for signal filtering")
-    parser.add_argument("--setup", default="dtss", help="Setup type")
+    parser.add_argument("--setup", required=True, help="Setup type")
     parser.add_argument("--max-forward", type=int, default=MAX_FORWARD_DEFAULT,
                         help="Max forward bars from signal (default: 120)")
     parser.add_argument("--n-thresholds", type=int, default=N_THRESHOLDS,
@@ -553,11 +616,13 @@ def main():
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     parser.add_argument("--top-n", type=int, default=50,
                         help="Top N results to save")
+    parser.add_argument("--conditions-file", type=str, default=None,
+                        help="Path to JSON with pre-supplied signal conditions "
+                             "(bypasses internal load_pyramid_conditions)")
     args = parser.parse_args()
 
     setup = args.setup
-    config = SETUP_CONFIGS.get(setup, {"direction": "short"})
-    direction = config["direction"]
+    direction = _get_setup_direction(setup)
 
     print(f"\n{'='*60}")
     print(f"  SIGNAL EXIT GRINDER — {setup.upper()}")
@@ -577,7 +642,7 @@ def main():
     print(f"  Expression cache: {n_expressions:,} expressions")
 
     # Load data
-    ohlcv_cache = load_5yr_cache()
+    ohlcv_cache = load_daily_cache()
     conditions = load_pyramid_conditions(setup)
     examples = load_examples(setup)
 
@@ -609,6 +674,7 @@ def main():
     # Save
     save_results(candidates, example_signals, setup, {
         "n_expressions": n_expressions,
+        "max_forward": args.max_forward,
     })
 
     # Summary

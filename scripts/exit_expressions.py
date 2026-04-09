@@ -167,7 +167,7 @@ def generate_exit_expressions():
             })
 
     # Sequential reclaim pairs — per ta_knowledge.md:
-    # "baby and daddy to sequentially confirm above the breakout AVWAP"
+    # "baby and daddy to sequentially confirm above the breakout level"
     for i, fast_ma in enumerate(MAS[:-1]):
         for slow_ma in MAS[i + 1:]:
             exprs.append({
@@ -495,61 +495,7 @@ def generate_exit_expressions():
             "compute": {"op": "algo_shallowest_slope", "line_type": line_type},
         })
 
-    # ═══════════════════════════════════════════════════════════
-    # 15. AVWAP — Anchored VWAP levels post-entry
-    #     Per ta_knowledge.md: "Breaking this level means the average
-    #     seller from the pullback is now losing → they capitulate →
-    #     accelerates price away from entry"
-    #     "AVWAP + extension convergence: The breakout AVWAP often
-    #     aligns with the 50 extension peak"
-    #
-    #     For exit: AVWAPs are anchored at frozen pivot points
-    #     (LSP levels) detected at entry time. As the trade
-    #     progresses, we track price vs these dynamic levels.
-    #     Also includes AVWAP anchored at entry bar itself.
-    #
-    #     AVWAP arrays precomputed ONCE per example (O(1) per bar
-    #     after precomputation via cumulative sum trick).
-    # ═══════════════════════════════════════════════════════════
-
-    # Distance to LSP-anchored AVWAPs (ATR-normalized)
-    # These are AVWAPs anchored at the most prominent LSP levels frozen at entry
-    # For shorts: price below AVWAP = trapped buyers, move continues
-    for direction in ["above", "below"]:
-        for rank in [1, 2]:
-            exprs.append({
-                "name": f"avwap_lsp_{direction}{rank}_distance_atr",
-                "category": "avwap",
-                "compute": {"op": "avwap_lsp_distance", "direction": direction,
-                            "rank": rank},
-            })
-
-    # AVWAP anchored at entry bar — distance from current price
-    # Shows how far price has moved from the entry's average cost basis
-    exprs.append({
-        "name": "avwap_entry_distance_atr",
-        "category": "avwap",
-        "compute": {"op": "avwap_entry_distance"},
-    })
-
-    # AVWAP slope — is the LSP AVWAP converging or diverging from price?
-    # Convergence = potential reaction zone approaching
-    for direction in ["above", "below"]:
-        exprs.append({
-            "name": f"avwap_lsp_{direction}1_slope",
-            "category": "avwap",
-            "compute": {"op": "avwap_lsp_slope", "direction": direction, "rank": 1},
-        })
-
-    # Price crossed AVWAP (boolean) — key structural event
-    # For shorts: crossing below overhead AVWAP = bullish reclaim (exit signal)
-    # For shorts: crossing below support AVWAP = continuation
-    for direction in ["above", "below"]:
-        exprs.append({
-            "name": f"avwap_lsp_{direction}1_crossed",
-            "category": "avwap",
-            "compute": {"op": "avwap_lsp_crossed", "direction": direction, "rank": 1},
-        })
+    # (Section 15 — AVWAP removed. Dan handles AVWAP manually at trade entry.)
 
     # ═══════════════════════════════════════════════════════════
     # 16. ENTRY-RELATIVE — expression value change from entry bar
@@ -657,15 +603,6 @@ def generate_exit_expressions():
                         "line_type": line_type, "rank": 1},
         })
 
-    # AVWAP entry distance — ratio to entry (how much has the entry AVWAP moved)
-    for direction in ["above", "below"]:
-        exprs.append({
-            "name": f"avwap_lsp_{direction}1_dist_ratio_entry",
-            "category": "entry_relative",
-            "compute": {"op": "ratio_to_entry", "base_op": "avwap_lsp_distance",
-                        "direction": direction, "rank": 1},
-        })
-
     return exprs
 
 
@@ -685,7 +622,7 @@ def generate_exit_boolean_conditions(base_exprs):
         "close_above_ma", "sequential_reclaim", "is_green", "is_doji",
         "touched_ma", "closed_below_ma", "below_signal_bar_low",
         "higher_low_formed", "mfe_expanding", "reclaim_then_lost",
-        "range_contracting", "lsp_broken", "algo_broken", "avwap_lsp_crossed",
+        "range_contracting", "lsp_broken", "algo_broken",
     }
 
     native_bools = [e for e in base_exprs if e["compute"]["op"] in native_bool_ops]
@@ -868,24 +805,6 @@ def generate_exit_boolean_conditions(base_exprs):
                     "condition": {"base_op": "algo_distance", "line_type": line_type,
                                   "rank": rank, "threshold": thresh, "direction": "below"},
                 })
-
-    # AVWAP distance thresholds — approaching LSP-anchored AVWAP
-    for avwap_dir in ["above", "below"]:
-        for rank in [1]:
-            for thresh in [0.5, 1.0, 2.0]:
-                threshold_bools.append({
-                    "name": f"avwap_lsp_{avwap_dir}{rank}_within_{str(thresh).replace('.','_')}atr",
-                    "condition": {"base_op": "avwap_lsp_distance", "avwap_direction": avwap_dir,
-                                  "rank": rank, "threshold": thresh, "direction": "below"},
-                })
-
-    # AVWAP entry distance thresholds — how far from entry cost basis
-    for thresh in [1.0, 2.0, 3.0, 5.0]:
-        threshold_bools.append({
-            "name": f"avwap_entry_beyond_{str(thresh).replace('.','_')}atr",
-            "condition": {"base_op": "avwap_entry_distance",
-                          "threshold": thresh, "direction": "above"},
-        })
 
     # Entry-relative RSI delta thresholds
     for p in [9, 14]:

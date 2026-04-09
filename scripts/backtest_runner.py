@@ -17,7 +17,7 @@ Outputs:
     local_runner/cache/backtest_charts_{setup}/         — chart images per signal
 
 Requires:
-    - 5-year OHLCV cache (local_runner/cache/universe_ohlcv_5yr.pkl)
+    - daily OHLCV cache (local_runner/cache/universe_ohlcv_daily.pkl)
     - Pyramid grinder results (local_runner/cache/pyramid_results_{setup}.json
       or historical_results_{setup}.json)
 """
@@ -470,13 +470,15 @@ def main():
     # Load conditions
     conditions, results = load_conditions(args.setup)
 
-    # Load 5yr cache
-    cache_path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+    # Load daily cache
+    cache_path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(cache_path):
+        cache_path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
     if not os.path.exists(cache_path):
         cache_path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
     if not os.path.exists(cache_path):
         print(f"  ERROR: No OHLCV cache found at {cache_path}")
-        print(f"  Run: python local_runner/cache_builder.py --5yr")
+        print(f"  Run: python local_runner/cache_builder.py --daily")
         return
 
     print(f"  Loading OHLCV cache...")

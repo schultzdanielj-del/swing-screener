@@ -26,7 +26,7 @@ import json
 import numpy as np
 import pandas as pd
 import pickle
-import requests
+import sqlite3
 from dataclasses import dataclass, field
 from typing import Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -47,7 +47,6 @@ from scripts.exit_expressions import (
 # ============================================================
 # Config
 # ============================================================
-RAILWAY_URL = "https://web-production-e3025.up.railway.app"
 MAX_FORWARD_DEFAULT = 120  # bars after entry to analyze (~1 quarter)
 DEFAULT_WORKERS = os.cpu_count() or 8
 
@@ -99,14 +98,16 @@ class ExitCandidate:
 # Data Loading
 # ============================================================
 
-def load_5yr_cache():
-    """Load 5-year OHLCV cache from local disk."""
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+def load_daily_cache():
+    """Load daily OHLCV cache from local disk."""
+    path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(path):
+        path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
     if not os.path.exists(path):
         path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
     if not os.path.exists(path):
         raise FileNotFoundError("No OHLCV cache found. Run cache_builder.py first.")
-    print(f"Loading 5yr OHLCV cache from {path}...")
+    print(f"Loading daily OHLCV cache from {path}...")
     with open(path, "rb") as f:
         cache = pickle.load(f)
     print(f"  {len(cache)} tickers loaded")
@@ -114,25 +115,32 @@ def load_5yr_cache():
 
 
 def load_examples(setup_type: str) -> list:
-    """Load examples from Railway API (metadata only — ticker + entry date)."""
-    r = requests.get(f"{RAILWAY_URL}/api/examples/{setup_type}")
-    r.raise_for_status()
-    data = r.json()
-    examples = data["examples"]
-    print(f"Loaded {len(examples)} {setup_type.upper()} examples")
+    """Load examples from local SQLite (metadata only — ticker + entry date)."""
+    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT id, ticker, chart_date, entry_date FROM examples WHERE setup_type=? ORDER BY ticker",
+        (setup_type,)
+    ).fetchall()
+    conn.close()
+    examples = [{"id": r["id"], "ticker": r["ticker"], "chartDate": r["chart_date"],
+                 "entryDate": r["entry_date"]} for r in rows]
+    print(f"Loaded {len(examples)} {setup_type.upper()} examples from local DB")
     return examples
 
 
 def build_example_data(example: dict, direction: str, max_forward: int,
                        universe_cache: dict, spy_df: pd.DataFrame = None) -> Optional[ExampleData]:
-    """Build ExampleData using local 5yr OHLCV cache."""
+    """Build ExampleData using local daily OHLCV cache."""
     ticker = example["ticker"]
     entry_date = example["entryDate"]
 
     try:
         df = universe_cache.get(ticker)
         if df is None:
-            print(f"  SKIP {ticker} — not in 5yr cache")
+            print(f"  SKIP {ticker} — not in daily cache")
             return None
 
         df = df.copy()
@@ -768,6 +776,10 @@ def save_results(candidates: list, examples: list, setup_type: str, args):
         json.dump(data, f, indent=2, default=lambda x: None if isinstance(x, float) and np.isnan(x) else x)
     print(f"  Saved as latest: {latest_path}")
 
+    from file_mirror import mirror_file
+    mirror_file(ts_path)
+    mirror_file(latest_path)
+
 
 # ============================================================
 # Main
@@ -795,8 +807,8 @@ def main():
     # 1. Load examples
     raw_examples = load_examples(args.setup)
 
-    # 2. Load 5yr OHLCV cache
-    universe_cache = load_5yr_cache()
+    # 2. Load daily OHLCV cache
+    universe_cache = load_daily_cache()
 
     # 3. Get SPY from cache
     spy_df = universe_cache.get("SPY")

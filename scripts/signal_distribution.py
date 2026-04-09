@@ -1,7 +1,7 @@
 """
 Signal Distribution Analyzer — Check peak/avg/median signals per day.
 
-Loads Phase 2 results + 5yr cache, applies all conditions, counts signals
+Loads Phase 2 results + daily cache, applies all conditions, counts signals
 per calendar day. Fast (~60s) since it's just 12 conditions, no candidate search.
 
 Usage:
@@ -85,8 +85,10 @@ def main():
     conditions = results["all_conditions"]
     print(f"Loaded {len(conditions)} conditions for {args.setup.upper()}")
 
-    # Load 5yr cache
-    cache_path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+    # Load daily cache
+    cache_path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(cache_path):
+        cache_path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
     if not os.path.exists(cache_path):
         cache_path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
     print(f"Loading cache...")

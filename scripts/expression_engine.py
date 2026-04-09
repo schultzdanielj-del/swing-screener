@@ -987,28 +987,6 @@ class ExpressionEngine:
                 recent_avg = self.v.iloc[recent_start:i + 1].mean()
                 return recent_avg / lsp_vol
 
-            elif op == "avwap_lsp_distance":
-                # AVWAP anchored at LSP bar — distance from scan close to AVWAP
-                # Negative = price below AVWAP (trapped buyers — short fuel)
-                # Positive = price above AVWAP
-                if self._lsp is None:
-                    return np.nan
-                lsp_bars_back = self._lsp["bars_lookback"]
-                lsp_idx = i - lsp_bars_back
-                if lsp_idx < 0:
-                    return np.nan
-                # AVWAP = cumsum(typical_price * volume) / cumsum(volume) from LSP bar
-                segment = self.df.iloc[lsp_idx:i + 1]
-                tp = (segment["high"] + segment["low"] + segment["close"]) / 3
-                vol = segment["volume"]
-                cum_vol = vol.cumsum()
-                if cum_vol.iloc[-1] <= 0:
-                    return np.nan
-                avwap = (tp * vol).cumsum() / cum_vol
-                avwap_val = avwap.iloc[-1]
-                norm = self._normalizer(comp["normalizer"])
-                return (self.c.iloc[i] - avwap_val) / norm if norm else np.nan
-
             elif op == "lsp_bars_back":
                 if self._lsp is None:
                     return np.nan

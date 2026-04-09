@@ -447,6 +447,8 @@ if __name__ == "__main__":
         with open("data/lsp_validation_results.json", "w") as f:
             json.dump(results, f, indent=2)
         print(f"\nResults saved to data/lsp_validation_results.json")
+        from file_mirror import mirror_file
+        mirror_file("data/lsp_validation_results.json")
     else:
         # Single ticker test
         ticker = sys.argv[1] if len(sys.argv) > 1 else "AAOI"

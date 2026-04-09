@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>ScanPerfect Architecture</title></head><body style="margin:0;padding:20px;background:#1a1a1a">
+<svg width="100%" viewBox="0 0 680 920" xmlns="http://www.w3.org/2000/svg">
+<style>
+text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.th { font-size: 14px; font-weight: 500; fill: #e0e0e0; }
+.ts { font-size: 12px; font-weight: 400; fill: #999; }
+.arr { stroke: #888; stroke-width: 1.5; }
+.leader { stroke: #666; stroke-width: 0.5; stroke-dasharray: 4 3; }
+/* Color fills */
+.c-gray rect { fill: #2c2c2a; stroke: #5f5e5a; }
+.c-gray .th { fill: #d3d1c7; }
+.c-gray .ts { fill: #b4b2a9; }
+.c-blue rect { fill: #042c53; stroke: #85b7eb; }
+.c-blue .th { fill: #b5d4f4; }
+.c-blue .ts { fill: #85b7eb; }
+.c-teal rect { fill: #085041; stroke: #5dcaa5; }
+.c-teal .th { fill: #9fe1cb; }
+.c-teal .ts { fill: #5dcaa5; }
+.c-purple rect { fill: #26215c; stroke: #afa9ec; }
+.c-purple .th { fill: #cecbf6; }
+.c-purple .ts { fill: #afa9ec; }
+.c-coral rect { fill: #4a1b0c; stroke: #f0997b; }
+.c-coral .th { fill: #f5c4b3; }
+.c-coral .ts { fill: #f0997b; }
+.c-amber rect { fill: #412402; stroke: #fac775; }
+.c-amber .th { fill: #fac775; }
+.c-amber .ts { fill: #ef9f27; }
+.c-green rect { fill: #173404; stroke: #97c459; }
+.c-green .th { fill: #c0dd97; }
+.c-green .ts { fill: #97c459; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<!-- NIGHTLY PIPELINE -->
+<g class="c-gray">
+<rect x="40" y="40" width="600" height="120" rx="16" stroke-width="0.5"/>
+<text class="th" x="340" y="68" text-anchor="middle">Nightly pipeline — 10 steps, 4:30pm ET</text>
+</g>
+<g class="c-teal">
+<rect x="60" y="85" width="120" height="48" rx="8" stroke-width="0.5"/>
+<text class="th" x="120" y="102" text-anchor="middle" dominant-baseline="central">OHLCV</text>
+<text class="ts" x="120" y="118" text-anchor="middle" dominant-baseline="central">Steps 1-4</text>
+</g>
+<g class="c-coral">
+<rect x="200" y="85" width="120" height="48" rx="8" stroke-width="0.5"/>
+<text class="th" x="260" y="102" text-anchor="middle" dominant-baseline="central">Expr cache</text>
+<text class="ts" x="260" y="118" text-anchor="middle" dominant-baseline="central">Step 5 (blocker)</text>
+</g>
+<g class="c-teal">
+<rect x="340" y="85" width="140" height="48" rx="8" stroke-width="0.5"/>
+<text class="th" x="410" y="102" text-anchor="middle" dominant-baseline="central">Matrix + market</text>
+<text class="ts" x="410" y="118" text-anchor="middle" dominant-baseline="central">Steps 6-9</text>
+</g>
+<g class="c-teal">
+<rect x="500" y="85" width="130" height="48" rx="8" stroke-width="0.5"/>
+<text class="th" x="565" y="102" text-anchor="middle" dominant-baseline="central">Seed vault</text>
+<text class="ts" x="565" y="118" text-anchor="middle" dominant-baseline="central">Step 10 → Railway</text>
+</g>
+<line x1="180" y1="109" x2="198" y2="109" class="arr" marker-end="url(#arrow)"/>
+<line x1="320" y1="109" x2="338" y2="109" class="arr" marker-end="url(#arrow)"/>
+<line x1="480" y1="109" x2="498" y2="109" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="120" y="35" text-anchor="middle">yfinance</text>
+<line x1="120" y1="40" x2="120" y2="83" class="arr" marker-end="url(#arrow)"/>
+
+<!-- DATA LAYER -->
+<g class="c-gray">
+<rect x="40" y="200" width="600" height="120" rx="16" stroke-width="0.5"/>
+<text class="th" x="340" y="228" text-anchor="middle">Data layer</text>
+</g>
+<g class="c-blue">
+<rect x="60" y="245" width="130" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="125" y="265" text-anchor="middle" dominant-baseline="central">OHLCV caches</text>
+<text class="ts" x="125" y="283" text-anchor="middle" dominant-baseline="central">D / W / M pickles</text>
+</g>
+<g class="c-blue">
+<rect x="210" y="245" width="130" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="275" y="265" text-anchor="middle" dominant-baseline="central">Expr cache</text>
+<text class="ts" x="275" y="283" text-anchor="middle" dominant-baseline="central">15,805 × 10,542</text>
+</g>
+<g class="c-blue">
+<rect x="360" y="245" width="130" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="425" y="265" text-anchor="middle" dominant-baseline="central">Market cache</text>
+<text class="ts" x="425" y="283" text-anchor="middle" dominant-baseline="central">256 instruments</text>
+</g>
+<g class="c-blue">
+<rect x="510" y="245" width="120" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="570" y="265" text-anchor="middle" dominant-baseline="central">SQLite DB</text>
+<text class="ts" x="570" y="283" text-anchor="middle" dominant-baseline="central">Examples, setups</text>
+</g>
+<line x1="340" y1="160" x2="340" y2="198" class="arr" marker-end="url(#arrow)"/>
+
+<!-- PHASE 1: VETTING -->
+<g class="c-coral">
+<rect x="40" y="360" width="200" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="140" y="380" text-anchor="middle" dominant-baseline="central">Phase 1 — vetting</text>
+<text class="ts" x="140" y="398" text-anchor="middle" dominant-baseline="central">Example gathering</text>
+</g>
+
+<!-- GRINDER ENGINE -->
+<g class="c-purple">
+<rect x="40" y="456" width="600" height="160" rx="16" stroke-width="0.5"/>
+<text class="th" x="340" y="484" text-anchor="middle">Phase 2 — grinder engine</text>
+</g>
+<g class="c-teal">
+<rect x="60" y="501" width="160" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="140" y="521" text-anchor="middle" dominant-baseline="central">Signal grind</text>
+<text class="ts" x="140" y="539" text-anchor="middle" dominant-baseline="central">Beam search conditions</text>
+</g>
+<g class="c-teal">
+<rect x="250" y="501" width="180" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="340" y="521" text-anchor="middle" dominant-baseline="central">Entry / exit grind</text>
+<text class="ts" x="340" y="539" text-anchor="middle" dominant-baseline="central">Stop + W/L classification</text>
+</g>
+<g class="c-teal">
+<rect x="460" y="501" width="170" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="545" y="521" text-anchor="middle" dominant-baseline="central">Refinement grind</text>
+<text class="ts" x="545" y="539" text-anchor="middle" dominant-baseline="central">Winner/loser separation</text>
+</g>
+<line x1="220" y1="529" x2="248" y2="529" class="arr" marker-end="url(#arrow)"/>
+<line x1="430" y1="529" x2="458" y2="529" class="arr" marker-end="url(#arrow)"/>
+
+<!-- Two modes labels -->
+<g class="c-amber">
+<rect x="60" y="570" width="260" height="30" rx="6" stroke-width="0.5"/>
+<text class="ts" x="190" y="589" text-anchor="middle" dominant-baseline="central">Manual run → charts to vet</text>
+</g>
+<g class="c-green">
+<rect x="350" y="570" width="280" height="30" rx="6" stroke-width="0.5"/>
+<text class="ts" x="490" y="589" text-anchor="middle" dominant-baseline="central">Consensus overnight → tradeable conditions</text>
+</g>
+
+<!-- Data to grinder -->
+<line x1="275" y1="301" x2="275" y2="454" class="arr" marker-end="url(#arrow)"/>
+
+<!-- Vetting feedback loop -->
+<path d="M140 416 L140 454" fill="none" class="arr" marker-end="url(#arrow)"/>
+<path d="M545 501 L545 440 L240 440 L240 416 L140 416" fill="none" class="arr" stroke-dasharray="4 3"/>
+<text class="ts" x="350" y="435">Vet winners → regrind</text>
+
+<!-- PHASE 3: EV GRINDER -->
+<g class="c-purple">
+<rect x="170" y="660" width="200" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="270" y="680" text-anchor="middle" dominant-baseline="central">Phase 3 — EV grinder</text>
+<text class="ts" x="270" y="698" text-anchor="middle" dominant-baseline="central">WR + MFE scoring</text>
+</g>
+<line x1="340" y1="616" x2="340" y2="640" fill="none" class="arr"/>
+<line x1="340" y1="640" x2="270" y2="640" fill="none"/>
+<line x1="270" y1="640" x2="270" y2="658" class="arr" marker-end="url(#arrow)"/>
+
+<!-- PHASE 4: PROFIT GRINDER -->
+<g class="c-purple">
+<rect x="170" y="750" width="200" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="270" y="770" text-anchor="middle" dominant-baseline="central">Phase 4 — profit grinder</text>
+<text class="ts" x="270" y="788" text-anchor="middle" dominant-baseline="central">Exit optimization</text>
+</g>
+<line x1="270" y1="716" x2="270" y2="748" class="arr" marker-end="url(#arrow)"/>
+
+<!-- PHASE 5: LIVE WATCHLIST -->
+<g class="c-green">
+<rect x="170" y="840" width="200" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="270" y="860" text-anchor="middle" dominant-baseline="central">Phase 5 — watchlist</text>
+<text class="ts" x="270" y="878" text-anchor="middle" dominant-baseline="central">Nightly ranked output</text>
+</g>
+<line x1="270" y1="806" x2="270" y2="838" class="arr" marker-end="url(#arrow)"/>
+
+<!-- DESKTOP APP -->
+<g class="c-gray">
+<rect x="420" y="840" width="220" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="530" y="860" text-anchor="middle" dominant-baseline="central">scanperfect.py</text>
+<text class="ts" x="530" y="878" text-anchor="middle" dominant-baseline="central">PySide6 desktop app</text>
+</g>
+
+<!-- Setup types -->
+<g class="c-gray">
+<rect x="40" y="840" width="110" height="56" rx="8" stroke-width="0.5"/>
+<text class="th" x="95" y="860" text-anchor="middle" dominant-baseline="central">Setups</text>
+<text class="ts" x="95" y="878" text-anchor="middle" dominant-baseline="central">DTSS, BRKO...</text>
+</g>
+
+</svg>
+</body></html>

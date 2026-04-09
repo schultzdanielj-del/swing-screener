@@ -16,22 +16,16 @@ from scripts.outcome_grinder import _compute_exit_series
 
 def test_parity(setup="dtss", n_tickers=20):
     # Load cache
-    cache_path = os.path.join("local_runner", "cache", "universe_ohlcv_5yr.pkl")
+    cache_path = os.path.join("local_runner", "cache", "universe_ohlcv_daily.pkl")
+    if not os.path.exists(cache_path):
+        cache_path = os.path.join("local_runner", "cache", "universe_ohlcv_5yr.pkl")
     cache = pickle.load(open(cache_path, "rb"))
     
-    # Load exit grind to get the winning condition
-    from local_runner.grind_storage import GrindStorage
-    gs = GrindStorage(setup)
-    exit_data = gs.load("exit")
-    expr_name = exit_data["results"][0]["expr_name"]
-    
-    # Get example tickers from signal grind
-    signal_data = gs.load("signal")
-    # Signal grind stores examples under "example_signals"
-    example_entries = signal_data.get("example_signals", signal_data.get("examples", []))
-    example_tickers = list(set(
-        ex.get("ticker", ex.get("Ticker", "")) for ex in example_entries
-    ))
+    # Load exit grind — GrindStorage was removed in V2
+    # parity_test is a V1 legacy script; pass --exit and --signal paths manually
+    print("ERROR: parity_test.py requires manual path args. GrindStorage was removed in V2.")
+    print("This script needs updating to work with the V2 storage system.")
+    sys.exit(1)
     
     # Test examples first, then pad with random tickers
     test_tickers = list(example_tickers)

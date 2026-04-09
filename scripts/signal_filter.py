@@ -1,20 +1,17 @@
 """
-Signal Filter -- Deduplicate, apply exit, rank for vetting.
+Signal Filter -- Deduplicate, apply exit, classify, upload to v2 cycle.
 
-Scans all 5yr history for signal conditions, then:
+Scans all full history for signal conditions, then:
   1. Deduplicates: consecutive signal bars for same ticker -> keep rightmost
   2. Applies exit condition: run each signal forward, check if exit fires
   3. Measures exit distance: signal close -> exit close (in ADR)
-  4. Filters: keep only signals where exit distance >= example floor
-  5. Ranks: sort by exit distance descending
-  6. Outputs: ranked JSON for chart vetting + uploads to Railway
-
-Also deduplicates examples the same way (one signal bar per example).
+  4. Classifies: examples -> AUTO_WIN, exit+move >= median -> AUTO_WIN, else AUTO_LOSS
+  5. Uploads full classified signal set to v2 cycle_signals
+  6. Saves filtered subset (>= ADR floor) locally for chart vetting
 
 Usage:
     python scripts/signal_filter.py --setup dtss
     python scripts/signal_filter.py --setup dtss --min-adr 2.0
-    python scripts/signal_filter.py --setup dtss --charts  # also generate charts
 """
 
 import argparse
@@ -26,7 +23,8 @@ import pickle
 import numpy as np
 import pandas as pd
 import requests
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import cpu_count
 from datetime import datetime
 
 # Force UTF-8 output on Windows (cp1252 can't handle ✓, ⚠, etc.)
@@ -38,28 +36,57 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, os.path.join(REPO_ROOT, "local_runner"))
 
-from expr_cache_builder import ExprSeriesCache
+from expr_cache_builder import ExprSeriesCache, dispatch_arith_numpy
+from intermediate_cache_builder import read_im_as_dict
 
 # ============================================================
 # Config
 # ============================================================
 LOCAL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "local_runner")
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
+IM_CACHE_DIR = os.path.join(CACHE_DIR, "intermediate_series")
 RAILWAY_URL = "https://web-production-e3025.up.railway.app"
 MAX_FORWARD = 120
 DEFAULT_WORKERS = os.cpu_count() or 8
+EXPR_CACHE_START = "2020-01-02"
 
-SETUP_CONFIGS = {
-    "dtss": {"direction": "short", "examples_endpoint": "/api/examples/dtss"},
+# Ops that dispatch_arith_numpy handles from intermediates (fast path).
+# Everything else falls back to ExpressionEngine via compute_series.
+_DISPATCH_OPS = {
+    "ma_slope", "ma_spread", "extension", "distance_to_maxh", "ratio_c_maxh",
+    "distance_to_minl", "ratio_c_minl", "extension_slope", "extension_peak_ratio",
+    "extension_ceiling_ratio", "ext_adr_multiples", "spread_slope", "pullback",
+    "range_position", "range_width", "roc", "roc_delta", "adx", "adx_slope",
+    "rsi", "rsi_slope", "stochastic", "cci", "di_spread", "volume_ratio",
+    "candle_range_ratio", "body_range_ratio", "upper_wick_ratio", "lower_wick_ratio",
+    "bop", "obv_slope", "macd_histogram", "macd_histogram_slope", "macd_line_norm",
+    "bollinger_pctb", "bollinger_bandwidth", "bollinger_bandwidth_rank",
+    "aroon_up_val", "aroon_down_val", "aroon_oscillator", "cmf", "cmf_slope",
+    "kaufman_efficiency_ratio", "atr_ratio", "slope_ratio", "ma_undercut_depth",
+    "channel_slope", "retrace_high", "retrace_low",
 }
+
+def _get_setup_direction(setup_type):
+    """Look up trade direction from the local setups table."""
+    import sqlite3
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db_path = os.path.join(repo_root, "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT direction FROM setups WHERE setup_type=?", (setup_type,)).fetchone()
+    conn.close()
+    if not row:
+        raise ValueError(f"Setup '{setup_type}' not found in setups table")
+    return row[0]
 
 
 # ============================================================
 # Data Loading
 # ============================================================
-def load_5yr_cache():
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
-    print(f"  Loading 5yr cache from {path}...")
+def load_daily_cache():
+    path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    if not os.path.exists(path):
+        path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
+    print(f"  Loading daily cache from {path}...")
     with open(path, "rb") as f:
         cache = pickle.load(f)
     print(f"  Loaded {len(cache):,} tickers")
@@ -98,22 +125,37 @@ def load_pyramid_conditions(setup_type, conditions_file=None):
         os.path.join(REPO_ROOT, "data"),
     ]
 
-    # Collect all matching files
+    # Collect timestamped signal grind files only.
+    # Exclude blackout/refinement files — those are step 4, not step 1.
     candidates = []
     for d in search_dirs:
-        # Exact name match
-        exact = os.path.join(d, f"pyramid_results_{setup_type}.json")
-        if os.path.exists(exact):
-            candidates.append(exact)
-        # Timestamped files (e.g. pyramid_dtss_mp_sig264_pk3_20260228_163923.json)
         pattern = os.path.join(d, f"pyramid_{setup_type}_*.json")
-        candidates.extend(glob.glob(pattern))
+        for p in glob.glob(pattern):
+            bn = os.path.basename(p)
+            # Skip refinement/blackout files
+            if "blackout" in bn or "refinement" in bn:
+                continue
+            candidates.append(p)
 
     if not candidates:
         raise FileNotFoundError(f"No pyramid results found for {setup_type}")
 
-    # Pick the most recently modified file
-    candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    # Sort by timestamp in filename (YYYYMMDD_HHMMSS), not mtime.
+    # Filename format: pyramid_dtss_mp_sig1218_pk14_20260310_003848.json
+    # Extract last two underscore-separated segments before .json as the timestamp.
+    import re
+
+    def _extract_ts(path):
+        bn = os.path.basename(path).replace(".json", "")
+        parts = bn.split("_")
+        # Last two parts should be YYYYMMDD and HHMMSS
+        if len(parts) >= 2:
+            ts_str = parts[-2] + parts[-1]
+            if len(ts_str) == 14 and ts_str.isdigit():
+                return ts_str
+        return "0"
+
+    candidates.sort(key=_extract_ts, reverse=True)
     best = candidates[0]
 
     with open(best) as f:
@@ -161,127 +203,253 @@ def load_exit_condition(setup_type):
 
 
 def load_examples(setup_type):
-    """Load validated examples from Railway."""
-    import requests
-    try:
-        r = requests.get(f"{RAILWAY_URL}/api/examples/{setup_type}", timeout=30)
-        r.raise_for_status()
-        examples = r.json().get("examples", [])
-        print(f"  Loaded {len(examples)} examples from Railway")
-        return examples
-    except Exception as e:
-        print(f"  Warning: couldn't load examples from Railway: {e}")
-        return []
+    """Load validated examples from local SQLite."""
+    import sqlite3
+    db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT ticker, entry_date FROM examples WHERE setup_type=? ORDER BY ticker",
+        (setup_type,)
+    ).fetchall()
+    conn.close()
+    examples = [{"ticker": r["ticker"], "entry_date": r["entry_date"]} for r in rows]
+    print(f"  Loaded {len(examples)} examples from local DB")
+    return examples
 
 
 # ============================================================
-# Phase 1: Scan all signals (parallel)
+# Phase 1: Scan all signals (parallel) — intermediate cache
 # ============================================================
-_worker_cache = None
-_worker_conditions = None
-_worker_expr_cache = None
-_worker_cond_col_indices = None
+
+def _classify_conditions(conditions):
+    """Split conditions into dispatch-able (from intermediates) vs fallback.
+
+    Returns (dispatch_indices, fallback_indices) — lists of int indices
+    into the conditions list.
+    """
+    dispatch_idx = []
+    fallback_idx = []
+    for i, cond in enumerate(conditions):
+        op = cond.get("compute", {}).get("op", "")
+        if op in _DISPATCH_OPS:
+            dispatch_idx.append(i)
+        else:
+            fallback_idx.append(i)
+    return dispatch_idx, fallback_idx
 
 
-def _init_scan_worker(cache, conditions, expr_cache_dir, cond_col_indices):
-    global _worker_cache, _worker_conditions, _worker_expr_cache, _worker_cond_col_indices
-    _worker_cache = cache
-    _worker_conditions = conditions
-    _worker_expr_cache = expr_cache_dir
-    _worker_cond_col_indices = cond_col_indices
+def _truncate_to_cache_window(df):
+    """Truncate DataFrame to EXPR_CACHE_START onward.
+
+    OHLCV daily cache keeps 10 years (from 2016) so long-period indicators
+    (200-SMA, etc.) are warm by 2020-01-02.  Expression and intermediate
+    caches only store 2020-01-02 onward.  Scan workers must use the same
+    window so bar counts and indices align with .im files.
+    """
+    start = pd.Timestamp(EXPR_CACHE_START)
+    mask = pd.to_datetime(df["date"]) >= start
+    return df[mask].reset_index(drop=True) if mask.any() else None
 
 
-def _load_ticker_npz(ticker):
-    """Load expression cache .npz for a ticker."""
-    safe = ticker.replace("/", "_").replace("\\", "_")
-    path = os.path.join(_worker_expr_cache, f"{safe}.npz")
-    if not os.path.exists(path):
-        return None, None
-    try:
-        loaded = np.load(path, allow_pickle=True)
-        return loaded["dates"], loaded["data"]
-    except:
-        return None, None
+def _build_slim_cache(cache):
+    """Build lightweight cache for scan workers: {ticker: (n_bars, dates_strs, closes)}.
+
+    Workers only need bar count, date strings, and close prices.
+    Truncated to EXPR_CACHE_START to align with .im file bar counts.
+    """
+    slim = {}
+    for ticker, df in cache.items():
+        if df is None:
+            continue
+        df = _truncate_to_cache_window(df)
+        if df is not None and len(df) >= 100:
+            slim[ticker] = (
+                len(df),
+                np.array([str(d)[:10] for d in df["date"].values]),
+                df["close"].values.astype(np.float64),
+            )
+    return slim
 
 
-def _scan_batch(tickers):
-    """Scan a batch of tickers using expression cache. Returns list of signals."""
+def _build_ohlcv_cache(cache):
+    """Build OHLCV arrays for ExpressionEngine fallback in scan workers.
+
+    Returns {ticker: (opens, highs, lows, volumes)} as float64 numpy arrays.
+    Truncated to EXPR_CACHE_START to align with .im file bar counts.
+    Only needed when some conditions require ExpressionEngine (bool_aggs, SLOW_OPS, etc.).
+    """
+    ohlcv = {}
+    for ticker, df in cache.items():
+        if df is None:
+            continue
+        df = _truncate_to_cache_window(df)
+        if df is not None and len(df) >= 100:
+            ohlcv[ticker] = (
+                df["open"].values.astype(np.float64),
+                df["high"].values.astype(np.float64),
+                df["low"].values.astype(np.float64),
+                df["volume"].values.astype(np.float64),
+            )
+    return ohlcv
+
+
+# Worker globals
+_w_slim = None
+_w_ohlcv = None
+_w_conditions = None
+_w_dispatch_idx = None
+_w_fallback_idx = None
+_w_im_dir = None
+
+
+def _init_scan_worker_im(slim, conds, im_dir, dispatch_idx, fallback_idx, ohlcv):
+    global _w_slim, _w_ohlcv, _w_conditions, _w_dispatch_idx, _w_fallback_idx, _w_im_dir
+    _w_slim = slim
+    _w_ohlcv = ohlcv
+    _w_conditions = conds
+    _w_dispatch_idx = dispatch_idx
+    _w_fallback_idx = fallback_idx
+    _w_im_dir = im_dir
+
+
+def _scan_batch_im(tickers):
+    """Scan a batch of tickers against all conditions using intermediate cache.
+
+    For each ticker:
+      1. Load .im file (196 intermediates) — fast
+      2. Evaluate dispatch conditions via dispatch_arith_numpy — fast
+      3. If any condition needs fallback, build ExpressionEngine from OHLCV — slower
+      4. Combine all condition masks, extract signal bars for ALL bars (not just last)
+
+    Returns (signals_list, skipped_count).
+    """
     signals = []
     skipped = 0
     for ticker in tickers:
-        df = _worker_cache.get(ticker)
-        if df is None or len(df) < 100:
+        entry = _w_slim.get(ticker)
+        if entry is None:
             skipped += 1
             continue
+        n_bars, dates, closes = entry
+
         try:
-            dates_cache, data_cache = _load_ticker_npz(ticker)
-            if dates_cache is None:
+            # Load .im file
+            safe = ticker.replace("/", "_").replace("\\", "_")
+            im_path = os.path.join(_w_im_dir, f"{safe}.im")
+            im_dict, im_dates = read_im_as_dict(im_path)
+            if im_dict is None or len(im_dates) < 50:
                 skipped += 1
                 continue
 
-            n_bars = len(df)
-            # Verify bar count matches
-            if len(dates_cache) != n_bars:
+            n_im = len(im_dates)
+            if n_im != n_bars:
                 skipped += 1
                 continue
 
-            pass_mask = np.ones(n_bars, dtype=bool)
+            pass_mask = np.ones(n_im, dtype=bool)
             pass_mask[:50] = False  # warmup
 
-            for i, cond in enumerate(_worker_conditions):
-                col_idx = _worker_cond_col_indices[i]
-                if col_idx is None:
-                    pass_mask[:] = False
-                    break
-                series = data_cache[:, col_idx]
+            # Track dispatch conditions that returned None (defer to fallback)
+            deferred = []
+
+            # ── Dispatch conditions (fast path from intermediates) ──
+            for i in _w_dispatch_idx:
+                cond = _w_conditions[i]
+                series = dispatch_arith_numpy(cond["compute"], im_dict)
+                if series is None:
+                    deferred.append(i)
+                    continue
+                series = np.asarray(series, dtype=np.float64)[:n_im]
                 low, high = cond["low"], cond["high"]
                 in_range = (series >= low) & (series <= high)
                 in_range[np.isnan(series)] = False
                 pass_mask &= in_range
+                if not pass_mask.any():
+                    break
 
-            signal_indices = np.where(pass_mask)[0]
-            if len(signal_indices) > 0:
-                dates = df["date"].values
-                closes = df["close"].values
-                for idx in signal_indices:
-                    signals.append({
-                        "ticker": ticker,
-                        "date": str(dates[idx])[:10],
-                        "bar_idx": int(idx),
-                        "close": float(closes[idx]),
+            # ── Fallback conditions + deferred dispatch failures ──
+            all_fallback = list(_w_fallback_idx) + deferred
+            if all_fallback and pass_mask.any():
+                ohlcv_entry = _w_ohlcv.get(ticker) if _w_ohlcv is not None else None
+                if ohlcv_entry is None:
+                    # No OHLCV available — cannot evaluate fallback conditions
+                    pass_mask[:] = False
+                else:
+                    opens, highs, lows, volumes = ohlcv_entry
+                    df = pd.DataFrame({
+                        "date": pd.to_datetime(dates),
+                        "open": opens[:n_im],
+                        "high": highs[:n_im],
+                        "low": lows[:n_im],
+                        "close": closes[:n_im],
+                        "volume": volumes[:n_im],
                     })
+                    from scripts.expression_engine import ExpressionEngine
+                    from scripts.backtest_conditions import compute_series
+                    engine = ExpressionEngine(df)
+
+                    for i in all_fallback:
+                        if not pass_mask.any():
+                            break
+                        cond = _w_conditions[i]
+                        series = compute_series(engine, cond["compute"])
+                        if series is None:
+                            pass_mask[:] = False
+                            break
+                        series = np.asarray(series, dtype=np.float64)[:n_im]
+                        low, high = cond["low"], cond["high"]
+                        in_range = (series >= low) & (series <= high)
+                        in_range[np.isnan(series)] = False
+                        pass_mask &= in_range
+
+            # Extract signals from all passing bars
+            signal_indices = np.where(pass_mask)[0]
+            for idx in signal_indices:
+                signals.append({
+                    "ticker": ticker,
+                    "date": dates[idx],
+                    "bar_idx": int(idx),
+                    "close": float(closes[idx]),
+                })
         except Exception:
             skipped += 1
+
     return signals, skipped
 
 
-def scan_all_signals(cache, conditions, workers, expr_cache):
-    """Scan full universe for signal conditions using expression cache."""
-    tickers = list(cache.keys())
+def scan_all_signals(slim_cache, conditions, workers, ohlcv_cache=None):
+    """Scan full universe for signal conditions using intermediate cache.
+
+    Derives expression values on-the-fly from .im files (196 intermediates)
+    via dispatch_arith_numpy. Falls back to ExpressionEngine for ops that
+    dispatch cannot handle (bool_aggs, SLOW_OPS, etc.).
+
+    Evaluates ALL bars per ticker — signal_filter feeds classification cycles.
+
+    slim_cache: {ticker: (n_bars, dates_strs, closes)} — lightweight.
+    ohlcv_cache: {ticker: (opens, highs, lows, volumes)} — for fallback conditions.
+    """
+    tickers = list(slim_cache.keys())
     batch_size = max(1, len(tickers) // (workers * 4))
     batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
 
-    # Map condition names to expression cache column indices
-    cond_col_indices = []
-    for cond in conditions:
-        col_idx = expr_cache.expr_index(cond["name"])
-        if col_idx is None:
-            print(f"  WARNING: condition '{cond['name']}' not in expression cache!")
-        cond_col_indices.append(col_idx)
-
-    expr_cache_dir = os.path.join(REPO_ROOT, "local_runner", "cache", "expr_series")
+    dispatch_idx, fallback_idx = _classify_conditions(conditions)
+    n_dispatch = len(dispatch_idx)
+    n_fallback = len(fallback_idx)
 
     print(f"\n  Scanning {len(tickers):,} tickers x {len(conditions)} conditions...")
-    print(f"  {workers} workers, {len(batches)} batches (using expression cache)")
+    print(f"  {n_dispatch} dispatch + {n_fallback} fallback conditions")
+    print(f"  {workers} workers, {len(batches)} batches (using intermediate cache)")
     t0 = time.time()
 
     all_signals = []
     with ProcessPoolExecutor(
         max_workers=workers,
-        initializer=_init_scan_worker,
-        initargs=(cache, conditions, expr_cache_dir, cond_col_indices)
+        initializer=_init_scan_worker_im,
+        initargs=(slim_cache, conditions, IM_CACHE_DIR, dispatch_idx, fallback_idx, ohlcv_cache)
     ) as pool:
-        futures = [pool.submit(_scan_batch, batch) for batch in batches]
+        futures = [pool.submit(_scan_batch_im, batch) for batch in batches]
         done = 0
         for future in futures:
             batch_signals, _ = future.result()
@@ -342,17 +510,147 @@ def deduplicate_signals(signals):
 
 
 # ============================================================
-# Phase 3: Apply exit condition, measure distance
+# Phase 3: Apply exit condition, measure distance (parallel)
 # ============================================================
+
+# Worker globals for exit/measure
+_exit_slim_ohlcv = None  # {ticker: (n_bars, dates, closes, highs, lows)}
+_exit_signals_by_ticker = None  # {ticker: [signal_dicts]}
+_exit_expr_name = None
+_exit_thresh = None
+_exit_dir = None
+_exit_col_idx = None
+_exit_adr_col_idx = None
+_exit_direction = None
+_exit_max_forward = None
+
+
+def _init_exit_worker(slim_ohlcv, exit_expr_name, exit_threshold, exit_direction,
+                      exit_col, adr_col, trade_direction, max_fwd):
+    global _exit_slim_ohlcv, _exit_expr_name, _exit_thresh, _exit_dir
+    global _exit_col_idx, _exit_adr_col_idx, _exit_direction, _exit_max_forward
+    _exit_slim_ohlcv = slim_ohlcv
+    _exit_expr_name = exit_expr_name
+    _exit_thresh = exit_threshold
+    _exit_dir = exit_direction
+    _exit_col_idx = exit_col
+    _exit_adr_col_idx = adr_col
+    _exit_direction = trade_direction
+    _exit_max_forward = max_fwd
+
+
+def _exit_batch(ticker_signals_list):
+    """Process exit/measure for a batch of (ticker, signals) pairs.
+
+    Each worker loads its own NPZ files from disk. OHLCV comes from slim dict.
+    """
+    from expr_cache_builder import load_ticker_cache
+
+    results = []
+    no_exit = 0
+    errors = 0
+
+    for ticker, sigs in ticker_signals_list:
+        ohlcv = _exit_slim_ohlcv.get(ticker)
+        if ohlcv is None:
+            errors += len(sigs)
+            continue
+
+        n_bars, dates, closes, highs, lows = ohlcv
+
+        # Load NPZ for this ticker
+        cached_dates, cached_data = load_ticker_cache(ticker)
+        if cached_dates is None or len(cached_dates) != n_bars:
+            errors += len(sigs)
+            continue
+
+        for sig in sigs:
+            bar_idx = sig["bar_idx"]
+            if bar_idx >= n_bars - 1:
+                errors += 1
+                continue
+
+            try:
+                # ADR
+                if _exit_adr_col_idx is not None:
+                    adr = float(cached_data[bar_idx, _exit_adr_col_idx])
+                else:
+                    start = max(0, bar_idx - 13)
+                    adr = float(np.mean(highs[start:bar_idx+1] - lows[start:bar_idx+1]))
+
+                if adr <= 0 or np.isnan(adr):
+                    errors += 1
+                    continue
+
+                signal_close = float(closes[bar_idx])
+                actual_forward = min(_exit_max_forward, n_bars - bar_idx - 1)
+                if actual_forward < 5:
+                    errors += 1
+                    continue
+
+                # Find exit
+                exit_series = cached_data[:, _exit_col_idx]
+                exit_bar = None
+                exit_close = None
+                for fwd in range(1, actual_forward + 1):
+                    check_idx = bar_idx + fwd
+                    val = exit_series[check_idx]
+                    if np.isnan(val):
+                        continue
+                    if _exit_dir == ">=" and val >= _exit_thresh:
+                        exit_bar = fwd
+                        exit_close = float(closes[check_idx])
+                        break
+                    elif _exit_dir == "<=" and val <= _exit_thresh:
+                        exit_bar = fwd
+                        exit_close = float(closes[check_idx])
+                        break
+
+                if exit_bar is None:
+                    no_exit += 1
+                    continue
+
+                # Measure
+                if _exit_direction == "short":
+                    move_pct = (signal_close - exit_close) / signal_close * 100
+                    move_adr = (signal_close - exit_close) / adr
+                    mfe_price = float(lows[bar_idx+1:bar_idx+exit_bar+1].min())
+                    mfe_adr = (signal_close - mfe_price) / adr
+                else:
+                    move_pct = (exit_close - signal_close) / signal_close * 100
+                    move_adr = (exit_close - signal_close) / adr
+                    mfe_price = float(highs[bar_idx+1:bar_idx+exit_bar+1].max())
+                    mfe_adr = (mfe_price - signal_close) / adr
+
+                exit_date = dates[bar_idx + exit_bar]
+
+                results.append({
+                    **sig,
+                    "signal_close": round(signal_close, 2),
+                    "adr_at_signal": round(adr, 2),
+                    "exit_bar": exit_bar,
+                    "exit_date": exit_date,
+                    "exit_close": round(exit_close, 2),
+                    "move_pct": round(move_pct, 2),
+                    "move_adr": round(move_adr, 2),
+                    "mfe_adr": round(mfe_adr, 2),
+                    "capture_eff": round(move_adr / mfe_adr, 3) if mfe_adr > 0 else 0,
+                })
+            except Exception:
+                errors += 1
+
+    return results, no_exit, errors
+
+
 def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache, max_forward=MAX_FORWARD):
     """
     For each signal, run forward and check if exit condition fires.
     Measure signal close -> exit close in ADR units.
-    Uses expression cache for exit condition (same computation path).
+    Parallelized: workers load NPZ from disk, get slim OHLCV via initargs.
     """
     expr_name = exit_cond["expression"]
     exit_thresh = exit_cond["threshold"]
-    exit_dir = exit_cond["direction"]  # ">=" or "<="
+    exit_dir = exit_cond["direction"]
 
     exit_col_idx = expr_cache.expr_index(expr_name)
     if exit_col_idx is None:
@@ -360,126 +658,73 @@ def apply_exit_and_measure(signals, cache, exit_cond, direction, expr_cache, max
         print(f"  Rebuild cache: python local_runner/expr_cache_builder.py --build --force")
         return []
 
-    # Also need ADR -- check if it's in the cache
     adr_col_idx = expr_cache.expr_index("adr14")
 
     print(f"\n  Applying exit: {expr_name} {exit_dir} {exit_thresh}")
     print(f"  Direction: {direction}, max forward: {max_forward} bars")
 
-    results = []
-    no_exit = 0
-    errors = 0
+    # Build slim OHLCV: {ticker: (n_bars, dates_strs, closes, highs, lows)}
+    slim_ohlcv = {}
+    for ticker, df in cache.items():
+        if df is not None and len(df) >= 50:
+            slim_ohlcv[ticker] = (
+                len(df),
+                np.array([str(d)[:10] for d in df["date"].values]),
+                df["close"].values.astype(np.float64),
+                df["high"].values.astype(np.float64),
+                df["low"].values.astype(np.float64),
+            )
 
-    # Pre-load expression cache per ticker (avoid repeated file loads)
-    _ticker_cache = {}
+    # Group signals by ticker (they're already sorted by ticker from dedup)
+    from collections import OrderedDict
+    ticker_groups = OrderedDict()
+    for sig in signals:
+        t = sig["ticker"]
+        if t not in ticker_groups:
+            ticker_groups[t] = []
+        ticker_groups[t].append(sig)
 
-    for i, sig in enumerate(signals):
-        ticker = sig["ticker"]
-        bar_idx = sig["bar_idx"]
-        df = cache.get(ticker)
+    # Batch tickers for workers
+    ticker_list = list(ticker_groups.items())  # [(ticker, [signals]), ...]
+    n_workers = max(cpu_count() - 1, 1)
+    batch_size = max(1, len(ticker_list) // (n_workers * 4))
+    batches = [ticker_list[i:i + batch_size]
+               for i in range(0, len(ticker_list), batch_size)]
 
-        if df is None or bar_idx >= len(df) - 1:
-            errors += 1
-            continue
+    # Free full cache — slim OHLCV has what workers need
+    del cache
+    import gc; gc.collect()
 
-        try:
-            # Load expression cache for this ticker (cached per ticker)
-            if ticker not in _ticker_cache:
-                dates, data = expr_cache.get_ticker(ticker)
-                _ticker_cache[ticker] = (dates, data)
-            cached_dates, cached_data = _ticker_cache[ticker]
+    print(f"  {n_workers} workers, {len(batches)} batches, {len(ticker_groups)} tickers")
+    t0 = time.time()
 
-            if cached_dates is None or len(cached_dates) != len(df):
-                errors += 1
-                continue
+    all_results = []
+    total_no_exit = 0
+    total_errors = 0
 
-            # ADR at signal bar
-            if adr_col_idx is not None:
-                adr_at_signal = float(cached_data[bar_idx, adr_col_idx])
-            else:
-                # Fallback: compute ADR manually from OHLCV
-                h = df["high"].values
-                l = df["low"].values
-                start = max(0, bar_idx - 13)
-                adr_at_signal = float(np.mean(h[start:bar_idx+1] - l[start:bar_idx+1]))
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_init_exit_worker,
+        initargs=(slim_ohlcv, expr_name, exit_thresh, exit_dir,
+                  exit_col_idx, adr_col_idx, direction, max_forward)
+    ) as pool:
+        futures = [pool.submit(_exit_batch, batch) for batch in batches]
+        done = 0
+        for future in as_completed(futures):
+            batch_results, batch_no_exit, batch_errors = future.result()
+            all_results.extend(batch_results)
+            total_no_exit += batch_no_exit
+            total_errors += batch_errors
+            done += 1
+            if done % max(len(batches) // 5, 1) == 0 or done == len(batches):
+                elapsed = time.time() - t0
+                pct = done / len(batches) * 100
+                print(f"    {pct:.0f}% [{elapsed:.0f}s] {len(all_results):,} with exit")
 
-            if adr_at_signal <= 0 or np.isnan(adr_at_signal):
-                errors += 1
-                continue
-
-            signal_close = float(df["close"].values[bar_idx])
-            n_available = len(df) - bar_idx - 1
-            actual_forward = min(max_forward, n_available)
-
-            if actual_forward < 5:
-                errors += 1
-                continue
-
-            # Get exit expression series from cache
-            exit_series = cached_data[:, exit_col_idx]
-
-            # Find first bar after signal where exit fires
-            exit_bar = None
-            exit_close = None
-            for fwd in range(1, actual_forward + 1):
-                check_idx = bar_idx + fwd
-                val = exit_series[check_idx]
-                if np.isnan(val):
-                    continue
-                if exit_dir == ">=" and val >= exit_thresh:
-                    exit_bar = fwd
-                    exit_close = float(df["close"].values[check_idx])
-                    break
-                elif exit_dir == "<=" and val <= exit_thresh:
-                    exit_bar = fwd
-                    exit_close = float(df["close"].values[check_idx])
-                    break
-
-            if exit_bar is None:
-                no_exit += 1
-                continue
-
-            # Measure distance: signal close -> exit close in ADR
-            if direction == "short":
-                move_pct = (signal_close - exit_close) / signal_close * 100
-                move_adr = (signal_close - exit_close) / adr_at_signal
-            else:
-                move_pct = (exit_close - signal_close) / signal_close * 100
-                move_adr = (exit_close - signal_close) / adr_at_signal
-
-            # Also compute MFE for reference
-            fwd_slice = slice(bar_idx + 1, bar_idx + exit_bar + 1)
-            if direction == "short":
-                mfe_price = float(df["low"].values[fwd_slice].min())
-                mfe_adr = (signal_close - mfe_price) / adr_at_signal
-            else:
-                mfe_price = float(df["high"].values[fwd_slice].max())
-                mfe_adr = (mfe_price - signal_close) / adr_at_signal
-
-            exit_date = str(df["date"].values[bar_idx + exit_bar])[:10]
-
-            results.append({
-                **sig,
-                "signal_close": round(signal_close, 2),
-                "adr_at_signal": round(adr_at_signal, 2),
-                "exit_bar": exit_bar,
-                "exit_date": exit_date,
-                "exit_close": round(exit_close, 2),
-                "move_pct": round(move_pct, 2),
-                "move_adr": round(move_adr, 2),
-                "mfe_adr": round(mfe_adr, 2),
-                "capture_eff": round(move_adr / mfe_adr, 3) if mfe_adr > 0 else 0,
-            })
-
-        except Exception as e:
-            errors += 1
-            continue
-
-        if (i + 1) % 50 == 0:
-            print(f"    {i + 1}/{len(signals)} processed, {len(results)} with exit")
-
-    print(f"\n  OK: Exit applied: {len(results)} triggered, {no_exit} no exit, {errors} errors")
-    return results
+    elapsed = time.time() - t0
+    print(f"\n  OK: Exit applied: {len(all_results)} triggered, "
+          f"{total_no_exit} no exit, {total_errors} errors ({elapsed:.0f}s)")
+    return all_results
 
 
 # ============================================================
@@ -551,7 +796,7 @@ def deduplicate_examples(examples, cache, conditions, expr_cache):
     results = []
     for ex in examples:
         ticker = ex.get("ticker")
-        entry_date = ex.get("entryDate", ex.get("entry_date"))
+        entry_date = ex.get("entry_date")
         df = cache.get(ticker)
         if df is None:
             print(f"    {ticker}: not in cache, skipping")
@@ -649,44 +894,171 @@ def save_results(filtered, example_signals, setup_type, args):
         json.dump(output, f, indent=2, default=str)
     print(f"  Saved: {latest_path}")
 
-    # Upload to Railway so vetting UI can read it
-    _upload_to_railway(output, setup_type)
+    from file_mirror import mirror_file
+    mirror_file(ts_path)
+    mirror_file(latest_path)
 
     return latest_path
 
 
-def _upload_to_railway(output, setup_type):
-    """Upload filtered signals to Railway for vetting UI."""
-    url = f"{RAILWAY_URL}/api/vetting/{setup_type}/upload-signals"
+def _build_classified_signals(deduped, with_exit, example_signals, adr_threshold):
+    """Build full classified signal set from deduped signals + exit results + examples.
+
+    Args:
+        deduped: all deduped signals from scan
+        with_exit: signals that triggered the exit condition
+        example_signals: deduplicated example signal bars
+        adr_threshold: example floor ADR with 10% wiggle (from measure_example_exit_distances)
+
+    Returns list of dicts with classification labels. Used by both local save
+    and Railway upload.
+    """
+    # Build example lookup: ticker -> set of exact signal_bar_idx
+    # Signals are deduped — one signal bar per example, exact match only
+    example_bars = {}
+    for ex in example_signals:
+        ticker = ex["ticker"]
+        bar_idx = ex["signal_bar_idx"]
+        if ticker not in example_bars:
+            example_bars[ticker] = set()
+        example_bars[ticker].add(bar_idx)
+
+    # Build exit lookup: (ticker, bar_idx) -> exit record
+    exit_lookup = {}
+    for sig in with_exit:
+        exit_lookup[(sig["ticker"], sig["bar_idx"])] = sig
+
+    signals = []
+    for sig in deduped:
+        ticker = sig["ticker"]
+        bar_idx = sig["bar_idx"]
+
+        is_example = 0
+        if ticker in example_bars and bar_idx in example_bars[ticker]:
+            is_example = 1
+
+        exit_data = exit_lookup.get((ticker, bar_idx))
+
+        if is_example:
+            classification = "AUTO_WIN"
+            classification_source = "example"
+        elif exit_data and exit_data.get("move_adr", 0) >= adr_threshold:
+            classification = "AUTO_WIN"
+            classification_source = "exit_filter"
+        elif exit_data:
+            classification = "AUTO_LOSS"
+            classification_source = "exit_filter"
+        else:
+            classification = "AUTO_LOSS"
+            classification_source = "exit_filter"
+
+        row = {
+            "ticker": ticker,
+            "signal_date": sig["date"],
+            "bar_idx": bar_idx,
+            "close": sig.get("close"),
+            "adr": exit_data.get("adr_at_signal") if exit_data else None,
+            "is_example": is_example,
+            "classification": classification,
+            "classification_source": classification_source,
+            "exit_triggered": 1 if exit_data else 0,
+            "exit_date": exit_data.get("exit_date") if exit_data else None,
+            "move_adr": exit_data.get("move_adr") if exit_data else None,
+            "mfe_adr": exit_data.get("mfe_adr") if exit_data else None,
+            "capture_eff": exit_data.get("capture_eff") if exit_data else None,
+        }
+        signals.append(row)
+
+    n_win = sum(1 for s in signals if s["classification"] == "AUTO_WIN")
+    n_loss = sum(1 for s in signals if s["classification"] == "AUTO_LOSS")
+    n_ex = sum(1 for s in signals if s["is_example"])
+    n_exit = sum(1 for s in signals if s["exit_triggered"])
+
+    print(f"  Total signals: {len(signals)}")
+    print(f"  AUTO_WIN: {n_win} (examples: {n_ex}, exit_filter: {n_win - n_ex})")
+    print(f"  AUTO_LOSS: {n_loss}")
+    print(f"  Exit triggered: {n_exit}/{len(signals)}")
+    print(f"  Win rate: {n_win/len(signals)*100:.1f}%")
+    print(f"  ADR threshold (example floor): {adr_threshold:.1f}")
+
+    return signals, adr_threshold
+
+
+def _save_classified_signals(setup_type, classified_signals, adr_threshold):
+    """Save full classified signal set locally for downstream pipeline steps."""
+    out_dir = os.path.join(REPO_ROOT, "data", "signal_filter")
+    os.makedirs(out_dir, exist_ok=True)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    n_win = sum(1 for s in classified_signals if s["classification"] == "AUTO_WIN")
+    n_loss = sum(1 for s in classified_signals if s["classification"] == "AUTO_LOSS")
+
+    output = {
+        "setup_type": setup_type,
+        "timestamp": datetime.now().isoformat(),
+        "n_signals": len(classified_signals),
+        "n_win": n_win,
+        "n_loss": n_loss,
+        "adr_threshold": adr_threshold,
+        "signals": classified_signals,
+    }
+
+    # Timestamped
+    ts_path = os.path.join(out_dir, f"classified_{setup_type}_{len(classified_signals)}sig_{ts}.json")
+    with open(ts_path, "w") as f:
+        json.dump(output, f, indent=2, default=str)
+    print(f"  Saved classified: {ts_path}")
+
+    # Latest pointer
+    latest_path = os.path.join(out_dir, f"classified_{setup_type}.json")
+    with open(latest_path, "w") as f:
+        json.dump(output, f, indent=2, default=str)
+    print(f"  Saved classified: {latest_path}")
+
+    from file_mirror import mirror_file
+    mirror_file(ts_path)
+    mirror_file(latest_path)
+
+
+def _upload_v2_cycle_signals(setup_type, classified_signals):
+    """Upload full classified signal set to v2 cycle_signals table."""
+    import requests
+
+    # Find current cycle_id
     try:
-        print(f"  Uploading to Railway...")
-        r = requests.post(url, json=output, timeout=120)
+        r = requests.get(f"{RAILWAY_URL}/api/v2/cycles/{setup_type}", timeout=30)
         r.raise_for_status()
-        result = r.json()
-        n = result.get("n_signals", "?")
-        print(f"  ✓ Uploaded {n} signals to Railway")
+        cycles = r.json().get("cycles", [])
+        current = [c for c in cycles if c.get("is_current") == 1]
+        if not current:
+            print(f"  ⚠ No current cycle found for {setup_type} — skipping v2 upload")
+            return
+        cycle_id = current[0]["cycle_id"]
     except Exception as e:
-        print(f"  ⚠ Railway upload failed (vetting UI won't have new signals): {e}")
-        print(f"  Manual fallback: python scripts/upload_vetting_data.py --setup {setup_type}")
-
-
-def _upload_exit_grind_to_railway(setup_type):
-    """Upload exit grind JSON to Railway so vetting UI has exit data."""
-    exit_path = os.path.join(REPO_ROOT, "data", "signal_exit_grind",
-                             f"signal_exit_{setup_type}.json")
-    if not os.path.exists(exit_path):
-        print(f"  ⚠ No exit grind file to upload: {exit_path}")
+        print(f"  ⚠ Failed to find current cycle: {e}")
         return
-    url = f"{RAILWAY_URL}/api/vetting/{setup_type}/upload-exit"
+
+    print(f"\n  ── V2 CYCLE SIGNALS UPLOAD ──")
+    print(f"  Cycle: {cycle_id}")
+
+    # Upload
     try:
-        with open(exit_path) as f:
-            data = json.load(f)
-        print(f"  Uploading exit grind to Railway...")
-        r = requests.post(url, json=data, timeout=60)
+        payload = {"signals": classified_signals, "replace": True}
+        r = requests.post(f"{RAILWAY_URL}/api/v2/cycles/{cycle_id}/signals",
+                          json=payload, timeout=120)
         r.raise_for_status()
-        print(f"  ✓ Exit grind uploaded to Railway")
+        print(f"  ✓ Uploaded {len(classified_signals)} signals to v2 cycle {cycle_id}")
+
+        # Verify
+        r2 = requests.get(f"{RAILWAY_URL}/api/v2/cycles/{cycle_id}/signals", timeout=30)
+        r2.raise_for_status()
+        stored = r2.json().get("signals", [])
+        if len(stored) == len(classified_signals):
+            print(f"  ✓ Verified: {len(stored)} signals in Railway")
+        else:
+            print(f"  ⚠ MISMATCH — uploaded {len(classified_signals)}, Railway has {len(stored)}")
     except Exception as e:
-        print(f"  ⚠ Exit grind upload failed: {e}")
+        print(f"  ⚠ V2 cycle upload failed: {e}")
 
 
 def measure_example_exit_distances(example_signals, cache, exit_cond, direction, expr_cache, max_forward=MAX_FORWARD):
@@ -812,7 +1184,7 @@ def measure_example_exit_distances(example_signals, cache, exit_cond, direction,
 # ============================================================
 def main():
     parser = argparse.ArgumentParser(description="Signal Filter -- Dedup + Exit + Rank")
-    parser.add_argument("--setup", default="dtss", help="Setup type")
+    parser.add_argument("--setup", required=True, help="Setup type")
     parser.add_argument("--min-adr", type=float, default=None,
                         help="Min exit distance in ADR (default: derived from examples)")
     parser.add_argument("--max-forward", type=int, default=MAX_FORWARD)
@@ -824,8 +1196,7 @@ def main():
     args = parser.parse_args()
 
     setup = args.setup
-    config = SETUP_CONFIGS.get(setup, {"direction": "short"})
-    direction = config["direction"]
+    direction = _get_setup_direction(setup)
 
     print(f"\n{'='*60}")
     print(f"  SIGNAL FILTER -- {setup.upper()}")
@@ -833,7 +1204,7 @@ def main():
     t0 = time.time()
 
     # Load data
-    cache = load_5yr_cache()
+    cache = load_daily_cache()
     conditions = load_pyramid_conditions(setup, conditions_file=args.conditions_file)
     exit_cond = load_exit_condition(setup)
     examples = load_examples(setup)
@@ -865,12 +1236,22 @@ def main():
     print(f"  Using filter threshold: {min_adr:.1f} ADR (90% of floor)")
 
     # Phase 3: Scan all backtest signals
+    # Build slim cache + OHLCV arrays (if fallback conditions exist), then free full cache.
     print(f"\n  PHASE 3: Scan all signals")
-    raw_signals = scan_all_signals(cache, conditions, args.workers, expr_cache)
+    slim_cache = _build_slim_cache(cache)
+    _, fallback_idx = _classify_conditions(conditions)
+    ohlcv_cache = _build_ohlcv_cache(cache) if fallback_idx else None
+    del cache
+    import gc; gc.collect()
+    raw_signals = scan_all_signals(slim_cache, conditions, args.workers, ohlcv_cache)
+    del slim_cache, ohlcv_cache; gc.collect()
 
     # Phase 4: Deduplicate backtest signals
     print(f"\n  PHASE 4: Deduplicate (consecutive -> rightmost)")
     deduped = deduplicate_signals(raw_signals)
+
+    # Reload full cache — needed for exit close prices, ADR, MFE
+    cache = load_daily_cache()
 
     # Phase 5: Apply exit + measure
     print(f"\n  PHASE 5: Apply exit condition + measure distance")
@@ -884,7 +1265,7 @@ def main():
     print(f"\n  PHASE 7: Filter + rank (>= {min_adr:.1f} ADR)")
     filtered = filter_and_rank(new_signals, min_adr, direction)
 
-    # Save
+    # Save filtered results for chart vetting
     print(f"\n  SAVING RESULTS")
     save_results(filtered, example_signals, setup, {
         "exit_expr": f"{exit_cond['expression']} {exit_cond['direction']} {exit_cond['threshold']}",
@@ -894,9 +1275,6 @@ def main():
         "n_deduped": len(deduped),
         "n_with_exit": len(with_exit),
     })
-
-    # Also upload exit grind to Railway (vetting UI needs it)
-    _upload_exit_grind_to_railway(setup)
 
     total_time = time.time() - t0
     print(f"\n{'='*60}")

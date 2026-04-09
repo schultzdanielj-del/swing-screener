@@ -255,12 +255,12 @@ def compute_series(engine, comp, **kwargs):
             s = engine._rsi(14)
         else:
             s = engine.c
-        # Vectorized percentile rank via rolling
+        # Vectorized percentile rank via rolling (raw=True for numpy array, not Series)
         def pct_rank(window):
             if len(window) < 2:
                 return np.nan
-            return (window <= window.iloc[-1]).sum() / len(window) * 100
-        return s.rolling(period, min_periods=2).apply(pct_rank, raw=False).values
+            return np.sum(window <= window[-1]) / len(window) * 100
+        return s.rolling(period, min_periods=2).apply(pct_rank, raw=True).values
 
     elif op == "spread_slope":
         fast = engine._ma(comp["ma_fast"])
@@ -320,13 +320,25 @@ def compute_series(engine, comp, **kwargs):
         max_lb = comp.get("max_lookback", 120)
         above = (engine.c > ma).values
         n = len(above)
+        # Default: max_lb (means "no cross found in lookback")
         result = np.full(n, float(max_lb))
-        for i in range(1, n):
-            above_now = above[i]
-            for back in range(1, min(max_lb, i + 1)):
-                if above[i - back] != above_now:
-                    result[i] = float(back)
-                    break
+        # Find state-change points (bar where above[i] != above[i-1])
+        change_mask = np.empty(n, dtype=bool)
+        change_mask[0] = False
+        change_mask[1:] = above[1:] != above[:-1]
+        change_indices = np.where(change_mask)[0]
+        if len(change_indices) > 0:
+            # For each bar, find the index of the most recent change point
+            last_change = np.full(n, -1, dtype=np.intp)
+            for cp in change_indices:
+                last_change[cp:] = cp
+            # Bars with a change in their history: distance = bar - change + 1
+            # (+1 matches original: "bars back to the last bar with different state")
+            mask = last_change >= 0
+            result[mask] = np.minimum(
+                np.arange(n, dtype=np.float64)[mask] - last_change[mask] + 1,
+                float(max_lb)
+            )
         return result
 
     elif op == "gap_count":
@@ -340,11 +352,8 @@ def compute_series(engine, comp, **kwargs):
         with np.errstate(divide='ignore', invalid='ignore'):
             gap_atr = np.where(atr_s > 0, gaps / atr_s, 0.0)
         is_gap = (gap_atr > threshold).astype(float)
-        # Rolling count over period
-        result = np.full(len(is_gap), np.nan)
-        for i in range(p - 1, len(is_gap)):
-            result[i] = np.sum(is_gap[i - p + 1:i + 1])
-        return result
+        # Rolling count over period — vectorized
+        return pd.Series(is_gap).rolling(p, min_periods=p).sum().values
 
     # ══════════════════════════════════════════════════════════
     # NEW OPS — Step 5a: Ported from expression_engine.compute()
@@ -592,27 +601,40 @@ def compute_series(engine, comp, **kwargs):
         p = comp["period"]
         h_vals = engine.h.values
         n = len(h_vals)
-        result = np.full(n, np.nan)
-        for i in range(p + 1, n):
-            count = 0
-            for j in range(i - p + 2, i):
-                if h_vals[j] > h_vals[j - 1] and h_vals[j] > h_vals[j + 1]:
-                    count += 1
-            result[i] = count
-        return result
+        # Pre-detect all swing highs vectorized
+        is_sh = np.zeros(n, dtype=np.float64)
+        if n > 2:
+            is_sh[1:-1] = ((h_vals[1:-1] > h_vals[:-2]) &
+                           (h_vals[1:-1] > h_vals[2:])).astype(np.float64)
+        # Original counts swings in [i-p+2, i-1], a window of p-2 bars.
+        # rolling[k] = sum of is_sh[k-window+1..k], so result[i] = rolling[i-1]
+        window = p - 2
+        if window >= 1:
+            result = np.full(n, np.nan)
+            rolling = pd.Series(is_sh).rolling(window, min_periods=1).sum().values
+            # Shift: result[i] = rolling[i-1] for i in [p+1, n-1]
+            result[p + 1:] = rolling[p:n - 1]
+            return result
+        return np.full(n, np.nan)
 
     elif op == "swing_low_count":
         p = comp["period"]
         l_vals = engine.l.values
         n = len(l_vals)
-        result = np.full(n, np.nan)
-        for i in range(p + 1, n):
-            count = 0
-            for j in range(i - p + 2, i):
-                if l_vals[j] < l_vals[j - 1] and l_vals[j] < l_vals[j + 1]:
-                    count += 1
-            result[i] = count
-        return result
+        # Pre-detect all swing lows vectorized
+        is_sl = np.zeros(n, dtype=np.float64)
+        if n > 2:
+            is_sl[1:-1] = ((l_vals[1:-1] < l_vals[:-2]) &
+                           (l_vals[1:-1] < l_vals[2:])).astype(np.float64)
+        # Original counts swings in [i-p+2, i-1], a window of p-2 bars.
+        # rolling[k] = sum of is_sl[k-window+1..k], so result[i] = rolling[i-1]
+        window = p - 2
+        if window >= 1:
+            result = np.full(n, np.nan)
+            rolling = pd.Series(is_sl).rolling(window, min_periods=1).sum().values
+            result[p + 1:] = rolling[p:n - 1]
+            return result
+        return np.full(n, np.nan)
 
     elif op == "higher_high_count":
         p = comp["period"]

@@ -466,8 +466,6 @@ def _find_shallowest_line(active_lines: list, is_hminus: bool,
 
 
 def compute_all_algo_series(daily_df: pd.DataFrame,
-                            cum_tpv: np.ndarray = None,
-                            cum_v: np.ndarray = None,
                             n_ranks: int = 3) -> dict:
     """Compute ALL algo line expression series for one ticker.
 
@@ -475,8 +473,6 @@ def compute_all_algo_series(daily_df: pd.DataFrame,
 
     Args:
         daily_df: Daily OHLCV DataFrame
-        cum_tpv: Precomputed cumulative TP*V (for AVWAP convergence)
-        cum_v: Precomputed cumulative V (for AVWAP convergence)
         n_ranks: Number of proximity-ranked lines per direction
 
     Returns:
@@ -500,7 +496,7 @@ def compute_all_algo_series(daily_df: pd.DataFrame,
     directions = [('hminus', hminus_lines, True), ('lplus', lplus_lines, False)]
     metrics = ['distance', 'touch_count', 'hivol_touch_count', 'slope', 'broken', 'retest_distance']
     shallowest_metrics = ['shallowest_distance', 'shallowest_slope',
-                          'shallowest_touch_count', 'shallowest_avwap_convergence']
+                          'shallowest_touch_count']
 
     for dir_name, _, _ in directions:
         for rank in range(1, n_ranks + 1):
@@ -510,18 +506,6 @@ def compute_all_algo_series(daily_df: pd.DataFrame,
         for metric in shallowest_metrics:
             name = f"algo_{dir_name}_{metric}"
             series[name] = np.full(n_bars, np.nan, dtype=np.float64)
-
-    # Compute AVWAP arrays if not provided (for convergence metric)
-    compute_avwap = cum_tpv is not None and cum_v is not None
-    if not compute_avwap:
-        try:
-            tp = (highs + lows + closes) / 3.0
-            tpv = tp * daily_df['volume'].values.astype(np.float64)
-            cum_tpv = np.cumsum(tpv)
-            cum_v = np.cumsum(daily_df['volume'].values.astype(np.float64))
-            compute_avwap = True
-        except:
-            pass
 
     # Bar-by-bar computation
     # Start from bar 60 (need 50 bars for volume SMA + some history for lines)
@@ -564,75 +548,9 @@ def compute_all_algo_series(daily_df: pd.DataFrame,
                 series[shal_prefix + "slope"][bar_idx] = s_line.slope_per_bar / atr_val if atr_val > 0 else 0.0
                 series[shal_prefix + "touch_count"][bar_idx] = s_line.touch_count
 
-                # AVWAP convergence: distance between shallowest line price
-                # and the nearest contextual AVWAP
-                if compute_avwap:
-                    convergence = _compute_avwap_convergence(
-                        s_line, s_line_price, bar_idx,
-                        cum_tpv, cum_v, close, atr_val
-                    )
-                    series[shal_prefix + "avwap_convergence"][bar_idx] = convergence
-
     return series
 
 
-def _compute_avwap_convergence(line: AlgoLine, line_price: float,
-                               bar_idx: int, cum_tpv: np.ndarray,
-                               cum_v: np.ndarray, close: float,
-                               atr_val: float, search_range: int = 25) -> float:
-    """Compute convergence between algo line price and nearest contextual AVWAP.
-
-    Searches for the AVWAP anchored near the line's origin that produces
-    the closest value to the line price at the current bar.
-
-    Returns distance between line price and best AVWAP, normalized by ATR.
-    Small values = convergence (line and AVWAP aligning).
-    """
-    origin = line.origin_idx
-    search_start = max(0, origin - search_range)
-    search_end = min(origin + search_range, bar_idx)
-
-    if search_start >= search_end or bar_idx >= len(cum_tpv):
-        return np.nan
-
-    anchors = np.arange(search_start, search_end)
-
-    tpv_at_bar = cum_tpv[bar_idx]
-    v_at_bar = cum_v[bar_idx]
-
-    # Handle anchor=0 case
-    if anchors[0] == 0:
-        prev_tpv = np.empty(len(anchors))
-        prev_v = np.empty(len(anchors))
-        prev_tpv[0] = 0.0
-        prev_v[0] = 0.0
-        if len(anchors) > 1:
-            prev_tpv[1:] = cum_tpv[anchors[1:] - 1]
-            prev_v[1:] = cum_v[anchors[1:] - 1]
-    else:
-        prev_tpv = cum_tpv[anchors - 1]
-        prev_v = cum_v[anchors - 1]
-
-    total_tpv = tpv_at_bar - prev_tpv
-    total_v = v_at_bar - prev_v
-
-    valid = total_v > 0
-    if not valid.any():
-        return np.nan
-
-    avwaps = np.full(len(anchors), np.nan)
-    avwaps[valid] = total_tpv[valid] / total_v[valid]
-
-    # Find the AVWAP closest to the line price
-    distances = np.abs(avwaps - line_price)
-    best_idx = np.nanargmin(distances)
-    best_avwap = avwaps[best_idx]
-
-    if np.isnan(best_avwap) or atr_val <= 0:
-        return np.nan
-
-    # Return distance between line and AVWAP, normalized by ATR
-    return (line_price - best_avwap) / atr_val
 
 
 # ══════════════════════════════════════════════════════════════
@@ -648,7 +566,7 @@ def get_algo_expression_names(n_ranks: int = 3) -> list:
     metrics = ['distance', 'touch_count', 'hivol_touch_count',
                'slope', 'broken', 'retest_distance']
     shallowest_metrics = ['shallowest_distance', 'shallowest_slope',
-                          'shallowest_touch_count', 'shallowest_avwap_convergence']
+                          'shallowest_touch_count']
 
     for dir_name in ['hminus', 'lplus']:
         for rank in range(1, n_ranks + 1):
@@ -677,7 +595,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "bench":
         # Benchmark: detect algo lines + compute series for one ticker
         ticker = sys.argv[2] if len(sys.argv) > 2 else "AAPL"
-        cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
+        cache_path = "local_runner/cache/universe_ohlcv_daily.pkl"
+        if not os.path.exists(cache_path):
+            cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
         if not os.path.exists(cache_path):
             cache_path = "local_runner/cache/universe_ohlcv.pkl"
         print(f"Loading cache...")
@@ -731,7 +651,9 @@ if __name__ == "__main__":
 
     elif len(sys.argv) > 1 and sys.argv[1] == "count":
         # Count total lines across a sample of tickers
-        cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
+        cache_path = "local_runner/cache/universe_ohlcv_daily.pkl"
+        if not os.path.exists(cache_path):
+            cache_path = "local_runner/cache/universe_ohlcv_5yr.pkl"
         if not os.path.exists(cache_path):
             cache_path = "local_runner/cache/universe_ohlcv.pkl"
         print(f"Loading cache...")

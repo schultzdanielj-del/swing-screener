@@ -32,5 +32,9 @@ input/*.csv
 .DS_Store
 Thumbs.db
 data/ohlcv_cache_universe.json
+data/scanperfect.db
+data/pipeline_state.json
+data/pipeline_logs.json
+data/grinder_agent.json
 local_runner/cache/
 local_runner/grinds/

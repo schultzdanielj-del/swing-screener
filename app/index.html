@@ -1,1602 +1,294 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ScanPerfect</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --bg: #08090b; --surface: #0f1114; --surface-2: #151719; --surface-3: #1b1d21;
-      --border: #232529; --border-bright: #35373d;
-      --text: #e8eaed; --text-dim: #9ca0a8; --text-muted: #62656d;
-      --green: #34d399; --green-dark: #059669; --green-bg: rgba(52,211,153,0.07);
-      --red: #f87171; --red-dark: #dc2626; --red-bg: rgba(248,113,113,0.07);
-      --amber: #fbbf24; --amber-bg: rgba(251,191,36,0.07);
-      --blue: #60a5fa; --blue-bg: rgba(96,165,250,0.07);
-      --cyan: #22d3ee; --purple: #a78bfa;
-      --mono: 'JetBrains Mono', monospace; --sans: 'DM Sans', system-ui, sans-serif;
-    }
-    * { margin:0; padding:0; box-sizing:border-box; }
-    body { background:var(--bg); color:var(--text); font-family:var(--sans); }
-    ::-webkit-scrollbar { width:5px; height:5px; }
-    ::-webkit-scrollbar-thumb { background:var(--border-bright); border-radius:3px; }
-    ::-webkit-scrollbar-track { background:transparent; }
-
-    /* ── Layout ─────────────────────── */
-    .app { display:flex; height:100vh; }
-    .rail {
-      width:52px; min-width:52px; background:var(--surface);
-      border-right:1px solid var(--border); display:flex; flex-direction:column;
-      align-items:center; padding:12px 0; gap:4px;
-    }
-    .rail-logo { font-family:var(--mono); font-size:9px; font-weight:700; color:var(--blue);
-      letter-spacing:1px; margin-bottom:16px; writing-mode:vertical-rl; text-orientation:mixed;
-      transform:rotate(180deg); }
-    .rail-btn {
-      width:36px; height:36px; border-radius:6px; border:none; background:transparent;
-      color:var(--text-muted); cursor:pointer; font-size:16px; transition:all 0.12s;
-      display:flex; align-items:center; justify-content:center;
-    }
-    .rail-btn:hover { background:var(--surface-2); color:var(--text-dim); }
-    .rail-btn.on { background:var(--blue-bg); color:var(--blue); }
-    .rail-agent {
-      margin-top:auto; width:8px; height:8px; border-radius:50%; background:var(--red-dark);
-      transition:background 0.4s;
-    }
-    .rail-agent.online { background:var(--green); box-shadow:0 0 8px rgba(52,211,153,0.4); }
-
-    .sidebar {
-      width:220px; min-width:220px; background:var(--surface);
-      border-right:1px solid var(--border); display:flex; flex-direction:column;
-      overflow-y:auto;
-    }
-    .sb-hdr {
-      padding:14px 16px 10px; font-family:var(--mono); font-size:11px; font-weight:600;
-      letter-spacing:0.5px; color:var(--text); border-bottom:1px solid var(--border);
-    }
-    .sb-section { padding:8px 0; }
-    .sb-label {
-      padding:4px 16px; font-family:var(--mono); font-size:9px; font-weight:600;
-      letter-spacing:1.2px; text-transform:uppercase; color:var(--text-muted);
-    }
-    .sb-item {
-      padding:7px 16px; cursor:pointer; font-family:var(--mono); font-size:11px;
-      color:var(--text-dim); transition:all 0.08s; border-left:2px solid transparent;
-      display:flex; align-items:center; gap:8px;
-    }
-    .sb-item:hover { background:var(--surface-2); color:var(--text); }
-    .sb-item.on { background:var(--surface-2); color:var(--blue); border-left-color:var(--blue); }
-    .sb-item .num {
-      font-size:9px; font-weight:700; width:16px; height:16px; border-radius:3px;
-      background:var(--surface-3); color:var(--text-muted); display:flex;
-      align-items:center; justify-content:center; flex-shrink:0;
-    }
-    .sb-item.on .num { background:var(--blue-bg); color:var(--blue); }
-
-    .sb-setup-sel {
-      display:flex; gap:4px; padding:8px 16px;
-    }
-    .sb-setup-btn {
-      flex:1; padding:6px; border:1px solid var(--border); border-radius:4px;
-      background:transparent; color:var(--text-dim); font-family:var(--mono);
-      font-size:10px; font-weight:600; cursor:pointer; transition:all 0.1s;
-    }
-    .sb-setup-btn:hover { border-color:var(--text-muted); color:var(--text); }
-    .sb-setup-btn.on { background:var(--blue-bg); border-color:var(--blue); color:var(--blue); }
-
-    .main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
-    .main-hdr {
-      padding:12px 24px; border-bottom:1px solid var(--border);
-      display:flex; align-items:center; justify-content:space-between; flex-shrink:0;
-    }
-    .main-title { font-family:var(--mono); font-size:14px; font-weight:600; }
-    .main-title span { color:var(--text-muted); font-weight:400; }
-    .main-body { flex:1; overflow-y:auto; padding:20px 24px; }
-
-    /* ── Components ─────────────────── */
-    .card {
-      background:var(--surface); border:1px solid var(--border); border-radius:8px;
-      padding:16px 20px; margin-bottom:12px;
-    }
-    .card-title {
-      font-family:var(--mono); font-size:11px; font-weight:600;
-      letter-spacing:0.5px; color:var(--text-dim); margin-bottom:10px;
-    }
-    .badge {
-      font-family:var(--mono); font-size:9px; font-weight:700; padding:2px 7px;
-      border-radius:3px; letter-spacing:0.5px; text-transform:uppercase;
-    }
-    .b-done { color:var(--green); background:var(--green-bg); }
-    .b-running { color:var(--amber); background:var(--amber-bg); animation:blink 1.5s infinite; }
-    .b-pending { color:var(--text-muted); background:var(--surface-3); }
-    .b-error { color:var(--red); background:var(--red-bg); }
-    @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.5;} }
-    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
-    .pulse-dot { animation: pulse 1.5s ease-in-out infinite; }
-
-    .btn {
-      font-family:var(--mono); font-size:11px; font-weight:600;
-      padding:7px 16px; border:1px solid var(--border-bright); border-radius:5px;
-      cursor:pointer; transition:all 0.1s; background:var(--surface-2); color:var(--text-dim);
-    }
-    .btn:hover:not(:disabled) { background:var(--surface-3); color:var(--text); }
-    .btn:disabled { opacity:0.3; cursor:not-allowed; }
-    .btn-go { background:var(--green-dark); border-color:var(--green); color:#fff; }
-    .btn-go:hover:not(:disabled) { background:var(--green); }
-    .btn-stop { background:var(--red-dark); border-color:var(--red); color:#fff; }
-
-    .stat-row { display:flex; gap:16px; flex-wrap:wrap; }
-    .stat-box {
-      background:var(--surface-2); border:1px solid var(--border); border-radius:6px;
-      padding:12px 16px; min-width:120px; flex:1;
-    }
-    .stat-label { font-family:var(--mono); font-size:9px; color:var(--text-muted);
-      letter-spacing:0.8px; text-transform:uppercase; margin-bottom:4px; }
-    .stat-val { font-family:var(--mono); font-size:18px; font-weight:700; color:var(--text); }
-    .stat-val.green { color:var(--green); }
-    .stat-val.amber { color:var(--amber); }
-    .stat-val.blue { color:var(--blue); }
-
-    .log-box {
-      background:var(--bg); border:1px solid var(--border); border-radius:6px;
-      padding:12px 16px; font-family:var(--mono); font-size:11px; line-height:1.55;
-      color:var(--text-dim); max-height:400px; overflow-y:auto; white-space:pre-wrap;
-    }
-    .log-box .ok { color:var(--green); font-weight:500; }
-    .log-box .err { color:var(--red); }
-
-    .empty-state {
-      display:flex; flex-direction:column; align-items:center; justify-content:center;
-      height:300px; color:var(--text-muted); font-family:var(--mono); font-size:12px;
-      gap:8px;
-    }
-    .empty-state .icon { font-size:32px; opacity:0.3; }
-
-    /* ── Examples grid ──────────────── */
-    .ex-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:8px; }
-    .ex-card {
-      background:var(--surface-2); border:1px solid var(--border); border-radius:6px;
-      padding:10px 12px; cursor:default; transition:border-color 0.1s;
-    }
-    .ex-card:hover { border-color:var(--border-bright); }
-    .ex-ticker { font-family:var(--mono); font-size:13px; font-weight:700; }
-    .ex-date { font-family:var(--mono); font-size:10px; color:var(--text-muted); }
-    .ex-card.rejected { border-left:3px solid var(--red-dark); opacity:0.6; }
-
-    /* ── Vetting ────────────────────── */
-    .vet-layout { display:flex; height:calc(100vh - 110px); margin:-20px -24px; }
-    .vet-list {
-      width:260px; min-width:260px; border-right:1px solid var(--border);
-      overflow-y:auto; background:var(--surface);
-    }
-    .vet-item {
-      padding:8px 14px; cursor:pointer; border-bottom:1px solid rgba(35,37,41,0.5);
-      transition:background 0.08s; border-left:3px solid transparent;
-    }
-    .vet-item:hover { background:var(--surface-2); }
-    .vet-item.on { background:var(--surface-2); border-left-color:var(--blue); }
-    .vet-item.v-yes { border-left-color:var(--green); }
-    .vet-item.v-maybe { border-left-color:var(--amber); }
-    .vet-item.v-no { border-left-color:var(--red); opacity:0.5; }
-    .vet-ticker { font-family:var(--mono); font-size:12px; font-weight:700; }
-    .vet-meta { font-family:var(--mono); font-size:10px; color:var(--text-muted); display:flex; justify-content:space-between; }
-    .vet-adr { color:var(--green); font-weight:600; }
-
-    .vet-chart { flex:1; display:flex; flex-direction:column; overflow:hidden; }
-    .vet-chart-hdr {
-      padding:10px 16px; background:var(--surface); border-bottom:1px solid var(--border);
-      display:flex; align-items:center; justify-content:space-between;
-    }
-    .vet-chart-info { display:flex; align-items:center; gap:14px; }
-    .vet-chart-ticker { font-family:var(--mono); font-size:18px; font-weight:700; }
-    .vet-chart-meta { font-family:var(--mono); font-size:10px; color:var(--text-dim); }
-    .vet-btns { display:flex; gap:6px; align-items:center; }
-    .vet-btn {
-      padding:7px 18px; border:2px solid; border-radius:5px; font-family:var(--mono);
-      font-size:12px; font-weight:700; cursor:pointer; background:transparent; transition:all 0.12s;
-    }
-    .vet-btn.yes { color:var(--green); border-color:var(--green); }
-    .vet-btn.yes:hover,.vet-btn.yes.sel { background:var(--green); color:#000; }
-    .vet-btn.maybe { color:var(--amber); border-color:var(--amber); }
-    .vet-btn.maybe:hover,.vet-btn.maybe.sel { background:var(--amber); color:#000; }
-    .vet-btn.no { color:var(--red); border-color:var(--red); }
-    .vet-btn.no:hover,.vet-btn.no.sel { background:var(--red); color:#fff; }
-    .vet-canvas-area { flex:1; position:relative; }
-
-    .vet-filter-bar {
-      display:flex; gap:6px; padding:6px 14px; background:var(--surface-2);
-      border-bottom:1px solid var(--border);
-    }
-    .vet-filter-btn {
-      padding:3px 9px; border-radius:3px; border:1px solid var(--border);
-      background:transparent; color:var(--text-muted); cursor:pointer;
-      font-family:var(--mono); font-size:9px; font-weight:600;
-    }
-    .vet-filter-btn.on { background:var(--blue); color:#fff; border-color:var(--blue); }
-
-    .kbd-hint {
-      position:fixed; bottom:10px; right:14px; font-family:var(--mono); font-size:9px;
-      color:var(--text-muted); background:var(--surface); padding:5px 10px;
-      border-radius:4px; border:1px solid var(--border); z-index:100;
-    }
-    kbd { background:var(--surface-2); border:1px solid var(--border); border-radius:2px;
-      padding:1px 4px; font-size:9px; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ScanPerfect V2</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#000;--s1:#0A0A0A;--s2:#0A0A0A;--s3:#111;
+  --b1:#1A1A1A;--b2:#222;
+  --t1:#E0E0E0;--t2:#888;--t3:#555;
+  --acc:#E0E0E0;--red:#E0E0E0;--grn:#E0E0E0;--org:#888;--blu:#888;--pur:#888;
+  --rbg:rgba(255,255,255,.03);--gbg:rgba(255,255,255,.03);--obg:rgba(255,255,255,.03);
+  --f:'DM Sans',system-ui,sans-serif;
+}
+html,body{height:100%;overflow:hidden}
+body{background:var(--bg);color:var(--t1);font:16px var(--f);display:flex;flex-direction:column;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.tw{background:rgba(0,200,100,.06)!important;color:#4ade80!important;border-color:rgba(0,200,100,.2)!important}
+.tl{background:rgba(255,80,80,.06)!important;color:#f87171!important;border-color:rgba(255,80,80,.2)!important}
+.pend-verdict.approve{background:rgba(0,200,100,.06)!important;color:#4ade80!important;border-color:rgba(0,200,100,.2)!important}
+.pend-verdict.reject{background:rgba(255,80,80,.06)!important;color:#f87171!important;border-color:rgba(255,80,80,.2)!important}
+.vi.yes{border-left-color:#4ade80!important}
+.vi.no{border-left-color:#f87171!important}
+.btn.bg{border-color:#4ade80!important;color:#4ade80!important}.btn.bg:hover{background:#4ade80!important;color:#000!important}
+.btn.bd{border-color:#f87171!important;color:#f87171!important}.btn.bd:hover{background:#f87171!important;color:#000!important}
+.cg{color:#4ade80!important}
+.cr{color:#f87171!important}
+.adot.on{background:#4ade80!important;box-shadow:0 0 6px #4ade80!important}
+.top{display:flex;align-items:center;height:52px;border-bottom:1px solid var(--b1);background:var(--s1);padding:0 20px;flex-shrink:0;gap:15px}
+.logo{font-size:13px;font-weight:700;letter-spacing:.2em;color:var(--acc);text-transform:uppercase}
+.sep{color:var(--b2)}
+.tabs{display:flex}
+.tab{padding:0 18px;height:52px;display:flex;align-items:center;font-size:13px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:color .15s}
+.tab:hover{color:var(--t2)}
+.tab.on{color:var(--acc);border-bottom-color:var(--acc)}
+.top-r{display:flex;align-items:center;gap:13px;margin-left:auto}
+select.sel{background:var(--s2);border:1px solid var(--b2);color:var(--t1);font:10px var(--f);padding:4px 8px;cursor:pointer;appearance:none;outline:none}
+select.sel:hover{border-color:var(--acc)}
+.adot{width:6px;height:6px;border-radius:50%;background:var(--t3);transition:.3s}
+.adot.on{background:var(--grn);box-shadow:0 0 6px var(--grn)}
+.albl{font-size:13px;color:var(--t3);letter-spacing:.06em}
+.wrap{display:flex;flex:1;overflow:hidden}
+.side{width:275px;border-right:1px solid var(--b1);background:var(--s1);flex-shrink:0;display:flex;flex-direction:column;overflow-y:auto}
+.side-l{padding:15px 18px 6px;font-size:13px;font-weight:700;letter-spacing:.25em;text-transform:uppercase;color:var(--t3)}
+.ss{display:flex;align-items:flex-start;gap:13px;padding:9px 18px;cursor:pointer;border-left:2px solid transparent;transition:background .1s}
+.ss:hover{background:var(--s2)}
+.ss.on{background:var(--s2);border-left-color:var(--acc)}
+.sn{font-size:13px;font-weight:700;color:var(--t3);width:20px;height:24px;display:flex;align-items:center;justify-content:center;border:1px solid var(--b2);flex-shrink:0;margin-top:4px}
+.ss.on .sn{color:var(--acc);border-color:var(--acc)}
+.ss.done .sn{background:var(--acc);color:var(--bg);border-color:var(--acc)}
+.ss.run .sn{border-color:var(--org);color:var(--org);animation:pls 1.5s infinite}
+@keyframes pls{0%,100%{box-shadow:0 0 0 0 rgba(255,138,0,.3)}50%{box-shadow:0 0 0 3px rgba(255,138,0,.08)}}
+.si{flex:1;min-width:0}
+.sname{font-size:13px;font-weight:500;color:var(--t2);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ss.on .sname{color:var(--t1)}
+.smeta{font-size:14px;color:var(--t3);margin-top:4px}
+.content{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.pnl{display:none;flex-direction:column;flex:1;overflow:hidden}
+.pnl.on{display:flex}
+.ph{display:flex;align-items:center;gap:15px;padding:12px 25px;border-bottom:1px solid var(--b1);flex-shrink:0;background:var(--s1)}
+.pt{font-size:15px;font-weight:600;letter-spacing:.04em}
+.ps{font-size:13px;color:var(--t3)}
+.pa{display:flex;gap:8px;margin-left:auto}
+.pb{flex:1;overflow-y:auto;padding:18px 25px}
+.btn{font:10px/1 var(--f);font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:6px 15px;cursor:pointer;border:1px solid;background:transparent;transition:.15s;outline:none}
+.ba{border-color:var(--acc);color:var(--acc)}.ba:hover{background:var(--acc);color:var(--bg)}.ba:disabled{border-color:var(--b2);color:var(--t3);cursor:not-allowed}
+.bd{border-color:var(--red);color:var(--red)}.bd:hover{background:var(--red);color:var(--bg)}
+.bn{border-color:var(--b2);color:var(--t2)}.bn:hover{border-color:var(--t2);color:var(--t1)}
+.bg{border-color:var(--grn);color:var(--grn)}.bg:hover{background:var(--grn);color:var(--bg)}
+.bs{padding:4px 10px;font-size:14px}
+.mg{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--b1);border:1px solid var(--b1);margin-bottom:18px}
+.mc{background:var(--s2);padding:12px 15px}
+.ml{font-size:13px;letter-spacing:.15em;text-transform:uppercase;color:var(--t3);margin-bottom:5px;font-weight:600}
+.mv{font-size:22px;font-weight:500;line-height:1}
+.ms{font-size:14px;color:var(--t3);margin-top:4px}
+.logs{background:var(--bg);border:1px solid var(--b1);font-size:13px;padding:10px 13px;overflow-y:auto;max-height:350px;min-height:100px}
+.ll{padding:1px 0;color:var(--t3);line-height:1.6}
+.ll.info{color:var(--t2)}.ll.ok{color:var(--grn)}.ll.warn{color:var(--org)}.ll.error{color:var(--red)}
+.ll .ts{color:var(--t3);margin-right:10px;opacity:.6}
+.prog{background:var(--s3);border:1px solid var(--b1);height:4px;margin:6px 0;overflow:hidden}
+.pf{height:100%;background:var(--acc);transition:width .4s;width:0}
+.sec{margin-bottom:18px}
+.sh{display:flex;align-items:center;gap:10px;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--b1)}
+.st{font-size:14px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--t3)}
+.dt{width:100%;border-collapse:collapse;font-size:13px}
+.dt th{text-align:left;padding:6px 10px;font-size:13px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--t3);border-bottom:1px solid var(--b2);white-space:nowrap}
+.dt td{padding:6px 10px;border-bottom:1px solid var(--b1);color:var(--t2);white-space:nowrap}
+.dt tr:hover td{background:var(--s2)}
+.tk{font-weight:600;color:var(--t1)!important;font-size:14px}
+.tag{display:inline-block;font-size:13px;font-weight:700;letter-spacing:.06em;padding:2px 6px;text-transform:uppercase}
+.tw{background:var(--gbg);color:var(--grn);border:1px solid rgba(0,232,123,.25)}
+.tl{background:var(--rbg);color:var(--red);border:1px solid rgba(255,59,59,.25)}
+.te{background:rgba(212,255,0,.08);color:var(--acc);border:1px solid rgba(212,255,0,.2)}
+.tier{display:inline-block;font-size:13px;font-weight:700;padding:2px 6px;letter-spacing:.04em}
+.tier-D1{background:rgba(155,95,255,.12);color:var(--pur);border:1px solid rgba(155,95,255,.25)}
+.tier-1wk{background:rgba(59,138,255,.1);color:var(--blu);border:1px solid rgba(59,138,255,.25)}
+.tier-1mo{background:var(--gbg);color:var(--grn);border:1px solid rgba(0,232,123,.2)}
+.tier-6mo{background:var(--obg);color:var(--org);border:1px solid rgba(255,138,0,.2)}
+.tier-1yr{background:var(--rbg);color:var(--red);border:1px solid rgba(255,59,59,.2)}
+.tier-5yr{background:rgba(212,255,0,.08);color:var(--acc);border:1px solid rgba(212,255,0,.2)}
+.ex-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.ex-card{background:var(--s2);border:1px solid var(--b1);padding:12px 15px;cursor:pointer;transition:border-color .15s}
+.ex-card:hover{border-color:var(--b2)}
+.ex-card.on{border-color:var(--acc)}
+.ex-tk{font-size:15px;font-weight:600;color:var(--t1)}
+.ex-dt{font-size:14px;color:var(--t3);margin-top:4px}
+.ex-adr{font-size:13px;color:var(--acc);float:right}
+.ex-detail{border:1px solid var(--b1);background:var(--s2);margin-bottom:18px;min-height:375px;position:relative}
+.pend-item{display:flex;align-items:center;gap:15px;background:var(--s2);border:1px solid var(--b1);padding:12px 15px;margin-bottom:8px;transition:border-color .15s}
+.pend-item:hover{border-color:var(--b2)}
+.pend-tk{font-size:15px;font-weight:600;color:var(--t1);min-width:60px}
+.pend-dt{font-size:13px;color:var(--t3);min-width:80px}
+.pend-ai{flex:1;font-size:13px;line-height:1.5}
+.pend-verdict{font-size:14px;font-weight:700;letter-spacing:.06em;padding:2px 6px;text-transform:uppercase}
+.pend-verdict.approve{background:var(--gbg);color:var(--grn);border:1px solid rgba(0,232,123,.25)}
+.pend-verdict.reject{background:var(--rbg);color:var(--red);border:1px solid rgba(255,59,59,.25)}
+.pend-verdict.pending{background:var(--obg);color:var(--org);border:1px solid rgba(255,138,0,.25)}
+.pend-reason{font-size:14px;color:var(--t2);margin-top:4px}
+.pend-acts{display:flex;gap:6px;flex-shrink:0}
+.vw{display:flex;flex:1;overflow:hidden}
+.vl{width:300px;border-right:1px solid var(--b1);overflow-y:auto;flex-shrink:0;background:var(--s1)}
+.vi{padding:9px 15px;border-bottom:1px solid var(--b1);cursor:pointer;transition:background .1s}
+.vi:hover{background:var(--s2)}
+.vi.on{background:var(--s3);border-left:2px solid var(--acc)}
+.vi.yes{border-left:2px solid var(--grn)}
+.vi.no{border-left:2px solid var(--red)}
+.vitk{font-size:14px;font-weight:600;color:var(--t1)}
+.vidt{font-size:14px;color:var(--t3)}
+.viadr{font-size:13px;color:var(--acc);float:right}
+.vm{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.vc{flex:1;background:var(--bg);position:relative;overflow:hidden;min-height:0}
+.cph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:13px;flex-direction:column;gap:8px}
+.cphi{font-size:35px;opacity:.15}
+.vbar{border-top:1px solid var(--b1);padding:10px 18px;display:flex;align-items:center;gap:13px;background:var(--s1);flex-shrink:0}
+.vinf{display:flex;gap:14px;font-size:13px}
+.vii{display:flex;flex-direction:column}
+.vil{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)}
+.viv{color:var(--t1);font-weight:500}
+.vbs{display:flex;gap:8px;margin-left:auto}
+kbd{background:var(--s3);border:1px solid var(--b2);padding:0 4px;font:9px var(--f);color:var(--t2)}
+.nb{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;color:var(--t3);gap:10px;padding:50px}
+.nbi{font-size:45px;opacity:.1}
+.nbt{font-size:14px;font-weight:600}
+.nbs{font-size:13px;opacity:.7;text-align:center;max-width:380px;line-height:1.6}
+.ibox{background:var(--s2);border:1px solid var(--b1);padding:12px 15px;margin-bottom:13px}
+.ibt{font-size:13px;letter-spacing:.15em;text-transform:uppercase;color:var(--t3);margin-bottom:8px;font-weight:700}
+.ibv{font-size:15px;color:var(--t1);font-weight:500}
+.ibs{font-size:14px;color:var(--t3);margin-top:4px}
+.vet-toggle{display:flex;gap:0;border:1px solid var(--b2);margin-left:15px}
+.vet-toggle-btn{padding:4px 13px;font:9px var(--f);font-weight:600;letter-spacing:.04em;text-transform:uppercase;cursor:pointer;background:transparent;color:var(--t3);border:none;transition:.15s}
+.vet-toggle-btn:hover{color:var(--t2)}
+.vet-toggle-btn.on{background:var(--acc);color:var(--bg)}
+.vet-filter{display:flex;gap:0;border:1px solid var(--b2);margin-left:10px}
+.vet-filter-btn{padding:4px 10px;font:9px var(--f);font-weight:600;cursor:pointer;background:transparent;color:var(--t3);border:none;transition:.15s}
+.vet-filter-btn:hover{color:var(--t2)}
+.vet-filter-btn.on{background:var(--s3);color:var(--t1)}
+.vet-counter{font-size:13px;color:var(--t2);margin-left:15px;display:flex;gap:13px}
+.vet-counter span{display:flex;align-items:center;gap:3px}
+.vet-counter .cv{font-weight:600;color:var(--t1)}
+.vet-counter .cg{color:var(--grn)}
+.vet-counter .cr{color:var(--red)}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--b2)}
+::-webkit-scrollbar-thumb:hover{background:var(--t3)}
+.ex-chart-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:4px}
+.ex-cg-card{background:#0A0A0A;position:relative;cursor:pointer;aspect-ratio:16/10;overflow:hidden;border:1px solid #2A2A2A}
+.ex-cg-card:hover{background:var(--s2)}
+.ex-cg-card.expanded{grid-column:1/-1;aspect-ratio:unset;height:400px}
+.ex-cg-card .cg-label{position:absolute;bottom:0;left:0;right:0;padding:5px 8px;background:#000;border-top:1px solid var(--b1);display:flex;align-items:center;justify-content:space-between;z-index:1}
+.ex-cg-card .cg-tk{font-size:14px;font-weight:500;color:#fff}
+.ex-cg-card .cg-dt{font-size:12px;color:#B0B0B0;margin-left:8px}
+.ex-cg-card .cg-adr{font-size:12px;color:#B0B0B0}
+.ex-cg-card .cg-chart{position:absolute;inset:0}
+.ex-cg-card .cg-chart svg{width:100%;height:100%}
+.ex-cg-card .cg-loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:11px}
+.ex-cg-card .cg-actions{position:absolute;top:4px;right:4px;display:none;gap:4px;z-index:2}
+.ex-cg-card:hover .cg-actions{display:flex}
+.ex-cg-card .cg-pending-tag{position:absolute;top:4px;left:4px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:2px 6px;z-index:2}
+.ex-cg-card .cg-pending-tag.review{background:rgba(255,255,255,.08);color:var(--t2);border:1px solid var(--b2)}
+.ex-cg-card .cg-pending-tag.approved{background:rgba(0,200,100,.08);color:#4ade80;border:1px solid rgba(0,200,100,.2)}
+.ex-cg-card .cg-pending-tag.rejected{background:rgba(255,80,80,.08);color:#f87171;border:1px solid rgba(255,80,80,.2)}
+.add-section{border:1px solid var(--b1);margin-bottom:18px}
+.add-section-hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 15px;cursor:pointer;background:var(--s1)}
+.add-section-hdr:hover{background:var(--s2)}
+.add-section-body{padding:15px;display:none}
+.add-section-body.open{display:block}
+.ex-sort-btn.on{background:var(--s3)!important;color:var(--t1)!important}
+.float-yes{position:absolute;z-index:10;background:#4ade80;color:#000;font:13px var(--f);font-weight:700;padding:6px 16px;cursor:pointer;border:none;text-transform:uppercase;letter-spacing:.05em;pointer-events:auto;transition:opacity .15s}
+.float-yes:hover{background:#22c55e}
+.ex-cg-card.just-added{animation:flashNew 1.5s ease-out}
+@keyframes flashNew{0%{box-shadow:inset 0 0 0 2px #4ade80}70%{box-shadow:inset 0 0 0 2px #4ade80}100%{box-shadow:none}}
+</style>
 </head>
 <body>
-<div id="root"></div>
-<script type="text/babel">
-const { useState, useEffect, useRef, useCallback } = React;
-const API = '';
-
-// ═══════════════════════════════════════════════════════
-// SHARED HELPERS
-// ═══════════════════════════════════════════════════════
-function ema(data, period) {
-  const k = 2/(period+1), r = new Array(data.length).fill(null); let p = null;
-  for (let i=0;i<data.length;i++) { if(data[i]==null) continue; if(p==null){p=data[i];r[i]=p;} else{p=data[i]*k+p*(1-k);r[i]=p;}} return r;
-}
-function sma(data, period) {
-  const r = new Array(data.length).fill(null);
-  for(let i=period-1;i<data.length;i++){let s=0,c=0;for(let j=i-period+1;j<=i;j++){if(data[j]!=null){s+=data[j];c++;}}if(c===period)r[i]=s/c;} return r;
-}
-function fmtDur(s) { if(s<60) return `${Math.round(s)}s`; if(s<3600) return `${Math.floor(s/60)}m ${Math.round(s%60)}s`; return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`; }
-
-// ═══════════════════════════════════════════════════════
-// NIGHTLY REFRESH PAGE
-// ═══════════════════════════════════════════════════════
-function NightlyPage() {
-  const [pipe, setPipe] = useState(null);
-  const [logs, setLogs] = useState([]);
-  const logRef = useRef(null);
-  const logCountRef = useRef(0);
-
-  useEffect(() => {
-    const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
-    load(); const id = setInterval(load, 5000); return () => clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    if (!pipe) return;
-    const step = pipe.steps.find(s => s.id === 'nightly');
-    if (!step || !['running','claimed','queued'].includes(step.state?.status)) { logCountRef.current = 0; return; }
-    const poll = () => fetch(`${API}/api/pipeline/logs/nightly?after=${logCountRef.current}`).then(r=>r.json())
-      .then(d => { if(d.lines?.length) { logCountRef.current += d.lines.length; setLogs(p=>[...p,...d.lines]); } }).catch(()=>{});
-    poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
-  }, [pipe?.steps?.find(s=>s.id==='nightly')?.state?.status]);
-
-  useEffect(() => { if(logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
-
-  const nightly = pipe?.steps?.find(s => s.id === 'nightly');
-  const st = nightly?.state?.status || 'pending';
-  const isRun = ['running','claimed','queued'].includes(st);
-
-  function doRun() {
-    fetch(`${API}/api/pipeline/run/nightly`, {method:'POST'}).then(r=>r.json()).then(d => {
-      if(d.error) alert(d.error); else { setLogs([]); }
-    });
-  }
-  function doReset() { fetch(`${API}/api/pipeline/reset/nightly`, {method:'POST'}); }
-
-  return (
-    <div>
-      <div className="stat-row" style={{marginBottom:16}}>
-        <div className="stat-box">
-          <div className="stat-label">Status</div>
-          <div className={`stat-val ${st==='done'?'green':st==='running'?'amber':''}`}>{st.toUpperCase()}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Last Run</div>
-          <div className="stat-val" style={{fontSize:13}}>{nightly?.state?.finished_at ? new Date(nightly.state.finished_at).toLocaleString() : '—'}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Duration</div>
-          <div className="stat-val" style={{fontSize:13}}>{nightly?.state?.duration_s ? fmtDur(nightly.state.duration_s) : '—'}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Agent</div>
-          <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
-            {pipe?.agent_status?.toUpperCase() || '?'}
-          </div>
-        </div>
-      </div>
-      <div style={{display:'flex',gap:8,marginBottom:16}}>
-        {isRun
-          ? <button className="btn btn-stop" onClick={()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'})}>■ STOP</button>
-          : <button className="btn btn-go" onClick={doRun} disabled={pipe?.agent_status!=='online'}>▶ RUN NIGHTLY</button>
-        }
-        <button className="btn" onClick={doReset}>↻ Reset</button>
-      </div>
-      {pipe?.agent_status !== 'online' && (
-        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
-          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--amber)',marginBottom:6}}>Agent is offline. Start it locally:</div>
-          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
-            style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--cyan)',background:'var(--bg)',
-            padding:'8px 12px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer',userSelect:'all'}}>
-            python local_runner/agent.py
-            <span style={{float:'right',fontSize:9,color:'var(--text-muted)'}}>click to copy</span>
-          </div>
-        </div>
-      )}
-      {nightly?.state?.result_summary && (
-        <div className="card" style={{borderColor:'rgba(52,211,153,0.15)',background:'rgba(52,211,153,0.03)'}}>
-          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--green)',whiteSpace:'pre-wrap'}}>{nightly.state.result_summary}</div>
-        </div>
-      )}
-      {logs.length > 0 && (
-        <div className="log-box" ref={logRef}>
-          {logs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')?'ok':''}>{l}</div>)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// PIPELINE STEP PAGE (reusable for steps 2-4, 6-7)
-// ═══════════════════════════════════════════════════════
-function StepPage({ stepId, setup }) {
-  const [pipe, setPipe] = useState(null);
-  const [logs, setLogs] = useState([]);
-  const logRef = useRef(null);
-  const logCountRef = useRef(0);
-
-  const [grinderParams, setGrinderParams] = useState({beam: 10000, depth: 100, peak_target: 3});
-
-  useEffect(() => {
-    const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
-    load(); const id = setInterval(load, 5000); return () => clearInterval(id);
-  }, []);
-
-  const step = pipe?.steps?.find(s => s.id === stepId);
-  const st = step?.state?.status || 'pending';
-  const isRun = ['running','claimed','queued'].includes(st);
-
-  useEffect(() => {
-    if (!isRun) { logCountRef.current = 0; return; }
-    const poll = () => fetch(`${API}/api/pipeline/logs/${stepId}?after=${logCountRef.current}`).then(r=>r.json())
-      .then(d => { if(d.lines?.length) { logCountRef.current += d.lines.length; setLogs(p=>[...p,...d.lines]); } }).catch(()=>{});
-    poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
-  }, [isRun]);
-
-  useEffect(() => { if(logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
-
-  function doRun() {
-    const opts = {method:'POST', headers:{'Content-Type':'application/json'}};
-    if (stepId === 'signal_brute') opts.body = JSON.stringify({params: grinderParams});
-    fetch(`${API}/api/pipeline/run/${stepId}`, opts).then(r=>r.json()).then(d => {
-      if(d.error) alert(d.error); else { setLogs([]); logCountRef.current = 0; }
-    });
-  }
-
-  return (
-    <div>
-      <div className="stat-row" style={{marginBottom:16}}>
-        <div className="stat-box">
-          <div className="stat-label">Status</div>
-          <div className={`stat-val ${st==='done'?'green':isRun?'amber':''}`}>{st.toUpperCase()}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Duration</div>
-          <div className="stat-val" style={{fontSize:13}}>{step?.state?.duration_s ? fmtDur(step.state.duration_s) : '—'}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Agent</div>
-          <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
-            {pipe?.agent_status?.toUpperCase() || '?'}
-          </div>
-          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
-            style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--cyan)',marginTop:4,cursor:'pointer',userSelect:'all'}}>
-            python local_runner/agent.py <span style={{fontSize:8,color:'var(--text-muted)',marginLeft:4}}>copy</span>
-          </div>
-        </div>
-      </div>
-      {stepId === 'signal_brute' && !isRun && (
-        <div style={{display:'flex',gap:12,marginBottom:12,alignItems:'center'}}>
-          {[['beam','Beam'],['depth','Depth'],['peak_target','Peak']].map(([k,label])=>(
-            <div key={k} style={{display:'flex',alignItems:'center',gap:6}}>
-              <label style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-dim)'}}>{label}</label>
-              <input type="number" value={grinderParams[k]}
-                onChange={e=>setGrinderParams(p=>({...p,[k]:parseInt(e.target.value)||0}))}
-                style={{width:80,fontFamily:'var(--mono)',fontSize:12,color:'var(--text)',
-                  background:'var(--surface-2)',border:'1px solid var(--border)',borderRadius:4,
-                  padding:'4px 8px',outline:'none'}} />
-            </div>
-          ))}
-        </div>
-      )}
-      <div style={{display:'flex',gap:8,marginBottom:16}}>
-        {isRun
-          ? <button className="btn btn-stop" onClick={()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'})}>■ STOP</button>
-          : <button className="btn btn-go" onClick={doRun} disabled={pipe?.agent_status!=='online'}>▶ RUN</button>
-        }
-        <button className="btn" onClick={()=>fetch(`${API}/api/pipeline/reset/${stepId}`,{method:'POST'})}>↻ Reset</button>
-      </div>
-      {pipe?.agent_status !== 'online' && (
-        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
-          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
-            style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--cyan)',background:'var(--bg)',
-            padding:'6px 10px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer'}}>
-            python local_runner/agent.py <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:8}}>click to copy</span>
-          </div>
-        </div>
-      )}
-      {step?.state?.result_summary && (
-        <div className="card" style={{borderColor:'rgba(52,211,153,0.15)',background:'rgba(52,211,153,0.03)'}}>
-          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--green)',whiteSpace:'pre-wrap'}}>{step.state.result_summary}</div>
-        </div>
-      )}
-      {step?.state?.error && (
-        <div className="card" style={{borderColor:'rgba(248,113,113,0.15)',background:'rgba(248,113,113,0.03)'}}>
-          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--red)',whiteSpace:'pre-wrap'}}>{step.state.error}</div>
-        </div>
-      )}
-      {logs.length > 0 && (
-        <div className="log-box" ref={logRef}>
-          {logs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')||l.includes('done')?'ok':''}>{l}</div>)}
-        </div>
-      )}
-      {logs.length === 0 && st === 'pending' && (
-        <div className="empty-state"><div className="icon">⚡</div>Ready to run</div>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// EXIT GRINDER PAGE (Step 4a)
-// ═══════════════════════════════════════════════════════
-function ExitGrinderPage({ setup }) {
-  const [pipe, setPipe]     = useState(null);
-  const [results, setResults] = useState(null);
-  const [choosing, setChoosing] = useState(null); // 'single'|'multi'|null
-  const [logs, setLogs]     = useState([]);
-  const logRef  = useRef(null);
-  const logCountRef = useRef(0);
-
-  const stepId = 'setup_grinder_a';
-
-  // Poll pipeline state
-  useEffect(() => {
-    const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
-    load(); const id = setInterval(load, 5000); return () => clearInterval(id);
-  }, []);
-
-  // Poll exit grind results
-  useEffect(() => {
-    const load = () => fetch(`${API}/api/exit-grind/${setup}/results`)
-      .then(r=>r.ok ? r.json() : null).then(d=>{ if(d) setResults(d); }).catch(()=>{});
-    load(); const id = setInterval(load, 8000); return () => clearInterval(id);
-  }, [setup]);
-
-  const step = pipe?.steps?.find(s => s.id === stepId);
-  const st   = step?.state?.status || 'pending';
-  const isRun = ['running','claimed','queued'].includes(st);
-
-  // Log streaming
-  useEffect(() => {
-    if (!isRun) { logCountRef.current = 0; return; }
-    const poll = () => fetch(`${API}/api/pipeline/logs/${stepId}?after=${logCountRef.current}`)
-      .then(r=>r.json())
-      .then(d => { if(d.lines?.length) { logCountRef.current += d.lines.length; setLogs(p=>[...p,...d.lines]); } })
-      .catch(()=>{});
-    poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
-  }, [isRun]);
-
-  useEffect(() => { if(logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
-
-  function doRun() {
-    fetch(`${API}/api/pipeline/run/${stepId}`, {method:'POST'})
-      .then(r=>r.json()).then(d => { if(d.error) alert(d.error); else { setLogs([]); logCountRef.current = 0; } });
-  }
-
-  function doChoose(choice) {
-    setChoosing(choice);
-    fetch(`${API}/api/exit-grind/${setup}/choose`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({choice})
-    }).then(r=>r.json()).then(d => {
-      if(d.error) { alert(d.error); setChoosing(null); }
-      else setResults(r => r ? {...r, choice} : r);
-    }).catch(()=>setChoosing(null));
-  }
-
-  const pct = v => v != null ? `${(v*100).toFixed(1)}%` : '—';
-  const adr = v => v != null ? `${v.toFixed(2)} ADR` : '—';
-  const bars = v => v != null ? `${v.toFixed(1)} bars` : '—';
-
-  const choiceMade = results?.choice;
-  const s = results?.single;
-  const m = results?.multi;
-
-  return (
-    <div>
-      {/* Status row */}
-      <div className="stat-row" style={{marginBottom:16}}>
-        <div className="stat-box">
-          <div className="stat-label">Status</div>
-          <div className={`stat-val ${st==='done'?'green':isRun?'amber':''}`}>{st.toUpperCase()}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Duration</div>
-          <div className="stat-val" style={{fontSize:13}}>{step?.state?.duration_s ? fmtDur(step.state.duration_s) : '—'}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Agent</div>
-          <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
-            {pipe?.agent_status?.toUpperCase() || '?'}
-          </div>
-          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
-            style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--cyan)',marginTop:4,cursor:'pointer',userSelect:'all'}}>
-            python local_runner/agent.py <span style={{fontSize:8,color:'var(--text-muted)',marginLeft:4}}>copy</span>
-          </div>
-        </div>
-        {choiceMade && (
-          <div className="stat-box">
-            <div className="stat-label">Exit Choice</div>
-            <div className="stat-val green">{choiceMade.toUpperCase()}-STAGE</div>
-          </div>
-        )}
-      </div>
-
-      {/* Run/Stop */}
-      <div style={{display:'flex',gap:8,marginBottom:16}}>
-        {isRun
-          ? <button className="btn btn-stop" onClick={()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'})}>■ STOP</button>
-          : <button className="btn btn-go" onClick={doRun} disabled={pipe?.agent_status!=='online'}>▶ RUN</button>
-        }
-        <button className="btn" onClick={()=>fetch(`${API}/api/pipeline/reset/${stepId}`,{method:'POST'})}>↻ Reset</button>
-      </div>
-
-      {pipe?.agent_status !== 'online' && (
-        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
-          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
-            style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--cyan)',background:'var(--bg)',
-            padding:'6px 10px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer'}}>
-            python local_runner/agent.py <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:8}}>click to copy</span>
-          </div>
-        </div>
-      )}
-
-      {/* Results panel — single vs multi side by side */}
-      {(s || m) && (
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
-          {/* Single-stage */}
-          <div className="card" style={{
-            borderColor: choiceMade==='single' ? 'var(--green)' : 'var(--border)',
-            background: choiceMade==='single' ? 'rgba(52,211,153,0.05)' : undefined,
-            position:'relative'
-          }}>
-            <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-muted)',marginBottom:8,letterSpacing:'0.05em'}}>
-              SINGLE-STAGE EXIT
-            </div>
-            {s ? (
-              <>
-                <div style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--cyan)',marginBottom:10,wordBreak:'break-all'}}>
-                  {s.expression} {s.direction} {s.threshold?.toFixed(6)}
-                </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:12}}>
-                  {[
-                    ['Floor Capture', pct(s.floor_capture_eff)],
-                    ['Median Capture', pct(s.median_capture_eff)],
-                    ['Floor ADR', adr(s.floor_adr)],
-                    ['Median ADR', adr(s.median_adr)],
-                    ['Avg Bars', bars(s.avg_bars_to_exit)],
-                    ['Examples', s.n_examples ?? '—'],
-                  ].map(([label,val])=>(
-                    <div key={label}>
-                      <div style={{fontSize:9,color:'var(--text-muted)',fontFamily:'var(--mono)',marginBottom:2}}>{label}</div>
-                      <div style={{fontSize:12,color:'var(--text)',fontFamily:'var(--mono)'}}>{val}</div>
-                    </div>
-                  ))}
-                </div>
-                <button
-                  className="btn btn-go"
-                  style={{width:'100%',opacity: choiceMade==='single'?0.5:1}}
-                  disabled={!!choiceMade || choosing==='single'}
-                  onClick={()=>doChoose('single')}
-                >
-                  {choiceMade==='single' ? '✓ SELECTED' : choosing==='single' ? 'Saving…' : 'Use Single-Stage'}
-                </button>
-              </>
-            ) : (
-              <div style={{color:'var(--text-muted)',fontSize:11,fontFamily:'var(--mono)'}}>Not yet run</div>
-            )}
-          </div>
-
-          {/* Multi-stage */}
-          <div className="card" style={{
-            borderColor: choiceMade==='multi' ? 'var(--green)' : 'var(--border)',
-            background: choiceMade==='multi' ? 'rgba(52,211,153,0.05)' : undefined,
-          }}>
-            <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-muted)',marginBottom:8,letterSpacing:'0.05em'}}>
-              MULTI-STAGE EXIT
-            </div>
-            {m ? (
-              <>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:10}}>
-                  {[
-                    ['Stages', m.n_stages ?? '—'],
-                    ['Floor Capture', pct(m.floor_capture_eff)],
-                    ['Median Capture', pct(m.median_capture_eff)],
-                    ['Avg Bars (full)', bars(m.avg_bars_to_full_exit)],
-                    ['Examples', m.n_examples ?? '—'],
-                  ].map(([label,val])=>(
-                    <div key={label}>
-                      <div style={{fontSize:9,color:'var(--text-muted)',fontFamily:'var(--mono)',marginBottom:2}}>{label}</div>
-                      <div style={{fontSize:12,color:'var(--text)',fontFamily:'var(--mono)'}}>{val}</div>
-                    </div>
-                  ))}
-                </div>
-                {/* Stage breakdown */}
-                {m.stages?.length > 0 && (
-                  <div style={{marginBottom:12}}>
-                    {m.stages.map((stg, i) => (
-                      <div key={i} style={{
-                        fontFamily:'var(--mono)',fontSize:10,color:'var(--text-dim)',
-                        padding:'4px 6px',background:'var(--surface-2)',borderRadius:3,marginBottom:4,
-                        borderLeft:`2px solid var(--cyan)`
-                      }}>
-                        <span style={{color:'var(--cyan)'}}>S{i+1}</span>{' '}
-                        {stg.trim_pct != null ? `trim ${(stg.trim_pct*100).toFixed(0)}%` : ''}{' '}
-                        {stg.gate_type && stg.gate_value != null ? `· gate ${stg.gate_type} ${stg.gate_value}` : ''}{' '}
-                        · {stg.expr_name} {stg.direction} {stg.threshold?.toFixed(4)}
-                        {stg.max_window ? ` · max ${stg.max_window}b` : ''}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <button
-                  className="btn btn-go"
-                  style={{width:'100%',opacity: choiceMade==='multi'?0.5:1}}
-                  disabled={!!choiceMade || choosing==='multi'}
-                  onClick={()=>doChoose('multi')}
-                >
-                  {choiceMade==='multi' ? '✓ SELECTED' : choosing==='multi' ? 'Saving…' : 'Use Multi-Stage'}
-                </button>
-              </>
-            ) : (
-              <div style={{color:'var(--text-muted)',fontSize:11,fontFamily:'var(--mono)'}}>Not yet run</div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Change choice link */}
-      {choiceMade && (
-        <div style={{marginBottom:12,fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)'}}>
-          Choice locked. To change:{' '}
-          <span style={{color:'var(--cyan)',cursor:'pointer'}}
-            onClick={()=>{
-              if(!confirm('Clear exit choice? This will reset 4b.')) return;
-              fetch(`${API}/api/exit-grind/${setup}/clear-choice`,{method:'POST'})
-                .then(()=>{
-                  fetch(`${API}/api/pipeline/reset/setup_grinder_b`,{method:'POST'});
-                  setResults(r=>r?{...r,choice:null}:r);
-                });
-            }}>change choice</span>
-        </div>
-      )}
-
-      {/* Error */}
-      {step?.state?.error && (
-        <div className="card" style={{borderColor:'rgba(248,113,113,0.15)',background:'rgba(248,113,113,0.03)',marginBottom:12}}>
-          <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--red)',whiteSpace:'pre-wrap'}}>{step.state.error}</div>
-        </div>
-      )}
-
-      {/* Logs */}
-      {logs.length > 0 && (
-        <div className="log-box" ref={logRef}>
-          {logs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')||l.includes('done')?'ok':''}>{l}</div>)}
-        </div>
-      )}
-      {logs.length === 0 && st === 'pending' && !s && !m && (
-        <div className="empty-state"><div className="icon">⚡</div>Ready to run</div>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// MINI CHART (for examples gallery)
-// ═══════════════════════════════════════════════════════
-function MiniChart({ data, entryDate }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    const canvas = ref.current; if (!canvas || !data.length) return;
-    const W = canvas.width = canvas.parentElement.clientWidth - 24;
-    const H = canvas.height = 80;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#08090b'; ctx.fillRect(0, 0, W, H);
-    const prices = data.flatMap(c => [c.high, c.low]);
-    const mn = Math.min(...prices)*0.998, mx = Math.max(...prices)*1.002;
-    const cw = W / data.length, bw = Math.max(1, cw * 0.6);
-    const py = p => H * (1 - (p - mn) / (mx - mn));
-    data.forEach((c, i) => {
-      const x = i * cw + cw / 2, up = c.close >= c.open;
-      const color = c.date === entryDate ? '#3b82f6' : up ? '#26A69A' : '#EF5350';
-      ctx.strokeStyle = color; ctx.lineWidth = 0.8;
-      ctx.beginPath(); ctx.moveTo(x, py(c.high)); ctx.lineTo(x, py(c.low)); ctx.stroke();
-      const t = py(Math.max(c.open, c.close)), b = py(Math.min(c.open, c.close));
-      if (up) { ctx.strokeStyle = color; ctx.strokeRect(x-bw/2, t, bw, Math.max(1,b-t)); }
-      else { ctx.fillStyle = color; ctx.fillRect(x-bw/2, t, bw, Math.max(1,b-t)); }
-    });
-  }, [data, entryDate]);
-  return <canvas ref={ref} style={{display:'block', marginTop:6, borderRadius:3}} />;
-}
-
-// ═══════════════════════════════════════════════════════
-// EXAMPLES PAGE
-// ═══════════════════════════════════════════════════════
-function ExamplesPage({ setup }) {
-  const [examples, setExamples] = useState([]);
-  const [rejected, setRejected] = useState([]);
-  const [pending, setPending] = useState([]);
-  const [tab, setTab] = useState('examples');
-  const [showCharts, setShowCharts] = useState(false);
-  const [chartData, setChartData] = useState({});
-
-  const reload = () => {
-    fetch(`${API}/api/examples/${setup}`).then(r=>r.json()).then(d => setExamples(d.examples || [])).catch(()=>{});
-    fetch(`${API}/api/vetting/${setup}/rejected`).then(r=>r.json()).then(d => setRejected(d.rejected || [])).catch(()=>{});
-    fetch(`${API}/api/pending/${setup}`).then(r=>r.json()).then(d => setPending(d.pending || [])).catch(()=>{});
-  };
-
-  useEffect(reload, [setup]);
-
-  function loadChart(ticker, entryDate) {
-    const key = `${ticker}_${entryDate}`;
-    if (chartData[key]) return;
-    fetch(`${API}/api/vetting/${setup}/ohlcv/${ticker}?signal_date=${entryDate}&lookback=60&forward=30`)
-      .then(r=>r.json()).then(d => setChartData(prev => ({...prev, [key]: d.data || []}))).catch(()=>{});
-  }
-
-  useEffect(() => {
-    if (showCharts && tab==='examples') {
-      examples.forEach(ex => loadChart(ex.ticker, ex.entryDate));
-    }
-  }, [showCharts, examples, tab]);
-
-  return (
-    <div>
-      <div className="stat-row" style={{marginBottom:16}}>
-        <div className="stat-box">
-          <div className="stat-label">Optimal Samples</div>
-          <div className="stat-val green">{examples.length}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Rejected</div>
-          <div className="stat-val" style={{color:'var(--red)'}}>{rejected.length}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Unique Tickers</div>
-          <div className="stat-val blue">{new Set(examples.map(e=>e.ticker)).size}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Date Range</div>
-          <div className="stat-val" style={{fontSize:11}}>
-            {examples.length > 0
-              ? `${examples.reduce((a,e) => e.entryDate < a ? e.entryDate : a, '9999').slice(0,7)} — ${examples.reduce((a,e) => e.entryDate > a ? e.entryDate : a, '0000').slice(0,7)}`
-              : '—'}
-          </div>
-        </div>
-      </div>
-
-      <div style={{display:'flex',gap:8,marginBottom:16}}>
-        <button className={`btn ${tab==='examples'?'btn-go':''}`} onClick={()=>setTab('examples')}>
-          Optimal Samples ({examples.length})
-        </button>
-        <button className={`btn ${tab==='pending'?'btn-go':''}`} onClick={()=>setTab('pending')}
-          style={pending.length>0?{borderColor:'var(--amber)',color:'var(--amber)'}:{}}>
-          Pending ({pending.length})
-        </button>
-        <button className={`btn ${tab==='rejected'?'btn-stop':''}`} onClick={()=>setTab('rejected')}>
-          Rejected ({rejected.length})
-        </button>
-        {tab==='examples' && (
-          <button className="btn" onClick={()=>setShowCharts(p=>!p)} style={{marginLeft:'auto'}}>
-            {showCharts ? '▣ Hide Charts' : '▢ Show Charts'}
-          </button>
-        )}
-      </div>
-
-      {tab==='examples' ? (
-        <div className="ex-grid" style={showCharts ? {gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))'} : {}}>
-          {examples.map(ex => {
-            const key = `${ex.ticker}_${ex.entryDate}`;
-            const data = chartData[key];
-            return (
-              <div key={key} className="ex-card">
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                  <span className="ex-ticker">{ex.ticker}</span>
-                  <div style={{display:'flex',alignItems:'center',gap:8}}>
-                    {ex.adrMove != null && <span style={{fontFamily:'var(--mono)',fontSize:12,color:'var(--green)',fontWeight:600}}>+{ex.adrMove} ADR</span>}
-                    <span className="ex-date">{ex.entryDate}</span>
-                    <span onClick={()=>{if(confirm(`Delete ${ex.ticker} ${ex.entryDate}?`))fetch(`${API}/api/examples/${setup}/${ex.id}`,{method:'DELETE'}).then(reload)}}
-                      style={{color:'var(--text-muted)',cursor:'pointer',fontSize:14,lineHeight:1,padding:'0 2px'}}
-                      onMouseOver={e=>e.target.style.color='var(--red)'}
-                      onMouseOut={e=>e.target.style.color='var(--text-muted)'}>×</span>
-                  </div>
-                </div>
-                {showCharts && data && data.length > 0 && <MiniChart data={data} entryDate={ex.entryDate} />}
-              </div>
-            );
-          })}
-        </div>
-      ) : tab==='pending' ? (
-        <div>
-          {pending.length > 0 && (
-            <div style={{display:'flex',gap:8,marginBottom:12,alignItems:'center'}}>
-              <button className="btn btn-go" onClick={()=>{if(confirm(`Approve all ${pending.filter(p=>p.ai_verdict==='APPROVE').length} AI-approved items?`))
-                fetch(`${API}/api/pending/${setup}/approve-all`,{method:'POST'}).then(reload)}}>
-                ✓ Approve All AI-Approved
-              </button>
-              <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)'}}>
-                {pending.filter(p=>p.status==='pending').length} awaiting AI review · {pending.filter(p=>p.ai_verdict==='APPROVE').length} AI approved · {pending.filter(p=>p.ai_verdict==='REJECT').length} AI rejected
-              </span>
-            </div>
-          )}
-          <div className="ex-grid">
-            {pending.map(p => {
-              const isApprove = p.ai_verdict === 'APPROVE';
-              const isReject = p.ai_verdict === 'REJECT';
-              const isWaiting = !p.ai_verdict;
-              const borderColor = isApprove ? 'rgba(38,166,154,0.3)' : isReject ? 'rgba(239,83,80,0.3)' : 'rgba(251,191,36,0.2)';
-              return (
-                <div key={p.id} className="ex-card" style={{borderColor}}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:p.ai_reasoning?6:0}}>
-                    <div style={{display:'flex',alignItems:'center',gap:8}}>
-                      {isApprove && <span style={{color:'var(--green)',fontWeight:700,fontSize:11,fontFamily:'var(--mono)'}}>✓ AI APPROVE</span>}
-                      {isReject && <span style={{color:'var(--red)',fontWeight:700,fontSize:11,fontFamily:'var(--mono)'}}>✗ AI REJECT</span>}
-                      {isWaiting && <span style={{color:'var(--amber)',fontWeight:700,fontSize:11,fontFamily:'var(--mono)'}}>⏳ WAITING</span>}
-                      <span className="ex-ticker">{p.ticker}</span>
-                    </div>
-                    <div style={{display:'flex',alignItems:'center',gap:8}}>
-                      <span className="ex-date">{p.entry_date}</span>
-                      <span onClick={()=>fetch(`${API}/api/pending/${setup}/${p.id}/approve`,{method:'POST'}).then(reload)}
-                        style={{color:'var(--green)',cursor:'pointer',fontSize:13,fontFamily:'var(--mono)',fontWeight:700}}
-                        title="Approve into examples">✓</span>
-                      <span onClick={()=>fetch(`${API}/api/pending/${setup}/${p.id}/reject`,{method:'POST'}).then(reload)}
-                        style={{color:'var(--red)',cursor:'pointer',fontSize:15,lineHeight:1,fontWeight:700}}
-                        title="Reject">×</span>
-                    </div>
-                  </div>
-                  {p.ai_reasoning && (
-                    <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-dim)',lineHeight:1.5,
-                      padding:'6px 8px',background:'var(--surface-2)',borderRadius:4,marginTop:4}}>
-                      {p.ai_reasoning}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {pending.length === 0 && <div className="empty-state"><div className="icon">∅</div>No pending examples. Vet signals and click YES to add picks here.</div>}
-          </div>
-        </div>
-      ) : (
-        <div className="ex-grid">
-          {rejected.map((r,i) => (
-            <div key={i} className="ex-card rejected">
-              <div className="ex-ticker">{r.ticker}</div>
-              <div className="ex-date">{r.signal_date}</div>
-            </div>
-          ))}
-          {rejected.length === 0 && <div className="empty-state"><div className="icon">∅</div>No rejected signals yet</div>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// VETTING PAGE (ported from vetting.html)
-// ═══════════════════════════════════════════════════════
-function VettingChart({ candles, ticker, signalDate, selectedDate, onSelectDate, exitDate, earningsDates }) {
-  const containerRef = useRef(null);
-  const canvasRef = useRef(null);
-  const volCanvasRef = useRef(null);
-  const [dims, setDims] = useState({ w: 900, h: 520 });
-  const [hoverIdx, setHoverIdx] = useState(null);
-  const [scrollOffset, setScrollOffset] = useState(0);
-  const VISIBLE = Math.max(candles.length, 330);
-
-  const UP='#26A69A',DOWN='#EF5350',BG='#08090b',GRID='rgba(35,37,41,0.6)';
-  const EMA8='#5dade2',EMA21='#d4a853',SMA50='#f5c542',SMA200='#e74c3c';
-  const SIGNAL_COLOR='#f59e0b',SELECTED_COLOR='#3b82f6',EXIT_COLOR='#a855f7';
-
-  useEffect(() => {
-    function resize() {
-      if(containerRef.current) { const w=containerRef.current.clientWidth; setDims({w, h:Math.max(400,containerRef.current.clientHeight)}); }
-    }
-    resize(); window.addEventListener('resize',resize); return ()=>window.removeEventListener('resize',resize);
-  }, []);
-
-  const closes=candles.map(c=>c.close), ema8=ema(closes,8), ema21=ema(closes,21), sma50v=sma(closes,50), sma200v=sma(closes,200);
-  const vols=candles.map(c=>c.volume||0), volAvg=sma(vols,20);
-  const enriched=candles.map((c,i)=>({...c,ema8:ema8[i],ema21:ema21[i],sma50:sma50v[i],sma200:sma200v[i],volAvg20:volAvg[i]}));
-
-  const maxOffset=Math.max(0,enriched.length-VISIBLE);
-  const offset=Math.min(Math.max(0,scrollOffset),maxOffset);
-  const visible=enriched.slice(offset,offset+VISIBLE);
-
-  useEffect(() => {
-    const sigIdx=enriched.findIndex(c=>c.date===signalDate);
-    if(sigIdx>=0) setScrollOffset(Math.max(0,sigIdx-Math.floor(VISIBLE*0.5)));
-    else setScrollOffset(maxOffset);
-  }, [candles, signalDate]);
-
-  const MARGIN={top:32,right:64,bottom:0}, VOL_H=70;
-  const CHART_H=dims.h-MARGIN.top-VOL_H, CHART_W=dims.w-MARGIN.right;
-  const candleW=CHART_W/VISIBLE, bodyW=Math.max(1,candleW*0.6);
-  const prices=visible.flatMap(c=>[c.high,c.low]);
-  const pMin=Math.min(...prices)*0.995, pMax=Math.max(...prices)*1.005;
-  const priceY=p=>MARGIN.top+CHART_H*(1-(p-pMin)/(pMax-pMin));
-  const candleX=i=>i*candleW+candleW/2;
-  const volMax=Math.max(...visible.map(c=>c.volume||0))||1;
-
-  // Draw price chart
-  useEffect(() => {
-    const canvas=canvasRef.current; if(!canvas||!visible.length) return;
-    canvas.width=dims.w; canvas.height=dims.h-VOL_H;
-    const ctx=canvas.getContext('2d');
-    ctx.fillStyle=BG; ctx.fillRect(0,0,canvas.width,canvas.height);
-
-    ctx.strokeStyle=GRID; ctx.lineWidth=0.5;
-    for(let i=0;i<=6;i++){const y=MARGIN.top+(CHART_H/6)*i;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(CHART_W,y);ctx.stroke();
-      const price=pMax-((pMax-pMin)/6)*i;ctx.fillStyle='#62656d';ctx.font='10px JetBrains Mono';ctx.textAlign='left';ctx.fillText(price.toFixed(2),CHART_W+6,y+3);}
-
-    function drawMA(key,color){ctx.strokeStyle=color;ctx.lineWidth=1.2;ctx.beginPath();let s=false;
-      visible.forEach((c,i)=>{if(c[key]==null)return;const x=candleX(i),y=priceY(c[key]);if(!s){ctx.moveTo(x,y);s=true;}else ctx.lineTo(x,y);});ctx.stroke();}
-    drawMA('ema8',EMA8);drawMA('ema21',EMA21);drawMA('sma50',SMA50);drawMA('sma200',SMA200);
-
-    visible.forEach((c,i) => {
-      const x=candleX(i), isUp=c.close>=c.open, color=isUp?UP:DOWN;
-      const isSig=c.date===signalDate, isSel=c.date===selectedDate, isExit=c.date===exitDate;
-
-      if(isSig){ctx.fillStyle='rgba(245,158,11,0.1)';ctx.fillRect(x-candleW/2,MARGIN.top,candleW,CHART_H);
-        ctx.strokeStyle=SIGNAL_COLOR;ctx.lineWidth=1;ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(x,MARGIN.top);ctx.lineTo(x,MARGIN.top+CHART_H);ctx.stroke();ctx.setLineDash([]);}
-      if(isSel&&!isSig){ctx.fillStyle='rgba(59,130,246,0.12)';ctx.fillRect(x-candleW/2,MARGIN.top,candleW,CHART_H);
-        ctx.strokeStyle=SELECTED_COLOR;ctx.lineWidth=1;ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(x,MARGIN.top);ctx.lineTo(x,MARGIN.top+CHART_H);ctx.stroke();ctx.setLineDash([]);}
-      if(isExit){ctx.strokeStyle=EXIT_COLOR;ctx.lineWidth=1;ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(x,MARGIN.top);ctx.lineTo(x,MARGIN.top+CHART_H);ctx.stroke();ctx.setLineDash([]);}
-
-      ctx.strokeStyle=color;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,priceY(c.high));ctx.lineTo(x,priceY(c.low));ctx.stroke();
-      const bTop=priceY(Math.max(c.open,c.close)),bBot=priceY(Math.min(c.open,c.close)),bH=Math.max(1,bBot-bTop);
-      if(isUp){ctx.strokeStyle=color;ctx.lineWidth=1;ctx.strokeRect(x-bodyW/2,bTop,bodyW,bH);}
-      else{ctx.fillStyle=color;ctx.fillRect(x-bodyW/2,bTop,bodyW,bH);}
-
-      if(isSig){ctx.fillStyle=SIGNAL_COLOR;ctx.font='bold 9px JetBrains Mono';ctx.textAlign='center';ctx.fillText('SIGNAL',x,MARGIN.top+CHART_H-4);}
-      if(isSel&&!isSig){ctx.fillStyle=SELECTED_COLOR;ctx.font='bold 9px JetBrains Mono';ctx.textAlign='center';ctx.fillText('ENTRY',x,priceY(c.low)+20);}
-      if(isExit){ctx.fillStyle=EXIT_COLOR;ctx.font='bold 9px JetBrains Mono';ctx.textAlign='center';ctx.fillText('EXIT',x,MARGIN.top+14);}
-    });
-
-    // Earnings markers
-    if(earningsDates&&earningsDates.length>0){const edSet=new Set(earningsDates);
-      visible.forEach((c,i)=>{const prevDate=i>0?visible[i-1].date:(offset>0?enriched[offset-1]?.date:null);
-        const isReaction=prevDate&&edSet.has(prevDate),isReport=edSet.has(c.date);
-        if(isReport||isReaction){const x=candleX(i);
-          ctx.fillStyle=isReaction?'rgba(168,85,247,0.12)':'rgba(168,85,247,0.06)';ctx.fillRect(x-candleW/2,MARGIN.top,candleW,CHART_H);
-          ctx.fillStyle='#a855f7';ctx.font='bold 9px JetBrains Mono';ctx.textAlign='center';ctx.fillText('E',x,MARGIN.top+10);}});}
-
-    ctx.fillStyle='rgba(255,255,255,0.04)';ctx.font='bold 48px DM Sans';ctx.textAlign='right';ctx.fillText(ticker,CHART_W-12,MARGIN.top+52);
-
-    if(hoverIdx!=null&&visible[hoverIdx]){const c=visible[hoverIdx],x=candleX(hoverIdx);
-      ctx.strokeStyle='rgba(255,255,255,0.12)';ctx.lineWidth=0.5;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(x,MARGIN.top);ctx.lineTo(x,MARGIN.top+CHART_H);ctx.stroke();ctx.setLineDash([]);
-      const isUp=c.close>=c.open;ctx.fillStyle=isUp?UP:DOWN;ctx.font='11px JetBrains Mono';ctx.textAlign='left';
-      ctx.fillText(`${c.date}  O:${c.open?.toFixed(2)} H:${c.high?.toFixed(2)} L:${c.low?.toFixed(2)} C:${c.close?.toFixed(2)}  V:${(c.volume/1e6)?.toFixed(1)}M`,8,16);}
-  }, [visible,dims,hoverIdx,selectedDate,signalDate,exitDate,earningsDates]);
-
-  // Volume
-  useEffect(() => {
-    const canvas=volCanvasRef.current; if(!canvas||!visible.length) return;
-    canvas.width=dims.w; canvas.height=VOL_H;
-    const ctx=canvas.getContext('2d');
-    ctx.fillStyle=BG;ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.strokeStyle=GRID;ctx.lineWidth=0.5;ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(CHART_W,0);ctx.stroke();
-    visible.forEach((c,i)=>{const x=candleX(i),isUp=c.close>=c.open,barH=((c.volume||0)/volMax)*(VOL_H-8);
-      ctx.fillStyle=isUp?'rgba(38,166,154,0.35)':'rgba(239,83,80,0.35)';ctx.fillRect(x-bodyW/2,VOL_H-barH,bodyW,barH);});
-    ctx.strokeStyle='rgba(245,158,11,0.5)';ctx.lineWidth=1;ctx.beginPath();let s=false;
-    visible.forEach((c,i)=>{if(c.volAvg20==null)return;const x=candleX(i),y=VOL_H-(c.volAvg20/volMax)*(VOL_H-8);if(!s){ctx.moveTo(x,y);s=true;}else ctx.lineTo(x,y);});ctx.stroke();
-    ctx.fillStyle='#62656d';ctx.font='9px JetBrains Mono';ctx.textAlign='center';
-    const step=Math.max(1,Math.floor(VISIBLE/10));
-    visible.forEach((c,i)=>{if(i%step===0){const p=c.date.split('-');ctx.fillText(p[1]+'/'+p[2],candleX(i),VOL_H-2);}});
-  }, [visible,dims]);
-
-  function getIdx(e,canvas){const rect=canvas.getBoundingClientRect();const mx=e.clientX-rect.left;const idx=Math.floor(mx/candleW);return idx>=0&&idx<visible.length?idx:null;}
-
-  return (
-    <div ref={containerRef} style={{width:'100%',height:'100%'}}>
-      <canvas ref={canvasRef} style={{display:'block',cursor:'crosshair'}}
-        onMouseMove={e=>setHoverIdx(getIdx(e,canvasRef.current))}
-        onMouseLeave={()=>setHoverIdx(null)}
-        onClick={e=>{const idx=getIdx(e,canvasRef.current);if(idx!=null&&visible[idx])onSelectDate(visible[idx].date);}}
-        onWheel={e=>{e.preventDefault();setScrollOffset(p=>Math.min(Math.max(0,p+(e.deltaY>0?5:-5)),maxOffset));}}
-      />
-      <canvas ref={volCanvasRef} style={{display:'block'}} />
-    </div>
-  );
-}
-
-function VettingPage({ setup }) {
-  const [signals, setSignals] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [currentIdx, setCurrentIdx] = useState(0);
-  const [candles, setCandles] = useState([]);
-  const [chartLoading, setChartLoading] = useState(false);
-  const [selectedEntry, setSelectedEntry] = useState(null);
-  const [filter, setFilter] = useState('all');
-  const [saving, setSaving] = useState(false);
-  const [earningsDates, setEarningsDates] = useState([]);
-  const [pipe, setPipe] = useState(null);
-  const [filterLogs, setFilterLogs] = useState([]);
-  const [showLogs, setShowLogs] = useState(false);
-  const filterLogRef = useRef(null);
-  const [source, setSource] = useState('step2'); // 'step2' | 'step4'
-
-  // Poll pipeline state for agent status + step state
-  useEffect(() => {
-    const load = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
-    load(); const id = setInterval(load, 5000); return () => clearInterval(id);
-  }, []);
-
-  const stepState = pipe?.steps?.find(s=>s.id==='sample_expansion')?.state;
-  const stepStatus = stepState?.status || 'pending';
-  const isFilterRunning = ['running','claimed','queued'].includes(stepStatus);
-
-  // Poll logs while filter is running
-  const filterLogCountRef = useRef(0);
-  useEffect(() => {
-    if (!isFilterRunning) { filterLogCountRef.current = 0; return; }
-    setShowLogs(true);
-    const poll = () => fetch(`${API}/api/pipeline/logs/sample_expansion?after=${filterLogCountRef.current}`).then(r=>r.json())
-      .then(d => { if(d.lines?.length) { filterLogCountRef.current += d.lines.length; setFilterLogs(p=>[...p,...d.lines]); } }).catch(()=>{});
-    poll(); const id = setInterval(poll, 2000); return () => clearInterval(id);
-  }, [isFilterRunning]);
-
-  // Auto-scroll logs
-  useEffect(() => { if(filterLogRef.current) filterLogRef.current.scrollTop = filterLogRef.current.scrollHeight; }, [filterLogs]);
-
-  // Refresh signals when filter finishes
-  const prevRunning = useRef(false);
-  useEffect(() => {
-    if (prevRunning.current && !isFilterRunning) {
-      // Just finished — reload signals
-      setLoading(true);
-      fetch(`${API}/api/vetting/${setup}/signals`).then(r=>r.json())
-        .then(d=>{setSignals(d.signals||[]);setLoading(false);setCurrentIdx(0);}).catch(()=>setLoading(false));
-    }
-    prevRunning.current = isFilterRunning;
-  }, [isFilterRunning]);
-
-  function reloadSamples() {
-    setFilterLogs([]);
-    fetch(`${API}/api/pipeline/run/sample_expansion`, {method:'POST'}).then(r=>r.json()).then(d => {
-      if(d.error) {
-        if(d.error.includes('Prerequisite')) {
-          alert('Signal Brute Forcing (Step 2) must run first.\n\nAfter adding new examples through vetting, the full chain needs to re-run:\n  Step 2: Grind → finds conditions that pass ALL examples\n  Step 3: Filter → scans with those conditions\n\nGo to Step 2 and run the grind first.');
-        } else {
-          alert(d.error);
-        }
-      }
-    });
-  }
-
-  function signalFetchUrl() {
-    return source === 'step4'
-      ? `${API}/api/setup-grinder/${setup}/signals`
-      : `${API}/api/vetting/${setup}/signals`;
-  }
-
-  useEffect(() => {
-    setLoading(true);
-    setSignals([]);
-    setCurrentIdx(0);
-    fetch(signalFetchUrl()).then(r=>r.json())
-      .then(d=>{setSignals(d.signals||[]);setLoading(false);}).catch(()=>setLoading(false));
-  }, [setup, source]);
-
-  const filtered = signals.filter(s => {
-    if(filter==='all') return true; if(filter==='unvetted') return !s.verdict; return s.verdict===filter;
-  });
-  const current = filtered[currentIdx] || null;
-
-  // Prefetch cache: load current + next 3 charts
-  const ohlcvCache = useRef({});
-
-  function fetchOhlcv(ticker, date) {
-    const key = `${ticker}_${date}`;
-    if (ohlcvCache.current[key]) return Promise.resolve(ohlcvCache.current[key]);
-    return fetch(`${API}/api/vetting/${setup}/ohlcv/${ticker}?signal_date=${date}&lookback=250&forward=80`)
-      .then(r=>r.json()).then(d => { ohlcvCache.current[key] = d.data || []; return ohlcvCache.current[key]; });
-  }
-
-  useEffect(() => {
-    if(!current){setCandles([]);setEarningsDates([]);return;}
-    setChartLoading(true); setSelectedEntry(current.entry_date||null);
-    fetchOhlcv(current.ticker, current.date)
-      .then(data=>{setCandles(data);setChartLoading(false);}).catch(()=>setChartLoading(false));
-    setEarningsDates([]);
-    fetch(`${API}/api/vetting/earnings/${current.ticker}`).then(r=>r.json()).then(d=>setEarningsDates(d.earnings_dates||[])).catch(()=>{});
-    // Prefetch next 3
-    for(let i=1;i<=3;i++){
-      const next=filtered[currentIdx+i];
-      if(next) fetchOhlcv(next.ticker, next.date).catch(()=>{});
-    }
-  }, [current?.ticker, current?.date]);
-
-  function saveVerdict(verdict) {
-    if(!current) return;
-    if(verdict==='yes'&&!selectedEntry){alert('Click a candle to set entry date first');return;}
-    setSaving(true);
-    fetch(`${API}/api/vetting/${setup}/decide`,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ticker:current.ticker,signal_date:current.date,verdict,entry_date:verdict==='yes'?selectedEntry:null})})
-      .then(r=>r.json()).then(()=>{
-        const key=`${current.ticker}_${current.date}`;
-        setSignals(p=>p.map(s=>`${s.ticker}_${s.date}`===key?{...s,verdict,entry_date:verdict==='yes'?selectedEntry:null}:s));
-        setSaving(false);
-        const nextIdx=filtered.findIndex((s,i)=>i>currentIdx&&!s.verdict);
-        if(nextIdx>=0)setCurrentIdx(nextIdx);else if(currentIdx<filtered.length-1)setCurrentIdx(currentIdx+1);
-      }).catch(()=>setSaving(false));
-  }
-
-  useEffect(() => {
-    function handler(e){
-      if(e.key==='ArrowDown'||e.key==='j'){e.preventDefault();setCurrentIdx(i=>Math.min(i+1,filtered.length-1));}
-      if(e.key==='ArrowUp'||e.key==='k'){e.preventDefault();setCurrentIdx(i=>Math.max(i-1,0));}
-      if(e.key==='1'||e.key==='y') saveVerdict('yes');
-      if(e.key==='2'||e.key==='m') { if(source!=='step4') saveVerdict('maybe'); }
-      if(e.key==='3'||e.key==='n') saveVerdict('no');
-    }
-    window.addEventListener('keydown',handler); return ()=>window.removeEventListener('keydown',handler);
-  }, [current,selectedEntry,currentIdx,filtered.length]);
-
-  const counts={yes:0,maybe:0,no:0,unvetted:0};
-  signals.forEach(s=>{if(s.verdict)counts[s.verdict]++;else counts.unvetted++;});
-
-  if(loading) return <div className="empty-state"><div className="icon">⏳</div>Loading signals...</div>;
-  if(signals.length===0) return (
-    <div>
-      <div className="stat-row" style={{marginBottom:16}}>
-        <div className="stat-box">
-          <div className="stat-label">Filter Status</div>
-          <div className={`stat-val ${stepStatus==='done'?'green':isFilterRunning?'amber':''}`}>{stepStatus.toUpperCase()}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Agent</div>
-          <div className={`stat-val ${pipe?.agent_status==='online'?'green':'amber'}`} style={{fontSize:13}}>
-            {pipe?.agent_status?.toUpperCase() || '?'}
-          </div>
-        </div>
-      </div>
-      <div style={{display:'flex',gap:8,marginBottom:16}}>
-        {isFilterRunning
-          ? <button className="btn btn-stop" onClick={()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'})}>■ STOP</button>
-          : <button className="btn btn-go" onClick={reloadSamples} disabled={pipe?.agent_status!=='online'}>▶ RELOAD SAMPLES</button>
-        }
-      </div>
-      {pipe?.agent_status !== 'online' && !isFilterRunning && (
-        <div className="card" style={{borderColor:'rgba(251,191,36,0.15)',background:'rgba(251,191,36,0.03)',marginBottom:12}}>
-          <div style={{fontSize:11,color:'var(--amber)',marginBottom:6}}>Agent offline — start it to run signal filter:</div>
-          <div onClick={e=>{navigator.clipboard.writeText('python local_runner/agent.py');e.target.style.color='var(--green)';setTimeout(()=>e.target.style.color='var(--cyan)',1000);}}
-            style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--cyan)',background:'var(--bg)',
-            padding:'6px 10px',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer'}}>
-            python local_runner/agent.py <span style={{fontSize:9,color:'var(--text-muted)',marginLeft:8}}>click to copy</span>
-          </div>
-        </div>
-      )}
-      {showLogs && filterLogs.length > 0 && (
-        <div className="log-box" ref={filterLogRef}>
-          {filterLogs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')||l.includes('done')?'ok':''}>{l}</div>)}
-        </div>
-      )}
-      {!showLogs && !isFilterRunning && (
-        <div className="empty-state"><div className="icon">∅</div>No filtered signals. Click RELOAD SAMPLES to run signal filter.</div>
-      )}
-    </div>
-  );
-
-  return (
-    <div className="vet-layout">
-      <div className="vet-list">
-        <div style={{display:'flex',gap:0,padding:'8px 10px 0',borderBottom:'1px solid var(--border)'}}>
-          {[['step2','Step 2'],['step4','Step 4']].map(([s,label])=>(
-            <button key={s} onClick={()=>{setSource(s);setFilter('all');}}
-              style={{flex:1,padding:'5px 0',fontSize:10,fontFamily:'var(--mono)',fontWeight:700,cursor:'pointer',
-                border:'1px solid var(--border)',borderRadius: s==='step2'?'4px 0 0 4px':'0 4px 4px 0',
-                background:source===s?'var(--cyan)':'transparent',
-                color:source===s?'var(--bg)':'var(--text-muted)',
-                marginLeft:s==='step4'?-1:0}}>{label}</button>
-          ))}
-        </div>
-        <div className="vet-filter-bar">
-          {['all','unvetted','yes','maybe','no'].map(f=>{
-            const disabled = source==='step4' && f==='maybe';
-            return (
-              <button key={f} className={`vet-filter-btn ${filter===f?'on':''}`}
-                disabled={disabled}
-                onClick={()=>{if(!disabled){setFilter(f);setCurrentIdx(0);}}}
-                style={disabled?{opacity:0.3,cursor:'not-allowed'}:{}}
-              >{f} {f==='all'?signals.length:f==='unvetted'?counts.unvetted:counts[f]}</button>
-            );
-          })}
-        </div>
-        {filtered.map((sig,i) => {
-          const noExit = source==='step4' && !sig.exit_date;
-          return (
-          <div key={`${sig.ticker}_${sig.date}`}
-            className={`vet-item ${i===currentIdx?'on':''} ${sig.verdict?'v-'+sig.verdict:''}`}
-            style={noExit?{opacity:0.45}:{}}
-            onClick={()=>setCurrentIdx(i)}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span className="vet-ticker">{sig.ticker}</span>
-              <span style={{display:'flex',alignItems:'center',gap:4}}>
-                {noExit && <span style={{fontSize:8,fontFamily:'var(--mono)',padding:'1px 4px',borderRadius:2,background:'rgba(251,191,36,0.15)',color:'var(--amber)',fontWeight:700,letterSpacing:'0.05em'}}>NO EXIT</span>}
-                <span className="vet-adr" style={{fontFamily:'var(--mono)',fontSize:11}}>+{sig.move_adr?.toFixed(1)}</span>
-              </span>
-            </div>
-            <div className="vet-meta">
-              <span>{sig.date}</span>
-              <span>{sig.exit_bar}d {sig.verdict && <span style={{textTransform:'uppercase',fontWeight:700,
-                color:sig.verdict==='yes'?'var(--green)':sig.verdict==='maybe'?'var(--amber)':'var(--red)'}}>{sig.verdict}</span>}</span>
-            </div>
-          </div>
-          );
-        })}
-      </div>
-      <div className="vet-chart">
-        {isFilterRunning || (showLogs && filterLogs.length > 0) ? (
-          <div style={{display:'flex',flexDirection:'column',height:'100%'}}>
-            <div style={{padding:'10px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:12}}>
-              {isFilterRunning && <span className="pulse-dot" style={{width:8,height:8,borderRadius:'50%',background:'var(--green)',display:'inline-block'}} />}
-              <span style={{fontFamily:'var(--mono)',fontSize:12,fontWeight:700,color:isFilterRunning?'var(--green)':'var(--text-dim)'}}>
-                {isFilterRunning ? 'Signal Filter Running...' : 'Signal Filter Complete'}
-              </span>
-              {isFilterRunning && filterLogs.length > 0 && (
-                <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',marginLeft:'auto'}}>
-                  {filterLogs.length} lines
-                </span>
-              )}
-              {!isFilterRunning && filterLogs.length > 0 && (
-                <button onClick={()=>{setShowLogs(false);setFilterLogs([]);}}
-                  style={{marginLeft:'auto',padding:'2px 8px',borderRadius:3,fontSize:9,fontFamily:'var(--mono)',
-                    border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',cursor:'pointer'}}>
-                  ✕ CLOSE
-                </button>
-              )}
-            </div>
-            <div className="log-box" ref={filterLogRef} style={{flex:1,maxHeight:'none',borderRadius:0,border:'none'}}>
-              {filterLogs.map((l,i) => <div key={i} className={l.toLowerCase().includes('error')?'err':l.includes('✓')||l.toLowerCase().includes('done')?'ok':''}>{l}</div>)}
-              {isFilterRunning && filterLogs.length === 0 && (
-                <div style={{color:'var(--text-muted)'}}>Waiting for agent to start signal_filter.py...</div>
-              )}
-            </div>
-          </div>
-        ) : current ? (
-          <>
-            <div className="vet-chart-hdr">
-              <div className="vet-chart-info">
-                <span className="vet-chart-ticker">{current.ticker}</span>
-                <span className="vet-chart-meta">
-                  Signal: {current.date} · Exit: {current.exit_date} ({current.exit_bar}d)
-                  · Move: +{current.move_adr?.toFixed(1)} ADR
-                  · Eff: {current.capture_eff?(current.capture_eff*100).toFixed(0):'?'}%
-                </span>
-              </div>
-              <div className="vet-btns">
-                <button
-                  onClick={isFilterRunning ? ()=>fetch(`${API}/api/pipeline/stop`,{method:'POST'}) : reloadSamples}
-                  disabled={!isFilterRunning && pipe?.agent_status!=='online'}
-                  style={{padding:'4px 10px',borderRadius:4,fontSize:10,fontFamily:'var(--mono)',fontWeight:700,cursor:'pointer',marginRight:12,
-                    border:isFilterRunning?'1px solid var(--red)':'1px solid var(--cyan)',
-                    color:isFilterRunning?'#fff':'var(--cyan)',
-                    background:isFilterRunning?'var(--red)':'transparent',
-                    opacity:(!isFilterRunning && pipe?.agent_status!=='online')?0.4:1}}
-                  title={pipe?.agent_status!=='online'?'Agent offline — start agent first':'Re-run signal filter'}>
-                  {isFilterRunning ? '■ STOP' : '↻ RELOAD'}
-                </button>
-                {selectedEntry && <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--blue)',marginRight:8}}>Entry: {selectedEntry}</span>}
-                <button className={`vet-btn yes ${current.verdict==='yes'?'sel':''}`} onClick={()=>saveVerdict('yes')} disabled={saving}>YES (1)</button>
-                <button className={`vet-btn maybe ${current.verdict==='maybe'?'sel':''}`} onClick={()=>saveVerdict('maybe')} disabled={saving||source==='step4'} style={source==='step4'?{opacity:0.3,cursor:'not-allowed'}:{}}>MAYBE (2)</button>
-                <button className={`vet-btn no ${current.verdict==='no'?'sel':''}`} onClick={()=>saveVerdict('no')} disabled={saving}>NO (3)</button>
-              </div>
-            </div>
-            <div className="vet-canvas-area">
-              {chartLoading ? <div className="empty-state">Loading chart...</div> : (
-                <VettingChart candles={candles} ticker={current.ticker} signalDate={current.date}
-                  selectedDate={selectedEntry} onSelectDate={setSelectedEntry}
-                  exitDate={current.exit_date} earningsDates={earningsDates} />
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="empty-state">{filtered.length===0?'No signals match filter':'Select a signal'}</div>
-        )}
-      </div>
-      <div className="kbd-hint">
-        <kbd>↑</kbd><kbd>↓</kbd> nav · <kbd>1</kbd> yes · <kbd>2</kbd> maybe · <kbd>3</kbd> no · click = entry
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// SETUP HOME PAGE
-// ═══════════════════════════════════════════════════════
-function SetupHomePage({ setup }) {
-  const [examples, setExamples] = useState([]);
-  const [pipe, setPipe] = useState(null);
-  const [grindHistory, setGrindHistory] = useState([]);
-
-  useEffect(() => {
-    fetch(`${API}/api/examples/${setup}`).then(r=>r.json()).then(d=>setExamples(d.examples||[])).catch(()=>{});
-    fetch(`${API}/api/pipeline/steps`).then(r=>r.json()).then(setPipe).catch(()=>{});
-    fetch(`${API}/api/grinder/history/${setup}`).then(r=>r.json()).then(d=>setGrindHistory(d.runs||[])).catch(()=>{});
-  }, [setup]);
-
-  const vetting = pipe?.steps?.find(s=>s.id==='sample_expansion');
-  const vs = vetting?.state?.vetting_stats;
-  const grind = pipe?.steps?.find(s=>s.id==='signal_brute');
-
-  // Dataset metrics
-  const n = examples.length;
-  const tickers = new Set(examples.map(e=>e.ticker)).size;
-  const adrs = examples.filter(e=>e.adrMove!=null).map(e=>e.adrMove).sort((a,b)=>a-b);
-  const medianAdr = adrs.length > 0 ? adrs[Math.floor(adrs.length/2)] : 0;
-  const minAdr = adrs.length > 0 ? adrs[0] : 0;
-  const dates = examples.map(e=>e.entryDate).sort();
-  const dateSpanYrs = dates.length >= 2 ? (new Date(dates[dates.length-1]) - new Date(dates[0])) / (365.25*86400000) : 0;
-  const tickerRatio = n > 0 ? tickers / n : 0;
-  const hasGrind = grind?.state?.status === 'done';
-
-  // Convergence metrics (from grind history)
-  const gh = grindHistory;
-  const nRuns = gh.length;
-  let condStability = 0, sigStability = 0, condOverlap = 0;
-  if (nRuns >= 2) {
-    const last = gh[nRuns-1], prev = gh[nRuns-2];
-    // Condition count change
-    const condDelta = Math.abs(last.n_conditions - prev.n_conditions);
-    const maxCond = Math.max(last.n_conditions, prev.n_conditions, 1);
-    condStability = Math.max(0, Math.round(100 - (condDelta / maxCond) * 200));
-    // Signal count change
-    const sigDelta = Math.abs(last.final_total - prev.final_total);
-    const maxSig = Math.max(last.final_total, prev.final_total, 1);
-    sigStability = Math.max(0, Math.round(100 - (sigDelta / maxSig) * 150));
-    // Condition overlap (how many expressions are shared)
-    const prevSet = new Set(prev.conditions || []);
-    const lastSet = new Set(last.conditions || []);
-    const shared = [...lastSet].filter(c => prevSet.has(c)).length;
-    const unionSize = new Set([...prevSet, ...lastSet]).size || 1;
-    condOverlap = Math.round((shared / unionSize) * 100);
-  }
-
-  // Vetting yield
-  const vettingYield = vs && vs.n_vetted > 0
-    ? Math.round((vs.n_no / vs.n_vetted) * 100)
-    : 0;
-
-  // Score components
-  const diversityScore = Math.min(100, Math.round(tickerRatio * 120));
-  const spreadScore = Math.min(100, Math.round(dateSpanYrs * 25));
-  const moveScore = Math.min(100, Math.round(minAdr * 20));
-  const convergenceScore = nRuns >= 2 ? Math.round((condStability + sigStability + condOverlap) / 3) : 0;
-  const yieldScore = vs && vs.n_vetted >= 10 ? vettingYield : 0;
-
-  const overall = nRuns >= 2
-    ? Math.round(diversityScore*0.10 + spreadScore*0.10 + moveScore*0.10 + convergenceScore*0.45 + yieldScore*0.15)
-    : Math.round(diversityScore*0.20 + spreadScore*0.20 + moveScore*0.20 + (hasGrind?20:0));
-  const grade = overall >= 85 ? 'A' : overall >= 70 ? 'B' : overall >= 55 ? 'C' : overall >= 40 ? 'D' : 'F';
-  const gradeColor = overall >= 70 ? 'var(--green)' : overall >= 50 ? 'var(--amber)' : 'var(--red)';
-  const readiness = overall >= 80 ? 'Ready for live' : overall >= 60 ? 'Getting close — keep cycling' : overall >= 40 ? 'Needs more vetting cycles' : 'Early stage — collect examples';
-
-  const scoreBar = (label, val, note) => (
-    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
-      <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',width:90,flexShrink:0}}>{label}</span>
-      <div style={{flex:1,height:6,background:'var(--surface-3)',borderRadius:3,overflow:'hidden'}}>
-        <div style={{width:`${val}%`,height:'100%',borderRadius:3,
-          background:val>=70?'var(--green)':val>=50?'var(--amber)':'var(--red)',transition:'width 0.3s'}} />
-      </div>
-      <span style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-dim)',width:28,textAlign:'right'}}>{val}</span>
-      {note && <span style={{fontFamily:'var(--mono)',fontSize:9,color:'var(--text-muted)',width:90,flexShrink:0}}>{note}</span>}
-    </div>
-  );
-
-  return (
-    <div>
-      <div className="stat-row" style={{marginBottom:16}}>
-        <div className="stat-box">
-          <div className="stat-label">Quality</div>
-          <div className="stat-val" style={{color:gradeColor,fontSize:24}}>{grade}</div>
-          <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',marginTop:2}}>{overall}/100</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Samples</div>
-          <div className="stat-val green">{n}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Grinds</div>
-          <div className="stat-val blue">{nRuns}</div>
-        </div>
-        {nRuns >= 2 && (
-          <div className="stat-box">
-            <div className="stat-label">Convergence</div>
-            <div className="stat-val" style={{color:convergenceScore>=70?'var(--green)':convergenceScore>=40?'var(--amber)':'var(--red)'}}>{convergenceScore}%</div>
-          </div>
-        )}
-        {vs && vs.n_vetted > 0 && (
-          <div className="stat-box">
-            <div className="stat-label">Vetting NO%</div>
-            <div className="stat-val" style={{color:vettingYield>=80?'var(--green)':vettingYield>=50?'var(--amber)':'var(--red)'}}>{vettingYield}%</div>
-          </div>
-        )}
-      </div>
-
-      <div className="card" style={{marginBottom:12}}>
-        <div className="card-title" style={{marginBottom:8}}>Dataset Quality — <span style={{color:gradeColor,fontWeight:400}}>{readiness}</span></div>
-        {scoreBar('Diversity', diversityScore, `${tickers} tickers`)}
-        {scoreBar('Date Spread', spreadScore, `${dateSpanYrs.toFixed(1)}yr`)}
-        {scoreBar('Move Floor', moveScore, `${minAdr} ADR`)}
-        {nRuns >= 2 && scoreBar('Cond Stability', condStability, `Δ${Math.abs((gh[nRuns-1]?.n_conditions||0)-(gh[nRuns-2]?.n_conditions||0))} conds`)}
-        {nRuns >= 2 && scoreBar('Sig Stability', sigStability, `Δ${Math.abs((gh[nRuns-1]?.final_total||0)-(gh[nRuns-2]?.final_total||0))} sigs`)}
-        {nRuns >= 2 && scoreBar('Cond Overlap', condOverlap, `${Math.round(condOverlap)}% shared`)}
-        {vs && vs.n_vetted >= 10 && scoreBar('Vetting Yield', yieldScore, `${vs.n_no}/${vs.n_vetted} NO`)}
-        {nRuns < 2 && (
-          <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)',marginTop:8,fontStyle:'italic'}}>
-            Need 2+ grind runs to show convergence metrics. Run grind → vet → add examples → re-grind.
-          </div>
-        )}
-      </div>
-
-      {nRuns > 0 && (
-        <div className="card" style={{marginBottom:12}}>
-          <div className="card-title">Grind History</div>
-          <div style={{fontFamily:'var(--mono)',fontSize:10,overflowX:'auto'}}>
-            <div style={{display:'grid',gridTemplateColumns:'auto repeat(4,1fr)',gap:'4px 12px',color:'var(--text-muted)',marginBottom:4}}>
-              <span>Run</span><span>Examples</span><span>Conditions</span><span>Signals</span><span>Peak</span>
-            </div>
-            {gh.map((r,i) => (
-              <div key={i} style={{display:'grid',gridTemplateColumns:'auto repeat(4,1fr)',gap:'4px 12px',color:'var(--text-dim)'}}>
-                <span style={{color:'var(--text-muted)'}}>#{i+1}</span>
-                <span>{r.n_examples}</span>
-                <span>{r.n_conditions}</span>
-                <span>{r.final_total}</span>
-                <span>{r.final_peak}/day</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="card">
-        <div className="card-title">Pipeline Status</div>
-        {pipe?.steps?.filter(s=>s.id!=='nightly').map(s => (
-          <div key={s.id} style={{display:'flex',alignItems:'center',gap:10,padding:'5px 0',
-            fontFamily:'var(--mono)',fontSize:11,color:'var(--text-dim)'}}>
-            <span className={`badge b-${s.state?.status||'pending'}`}>{s.state?.status||'pending'}</span>
-            <span>{s.name}</span>
-            {s.state?.duration_s && <span style={{marginLeft:'auto',color:'var(--text-muted)',fontSize:10}}>{fmtDur(s.state.duration_s)}</span>}
-          </div>
-        ))}
-      </div>
-
-      <div className="card">
-        <div className="card-title">Optimal Samples ({examples.length})</div>
-        <div style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--text-dim)',lineHeight:1.8}}>
-          {examples.map(e => `${e.ticker} ${e.entryDate}`).join(' · ')}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// WATCHLIST PAGE (placeholder)
-// ═══════════════════════════════════════════════════════
-function WatchlistPage() {
-  return <div className="empty-state"><div className="icon">📋</div>Daily Watchlist — coming soon<div style={{fontSize:10,color:'var(--text-muted)'}}>Needs market grinder results for EV ranking</div></div>;
-}
-
-// ═══════════════════════════════════════════════════════
-// APP
-// ═══════════════════════════════════════════════════════
-function App() {
-  const [section, setSection] = useState('setup'); // 'nightly' | 'setup' | 'watchlist'
-  const [setup, setSetup] = useState('dtss');
-  const [tab, setTab] = useState('home');
-  const [agentOnline, setAgentOnline] = useState(false);
-
-  useEffect(() => {
-    const check = () => fetch(`${API}/api/pipeline/steps`).then(r=>r.json())
-      .then(d=>setAgentOnline(d.agent_status==='online')).catch(()=>setAgentOnline(false));
-    check(); const id = setInterval(check, 5000); return ()=>clearInterval(id);
-  }, []);
-
-  const setupSteps = [
-    { id:'home', label:'Home', icon:'◉' },
-    { id:'optimal_samples', label:'Optimal Samples', num:'1' },
-    { id:'signal_brute', label:'Signal Brute Forcing', num:'2' },
-    { id:'sample_expansion', label:'Sample Expansion', num:'3' },
-    { id:'setup_grinder_a', label:'Exit Grinder', num:'4a' },
-    { id:'setup_grinder_b', label:'Setup Grinder', num:'4b' },
-    { id:'market_grind', label:'Market Grinder', num:'5' },
-  ];
-
-  const titles = {
-    nightly: 'Nightly Refresh',
-    home: `${setup.toUpperCase()} — Overview`,
-    optimal_samples: `${setup.toUpperCase()} — Optimal Samples`,
-    signal_brute: `${setup.toUpperCase()} — Signal Brute Forcing`,
-    sample_expansion: `${setup.toUpperCase()} — Sample Expansion`,
-    setup_grinder_a: `${setup.toUpperCase()} — Exit Grinder`,
-    setup_grinder_b: `${setup.toUpperCase()} — Setup Grinder`,
-    market_grind: `${setup.toUpperCase()} — Market Grinder`,
-    watchlist: 'Daily Watchlist',
-  };
-
-  const currentTitle = section === 'nightly' ? titles.nightly
-    : section === 'watchlist' ? titles.watchlist
-    : titles[tab] || '';
-
-  return (
-    <div className="app">
-      {/* Rail */}
-      <div className="rail">
-        <div className="rail-logo">SP</div>
-        <button className={`rail-btn ${section==='nightly'?'on':''}`} onClick={()=>setSection('nightly')} title="Nightly Refresh">🌙</button>
-        <button className={`rail-btn ${section==='setup'?'on':''}`} onClick={()=>setSection('setup')} title="Setup Analysis">⚡</button>
-        <button className={`rail-btn ${section==='watchlist'?'on':''}`} onClick={()=>setSection('watchlist')} title="Daily Watchlist">📋</button>
-        <div className={`rail-agent ${agentOnline?'online':''}`} title={agentOnline?'Agent online':'Agent offline'}></div>
-      </div>
-
-      {/* Sidebar (only for setup analysis) */}
-      {section === 'setup' && (
-        <div className="sidebar">
-          <div className="sb-hdr">SETUP ANALYSIS</div>
-          <div className="sb-setup-sel">
-            <button className={`sb-setup-btn ${setup==='dtss'?'on':''}`} onClick={()=>{setSetup('dtss');setTab('home');}}>DTSS</button>
-            <button className={`sb-setup-btn ${setup==='3-4db'?'on':''}`} onClick={()=>{setSetup('3-4db');setTab('home');}}>3-4DB</button>
-          </div>
-          <div className="sb-section">
-            {setupSteps.map(s => (
-              <div key={s.id} className={`sb-item ${tab===s.id?'on':''}`} onClick={()=>setTab(s.id)}>
-                {s.num ? <span className="num">{s.num}</span> : null}
-                {s.icon && !s.num ? <span style={{fontSize:11}}>{s.icon}</span> : null}
-                <span>{s.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Main */}
-      <div className="main">
-        <div className="main-hdr">
-          <div className="main-title">{currentTitle}</div>
-          <div style={{fontFamily:'var(--mono)',fontSize:10,color:'var(--text-muted)'}}>
-            {new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}
-          </div>
-        </div>
-        <div className="main-body">
-          {section === 'nightly' && <NightlyPage />}
-          {section === 'watchlist' && <WatchlistPage />}
-          {section === 'setup' && tab === 'home' && <SetupHomePage setup={setup} />}
-          {section === 'setup' && tab === 'optimal_samples' && <ExamplesPage setup={setup} />}
-          {section === 'setup' && tab === 'signal_brute' && <StepPage stepId="signal_brute" setup={setup} />}
-          {section === 'setup' && tab === 'sample_expansion' && <VettingPage setup={setup} />}
-          {section === 'setup' && tab === 'setup_grinder_a' && <ExitGrinderPage setup={setup} />}
-          {section === 'setup' && tab === 'setup_grinder_b' && <StepPage stepId="setup_grinder_b" setup={setup} />}
-          {section === 'setup' && tab === 'market_grind' && <div className="empty-state"><div className="icon">🌍</div>Market Grinder — coming soon</div>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+<div class="top"><div class="logo">ScanPerfect</div><span class="sep">│</span><div class="tabs"><div class="tab on" data-v="pipeline" onclick="nav('pipeline')">Pipeline</div><div class="tab" data-v="examples" onclick="nav('examples')">Examples</div><div class="tab" data-v="vetting" onclick="nav('vetting')">Vetting</div><div class="tab" data-v="watchlist" onclick="nav('watchlist')">Watchlist</div></div><div class="top-r"><select class="sel" id="setupSel" onchange="S.setup=this.value;refresh()"></select><div class="adot" id="aDot"></div><div class="albl" id="aLbl">checking</div></div></div>
+<div class="wrap"><div class="side" id="side"></div><div class="content">
+<div class="pnl on" id="v-pipeline"><div id="sp"></div></div>
+<div class="pnl" id="v-examples"><div class="ph"><div><div class="pt" id="exTitle">Examples</div><div class="ps" id="exSub">Loading...</div></div><div class="pa"><button class="btn bn bs" onclick="showNewSetupModal()">New Setup</button><span style="font-size:13px;color:var(--t3);margin-left:10px" id="exCount"></span></div></div><div class="pb">
+<div id="newSetupForm" style="display:none;margin-bottom:18px;border:1px solid var(--b1);padding:15px">
+<p style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px;font-weight:500">Create New Setup</p>
+<div style="display:flex;gap:10px;margin-bottom:10px"><input id="nsName" placeholder="Name (e.g. DTSS)" style="flex:1;background:var(--bg);border:1px solid var(--b1);color:var(--t1);font:14px var(--f);padding:8px 10px;outline:none"><select id="nsDir" style="background:var(--bg);border:1px solid var(--b1);color:var(--t1);font:14px var(--f);padding:8px 10px;outline:none"><option value="short">Short</option><option value="long">Long</option></select></div>
+<input id="nsDesc" placeholder="Description (e.g. Double Top Short Sell)" style="width:100%;background:var(--bg);border:1px solid var(--b1);color:var(--t1);font:14px var(--f);padding:8px 10px;outline:none;margin-bottom:10px">
+<div style="display:flex;gap:8px"><button class="btn ba bs" onclick="createSetup()">Create</button><button class="btn bn bs" onclick="hideNewSetupModal()">Cancel</button></div>
+</div>
+<div style="display:flex;gap:16px;margin-bottom:12px">
+<div style="flex:1">
+<div class="add-section"><div class="add-section-hdr" onclick="toggleAddSection()"><span style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.1em;font-weight:500">Add Examples</span><span id="addSectionArrow" style="color:var(--t3);font-size:13px">▸</span></div>
+<div class="add-section-body" id="addSectionBody">
+<div style="display:flex;gap:10px;margin-bottom:10px"><input id="exTicker" placeholder="TICKER" style="width:100px;background:var(--bg);border:1px solid var(--b1);color:var(--t1);font:14px var(--f);padding:8px 10px;outline:none;text-transform:uppercase"><input id="exDate" placeholder="MM/DD/YYYY" style="width:140px;background:var(--bg);border:1px solid var(--b1);color:var(--t1);font:14px var(--f);padding:8px 10px;outline:none"><button class="btn ba bs" onclick="addSingleExample()">Add</button></div>
+<div style="margin-bottom:8px"><textarea id="exBulk" placeholder="Paste list — one per line: TICKER MM/DD/YYYY" style="width:100%;height:100px;background:var(--bg);border:1px solid var(--b1);color:var(--t1);font:13px var(--f);padding:10px;outline:none;resize:vertical"></textarea></div>
+<div style="display:flex;gap:8px;align-items:center"><button class="btn ba bs" onclick="bulkAdd()">Import All</button><span id="bulkResult" style="font-size:13px;color:var(--t3)"></span></div>
+<div id="pendingReviewArea"></div>
+</div></div>
+</div>
+<div style="flex:1;display:flex;flex-direction:column">
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.1em;font-weight:500">Setup Description</span><button class="btn bn bs" style="font-size:10px;padding:2px 8px" onclick="saveSetupDesc()">Save</button></div>
+<textarea id="setupDesc" placeholder="Describe the setup pattern — what makes it valid, what disqualifies it. Used by the AI reviewer." style="flex:1;min-height:80px;background:var(--bg);border:1px solid var(--b1);color:var(--t2);font:13px var(--f);padding:8px 10px;outline:none;resize:vertical;line-height:1.5"></textarea>
+</div>
+</div>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;padding-top:8px;border-top:1px solid var(--b1)">
+<div style="display:flex;align-items:center;gap:16px;font-size:12px">
+<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:#E0E0E0;display:inline-block"></span><span style="color:#B0B0B0">Entry</span></span>
+<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:#E8A735;display:inline-block"></span><span style="color:#888">Exit Signal</span></span>
+<span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:#A855F7;display:inline-block"></span><span style="color:#888">Profit Exit</span></span>
+</div>
+<div style="display:flex;gap:0;border:1px solid var(--b1)"><button class="btn bn bs ex-sort-btn" data-sort="adr" onclick="setExSort('adr')" style="border:none;padding:4px 10px;font-size:11px">ADR Move ↓</button><button class="btn bn bs ex-sort-btn on" data-sort="ticker" onclick="setExSort('ticker')" style="border:none;padding:4px 10px;font-size:11px">Ticker</button><button class="btn bn bs ex-sort-btn" data-sort="date" onclick="setExSort('date')" style="border:none;padding:4px 10px;font-size:11px">Date</button></div>
+</div>
+<div id="exChartGrid" class="ex-chart-grid"></div>
+</div></div>
+<div class="pnl" id="v-vetting"><div class="ph"><div><div style="display:flex;flex-direction:column"><div class="pt" id="vetTitle">Winners</div><div class="ps" id="vetWinCount" style="color:var(--t3)"></div></div></div><div style="display:flex;flex-direction:column;gap:2px;margin-left:16px"><label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px"><input type="checkbox" id="vetShowV" onchange="applyVetFilter();renderVL();updateVetCounters();if(S.vetSigs.length)selVet(0)" style="accent-color:#4ade80"><span style="color:#4ade80">V</span><span style="color:#555;font-size:11px" id="vetCountV">0</span></label><label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px"><input type="checkbox" id="vetShowU" checked onchange="applyVetFilter();renderVL();updateVetCounters();if(S.vetSigs.length)selVet(0)" style="accent-color:#888"><span style="color:#888">U</span><span style="color:#555;font-size:11px" id="vetCountU">0</span></label><label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px"><input type="checkbox" id="vetShowN" onchange="applyVetFilter();renderVL();updateVetCounters();if(S.vetSigs.length)selVet(0)" style="accent-color:#f87171"><span style="color:#f87171">N</span><span style="color:#555;font-size:11px" id="vetCountN">0</span></label></div><div class="pa"><div style="display:flex;align-items:center;gap:12px;font-size:11px"><span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:#E0E0E0;display:inline-block"></span><span style="color:#B0B0B0">Signal</span></span><span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:#E8A735;display:inline-block"></span><span style="color:#888">Exit</span></span><span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:#A855F7;display:inline-block"></span><span style="color:#888">Profit</span></span><span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:#EF4444;display:inline-block"></span><span style="color:#888">Earnings</span></span></div></div></div><div class="vw"><div class="vl" id="vetList"></div><div class="vm"><div class="vc" id="vetChart"><div class="cph"><div class="cphi">▦</div><div>Select a signal</div></div></div><div class="vbar"><div class="vinf"><div class="vii"><div class="vil">Ticker</div><div class="viv" id="viTk">—</div></div><div class="vii"><div class="vil">Signal</div><div class="viv" id="viDt">—</div></div><div class="vii"><div class="vil">Move</div><div class="viv" id="viMv" style="color:var(--grn)">—</div></div><div class="vii"><div class="vil">MFE</div><div class="viv" id="viMfe">—</div></div><div class="vii"><div class="vil">Capture</div><div class="viv" id="viCap">—</div></div><div class="vii"><div class="vil">Exit</div><div class="viv" id="viEx">—</div></div><div class="vii"><div class="vil">Entry</div><div class="viv" id="viEntry" style="color:var(--blu)">click chart</div></div></div><div class="vbs"><button class="btn bd bs" onclick="vetDo('no')">✗ No (2)</button><button class="btn bn bs" onclick="vetDo('skip')">— Skip (3)</button><button class="btn bg bs" onclick="vetDo('yes')">✓ Yes (1)</button></div></div></div></div></div>
+<div class="pnl" id="v-watchlist"><div class="ph"><div><div class="pt">Nightly Watchlist</div><div class="ps">Unified ranked list across all setup types</div></div></div><div class="pb"><div class="nb"><div class="nbi">◈</div><div class="nbt">Nightly Watchlist — Live Mode</div><div class="nbs">Not yet built.</div></div></div></div>
+</div></div>
+<script>
+const STEPS=[{id:'signal_grind',n:1,name:'Signal Grind',desc:'Examples vs universe → conditions'},{id:'exit_grind',n:2,name:'Exit Grind',desc:'Optimal exit condition from entry bar highs'},{id:'refinement_grind',n:3,name:'Refinement Grind',desc:'Classify winners/losers, eliminate losing clusters'},{id:'ev_grind',n:4,name:'EV Grinder',desc:'Score signals with predicted WR, MFE, EV'}];
+const API='';let S={setup:'dtss',view:'pipeline',step:'signal_grind',agentOn:false,logN:{},vetAllSigs:[],vetSigs:[],vetI:0,vetSelectedEntry:null,vetSessYes:0,vetSessNo:0,vetEarnings:[],exSel:null,_exData:[],exSort:'adr',exSortDir:1,vetCache:{},vetPreloading:new Set(),vetZoom:330,vetFullOhlcv:null,vetCurSig:null};
+document.addEventListener('DOMContentLoaded',()=>{buildSide();buildPanels();loadSetups();chkAgent();loadPipe();setInterval(chkAgent,5000);setInterval(()=>{if(S.view==='pipeline'&&S.step)pollLog(S.step)},3000);document.addEventListener('keydown',onKey)});
+function onKey(e){if(S.view==='vetting'){if(e.key==='1'){e.preventDefault();vetDo('yes')}if(e.key==='2'){e.preventDefault();vetDo('no')}if(e.key==='3'){e.preventDefault();vetDo('skip')}if(e.key==='ArrowDown'){e.preventDefault();vetNav(1)}if(e.key==='ArrowUp'){e.preventDefault();vetNav(-1)}}if(S.view==='examples'&&e.key==='Enter'){const ae=document.activeElement;if(ae&&(ae.id==='exTicker'||ae.id==='exDate')){e.preventDefault();addSingleExample()}}}
+function buildSide(){document.getElementById('side').innerHTML='<div class="side-l">Pipeline</div>'+STEPS.map(s=>`<div class="ss${s.id===S.step?' on':''}" data-s="${s.id}" onclick="pick('${s.id}')"><div class="sn">${s.n}</div><div class="si"><div class="sname">${s.name}</div><div class="smeta" id="sm-${s.id}">—</div></div></div>`).join('')}
+function buildPanels(){document.getElementById('sp').innerHTML=STEPS.map(s=>`<div class="pnl${s.id===S.step?' on':''}" id="sp-${s.id}" style="flex:1;display:${s.id===S.step?'flex':'none'}"><div class="ph"><div class="sn" style="color:var(--acc);border-color:var(--acc)">${s.n}</div><div><div class="pt">${s.name}</div><div class="ps">${s.desc}</div></div><div class="pa"><button class="btn bn bs" onclick="stopS('${s.id}')">Stop</button><button class="btn ba" id="btn-${s.id}" onclick="runS('${s.id}')">Run</button></div></div><div class="pb"><div class="mg" id="mg-${s.id}"></div><div class="sec" id="result-${s.id}"></div><div class="sec"><div class="sh"><span class="st">Log</span><button class="btn bn bs" style="margin-left:auto" onclick="clrLog('${s.id}')">Clear</button></div><div class="prog"><div class="pf" id="pf-${s.id}"></div></div><div class="logs" id="log-${s.id}"><div class="ll">Waiting...</div></div></div></div></div>`).join('')}
+function nav(v){S.view=v;document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.v===v));['pipeline','examples','vetting','watchlist'].forEach(id=>{const el=document.getElementById('v-'+id);if(el){el.classList.toggle('on',id===v);el.style.display=id===v?'flex':'none'}});document.getElementById('side').style.display=v==='pipeline'?'flex':'none';if(v==='examples')loadExamples();if(v==='vetting')loadVet()}
+function pick(id){S.step=id;document.querySelectorAll('.ss').forEach(s=>s.classList.toggle('on',s.dataset.s===id));document.querySelectorAll('#sp>.pnl').forEach(p=>{const sh=p.id==='sp-'+id;p.style.display=sh?'flex':'none';p.classList.toggle('on',sh)})}
+function refresh(){loadPipe();if(S.view==='examples')loadExamples();if(S.view==='vetting')loadVet()}
+async function api(p,o={}){try{const r=await fetch(API+p,{...o,headers:{'Content-Type':'application/json',...(o.headers||{})}});return r.ok?await r.json():null}catch(e){return null}}
+async function chkAgent(){const d=await api('/api/grinder/agent/status');const on=d?.status==='online';S.agentOn=on;document.getElementById('aDot').className='adot'+(on?' on':'');document.getElementById('aLbl').textContent=on?'agent online':'agent offline'}
+async function loadSetups(){const d=await api('/api/setups');if(!d)return;document.getElementById('setupSel').innerHTML=Object.entries(d).map(([k,v])=>`<option value="${k}"${k===S.setup?' selected':''}>${v.name||k.toUpperCase()} (${v.examples||'?'})</option>`).join('')}
+async function loadPipe(){const d=await api('/api/pipeline/steps');if(!d?.steps)return;const ss={};for(const s of d.steps)ss[s.id]=s;STEPS.forEach(step=>{const srv=ss[step.id];if(!srv)return;const st=srv.state||{};const mg=document.getElementById('mg-'+step.id);if(mg)mg.innerHTML=mGrid([{l:'Status',v:st.status||'idle',c:st.status==='complete'?'color:var(--grn)':st.status==='running'?'color:var(--org)':''},{l:'Last Run',v:st.finished_at?new Date(st.finished_at).toLocaleDateString():'—'},{l:'Duration',v:st.duration_s?fmtD(st.duration_s):'—'},{l:'Setup',v:S.setup.toUpperCase()}]);const meta=document.getElementById('sm-'+step.id);if(meta){meta.textContent=st.status||'—'}const el=document.querySelector(`.ss[data-s="${step.id}"]`);if(el){el.classList.remove('run','done');if(st.status==='running')el.classList.add('run');if(st.status==='complete')el.classList.add('done')}})}
+function mGrid(items){return items.map(m=>`<div class="mc"><div class="ml">${m.l}</div><div class="mv"${m.c?' style="'+m.c+'"':''}>${m.v}</div>${m.s?'<div class="ms">'+m.s+'</div>':''}</div>`).join('')}
+async function runS(id){if(!S.agentOn){aLog(id,'error','Agent offline. Start it first.');return}const btn=document.getElementById('btn-'+id);if(btn){btn.disabled=true;btn.textContent='Queuing...'}aLog(id,'info','Queuing '+id+'...');const r=await api('/api/pipeline/run/'+id,{method:'POST',body:JSON.stringify({setup_type:S.setup})});if(r){aLog(id,'ok','Queued. Waiting for agent...');const el=document.querySelector(`.ss[data-s="${id}"]`);if(el)el.classList.add('run')}else{aLog(id,'error','Queue failed.');if(btn){btn.disabled=false;btn.textContent='Run'}}}
+async function stopS(id){await api('/api/pipeline/stop',{method:'POST',body:JSON.stringify({setup_type:S.setup})});aLog(id,'warn','Stop sent.')}
+async function pollLog(id){const d=await api('/api/pipeline/logs/'+id);if(!d?.logs?.length)return;const k='l-'+id,prev=S.logN[k]||0,nl=d.logs.slice(prev);S.logN[k]=d.logs.length;const el=document.getElementById('log-'+id);if(!el)return;nl.forEach(e=>{const div=document.createElement('div');div.className='ll '+(e.level||'info');div.innerHTML='<span class="ts">'+(e.timestamp?new Date(e.timestamp).toLocaleTimeString():'')+'</span>'+esc(e.message||'');el.appendChild(div);el.scrollTop=el.scrollHeight});if(d.progress!=null){const pf=document.getElementById('pf-'+id);if(pf)pf.style.width=(d.progress*100)+'%'}if(d.status==='complete'){const el2=document.querySelector(`.ss[data-s="${id}"]`);if(el2){el2.classList.remove('run');el2.classList.add('done')}const btn=document.getElementById('btn-'+id);if(btn){btn.disabled=false;btn.textContent='Run'}aLog(id,'ok','✓ Complete.');loadPipe()}}
+function aLog(id,lv,msg){const el=document.getElementById('log-'+id);if(!el)return;const div=document.createElement('div');div.className='ll '+lv;div.innerHTML='<span class="ts">'+new Date().toLocaleTimeString()+'</span>'+esc(msg);el.appendChild(div);el.scrollTop=el.scrollHeight}
+function clrLog(id){const el=document.getElementById('log-'+id);if(el)el.innerHTML='';S.logN['l-'+id]=0}
+function setExSort(key){S.exSort=key;document.querySelectorAll('.ex-sort-btn').forEach(b=>b.classList.toggle('on',b.dataset.sort===key));loadExamples()}
+function toggleAddSection(){const body=document.getElementById('addSectionBody');const arrow=document.getElementById('addSectionArrow');const open=body.classList.toggle('open');arrow.textContent=open?'\u25be':'\u25b8'}
+async function loadExamples(){const[exData,pendData]=await Promise.all([api('/api/examples/'+S.setup),api('/api/pending/'+S.setup)]);const pending=pendData?.pending||[];const exs=exData?.examples||[];S._exData=exs;S._pendData=pending;document.getElementById('exSub').textContent=S.setup.toUpperCase();const setupInfo=await api('/api/setups');if(setupInfo&&setupInfo[S.setup]){const descEl=document.getElementById('setupDesc');if(descEl)descEl.value=setupInfo[S.setup].desc||''}document.getElementById('exCount').textContent=exs.length+' examples'+(pending.length?' \u00b7 '+pending.length+' pending':'')+(exs.length<20?' \u2014 need '+(20-exs.length)+' more':'');const pArea=document.getElementById('pendingReviewArea');if(pending.length){const hdrLabel=document.querySelector('.add-section-hdr span:first-child');if(hdrLabel)hdrLabel.textContent='Add Examples ('+pending.length+' pending review)';pArea.innerHTML='<div style="margin-top:15px;border-top:1px solid var(--b1);padding-top:12px"><p style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;font-weight:500">Pending AI Review</p><div class="ex-chart-grid" id="pendChartGrid">'+pending.map((p,pi)=>{const isApproved=p.ai_verdict==='APPROVE';const isReject=p.ai_verdict==='REJECT';const reviewed=isApproved||isReject;const tag=isApproved?'APPROVE':isReject?'REJECT':'PENDING';const tagClass=isApproved?'approved':isReject?'rejected':'review';const btns=`<button class="btn bg bs" style="font-size:10px;padding:2px 6px" onclick="event.stopPropagation();approvePend(${p.id})">Approve</button><button class="btn bd bs" style="font-size:10px;padding:2px 6px" onclick="event.stopPropagation();rejectPend(${p.id})">Reject</button>`;return`<div class="ex-cg-card" data-idx="p${pi}" data-ticker="${p.ticker}" data-date="${p.entry_date}" onclick="expandExCard(this)"><div class="cg-loading">Loading...</div><div class="cg-chart" id="exc-p${pi}"></div><div class="cg-pending-tag ${tagClass}">${tag}</div><div class="cg-actions">${btns}</div><div class="cg-label"><div><span class="cg-tk">${p.ticker}</span><span class="cg-dt">${p.entry_date}</span></div></div></div>`}).join('')+'</div></div>';if(!document.getElementById('addSectionBody').classList.contains('open'))toggleAddSection();setTimeout(()=>{document.querySelectorAll('#pendChartGrid .ex-cg-card').forEach(c=>{if(!c.dataset.loaded){c.dataset.loaded='1';loadExChart(c)}})},50)}else{pArea.innerHTML='';const hdrLabel=document.querySelector('.add-section-hdr span:first-child');if(hdrLabel)hdrLabel.textContent='Add Examples'}const grid=document.getElementById('exChartGrid');if(!exs.length){grid.innerHTML='<div style="grid-column:1/-1;padding:40px;text-align:center;color:var(--t3)">No examples yet. Open Add Examples above.</div>';return}const sorted=[...exs].sort((a,b)=>{if(S.exSort==='adr')return(b.adrMove??-999)-(a.adrMove??-999);if(S.exSort==='date')return a.entryDate<b.entryDate?1:a.entryDate>b.entryDate?-1:0;return a.ticker<b.ticker?-1:a.ticker>b.ticker?1:0});grid.innerHTML=sorted.map((e,i)=>`<div class="ex-cg-card" data-idx="${i}" data-ticker="${e.ticker}" data-date="${e.entryDate}" onclick="expandExCard(this)"><div class="cg-loading">Loading...</div><div class="cg-chart" id="exc-${i}"></div><div class="cg-actions"><button class="btn bn bs" style="font-size:10px;padding:2px 6px" onclick="event.stopPropagation();delExample(${e.id})">\u00d7</button></div><div class="cg-label"><div><span class="cg-tk">${e.ticker}</span><span class="cg-dt">${e.entryDate}</span></div>${e.adrMove!=null?`<span class="cg-adr">${e.adrMove} ADR</span>`:''}</div></div>`).join('');initChartObserver();if(S._justAdded&&S._justAdded.length){setTimeout(()=>{const cards=document.querySelectorAll('.ex-cg-card');let firstNew=null;cards.forEach(c=>{const key=c.dataset.ticker+'_'+c.dataset.date;if(S._justAdded.includes(key)){c.classList.add('just-added');if(!firstNew)firstNew=c}});if(firstNew)firstNew.scrollIntoView({behavior:'smooth',block:'center'});S._justAdded=null},100)}}
+let exChartObserver=null;function initChartObserver(){if(exChartObserver)exChartObserver.disconnect();const cards=document.querySelectorAll('.ex-cg-card');exChartObserver=new IntersectionObserver((entries)=>{entries.forEach(entry=>{if(entry.isIntersecting){const card=entry.target;if(!card.dataset.loaded){card.dataset.loaded='1';loadExChart(card)}exChartObserver.unobserve(card)}})},{rootMargin:'400px 0px'});cards.forEach(c=>exChartObserver.observe(c))}
+async function loadExChart(card){const ticker=card.dataset.ticker;const date=card.dataset.date;const idx=card.dataset.idx;const chartEl=document.getElementById('exc-'+idx);if(!chartEl)return;try{const data=await api('/api/vetting/'+S.setup+'/ohlcv/'+ticker+'?signal_date='+date+'&lookback=120&forward=40');const bars=data?.data;if(!bars?.length){const ld=card.querySelector('.cg-loading');if(ld)ld.textContent='No data';return}const loading=card.querySelector('.cg-loading');if(loading)loading.style.display='none';drawExThumb(chartEl,bars,date)}catch(e){const ld=card.querySelector('.cg-loading');if(ld)ld.textContent='Error'}}
+function drawExThumb(el,ohlcv,sigDate){const rect=el.getBoundingClientRect();const W=rect.width||300;const H=rect.height||180;const P={t:4,r:4,b:22,l:4},CW=W-P.l-P.r,CH=H-P.t-P.b,N=ohlcv.length;const si=ohlcv.findIndex(b=>b.date===sigDate);const lo=Math.min(...ohlcv.map(b=>b.low)),hi=Math.max(...ohlcv.map(b=>b.high)),rng=hi-lo||1;const x=i=>P.l+(i/(N-1||1))*CW,y=p=>P.t+(1-(p-lo)/rng)*CH,bw=Math.max(1,(CW/N)*.6);const emaF=(c,p)=>{const k=2/(p+1);let v=null;return c.map(x=>{if(x==null)return null;v=v===null?x:x*k+v*(1-k);return v})};const cl=ohlcv.map(b=>b.close);const ema8=emaF(cl,8);const ema21=emaF(cl,21);const mkP=s=>{let d='';s.forEach((v,i)=>{if(v==null)return;d+=(d===''?'M ':'L ')+x(i)+' '+y(v)+' '});return d};let svg=`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" style="width:100%;height:100%">`;svg+=`<rect width="${W}" height="${H}" fill="#000"/>`;if(si>=0){svg+=`<rect x="${x(si)-bw}" y="${P.t}" width="${bw*2}" height="${CH}" fill="rgba(255,255,255,.06)"/>`;svg+=`<line x1="${x(si)}" y1="${P.t}" x2="${x(si)}" y2="${P.t+CH}" stroke="#E0E0E0" stroke-width="1" opacity=".5"/>`}ohlcv.forEach((b,i)=>{const px=x(i),up=b.close>=b.open,c=up?'#00e87b':'#ff3b3b';svg+=`<line x1="${px}" y1="${y(b.high)}" x2="${px}" y2="${y(b.low)}" stroke="${c}" stroke-width=".5" opacity=".5"/>`;svg+=`<rect x="${px-bw/2}" y="${Math.min(y(b.open),y(b.close))}" width="${bw}" height="${Math.max(.5,Math.abs(y(b.open)-y(b.close)))}" fill="${c}" opacity=".7"/>`});svg+=`<path d="${mkP(ema8)}" stroke="#AAA" stroke-width=".7" fill="none" opacity=".3"/>`;svg+=`<path d="${mkP(ema21)}" stroke="#777" stroke-width=".7" fill="none" opacity=".3"/>`;if(si>=0)svg+=`<circle cx="${x(si)}" cy="${y(ohlcv[si].close)}" r="2.5" fill="#E0E0E0" opacity=".8"/>`;svg+=`</svg>`;el.innerHTML=svg}
+function expandExCard(card){const wasExpanded=card.classList.contains('expanded');document.querySelectorAll('.ex-cg-card.expanded').forEach(c=>{c.classList.remove('expanded');if(c.dataset.loaded)loadExChart(c)});if(!wasExpanded){card.classList.add('expanded');if(card.dataset.loaded)loadExChart(card);card.scrollIntoView({behavior:'smooth',block:'nearest'})}}
+async function approvePend(id){const r=await api('/api/pending/'+S.setup+'/'+id+'/approve',{method:'POST'});if(r){loadExamples();loadSetups()}}
+async function rejectPend(id){const r=await api('/api/pending/'+S.setup+'/'+id+'/reject',{method:'POST'});if(r)loadExamples()}
+async function addSingleExample(){const tk=document.getElementById('exTicker').value.trim();const dt=document.getElementById('exDate').value.trim();const res=document.getElementById('bulkResult');if(!tk||!dt){if(res){res.textContent='Enter both ticker and date';res.style.color='#f87171'}return}if(res){res.textContent='Adding...';res.style.color='var(--t3)'}const r=await api('/api/examples/'+S.setup+'/bulk',{method:'POST',body:JSON.stringify({text:tk+' '+dt})});if(!r){if(res){res.textContent='Server error — check connection';res.style.color='#f87171'}return}if(r.added>0){document.getElementById('exTicker').value='';document.getElementById('exDate').value='';document.getElementById('exTicker').focus();if(res){res.textContent='Added '+tk.toUpperCase();res.style.color='#4ade80'}S._justAdded=r.details_added.map(d=>d.ticker+'_'+d.entry_date);await loadExamples();loadSetups()}if(r.details_failed?.length){const msg=r.details_failed.map(f=>f.reason).join('; ');if(res){res.textContent=msg;res.style.color='#f87171'}}}
+async function bulkAdd(){const raw=document.getElementById('exBulk').value.trim();if(!raw)return;const res=document.getElementById('bulkResult');if(res){res.textContent='Importing...';res.style.color='var(--t3)'}const r=await api('/api/examples/'+S.setup+'/bulk',{method:'POST',body:JSON.stringify({text:raw})});if(!r){if(res){res.textContent='Server error';res.style.color='#f87171'}return}const msg=r.added+' added';const fails=r.failed>0?', '+r.failed+' failed':'';if(res){res.textContent=msg+fails;res.style.color=r.failed>0?'#f87171':'#4ade80'}if(r.added>0){document.getElementById('exBulk').value='';S._justAdded=r.details_added.map(d=>d.ticker+'_'+d.entry_date);await loadExamples();loadSetups()}if(r.details_failed?.length){console.log('Failed imports:',r.details_failed)}}
+async function delExample(id){if(!confirm('Delete this example?'))return;await api('/api/examples/'+S.setup+'/'+id,{method:'DELETE'});loadExamples();loadSetups()}
+function showNewSetupModal(){document.getElementById('newSetupForm').style.display='';document.getElementById('nsName').focus()}
+function hideNewSetupModal(){document.getElementById('newSetupForm').style.display='none';document.getElementById('nsName').value='';document.getElementById('nsDesc').value=''}
+async function saveSetupDesc(){const desc=document.getElementById('setupDesc').value.trim();const r=await api('/api/setups/'+S.setup,{method:'PATCH',body:JSON.stringify({description:desc})});if(r){const btn=document.querySelector('#setupDesc+button,.btn');document.getElementById('setupDesc').style.borderColor='#4ade80';setTimeout(()=>{document.getElementById('setupDesc').style.borderColor=''},1000)}}
+async function createSetup(){const name=document.getElementById('nsName').value.trim();const desc=document.getElementById('nsDesc').value.trim();const dir=document.getElementById('nsDir').value;if(!name)return;const r=await api('/api/setups',{method:'POST',body:JSON.stringify({name,description:desc,direction:dir})});if(r&&r.setup_type){S.setup=r.setup_type;hideNewSetupModal();await loadSetups();loadExamples()}}
+// ═══════ VETTING — toggle reads from signal grind or refinement flat files ═══════
+function applyVetFilter(){const showV=document.getElementById('vetShowV')?.checked;const showU=document.getElementById('vetShowU')?.checked;const showN=document.getElementById('vetShowN')?.checked;S.vetSigs=S.vetAllSigs.filter(s=>{if(!s._verdict)return showU;if(s._verdict==='yes')return showV;if(s._verdict==='no')return showN;return showU});S.vetI=0}
+async function loadVet(){const list=document.getElementById('vetList');list.innerHTML='<div style="padding:12px;color:var(--t3);font-size:10px">Loading winners...</div>';const d=await api('/api/vetting/'+S.setup+'/refinement-signals?pile=winners');const nW=d?.n_signals||0;document.getElementById('vetWinCount').textContent=nW+' signals';if(!d?.signals?.length){list.innerHTML='<div style="padding:12px;color:var(--t3);font-size:10px">No winners. Run the refinement grind first.</div>';return}S.vetAllSigs=d.signals.map(s=>({...s,signal_date:s.signal_date||s.date})).sort((a,b)=>(b.move_adr||0)-(a.move_adr||0));S.vetAllSigs.forEach(s=>{s._verdict=s.verdict||null});applyVetFilter();renderVL();updateVetCounters();if(S.vetSigs.length){vetPreload(0,15);selVet(0);}else{document.getElementById('vetChart').innerHTML='<div class="cph"><div class="cphi">▦</div><div>No signals match filter</div></div>';clearVetInfo()}}
+function updateVetCounters(){const nV=S.vetAllSigs.filter(s=>s._verdict==='yes').length;const nU=S.vetAllSigs.filter(s=>!s._verdict).length;const nN=S.vetAllSigs.filter(s=>s._verdict==='no').length;document.getElementById('vetCountV').textContent=nV;document.getElementById('vetCountU').textContent=nU;document.getElementById('vetCountN').textContent=nN}
+function clearVetInfo(){txt('viTk','—');txt('viDt','—');txt('viMv','—');txt('viMfe','—');txt('viCap','—');txt('viEx','—');txt('viEntry','click chart')}
+function renderVL(){document.getElementById('vetList').innerHTML=S.vetSigs.map((s,i)=>{let c='';if(s._verdict==='yes')c='yes';else if(s._verdict==='no')c='no';if(i===S.vetI)c+=' on';return`<div class="vi ${c}" onclick="selVet(${i})"><span class="viadr">${s.move_adr!=null?s.move_adr.toFixed(1):'?'} ADR</span><div class="vitk">${s.ticker}</div><div class="vidt">${s.signal_date}${s._verdict?' · <span style="color:'+(s._verdict==='yes'?'#4ade80':'#f87171')+'">'+s._verdict.toUpperCase()+'</span>':''}</div></div>`}).join('')}
+function vetCacheKey(s){return s.ticker+'_'+s.signal_date}
+function vetPreload(startIdx,count){const end=Math.min(startIdx+count,S.vetSigs.length);for(let j=startIdx;j<end;j++){const s=S.vetSigs[j];if(!s)continue;const k=vetCacheKey(s);if(S.vetCache[k]||S.vetPreloading.has(k))continue;S.vetPreloading.add(k);fetch(API+'/api/vetting/'+S.setup+'/ohlcv/'+s.ticker+'?signal_date='+s.signal_date+'&lookback=250&forward=80').then(r=>r.ok?r.json():null).then(data=>{S.vetCache[k]=data?.data||[];S.vetPreloading.delete(k)}).catch(()=>{S.vetPreloading.delete(k)})}}
+function selVet(i){S.vetI=i;S.vetSelectedEntry=null;updateYesBtn();const fb=document.querySelector('.float-yes');if(fb)fb.style.display='none';const s=S.vetSigs[i];if(!s)return;txt('viTk',s.ticker);txt('viDt',s.signal_date);txt('viMv',(s.move_adr!=null?s.move_adr.toFixed(2):'—')+' ADR');txt('viMfe',(s.mfe_adr!=null?s.mfe_adr.toFixed(2):'—')+' ADR');txt('viCap',s.capture_eff!=null?(s.capture_eff*100).toFixed(0)+'%':'—');txt('viEx',s.exit_date||'—');txt('viEntry','click chart');const area=document.getElementById('vetChart');const k=vetCacheKey(s);if(S.vetCache[k]&&S.vetCache[k].length){drawVetChart(area,S.vetCache[k],s)}else{area.innerHTML='<div class="cph"><div class="cphi">⟳</div><div>Loading '+s.ticker+'...</div></div>';fetch(API+'/api/vetting/'+S.setup+'/ohlcv/'+s.ticker+'?signal_date='+s.signal_date+'&lookback=250&forward=80').then(r=>r.ok?r.json():null).then(data=>{const bars=data?.data;if(!bars?.length){area.innerHTML='<div class="cph"><div class="cphi">▦</div><div>No data</div></div>';return}S.vetCache[k]=bars;if(S.vetSigs[S.vetI]===s)drawVetChart(area,bars,s)}).catch(()=>{area.innerHTML='<div class="cph"><div class="cphi">▦</div><div>Unavailable</div></div>'})}S.vetEarnings=[];fetch(API+'/api/vetting/earnings/'+s.ticker).then(r=>r.ok?r.json():null).then(d=>{S.vetEarnings=d?.earnings_dates||[];if(S.vetSigs[S.vetI]===s){const svgEl=document.getElementById('vetChart')?.querySelector('svg');if(svgEl)addEarningsToChart(svgEl,S.vetEarnings)}}).catch(()=>{});renderVL();vetPreload(i+1,10)}
+function updateYesBtn(){const btn=document.querySelector('.vbs .btn.bg');if(!btn)return;if(S.vetSelectedEntry){btn.style.opacity='1';btn.style.cursor='pointer'}else{btn.style.opacity='0.3';btn.style.cursor='not-allowed'}}
+async function vetDo(v){const s=S.vetSigs[S.vetI];if(!s)return;if(v==='yes'&&!S.vetSelectedEntry){txt('viEntry','⚠ click chart first');return}if(v!=='skip'){const entryDate=v==='yes'?S.vetSelectedEntry:null;await api('/api/vetting/'+S.setup+'/decide',{method:'POST',body:JSON.stringify({ticker:s.ticker,signal_date:s.signal_date,verdict:v,entry_date:entryDate})});s._verdict=v;updateVetCounters()}applyVetFilter();renderVL();if(S.vetSigs.length)selVet(Math.min(S.vetI,S.vetSigs.length-1));else{document.getElementById('vetChart').innerHTML='<div class="cph"><div class="cphi">✓</div><div>All signals vetted!</div></div>';clearVetInfo()}}
+function vetNav(d){const n=S.vetI+d;if(n>=0&&n<S.vetSigs.length)selVet(n)}
+function drawVetChart(el,ohlcv,sig,zoom){S.vetFullOhlcv=ohlcv;S.vetCurSig=sig;if(!zoom)zoom=S.vetZoom;const si=ohlcv.findIndex(b=>b.date===sig.signal_date);const center=si>=0?si:Math.floor(ohlcv.length/2);const half=Math.floor(zoom/2);const vStart=Math.max(0,center-half);const vEnd=Math.min(ohlcv.length,vStart+zoom);const bars=ohlcv.slice(vStart,vEnd);const ofsI=vStart;const W=el.clientWidth||800,H=el.clientHeight||300;const P={t:18,r:55,b:20,l:6},CW=W-P.l-P.r,CH=H-P.t-P.b,N=bars.length;const siV=si-ofsI;const ei=sig.exit_date?ohlcv.findIndex(b=>b.date===sig.exit_date):-1;const eiV=ei>=0?ei-ofsI:-1;const lo=Math.min(...bars.map(b=>b.low)),hi=Math.max(...bars.map(b=>b.high)),rng=hi-lo||1;const x=i=>P.l+(i/(N-1||1))*CW,y=p=>P.t+(1-(p-lo)/rng)*CH,bw=Math.max(1,(CW/N)*.6);const emaF=(c,p)=>{const k=2/(p+1);let v=null;return c.map(x=>{if(x==null)return null;v=v===null?x:x*k+v*(1-k);return v})};const smaF=(c,p)=>c.map((_,i)=>i<p-1?null:c.slice(i-p+1,i+1).reduce((a,b)=>a+b,0)/p);const cl=bars.map(b=>b.close);const lines=[[emaF(cl,8),'#AAA',.4],[emaF(cl,21),'#777',.4],[smaF(cl,50),'#555',.3],[smaF(cl,200),'#333',.3]];const mkP=s=>{let d='';s.forEach((v,i)=>{if(v==null)return;d+=(d===''?'M ':'L ')+x(i)+' '+y(v)+' '});return d};let svg=`<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="cursor:crosshair">`;svg+=`<rect width="${W}" height="${H}" fill="#000"/>`;svg+=`<g class="earnings-markers"></g>`;if(siV>=0&&siV<N){svg+=`<g class="sig-marker"><rect x="${x(siV)-bw}" y="${P.t}" width="${bw*2}" height="${CH}" fill="rgba(255,255,255,.04)"/>`;svg+=`<line x1="${x(siV)}" y1="${P.t}" x2="${x(siV)}" y2="${P.t+CH}" stroke="#E0E0E0" stroke-width="1" opacity=".5"/>`;svg+=`<text x="${x(siV)}" y="${P.t+CH-4}" fill="#E0E0E0" font-size="7" font-family="DM Sans" font-weight="700" text-anchor="middle">SIG</text></g>`}if(eiV>=0&&eiV<N){svg+=`<line x1="${x(eiV)}" y1="${P.t}" x2="${x(eiV)}" y2="${P.t+CH}" stroke="#E8A735" stroke-width="1" opacity=".6"/>`;svg+=`<text x="${x(eiV)}" y="${P.t+10}" fill="#E8A735" font-size="7" font-family="DM Sans" font-weight="700" text-anchor="middle">EXIT</text>`}bars.forEach((b,i)=>{const px=x(i),up=b.close>=b.open,c=up?'#00e87b':'#ff3b3b';svg+=`<line x1="${px}" y1="${y(b.high)}" x2="${px}" y2="${y(b.low)}" stroke="${c}" stroke-width=".7" opacity=".6"/>`;svg+=`<rect x="${px-bw/2}" y="${Math.min(y(b.open),y(b.close))}" width="${bw}" height="${Math.max(1,Math.abs(y(b.open)-y(b.close)))}" fill="${c}" opacity=".8"/>`});lines.forEach(([s,c,o])=>{svg+=`<path d="${mkP(s)}" stroke="${c}" stroke-width="1" fill="none" opacity="${o}"/>`});if(siV>=0&&siV<N)svg+=`<circle class="sig-marker" cx="${x(siV)}" cy="${y(bars[siV].close)}" r="3" fill="#E0E0E0" opacity=".8"/>`;if(eiV>=0&&eiV<N)svg+=`<circle cx="${x(eiV)}" cy="${y(bars[eiV].close)}" r="3" fill="#E8A735" opacity=".8"/>`;[lo,(lo+hi)/2,hi].forEach(p=>{svg+=`<text x="${P.l+CW+3}" y="${y(p)+3}" fill="#555" font-size="8" font-family="DM Sans">${p.toFixed(2)}</text>`});svg+=`<text x="8" y="12" fill="#555" font-size="7" font-family="DM Sans">EMA8 EMA21 SMA50 SMA200</text>`;svg+=`<text x="${W-P.r-8}" y="${P.t+40}" fill="rgba(255,255,255,.04)" font-size="36" font-family="DM Sans" font-weight="700" text-anchor="end">${sig.ticker}</text>`;svg+=`<g class="entry-marker"></g>`;bars.forEach((b,i)=>{svg+=`<rect x="${x(i)-bw}" y="${P.t}" width="${bw*2}" height="${CH}" fill="transparent" data-idx="${i+ofsI}" data-date="${b.date}" class="click-bar"/>`});svg+=`</svg>`;el.innerHTML=svg;el.querySelectorAll('.click-bar').forEach(bar=>{bar.addEventListener('click',function(evt){const date=this.dataset.date;const idx=parseInt(this.dataset.idx);const localIdx=idx-ofsI;S.vetSelectedEntry=date;txt('viEntry',date);updateYesBtn();el.querySelectorAll('.sig-marker').forEach(m=>m.style.display='none');const markerG=el.querySelector('.entry-marker');if(markerG&&localIdx>=0&&localIdx<N){markerG.innerHTML=`<line x1="${x(localIdx)}" y1="${P.t}" x2="${x(localIdx)}" y2="${P.t+CH}" stroke="#E0E0E0" stroke-width="1" opacity=".5"/><circle cx="${x(localIdx)}" cy="${y(bars[localIdx].close)}" r="3" fill="#E0E0E0" opacity=".8"/><text x="${x(localIdx)}" y="${P.t+CH-4}" fill="#E0E0E0" font-size="7" font-family="DM Sans" font-weight="700" text-anchor="middle">ENTRY</text>`}let fb=el.querySelector('.float-yes');if(!fb){fb=document.createElement('button');fb.className='float-yes';fb.textContent='Yes \u2713';fb.addEventListener('click',function(e){e.stopPropagation();vetDo('yes')});el.appendChild(fb)}const rect=el.getBoundingClientRect();const cx2=evt.clientX-rect.left;const cy2=evt.clientY-rect.top;fb.style.left=Math.min(cx2+12,el.clientWidth-80)+'px';fb.style.top=Math.max(cy2-16,4)+'px';fb.style.display='block'})});el.onwheel=function(e){e.preventDefault();const delta=e.deltaY>0?30:-30;S.vetZoom=Math.max(40,Math.min(ohlcv.length,S.vetZoom+delta));drawVetChart(el,ohlcv,sig,S.vetZoom)};if(S.vetEarnings.length){const svgEl=el.querySelector('svg');if(svgEl)addEarningsToChart(svgEl,S.vetEarnings)}}
+function addEarningsToChart(svgEl,earningsDates){const g=svgEl.querySelector('.earnings-markers');if(!g)return;const bars=svgEl.querySelectorAll('.click-bar');const edSet=new Set(earningsDates);let markup='';bars.forEach(bar=>{const date=bar.dataset.date;if(edSet.has(date)){const bx=parseFloat(bar.getAttribute('x'));const bw=parseFloat(bar.getAttribute('width'));const by=parseFloat(bar.getAttribute('y'));const bh=parseFloat(bar.getAttribute('height'));const cx=bx+bw/2;markup+=`<line x1="${cx}" y1="${by}" x2="${cx}" y2="${by+bh}" stroke="#EF4444" stroke-width="1.5" opacity=".7"/>`;markup+=`<text x="${cx}" y="${by+10}" fill="#EF4444" font-size="8" font-family="DM Sans" font-weight="700" text-anchor="middle">E</text>`}});g.innerHTML=markup}
+function drawC(el,ohlcv,sigDate,sig){const W=el.clientWidth||800,H=el.clientHeight||300;const P={t:18,r:55,b:20,l:6},CW=W-P.l-P.r,CH=H-P.t-P.b,N=ohlcv.length;const si=ohlcv.findIndex(b=>b.date===sigDate);const lo=Math.min(...ohlcv.map(b=>b.low)),hi=Math.max(...ohlcv.map(b=>b.high)),rng=hi-lo||1;const x=i=>P.l+(i/(N-1||1))*CW,y=p=>P.t+(1-(p-lo)/rng)*CH,bw=Math.max(1,(CW/N)*.6);const emaF=(c,p)=>{const k=2/(p+1);let v=null;return c.map(x=>{if(x==null)return null;v=v===null?x:x*k+v*(1-k);return v})};const smaF=(c,p)=>c.map((_,i)=>i<p-1?null:c.slice(i-p+1,i+1).reduce((a,b)=>a+b,0)/p);const cl=ohlcv.map(b=>b.close);const lines=[[emaF(cl,8),'#AAA',.4],[emaF(cl,21),'#777',.4],[smaF(cl,50),'#555',.3],[smaF(cl,200),'#333',.3]];const mkP=s=>{let d='';s.forEach((v,i)=>{if(v==null)return;d+=(d===''?'M ':'L ')+x(i)+' '+y(v)+' '});return d};const cndl=ohlcv.map((b,i)=>{const px=x(i),up=b.close>=b.open,c=up?'#00e87b':'#ff3b3b';return`<line x1="${px}" y1="${y(b.high)}" x2="${px}" y2="${y(b.low)}" stroke="${c}" stroke-width=".7" opacity=".6"/><rect x="${px-bw/2}" y="${Math.min(y(b.open),y(b.close))}" width="${bw}" height="${Math.max(1,Math.abs(y(b.open)-y(b.close)))}" fill="${c}" opacity=".8"/>`}).join('');const sm=si>=0?`<line x1="${x(si)}" y1="${P.t}" x2="${x(si)}" y2="${P.t+CH}" stroke="#E0E0E0" stroke-width="1" opacity=".5"/><circle cx="${x(si)}" cy="${y(ohlcv[si].close)}" r="4" fill="#E0E0E0" opacity=".9"/>`:'';
+const ei=sig?.exit_date?ohlcv.findIndex(b=>b.date===sig.exit_date):-1;const em=ei>=0?`<line x1="${x(ei)}" y1="${P.t}" x2="${x(ei)}" y2="${P.t+CH}" stroke="#E8A735" stroke-width="1" opacity=".6"/><circle cx="${x(ei)}" cy="${y(ohlcv[ei].close)}" r="3" fill="#E8A735" opacity=".8"/>`:'';
+const pl=[lo,(lo+hi)/2,hi].map(p=>`<text x="${P.l+CW+3}" y="${y(p)+3}" fill="#555" font-size="8" font-family="JetBrains Mono">${p.toFixed(2)}</text>`).join('');el.innerHTML=`<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg"><rect width="${W}" height="${H}" fill="#000"/>${cndl}${lines.map(([s,c,o])=>`<path d="${mkP(s)}" stroke="${c}" stroke-width="1" fill="none" opacity="${o}"/>`).join('')}${sm}${em}${pl}<text x="8" y="12" fill="#555" font-size="7" font-family="JetBrains Mono">EMA8 EMA21 SMA50 SMA200</text></svg>`}
+function txt(id,v){const el=document.getElementById(id);if(el)el.textContent=v}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function fmtD(s){if(!s||s<0)return'—';const m=Math.floor(s/60),sc=Math.floor(s%60);return m?m+'m '+sc+'s':sc+'s'}
 </script>
 </body>
 </html>

@@ -86,20 +86,36 @@ def check_for_jobs():
 # ── V2 Pipeline step handling ──────────────────────────────────────────
 
 PIPELINE_STEP_SCRIPTS = {
-    "signal_brute":    [
-        ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}"],
-        ["python", "scripts/signal_exit_grinder.py", "--setup", "{setup}"],
+    # V2 step IDs — must match server.py PIPELINE_STEPS exactly
+    "signal_grind": [
+        ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}",
+         "--beam", "10000", "--depth", "100", "--peak-target", "3"],
     ],
-    "sample_expansion": [["python", "scripts/signal_filter.py", "--setup", "{setup}"]],
-    "sample_review":    [["python", "scripts/review_samples.py", "--setup", "{setup}"]],
-    "setup_grinder_a": [
-        ["python", "scripts/profit_grinder.py", "--setup", "{setup}"],
-        ["python", "scripts/multistage_exit_grinder.py", "--setup", "{setup}"],
+    "signal_grind_dartboard": [
+        ["python", "-m", "local_runner.dartboard_grinder", "--setup", "{setup}",
+         "--top-n", "500", "--target-peak", "5"],
     ],
-    "setup_grinder_b": [
+    "exit_grind": [
+        ["python", "scripts/exit_grinder.py", "--setup", "{setup}"],
+    ],
+    "scan": [
+        ["python", "scripts/signal_filter.py", "--setup", "{setup}"],
+    ],
+    # refinement_grind: re-grind with blackout masking, then prune conditions
+    "refinement_grind": [
         ["python", "-m", "local_runner.pyramid_grinder", "--setup", "{setup}",
          "--blackout", "--beam", "10000", "--depth", "100", "--peak-target", "3"],
         ["python", "scripts/setup_refiner.py", "--setup", "{setup}"],
+    ],
+    # vet is is_manual=True on the server — no agent command, UI-only
+    "proximity_grind": [
+        ["python", "scripts/proximity_grinder.py", "--setup", "{setup}"],
+    ],
+    "regime": [
+        ["python", "scripts/market_grinder.py", "--setup", "{setup}"],
+    ],
+    "health": [
+        ["python", "scripts/cycle_health.py", "--setup", "{setup}"],
     ],
 }
 
@@ -158,9 +174,19 @@ def handle_pipeline_job(job):
 
     # Inject grinder params from job (beam, depth, peak_target) into pyramid_grinder command
     job_params = job.get('params', {})
-    if step_id == 'signal_brute' and job_params:
-        grinder_cmd = cmds[0]  # First command is pyramid_grinder
+    if step_id in ('signal_grind', 'refinement_grind') and job_params:
+        grinder_cmd = cmds[0]  # First command is always pyramid_grinder for these steps
         param_map = {'beam': '--beam', 'depth': '--depth', 'peak_target': '--peak-target'}
+        for key, flag in param_map.items():
+            val = job_params.get(key)
+            if val is not None:
+                grinder_cmd.extend([flag, str(val)])
+
+    # Inject dartboard params
+    if step_id == 'signal_grind_dartboard' and job_params:
+        grinder_cmd = cmds[0]
+        param_map = {'top_n': '--top-n', 'target_peak': '--target-peak',
+                     'threshold': '--threshold', 'target_avg': '--target-avg'}
         for key, flag in param_map.items():
             val = job_params.get(key)
             if val is not None:
@@ -387,6 +413,79 @@ def handle_job(job):
         print(f"\n  ✗ Failed: {error_msg}")
         traceback.print_exc()
         post_status(job_id, "error", error_msg)
+
+
+# ── Task Queue handling ────────────────────────────────────────────────
+
+def check_for_tasks():
+    """Poll Railway for pending ad-hoc tasks."""
+    try:
+        r = requests.get(f"{API_BASE}/api/v2/tasks/pending", timeout=10)
+        if r.status_code == 200:
+            return r.json().get("tasks", [])
+    except:
+        pass
+    return []
+
+
+def task_update(task_id, **kwargs):
+    """Update task status on Railway."""
+    try:
+        requests.patch(f"{API_BASE}/api/v2/tasks/{task_id}", json=kwargs, timeout=15)
+    except:
+        pass
+
+
+def handle_task(task):
+    """Execute an ad-hoc task from the queue."""
+    task_id = task["id"]
+    command = task["command"]
+    resolved = task.get("resolved_command", "")
+
+    print(f"\n{'='*60}")
+    print(f"  TASK #{task_id}: {command}")
+    print(f"  Command: {resolved}")
+    print(f"{'='*60}")
+
+    task_update(task_id, status="running")
+
+    try:
+        cmd_parts = resolved.split()
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+
+        proc = subprocess.Popen(
+            cmd_parts, cwd=REPO_ROOT,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, encoding='utf-8', errors='replace',
+            env=env,
+        )
+
+        log_lines = []
+        for line in proc.stdout:
+            line = line.rstrip()
+            print(f"    {line}")
+            log_lines.append(line)
+
+        proc.wait()
+
+        # Keep last 200 lines for log_tail
+        log_tail = "\n".join(log_lines[-200:])
+
+        if proc.returncode == 0:
+            print(f"\n  ✓ Task #{task_id} complete")
+            task_update(task_id, status="completed", exit_code=0, log_tail=log_tail)
+        else:
+            print(f"\n  ✗ Task #{task_id} failed (exit {proc.returncode})")
+            task_update(task_id, status="failed", exit_code=proc.returncode,
+                       error=f"Exit code {proc.returncode}", log_tail=log_tail)
+
+    except Exception as e:
+        import traceback
+        error_msg = f"{type(e).__name__}: {e}"
+        print(f"\n  ✗ Task #{task_id} error: {error_msg}")
+        traceback.print_exc()
+        task_update(task_id, status="failed", error=error_msg)
 
 
 # ── Auto AI Review for pending samples ─────────────────────────────────
@@ -632,6 +731,11 @@ def main():
             pipe_jobs = check_for_pipeline_jobs()
             for pj in pipe_jobs:
                 handle_pipeline_job(pj)
+
+            # Poll for ad-hoc tasks
+            tasks = check_for_tasks()
+            for task in tasks:
+                handle_task(task)
 
             # Auto-review pending samples every 15s
             if time.time() - last_review_check > 15:

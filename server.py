@@ -1,19 +1,23 @@
-"""ScanPerfect — FastAPI backend with SQLite storage."""
+"""ScanPerfect V2 — FastAPI backend. Deploy: 2026-03-06."""
 
 import os
-import io
-import json
+import json as _json
 import math
 import sqlite3
+import subprocess
+import sys
+import threading
+import time as _time
 from datetime import datetime, timedelta
 from pathlib import Path
 from contextlib import contextmanager
 
+import io
 import numpy as np
 import pandas as pd
 import yfinance as yf
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
@@ -22,20 +26,21 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="ScanPerfect API")
+app = FastAPI(title="ScanPerfect V2")
 
-DB_DIR = Path(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/app/data"))
+_railway_vol = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
+IS_RAILWAY = _railway_vol is not None
+DB_DIR = Path(_railway_vol) if IS_RAILWAY else Path("data")
 DB_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DB_DIR / "scanperfect.db"
 
-# Legacy flat files live in repo's data/ dir (may be shadowed by volume mount)
-# On first deploy, copy them to volume so migration can read them
-LEGACY_DATA_DIR = Path("/app/data_legacy") if Path("/app/data_legacy").exists() else Path("data")
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(exist_ok=True)
 
 
-# ============================================
+# ============================================================
 # DATABASE
-# ============================================
+# ============================================================
 
 @contextmanager
 def get_db():
@@ -69,30 +74,7 @@ def init_db():
                 FOREIGN KEY (example_id) REFERENCES examples(id) ON DELETE CASCADE,
                 UNIQUE(example_id, date)
             );
-            CREATE TABLE IF NOT EXISTS extension (
-                example_id INTEGER NOT NULL,
-                date TEXT NOT NULL,
-                close REAL, sma50 REAL, sma200 REAL, atr14 REAL,
-                ext_sma50_xatr REAL, ext_sma200_xatr REAL,
-                FOREIGN KEY (example_id) REFERENCES examples(id) ON DELETE CASCADE,
-                UNIQUE(example_id, date)
-            );
-            CREATE TABLE IF NOT EXISTS conditions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                setup_type TEXT NOT NULL,
-                name TEXT NOT NULL,
-                description TEXT,
-                pcf TEXT,
-                active INTEGER DEFAULT 1,
-                sort_order INTEGER DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS signal_analysis (
-                example_id INTEGER NOT NULL UNIQUE,
-                analysis_json TEXT NOT NULL,
-                FOREIGN KEY (example_id) REFERENCES examples(id) ON DELETE CASCADE
-            );
             CREATE INDEX IF NOT EXISTS idx_ohlcv_example ON ohlcv(example_id);
-            CREATE INDEX IF NOT EXISTS idx_extension_example ON extension(example_id);
             CREATE INDEX IF NOT EXISTS idx_examples_setup ON examples(setup_type);
             CREATE TABLE IF NOT EXISTS rejected_signals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,13 +84,6 @@ def init_db():
                 created_at TEXT DEFAULT (datetime('now')),
                 UNIQUE(setup_type, ticker, signal_date)
             );
-            CREATE TABLE IF NOT EXISTS earnings_dates (
-                ticker TEXT NOT NULL,
-                earnings_date TEXT NOT NULL,
-                updated_at TEXT DEFAULT (datetime('now')),
-                UNIQUE(ticker, earnings_date)
-            );
-            CREATE INDEX IF NOT EXISTS idx_earnings_ticker ON earnings_dates(ticker);
             CREATE TABLE IF NOT EXISTS pending_examples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 setup_type TEXT NOT NULL,
@@ -123,93 +98,297 @@ def init_db():
                 reviewed_at TEXT,
                 UNIQUE(setup_type, ticker, entry_date)
             );
+            CREATE TABLE IF NOT EXISTS earnings_dates (
+                ticker TEXT NOT NULL,
+                earnings_date TEXT NOT NULL,
+                updated_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(ticker, earnings_date)
+            );
+            CREATE INDEX IF NOT EXISTS idx_earnings_ticker ON earnings_dates(ticker);
+            CREATE TABLE IF NOT EXISTS universe_ohlcv (
+                ticker TEXT NOT NULL,
+                date TEXT NOT NULL,
+                open REAL, high REAL, low REAL, close REAL, volume REAL,
+                UNIQUE(ticker, date)
+            );
+            CREATE INDEX IF NOT EXISTS idx_universe_ohlcv_ticker ON universe_ohlcv(ticker, date);
+            CREATE TABLE IF NOT EXISTS tradable_universe (ticker TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS grind_cycles (
+                cycle_id TEXT PRIMARY KEY,
+                setup_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error_msg TEXT,
+                is_current INTEGER NOT NULL DEFAULT 0,
+                n_examples_at_grind INTEGER,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                reverted_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS cycle_conditions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT NOT NULL,
+                tier TEXT NOT NULL,
+                expression_name TEXT NOT NULL,
+                low REAL, high REAL, filter_power REAL, sort_order INTEGER,
+                FOREIGN KEY (cycle_id) REFERENCES grind_cycles(cycle_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cycle_conditions_cycle ON cycle_conditions(cycle_id);
+            CREATE TABLE IF NOT EXISTS cycle_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT NOT NULL,
+                setup_type TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                signal_date TEXT NOT NULL,
+                bar_idx INTEGER,
+                close REAL, adr REAL,
+                is_example INTEGER NOT NULL DEFAULT 0,
+                classification TEXT,
+                classification_source TEXT,
+                exit_triggered INTEGER,
+                exit_date TEXT,
+                move_adr REAL, mfe_adr REAL, capture_eff REAL,
+                regime_score REAL, vetted_at TEXT,
+                FOREIGN KEY (cycle_id) REFERENCES grind_cycles(cycle_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cycle_signals_cycle ON cycle_signals(cycle_id);
+            CREATE INDEX IF NOT EXISTS idx_cycle_signals_ticker_date ON cycle_signals(ticker, signal_date);
+            CREATE TABLE IF NOT EXISTS cycle_sacrificial_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_id TEXT NOT NULL,
+                setup_type TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                signal_date TEXT NOT NULL,
+                bar_idx INTEGER,
+                close REAL,
+                FOREIGN KEY (cycle_id) REFERENCES grind_cycles(cycle_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cycle_sacrificial_cycle ON cycle_sacrificial_signals(cycle_id);
+            CREATE TABLE IF NOT EXISTS exit_conditions (
+                setup_type TEXT PRIMARY KEY,
+                expression_name TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                threshold REAL NOT NULL,
+                max_forward_bars INTEGER NOT NULL,
+                adr_threshold_multiplier REAL NOT NULL DEFAULT 1.0,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS cycle_health (
+                cycle_id TEXT PRIMARY KEY,
+                setup_type TEXT NOT NULL,
+                n_signals INTEGER, peak_per_day REAL, avg_per_day REAL,
+                signal_stability_pct REAL, examples_passing INTEGER,
+                examples_added_this_cycle INTEGER, examples_since_last_grind INTEGER,
+                win_rate_auto REAL, win_rate_vetted REAL, pct_manually_vetted REAL,
+                median_winner_adr REAL, median_loser_adr REAL, ev_estimate REAL,
+                prev_cycle_id TEXT, signal_count_delta INTEGER,
+                condition_count_delta INTEGER, win_rate_delta REAL,
+                promote_recommendation TEXT, flag_reason TEXT,
+                live_ready INTEGER, live_ready_blockers TEXT, computed_at TEXT NOT NULL,
+                FOREIGN KEY (cycle_id) REFERENCES grind_cycles(cycle_id)
+            );
+            CREATE TABLE IF NOT EXISTS nightly_watchlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_date TEXT NOT NULL,
+                setup_type TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                signal_date TEXT NOT NULL,
+                cycle_id TEXT NOT NULL,
+                regime_score REAL, expected_win_rate REAL,
+                rank INTEGER, expected_move_adr REAL,
+                ai_vet_status TEXT, ai_vet_reason TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_watchlist_run_date ON nightly_watchlist(run_date);
+            CREATE TABLE IF NOT EXISTS regime_model (
+                setup_type TEXT PRIMARY KEY,
+                cycle_id TEXT NOT NULL,
+                n_signals_used INTEGER,
+                n_features_tested INTEGER,
+                feature_weights TEXT,
+                top_features TEXT,
+                win_rate_by_decile TEXT,
+                baseline_win_rate REAL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (cycle_id) REFERENCES grind_cycles(cycle_id)
+            );
+            CREATE TABLE IF NOT EXISTS signal_regime_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cycle_signal_id INTEGER NOT NULL,
+                cycle_id TEXT NOT NULL,
+                regime_score REAL,
+                expected_win_rate REAL,
+                FOREIGN KEY (cycle_id) REFERENCES grind_cycles(cycle_id)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_srs_signal ON signal_regime_scores(cycle_signal_id);
+            CREATE INDEX IF NOT EXISTS idx_srs_cycle ON signal_regime_scores(cycle_id);
+            CREATE TABLE IF NOT EXISTS file_mirror (
+                path TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                size_bytes INTEGER,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS task_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT NOT NULL,
+                args TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT DEFAULT (datetime('now')),
+                claimed_at TEXT,
+                completed_at TEXT,
+                exit_code INTEGER,
+                error TEXT,
+                log_tail TEXT,
+                result_path TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_task_queue_status ON task_queue(status);
+            CREATE TABLE IF NOT EXISTS research_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                branch TEXT,
+                max_time_s INTEGER DEFAULT 14400,
+                max_phases INTEGER DEFAULT 8,
+                created_at TEXT DEFAULT (datetime('now')),
+                claimed_at TEXT,
+                completed_at TEXT,
+                summary TEXT,
+                diff TEXT,
+                signal_before INTEGER,
+                signal_after INTEGER,
+                examples_benched TEXT,
+                error TEXT,
+                log TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_research_jobs_status ON research_jobs(status);
+            CREATE TABLE IF NOT EXISTS setups (
+                setup_type TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                direction TEXT NOT NULL DEFAULT 'short',
+                created_at TEXT DEFAULT (datetime('now'))
+            );
         """)
+        # ── Add new grind_cycles columns (safe — no-op if already exist) ──
+        for col, coltype in [
+            ("step_type", "TEXT"),
+            ("grind_params", "TEXT"),
+            ("source_hash", "TEXT"),
+        ]:
+            try:
+                db.execute(f"ALTER TABLE grind_cycles ADD COLUMN {col} {coltype}")
+            except Exception:
+                pass  # Column already exists
+        # ── Add research_jobs config columns ──
+        for col, coltype in [
+            ("max_time_s", "INTEGER DEFAULT 14400"),
+            ("max_phases", "INTEGER DEFAULT 8"),
+        ]:
+            try:
+                db.execute(f"ALTER TABLE research_jobs ADD COLUMN {col} {coltype}")
+            except Exception:
+                pass
+        # ── Seed default setups ──
+        for st, name, desc, direction in [
+            ("dtss", "DTSS", "Double Top Short Sell", "short"),
+            ("3-4db", "3-4DB", "3-4 Day Bounce (Short)", "short"),
+            ("htf", "HTF", "High Tight Flag (Long)", "long"),
+        ]:
+            db.execute(
+                "INSERT OR IGNORE INTO setups (setup_type, name, description, direction) VALUES (?,?,?,?)",
+                (st, name, desc, direction),
+            )
+
 
 init_db()
 
-# Migrate: change UNIQUE(setup_type, ticker) → UNIQUE(setup_type, ticker, entry_date)
-def migrate_unique_constraint():
-    with get_db() as db:
-        table_sql = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='examples'").fetchone()
-        if table_sql and "UNIQUE(setup_type, ticker)" in table_sql[0] and "UNIQUE(setup_type, ticker, entry_date)" not in table_sql[0]:
-            print("Migrating examples table: UNIQUE(setup_type, ticker) → UNIQUE(setup_type, ticker, entry_date)")
-            db.execute("PRAGMA foreign_keys = OFF")
-            db.executescript("""
-                CREATE TABLE IF NOT EXISTS examples_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    setup_type TEXT NOT NULL,
-                    ticker TEXT NOT NULL,
-                    chart_date TEXT NOT NULL,
-                    entry_date TEXT NOT NULL,
-                    created_at TEXT DEFAULT (datetime('now')),
-                    UNIQUE(setup_type, ticker, entry_date)
-                );
-                INSERT INTO examples_new (id, setup_type, ticker, chart_date, entry_date, created_at)
-                    SELECT id, setup_type, ticker, chart_date, entry_date, created_at FROM examples;
-                DROP TABLE examples;
-                ALTER TABLE examples_new RENAME TO examples;
-                CREATE INDEX IF NOT EXISTS idx_examples_setup ON examples(setup_type);
-            """)
-            db.execute("PRAGMA foreign_keys = ON")
-            print("Migration complete.")
 
-migrate_unique_constraint()
+# ============================================================
+# LOCAL OHLCV CACHE (replaces universe_ohlcv SQL table locally)
+# ============================================================
 
-# Ensure pending_examples table exists (may be missing on existing DBs)
-with get_db() as db:
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS pending_examples (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            setup_type TEXT NOT NULL,
-            ticker TEXT NOT NULL,
-            signal_date TEXT NOT NULL,
-            entry_date TEXT NOT NULL,
-            status TEXT DEFAULT 'pending',
-            ai_verdict TEXT,
-            ai_reasoning TEXT,
-            review_notes TEXT,
-            created_at TEXT DEFAULT (datetime('now')),
-            reviewed_at TEXT,
-            UNIQUE(setup_type, ticker, entry_date)
-        )
-    """)
-    # Add columns if missing (table may have been created without them)
-    cols = [r[1] for r in db.execute("PRAGMA table_info(pending_examples)").fetchall()]
-    if "ai_verdict" not in cols:
-        db.execute("ALTER TABLE pending_examples ADD COLUMN ai_verdict TEXT")
-    if "ai_reasoning" not in cols:
-        db.execute("ALTER TABLE pending_examples ADD COLUMN ai_reasoning TEXT")
+_ohlcv_cache = {}  # {ticker: DataFrame} — loaded from daily pickle
 
-# Migrate extension table: old schema had ext_sma50_pct/ext_sma200_pct, new uses xatr + atr14
-with get_db() as db:
-    cols = [r[1] for r in db.execute("PRAGMA table_info(extension)").fetchall()]
-    if "ext_sma50_pct" in cols:
-        print("Migrating extension table from pct to xATR schema...")
-        db.executescript("""
-            DROP TABLE IF EXISTS extension;
-            CREATE TABLE extension (
-                example_id INTEGER NOT NULL,
-                date TEXT NOT NULL,
-                close REAL, sma50 REAL, sma200 REAL, atr14 REAL,
-                ext_sma50_xatr REAL, ext_sma200_xatr REAL,
-                FOREIGN KEY (example_id) REFERENCES examples(id) ON DELETE CASCADE,
-                UNIQUE(example_id, date)
-            );
-            CREATE INDEX IF NOT EXISTS idx_extension_example ON extension(example_id);
-        """)
-        # Re-fetch extension data for all existing examples
-        examples = db.execute("SELECT id, ticker FROM examples").fetchall()
-        for ex in examples:
-            print(f"  Re-fetching extension for {ex['ticker']}...")
-            ext_df = fetch_extension(ex["ticker"])
-            if ext_df is not None:
-                store_extension(db, ex["id"], ext_df)
-        print("Extension migration complete.")
+def _load_ohlcv_cache():
+    """Load the daily OHLCV pickle into memory. Only in local mode."""
+    global _ohlcv_cache
+    cache_path = Path("local_runner/cache/universe_ohlcv_daily.pkl")
+    if not cache_path.exists():
+        cache_path = Path("local_runner/cache/universe_ohlcv_5yr.pkl")
+    if not cache_path.exists():
+        print(f"  WARNING: daily OHLCV cache not found at {cache_path}")
+        print(f"  Vetting charts and ADR calculations will not work.")
+        print(f"  Run: python local_runner/cache_builder.py --daily --force")
+        return
+    import pickle
+    t0 = _time.time()
+    with open(cache_path, "rb") as f:
+        _ohlcv_cache = pickle.load(f)
+    elapsed = _time.time() - t0
+    print(f"  OHLCV cache loaded: {len(_ohlcv_cache)} tickers in {elapsed:.1f}s")
+
+if not IS_RAILWAY:
+    _load_ohlcv_cache()
 
 
-# ============================================
+def _get_ohlcv(ticker):
+    """Get OHLCV DataFrame for a ticker. Returns None if not found.
+    Local: reads from in-memory cache.
+    Railway: reads from universe_ohlcv SQL table.
+    """
+    ticker = ticker.upper()
+    if not IS_RAILWAY:
+        df = _ohlcv_cache.get(ticker)
+        if df is None:
+            return None
+        return df.copy()
+    else:
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT date, open, high, low, close, volume FROM universe_ohlcv WHERE ticker=? ORDER BY date",
+                (ticker,)
+            ).fetchall()
+        if not rows:
+            return None
+        df = pd.DataFrame([dict(r) for r in rows])
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+
+
+def _get_all_tickers():
+    """Get set of all tickers with OHLCV data.
+    Local: keys from in-memory cache.
+    Railway: distinct tickers from universe_ohlcv.
+    """
+    if not IS_RAILWAY:
+        return set(_ohlcv_cache.keys())
+    else:
+        with get_db() as db:
+            rows = db.execute("SELECT DISTINCT ticker FROM universe_ohlcv").fetchall()
+        return set(r[0].upper() for r in rows)
+
+
+def _has_bar(ticker, date_str):
+    """Check if a specific ticker+date exists in OHLCV data.
+    Local: check in-memory cache.
+    Railway: SQL lookup.
+    """
+    ticker = ticker.upper()
+    if not IS_RAILWAY:
+        df = _ohlcv_cache.get(ticker)
+        if df is None:
+            return False
+        dates = df["date"].dt.strftime("%Y-%m-%d").values
+        return date_str in dates
+    else:
+        with get_db() as db:
+            return db.execute(
+                "SELECT 1 FROM universe_ohlcv WHERE ticker=? AND date=?", (ticker, date_str)
+            ).fetchone() is not None
+
+
+# ============================================================
 # HELPERS
-# ============================================
+# ============================================================
 
 def clean_val(v):
     if v is None: return None
@@ -217,124 +396,56 @@ def clean_val(v):
     if hasattr(v, 'item'): v = v.item()
     return v
 
-def calc_ema(series, period):
-    k = 2 / (period + 1)
-    ema = [series.iloc[0]]
-    for i in range(1, len(series)):
-        ema.append(series.iloc[i] * k + ema[-1] * (1 - k))
-    return pd.Series(ema, index=series.index)
 
-def calc_sma(series, period):
-    return series.rolling(window=period, min_periods=period).mean()
+def normalize_ticker(ticker):
+    SHARE_CLASS = {
+        "BRKA":"BRK-A","BRKB":"BRK-B","BRK.A":"BRK-A","BRK.B":"BRK-B",
+        "BF.A":"BF-A","BF.B":"BF-B","BFA":"BF-A","BFB":"BF-B",
+        "MOG.A":"MOG-A","MOG.B":"MOG-B","MOGA":"MOG-A","MOGB":"MOG-B",
+        "GEF.B":"GEF-B","GEFB":"GEF-B","LGF.A":"LGF-A","LGF.B":"LGF-B",
+        "LGFA":"LGF-A","LGFB":"LGF-B",
+    }
+    up = ticker.upper().strip()
+    if up in SHARE_CLASS: return SHARE_CLASS[up]
+    if "." in up: return up.replace(".", "-")
+    return up
 
-def calc_atr(df, period=14):
-    high, low, close = df["High"], df["Low"], df["Close"]
-    prev_close = close.shift(1)
-    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
-    return tr.rolling(window=period).mean()
+
+def fetch_ohlcv_yf(ticker, chart_date_str):
+    ticker = normalize_ticker(ticker)
+    chart_dt = datetime.strptime(chart_date_str, "%Y-%m-%d")
+    start = chart_dt - timedelta(days=250)
+    end   = chart_dt + timedelta(days=60)
+    raw = yf.download(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), progress=False)
+    if raw.empty: return None
+    if isinstance(raw.columns, pd.MultiIndex): raw.columns = raw.columns.get_level_values(0)
+    return raw.reset_index().sort_values("Date").reset_index(drop=True)
+
 
 def add_indicators(df):
     df = df.copy()
-    df["EMA8"] = calc_ema(df["Close"], 8)
-    df["EMA21"] = calc_ema(df["Close"], 21)
-    df["SMA50"] = calc_sma(df["Close"], 50)
-    df["SMA200"] = calc_sma(df["Close"], 200)
-    df["ATR14"] = calc_atr(df, 14)
+    df["EMA8"] = df["Close"].ewm(span=8, adjust=False).mean()
+    df["EMA21"] = df["Close"].ewm(span=21, adjust=False).mean()
+    df["SMA50"] = df["Close"].rolling(50).mean()
+    df["SMA200"] = df["Close"].rolling(200).mean()
+    tr = pd.concat([df["High"]-df["Low"], (df["High"]-df["Close"].shift(1)).abs(), (df["Low"]-df["Close"].shift(1)).abs()], axis=1).max(axis=1)
+    df["ATR14"] = tr.rolling(14).mean()
     df["VolAvg20"] = df["Volume"].rolling(20).mean()
     return df
 
-def normalize_ticker_for_yfinance(ticker):
-    """Convert common ticker formats to yfinance-compatible symbols.
-    e.g. BRK.B or BRKB -> BRK-B, MOG.A -> MOG-A, BF.B -> BF-B"""
-    # Known multi-class tickers where letter suffix is a share class
-    SHARE_CLASS_TICKERS = {
-        "BRKA": "BRK-A", "BRKB": "BRK-B",
-        "BRK.A": "BRK-A", "BRK.B": "BRK-B",
-        "BF.A": "BF-A", "BF.B": "BF-B",
-        "BFA": "BF-A", "BFB": "BF-B",
-        "MOG.A": "MOG-A", "MOG.B": "MOG-B",
-        "MOGA": "MOG-A", "MOGB": "MOG-B",
-        "GEF.B": "GEF-B", "GEFB": "GEF-B",
-        "LGF.A": "LGF-A", "LGF.B": "LGF-B",
-        "LGFA": "LGF-A", "LGFB": "LGF-B",
-    }
-    up = ticker.upper().strip()
-    if up in SHARE_CLASS_TICKERS:
-        return SHARE_CLASS_TICKERS[up]
-    # Generic: convert dots to hyphens for yfinance
-    if "." in up:
-        return up.replace(".", "-")
-    return up
-
-def fetch_ohlcv(ticker, chart_date_str):
-    ticker = normalize_ticker_for_yfinance(ticker)
-    chart_dt = datetime.strptime(chart_date_str, "%Y-%m-%d")
-    start = chart_dt - timedelta(days=250)
-    end = chart_dt + timedelta(days=60)
-    raw = yf.download(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), progress=False)
-    if raw.empty: return None
-    if isinstance(raw.columns, pd.MultiIndex): raw.columns = raw.columns.get_level_values(0)
-    raw = raw.reset_index()
-    raw["Date"] = pd.to_datetime(raw["Date"])
-    return raw.sort_values("Date").reset_index(drop=True)
-
-def fetch_extension(ticker):
-    ticker = normalize_ticker_for_yfinance(ticker)
-    end = datetime.now()
-    start = end - timedelta(days=365 * 5 + 60)
-    raw = yf.download(ticker, start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), progress=False)
-    if raw.empty: return None
-    if isinstance(raw.columns, pd.MultiIndex): raw.columns = raw.columns.get_level_values(0)
-    raw = raw.reset_index()
-    raw["Date"] = pd.to_datetime(raw["Date"])
-    raw = raw.sort_values("Date").reset_index(drop=True)
-    raw["SMA50"] = raw["Close"].rolling(50).mean()
-    raw["SMA200"] = raw["Close"].rolling(200).mean()
-    tr = pd.concat([raw["High"] - raw["Low"], (raw["High"] - raw["Close"].shift(1)).abs(), (raw["Low"] - raw["Close"].shift(1)).abs()], axis=1).max(axis=1)
-    raw["ATR14"] = tr.rolling(14).mean()
-    raw["ext_sma50_xatr"] = ((raw["Close"] - raw["SMA50"]) / raw["ATR14"]).round(2)
-    raw["ext_sma200_xatr"] = ((raw["Close"] - raw["SMA200"]) / raw["ATR14"]).round(2)
-    return raw
-
-def store_ohlcv(db, example_id, df):
-    rows = [(example_id, r["Date"].strftime("%Y-%m-%d"), clean_val(r["Open"]), clean_val(r["High"]),
-             clean_val(r["Low"]), clean_val(r["Close"]), clean_val(r["Volume"])) for _, r in df.iterrows()]
-    db.executemany("INSERT OR REPLACE INTO ohlcv (example_id, date, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?)", rows)
-
-def store_extension(db, example_id, df):
-    rows = [(example_id, r["Date"].strftime("%Y-%m-%d"), clean_val(r["Close"]), clean_val(r.get("SMA50")),
-             clean_val(r.get("SMA200")), clean_val(r.get("ATR14")), clean_val(r.get("ext_sma50_xatr")), clean_val(r.get("ext_sma200_xatr"))) for _, r in df.iterrows()]
-    db.executemany("INSERT OR REPLACE INTO extension (example_id, date, close, sma50, sma200, atr14, ext_sma50_xatr, ext_sma200_xatr) VALUES (?,?,?,?,?,?,?,?)", rows)
-
-def get_ohlcv_df(db, example_id):
-    rows = db.execute("SELECT date as Date, open as Open, high as High, low as Low, close as Close, volume as Volume FROM ohlcv WHERE example_id=? ORDER BY date", (example_id,)).fetchall()
-    if not rows: return None
-    df = pd.DataFrame([dict(r) for r in rows])
-    df["Date"] = pd.to_datetime(df["Date"])
-    return df
-
-def get_extension_rows(db, example_id):
-    return [dict(r) for r in db.execute("SELECT date, close, sma50, sma200, atr14, ext_sma50_xatr, ext_sma200_xatr FROM extension WHERE example_id=? ORDER BY date", (example_id,)).fetchall()]
-
-
-# ============================================
-# CHART GENERATION (returns PNG bytes, no files)
-# ============================================
 
 def generate_chart_png(df, ticker, entry_date, at_entry=False, setup_type=None):
+    """Generate a chart PNG for AI review. Returns bytes or None."""
     df = df.copy()
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
     df = add_indicators(df)
-
-    # Setup-specific lookback config
-    LOOKBACK = {"dtss": {"at_entry_before": 100, "default_before": 100, "default_after": 30, "min_total": 130}}
-    cfg = LOOKBACK.get(setup_type, {})
+    cfg = {"dtss": {"at_entry_before": 100, "default_before": 100, "default_after": 30, "min_total": 130}}.get(
+        setup_type, {"at_entry_before": 100, "default_before": 100, "default_after": 30, "min_total": 130})
     at_entry_before = cfg.get("at_entry_before", 50)
     default_before = cfg.get("default_before", 30)
     default_after = cfg.get("default_after", 30)
     min_total = cfg.get("min_total", 60)
-
     entry_dt = pd.Timestamp(entry_date)
     entry_rows = df[df["Date"] == entry_dt]
     if entry_rows.empty:
@@ -343,7 +454,6 @@ def generate_chart_png(df, ticker, entry_date, at_entry=False, setup_type=None):
         entry_idx = before.index[-1]
     else:
         entry_idx = entry_rows.index[0]
-
     if at_entry:
         want_before = min(at_entry_before, entry_idx)
         start_idx = entry_idx - want_before
@@ -355,47 +465,40 @@ def generate_chart_png(df, ticker, entry_date, at_entry=False, setup_type=None):
         avail_after = len(df) - entry_idx - 1
         avail_before = entry_idx
         want_after = min(default_after, avail_after)
-        want_before = min(default_before, avail_before)
-        total = want_before + 1 + want_after
+        want_before2 = min(default_before, avail_before)
+        total = want_before2 + 1 + want_after
         if total < min_total:
             extra = min_total - total
-            if want_before < default_before: want_after = min(want_after + extra, avail_after)
-            else: want_before = min(want_before + extra, avail_before)
-        chart_df = df.iloc[entry_idx - want_before:entry_idx + want_after + 1].copy().reset_index(drop=True)
-        entry_pos = want_before
+            if want_before2 < default_before: want_after = min(want_after + extra, avail_after)
+            else: want_before2 = min(want_before2 + extra, avail_before)
+        chart_df = df.iloc[entry_idx - want_before2:entry_idx + want_after + 1].copy().reset_index(drop=True)
+        entry_pos = want_before2
         total_width = len(chart_df)
-
     if chart_df.empty: return None
-
     fig, (ax, ax_vol) = plt.subplots(2, 1, figsize=(8, 4), dpi=120, gridspec_kw={"height_ratios": [3, 1]}, facecolor="#0a0e17")
-    ax.set_facecolor("#0a0e17")
-    ax_vol.set_facecolor("#0a0e17")
-    n = len(chart_df)
-    w = 0.6
-
+    ax.set_facecolor("#0a0e17"); ax_vol.set_facecolor("#0a0e17")
+    n = len(chart_df); w = 0.6
     for i, row in chart_df.iterrows():
         o, h, l, c = row["Open"], row["High"], row["Low"], row["Close"]
         color = "#26A69A" if c >= o else "#EF5350"
         ax.plot([i, i], [l, h], color=color, linewidth=0.8)
         ax.add_patch(Rectangle((i - w/2, min(o, c)), w, max(abs(c - o), 0.001), facecolor=color, edgecolor=color, linewidth=0.5))
         ax_vol.bar(i, row["Volume"], width=w, color=color, alpha=0.7)
-
     for period, ma_type, color, lw in [(8, "ema", "#ADD8E6", 1.0), (21, "ema", "#D2B48C", 1.0), (50, "sma", "#FFD700", 1.2), (200, "sma", "#FF0000", 1.5)]:
         if n >= period:
             s = chart_df["Close"].ewm(span=period, adjust=False).mean() if ma_type == "ema" else chart_df["Close"].rolling(window=period).mean()
             ax.plot(range(n), s.values, color=color, linewidth=lw, alpha=0.8)
-
     entry_open = float(chart_df.iloc[entry_pos]["Open"])
     ax.axvline(x=entry_pos, color="#3b82f6", linewidth=1, alpha=0.6, linestyle="--")
     ax.axhline(y=entry_open, color="#3b82f6", linewidth=1, alpha=0.6, linestyle="--")
     ax_vol.axvline(x=entry_pos, color="#3b82f6", linewidth=1, alpha=0.6, linestyle="--")
     ax.set_title(f"{ticker}  •  {entry_date}", color="#e2e8f0", fontsize=11, fontweight="bold", pad=8)
     ax.tick_params(colors="#64748b", labelsize=8); ax_vol.tick_params(colors="#64748b", labelsize=7)
-    ax.spines[:].set_color("#2a3550"); ax_vol.spines[:].set_color("#2a3550")
+    for spine in ax.spines.values(): spine.set_color("#2a3550")
+    for spine in ax_vol.spines.values(): spine.set_color("#2a3550")
     ax.set_xlim(-1, total_width); ax_vol.set_xlim(-1, total_width)
     ax.set_xticks([]); ax_vol.set_xticks([]); ax_vol.yaxis.set_visible(False)
     ax.grid(True, alpha=0.1, color="#64748b")
-
     fig.tight_layout(pad=0.5)
     buf = io.BytesIO()
     fig.savefig(buf, format="png", facecolor="#0a0e17", bbox_inches="tight")
@@ -404,3011 +507,1473 @@ def generate_chart_png(df, ticker, entry_date, at_entry=False, setup_type=None):
     return buf.getvalue()
 
 
-# ============================================
-# SIGNAL ANALYSIS
-# ============================================
-
-def run_signal_analysis(df, ticker, entry_date):
-    df = df.copy()
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df.sort_values("Date").reset_index(drop=True)
-    df = add_indicators(df)
-    df["SMA10"] = calc_sma(df["Close"], 10)
-
-    entry_dt = pd.Timestamp(entry_date)
-    entry_idx = df.index[df["Date"] == entry_dt]
-    if len(entry_idx) == 0:
-        before = df[df["Date"] <= entry_dt]
-        if before.empty: raise ValueError(f"No data at or before {entry_date}")
-        entry_idx = [before.index[-1]]
-    eidx = entry_idx[0]
-    if eidx == 0: raise ValueError("Entry date is first row")
-
-    sig_idx = eidx - 1
-    sig = df.iloc[sig_idx]
-    c, o, h, l = float(sig["Close"]), float(sig["Open"]), float(sig["High"]), float(sig["Low"])
-    atr = float(sig["ATR14"]) if pd.notna(sig["ATR14"]) else None
-    vol = float(sig["Volume"])
-    vol_avg = float(sig["VolAvg20"]) if pd.notna(sig["VolAvg20"]) else None
-    ema8 = float(sig["EMA8"]) if pd.notna(sig["EMA8"]) else None
-    ema21 = float(sig["EMA21"]) if pd.notna(sig["EMA21"]) else None
-    sma10 = float(sig["SMA10"]) if pd.notna(sig["SMA10"]) else None
-    sma50 = float(sig["SMA50"]) if pd.notna(sig["SMA50"]) else None
-    sma200 = float(sig["SMA200"]) if pd.notna(sig["SMA200"]) else None
-
-    lb30 = df.iloc[max(0, sig_idx - 30):sig_idx + 1]
-    swing_high = float(lb30["High"].max())
-    high_idx = lb30["High"].idxmax()
-    days_from_high = sig_idx - high_idx
-    pullback_pct = round((swing_high - c) / swing_high * 100, 2)
-    pullback_atr = round((swing_high - c) / atr, 2) if atr else None
-
-    pb_range = df.iloc[high_idx:sig_idx + 1]
-    pullback_low = float(pb_range["Low"].min())
-    low_idx = pb_range["Low"].idxmin()
-    days_since_low = sig_idx - low_idx
-    bounce_pct = round((c - pullback_low) / pullback_low * 100, 2)
-    bounce_atr = round((c - pullback_low) / atr, 2) if atr else None
-
-    r5 = df.iloc[max(0, sig_idx - 4):sig_idx + 1]
-    r3 = df.iloc[max(0, sig_idx - 2):sig_idx + 1]
-    sig_body, sig_range = abs(c - o), h - l
-
-    sma50_slope = None
-    if sig_idx >= 5 and pd.notna(sig["SMA50"]):
-        s5 = df.iloc[sig_idx - 5]["SMA50"]
-        if pd.notna(s5) and s5 > 0: sma50_slope = round((float(sig["SMA50"]) - float(s5)) / float(s5) * 100, 3)
-
-    down_days = int((pb_range["Close"] < pb_range["Open"]).sum())
-    r20 = df.iloc[max(0, sig_idx - 19):sig_idx + 1]
-    r20h, r20l = float(r20["High"].max()), float(r20["Low"].min())
-
-    return {
-        "ticker": ticker, "entry_date": entry_date, "signal_date": sig["Date"].strftime("%Y-%m-%d"),
-        "close": round(c, 2), "atr14": round(atr, 4) if atr else None,
-        "atr_pct": round(atr / c * 100, 2) if atr else None,
-        "above_sma50": c > sma50 if sma50 else None, "above_sma200": c > sma200 if sma200 else None,
-        "ema8_above_ema21": ema8 > ema21 if (ema8 and ema21) else None,
-        "c_vs_ema8_pct": round((c - ema8) / ema8 * 100, 2) if ema8 else None,
-        "c_vs_ema21_pct": round((c - ema21) / ema21 * 100, 2) if ema21 else None,
-        "c_vs_sma10_pct": round((c - sma10) / sma10 * 100, 2) if sma10 else None,
-        "c_vs_sma50_pct": round((c - sma50) / sma50 * 100, 2) if sma50 else None,
-        "c_vs_ema8_atr": round((c - ema8) / atr, 2) if (ema8 and atr) else None,
-        "c_vs_ema21_atr": round((c - ema21) / atr, 2) if (ema21 and atr) else None,
-        "c_vs_sma50_atr": round((c - sma50) / atr, 2) if (sma50 and atr) else None,
-        "sma50_slope_5d": sma50_slope, "swing_high_30d": round(swing_high, 2),
-        "days_from_high": int(days_from_high), "pullback_pct": pullback_pct, "pullback_atr": pullback_atr,
-        "pullback_low": round(pullback_low, 2), "days_since_low": int(days_since_low),
-        "bounce_from_low_pct": bounce_pct, "bounce_from_low_atr": bounce_atr,
-        "green_candles_3d": int((r3["Close"] > r3["Open"]).sum()),
-        "green_candles_5d": int((r5["Close"] > r5["Open"]).sum()),
-        "up_close_3d": int((r3["Close"] > r3["Close"].shift(1)).sum()),
-        "up_close_5d": int((r5["Close"] > r5["Close"].shift(1)).sum()),
-        "sig_is_green": c > o,
-        "sig_close_position": round((c - l) / sig_range, 2) if sig_range > 0 else 0.5,
-        "sig_body_atr": round(sig_body / atr, 2) if atr else None,
-        "sig_range_atr": round(sig_range / atr, 2) if atr else None,
-        "sig_vol_vs_20avg": round(vol / vol_avg, 2) if vol_avg else None,
-        "total_pullback_days": int(days_from_high), "down_days_in_pullback": down_days,
-        "pct_down_in_pullback": round(down_days / max(days_from_high, 1) * 100, 1),
-        "range_20d_pct": round((r20h - r20l) / r20l * 100, 1) if r20l > 0 else None,
-        "up_days_14": int((df.iloc[max(0, sig_idx - 13):sig_idx + 1]["Close"] > df.iloc[max(0, sig_idx - 13):sig_idx + 1]["Close"].shift(1)).sum()),
-    }
+def store_ohlcv(db, example_id, df):
+    rows = [(example_id, r["Date"].strftime("%Y-%m-%d"), clean_val(r["Open"]), clean_val(r["High"]),
+             clean_val(r["Low"]), clean_val(r["Close"]), clean_val(r["Volume"])) for _, r in df.iterrows()]
+    db.executemany("INSERT OR REPLACE INTO ohlcv (example_id, date, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?)", rows)
 
 
-# ============================================
-# API ROUTES
-# ============================================
+def _load_json(path, default=None):
+    if default is None: default = {}
+    try:
+        p = Path(path)
+        if p.exists():
+            with open(p) as f: return _json.load(f)
+    except: pass
+    return default
+
+
+def _save_json(path, data):
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w") as f: _json.dump(data, f, indent=2, default=str)
+
+
+# ============================================================
+# PIPELINE / AGENT
+# ============================================================
+
+PIPELINE_FILE      = DATA_DIR / "pipeline_state.json"
+PIPELINE_LOGS_FILE = DATA_DIR / "pipeline_logs.json"
+GRINDER_AGENT_FILE = DATA_DIR / "grinder_agent.json"
+VETTING_DATA_DIR   = DATA_DIR
+
+PIPELINE_STEPS = [
+    {"id":"signal_grind",     "name":"1. Signal Grind",      "category":"pipeline", "prerequisites":[], "description":"Pyramid grinder — examples vs universe → candidate conditions."},
+    {"id":"exit_grind",       "name":"2. Exit Grind",        "category":"pipeline", "prerequisites":[], "description":"Brute-force optimal exit condition from example entry bar highs."},
+    {"id":"refinement_grind", "name":"3. Refinement Grind",  "category":"pipeline", "prerequisites":[], "description":"Scan universe, classify winners/losers via ceiling+exit race, beam-search to eliminate losers."},
+    {"id":"ev_grind",         "name":"4. EV Grinder",        "category":"pipeline", "prerequisites":[], "description":"Score every signal with predicted WR, MFE, EV. Unified correlative scoring across all features."},
+]
+
+
+def _load_pipeline_state():
+    return _load_json(PIPELINE_FILE, {"steps":{}, "jobs":[]})
+
+def _save_pipeline_state(s): _save_json(PIPELINE_FILE, s)
+def _load_pipeline_logs():   return _load_json(PIPELINE_LOGS_FILE, {})
+def _save_pipeline_logs(l):  _save_json(PIPELINE_LOGS_FILE, l)
+
+
+# ── Local subprocess runner (replaces pipeline_agent.py polling) ──
+
+REPO_ROOT = str(Path(__file__).resolve().parent)
+LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
+
+STEP_COMMANDS = {
+    "nightly": [sys.executable, os.path.join(LOCAL_DIR, "nightly.py")],
+    "signal_grind": [
+        sys.executable, os.path.join(LOCAL_DIR, "pyramid_grinder.py"),
+        "--setup", "{setup}", "--peak-target", "3", "--beam", "10000", "--depth", "100",
+    ],
+    "exit_grind": [
+        sys.executable, os.path.join(REPO_ROOT, "scripts", "exit_grinder.py"),
+        "--setup", "{setup}", "--max-forward", "120",
+    ],
+    "refinement_grind": [
+        sys.executable, os.path.join(LOCAL_DIR, "pyramid_grinder.py"),
+        "--setup", "{setup}", "--blackout",
+    ],
+    "ev_grind": [
+        sys.executable, os.path.join(REPO_ROOT, "scripts", "ev_grinder.py"),
+        "--setup", "{setup}",
+    ],
+}
+
+_running_process = None  # Track the active subprocess for stop support
+
+
+def _extract_summary(lines):
+    """Pull key result lines from subprocess output."""
+    summary_lines = []
+    for line in lines[-80:]:
+        lower = line.lower().strip()
+        if any(kw in lower for kw in [
+            "winner", "best:", "result:", "final", "complete",
+            "signals", "peak", "conditions", "floor=", "median=",
+            "all passes complete", "total signals", "\u2713",
+        ]):
+            summary_lines.append(line.strip())
+    return "\n".join(summary_lines[-10:]) if summary_lines else None
+
+
+def _run_step_local(step_id, setup_type):
+    """Run a pipeline step as a local subprocess in a background thread."""
+    global _running_process
+
+    cmd_template = STEP_COMMANDS.get(step_id)
+    if not cmd_template:
+        _update_step_status(step_id, "error", error=f"Unknown step: {step_id}")
+        return
+
+    # Substitute {setup} placeholder with actual setup type
+    cmd = [arg.replace("{setup}", setup_type) for arg in cmd_template]
+
+    # Mark as running
+    _update_step_status(step_id, "running")
+
+    # Clear log
+    logs = _load_pipeline_logs()
+    logs[step_id] = []
+    _save_pipeline_logs(logs)
+
+    all_lines = []
+    start_time = _time.time()
+
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=REPO_ROOT,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            bufsize=1,
+            universal_newlines=True,
+        )
+        _running_process = process
+
+        for line in process.stdout:
+            all_lines.append(line.rstrip("\n"))
+            # Flush to log file periodically (every 20 lines)
+            if len(all_lines) % 20 == 0:
+                logs = _load_pipeline_logs()
+                logs[step_id] = all_lines[-4000:]  # Keep last 4000
+                _save_pipeline_logs(logs)
+
+        process.wait()
+        _running_process = None
+        exit_code = process.returncode
+        duration = round(_time.time() - start_time, 1)
+
+        # Final log flush
+        logs = _load_pipeline_logs()
+        logs[step_id] = all_lines[-4000:]
+        _save_pipeline_logs(logs)
+
+        if exit_code == 0:
+            _update_step_status(step_id, "done",
+                                duration_s=duration, exit_code=0,
+                                result_summary=_extract_summary(all_lines))
+        else:
+            error_tail = "\n".join(all_lines[-20:])
+            _update_step_status(step_id, "error",
+                                duration_s=duration, exit_code=exit_code,
+                                error=error_tail,
+                                result_summary=_extract_summary(all_lines))
+
+    except Exception as e:
+        _running_process = None
+        duration = round(_time.time() - start_time, 1)
+        _update_step_status(step_id, "error",
+                            duration_s=duration,
+                            error=f"{type(e).__name__}: {e}")
+
+
+def _update_step_status(step_id, status, **kwargs):
+    """Update pipeline step status directly (no network hop)."""
+    state = _load_pipeline_state()
+    ss = state.setdefault("steps", {}).setdefault(step_id, {})
+    ss["status"] = status
+    now = datetime.now().isoformat()
+    if status == "running":
+        ss["started_at"] = now
+    elif status in ("done", "error", "stopped"):
+        ss["finished_at"] = now
+        ss["duration_s"] = kwargs.get("duration_s")
+        ss["exit_code"] = kwargs.get("exit_code")
+        ss["error"] = kwargs.get("error")
+        ss["result_summary"] = kwargs.get("result_summary")
+        # Also update the job record
+        for j in state.get("jobs", []):
+            if j.get("step_id") == step_id and j.get("status") in ("claimed", "running"):
+                j["status"] = status
+    _save_pipeline_state(state)
+
+
+@app.get("/api/pipeline/steps")
+async def get_pipeline_steps():
+    state = _load_pipeline_state()
+    valid_ids = {s["id"] for s in PIPELINE_STEPS}
+    if state.get("jobs"):
+        state["jobs"] = [j for j in state["jobs"] if j.get("step_id") in valid_ids]
+        _save_pipeline_state(state)
+    # Local mode: server IS the agent — always online
+    if not IS_RAILWAY:
+        agent_status = "online"
+        last_hb = datetime.utcnow().isoformat()
+    else:
+        agent = _load_json(GRINDER_AGENT_FILE, {})
+        agent_status = "unknown"
+        last_hb = agent.get("last_heartbeat","")
+        if last_hb:
+            try:
+                hb_time = datetime.fromisoformat(last_hb.replace('+00:00','').replace('Z',''))
+                agent_status = "online" if (datetime.utcnow()-hb_time).total_seconds()<20 else "offline"
+            except: agent_status = "unknown"
+    steps_out = []
+    for step_def in PIPELINE_STEPS:
+        step_state = state.get("steps",{}).get(step_def["id"], {
+            "status":"pending","started_at":None,"finished_at":None,
+            "duration_s":None,"exit_code":None,"error":None,"result_summary":None,
+        })
+        can_run = not any(j.get("status") in ("queued","running","claimed") for j in state.get("jobs",[]))
+        if can_run:
+            for prereq in step_def["prerequisites"]:
+                if state.get("steps",{}).get(prereq,{}).get("status") != "done":
+                    can_run = False; break
+        if step_def["id"] in ("optimal_samples","sample_expansion"):
+            try:
+                decisions = _load_json(VETTING_DATA_DIR/"vetting"/"vetting_dtss.json", {})
+                n_total = 0
+                fp = VETTING_DATA_DIR/"signal_filter"/"filtered_dtss.json"
+                if fp.exists(): n_total = len(_load_json(fp,{}).get("signals",[]))
+                counts = {"yes":0,"maybe":0,"no":0}
+                for v in decisions.values():
+                    vd = v.get("verdict","")
+                    if vd in counts: counts[vd]+=1
+                n_vetted = sum(counts.values())
+                with get_db() as db:
+                    n_examples = db.execute("SELECT COUNT(*) FROM examples WHERE setup_type='dtss'").fetchone()[0]
+                    n_rejected = db.execute("SELECT COUNT(*) FROM rejected_signals WHERE setup_type='dtss'").fetchone()[0]
+                    n_pending  = db.execute("SELECT COUNT(*) FROM pending_examples WHERE setup_type='dtss'").fetchone()[0]
+                step_state["vetting_stats"] = {"n_total":n_total,"n_vetted":n_vetted,
+                    "n_yes":counts["yes"],"n_maybe":counts["maybe"],"n_no":counts["no"],
+                    "n_examples":n_examples,"n_rejected":n_rejected,"n_pending":n_pending}
+                if step_def["id"]=="sample_expansion" and n_vetted>0:
+                    if n_vetted>=n_total: step_state["status"]="done"
+                    step_state["result_summary"]=f"{n_vetted}/{n_total} vetted · {counts['yes']} yes · {counts['no']} no · {n_examples} total optimal samples"
+            except: pass
+        steps_out.append({**step_def,"state":step_state,"can_run":can_run})
+    running = next((j.get("step_id") for j in state.get("jobs",[]) if j.get("status") in ("queued","running","claimed")),None)
+    return {"steps":steps_out,"running":running,"agent_status":agent_status,"agent_last_heartbeat":last_hb}
+
+
+@app.post("/api/pipeline/run/{step_id}")
+async def pipeline_run_step(step_id: str, request: Request = None):
+    step_params = {}
+    setup_type = "dtss"
+    if request:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                step_params = body.get("params",{})
+                setup_type = body.get("setup_type", "dtss")
+        except: pass
+    step_def = next((s for s in PIPELINE_STEPS if s["id"]==step_id), None)
+    if not step_def: return {"error":f"Unknown step: {step_id}"}
+    state = _load_pipeline_state()
+    # Check prerequisites
+    for prereq in step_def["prerequisites"]:
+        if state.get("steps",{}).get(prereq,{}).get("status")!="done":
+            return {"error":f"Prerequisite not met: {prereq}"}
+    # Check if something is already running
+    active = [j for j in state.get("jobs",[]) if j.get("status") in ("queued","running","claimed")]
+    if active: return {"error":f"Already running: {active[0].get('step_id')}"}
+    # Create job record
+    job_id = f"pipe_{step_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    job = {"job_id":job_id,"step_id":step_id,"status":"running","params":step_params,"created_at":datetime.now().isoformat()}
+    state["jobs"] = [j for j in state.get("jobs",[]) if j.get("step_id")!=step_id]
+    state.setdefault("jobs",[]).append(job)
+    state.setdefault("steps",{})[step_id] = {"status":"running","started_at":datetime.now().isoformat(),"finished_at":None,
+        "duration_s":None,"exit_code":None,"error":None,"result_summary":None}
+    _save_pipeline_state(state)
+    logs = _load_pipeline_logs(); logs[step_id]=[]; _save_pipeline_logs(logs)
+    # Launch subprocess in background thread
+    thread = threading.Thread(target=_run_step_local, args=(step_id, setup_type), daemon=True)
+    thread.start()
+    return {"status":"running","job_id":job_id,"step_id":step_id}
+
+
+@app.get("/api/pipeline/jobs/pending")
+async def pipeline_pending_jobs():
+    state = _load_pipeline_state(); pending = []
+    for j in state.get("jobs",[]):
+        if j.get("status")=="queued": j["status"]="claimed"; pending.append(j)
+    if pending: _save_pipeline_state(state)
+    return {"jobs":pending}
+
+
+@app.post("/api/pipeline/status")
+async def pipeline_update_status(request: Request):
+    body = await request.json(); step_id=body.get("step_id"); status=body.get("status")
+    state = _load_pipeline_state()
+    ss = state.setdefault("steps",{}).setdefault(step_id,{})
+    ss["status"]=status
+    if status=="running": ss["started_at"]=body.get("timestamp",datetime.now().isoformat())
+    elif status in ("done","error","stopped"):
+        ss["finished_at"]=body.get("timestamp",datetime.now().isoformat())
+        ss["duration_s"]=body.get("duration_s"); ss["exit_code"]=body.get("exit_code")
+        ss["error"]=body.get("error"); ss["result_summary"]=body.get("result_summary")
+        for j in state.get("jobs",[]):
+            if j.get("step_id")==step_id and j.get("status") in ("claimed","running"): j["status"]=status
+    _save_pipeline_state(state); return {"ok":True}
+
+
+@app.post("/api/pipeline/logs")
+async def pipeline_append_logs(request: Request):
+    body=await request.json(); step_id=body.get("step_id"); lines=body.get("lines",[])
+    logs=_load_pipeline_logs(); existing=logs.get(step_id,[]); existing.extend(lines)
+    if len(existing)>5000: existing=existing[-4000:]
+    logs[step_id]=existing; _save_pipeline_logs(logs)
+    return {"ok":True,"total_lines":len(existing)}
+
+
+@app.get("/api/pipeline/logs/{step_id}")
+async def pipeline_get_logs(step_id: str, after: int=0):
+    logs=_load_pipeline_logs(); all_lines=logs.get(step_id,[])
+    return {"step_id":step_id,"lines":all_lines[after:],"total":len(all_lines),"after":after}
+
+
+@app.post("/api/pipeline/reset/{step_id}")
+async def pipeline_reset_step(step_id: str):
+    state=_load_pipeline_state()
+    state.setdefault("steps",{})[step_id]={"status":"pending","started_at":None,"finished_at":None,
+        "duration_s":None,"exit_code":None,"error":None,"result_summary":None}
+    state["jobs"]=[j for j in state.get("jobs",[]) if j.get("step_id")!=step_id]
+    _save_pipeline_state(state); return {"ok":True,"step_id":step_id}
+
+
+@app.post("/api/pipeline/stop")
+async def pipeline_stop():
+    global _running_process
+    state=_load_pipeline_state()
+    for j in state.get("jobs",[]):
+        if j.get("status") in ("queued","claimed","running"):
+            j["status"]="stopped"
+            step_id = j.get("step_id")
+            if step_id:
+                ss = state.get("steps",{}).get(step_id,{})
+                ss["status"] = "stopped"
+                ss["finished_at"] = datetime.now().isoformat()
+    _save_pipeline_state(state)
+    # Kill the running subprocess if any
+    if _running_process and _running_process.poll() is None:
+        try:
+            _running_process.terminate()
+        except: pass
+        _running_process = None
+    return {"ok":True}
+
+
+@app.get("/api/pipeline/stop-check/{step_id}")
+async def pipeline_stop_check(step_id: str):
+    state=_load_pipeline_state()
+    for j in state.get("jobs",[]):
+        if j.get("step_id")==step_id and j.get("status")=="stop_requested": return {"stop":True}
+    return {"stop":False}
+
+
+@app.post("/api/grinder/agent/register")
+async def register_agent(request: Request):
+    _save_json(GRINDER_AGENT_FILE, await request.json()); return {"ok":True}
+
+
+@app.post("/api/grinder/agent/heartbeat")
+async def agent_heartbeat(request: Request):
+    body=await request.json(); agent=_load_json(GRINDER_AGENT_FILE,{})
+    agent["last_heartbeat"]=body.get("timestamp",datetime.now().isoformat()); agent["status"]="online"
+    _save_json(GRINDER_AGENT_FILE,agent); return {"ok":True}
+
+
+@app.get("/api/grinder/agent/status")
+async def get_agent_status():
+    # Local mode: server IS the agent
+    if not IS_RAILWAY:
+        return {"status":"online","agent":{"status":"online","agent_id":"local"}}
+    agent=_load_json(GRINDER_AGENT_FILE,{})
+    if not agent: return {"status":"unknown","agent":None}
+    last_hb=agent.get("last_heartbeat","")
+    if last_hb:
+        try:
+            hb=datetime.fromisoformat(last_hb.replace('+00:00','').replace('Z',''))
+            if (datetime.utcnow()-hb).total_seconds()>20: agent["status"]="offline"
+        except: pass
+    return {"status":agent.get("status","unknown"),"agent":agent}
+
+
+# ============================================================
+# EXAMPLES
+# ============================================================
 
 @app.get("/api/setups")
 async def get_setups():
-    types = {"3-4db": {"name": "3-4DB", "desc": "3-4 Day Bounce (Short)"}, "dtss": {"name": "DTSS", "desc": "Double Top Short Sell"}, "htf": {"name": "HTF", "desc": "High Tight Flag (Long)"}}
     with get_db() as db:
-        for st in types:
-            types[st]["examples"] = db.execute("SELECT COUNT(*) FROM examples WHERE setup_type=?", (st,)).fetchone()[0]
-    return types
+        rows = db.execute("SELECT setup_type, name, description, direction FROM setups ORDER BY created_at").fetchall()
+        result = {}
+        for r in rows:
+            n = db.execute("SELECT COUNT(*) FROM examples WHERE setup_type=?", (r["setup_type"],)).fetchone()[0]
+            result[r["setup_type"]] = {
+                "name": r["name"], "desc": r["description"],
+                "direction": r["direction"], "examples": n,
+            }
+    return result
+
+
+class CreateSetupRequest(BaseModel):
+    name: str
+    description: str = ""
+    direction: str = "short"
+
+
+@app.post("/api/setups")
+async def create_setup(req: CreateSetupRequest):
+    import re
+    setup_type = re.sub(r"[^a-z0-9]+", "-", req.name.lower()).strip("-")
+    if not setup_type:
+        raise HTTPException(400, "Invalid setup name")
+    if req.direction not in ("long", "short"):
+        raise HTTPException(400, "direction must be 'long' or 'short'")
+    with get_db() as db:
+        if db.execute("SELECT setup_type FROM setups WHERE setup_type=?", (setup_type,)).fetchone():
+            raise HTTPException(409, f"Setup '{setup_type}' already exists")
+        db.execute(
+            "INSERT INTO setups (setup_type, name, description, direction) VALUES (?,?,?,?)",
+            (setup_type, req.name.strip(), req.description.strip(), req.direction),
+        )
+    return {"setup_type": setup_type, "name": req.name.strip(), "direction": req.direction}
+
+
+@app.patch("/api/setups/{setup_type}")
+async def patch_setup(setup_type: str, request: Request):
+    body = await request.json()
+    ALLOWED = {"name", "description", "direction"}
+    updates = {k: v for k, v in body.items() if k in ALLOWED}
+    if not updates:
+        raise HTTPException(400, "No valid fields to update")
+    if "direction" in updates and updates["direction"] not in ("long", "short"):
+        raise HTTPException(400, "direction must be 'long' or 'short'")
+    with get_db() as db:
+        if not db.execute("SELECT setup_type FROM setups WHERE setup_type=?", (setup_type,)).fetchone():
+            raise HTTPException(404, f"Setup '{setup_type}' not found")
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        db.execute(f"UPDATE setups SET {set_clause} WHERE setup_type=?", list(updates.values()) + [setup_type])
+    return {"setup_type": setup_type, "updated": list(updates.keys())}
+
 
 @app.get("/api/examples/{setup_type}")
 async def get_examples(setup_type: str):
     with get_db() as db:
-        rows = db.execute("SELECT id, ticker, chart_date, entry_date FROM examples WHERE setup_type=? ORDER BY ticker", (setup_type,)).fetchall()
-        examples = []
-        for r in rows:
-            has = db.execute("SELECT 1 FROM signal_analysis WHERE example_id=?", (r["id"],)).fetchone() is not None
-            ex = {"id": r["id"], "ticker": r["ticker"], "chartDate": r["chart_date"], "entryDate": r["entry_date"], "hasAnalysis": has}
+        rows=db.execute("SELECT id,ticker,chart_date,entry_date FROM examples WHERE setup_type=? ORDER BY ticker",(setup_type,)).fetchall()
+    examples=[]
+    for r in rows:
+        ex={"id":r["id"],"ticker":r["ticker"],"chartDate":r["chart_date"],"entryDate":r["entry_date"]}
+        try:
+            df = _get_ohlcv(r["ticker"])
+            if df is not None and len(df) > 5:
+                dates = df["date"].dt.strftime("%Y-%m-%d").values
+                entry_date = r["entry_date"]
+                entry_mask = dates < entry_date
+                pre = df[entry_mask].tail(14)
+                if len(pre) >= 5:
+                    adr = (pre["high"] - pre["low"]).abs().mean()
+                    if adr > 0:
+                        fwd_mask = dates >= entry_date
+                        fwd = df[fwd_mask].head(120)
+                        if len(fwd) >= 2:
+                            entry_high = float(fwd.iloc[0]["high"])
+                            best_close = float(fwd.iloc[1:]["close"].min())
+                            ex["adrMove"] = round((entry_high - best_close) / adr, 1)
+        except: pass
+        examples.append(ex)
+    return {"setupType":setup_type,"examples":examples}
 
-            # Compute ADR move: entry candle high → max favorable excursion close
+
+class SaveExampleRequest(BaseModel):
+    ticker: str; chart_date: str; entry_date: str
+
+
+@app.post("/api/examples/{setup_type}")
+async def save_example(setup_type: str, req: SaveExampleRequest):
+    ticker=req.ticker.upper().strip()
+    with get_db() as db:
+        if db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",(setup_type,ticker,req.entry_date)).fetchone():
+            raise HTTPException(409,f"{ticker} {req.entry_date} already exists")
+        eid=db.execute("INSERT INTO examples (setup_type,ticker,chart_date,entry_date) VALUES (?,?,?,?)",(setup_type,ticker,req.chart_date,req.entry_date)).lastrowid
+    return {"id":eid,"ticker":ticker,"entry_date":req.entry_date}
+
+
+@app.delete("/api/examples/{setup_type}/{example_id}")
+async def delete_example(setup_type: str, example_id: int):
+    with get_db() as db:
+        db.execute("DELETE FROM examples WHERE id=? AND setup_type=?",(example_id,setup_type))
+    return {"deleted":example_id}
+
+
+@app.post("/api/examples/{setup_type}/bulk")
+async def bulk_add_examples(setup_type: str, request: Request):
+    """Parse a text blob of 'TICKER MM/DD/YYYY' lines and add them as examples."""
+    body = await request.json()
+    raw = body.get("text", "")
+    if not raw.strip():
+        raise HTTPException(400, "No text provided")
+
+    from dateutil import parser as dateparser
+    lines = [l.strip() for l in raw.strip().splitlines() if l.strip()]
+    added = []
+    failed = []
+
+    with get_db() as db:
+        # Build set of valid tickers
+        valid_tickers = _get_all_tickers()
+
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 2:
+                failed.append({"line": line, "reason": "Could not parse — need TICKER DATE"})
+                continue
+
+            ticker = normalize_ticker(parts[0])
+            date_str = " ".join(parts[1:])
+
+            # Parse flexible date formats
             try:
-                ohlcv = db.execute(
-                    "SELECT date, open, high, low, close FROM universe_ohlcv WHERE ticker=? AND date >= ? ORDER BY date LIMIT 120",
-                    (r["ticker"], r["entry_date"])
-                ).fetchall()
-                if ohlcv and len(ohlcv) >= 2:
-                    # ADR(14): use 14 bars before entry
-                    pre = db.execute(
-                        "SELECT high, low FROM universe_ohlcv WHERE ticker=? AND date < ? ORDER BY date DESC LIMIT 14",
-                        (r["ticker"], r["entry_date"])
-                    ).fetchall()
-                    if pre and len(pre) >= 5:
-                        adr = sum(abs(p["high"] - p["low"]) for p in pre) / len(pre)
-                        if adr > 0:
-                            entry_high = ohlcv[0]["high"]
-                            # For short setup: best move = entry high - lowest close after
-                            best_close = min(bar["close"] for bar in ohlcv[1:])
-                            move_adr = (entry_high - best_close) / adr
-                            ex["adrMove"] = round(move_adr, 1)
-            except:
-                pass
+                dt = dateparser.parse(date_str)
+                entry_date = dt.strftime("%Y-%m-%d")
+            except Exception:
+                failed.append({"line": line, "reason": f"Could not parse date: {date_str}"})
+                continue
 
-            examples.append(ex)
-    return {"setupType": setup_type, "examples": examples}
+            # Validate ticker exists in universe
+            if ticker not in valid_tickers:
+                failed.append({"line": line, "reason": f"Ticker {ticker} not in universe"})
+                continue
 
-@app.get("/api/chart/{setup_type}/{ticker}/{entry_date}")
+            # Validate date is a trading day (exists in OHLCV)
+            if not _has_bar(ticker, entry_date):
+                failed.append({"line": line, "reason": f"No trading data for {ticker} on {entry_date}"})
+                continue
+
+            # Check duplicate
+            if db.execute(
+                "SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
+                (setup_type, ticker, entry_date),
+            ).fetchone():
+                failed.append({"line": line, "reason": f"Duplicate: {ticker} {entry_date}"})
+                continue
+
+            # Insert
+            db.execute(
+                "INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
+                (setup_type, ticker, entry_date, entry_date),
+            )
+            added.append({"ticker": ticker, "entry_date": entry_date})
+
+    return {"added": len(added), "failed": len(failed), "details_added": added, "details_failed": failed}
 async def get_chart_by_ticker(setup_type: str, ticker: str, entry_date: str):
     """Generate chart PNG for any ticker+date (used by AI review)."""
-    ohlcv_df = fetch_ohlcv(ticker, entry_date)
-    if ohlcv_df is None:
+    df = _get_ohlcv(ticker)
+    if df is not None and not df.empty:
+        # Rename columns to match generate_chart_png expectations
+        df = df.rename(columns={"date":"Date","open":"Open","high":"High","low":"Low","close":"Close","volume":"Volume"})
+    else:
+        # Railway fallback: try yfinance
+        df = fetch_ohlcv_yf(ticker, entry_date) if IS_RAILWAY else None
+    if df is None or df.empty:
         raise HTTPException(404, f"No OHLCV data for {ticker}")
-    png = generate_chart_png(ohlcv_df, ticker, entry_date, at_entry=False, setup_type=setup_type)
+    png = generate_chart_png(df, ticker, entry_date, at_entry=False, setup_type=setup_type)
     if png is None:
         raise HTTPException(500, "Chart generation failed")
     return Response(content=png, media_type="image/png")
 
 
-@app.get("/api/chart-image/{setup_type}/{example_id}")
-async def get_chart_image(setup_type: str, example_id: int, at_entry: int = Query(0)):
-    with get_db() as db:
-        ex = db.execute("SELECT id, ticker, entry_date FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
-        if not ex: raise HTTPException(404, f"No example with id {example_id}")
-        df = get_ohlcv_df(db, example_id)
-        if df is None: raise HTTPException(404, f"No OHLCV data for {ex['ticker']}")
-    png = generate_chart_png(df, ex["ticker"], ex["entry_date"], at_entry=bool(at_entry), setup_type=setup_type)
-    if png is None: raise HTTPException(500, "Chart generation failed")
-    return Response(content=png, media_type="image/png")
-
-@app.get("/api/extension-data/{setup_type}/{example_id}")
-async def api_extension_data(setup_type: str, example_id: int, entry_date: str = Query(None)):
-    with get_db() as db:
-        ex = db.execute("SELECT id, entry_date FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
-        if not ex: raise HTTPException(404)
-        data = get_extension_rows(db, example_id)
-        if not data: raise HTTPException(404)
-    ed = entry_date or ex["entry_date"]
-    if ed:
-        entry_idx = len(data) - 1
-        for i, d in enumerate(data):
-            if d["date"] >= ed: entry_idx = i; break
-        after_count = len(data) - entry_idx - 1
-        before_count = max(min(after_count * 2, entry_idx), min(200, entry_idx))
-        data = data[max(0, entry_idx - before_count):]
-    return data
-
-@app.get("/api/ohlcv/local/{setup_type}/{example_id}")
-async def get_local_ohlcv(setup_type: str, example_id: int):
-    with get_db() as db:
-        ex = db.execute("SELECT id, ticker FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
-        if not ex: raise HTTPException(404)
-        df = get_ohlcv_df(db, example_id)
-        if df is None: raise HTTPException(404)
-    df = add_indicators(df)
-    candles = [{"date": row["Date"].strftime("%Y-%m-%d"), "open": clean_val(row["Open"]), "high": clean_val(row["High"]),
-                "low": clean_val(row["Low"]), "close": clean_val(row["Close"]), "volume": clean_val(row["Volume"]),
-                "ema8": clean_val(row.get("EMA8")), "ema21": clean_val(row.get("EMA21")), "sma50": clean_val(row.get("SMA50")),
-                "sma200": clean_val(row.get("SMA200")), "atr14": clean_val(row.get("ATR14")), "volAvg20": clean_val(row.get("VolAvg20"))}
-               for _, row in df.tail(150).iterrows()]
-    return {"ticker": ex["ticker"], "candles": candles}
-
-@app.get("/api/conditions/{setup_type}")
-async def get_conditions(setup_type: str):
-    with get_db() as db:
-        return [dict(r) for r in db.execute("SELECT id, name, description, pcf, active FROM conditions WHERE setup_type=? ORDER BY sort_order", (setup_type,)).fetchall()]
-
-class SaveExampleRequest(BaseModel):
-    ticker: str
-    chart_date: str
-    entry_date: str
-
-@app.post("/api/examples/{setup_type}")
-async def save_example(setup_type: str, req: SaveExampleRequest):
-    ticker = req.ticker.upper().strip()
-    try:
-        datetime.strptime(req.chart_date, "%Y-%m-%d")
-        datetime.strptime(req.entry_date, "%Y-%m-%d")
-    except ValueError:
-        raise HTTPException(400, "Invalid date format")
-
-    ohlcv_df = fetch_ohlcv(ticker, req.chart_date)
-    if ohlcv_df is None: raise HTTPException(404, f"No data for {ticker}")
-    ext_df = fetch_extension(ticker)
-
-    with get_db() as db:
-        existing = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?", (setup_type, ticker, req.entry_date)).fetchone()
-        if existing:
-            eid = existing["id"]
-            db.execute("UPDATE examples SET chart_date=? WHERE id=?", (req.chart_date, eid))
-            db.execute("DELETE FROM ohlcv WHERE example_id=?", (eid,))
-            db.execute("DELETE FROM extension WHERE example_id=?", (eid,))
-            db.execute("DELETE FROM signal_analysis WHERE example_id=?", (eid,))
-        else:
-            eid = db.execute("INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
-                             (setup_type, ticker, req.chart_date, req.entry_date)).lastrowid
-        store_ohlcv(db, eid, ohlcv_df)
-        if ext_df is not None: store_extension(db, eid, ext_df)
-        analysis = None
-        try:
-            analysis = run_signal_analysis(ohlcv_df, ticker, req.entry_date)
-            db.execute("INSERT OR REPLACE INTO signal_analysis (example_id, analysis_json) VALUES (?,?)", (eid, json.dumps(analysis)))
-        except Exception as e:
-            analysis = {"error": str(e)}
-    return {"status": "saved", "ticker": ticker, "entryDate": req.entry_date, "analysis": analysis}
-
-@app.delete("/api/examples/{setup_type}/{example_id}")
-async def delete_example(setup_type: str, example_id: int):
-    with get_db() as db:
-        ex = db.execute("SELECT id FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
-        if not ex: raise HTTPException(404, f"No example with id {example_id}")
-        db.execute("DELETE FROM examples WHERE id=?", (example_id,))
-    return {"status": "deleted", "id": example_id}
-
-class UpdateEntryRequest(BaseModel):
-    entry_date: str
-    ticker: str = None
-
-@app.patch("/api/examples/{setup_type}/{example_id}")
-async def update_entry_date(setup_type: str, example_id: int, req: UpdateEntryRequest):
-    try:
-        datetime.strptime(req.entry_date, "%Y-%m-%d")
-    except ValueError:
-        raise HTTPException(400, "Invalid date format")
-
-    with get_db() as db:
-        ex = db.execute("SELECT id, ticker, chart_date, entry_date FROM examples WHERE id=? AND setup_type=?", (example_id, setup_type)).fetchone()
-        if not ex: raise HTTPException(404)
-        ticker = req.ticker if req.ticker else ex["ticker"]
-        if req.ticker and req.ticker != ex["ticker"]:
-            db.execute("UPDATE examples SET ticker=? WHERE id=?", (req.ticker, example_id))
-
-        # Check if new entry_date falls outside the existing OHLCV range
-        ohlcv_range = db.execute("SELECT MIN(date) as min_d, MAX(date) as max_d FROM ohlcv WHERE example_id=?", (example_id,)).fetchone()
-        need_refetch = True
-        if ohlcv_range and ohlcv_range["min_d"] and ohlcv_range["max_d"]:
-            need_refetch = req.entry_date < ohlcv_range["min_d"] or req.entry_date > ohlcv_range["max_d"]
-
-        if need_refetch:
-            ohlcv_df = fetch_ohlcv(ticker, req.entry_date)
-            if ohlcv_df is None:
-                raise HTTPException(404, f"No OHLCV data for {ticker} around {req.entry_date}")
-            db.execute("DELETE FROM ohlcv WHERE example_id=?", (example_id,))
-            db.execute("DELETE FROM extension WHERE example_id=?", (example_id,))
-            store_ohlcv(db, example_id, ohlcv_df)
-            ext_df = fetch_extension(ticker)
-            if ext_df is not None:
-                store_extension(db, example_id, ext_df)
-            db.execute("UPDATE examples SET entry_date=?, chart_date=? WHERE id=?", (req.entry_date, req.entry_date, example_id))
-            df = ohlcv_df
-        else:
-            db.execute("UPDATE examples SET entry_date=? WHERE id=?", (req.entry_date, example_id))
-            df = get_ohlcv_df(db, example_id)
-
-        analysis = None
-        if df is not None:
-            try:
-                analysis = run_signal_analysis(df, ticker, req.entry_date)
-                db.execute("INSERT OR REPLACE INTO signal_analysis (example_id, analysis_json) VALUES (?,?)", (example_id, json.dumps(analysis)))
-            except Exception as e:
-                analysis = {"error": str(e)}
-    return {"status": "updated", "ticker": ticker, "entryDate": req.entry_date, "refetched": need_refetch, "analysis": analysis}
-
-
-@app.post("/api/repair-data")
-async def repair_missing_data():
-    """Re-fetch OHLCV and extension data for any examples missing it."""
-    repaired = []
-    with get_db() as db:
-        examples = db.execute("SELECT id, ticker, chart_date, entry_date FROM examples").fetchall()
-        for ex in examples:
-            has_ohlcv = db.execute("SELECT 1 FROM ohlcv WHERE example_id=? LIMIT 1", (ex["id"],)).fetchone()
-            if not has_ohlcv:
-                print(f"  Repairing OHLCV for {ex['ticker']} (id={ex['id']})...")
-                ohlcv_df = fetch_ohlcv(ex["ticker"], ex["chart_date"])
-                if ohlcv_df is not None:
-                    store_ohlcv(db, ex["id"], ohlcv_df)
-                ext_df = fetch_extension(ex["ticker"])
-                if ext_df is not None:
-                    store_extension(db, ex["id"], ext_df)
-                try:
-                    if ohlcv_df is not None:
-                        analysis = run_signal_analysis(ohlcv_df, ex["ticker"], ex["entry_date"])
-                        db.execute("INSERT OR REPLACE INTO signal_analysis (example_id, analysis_json) VALUES (?,?)", (ex["id"], json.dumps(analysis)))
-                except Exception as e:
-                    print(f"  Analysis error for {ex['ticker']}: {e}")
-                repaired.append(ex["ticker"])
-    return {"repaired": repaired, "count": len(repaired)}
-
-
-# ============================================
-# UNIVERSE DATA — full market OHLCV
-# ============================================
-
-@app.post("/api/universe/fetch")
-async def start_universe_fetch(background_tasks: BackgroundTasks):
-    """Kick off full market OHLCV fetch in background. Fire and forget."""
-    from scripts.fetch_universe import run_full_fetch, init_universe_tables, get_db as u_get_db
-
-    # Check if already running
-    try:
-        udb = u_get_db()
-        init_universe_tables(udb)
-        row = udb.execute("SELECT state, updated_at FROM universe_fetch_status WHERE id=1").fetchone()
-        if row and row["state"] == "running":
-            # Check if stale (no update in 15 minutes = dead process)
-            try:
-                from datetime import datetime, timedelta
-                last_update = datetime.fromisoformat(row["updated_at"])
-                if datetime.utcnow() - last_update < timedelta(minutes=15):
-                    udb.close()
-                    return {"status": "already_running", "message": "Fetch is already in progress. Check /api/universe/status"}
-                else:
-                    # Stale — mark as crashed and allow re-trigger
-                    udb.execute("UPDATE universe_fetch_status SET state='crashed', current_batch='stale process detected' WHERE id=1")
-                    udb.commit()
-            except Exception:
-                udb.close()
-                return {"status": "already_running", "message": "Fetch is already in progress. Check /api/universe/status"}
-        udb.close()
-    except Exception:
-        pass
-
-    background_tasks.add_task(run_full_fetch)
-    return {"status": "started", "message": "Universe fetch kicked off in background. Check /api/universe/status for progress."}
-
-
-@app.get("/api/universe/status")
-async def universe_fetch_status():
-    """Check progress of universe data fetch."""
-    with get_db() as db:
-        try:
-            row = db.execute("SELECT * FROM universe_fetch_status WHERE id=1").fetchone()
-            if not row:
-                return {"state": "not_started"}
-            result = dict(row)
-            result["errors"] = json.loads(result.get("errors", "[]"))
-            # Add DB stats
-            try:
-                total_rows = db.execute("SELECT COUNT(*) FROM universe_ohlcv").fetchone()[0]
-                total_tickers_done = db.execute("SELECT COUNT(DISTINCT ticker) FROM universe_ohlcv").fetchone()[0]
-                result["db_rows"] = total_rows
-                result["db_tickers"] = total_tickers_done
-                # Estimate size
-                page_count = db.execute("PRAGMA page_count").fetchone()[0]
-                page_size = db.execute("PRAGMA page_size").fetchone()[0]
-                result["db_size_mb"] = round((page_count * page_size) / (1024 * 1024), 1)
-            except Exception:
-                pass
-            return result
-        except Exception:
-            return {"state": "not_initialized"}
-
-
-@app.post("/api/universe/tickers")
-async def upload_ticker_list(tickers: list[str]):
-    """Upload a custom ticker list (fallback if NASDAQ FTP fails)."""
-    from scripts.fetch_universe import init_universe_tables
-    with get_db() as db:
-        init_universe_tables(db)
-        count = 0
-        for t in tickers:
-            t = t.strip().upper()
-            if t and len(t) <= 5:
-                db.execute("INSERT OR IGNORE INTO universe_tickers (ticker) VALUES (?)", (t,))
-                count += 1
-        db.commit()
-    return {"stored": count}
-
-
-@app.post("/api/universe/load-file")
-async def load_ticker_file():
-    """Load tickers from the bundled universe_tickers.txt file on the server."""
-    from scripts.fetch_universe import init_universe_tables
-    import glob
-
-    # Search everywhere for the file
-    candidates = glob.glob("/app/**/*universe*ticker*", recursive=True) + \
-                 glob.glob("/app/**/*Universe*", recursive=True) + \
-                 glob.glob("./**/*universe*ticker*", recursive=True)
-
-    # Also check known paths
-    for p in ["/app/universe_tickers.txt", "universe_tickers.txt",
-              "/app/data/universe_tickers.txt", "data/universe_tickers.txt"]:
-        if Path(p).exists() and p not in candidates:
-            candidates.append(p)
-
-    # Find the first one that exists and has content
-    found = None
-    for c in candidates:
-        p = Path(c)
-        if p.is_file() and p.stat().st_size > 100:
-            found = p
-            break
-
-    if not found:
-        return {"error": "No ticker file found", "searched": candidates}
-
-    lines = found.read_text().replace("\r", "").strip().split("\n")
-    tickers = [l.strip().upper() for l in lines if l.strip()]
-
-    with get_db() as db:
-        init_universe_tables(db)
-        count = 0
-        for t in tickers:
-            if t and len(t) <= 6:
-                db.execute("INSERT OR IGNORE INTO universe_tickers (ticker) VALUES (?)", (t,))
-                count += 1
-        db.commit()
-
-    return {"stored": count, "file": str(found), "candidates_found": candidates}
-
-
-@app.post("/api/universe/reset")
-async def reset_universe_fetch():
-    """Reset fetch status so it can be re-run. Does NOT delete existing OHLCV data."""
-    with get_db() as db:
-        try:
-            db.execute("UPDATE universe_tickers SET status='pending', rows_stored=0, fetched_at=NULL")
-            db.execute("UPDATE universe_fetch_status SET state='idle', completed_tickers=0, failed_tickers=0, skipped_tickers=0, current_batch=NULL, errors='[]'")
-            db.commit()
-        except Exception:
-            pass
-    return {"status": "reset"}
-
-
-@app.delete("/api/universe/data")
-async def delete_universe_data():
-    """Nuclear option — delete all universe OHLCV data."""
-    with get_db() as db:
-        try:
-            db.execute("DELETE FROM universe_ohlcv")
-            db.execute("DELETE FROM universe_tickers")
-            db.execute("UPDATE universe_fetch_status SET state='idle', completed_tickers=0, failed_tickers=0, skipped_tickers=0, current_batch=NULL, errors='[]', total_tickers=0")
-            db.commit()
-            db.execute("VACUUM")
-        except Exception:
-            pass
-    return {"status": "deleted"}
-
-
-# ============================================
-# MIGRATION — import existing flat file data on first run
-# ============================================
-
-@app.on_event("startup")
-async def migrate_legacy_data():
-    with get_db() as db:
-        count = db.execute("SELECT COUNT(*) FROM examples").fetchone()[0]
-        if count > 0:
-            print(f"DB has {count} examples, skipping migration")
-            return
-
-    print("=== Migrating legacy data to SQLite ===")
-    legacy_dir = LEGACY_DATA_DIR / "ohlcv"
-    if not legacy_dir.exists():
-        legacy_dir = Path("data/ohlcv")
-    if not legacy_dir.exists():
-        print("No legacy data found"); return
-
-    for setup_dir in legacy_dir.iterdir():
-        if not setup_dir.is_dir(): continue
-        setup_type = setup_dir.name
-        entry_file = setup_dir / "entry_dates.json"
-        if not entry_file.exists(): continue
-        entries = json.loads(entry_file.read_text())
-
-        analysis_map = {}
-        af = setup_dir / "signal_day_analysis.json"
-        if af.exists():
-            for a in json.loads(af.read_text()): analysis_map[a["ticker"]] = a
-
-        with get_db() as db:
-            for entry in entries:
-                ticker = entry["ticker"]
-                chart_date = entry.get("chart_date", entry.get("entry_date"))
-                entry_date = entry["entry_date"]
-                cur = db.execute("INSERT OR IGNORE INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
-                                 (setup_type, ticker, chart_date, entry_date))
-                if cur.lastrowid == 0: continue
-                eid = cur.lastrowid
-
-                csvs = list(setup_dir.glob(f"{ticker}_*.csv"))
-                if csvs:
-                    raw = pd.read_csv(csvs[0]); raw["Date"] = pd.to_datetime(raw["Date"])
-                    raw = raw.sort_values("Date").reset_index(drop=True)
-                    store_ohlcv(db, eid, raw)
-
-                ext_csv = LEGACY_DATA_DIR / "extension" / setup_type / f"{ticker}.csv"
-                if not ext_csv.exists():
-                    ext_csv = Path("data/extension") / setup_type / f"{ticker}.csv"
-                if ext_csv.exists():
-                    ext = pd.read_csv(ext_csv); ext["Date"] = pd.to_datetime(ext["Date"])
-                    # Legacy CSVs have pct columns — skip them, re-fetch fresh xATR data
-                    if "ext_sma50_xatr" not in ext.columns:
-                        print(f"  {ticker}: legacy ext CSV has pct columns, re-fetching for xATR...")
-                        ext = fetch_extension(ticker)
-                    if ext is not None:
-                        store_extension(db, eid, ext)
-
-                if ticker in analysis_map:
-                    db.execute("INSERT OR REPLACE INTO signal_analysis (example_id, analysis_json) VALUES (?,?)",
-                               (eid, json.dumps(analysis_map[ticker])))
-
-                print(f"  Migrated: {ticker}")
-        print(f"  Setup '{setup_type}': {len(entries)} examples")
-    print("=== Migration complete ===")
-
-
-# ---------------------------------------------------------------------------
-# Tradable Universe
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-def rebuild_tradable_universe(db):
-    """Rebuild the tradable_universe table from universe_ohlcv data.
-    Filters: last close >= $1, 20-day avg dollar volume >= $5M.
-    Excludes any ticker in universe_exclusions table.
-    """
-    # Ensure exclusions table exists (no-op if already there)
-    db.execute("""CREATE TABLE IF NOT EXISTS universe_exclusions (
-        ticker TEXT PRIMARY KEY,
-        reason TEXT,
-        added_at TEXT
-    )""")
-
-    db.execute("DROP TABLE IF EXISTS tradable_universe")
-    db.execute("""
-        CREATE TABLE tradable_universe (
-            ticker TEXT PRIMARY KEY,
-            last_close REAL,
-            avg_dollar_volume REAL,
-            last_date TEXT,
-            updated_at TEXT
-        )
-    """)
-
-    # For each ticker with recent data, compute stats from the last 20 trading days
-    now_iso = __import__('datetime').datetime.utcnow().isoformat()
-    db.execute("""
-        INSERT INTO tradable_universe (ticker, last_close, avg_dollar_volume, last_date, updated_at)
-        SELECT
-            t.ticker,
-            t.last_close,
-            t.avg_dv,
-            t.last_date,
-            ?
-        FROM (
-            SELECT
-                ticker,
-                -- last close = close on the most recent date
-                (SELECT close FROM universe_ohlcv u2
-                 WHERE u2.ticker = u1.ticker ORDER BY u2.date DESC LIMIT 1) as last_close,
-                -- avg dollar volume over last 20 trading days
-                AVG(close * volume) as avg_dv,
-                MAX(date) as last_date
-            FROM (
-                SELECT ticker, date, close, volume,
-                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) as rn
-                FROM universe_ohlcv
-                WHERE close IS NOT NULL AND volume IS NOT NULL AND volume > 0
-            ) u1
-            WHERE rn <= 20
-            GROUP BY ticker
-            HAVING COUNT(*) >= 10  -- need at least 10 days of data
-        ) t
-        WHERE t.last_close >= 1.0
-          AND t.avg_dv >= 5000000
-          AND t.ticker NOT IN (
-              SELECT ticker FROM universe_exclusions
-              WHERE 1=1  -- table may not exist on fresh DB, handled by try below
-          )
-    """, (now_iso,))
-
-    count = db.execute("SELECT COUNT(*) FROM tradable_universe").fetchone()[0]
-    db.commit()
-
-    return count
-
-
-@app.post("/api/universe/append-daily")
-async def append_daily_data():
-    """
-    Nightly append — fetch only missing trading days for all tradable tickers.
-    Synchronous (blocks until done) since it's much faster than full fetch.
-    Returns immediately if DB is already up to date.
-    """
-    try:
-        from scripts.fetch_universe import append_daily
-        result = append_daily()
-
-        # If new data was added, rebuild tradable universe too
-        if result.get("status") == "complete" and result.get("new_rows", 0) > 0:
-            with get_db() as db:
-                tradable_count = rebuild_tradable_universe(db)
-            result["tradable_rebuilt"] = True
-            result["tradable_count"] = tradable_count
-
-        return result
-    except Exception as e:
-        import traceback
-        return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
-
-
-@app.post("/api/tradable/rebuild")
-async def rebuild_tradable():
-    """Rebuild the tradable universe from current OHLCV data."""
-    try:
-        with get_db() as db:
-            count = rebuild_tradable_universe(db)
-        return {"status": "ok", "tradable_count": count}
-    except Exception as e:
-        import traceback
-        return {"error": str(e), "trace": traceback.format_exc()}
-
-
-@app.get("/api/tradable")
-async def get_tradable(sort: str = "ticker", limit: int = 0):
-    """Get current tradable universe list."""
-    try:
-        with get_db() as db:
-            order = "ticker"
-            if sort == "volume":
-                order = "avg_dollar_volume DESC"
-            elif sort == "price":
-                order = "last_close DESC"
-
-            q = f"SELECT * FROM tradable_universe ORDER BY {order}"
-            if limit > 0:
-                q += f" LIMIT {limit}"
-
-            rows = db.execute(q).fetchall()
-            count = db.execute("SELECT COUNT(*) FROM tradable_universe").fetchone()[0]
-
-        tickers = [dict(r) for r in rows]
-        return {"count": count, "tickers": tickers}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ---------------------------------------------------------------------------
-# 3-4DB Scanner endpoint
-# ---------------------------------------------------------------------------
-@app.post("/api/scan/3-4db")
-async def scan_3_4db(background_tasks: BackgroundTasks, days: int = 77):
-    """Kick off 3-4DB scan in background."""
-    from scripts.scan_3_4db import run_scan
-
-    def _run():
-        try:
-            db = sqlite3.connect(str(DB_PATH), timeout=30)
-            db.execute("""CREATE TABLE IF NOT EXISTS scan_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                scan_type TEXT, ticker TEXT, date TEXT, close REAL,
-                atr14 REAL, volume INTEGER, avgv20 INTEGER,
-                pct_above_sma50 REAL, pct_above_sma200 REAL, retracement REAL,
-                scanned_at TEXT
-            )""")
-            db.execute("DELETE FROM scan_results WHERE scan_type='3-4db'")
-            db.commit()
-
-            sdf = run_scan(lookback_days=days, db_path=str(DB_PATH))
-
-            if not sdf.empty:
-                now = datetime.utcnow().isoformat()
-                rows = []
-                for _, s in sdf.iterrows():
-                    rows.append((
-                        "3-4db", s["ticker"], s["date"], s["close"],
-                        s["atr14"], int(s["volume"]), int(s["avgv20"]),
-                        s["pct_above_sma50"], s["pct_above_sma200"],
-                        s["retracement"], now
-                    ))
-                db.executemany(
-                    "INSERT INTO scan_results (scan_type, ticker, date, close, atr14, volume, avgv20, pct_above_sma50, pct_above_sma200, retracement, scanned_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    rows
-                )
-                db.commit()
-            db.close()
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-
-    background_tasks.add_task(_run)
-    return {"status": "started", "message": f"Scanning tradable universe for 3-4DB setups (last {days} days). Check GET /api/scan/3-4db/results"}
-
-
-@app.get("/api/scan/3-4db/results")
-async def scan_3_4db_results():
-    """Get stored 3-4DB scan results."""
-    try:
-        with get_db() as db:
-            # Check if table exists
-            exists = db.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='scan_results'").fetchone()[0]
-            if not exists:
-                return {"signals": [], "count": 0, "message": "No scan has been run yet. POST /api/scan/3-4db"}
-
-            rows = db.execute(
-                "SELECT ticker, date, close, atr14, volume, avgv20, pct_above_sma50, pct_above_sma200, retracement, scanned_at "
-                "FROM scan_results WHERE scan_type='3-4db' ORDER BY date DESC, ticker"
-            ).fetchall()
-
-            signals = [dict(r) for r in rows]
-            scanned_at = signals[0]["scanned_at"] if signals else None
-
-            # Group count by date
-            date_counts = {}
-            for s in signals:
-                date_counts[s["date"]] = date_counts.get(s["date"], 0) + 1
-
-            return {
-                "count": len(signals),
-                "signals": signals,
-                "dates": date_counts,
-                "scanned_at": scanned_at
-            }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ---------------------------------------------------------------------------
-# ============================================
-# DTSS SCAN ENDPOINTS
-# ============================================
-
-@app.post("/api/scan/dtss")
-async def scan_dtss(background_tasks: BackgroundTasks, days: int = 77):
-    """Kick off DTSS scan in background."""
-    from scripts.scan_dtss import run_scan
-
-    def _run():
-        try:
-            db = sqlite3.connect(str(DB_PATH), timeout=30)
-            db.execute("""CREATE TABLE IF NOT EXISTS scan_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                scan_type TEXT, ticker TEXT, date TEXT, close REAL,
-                atr14 REAL, volume INTEGER, avgv20 INTEGER,
-                pct_above_sma50 REAL, pct_above_sma200 REAL, retracement REAL,
-                scanned_at TEXT
-            )""")
-            db.execute("DELETE FROM scan_results WHERE scan_type='dtss'")
-            db.commit()
-
-            sdf = run_scan(lookback_days=days, db_path=str(DB_PATH))
-
-            if not sdf.empty:
-                now = datetime.utcnow().isoformat()
-                rows = []
-                for _, s in sdf.iterrows():
-                    rows.append((
-                        "dtss", s["ticker"], s["date"], s["close"],
-                        s["atr14"], int(s["volume"]), int(s["avgv20"]),
-                        s.get("range20_atr", 0), s.get("h_from_low65", 0),
-                        s.get("near_high", 0), now
-                    ))
-                db.executemany(
-                    "INSERT INTO scan_results (scan_type, ticker, date, close, atr14, volume, avgv20, pct_above_sma50, pct_above_sma200, retracement, scanned_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    rows
-                )
-                db.commit()
-            db.close()
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-
-    background_tasks.add_task(_run)
-    return {"status": "started", "message": f"Scanning universe for DTSS setups (last {days} days). Check GET /api/scan/dtss/results"}
-
-
-@app.get("/api/scan/dtss/results")
-async def scan_dtss_results():
-    """Get stored DTSS scan results."""
-    try:
-        with get_db() as db:
-            exists = db.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='scan_results'").fetchone()[0]
-            if not exists:
-                return {"signals": [], "count": 0, "message": "No scan has been run yet. POST /api/scan/dtss"}
-
-            rows = db.execute(
-                "SELECT ticker, date, close, atr14, volume, avgv20, "
-                "pct_above_sma50 as range20_atr, pct_above_sma200 as h_from_low65, "
-                "retracement as near_high, scanned_at "
-                "FROM scan_results WHERE scan_type='dtss' ORDER BY date DESC, ticker"
-            ).fetchall()
-
-            signals = [dict(r) for r in rows]
-            scanned_at = signals[0]["scanned_at"] if signals else None
-
-            date_counts = {}
-            for s in signals:
-                date_counts[s["date"]] = date_counts.get(s["date"], 0) + 1
-
-            return {
-                "count": len(signals),
-                "signals": signals,
-                "dates": date_counts,
-                "scanned_at": scanned_at
-            }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ---------------------------------------------------------------------------
-# ============================================
-# BACKTEST ENDPOINTS
-# ============================================
-
-@app.post("/api/backtest/signals/upload")
-async def upload_backtest_signals(request: Request):
-    """Upload backtest signals from desktop runner.
-    
-    Expects JSON:
-    {
-        "setup_type": "dtss",
-        "signals": [{"date": "2024-01-15", "ticker": "AAPL"}, ...],
-        "conditions_hash": "abc123",  // optional
-        "grinder_version": "v2"       // optional
-    }
-    
-    Replaces all existing signals for that setup_type.
-    """
-    try:
-        body = await request.json()
-        setup_type = body.get("setup_type", "").lower()
-        signals = body.get("signals", [])
-        conditions_hash = body.get("conditions_hash", "")
-        grinder_version = body.get("grinder_version", "")
-        
-        if not setup_type:
-            raise HTTPException(400, "setup_type required")
-        if not signals:
-            raise HTTPException(400, "signals array required")
-        
-        with get_db() as db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS backtest_signals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    setup_type TEXT NOT NULL,
-                    ticker TEXT NOT NULL,
-                    date TEXT NOT NULL,
-                    uploaded_at TEXT NOT NULL,
-                    conditions_hash TEXT,
-                    UNIQUE(setup_type, ticker, date)
-                )
-            """)
-            db.execute("CREATE INDEX IF NOT EXISTS idx_bt_sig_setup ON backtest_signals(setup_type)")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_bt_sig_date ON backtest_signals(date)")
-            
-            # Clear old signals for this setup
-            db.execute("DELETE FROM backtest_signals WHERE setup_type=?", (setup_type,))
-            
-            now = datetime.now().isoformat()
-            inserted = 0
-            for sig in signals:
-                try:
-                    db.execute(
-                        "INSERT OR IGNORE INTO backtest_signals (setup_type, ticker, date, uploaded_at, conditions_hash) "
-                        "VALUES (?, ?, ?, ?, ?)",
-                        (setup_type, sig["ticker"], sig["date"], now, conditions_hash)
-                    )
-                    inserted += 1
-                except Exception:
-                    pass
-            
-            db.commit()
-            
-            # Aggregate stats
-            total = db.execute("SELECT COUNT(*) FROM backtest_signals WHERE setup_type=?", (setup_type,)).fetchone()[0]
-            tickers = db.execute("SELECT COUNT(DISTINCT ticker) FROM backtest_signals WHERE setup_type=?", (setup_type,)).fetchone()[0]
-            dates = db.execute("SELECT COUNT(DISTINCT date) FROM backtest_signals WHERE setup_type=?", (setup_type,)).fetchone()[0]
-            max_per_day = db.execute(
-                "SELECT COUNT(*) as c FROM backtest_signals WHERE setup_type=? GROUP BY date ORDER BY c DESC LIMIT 1",
-                (setup_type,)
-            ).fetchone()
-            
-        return {
-            "status": "ok",
-            "setup_type": setup_type,
-            "inserted": inserted,
-            "total": total,
-            "unique_tickers": tickers,
-            "unique_dates": dates,
-            "max_signals_per_day": max_per_day[0] if max_per_day else 0,
-            "uploaded_at": now,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.get("/api/backtest/signals/{setup_type}")
-async def get_backtest_signals(setup_type: str, limit: int = 5000, offset: int = 0):
-    """Get backtest signals for a setup type. Used by Historical tab."""
-    try:
-        with get_db() as db:
-            exists = db.execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='backtest_signals'"
-            ).fetchone()[0]
-            if not exists:
-                return {"count": 0, "unique_tickers": 0, "results": [], "message": "No signals uploaded yet."}
-            
-            total = db.execute(
-                "SELECT COUNT(*) FROM backtest_signals WHERE setup_type=?", (setup_type,)
-            ).fetchone()[0]
-            tickers = db.execute(
-                "SELECT COUNT(DISTINCT ticker) FROM backtest_signals WHERE setup_type=?", (setup_type,)
-            ).fetchone()[0]
-            rows = db.execute(
-                "SELECT ticker, date FROM backtest_signals WHERE setup_type=? ORDER BY date, ticker LIMIT ? OFFSET ?",
-                (setup_type, limit, offset)
-            ).fetchall()
-            
-            return {
-                "count": total,
-                "unique_tickers": tickers,
-                "showing": len(rows),
-                "results": [dict(r) for r in rows],
-            }
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.post("/api/backtest/run")
-async def run_backtest_endpoint(background_tasks: BackgroundTasks):
-    """Kick off full 5-year 3-4DB backtest in background."""
-    from scripts.backtest_3_4db import run_backtest
-    background_tasks.add_task(run_backtest)
-    return {
-        "status": "started",
-        "message": "Full 5-year backtest kicked off. Check GET /api/backtest/status for progress."
-    }
-
-
-@app.get("/api/backtest/status")
-async def backtest_status():
-    """Get current backtest progress."""
-    try:
-        with get_db() as db:
-            exists = db.execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='backtest_status'"
-            ).fetchone()[0]
-            if not exists:
-                return {"state": "idle", "message": "No backtest has been run yet."}
-            row = db.execute("SELECT * FROM backtest_status WHERE id=1").fetchone()
-            if not row:
-                return {"state": "idle"}
-            d = dict(row)
-            # Add live counts
-            for table in ["scan_backtest", "scan_backtest_clean"]:
-                t_exists = db.execute(
-                    f"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"
-                ).fetchone()[0]
-                if t_exists:
-                    d[f"{table}_count"] = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-                    d[f"{table}_tickers"] = db.execute(f"SELECT COUNT(DISTINCT ticker) FROM {table}").fetchone()[0]
-            return d
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@app.get("/api/backtest/results")
-async def backtest_results(
-    clean: bool = True,
-    ticker: str = None,
-    date_from: str = None,
-    date_to: str = None,
-    limit: int = 500,
-    offset: int = 0,
-):
-    """Get backtest results. clean=true for filtered, clean=false for raw."""
-    table = "scan_backtest_clean" if clean else "scan_backtest"
-    try:
-        with get_db() as db:
-            exists = db.execute(
-                f"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"
-            ).fetchone()[0]
-            if not exists:
-                return {"count": 0, "results": [], "message": f"No results yet. Run backtest first."}
-
-            wheres, params = [], []
-            if ticker:
-                wheres.append("ticker = ?")
-                params.append(ticker.upper())
-            if date_from:
-                wheres.append("date >= ?")
-                params.append(date_from)
-            if date_to:
-                wheres.append("date <= ?")
-                params.append(date_to)
-
-            where = f"WHERE {' AND '.join(wheres)}" if wheres else ""
-
-            total = db.execute(f"SELECT COUNT(*) FROM {table} {where}", params).fetchone()[0]
-            unique = db.execute(f"SELECT COUNT(DISTINCT ticker) FROM {table} {where}", params).fetchone()[0]
-            rows = db.execute(
-                f"SELECT * FROM {table} {where} ORDER BY date DESC, ticker LIMIT ? OFFSET ?",
-                params + [limit, offset]
-            ).fetchall()
-
-            return {
-                "count": total,
-                "unique_tickers": unique,
-                "showing": len(rows),
-                "offset": offset,
-                "results": [dict(r) for r in rows],
-            }
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.get("/api/backtest/summary")
-async def backtest_summary():
-    """Summary stats of backtest results."""
-    try:
-        with get_db() as db:
-            out = {}
-            for table, label in [("scan_backtest", "raw"), ("scan_backtest_clean", "clean")]:
-                exists = db.execute(
-                    f"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"
-                ).fetchone()[0]
-                if not exists:
-                    out[label] = {"signals": 0, "tickers": 0}
-                    continue
-
-                total = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-                tickers = db.execute(f"SELECT COUNT(DISTINCT ticker) FROM {table}").fetchone()[0]
-                dates = db.execute(f"SELECT MIN(date), MAX(date) FROM {table}").fetchone()
-
-                yearly = db.execute(f"""
-                    SELECT SUBSTR(date, 1, 4) as year, COUNT(*) as cnt,
-                           COUNT(DISTINCT ticker) as tickers
-                    FROM {table} GROUP BY year ORDER BY year
-                """).fetchall()
-
-                out[label] = {
-                    "signals": total,
-                    "tickers": tickers,
-                    "date_range": [dates[0], dates[1]] if dates[0] else None,
-                    "by_year": [dict(r) for r in yearly],
-                }
-
-            # Filter info
-            sector_exists = db.execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ticker_sectors'"
-            ).fetchone()[0]
-            if sector_exists:
-                out["filters"] = {
-                    "total_classified": db.execute("SELECT COUNT(*) FROM ticker_sectors").fetchone()[0],
-                    "biotech": db.execute(
-                        "SELECT COUNT(*) FROM ticker_sectors WHERE LOWER(industry) LIKE '%biotech%' "
-                        "OR LOWER(industry) LIKE '%pharma%' OR LOWER(industry) LIKE '%drug%'"
-                    ).fetchone()[0],
-                    "etf": db.execute("SELECT COUNT(*) FROM ticker_sectors WHERE is_etf = 1").fetchone()[0],
-                }
-
-            return out
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ---------------------------------------------------------------------------
-# FAST SQL QUERY ENDPOINT
-# ---------------------------------------------------------------------------
-
-@app.post("/api/query")
-async def run_query(request: Request):
-    """Run a read-only SQL query against the database. Returns rows and count."""
-    body = await request.json()
-    sql = body.get("sql", "")
-    if not sql:
-        return {"error": "No SQL provided"}
-    
-    # Safety: read-only
-    sql_lower = sql.strip().lower()
-    if not sql_lower.startswith("select"):
-        return {"error": "Only SELECT queries allowed"}
-    
-    try:
-        with get_db() as db:
-            rows = db.execute(sql).fetchall()
-            results = [dict(r) for r in rows]
-            return {"count": len(results), "results": results[:100]}
-    except Exception as e:
-        return {"error": str(e)}
-
-# ---------------------------------------------------------------------------
-# PROFILING ENGINE SUPPORT
-# ---------------------------------------------------------------------------
-
-@app.post("/api/query/bulk")
-async def run_query_bulk(request: Request):
-    """Run a read-only SQL query with higher row limit (for profiling engine)."""
-    body = await request.json()
-    sql = body.get("sql", "")
-    limit = min(body.get("limit", 1000), 5000)  # Max 5000 rows
-    if not sql:
-        return {"error": "No SQL provided"}
-    sql_lower = sql.strip().lower()
-    if not sql_lower.startswith("select"):
-        return {"error": "Only SELECT queries allowed"}
-    try:
-        with get_db() as db:
-            rows = db.execute(sql).fetchall()
-            results = [dict(r) for r in rows]
-            return {"count": len(results), "results": results[:limit]}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@app.get("/api/ohlcv/bulk/{ticker}")
-async def get_ohlcv_bulk(ticker: str, end_date: str = Query(None),
-                         lookback: int = Query(250)):
-    """Fetch OHLCV data for a ticker with configurable lookback.
-    Returns up to `lookback` bars ending on `end_date`."""
-    lookback = min(lookback, 1500)
-    try:
-        with get_db() as db:
-            if end_date:
-                rows = db.execute(
-                    "SELECT date, open, high, low, close, volume "
-                    "FROM universe_ohlcv "
-                    "WHERE ticker=? AND date<=? "
-                    "ORDER BY date DESC LIMIT ?",
-                    (ticker, end_date, lookback)
-                ).fetchall()
-            else:
-                rows = db.execute(
-                    "SELECT date, open, high, low, close, volume "
-                    "FROM universe_ohlcv "
-                    "WHERE ticker=? "
-                    "ORDER BY date DESC LIMIT ?",
-                    (ticker, lookback)
-                ).fetchall()
-            results = [dict(r) for r in rows]
-            return {"count": len(results), "results": results}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# ---------------------------------------------------------------------------
-# FAST DTSS CONDITION TESTER
-# ---------------------------------------------------------------------------
-
-@app.post("/api/scan/dtss/test")
-async def test_dtss_conditions(request: Request):
-    """
-    Fast condition tester. Pass JSON with threshold overrides.
-    Scans last N bars of ALL universe tickers, returns count + ticker list.
-    Defaults match the 12 validated conditions.
-    """
-    import numpy as np
-    
-    body = await request.json()
-    days = body.get("days", 5)  # only check last N trading days
-    
-    # Thresholds (all in ATR multiples unless noted)
-    slope_min = body.get("slope_min", -0.2)
-    range20_min = body.get("range20_min", 3.0)
-    near_high_max = body.get("near_high_max", 3.0)
-    candle_min = body.get("candle_min", 0.6)
-    hc_min = body.get("hc_min", 0.05)
-    hcho_min = body.get("hcho_min", 0.5)
-    pullback = body.get("pullback", True)  # MINC15 < EMA8
-    vol_floor = body.get("vol_floor", 0.5)
-    vol_cap = body.get("vol_cap", 3.0)
-    up5_min = body.get("up5_min", 1)
-    h_minl65_min = body.get("h_minl65_min", 3.0)
-    c_minl65_min = body.get("c_minl65_min", 2.5)
-    
-    # Conditions to skip (pass list of names to disable)
-    skip = set(body.get("skip", []))
-    
-    db = sqlite3.connect(str(DB_PATH), timeout=60)
-    
-    # Get most recent date
-    max_date = db.execute("SELECT MAX(date) FROM universe_ohlcv").fetchone()[0]
-    
-    # Get all tickers
-    tickers = [r[0] for r in db.execute("SELECT DISTINCT ticker FROM universe_ohlcv").fetchall()]
-    
-    signals = []
-    
-    for ticker in tickers:
-        rows = db.execute(
-            "SELECT date, open, high, low, close, volume FROM universe_ohlcv WHERE ticker=? ORDER BY date",
-            (ticker,)
-        ).fetchall()
-        
-        n = len(rows)
-        if n < 100:
-            continue
-        
-        # Convert to arrays for speed
-        dates = [r[0] for r in rows]
-        O = np.array([r[1] for r in rows], dtype=float)
-        H = np.array([r[2] for r in rows], dtype=float)
-        L = np.array([r[3] for r in rows], dtype=float)
-        C = np.array([r[4] for r in rows], dtype=float)
-        V = np.array([r[5] for r in rows], dtype=float)
-        
-        # ATR14
-        tr = np.maximum(H[1:] - L[1:], np.maximum(np.abs(H[1:] - C[:-1]), np.abs(L[1:] - C[:-1])))
-        tr = np.concatenate([[H[0]-L[0]], tr])
-        atr = np.full(n, np.nan)
-        atr[13] = np.mean(tr[:14])
-        for j in range(14, n):
-            atr[j] = (atr[j-1] * 13 + tr[j]) / 14
-        
-        # SMA50
-        sma50 = np.full(n, np.nan)
-        cs = np.cumsum(C)
-        sma50[49:] = (cs[49:] - np.concatenate([[0], cs[:n-50]])) / 50
-        
-        # EMA8
-        ema8 = np.full(n, np.nan)
-        ema8[7] = np.mean(C[:8])
-        mult = 2.0 / 9.0
-        for j in range(8, n):
-            ema8[j] = C[j] * mult + ema8[j-1] * (1 - mult)
-        
-        # AvgV20
-        avgv = np.full(n, np.nan)
-        vs = np.cumsum(V)
-        avgv[19:] = (vs[19:] - np.concatenate([[0], vs[:n-20]])) / 20
-        
-        # Only check last `days` bars
-        start_idx = max(65, n - days)
-        
-        for i in range(start_idx, n):
-            if np.isnan(atr[i]) or atr[i] <= 0: continue
-            if np.isnan(sma50[i]) or np.isnan(ema8[i]) or np.isnan(avgv[i]): continue
-            if i < 65: continue
-            
-            a = atr[i]
-            
-            # 1. SMA50 slope
-            if "slope" not in skip:
-                if i < 60 or np.isnan(sma50[i-10]): continue
-                if not (sma50[i] > sma50[i-10] - slope_min * a): continue
-            
-            # 2. Range20
-            if "range20" not in skip:
-                maxh20 = np.max(H[max(0,i-19):i+1])
-                minl20 = np.min(L[max(0,i-19):i+1])
-                if not ((maxh20 - minl20) > range20_min * a): continue
-            else:
-                maxh20 = np.max(H[max(0,i-19):i+1])
-            
-            # 3. Near high
-            if "near_high" not in skip:
-                if 'maxh20' not in dir(): maxh20 = np.max(H[max(0,i-19):i+1])
-                if not ((maxh20 - H[i]) < near_high_max * a): continue
-            
-            # 4. Candle size
-            if "candle" not in skip:
-                if not ((H[i] - L[i]) >= candle_min * a): continue
-            
-            # 5. H-C
-            if "hc" not in skip:
-                if not ((H[i] - C[i]) >= hc_min * a): continue
-            
-            # 6. HC+HO
-            if "hcho" not in skip:
-                if not ((H[i]-C[i]) + (H[i]-O[i]) >= hcho_min * a): continue
-            
-            # 7. Pullback
-            if "pullback" not in skip and pullback:
-                minc15 = np.min(C[max(0,i-14):i+1])
-                if not (minc15 < ema8[i]): continue
-            
-            # 8. Vol floor
-            if "vol_floor" not in skip:
-                if not (V[i] > vol_floor * avgv[i]): continue
-            
-            # 9. Vol cap
-            if "vol_cap" not in skip:
-                if not (V[i] < vol_cap * avgv[i]): continue
-            
-            # 10. Up bars
-            if "up5" not in skip:
-                up = sum(1 for j in range(1,6) if i-j>=0 and C[i-j+1]>C[i-j])
-                if not (up >= up5_min): continue
-            
-            # 11. H - MINL65
-            if "h_minl65" not in skip:
-                minl65 = np.min(L[max(0,i-64):i+1])
-                if not ((H[i] - minl65) > h_minl65_min * a): continue
-            
-            # 12. C - MINL65
-            if "c_minl65" not in skip:
-                if 'minl65' not in dir(): minl65 = np.min(L[max(0,i-64):i+1])
-                if not ((C[i] - minl65) > c_minl65_min * a): continue
-            
-            signals.append({"ticker": ticker, "date": dates[i], "close": round(float(C[i]),2)})
-            break  # one signal per ticker is enough for counting
-    
-    db.close()
-    
-    ticker_list = [s["ticker"] for s in signals]
-    return {
-        "count": len(signals),
-        "days_scanned": days,
-        "thresholds": {
-            "slope_min": slope_min, "range20_min": range20_min,
-            "near_high_max": near_high_max, "candle_min": candle_min,
-            "hc_min": hc_min, "hcho_min": hcho_min,
-            "pullback": pullback, "vol_floor": vol_floor, "vol_cap": vol_cap,
-            "up5_min": up5_min, "h_minl65_min": h_minl65_min, "c_minl65_min": c_minl65_min,
-            "skip": list(skip)
-        },
-        "tickers": ticker_list
-    }
-
-
-# ===========================================================================
-# ANALYSIS ENGINE ENDPOINTS
-# ===========================================================================
-
-# Initialize analysis tables on import
-try:
-    from scripts.analysis_api import (
-        init_analysis_tables, run_profiling, run_discovery,
-        run_outcomes, run_optimization, run_full_pipeline,
-        _get_status
-    )
-    init_analysis_tables()
-except Exception as _init_err:
-    print(f"Analysis tables init note: {_init_err}")
-
-
-@app.post("/api/analysis/profile/{setup_type}")
-async def start_profiling(setup_type: str, background_tasks: BackgroundTasks,
-                          universe_n: int = Query(500)):
-    """Run profiling engine on all examples + universe sample. Runs in background."""
-    background_tasks.add_task(run_profiling, setup_type, universe_n)
-    return {
-        "status": "started",
-        "setup_type": setup_type,
-        "universe_n": universe_n,
-        "message": f"Profiling {setup_type}. Check GET /api/analysis/status/{setup_type}/profiling"
-    }
-
-
-@app.post("/api/analysis/discover/{setup_type}")
-async def start_discovery(setup_type: str, background_tasks: BackgroundTasks):
-    """Run discovery engine on stored profiling data. Requires profiling first."""
-    background_tasks.add_task(run_discovery, setup_type)
-    return {
-        "status": "started",
-        "setup_type": setup_type,
-        "message": f"Discovery for {setup_type}. Check GET /api/analysis/status/{setup_type}/discovery"
-    }
-
-
-@app.post("/api/analysis/outcomes/{setup_type}")
-async def start_outcomes(setup_type: str, background_tasks: BackgroundTasks,
-                         source: str = Query("examples"),
-                         limit: int = Query(None)):
-    """Compute forward outcomes. source=examples or source=backtest."""
-    background_tasks.add_task(run_outcomes, setup_type, source, limit)
-    return {
-        "status": "started",
-        "setup_type": setup_type,
-        "source": source,
-        "message": f"Computing {source} outcomes for {setup_type}. Check GET /api/analysis/status/{setup_type}/outcomes"
-    }
-
-
-@app.post("/api/analysis/optimize/{setup_type}")
-async def start_optimization(setup_type: str, background_tasks: BackgroundTasks,
-                              mode: str = Query("quick"),
-                              source: str = Query("examples")):
-    """Run management optimizer. mode=quick (~8K combos) or mode=full (~3.6M combos)."""
-    background_tasks.add_task(run_optimization, setup_type, mode, source)
-    return {
-        "status": "started",
-        "setup_type": setup_type,
-        "mode": mode,
-        "message": f"Optimizing {setup_type} ({mode} mode). Check GET /api/analysis/status/{setup_type}/optimization"
-    }
-
-
-@app.post("/api/analysis/pipeline/{setup_type}")
-async def start_pipeline(setup_type: str, background_tasks: BackgroundTasks,
-                          universe_n: int = Query(500)):
-    """Run full analysis pipeline (profile → discover → outcomes → optimize)."""
-    background_tasks.add_task(run_full_pipeline, setup_type, universe_n)
-    return {
-        "status": "started",
-        "setup_type": setup_type,
-        "message": f"Full pipeline for {setup_type}. Check GET /api/analysis/status/{setup_type}/pipeline"
-    }
-
-
-# --- STATUS ENDPOINTS ---
-
-@app.get("/api/analysis/status/{setup_type}/{engine}")
-async def analysis_status(setup_type: str, engine: str):
-    """Get status of a running or completed analysis job."""
-    try:
-        return _get_status(engine, setup_type)
-    except Exception as e:
-        return {"state": "idle", "error": str(e)}
-
-
-@app.get("/api/analysis/status/{setup_type}")
-async def analysis_status_all(setup_type: str):
-    """Get status of all engines for a setup type."""
-    engines = ["profiling", "discovery", "outcomes", "optimization", "pipeline"]
-    result = {}
-    for eng in engines:
-        try:
-            result[eng] = _get_status(eng, setup_type)
-        except Exception:
-            result[eng] = {"state": "idle"}
-    return result
-
-
-# --- RESULTS ENDPOINTS ---
-
-@app.get("/api/analysis/profiling/{setup_type}")
-async def profiling_results(setup_type: str, examples_only: bool = Query(False)):
-    """Get stored profiling results."""
-    try:
-        with get_db() as db_conn:
-            where = f"WHERE setup_type='{setup_type}'"
-            if examples_only:
-                where += " AND is_example=1"
-            rows = db_conn.execute(
-                f"SELECT ticker, entry_date, scan_date, is_example, computed_at "
-                f"FROM analysis_profiling {where} ORDER BY is_example DESC, ticker"
-            ).fetchall()
-            return {
-                "count": len(rows),
-                "results": [dict(r) for r in rows]
-            }
-    except Exception as e:
-        return {"count": 0, "results": [], "error": str(e)}
-
-
-@app.get("/api/analysis/profiling/{setup_type}/{ticker}")
-async def profiling_detail(setup_type: str, ticker: str):
-    """Get full profiling measurements for a specific ticker."""
-    try:
-        with get_db() as db_conn:
-            row = db_conn.execute(
-                "SELECT * FROM analysis_profiling "
-                "WHERE setup_type=? AND ticker=? AND is_example=1 LIMIT 1",
-                (setup_type, ticker)
-            ).fetchone()
-            if not row:
-                raise HTTPException(404, f"No profiling data for {ticker}")
-            d = dict(row)
-            d['measurements'] = json.loads(d['measurements_json'])
-            del d['measurements_json']
-            return d
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.get("/api/analysis/discovery/{setup_type}")
-async def discovery_results(setup_type: str, n: int = Query(50)):
-    """Get top discovery features ranked by combined score."""
-    try:
-        with get_db() as db_conn:
-            # Get meta
-            meta = db_conn.execute(
-                "SELECT * FROM analysis_discovery_meta WHERE setup_type=? "
-                "ORDER BY computed_at DESC LIMIT 1",
-                (setup_type,)
-            ).fetchone()
-
-            features = db_conn.execute(
-                "SELECT * FROM analysis_discovery "
-                "WHERE setup_type=? ORDER BY feature_rank LIMIT ?",
-                (setup_type, n)
-            ).fetchall()
-
-            return {
-                "meta": dict(meta) if meta else {},
-                "count": len(features),
-                "features": [dict(f) for f in features]
-            }
-    except Exception as e:
-        return {"meta": {}, "count": 0, "features": [], "error": str(e)}
-
-
-@app.get("/api/analysis/discovery/{setup_type}/concepts")
-async def discovery_by_concept(setup_type: str):
-    """Get discovery features grouped by TA concept."""
-    try:
-        with get_db() as db_conn:
-            features = db_conn.execute(
-                "SELECT * FROM analysis_discovery "
-                "WHERE setup_type=? ORDER BY concept_group, feature_rank",
-                (setup_type,)
-            ).fetchall()
-
-            grouped = {}
-            for f in features:
-                d = dict(f)
-                concept = d.get('concept_group', 'other')
-                grouped.setdefault(concept, []).append(d)
-
-            return {
-                "n_concepts": len(grouped),
-                "concepts": grouped
-            }
-    except Exception as e:
-        return {"n_concepts": 0, "concepts": {}, "error": str(e)}
-
-
-@app.get("/api/analysis/outcomes/{setup_type}")
-async def outcome_results(setup_type: str, source: str = Query("examples")):
-    """Get outcome summary per signal."""
-    try:
-        with get_db() as db_conn:
-            rows = db_conn.execute(
-                "SELECT ticker, entry_date, direction, entry_price, scan_bar_atr, "
-                "bars_available, MAX(mfe) as peak_mfe, MIN(mae) as peak_mae "
-                "FROM signal_outcomes "
-                "WHERE setup_type=? AND source=? "
-                "GROUP BY ticker, entry_date "
-                "ORDER BY ticker, entry_date",
-                (setup_type, source)
-            ).fetchall()
-
-            results = [dict(r) for r in rows]
-
-            # Summary stats
-            if results:
-                mfes = [r['peak_mfe'] for r in results if r['peak_mfe'] is not None]
-                maes = [r['peak_mae'] for r in results if r['peak_mae'] is not None]
-                return {
-                    "count": len(results),
-                    "summary": {
-                        "median_mfe": round(float(np.median(mfes)), 2) if mfes else 0,
-                        "median_mae": round(float(np.median(maes)), 2) if maes else 0,
-                        "mean_mfe": round(float(np.mean(mfes)), 2) if mfes else 0,
-                        "mean_mae": round(float(np.mean(maes)), 2) if maes else 0,
-                    },
-                    "signals": results
-                }
-            return {"count": 0, "signals": []}
-    except Exception as e:
-        return {"count": 0, "signals": [], "error": str(e)}
-
-
-@app.get("/api/analysis/outcomes/{setup_type}/{ticker}")
-async def outcome_detail(setup_type: str, ticker: str,
-                          entry_date: str = Query(None)):
-    """Get bar-by-bar outcome data for a specific signal."""
-    try:
-        with get_db() as db_conn:
-            where = "WHERE setup_type=? AND ticker=?"
-            params = [setup_type, ticker]
-            if entry_date:
-                where += " AND entry_date=?"
-                params.append(entry_date)
-
-            rows = db_conn.execute(
-                f"SELECT * FROM signal_outcomes {where} ORDER BY entry_date, bar_num",
-                params
-            ).fetchall()
-
-            return {
-                "count": len(rows),
-                "bars": [dict(r) for r in rows]
-            }
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.get("/api/analysis/optimization/{setup_type}")
-async def optimization_results(setup_type: str, n: int = Query(20)):
-    """Get top optimization strategies."""
-    try:
-        with get_db() as db_conn:
-            strategies = db_conn.execute(
-                "SELECT * FROM analysis_optimization "
-                "WHERE setup_type=? ORDER BY rank LIMIT ?",
-                (setup_type, n)
-            ).fetchall()
-
-            plateaus = db_conn.execute(
-                "SELECT * FROM analysis_plateaus "
-                "WHERE setup_type=? ORDER BY plateau_rank",
-                (setup_type,)
-            ).fetchall()
-
-            return {
-                "strategies": {
-                    "count": len(strategies),
-                    "results": [dict(s) for s in strategies]
-                },
-                "plateaus": {
-                    "count": len(plateaus),
-                    "results": [dict(p) for p in plateaus]
-                }
-            }
-    except Exception as e:
-        return {"strategies": {"count": 0}, "plateaus": {"count": 0}, "error": str(e)}
-
-
-# ============================================
-# SETUP-SPECIFIC DATA (LSP, etc.)
-# ============================================
-
-@app.get("/api/setup-data/{setup_type}")
-async def get_setup_data(setup_type: str):
-    """Get setup-specific data (e.g. LSP prices for DTSS)."""
-    import json as _json
-    data_file = os.path.join("data", f"{setup_type}_lsp_data.json")
-    if os.path.exists(data_file):
-        with open(data_file) as f:
-            return {"data": _json.load(f), "type": "lsp"}
-    return {"data": [], "type": "none"}
-
-
-class LSPEntry(BaseModel):
-    ticker: str
-    date: str
-    price: float
-    entry_date: str = ""
-    example_id: int = 0
-
-
-@app.put("/api/setup-data/{setup_type}/lsp")
-async def save_lsp_data(setup_type: str, entries: list[LSPEntry]):
-    """Save LSP data for a setup type."""
-    import json as _json
-    data_file = os.path.join("data", f"{setup_type}_lsp_data.json")
-    data = [e.dict() for e in entries]
-    with open(data_file, "w") as f:
-        _json.dump(data, f, indent=2)
-    return {"saved": len(data)}
-
-
-@app.post("/api/setup-data/{setup_type}/lsp")
-async def add_lsp_entry(setup_type: str, entry: LSPEntry):
-    """Add a single LSP entry."""
-    import json as _json
-    data_file = os.path.join("data", f"{setup_type}_lsp_data.json")
-    data = []
-    if os.path.exists(data_file):
-        with open(data_file) as f:
-            data = _json.load(f)
-    data.append(entry.dict())
-    with open(data_file, "w") as f:
-        _json.dump(data, f, indent=2)
-    return {"saved": len(data)}
-
-
-@app.delete("/api/setup-data/{setup_type}/lsp/{idx}")
-async def delete_lsp_entry(setup_type: str, idx: int):
-    """Delete an LSP entry by index."""
-    import json as _json
-    data_file = os.path.join("data", f"{setup_type}_lsp_data.json")
-    if not os.path.exists(data_file):
-        return {"error": "no data file"}
-    with open(data_file) as f:
-        data = _json.load(f)
-    if idx < 0 or idx >= len(data):
-        return {"error": "index out of range"}
-    removed = data.pop(idx)
-    with open(data_file, "w") as f:
-        _json.dump(data, f, indent=2)
-    return {"removed": removed, "remaining": len(data)}
-
-
-# ═══════════════════════════════════════════════════════════
-# GRINDER — Desktop agent job queue
-# ═══════════════════════════════════════════════════════════
-
-GRINDER_JOBS_FILE = os.path.join("data", "grinder_jobs.json")
-GRINDER_RESULTS_FILE = os.path.join("data", "grinder_results.json")
-GRINDER_HISTORY_FILE = os.path.join("data", "grinder_history.json")
-GRINDER_AGENT_FILE = os.path.join("data", "grinder_agent.json")
-
-import json as _grinder_json
-
-def _load_grinder_json(path, default=None):
-    if default is None:
-        default = {}
-    try:
-        if os.path.exists(path):
-            with open(path) as f:
-                return _grinder_json.load(f)
-    except:
-        pass
-    return default
-
-def _save_grinder_json(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        _grinder_json.dump(data, f, indent=2, default=str)
-
-
-class GrinderJobRequest(BaseModel):
-    setup_type: str = "dtss"
-    grind_level: int = 3
-    action: str = "grind"
-
-
-@app.post("/api/grinder/jobs")
-async def create_grinder_job(req: GrinderJobRequest):
-    """Create a new grind job for the desktop agent."""
-    jobs = _load_grinder_json(GRINDER_JOBS_FILE, [])
-    for j in jobs:
-        if j.get("setup_type") == req.setup_type and j.get("status") == "pending":
-            j["status"] = "cancelled"
-    job_id = f"{req.setup_type}_{req.action}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    job = {
-        "job_id": job_id,
-        "setup_type": req.setup_type,
-        "grind_level": req.grind_level,
-        "action": req.action,
-        "status": "pending",
-        "created_at": datetime.now().isoformat(),
-        "message": "",
-        "progress": {"phase": "", "progress_pct": 0, "detail": ""},
-    }
-    jobs.append(job)
-    _save_grinder_json(GRINDER_JOBS_FILE, jobs)
-    return {"job_id": job_id, "status": "pending"}
-
-
-@app.get("/api/grinder/jobs/pending")
-async def get_pending_jobs():
-    """Get pending jobs for the desktop agent."""
-    jobs = _load_grinder_json(GRINDER_JOBS_FILE, [])
-    pending = [j for j in jobs if j.get("status") == "pending"]
-    for j in jobs:
-        if j.get("status") == "pending":
-            j["status"] = "claimed"
-    _save_grinder_json(GRINDER_JOBS_FILE, jobs)
-    return {"jobs": pending}
-
-
-@app.post("/api/grinder/status")
-async def update_job_status(request: Request):
-    """Update job status from desktop agent."""
-    body = await request.json()
-    job_id = body.get("job_id")
-    status = body.get("status")
-    message = body.get("message", "")
-    data = body.get("data")
-    jobs = _load_grinder_json(GRINDER_JOBS_FILE, [])
-    for j in jobs:
-        if j.get("job_id") == job_id:
-            j["status"] = status
-            j["message"] = message
-            j["updated_at"] = datetime.now().isoformat()
-            break
-    _save_grinder_json(GRINDER_JOBS_FILE, jobs)
-    if status == "complete" and data:
-        results = _load_grinder_json(GRINDER_RESULTS_FILE, {})
-        setup_type = data.get("setup_type", "unknown")
-        results[setup_type] = data
-        _save_grinder_json(GRINDER_RESULTS_FILE, results)
-        # Append to history
-        history = _load_grinder_json(GRINDER_HISTORY_FILE, {})
-        if setup_type not in history:
-            history[setup_type] = []
-        history[setup_type].append({
-            "timestamp": data.get("timestamp", datetime.now().isoformat()),
-            "n_conditions": data.get("n_conditions", 0),
-            "n_examples": data.get("examples_passing", 0),
-            "final_total": data.get("summary", {}).get("final_total", 0),
-            "final_peak": data.get("summary", {}).get("final_peak", 0),
-            "final_avg": data.get("summary", {}).get("final_avg", 0),
-            "conditions": [c.get("expr", "") for c in data.get("all_conditions", [])],
-        })
-        # Keep last 20
-        history[setup_type] = history[setup_type][-20:]
-        _save_grinder_json(GRINDER_HISTORY_FILE, history)
-    return {"ok": True}
-
-
-@app.post("/api/grinder/progress")
-async def update_job_progress(request: Request):
-    """Update job progress from desktop agent."""
-    body = await request.json()
-    job_id = body.get("job_id")
-    jobs = _load_grinder_json(GRINDER_JOBS_FILE, [])
-    for j in jobs:
-        if j.get("job_id") == job_id:
-            j["progress"] = {
-                "phase": body.get("phase", ""),
-                "progress_pct": body.get("progress_pct", 0),
-                "detail": body.get("detail", ""),
-            }
-            j["updated_at"] = datetime.now().isoformat()
-            break
-    _save_grinder_json(GRINDER_JOBS_FILE, jobs)
-    return {"ok": True}
-
-
-@app.get("/api/grinder/jobs/status")
-async def get_job_status(setup_type: str = Query("dtss")):
-    """Get current/latest job status for frontend polling."""
-    jobs = _load_grinder_json(GRINDER_JOBS_FILE, [])
-    matching = [j for j in jobs if j.get("setup_type") == setup_type]
-    if not matching:
-        return {"status": "none", "job": None}
-    latest = matching[-1]
-    return {"status": latest.get("status"), "job": latest}
-
-
-@app.post("/api/grinder/jobs/reset")
-async def reset_grinder_jobs(setup_type: str = Query("dtss")):
-    """Reset all stuck jobs for a setup type."""
-    jobs = _load_grinder_json(GRINDER_JOBS_FILE, [])
-    for j in jobs:
-        if j.get("setup_type") == setup_type and j.get("status") in ("pending", "claimed", "running"):
-            j["status"] = "cancelled"
-    _save_grinder_json(GRINDER_JOBS_FILE, jobs)
-    return {"status": "reset", "setup_type": setup_type}
-
-
-@app.get("/api/grinder/results/{setup_type}")
-async def get_grinder_results(setup_type: str):
-    """Get grinder results for frontend display."""
-    results = _load_grinder_json(GRINDER_RESULTS_FILE, {})
-    if setup_type not in results:
-        return {"status": "none", "results": None}
-    return {"status": "ok", "results": results[setup_type]}
-
-
-@app.get("/api/grinder/history/{setup_type}")
-async def get_grinder_history(setup_type: str):
-    """Get grind history for convergence tracking."""
-    history = _load_grinder_json(GRINDER_HISTORY_FILE, {})
-    return {"runs": history.get(setup_type, [])}
-
-
-@app.post("/api/grinder/agent/register")
-async def register_agent(request: Request):
-    body = await request.json()
-    _save_grinder_json(GRINDER_AGENT_FILE, body)
-    return {"ok": True}
-
-
-@app.post("/api/grinder/agent/heartbeat")
-async def agent_heartbeat(request: Request):
-    body = await request.json()
-    agent = _load_grinder_json(GRINDER_AGENT_FILE, {})
-    agent["last_heartbeat"] = body.get("timestamp", datetime.now().isoformat())
-    agent["status"] = "online"
-    _save_grinder_json(GRINDER_AGENT_FILE, agent)
-    return {"ok": True}
-
-
-@app.get("/api/grinder/agent/status")
-async def get_agent_status():
-    """Check if desktop agent is online."""
-    agent = _load_grinder_json(GRINDER_AGENT_FILE, {})
-    if not agent:
-        return {"status": "unknown", "agent": None}
-    last_hb = agent.get("last_heartbeat", "")
-    if last_hb:
-        try:
-            hb_time = datetime.fromisoformat(last_hb.replace('+00:00', '').replace('Z', ''))
-            if (datetime.utcnow() - hb_time).total_seconds() > 20:
-                agent["status"] = "offline"
-        except:
-            pass
-    return {"status": agent.get("status", "unknown"), "agent": agent}
-
-
-@app.post("/api/universe/insert-ohlcv")
-async def insert_ohlcv(request: Request):
-    """Insert OHLCV rows for a ticker. Also adds to tradable_universe and universe_tickers.
-    Body: {ticker: str, rows: [{date, open, high, low, close, volume}, ...]}
-    """
-    body = await request.json()
-    ticker = body.get("ticker", "").strip().upper()
-    rows = body.get("rows", [])
-    if not ticker or not rows:
-        return {"error": "Need ticker and rows"}
-    try:
-        with get_db() as db:
-            db.execute("INSERT OR IGNORE INTO universe_tickers (ticker, status, rows_stored) VALUES (?, 'done', 0)", (ticker,))
-            db.execute("INSERT OR IGNORE INTO tradable_universe (ticker) VALUES (?)", (ticker,))
-            ohlcv_rows = []
-            for r in rows:
-                ohlcv_rows.append((ticker, r["date"], r["open"], r["high"], r["low"], r["close"], r["volume"]))
-            db.executemany(
-                "INSERT OR REPLACE INTO universe_ohlcv (ticker, date, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?)",
-                ohlcv_rows
-            )
-            db.execute("UPDATE universe_tickers SET rows_stored=?, status='done' WHERE ticker=?", (len(ohlcv_rows), ticker))
-            db.commit()
-        return {"ok": True, "ticker": ticker, "rows_inserted": len(ohlcv_rows)}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@app.post("/api/analysis/grinder-results")
-async def save_grinder_results(request: Request):
-    """Save grinder results."""
-    body = await request.json()
-    setup_type = body.get("setup_type", "unknown")
-    results = _load_grinder_json(GRINDER_RESULTS_FILE, {})
-    results[setup_type] = body.get("results", body)
-    _save_grinder_json(GRINDER_RESULTS_FILE, results)
-    return {"ok": True, "setup_type": setup_type}
-
-
-# ═══════════════════════════════════════════════════════════
-# PIPELINE DASHBOARD — Remote job queue for desktop agent
-# ═══════════════════════════════════════════════════════════
-
-PIPELINE_FILE = os.path.join("data", "pipeline_state.json")
-PIPELINE_LOGS_FILE = os.path.join("data", "pipeline_logs.json")
-
-PIPELINE_STEPS = [
-    {"id": "nightly", "name": "Nightly Refresh", "category": "data",
-     "description": "Append new OHLCV bars, rebuild caches and matrix.",
-     "prerequisites": [], "result_files": []},
-    {"id": "optimal_samples", "name": "1. Optimal Samples", "category": "pipeline",
-     "description": "Current validated optimal samples for this setup.",
-     "prerequisites": [], "result_files": [], "is_manual": True},
-    {"id": "signal_brute", "name": "2. Signal Brute Forcing", "category": "pipeline",
-     "description": "Pyramid grinder + signal exit grinder (runs back-to-back).",
-     "prerequisites": [], "result_files": ["data/pyramid_results_dtss.json", "data/signal_exit_grind/signal_exit_dtss.json"]},
-    {"id": "sample_expansion", "name": "3. Sample Expansion", "category": "pipeline",
-     "description": "Signal filter + chart vetting. Review signals, YES = new optimal sample, NO = reject.",
-     "prerequisites": ["signal_brute"],
-     "result_files": ["data/signal_filter/filtered_dtss.json"], "is_manual": True},
-    {"id": "sample_review", "name": "3b. AI Sample Review", "category": "pipeline",
-     "description": "AI reviews pending YES picks via Claude CLI. Approve/reject in Optimal Samples > Pending.",
-     "prerequisites": ["sample_expansion"],
-     "result_files": []},
-    {"id": "setup_grinder_a", "name": "4a. Exit Grinder", "category": "pipeline",
-     "description": "Single-stage + multi-stage exit grinders run sequentially. Review results and choose which exit to use before running 4b.",
-     "prerequisites": ["sample_expansion"],
-     "result_files": ["data/profit_grind/profit_dtss.json", "data/multistage_exit/ms_exit_dtss.json"]},
-    {"id": "setup_grinder_b", "name": "4b. Setup Grinder", "category": "pipeline",
-     "description": "Blackout re-grind + condition prune + signal filter. Requires exit choice from 4a.",
-     "prerequisites": ["setup_grinder_a"],
-     "result_files": ["data/setup_refiner/refined_dtss.json"]},
-    {"id": "market_grind", "name": "5. Market Grinder", "category": "pipeline",
-     "description": "Cluster outcomes vs market regime. Find optimal conditions.",
-     "prerequisites": ["setup_grinder_b"],
-     "result_files": []},
-]
-
-
-def _load_pipeline_state():
-    return _load_grinder_json(PIPELINE_FILE, {"steps": {}, "jobs": []})
-
-
-def _save_pipeline_state(state):
-    _save_grinder_json(PIPELINE_FILE, state)
-
-
-def _load_pipeline_logs():
-    return _load_grinder_json(PIPELINE_LOGS_FILE, {})
-
-
-def _save_pipeline_logs(logs):
-    _save_grinder_json(PIPELINE_LOGS_FILE, logs)
-
-
-@app.get("/api/pipeline/steps")
-async def get_pipeline_steps():
-    """Get all pipeline steps with current state."""
-    state = _load_pipeline_state()
-
-    # Clean up jobs for step IDs that no longer exist
-    valid_ids = {s["id"] for s in PIPELINE_STEPS}
-    if state.get("jobs"):
-        state["jobs"] = [j for j in state["jobs"] if j.get("step_id") in valid_ids]
-        _save_pipeline_state(state)
-    agent = _load_grinder_json(GRINDER_AGENT_FILE, {})
-
-    agent_status = "unknown"
-    last_hb = agent.get("last_heartbeat", "")
-    if last_hb:
-        try:
-            hb_time = datetime.fromisoformat(last_hb.replace('+00:00', '').replace('Z', ''))
-            age = (datetime.utcnow() - hb_time).total_seconds()
-            agent_status = "online" if age < 20 else "offline"
-        except:
-            agent_status = "unknown"
-
-    steps_out = []
-    for step_def in PIPELINE_STEPS:
-        step_state = state.get("steps", {}).get(step_def["id"], {
-            "status": "pending", "started_at": None, "finished_at": None,
-            "duration_s": None, "exit_code": None, "error": None,
-            "result_summary": None,
-        })
-
-        can_run = True
-        if any(j.get("status") in ("queued", "running", "claimed") for j in state.get("jobs", [])):
-            can_run = False
-        else:
-            for prereq in step_def["prerequisites"]:
-                prereq_state = state.get("steps", {}).get(prereq, {})
-                if prereq_state.get("status") != "done":
-                    can_run = False
-                    break
-            # setup_grinder_b also requires an exit choice
-            if step_def["id"] == "setup_grinder_b" and can_run:
-                choice_path = VETTING_DATA_DIR / "exit_grind_choice" / "dtss.json"
-                if not choice_path.exists():
-                    can_run = False
-
-        # Optimal Samples + Sample Expansion: compute live stats
-        if step_def["id"] in ("optimal_samples", "sample_expansion"):
-            try:
-                vetting_path = VETTING_DATA_DIR / "vetting" / "vetting_dtss.json"
-                filtered_path = VETTING_DATA_DIR / "signal_filter" / "filtered_dtss.json"
-                decisions = {}
-                if vetting_path.exists():
-                    with open(vetting_path) as f:
-                        decisions = json.load(f)
-                n_total = 0
-                if filtered_path.exists():
-                    with open(filtered_path) as f:
-                        n_total = len(json.load(f).get("signals", []))
-                counts = {"yes": 0, "maybe": 0, "no": 0}
-                for v in decisions.values():
-                    vd = v.get("verdict", "")
-                    if vd in counts:
-                        counts[vd] += 1
-                n_vetted = sum(counts.values())
-                with get_db() as db:
-                    n_examples = db.execute(
-                        "SELECT COUNT(*) FROM examples WHERE setup_type='dtss'"
-                    ).fetchone()[0]
-                    n_rejected = db.execute(
-                        "SELECT COUNT(*) FROM rejected_signals WHERE setup_type='dtss'"
-                    ).fetchone()[0]
-                    try:
-                        n_pending = db.execute(
-                            "SELECT COUNT(*) FROM pending_examples WHERE setup_type='dtss'"
-                        ).fetchone()[0]
-                    except:
-                        n_pending = 0
-                step_state["vetting_stats"] = {
-                    "n_total": n_total, "n_vetted": n_vetted,
-                    "n_yes": counts["yes"], "n_maybe": counts["maybe"], "n_no": counts["no"],
-                    "n_examples": n_examples, "n_rejected": n_rejected, "n_pending": n_pending,
-                }
-                if step_def["id"] == "sample_expansion" and n_vetted > 0:
-                    # Show vetting progress, but don't override to 'running' — that
-                    # conflicts with the Reload button which checks isFilterRunning.
-                    # Only mark 'done' when all signals are vetted.
-                    if n_vetted >= n_total:
-                        step_state["status"] = "done"
-                    step_state["result_summary"] = f"{n_vetted}/{n_total} vetted · {counts['yes']} yes · {counts['no']} no · {n_examples} total optimal samples"
-            except:
-                pass
-
-        # setup_grinder_a: inject result_summary + choice status
-        if step_def["id"] == "setup_grinder_a" and step_state.get("status") == "done":
-            try:
-                profit_path = VETTING_DATA_DIR / "profit_grind" / "profit_dtss.json"
-                ms_path = VETTING_DATA_DIR / "multistage_exit" / "ms_exit_dtss.json"
-                choice_path = VETTING_DATA_DIR / "exit_grind_choice" / "dtss.json"
-                parts = []
-                if profit_path.exists():
-                    with open(profit_path) as f:
-                        pd_ = json.load(f)
-                    results = pd_.get("results", [])
-                    if results:
-                        eff = results[0].get("floor_capture_eff", None)
-                        if eff is not None:
-                            parts.append(f"single floor {eff:.0%}")
-                if ms_path.exists():
-                    with open(ms_path) as f:
-                        md = json.load(f)
-                    r = md.get("result")
-                    if r:
-                        eff = r.get("floor_capture_eff", None)
-                        n_stg = r.get("n_stages", "?")
-                        if eff is not None:
-                            parts.append(f"multi ({n_stg}-stage) floor {eff:.0%}")
-                if choice_path.exists():
-                    with open(choice_path) as f:
-                        cd = json.load(f)
-                    parts.append(f"choice: {cd.get('choice','?')}")
-                else:
-                    parts.append("no choice yet")
-                if parts:
-                    step_state["result_summary"] = " · ".join(parts)
-            except:
-                pass
-
-        # setup_grinder_b: inject result_summary from refined output
-        if step_def["id"] == "setup_grinder_b" and step_state.get("status") == "done":
-            try:
-                refined_path = VETTING_DATA_DIR / "setup_refiner" / "refined_dtss.json"
-                parts = []
-                if refined_path.exists():
-                    with open(refined_path) as f:
-                        rd = json.load(f)
-                    parts.append(f"{rd.get('n_conditions','?')} conds")
-                    parts.append(f"{rd.get('n_signals','?')} signals")
-                if parts:
-                    step_state["result_summary"] = " · ".join(parts)
-            except:
-                pass
-
-        steps_out.append({**step_def, "state": step_state, "can_run": can_run})
-
-    running = None
-    for j in state.get("jobs", []):
-        if j.get("status") in ("queued", "running", "claimed"):
-            running = j.get("step_id")
-            break
-
-    return {
-        "steps": steps_out, "running": running,
-        "agent_status": agent_status, "agent_last_heartbeat": last_hb,
-    }
-
-
-@app.post("/api/pipeline/run/{step_id}")
-async def pipeline_run_step(step_id: str, request: Request = None):
-    """Queue a pipeline step for the desktop agent."""
-    # Read optional params from request body (e.g. beam, depth, peak_target)
-    step_params = {}
-    if request:
-        try:
-            body = await request.json()
-            if isinstance(body, dict):
-                step_params = body.get("params", {})
-        except:
-            pass  # No body or not JSON
-
-    step_def = next((s for s in PIPELINE_STEPS if s["id"] == step_id), None)
-    if not step_def:
-        return {"error": f"Unknown step: {step_id}"}
-
-    state = _load_pipeline_state()
-
-    # Remove ALL stale/dead jobs — if agent hasn't heartbeated in 30s, any
-    # "running" job is dead. Just nuke everything that isn't actively alive.
-    now = datetime.utcnow()
-    agent = _load_grinder_json(GRINDER_AGENT_FILE, {})
-    last_hb = agent.get("last_heartbeat", "")
-    agent_alive = False
-    if last_hb:
-        try:
-            hb_time = datetime.fromisoformat(last_hb.replace('+00:00', '').replace('Z', ''))
-            age = (now - hb_time).total_seconds()
-            agent_alive = age < 30
-        except:
-            pass
-
-    if not agent_alive:
-        # Agent is dead — no job can be running. Clear everything.
-        state["jobs"] = []
-    else:
-        # Agent is alive — only block if there's a job for a DIFFERENT step
-        # that's actively running. If it's the SAME step, kill the old job
-        # and let the new one take over.
-        active_other = [j for j in state.get("jobs", [])
-                        if j.get("status") in ("queued", "running", "claimed")
-                        and j.get("step_id") != step_id]
-        if active_other:
-            return {"error": f"Already running: {active_other[0].get('step_id')}"}
-        # Remove any old jobs for THIS step
-        state["jobs"] = [j for j in state.get("jobs", [])
-                         if j.get("step_id") != step_id]
-
-    for prereq in step_def["prerequisites"]:
-        prereq_state = state.get("steps", {}).get(prereq, {})
-        if prereq_state.get("status") != "done":
-            return {"error": f"Prerequisite not met: {prereq}"}
-
-    # setup_grinder_b requires an exit choice from 4a
-    if step_id == "setup_grinder_b":
-        choice_path = VETTING_DATA_DIR / "exit_grind_choice" / "dtss.json"
-        if not choice_path.exists():
-            return {"error": "No exit choice made. Run 4a and choose single or multi-stage exit first."}
-
-    job = {
-        "job_id": f"pipe_{step_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        "step_id": step_id, "status": "queued", "params": step_params,
-        "created_at": datetime.now().isoformat(),
-    }
-    state.setdefault("jobs", []).append(job)
-    state.setdefault("steps", {})[step_id] = {
-        "status": "queued", "started_at": None, "finished_at": None,
-        "duration_s": None, "exit_code": None, "error": None, "result_summary": None,
-    }
-    _save_pipeline_state(state)
-
-    logs = _load_pipeline_logs()
-    logs[step_id] = []
-    _save_pipeline_logs(logs)
-
-    return {"status": "queued", "job_id": job["job_id"], "step_id": step_id}
-
-
-@app.get("/api/pipeline/jobs/pending")
-async def pipeline_pending_jobs():
-    """Agent polls this to pick up queued pipeline jobs."""
-    state = _load_pipeline_state()
-    pending = []
-    for j in state.get("jobs", []):
-        if j.get("status") == "queued":
-            j["status"] = "claimed"
-            pending.append(j)
-    if pending:
-        _save_pipeline_state(state)
-    return {"jobs": pending}
-
-
-@app.post("/api/pipeline/status")
-async def pipeline_update_status(request: Request):
-    """Agent reports step status updates."""
-    body = await request.json()
-    step_id = body.get("step_id")
-    status = body.get("status")
-
-    state = _load_pipeline_state()
-    step_state = state.setdefault("steps", {}).setdefault(step_id, {})
-    step_state["status"] = status
-
-    if status == "running":
-        step_state["started_at"] = body.get("timestamp", datetime.now().isoformat())
-    elif status in ("done", "error", "stopped"):
-        step_state["finished_at"] = body.get("timestamp", datetime.now().isoformat())
-        step_state["duration_s"] = body.get("duration_s")
-        step_state["exit_code"] = body.get("exit_code")
-        step_state["error"] = body.get("error")
-        step_state["result_summary"] = body.get("result_summary")
-        for j in state.get("jobs", []):
-            if j.get("step_id") == step_id and j.get("status") in ("claimed", "running"):
-                j["status"] = status
-
-    _save_pipeline_state(state)
-    return {"ok": True}
-
-
-@app.post("/api/pipeline/logs")
-async def pipeline_append_logs(request: Request):
-    """Agent streams log lines back."""
-    body = await request.json()
-    step_id = body.get("step_id")
-    lines = body.get("lines", [])
-
-    logs = _load_pipeline_logs()
-    existing = logs.get(step_id, [])
-    existing.extend(lines)
-    if len(existing) > 5000:
-        existing = existing[-4000:]
-    logs[step_id] = existing
-    _save_pipeline_logs(logs)
-    return {"ok": True, "total_lines": len(existing)}
-
-
-@app.get("/api/pipeline/logs/{step_id}")
-async def pipeline_get_logs(step_id: str, after: int = 0):
-    """Get log lines for a step. Use 'after' for polling (line index)."""
-    logs = _load_pipeline_logs()
-    all_lines = logs.get(step_id, [])
-    return {"step_id": step_id, "lines": all_lines[after:], "total": len(all_lines), "after": after}
-
-
-@app.post("/api/pipeline/reset/{step_id}")
-async def pipeline_reset_step(step_id: str):
-    """Reset a step to pending and clean up any associated jobs."""
-    state = _load_pipeline_state()
-    state.setdefault("steps", {})[step_id] = {
-        "status": "pending", "started_at": None, "finished_at": None,
-        "duration_s": None, "exit_code": None, "error": None, "result_summary": None,
-    }
-    # Remove ALL jobs for this step (prevents zombie jobs blocking future runs)
-    state["jobs"] = [j for j in state.get("jobs", []) if j.get("step_id") != step_id]
-    _save_pipeline_state(state)
-    return {"ok": True, "step_id": step_id}
-
-
-@app.post("/api/pipeline/stop")
-async def pipeline_stop():
-    """Request the agent to stop the current job."""
-    state = _load_pipeline_state()
-    for j in state.get("jobs", []):
-        if j.get("status") in ("queued", "claimed", "running"):
-            j["status"] = "stop_requested"
-    _save_pipeline_state(state)
-    return {"ok": True}
-
-
-@app.get("/api/pipeline/stop-check/{step_id}")
-async def pipeline_stop_check(step_id: str):
-    """Agent polls this to check if stop was requested."""
-    state = _load_pipeline_state()
-    for j in state.get("jobs", []):
-        if j.get("step_id") == step_id and j.get("status") == "stop_requested":
-            return {"stop": True}
-    return {"stop": False}
-
-
-# ---------------------------------------------------------------------------
-# VETTING — Signal filter results + chart vetting workflow
-# ---------------------------------------------------------------------------
-
-VETTING_DATA_DIR = Path("data")  # repo-local data dir (signal_filter output lives here)
+# ============================================================
+# VETTING
+# ============================================================
 
 @app.post("/api/vetting/{setup_type}/upload-signals")
 async def upload_vetting_signals(setup_type: str, request: Request):
-    """Upload filtered signals JSON from desktop. No git required."""
-    body = await request.json()
-    out_dir = VETTING_DATA_DIR / "signal_filter"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"filtered_{setup_type}.json"
-    with open(path, "w") as f:
-        json.dump(body, f, indent=2, default=str)
-    n = len(body.get("signals", []))
-    return {"status": "ok", "path": str(path), "n_signals": n}
-
-@app.post("/api/vetting/{setup_type}/upload-exit")
-async def upload_vetting_exit(setup_type: str, request: Request):
-    """Upload signal exit grind JSON from desktop. No git required."""
-    body = await request.json()
-    out_dir = VETTING_DATA_DIR / "signal_exit_grind"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"signal_exit_{setup_type}.json"
-    with open(path, "w") as f:
-        json.dump(body, f, indent=2, default=str)
-    return {"status": "ok", "path": str(path)}
+    body=await request.json()
+    out=VETTING_DATA_DIR/"signal_filter"; out.mkdir(parents=True,exist_ok=True)
+    path=out/f"filtered_{setup_type}.json"
+    with open(path,"w") as f: _json.dump(body,f,indent=2,default=str)
+    return {"status":"ok","path":str(path),"n_signals":len(body.get("signals",[]))}
 
 
 @app.post("/api/setup-grinder/{setup_type}/upload-signals")
 async def upload_setup_grinder_signals(setup_type: str, request: Request):
-    """Upload refined signals from setup_refiner.py. Isolated — never touches signal_filter output."""
-    body = await request.json()
-    out_dir = VETTING_DATA_DIR / "setup_refiner"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"refined_{setup_type}.json"
-    with open(path, "w") as f:
-        json.dump(body, f, indent=2, default=str)
-    n = len(body.get("signals", []))
-    return {"status": "ok", "path": str(path), "n_signals": n}
+    body=await request.json()
+    out=VETTING_DATA_DIR/"setup_refiner"; out.mkdir(parents=True,exist_ok=True)
+    path=out/f"refined_{setup_type}.json"
+    with open(path,"w") as f: _json.dump(body,f,indent=2,default=str)
+    return {"status":"ok","path":str(path),"n_signals":len(body.get("signals",[]))}
 
 
-@app.post("/api/profit-grind/{setup_type}/upload")
-async def upload_profit_grind(setup_type: str, request: Request):
-    """Upload profit grinder results from desktop agent."""
-    body = await request.json()
-    out_dir = VETTING_DATA_DIR / "profit_grind"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"profit_{setup_type}.json"
-    with open(path, "w") as f:
-        json.dump(body, f, indent=2, default=str)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    n_ex = body.get("n_examples", 0)
-    top = body.get("top_conditions", [{}])
-    floor_tag = top[0].get("floor_adr", "na") if top else "na"
-    archive_path = out_dir / f"profit_{setup_type}_{n_ex}ex_{floor_tag}adr_{ts}.json"
-    with open(archive_path, "w") as f:
-        json.dump(body, f, indent=2, default=str)
-    return {"status": "ok", "path": str(path), "archive": str(archive_path)}
+def _get_example_dates(setup_type):
+    with get_db() as db:
+        rows=db.execute("SELECT ticker,entry_date FROM examples WHERE setup_type=?",(setup_type,)).fetchall()
+    ed={}
+    for r in rows:
+        ed.setdefault(r["ticker"],[])
+        try: ed[r["ticker"]].append(datetime.strptime(r["entry_date"],"%Y-%m-%d"))
+        except: pass
+    return ed
 
-
-@app.get("/api/profit-grind/{setup_type}")
-async def get_profit_grind(setup_type: str):
-    """Get latest profit grinder results."""
-    path = VETTING_DATA_DIR / "profit_grind" / f"profit_{setup_type}.json"
-    if not path.exists():
-        raise HTTPException(404, f"No profit grind results for {setup_type}. Run profit_grinder.py first.")
-    with open(path) as f:
-        data = json.load(f)
-    return data
-
-
-@app.post("/api/exit-grind/{setup_type}/upload-multistage")
-async def upload_multistage_exit(setup_type: str, request: Request):
-    """Upload multi-stage exit grinder results from desktop agent."""
-    body = await request.json()
-    out_dir = VETTING_DATA_DIR / "multistage_exit"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"ms_exit_{setup_type}.json"
-    with open(path, "w") as f:
-        json.dump(body, f, indent=2, default=str)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    r = body.get("result") or {}
-    n_stg = r.get("n_stages", "na")
-    eff = r.get("floor_capture_eff", "na")
-    archive_path = out_dir / f"ms_exit_{setup_type}_{n_stg}stg_{eff}floor_{ts}.json"
-    with open(archive_path, "w") as f:
-        json.dump(body, f, indent=2, default=str)
-    return {"status": "ok", "path": str(path), "archive": str(archive_path)}
-
-
-@app.get("/api/exit-grind/{setup_type}/results")
-async def get_exit_grind_results(setup_type: str):
-    """Return single-stage and multi-stage exit grinder results side by side."""
-    profit_path = VETTING_DATA_DIR / "profit_grind" / f"profit_{setup_type}.json"
-    ms_path = VETTING_DATA_DIR / "multistage_exit" / f"ms_exit_{setup_type}.json"
-    choice_path = VETTING_DATA_DIR / "exit_grind_choice" / f"{setup_type}.json"
-
-    out = {"single": None, "multi": None, "choice": None}
-
-    if profit_path.exists():
-        with open(profit_path) as f:
-            pd_ = json.load(f)
-        results = pd_.get("results", [])
-        best = results[0] if results else {}
-        adr_list = [x for x in (best.get("adr_captured") or []) if x is not None]
-        eff_list = [x for x in (best.get("capture_effs") or []) if x is not None]
-        out["single"] = {
-            "expression": best.get("expr_name"),
-            "direction": best.get("direction"),
-            "threshold": best.get("threshold"),
-            "floor_capture_eff": best.get("floor_capture_eff"),
-            "median_capture_eff": best.get("median_capture_eff"),
-            "mean_capture_eff": best.get("avg_pct_move"),
-            "floor_adr": min(adr_list) if adr_list else None,
-            "median_adr": float(sorted(adr_list)[len(adr_list)//2]) if adr_list else None,
-            "mean_adr": float(sum(adr_list)/len(adr_list)) if adr_list else None,
-            "avg_bars_to_exit": best.get("avg_bars_to_exit"),
-            "n_examples": pd_.get("n_examples"),
-            "results": results,
-        }
-
-    if ms_path.exists():
-        with open(ms_path) as f:
-            md = json.load(f)
-        r = md.get("result")
-        if r:
-            out["multi"] = {
-                "n_stages": r.get("n_stages"),
-                "floor_capture_eff": r.get("floor_capture_eff"),
-                "median_capture_eff": r.get("median_capture_eff"),
-                "avg_capture_eff": r.get("avg_capture_eff"),
-                "avg_bars_to_full_exit": r.get("avg_bars_to_full_exit"),
-                "stages": r.get("stages", []),
-                "n_examples": md.get("n_examples"),
-            }
-
-    if choice_path.exists():
-        with open(choice_path) as f:
-            out["choice"] = json.load(f).get("choice")
-
-    if out["single"] is None and out["multi"] is None:
-        raise HTTPException(404, f"No exit grinder results for {setup_type}. Run setup_grinder_a first.")
-
-    return out
-
-
-@app.post("/api/exit-grind/{setup_type}/choose")
-async def choose_exit_grind(setup_type: str, request: Request):
-    """Store user's choice of single or multi-stage exit. Unlocks setup_grinder_b."""
-    body = await request.json()
-    choice = body.get("choice")
-    if choice not in ("single", "multi"):
-        raise HTTPException(400, "choice must be 'single' or 'multi'")
-    out_dir = VETTING_DATA_DIR / "exit_grind_choice"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{setup_type}.json"
-    with open(path, "w") as f:
-        json.dump({"choice": choice, "set_at": datetime.now().isoformat()}, f)
-    return {"status": "ok", "choice": choice}
-
-
-@app.get("/api/exit-grind/{setup_type}/choice")
-async def get_exit_grind_choice(setup_type: str):
-    """Get current exit choice for this setup. 404 if none chosen yet."""
-    path = VETTING_DATA_DIR / "exit_grind_choice" / f"{setup_type}.json"
-    if not path.exists():
-        raise HTTPException(404, f"No exit choice made for {setup_type}.")
-    with open(path) as f:
-        return json.load(f)
-
-
-@app.post("/api/exit-grind/{setup_type}/clear-choice")
-async def clear_exit_grind_choice(setup_type: str):
-    """Clear the exit choice, re-locking setup_grinder_b."""
-    path = VETTING_DATA_DIR / "exit_grind_choice" / f"{setup_type}.json"
-    if path.exists():
-        path.unlink()
-    return {"status": "ok", "cleared": True}
+def _is_dup(sig, example_dates):
+    t=sig.get("ticker","")
+    if t not in example_dates: return False
+    try: sig_dt=datetime.strptime(sig["date"],"%Y-%m-%d")
+    except: return False
+    return any(abs((sig_dt-ex_dt).days)<=5 for ex_dt in example_dates[t])
 
 
 @app.get("/api/vetting/{setup_type}/signals")
 async def get_vetting_signals(setup_type: str):
-    """Load filtered signals for chart vetting. Ranked by move_adr descending."""
-    path = VETTING_DATA_DIR / "signal_filter" / f"filtered_{setup_type}.json"
-    if not path.exists():
-        raise HTTPException(404, f"No filtered signals for {setup_type}. Run signal_filter.py first.")
-    with open(path) as f:
-        data = json.load(f)
-    # Load existing vetting decisions
-    vetting_path = VETTING_DATA_DIR / "vetting" / f"vetting_{setup_type}.json"
-    decisions = {}
-    if vetting_path.exists():
-        with open(vetting_path) as f:
-            decisions = json.load(f)
-    signals = data.get("signals", [])
-
-    # Load existing examples and exclude signals that duplicate them
-    with get_db() as db:
-        examples = db.execute(
-            "SELECT ticker, entry_date FROM examples WHERE setup_type=?",
-            (setup_type,)
-        ).fetchall()
-    example_dates = {}  # ticker -> set of entry dates as datetime
-    for ex in examples:
-        t, d = ex["ticker"], ex["entry_date"]
-        if t not in example_dates:
-            example_dates[t] = []
-        try:
-            example_dates[t].append(datetime.strptime(d, "%Y-%m-%d"))
-        except:
-            pass
-
-    def is_example_dup(sig):
-        t = sig.get("ticker", "")
-        if t not in example_dates:
-            return False
-        try:
-            sig_dt = datetime.strptime(sig["date"], "%Y-%m-%d")
-        except:
-            return False
-        for ex_dt in example_dates[t]:
-            if abs((sig_dt - ex_dt).days) <= 5:
-                return True
-        return False
-
-    signals = [s for s in signals if not is_example_dup(s)]
-
-    # Attach existing decisions
+    path=VETTING_DATA_DIR/"signal_filter"/f"filtered_{setup_type}.json"
+    if not path.exists(): raise HTTPException(404,f"No filtered signals for {setup_type}. Run signal_filter.py first.")
+    data=_load_json(path,{})
+    decisions=_load_json(VETTING_DATA_DIR/"vetting"/f"vetting_{setup_type}.json",{})
+    signals=[s for s in data.get("signals",[]) if not _is_dup(s,_get_example_dates(setup_type))]
     for sig in signals:
-        key = f"{sig['ticker']}_{sig['date']}"
-        sig["verdict"] = decisions.get(key, {}).get("verdict")
-        sig["entry_date"] = decisions.get(key, {}).get("entry_date")
-    return {
-        "setup_type": setup_type,
-        "n_signals": len(signals),
-        "exit_condition": data.get("exit_condition", ""),
-        "min_adr_threshold": data.get("min_adr_threshold", 0),
-        "signals": signals,
-    }
+        key=f"{sig['ticker']}_{sig['date']}"
+        sig["verdict"]=decisions.get(key,{}).get("verdict")
+        sig["entry_date"]=decisions.get(key,{}).get("entry_date")
+    return {"setup_type":setup_type,"n_signals":len(signals),
+            "exit_condition":data.get("exit_condition",""),
+            "min_adr_threshold":data.get("min_adr_threshold",0),"signals":signals}
 
 
 @app.get("/api/setup-grinder/{setup_type}/signals")
 async def get_setup_grinder_signals(setup_type: str):
-    """Load refined signals from setup_refiner for Step 4 vetting. Returns all signals including those without an exit trigger."""
-    path = VETTING_DATA_DIR / "setup_refiner" / f"refined_{setup_type}.json"
-    if not path.exists():
-        raise HTTPException(404, f"No refined signals for {setup_type}. Run setup_refiner.py first.")
-    with open(path) as f:
-        data = json.load(f)
-    # Load existing vetting decisions (shared with Step 2 vetting)
-    vetting_path = VETTING_DATA_DIR / "vetting" / f"vetting_{setup_type}.json"
-    decisions = {}
-    if vetting_path.exists():
-        with open(vetting_path) as f:
-            decisions = json.load(f)
-    signals = data.get("signals", [])
-
-    # Exclude signals that duplicate existing examples (same logic as Step 2)
-    with get_db() as db:
-        examples = db.execute(
-            "SELECT ticker, entry_date FROM examples WHERE setup_type=?",
-            (setup_type,)
-        ).fetchall()
-    example_dates = {}
-    for ex in examples:
-        t, d = ex["ticker"], ex["entry_date"]
-        if t not in example_dates:
-            example_dates[t] = []
-        try:
-            example_dates[t].append(datetime.strptime(d, "%Y-%m-%d"))
-        except:
-            pass
-
-    def is_example_dup(sig):
-        t = sig.get("ticker", "")
-        if t not in example_dates:
-            return False
-        try:
-            sig_dt = datetime.strptime(sig["date"], "%Y-%m-%d")
-        except:
-            return False
-        for ex_dt in example_dates[t]:
-            if abs((sig_dt - ex_dt).days) <= 5:
-                return True
-        return False
-
-    signals = [s for s in signals if not is_example_dup(s)]
-
-    # Attach existing decisions
+    path=VETTING_DATA_DIR/"setup_refiner"/f"refined_{setup_type}.json"
+    if not path.exists(): raise HTTPException(404,f"No refined signals for {setup_type}. Run setup_refiner.py first.")
+    data=_load_json(path,{})
+    decisions=_load_json(VETTING_DATA_DIR/"vetting"/f"vetting_{setup_type}.json",{})
+    signals=[s for s in data.get("signals",[]) if not _is_dup(s,_get_example_dates(setup_type))]
     for sig in signals:
-        key = f"{sig['ticker']}_{sig['date']}"
-        sig["verdict"] = decisions.get(key, {}).get("verdict")
-        sig["entry_date"] = decisions.get(key, {}).get("entry_date")
-    return {
-        "setup_type": setup_type,
-        "n_signals": len(signals),
-        "signals": signals,
-    }
+        key=f"{sig['ticker']}_{sig['date']}"
+        sig["verdict"]=decisions.get(key,{}).get("verdict")
+        sig["entry_date"]=decisions.get(key,{}).get("entry_date")
+    return {"setup_type":setup_type,"n_signals":len(signals),"signals":signals}
 
 
 @app.get("/api/vetting/{setup_type}/ohlcv/{ticker}")
 async def get_vetting_ohlcv(setup_type: str, ticker: str,
-                             signal_date: str = Query(...),
-                             lookback: int = Query(120),
-                             forward: int = Query(80)):
-    """Fetch OHLCV centered on signal date for chart vetting."""
+                             signal_date: str=Query(...), lookback: int=Query(120), forward: int=Query(80)):
+    df = _get_ohlcv(ticker)
+    if df is None or df.empty: raise HTTPException(404,f"No OHLCV for {ticker}")
+    # Convert to list of dicts with string dates for JSON response
+    all_data = [{"date":r["date"].strftime("%Y-%m-%d") if hasattr(r["date"],"strftime") else str(r["date"]),
+                 "open":float(r["open"]),"high":float(r["high"]),"low":float(r["low"]),
+                 "close":float(r["close"]),"volume":float(r["volume"])} for _,r in df.iterrows()]
+    dates = [d["date"] for d in all_data]
+    try: sig_idx=dates.index(signal_date)
+    except ValueError:
+        sig_idx=min(range(len(dates)),key=lambda i:abs((datetime.strptime(dates[i],"%Y-%m-%d")-datetime.strptime(signal_date,"%Y-%m-%d")).days))
+    return {"ticker":ticker,"signal_date":signal_date,"data":all_data[max(0,sig_idx-lookback):min(len(all_data),sig_idx+forward)]}
+
+
+@app.get("/api/vetting/{setup_type}/refinement-signals")
+async def get_refinement_signals(setup_type: str, pile: str = Query("post")):
+    """Serve signals from the latest refinement JSON.
+    pile=pre: all signals (winners + losers + eliminated)
+    pile=post: winners + surviving losers only (eliminated removed)
+    """
+    # Find latest refinement file
     with get_db() as db:
         rows = db.execute(
-            "SELECT date, open, high, low, close, volume FROM universe_ohlcv "
-            "WHERE ticker=? ORDER BY date",
-            (ticker,)
+            "SELECT path, data FROM file_mirror WHERE path LIKE ? ORDER BY created_at DESC LIMIT 1",
+            (f"local_runner/cache/refinement_{setup_type}_%",),
         ).fetchall()
     if not rows:
-        raise HTTPException(404, f"No OHLCV for {ticker}")
-    all_data = [dict(r) for r in rows]
-    dates = [r["date"] for r in all_data]
-    try:
-        sig_idx = dates.index(signal_date)
-    except ValueError:
-        # Find nearest date
-        sig_idx = min(range(len(dates)), key=lambda i: abs(
-            (datetime.strptime(dates[i], "%Y-%m-%d") - datetime.strptime(signal_date, "%Y-%m-%d")).days))
-    start = max(0, sig_idx - lookback)
-    end = min(len(all_data), sig_idx + forward)
-    return {"ticker": ticker, "signal_date": signal_date, "data": all_data[start:end]}
+        raise HTTPException(404, f"No refinement data for {setup_type}. Run the refinement grind first.")
+    data = _json.loads(rows[0]["data"])
+    winners = data.get("winner_signals", [])
+    losers = data.get("loser_signals", [])
+    eliminated = data.get("eliminated_signals", [])
+    # Tag each signal with its pile
+    for s in winners:
+        s["pile"] = "winner"
+    for s in losers:
+        s["pile"] = "loser"
+    for s in eliminated:
+        s["pile"] = "eliminated"
+    if pile == "pre":
+        signals = winners + losers + eliminated
+    elif pile == "winners":
+        signals = winners
+    else:
+        signals = winners + losers
+    # Normalize field names for the vetting UI
+    vetting_decisions = _load_json(VETTING_DATA_DIR / "vetting" / f"vetting_{setup_type}.json", {})
+    example_dates = _get_example_dates(setup_type)
+    # Also load rejected signals from DB
+    with get_db() as db:
+        rejected_rows = db.execute(
+            "SELECT ticker, signal_date FROM rejected_signals WHERE setup_type=?", (setup_type,)
+        ).fetchall()
+    rejected_set = set(f"{r['ticker']}_{r['signal_date']}" for r in rejected_rows)
+    out = []
+    for s in signals:
+        sig_date = s.get("signal_date", s.get("date", ""))
+        tk = s.get("ticker", "")
+        # Skip if it's already an example
+        if _is_dup({"ticker": tk, "date": sig_date}, example_dates):
+            continue
+        key = f"{tk}_{sig_date}"
+        verdict_data = vetting_decisions.get(key, {})
+        verdict = verdict_data.get("verdict")
+        if not verdict and key in rejected_set:
+            verdict = "no"
+        out.append({
+            "ticker": tk,
+            "signal_date": sig_date,
+            "date": sig_date,
+            "move_adr": clean_val(s.get("move_adr")),
+            "adr_at_signal": clean_val(s.get("adr_at_signal")),
+            "classification": s.get("classification"),
+            "pile": s.get("pile"),
+            "is_example": s.get("is_example", 0),
+            "verdict": verdict,
+            "entry_date": verdict_data.get("entry_date"),
+        })
+    n_winners = sum(1 for s in out if s["pile"] == "winner")
+    n_losers = sum(1 for s in out if s["pile"] == "loser")
+    n_eliminated = sum(1 for s in out if s["pile"] == "eliminated")
+    return {
+        "setup_type": setup_type,
+        "pile": pile,
+        "n_signals": len(out),
+        "n_winners": n_winners,
+        "n_losers": n_losers,
+        "n_eliminated": n_eliminated,
+        "signals": out,
+    }
 
 
 class VettingDecision(BaseModel):
-    ticker: str
-    signal_date: str
-    verdict: str  # "yes", "maybe", "no"
-    entry_date: str = None  # required for "yes"
+    ticker: str; signal_date: str; verdict: str; entry_date: str = None
 
 
 @app.post("/api/vetting/{setup_type}/decide")
 async def save_vetting_decision(setup_type: str, req: VettingDecision):
-    """Save a vetting decision for a signal."""
-    if req.verdict not in ("yes", "maybe", "no"):
-        raise HTTPException(400, "verdict must be yes/maybe/no")
-    if req.verdict == "yes" and not req.entry_date:
-        raise HTTPException(400, "entry_date required for yes verdict")
-
-    vetting_dir = VETTING_DATA_DIR / "vetting"
-    vetting_dir.mkdir(exist_ok=True)
-    vetting_path = vetting_dir / f"vetting_{setup_type}.json"
-
-    decisions = {}
-    if vetting_path.exists():
-        with open(vetting_path) as f:
-            decisions = json.load(f)
-
-    key = f"{req.ticker}_{req.signal_date}"
-    decisions[key] = {
-        "ticker": req.ticker,
-        "signal_date": req.signal_date,
-        "verdict": req.verdict,
-        "entry_date": req.entry_date,
-        "timestamp": datetime.now().isoformat(),
-    }
-
-    with open(vetting_path, "w") as f:
-        json.dump(decisions, f, indent=2)
-
-    # If yes, add to pending (AI review gate before becoming example)
-    result = {"status": "saved", "verdict": req.verdict}
-    if req.verdict == "yes":
+    if req.verdict not in ("yes","maybe","no"): raise HTTPException(400,"verdict must be yes/maybe/no")
+    if req.verdict=="yes" and not req.entry_date: raise HTTPException(400,"entry_date required for yes verdict")
+    vetting_dir=VETTING_DATA_DIR/"vetting"; vetting_dir.mkdir(exist_ok=True)
+    vetting_path=vetting_dir/f"vetting_{setup_type}.json"
+    decisions=_load_json(vetting_path,{})
+    key=f"{req.ticker}_{req.signal_date}"
+    decisions[key]={"ticker":req.ticker,"signal_date":req.signal_date,"verdict":req.verdict,
+                    "entry_date":req.entry_date,"timestamp":datetime.now().isoformat()}
+    _save_json(vetting_path,decisions)
+    result={"status":"saved","verdict":req.verdict}
+    if req.verdict=="yes":
         try:
             with get_db() as db:
-                existing = db.execute(
-                    "SELECT id FROM pending_examples WHERE setup_type=? AND ticker=? AND entry_date=?",
-                    (setup_type, req.ticker, req.entry_date)
-                ).fetchone()
-                if not existing:
-                    db.execute(
-                        "INSERT INTO pending_examples (setup_type, ticker, signal_date, entry_date) VALUES (?,?,?,?)",
-                        (setup_type, req.ticker, req.signal_date, req.entry_date)
-                    )
-                    result["message"] = f"Added to pending review: {req.ticker} {req.entry_date}"
-                else:
-                    result["message"] = f"Already pending: {req.ticker} {req.entry_date}"
-        except Exception as e:
-            result["example_error"] = str(e)
-
-        # Auto-queue sample_review job so AI audit starts immediately
+                if not db.execute("SELECT id FROM pending_examples WHERE setup_type=? AND ticker=? AND entry_date=?",(setup_type,req.ticker,req.entry_date)).fetchone():
+                    db.execute("INSERT INTO pending_examples (setup_type,ticker,signal_date,entry_date) VALUES (?,?,?,?)",(setup_type,req.ticker,req.signal_date,req.entry_date))
+                    result["message"]=f"Added to pending review: {req.ticker} {req.entry_date}"
+                else: result["message"]=f"Already pending: {req.ticker} {req.entry_date}"
+        except Exception as e: result["example_error"]=str(e)
+        # Auto-queue AI review if agent idle
         try:
-            state = _load_pipeline_state()
-            now = datetime.utcnow()
-            agent = _load_grinder_json(GRINDER_AGENT_FILE, {})
-            last_hb = agent.get("last_heartbeat", "")
-            agent_alive = False
+            state=_load_pipeline_state(); agent=_load_json(GRINDER_AGENT_FILE,{})
+            last_hb=agent.get("last_heartbeat",""); agent_alive=False
             if last_hb:
                 try:
-                    hb_time = datetime.fromisoformat(last_hb.replace('+00:00', '').replace('Z', ''))
-                    agent_alive = (now - hb_time).total_seconds() < 30
-                except:
-                    pass
-            # Only queue if agent is alive and no other step is actively running
-            active_other = [j for j in state.get("jobs", [])
-                            if j.get("status") in ("queued", "running", "claimed")
-                            and j.get("step_id") != "sample_review"]
-            already_queued = any(j.get("step_id") == "sample_review"
-                                 and j.get("status") in ("queued", "running", "claimed")
-                                 for j in state.get("jobs", []))
+                    hb=datetime.fromisoformat(last_hb.replace('+00:00','').replace('Z',''))
+                    agent_alive=(datetime.utcnow()-hb).total_seconds()<30
+                except: pass
+            active_other=[j for j in state.get("jobs",[]) if j.get("status") in ("queued","running","claimed") and j.get("step_id")!="sample_review"]
+            already_queued=any(j.get("step_id")=="sample_review" and j.get("status") in ("queued","running","claimed") for j in state.get("jobs",[]))
             if agent_alive and not active_other and not already_queued:
-                state["jobs"] = [j for j in state.get("jobs", []) if j.get("step_id") != "sample_review"]
-                job = {
-                    "job_id": f"pipe_sample_review_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                    "step_id": "sample_review", "status": "queued", "params": {"setup": setup_type},
-                    "created_at": datetime.now().isoformat(),
-                }
-                state.setdefault("jobs", []).append(job)
-                state.setdefault("steps", {})["sample_review"] = {
-                    "status": "queued", "started_at": None, "finished_at": None,
-                    "duration_s": None, "exit_code": None, "error": None, "result_summary": None,
-                }
-                _save_pipeline_state(state)
-                logs = _load_pipeline_logs()
-                logs["sample_review"] = []
-                _save_pipeline_logs(logs)
-                result["review_queued"] = True
-        except Exception as e:
-            result["review_queue_error"] = str(e)
-
-    elif req.verdict == "no":
+                state["jobs"]=[j for j in state.get("jobs",[]) if j.get("step_id")!="sample_review"]
+                job={"job_id":f"pipe_sample_review_{datetime.now().strftime('%Y%m%d_%H%M%S')}","step_id":"sample_review",
+                     "status":"queued","params":{"setup":setup_type},"created_at":datetime.now().isoformat()}
+                state.setdefault("jobs",[]).append(job)
+                state.setdefault("steps",{})["sample_review"]={"status":"queued","started_at":None,"finished_at":None,"duration_s":None,"exit_code":None,"error":None,"result_summary":None}
+                _save_pipeline_state(state); logs=_load_pipeline_logs(); logs["sample_review"]=[]; _save_pipeline_logs(logs)
+                result["review_queued"]=True
+        except Exception as e: result["review_queue_error"]=str(e)
+    elif req.verdict=="no":
         try:
             with get_db() as db:
-                db.execute(
-                    "INSERT OR IGNORE INTO rejected_signals (setup_type, ticker, signal_date) VALUES (?,?,?)",
-                    (setup_type, req.ticker, req.signal_date)
-                )
-            result["message"] = f"Rejected: {req.ticker} {req.signal_date}"
-        except Exception as e:
-            result["reject_error"] = str(e)
-
+                db.execute("INSERT OR IGNORE INTO rejected_signals (setup_type,ticker,signal_date) VALUES (?,?,?)",(setup_type,req.ticker,req.signal_date))
+            result["message"]=f"Rejected: {req.ticker} {req.signal_date}"
+        except Exception as e: result["reject_error"]=str(e)
     return result
 
 
 @app.get("/api/vetting/earnings/{ticker}")
 async def get_earnings_dates(ticker: str):
-    """Get earnings dates — cached in DB, fetched on-demand from Yahoo if missing."""
-    ticker = ticker.upper()
+    ticker=ticker.upper()
     try:
         with get_db() as db:
-            rows = db.execute(
-                "SELECT earnings_date FROM earnings_dates WHERE ticker = ? ORDER BY earnings_date",
-                [ticker]
-            ).fetchall()
-            dates = [r[0] for r in rows]
-        if dates:
-            return {"ticker": ticker, "earnings_dates": dates}
-        # Cache miss — fetch from Yahoo
-        import yfinance as yf
-        t = yf.Ticker(ticker)
-        cal = t.get_earnings_dates(limit=20)
+            rows=db.execute("SELECT earnings_date FROM earnings_dates WHERE ticker=? ORDER BY earnings_date",[ticker]).fetchall()
+            dates=[r[0] for r in rows]
+        if dates: return {"ticker":ticker,"earnings_dates":dates}
+        t=yf.Ticker(ticker); cal=t.get_earnings_dates(limit=20)
         if cal is not None and not cal.empty:
-            dates = [d.strftime("%Y-%m-%d") for d in cal.index]
+            dates=[d.strftime("%Y-%m-%d") for d in cal.index]
             with get_db() as db:
                 for d in dates:
-                    db.execute(
-                        "INSERT OR REPLACE INTO earnings_dates (ticker, earnings_date, updated_at) VALUES (?, ?, datetime('now'))",
-                        [ticker, d]
-                    )
-                db.commit()
-            return {"ticker": ticker, "earnings_dates": sorted(dates)}
-        return {"ticker": ticker, "earnings_dates": []}
-    except Exception as e:
-        return {"ticker": ticker, "earnings_dates": [], "error": str(e)}
-
-
-@app.get("/api/pending/{setup_type}")
-async def get_pending_examples(setup_type: str):
-    """Get pending examples awaiting AI review."""
-    try:
-        with get_db() as db:
-            rows = db.execute(
-                "SELECT id, ticker, signal_date, entry_date, status, ai_verdict, ai_reasoning, review_notes, created_at FROM pending_examples WHERE setup_type=? ORDER BY created_at DESC",
-                [setup_type]
-            ).fetchall()
-        return {"pending": [dict(r) for r in rows]}
-    except Exception as e:
-        return {"pending": [], "error": str(e)}
-
-
-@app.post("/api/pending/{setup_type}/backfill")
-async def backfill_pending(setup_type: str):
-    """Backfill YES vetting decisions that missed the pending table."""
-    vetting_path = VETTING_DATA_DIR / "vetting" / f"vetting_{setup_type}.json"
-    if not vetting_path.exists():
-        return {"status": "no vetting file", "added": 0}
-    with open(vetting_path) as f:
-        decisions = json.load(f)
-    added = 0
-    with get_db() as db:
-        for key, v in decisions.items():
-            if v.get("verdict") != "yes":
-                continue
-            ticker = v["ticker"]
-            entry_date = v.get("entry_date")
-            signal_date = v.get("signal_date", "")
-            if not entry_date:
-                continue
-            # Skip if already in examples
-            existing_ex = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
-                (setup_type, ticker, entry_date)).fetchone()
-            if existing_ex:
-                continue
-            # Skip if already pending
-            existing_p = db.execute("SELECT id FROM pending_examples WHERE setup_type=? AND ticker=? AND entry_date=?",
-                (setup_type, ticker, entry_date)).fetchone()
-            if existing_p:
-                continue
-            db.execute("INSERT OR IGNORE INTO pending_examples (setup_type, ticker, signal_date, entry_date) VALUES (?,?,?,?)",
-                (setup_type, ticker, signal_date, entry_date))
-            added += 1
-    return {"status": "ok", "added": added}
-
-
-@app.post("/api/pending/{setup_type}/{pending_id}/approve")
-async def approve_pending(setup_type: str, pending_id: int):
-    """Approve pending example — move to examples table."""
-    with get_db() as db:
-        row = db.execute("SELECT * FROM pending_examples WHERE id=? AND setup_type=?", (pending_id, setup_type)).fetchone()
-        if not row:
-            raise HTTPException(404, "Not found")
-        ticker, entry_date = row["ticker"], row["entry_date"]
-        existing = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?", (setup_type, ticker, entry_date)).fetchone()
-        if not existing:
-            ohlcv_df = fetch_ohlcv(ticker, entry_date)
-            if ohlcv_df is not None:
-                eid = db.execute("INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
-                    (setup_type, ticker, entry_date, entry_date)).lastrowid
-                store_ohlcv(db, eid, ohlcv_df)
-        db.execute("DELETE FROM pending_examples WHERE id=?", (pending_id,))
-    return {"status": "approved", "ticker": ticker, "entry_date": entry_date}
-
-
-@app.post("/api/pending/{setup_type}/{pending_id}/reject")
-async def reject_pending(setup_type: str, pending_id: int):
-    """Reject pending example — remove from pending, add to rejected."""
-    with get_db() as db:
-        row = db.execute("SELECT * FROM pending_examples WHERE id=? AND setup_type=?", (pending_id, setup_type)).fetchone()
-        if not row:
-            raise HTTPException(404, "Not found")
-        db.execute("INSERT OR IGNORE INTO rejected_signals (setup_type, ticker, signal_date) VALUES (?,?,?)",
-            (setup_type, row["ticker"], row["signal_date"]))
-        db.execute("DELETE FROM pending_examples WHERE id=?", (pending_id,))
-    return {"status": "rejected", "ticker": row["ticker"]}
-
-
-@app.post("/api/pending/{setup_type}/{pending_id}/review")
-async def store_ai_review(setup_type: str, pending_id: int, request: Request):
-    """Store AI verdict + reasoning on a pending example."""
-    body = await request.json()
-    ai_verdict = body.get("ai_verdict", "")
-    ai_reasoning = body.get("ai_reasoning", "")
-    with get_db() as db:
-        row = db.execute("SELECT id FROM pending_examples WHERE id=? AND setup_type=?", (pending_id, setup_type)).fetchone()
-        if not row:
-            raise HTTPException(404, "Not found")
-        db.execute(
-            "UPDATE pending_examples SET ai_verdict=?, ai_reasoning=?, status='reviewed', reviewed_at=datetime('now') WHERE id=?",
-            (ai_verdict, ai_reasoning, pending_id)
-        )
-    return {"status": "ok", "ai_verdict": ai_verdict}
-
-
-@app.post("/api/pending/{setup_type}/reset-reviews")
-async def reset_pending_reviews(setup_type: str):
-    """Reset all AI reviews so they get re-reviewed."""
-    with get_db() as db:
-        db.execute("UPDATE pending_examples SET ai_verdict=NULL, ai_reasoning=NULL, status='pending', reviewed_at=NULL WHERE setup_type=?", [setup_type])
-        n = db.execute("SELECT changes()").fetchone()[0]
-    return {"status": "ok", "reset": n}
-
-
-@app.post("/api/pending/{setup_type}/approve-all")
-async def approve_all_pending(setup_type: str):
-    """Approve all AI-approved pending examples at once."""
-    with get_db() as db:
-        rows = db.execute("SELECT * FROM pending_examples WHERE setup_type=? AND ai_verdict='APPROVE'", [setup_type]).fetchall()
-        approved = 0
-        for row in rows:
-            existing = db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",
-                (setup_type, row["ticker"], row["entry_date"])).fetchone()
-            if not existing:
-                ohlcv_df = fetch_ohlcv(row["ticker"], row["entry_date"])
-                if ohlcv_df is not None:
-                    eid = db.execute("INSERT INTO examples (setup_type, ticker, chart_date, entry_date) VALUES (?,?,?,?)",
-                        (setup_type, row["ticker"], row["entry_date"], row["entry_date"])).lastrowid
-                    store_ohlcv(db, eid, ohlcv_df)
-                    approved += 1
-        db.execute("DELETE FROM pending_examples WHERE setup_type=? AND ai_verdict='APPROVE'", [setup_type])
-    return {"status": "ok", "approved": approved}
-
-
-@app.post("/api/universe/refresh-earnings")
-async def refresh_earnings(background_tasks: BackgroundTasks):
-    """Batch scrape earnings dates for all tradable tickers, store in DB."""
-    def _do_refresh():
-        import yfinance as yf
-        import time as _time
-
-        with get_db() as db:
-            tickers = [r[0] for r in db.execute("SELECT ticker FROM tradable_universe ORDER BY ticker").fetchall()]
-
-        total = len(tickers)
-        success = 0
-        failed = 0
-        total_dates = 0
-        t0 = _time.time()
-
-        print(f"  Earnings refresh: {total} tickers")
-
-        for i, ticker in enumerate(tickers):
-            try:
-                t = yf.Ticker(ticker)
-                cal = t.get_earnings_dates(limit=20)
-                if cal is not None and not cal.empty:
-                    dates = [d.strftime("%Y-%m-%d") for d in cal.index]
-                    with get_db() as db:
-                        for d in dates:
-                            db.execute(
-                                "INSERT OR REPLACE INTO earnings_dates (ticker, earnings_date, updated_at) VALUES (?, ?, datetime('now'))",
-                                [ticker, d]
-                            )
-                        db.commit()
-                    total_dates += len(dates)
-                success += 1
-            except Exception as e:
-                failed += 1
-
-            if (i + 1) % 100 == 0:
-                elapsed = _time.time() - t0
-                rate = (i + 1) / elapsed
-                eta = (total - i - 1) / rate if rate > 0 else 0
-                print(f"    {i+1}/{total} ({success} ok, {failed} fail, {total_dates} dates, ETA {eta:.0f}s)")
-
-            # Rate limit: ~2 per second to avoid Yahoo throttling
-            if (i + 1) % 2 == 0:
-                _time.sleep(0.5)
-
-        elapsed = _time.time() - t0
-        print(f"  Earnings refresh done: {success}/{total} tickers, {total_dates} dates, {elapsed:.0f}s")
-
-    background_tasks.add_task(_do_refresh)
-    return {"status": "started", "message": "Earnings refresh running in background"}
-
-
-@app.get("/api/universe/earnings-status")
-async def earnings_status():
-    """Check earnings data freshness."""
-    with get_db() as db:
-        count = db.execute("SELECT COUNT(DISTINCT ticker) FROM earnings_dates").fetchone()[0]
-        total_dates = db.execute("SELECT COUNT(*) FROM earnings_dates").fetchone()[0]
-        latest = db.execute("SELECT MAX(updated_at) FROM earnings_dates").fetchone()[0]
-    return {"tickers_with_earnings": count, "total_dates": total_dates, "last_updated": latest}
+                    db.execute("INSERT OR REPLACE INTO earnings_dates (ticker,earnings_date,updated_at) VALUES (?,?,datetime('now'))",[ticker,d])
+            return {"ticker":ticker,"earnings_dates":sorted(dates)}
+        return {"ticker":ticker,"earnings_dates":[]}
+    except Exception as e: return {"ticker":ticker,"earnings_dates":[],"error":str(e)}
 
 
 @app.get("/api/vetting/{setup_type}/rejected")
 async def get_rejected_signals(setup_type: str):
-    """Get all rejected signals for a setup type."""
+    with get_db() as db:
+        rows=db.execute("SELECT ticker,signal_date,created_at FROM rejected_signals WHERE setup_type=? ORDER BY created_at DESC",(setup_type,)).fetchall()
+    return {"setup_type":setup_type,"count":len(rows),"rejected":[dict(r) for r in rows]}
+
+
+# ============================================================
+# PENDING / AI REVIEW
+# ============================================================
+
+@app.get("/api/pending/{setup_type}")
+async def get_pending_examples(setup_type: str):
+    try:
+        with get_db() as db:
+            rows=db.execute("SELECT id,ticker,signal_date,entry_date,status,ai_verdict,ai_reasoning,review_notes,created_at FROM pending_examples WHERE setup_type=? ORDER BY created_at DESC",[setup_type]).fetchall()
+        return {"pending":[dict(r) for r in rows]}
+    except Exception as e: return {"pending":[],"error":str(e)}
+
+
+@app.post("/api/pending/{setup_type}/backfill")
+async def backfill_pending(setup_type: str):
+    vp=VETTING_DATA_DIR/"vetting"/f"vetting_{setup_type}.json"
+    if not vp.exists(): return {"status":"no vetting file","added":0}
+    decisions=_load_json(vp,{}); added=0
+    with get_db() as db:
+        for key,v in decisions.items():
+            if v.get("verdict")!="yes": continue
+            ticker=v["ticker"]; entry_date=v.get("entry_date"); signal_date=v.get("signal_date","")
+            if not entry_date: continue
+            if db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",(setup_type,ticker,entry_date)).fetchone(): continue
+            if db.execute("SELECT id FROM pending_examples WHERE setup_type=? AND ticker=? AND entry_date=?",(setup_type,ticker,entry_date)).fetchone(): continue
+            db.execute("INSERT OR IGNORE INTO pending_examples (setup_type,ticker,signal_date,entry_date) VALUES (?,?,?,?)",(setup_type,ticker,signal_date,entry_date)); added+=1
+    return {"status":"ok","added":added}
+
+
+@app.post("/api/pending/{setup_type}/{pending_id}/approve")
+async def approve_pending(setup_type: str, pending_id: int):
+    with get_db() as db:
+        row=db.execute("SELECT * FROM pending_examples WHERE id=? AND setup_type=?",(pending_id,setup_type)).fetchone()
+        if not row: raise HTTPException(404,"Not found")
+        ticker,entry_date=row["ticker"],row["entry_date"]
+        if not db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",(setup_type,ticker,entry_date)).fetchone():
+            ohlcv_df = _get_ohlcv(ticker)
+            if ohlcv_df is not None:
+                ohlcv_df = ohlcv_df.rename(columns={"date":"Date","open":"Open","high":"High","low":"Low","close":"Close","volume":"Volume"})
+            elif IS_RAILWAY:
+                ohlcv_df = fetch_ohlcv_yf(ticker, entry_date)
+            if ohlcv_df is not None:
+                eid=db.execute("INSERT INTO examples (setup_type,ticker,chart_date,entry_date) VALUES (?,?,?,?)",(setup_type,ticker,entry_date,entry_date)).lastrowid
+                store_ohlcv(db,eid,ohlcv_df)
+        db.execute("DELETE FROM pending_examples WHERE id=?",(pending_id,))
+    return {"status":"approved","ticker":ticker,"entry_date":entry_date}
+
+
+@app.post("/api/pending/{setup_type}/{pending_id}/reject")
+async def reject_pending(setup_type: str, pending_id: int):
+    with get_db() as db:
+        row=db.execute("SELECT * FROM pending_examples WHERE id=? AND setup_type=?",(pending_id,setup_type)).fetchone()
+        if not row: raise HTTPException(404,"Not found")
+        db.execute("INSERT OR IGNORE INTO rejected_signals (setup_type,ticker,signal_date) VALUES (?,?,?)",(setup_type,row["ticker"],row["signal_date"]))
+        db.execute("DELETE FROM pending_examples WHERE id=?",(pending_id,))
+    return {"status":"rejected","ticker":row["ticker"]}
+
+
+@app.post("/api/pending/{setup_type}/{pending_id}/review")
+async def store_ai_review(setup_type: str, pending_id: int, request: Request):
+    body=await request.json()
+    with get_db() as db:
+        if not db.execute("SELECT id FROM pending_examples WHERE id=? AND setup_type=?",(pending_id,setup_type)).fetchone():
+            raise HTTPException(404,"Not found")
+        db.execute("UPDATE pending_examples SET ai_verdict=?,ai_reasoning=?,status='reviewed',reviewed_at=datetime('now') WHERE id=?",
+                   (body.get("ai_verdict",""),body.get("ai_reasoning",""),pending_id))
+    return {"status":"ok","ai_verdict":body.get("ai_verdict","")}
+
+
+@app.post("/api/pending/{setup_type}/reset-reviews")
+async def reset_pending_reviews(setup_type: str):
+    with get_db() as db:
+        db.execute("UPDATE pending_examples SET ai_verdict=NULL,ai_reasoning=NULL,status='pending',reviewed_at=NULL WHERE setup_type=?",[setup_type])
+        n=db.execute("SELECT changes()").fetchone()[0]
+    return {"status":"ok","reset":n}
+
+
+@app.post("/api/pending/{setup_type}/approve-all")
+async def approve_all_pending(setup_type: str):
+    with get_db() as db:
+        rows=db.execute("SELECT * FROM pending_examples WHERE setup_type=? AND ai_verdict='APPROVE'",[setup_type]).fetchall()
+        approved=0
+        for row in rows:
+            if not db.execute("SELECT id FROM examples WHERE setup_type=? AND ticker=? AND entry_date=?",(setup_type,row["ticker"],row["entry_date"])).fetchone():
+                ohlcv_df = _get_ohlcv(row["ticker"])
+                if ohlcv_df is not None:
+                    ohlcv_df = ohlcv_df.rename(columns={"date":"Date","open":"Open","high":"High","low":"Low","close":"Close","volume":"Volume"})
+                elif IS_RAILWAY:
+                    ohlcv_df = fetch_ohlcv_yf(row["ticker"], row["entry_date"])
+                if ohlcv_df is not None:
+                    eid=db.execute("INSERT INTO examples (setup_type,ticker,chart_date,entry_date) VALUES (?,?,?,?)",(setup_type,row["ticker"],row["entry_date"],row["entry_date"])).lastrowid
+                    store_ohlcv(db,eid,ohlcv_df); approved+=1
+        db.execute("DELETE FROM pending_examples WHERE setup_type=? AND ai_verdict='APPROVE'",[setup_type])
+    return {"status":"ok","approved":approved}
+
+
+# ============================================================
+# UNIVERSE OHLCV
+# ============================================================
+
+@app.post("/api/query/bulk")
+async def query_bulk(request: Request):
+    body=await request.json(); sql=body.get("sql",""); limit=body.get("limit",1000)
+    if not sql: raise HTTPException(400,"sql required")
+    sql_upper=sql.strip().upper()
+    if not sql_upper.startswith("SELECT"): raise HTTPException(400,"Only SELECT queries allowed")
+    for forbidden in ["DROP","DELETE","UPDATE","INSERT","ALTER","CREATE"]:
+        if forbidden in sql_upper: raise HTTPException(400,f"{forbidden} not allowed")
+    try:
+        with get_db() as db:
+            rows=db.execute(sql).fetchall()
+            results=[dict(r) for r in rows[:limit]]
+        return {"results":results,"count":len(results)}
+    except Exception as e: raise HTTPException(500,str(e))
+
+
+@app.post("/api/universe/insert-ohlcv")
+async def insert_ohlcv(request: Request):
+    body=await request.json(); ticker=body.get("ticker","").strip().upper(); rows=body.get("rows",[])
+    if not ticker or not rows: return {"error":"Need ticker and rows"}
+    try:
+        with get_db() as db:
+            db.execute("INSERT OR IGNORE INTO tradable_universe (ticker) VALUES (?)",(ticker,))
+            db.executemany("INSERT OR REPLACE INTO universe_ohlcv (ticker,date,open,high,low,close,volume) VALUES (?,?,?,?,?,?,?)",
+                           [(ticker,r["date"],r["open"],r["high"],r["low"],r["close"],r["volume"]) for r in rows])
+        return {"ok":True,"ticker":ticker,"rows_inserted":len(rows)}
+    except Exception as e: return {"error":str(e)}
+
+
+@app.post("/api/universe/append-daily")
+async def append_daily_data():
+    try:
+        from scripts.fetch_universe import append_daily
+        result = append_daily()
+        return result
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# ============================================================
+# V2 — Cycle management
+# ============================================================
+
+@app.post("/api/v2/cycles")
+async def v2_create_cycle(request: Request):
+    body=await request.json(); cycle_id=body.get("cycle_id"); setup_type=body.get("setup_type")
+    if not cycle_id or not setup_type: raise HTTPException(400,"cycle_id and setup_type required")
+    with get_db() as db:
+        if db.execute("SELECT cycle_id FROM grind_cycles WHERE cycle_id=?",(cycle_id,)).fetchone():
+            return {"cycle_id":cycle_id,"already_exists":True}
+        db.execute("""INSERT INTO grind_cycles (cycle_id,setup_type,status,error_msg,is_current,n_examples_at_grind,created_at,completed_at,step_type,grind_params,source_hash)
+                      VALUES (?,?,?,?,0,?,?,?,?,?,?)""",
+                   (cycle_id,setup_type,body.get("status","complete"),body.get("error_msg"),body.get("n_examples_at_grind"),body.get("created_at"),body.get("completed_at"),
+                    body.get("step_type"),body.get("grind_params"),body.get("source_hash")))
+    return {"cycle_id":cycle_id,"created":True}
+
+
+@app.patch("/api/v2/cycles/{cycle_id}")
+async def v2_patch_cycle(cycle_id: str, request: Request):
+    body=await request.json()
+    ALLOWED={"status","error_msg","step_type","grind_params","source_hash","completed_at","reverted_at"}
+    updates={k:v for k,v in body.items() if k in ALLOWED}
+    if not updates: raise HTTPException(400,"No valid fields to update")
+    with get_db() as db:
+        if not db.execute("SELECT cycle_id FROM grind_cycles WHERE cycle_id=?",(cycle_id,)).fetchone():
+            raise HTTPException(404,f"cycle_id {cycle_id!r} not found")
+        set_clause=", ".join(f"{k}=?" for k in updates)
+        db.execute(f"UPDATE grind_cycles SET {set_clause} WHERE cycle_id=?", list(updates.values())+[cycle_id])
+    return {"cycle_id":cycle_id,"updated":list(updates.keys())}
+
+
+@app.post("/api/v2/cycles/{cycle_id}/conditions")
+async def v2_upload_conditions(cycle_id: str, request: Request):
+    body=await request.json(); conditions=body.get("conditions",[])
+    if not conditions: raise HTTPException(400,"conditions list is empty")
+    with get_db() as db:
+        if not db.execute("SELECT cycle_id FROM grind_cycles WHERE cycle_id=?",(cycle_id,)).fetchone():
+            raise HTTPException(404,f"cycle_id {cycle_id!r} not found")
+        db.execute("DELETE FROM cycle_conditions WHERE cycle_id=?",(cycle_id,))
+        db.executemany("INSERT INTO cycle_conditions (cycle_id,tier,expression_name,low,high,filter_power,sort_order) VALUES (?,?,?,?,?,?,?)",
+                       [(cycle_id,c.get("tier","D1"),c.get("expression_name",""),c.get("low"),c.get("high"),c.get("filter_power"),c.get("sort_order",i)) for i,c in enumerate(conditions)])
+    return {"cycle_id":cycle_id,"inserted":len(conditions)}
+
+
+@app.post("/api/v2/cycles/{cycle_id}/activate")
+async def v2_activate_cycle(cycle_id: str):
+    with get_db() as db:
+        row=db.execute("SELECT setup_type FROM grind_cycles WHERE cycle_id=?",(cycle_id,)).fetchone()
+        if not row: raise HTTPException(404,f"cycle_id {cycle_id!r} not found")
+        setup_type=row["setup_type"]
+        db.execute("UPDATE grind_cycles SET is_current=0 WHERE setup_type=?",(setup_type,))
+        db.execute("UPDATE grind_cycles SET is_current=1 WHERE cycle_id=?",(cycle_id,))
+    return {"cycle_id":cycle_id,"setup_type":setup_type,"message":f"Cycle {cycle_id} is now current for {setup_type}"}
+
+
+@app.get("/api/v2/cycles/{setup_type}")
+async def v2_list_cycles(setup_type: str, step_type: str = None):
+    with get_db() as db:
+        sql="""SELECT gc.cycle_id,gc.status,gc.is_current,gc.n_examples_at_grind,gc.created_at,gc.completed_at,gc.reverted_at,gc.step_type,gc.grind_params,gc.source_hash,COUNT(cc.id) AS n_conditions
+               FROM grind_cycles gc LEFT JOIN cycle_conditions cc ON cc.cycle_id=gc.cycle_id
+               WHERE gc.setup_type=?"""
+        params=[setup_type]
+        if step_type:
+            sql+=" AND gc.step_type=?"
+            params.append(step_type)
+        sql+=" GROUP BY gc.cycle_id ORDER BY gc.created_at DESC"
+        rows=db.execute(sql,params).fetchall()
+    return {"setup_type":setup_type,"cycles":[dict(r) for r in rows]}
+
+
+@app.get("/api/v2/cycles/{cycle_id}/conditions")
+async def v2_get_conditions(cycle_id: str):
+    with get_db() as db:
+        rows=db.execute("SELECT tier,expression_name,low,high,filter_power,sort_order FROM cycle_conditions WHERE cycle_id=? ORDER BY sort_order",(cycle_id,)).fetchall()
+    return {"cycle_id":cycle_id,"conditions":[dict(r) for r in rows]}
+
+
+@app.post("/api/v2/cycles/{cycle_id}/signals")
+async def v2_upload_signals(cycle_id: str, request: Request):
+    body=await request.json(); signals=body.get("signals",[]); replace=body.get("replace",False)
+    if not signals: raise HTTPException(400,"signals list is empty")
+    with get_db() as db:
+        if not db.execute("SELECT cycle_id FROM grind_cycles WHERE cycle_id=?",(cycle_id,)).fetchone():
+            raise HTTPException(404,f"cycle_id {cycle_id!r} not found")
+        if replace: db.execute("DELETE FROM cycle_signals WHERE cycle_id=?",(cycle_id,))
+        db.executemany("INSERT INTO cycle_signals (cycle_id,setup_type,ticker,signal_date,bar_idx,close,adr,is_example,classification,classification_source,exit_triggered,exit_date,move_adr,mfe_adr,capture_eff) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       [(cycle_id,s.get("setup_type",""),s.get("ticker",""),s.get("signal_date",""),s.get("bar_idx"),s.get("close"),s.get("adr"),s.get("is_example",0),s.get("classification"),s.get("classification_source"),s.get("exit_triggered",0),s.get("exit_date"),s.get("move_adr"),s.get("mfe_adr"),s.get("capture_eff")) for s in signals])
+    return {"cycle_id":cycle_id,"inserted":len(signals)}
+
+
+@app.get("/api/v2/cycles/{cycle_id}/signals")
+async def v2_get_signals(cycle_id: str):
+    with get_db() as db:
+        rows=db.execute("SELECT * FROM cycle_signals WHERE cycle_id=? ORDER BY signal_date,ticker",(cycle_id,)).fetchall()
+    return {"cycle_id":cycle_id,"signals":[dict(r) for r in rows]}
+
+
+@app.post("/api/v2/cycles/{cycle_id}/sacrificial_signals")
+async def v2_upload_sacrificial(cycle_id: str, request: Request):
+    body=await request.json(); signals=body.get("signals",[]); replace=body.get("replace",False)
+    if not signals: raise HTTPException(400,"signals list is empty")
+    with get_db() as db:
+        if not db.execute("SELECT cycle_id FROM grind_cycles WHERE cycle_id=?",(cycle_id,)).fetchone():
+            raise HTTPException(404,f"cycle_id {cycle_id!r} not found")
+        if replace: db.execute("DELETE FROM cycle_sacrificial_signals WHERE cycle_id=?",(cycle_id,))
+        db.executemany("INSERT INTO cycle_sacrificial_signals (cycle_id,setup_type,ticker,signal_date,bar_idx,close) VALUES (?,?,?,?,?,?)",
+                       [(cycle_id,s.get("setup_type",""),s.get("ticker",""),s.get("signal_date",""),s.get("bar_idx"),s.get("close")) for s in signals])
+    return {"cycle_id":cycle_id,"inserted":len(signals)}
+
+
+@app.get("/api/v2/cycles/{cycle_id}/sacrificial_signals")
+async def v2_get_sacrificial(cycle_id: str):
+    with get_db() as db:
+        rows=db.execute("SELECT * FROM cycle_sacrificial_signals WHERE cycle_id=? ORDER BY signal_date,ticker",(cycle_id,)).fetchall()
+    return {"cycle_id":cycle_id,"signals":[dict(r) for r in rows]}
+
+
+@app.get("/api/v2/exit_conditions/{setup_type}")
+async def v2_get_exit_condition(setup_type: str):
+    with get_db() as db:
+        row=db.execute("SELECT * FROM exit_conditions WHERE setup_type=?",(setup_type,)).fetchone()
+    return {"setup_type":setup_type,"exit_condition":dict(row) if row else None}
+
+
+@app.post("/api/v2/exit_conditions")
+async def v2_upsert_exit_condition(request: Request):
+    body=await request.json()
+    for k in ["setup_type","expression_name","direction","threshold","max_forward_bars"]:
+        if k not in body: raise HTTPException(400,f"Missing field: {k}")
+    now=datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    with get_db() as db:
+        db.execute("""INSERT INTO exit_conditions (setup_type,expression_name,direction,threshold,max_forward_bars,adr_threshold_multiplier,updated_at)
+               VALUES (?,?,?,?,?,?,?) ON CONFLICT(setup_type) DO UPDATE SET expression_name=excluded.expression_name,direction=excluded.direction,threshold=excluded.threshold,max_forward_bars=excluded.max_forward_bars,adr_threshold_multiplier=excluded.adr_threshold_multiplier,updated_at=excluded.updated_at""",
+                   (body["setup_type"],body["expression_name"],body["direction"],float(body["threshold"]),int(body["max_forward_bars"]),float(body.get("adr_threshold_multiplier",1.0)),now))
+    return {"setup_type":body["setup_type"],"upserted":True}
+
+
+@app.post("/api/v2/health")
+async def v2_upsert_health(request: Request):
+    body=await request.json(); cycle_id=body.get("cycle_id")
+    if not cycle_id: raise HTTPException(400,"cycle_id required")
+    with get_db() as db:
+        db.execute("""INSERT INTO cycle_health (cycle_id,setup_type,n_signals,peak_per_day,avg_per_day,signal_stability_pct,examples_passing,examples_added_this_cycle,examples_since_last_grind,win_rate_auto,win_rate_vetted,pct_manually_vetted,median_winner_adr,median_loser_adr,ev_estimate,prev_cycle_id,signal_count_delta,condition_count_delta,win_rate_delta,promote_recommendation,flag_reason,live_ready,live_ready_blockers,computed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(cycle_id) DO UPDATE SET n_signals=excluded.n_signals,peak_per_day=excluded.peak_per_day,avg_per_day=excluded.avg_per_day,signal_stability_pct=excluded.signal_stability_pct,examples_passing=excluded.examples_passing,examples_added_this_cycle=excluded.examples_added_this_cycle,examples_since_last_grind=excluded.examples_since_last_grind,win_rate_auto=excluded.win_rate_auto,win_rate_vetted=excluded.win_rate_vetted,pct_manually_vetted=excluded.pct_manually_vetted,median_winner_adr=excluded.median_winner_adr,median_loser_adr=excluded.median_loser_adr,ev_estimate=excluded.ev_estimate,prev_cycle_id=excluded.prev_cycle_id,signal_count_delta=excluded.signal_count_delta,condition_count_delta=excluded.condition_count_delta,win_rate_delta=excluded.win_rate_delta,promote_recommendation=excluded.promote_recommendation,flag_reason=excluded.flag_reason,live_ready=excluded.live_ready,live_ready_blockers=excluded.live_ready_blockers,computed_at=excluded.computed_at""",
+                   (cycle_id,body.get("setup_type"),body.get("n_signals"),body.get("peak_per_day"),body.get("avg_per_day"),body.get("signal_stability_pct"),body.get("examples_passing"),body.get("examples_added_this_cycle"),body.get("examples_since_last_grind"),body.get("win_rate_auto"),body.get("win_rate_vetted"),body.get("pct_manually_vetted"),body.get("median_winner_adr"),body.get("median_loser_adr"),body.get("ev_estimate"),body.get("prev_cycle_id"),body.get("signal_count_delta"),body.get("condition_count_delta"),body.get("win_rate_delta"),body.get("promote_recommendation"),body.get("flag_reason"),body.get("live_ready"),body.get("live_ready_blockers"),body.get("computed_at")))
+    return {"cycle_id":cycle_id,"message":f"Health metrics saved for {cycle_id}"}
+
+
+@app.get("/api/v2/health/{cycle_id}")
+async def v2_get_health(cycle_id: str):
+    with get_db() as db:
+        row=db.execute("SELECT * FROM cycle_health WHERE cycle_id=?",(cycle_id,)).fetchone()
+    return {"cycle_id":cycle_id,"health":dict(row) if row else None}
+
+
+@app.get("/api/v2/health/{setup_type}/latest")
+async def v2_get_latest_health(setup_type: str):
+    with get_db() as db:
+        gc=db.execute("SELECT cycle_id FROM grind_cycles WHERE setup_type=? AND is_current=1",(setup_type,)).fetchone()
+        if not gc: return {"setup_type":setup_type,"cycle_id":None,"health":None}
+        cycle_id=gc["cycle_id"]
+        row=db.execute("SELECT * FROM cycle_health WHERE cycle_id=?",(cycle_id,)).fetchone()
+    return {"setup_type":setup_type,"cycle_id":cycle_id,"health":dict(row) if row else None}
+
+
+# ── Regime Model ──────────────────────────────────────────────────────────────
+
+@app.post("/api/v2/regime/model")
+async def v2_upsert_regime_model(request: Request):
+    body = await request.json()
+    for k in ["setup_type","cycle_id","baseline_win_rate","updated_at"]:
+        if k not in body: raise HTTPException(400, f"Missing field: {k}")
+    with get_db() as db:
+        db.execute("""INSERT INTO regime_model
+            (setup_type,cycle_id,n_signals_used,n_features_tested,feature_weights,
+             top_features,win_rate_by_decile,baseline_win_rate,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(setup_type) DO UPDATE SET
+              cycle_id=excluded.cycle_id,
+              n_signals_used=excluded.n_signals_used,
+              n_features_tested=excluded.n_features_tested,
+              feature_weights=excluded.feature_weights,
+              top_features=excluded.top_features,
+              win_rate_by_decile=excluded.win_rate_by_decile,
+              baseline_win_rate=excluded.baseline_win_rate,
+              updated_at=excluded.updated_at""",
+            (body["setup_type"], body["cycle_id"],
+             body.get("n_signals_used"), body.get("n_features_tested"),
+             body.get("feature_weights"), body.get("top_features"),
+             body.get("win_rate_by_decile"), float(body["baseline_win_rate"]),
+             body["updated_at"]))
+    return {"setup_type": body["setup_type"], "upserted": True}
+
+
+@app.get("/api/v2/regime/model/{setup_type}")
+async def v2_get_regime_model(setup_type: str):
+    with get_db() as db:
+        row = db.execute("SELECT * FROM regime_model WHERE setup_type=?", (setup_type,)).fetchone()
+    if not row:
+        return {"setup_type": setup_type, "model": None}
+    m = dict(row)
+    # Parse JSON blobs for convenience
+    for field in ["feature_weights", "top_features", "win_rate_by_decile"]:
+        if m.get(field):
+            try: m[field] = _json.loads(m[field])
+            except: pass
+    return {"setup_type": setup_type, "model": m}
+
+
+@app.post("/api/v2/regime/scores")
+async def v2_upsert_signal_scores(request: Request):
+    body = await request.json()
+    cycle_id = body.get("cycle_id")
+    scores   = body.get("scores", [])
+    if not cycle_id: raise HTTPException(400, "cycle_id required")
+    if not scores:   raise HTTPException(400, "scores array required")
+    with get_db() as db:
+        # Clear existing scores for this cycle first
+        db.execute("DELETE FROM signal_regime_scores WHERE cycle_id=?", (cycle_id,))
+        # Insert all scores
+        db.executemany("""INSERT INTO signal_regime_scores
+            (cycle_signal_id, cycle_id, regime_score, expected_win_rate)
+            VALUES (?,?,?,?)""",
+            [(r["cycle_signal_id"], cycle_id,
+              r.get("regime_score"), r.get("expected_win_rate"))
+             for r in scores])
+        # Denormalize regime_score back to cycle_signals
+        db.executemany("""UPDATE cycle_signals SET regime_score=?
+            WHERE id=? AND cycle_id=?""",
+            [(r.get("regime_score"), r["cycle_signal_id"], cycle_id)
+             for r in scores])
+    return {"cycle_id": cycle_id, "n_scores": len(scores), "upserted": True}
+
+
+@app.get("/api/v2/regime/scores/{cycle_id}")
+async def v2_get_signal_scores(cycle_id: str):
     with get_db() as db:
         rows = db.execute(
-            "SELECT ticker, signal_date, created_at FROM rejected_signals WHERE setup_type=? ORDER BY created_at DESC",
-            (setup_type,)
+            "SELECT * FROM signal_regime_scores WHERE cycle_id=? ORDER BY regime_score DESC NULLS LAST",
+            (cycle_id,)
         ).fetchall()
-    return {"setup_type": setup_type, "count": len(rows), "rejected": [dict(r) for r in rows]}
+    return {"cycle_id": cycle_id, "scores": [dict(r) for r in rows]}
 
 
-# Serve frontend (MUST be last - catches all routes)
+@app.get("/api/v2/watchlist/latest")
+async def v2_get_latest_watchlist():
+    with get_db() as db:
+        # Get most recent run_date
+        row = db.execute(
+            "SELECT run_date FROM nightly_watchlist ORDER BY run_date DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return {"entries": [], "run_date": None}
+        run_date = row["run_date"]
+        rows = db.execute(
+            "SELECT * FROM nightly_watchlist WHERE run_date=? ORDER BY rank ASC",
+            (run_date,)
+        ).fetchall()
+    return {"run_date": run_date, "entries": [dict(r) for r in rows]}
+
+
+# ════════════════════════════════════════════════════════════════
+# FILE MIRROR — exact copies of local grinder JSON files
+# ════════════════════════════════════════════════════════════════
+
+# ============================================================
+# TASK QUEUE — Remote command execution via agent
+# ============================================================
+
+ALLOWED_TASK_COMMANDS = {
+    "signal_grind": "python local_runner/pyramid_grinder.py --setup {setup} --beam {beam} --depth {depth} --peak-target {peak_target}",
+    "signal_grind_dartboard": "python local_runner/dartboard_grinder.py --setup {setup} --top-n {top_n}",
+    "signal_grind_blackout": "python local_runner/pyramid_grinder.py --setup {setup} --blackout --beam {beam} --depth {depth} --peak-target {peak_target}",
+    "exit_grind": "python scripts/exit_grinder.py --setup {setup}",
+    "scan": "python scripts/signal_filter.py --setup {setup}",
+    "refinement_grind": "python scripts/setup_refiner.py --setup {setup}",
+    "proximity_grind": "python scripts/proximity_grinder.py --setup {setup}",
+    "profit_grind": "python scripts/profit_grinder.py --setup {setup}",
+    "regime_model": "python scripts/market_grinder.py --setup {setup}",
+    "health_check": "python scripts/cycle_health.py --setup {setup}",
+    "outlier_analysis": "python scripts/example_outlier_analysis.py --setup {setup}",
+    "nightly": "python local_runner/nightly.py",
+}
+
+@app.post("/api/v2/tasks")
+async def create_task(request: Request):
+    body = await request.json()
+    command = body.get("command")
+    args = body.get("args", {})
+    if command not in ALLOWED_TASK_COMMANDS:
+        raise HTTPException(400, f"Unknown command: {command}. Allowed: {list(ALLOWED_TASK_COMMANDS.keys())}")
+    with get_db() as db:
+        cur = db.execute(
+            "INSERT INTO task_queue (command, args, status) VALUES (?,?,?)",
+            (command, _json.dumps(args), "pending")
+        )
+        task_id = cur.lastrowid
+    return {"id": task_id, "command": command, "args": args, "status": "pending"}
+
+
+@app.get("/api/v2/tasks/pending")
+async def get_pending_tasks():
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT * FROM task_queue WHERE status='pending' ORDER BY created_at ASC"
+        ).fetchall()
+        tasks = []
+        for r in rows:
+            db.execute("UPDATE task_queue SET status='claimed', claimed_at=datetime('now') WHERE id=?", (r["id"],))
+            task = dict(r)
+            task["status"] = "claimed"
+            # Resolve the command template
+            args = _json.loads(task["args"]) if task["args"] else {}
+            template = ALLOWED_TASK_COMMANDS[task["command"]]
+            # Fill defaults
+            args.setdefault("setup", "dtss")
+            args.setdefault("beam", "10000")
+            args.setdefault("depth", "100")
+            args.setdefault("peak_target", "3")
+            args.setdefault("top_n", "500")
+            task["resolved_command"] = template.format(**{k: str(v) for k, v in args.items()})
+            tasks.append(task)
+    return {"tasks": tasks}
+
+
+@app.patch("/api/v2/tasks/{task_id}")
+async def update_task(task_id: int, request: Request):
+    body = await request.json()
+    with get_db() as db:
+        row = db.execute("SELECT id FROM task_queue WHERE id=?", (task_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Task not found: {task_id}")
+        updates = []
+        params = []
+        for field in ("status", "exit_code", "error", "log_tail", "result_path"):
+            if field in body:
+                updates.append(f"{field}=?")
+                params.append(body[field])
+        if "status" in body and body["status"] in ("completed", "failed"):
+            updates.append("completed_at=datetime('now')")
+        if updates:
+            params.append(task_id)
+            db.execute(f"UPDATE task_queue SET {','.join(updates)} WHERE id=?", params)
+    return {"id": task_id, "updated": True}
+
+
+@app.get("/api/v2/tasks/{task_id}")
+async def get_task(task_id: int):
+    with get_db() as db:
+        row = db.execute("SELECT * FROM task_queue WHERE id=?", (task_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, f"Task not found: {task_id}")
+    return dict(row)
+
+
+@app.get("/api/v2/tasks")
+async def list_tasks(status: str = None, limit: int = 20):
+    with get_db() as db:
+        if status:
+            rows = db.execute(
+                "SELECT * FROM task_queue WHERE status=? ORDER BY created_at DESC LIMIT ?",
+                (status, limit)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT * FROM task_queue ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+    return {"tasks": [dict(r) for r in rows]}
+
+
+# ============================================================
+# RESEARCH JOBS — Open-ended Claude Code research sessions
+# ============================================================
+
+@app.post("/api/v2/research")
+async def create_research_job(request: Request):
+    body = await request.json()
+    prompt = body.get("prompt")
+    if not prompt:
+        raise HTTPException(400, "prompt is required")
+    max_time = body.get("max_time_s", 14400)
+    max_phases = body.get("max_phases", 8)
+    with get_db() as db:
+        cur = db.execute(
+            "INSERT INTO research_jobs (prompt, status, max_time_s, max_phases) VALUES (?,?,?,?)",
+            (prompt, "pending", max_time, max_phases)
+        )
+        job_id = cur.lastrowid
+    return {"id": job_id, "prompt": prompt, "status": "pending", "max_time_s": max_time, "max_phases": max_phases}
+
+
+@app.get("/api/v2/research/pending")
+async def get_pending_research():
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT * FROM research_jobs WHERE status='pending' ORDER BY created_at ASC LIMIT 1"
+        ).fetchall()
+        tasks = []
+        for r in rows:
+            db.execute("UPDATE research_jobs SET status='claimed', claimed_at=datetime('now') WHERE id=?", (r["id"],))
+            tasks.append(dict(r))
+    return {"jobs": tasks}
+
+
+@app.patch("/api/v2/research/{job_id}")
+async def update_research_job(job_id: int, request: Request):
+    body = await request.json()
+    with get_db() as db:
+        row = db.execute("SELECT id FROM research_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Research job not found: {job_id}")
+        updates = []
+        params = []
+        for field in ("status", "branch", "summary", "diff", "signal_before", "signal_after",
+                       "examples_benched", "error", "log"):
+            if field in body:
+                updates.append(f"{field}=?")
+                params.append(body[field])
+        if "status" in body and body["status"] in ("completed", "failed"):
+            updates.append("completed_at=datetime('now')")
+        if updates:
+            params.append(job_id)
+            db.execute(f"UPDATE research_jobs SET {','.join(updates)} WHERE id=?", params)
+    return {"id": job_id, "updated": True}
+
+
+@app.get("/api/v2/research/{job_id}")
+async def get_research_job(job_id: int):
+    with get_db() as db:
+        row = db.execute("SELECT * FROM research_jobs WHERE id=?", (job_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, f"Research job not found: {job_id}")
+    return dict(row)
+
+
+@app.get("/api/v2/research")
+async def list_research_jobs(status: str = None, limit: int = 20):
+    with get_db() as db:
+        if status:
+            rows = db.execute(
+                "SELECT id, prompt, status, branch, created_at, completed_at, summary, signal_before, signal_after FROM research_jobs WHERE status=? ORDER BY created_at DESC LIMIT ?",
+                (status, limit)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT id, prompt, status, branch, created_at, completed_at, summary, signal_before, signal_after FROM research_jobs ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+    return {"jobs": [dict(r) for r in rows]}
+
+
+@app.post("/api/v2/research/{job_id}/reset")
+async def reset_research_job(job_id: int):
+    with get_db() as db:
+        row = db.execute("SELECT id FROM research_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"Research job not found: {job_id}")
+        db.execute(
+            "UPDATE research_jobs SET status='pending', claimed_at=NULL, completed_at=NULL, "
+            "summary=NULL, diff=NULL, error=NULL, log=NULL, branch=NULL WHERE id=?",
+            (job_id,)
+        )
+    return {"id": job_id, "status": "pending", "reset": True}
+
+
+@app.post("/api/v2/files")
+async def v2_upload_file(request: Request):
+    body = await request.json()
+    path = body.get("path")
+    data = body.get("data")
+    if not path or data is None:
+        raise HTTPException(400, "path and data are required")
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as db:
+        db.execute(
+            "INSERT OR REPLACE INTO file_mirror (path, data, size_bytes, created_at) VALUES (?,?,?,?)",
+            (path, data, len(data), now)
+        )
+    return {"path": path, "size_bytes": len(data), "created": True}
+
+
+@app.get("/api/v2/files")
+async def v2_list_files(prefix: str = None):
+    with get_db() as db:
+        if prefix:
+            rows = db.execute(
+                "SELECT path, size_bytes, created_at FROM file_mirror WHERE path LIKE ? ORDER BY created_at DESC",
+                (prefix + "%",)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT path, size_bytes, created_at FROM file_mirror ORDER BY created_at DESC"
+            ).fetchall()
+    return {"files": [dict(r) for r in rows]}
+
+
+@app.get("/api/v2/files/{path:path}")
+async def v2_get_file(path: str):
+    with get_db() as db:
+        row = db.execute("SELECT data, created_at FROM file_mirror WHERE path=?", (path,)).fetchone()
+    if not row:
+        raise HTTPException(404, f"File not found: {path}")
+    return Response(content=row["data"], media_type="application/json",
+                    headers={"X-Created-At": row["created_at"]})
+
+
+@app.delete("/api/v2/files/{path:path}")
+async def v2_delete_file(path: str):
+    with get_db() as db:
+        row = db.execute("SELECT path FROM file_mirror WHERE path=?", (path,)).fetchone()
+        if not row:
+            raise HTTPException(404, f"File not found: {path}")
+        db.execute("DELETE FROM file_mirror WHERE path=?", (path,))
+    return {"path": path, "deleted": True}
+
+
+# Serve frontend — MUST be last
 app.mount("/", StaticFiles(directory="app", html=True), name="frontend")

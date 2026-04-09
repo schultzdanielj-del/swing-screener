@@ -1,710 +1,927 @@
 """
-Profit Grinder — Step 4a of ANALYSIS_SYSTEM.md
+Profit Grinder — Phase 4: TA-Expression-Based Exit Optimization
 
-Brute forces post-entry expressions against validated examples' forward paths
-to find TA-driven exit conditions that maximize capture from the ENTRY BAR HIGH.
+1-stage: brute-force all expressions as full exits.
+2-stage: for top N final exits, search all expressions as earlier trim triggers.
+  Trim is optional — if it doesn't fire, full position rides to final exit.
 
-Uses the SAME expression cache as the pyramid grinder (12,131 expressions).
-No separate exit expression library — one library, one computation path.
-
-For each example: load ticker .npz from expr cache, find entry bar by date,
-slice forward window, test thresholds. Expressions that are all-NaN in the
-forward window are auto-skipped.
-
-Benchmark: entry candle high → exit candle close (% move + ADR captured).
-For shorts: positive captured = price went down from entry high.
+See PROFIT_GRINDER.md for full spec.
 
 Usage:
     python scripts/profit_grinder.py --setup dtss
-    python scripts/profit_grinder.py --setup dtss --max-forward 120 --workers 12
+    python scripts/profit_grinder.py --setup dtss --exit-horizon 120 --top-n-2stage 50
 """
 
-import argparse
-import sys
-import os
-import time
-import json
-import numpy as np
-import pandas as pd
-import pickle
-import requests
-from dataclasses import dataclass
-from typing import Optional
+import argparse, sys, os, time, json, glob, sqlite3, gc
+import numpy as np, pickle
+from datetime import datetime, timezone
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import tempfile
 
-# Force UTF-8 output on Windows
+
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# ============================================================
-# Config
-# ============================================================
-RAILWAY_URL = "https://web-production-e3025.up.railway.app"
-MAX_FORWARD_DEFAULT = 120
-DEFAULT_WORKERS = os.cpu_count() or 8
-
-LOCAL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "local_runner")
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
+DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+sys.path.insert(0, REPO_ROOT); sys.path.insert(0, LOCAL_DIR)
 
+EXIT_HORIZON_DEFAULT = 120
+INITIAL_CAPITAL = 100_000
+RISK_PER_TRADE = 0.01
+TRADING_DAYS_PER_YEAR = 252
+TOP_N_DETAIL = 100
+LOSS_ASSUMPTION_ADR = 1.0
+N_THRESHOLDS = 100
+BOOLEAN_AGG_PREFIXES = ("ct_", "st_", "tir_")
+DEDUP_CORR_THRESHOLD = 0.95
+DEDUP_TOP_N = 500
+TOP_N_2STAGE_DEFAULT = 50
+TRIM_PCTS = [0.33, 0.50, 0.67]
+SETUP_CONFIGS = {"dtss": {"direction": "short"}, "3-4db": {"direction": "short"}, "htf": {"direction": "long"}}
 
-# ============================================================
-# Data Classes
-# ============================================================
-
-@dataclass
-class ExampleData:
-    """Loaded example with forward expression matrix from cache."""
-    id: int
-    ticker: str
-    entry_date: str
-    entry_idx: int
-    entry_high: float
-    n_forward: int              # bars available after entry
-    mfe_pct: float              # max favorable excursion as % from entry high
-    direction: str
-    # Forward expression matrix: (n_forward+1, n_expressions) — from expr cache
-    fwd_matrix: np.ndarray
-    # OHLCV arrays for scoring (entry bar onward)
-    fwd_closes: np.ndarray
-    fwd_highs: np.ndarray
-    fwd_lows: np.ndarray
-    adr_at_entry: float
-    # Forward dates for exit date resolution
-    fwd_dates: list
-
-
-# ============================================================
-# Data Loading
-# ============================================================
-
-def load_5yr_cache():
-    """Load 5-year OHLCV cache from local disk."""
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
-    if not os.path.exists(path):
-        path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
-    if not os.path.exists(path):
-        raise FileNotFoundError("No OHLCV cache found. Run cache_builder.py first.")
-    print(f"Loading 5yr OHLCV cache from {path}...")
-    with open(path, "rb") as f:
-        cache = pickle.load(f)
-    print(f"  {len(cache)} tickers loaded")
-    return cache
-
-
-def load_examples(setup_type: str) -> list:
-    """Load examples from Railway API."""
-    r = requests.get(f"{RAILWAY_URL}/api/examples/{setup_type}")
-    r.raise_for_status()
-    data = r.json()
-    examples = data["examples"]
-    print(f"Loaded {len(examples)} {setup_type.upper()} examples")
-    return examples
-
-
-def _load_one_example(args):
-    """Load one example from expr cache + OHLCV cache. Runs in subprocess."""
-    (ticker, entry_date, example_id, direction, max_forward,
-     ohlcv_records, cache_dir) = args
-
-    import numpy as np
-    import pandas as pd
-    import os
-
+# ── RAM ──
+def get_available_ram_gb():
     try:
-        # Build OHLCV DataFrame
-        df = pd.DataFrame(ohlcv_records)
-        for col in ["open", "high", "low", "close", "volume"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        if not pd.api.types.is_datetime64_any_dtype(df["date"]):
-            df["date"] = pd.to_datetime(df["date"])
-        df = df.sort_values("date").reset_index(drop=True)
-
-        # Find entry bar
-        entry_dt = pd.to_datetime(entry_date)
-        date_matches = df.index[df["date"] == entry_dt].tolist()
-        if not date_matches:
-            date_matches = df.index[df["date"].dt.strftime("%Y-%m-%d") == entry_date].tolist()
-        if not date_matches:
-            return None, f"SKIP {ticker} — entry date {entry_date} not found"
-
-        entry_idx = date_matches[0]
-        n_available = len(df) - entry_idx - 1
-        if n_available < 5:
-            return None, f"SKIP {ticker} — only {n_available} forward bars"
-
-        actual_forward = min(max_forward, n_available)
-        entry_high = float(df["high"].iloc[entry_idx])
-
-        # MFE
-        if direction == "short":
-            fwd_lows = df["low"].iloc[entry_idx:entry_idx + actual_forward + 1].values
-            mfe_price = float(np.min(fwd_lows))
-            mfe_pct = (entry_high - mfe_price) / entry_high * 100
-        else:
-            fwd_highs = df["high"].iloc[entry_idx:entry_idx + actual_forward + 1].values
-            entry_low = float(df["low"].iloc[entry_idx])
-            mfe_price = float(np.max(fwd_highs))
-            mfe_pct = (mfe_price - entry_low) / entry_low * 100
-
-        # ADR14 at entry
-        highs = df["high"].values
-        lows = df["low"].values
-        hl = highs - lows
-        start14 = max(0, entry_idx - 13)
-        adr_val = float(np.mean(hl[start14:entry_idx + 1]))
-        if adr_val <= 0:
-            adr_val = 1.0
-
-        # Forward OHLCV slices
-        fwd_closes = df["close"].values[entry_idx:entry_idx + actual_forward + 1].astype(np.float64)
-        fwd_highs_arr = df["high"].values[entry_idx:entry_idx + actual_forward + 1].astype(np.float64)
-        fwd_lows_arr = df["low"].values[entry_idx:entry_idx + actual_forward + 1].astype(np.float64)
-
-        # Load expression cache for this ticker
-        safe_ticker = ticker.replace("/", "_").replace("\\", "_")
-        npz_path = os.path.join(cache_dir, f"{safe_ticker}.npz")
-        if not os.path.exists(npz_path):
-            return None, f"SKIP {ticker} — not in expression cache"
-
-        loaded = np.load(npz_path, allow_pickle=True)
-        cache_dates = loaded["dates"]
-        cache_data = loaded["data"]  # (n_bars, n_expressions)
-
-        # Find entry bar in cache dates
-        entry_str = entry_date if isinstance(entry_date, str) else str(entry_date)[:10]
-        cache_date_strs = [str(d)[:10] for d in cache_dates]
+        import psutil; return psutil.virtual_memory().available / (1024**3)
+    except ImportError:
         try:
-            cache_entry_idx = cache_date_strs.index(entry_str)
-        except ValueError:
-            return None, f"SKIP {ticker} — entry date {entry_date} not in expr cache dates"
-
-        # Slice forward window from cache
-        cache_end = min(cache_entry_idx + actual_forward + 1, len(cache_data))
-        fwd_matrix = cache_data[cache_entry_idx:cache_end].astype(np.float32)
-
-        # Trim OHLCV arrays to match cache forward length
-        actual_len = len(fwd_matrix)
-        fwd_closes = fwd_closes[:actual_len]
-        fwd_highs_arr = fwd_highs_arr[:actual_len]
-        fwd_lows_arr = fwd_lows_arr[:actual_len]
-        actual_forward = actual_len - 1  # -1 because includes entry bar
-
-        # Forward dates for exit date resolution
-        fwd_dates = [str(d)[:10] for d in df["date"].values[entry_idx:entry_idx + actual_len]]
-
-        if actual_forward < 5:
-            return None, f"SKIP {ticker} — only {actual_forward} forward bars in cache"
-
-        return {
-            "id": example_id,
-            "ticker": ticker,
-            "entry_date": entry_date,
-            "entry_idx": entry_idx,
-            "entry_high": entry_high,
-            "n_forward": actual_forward,
-            "mfe_pct": mfe_pct,
-            "direction": direction,
-            "fwd_matrix": fwd_matrix,
-            "fwd_closes": fwd_closes,
-            "fwd_highs": fwd_highs_arr,
-            "fwd_lows": fwd_lows_arr,
-            "adr_at_entry": adr_val,
-            "fwd_dates": fwd_dates,
-        }, None
-
-    except Exception as e:
-        return None, f"ERROR {ticker}: {e}"
-
-
-def load_all_examples(raw_examples, direction, max_forward, universe_cache, workers):
-    """Load all examples in parallel — expr cache + OHLCV."""
-    expr_cache_dir = os.path.join(CACHE_DIR, "expr_series")
-
-    tasks = []
-    for raw in raw_examples:
-        ticker = raw["ticker"]
-        ohlcv_df = universe_cache.get(ticker)
-        if ohlcv_df is None:
-            print(f"  SKIP {ticker} — not in 5yr OHLCV cache")
-            continue
-        ohlcv_df = ohlcv_df.copy()
-        if not pd.api.types.is_datetime64_any_dtype(ohlcv_df["date"]):
-            ohlcv_df["date"] = pd.to_datetime(ohlcv_df["date"])
-        records = ohlcv_df.to_dict("records")
-        tasks.append((ticker, raw["entryDate"], raw["id"], direction, max_forward,
-                       records, expr_cache_dir))
-
-    print(f"\nLoading {len(tasks)} examples from expr cache ({workers} workers)...")
-    t0 = time.time()
-
-    examples = []
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_load_one_example, task): task[0] for task in tasks}
-        done = 0
-        for future in as_completed(futures):
-            ticker = futures[future]
-            done += 1
-            result, err = future.result()
-            if err:
-                print(f"  [{done}/{len(tasks)}] {err}")
-            elif result:
-                ex = ExampleData(**result)
-                examples.append(ex)
-                print(f"  [{done}/{len(tasks)}] {ticker:8s} OK — "
-                      f"{ex.n_forward} fwd bars, MFE={ex.mfe_pct:+.2f}%, "
-                      f"matrix {ex.fwd_matrix.shape}")
-
-    elapsed = time.time() - t0
-    print(f"\n{len(examples)} examples loaded in {elapsed:.1f}s")
-    return examples
-
-
-# ============================================================
-# Move Arrays — precompute pct/adr/eff for scoring
-# ============================================================
-
-def build_move_arrays(examples, direction, min_bar):
-    """Precompute pct_move, adr_captured, capture_eff arrays for all examples x bars."""
-    n_examples = len(examples)
-    max_bars = max(ex.n_forward for ex in examples) + 1
-
-    pct_arr = np.full((n_examples, max_bars), np.nan)
-    adr_arr = np.full((n_examples, max_bars), np.nan)
-    eff_arr = np.full((n_examples, max_bars), np.nan)
-
-    for i, ex in enumerate(examples):
-        entry_high = ex.entry_high
-        adr_val = ex.adr_at_entry
-
-        for bar in range(min_bar, len(ex.fwd_closes)):
-            exit_close = ex.fwd_closes[bar]
-            if direction == "short":
-                raw_move = entry_high - exit_close
-                pct_move = raw_move / entry_high * 100
-            else:
-                entry_low = ex.fwd_lows[0]
-                raw_move = exit_close - entry_low
-                pct_move = raw_move / entry_low * 100
-
-            pct_arr[i, bar] = pct_move
-            adr_arr[i, bar] = raw_move / adr_val
-            eff_arr[i, bar] = pct_move / ex.mfe_pct if ex.mfe_pct > 0 else 0.0
-
-    return pct_arr, adr_arr, eff_arr
-
-
-# ============================================================
-# Grinder — parallel threshold testing
-# ============================================================
-
-def _grind_chunk(args):
-    """Worker: grind a chunk of expression columns. Returns list of result dicts."""
-    (col_indices, col_names, fwd_matrices, n_forwards, n_examples,
-     n_thresholds, min_bar, pct_arr, adr_arr, eff_arr) = args
-
-    import numpy as np
-
-    results = []
-
-    for ci, col_idx in enumerate(col_indices):
-        expr_name = col_names[ci]
-
-        # Gather this expression's forward series across all examples
-        example_series = []
-        all_values = []
-        for ex_i in range(n_examples):
-            mat = fwd_matrices[ex_i]
-            if col_idx >= mat.shape[1]:
-                continue
-            series = mat[:, col_idx].astype(np.float64)
-            # Check if this expression has any valid values in forward window
-            valid = ~np.isnan(series[min_bar:])
-            if valid.any():
-                example_series.append((ex_i, series))
-                vals = series[min_bar:][valid]
-                all_values.append(vals)
-
-        # Must have data for ALL examples
-        if len(example_series) < n_examples or not all_values:
-            continue
-
-        combined = np.concatenate(all_values)
-        if len(combined) < 5:
-            continue
-        thresholds = np.unique(np.percentile(combined, np.linspace(5, 95, n_thresholds)))
-
-        for thresh in thresholds:
-            for dir_test in ["above", "below"]:
-                exit_bars = np.full(n_examples, -1, dtype=np.int32)
-                triggered = 0
-
-                for ex_idx, series in example_series:
-                    for bar in range(min_bar, len(series)):
-                        val = series[bar]
-                        if np.isnan(val):
-                            continue
-                        hit = (val > thresh) if dir_test == "above" else (val < thresh)
-                        if hit:
-                            exit_bars[ex_idx] = bar
-                            triggered += 1
-                            break
-
-                if triggered < n_examples:
-                    continue
-
-                valid_mask = exit_bars >= 0
-                bars_valid = exit_bars[valid_mask]
-                pct_valid = pct_arr[valid_mask, bars_valid]
-                adr_valid = adr_arr[valid_mask, bars_valid]
-                eff_valid = eff_arr[valid_mask, bars_valid]
-
-                ok = ~(np.isnan(pct_valid) | np.isnan(eff_valid))
-                if ok.sum() < n_examples:
-                    continue
-
-                results.append({
-                    "expr_name": expr_name,
-                    "direction": dir_test,
-                    "threshold": round(float(thresh), 6),
-                    "exit_bars": exit_bars.tolist(),
-                    "adr_captured": adr_valid[ok].tolist(),
-                    "capture_effs": eff_valid[ok].tolist(),
-                    "examples_triggered": int(triggered),
-                    "floor_pct_move": float(np.min(pct_valid[ok])),
-                    "median_pct_move": float(np.median(pct_valid[ok])),
-                    "avg_pct_move": float(np.mean(pct_valid[ok])),
-                    "floor_capture_eff": float(np.min(eff_valid[ok])),
-                    "median_capture_eff": float(np.median(eff_valid[ok])),
-                    "avg_bars_to_exit": float(np.mean(bars_valid[ok])),
-                    "_pct_full": [float(pct_arr[i, exit_bars[i]]) if exit_bars[i] >= 0 else float('nan')
-                                  for i in range(n_examples)],
-                    "_adr_full": [float(adr_arr[i, exit_bars[i]]) if exit_bars[i] >= 0 else float('nan')
-                                  for i in range(n_examples)],
-                    "_eff_full": [float(eff_arr[i, exit_bars[i]]) if exit_bars[i] >= 0 else float('nan')
-                                  for i in range(n_examples)],
-                })
-
-    return results
-
-
-def grind_exits(examples, expr_names, expr_col_map=None, direction="short", n_thresholds=20,
-                min_bar=1, top_n=50, workers=None):
-    """Grind all expressions x thresholds x directions. Parallel across CPU cores."""
-    import math
-    workers = workers or (os.cpu_count() or 8)
-    n_examples = len(examples)
-    n_exprs = len(expr_names)
-
-    # If no col_map, assume 1:1 mapping (expr_names[i] = column i)
-    if expr_col_map is None:
-        expr_col_map = list(range(n_exprs))
-
-    print(f"\nPre-computing move arrays ({n_examples} examples)...")
-    t0 = time.time()
-    pct_arr, adr_arr, eff_arr = build_move_arrays(examples, direction, min_bar)
-    print(f"  Done in {time.time()-t0:.1f}s")
-
-    # Collect forward matrices and n_forwards for workers
-    fwd_matrices = [ex.fwd_matrix for ex in examples]
-    n_forwards = [ex.n_forward for ex in examples]
-
-    print(f"\nGrinding {n_exprs:,} expressions x ~{n_thresholds} thresholds x 2 directions ({workers} workers)...")
-    print(f"Requirement: ALL {n_examples} examples must trigger (100%, no exceptions)")
-
-    # Split into chunks using actual cache column indices
-    chunk_size = max(1, math.ceil(n_exprs / workers))
-    chunks = []
-    for i in range(0, n_exprs, chunk_size):
-        # Use actual cache column indices, not sequential indices
-        cache_col_chunk = expr_col_map[i:i+chunk_size]
-        name_chunk = expr_names[i:i+chunk_size]
-        chunks.append((cache_col_chunk, name_chunk))
-
-    tasks = [(idx_chunk, name_chunk, fwd_matrices, n_forwards, n_examples,
-              n_thresholds, min_bar, pct_arr, adr_arr, eff_arr)
-             for idx_chunk, name_chunk in chunks]
-
-    t0 = time.time()
-    all_raw = []
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_grind_chunk, task): i for i, task in enumerate(tasks)}
-        done = 0
-        for future in as_completed(futures):
-            chunk_results = future.result()
-            all_raw.extend(chunk_results)
-            done += 1
-            if done % 4 == 0 or done == len(chunks):
-                elapsed = time.time() - t0
-                print(f"  [{done}/{len(chunks)} chunks done, {len(all_raw)} candidates, {elapsed:.0f}s]")
-
-    elapsed = time.time() - t0
-    print(f"\nDone in {elapsed:.1f}s — {len(all_raw):,} candidates passed 100% filter")
-
-    # Filter: minimum floor capture efficiency (drop conditions where worst example is terrible)
-    MIN_FLOOR = 0.15
-    before = len(all_raw)
-    all_raw = [r for r in all_raw if r["floor_capture_eff"] >= MIN_FLOOR]
-    if before > len(all_raw):
-        print(f"  Filtered {before - len(all_raw)} candidates below {MIN_FLOOR:.0%} floor")
-
-    # Sort: MEDIAN capture primary, floor secondary
-    all_raw.sort(key=lambda r: (r["median_capture_eff"], r["floor_capture_eff"]), reverse=True)
-    return all_raw[:top_n]
-
-
-# ============================================================
-# Reporting
-# ============================================================
-
-def print_results(candidates, examples, top_n=30):
-    if not candidates:
-        print("\nNo exit conditions found matching criteria.")
-        return
-
-    n_show = min(top_n, len(candidates))
-    print(f"\n{'='*120}")
-    print(f"TOP {n_show} EXIT CONDITIONS — ranked by floor capture efficiency")
-    print(f"{'='*120}")
-
-    for rank, c in enumerate(candidates[:n_show], 1):
-        print(f"\n{'─'*120}")
-        print(f"#{rank:3d}  {c['expr_name']} {c['direction']} {c['threshold']:.4f}")
-        print(f"      Triggered: {c['examples_triggered']}/{len(examples)}  |  "
-              f"Avg bars: {c['avg_bars_to_exit']:.1f}  |  "
-              f"Floor capture eff: {c['floor_capture_eff']:.2f}  |  "
-              f"Median capture eff: {c['median_capture_eff']:.2f}")
-        print(f"      % Move  ->  floor: {c['floor_pct_move']:+.2f}%  |  "
-              f"median: {c['median_pct_move']:+.2f}%  |  "
-              f"avg: {c['avg_pct_move']:+.2f}%")
-
-        print(f"      {'Ticker':8s} {'Entry Date':12s} {'Bar#':>5s} "
-              f"{'% Move':>8s} {'ADR Capt':>9s} {'Capt Eff':>9s}")
-        for i, ex in enumerate(examples):
-            bar = c["exit_bars"][i]
-            if bar < 0:
-                print(f"      {ex.ticker:8s} {ex.entry_date:12s}   ---   (not triggered)")
-                continue
-            pct = c["_pct_full"][i]
-            adr = c["_adr_full"][i]
-            eff = c["_eff_full"][i]
-            print(f"      {ex.ticker:8s} {ex.entry_date:12s} {bar:5d} "
-                  f"{pct:+7.2f}% {adr:+8.2f} ADR {eff:8.2f}")
-
-
-def print_mfe_summary(examples):
-    print(f"\n{'='*80}")
-    print(f"MFE SUMMARY")
-    print(f"{'='*80}")
-    print(f"{'Ticker':8s} {'Entry Date':12s} {'Entry High':>11s} {'MFE %':>8s} {'Fwd Bars':>9s}")
-    for ex in examples:
-        print(f"{ex.ticker:8s} {ex.entry_date:12s} ${ex.entry_high:10.2f} "
-              f"{ex.mfe_pct:+7.2f}% {ex.n_forward:9d}")
-    mfes = [ex.mfe_pct for ex in examples]
-    print(f"\n  Floor MFE:  {min(mfes):+.2f}%")
-    print(f"  Median MFE: {np.median(mfes):+.2f}%")
-    print(f"  Avg MFE:    {np.mean(mfes):+.2f}%")
-
-
-def save_results(candidates, examples, setup_type, args, expr_names):
-    """Save results to JSON — timestamped archive + latest + Railway upload."""
-    from datetime import datetime
-
-    os.makedirs("data/profit_grind", exist_ok=True)
-
-    best = candidates[0] if candidates else None
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    n_ex = len(examples)
-    floor_adr = f"{min(best['adr_captured']):.1f}adr" if best else "na"
-
-    # Build per-example exit dates from best candidate's exit bars
-    exit_dates_per_example = {}
-    if best:
-        for i, ex in enumerate(examples):
-            bar = best["exit_bars"][i]
-            if bar >= 0 and bar < len(ex.fwd_dates):
-                exit_dates_per_example[f"{ex.ticker}|{ex.entry_date}"] = ex.fwd_dates[bar]
-
-    nan_fix = lambda x: None if isinstance(x, float) and np.isnan(x) else x
-
-    data = {
-        "setup_type": setup_type,
-        "timestamp": datetime.now().isoformat(),
-        "direction": args.direction,
-        "max_forward": args.max_forward,
-        "n_thresholds": args.n_thresholds,
-        "n_examples": n_ex,
-        "n_expressions_tested": len(expr_names),
-        "computation_source": "expression_cache",
-        "examples": [
-            {"ticker": ex.ticker, "entry_date": ex.entry_date,
-             "entry_high": ex.entry_high, "mfe_pct": ex.mfe_pct}
-            for ex in examples
-        ],
-        "exit_dates": exit_dates_per_example,
-        "results": [
-            {
-                "rank": i + 1,
-                "expr_name": c["expr_name"],
-                "direction": c["direction"],
-                "threshold": c["threshold"],
-                "examples_triggered": c["examples_triggered"],
-                "floor_pct_move": c["floor_pct_move"],
-                "median_pct_move": c["median_pct_move"],
-                "avg_pct_move": c["avg_pct_move"],
-                "floor_capture_eff": c["floor_capture_eff"],
-                "median_capture_eff": c["median_capture_eff"],
-                "avg_bars_to_exit": c["avg_bars_to_exit"],
-                "exit_bars": c["exit_bars"],
-                "pct_moves": c["_pct_full"],
-                "adr_captured": c["_adr_full"],
-                "capture_effs": c["_eff_full"],
-            }
-            for i, c in enumerate(candidates)
-        ],
-    }
-
-    # Timestamped archive
-    ts_path = f"data/profit_grind/profit_{setup_type}_{n_ex}ex_{floor_adr}_{ts}.json"
-    with open(ts_path, "w") as f:
-        json.dump(data, f, indent=2, default=nan_fix)
-    print(f"\n  Saved: {ts_path}")
-
-    # Latest (overwritten each run)
-    latest_path = f"data/profit_grind/profit_{setup_type}.json"
-    with open(latest_path, "w") as f:
-        json.dump(data, f, indent=2, default=nan_fix)
-    print(f"  Saved as latest: {latest_path}")
-
-    # Upload to Railway
+            if sys.platform == 'win32':
+                import ctypes; k = ctypes.windll.kernel32; u = ctypes.c_ulonglong
+                class M(ctypes.Structure):
+                    _fields_ = [('dwLength',ctypes.c_ulong),('dwMemoryLoad',ctypes.c_ulong),
+                        ('ullTotalPhys',u),('ullAvailPhys',u),('ullTotalPageFile',u),
+                        ('ullAvailPageFile',u),('ullTotalVirtual',u),('ullAvailVirtual',u),('ullAvailExtendedVirtual',u)]
+                s = M(); s.dwLength = ctypes.sizeof(s); k.GlobalMemoryStatusEx(ctypes.byref(s))
+                return s.ullAvailPhys / (1024**3)
+        except: pass
+    return None
+def check_ram(label="", min_gb=2.0):
+    a = get_available_ram_gb()
+    if a is not None and a < min_gb:
+        print(f"\n  ✗ RAM ABORT {label}: {a:.1f} GB avail, need {min_gb:.1f}"); sys.exit(1)
+def print_ram(label=""):
+    a = get_available_ram_gb()
+    if a is not None: print(f"  RAM available: {a:.1f} GB {label}")
+
+# ── Data Loading ──
+def load_daily_cache():
+    for n in ("universe_ohlcv_daily.pkl","universe_ohlcv_5yr.pkl","universe_ohlcv.pkl"):
+        p = os.path.join(CACHE_DIR, n)
+        if os.path.exists(p):
+            print(f"  Loading daily OHLCV from {n}...")
+            with open(p,"rb") as f: c = pickle.load(f)
+            print(f"  {len(c)} tickers"); return c
+    raise FileNotFoundError("No OHLCV cache.")
+def find_latest_ev_file(st):
+    cs = [os.path.join(CACHE_DIR,f) for f in os.listdir(CACHE_DIR) if f.startswith(f"ev_{st}_") and f.endswith(".json")]
+    if not cs: raise FileNotFoundError(f"No EV output for {st}")
+    cs.sort(key=os.path.getmtime, reverse=True); return cs[0]
+def load_ev_data(st, ef=None):
+    p = ef or find_latest_ev_file(st)
+    print(f"  Loading EV data from {os.path.basename(p)}...")
+    with open(p) as f: d = json.load(f)
+    print(f"  {len(d.get('signals',[]))} total signals"); return d, p
+def load_entry_scores(st):
+    p = os.path.join(CACHE_DIR, f"entry_scores_{st}.json")
+    if not os.path.exists(p):
+        cs = glob.glob(os.path.join(CACHE_DIR, f"entry_scores_{st}_*.json"))
+        if not cs: print(f"  WARNING: No entry scores for {st}"); return {}
+        cs.sort(key=os.path.getmtime, reverse=True); p = cs[0]
+    print(f"  Loading entry scores from {os.path.basename(p)}...")
+    with open(p) as f: d = json.load(f)
+    lk = {}
+    for s in d.get("scored_signals",[]):
+        t,sd,sc = s.get("ticker"), s.get("signal_date",s.get("date")), s.get("entry_candle_score")
+        if t and sd and sc is not None: lk[(t,sd)] = sc
+    print(f"  {len(lk)} signals with entry_candle_score"); return lk
+def load_vetting_decisions(st):
+    ek, rk = set(), set()
+    if not os.path.exists(DB_PATH): print(f"  WARNING: No DB at {DB_PATH}"); return ek, rk
     try:
-        r = requests.post(
-            f"{RAILWAY_URL}/api/profit-grind/{setup_type}/upload",
-            json=data, timeout=60
-        )
-        if r.status_code == 200:
-            print(f"  Uploaded to Railway OK")
+        cn = sqlite3.connect(DB_PATH); cn.row_factory = sqlite3.Row
+        for r in cn.execute("SELECT ticker,entry_date,chart_date FROM examples WHERE setup_type=?",(st,)):
+            ek.add((r["ticker"],r["entry_date"]))
+            if r["chart_date"]: ek.add((r["ticker"],r["chart_date"]))
+        try:
+            for r in cn.execute("SELECT ticker,signal_date FROM rejected_signals WHERE setup_type=?",(st,)):
+                rk.add((r["ticker"],r["signal_date"]))
+        except sqlite3.OperationalError: pass
+        cn.close()
+    except Exception as e: print(f"  WARNING: DB error: {e}")
+    print(f"  Examples: {len(ek)} keys, Rejected: {len(rk)} keys"); return ek, rk
+def load_example_entry_dates(setup_type):
+    result = {}
+    if not os.path.exists(DB_PATH): return result
+    try:
+        cn = sqlite3.connect(DB_PATH); cn.row_factory = sqlite3.Row
+        for r in cn.execute("SELECT ticker, entry_date FROM examples WHERE setup_type=?", (setup_type,)):
+            tk, ed = r["ticker"], r["entry_date"]
+            if tk and ed: result[(tk, ed)] = ed
+        cn.close()
+    except Exception as e: print(f"  WARNING: Error loading example entry dates: {e}")
+    print(f"  Example entry dates loaded: {len(result)}")
+    return result
+def load_entry_window(setup_type):
+    latest = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
+    if not os.path.exists(latest):
+        cs = glob.glob(os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}_*.json"))
+        if not cs: print(f"  WARNING: No cluster file — using entry_window=1"); return 1
+        cs.sort(key=os.path.getmtime, reverse=True); latest = cs[0]
+    with open(latest) as f: data = json.load(f)
+    ew = data.get("forward_window")
+    if ew is None or ew < 1: print(f"  WARNING: No forward_window — using entry_window=1"); return 1
+    print(f"  Entry window from cluster file: {ew} bars ({os.path.basename(latest)})"); return int(ew)
+
+# ── Signal Population ──
+def build_signal_population(ev_data, entry_scores, example_keys, rejected_keys):
+    raw = ev_data.get("signals",[])
+    signals = []
+    counts = {"no_move":0,"no_entry":0,"rejected":0,"examples":0,"vetted_yes":0,"unvetted":0,"no_score":0}
+    for sig in raw:
+        if sig.get("move_adr") is None: counts["no_move"]+=1; continue
+        if sig.get("entry_high") is None or sig.get("adr_at_signal") is None: counts["no_entry"]+=1; continue
+        if sig["adr_at_signal"]<=0: counts["no_entry"]+=1; continue
+        key=(sig["ticker"],sig["date"])
+        if key in rejected_keys: counts["rejected"]+=1; continue
+        if sig.get("is_example",False): w,cat=1.0,"example"; counts["examples"]+=1
         else:
-            print(f"  WARNING: Railway upload failed: {r.status_code} {r.text[:100]}")
+            ec=entry_scores.get(key)
+            if ec is not None: w,cat=max(float(ec),0.0),"unvetted"; counts["unvetted"]+=1
+            else: w,cat=0.0,"unvetted_no_score"; counts["no_score"]+=1
+        s=dict(sig); s["weight"]=w; s["weight_category"]=cat; s["entry_candle_score"]=entry_scores.get(key)
+        signals.append(s)
+    counts["total"]=len(signals); return signals, counts
+
+def build_expr_col_map(expr_names):
+    ecm,fn,ne = [],[],0
+    for ci,n in enumerate(expr_names):
+        if n.startswith(BOOLEAN_AGG_PREFIXES): ne+=1; continue
+        ecm.append((len(ecm),ci)); fn.append(n)
+    return ecm, fn, ne
+
+# ── Forward Data Construction ──
+def build_forward_data(signals, ohlcv_cache, expr_cache, expr_col_map,
+                       direction, exit_horizon, entry_window, example_entry_dates):
+    import pandas as pd
+    n_signals = len(signals)
+    cache_cols = np.array([ci for _,ci in expr_col_map], dtype=np.int32)
+    fwd_expr = [None]*n_signals; fwd_closes = [None]*n_signals
+    entry_high_bar_expr = [None]*n_signals
+    entry_high_offset = np.full(n_signals, -1, dtype=np.int32)
+    entry_prices = np.zeros(n_signals, dtype=np.float64)
+    adr_values = np.zeros(n_signals, dtype=np.float64)
+    signal_meta = []
+    loaded=skipped_ohlcv=skipped_expr=skipped_date=skipped_fwd=0
+    n_ex_date_found=n_ex_date_fallback=n_nonex_argmax=0
+    tg = {}
+    for i,sig in enumerate(signals): tg.setdefault(sig["ticker"],[]).append(i)
+    for ticker, indices in tg.items():
+        df = ohlcv_cache.get(ticker)
+        if df is None:
+            skipped_ohlcv+=len(indices)
+            for i in indices: signal_meta.append({"idx":i,"ticker":ticker,"status":"no_ohlcv"})
+            continue
+        if not pd.api.types.is_datetime64_any_dtype(df["date"]): df=df.copy(); df["date"]=pd.to_datetime(df["date"])
+        df=df.sort_values("date").reset_index(drop=True)
+        ds=df["date"].dt.strftime("%Y-%m-%d").values; d2i={d:i for i,d in enumerate(ds)}
+        ca=df["close"].values.astype(np.float64); ha=df["high"].values.astype(np.float64)
+        ed,edata=expr_cache.get_ticker(ticker)
+        if ed is None:
+            skipped_expr+=len(indices)
+            for i in indices: signal_meta.append({"idx":i,"ticker":ticker,"status":"no_expr"})
+            continue
+        edm={str(d)[:10]:i for i,d in enumerate(ed)}
+        for i in indices:
+            sig=signals[i]; sd=sig["date"]; oi=d2i.get(sd); ei=edm.get(sd)
+            if oi is None or ei is None:
+                skipped_date+=1; signal_meta.append({"idx":i,"ticker":ticker,"status":"no_date","date":sd}); continue
+            entry_prices[i]=sig["entry_high"]; adr_values[i]=sig["adr_at_signal"]
+            nf=min(min(len(df)-oi-1,len(edata)-ei-1),exit_horizon)
+            if nf<1:
+                skipped_fwd+=1; signal_meta.append({"idx":i,"ticker":ticker,"status":"no_fwd","date":sd}); continue
+            fwd_closes[i]=ca[oi+1:oi+1+nf].copy()
+            fwd_expr[i]=edata[ei+1:ei+1+nf][:,cache_cols].copy()
+            fwd_start = oi + 1
+            if sig.get("is_example", False):
+                entry_date_found = False
+                for (etk, edt), _ in example_entry_dates.items():
+                    if etk != ticker: continue
+                    entry_ohlcv_idx = d2i.get(edt)
+                    if entry_ohlcv_idx is not None:
+                        eh_bar = entry_ohlcv_idx - fwd_start
+                        if 0 <= eh_bar < nf:
+                            entry_high_offset[i] = eh_bar; entry_date_found = True; n_ex_date_found += 1; break
+                if not entry_date_found: entry_high_offset[i] = 0; n_ex_date_fallback += 1
+            else:
+                eh_search_end = min(entry_window, nf)
+                entry_high_offset[i] = int(np.argmax(ha[fwd_start:fwd_start+eh_search_end]))
+                n_nonex_argmax += 1
+            eh_bar = entry_high_offset[i]
+            entry_high_bar_expr[i] = fwd_expr[i][eh_bar, :].copy()
+            fd=ds[oi+1:oi+1+nf].tolist()
+            signal_meta.append({"idx":i,"ticker":ticker,"signal_date":sd,
+                "entry_price":float(entry_prices[i]),"adr":float(adr_values[i]),
+                "entry_high_bar_offset":int(eh_bar),
+                "classification":sig.get("classification"),"is_example":sig.get("is_example",False),
+                "quality_score":sig.get("quality_score",0),"move_adr":sig.get("move_adr"),
+                "killed_at_depth":sig.get("killed_at_depth"),"weight":sig["weight"],
+                "weight_category":sig["weight_category"],"entry_candle_score":sig.get("entry_candle_score"),
+                "n_forward_bars":nf,"fwd_dates":fd,"status":"ok"})
+            loaded+=1
+    vm=np.array([fwd_expr[i] is not None for i in range(n_signals)])
+    stats={"loaded":loaded,"skipped_ohlcv":skipped_ohlcv,"skipped_expr":skipped_expr,
+           "skipped_date":skipped_date,"skipped_fwd":skipped_fwd,"n_valid":int(vm.sum()),
+           "n_ex_date_found":n_ex_date_found,"n_ex_date_fallback":n_ex_date_fallback,
+           "n_nonex_argmax":n_nonex_argmax}
+    return fwd_expr, fwd_closes, entry_high_bar_expr, entry_high_offset, entry_prices, adr_values, signal_meta, vm, stats
+
+def extract_column_padded(fwd_expr_list, valid_indices, expr_col, exit_horizon):
+    n=len(valid_indices); c=np.full((n,exit_horizon),np.nan,dtype=np.float32)
+    for vi,si in enumerate(valid_indices): fe=fwd_expr_list[si]; c[vi,:fe.shape[0]]=fe[:,expr_col]
+    return c
+
+def extract_entry_high_bar_column(entry_high_bar_expr_list, valid_indices, expr_col):
+    n=len(valid_indices); vals=np.full(n,np.nan,dtype=np.float32)
+    for vi,si in enumerate(valid_indices):
+        eb=entry_high_bar_expr_list[si]
+        if eb is not None: vals[vi]=eb[expr_col]
+    return vals
+
+# ── Weighted Stats ──
+def compute_weighted_stats(captured_adr, weights, triggered, move_adrs_actual, n_bars_held):
+    n=len(captured_adr)
+    if n<2: return None
+    w=weights.copy(); ws=w.sum()
+    if ws<1e-10: return None
+    iw=captured_adr>0; il=~iw
+    wr=float(np.sum(w[iw])/ws); exp=float(np.sum(captured_adr*w)/ws)
+    wv=np.sum(w*(captured_adr-exp)**2)/ws; wstd=float(np.sqrt(max(wv,0.0)))
+    ne=(ws**2)/np.sum(w**2) if np.sum(w**2)>0 else 1.0
+    sqn=float(np.sqrt(ne)*exp/wstd) if wstd>0 else 0.0
+    gw=float(np.sum(captured_adr[iw]*w[iw])) if iw.any() else 0.0
+    gl=float(np.abs(np.sum(captured_adr[il]*w[il]))) if il.any() else 0.001
+    pf=gw/gl if gl>0 else 999.0
+    def _wm(a,m,wt):
+        if not m.any(): return 0.0
+        s=wt[m].sum(); return float(np.sum(a[m]*wt[m])/s) if s>0 else 0.0
+    aw=_wm(captured_adr,iw,w); al=_wm(captured_adr,il,w)
+    pr=abs(aw/al) if al!=0 else 999.0
+    wa=captured_adr[iw]; la=captured_adr[il]
+    eq=_bwec(captured_adr,w,INITIAL_CAPITAL,RISK_PER_TRADE)
+    pk=np.maximum.accumulate(eq); dd=np.where(pk>0,(pk-eq)/pk,0.0)
+    mdd=float(np.max(dd)); add=float(np.mean(dd[dd>0])) if (dd>0).any() else 0.0
+    tb=int(np.sum(n_bars_held)); ab=float(np.mean(n_bars_held))
+    yr=tb/TRADING_DAYS_PER_YEAR if tb>0 else 1.0
+    tr=eq[-1]/eq[0] if eq[0]>0 else 1.0
+    cagr=float((tr**(1/yr)-1)) if yr>0 and tr>0 else 0.0
+    tpy=TRADING_DAYS_PER_YEAR/ab if ab>0 else 1.0
+    ar=exp*tpy; astd=wstd*np.sqrt(tpy); sh=float(ar/astd) if astd>0 else 0.0
+    ds=captured_adr[captured_adr<0]; dstd=float(np.std(ds,ddof=1)) if len(ds)>1 else 1.0
+    so=float(ar/(dstd*np.sqrt(tpy))) if dstd>0 else 0.0
+    ca=float(cagr/mdd) if mdd>0 else 999.0
+    tm=triggered&(move_adrs_actual>0)
+    if tm.any():
+        ce=captured_adr[tm]/move_adrs_actual[tm]
+        mc,fc,mnc=float(np.median(ce)),float(np.min(ce)),float(np.mean(ce))
+        sc=float(np.std(ce,ddof=1)) if tm.sum()>1 else 0.0
+    else: mc=fc=mnc=sc=0.0
+    tbars=n_bars_held[triggered]
+    if len(tbars)>0:
+        bmi,bmd,bmx=int(np.min(tbars)),int(np.median(tbars)),int(np.max(tbars))
+        bstd=float(np.std(tbars,ddof=1)) if len(tbars)>1 else 0.0
+    else: bmi=bmd=bmx=0; bstd=0.0
+    return {"n_signals":n,"n_triggered":int(triggered.sum()),"trigger_rate":round(triggered.sum()/n,4),
+        "n_winners":int(iw.sum()),"n_losers":int(il.sum()),"win_rate":round(wr,4),
+        "expectancy":round(exp,4),"sqn":round(sqn,4),
+        "profit_factor":round(min(pf,999.0),4),"payoff_ratio":round(min(pr,999.0),4),
+        "avg_win_adr":round(aw,4),"avg_loss_adr":round(al,4),
+        "median_win_adr":round(float(np.median(wa)),4) if len(wa)>0 else 0.0,
+        "median_loss_adr":round(float(np.median(la)),4) if len(la)>0 else 0.0,
+        "best_win_adr":round(float(np.max(wa)),4) if len(wa)>0 else 0.0,
+        "worst_loss_adr":round(float(np.min(la)),4) if len(la)>0 else 0.0,
+        "std_adr":round(wstd,4),
+        "max_consec_winners":_maxc(iw),"max_consec_losers":_maxc(il),
+        "avg_bars_winners":round(float(np.mean(n_bars_held[iw])),1) if iw.any() else 0.0,
+        "avg_bars_losers":round(float(np.mean(n_bars_held[il])),1) if il.any() else 0.0,
+        "avg_bars_all":round(ab,1),
+        "bars_held_min":bmi,"bars_held_median":bmd,"bars_held_max":bmx,"bars_held_std":round(bstd,1),
+        "max_drawdown":round(mdd,4),"avg_drawdown":round(add,4),"max_dd_duration_trades":_mdd(eq),
+        "cagr":round(cagr,4),"sharpe":round(sh,4),"sortino":round(so,4),"calmar":round(min(ca,999.0),4),
+        "final_equity":round(float(eq[-1]),2),
+        "total_return_pct":round(float((eq[-1]/eq[0]-1)*100),2),
+        "median_capture_eff":round(mc,4),"floor_capture_eff":round(fc,4),
+        "mean_capture_eff":round(mnc,4),"std_capture_eff":round(sc,4)}
+def _maxc(ba):
+    mx=cur=0
+    for v in ba:
+        if v: cur+=1; mx=max(mx,cur)
+        else: cur=0
+    return mx
+def _bwec(ca, w, cap, risk):
+    n=len(ca); eq=np.zeros(n+1); eq[0]=cap
+    for i in range(n):
+        eq[i+1]=eq[i]+eq[i]*risk*ca[i]*w[i]
+        if eq[i+1]<=0: eq[i+1:]=0; break
+    return eq
+def _mdd(eq):
+    pk=eq[0]; mx=cur=0
+    for v in eq[1:]:
+        if v>=pk: pk=v; cur=0
+        else: cur+=1; mx=max(mx,cur)
+    return mx
+
+# ── ProcessPoolExecutor worker state (set by initializer in each subprocess) ──
+_w = {}
+
+def _init_1stage(expr_path, eb_path, shared):
+    """Initializer for 1-stage workers. Loads mmap'd arrays."""
+    _w['e3'] = np.load(expr_path, mmap_mode='r')
+    _w['eb'] = np.load(eb_path, mmap_mode='r')
+    _w.update(shared)
+
+def _work_1stage(expr_indices):
+    """1-stage worker: process expression chunk in subprocess."""
+    e3=_w['e3']; eb=_w['eb']; c2d=_w['c2d']; sv=_w['sv']; bi=_w['bi']
+    eho=_w['eho']; ep=_w['ep']; ad=_w['ad']; wt=_w['wt']; hg=_w['hg']
+    mv=_w['mv']; nm=_w['nm']; dr=_w['dr']; eh=_w['eh']
+    nv=e3.shape[0]; cands=[]; tested=0; hgf=0; atef=0
+    for ei in expr_indices:
+        col=e3[:,:,ei]; fm=np.isfinite(col)&sv; fv=col[fm]
+        if len(fv)<nv: continue
+        ths=np.unique(np.percentile(fv,np.linspace(5,95,N_THRESHOLDS)))
+        if len(ths)<2: continue
+        ebv=eb[:,ei]; ebf=np.isfinite(ebv); en=nm[ei]
+        for th in ths:
+            for dl,above in [("above",True),("below",False)]:
+                tested+=1
+                hit=((col>=th) if above else (col<=th))&fm
+                hb=np.where(hit,bi,eh+1); fb=np.min(hb,axis=1)
+                trig=fb<eh+1
+                ate=ebf&((ebv>=th) if above else (ebv<=th))
+                trig=trig&(~ate)
+                if not trig[hg].all():
+                    if ate[hg].any(): atef+=1
+                    else: hgf+=1
+                    continue
+                ca=np.full(nv,-LOSS_ASSUMPTION_ADR,dtype=np.float64)
+                bh=np.full(nv,eh,dtype=np.int32)
+                for vi in np.where(trig)[0]:
+                    f=fb[vi]; ec=c2d[vi,f]
+                    if np.isfinite(ec) and ad[vi]>0:
+                        if dr=="short": ca[vi]=(ep[vi]-ec)/ad[vi]
+                        else: ca[vi]=(ec-ep[vi])/ad[vi]
+                    bh[vi]=f-eho[vi]
+                st=compute_weighted_stats(ca,wt,trig,mv,bh)
+                if st is None: continue
+                st["expr_name"]=en; st["direction"]=dl
+                st["threshold"]=round(float(th),6)
+                st["n_already_true"]=int(ate.sum())
+                cands.append((st,fb.astype(np.int16).copy()))
+    return cands, tested, hgf, atef
+
+# ── 1-Stage Grind (ProcessPoolExecutor + mmap) ──
+def grind_1stage(fwd_expr_list, fwd_close_list, entry_high_bar_expr_list,
+                 entry_high_offset_v, valid_indices,
+                 entry_prices_v, adr_values_v, weights_v, is_hard_gate_v,
+                 move_adrs_v, n_bars_per_signal, filtered_names, direction, exit_horizon,
+                 n_workers=None):
+    if n_workers is None: n_workers = os.cpu_count() or 8
+    nv = len(valid_indices); ne = len(filtered_names)
+    print(f"\n  ── 1-STAGE EXPRESSION GRIND ──")
+    print(f"  {nv} signals × {ne} expressions × ~{N_THRESHOLDS} thresholds × 2 dirs")
+    print(f"  Hard gate: {int(is_hard_gate_v.sum())}  Workers: {n_workers} processes")
+    print_ram("(before 1-stage)"); t0 = time.time()
+
+    close_2d = np.full((nv, exit_horizon), np.nan, dtype=np.float64)
+    for vi, si in enumerate(valid_indices): fc=fwd_close_list[si]; close_2d[vi,:len(fc)]=fc
+    search_valid = np.zeros((nv, exit_horizon), dtype=bool)
+    for vi in range(nv):
+        s=entry_high_offset_v[vi]+1
+        if s<n_bars_per_signal[vi]: search_valid[vi,s:n_bars_per_signal[vi]]=True
+    bar_indices = np.arange(exit_horizon)[np.newaxis, :]
+
+    print(f"  Building 3D expression array ({nv} x {exit_horizon} x {ne})...")
+    expr_3d = np.full((nv, exit_horizon, ne), np.nan, dtype=np.float32)
+    for vi, si in enumerate(valid_indices):
+        fe = fwd_expr_list[si]; expr_3d[vi, :fe.shape[0], :] = fe
+    eb_2d = np.full((nv, ne), np.nan, dtype=np.float32)
+    for vi, si in enumerate(valid_indices):
+        eb = entry_high_bar_expr_list[si]
+        if eb is not None: eb_2d[vi, :] = eb
+    print(f"  3D: {expr_3d.nbytes/1e9:.2f} GB")
+
+    tmpdir = tempfile.mkdtemp(prefix='pg_')
+    expr_path = os.path.join(tmpdir, 'expr_3d.npy')
+    eb_path = os.path.join(tmpdir, 'eb_2d.npy')
+    np.save(expr_path, expr_3d); np.save(eb_path, eb_2d)
+    del expr_3d, eb_2d; gc.collect()
+    print(f"  Saved to temp, arrays freed")
+    print_ram("(mmap ready)")
+    check_ram("(pre-grind)", min_gb=1.0)
+
+    shared = {'c2d':close_2d, 'sv':search_valid, 'bi':bar_indices,
+              'eho':entry_high_offset_v, 'ep':entry_prices_v, 'ad':adr_values_v,
+              'wt':weights_v, 'hg':is_hard_gate_v, 'mv':move_adrs_v,
+              'nm':filtered_names, 'dr':direction, 'eh':exit_horizon}
+
+    chunk_sz = max(1, ne // n_workers)
+    chunks = [list(range(ne))[i:i+chunk_sz] for i in range(0, ne, chunk_sz)]
+    print(f"  {len(chunks)} chunks of ~{chunk_sz}, dispatching {n_workers} processes...")
+
+    all_cands=[]; tt=0; thgf=0; tatef=0; done=0
+    with ProcessPoolExecutor(max_workers=n_workers,
+                              initializer=_init_1stage,
+                              initargs=(expr_path, eb_path, shared)) as pool:
+        futs = {pool.submit(_work_1stage, ch): ci for ci, ch in enumerate(chunks)}
+        for f in as_completed(futs):
+            c,t,h,a = f.result()
+            all_cands.extend(c); tt+=t; thgf+=h; tatef+=a; done+=1
+            el = time.time()-t0
+            print(f"    [{done}/{len(chunks)}] {el:.1f}s, {len(all_cands):,} cands, "
+                  f"{tt:,} tested")
+
+    el = time.time()-t0
+    print(f"\n  1-stage: {el:.1f}s ({el/60:.1f} min)")
+    print(f"    {tt:,} tested, {thgf:,} gate, {tatef:,} ate, {len(all_cands):,} raw")
+    print_ram("(after 1-stage)")
+    return dedup_candidates(all_cands, exit_horizon), close_2d, expr_path, eb_path, tmpdir
+
+def _init_2stage(expr_path, eb_path, shared):
+    """Initializer for 2-stage workers."""
+    _w['e3'] = np.load(expr_path, mmap_mode='r')
+    _w['eb'] = np.load(eb_path, mmap_mode='r')
+    _w.update(shared)
+
+def _work_2stage(expr_indices):
+    """2-stage worker: lightweight — only computes expectancy, not full stats."""
+    e3=_w['e3']; eb=_w['eb']; c2d=_w['c2d']
+    ad=_w['ad']; ep=_w['ep']; wt=_w['wt']
+    nm=_w['nm']; dr=_w['dr']; eh=_w['eh']
+    fd_list=_w['fd']; tps=_w['tp']; sv=_w['sv']
+    nv=e3.shape[0]; bi=np.arange(eh)[np.newaxis,:]; combos=[]; tested=0
+    ws=wt.sum(); adr_ok=ad>0; sig_idx=np.arange(nv)
+    if ws<1e-10: return combos, tested, 0
+    for ei in expr_indices:
+        col=e3[:,:,ei]; ebv=eb[:,ei]; ebf=np.isfinite(ebv); tn=nm[ei]
+        fm_full=np.isfinite(col)&sv; fv_full=col[fm_full]
+        if len(fv_full)<nv: continue
+        ths=np.unique(np.percentile(fv_full,np.linspace(5,95,N_THRESHOLDS)))
+        if len(ths)<2: continue
+        for fd in fd_list:
+            fm=np.isfinite(col)&fd['pe']
+            baseline=fd['ex']
+            for th in ths:
+                for dl,above in [("above",True),("below",False)]:
+                    tested+=1
+                    hit=((col>=th) if above else (col<=th))&fm
+                    hb=np.where(hit,bi,eh+1); tb=np.min(hb,axis=1)
+                    tt=tb<eh+1
+                    ate=ebf&((ebv>=th) if above else (ebv<=th))
+                    tt=tt&(~ate); nt=int(tt.sum())
+                    if nt<5: continue
+                    tb_clipped=np.clip(tb,0,eh-1)
+                    exit_prices=c2d[sig_idx,tb_clipped]
+                    if dr=="short": trim_caps=(ep-exit_prices)/np.where(adr_ok,ad,1.0)
+                    else: trim_caps=(exit_prices-ep)/np.where(adr_ok,ad,1.0)
+                    trim_caps=np.where(adr_ok&np.isfinite(exit_prices)&tt,trim_caps,0.0)
+                    for tp in tps:
+                        bl=fd['cap'].copy()
+                        bl[tt]=tp*trim_caps[tt]+(1-tp)*fd['cap'][tt]
+                        qexp=float(np.sum(bl*wt)/ws)
+                        if qexp<=baseline: continue
+                        # LIGHTWEIGHT: store only what we need to reconstruct later
+                        combos.append({
+                            "expectancy":round(qexp,4),
+                            "trim_expr":tn,"trim_direction":dl,
+                            "trim_threshold":round(float(th),6),
+                            "trim_pct":tp,"final_expr":fd['nm'],
+                            "final_direction":fd['dr'],"final_threshold":fd['th'],
+                            "n_trimmed":nt,"trim_rate":round(nt/nv,4),
+                            "final_exit_expectancy":baseline,"mode":"2-stage"
+                        })
+    return combos, tested, 0
+
+
+# ── 2-Stage Grind (ProcessPoolExecutor + mmap) ──
+def grind_2stage(stage1_results, entry_high_offset_v, valid_indices, close_2d,
+                 entry_prices_v, adr_values_v, weights_v,
+                 move_adrs_v, n_bars_per_signal, filtered_names,
+                 direction, exit_horizon, expr_path, eb_path,
+                 top_n_final=50, n_workers=None):
+    if n_workers is None: n_workers = os.cpu_count() or 8
+    nv = len(valid_indices); ne = len(filtered_names)
+    n_final = min(top_n_final, len(stage1_results))
+    if n_final == 0: print("\n  ── 2-STAGE: No results ──"); return []
+
+    print(f"\n  ── 2-STAGE TRIM SEARCH ──")
+    print(f"  Top ~300 trim exprs × {n_final} final exits × ~{N_THRESHOLDS} thresholds × 2 dirs × {len(TRIM_PCTS)} trim%")
+    print(f"  Trim%: {TRIM_PCTS}  Workers: {n_workers} processes")
+    print_ram("(before 2-stage)"); t0 = time.time()
+
+    bi = np.arange(exit_horizon)[np.newaxis, :]
+
+    print(f"  Pre-computing {n_final} final exit profiles...")
+    e3 = np.load(expr_path, mmap_mode='r')
+    final_data = []
+    for fi in range(n_final):
+        final = stage1_results[fi]
+        fn=final["expr_name"]; fd=final["direction"]; ft=final["threshold"]
+        fei=None
+        for j, name in enumerate(filtered_names):
+            if name==fn: fei=j; break
+        if fei is None: continue
+        fcol=e3[:,:,fei]
+        fsr=np.zeros((nv,exit_horizon),dtype=bool)
+        for vi in range(nv):
+            s=entry_high_offset_v[vi]+1
+            if s<n_bars_per_signal[vi]: fsr[vi,s:n_bars_per_signal[vi]]=True
+        fm=np.isfinite(fcol)&fsr
+        fhit=((fcol>=ft) if fd=="above" else (fcol<=ft))&fm
+        fhb=np.where(fhit,bi,exit_horizon+1); feb=np.min(fhb,axis=1)
+        fcap=np.full(nv,-LOSS_ASSUMPTION_ADR,dtype=np.float64)
+        ftrig=feb<exit_horizon+1
+        for vi in np.where(ftrig)[0]:
+            fb=feb[vi]; ec=close_2d[vi,fb]
+            if np.isfinite(ec) and adr_values_v[vi]>0:
+                if direction=="short": fcap[vi]=(entry_prices_v[vi]-ec)/adr_values_v[vi]
+                else: fcap[vi]=(ec-entry_prices_v[vi])/adr_values_v[vi]
+        pe=np.zeros((nv,exit_horizon),dtype=bool); nr=0
+        for vi in range(nv):
+            eh=entry_high_offset_v[vi]; fb=feb[vi]
+            if fb<exit_horizon+1 and eh+2<=fb: pe[vi,eh+1:fb]=True; nr+=1
+        bh=np.full(nv,exit_horizon,dtype=np.int32)
+        for vi in np.where(ftrig)[0]: bh[vi]=feb[vi]-entry_high_offset_v[vi]
+        if nr>=20:
+            final_data.append({'pe':pe,'cap':fcap,'tr':ftrig,'bh':bh,
+                'nm':fn,'dr':fd,'th':ft,'ex':final["expectancy"]})
+    del e3
+    na=len(final_data)
+    print(f"  Active final exits: {na}/{n_final}")
+    if na==0: print("  No room for trim."); return []
+
+    # Build search_valid for threshold generation
+    search_valid=np.zeros((nv,exit_horizon),dtype=bool)
+    for vi in range(nv):
+        s=entry_high_offset_v[vi]+1
+        if s<n_bars_per_signal[vi]: search_valid[vi,s:n_bars_per_signal[vi]]=True
+    shared = {'c2d':close_2d, 'ad':adr_values_v, 'ep':entry_prices_v,
+              'wt':weights_v, 'mv':move_adrs_v,
+              'nm':filtered_names, 'dr':direction, 'eh':exit_horizon,
+              'fd':final_data, 'tp':TRIM_PCTS, 'sv':search_valid}
+
+    # Only test expressions that proved useful in 1-stage as trim candidates.
+    # Testing all 12,878 × 50 finals is 50× the 1-stage work — too slow.
+    # Top 300 1-stage expressions cover the meaningful TA signals.
+    trim_expr_limit = min(300, len(stage1_results))
+    trim_expr_names = set()
+    for r in stage1_results[:trim_expr_limit]:
+        trim_expr_names.add(r["expr_name"])
+    trim_expr_indices = [i for i, n in enumerate(filtered_names) if n in trim_expr_names]
+    n_trim = len(trim_expr_indices)
+    print(f"  Trim candidates: {n_trim} expressions (top {trim_expr_limit} from 1-stage)")
+
+    chunk_sz = max(1, n_trim // (n_workers * 2))
+    chunks = [trim_expr_indices[i:i+chunk_sz] for i in range(0, n_trim, chunk_sz)]
+    print(f"  {len(chunks)} chunks of ~{chunk_sz}, dispatching {n_workers} processes...")
+
+    all_combos=[]; total_tested=0; done=0
+    with ProcessPoolExecutor(max_workers=n_workers,
+                              initializer=_init_2stage,
+                              initargs=(expr_path, eb_path, shared)) as pool:
+        futs = {pool.submit(_work_2stage, ch): ci for ci, ch in enumerate(chunks)}
+        for f in as_completed(futs):
+            combos, tested, sk = f.result()
+            all_combos.extend(combos); total_tested+=tested; done+=1
+            if done%max(1,len(chunks)//20)==0 or done==len(chunks):
+                el=time.time()-t0
+                print(f"    [{done}/{len(chunks)}] {el:.1f}s, {len(all_combos):,} combos, {total_tested:,} tested")
+
+    el=time.time()-t0
+    print(f"\n  2-stage grind: {el:.1f}s ({el/60:.1f} min), {total_tested:,} tested, {len(all_combos):,} raw")
+    print_ram("(after 2-stage grind)")
+
+    all_combos.sort(key=lambda c:c.get("expectancy",float('-inf')),reverse=True)
+    seen=set(); deduped=[]
+    for c in all_combos:
+        k=(c["trim_expr"],c["final_expr"],c["trim_pct"])
+        if k not in seen: seen.add(k); deduped.append(c)
+    print(f"  Dedup: {len(all_combos):,} -> {len(deduped):,}")
+
+    improved=[c for c in deduped if c["expectancy"]>c["final_exit_expectancy"]]
+    print(f"  Combos beating 1-stage: {len(improved)}")
+
+    # Run full stats on top 500 only (workers computed expectancy only)
+    if improved:
+        top_n = min(500, len(improved))
+        print(f"  Computing full stats on top {top_n}...")
+        e3 = np.load(expr_path, mmap_mode='r')
+        bi = np.arange(exit_horizon)[np.newaxis, :]
+        for ci, combo in enumerate(improved[:top_n]):
+            # Reconstruct blended capture for this combo
+            # Find final exit
+            fn=combo["final_expr"]; fd_dir=combo["final_direction"]; ft=combo["final_threshold"]
+            fei=None
+            for j, name in enumerate(filtered_names):
+                if name==fn: fei=j; break
+            if fei is None: continue
+            fcol=e3[:,:,fei]
+            fsr=np.zeros((nv,exit_horizon),dtype=bool)
+            for vi in range(nv):
+                s=entry_high_offset_v[vi]+1
+                if s<n_bars_per_signal[vi]: fsr[vi,s:n_bars_per_signal[vi]]=True
+            fm=np.isfinite(fcol)&fsr
+            fhit=((fcol>=ft) if fd_dir=="above" else (fcol<=ft))&fm
+            fhb=np.where(fhit,bi,exit_horizon+1); feb=np.min(fhb,axis=1)
+            fcap=np.full(nv,-LOSS_ASSUMPTION_ADR,dtype=np.float64)
+            ftrig=feb<exit_horizon+1
+            sig_idx=np.arange(nv)
+            feb_clip=np.clip(feb,0,exit_horizon-1)
+            fprices=close_2d[sig_idx,feb_clip]
+            adr_ok=adr_values_v>0
+            if direction=="short": fcap=np.where(ftrig&adr_ok&np.isfinite(fprices),(entry_prices_v-fprices)/adr_values_v,-LOSS_ASSUMPTION_ADR)
+            else: fcap=np.where(ftrig&adr_ok&np.isfinite(fprices),(fprices-entry_prices_v)/adr_values_v,-LOSS_ASSUMPTION_ADR)
+            # Find trim
+            tn=combo["trim_expr"]; td=combo["trim_direction"]; tt_th=combo["trim_threshold"]; tp=combo["trim_pct"]
+            tei=None
+            for j, name in enumerate(filtered_names):
+                if name==tn: tei=j; break
+            if tei is None: continue
+            tcol=e3[:,:,tei]
+            pe=np.zeros((nv,exit_horizon),dtype=bool)
+            for vi in range(nv):
+                eh=entry_high_offset_v[vi]; fb=feb[vi]
+                if fb<exit_horizon+1 and eh+2<=fb: pe[vi,eh+1:fb]=True
+            tfm=np.isfinite(tcol)&pe
+            thit=((tcol>=tt_th) if td=="above" else (tcol<=tt_th))&tfm
+            thb=np.where(thit,bi,exit_horizon+1); ttb=np.min(thb,axis=1)
+            ttrig=ttb<exit_horizon+1
+            # ATE check
+            teb=e3[sig_idx,0,tei] if tei<e3.shape[2] else np.full(nv,np.nan)
+            # Actually use eb_2d for ATE
+            eb_2d=np.load(eb_path,mmap_mode='r')
+            teb=eb_2d[:,tei]; tebf=np.isfinite(teb)
+            ate=tebf&((teb>=tt_th) if td=="above" else (teb<=tt_th))
+            ttrig=ttrig&(~ate)
+            # Vectorized trim capture
+            ttb_clip=np.clip(ttb,0,exit_horizon-1)
+            tprices=close_2d[sig_idx,ttb_clip]
+            if direction=="short": tcaps=np.where(ttrig&adr_ok&np.isfinite(tprices),(entry_prices_v-tprices)/adr_values_v,0.0)
+            else: tcaps=np.where(ttrig&adr_ok&np.isfinite(tprices),(tprices-entry_prices_v)/adr_values_v,0.0)
+            bl=fcap.copy(); bl[ttrig]=tp*tcaps[ttrig]+(1-tp)*fcap[ttrig]
+            bh=np.full(nv,exit_horizon,dtype=np.int32)
+            for vi in np.where(ftrig)[0]: bh[vi]=feb[vi]-entry_high_offset_v[vi]
+            st=compute_weighted_stats(bl,weights_v,ftrig,move_adrs_v,bh)
+            if st is not None:
+                combo.update(st)
+            if (ci+1)%100==0: print(f"    [{ci+1}/{top_n}] full stats computed")
+        del e3
+        print(f"  Full stats done on {min(top_n,len(improved))} combos")
+    if improved:
+        print(f"\n  Top 10 2-stage (beating 1-stage):")
+        print(f"    {'#':<3} {'Trim':<30} {'Dir':<6} {'T%':>4} "
+              f"{'Final':<30} {'Exp':>6} {'1stg':>6} {'D':>5} {'TrR':>5}")
+        print(f"    {'-'*105}")
+        for i,c in enumerate(improved[:10]):
+            d=c["expectancy"]-c["final_exit_expectancy"]
+            print(f"    {i+1:<3} {c['trim_expr']:<30} {c['trim_direction']:<6} "
+                  f"{c['trim_pct']:>4.0%} {c['final_expr']:<30} "
+                  f"{c['expectancy']:>6.3f} {c['final_exit_expectancy']:>6.3f} "
+                  f"{d:>+5.3f} {c['trim_rate']:>5.1%}")
+    else:
+        print(f"\n  No 2-stage combo beats 1-stage.")
+    return deduped
+
+
+# ── Dedup ──
+def dedup_candidates(candidates, exit_horizon):
+    if len(candidates)<2: return [c[0] for c in candidates]
+    print(f"\n  ── CANDIDATE DEDUP ──")
+    t0=time.time(); nr=len(candidates)
+    eb={}
+    for st,ex in candidates:
+        n=st["expr_name"]
+        if n not in eb or st["expectancy"]>eb[n][0]["expectancy"]: eb[n]=(st,ex)
+    p1=list(eb.values()); n1=len(p1)
+    print(f"  Pass 1 (best/expression): {nr:,} → {n1:,}")
+    p1.sort(key=lambda x:x[0]["expectancy"],reverse=True)
+    tn=p1[:DEDUP_TOP_N]; rest=p1[DEDUP_TOP_N:]
+    if len(tn)<2: print(f"  Pass 2: skipped"); return [c[0] for c in p1]
+    nc=len(tn); ns=len(tn[0][1])
+    em=np.zeros((nc,ns),dtype=np.float64)
+    for ci,(st,ex) in enumerate(tn): em[ci,:]=ex.astype(np.float64)
+    kept=[]; kr=[]
+    for ci in range(nc):
+        row=em[ci]; dom=False
+        for k in kr:
+            bv=(row<exit_horizon+1)&(k<exit_horizon+1); nv=int(bv.sum())
+            if nv<50: continue
+            rv,kv=row[bv],k[bv]
+            if np.std(rv)<1e-10 or np.std(kv)<1e-10: dom=True; break
+            if abs(np.corrcoef(rv,kv)[0,1])>=DEDUP_CORR_THRESHOLD: dom=True; break
+        if not dom: kept.append(tn[ci]); kr.append(row)
+    n2=len(kept); nd=nc-n2; el=time.time()-t0
+    print(f"  Pass 2 (exit-bar corr, top {DEDUP_TOP_N}): {nc} → {n2} ({nd} dupes)")
+    print(f"  Dedup: {el:.1f}s")
+    result=[c[0] for c in kept]+[c[0] for c in rest]
+    result.sort(key=lambda c:c.get("expectancy",float('-inf')),reverse=True)
+    print(f"  Final: {len(result):,}"); return result
+
+
+def _np_fix(obj):
+    """JSON serializer for numpy types."""
+    if isinstance(obj, (np.integer,)): return int(obj)
+    if isinstance(obj, (np.floating,)): return float(obj)
+    if isinstance(obj, np.ndarray): return obj.tolist()
+    if isinstance(obj, (np.bool_,)): return bool(obj)
+    return obj
+
+def save_output(setup, direction, exit_horizon, entry_window,
+                ev_path, counts, stage1, stage2, elapsed):
+    """Save profit grinder results to timestamped JSON + latest pointer."""
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    out = {
+        "setup_type": setup,
+        "timestamp": ts,
+        "direction": direction,
+        "exit_horizon": exit_horizon,
+        "entry_window": entry_window,
+        "ev_source": os.path.basename(ev_path),
+        "loss_assumption_adr": LOSS_ASSUMPTION_ADR,
+        "n_thresholds": N_THRESHOLDS,
+        "elapsed_seconds": round(elapsed, 1),
+        "population": {
+            "total": counts["total"],
+            "examples": counts["examples"],
+            "vetted_yes": counts.get("vetted_yes", 0),
+            "rejected": counts["rejected"],
+            "unvetted": counts["unvetted"],
+            "no_score": counts["no_score"],
+        },
+        "stage_1": {
+            "n_candidates": len(stage1),
+            "top_100": stage1[:100],
+        },
+        "stage_2": {
+            "n_candidates": len(stage2),
+            "n_beating_1stage": len([c for c in stage2 if c.get("expectancy",0) > c.get("final_exit_expectancy",0)]),
+            "trim_pcts": TRIM_PCTS,
+            "top_100": stage2[:100],
+        },
+    }
+    
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    # Timestamped file
+    fname = f"profit_{setup}_{ts}.json"
+    fpath = os.path.join(CACHE_DIR, fname)
+    with open(fpath, "w") as f:
+        json.dump(out, f, indent=2, default=_np_fix)
+    sz_mb = os.path.getsize(fpath) / 1e6
+    print(f"\n  ── SAVED ──")
+    print(f"  {fname} ({sz_mb:.1f} MB)")
+    
+    # Latest pointer (copy)
+    latest = os.path.join(CACHE_DIR, f"profit_{setup}.json")
+    import shutil
+    shutil.copy2(fpath, latest)
+    print(f"  profit_{setup}.json (latest pointer)")
+    
+    # Mirror to Railway
+    try:
+        sys.path.insert(0, os.path.join(REPO_ROOT, "local_runner"))
+        from file_mirror import mirror_file
+        mirror_file(fpath)
+        print(f"  Mirrored to Railway")
     except Exception as e:
-        print(f"  WARNING: Railway upload error: {e}")
+        print(f"  WARNING: Mirror failed: {e}")
+    
+    return fpath
 
-
-# ============================================================
-# Main
-# ============================================================
-
+# ── Main ──
 def main():
-    parser = argparse.ArgumentParser(description="Profit Grinder — Step 4a (expr cache)")
-    parser.add_argument("--setup", default="dtss", help="Setup type")
-    parser.add_argument("--max-forward", type=int, default=MAX_FORWARD_DEFAULT)
-    parser.add_argument("--n-thresholds", type=int, default=50)
-    parser.add_argument("--min-bar", type=int, default=1)
-    parser.add_argument("--top-n", type=int, default=50)
-    parser.add_argument("--direction", default="short")
-    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
-    args = parser.parse_args()
+    pa=argparse.ArgumentParser(description="Profit Grinder — Phase 4")
+    pa.add_argument("--setup",default="dtss"); pa.add_argument("--direction",default=None)
+    pa.add_argument("--ev-file",default=None)
+    pa.add_argument("--exit-horizon",type=int,default=EXIT_HORIZON_DEFAULT)
+    pa.add_argument("--workers",type=int,default=None)
+    pa.add_argument("--top-n-2stage",type=int,default=TOP_N_2STAGE_DEFAULT,
+                    help="How many 1-stage results to use as final exits for 2-stage search")
+    pa.add_argument("--skip-2stage",action="store_true",help="Skip 2-stage search")
+    args=pa.parse_args()
+    setup=args.setup; cfg=SETUP_CONFIGS.get(setup,{"direction":"short"}); direction=args.direction or cfg["direction"]
+    exit_horizon=args.exit_horizon; n_workers=args.workers or min(os.cpu_count() or 8, 12)
 
-    print(f"Profit Grinder — Step 4a (expression cache)")
-    print(f"Setup: {args.setup.upper()}, Direction: {args.direction}")
-    print(f"Max forward: {args.max_forward} bars, Thresholds: {args.n_thresholds}")
-    print(f"Min bar: {args.min_bar}, 100% example pass required")
-    print(f"Workers: {args.workers}")
+    print(f"\n{'='*70}\n  PROFIT GRINDER — Phase 4 Exit Optimization\n{'='*70}")
+    print(f"  Setup: {setup.upper()}, Direction: {direction}")
+    print(f"  Exit horizon: {exit_horizon} bars, Loss: {LOSS_ASSUMPTION_ADR} ADR, Thresholds: {N_THRESHOLDS}")
+    print(f"  Workers: {n_workers}, 2-stage final exits: {args.top_n_2stage}")
+    print_ram("(startup)"); check_ram("(startup)",min_gb=4.0); t0=time.time()
 
-    # 1. Load expression cache manifest for expression names
-    from local_runner.expr_cache_builder import ExprSeriesCache
-    expr_cache = ExprSeriesCache()
-    if not expr_cache.is_valid():
-        print("ERROR: Expression cache not valid. Run expr_cache_builder.py --build first.")
-        sys.exit(1)
+    print(f"\n  ── LOADING DATA ──")
+    ev_data,ev_path=load_ev_data(setup,args.ev_file)
+    entry_scores=load_entry_scores(setup)
+    example_keys,rejected_keys=load_vetting_decisions(setup)
+    example_entry_dates=load_example_entry_dates(setup)
+    entry_window=load_entry_window(setup)
 
-    all_expr_names = expr_cache.expr_names
+    print(f"\n  ── BUILDING POPULATION ──")
+    signals,counts=build_signal_population(ev_data,entry_scores,example_keys,rejected_keys)
+    print(f"\n  Population: {counts['total']} signals")
+    print(f"    Examples: {counts['examples']}  Unvetted: {counts['unvetted']}  "
+          f"Rejected: {counts['rejected']}  No score: {counts['no_score']}")
+    if counts["no_score"]>0: print(f"  ⚠ {counts['no_score']} missing entry_candle_score")
+    w=np.array([s["weight"] for s in signals])
+    print(f"  Weights: min={w.min():.4f} med={np.median(w):.4f} max={w.max():.4f} sum={w.sum():.1f}")
+    hg=sum(1 for s in signals if s["weight_category"] in ("example","vetted_yes"))
+    print(f"  Hard gate: {hg}")
+    if counts["total"]<5: print("  ERROR: <5 signals"); sys.exit(1)
+    print(f"\n  ⚠ Winner-only population. SQN/WR inflated. Use expectancy + capture_eff for ranking.")
 
-    # Filter out boolean aggregations — monotonically increasing during trends,
-    # structurally wrong for exit detection (they fire early, not at move exhaustion)
-    BOOL_PREFIXES = ("ct_", "st_", "tir_")
-    # Build mapping: filtered index -> actual cache column index
-    expr_names = []
-    expr_col_map = []  # expr_col_map[i] = actual column index in .npz for expr_names[i]
-    for col_i, name in enumerate(all_expr_names):
-        if not name.startswith(BOOL_PREFIXES):
-            expr_names.append(name)
-            expr_col_map.append(col_i)
+    print(f"\n  ── EXPRESSION CACHE ──")
+    from expr_cache_builder import ExprSeriesCache
+    ec=ExprSeriesCache()
+    if not ec.is_valid(): print("  ERROR: expr cache invalid"); sys.exit(1)
+    ecm,fn,ne=build_expr_col_map(ec.expr_names); nf=len(ecm)
+    print(f"  {len(ec.expr_names)} total, {ne} boolean excluded, {nf} for search")
 
-    n_excluded = len(all_expr_names) - len(expr_names)
-    print(f"\nExpression cache: {len(all_expr_names)} total, "
-          f"{n_excluded} boolean aggregations excluded, "
-          f"{len(expr_names)} expressions for exit grind")
-    print(f"  {len(expr_cache.get_available_tickers())} tickers")
+    print(f"\n  ── FORWARD MATRIX CONSTRUCTION ──")
+    print(f"  Entry window: {entry_window} bars  Exit horizon: {exit_horizon} bars")
+    check_ram("(pre-OHLCV)",min_gb=3.0); oc=load_daily_cache(); print_ram("(OHLCV loaded)")
+    fwd_expr,fwd_closes,entry_high_bar_expr,entry_high_offset,entry_prices,adr_values,signal_meta,valid_mask,bs=\
+        build_forward_data(signals,oc,ec,ecm,direction,exit_horizon,entry_window,example_entry_dates)
+    del oc; gc.collect()
+    print(f"  Loaded: {bs['loaded']}  Valid: {bs['n_valid']}")
+    print(f"  Entry bar: {bs['n_ex_date_found']} ex by date, {bs['n_ex_date_fallback']} ex fallback, {bs['n_nonex_argmax']} non-ex argmax")
+    if bs['n_ex_date_fallback']>0: print(f"  ⚠ {bs['n_ex_date_fallback']} example fallbacks")
+    exl=sum(1 for m in signal_meta if m.get("status")=="ok" and m.get("is_example"))
+    if exl<counts["examples"]: print(f"  ✗ FAIL: {exl}/{counts['examples']} examples"); sys.exit(1)
+    print(f"  ✓ All {counts['examples']} examples loaded")
+    tfb=sum(fwd_expr[si].nbytes for si in range(len(signals)) if fwd_expr[si] is not None)
+    print(f"  Forward data: {tfb/1e9:.2f} GB")
+    print_ram("(OHLCV freed)"); check_ram("(pre-grind)",min_gb=2.0)
 
-    # 2. Load examples from Railway
-    raw_examples = load_examples(args.setup)
+    vi=np.where(valid_mask)[0]
+    sd=[signals[si]["date"] for si in vi]; do=np.argsort(sd); vi=vi[do]
+    wv=np.array([signals[si]["weight"] for si in vi])
+    epv=entry_prices[vi]; av=adr_values[vi]
+    mv=np.array([signals[si].get("move_adr",0) or 0 for si in vi])
+    ihg=np.array([signals[si]["weight_category"] in ("example","vetted_yes") for si in vi])
+    nbp=np.array([fwd_expr[si].shape[0] for si in vi],dtype=np.int32)
+    eho=entry_high_offset[vi]
 
-    # 3. Load 5yr OHLCV cache
-    universe_cache = load_5yr_cache()
+    # ── 1-Stage ──
+    stage1, close_2d, expr_path, eb_path, tmpdir = grind_1stage(
+        fwd_expr,fwd_closes,entry_high_bar_expr,eho,vi,
+        epv,av,wv,ihg,mv,nbp,fn,direction,exit_horizon,n_workers)
 
-    # 4. Load all examples (parallel — expr cache + OHLCV)
-    examples = load_all_examples(
-        raw_examples, args.direction, args.max_forward, universe_cache, args.workers
-    )
+    if stage1:
+        t=stage1[0]
+        print(f"\n  1-Stage top (by expectancy): {t['expr_name']} {t['direction']} {t['threshold']}")
+        print(f"    Exp={t['expectancy']:.3f}  Capture: {t['median_capture_eff']:.2f}±{t['std_capture_eff']:.2f}  "
+              f"Bars med={t['bars_held_median']}")
 
-    if len(examples) < 3:
-        print(f"\nOnly {len(examples)} examples — need at least 3. Aborting.")
-        sys.exit(1)
+    if len(stage1)>=10:
+        print(f"\n  1-Stage top 10:")
+        print(f"    {'#':<3} {'Expression':<40} {'Dir':<6} {'Thresh':>8} {'Exp':>6} {'CapM':>5} {'BrM':>4}")
+        print(f"    {'-'*75}")
+        for i,c in enumerate(stage1[:10]):
+            print(f"    {i+1:<3} {c['expr_name']:<40} {c['direction']:<6} "
+                  f"{c['threshold']:>8.4f} {c['expectancy']:>6.3f} "
+                  f"{c['median_capture_eff']:>5.2f} {c['bars_held_median']:>4}")
 
-    print_mfe_summary(examples)
+    # ── 2-Stage ──
+    stage2 = []
+    if not args.skip_2stage and stage1:
+        stage2 = grind_2stage(
+            stage1, entry_high_offset_v=eho, valid_indices=vi, close_2d=close_2d,
+            entry_prices_v=epv, adr_values_v=av, weights_v=wv,
+            move_adrs_v=mv, n_bars_per_signal=nbp, filtered_names=fn,
+            direction=direction, exit_horizon=exit_horizon,
+            expr_path=expr_path, eb_path=eb_path,
+            top_n_final=args.top_n_2stage, n_workers=n_workers)
 
-    # 5. Verify expression count matches cache (compare against total cache cols, not filtered)
-    expected_cols = len(all_expr_names)
-    for ex in examples:
-        if ex.fwd_matrix.shape[1] != expected_cols:
-            print(f"WARNING: {ex.ticker} has {ex.fwd_matrix.shape[1]} cols, expected {expected_cols}")
+    # Cleanup temp files
+    import shutil
+    shutil.rmtree(tmpdir, ignore_errors=True)
 
-    # 6. Grind
-    candidates = grind_exits(
-        examples, expr_names,
-        expr_col_map=expr_col_map,
-        direction=args.direction,
-        n_thresholds=args.n_thresholds,
-        min_bar=args.min_bar,
-        top_n=args.top_n,
-        workers=args.workers,
-    )
+    # ── Save Output ──
+    el=time.time()-t0
+    save_output(setup, direction, exit_horizon, entry_window,
+                ev_path, counts, stage1, stage2, el)
 
-    # 7. Report
-    print_results(candidates, examples, top_n=3)
+    # ── Summary ──
+    print(f"\n  {'='*60}")
+    print(f"  PROFIT GRINDER COMPLETE ({el:.1f}s / {el/60:.1f} min)")
+    print(f"  {'='*60}")
+    print(f"  1-stage candidates: {len(stage1)}")
+    print(f"  2-stage combos: {len(stage2)}")
+    improved = len([c for c in stage2 if c.get("expectancy",0) > c.get("final_exit_expectancy",0)])
+    print(f"  2-stage combos beating 1-stage: {improved}")
+    print(f"  EV source: {os.path.basename(ev_path)}")
+    print_ram("(final)"); print(f"  {'='*60}")
 
-    # 8. Safety check
-    if candidates:
-        best = candidates[0]
-        failed = [ex.ticker for i, ex in enumerate(examples) if best["exit_bars"][i] < 0]
-        if failed:
-            print(f"\n{'!'*80}")
-            print(f"INTERNAL ERROR — best exit does NOT trigger on all examples!")
-            print(f"  Failed: {failed}")
-            print(f"{'!'*80}")
-        else:
-            print(f"\n  Validation passed: {len(examples)}/{len(examples)} examples trigger")
-
-    # 9. Save
-    save_results(candidates, examples, args.setup, args, expr_names)
-
-    # 10. Summary
-    if candidates:
-        best = candidates[0]
-        print(f"\n{'='*80}")
-        print(f"BEST EXIT: {best['expr_name']} {best['direction']} {best['threshold']:.4f}")
-        print(f"  Floor capture eff: {best['floor_capture_eff']:.2f}")
-        print(f"  Median capture eff: {best['median_capture_eff']:.2f}")
-        print(f"  Floor % move: {best['floor_pct_move']:+.2f}%")
-        print(f"  Median % move: {best['median_pct_move']:+.2f}%")
-        print(f"  Avg bars to exit: {best['avg_bars_to_exit']:.1f}")
-        print(f"  Expressions tested: {len(expr_names):,}")
-        print(f"{'='*80}")
-
-
-if __name__ == "__main__":
-    main()
+if __name__=="__main__": main()

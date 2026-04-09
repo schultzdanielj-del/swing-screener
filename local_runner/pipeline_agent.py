@@ -36,6 +36,8 @@ LOG_BATCH_SIZE = 50      # max lines per batch
 # ============================================================
 STEP_COMMANDS = {
     "nightly": [sys.executable, os.path.join(LOCAL_DIR, "nightly.py")],
+
+    # ── V2 pipeline steps ──
     "signal_grind": [
         sys.executable, os.path.join(LOCAL_DIR, "pyramid_grinder.py"),
         "--setup", "dtss", "--peak-target", "3", "--beam", "10000", "--depth", "100",
@@ -44,24 +46,12 @@ STEP_COMMANDS = {
         sys.executable, os.path.join(REPO_ROOT, "scripts", "exit_grinder.py"),
         "--setup", "dtss", "--max-forward", "120",
     ],
-    "multistage_exit": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "multistage_exit_grinder.py"),
-        "--setup", "dtss",
+    "refinement_grind": [
+        sys.executable, os.path.join(LOCAL_DIR, "pyramid_grinder.py"),
+        "--setup", "dtss", "--blackout",
     ],
-    "signal_filter": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "signal_filter.py"),
-        "--setup", "dtss",
-    ],
-    "profit_grinder": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "profit_grinder.py"),
-        "--setup", "dtss", "--max-forward", "120",
-    ],
-    "outcome_grind": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "outcome_grinder.py"),
-        "--setup", "dtss",
-    ],
-    "backtest": [
-        sys.executable, os.path.join(REPO_ROOT, "scripts", "backtest_runner.py"),
+    "ev_grind": [
+        sys.executable, os.path.join(REPO_ROOT, "scripts", "ev_grinder.py"),
         "--setup", "dtss",
     ],
 }
@@ -207,20 +197,42 @@ def extract_summary(output_lines):
 
 
 def run_step(job):
-    """Run a pipeline step as a local subprocess."""
+    """Run a pipeline step as a local subprocess.
+
+    STEP_COMMANDS values can be:
+      - A flat list: single command, e.g. [sys.executable, "script.py", "--arg"]
+      - A list of lists: multi-command sequence, e.g. [[cmd1], [cmd2]]
+        Each command runs sequentially. Any non-zero exit code aborts the sequence.
+    """
     step_id = job["step_id"]
     job_id = job["job_id"]
+    params = job.get("params", {})
 
-    cmd = STEP_COMMANDS.get(step_id)
-    if not cmd:
+    cmd_entry = STEP_COMMANDS.get(step_id)
+    if not cmd_entry:
         print(f"  [{ts()}] Unknown step: {step_id}")
         post_status(step_id, "error", error=f"Unknown step: {step_id}")
         return
 
+    # Normalize to list of commands
+    if cmd_entry and isinstance(cmd_entry[0], list):
+        commands = [list(c) for c in cmd_entry]  # deep copy so we can modify
+    else:
+        commands = [list(cmd_entry)]
+
+    # ── Inject job params into commands ──
+    # (reserved for future per-step param injection)
+
+    n_cmds = len(commands)
     print(f"\n{'='*60}")
     print(f"  PIPELINE: {step_id}")
     print(f"  Job:      {job_id}")
-    print(f"  Command:  {' '.join(cmd)}")
+    if n_cmds > 1:
+        print(f"  Commands: {n_cmds} sequential")
+        for i, c in enumerate(commands, 1):
+            print(f"    [{i}/{n_cmds}] {' '.join(c)}")
+    else:
+        print(f"  Command:  {' '.join(commands[0])}")
     print(f"  Time:     {ts()}")
     print(f"{'='*60}\n")
 
@@ -232,44 +244,54 @@ def run_step(job):
     start_time = time.time()
 
     try:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            cwd=REPO_ROOT,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
-            bufsize=1,
-            universal_newlines=True,
-        )
+        for cmd_idx, cmd in enumerate(commands):
+            if n_cmds > 1:
+                marker = f"\n── Sub-command {cmd_idx + 1}/{n_cmds}: {' '.join(cmd)}\n"
+                print(marker)
+                streamer.add(marker)
+                all_lines.append(marker)
 
-        for line in process.stdout:
-            # Print locally
-            print(f"  | {line}", end="")
-            # Buffer for Railway
-            streamer.add(line)
-            all_lines.append(line)
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=REPO_ROOT,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                bufsize=1,
+                universal_newlines=True,
+            )
 
-        process.wait()
-        exit_code = process.returncode
+            for line in process.stdout:
+                # Print locally
+                print(f"  | {line}", end="")
+                # Buffer for Railway
+                streamer.add(line)
+                all_lines.append(line)
+
+            process.wait()
+            exit_code = process.returncode
+            duration = round(time.time() - start_time, 1)
+
+            if exit_code != 0:
+                # Abort sequence on first failure
+                streamer.stop()
+                error_tail = "".join(all_lines[-20:])
+                label = f"sub-command {cmd_idx + 1}/{n_cmds}" if n_cmds > 1 else ""
+                print(f"\n  ✗ {step_id} {label} failed (exit {exit_code}, {duration}s)")
+                post_status(step_id, "error",
+                            duration_s=duration, exit_code=exit_code,
+                            error=error_tail,
+                            result_summary=extract_summary(all_lines))
+                return
+
+        # All commands succeeded
         duration = round(time.time() - start_time, 1)
-
-        # Stop streamer, flush remaining
         streamer.stop()
-
-        # Extract summary
         summary = extract_summary(all_lines)
-
-        if exit_code == 0:
-            print(f"\n  ✓ {step_id} complete ({duration}s)")
-            post_status(step_id, "done",
-                        duration_s=duration, exit_code=0,
-                        result_summary=summary)
-        else:
-            error_tail = "".join(all_lines[-20:])
-            print(f"\n  ✗ {step_id} failed (exit {exit_code}, {duration}s)")
-            post_status(step_id, "error",
-                        duration_s=duration, exit_code=exit_code,
-                        error=error_tail, result_summary=summary)
+        print(f"\n  ✓ {step_id} complete ({duration}s)")
+        post_status(step_id, "done",
+                    duration_s=duration, exit_code=0,
+                    result_summary=summary)
 
     except Exception as e:
         streamer.stop()
@@ -296,6 +318,13 @@ def main():
         "timestamp": now_iso(),
         "status": "online",
     })
+
+    # Retry any pending grind uploads from previous failed attempts
+    try:
+        from grind_uploader import retry_pending
+        retry_pending()
+    except Exception as e:
+        print(f"  [{ts()}] WARNING: Pending upload retry failed: {e}")
 
     print(f"\n  [{ts()}] Waiting for pipeline jobs...\n")
 
