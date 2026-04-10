@@ -46,7 +46,7 @@ def mirror_file(filepath):
         )
         if r.status_code == 200:
             size_kb = len(data) / 1024
-            print(f"  [mirror] ✓ {rel_path} ({size_kb:.0f} KB)")
+            print(f"  [mirror] OK {rel_path} ({size_kb:.0f} KB)")
         else:
             print(f"  [mirror] WARNING: upload failed HTTP {r.status_code}: {r.text[:200]}")
 

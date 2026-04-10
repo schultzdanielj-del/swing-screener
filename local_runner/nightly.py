@@ -227,46 +227,27 @@ def step_6_matrix():
 
 
 def step_7_earnings():
-    """Refresh earnings dates for all tradable tickers."""
-    step_header(7, TOTAL_STEPS, "Earnings Dates Refresh")
+    """Report earnings date status. Earnings are refreshed quarterly, not nightly.
 
-    import requests
-
-    print("  Calling POST /api/universe/refresh-earnings ...")
-    print("  (Scrapes Yahoo Finance for all tradable tickers)")
-    print()
+    Run manually: python scripts/fetch_earnings.py
+    """
+    step_header(7, TOTAL_STEPS, "Earnings Dates -- Status")
 
     try:
-        # Trigger the background task
-        r = requests.post(f"{API_BASE}/api/universe/refresh-earnings", timeout=30)
-        r.raise_for_status()
-        print(f"  Started: {r.json().get('message', 'ok')}")
-
-        # Poll until complete (check every 30s, max 60 min)
-        import time as _time
-        last_count = 0
-        for _ in range(120):
-            _time.sleep(30)
-            try:
-                sr = requests.get(f"{API_BASE}/api/universe/earnings-status", timeout=10)
-                data = sr.json()
-                count = data.get("tickers_with_earnings", 0)
-                total = data.get("total_dates", 0)
-                if count > last_count:
-                    print(f"    {count} tickers, {total} dates...")
-                    last_count = count
-                elif count == last_count and count > 0:
-                    # No change for 30s -- probably done
-                    print(f"  OK Earnings refresh complete: {count} tickers, {total} dates")
-                    return
-            except:
-                pass
-
-        print("  OK Earnings refresh sent (may still be running in background)")
-
+        import sqlite3
+        db_path = os.path.join(PROJECT_ROOT, "data", "scanperfect.db")
+        if not os.path.exists(db_path):
+            print("  No local DB -- earnings dates not available")
+            return
+        db = sqlite3.connect(db_path)
+        n_tickers = db.execute("SELECT COUNT(DISTINCT ticker) FROM earnings_dates").fetchone()[0]
+        n_rows = db.execute("SELECT COUNT(*) FROM earnings_dates").fetchone()[0]
+        latest = db.execute("SELECT MAX(updated_at) FROM earnings_dates").fetchone()[0]
+        db.close()
+        print(f"  {n_tickers} tickers, {n_rows} dates (last updated: {latest})")
+        print("  (Quarterly refresh -- run 'python scripts/fetch_earnings.py' manually)")
     except Exception as e:
-        print(f"  FAIL Failed: {e}")
-        print("  (Non-fatal -- vetting will work without earnings dates)")
+        print(f"  FAIL {e}")
 
 
 def step_8_market_cache():

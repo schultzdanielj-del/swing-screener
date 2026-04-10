@@ -1575,9 +1575,14 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
         else:
             print(f"  No existing cache — building from scratch")
     elif os.path.exists(output_file):
-        with open(output_file, "rb") as f:
-            universe = pickle.load(f)
-        print(f"  Existing cache: {len(universe)} tickers")
+        try:
+            with open(output_file, "rb") as f:
+                universe = pickle.load(f)
+            print(f"  Existing cache: {len(universe)} tickers")
+        except Exception as e:
+            print(f"  WARNING: Could not load existing cache: {e}")
+            print(f"  Falling back to full rebuild from EODHD")
+            full_sweep = True
     else:
         if not full_sweep:
             print(f"  No existing cache. Run --htf first.")
