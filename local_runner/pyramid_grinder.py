@@ -1940,7 +1940,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 blackout_map=None, whitelist_map=None,
                 override_example_dfs=None, output_dir=None,
                 seed=None, subsample=None, pass_order=None,
-                zero_margin=False, no_peak_target=False):
+                zero_margin=False, no_peak_target=False,
+                permute=False):
     """Run the full pyramid grinder.
 
     Args:
@@ -1986,6 +1987,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     print(f"  Historical tiers: beam={beam_width}, depth={depth}")
     if multi_pass:
         print(f"  Mode: 3-pass (daily->weekly->monthly)")
+    if permute:
+        print(f"  Mode: PERMUTATION TEST (fake examples)")
     if seed is not None:
         print(f"  Seed: {seed}")
     if subsample is not None:
@@ -2017,6 +2020,33 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     else:
         example_dfs = load_example_data(setup_type, universe_cache)
         print(f"  {len(example_dfs)} examples loaded")
+
+    # ── Consensus: permutation test — replace real examples with fakes ──
+    if permute and rng is not None:
+        n_fake = len(example_dfs)
+        # Filter to tickers with enough bars for a valid scan_idx
+        universe_tickers = [t for t in sorted(universe_cache.keys())
+                            if len(universe_cache[t]) >= 100]
+        fake_examples = []
+        for _ in range(n_fake):
+            fake_ticker = rng.choice(universe_tickers)
+            fake_df = universe_cache[fake_ticker].copy()
+            if not pd.api.types.is_datetime64_any_dtype(fake_df["date"]):
+                fake_df["date"] = pd.to_datetime(fake_df["date"])
+            fake_df = fake_df.sort_values("date").reset_index(drop=True)
+            # Pick a random bar index in the valid range (leave margin for lookback)
+            min_idx = max(50, len(fake_df) // 4)
+            max_idx = len(fake_df) - 2
+            fake_scan_idx = rng.randint(min_idx, max_idx)
+            fake_entry_date = str(fake_df.iloc[min(fake_scan_idx + 1, len(fake_df) - 1)]["date"].date())
+            fake_examples.append({
+                "ticker": fake_ticker,
+                "entry_date": fake_entry_date,
+                "scan_idx": fake_scan_idx,
+                "df": fake_df,
+            })
+        example_dfs = fake_examples
+        print(f"  {n_fake} fake examples generated (permutation test)")
 
     print(f"\n  Loading expressions...")
     # Signal expressions for grinding (what the grinder actually uses)
@@ -2349,23 +2379,29 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 "is_example": True,
             })
 
-    # ── Final validation ──
-    print(f"\n  Final example validation:")
-    if not validate_examples(example_dfs, all_conditions, expr_cache=expr_cache):
-        print(f"\n{'!'*80}")
-        print(f"VALIDATION FAILED — Results NOT saved. All examples must pass. No exceptions.")
-        print(f"{'!'*80}")
-        return None
+    # ── Final validation (skip for permuted runs — fake examples won't pass) ──
+    if permute:
+        print(f"\n  Final example validation: SKIPPED (permutation test)")
+        examples_passing = len(example_dfs)
+        examples_failing = 0
+    else:
+        print(f"\n  Final example validation:")
+        if not validate_examples(example_dfs, all_conditions, expr_cache=expr_cache):
+            print(f"\n{'!'*80}")
+            print(f"VALIDATION FAILED — Results NOT saved. All examples must pass. No exceptions.")
+            print(f"{'!'*80}")
+            return None
 
-    examples_passing = len([ex for ex in example_dfs if ex["scan_idx"] is not None])
-    examples_failing = 0
-    print(f"    {examples_passing}/{examples_passing} examples pass all conditions")
+        examples_passing = len([ex for ex in example_dfs if ex["scan_idx"] is not None])
+        examples_failing = 0
+        print(f"    {examples_passing}/{examples_passing} examples pass all conditions")
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     mode_tag = "mp" if multi_pass else "sp"
     is_refinement = whitelist_map is not None
     refinement_tag = "_refinement" if is_refinement else ""
-    desc_name = f"pyramid_{setup_type}_{mode_tag}{refinement_tag}_sig{final_total}_pk{final_peak}_{ts}"
+    file_prefix = "permuted" if permute else "pyramid"
+    desc_name = f"{file_prefix}_{setup_type}_{mode_tag}{refinement_tag}_sig{final_total}_pk{final_peak}_{ts}"
 
     result = {
         "setup_type": setup_type,
@@ -2392,6 +2428,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "pass_order": pass_order,
             "zero_margin": zero_margin,
             "no_peak_target": no_peak_target,
+            "permute": permute,
         },
         "summary": {
             "final_total": final_total,
@@ -2493,7 +2530,7 @@ def _load_exit_cond(setup_type):
     return None
 
 
-def _gather_raw_signal_clusters(setup_type):
+def _gather_raw_signal_clusters(setup_type, conditions_override=None):
     """Gather raw pre-dedup signal clusters for the refinement grinder.
 
     Scans the full universe with step 1 signal conditions, groups consecutive
@@ -2501,8 +2538,10 @@ def _gather_raw_signal_clusters(setup_type):
     each cluster as AUTO_WIN or AUTO_LOSS.
 
     Output saved to local_runner/cache/raw_signal_clusters_{setup}.json.
-    The existing refinement grinder does NOT use this yet — it's gathered
-    here for later steps to wire in.
+
+    Args:
+        conditions_override: if provided, use these conditions instead of loading
+                             from _load_signal_conditions(). Used by --scan-only mode.
 
     Returns path to saved file, or None on error.
     """
@@ -2511,7 +2550,11 @@ def _gather_raw_signal_clusters(setup_type):
     print(f"\n  ── GATHERING RAW SIGNAL CLUSTERS ──")
 
     # ── Load signal conditions ──
-    signal_conditions, cond_source = _load_signal_conditions(setup_type)
+    if conditions_override is not None:
+        signal_conditions = conditions_override
+        cond_source = "--conditions-file override"
+    else:
+        signal_conditions, cond_source = _load_signal_conditions(setup_type)
     if not signal_conditions:
         print(f"  ERROR: No signal conditions found for {setup_type}")
         print(f"  Run step 1 first: python local_runner/pyramid_grinder.py --setup {setup_type}")
@@ -2595,8 +2638,21 @@ def _gather_raw_signal_clusters(setup_type):
     gc.collect()
 
     if not raw_signals:
-        print(f"  ERROR: Scan produced 0 raw signals")
-        return None
+        print(f"  WARNING: Scan produced 0 raw signals")
+        # Save empty cluster file — conditions may be very restrictive
+        empty_result = {
+            "setup_type": setup_type,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "n_conditions": len(signal_conditions),
+            "n_raw_signals": 0,
+            "clusters": [],
+            "classification_stats": {},
+        }
+        out_path = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
+        with open(out_path, "w") as f:
+            json.dump(empty_result, f, indent=2)
+        print(f"  Saved empty cluster file: {out_path}")
+        return out_path
 
     # ── Cluster consecutive bars ──
     print(f"\n  Clustering {len(raw_signals):,} raw signals...")
@@ -3291,13 +3347,21 @@ def _load_refinement_piles(setup_type):
 
 
 def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3,
-                   skip_gather=False, output_dir=None):
+                   skip_gather=False, output_dir=None,
+                   signal_conditions_override=None, subsample_losers=False,
+                   seed=None):
     """Refinement grind: cluster-aware beam search, winners must-pass, minimize losing clusters.
 
     Gathers raw signal clusters (Phase 1), loads full expendable set,
     runs cluster-aware beam search (Phase 2), combines conditions and
     filters signal lists by whole-cluster elimination (Phase 3).
     No re-scan, no re-classify — Phase 1 classification is truth.
+
+    Args:
+        signal_conditions_override: if provided, use these conditions instead of
+            loading from _load_signal_conditions(). Used by consensus pipeline.
+        subsample_losers: if True, subsample 50% of losing clusters using seed RNG.
+        seed: RNG seed for reproducible loser subsampling.
     """
     print("\n" + "=" * 70)
     print("  REFINEMENT GRINDER")
@@ -3343,6 +3407,26 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3,
     if win_dfs is None:
         print("  ABORT: Could not load refinement piles.")
         return None
+
+    # ── Consensus: loser subsampling ──
+    if subsample_losers and seed is not None and losing_cluster_bars:
+        ref_rng = random.Random(seed)
+        n_total = len(losing_cluster_bars)
+        n_keep = max(1, n_total // 2)
+        keep_indices = set(ref_rng.sample(range(n_total), n_keep))
+        losing_cluster_bars = [c for i, c in enumerate(losing_cluster_bars) if i in keep_indices]
+        # Rebuild loser_whitelist from surviving clusters
+        loser_whitelist = {}
+        for cluster_bars in losing_cluster_bars:
+            for tk, bi in cluster_bars:
+                loser_whitelist.setdefault(tk, set()).add(bi)
+        # Filter raw_losers to match surviving clusters
+        surviving_bars = set()
+        for cluster_bars in losing_cluster_bars:
+            for tk, bi in cluster_bars:
+                surviving_bars.add((tk, bi))
+        raw_losers = [s for s in raw_losers if (s["ticker"], s.get("bar_idx")) in surviving_bars]
+        print(f"  Subsampled 50% of loser clusters: {n_keep}/{n_total} kept (seed={seed})")
 
     # Free daily cache — no longer needed (win_dfs have their own df copies,
     # everything else is bar indices and metadata)
@@ -3627,7 +3711,11 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3,
     print(f"    Losers eliminated:   {len(eliminated_losers)}")
 
     # ── Combine signal + refinement conditions ──
-    signal_conditions, _cond_src = _load_signal_conditions(setup_type)
+    if signal_conditions_override is not None:
+        signal_conditions = signal_conditions_override
+        _cond_src = "--conditions-file override"
+    else:
+        signal_conditions, _cond_src = _load_signal_conditions(setup_type)
     if signal_conditions:
         print(f"\n  Signal conditions: {len(signal_conditions)} from {_cond_src}")
     else:
@@ -3807,12 +3895,39 @@ def main():
         if sorted(parts) != [1, 2, 3]:
             parser.error("--pass-order must be a permutation of 1,2,3")
 
+    # ── Scan-only mode: deterministic scan with supplied conditions ──
+    if args.scan_only:
+        print(f"\n  SCAN-ONLY MODE: Loading conditions from {args.conditions_file}")
+        with open(args.conditions_file) as f:
+            cond_data = json.load(f)
+        conditions_override = cond_data.get("all_conditions", [])
+        if not conditions_override:
+            print(f"  ERROR: No all_conditions found in {args.conditions_file}")
+            sys.exit(1)
+        print(f"  Loaded {len(conditions_override)} conditions")
+        cluster_path = _gather_raw_signal_clusters(args.setup, conditions_override=conditions_override)
+        if cluster_path:
+            print(f"  Cluster file saved: {cluster_path}")
+            sys.exit(0)
+        else:
+            print(f"  ERROR: Cluster gathering failed")
+            sys.exit(1)
+
     # ── Refinement grind: separate path ──
     if args.blackout:
         # Use aggressive defaults for refinement unless explicitly overridden
         ref_beam = args.beam if args.beam != 50 else 500
         ref_depth = args.depth if args.depth != 10 else 100
         ref_peak = args.peak_target if args.peak_target != 15 else 3
+
+        # Load --conditions-file for signal_conditions_override
+        ref_signal_override = None
+        if args.conditions_file:
+            with open(args.conditions_file) as f:
+                _cf = json.load(f)
+            ref_signal_override = _cf.get("all_conditions", [])
+            print(f"  --conditions-file: {len(ref_signal_override)} signal conditions loaded")
+
         result = run_refinement(
             setup_type=args.setup,
             beam_width=ref_beam,
@@ -3820,6 +3935,9 @@ def main():
             peak_target=ref_peak,
             skip_gather=getattr(args, 'skip_gather', False),
             output_dir=args.output_dir,
+            signal_conditions_override=ref_signal_override,
+            subsample_losers=args.subsample_losers,
+            seed=args.seed,
         )
         if result is None:
             sys.exit(1)
@@ -3855,6 +3973,7 @@ def main():
             pass_order=parsed_pass_order,
             zero_margin=args.zero_margin,
             no_peak_target=args.no_peak_target,
+            permute=args.permute,
         )
         results.append(result)
 

@@ -41,6 +41,15 @@ from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Worktree detection: resolve to main repo for data/cache access
+_claude_marker = os.sep + ".claude" + os.sep
+if _claude_marker in REPO_ROOT:
+    REPO_ROOT = os.environ.get(
+        "SCANPERFECT_REPO_ROOT",
+        REPO_ROOT[:REPO_ROOT.index(_claude_marker)],
+    )
+
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, os.path.join(REPO_ROOT, "local_runner"))
 
@@ -50,7 +59,7 @@ from expr_cache_builder import ExprSeriesCache
 # Config
 # ============================================================
 LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
-CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
+CACHE_DIR = os.environ.get("SCANPERFECT_CACHE_DIR", os.path.join(LOCAL_DIR, "cache"))
 RAILWAY_URL = "https://web-production-e3025.up.railway.app"
 MAX_FORWARD_DEFAULT = 120
 DEFAULT_WORKERS = os.cpu_count() or 8
@@ -643,7 +652,14 @@ def main():
 
     # Load data
     ohlcv_cache = load_daily_cache()
-    conditions = load_pyramid_conditions(setup)
+    if args.conditions_file:
+        print(f"  Loading conditions from: {args.conditions_file}")
+        with open(args.conditions_file) as _cf:
+            _cond_data = json.load(_cf)
+        conditions = _cond_data.get("all_conditions", [])
+        print(f"  Loaded {len(conditions)} conditions from --conditions-file")
+    else:
+        conditions = load_pyramid_conditions(setup)
     examples = load_examples(setup)
 
     # Phase 1: Resolve example signal bars

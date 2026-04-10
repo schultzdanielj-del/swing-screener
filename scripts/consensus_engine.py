@@ -1,15 +1,20 @@
 """
 Consensus Engine — Multi-Run Stability Selection for Signal & Refinement Conditions.
 
-Reads N grind outputs, matches conditions across runs by expression name,
-counts frequency of appearance, applies consensus threshold + EPV cap,
-outputs a locked condition set with stability metrics.
+Signal mode (Inc 8): Reads real + permuted run outputs from --input-dir.
+Computes z-score comparing real vs permuted condition counts.
+Locks conditions appearing in >= threshold fraction of real runs,
+applies 5% margin on bounds.
 
-Based on Meinshausen & Bühlmann (2010) stability selection framework.
-Recommended: 15 signal runs, 10 refinement runs, 0.7 consensus threshold.
+Refinement mode (Inc 9): Reads refinement run outputs, applies consensus
+threshold + binomial test. (Not yet rewritten — uses legacy logic.)
+
+Based on Meinshausen & Buhlmann (2010) stability selection framework.
+Permutation test replaces EPV formula — measures empirical noise floor.
 
 Usage:
-    python scripts/consensus_engine.py --setup dtss --stage signal --threshold 0.7
+    python scripts/consensus_engine.py --setup dtss --stage signal \\
+        --threshold 0.7 --input-dir local_runner/cache/consensus/run1/
     python scripts/consensus_engine.py --setup dtss --stage refinement --threshold 0.7
     python scripts/consensus_engine.py --setup dtss --stage signal --list-runs
 """
@@ -18,32 +23,45 @@ import os
 import sys
 import json
 import glob
-import sqlite3
+import math
 import argparse
 from datetime import datetime, timezone
 from collections import Counter, defaultdict
 
+# Force UTF-8 output on Windows
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
-DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
+
+# Detect worktree — resolve CACHE_DIR to main repo
+_claude_marker = os.sep + ".claude" + os.sep
+if _claude_marker in REPO_ROOT:
+    _MAIN_REPO = REPO_ROOT[:REPO_ROOT.index(_claude_marker)]
+    CACHE_DIR = os.environ.get(
+        "SCANPERFECT_CACHE_DIR",
+        os.path.join(_MAIN_REPO, "local_runner", "cache"),
+    )
+
 
 # ══════════════════════════════════════════════════════════════
 # FILE DISCOVERY
 # ══════════════════════════════════════════════════════════════
 
-def find_signal_grind_files(setup_type, limit=None):
-    """Find pyramid grind outputs for a setup (signal grind, not refinement)."""
-    pattern = os.path.join(CACHE_DIR, f"pyramid_{setup_type}_*.json")
+def _find_grind_files(search_dir, prefix, setup_type, skip_refinement=False):
+    """Find grind output JSONs matching prefix_setup_*.json in search_dir."""
+    pattern = os.path.join(search_dir, f"{prefix}_{setup_type}_*.json")
     candidates = []
     for path in glob.glob(pattern):
         try:
             with open(path) as f:
                 data = json.load(f)
-            # Skip refinement outputs
-            if data.get("refinement"):
+            if skip_refinement and data.get("refinement"):
                 continue
-            n_conds = data.get("n_conditions", 0)
+            n_conds = data.get("n_conditions", len(data.get("all_conditions", [])))
             if n_conds == 0:
                 continue
             candidates.append({
@@ -53,20 +71,33 @@ def find_signal_grind_files(setup_type, limit=None):
                 "n_conditions": n_conds,
                 "total_time_s": data.get("total_time_s", 0),
                 "summary": data.get("summary", {}),
+                "params": data.get("params", {}),
                 "mtime": os.path.getmtime(path),
             })
         except Exception as e:
             print(f"  WARNING: Could not read {os.path.basename(path)}: {e}")
-    # Sort by modification time, newest first
     candidates.sort(key=lambda c: c["mtime"], reverse=True)
-    if limit:
-        candidates = candidates[:limit]
     return candidates
 
 
-def find_refinement_grind_files(setup_type, limit=None):
+def find_signal_grind_files(setup_type, search_dir=None, limit=None):
+    """Find pyramid (real) grind outputs for a setup."""
+    d = search_dir or CACHE_DIR
+    files = _find_grind_files(d, "pyramid", setup_type, skip_refinement=True)
+    return files[:limit] if limit else files
+
+
+def find_permuted_grind_files(setup_type, search_dir=None, limit=None):
+    """Find permuted grind outputs for a setup."""
+    d = search_dir or CACHE_DIR
+    files = _find_grind_files(d, "permuted", setup_type)
+    return files[:limit] if limit else files
+
+
+def find_refinement_grind_files(setup_type, search_dir=None, limit=None):
     """Find refinement grind outputs for a setup."""
-    pattern = os.path.join(CACHE_DIR, f"refinement_{setup_type}_*.json")
+    d = search_dir or CACHE_DIR
+    pattern = os.path.join(d, f"refinement_{setup_type}_*.json")
     candidates = []
     for path in glob.glob(pattern):
         try:
@@ -87,9 +118,7 @@ def find_refinement_grind_files(setup_type, limit=None):
         except Exception as e:
             print(f"  WARNING: Could not read {os.path.basename(path)}: {e}")
     candidates.sort(key=lambda c: c["mtime"], reverse=True)
-    if limit:
-        candidates = candidates[:limit]
-    return candidates
+    return candidates[:limit] if limit else candidates
 
 
 # ══════════════════════════════════════════════════════════════
@@ -138,26 +167,23 @@ def extract_refinement_conditions(path):
 # CONSENSUS COMPUTATION
 # ══════════════════════════════════════════════════════════════
 
-def compute_consensus(all_run_conditions, n_runs, threshold=0.7, max_conditions=35):
+def compute_consensus(all_run_conditions, n_runs, threshold=0.7, max_conditions=None):
     """Compute consensus across N runs.
 
-    Matches conditions by expression name (exact match — the expression name
-    uniquely identifies the condition, thresholds are derived from examples
-    and will be recomputed from the locked example set).
+    Matches conditions by expression name (exact match).
 
     Args:
         all_run_conditions: list of lists, one per run, each containing condition dicts
         n_runs: total number of runs
         threshold: minimum selection frequency (0.0-1.0), default 0.7
-        max_conditions: maximum conditions to keep (EPV cap)
+        max_conditions: maximum conditions to keep (None = no cap)
 
     Returns:
         dict with consensus results
     """
-    # Count how many runs each condition appears in
     condition_freq = Counter()
-    condition_runs = defaultdict(list)  # name -> list of run indices
-    condition_examples = {}  # name -> latest condition dict (for compute, category etc.)
+    condition_runs = defaultdict(list)
+    condition_examples = {}
 
     for run_i, conditions in enumerate(all_run_conditions):
         seen_this_run = set()
@@ -167,23 +193,19 @@ def compute_consensus(all_run_conditions, n_runs, threshold=0.7, max_conditions=
                 condition_freq[name] += 1
                 seen_this_run.add(name)
             condition_runs[name].append(run_i)
-            condition_examples[name] = c  # keep latest version for metadata
+            condition_examples[name] = c
 
-    # All unique conditions found across all runs
     all_names = sorted(condition_freq.keys(), key=lambda n: condition_freq[n], reverse=True)
     n_unique = len(all_names)
 
-    # Apply consensus threshold
     min_appearances = max(1, int(n_runs * threshold))
     consensus_names = [name for name in all_names if condition_freq[name] >= min_appearances]
 
-    # Apply condition cap (if provided — usually None, EPV enforced at grinder)
     if max_conditions is not None:
         capped_names = consensus_names[:max_conditions]
     else:
         capped_names = consensus_names
 
-    # Build consensus condition list with metadata
     consensus_conditions = []
     for name in capped_names:
         c = condition_examples[name]
@@ -195,13 +217,11 @@ def compute_consensus(all_run_conditions, n_runs, threshold=0.7, max_conditions=
             "category": c.get("category", ""),
             "tier": c.get("tier", ""),
             "compute": c.get("compute", ""),
-            # Bounds will be recomputed from locked example set — these are reference only
             "ref_low": c.get("low"),
             "ref_high": c.get("high"),
         })
 
-    # Stability metrics
-    # Pairwise overlap: for each pair of runs, what fraction of conditions overlap?
+    # Pairwise Jaccard overlap
     pairwise_overlaps = []
     for i in range(len(all_run_conditions)):
         names_i = set(c["name"] for c in all_run_conditions[i])
@@ -213,8 +233,6 @@ def compute_consensus(all_run_conditions, n_runs, threshold=0.7, max_conditions=
                 pairwise_overlaps.append(len(inter) / len(union))
 
     avg_overlap = sum(pairwise_overlaps) / len(pairwise_overlaps) if pairwise_overlaps else 0
-
-    # Frequency distribution
     freq_dist = Counter(condition_freq.values())
 
     return {
@@ -246,219 +264,308 @@ def compute_consensus(all_run_conditions, n_runs, threshold=0.7, max_conditions=
     }
 
 
+def compute_z_score(real_counts, permuted_counts):
+    """Compute z-score comparing real vs permuted condition counts.
+
+    z = (mean_R - mean_P) / std_P
+
+    Args:
+        real_counts: list of condition counts from real runs
+        permuted_counts: list of condition counts from permuted runs
+
+    Returns:
+        (z_score, mean_real, mean_permuted, std_permuted)
+    """
+    mean_r = sum(real_counts) / len(real_counts) if real_counts else 0
+    mean_p = sum(permuted_counts) / len(permuted_counts) if permuted_counts else 0
+
+    if len(permuted_counts) < 2:
+        std_p = 0.0
+    else:
+        variance = sum((x - mean_p) ** 2 for x in permuted_counts) / (len(permuted_counts) - 1)
+        std_p = math.sqrt(variance)
+
+    if std_p == 0:
+        z = float('inf') if mean_r > mean_p else 0.0
+    else:
+        z = (mean_r - mean_p) / std_p
+
+    return z, mean_r, mean_p, std_p
+
+
+def apply_margin(conditions, margin_pct=0.05):
+    """Apply margin to condition bounds (widen low/high by margin_pct).
+
+    Phase E: Deep-copy each condition dict, widen bounds outward by margin.
+    low gets lower (multiplied by 1-margin or 1+margin depending on sign),
+    high gets higher (multiplied by 1+margin or 1-margin depending on sign).
+
+    Returns new list of condition dicts with widened bounds.
+    """
+    result = []
+    for c in conditions:
+        c_copy = dict(c)
+        low = c_copy.get("low") or c_copy.get("ref_low")
+        high = c_copy.get("high") or c_copy.get("ref_high")
+
+        if low is not None and high is not None:
+            span = high - low
+            if span > 0:
+                margin = span * margin_pct
+            else:
+                margin = abs(low) * margin_pct if low != 0 else margin_pct
+            c_copy["low"] = low - margin
+            c_copy["high"] = high + margin
+
+        result.append(c_copy)
+    return result
+
+
 # ══════════════════════════════════════════════════════════════
-# EXAMPLE COUNT (for EPV cap)
+# SIGNAL MODE (Inc 8 — permutation test based)
 # ══════════════════════════════════════════════════════════════
 
-def get_example_count(setup_type):
-    """Get example count from local SQLite."""
-    if not os.path.exists(DB_PATH):
-        print(f"  WARNING: No DB at {DB_PATH}")
-        return 0
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        n = conn.execute(
-            "SELECT COUNT(*) FROM examples WHERE setup_type=?", (setup_type,)
-        ).fetchone()[0]
-        conn.close()
-        return n
-    except Exception as e:
-        print(f"  WARNING: DB error: {e}")
-        return 0
+def run_signal(setup_type, threshold=0.7, input_dir=None):
+    """Run signal consensus with permutation test z-score.
 
-
-# ══════════════════════════════════════════════════════════════
-# MAIN
-# ══════════════════════════════════════════════════════════════
-
-def run(setup_type, stage, threshold=0.7, n_latest=None, epv_divisor=3,
-        signal_cap=35, refinement_cap=50):
-    """Run consensus engine.
+    Reads real (pyramid_*.json) and permuted (permuted_*.json) files from
+    input_dir. Computes z-score and locks consensus conditions with 5% margin.
 
     Args:
         setup_type: e.g. "dtss"
-        stage: "signal" or "refinement"
         threshold: consensus frequency threshold (0.0-1.0)
-        n_latest: only use the N most recent runs (None = use all)
-        epv_divisor: EPV denominator (default 3)
-        signal_cap: hard ceiling for signal conditions (default 35)
-        refinement_cap: hard ceiling for refinement conditions (default 50)
+        input_dir: directory containing real + permuted grind outputs
+
+    Returns:
+        dict with consensus output, or None on error
     """
+    search_dir = input_dir or CACHE_DIR
+
     print("\n" + "=" * 70)
-    print("  CONSENSUS ENGINE")
+    print("  CONSENSUS ENGINE — SIGNAL MODE")
     print("=" * 70)
     print(f"  Setup: {setup_type.upper()}")
-    print(f"  Stage: {stage}")
     print(f"  Threshold: {threshold} ({threshold:.0%})")
+    print(f"  Input dir: {search_dir}")
 
-    # Find grind files
-    if stage == "signal":
-        run_files = find_signal_grind_files(setup_type, limit=n_latest)
-        extract_fn = extract_signal_conditions
-        hard_cap = signal_cap
-    elif stage == "refinement":
-        run_files = find_refinement_grind_files(setup_type, limit=n_latest)
-        extract_fn = extract_refinement_conditions
-        hard_cap = refinement_cap
-    else:
-        print(f"  ERROR: Unknown stage '{stage}'. Use 'signal' or 'refinement'.")
+    # Find real + permuted files
+    real_files = find_signal_grind_files(setup_type, search_dir=search_dir)
+    perm_files = find_permuted_grind_files(setup_type, search_dir=search_dir)
+
+    n_real = len(real_files)
+    n_perm = len(perm_files)
+    print(f"\n  Real runs: {n_real}")
+    print(f"  Permuted runs: {n_perm}")
+
+    if n_real < 1:
+        print(f"  ERROR: Need at least 1 real run. Found {n_real}.")
         return None
 
-    n_runs = len(run_files)
-    print(f"\n  Found {n_runs} {stage} grind outputs")
-
-    if n_runs < 3:
-        print(f"  ERROR: Need at least 3 runs for consensus. Found {n_runs}.")
-        print(f"  Run: python local_runner/pyramid_grinder.py --setup {setup_type} --runs 15")
-        return None
-
-    # List runs
-    print(f"\n  Runs:")
-    for i, rf in enumerate(run_files):
-        s = rf["summary"]
-        total = s.get("final_total", s.get("losing_clusters_eliminated", "?"))
-        print(f"    {i+1:>3}. {rf['filename']:<60s} "
-              f"{rf['n_conditions']:>3} conds  {total} signals")
-
-    # EPV validation — cap should be enforced at grinder level via --depth
-    if stage == "signal":
-        n_examples = get_example_count(setup_type)
-        epv_cap = n_examples // epv_divisor if n_examples > 0 else hard_cap
-        recommended_depth = min(epv_cap, hard_cap)
-        print(f"\n  Examples: {n_examples}")
-        print(f"  EPV recommended depth: min({n_examples} ÷ {epv_divisor}, {hard_cap}) = {recommended_depth}")
-
-        # Check if the runs were actually EPV-capped
-        avg_conds = sum(rf["n_conditions"] for rf in run_files) / n_runs
-        if avg_conds > recommended_depth * 1.5:
-            print(f"\n  ⚠ WARNING: Runs averaged {avg_conds:.0f} conditions, but EPV says max {recommended_depth}.")
-            print(f"    Re-run with: --depth {recommended_depth}")
-            print(f"    Without EPV capping at the grinder level, consensus selects")
-            print(f"    the most popular overfit conditions — not the most robust ones.")
-        max_conditions = None  # no cap at consensus level — threshold is the filter
-    else:
-        n_examples = None
-        recommended_depth = hard_cap
-        max_conditions = None  # threshold only
-        print(f"\n  Refinement ceiling: {hard_cap} (enforce via --depth at grinder level)")
+    # List files
+    print(f"\n  Real runs:")
+    for i, rf in enumerate(real_files):
+        print(f"    {i+1:>3}. {rf['filename']:<55s} {rf['n_conditions']:>3} conds")
+    if perm_files:
+        print(f"\n  Permuted runs:")
+        for i, rf in enumerate(perm_files):
+            print(f"    {i+1:>3}. {rf['filename']:<55s} {rf['n_conditions']:>3} conds")
 
     # Extract conditions from each run
     print(f"\n  Extracting conditions...")
-    all_run_conditions = []
-    for rf in run_files:
-        try:
-            conds = extract_fn(rf["path"])
-            all_run_conditions.append(conds)
-            print(f"    {rf['filename']}: {len(conds)} conditions")
-        except Exception as e:
-            print(f"    ERROR reading {rf['filename']}: {e}")
-            all_run_conditions.append([])
+    real_conditions = []
+    for rf in real_files:
+        conds = extract_signal_conditions(rf["path"])
+        real_conditions.append(conds)
 
-    # Compute consensus — threshold only, no cap (EPV enforced at grinder level)
-    result = compute_consensus(
-        all_run_conditions, n_runs,
-        threshold=threshold,
-        max_conditions=None,
-    )
+    perm_conditions = []
+    for rf in perm_files:
+        conds = extract_signal_conditions(rf["path"])
+        perm_conditions.append(conds)
 
-    # Print results
+    # Z-score: compare condition counts (real vs permuted)
+    real_counts = [len(c) for c in real_conditions]
+    perm_counts = [len(c) for c in perm_conditions]
+
+    z_score, mean_r, mean_p, std_p = compute_z_score(real_counts, perm_counts)
+
+    print(f"\n  ══ PERMUTATION TEST ══")
+    print(f"  Real: mean={mean_r:.1f} conditions (counts: {real_counts})")
+    if perm_counts:
+        print(f"  Permuted: mean={mean_p:.1f}, std={std_p:.1f} (counts: {perm_counts})")
+    else:
+        print(f"  Permuted: no permuted runs")
+    print(f"  z-score: {z_score:.2f}")
+
+    if z_score == float('inf'):
+        print(f"  z = inf (std_P = 0 — permuted runs all same count, or < 2 permuted runs)")
+    elif z_score >= 3:
+        print(f"  z >= 3: PASS (99.7% confidence real > noise)")
+    elif z_score >= 2:
+        print(f"  z >= 2: MARGINAL (95% confidence)")
+    else:
+        print(f"  z < 2: FAIL (real not clearly above noise)")
+
+    # Compute consensus on real runs
+    consensus = compute_consensus(real_conditions, n_real, threshold=threshold)
+
+    # Print consensus results
+    cc = consensus["consensus_conditions"]
     print(f"\n  ══ CONSENSUS RESULTS ══")
-    print(f"  Runs analyzed: {n_runs}")
-    print(f"  Unique conditions found: {result['n_unique_conditions']}")
-    print(f"  Above {threshold:.0%} threshold ({result['min_appearances']}/{n_runs}): "
-          f"{result['n_above_threshold']}")
-    if stage == "signal":
-        if result['n_above_threshold'] > recommended_depth:
-            print(f"  ⚠ {result['n_above_threshold']} survived threshold but EPV recommends max {recommended_depth}")
-            print(f"    This means grinder --depth was too high. Re-run with --depth {recommended_depth}")
-        else:
-            print(f"  ✓ {result['n_above_threshold']} conditions — within EPV limit of {recommended_depth}")
+    print(f"  Unique conditions across real runs: {consensus['n_unique_conditions']}")
+    print(f"  Above {threshold:.0%} threshold: {consensus['n_above_threshold']}")
 
-    sm = result["stability_metrics"]
+    sm = consensus["stability_metrics"]
     print(f"\n  Stability Metrics:")
     print(f"    Avg pairwise overlap (Jaccard): {sm['avg_pairwise_overlap']:.1%}")
     print(f"    Avg conditions per run: {sm['avg_conditions_per_run']:.0f}")
 
-    if sm['avg_pairwise_overlap'] < 0.2:
-        print(f"\n  ⚠ WARNING: Very low overlap — beam search is highly unstable.")
-        print(f"    Conditions vary wildly between runs. Consider:")
-        print(f"    - Adding more examples to tighten the search space")
-        print(f"    - Lowering the consensus threshold")
-        print(f"    - Checking that examples are consistent (same pattern)")
-    elif sm['avg_pairwise_overlap'] < 0.4:
-        print(f"\n  ⚠ Moderate overlap — some instability in condition selection.")
-    else:
-        print(f"\n  ✓ Good overlap — conditions are reasonably stable across runs.")
-
     # Frequency distribution
     print(f"\n  Frequency Distribution:")
-    fd = result["stability_metrics"]["frequency_distribution"]
+    fd = sm["frequency_distribution"]
     for freq, count in sorted(fd.items(), key=lambda x: int(x[0]), reverse=True):
-        bar = "█" * count
-        marker = " ← threshold" if int(freq) == result["min_appearances"] else ""
-        print(f"    {freq:>3}/{n_runs}: {count:>3} conditions  {bar}{marker}")
+        bar = "=" * count
+        marker = " <- threshold" if int(freq) == consensus["min_appearances"] else ""
+        print(f"    {freq:>3}/{n_real}: {count:>3} conditions  {bar}{marker}")
 
-    # Top consensus conditions
-    cc = result["consensus_conditions"]
     if cc:
-        print(f"\n  Top Consensus Conditions ({len(cc)}):")
+        print(f"\n  Consensus Conditions ({len(cc)}):")
         print(f"    {'#':>3} {'Freq':>5} {'%':>5}  {'Name':<50s} {'Tier':<6}")
         print(f"    {'-'*3} {'-'*5} {'-'*5}  {'-'*50} {'-'*6}")
         for i, c in enumerate(cc):
-            print(f"    {i+1:>3} {c['frequency']:>3}/{n_runs} "
+            print(f"    {i+1:>3} {c['frequency']:>3}/{n_real} "
                   f"{c['frequency_pct']:>4.0%}  {c['name']:<50s} {c.get('tier',''):<6}")
     else:
-        print(f"\n  ✗ No conditions survived consensus. Pipeline cannot proceed.")
-        print(f"    This means no condition appeared in {result['min_appearances']}/{n_runs} runs.")
-        print(f"    Lower the threshold or add more examples.")
+        print(f"\n  No conditions survived consensus.")
 
-    # Save output
+    # Phase E: Lock conditions with 5% margin
+    locked_conditions = apply_margin(cc, margin_pct=0.05)
+    print(f"\n  Locked {len(locked_conditions)} conditions with 5% margin")
+
+    # Build output
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     output = {
         "setup_type": setup_type,
-        "stage": stage,
+        "stage": "signal",
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "n_runs": n_runs,
+        "n_real_runs": n_real,
+        "n_permuted_runs": n_perm,
         "threshold": threshold,
-        "n_examples": n_examples if stage == "signal" else None,
-        "epv_divisor": epv_divisor if stage == "signal" else None,
-        "recommended_grinder_depth": recommended_depth,
-        "run_files": [rf["filename"] for rf in run_files],
-        "consensus": result,
+        "z_score": z_score if z_score != float('inf') else "inf",
+        "permutation_test": {
+            "mean_real": round(mean_r, 2),
+            "mean_permuted": round(mean_p, 2),
+            "std_permuted": round(std_p, 2),
+            "real_counts": real_counts,
+            "permuted_counts": perm_counts,
+        },
+        "all_conditions": locked_conditions,
+        "consensus": consensus,
+        "run_files": {
+            "real": [rf["filename"] for rf in real_files],
+            "permuted": [rf["filename"] for rf in perm_files],
+        },
+        "stability_metrics": sm,
     }
 
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    out_path = os.path.join(CACHE_DIR, f"consensus_{stage}_{setup_type}_{ts}.json")
+    # Save to CACHE_DIR (not input_dir — this is the final consensus output)
+    save_dir = CACHE_DIR
+    os.makedirs(save_dir, exist_ok=True)
+    out_path = os.path.join(save_dir, f"consensus_signal_{setup_type}_{ts}.json")
     with open(out_path, "w") as f:
         json.dump(output, f, indent=2)
     print(f"\n  Saved: {out_path}")
 
-    # Also save a latest pointer
-    latest_path = os.path.join(CACHE_DIR, f"consensus_{stage}_{setup_type}.json")
+    # Latest pointer
     import shutil
+    latest_path = os.path.join(save_dir, f"consensus_signal_{setup_type}.json")
     shutil.copy2(out_path, latest_path)
     print(f"  Latest: {latest_path}")
 
-    # Mirror to Railway
-    try:
-        sys.path.insert(0, LOCAL_DIR)
-        from file_mirror import mirror_file
-        mirror_file(out_path)
-        print(f"  Mirrored to Railway")
-    except Exception as e:
-        print(f"  WARNING: Mirror failed: {e}")
-
     print(f"\n  {'='*50}")
-    if cc:
-        print(f"  ✓ CONSENSUS: {len(cc)} conditions locked")
+    if locked_conditions:
+        print(f"  CONSENSUS: {len(locked_conditions)} conditions locked (z={z_score:.2f})")
         print(f"    Stability: {sm['avg_pairwise_overlap']:.1%} avg overlap")
-        print(f"    Next: Use these conditions for {'scanning' if stage == 'signal' else 'filtering'}")
     else:
-        print(f"  ✗ CONSENSUS FAILED: No conditions survived")
-        print(f"    Vet more examples or lower threshold")
+        print(f"  CONSENSUS FAILED: No conditions survived")
     print(f"  {'='*50}")
 
     return output
+
+
+# ══════════════════════════════════════════════════════════════
+# REFINEMENT MODE (legacy — Inc 9 will rewrite)
+# ══════════════════════════════════════════════════════════════
+
+def run_refinement(setup_type, threshold=0.7, input_dir=None):
+    """Run refinement consensus (legacy, reads from CACHE_DIR or input_dir)."""
+    search_dir = input_dir or CACHE_DIR
+    run_files = find_refinement_grind_files(setup_type, search_dir=search_dir)
+    n_runs = len(run_files)
+
+    print("\n" + "=" * 70)
+    print("  CONSENSUS ENGINE — REFINEMENT MODE")
+    print("=" * 70)
+    print(f"  Setup: {setup_type.upper()}")
+    print(f"  Threshold: {threshold} ({threshold:.0%})")
+    print(f"  Found {n_runs} refinement grind outputs")
+
+    if n_runs < 1:
+        print(f"  ERROR: Need at least 1 refinement run. Found {n_runs}.")
+        return None
+
+    for i, rf in enumerate(run_files):
+        print(f"    {i+1:>3}. {rf['filename']:<55s} {rf['n_conditions']:>3} conds")
+
+    all_run_conditions = []
+    for rf in run_files:
+        conds = extract_refinement_conditions(rf["path"])
+        all_run_conditions.append(conds)
+
+    consensus = compute_consensus(all_run_conditions, n_runs, threshold=threshold)
+    cc = consensus["consensus_conditions"]
+
+    print(f"\n  Consensus: {len(cc)} conditions locked")
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output = {
+        "setup_type": setup_type,
+        "stage": "refinement",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "n_runs": n_runs,
+        "threshold": threshold,
+        "all_conditions": apply_margin(cc, margin_pct=0.05),
+        "consensus": consensus,
+        "run_files": [rf["filename"] for rf in run_files],
+    }
+
+    save_dir = CACHE_DIR
+    os.makedirs(save_dir, exist_ok=True)
+    out_path = os.path.join(save_dir, f"consensus_refinement_{setup_type}_{ts}.json")
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2)
+    print(f"  Saved: {out_path}")
+
+    import shutil
+    latest_path = os.path.join(save_dir, f"consensus_refinement_{setup_type}.json")
+    shutil.copy2(out_path, latest_path)
+    print(f"  Latest: {latest_path}")
+
+    return output
+
+
+# ══════════════════════════════════════════════════════════════
+# DISPATCH
+# ══════════════════════════════════════════════════════════════
+
+def run(setup_type, stage, threshold=0.7, input_dir=None, **kwargs):
+    """Dispatch to signal or refinement consensus."""
+    if stage == "signal":
+        return run_signal(setup_type, threshold=threshold, input_dir=input_dir)
+    elif stage == "refinement":
+        return run_refinement(setup_type, threshold=threshold, input_dir=input_dir)
+    else:
+        print(f"  ERROR: Unknown stage '{stage}'. Use 'signal' or 'refinement'.")
+        return None
 
 
 def list_runs(setup_type, stage):
@@ -466,6 +573,11 @@ def list_runs(setup_type, stage):
     print(f"\n  Available {stage} grind outputs for {setup_type.upper()}:")
     if stage == "signal":
         files = find_signal_grind_files(setup_type)
+        perm = find_permuted_grind_files(setup_type)
+        if perm:
+            files = files + [{"filename": f["filename"], "n_conditions": f["n_conditions"],
+                              "timestamp": f["timestamp"], "summary": f["summary"]}
+                             for f in perm]
     else:
         files = find_refinement_grind_files(setup_type)
 
@@ -474,7 +586,7 @@ def list_runs(setup_type, stage):
         return
 
     for i, rf in enumerate(files):
-        s = rf["summary"]
+        s = rf.get("summary", {})
         total = s.get("final_total", s.get("losing_clusters_eliminated", "?"))
         ts = rf.get("timestamp", "")[:19]
         print(f"  {i+1:>3}. {rf['n_conditions']:>3} conds  "
@@ -483,20 +595,14 @@ def list_runs(setup_type, stage):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Consensus Engine — Multi-Run Stability Selection")
+    parser = argparse.ArgumentParser(description="Consensus Engine — Stability Selection + Permutation Test")
     parser.add_argument("--setup", default="dtss", help="Setup type (default: dtss)")
     parser.add_argument("--stage", required=True, choices=["signal", "refinement"],
                         help="Which grind stage to analyze")
     parser.add_argument("--threshold", type=float, default=0.7,
                         help="Consensus frequency threshold 0.0-1.0 (default: 0.7)")
-    parser.add_argument("--n-latest", type=int, default=None,
-                        help="Only use the N most recent runs (default: all)")
-    parser.add_argument("--epv-divisor", type=int, default=3,
-                        help="EPV denominator for condition cap (default: 3)")
-    parser.add_argument("--signal-cap", type=int, default=35,
-                        help="Hard ceiling for signal conditions (default: 35)")
-    parser.add_argument("--refinement-cap", type=int, default=50,
-                        help="Hard ceiling for refinement conditions (default: 50)")
+    parser.add_argument("--input-dir", type=str, default=None,
+                        help="Directory containing grind output JSONs (default: CACHE_DIR)")
     parser.add_argument("--list-runs", action="store_true",
                         help="Just list available runs, don't compute consensus")
     args = parser.parse_args()
@@ -508,10 +614,7 @@ if __name__ == "__main__":
             setup_type=args.setup,
             stage=args.stage,
             threshold=args.threshold,
-            n_latest=args.n_latest,
-            epv_divisor=args.epv_divisor,
-            signal_cap=args.signal_cap,
-            refinement_cap=args.refinement_cap,
+            input_dir=args.input_dir,
         )
         if result is None:
             sys.exit(1)
