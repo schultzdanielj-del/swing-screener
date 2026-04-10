@@ -2101,6 +2101,44 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "Run: python local_runner/expr_cache_builder.py --build"
         )
 
+    # Guard: 0 examples after filtering — produce empty result gracefully
+    if len(example_dfs) == 0:
+        print(f"\n  WARNING: 0 examples survived filtering. Producing empty result.")
+        total_time = time.time() - t_total
+        result_data = {
+            "setup_type": setup_type,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "total_time_s": round(total_time, 1),
+            "n_conditions": 0,
+            "all_conditions": [],
+            "tier_results": {},
+            "params": {
+                "beam_width": beam_width,
+                "depth": depth,
+                "peak_target": peak_target,
+                "seed": seed,
+                "subsample": subsample,
+                "pass_order": pass_order,
+                "zero_margin": zero_margin,
+                "no_peak_target": no_peak_target,
+                "permute": permute,
+            },
+            "summary": {
+                "n_examples_input": before_count if 'before_count' in dir() else 0,
+                "n_examples_resolved": 0,
+                "warning": "0 examples survived subsample + cache filtering",
+            },
+        }
+        save_dir = output_dir if output_dir else CACHE_DIR
+        os.makedirs(save_dir, exist_ok=True)
+        prefix = "permuted" if permute else "pyramid"
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = os.path.join(save_dir, f"{prefix}_{setup_type}_{ts}.json")
+        with open(out_path, "w") as f:
+            json.dump(result_data, f, indent=2)
+        print(f"  Saved: {out_path}")
+        return result_data
+
     # ══════════════════════════════════════════════════════════════
     # MULTI-PASS MODE
     # ══════════════════════════════════════════════════════════════
