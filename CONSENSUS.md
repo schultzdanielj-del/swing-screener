@@ -2,7 +2,7 @@
 
 ## Status
 
-Sessions 1-3 complete. Inc 1-9 built, 9/9 test steps pass. Next: Session 4 (Inc 10 orchestrator + full E2E).
+Sessions 1-4 complete. Inc 1-10 built, 9/9 test steps pass, orchestrator tested in --test-mode. Next: Session 5 (entry grinder fixes + optimization + first overnight prep).
 
 ## What This Is
 
@@ -14,7 +14,7 @@ A permutation test (15 real + 15 permuted runs) provides the noise floor. z > 3 
 
 - Full spec, architecture, and build increments: `SIGNAL_GRINDER.md`
 - Refinement consensus (runs in the same pipeline): `REFINEMENT_GRINDER.md`
-- Orchestrator: `scripts/run_consensus_pipeline.py` (not yet built)
+- Orchestrator: `scripts/run_consensus_pipeline.py` (Inc 10 complete, tested in --test-mode)
 - Consensus engine: `scripts/consensus_engine.py` (signal + refinement modes complete)
 
 ## Build Plan (6 Sessions)
