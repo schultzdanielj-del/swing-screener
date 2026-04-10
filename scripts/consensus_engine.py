@@ -264,18 +264,25 @@ def compute_consensus(all_run_conditions, n_runs, threshold=0.7, max_conditions=
     }
 
 
-def compute_z_score(real_counts, permuted_counts):
-    """Compute z-score comparing real vs permuted condition counts.
+def compute_z_score(real_counts, permuted_counts, n_bootstrap=1000, seed=42):
+    """Bootstrap z-score comparing real vs permuted condition counts.
 
-    z = (mean_R - mean_P) / std_P
+    Resamples real and permuted counts with replacement n_bootstrap times.
+    For each draw, computes mean_R - mean_P. The z-score is the mean of
+    the bootstrap differences divided by their standard deviation.
 
     Args:
         real_counts: list of condition counts from real runs
         permuted_counts: list of condition counts from permuted runs
+        n_bootstrap: number of bootstrap draws (default 1000)
+        seed: RNG seed for reproducible bootstrap
 
     Returns:
         (z_score, mean_real, mean_permuted, std_permuted)
     """
+    import random as _rng
+    bs_rng = _rng.Random(seed)
+
     mean_r = sum(real_counts) / len(real_counts) if real_counts else 0
     mean_p = sum(permuted_counts) / len(permuted_counts) if permuted_counts else 0
 
@@ -285,10 +292,25 @@ def compute_z_score(real_counts, permuted_counts):
         variance = sum((x - mean_p) ** 2 for x in permuted_counts) / (len(permuted_counts) - 1)
         std_p = math.sqrt(variance)
 
-    if std_p == 0:
+    # Bootstrap: resample and compute difference of means
+    if not real_counts or not permuted_counts:
         z = float('inf') if mean_r > mean_p else 0.0
+        return z, mean_r, mean_p, std_p
+
+    diffs = []
+    for _ in range(n_bootstrap):
+        bs_real = [bs_rng.choice(real_counts) for _ in range(len(real_counts))]
+        bs_perm = [bs_rng.choice(permuted_counts) for _ in range(len(permuted_counts))]
+        diff = sum(bs_real) / len(bs_real) - sum(bs_perm) / len(bs_perm)
+        diffs.append(diff)
+
+    bs_mean = sum(diffs) / len(diffs)
+    if len(diffs) < 2:
+        z = float('inf') if bs_mean > 0 else 0.0
     else:
-        z = (mean_r - mean_p) / std_p
+        bs_var = sum((d - bs_mean) ** 2 for d in diffs) / (len(diffs) - 1)
+        bs_std = math.sqrt(bs_var)
+        z = bs_mean / bs_std if bs_std > 0 else (float('inf') if bs_mean > 0 else 0.0)
 
     return z, mean_r, mean_p, std_p
 
@@ -396,16 +418,20 @@ def run_signal(setup_type, threshold=0.7, input_dir=None):
         print(f"  Permuted: no permuted runs")
     print(f"  z-score: {z_score:.2f}")
 
+    # Phase D: Gate decision
+    gate_pass = False
     if z_score == float('inf'):
         print(f"  z = inf (std_P = 0 — permuted runs all same count, or < 2 permuted runs)")
+        gate_pass = mean_r > mean_p  # proceed if real clearly above permuted
     elif z_score >= 3:
-        print(f"  z >= 3: PASS (99.7% confidence real > noise)")
+        print(f"  z >= 3: GATE PASS (99.7% confidence real > noise)")
+        gate_pass = True
     elif z_score >= 2:
-        print(f"  z >= 2: MARGINAL (95% confidence)")
+        print(f"  z >= 2: MARGINAL (95% confidence) — gate does NOT pass")
     else:
-        print(f"  z < 2: FAIL (real not clearly above noise)")
+        print(f"  z < 2: GATE FAIL (real not clearly above noise)")
 
-    # Compute consensus on real runs
+    # Compute consensus on real runs (always compute for reporting)
     consensus = compute_consensus(real_conditions, n_real, threshold=threshold)
 
     # Print consensus results
@@ -437,9 +463,14 @@ def run_signal(setup_type, threshold=0.7, input_dir=None):
     else:
         print(f"\n  No conditions survived consensus.")
 
-    # Phase E: Lock conditions with 5% margin
-    locked_conditions = apply_margin(cc, margin_pct=0.05)
-    print(f"\n  Locked {len(locked_conditions)} conditions with 5% margin")
+    # Phase E: Lock conditions with 5% margin (only if gate passes)
+    if gate_pass:
+        locked_conditions = apply_margin(cc, margin_pct=0.05)
+        print(f"\n  Locked {len(locked_conditions)} conditions with 5% margin")
+    else:
+        locked_conditions = []
+        print(f"\n  GATE FAILED (z={z_score:.2f} < 3) — no conditions locked")
+        print(f"  Pipeline cannot proceed. Add more examples or investigate noise.")
 
     # Build output
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -451,6 +482,7 @@ def run_signal(setup_type, threshold=0.7, input_dir=None):
         "n_permuted_runs": n_perm,
         "threshold": threshold,
         "z_score": z_score if z_score != float('inf') else "inf",
+        "gate_pass": gate_pass,
         "permutation_test": {
             "mean_real": round(mean_r, 2),
             "mean_permuted": round(mean_p, 2),

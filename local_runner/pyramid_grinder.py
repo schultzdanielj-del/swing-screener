@@ -2028,17 +2028,24 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         universe_tickers = [t for t in sorted(universe_cache.keys())
                             if len(universe_cache[t]) >= 100]
         fake_examples = []
-        for _ in range(n_fake):
+        attempts = 0
+        while len(fake_examples) < n_fake and attempts < n_fake * 10:
+            attempts += 1
             fake_ticker = rng.choice(universe_tickers)
             fake_df = universe_cache[fake_ticker].copy()
             if not pd.api.types.is_datetime64_any_dtype(fake_df["date"]):
                 fake_df["date"] = pd.to_datetime(fake_df["date"])
             fake_df = fake_df.sort_values("date").reset_index(drop=True)
-            # Pick a random bar index in the valid range (leave margin for lookback)
-            min_idx = max(50, len(fake_df) // 4)
-            max_idx = len(fake_df) - 2
-            fake_scan_idx = rng.randint(min_idx, max_idx)
-            fake_entry_date = str(fake_df.iloc[min(fake_scan_idx + 1, len(fake_df) - 1)]["date"].date())
+            n_bars = len(fake_df)
+            if n_bars < 52:
+                continue
+            # Random bar in range (50..n-1) per spec
+            fake_scan_idx = rng.randint(50, n_bars - 1)
+            # Verify non-NaN at scan bar for close/volume
+            row = fake_df.iloc[fake_scan_idx]
+            if pd.isna(row.get("close")) or pd.isna(row.get("volume")):
+                continue
+            fake_entry_date = str(fake_df.iloc[min(fake_scan_idx + 1, n_bars - 1)]["date"].date())
             fake_examples.append({
                 "ticker": fake_ticker,
                 "entry_date": fake_entry_date,
@@ -2046,7 +2053,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 "df": fake_df,
             })
         example_dfs = fake_examples
-        print(f"  {n_fake} fake examples generated (permutation test)")
+        print(f"  {len(fake_examples)} fake examples generated (permutation test)")
 
     print(f"\n  Loading expressions...")
     # Signal expressions for grinding (what the grinder actually uses)
