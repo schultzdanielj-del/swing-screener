@@ -11,7 +11,9 @@ Sessions 1-5 complete. Inc 1-10 built, 9/9 test steps pass (1216s/20.3 min, down
 4. **EODHD exchange filter gap**: 297 tickers missing because `EODHD_EXCHANGES` didn't include `"NYSE MKT"` or `"AMEX"` labels. Added both. Recovers EQX, UAMY, REPX, LEU, BTG and other AMEX names.
 5. **build_tradable.py was reading empty SQLite table** instead of the OHLCV pickle. Rewrote to use the pickle. Now produces 3,499 qualified tickers, matching the historical baseline Dan remembered.
 
-Next: Session 6 = first real overnight run. Before that:
+Next: Session 6 = MORE OPTIMIZATION before the first real run. Dan explicitly stated we are not running the real pipeline yet — wants more margin first. The current 12.8 min/grind = ~8.5 hr pipeline is overnight-feasible but Dan wants additional headroom. See "Discovered Optimizations" section below for the menu of options ordered by impact and risk.
+
+After Session 6 optimization, before first real run:
 - Run nightly refresh (`python local_runner/nightly.py`)
 - Append expression cache (`python local_runner/expr_cache_builder.py --append`)
 - Run consensus pipeline (`python scripts/run_consensus_pipeline.py --setup dtss`)
