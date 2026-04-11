@@ -99,6 +99,101 @@ def load_daily_cache():
         return pickle.load(f)
 
 
+# Tradable filter thresholds (per-bar, applied historically not just to today)
+TRADABLE_MIN_PRICE = 1.0
+TRADABLE_MIN_DVOL = 4_000_000.0
+TRADABLE_MIN_ADRP = 1.8  # 20-bar ADRP %, TC2000-style: (mean(H/L) - 1) * 100
+
+
+def compute_tradable_masks(universe_cache, expr_cache):
+    """Compute per-bar tradable masks aligned to expr cache coordinates.
+
+    Filters per bar:
+      - close >= $1
+      - 20-day avg dollar volume >= $4M
+      - 20-bar ADRP >= 1.8% (TC2000 formula: (mean(H/L) - 1) * 100)
+
+    A bar is tradable if the ticker met all three criteria AT THAT BAR.
+    A ticker that's untradable today but was tradable in 2022 still
+    contributes its 2022 bars to the historical search.
+
+    Cache-to-OHLCV alignment: cache covers OHLCV bars
+    [searchsorted(EXPR_CACHE_START), searchsorted(EXPR_CACHE_START) + cache_n_bars].
+
+    Returns: dict {ticker: bool_array of length cache_n_bars}
+    """
+    from expr_cache_builder import EXPR_CACHE_START
+
+    cache_start_date = pd.Timestamp(EXPR_CACHE_START)
+    masks = {}
+    n_bars_total = 0
+    n_bars_tradable = 0
+    n_tickers_skipped = 0
+
+    for ticker, df in universe_cache.items():
+        if df is None or len(df) < 50:
+            n_tickers_skipped += 1
+            continue
+        cache_n_bars = expr_cache.get_ticker_bar_count(ticker)
+        if cache_n_bars == 0:
+            n_tickers_skipped += 1
+            continue
+
+        # Find cache start in OHLCV
+        if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+            ohlcv_dates = pd.to_datetime(df["date"]).values
+        else:
+            ohlcv_dates = df["date"].values
+        cache_start_idx = int(np.searchsorted(ohlcv_dates, np.datetime64(cache_start_date), side="left"))
+        cache_end_idx = cache_start_idx + cache_n_bars  # exclusive
+
+        if cache_end_idx > len(df):
+            # Cache is longer than current OHLCV (shouldn't happen, skip)
+            n_tickers_skipped += 1
+            continue
+
+        closes = df["close"].values.astype(np.float64)
+        highs = df["high"].values.astype(np.float64)
+        lows = df["low"].values.astype(np.float64)
+        dvols = df["dvol_20d"].values.astype(np.float64) if "dvol_20d" in df.columns else None
+
+        # Compute 20-bar ADRP using cumsum trick: rolling mean of H/L
+        # Guard against zero/negative lows
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratios = np.where(lows > 0, highs / lows, np.nan)
+        cumsum = np.nancumsum(ratios)
+        rolling_mean = np.full(len(ratios), np.nan)
+        if len(ratios) >= 20:
+            # rolling mean over 20 bars: cumsum[t] - cumsum[t-20] / 20
+            rolling_mean[19:] = (cumsum[19:] - np.concatenate(([0.0], cumsum[:-20]))) / 20.0
+        adrp = (rolling_mean - 1.0) * 100.0  # ADRP in %
+
+        # Per-bar tradable
+        tradable_full = (closes >= TRADABLE_MIN_PRICE) & (~np.isnan(adrp)) & (adrp >= TRADABLE_MIN_ADRP)
+        if dvols is not None:
+            tradable_full &= (dvols >= TRADABLE_MIN_DVOL)
+        else:
+            # No dvol_20d column — compute on the fly (slow path)
+            volumes = df["volume"].values.astype(np.float64)
+            dollar_vol = closes * volumes
+            dvol_cumsum = np.nancumsum(dollar_vol)
+            dvol_rolling = np.full(len(dollar_vol), np.nan)
+            if len(dollar_vol) >= 20:
+                dvol_rolling[19:] = (dvol_cumsum[19:] - np.concatenate(([0.0], dvol_cumsum[:-20]))) / 20.0
+            tradable_full &= (~np.isnan(dvol_rolling)) & (dvol_rolling >= TRADABLE_MIN_DVOL)
+
+        # Slice to cache window
+        mask = tradable_full[cache_start_idx:cache_end_idx]
+        masks[ticker] = mask
+        n_bars_total += len(mask)
+        n_bars_tradable += int(np.sum(mask))
+
+    pct = (n_bars_tradable / n_bars_total * 100.0) if n_bars_total > 0 else 0.0
+    print(f"  Tradable filter: {n_bars_tradable:,}/{n_bars_total:,} bars qualify "
+          f"({pct:.1f}%) across {len(masks)} tickers ({n_tickers_skipped} skipped)")
+    return masks
+
+
 def load_example_data(setup_type, universe_cache):
     """Load example data using the daily universe cache for OHLCV.
 
@@ -208,20 +303,20 @@ def compute_example_ranges(example_dfs, expressions, expr_cache=None):
 
     def _load_example_row(args):
         """Load one example's scan bar values from expr cache."""
-        i, ticker, scan_idx = args
+        i, ticker, cache_scan_idx = args
         dates, data = expr_cache.get_ticker(ticker)
         if dates is None or data is None:
-            return i, ticker, scan_idx, None, f"not in expr cache"
-        if scan_idx >= len(data):
-            return i, ticker, scan_idx, None, f"scan_idx {scan_idx} >= {len(data)}"
-        return i, ticker, scan_idx, data[scan_idx, :], None
+            return i, ticker, cache_scan_idx, None, f"not in expr cache"
+        if cache_scan_idx >= len(data):
+            return i, ticker, cache_scan_idx, None, f"cache_scan_idx {cache_scan_idx} >= {len(data)}"
+        return i, ticker, cache_scan_idx, data[cache_scan_idx, :], None
 
     # Build work list
     work = []
     for i, ex in enumerate(example_dfs):
-        if ex["scan_idx"] is None:
+        if ex.get("cache_scan_idx") is None:
             continue
-        work.append((i, ex["ticker"], ex["scan_idx"]))
+        work.append((i, ex["ticker"], ex["cache_scan_idx"]))
 
     # Load in parallel (I/O bound — threads overlap disk reads)
     with _ThreadPool(max_workers=4) as pool:
@@ -343,14 +438,16 @@ _w_n_bars_window = None
 _w_expr_name_to_idx = None
 _w_blackout = None  # {ticker: [(entry_idx, exit_idx), ...]} — bars to exclude
 _w_whitelist = None  # {ticker: set(bar_idx)} — if set, ONLY these bars count
+_w_tradable = None  # {ticker: bool_array} — per-bar tradable mask in cache coords
 
 
 def _init_tier_worker(cache, locked_conditions, expressions, ranges,
                       candidate_indices, n_bars_window, expr_name_to_idx=None,
-                      blackout_map=None, whitelist_map=None):
+                      blackout_map=None, whitelist_map=None, tradable_masks=None):
     """Initializer: serialize cache + config once per worker."""
     global _w_cache, _w_locked, _w_exprs, _w_ranges, _w_candidate_indices
     global _w_n_bars_window, _w_expr_name_to_idx, _w_blackout, _w_whitelist
+    global _w_tradable
     _w_cache = cache
     _w_locked = locked_conditions
     _w_exprs = expressions
@@ -360,6 +457,7 @@ def _init_tier_worker(cache, locked_conditions, expressions, ranges,
     _w_expr_name_to_idx = expr_name_to_idx or {}
     _w_blackout = blackout_map or {}
     _w_whitelist = whitelist_map
+    _w_tradable = tradable_masks or {}
 
 
 def _build_tier_batch(tickers):
@@ -375,21 +473,23 @@ def _build_tier_batch(tickers):
     """
     results = []
     for ticker in tickers:
-        n_bars = _w_cache.get(ticker)
-        if n_bars is None or n_bars < 50:
+        # Sanity check: ticker must be in slim_cache (just used as a tradability filter now)
+        if _w_cache.get(ticker) is None:
             results.append((ticker, [], None))
             continue
 
+        # Early exit: if tradable masks are in use and this ticker has zero
+        # tradable bars, skip the .npz load entirely (pure waste).
+        if _w_tradable:
+            tmask_check = _w_tradable.get(ticker)
+            if tmask_check is None or not np.any(tmask_check):
+                results.append((ticker, [], None))
+                continue
+
         try:
 
-            # Determine window
-            if _w_n_bars_window == 0:
-                start_idx = 50  # skip warmup
-            else:
-                start_idx = max(50, n_bars - _w_n_bars_window)
-
             # Load from expression cache (REQUIRED)
-            cached_data = _load_ticker_expr_cache(ticker, n_bars)
+            cached_data = _load_ticker_expr_cache(ticker)
 
             if cached_data is None:
                 # Not in cache — skip (filtered examples already exclude these)
@@ -397,11 +497,38 @@ def _build_tier_batch(tickers):
                 continue
 
             cached_dates, cached_matrix = cached_data
-            # cached_matrix shape: (n_bars, n_all_expressions)
+            # cached_matrix shape: (cache_n_bars, n_all_expressions)
+            # Work entirely in cache-relative coordinates from here on.
+            cache_n_bars = len(cached_dates)
+            if cache_n_bars < 50:
+                results.append((ticker, [], None))
+                continue
+
+            # Determine window in cache coordinates
+            if _w_n_bars_window == 0:
+                start_idx = 50  # skip warmup
+            else:
+                start_idx = max(50, cache_n_bars - _w_n_bars_window)
 
             # Step 1: Apply locked conditions using cached series
-            pass_mask = np.ones(n_bars, dtype=bool)
+            pass_mask = np.ones(cache_n_bars, dtype=bool)
             pass_mask[:start_idx] = False
+
+            # Step 1a: Apply tradable filter (per-bar liquidity mask)
+            # Bars are excluded if the ticker did not meet price/dvol/ADRP
+            # thresholds AT THAT BAR. Historical untradable bars are dropped
+            # but old tradable bars from delisted/illiquid-today tickers are kept.
+            if _w_tradable:
+                tmask = _w_tradable.get(ticker)
+                if tmask is None:
+                    # Ticker not in tradable_masks → not tradable, skip entirely
+                    results.append((ticker, [], None))
+                    continue
+                if len(tmask) != cache_n_bars:
+                    # Mask length mismatch — fail safe
+                    results.append((ticker, [], None))
+                    continue
+                pass_mask &= tmask
 
             for cond in _w_locked:
                 col_idx = _w_expr_name_to_idx.get(cond["name"])
@@ -415,29 +542,26 @@ def _build_tier_batch(tickers):
                 pass_mask &= in_range
 
             # Step 1b: Apply blackout mask — exclude post-entry bars per example
-            # These are bars between entry and exit for any example in this ticker.
-            # Prevents the re-grind from learning conditions that fire on in-play
-            # post-entry price action rather than legitimate pre-entry setups.
+            # NOTE: blackout indices are currently OHLCV-relative. The signal
+            # grinder doesn't use blackout, so this is only reached from the
+            # refinement path. The refinement path needs a separate fix to
+            # translate indices to cache-relative coordinates via dates.
             if _w_blackout and ticker in _w_blackout:
-                for entry_idx, exit_idx in _w_blackout[ticker]:
-                    # Mask bars entry_idx+1 through exit_idx (inclusive)
-                    blackout_start = max(0, entry_idx + 1)
-                    blackout_end = min(n_bars, exit_idx + 1)
-                    if blackout_start < blackout_end:
-                        pass_mask[blackout_start:blackout_end] = False
+                raise RuntimeError(
+                    f"Blackout map is OHLCV-indexed but worker now operates "
+                    f"in cache-relative coordinates. Refinement path needs "
+                    f"date-based blackout translation."
+                )
 
             # Step 1c: Apply whitelist — if set, ONLY whitelisted bars count
-            # Used by refinement grind: only loser signal bars are eligible
+            # NOTE: whitelist indices are currently OHLCV-relative — same issue
+            # as blackout above. Refinement path needs separate fix.
             if _w_whitelist is not None:
-                if ticker in _w_whitelist:
-                    wl_mask = np.zeros(n_bars, dtype=bool)
-                    for idx in _w_whitelist[ticker]:
-                        if 0 <= idx < n_bars:
-                            wl_mask[idx] = True
-                    pass_mask &= wl_mask
-                else:
-                    # Ticker has no loser bars — nothing to count
-                    pass_mask[:] = False
+                raise RuntimeError(
+                    f"Whitelist map is OHLCV-indexed but worker now operates "
+                    f"in cache-relative coordinates. Refinement path needs "
+                    f"date-based whitelist translation."
+                )
 
             surviving_indices = np.where(pass_mask)[0]
             if len(surviving_indices) == 0:
@@ -467,17 +591,16 @@ def _build_tier_batch(tickers):
     return results
 
 
-def _load_ticker_expr_cache(ticker, expected_n_bars):
+def _load_ticker_expr_cache(ticker, expected_n_bars=None):
     """Load cached expression series for a ticker.
 
-    Returns (dates, data) or None if not available/mismatched.
+    Returns (dates, data) or None if not available.
+    The expected_n_bars argument is unused — kept for backward compat.
+    The caller must work in cache-relative coordinates (use len(dates) for bar count).
     """
     from expr_cache_builder import load_ticker_cache
     dates, data = load_ticker_cache(ticker)
     if dates is None:
-        return None
-    # Verify bar count matches current OHLCV
-    if len(dates) != expected_n_bars:
         return None
     return dates, data
 
@@ -1525,7 +1648,8 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
 def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
                         example_ranges, locked_conditions,
                         beam_width=50, depth=10, peak_target=15,
-                        expr_cache=None, blackout_map=None, whitelist_map=None):
+                        expr_cache=None, blackout_map=None, whitelist_map=None,
+                        tradable_masks=None):
     """Run a historical tier: build matrix of surviving ticker-day rows, then spiderweb.
 
     Args:
@@ -1589,12 +1713,20 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     slim_cache = {ticker: len(df) for ticker, df in universe_cache.items()
                   if df is not None and len(df) >= 50}
 
+    # Filter tradable_masks to only the tickers we'll actually process.
+    # The full dict has ~11K entries but we only need the ones in slim_cache
+    # (which is post-subsample). Reduces pickle/IPC overhead per worker spawn.
+    if tradable_masks:
+        tradable_masks_filtered = {t: m for t, m in tradable_masks.items() if t in slim_cache}
+    else:
+        tradable_masks_filtered = None
+
     with ProcessPoolExecutor(
         max_workers=n_workers,
         initializer=_init_tier_worker,
         initargs=(slim_cache, locked_conditions, expressions,
                   example_ranges, candidate_indices, n_bars_window,
-                  expr_name_to_idx, blackout_map, whitelist_map)
+                  expr_name_to_idx, blackout_map, whitelist_map, tradable_masks_filtered)
     ) as pool:
         futures = {pool.submit(_build_tier_batch, batch): batch for batch in batches}
         completed = 0
@@ -1685,18 +1817,18 @@ def validate_examples(example_dfs, conditions, expr_cache=None):
 
     all_pass = True
     for ex in example_dfs:
-        if ex["scan_idx"] is None:
+        cache_scan_idx = ex.get("cache_scan_idx")
+        if cache_scan_idx is None:
             continue
 
         ticker = ex["ticker"]
-        scan_idx = ex["scan_idx"]
         dates, data = expr_cache.get_ticker(ticker)
-        if dates is None or data is None or scan_idx >= len(data):
-            print(f"    ✗ {ticker} — not in expr cache or scan_idx out of range")
+        if dates is None or data is None or cache_scan_idx >= len(data):
+            print(f"    ✗ {ticker} — not in expr cache or cache_scan_idx out of range")
             all_pass = False
             continue
 
-        cached_row = data[scan_idx, :]
+        cached_row = data[cache_scan_idx, :]
         for cond in conditions:
             col_idx = cache_name_to_idx.get(cond["name"])
             if col_idx is None:
@@ -1767,7 +1899,7 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
                      locked_conditions, expr_cache,
                      beam_width, depth, peak_target,
                      d1_beam, d1_depth, blackout_map=None, whitelist_map=None,
-                     zero_margin=False):
+                     zero_margin=False, tradable_masks=None):
     """Run one pass of the multi-pass pyramid.
 
     Args:
@@ -1888,6 +2020,7 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
             expr_cache=expr_cache,
             blackout_map=blackout_map,
             whitelist_map=whitelist_map,
+            tradable_masks=tradable_masks,
         )
 
         new_conditions.extend(tier_new_conds)
@@ -2075,20 +2208,28 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         print(f"  Expression series cache: {n_cached} tickers, "
               f"{expr_cache.n_expressions} expressions")
 
-        # Filter examples to those in expr cache
+        # Filter examples to those in expr cache — resolve cache index by date
         cached_tickers = expr_cache.get_available_tickers()
         before_count = len(example_dfs)
         excluded = []
         filtered_dfs = []
         for ex in example_dfs:
-            if ex["ticker"] in cached_tickers:
-                n_cached_bars = expr_cache.get_ticker_bar_count(ex["ticker"])
-                if ex["scan_idx"] < n_cached_bars:
-                    filtered_dfs.append(ex)
-                else:
-                    excluded.append(f"{ex['ticker']} (scan_idx {ex['scan_idx']} >= {n_cached_bars} cached bars)")
-            else:
+            if ex["ticker"] not in cached_tickers:
                 excluded.append(f"{ex['ticker']} (not in expr cache)")
+                continue
+            # Find signal bar date in expr cache dates
+            ohlcv_df = ex["df"]
+            signal_date = str(ohlcv_df["date"].iloc[ex["scan_idx"]].date())
+            dates, _ = expr_cache.get_ticker(ex["ticker"])
+            if dates is None:
+                excluded.append(f"{ex['ticker']} (expr cache load failed)")
+                continue
+            cache_dates_str = [str(d)[:10] for d in dates]
+            if signal_date in cache_dates_str:
+                ex["cache_scan_idx"] = cache_dates_str.index(signal_date)
+                filtered_dfs.append(ex)
+            else:
+                excluded.append(f"{ex['ticker']} (signal date {signal_date} not in expr cache)")
         example_dfs = filtered_dfs
         if excluded:
             print(f"  ⚠ Excluded {len(excluded)} examples not in expr cache:")
@@ -2100,6 +2241,12 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             "Expression series cache not found or invalid.\n"
             "Run: python local_runner/expr_cache_builder.py --build"
         )
+
+    # ── Build per-bar tradable masks (one-time, before pass loop) ──
+    print(f"\n  Building tradable masks (per-bar liquidity filter)...")
+    t_trad = time.time()
+    tradable_masks = compute_tradable_masks(universe_cache, expr_cache)
+    print(f"  Tradable mask build: {time.time() - t_trad:.1f}s")
 
     # Guard: 0 examples after filtering — produce empty result gracefully
     if len(example_dfs) == 0:
@@ -2183,6 +2330,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 blackout_map=blackout_map,
                 whitelist_map=whitelist_map,
                 zero_margin=zero_margin,
+                tradable_masks=tradable_masks,
             )
 
             if new_conds is None:
@@ -2287,6 +2435,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
                 expr_cache=expr_cache,
                 blackout_map=blackout_map,
                 whitelist_map=whitelist_map,
+                tradable_masks=tradable_masks,
             )
 
             all_conditions.extend(new_conds)
@@ -2411,18 +2560,21 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         print("\n  WARNING: No 5yr tier data — signal count unavailable")
 
     # ── Build example signal bars ──
+    # Skip for permuted runs — fake examples have no real signal dates and
+    # nothing downstream uses example_signals from permuted output.
     example_signals = []
-    for ex in example_dfs:
-        if ex["scan_idx"] is not None:
-            df = ex["df"]
-            scan_date = df["date"].iloc[ex["scan_idx"]]
-            date_str = str(scan_date)[:10] if not hasattr(scan_date, "date") else str(scan_date.date())
-            example_signals.append({
-                "ticker": ex["ticker"],
-                "date": date_str,
-                "entry_date": ex["entry_date"],
-                "is_example": True,
-            })
+    if not permute:
+        for ex in example_dfs:
+            if ex["scan_idx"] is not None:
+                df = ex["df"]
+                scan_date = df["date"].iloc[ex["scan_idx"]]
+                date_str = str(scan_date)[:10] if not hasattr(scan_date, "date") else str(scan_date.date())
+                example_signals.append({
+                    "ticker": ex["ticker"],
+                    "date": date_str,
+                    "entry_date": ex["entry_date"],
+                    "is_example": True,
+                })
 
     # ── Final validation (skip for permuted runs — fake examples won't pass) ──
     if permute:
@@ -3485,14 +3637,21 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3,
         raise RuntimeError("Expression series cache not found or invalid.")
     print(f"  Expression cache: {expr_cache.n_expressions} expressions")
 
-    # Filter winners to those in expr cache
+    # Filter winners to those in expr cache — resolve cache index by date
     cached_tickers = expr_cache.get_available_tickers()
     filtered_win = []
     for ex in win_dfs:
-        if ex["ticker"] in cached_tickers:
-            n_bars = expr_cache.get_ticker_bar_count(ex["ticker"])
-            if ex["scan_idx"] < n_bars:
-                filtered_win.append(ex)
+        if ex["ticker"] not in cached_tickers:
+            continue
+        ohlcv_df = ex["df"]
+        signal_date = str(ohlcv_df["date"].iloc[ex["scan_idx"]].date())
+        dates, _ = expr_cache.get_ticker(ex["ticker"])
+        if dates is None:
+            continue
+        cache_dates_str = [str(d)[:10] for d in dates]
+        if signal_date in cache_dates_str:
+            ex["cache_scan_idx"] = cache_dates_str.index(signal_date)
+            filtered_win.append(ex)
     print(f"  Winners in expr cache: {len(filtered_win)}/{len(win_dfs)}")
     win_dfs = filtered_win
 

@@ -748,10 +748,13 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run Consensus Pipeline — Full overnight orchestrator")
     parser.add_argument("--setup", required=True, help="Setup type (e.g. dtss)")
-    parser.add_argument("--beam", type=int, default=10000,
-                        help="Beam width for signal grinds (default: 10000)")
+    parser.add_argument("--beam", type=int, default=500,
+                        help="Beam width for signal grinds (default: 500). "
+                             "beam=10000 is unviable without matmul vectorization (reverted Feb 25). "
+                             "beam=500 is sufficient because diversity comes from multi-run consensus.")
     parser.add_argument("--depth", type=int, default=100,
-                        help="Search depth for signal grinds (default: 100)")
+                        help="Search depth for signal grinds (default: 100). "
+                             "Natural ceiling kicks in well before 100, so this is just a cap.")
     parser.add_argument("--test-mode", action="store_true",
                         help="Mini run: 1+1 signal grinds + 1 refinement (not 15+15 + 10)")
     parser.add_argument("--skip-nightly-check", action="store_true",

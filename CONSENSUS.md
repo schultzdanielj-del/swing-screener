@@ -2,7 +2,21 @@
 
 ## Status
 
-Sessions 1-4 complete. Inc 1-10 built, 9/9 test steps pass, orchestrator tested in --test-mode. Next: Session 5 (entry grinder fixes + optimization + first overnight prep).
+Sessions 1-5 complete. Inc 1-10 built, 9/9 test steps pass (1216s/20.3 min, down from 35 min after Session 5 optimizations). Pipeline is overnight-feasible: per-grind cost is **~12.8 min** at the corrected defaults (BRKO benchmark, 47 conditions found, all examples validated). Full pipeline estimate: ~8.5 hours.
+
+**Session 5 (2026-04-10/11) findings — major:**
+1. **Bar count bug** in tier worker code: workers were using OHLCV bar counts to index the expression cache (which has fewer bars). Result: historical tiers were no-ops in every grind — only 1 ticker survived per tier. Every prior "consensus run" was effectively D1-only. Fixed by date-based lookups in 7 places across `pyramid_grinder.py`, `signal_exit_grinder.py`, and `entry_grinder.py`.
+2. **Orchestrator default `--beam 10000` was wrong.** The matmul vectorization that made beam=10000 viable was reverted in Feb (commit `e683eb2`). Without it, beam=10000 takes hours per grind. **beam=500 is the correct default** — it matches the historical 60-min grind baseline and is sufficient because diversity comes from multi-run consensus, not single-run width. Changed orchestrator default to beam=500.
+3. **No tradable filter applied**: grinder was scanning all 11,525 raw tickers including penny stocks and illiquid names. Added `compute_tradable_masks()` per-bar liquidity filter (price≥$1, dvol≥$4M, ADRP≥1.8%, applied per-bar so historical bars from currently-illiquid tickers are still kept). Reduces effective universe to ~6,468 tickers with ~32% of bars qualifying.
+4. **EODHD exchange filter gap**: 297 tickers missing because `EODHD_EXCHANGES` didn't include `"NYSE MKT"` or `"AMEX"` labels. Added both. Recovers EQX, UAMY, REPX, LEU, BTG and other AMEX names.
+5. **build_tradable.py was reading empty SQLite table** instead of the OHLCV pickle. Rewrote to use the pickle. Now produces 3,499 qualified tickers, matching the historical baseline Dan remembered.
+
+Next: Session 6 = first real overnight run. Before that:
+- Run nightly refresh (`python local_runner/nightly.py`)
+- Append expression cache (`python local_runner/expr_cache_builder.py --append`)
+- Run consensus pipeline (`python scripts/run_consensus_pipeline.py --setup dtss`)
+
+**Entry grinder still deferred** per Dan's earlier instruction — needs planning.
 
 ## What This Is
 
@@ -193,12 +207,45 @@ No new documents. SIGNAL_GRINDER.md is the source of truth. No build tracker fil
 - Debug targets: Subprocess arg passing, file paths between components, output schema mismatches. This session is mostly debugging.
 
 ### Session 5 — Entry Grinder + Optimization + Overnight Prep
-- Signal exit grinder validation (produce signal_exit_{setup}.json)
-- Entry grinder: ratchet diagnosis, signal validation, cache compat
-- Verify nightly refresh + forward scan speed is NOT regressed by any consensus changes
-- Profile consensus test run from Session 4 — optimize only if overnight window exceeded
-- Final test_consensus_pipeline.py run
-- Prep for first real overnight run
+- ✅ Signal exit grinder validation (format compatible, --conditions-file works)
+- ⏸️ Entry grinder: deferred per Dan's instruction (needs planning input)
+- ✅ Verified nightly refresh + forward scan code untouched (zero overlap with grinder)
+- ✅ Profiled and discovered the bar count bug + matmul revert + tradable filter gap
+- ✅ Final test_consensus_pipeline.py run: 9/9 PASS in 1216s (down from 35 min)
+- ✅ Pipeline now overnight-feasible at 12.8 min/grind (BRKO benchmark)
 NOT in this build: EV grinder, profit grinder — deferred to "live EV ranked watchlist" build.
 
-### Session 6 — (implied: first real overnight run + fixes)
+### Session 6 — First real overnight run + entry grinder
+1. Pre-flight: nightly refresh, expr cache append, verify alignment
+2. Optional: review/apply discovered optimizations (see "Discovered Optimizations" below)
+3. Run consensus pipeline against DTSS or BRKO
+4. Entry grinder work (separate planning conversation with Dan first)
+
+## Discovered Optimizations (from Session 5 deep dive)
+
+These were identified during Session 5 timing investigation. None are blocking — the current pipeline is overnight-feasible at 12.8 min/grind. Listed in priority order:
+
+**Higher impact, higher risk:**
+
+1. **Matmul vectorization revival in `PeakSpiderweb`** — commit `ecdd793` added matmul pre-screening that batches `(beam, candidate)` pair evaluation into a single SGEMM call. Reverted in `e683eb2` for tuning reasons (produced different signal counts than the goal "sub-200" tuning at the time). At beam=500 it gives ~5% pipeline savings AND broader beam node coverage (current capped iteration only expands the first ~9 of 500 beam nodes). At beam=10000 it makes that beam viable. See `reference_matmul_revival.md` in memory for the algorithm.
+
+2. **Slim expression cache** — pre-compute per-ticker .npz files containing only the ~2,000 useful expressions instead of all 16,039. Cache shrinks from 98 GB to ~17 GB (fits in OS file cache on 32 GB). Per-grind I/O drops 5-7×. ~1 hour one-time build cost.
+
+3. **Persistent worker pool within pass** — workers stay alive across tiers and cache loaded `.npz` data. 6× I/O reduction in Pass 1, 4× in Pass 2, 3× in Pass 3. Memory pressure on 32 GB system, requires column slicing. Architectural change.
+
+**Lower impact, lower risk:**
+
+4. **Cache `example_matrix` across passes within a grind** — currently computed 3× per grind (once per pass with different expression filter). Compute once for all expressions, slice per pass. Saves ~7-10 min total across 30 grinds.
+
+5. **Float16 throughout** — drop the `float32` cast on .npz load. 50% memory, 30-40% load time. Precision risk in `bincount` and accumulation operations.
+
+6. **Shared memory for tier matrices** — workers currently serialize tier matrices via pickle to send to parent. `multiprocessing.shared_memory` eliminates the round-trip. ~10-20% per tier.
+
+7. **Memory-map universe matrix** — convert from pickle to `.npy` + mmap. Lazy loading. ~2-4 min savings.
+
+8. **Batch grinds in single subprocess** — orchestrator currently launches 40 separate Python processes. Run multiple grinds in same interpreter to save startup cost. ~10 min savings. Watch for memory accumulation.
+
+**What was investigated and dismissed:**
+- **Parallelizing grinds** (running 2+ in parallel via different processes) — bad idea. Each grind already uses all 15 CPU cores. Parallel grinds would oversubscribe and thrash.
+- **Heuristic skip 5yr tier** — too risky. 5yr does add conditions for some setups (e.g. BRKO benchmark Pass 1 added 10 from 5yr).
+- **Refinement blackout/whitelist date translation** — investigated, not needed. blackout_map is never assigned; whitelist_map is consumed by `run_refinement`'s own loser matrix builder which already uses cache coordinates correctly.

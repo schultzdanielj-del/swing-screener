@@ -243,16 +243,22 @@ def extract_examples(cluster_data, universe_cache, exit_cond, direction):
 
         # Find exit bar: walk forward from signal bar, evaluate exit expression
         cached_dates, cached_data = expr_cache.get_ticker(ticker)
-        if cached_dates is None or len(cached_dates) != len(df):
-            skipped.append(f"{ticker} {entry_date}: expr cache mismatch")
+        if cached_dates is None:
+            skipped.append(f"{ticker} {entry_date}: not in expr cache")
             continue
+        # Resolve signal date in expr cache dates (date-based, not index-based)
+        cache_dates_str = [str(d)[:10] for d in cached_dates]
+        if signal_date not in cache_dates_str:
+            skipped.append(f"{ticker} {entry_date}: signal date {signal_date} not in expr cache")
+            continue
+        cache_signal_idx = cache_dates_str.index(signal_date)
 
         exit_series = cached_data[:, exit_col]
         exit_bar_idx = None
-        max_search = len(df) - 1
+        max_search = len(cached_data) - 1
 
-        for fi in range(1, max_search - signal_idx + 1):
-            check_idx = signal_idx + fi
+        for fi in range(1, max_search - cache_signal_idx + 1):
+            check_idx = cache_signal_idx + fi
             if check_idx > max_search:
                 break
             v = exit_series[check_idx]
@@ -266,8 +272,15 @@ def extract_examples(cluster_data, universe_cache, exit_cond, direction):
                 break
 
         if exit_bar_idx is None:
-            # No exit found — use end of data
+            # No exit found — use end of OHLCV data
             exit_bar_idx = len(df) - 1
+        else:
+            # exit_bar_idx is cache-relative — convert to OHLCV index via date
+            exit_date = cache_dates_str[exit_bar_idx]
+            exit_bar_idx = date_to_idx(df, exit_date)
+            if exit_bar_idx is None:
+                skipped.append(f"{ticker} {entry_date}: exit date {exit_date} not in OHLCV")
+                continue
 
         exit_bars_from_signal = exit_bar_idx - signal_idx
 

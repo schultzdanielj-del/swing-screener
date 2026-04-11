@@ -216,14 +216,17 @@ def resolve_example_signals(examples, cache, conditions, expr_cache, direction,
             print(f"    {ticker}: signal bar too early (idx {scan_idx})")
             continue
 
-        # Load expression cache
+        # Load expression cache — find signal bar by date, not OHLCV index
         cached_dates, cached_data = expr_cache.get_ticker(ticker)
         if cached_dates is None:
             print(f"    {ticker}: not in expression cache, skipping")
             continue
-        if len(cached_dates) != len(df):
-            print(f"    {ticker}: bar count mismatch (ohlcv={len(df)}, cache={len(cached_dates)})")
+        signal_date = dates_str[scan_idx]
+        cache_dates_str = [str(d)[:10] for d in cached_dates]
+        if signal_date not in cache_dates_str:
+            print(f"    {ticker}: signal date {signal_date} not in expr cache")
             continue
+        cache_scan_idx = cache_dates_str.index(signal_date)
 
         # Verify ALL conditions pass at signal bar
         n_fail = 0
@@ -232,7 +235,7 @@ def resolve_example_signals(examples, cache, conditions, expr_cache, direction,
             if col_idx is None:
                 n_fail += 1
                 continue
-            val = cached_data[scan_idx, col_idx]
+            val = cached_data[cache_scan_idx, col_idx]
             if np.isnan(val) or val < cond["low"] or val > cond["high"]:
                 n_fail += 1
 
@@ -242,7 +245,7 @@ def resolve_example_signals(examples, cache, conditions, expr_cache, direction,
 
         # ADR at signal bar
         if adr_col_idx is not None:
-            adr_val = float(cached_data[scan_idx, adr_col_idx])
+            adr_val = float(cached_data[cache_scan_idx, adr_col_idx])
         else:
             h = df["high"].values
             l = df["low"].values

@@ -72,7 +72,7 @@ def _eodhd_end_date():
 
 # Exchanges we pull from EODHD. NYSE ARCA and BATS are needed
 # because most ETFs (SPY, IWM, GLD, ARKK, etc.) trade there.
-EODHD_EXCHANGES = {"NASDAQ", "NYSE", "NYSE ARCA", "BATS"}
+EODHD_EXCHANGES = {"NASDAQ", "NYSE", "NYSE ARCA", "NYSE MKT", "AMEX", "BATS"}
 EODHD_SECURITY_TYPES = {"Common Stock", "ETF"}
 
 
