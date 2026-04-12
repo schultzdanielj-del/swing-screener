@@ -85,6 +85,181 @@ TIERS = [
 
 
 # ══════════════════════════════════════════════════════════════
+# PROFILING (optional wall-clock + psutil resource sampling)
+# Non-invasive: timers + background thread tag samples with current phase.
+# Zero logic change; gracefully no-ops when psutil is absent.
+# ══════════════════════════════════════════════════════════════
+from contextlib import contextmanager as _contextmanager
+
+_PHASE_TIMINGS = []          # list of (phase_name, elapsed_s), insertion-ordered
+_CURRENT_PHASE = "idle"      # innermost active phase, consumed by sampler
+_PASS_TAG = ""               # optional prefix applied via _phase_name()
+_RESOURCE_SAMPLES = []       # (t_rel, phase, cpu_pct, disk_read_bps, mem_used_gb)
+_PROFILE_T0 = None
+_SAMPLER_STOP = None
+
+try:
+    import psutil as _psutil
+    _PSUTIL_OK = True
+except Exception:
+    _psutil = None
+    _PSUTIL_OK = False
+
+
+def _reset_profiling():
+    global _PHASE_TIMINGS, _CURRENT_PHASE, _PASS_TAG, _RESOURCE_SAMPLES, _PROFILE_T0
+    _PHASE_TIMINGS = []
+    _CURRENT_PHASE = "idle"
+    _PASS_TAG = ""
+    _RESOURCE_SAMPLES = []
+    _PROFILE_T0 = time.perf_counter()
+
+
+def _set_pass_tag(tag):
+    global _PASS_TAG
+    _PASS_TAG = tag
+
+
+def _phase_name(base):
+    return f"{_PASS_TAG}_{base}" if _PASS_TAG else base
+
+
+@_contextmanager
+def _phase(name):
+    """Wall-clock timer; tags resource samples with the innermost phase name."""
+    global _CURRENT_PHASE
+    prev = _CURRENT_PHASE
+    _CURRENT_PHASE = name
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - t0
+        _PHASE_TIMINGS.append((name, elapsed))
+        _CURRENT_PHASE = prev
+
+
+def _start_resource_sampler():
+    global _SAMPLER_STOP
+    if not _PSUTIL_OK:
+        return
+    import threading
+    _SAMPLER_STOP = threading.Event()
+
+    def sample_loop():
+        try:
+            last_disk = _psutil.disk_io_counters()
+        except Exception:
+            last_disk = None
+        last_t = time.perf_counter()
+        try:
+            _psutil.cpu_percent(interval=None)  # prime the delta
+        except Exception:
+            pass
+        while not _SAMPLER_STOP.wait(1.0):
+            t = time.perf_counter()
+            dt = t - last_t
+            try:
+                cpu = _psutil.cpu_percent(interval=None)
+                disk = _psutil.disk_io_counters()
+                if last_disk is not None and disk is not None and dt > 0:
+                    read_rate = (disk.read_bytes - last_disk.read_bytes) / dt
+                else:
+                    read_rate = 0.0
+                mem = _psutil.virtual_memory()
+                _RESOURCE_SAMPLES.append((
+                    t - (_PROFILE_T0 or t),
+                    _CURRENT_PHASE,
+                    cpu,
+                    read_rate,
+                    mem.used / (1024 ** 3),
+                ))
+                last_t = t
+                last_disk = disk
+            except Exception:
+                pass
+
+    threading.Thread(target=sample_loop, daemon=True, name="pyramid-profiler").start()
+
+
+def _stop_resource_sampler():
+    global _SAMPLER_STOP
+    if _SAMPLER_STOP is not None:
+        _SAMPLER_STOP.set()
+        _SAMPLER_STOP = None
+
+
+def _print_timing_summary():
+    """Dump per-phase wall-clock + resource aggregates to stdout."""
+    print("\n" + "═" * 78)
+    print("  TIMING SUMMARY")
+    print("═" * 78)
+
+    phase_totals = {}
+    phase_counts = {}
+    phase_order = []
+    for name, elapsed in _PHASE_TIMINGS:
+        if name not in phase_totals:
+            phase_totals[name] = 0.0
+            phase_counts[name] = 0
+            phase_order.append(name)
+        phase_totals[name] += elapsed
+        phase_counts[name] += 1
+
+    total_recorded = sum(phase_totals.values())
+    if phase_order:
+        name_w = max(len(n) for n in phase_order)
+        name_w = min(max(name_w, 30), 55)
+        for name in phase_order:
+            t = phase_totals[name]
+            c = phase_counts[name]
+            pct = (t / total_recorded * 100) if total_recorded > 0 else 0.0
+            c_str = f"x{c}" if c > 1 else ""
+            print(f"    {name:<{name_w}s} {t:>8.2f}s {c_str:>4s}  ({pct:>5.1f}%)")
+        print(f"    {'-' * (name_w + 25)}")
+        print(f"    {'TOTAL (sum of phases)':<{name_w}s} {total_recorded:>8.2f}s")
+
+    if _PSUTIL_OK and _RESOURCE_SAMPLES:
+        by_phase = {}
+        for _, phase, cpu, read_rate, mem_gb in _RESOURCE_SAMPLES:
+            d = by_phase.setdefault(phase, {"cpu": [], "read": [], "mem": [], "n": 0})
+            d["cpu"].append(cpu)
+            d["read"].append(read_rate)
+            d["mem"].append(mem_gb)
+            d["n"] += 1
+
+        print("\n  Resource stats (1Hz psutil sampling, tagged by innermost phase):")
+        ordered = []
+        seen = set()
+        for name in phase_order:
+            if name in by_phase and name not in seen:
+                ordered.append(name)
+                seen.add(name)
+        for name in by_phase:
+            if name not in seen:
+                ordered.append(name)
+                seen.add(name)
+
+        name_w = max((len(p) for p in ordered), default=30)
+        name_w = min(max(name_w, 30), 55)
+        print(f"    {'phase':<{name_w}s}  {'n':>4s}  {'cpu avg/peak':>16s}  {'disk avg MB/s':>14s}  {'mem peak GB':>12s}")
+        for phase in ordered:
+            s = by_phase[phase]
+            if not s["cpu"]:
+                continue
+            avg_cpu = sum(s["cpu"]) / len(s["cpu"])
+            peak_cpu = max(s["cpu"])
+            avg_read_mb = (sum(s["read"]) / len(s["read"])) / (1024 ** 2)
+            peak_mem = max(s["mem"])
+            print(f"    {phase:<{name_w}s}  {s['n']:>4d}  {avg_cpu:>6.1f}%/{peak_cpu:>6.1f}%  "
+                  f"{avg_read_mb:>12.1f}    {peak_mem:>10.1f}")
+    elif not _PSUTIL_OK:
+        print("\n  (psutil not installed - resource stats skipped. `pip install psutil` to enable.)")
+
+    print("═" * 78)
+
+
+# ══════════════════════════════════════════════════════════════
 # DATA LOADING
 # ══════════════════════════════════════════════════════════════
 
@@ -1551,7 +1726,8 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
     t0 = time.time()
 
     # Load the full universe matrix (all expressions)
-    uni_data = get_universe_matrix()
+    with _phase(_phase_name("d1_matrix_load")):
+        uni_data = get_universe_matrix()
     full_uni_matrix = uni_data["universe_matrix"]
     tickers = uni_data["universe_tickers"]
     full_expr_names = uni_data["expr_names"]
@@ -1602,15 +1778,17 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
     print(f"  D1 matrix: {len(tickers)} tickers × {len(expr_names)} expressions ({time.time()-t0:.1f}s)")
 
     # Run spiderweb
-    search = SpiderwebSearch(
-        example_values=filtered_example_matrix,
-        universe_values=uni_matrix,
-        expr_names=expr_names,
-        expr_categories=expr_categories,
-        universe_tickers=tickers,
-    )
+    with _phase(_phase_name("d1_spiderweb_init")):
+        search = SpiderwebSearch(
+            example_values=filtered_example_matrix,
+            universe_values=uni_matrix,
+            expr_names=expr_names,
+            expr_categories=expr_categories,
+            universe_tickers=tickers,
+        )
 
-    result = search.run(depth=depth, beam_width=beam_width)
+    with _phase(_phase_name("d1_spiderweb_run")):
+        result = search.run(depth=depth, beam_width=beam_width)
 
     # Convert to condition list
     conditions = []
@@ -1721,29 +1899,30 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     else:
         tradable_masks_filtered = None
 
-    with ProcessPoolExecutor(
-        max_workers=n_workers,
-        initializer=_init_tier_worker,
-        initargs=(slim_cache, locked_conditions, expressions,
-                  example_ranges, candidate_indices, n_bars_window,
-                  expr_name_to_idx, blackout_map, whitelist_map, tradable_masks_filtered)
-    ) as pool:
-        futures = {pool.submit(_build_tier_batch, batch): batch for batch in batches}
-        completed = 0
-        for future in as_completed(futures):
-            batch_results = future.result()
-            for ticker, row_dates, cand_values in batch_results:
-                if row_dates and cand_values is not None and len(row_dates) > 0:
-                    all_row_dates.extend(row_dates)
-                    all_row_tickers.extend([ticker] * len(row_dates))
-                    all_row_values.append(cand_values)
-            completed += 1
-            if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
-                elapsed = time.time() - t0
-                print(f"    {completed}/{len(batches)} batches "
-                      f"[{elapsed:.0f}s, {len(all_row_dates):,} surviving rows]")
+    with _phase(_phase_name(f"tier_{tier_name}_matrix_build")):
+        with ProcessPoolExecutor(
+            max_workers=n_workers,
+            initializer=_init_tier_worker,
+            initargs=(slim_cache, locked_conditions, expressions,
+                      example_ranges, candidate_indices, n_bars_window,
+                      expr_name_to_idx, blackout_map, whitelist_map, tradable_masks_filtered)
+        ) as pool:
+            futures = {pool.submit(_build_tier_batch, batch): batch for batch in batches}
+            completed = 0
+            for future in as_completed(futures):
+                batch_results = future.result()
+                for ticker, row_dates, cand_values in batch_results:
+                    if row_dates and cand_values is not None and len(row_dates) > 0:
+                        all_row_dates.extend(row_dates)
+                        all_row_tickers.extend([ticker] * len(row_dates))
+                        all_row_values.append(cand_values)
+                completed += 1
+                if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
+                    elapsed = time.time() - t0
+                    print(f"    {completed}/{len(batches)} batches "
+                          f"[{elapsed:.0f}s, {len(all_row_dates):,} surviving rows]")
 
-    build_time = time.time() - t0
+        build_time = time.time() - t0
 
     if not all_row_values:
         print(f"  {tier_name}: Zero surviving rows. Nothing to grind.")
@@ -1758,16 +1937,18 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
           f"{candidate_values.shape[1]:,} candidates ({build_time:.0f}s)")
 
     # Run peak-based spiderweb
-    search = PeakSpiderweb(
-        candidate_values=candidate_values,
-        row_dates=all_row_dates,
-        row_tickers=all_row_tickers,
-        example_ranges=example_ranges,
-        candidate_names=candidate_names,
-        candidate_categories=candidate_categories,
-    )
+    with _phase(_phase_name(f"tier_{tier_name}_beam_init")):
+        search = PeakSpiderweb(
+            candidate_values=candidate_values,
+            row_dates=all_row_dates,
+            row_tickers=all_row_tickers,
+            example_ranges=example_ranges,
+            candidate_names=candidate_names,
+            candidate_categories=candidate_categories,
+        )
 
-    result = search.run(depth=depth, beam_width=beam_width, peak_target=peak_target)
+    with _phase(_phase_name(f"tier_{tier_name}_beam_run")):
+        result = search.run(depth=depth, beam_width=beam_width, peak_target=peak_target)
 
     # Convert conditions from search result
     new_conditions = []
@@ -2132,27 +2313,32 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         print(f"  Pass order: {pass_order}")
 
     t_total = time.time()
+    _reset_profiling()
+    _start_resource_sampler()
 
     # ── Load data ──
     print(f"\n  Loading OHLCV cache...")
-    universe_cache = load_daily_cache()
+    with _phase("load_ohlcv_cache"):
+        universe_cache = load_daily_cache()
     print(f"  {len(universe_cache)} tickers loaded")
 
     # ── Consensus: universe subsampling ──
     if subsample is not None and rng is not None:
-        all_tickers = sorted(universe_cache.keys())
-        n_keep = max(1, int(len(all_tickers) * subsample))
-        sampled = rng.sample(all_tickers, n_keep)
-        universe_cache = {t: universe_cache[t] for t in sampled}
+        with _phase("subsample_universe"):
+            all_tickers = sorted(universe_cache.keys())
+            n_keep = max(1, int(len(all_tickers) * subsample))
+            sampled = rng.sample(all_tickers, n_keep)
+            universe_cache = {t: universe_cache[t] for t in sampled}
         print(f"  Subsampled to {len(universe_cache)} tickers ({subsample:.0%} of {len(all_tickers)})")
 
     print(f"\n  Loading examples...")
-    if override_example_dfs is not None:
-        example_dfs = override_example_dfs
-        print(f"  {len(example_dfs)} examples (override — win pile)")
-    else:
-        example_dfs = load_example_data(setup_type, universe_cache)
-        print(f"  {len(example_dfs)} examples loaded")
+    with _phase("load_examples"):
+        if override_example_dfs is not None:
+            example_dfs = override_example_dfs
+            print(f"  {len(example_dfs)} examples (override — win pile)")
+        else:
+            example_dfs = load_example_data(setup_type, universe_cache)
+            print(f"  {len(example_dfs)} examples loaded")
 
     # ── Consensus: permutation test — replace real examples with fakes ──
     if permute and rng is not None:
@@ -2189,8 +2375,9 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         print(f"  {len(fake_examples)} fake examples generated (permutation test)")
 
     print(f"\n  Loading expressions...")
-    # Signal expressions for grinding (what the grinder actually uses)
-    all_expressions = generate_all()
+    with _phase("load_expressions"):
+        # Signal expressions for grinding (what the grinder actually uses)
+        all_expressions = generate_all()
     print(f"  {len(all_expressions)} signal expressions for grinding")
 
     if multi_pass:
@@ -2202,50 +2389,52 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 
     # ── Detect expression series cache ──
     print(f"\n  Detecting expression cache...")
-    expr_cache = ExprSeriesCache()
-    if expr_cache.is_valid():
-        n_cached = len(expr_cache.get_available_tickers())
-        print(f"  Expression series cache: {n_cached} tickers, "
-              f"{expr_cache.n_expressions} expressions")
+    with _phase("init_expr_cache_and_filter_examples"):
+        expr_cache = ExprSeriesCache()
+        if expr_cache.is_valid():
+            n_cached = len(expr_cache.get_available_tickers())
+            print(f"  Expression series cache: {n_cached} tickers, "
+                  f"{expr_cache.n_expressions} expressions")
 
-        # Filter examples to those in expr cache — resolve cache index by date
-        cached_tickers = expr_cache.get_available_tickers()
-        before_count = len(example_dfs)
-        excluded = []
-        filtered_dfs = []
-        for ex in example_dfs:
-            if ex["ticker"] not in cached_tickers:
-                excluded.append(f"{ex['ticker']} (not in expr cache)")
-                continue
-            # Find signal bar date in expr cache dates
-            ohlcv_df = ex["df"]
-            signal_date = str(ohlcv_df["date"].iloc[ex["scan_idx"]].date())
-            dates, _ = expr_cache.get_ticker(ex["ticker"])
-            if dates is None:
-                excluded.append(f"{ex['ticker']} (expr cache load failed)")
-                continue
-            cache_dates_str = [str(d)[:10] for d in dates]
-            if signal_date in cache_dates_str:
-                ex["cache_scan_idx"] = cache_dates_str.index(signal_date)
-                filtered_dfs.append(ex)
-            else:
-                excluded.append(f"{ex['ticker']} (signal date {signal_date} not in expr cache)")
-        example_dfs = filtered_dfs
-        if excluded:
-            print(f"  ⚠ Excluded {len(excluded)} examples not in expr cache:")
-            for e in excluded:
-                print(f"    - {e}")
-            print(f"  Examples: {before_count} → {len(example_dfs)}")
-    else:
-        raise RuntimeError(
-            "Expression series cache not found or invalid.\n"
-            "Run: python local_runner/expr_cache_builder.py --build"
-        )
+            # Filter examples to those in expr cache — resolve cache index by date
+            cached_tickers = expr_cache.get_available_tickers()
+            before_count = len(example_dfs)
+            excluded = []
+            filtered_dfs = []
+            for ex in example_dfs:
+                if ex["ticker"] not in cached_tickers:
+                    excluded.append(f"{ex['ticker']} (not in expr cache)")
+                    continue
+                # Find signal bar date in expr cache dates
+                ohlcv_df = ex["df"]
+                signal_date = str(ohlcv_df["date"].iloc[ex["scan_idx"]].date())
+                dates, _ = expr_cache.get_ticker(ex["ticker"])
+                if dates is None:
+                    excluded.append(f"{ex['ticker']} (expr cache load failed)")
+                    continue
+                cache_dates_str = [str(d)[:10] for d in dates]
+                if signal_date in cache_dates_str:
+                    ex["cache_scan_idx"] = cache_dates_str.index(signal_date)
+                    filtered_dfs.append(ex)
+                else:
+                    excluded.append(f"{ex['ticker']} (signal date {signal_date} not in expr cache)")
+            example_dfs = filtered_dfs
+            if excluded:
+                print(f"  ⚠ Excluded {len(excluded)} examples not in expr cache:")
+                for e in excluded:
+                    print(f"    - {e}")
+                print(f"  Examples: {before_count} → {len(example_dfs)}")
+        else:
+            raise RuntimeError(
+                "Expression series cache not found or invalid.\n"
+                "Run: python local_runner/expr_cache_builder.py --build"
+            )
 
     # ── Build per-bar tradable masks (one-time, before pass loop) ──
     print(f"\n  Building tradable masks (per-bar liquidity filter)...")
     t_trad = time.time()
-    tradable_masks = compute_tradable_masks(universe_cache, expr_cache)
+    with _phase("compute_tradable_masks"):
+        tradable_masks = compute_tradable_masks(universe_cache, expr_cache)
     print(f"  Tradable mask build: {time.time() - t_trad:.1f}s")
 
     # Guard: 0 examples after filtering — produce empty result gracefully
@@ -2284,6 +2473,8 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         with open(out_path, "w") as f:
             json.dump(result_data, f, indent=2)
         print(f"  Saved: {out_path}")
+        _stop_resource_sampler()
+        _print_timing_summary()
         return result_data
 
     # ══════════════════════════════════════════════════════════════
@@ -2306,10 +2497,11 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
             rng.shuffle(ordered_passes)
             print(f"  Pass order (seed-shuffled): {' -> '.join(p[0] for p in ordered_passes)}")
 
-        for pass_def in ordered_passes:
+        for _pass_idx, pass_def in enumerate(ordered_passes, 1):
             pass_name, timeframe, pass_tier_defs = pass_def
             pass_exprs = _filter_expressions_by_timeframe(all_expressions, timeframe)
 
+            _set_pass_tag(f"pass{_pass_idx}_{timeframe}")
             t_pass = time.time()
             new_conds, tier_results = _run_single_pass(
                 pass_name=pass_name,
@@ -2358,6 +2550,7 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
 
             print(f"\n  ═══ {pass_name} complete: +{len(new_conds)} conditions "
                   f"({len(all_conditions)} total) [{pass_time:.0f}s] ═══")
+            _set_pass_tag("")
 
         tier_results = all_tier_results
 
@@ -2583,10 +2776,14 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
         examples_failing = 0
     else:
         print(f"\n  Final example validation:")
-        if not validate_examples(example_dfs, all_conditions, expr_cache=expr_cache):
+        with _phase("final_validate"):
+            _valid = validate_examples(example_dfs, all_conditions, expr_cache=expr_cache)
+        if not _valid:
             print(f"\n{'!'*80}")
             print(f"VALIDATION FAILED — Results NOT saved. All examples must pass. No exceptions.")
             print(f"{'!'*80}")
+            _stop_resource_sampler()
+            _print_timing_summary()
             return None
 
         examples_passing = len([ex for ex in example_dfs if ex["scan_idx"] is not None])
@@ -2641,30 +2838,34 @@ def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
     os.makedirs(save_dir, exist_ok=True)
 
     # Timestamped archive — always unique, never overwrites anything
-    out_path = os.path.join(save_dir, f"{desc_name}.json")
-    with open(out_path, "w") as f:
-        json.dump(result, f, indent=2)
+    with _phase("save_output"):
+        out_path = os.path.join(save_dir, f"{desc_name}.json")
+        with open(out_path, "w") as f:
+            json.dump(result, f, indent=2)
     print(f"\n  Saved: {out_path}")
 
     # ── Mirror + upload to Railway (skip when output_dir is set) ──
     if not output_dir:
-        from file_mirror import mirror_file
-        mirror_file(out_path)
+        with _phase("railway_upload"):
+            from file_mirror import mirror_file
+            mirror_file(out_path)
 
-        step_type = "refinement_grind" if is_refinement else "signal_grind"
-        try:
-            from grind_uploader import upload as railway_upload
-            railway_upload(
-                result=result,
-                result_path=out_path,
-                step_type=step_type,
-                setup_type=setup_type,
-                activate=True,
-            )
-        except Exception as e:
-            print(f"\n  [pyramid_grinder] WARNING: Railway upload failed: {e}")
-            print(f"  [pyramid_grinder] Local files are saved. Upload manually or retry later.")
+            step_type = "refinement_grind" if is_refinement else "signal_grind"
+            try:
+                from grind_uploader import upload as railway_upload
+                railway_upload(
+                    result=result,
+                    result_path=out_path,
+                    step_type=step_type,
+                    setup_type=setup_type,
+                    activate=True,
+                )
+            except Exception as e:
+                print(f"\n  [pyramid_grinder] WARNING: Railway upload failed: {e}")
+                print(f"  [pyramid_grinder] Local files are saved. Upload manually or retry later.")
 
+    _stop_resource_sampler()
+    _print_timing_summary()
     return result
 
 
