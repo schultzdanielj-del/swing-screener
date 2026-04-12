@@ -1,5 +1,9 @@
 # Setup Analysis System
 
+> **⚠ SUPERSEDED — ARCHIVED 2026-04-11**
+>
+> This is the **v1 conceptual overview** of the setup analysis pipeline. The authoritative current architecture lives in `PIPELINE_V2.md`. This doc is retained for historical context on the design philosophy and the "best setups × best markets × best management" framework that drives the system, but specific component references may contradict the current state (e.g. it still refers to `market_grinder` + `setup_grinder`, both replaced by `ev_grinder.py`; refinement grind details predate the Session 5 bar-count fix; etc.). When this doc and `PIPELINE_V2.md` disagree, `PIPELINE_V2.md` wins.
+
 **The repeatable process for building any setup type into a fully optimized trading playbook.**
 
 **The formula:**

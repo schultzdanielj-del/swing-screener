@@ -1,5 +1,9 @@
 # Handoff: Expression Cache Builder — Parallelization
 
+> **⚠ SUPERSEDED — ARCHIVED 2026-04-11**
+>
+> This handoff doc described the parallelization task for `vectorized_cache_builder.py`. The same work is documented with more context in `UNIVERSE_EXPANSION.md` Phase 2. Current status of the parallelization work was not verified during the 2026-04-11 doc cleanup — check `vectorized_cache_builder.py` code if you need to know whether it's still single-threaded. This doc is retained for historical context only. Do not use it as a current planning document. The filename is also misleading — "parallelization" here refers to the expression cache builder, NOT the grinder's workers.
+
 ## Context
 
 The swing-screener vectorized expression cache builder produces correct output but is too slow (11 hours single-threaded vs 4.5 hours for the old per-ticker pandas builder). CPU utilization was 8% — the machine's 10 cores sat idle. The fix is parallelizing the expression computation loop.

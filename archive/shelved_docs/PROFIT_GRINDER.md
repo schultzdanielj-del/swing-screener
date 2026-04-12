@@ -1,9 +1,11 @@
 # Profit Grinder — Phase 4: Exit Optimization
 
-**Created:** 2026-03-19
-**Status:** Inc 1-4 COMPLETE. Script fully rewritten.
+> **⚠ DEFERRED — ARCHIVED 2026-04-11**
+>
+> This spec is retained as reference for the profit grinder's design. It is **not part of the current consensus pipeline build** (see `CONSENSUS.md`). It will be wired back in during the separate "live EV ranked watchlist" build alongside the EV grinder. Do NOT add it to `run_consensus_pipeline.py` without explicit planning first. The script exists at `scripts/profit_grinder.py` and can be run standalone for development.
+
+**Status at time of archive:** Inc 1-4 complete. Consumes EV grinder output (also deferred) and produces weighted multi-stage exit optimization results.
 **Script:** `scripts/profit_grinder.py`
-**Pipeline step:** `profit_grind` (Step 7 in PIPELINE_V2.md)
 
 ---
 

@@ -1,10 +1,11 @@
 # EV Grinder — Phase 3 Correlative Scoring Engine
 
-**Created:** 2026-03-14
-**Updated:** 2026-03-26
-**Status:** Complete (inc 1-6 + tree A/B). Setup-agnostic — runs on any setup type. Output saved locally, mirrored to Railway as backup.
+> **⚠ DEFERRED — ARCHIVED 2026-04-11**
+>
+> This spec is retained as reference for the EV grinder's design. It is **not part of the current consensus pipeline build** (see `CONSENSUS.md`). It will be wired back in during the separate "live EV ranked watchlist" build. Do NOT add it to `run_consensus_pipeline.py` without explicit planning first. The script still exists at `scripts/ev_grinder.py` and can be run standalone for development.
+
+**Status at time of archive:** Complete (inc 1-6 + tree A/B). Setup-agnostic. Historical output schema described below.
 **Script:** `scripts/ev_grinder.py`
-**Pipeline step:** `ev_grind` (wired in scanperfect.py PySide6 app)
 **Usage:** `python scripts/ev_grinder.py --setup <setup_type>`
 
 ---

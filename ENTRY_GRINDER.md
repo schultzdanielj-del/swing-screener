@@ -1,8 +1,11 @@
 # Entry Grinder — Specification
 
-**Created:** 2026-03-27
+> **⚠ DEFERRED — NOT ON THE ACTIVE CALL GRAPH (2026-04-11)**
+>
+> The entry grinder is deferred pending a planning conversation with Dan. v1 exists at `scripts/entry_grinder.py` and runs, but the ratchet-search path returned 0 monotonic survivors in v1 testing and needs a diagnostic/fix round before productionization. **Do NOT wire it into `run_consensus_pipeline.py`, the nightly pipeline, or any grinder chain without that planning conversation happening first.** The spec below describes v1 intent and design; the actual behavior matches only approximately.
+
 **Script:** `scripts/entry_grinder.py`
-**Status:** v1 built. Runs, produces output. Needs validation and seed vault fix before next iteration.
+**Status:** v1 built. Runs, produces output. Ratchet search returns 0 survivors (diagnostic pending). Seed vault integration incomplete.
 
 ---
 
