@@ -642,11 +642,20 @@ def _build_tier_batch(tickers):
     Loads pre-computed series from expr cache. Expr cache is REQUIRED — no fallback
     to compute_series() (all grinders must use the same computation path).
 
-    Returns list of (ticker, row_dates, candidate_values) where:
-      - row_dates: list of date strings for surviving bars
-      - candidate_values: np.array (n_surviving_bars, n_candidates) float
+    Returns (results, timings) where:
+      - results: list of (ticker, row_dates, candidate_values)
+      - timings: dict of per-phase CPU-time accumulators (seconds), summed across
+        all tickers in this batch. Parent aggregates these across batches and
+        records them into _PHASE_TIMINGS as <tier>_w_<phase>_cpu_sum rows.
+        Keys: "load", "mask_trad", "mask_locked", "cand_extract", "build_dates".
     """
     results = []
+    t_load = 0.0
+    t_mask_trad = 0.0
+    t_mask_locked = 0.0
+    t_cand_extract = 0.0
+    t_build_dates = 0.0
+
     for ticker in tickers:
         # Sanity check: ticker must be in slim_cache (just used as a tradability filter now)
         if _w_cache.get(ticker) is None:
@@ -663,11 +672,13 @@ def _build_tier_batch(tickers):
 
         try:
 
-            # Load from expression cache (REQUIRED)
+            # ── PHASE: Load .npz (decompress + cast to float32) ──
+            _tp0 = time.perf_counter()
             cached_data = _load_ticker_expr_cache(ticker)
 
             if cached_data is None:
                 # Not in cache — skip (filtered examples already exclude these)
+                t_load += time.perf_counter() - _tp0
                 results.append((ticker, [], None))
                 continue
 
@@ -676,6 +687,7 @@ def _build_tier_batch(tickers):
             # Work entirely in cache-relative coordinates from here on.
             cache_n_bars = len(cached_dates)
             if cache_n_bars < 50:
+                t_load += time.perf_counter() - _tp0
                 results.append((ticker, [], None))
                 continue
 
@@ -688,7 +700,10 @@ def _build_tier_batch(tickers):
             # Step 1: Apply locked conditions using cached series
             pass_mask = np.ones(cache_n_bars, dtype=bool)
             pass_mask[:start_idx] = False
+            _tp1 = time.perf_counter()
+            t_load += _tp1 - _tp0
 
+            # ── PHASE: Tradable mask apply ──
             # Step 1a: Apply tradable filter (per-bar liquidity mask)
             # Bars are excluded if the ticker did not meet price/dvol/ADRP
             # thresholds AT THAT BAR. Historical untradable bars are dropped
@@ -697,14 +712,19 @@ def _build_tier_batch(tickers):
                 tmask = _w_tradable.get(ticker)
                 if tmask is None:
                     # Ticker not in tradable_masks → not tradable, skip entirely
+                    t_mask_trad += time.perf_counter() - _tp1
                     results.append((ticker, [], None))
                     continue
                 if len(tmask) != cache_n_bars:
                     # Mask length mismatch — fail safe
+                    t_mask_trad += time.perf_counter() - _tp1
                     results.append((ticker, [], None))
                     continue
                 pass_mask &= tmask
+            _tp2 = time.perf_counter()
+            t_mask_trad += _tp2 - _tp1
 
+            # ── PHASE: Locked conditions (+ surviving_indices) ──
             for cond in _w_locked:
                 col_idx = _w_expr_name_to_idx.get(cond["name"])
                 if col_idx is None:
@@ -739,10 +759,14 @@ def _build_tier_batch(tickers):
                 )
 
             surviving_indices = np.where(pass_mask)[0]
+            _tp3 = time.perf_counter()
+            t_mask_locked += _tp3 - _tp2
+
             if len(surviving_indices) == 0:
                 results.append((ticker, [], None))
                 continue
 
+            # ── PHASE: Candidate column extract ──
             # Step 2: Extract candidate columns at surviving bars
             n_cands = len(_w_candidate_indices)
             # Map candidate_indices (position in expression list) to cache column indices
@@ -756,14 +780,26 @@ def _build_tier_batch(tickers):
             for ci_out, col_idx in enumerate(cand_col_indices):
                 if col_idx is not None:
                     cand_values[:, ci_out] = cached_matrix[surviving_indices, col_idx]
+            _tp4 = time.perf_counter()
+            t_cand_extract += _tp4 - _tp3
 
+            # ── PHASE: Build row_dates list ──
             row_dates = [str(cached_dates[idx]) for idx in surviving_indices]
+            _tp5 = time.perf_counter()
+            t_build_dates += _tp5 - _tp4
+
             results.append((ticker, row_dates, cand_values))
 
         except:
             results.append((ticker, [], None))
 
-    return results
+    return results, {
+        "load": t_load,
+        "mask_trad": t_mask_trad,
+        "mask_locked": t_mask_locked,
+        "cand_extract": t_cand_extract,
+        "build_dates": t_build_dates,
+    }
 
 
 def _load_ticker_expr_cache(ticker, expected_n_bars=None):
@@ -1899,6 +1935,17 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     else:
         tradable_masks_filtered = None
 
+    # Accumulator for per-phase worker CPU time (summed across all batches/workers).
+    # Written into _PHASE_TIMINGS after the pool closes so _print_timing_summary
+    # surfaces it alongside the existing wall-clock tier_{name}_matrix_build row.
+    tier_worker_cpu = {
+        "load": 0.0,
+        "mask_trad": 0.0,
+        "mask_locked": 0.0,
+        "cand_extract": 0.0,
+        "build_dates": 0.0,
+    }
+
     with _phase(_phase_name(f"tier_{tier_name}_matrix_build")):
         with ProcessPoolExecutor(
             max_workers=n_workers,
@@ -1910,17 +1957,27 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
             futures = {pool.submit(_build_tier_batch, batch): batch for batch in batches}
             completed = 0
             for future in as_completed(futures):
-                batch_results = future.result()
+                batch_results, batch_timings = future.result()
                 for ticker, row_dates, cand_values in batch_results:
                     if row_dates and cand_values is not None and len(row_dates) > 0:
                         all_row_dates.extend(row_dates)
                         all_row_tickers.extend([ticker] * len(row_dates))
                         all_row_values.append(cand_values)
+                for _k, _v in batch_timings.items():
+                    tier_worker_cpu[_k] += _v
                 completed += 1
                 if completed % max(len(batches) // 5, 1) == 0 or completed == len(batches):
                     elapsed = time.time() - t0
                     print(f"    {completed}/{len(batches)} batches "
                           f"[{elapsed:.0f}s, {len(all_row_dates):,} surviving rows]")
+
+        # Record the aggregated worker CPU time per phase into _PHASE_TIMINGS.
+        # Values are SUM across all workers, so they will exceed wall-clock tier
+        # matrix build time by roughly n_workers×. The _cpu_sum suffix flags that.
+        for _k in ("load", "mask_trad", "mask_locked", "cand_extract", "build_dates"):
+            _PHASE_TIMINGS.append(
+                (_phase_name(f"tier_{tier_name}_w_{_k}_cpu_sum"), tier_worker_cpu[_k])
+            )
 
         build_time = time.time() - t0
 
