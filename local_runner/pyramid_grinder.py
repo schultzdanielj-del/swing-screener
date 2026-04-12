@@ -649,6 +649,11 @@ def _build_tier_batch(tickers):
         records them into _PHASE_TIMINGS as <tier>_w_<phase>_cpu_sum rows.
         Keys: "load", "mask_trad", "mask_locked", "cand_extract", "build_dates".
     """
+    # Reset module-level load sub-phase accumulator so decompress/cast/append
+    # timings reflect only work done during this batch call.
+    from expr_cache_builder import reset_load_phase_timings, get_load_phase_timings
+    reset_load_phase_timings()
+
     results = []
     t_load = 0.0
     t_mask_trad = 0.0
@@ -793,8 +798,18 @@ def _build_tier_batch(tickers):
         except:
             results.append((ticker, [], None))
 
+    # Read the module-level load sub-phase accumulator now that all
+    # load_ticker_cache calls in this batch have completed. These partition
+    # the outer t_load into decompress / cast / append so the parent can
+    # decide between a codec swap (reduces decompress) and a cast-avoidance
+    # optimization (reduces cast).
+    _load_sub = get_load_phase_timings()
+
     return results, {
         "load": t_load,
+        "load_decompress": _load_sub.get("decompress", 0.0),
+        "load_cast": _load_sub.get("cast", 0.0),
+        "load_append": _load_sub.get("append", 0.0),
         "mask_trad": t_mask_trad,
         "mask_locked": t_mask_locked,
         "cand_extract": t_cand_extract,
@@ -1938,8 +1953,12 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
     # Accumulator for per-phase worker CPU time (summed across all batches/workers).
     # Written into _PHASE_TIMINGS after the pool closes so _print_timing_summary
     # surfaces it alongside the existing wall-clock tier_{name}_matrix_build row.
+    # load_decompress / load_cast / load_append partition the outer "load" key.
     tier_worker_cpu = {
         "load": 0.0,
+        "load_decompress": 0.0,
+        "load_cast": 0.0,
+        "load_append": 0.0,
         "mask_trad": 0.0,
         "mask_locked": 0.0,
         "cand_extract": 0.0,
@@ -1974,7 +1993,12 @@ def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
         # Record the aggregated worker CPU time per phase into _PHASE_TIMINGS.
         # Values are SUM across all workers, so they will exceed wall-clock tier
         # matrix build time by roughly n_workers×. The _cpu_sum suffix flags that.
-        for _k in ("load", "mask_trad", "mask_locked", "cand_extract", "build_dates"):
+        # Order is deliberate: total "load" first, then its decompress/cast/append
+        # sub-phases, then the other phases, so the summary reads top-to-bottom.
+        for _k in (
+            "load", "load_decompress", "load_cast", "load_append",
+            "mask_trad", "mask_locked", "cand_extract", "build_dates",
+        ):
             _PHASE_TIMINGS.append(
                 (_phase_name(f"tier_{tier_name}_w_{_k}_cpu_sum"), tier_worker_cpu[_k])
             )

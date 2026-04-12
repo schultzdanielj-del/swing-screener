@@ -1556,6 +1556,26 @@ def save_ticker_cache(ticker, dates, data):
             zf.writestr(name + ".npy", buf.getvalue())
 
 
+# ══════════════════════════════════════════════════════════════
+# LOAD PHASE PROFILING — sub-phase timers for load_ticker_cache
+# Module-level accumulator so workers can reset at the start of a
+# batch and read at the end to partition load cost into
+# decompress / cast / append. Zero change to load semantics.
+# ══════════════════════════════════════════════════════════════
+_load_phase_timings = {"decompress": 0.0, "cast": 0.0, "append": 0.0}
+
+
+def reset_load_phase_timings():
+    """Reset the module-level load sub-phase accumulator to zero."""
+    global _load_phase_timings
+    _load_phase_timings = {"decompress": 0.0, "cast": 0.0, "append": 0.0}
+
+
+def get_load_phase_timings():
+    """Return a copy of the current load sub-phase accumulator."""
+    return dict(_load_phase_timings)
+
+
 def load_ticker_cache(ticker):
     """Load one ticker's cached expression series.
 
@@ -1571,11 +1591,18 @@ def load_ticker_cache(ticker):
     if not os.path.exists(path):
         return None, None
     try:
+        _t0 = time.perf_counter()
         loaded = np.load(path, allow_pickle=True)
         data = loaded["data"]
         dates = loaded["dates"]
+        _t1 = time.perf_counter()
+        _load_phase_timings["decompress"] += _t1 - _t0
+
         if data.dtype != np.float32:
             data = data.astype(np.float32)
+        _t2 = time.perf_counter()
+        _load_phase_timings["cast"] += _t2 - _t1
+
         n_exprs = data.shape[1]
 
         # Check for .append file (forward-prop appended rows)
@@ -1596,6 +1623,7 @@ def load_ticker_cache(ticker):
                 elif file_size % (narrow_cols * 2) == 0:
                     total_cols = narrow_cols
                 else:
+                    _load_phase_timings["append"] += time.perf_counter() - _t2
                     return dates, data  # Corrupt .append — skip
 
                 raw = np.fromfile(append_path, dtype=np.float16)
@@ -1613,6 +1641,7 @@ def load_ticker_cache(ticker):
                     if len(append_dates) == append_exprs.shape[0]:
                         dates = np.concatenate([dates, append_dates])
 
+        _load_phase_timings["append"] += time.perf_counter() - _t2
         return dates, data
     except:
         return None, None
