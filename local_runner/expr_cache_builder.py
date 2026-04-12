@@ -1576,14 +1576,23 @@ def get_load_phase_timings():
     return dict(_load_phase_timings)
 
 
-def load_ticker_cache(ticker):
+def load_ticker_cache(ticker, cast_to_float32=True):
     """Load one ticker's cached expression series.
 
-    Data is stored as float16 on disk, cast to float32 on load.
+    Data is stored as float16 on disk. By default it is cast to float32 on
+    load so that consumers see float32. When `cast_to_float32=False`, the
+    upfront cast is skipped and the caller receives the raw float16 array —
+    use this when the caller only reads a small subset of columns and wants
+    to defer upcasting to the point of use (numpy will implicitly upcast
+    float16 → float32 during comparisons and when writing into a float32
+    destination, at a fraction of the cost of casting the full matrix).
+
     If .append file exists (from forward-prop nightly appends), its rows are
     vstacked onto the base .npz data. The .append file may be wider than .npz
     (16,001 cols vs 15,805) — only the first 15,805 expression columns are
-    returned to consumers.
+    returned to consumers. The append rows are kept at the same dtype as the
+    base data (float32 by default, float16 when cast_to_float32=False) so
+    that vstack does not silently promote.
 
     Returns: (dates, data) or (None, None)
     """
@@ -1598,7 +1607,7 @@ def load_ticker_cache(ticker):
         _t1 = time.perf_counter()
         _load_phase_timings["decompress"] += _t1 - _t0
 
-        if data.dtype != np.float32:
+        if cast_to_float32 and data.dtype != np.float32:
             data = data.astype(np.float32)
         _t2 = time.perf_counter()
         _load_phase_timings["cast"] += _t2 - _t1
@@ -1628,8 +1637,11 @@ def load_ticker_cache(ticker):
 
                 raw = np.fromfile(append_path, dtype=np.float16)
                 append_data = raw.reshape(-1, total_cols)
-                # Slice to expression columns only
-                append_exprs = append_data[:, :n_exprs].astype(np.float32)
+                # Slice to expression columns only. Match base dtype so vstack
+                # below does not silently upcast the whole matrix.
+                append_exprs = append_data[:, :n_exprs]
+                if cast_to_float32:
+                    append_exprs = append_exprs.astype(np.float32)
 
                 # Vstack with base
                 data = np.vstack([data, append_exprs])

@@ -820,12 +820,17 @@ def _build_tier_batch(tickers):
 def _load_ticker_expr_cache(ticker, expected_n_bars=None):
     """Load cached expression series for a ticker.
 
-    Returns (dates, data) or None if not available.
+    Returns (dates, data) or None if not available. Data is returned as
+    float16 — the worker defers upcasting to float32 to the point of use
+    (per-column comparisons and candidate extraction via implicit numpy
+    upcast) because the full-matrix upfront cast is ~39% of load CPU per
+    tier. See expr_cache_builder.load_ticker_cache docstring.
+
     The expected_n_bars argument is unused — kept for backward compat.
     The caller must work in cache-relative coordinates (use len(dates) for bar count).
     """
     from expr_cache_builder import load_ticker_cache
-    dates, data = load_ticker_cache(ticker)
+    dates, data = load_ticker_cache(ticker, cast_to_float32=False)
     if dates is None:
         return None
     return dates, data
