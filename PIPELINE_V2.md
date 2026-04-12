@@ -76,10 +76,9 @@ Seven nodes in the UI flowchart. The vetting loop (Examples → Causative Proces
 examples found). After convergence: Correlative Targeting → Scan Tuning ↔ Optimal Management → Summary.
 
 **Nightly auto-refresh (4:30pm ET, fully automated):**
-  OHLCV append → daily cache → 5yr cache (append-only) → expr cache (forward-prop, ~19 min) → matrix → earnings → market cache (256 instruments)
-  5yr cache and expr cache never rebuild from scratch — only new bars appended.
-  Expr cache uses forward-prop engine (`forward_prop_engine.py`) — computes one new bar per ticker using state + lookback, ~6x faster than full rebuild.
-  When you sit down, all data is current. No manual refresh needed.
+  OHLCV append (daily/weekly/monthly) → intermediate cache rebuild (196 intermediates per ticker, ~1.7 min) → nightly scan of locked conditions (~35 sec) → universe matrix → earnings → market cache → fundamentals → seed vault backup. See `NIGHTLY_REFRESH.md` for the current step list.
+  The nightly **does NOT update the expression cache `.npz` files**. The `.npz` cache is the grinder cache, rebuilt manually via `expr_cache_builder.py --build` when needed for a consensus pipeline run. The nightly live-scan path uses a separate 196-intermediate `.im` cache built by `intermediate_cache_builder.py`, consumed by `scan_engine.py`. These are two independent caches with different purposes — do not conflate them.
+  When you sit down in the morning, the live watchlist is current. No manual refresh needed for daily operation.
 
 ```
 The Vetting Loop (repeat until convergence):

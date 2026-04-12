@@ -1,8 +1,8 @@
-# Localize — Migration Complete
+# Localize — Local-First Architecture
 
-**Last updated:** 2026-03-27
+Everything runs locally on Dan's desktop. Railway is seed vault / file mirror only.
 
-Everything runs locally on Dan's desktop. Railway is seed vault only.
+Step numbers referenced in this doc may not match `NIGHTLY_REFRESH.md` exactly — when in doubt, `NIGHTLY_REFRESH.md` (which mirrors `nightly.py` directly) is authoritative.
 
 ---
 
@@ -11,10 +11,10 @@ Everything runs locally on Dan's desktop. Railway is seed vault only.
 **Local (desktop):**
 - Native PySide6 desktop app (`scanperfect.py`) — no browser, no server process
 - SQLite DB (`data/scanperfect.db`): examples, setups, vetting decisions, earnings, pending reviews, rejected signals
-- daily OHLCV pickle loaded into memory at startup (~4,169 tickers in 0.5s) — all chart data instant
-- All caches: expression cache, market cache, fundamentals — local files
+- Daily OHLCV pickle loaded into memory at startup — ticker count matches the current OHLCV cache state (see `OHLCV_CACHE.md`)
+- All caches (expression cache, intermediate cache, market cache, fundamentals) — local files
 - Grind results: local JSON files in `local_runner/cache/` and `data/`
-- Pipeline runs as subprocesses launched from PySide6 app via QProcess with auto-chaining
+- Pipeline runs as subprocesses launched from the PySide6 app via QProcess with auto-chaining
 - Start with: `python scanperfect.py` or double-click `ScanPerfect.bat`
 
 **Railway (seed vault only):**

@@ -1,6 +1,6 @@
 # ScanPerfect UI — Design Document
 
-**Updated:** 2026-03-18
+This file describes the PySide6 desktop UI intent and design. Implementation status lives in `SWING_SCREENER_PROJECT.md`.
 
 ---
 
@@ -8,7 +8,7 @@
 
 Native PySide6 desktop app (`scanperfect.py`). No browser, no server, no tabs.
 
-The pipeline flowchart IS the interface. Each node expands in place to become its own workspace. DO nodes (Examples, Vetting, Scan Tuning) expand to fill the viewport with 20px padding. RUN nodes expand moderately from their position. Setup selector dropdown in the top bar. 5yr OHLCV pickle loaded into memory at startup (~4,169 tickers in 0.5s).
+The pipeline flowchart IS the interface. Each node expands in place to become its own workspace. DO nodes (Examples, Vetting, Scan Tuning) expand to fill the viewport with 20px padding. RUN nodes expand moderately from their position. Setup selector dropdown in the top bar. The daily OHLCV pickle is loaded into memory at startup — exact ticker count depends on the current OHLCV cache state (~11,500 tickers in the raw universe after Session 5 expansion; check `OHLCV_CACHE.md` for the current target). UI startup timing figures in this doc predate the universe expansion and should not be trusted without re-measurement.
 
 ---
 

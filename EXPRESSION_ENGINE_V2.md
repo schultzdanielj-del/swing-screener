@@ -1,12 +1,20 @@
-# Expression Engine V2 — Build Plan
+# Expression Engine V2
+
+Architecture reference for the `.npz` expression cache consumed by the grinder. This file is a design doc, not a live build plan — the cache is built and operational.
 
 ## Purpose
 
-Every night: Fetch fresh OHLCV for all ~8,962 tickers via EODHD, then do a full expression cache rebuild for all of them. No skipping, no shortcuts. Because any ticker could become tradable tomorrow, and historical examples need complete data for tickers that were tradable in the past.
+The grinder needs to evaluate ~15,805 expressions at arbitrary bars across the full historical universe. The expression cache pre-computes every expression value for every bar of every ticker and stores it as a per-ticker `.npz` file. Grinders load per-ticker data via `ExprSeriesCache.get_ticker()` and slice to the bars and columns they need.
 
-The output must be **identical** to what the current builder produces. Same .npz files, same date arrays. The cache is additive — old bars are never dropped or trimmed. The full historical series from EXPR_CACHE_START (2020-01-02) onward is preserved in every .npz file. Historical expression values are immutable — bar 500 of AAPL must produce the exact same 16,051 values today that it produced yesterday.
+The full cache is built from ground truth via `expr_cache_builder.build_full()` (uses `_compute_ticker_full` — the authoritative compute path). Historical expression values are **immutable** — bar 500 of AAPL must produce the same values today as yesterday, modulo a ticker-specific rebuild caused by a split-adjustment detection.
 
-**Ticker count:** ~11,523 tickers in the daily OHLCV cache (from EODHD). Weekly cache matches daily. Monthly at ~11,239.
+A separate best-effort fast path exists for nightly updates to the *live-scan* watchlist (`forward_prop_engine.py`, documented in `FORWARD_PROP_SPEC.md`). **The forward-prop path is not consensus-grade** — before any consensus pipeline run, run a full rebuild to guarantee every expression is computed from ground truth.
+
+**Cache shape:** One `.npz` per ticker with `data` (float16 array, `n_bars × ~15,805`) and `dates` (date strings). Data is cast to float32 on load. Storage in float16 halves disk usage (~100+ GB total).
+
+**History window:** `EXPR_CACHE_START = 2020-01-02`. OHLCV data before this date is truncated before computing expressions. ~6 years of history, chosen to balance cache size against grinder scan diversity.
+
+**Ticker count:** Exact count depends on current universe state. The authoritative value is the length of `_manifest.json`'s `tickers` dict at the time of the last rebuild. See `OHLCV_CACHE.md` for the current raw universe size (~11,500 tickers). The grinder further filters to the tradable subset via the per-bar filter in `compute_tradable_masks()`.
 
 **Output format:** One .npz per ticker with `data` (float16 array on disk, n_bars x ~15,805) and `dates` (date strings). Data is cast to float32 on load via `load_ticker_cache()` — all consumers see float32 transparently. Storage dtype is float16 to halve disk usage (~111 GB total).
 

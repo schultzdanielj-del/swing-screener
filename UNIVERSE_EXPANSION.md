@@ -1,8 +1,6 @@
 # Universe Expansion + Expression Cache Vectorization
 
-**Created:** 2026-03-26
-**Status:** Planning — no code changes until plan is fully vetted
-**Branch:** v2
+**Status (as of 2026-04-11):** Partially executed. Phase 1 (universe expansion to ~11,500 tickers) COMPLETE — OHLCV caches cover the expanded set. Phase 3 (per-bar tradable filter in the grinder) COMPLETE — `compute_tradable_masks()` in `pyramid_grinder.py` applies the filter at grind time (see `OHLCV_CACHE.md` for current thresholds). Phase 2 (vectorized cache builder parallelization) — status not verified during the 2026-04-11 doc cleanup; check `vectorized_cache_builder.py` for current state. This doc is retained for historical context on the motivation and design decisions behind the expansion, but it is NOT a live planning document.
 
 ---
 

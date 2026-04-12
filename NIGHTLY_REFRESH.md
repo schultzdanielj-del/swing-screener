@@ -1,28 +1,30 @@
-# Nightly Refresh — Overhaul Spec
+# Nightly Refresh
 
-**Created:** 2026-03-25
-**Updated:** 2026-03-26
-**Branch:** `v2`
-**Goal:** Nightly refresh finishes in under 30 minutes with zero Railway dependency for data. Railway stays for seed vault backup only.
+**Goal:** Nightly refresh of the OHLCV + intermediate cache + market cache + fundamentals, producing a fresh live-scan watchlist. Zero Railway dependency for data; Railway is seed-vault backup only.
+
+**Entry point:** `local_runner/nightly.py` — triggered manually or via Windows Task Scheduler at 4:30pm ET.
+
+Refer to the authoritative step list in `DEPENDENCY_MAP.md` under `nightly.py`. This file documents the intent, known issues, and non-obvious design decisions.
 
 ---
 
-## CURRENT STATE (10 steps, was 8)
+## Pipeline steps
 
-### The nightly pipeline (`local_runner/nightly.py`):
+| Step | Component | Purpose |
+|------|-----------|---------|
+| 1 | `cache_builder.check_freshness()` | yfinance gate — abort if market day's data isn't available yet |
+| 2 | `cache_builder.append_daily_cache()` | Append new daily bars to `universe_ohlcv_daily.pkl`, sync universe (IPOs + delistings) against the EODHD exchange symbol list |
+| 3 | `cache_builder.append_weekly()` | Append to `universe_ohlcv_weekly.pkl` |
+| 4 | `cache_builder.append_monthly()` | Append to `universe_ohlcv_monthly.pkl` |
+| 5a | `intermediate_cache_builder.build_full()` | Rebuild `.im` files — 196 numeric intermediates per ticker (SMA, ATR, RSI, etc). Pure-numpy compute, no ExpressionEngine, ~1.7 min for all tickers at 14 workers. |
+| 5b | `scan_engine.scan_setup()` | For each discovered setup, evaluate locked signal conditions against the intermediate cache. Produces in-memory signal list logged to nightly output. |
+| 6 | `matrix_builder.get_universe_matrix()` | Rebuild D1 universe matrix for the grinder (graceful skip if expression cache missing). |
+| 7 | Earnings refresh | Currently **BROKEN** — Railway endpoints don't exist. Needs a local Yahoo Finance scraper. |
+| 8 | `market_cache_builder.append_new_bars()` | Append market context instruments (US ETFs + EODHD indices/crypto/breadth + yfinance futures + FRED macro). |
+| 9 | `fetch_fundamentals` | Refresh per-ticker sector, shares outstanding, float. Expensive on Mondays only. |
+| 10 | `seed_vault.backup()` | Push SQLite tables + grind result JSONs to Railway for backup. Intentional Railway dependency. |
 
-| Step | What it does | Time | Status |
-|------|-------------|------|--------|
-| 1 | yfinance freshness check — download 1 SPY bar, compare to cache | <5s | **DONE (2026-03-27).** Replaced Railway `POST /api/universe/append-daily`. Local only, no Railway dependency. |
-| 2 | Appends new bars to daily OHLCV pickle from yfinance | ~2-5 min | **DONE (2026-03-27).** Rewired from Railway to `yf.download()` directly. `_yf_append_after_date()` replaces `_fetch_ticker_after_date()`. |
-| 3 | Appends weekly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-28).** `cache_builder.py` → `append_weekly()`. 10yr lookback, overwrites partial week bar, appends closed weeks. |
-| 4 | Appends monthly OHLCV cache from yfinance | ~2-3 min | **NEW (2026-03-27).** Same pattern as weekly. Overwrites partial month bar. |
-| 5 | Appends expression cache | **~19 min** | **Forward-prop engine built (2026-04-07).** `forward_prop_engine.py` replaces `_compute_ticker_full` for existing tickers. Uses ExpressionEngine + truth-path dispatch for exact float16 match. Gate 1 passes (AAPL, zero mismatches). Gate 2 pending (awaiting OHLCV refresh → expr cache rebuild → full validation). |
-| 6 | Rebuilds universe matrix | ~30s | **OK.** No changes needed. |
-| 7 | Refreshes earnings dates via Railway | Fails silently | **BROKEN.** Railway endpoints don't exist. Replace with local Yahoo Finance scraper (separate task). |
-| 8 | Appends market context cache (272 instruments) | ~12 min | **DONE (2026-04-01).** Fully migrated: ~227 ETFs from daily pickle, indices/crypto/breadth from EODHD, futures yfinance, 4 FRED remaining. Stooq replaced. |
-| 9 | Refreshes fundamentals cache | ~10 min (Mon) / <1 min | **OK** but has a dead Railway mirror call at the end. |
-| 10 | Seed vault backup to Railway | ~1-2 min | **OK.** Intentional Railway dependency. |
+**The nightly pipeline does NOT update the expression cache `.npz` files.** The grinder's expression cache is a separate artifact, rebuilt manually via `expr_cache_builder.py --build` when needed for a consensus pipeline run. Step 5 uses the new intermediate-cache architecture (`.im` files) which is independent of the grinder's `.npz` cache — they have different purposes and different column sets. See `DATA_CONTRACT.md` for the format details and `DEPENDENCY_MAP.md` Chain 5 for the dependency graph.
 
 **Killed:** Old step 2 (300-bar daily OHLCV cache rebuild from Railway). Nothing reads this cache — everything uses the daily pickle. Removed 2026-03-25.
 

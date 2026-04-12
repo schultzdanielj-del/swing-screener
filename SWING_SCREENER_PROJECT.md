@@ -1,6 +1,5 @@
 # Swing Screener Project — State Document
 
-**Last updated:** 2026-04-01 (session 2)
 **GitHub repo:** https://github.com/schultzdanielj-del/swing-screener (branch: v2)
 **Railway:** https://web-production-e3025.up.railway.app (seed vault / file mirror only)
 
@@ -24,40 +23,31 @@
 
 ## WHAT THIS PROJECT IS
 
-Automated swing trade screener. Screens ~11,500 tickers nightly (Common Stock + ETF on NYSE/NASDAQ/NYSE ARCA/BATS, sourced from EODHD), finds the handful that match validated setup patterns with mathematically optimal conditions. Qullamaggie-style, 3-day to multi-week holds.
+Automated swing trade screener. Screens ~11,500 tickers nightly (Common Stock + ETF on NYSE, NASDAQ, NYSE ARCA, BATS, NYSE MKT/AMEX, sourced from EODHD), finds the handful that match validated setup patterns with mathematically optimal conditions. Qullamaggie-style, 3-day to multi-week holds.
 
 **Cost:** $0 additional — runs on existing Claude Max + TC2000 + Railway + GitHub.
 
 ---
 
-## CURRENT STATE (2026-04-01)
+## Current state (high level)
 
-### Expression Engine V2 — four-step plan:
-- **Step 1 (OHLCV caches):** ✅ Complete — daily/weekly/monthly caches built and nightly append working
-  - Daily: 11,523 tickers, 11,294 with today's bar (229 illiquid/delisted behind)
-  - Weekly: 11,469 tickers
-  - Monthly: 11,239 tickers
-  - Nightly append: EODHD bulk (~95% in seconds) + yfinance gap fill (~5% in ~30s)
-  - EODHD handles: universe sync (IPOs/delistings), bulk splits detection, full historical backfill
-  - yfinance handles: same-day bars not yet published by EODHD, fundamentals, earnings dates
-- **Step 2 (expression cache full rebuild):** ✅ Complete — 11,201 tickers, 0 failures, 111 GB, 124 min. Float16 storage + 6yr window (2020-01-02). HTF look-ahead bias FIXED via partial candle engine.
-- **Step 3 (universe matrix):** ✅ Complete — 11,201 tickers × 15,805 expressions, 1.35 GB, 148s. Reads last bar from expr cache .npz files.
-- **Step 4 (expression cache incremental append):** Infrastructure DONE (2026-04-01). `_append_one_ticker` worker, `.append`/`.append_dates` binary storage, `load_ticker_cache` vstack, `signal_filter._load_ticker_npz` updated. Validated 50/50 tickers zero mismatches. Currently still runs `_compute_ticker_full` internally (~100 min). Next: replace with forward-propagation phases 0-4 to reach ~13 min target.
-- **Market cache:** ✅ EODHD migration DONE (2026-04-01). 272 instruments (268 fetched successfully, 4 FRED series still down). ~227 US ETFs read from daily OHLCV pickle, indices/crypto/breadth from EODHD, futures from yfinance, 4 FRED macro series remaining. 5 derived instruments computed locally (NYMO_CALC, NYUD_CALC, NDXADP_CALC, T10Y2Y_CALC, T10Y3M_CALC). Stooq replaced by EODHD.
+Detailed component status lives in the per-component specs. This section is a short overview; it will go stale fast, so treat it as a pointer, not a source of truth.
 
-### DTSS (Double Top Short Sell) — first setup:
-- **Examples:** 66 (65 with valid scan bars in clusters, out of ~365 winner clusters)
-- **Causative (Phase 2):** Complete — 87 signal conditions + 100 refinement conditions, 182 combined, 78% WR, median winner 6.4 ADR
-- **Correlative (Phase 3):** Complete — EV Grinder inc 1-6 done. 1,816 pre / 1,940 post features. D1→D10 spread +45pp WR. RMSE 0.090
-- **Profit (Phase 4):** ✅ Inc 1-4 done (835 1-stage, 7703 2-stage, ~12 min)
-- **Live Watchlist (Phase 5):** Not built
+- **Expression cache** (15,805 expressions × ~11,500 tickers, float16 on disk): built and operational. Full rebuild via `expr_cache_builder.py --build`. Forward-prop append path exists for nightly updates but is **best-effort** and is NOT what the consensus pipeline uses — see `FORWARD_PROP_SPEC.md` and `CONSENSUS.md`.
+- **OHLCV caches** (daily/weekly/monthly): nightly append via `cache_builder.py`. Universe synced against EODHD exchange symbol list, IPOs added, delistings removed. See `OHLCV_CACHE.md`.
+- **Nightly pipeline** (`local_runner/nightly.py`): uses the `.im` intermediate cache (`intermediate_cache_builder.py`) + `scan_engine.py` for the live-scan path. Independent of the grinder's `.npz` expression cache. See `NIGHTLY_REFRESH.md` + `DEPENDENCY_MAP.md` Chain 5.
+- **Consensus pipeline** (`scripts/run_consensus_pipeline.py`): built through Increment 10 (Sessions 1–5). `test_consensus_pipeline.py --setup dtss` passes 9/9. Per-grind cost ~11–13 min at current defaults (BRKO benchmark). Full real run still pending — deferred for quality-preserving speed optimization work in the next session. Active tracker: `CONSENSUS.md`.
+- **Grinders**: signal grind, signal exit grind, refinement grind (`pyramid_grinder.py`). EV grinder and profit grinder exist but are **deferred** from the consensus pipeline — they'll be wired back in during a future "live EV ranked watchlist" build. See the DEFERRED banner in `ENTRY_GRINDER.md` for the entry grinder status.
+- **Native desktop UI** (`scanperfect.py`, PySide6): pipeline flowchart + workspaces. Replaces the legacy HTML UI. Implementation ongoing; design in `UI_FLOW.md`.
 
-### Native Desktop UI (Phase 6):
-- PySide6 app (`scanperfect.py`) — IN PROGRESS
-- Pipeline flowchart with 7 color-coded nodes, two feedback loops, unlock progression
-- Animated card expansion with Run/Stop/Log for grind nodes
-- Replaces browser-based HTML UI (server.py + app/*.html)
-- Next: expand DO nodes (Examples, Vetting) into full workspaces within the flowchart
+### Setup types in play
+
+| Setup | Examples | Status |
+|---|---|---|
+| DTSS (Double Top Short Sell) | ~66–68 | Primary benchmark for consensus pipeline |
+| BRKO | ~51 | Used for grinder benchmarking (12.8 min/grind reference) |
+| 3-4DB | ~21 | Examples loaded, not yet ground |
+| HTF | 0 | Scaffolded only |
 
 ---
 
@@ -97,17 +87,31 @@ app/                       # HTML UI (LEGACY — replaced by scanperfect.py)
 ```
 
 ### Key docs:
-- **`TODO.md`** — task list, pipeline status, immediate work items
-- **`LOCALIZE.md`** — local migration (complete) + UI status
-- **`UI_FLOW.md`** — PySide6 flowchart UI design
-- **`PIPELINE_V2.md`** — pipeline architecture
-- **`EV_GRINDER.md`** — EV grinder spec
-- **`ANALYSIS_SYSTEM.md`** — repeatable process for building any setup
-- **`DATA_CONTRACT.md`** — schema + data flow
+- **`CLAUDE.md`** — operating rules for Claude agents working on this codebase (read first)
+- **`PIPELINE_V2.md`** — authoritative pipeline architecture
+- **`DATA_CONTRACT.md`** — schemas, cache file formats, data flow
 - **`DEPENDENCY_MAP.md`** — per-component inputs, outputs, upstream callers, downstream consumers. Check before changing any component.
+- **`SIGNAL_GRINDER.md`** — signal grinder + multi-run consensus pipeline spec
+- **`REFINEMENT_GRINDER.md`** — refinement grinder spec
+- **`CONSENSUS.md`** — active status tracker for the consensus pipeline
+- **`NIGHTLY_REFRESH.md`** — nightly orchestration
+- **`OHLCV_CACHE.md`** — OHLCV cache contract + tradable filter thresholds
+- **`EXPRESSION_ENGINE_V2.md`** — expression library + .npz cache architecture
+- **`FORWARD_PROP_SPEC.md`** — forward-prop incremental append engine (and why it's best-effort, not consensus-grade)
+- **`LOCALIZE.md`** — local migration architecture + seed vault
+- **`UI_FLOW.md`** — PySide6 flowchart UI design
+- **`Code_Auditor.md`** — code auditor (`audit.sh` / `audit.py`) setup and usage
+- **`BUGS.md`** — live bug tracker / session notes
+- **`SHELVED.md`** — list of shelved / legacy scripts (reference only)
 - **`ta_knowledge.md`** — TA concepts reference
 - **`pcf.md`** — TC2000 PCF language reference
-- **`Code_Auditor`** — code auditor setup and spec
+- **`ENTRY_GRINDER.md`** — entry grinder (deferred — see banner)
+
+Deferred / archived on 2026-04-11 (in `archive/shelved_docs/`):
+- `archive/shelved_docs/EV_GRINDER.md` — EV grinder spec (deferred to "live EV ranked watchlist" build)
+- `archive/shelved_docs/PROFIT_GRINDER.md` — profit grinder spec (same)
+- `archive/shelved_docs/ANALYSIS_SYSTEM.md` — v1 conceptual overview, superseded by `PIPELINE_V2.md`
+- `archive/shelved_docs/HANDOFF_PARALLELIZATION.md` — superseded by `UNIVERSE_EXPANSION.md` Phase 2
 
 ---
 

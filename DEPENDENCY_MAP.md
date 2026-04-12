@@ -225,9 +225,9 @@ These are the only components that make network calls for market data.
 - `local_runner/cache/expr_series/_manifest.json` — metadata (expression fingerprint, dates, counts)
 
 **Key functions called by others:**
-- `append_new_bars()` — called by `nightly.py` step 5. Uses `forward_prop_engine._forward_prop_one_ticker` for existing tickers with .state files (writes .append, updates .lookback + .state), falls back to `_compute_and_save_ticker` for new tickers (writes .npz). Engine built 2026-04-07, Gate 1 passes (AAPL, zero mismatches), ~19 min projected runtime.
-- `build_full()` — full rebuild from scratch. Clears all .append/.append_dates/.lookback/.state files before computing.
-- `load_ticker_cache(ticker)` — called by grinders to load individual ticker data. Reads .npz + .append file if present, vstacks, returns combined (dates, data) float32 array. .append is wider (16,001 cols) — sliced to first 15,805 before return. Consumers see no API change.
+- `append_new_bars()` — manual/occasional operation. Uses `forward_prop_engine._forward_prop_one_ticker` for existing tickers with .state files (writes .append, updates .lookback + .state), falls back to `_compute_and_save_ticker` for new tickers (writes .npz). **NOT called by nightly.py** — nightly now uses `intermediate_cache_builder` + `scan_engine` instead (see `nightly.py` entry below). The forward-prop engine is a **best-effort fast path**: per-expression compute failures silently leave cells as NaN. Consequence: `.append` rows may have NaN cells that the full rebuild path would not have produced. For consensus grinding, always use `build_full()` — do NOT rely on appended rows.
+- `build_full()` — full rebuild from scratch via `_compute_ticker_full` (ground-truth path). Clears all .append/.append_dates/.lookback/.state files before computing. This is the only path that guarantees every expression is computed from the full OHLCV history for every bar. Required before any consensus pipeline run.
+- `load_ticker_cache(ticker)` — called by grinders to load individual ticker data. Reads `.npz` + `.append` if present, vstacks, returns combined `(dates, data)` float32 array. `.append` is 16,001 cols wide (15,805 expressions + 196 intermediates for forward-prop state) — sliced to first 15,805 before return. Grinders see only the 15,805 expression columns, but any NaN cells left by the best-effort `.append` path are surfaced to the consumer.
 - `save_ticker_cache(ticker, dates, data)` — saves one ticker's npz
 - `ExprSeriesCache` class — high-level accessor used by grinders
 
@@ -427,27 +427,33 @@ These are the only components that make network calls for market data.
 ### pyramid_grinder.py
 **Location:** `local_runner/pyramid_grinder.py`
 **Spec:** `SIGNAL_GRINDER.md`, `REFINEMENT_GRINDER.md`
-**What it does:** The main grinder. Three jobs: (1) signal grind — beam search for conditions, (2) raw signal cluster gathering — classify signals into winners/losers, (3) refinement grind — eliminate losing clusters.
+**What it does:** The main grinder. Three jobs: (1) signal grind — beam search for conditions, (2) raw signal cluster gathering — classify signals into winners/losers, (3) refinement grind — eliminate losing clusters. Also implements the multi-run consensus pipeline grind primitives via additive `--permute`, `--seed`, `--subsample`, `--zero-margin`, `--no-peak-target`, `--pass-order`, `--scan-only`, `--skip-gather`, `--conditions-file`, `--output-dir` flags.
+
+**Key design facts:**
+- Uses **cache-relative coordinates** throughout. Every example carries a `cache_scan_idx` resolved from its signal date against the ticker's expression-cache `dates` array. Bar indices are never carried across OHLCV and expression cache (different start dates, different lengths) — this was the root cause of the Session 5 bar-count bug where historical tiers were silently no-ops.
+- Applies a **per-bar tradable filter** via `compute_tradable_masks()` at grind start. Bar is tradable if close ≥ $1, 20-day average dollar volume ≥ $4M, and 20-bar ADRP ≥ 1.8% — **all evaluated at that bar**, not just at today. Tickers with zero tradable bars are skipped before `.npz` load. Filter is passed to tier workers and AND-ed into `pass_mask` during tier matrix building.
+- Spawns a **fresh `ProcessPoolExecutor` per historical tier** — workers have no persistent state across tiers. Each ticker's `.npz` is loaded, decompressed, and cast to float32 once per tier that needs it. Known inefficiency; target for future quality-preserving optimization work per `CONSENSUS.md`.
 
 **Inputs:**
 - `local_runner/cache/universe_ohlcv_daily.pkl`
-- `local_runner/cache/expr_series/*.npz` via `ExprSeriesCache`
+- `local_runner/cache/expr_series/*.npz` via `ExprSeriesCache` — **must be built via `expr_cache_builder.py --build`, not `--append`, for consensus runs**
 - `local_runner/cache/universe_matrix.pkl` via `matrix_builder.get_universe_matrix()`
 - `brute_expressions.py` — `generate_all()`
 - SQLite `examples` table (for example ticker+date pairs)
 - SQLite `setups` table (for trade direction)
-- `spiderweb.py` — `SpiderwebSearch` class
+- `spiderweb.py` — `SpiderwebSearch` class (D1 tier only)
 - `signal_filter.py` — `scan_all_signals()`, `_build_slim_cache()` (for cluster gathering)
 - `local_runner/cache/pyramid_{setup}_*.json` (loads own prior output for cluster gathering)
 - `data/signal_exit_grind/signal_exit_{setup}.json` (exit condition for cluster gathering)
 
 **Outputs:**
-- `local_runner/cache/pyramid_{setup}_{description}_{timestamp}.json` — signal grind results
+- `local_runner/cache/pyramid_{setup}_{description}_{timestamp}.json` — signal grind results (multi-pass runs). Consensus runs go to `local_runner/cache/consensus/` via `--output-dir`.
+- `local_runner/cache/permuted_{setup}_*.json` — permuted-run outputs under `--permute` (separate prefix so loaders never mistake a permuted result for a real one).
 - `local_runner/cache/raw_signal_clusters_{setup}_{timestamp}.json` — classified clusters
 - `local_runner/cache/raw_signal_clusters_{setup}.json` — latest pointer
 - `local_runner/cache/refinement_{setup}_{description}_{timestamp}.json` — refinement results
 
-**Also calls:** `file_mirror.mirror_file()`, `grind_uploader.upload()` (Railway backup)
+**Also calls:** `file_mirror.mirror_file()`, `grind_uploader.upload()` (Railway backup). **Both suppressed when `--output-dir` is set** (consensus pipeline case).
 
 **Downstream Consumers:**
 - `signal_exit_grinder.py` — reads `pyramid_*.json` for signal conditions
@@ -569,8 +575,8 @@ These are the only components that make network calls for market data.
 
 ### ev_grinder.py
 **Location:** `scripts/ev_grinder.py`
-**Spec:** `EV_GRINDER.md`
-**What it does:** Correlative scoring. Tests every market condition and ticker attribute against the signal set. Scores signals by predicted WR/MFE/EV.
+**Spec:** `archive/shelved_docs/EV_GRINDER.md` (deferred — not on active call graph, see spec banner)
+**What it does:** Correlative scoring. Tests every market condition and ticker attribute against the signal set. Scores signals by predicted WR/MFE/EV. **Not currently wired into the consensus pipeline** — will return in the future "live EV ranked watchlist" build.
 
 **Inputs:**
 - `local_runner/cache/refinement_{setup}_*.json`
@@ -607,8 +613,8 @@ These are the only components that make network calls for market data.
 
 ### profit_grinder.py
 **Location:** `scripts/profit_grinder.py`
-**Spec:** `PROFIT_GRINDER.md`
-**What it does:** Brute-forces TA-expression-based exit conditions to capture optimal MFE.
+**Spec:** `archive/shelved_docs/PROFIT_GRINDER.md` (deferred — not on active call graph, see spec banner)
+**What it does:** Brute-forces TA-expression-based exit conditions to capture optimal MFE. **Not currently wired into the consensus pipeline** — will return in the future "live EV ranked watchlist" build alongside the EV grinder.
 
 **Inputs:**
 - `local_runner/cache/universe_ohlcv_daily.pkl`
@@ -640,8 +646,8 @@ These are the only components that make network calls for market data.
 
 ### consensus_engine.py
 **Location:** `scripts/consensus_engine.py`
-**Spec:** `CONSENSUS_SPEC.md`
-**What it does:** Analyzes multiple grind runs to find conditions that appear consistently (threshold frequency).
+**Spec:** `SIGNAL_GRINDER.md` (signal stage), `REFINEMENT_GRINDER.md` (refinement stage), `CONSENSUS.md` (active status tracker)
+**What it does:** Analyzes multiple grind runs to find conditions that appear consistently (threshold frequency). Runs in two stages — signal consensus and refinement consensus — invoked by `run_consensus_pipeline.py`.
 
 **Inputs:**
 - `local_runner/cache/pyramid_{setup}_*.json` (all signal grind runs)
@@ -966,6 +972,15 @@ scanperfect.db
   ├── rejected_signals table → profit_grinder, scanperfect.py
   └── pending_examples table → scanperfect.py, agent.py
 ```
+
+### Chain 5: Nightly Scan Path (separate from grinder cache)
+```
+cache_builder.py (daily .pkl)
+  → intermediate_cache_builder.py (.im files, 196 intermediate columns per ticker)
+    → scan_engine.py (reads .im, applies locked conditions, produces nightly signals)
+      → nightly.py step 5b (invokes scan_setup per discovered setup)
+```
+**This chain is independent of the grinder's `.npz` expression cache.** The nightly scan uses a stripped-down 196-intermediate format because it only needs the ~42 dispatchable expression types, not all 15,805. Grinders cannot use `.im` (they need the full expression library). These are two parallel caches with different purposes: `.im` is nightly-scan-only, `.npz` is grinder-only. Do not conflate them.
 
 ---
 

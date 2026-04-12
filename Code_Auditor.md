@@ -2,7 +2,13 @@
 
 ## What This Is
 
-A manual code review tool. When you're ready to check your work, run `python audit.py` from any terminal. It uses Claude Code in pipe mode (`claude -p`) to read the diff, the relevant spec docs, the dependency map, and downstream consumer files, then evaluates four criteria:
+A manual code review tool with **two parallel implementations** at the repo root:
+- **`audit.sh`** — Bash implementation (Git Bash / WSL / Linux / macOS).
+- **`audit.py`** — Python implementation (cross-platform; the doc examples below use this).
+
+Both do the same thing, read the same state file (`local_runner/cache/last_audited_commit.txt`), and have near-identical behavior. Having two implementations is tech debt — the next cleanup round should consolidate on one or document the intended split. For now, use whichever fits your shell.
+
+When you're ready to check your work, run the auditor from any terminal. It uses Claude Code in pipe mode (`claude -p`) to read the diff, the relevant spec docs, the dependency map, and downstream consumer files, then evaluates four criteria:
 
 1. **PURPOSE** — Does the code still do what the component's spec doc says it should do?
 2. **SPEC COMPLIANCE** — Is it built according to the spec? File paths, data formats, function signatures, worker patterns, RAM management, constants.

@@ -1,14 +1,24 @@
 # Forward-Propagation Spec — Expression Cache Incremental Append
 
-**Date:** 2026-04-02
-**Updated:** 2026-04-07
-**Status:** ENGINE BUILT — Gate 1 passes (AAPL, zero mismatches). Awaiting OHLCV refresh → full expression cache rebuild → Gate 2 (all tickers).
-**Location in build:** Task H Phase 3, Increment 2 (replaces _compute_ticker_full inside _append_one_ticker)
-**Authoritative spec:** This file. EXPRESSION_ENGINE_V2.md has the original four-file design under "Forward-Propagation Design — Four Files Per Ticker".
+**Authoritative spec:** This file. EXPRESSION_ENGINE_V2.md has the original four-file design under "Forward-Propagation Design — Four Files Per Ticker". Code lives in `local_runner/forward_prop_engine.py`.
+
+## ⚠ CRITICAL: Forward-prop is a BEST-EFFORT fast path
+
+The forward-propagation engine is designed to append one new bar per ticker quickly so that the live forward-scanning watchlist has up-to-date data. It is **not** a substitute for the full rebuild path (`expr_cache_builder.py --build` / `_compute_ticker_full`).
+
+**How failure modes work:**
+- `_forward_prop_one_ticker()` allocates `expr_row = np.full(n_exprs, np.nan)` and then runs five phases to fill it: daily expressions, HTF expressions, extension structure, LSP, algo.
+- Each phase wraps its per-expression computations in `try: ... except: pass`. Any silently-failing path leaves the corresponding cell as the initial NaN.
+- The resulting `.append` row is written with whatever fills succeeded. Cells that failed stay NaN permanently for that bar.
+- The `.append` row is 16,001 columns wide on disk (15,805 expression columns + 196 intermediate columns for forward-prop state), but "16,001 wide" does NOT mean "16,001 populated". It means "16,001 slots, some possibly NaN."
+
+**Consequence:** bars appended via forward-prop may have NaN cells that the same bar would NOT have had if computed via the full rebuild path. Downstream consumers that treat NaN as "fails" (tier matrix filtering, universe scan, validation) will silently exclude those bars for those expressions. Downstream consumers that treat NaN as "passes" (beam search) will silently over-count.
+
+**Rule:** Before any consensus pipeline run, run `expr_cache_builder.py --build` (full rebuild via `_compute_ticker_full`). Do NOT rely on `.append` rows. Staleness of days or a week is acceptable; incompleteness is not. See CONSENSUS.md for the full prep sequence.
 
 ## Purpose of the Expression Cache (Non-Negotiable)
 
-The expression cache must provide the ability to find a historical signal and calculate the exact daily, weekly, AND monthly expressions for all ~16K expressions. The weekly and monthly expressions on any historical day must reflect the exact partial candle state for that day — before the week/month has closed. It cannot require an increase in any grind times, and the nightly refresh needs to be fast
+The expression cache must provide the ability to find a historical signal and calculate the exact daily, weekly, AND monthly expressions for all ~16K expressions. The weekly and monthly expressions on any historical day must reflect the exact partial candle state for that day — before the week/month has closed. It cannot require an increase in any grind times, and the nightly refresh needs to be fast.
 
 Any optimization that compromises the above is rejected. No exceptions.
 

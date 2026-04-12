@@ -1,7 +1,6 @@
 # OHLCV Cache
 
 **File:** `local_runner/cache_builder.py`
-**Last updated:** 2026-04-02
 
 ---
 
@@ -34,6 +33,22 @@ Each pickle is a Python dict: `{ticker_string: pandas_DataFrame}`. Each DataFram
 
 ---
 
+## Tradable universe filter (applied by grinder and live scan)
+
+The full OHLCV cache contains ~11,500 tickers. The grinder and live-scan paths apply an additional **per-bar liquidity filter** to produce the effective tradable universe (~3,500–4,000 tickers with qualifying bars). This filter lives in `pyramid_grinder.compute_tradable_masks()` and must match the corresponding thresholds in any live-scan code.
+
+A bar is considered tradable if the ticker met ALL of the following criteria **at that bar** (not just at today):
+
+- Close ≥ $1.00
+- 20-day average dollar volume ≥ $4,000,000 (uses the `dvol_20d` column stored in the OHLCV pickle)
+- 20-bar ADRP ≥ 1.8% (TC2000-style: `(mean(H/L) − 1) × 100`)
+
+The filter is **per-bar, not per-ticker**. A ticker that is a penny stock today but was tradable in 2022 still contributes its 2022 bars to historical search. A ticker that is tradable today but wasn't in 2020 only contributes bars from dates where it qualified. This mirrors historical scan behavior and prevents injecting illiquid-historical signals into condition derivation.
+
+**Thresholds are authoritative in `pyramid_grinder.compute_tradable_masks()`** (as of 2026-04-11). When the doc and the code disagree, the code wins — update the doc, not the code.
+
+---
+
 ## Data Sources
 
 ### EODHD (primary)
@@ -45,7 +60,7 @@ Plan: $19.99/month EOD Historical Data, 100K calls/day, 1,000/min.
 
 | Endpoint | Purpose | Cost | Notes |
 |----------|---------|------|-------|
-| `exchange-symbol-list/US` | Universe sync — get all tickers, types, exchanges | 1 call | Filtered to Common Stock + ETF on NYSE, NASDAQ, NYSE ARCA, BATS. Returns ~11,500 tickers. |
+| `exchange-symbol-list/US` | Universe sync — get all tickers, types, exchanges | 1 call | Filtered to Common Stock + ETF on `NYSE`, `NASDAQ`, `NYSE ARCA`, `BATS`, `NYSE MKT`, `AMEX` (the last two added in Session 5, recovered ~297 tickers including AMEX-listed names like EQX, UAMY, REPX, LEU, BTG). Returns ~11,500 tickers. |
 | `eod/{ticker}.US` | Per-ticker historical OHLCV | 1 call each | Returns unadjusted OHLC + `adjusted_close`. Used for full rebuilds and validation retries. |
 | `eod-bulk-last-day/US` | All US tickers' OHLCV for one date | 100 calls | Returns ~50K tickers in one response. Used for nightly append — one call per new trading day. |
 | `eod-bulk-last-day/US?type=splits` | All US splits on a given date | 1 call | One call per trading day in the gap. Used to detect tickers needing full refetch. |

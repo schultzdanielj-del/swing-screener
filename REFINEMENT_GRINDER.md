@@ -1,21 +1,19 @@
 # Refinement Grinder — Specification
 
-**Created:** 2026-03-22
 **Script:** `local_runner/pyramid_grinder.py` → `run_refinement()`
-**Status:** Updated 2026-03-26 with optimization rules and BRKO findings.
-**Prerequisite:** Signal grind z > 3 (see `SIGNAL_GRINDER.md`)
+**Prerequisite in the consensus pipeline:** Signal consensus engine has produced locked signal conditions with `z > 3` (see `SIGNAL_GRINDER.md`). In bootstrapping mode (pre-consensus), refinement runs against whatever signal conditions the single-run signal grind produced.
+
+This file describes behavior and design. The code is the source of truth for implementation details — no line numbers in this spec.
 
 ---
 
-## CURRENT STATE
-
-**Last documented:** 2026-03-22 (from reading `pyramid_grinder.py`, 3,532 lines on v2)
+## Current behavior
 
 ### Entry point
 
-`run_refinement()` (line 3042). Called from `main()` when `--blackout` flag is set (line 3445). CLI: `python local_runner/pyramid_grinder.py --setup dtss --blackout`
+`run_refinement()`, invoked via `python local_runner/pyramid_grinder.py --setup <type> --blackout` (plus optional consensus flags: `--skip-gather`, `--subsample-losers`, `--seed`, `--conditions-file`, `--output-dir`).
 
-Default parameters when called via `--blackout`: beam=10000 (overrides default 50), depth=100 (overrides default 10), peak_target=3 (overrides default 15). These are set in `main()` at lines 3447–3449.
+Default parameters when called via `--blackout`: `beam_width=500` (was 10000 pre-Session-5 — reverted because the matmul vectorization that made beam=10000 viable was reverted in February; see `CONSENSUS.md` notes). `depth=100`. `peak_target=3`. The matrix-building worker code uses cache-relative coordinates throughout (Session 5 bar-count fix applied in all places — `_load_example_row`, `_build_tier_batch`, `validate_examples`, and the refinement winner filter).
 
 ### Inputs
 
