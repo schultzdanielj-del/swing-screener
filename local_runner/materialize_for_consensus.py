@@ -538,9 +538,11 @@ def validate_against_existing(ticker, daily_cache, expressions):
     if result[1] == 0:
         return {"ticker": ticker, "error": "materialization failed"}
 
-    # Load materialized .npz
+    # Load materialized .npz via _open_npz to handle both legacy zlib
+    # and new zstd-wrapped formats
+    from expr_cache_builder import _open_npz
     mat_path = os.path.join(EXPR_CACHE_DIR, f"{ticker}.npz")
-    mat_data = np.load(mat_path)
+    mat_data = _open_npz(mat_path)
     mat_arr = mat_data["data"].astype(np.float32)
     mat_dates = mat_data["dates"]
 
@@ -550,7 +552,7 @@ def validate_against_existing(ticker, daily_cache, expressions):
     if not os.path.exists(existing_path):
         return {"ticker": ticker, "error": f"no existing .npz at {existing_path}"}
 
-    existing_data = np.load(existing_path, allow_pickle=True)
+    existing_data = _open_npz(existing_path)
     existing_arr = existing_data["data"].astype(np.float32)
     existing_dates = existing_data["dates"]
 

@@ -233,12 +233,16 @@ def _load_npz_tail(ticker, tail_rows=1260):
 
     Returns (npz_tail_data, npz_n_bars) or (None, 0).
     npz_tail_data: float32 array (min(tail_rows, n_bars), n_exprs)
+
+    Uses expr_cache_builder._open_npz so both the legacy zlib-compressed
+    .npz format and the new zstd-wrapped format are supported.
     """
     path = os.path.join(EXPR_CACHE_DIR, f"{_safe_ticker(ticker)}.npz")
     if not os.path.exists(path):
         return None, 0
     try:
-        loaded = np.load(path, allow_pickle=True)
+        from expr_cache_builder import _open_npz
+        loaded = _open_npz(path)
         data = loaded["data"]
         n_bars = data.shape[0]
         tail = data[-tail_rows:] if n_bars > tail_rows else data

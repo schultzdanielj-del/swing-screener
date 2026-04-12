@@ -481,13 +481,16 @@ def build_vectorized(batch_size=25, n_lsp_workers=8):
                 if results:
                     path = _ticker_cache_path(ticker_name)
                     try:
-                        loaded = np.load(path, allow_pickle=True)
+                        from expr_cache_builder import _open_npz, save_ticker_cache
+                        loaded = _open_npz(path)
                         data = loaded["data"].copy()
                         dates = loaded["dates"]
                         for j, arr in results.items():
                             if len(arr) == len(data):
                                 data[:, j] = arr
-                        np.savez_compressed(path, data=data, dates=dates)
+                        # Use the canonical writer so this alt builder produces
+                        # the same zstd-wrapped format as expr_cache_builder.build_full
+                        save_ticker_cache(ticker_name, dates, data)
                     except Exception:
                         pass
                 

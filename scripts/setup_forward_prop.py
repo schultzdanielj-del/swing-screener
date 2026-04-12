@@ -191,7 +191,8 @@ def _setup_one_ticker(args):
         if not os.path.exists(npz_path):
             return (ticker, False, "no .npz file")
 
-        loaded_npz = np.load(npz_path, allow_pickle=True)
+        from expr_cache_builder import _open_npz
+        loaded_npz = _open_npz(npz_path)
         npz_n_bars = loaded_npz["data"].shape[0]
         npz_dates = loaded_npz["dates"]
 
