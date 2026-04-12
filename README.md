@@ -1,48 +1,29 @@
-# Swing Screener
+# ScanPerfect — Swing Screener (v2)
 
-Visual pattern screener for swing trade setups. Takes TC2000 scan results and matches D1 charts against a curated setup library using vision-based pattern matching.
+Expression-library-based swing trade signal grinder, scanner, and live watchlist. Runs locally on Windows/Linux; a desktop PySide6 app drives the pipeline. Railway is a seed-vault/file-mirror backup only.
 
-## Overview
+## Entry points for new sessions
 
-1. **Ingest** — Paste ticker lists from TC2000 scans
-2. **Generate** — Produce clean D1 candlestick charts via yfinance + mplfinance
-3. **Match** — Compare charts against curated setup library using Claude vision
-4. **Output** — Bucketed results: **Actionable** (ready for entry) and **NMS** (Need More Sideways)
+- **`CLAUDE.md`** — Operating rules for Claude agents working on this codebase. Read first.
+- **`SWING_SCREENER_PROJECT.md`** — Project-level status and goals.
+- **`PIPELINE_V2.md`** — Authoritative architecture overview of the full analysis pipeline.
+- **`DEPENDENCY_MAP.md`** — What every `.py` file reads, writes, and is consumed by. Read before changing any component.
+- **`DATA_CONTRACT.md`** — File formats, schemas, and data flow rules.
 
-## Quick Start
+## Component specs
 
-```bash
-pip install -r requirements.txt
+- `SIGNAL_GRINDER.md` — Signal grinder + multi-run consensus pipeline
+- `REFINEMENT_GRINDER.md` — Refinement grinder (cluster-aware loser elimination)
+- `CONSENSUS.md` — Active status tracker for the consensus pipeline build
+- `NIGHTLY_REFRESH.md` — Nightly pipeline orchestration
+- `OHLCV_CACHE.md` — Daily/weekly/monthly OHLCV cache contract
+- `EXPRESSION_ENGINE_V2.md` — Expression library + .npz cache architecture
+- `FORWARD_PROP_SPEC.md` — Forward-propagation incremental append engine
+- `ENTRY_GRINDER.md` — Entry/stop optimization (deferred — see banner inside)
 
-# Generate charts for a list of tickers
-python scripts/run_nightly.py --tickers AAPL,MSFT,NVDA,TSLA
+## Reference
 
-# Or from a file (one ticker per line)
-python scripts/run_nightly.py --file input/tickers.txt
-```
-
-## Project Structure
-
-```
-swing-screener/
-├── config.yaml                  # Chart styling, MA periods, scan config
-├── src/
-│   ├── ingest.py               # Ticker list parsing and validation
-│   ├── data.py                 # yfinance data fetching with caching
-│   ├── charts.py               # mplfinance chart generation
-│   ├── batch.py                # Organize charts into upload batches
-│   └── results.py              # Parse Claude output into structured results
-├── setup_library/              # Curated setup examples and descriptions
-├── output/
-│   ├── charts/                 # Generated chart images
-│   └── results/                # Nightly screening results
-└── scripts/
-    └── run_nightly.py          # Main entry point
-```
-
-## Setup Library
-
-Each setup type lives in `setup_library/` with:
-- `description.md` — What makes this setup ideal
-- `examples/` — Annotated screenshot PNGs of perfect examples
-- `discord_commentary.md` — Curated pro trader commentary from Discord
+- `ta_knowledge.md` — TA concepts and indicator formulas
+- `pcf.md` — TC2000 PCF syntax reference
+- `BUGS.md` — Known issues and session notes
+- `SHELVED.md` — Abandoned scripts kept for reference only
