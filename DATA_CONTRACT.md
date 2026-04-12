@@ -1,7 +1,6 @@
 # Data Contract — ScanPerfect Schema & Data Flow
 
-**Last updated:** 2026-03-20
-**Status:** Authoritative. Build from this. Do not assume anything not written here.
+Authoritative reference for SQLite schemas, cache file formats, and data flow rules. Build from this. Do not assume anything not written here. When this file conflicts with code, fix the code or fix the doc — never both silently.
 
 ---
 
@@ -9,16 +8,16 @@
 
 - **Local is authoritative.** SQLite DB (`data/scanperfect.db`) and local cache files (`local_runner/cache/`) are the single source of truth. All compute runs locally, all results write locally.
 - **Railway is a seed vault.** Daily backup of DB tables + grind result JSONs to Railway via `scripts/seed_vault.py`. Railway has no compute, no UI, no pipeline logic. It exists for disaster recovery and for Claude to read grind results during chat sessions.
-- **Grind results are local JSON files.** The grinders write timestamped JSON to `local_runner/cache/`. These are the authoritative outputs. They are also mirrored to Railway's `file_mirror` table as a backup copy.
-- **The PySide6 app reads local files directly.** No HTTP layer, no server process, no API calls. SQLite for structured data (examples, setups, earnings). Local JSON files for grind outputs. Full daily OHLCV pickle loaded into memory.
-- All timestamps are UTC ISO-8601 strings: `"2026-03-06T14:30:22Z"`.
+- **Grind results are local JSON files.** The grinders write timestamped JSON to `local_runner/cache/` (or `local_runner/cache/consensus/` for consensus-pipeline runs via `--output-dir`). These are the authoritative outputs. They are also mirrored to Railway's `file_mirror` table as a backup copy, except for consensus runs which suppress the mirror.
+- **The PySide6 app reads local files directly.** No HTTP layer, no server process, no API calls.
+- All timestamps are UTC ISO-8601 strings: `"2026-04-11T14:30:22Z"`.
 - All dates (signal dates, entry dates) are `"YYYY-MM-DD"` strings.
-- **OHLCV and expr cache must stay in sync.** Both use append-only nightly updates. If they drift (different bar counts for the same ticker), signal bar indices between the two point to different dates, breaking example matching and condition checking. Fixed 2026-03-20. Delisted tickers are removed from the OHLCV pickle on nightly sync; the expr cache should follow suit.
-- **Example matching uses hardcoded entry_date, never bar indices.** Bar indices shift when caches rebuild. Dates are stable.
+- **Cross-source alignment uses dates, never bar indices.** OHLCV cache, expression cache, `.im` intermediate cache, and market cache all have different start dates and lengths. Carrying a bar index from one cache to another silently produces wrong values. Every cross-source lookup goes through dates.
+- **OHLCV and expression caches must stay in sync on ticker membership.** Delisted tickers are removed from the OHLCV pickle on nightly sync; the expression cache follows suit on the next manual `expr_cache_builder.py --build`.
 
 ---
 
-## SQLite Tables (data/scanperfect.db)
+## SQLite Tables (`data/scanperfect.db`)
 
 ### `setups`
 Setup type definitions. Seeded with DTSS, 3-4DB, HTF.
@@ -75,43 +74,124 @@ Future: ranked signals from the live nightly scan.
 
 ---
 
-## Local Cache Files (local_runner/cache/)
+## Local Cache Files (`local_runner/cache/`)
 
-These are the authoritative grind outputs. The PySide6 app reads them directly.
+These are the authoritative outputs and inputs for all downstream consumers. The PySide6 app reads them directly.
+
+### OHLCV data
+
+| File | Producer | Contents |
+|---|---|---|
+| `universe_ohlcv_daily.pkl` | `cache_builder.py` | All daily OHLCV for ~11,500 tickers (Common Stock + ETF from EODHD across NYSE, NASDAQ, NYSE ARCA, BATS, NYSE MKT/AMEX). Universe synced nightly — new IPOs added, delisted tickers removed. Dict `{ticker: DataFrame}` with columns `date, open, high, low, close, volume, dvol_20d`. |
+| `universe_ohlcv_weekly.pkl` | `cache_builder.py` | Same, weekly bars. Rebuilt on nightly sync. |
+| `universe_ohlcv_monthly.pkl` | `cache_builder.py` | Same, monthly bars. |
+| `ticker_reference.json` | `cache_builder.py` | First trade date per ticker (for validation). |
+
+### Expression cache (`expr_series/`)
+
+| File | Producer | Contents |
+|---|---|---|
+| `expr_series/{TICKER}.npz` | `expr_cache_builder.py --build` | Per-ticker expression series, 15,805 columns × N bars. Float16 on disk, cast to float32 on load. History begins at `EXPR_CACHE_START = 2020-01-02`. Frozen by full rebuild — never modified by append. |
+| `expr_series/{TICKER}.append` | `expr_cache_builder.py --append` / `forward_prop_engine.py` | Raw float16 binary, one row per appended bar, **16,001 cols wide** (15,805 expression columns + 196 intermediate columns for forward-prop state). Grinders read only the first 15,805 columns via `load_ticker_cache()`. **Fills are best-effort**: any per-expression compute failure silently leaves that cell as NaN. For consensus grinding, run a full `--build` to guarantee complete values — do not rely on `.append`. |
+| `expr_series/{TICKER}.append_dates` | `expr_cache_builder.py --append` | Date strings for appended rows, one per line. Paired with `.append`. |
+| `expr_series/{TICKER}.lookback` | `forward_prop_engine.py` / `setup_forward_prop.py` | Last 504 rows × 196 intermediate columns, float16 raw binary. Sliding window for forward-prop state. |
+| `expr_series/{TICKER}.state` | `forward_prop_engine.py` / `setup_forward_prop.py` | JSON, 317 float64 state values (daily + HTF + ext struct). Overwritten per append. |
+| `expr_series/_manifest.json` | `expr_cache_builder.py` | Expression fingerprint, date range, per-ticker bar counts. Used by `ExprSeriesCache.is_valid()` to detect library changes. |
+
+### Intermediate cache (`intermediate_series/`)
+
+| File | Producer | Contents |
+|---|---|---|
+| `intermediate_series/{TICKER}.im` | `intermediate_cache_builder.py` | Binary: 4-byte uint32 header (row count), then `n_rows × 196 × float16` data, then `n_rows × 10` bytes of YYYY-MM-DD date strings. This cache is **separate from and independent of** `expr_series/`. It stores only 196 numeric intermediates (SMA, ATR, RSI, etc.) and is used by `scan_engine.py` for the nightly live-scan path. Grinders do NOT read `.im` files — they need the full 15,805-expression library which `.im` does not provide. |
+
+### Market cache (`market_series/`)
+
+| File | Producer | Contents |
+|---|---|---|
+| `market_ohlcv.pkl` | `market_cache_builder.py` | Raw OHLCV for all market instruments (US ETFs/stocks + EODHD indices + EODHD crypto + yfinance futures + FRED macro series). Exact instrument count is authoritative in `market_cache_builder.all_instruments()` — check the code, not this doc. |
+| `market_series/{INST}.npz` | `market_cache_builder.py` | Per-instrument expression series. Float32. |
+| `market_series/_manifest.json` | `market_cache_builder.py` | Metadata. Used by `ev_grinder.py`. |
+
+### Universe matrix
+
+| File | Producer | Contents |
+|---|---|---|
+| `universe_matrix.pkl` | `matrix_builder.py` | Precomputed D1 (last-bar) matrix: `{universe_matrix: (n_tickers, n_exprs) float32, universe_tickers: [...], expr_names: [...], expr_categories: [...]}`. Rebuilt nightly after the expression cache is updated. Used by `pyramid_grinder.run_d1_tier()` and `prefilter_candidates()`. |
+
+### Grinder outputs
 
 | File Pattern | Producer | Contents |
-|-------------|----------|----------|
-| `pyramid_{setup}_*.json` | Signal grind | Condition set + raw signals |
-| `raw_signal_clusters_{setup}.json` | Refinement grind (phase 1) | All clusters with classification |
-| `refinement_{setup}_cl*.json` | Refinement grind (phase 2) | Winner/loser/eliminated signals + combined conditions + `depth_progression` (condition set + cluster counts + WR at each depth level) |
-| `ev_{setup}_*.json` | EV grinder | Scoring equation + per-signal WR/MFE/EV + setup_score/market_score + killed_at_depth + calibration |
-| `entry_scores_{setup}.json` | Entry candle scorer | Per-winner entry_candle_score, combined_score for vetting sort. Also consumed by profit grinder for tradability weighting. |
-| `profit_{setup}_*.json` | Profit grinder | Exit expression candidates + weighted stats + equity curves + per-trade detail |
-| `profit_{setup}.json` | Profit grinder | Latest pointer (symlink-style copy of most recent timestamped file) |
-| `scan_settings_{setup}.json` | Scan Tuning UI | Locked slider settings: setup/market score floors, refinement depth, WR floor, exit objective, trim %. Read by nightly scan. |
-| `universe_ohlcv_daily.pkl` | cache_builder.py | All available OHLCV history for ~11,500 tickers (Common Stock + ETF from EODHD). Universe synced nightly — new IPOs added, delisted tickers removed. |
-| `market_cache_*.npz` | market_cache_builder.py | 256 instrument expression series |
-| `expr_cache/*.npz` | expr_cache_builder.py | Per-ticker expression series (~111 GB). Float16 on disk, float32 on load. 6yr window from 2020-01-02. Frozen by full rebuild — never modified by append. |
-| `expr_cache/*.append` | expr_cache_builder.py | Incremental append rows (raw float16 binary, ~31 KB/night per ticker). Grows nightly. Cleared on full rebuild. Read by `load_ticker_cache()` and `signal_filter._load_ticker_npz()`. |
-| `expr_cache/*.append_dates` | expr_cache_builder.py | Date strings for appended rows (one per line). Paired with .append file. |
-| `fundamentals_cache.json` | fetch_fundamentals.py | Per-ticker sector, shares outstanding, float |
+|---|---|---|
+| `pyramid_{setup}_{mode}[_refinement]_sig{total}_pk{peak}_{timestamp}.json` | `pyramid_grinder.py` (signal grind) | Condition set + summary + per-tier breakdown. `mode` is `mp` (multi-pass) or `sp` (single-pass). `_refinement` present only on refinement runs. |
+| `permuted_{setup}_mp_*.json` | `pyramid_grinder.py --permute` | Permuted-run output. Separate prefix prevents any loader from accidentally grabbing a permuted result as real conditions. |
+| `raw_signal_clusters_{setup}_{timestamp}.json` | `pyramid_grinder.py` (cluster gathering) | All signal clusters with WIN/LOSS classification and forward-window data. |
+| `raw_signal_clusters_{setup}.json` | `pyramid_grinder.py` | Latest pointer (copy of most recent timestamped file). |
+| `refinement_{setup}_{description}_{timestamp}.json` | `pyramid_grinder.py --blackout` (refinement grind) | Winner/loser/eliminated signals + combined conditions + `depth_progression` for UI slider. Schema per `REFINEMENT_GRINDER.md`. |
+| `consensus/pyramid_{setup}_mp_*.json` | `pyramid_grinder.py --output-dir .../consensus/` | Real-run outputs during a consensus pipeline run. Same schema as standard grind output. Railway mirror + upload suppressed. |
+| `consensus/permuted_{setup}_mp_*.json` | `pyramid_grinder.py --permute --output-dir .../consensus/` | Permuted-run outputs during consensus. |
+| `consensus_signal_{setup}.json` | `consensus_engine.py --stage signal` | Locked consensus conditions + z-score + stability metrics. Written only when z > 3. |
+| `ev_{setup}_inc6_{timestamp}.json` | `ev_grinder.py` | Scoring equation + per-signal WR/MFE/EV + feature importances. |
+| `entry_scores_{setup}.json` | `entry_candle_scorer.py` | Per-winner entry_candle_score + combined_score for vetting sort. |
+| `profit_{setup}_{timestamp}.json` | `profit_grinder.py` | Exit expression candidates + weighted stats + equity curves + per-trade detail. |
+| `profit_{setup}.json` | `profit_grinder.py` | Latest pointer. |
+| `scan_settings_{setup}.json` | Scan Tuning UI | Locked slider settings read by the nightly scan. |
+| `fundamentals_cache.json` | `fetch_fundamentals.py` | Per-ticker sector, shares outstanding, float. |
+
+Other cache directories:
+- `data/signal_exit_grind/signal_exit_{setup}.json` — latest pointer to signal exit conditions
+- `data/signal_filter/filtered_{setup}.json` + `classified_{setup}.json` — full-universe scan outputs
+- `data/exit_grind/exit_grind_{setup}.json` — trade-management exit grinder output (separate from signal exit grinder)
+- `data/vetting/vetting_{setup}.json` — UI vetting state
 
 ---
 
 ## Data Flow
 
 ```
-Examples (SQLite) + Expression Cache (local .npz files)
-    → Signal Grind → pyramid_{setup}_*.json
-    → Exit Grind → exit condition in local cache
-    → Refinement Grind → raw_signal_clusters_{setup}.json + refinement_{setup}_cl*.json
-
-Refinement output + Market Cache + OHLCV + Fundamentals
-    → EV Grinder → ev_{setup}_*.json
-
-EV output + Entry Scores + Vetting Decisions (SQLite) + Expression Cache + OHLCV
-    → Profit Grinder → profit_{setup}_*.json
-
-All outputs mirrored to Railway via file_mirror.py (backup only)
-Nightly seed vault pushes SQLite tables to Railway (backup only)
+SQLite (examples, setups, rejected_signals)
+    │
+    ├→ pyramid_grinder (signal grind)
+    │     uses: expr cache .npz, OHLCV pkl, universe matrix
+    │     writes: pyramid_*.json
+    │
+    ├→ signal_exit_grinder
+    │     uses: expr cache, pyramid_*.json
+    │     writes: signal_exit_{setup}.json
+    │
+    ├→ pyramid_grinder (cluster gathering via --scan-only)
+    │     uses: pyramid_*.json, signal_exit_{setup}.json, OHLCV
+    │     writes: raw_signal_clusters_{setup}.json
+    │
+    ├→ pyramid_grinder (refinement via --blackout)
+    │     uses: raw_signal_clusters, expr cache
+    │     writes: refinement_*.json
+    │
+    ├→ consensus_engine (signal stage + refinement stage)
+    │     uses: consensus/pyramid_*.json + consensus/permuted_*.json
+    │     writes: consensus_signal_{setup}.json
+    │
+    ├→ signal_filter (full-universe scan, post-consensus)
+    │     uses: consensus_signal_*, expr cache, OHLCV
+    │     writes: filtered_*.json, classified_*.json
+    │
+    ├→ entry_candle_scorer
+    │     uses: refinement_*, raw_signal_clusters
+    │     writes: entry_scores_{setup}.json
+    │
+    ├→ ev_grinder
+    │     uses: refinement_*, raw_signal_clusters, market cache, OHLCV, fundamentals
+    │     writes: ev_*.json
+    │
+    └→ profit_grinder
+          uses: ev_*, entry_scores, raw_signal_clusters, expr cache, OHLCV
+          writes: profit_*.json
 ```
+
+Nightly live-scan path (separate from the grinder cache):
+```
+cache_builder → universe_ohlcv_daily.pkl
+    → intermediate_cache_builder → intermediate_series/*.im
+    → scan_engine → nightly signals (in-memory, logged by nightly.py)
+```
+
+All grinder outputs are mirrored to Railway's `file_mirror` table for backup. Consensus-pipeline outputs (written via `--output-dir local_runner/cache/consensus/`) suppress the mirror. Seed vault backs up SQLite tables to Railway nightly.
