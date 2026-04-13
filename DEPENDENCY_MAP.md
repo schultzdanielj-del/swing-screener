@@ -503,8 +503,8 @@ These are the only components that make network calls for market data.
 
 ### signal_filter.py
 **Location:** `scripts/signal_filter.py`
-**Spec:** `PIPELINE_V2.md`
-**What it does:** Scans full universe with locked conditions, applies exit, classifies signals, filters by ADR.
+**Spec:** `SIGNAL_FILTER.md` (classification logic), `PIPELINE_V2.md` (pipeline position)
+**What it does:** Scans full universe with locked conditions, applies exit, classifies signals into winner/loser piles using ADR thresholds, filters by ADR.
 
 **Inputs:**
 - `local_runner/cache/universe_ohlcv_daily.pkl`
@@ -529,8 +529,8 @@ These are the only components that make network calls for market data.
 
 ### entry_grinder.py
 **Location:** `scripts/entry_grinder.py`
-**Spec:** `ENTRY_GRINDER.md`
-**What it does:** Tests stop placement strategies and entry timing for classified signals.
+**Spec:** `MANAGEMENT_GRINDER.md` (stop management sub-component)
+**What it does:** Stop management optimization — ratchet protocol, breakeven timing, initial stop placement. Entry-relative, works with example set. Deferred pending classification (Problem 1).
 
 **Inputs:**
 - `local_runner/cache/universe_ohlcv_daily.pkl`
@@ -613,8 +613,8 @@ These are the only components that make network calls for market data.
 
 ### profit_grinder.py
 **Location:** `scripts/profit_grinder.py`
-**Spec:** `archive/shelved_docs/PROFIT_GRINDER.md` (deferred — not on active call graph, see spec banner)
-**What it does:** Brute-forces TA-expression-based exit conditions to capture optimal MFE. **Not currently wired into the consensus pipeline** — will return in the future "live EV ranked watchlist" build alongside the EV grinder.
+**Spec:** `MANAGEMENT_GRINDER.md` (exit optimization sub-component)
+**What it does:** Brute-forces TA-expression-based exit conditions for profit-taking, multi-stage trim. Entry-relative. Inc 1-4 complete but deferred — not on active call graph.
 
 **Inputs:**
 - `local_runner/cache/universe_ohlcv_daily.pkl`
