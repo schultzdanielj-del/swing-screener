@@ -87,7 +87,8 @@ class ExampleSignal:
     ticker: str
     entry_date: str
     signal_date: str
-    signal_bar_idx: int  # scan candle = entry - 1
+    signal_bar_idx: int  # OHLCV-relative scan candle = entry - 1
+    cache_signal_idx: int  # expression-cache-relative index for signal date
     signal_close: float
     adr_at_signal: float
     mfe_adr: float  # max favorable excursion in ADR from signal close
@@ -280,6 +281,7 @@ def resolve_example_signals(examples, cache, conditions, expr_cache, direction,
             entry_date=entry_date,
             signal_date=dates_str[scan_idx],
             signal_bar_idx=scan_idx,
+            cache_signal_idx=cache_scan_idx,
             signal_close=round(signal_close, 2),
             adr_at_signal=round(adr_val, 4),
             mfe_adr=round(mfe_adr, 2),
@@ -308,8 +310,8 @@ def build_forward_matrices(example_signals, expr_cache, n_expressions):
             matrices.append(None)
             continue
 
-        # Extract forward window: signal_bar+1 through signal_bar+n_forward
-        start = ex.signal_bar_idx + 1
+        # Extract forward window in cache-relative coordinates
+        start = ex.cache_signal_idx + 1
         end = start + ex.n_forward
         if end > len(cached_data):
             end = len(cached_data)

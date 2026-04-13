@@ -757,7 +757,8 @@ def _screen_one_instrument(args):
     from datetime import date as dt_date, timedelta
     t0 = time.time()
     try:
-        loaded = np.load(npz_path, allow_pickle=True)
+        from local_runner.expr_cache_builder import _open_npz
+        loaded = _open_npz(npz_path)
         data = loaded["data"]    # shape (n_bars, n_exprs)
         dates = loaded["dates"]  # string array
 
@@ -1053,7 +1054,8 @@ def _reload_instrument_values(args):
     from datetime import date as dt_date, timedelta
     t0 = time.time()
     try:
-        loaded = np.load(npz_path, allow_pickle=True)
+        from local_runner.expr_cache_builder import _open_npz
+        loaded = _open_npz(npz_path)
         data = loaded["data"]      # (n_bars, n_exprs)
         dates = loaded["dates"]    # string array
 
