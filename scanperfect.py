@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QFrame, QCheckBox, QSizePolicy,
     QListWidget, QListWidgetItem, QAbstractItemView,
     QGridLayout, QLineEdit, QTextEdit, QSlider, QDialog,
+    QToolButton, QMenu,
 )
 from PySide6.QtCore import Qt, QProcess, QTimer, Signal, QProcessEnvironment, QRectF, QPointF
 from PySide6.QtGui import QFont, QFontDatabase, QColor, QPainter, QPen, QLinearGradient, QBrush, QPainterPath
@@ -301,12 +302,9 @@ def _is_unlocked(nid, n_examples, step_statuses):
     if nid == "examples":
         return True
     if nid == "causative":
-        return n_examples >= 20
+        return True
     if nid == "vetting":
-        # Unlocked when causative is done — check state OR refinement output exists
-        if _causative_done(step_statuses):
-            return True
-        return False
+        return True
     if nid == "correlative":
         # Need 60+ examples AND causative done
         if n_examples < 60:
@@ -3242,15 +3240,29 @@ class CandlestickChart(QWidget):
         self._scroll_offset = 0
         self._visible_count = 200  # how many bars to show (zoom)
 
-        # Floating "Yes ✓" button
-        self._yes_btn = QPushButton("Yes ✓", self)
+        # Floating "Yes ✓ ▾" split button — main click = current setup, dropdown = send to other setup
+        self._yes_btn = QToolButton(self)
+        self._yes_btn.setText("Yes ✓")
+        self._yes_btn.setPopupMode(QToolButton.MenuButtonPopup)
         self._yes_btn.setVisible(False)
         self._yes_btn.setStyleSheet(
-            "QPushButton { background:#059669; color:#fff; border:1px solid #4ade80;"
+            "QToolButton { background:#059669; color:#fff; border:1px solid #4ade80;"
             "font-size:11px; font-weight:700; padding:4px 12px; }"
-            "QPushButton:hover { background:#4ade80; color:#000; }"
+            "QToolButton:hover { background:#4ade80; color:#000; }"
+            "QToolButton::menu-button { width:14px; border-left:1px solid #4ade80; }"
         )
         self._yes_btn.clicked.connect(lambda: self.candle_clicked.emit("__yes__"))
+        self._yes_menu = QMenu(self._yes_btn)
+        self._yes_btn.setMenu(self._yes_menu)
+
+    def set_other_setups(self, setups):
+        """Populate the Yes-button dropdown with 'Send to X' actions for other setups."""
+        self._yes_menu.clear()
+        for s in setups:
+            act = self._yes_menu.addAction("Send to %s" % s.upper())
+            act.triggered.connect(
+                lambda checked=False, target=s: self.candle_clicked.emit("__yes__:%s" % target)
+            )
 
     def set_data(self, candles, ticker, signal_date, exit_date=None, profit_exit_date=None, earnings_dates=None, other_signal_dates=None):
         self._candles = candles or []
@@ -3830,6 +3842,15 @@ class VettingWorkspace(QFrame):
 
     def set_setup(self, setup):
         self._setup = setup
+        # Populate chart's Yes-button dropdown with the OTHER setups
+        try:
+            with get_db() as db:
+                rows = db.execute("SELECT setup_type FROM setups ORDER BY setup_type").fetchall()
+            other_setups = [r["setup_type"] for r in rows if r["setup_type"] != setup]
+            if hasattr(self, "_chart") and hasattr(self._chart, "set_other_setups"):
+                self._chart.set_other_setups(other_setups)
+        except Exception:
+            pass
 
     def _set_mode(self, mode):
         """Switch between causative and correlative vetting modes."""
@@ -3936,7 +3957,24 @@ class VettingWorkspace(QFrame):
                 rows = db.execute(
                     "SELECT ticker, entry_date FROM examples WHERE setup_type=?", (setup,)
                 ).fetchall()
-            example_set = set("%s_%s" % (r["ticker"], r["entry_date"]) for r in rows)
+            for r in rows:
+                ticker = r["ticker"]
+                entry_date = r["entry_date"]
+                # Add entry_date variant (some downstream consumers index by entry)
+                example_set.add("%s_%s" % (ticker, entry_date))
+                # Also add signal_date variant: signal_date = last OHLCV bar strictly
+                # before entry_date. Pyramid signals carry signal_date, not entry_date,
+                # so without this any example added post-grind leaks back into vetting.
+                df = _ohlcv_cache.get(ticker.upper())
+                if df is not None:
+                    try:
+                        dates_str = np.array([str(d)[:10] for d in df["date"].values])
+                        idx = int(np.searchsorted(dates_str, entry_date))
+                        if 0 < idx <= len(dates_str):
+                            signal_date = str(dates_str[idx - 1])
+                            example_set.add("%s_%s" % (ticker, signal_date))
+                    except Exception:
+                        pass
         except Exception:
             pass
         return decisions, rejected_set, example_set
@@ -3966,9 +4004,197 @@ class VettingWorkspace(QFrame):
         sig.update(extra)
         return sig
 
+    def _find_latest_pyramid_file(self, setup):
+        """Find the most recent pyramid_{setup}_*.json (excluding refinement/permuted)."""
+        import glob
+        cache_dir = REPO_ROOT / "local_runner" / "cache"
+        candidates = []
+        for pat in ("pyramid_%s_mp_*.json" % setup, "pyramid_%s_sp_*.json" % setup):
+            candidates.extend(glob.glob(str(cache_dir / pat)))
+        candidates = [c for c in candidates if "_refinement_" not in os.path.basename(c)]
+        if not candidates:
+            return None
+        return max(candidates, key=os.path.getmtime)
+
+    def _load_pyramid_signal_pile(self, setup):
+        """Tier 1 fallback: deduplicated signal list from the latest pyramid grind.
+        Returns list of {ticker, date} dicts, or None if no pyramid file exists.
+        Walks tier_results in insertion order (daily -> weekly -> monthly passes)
+        and returns the LAST tier's non-empty final_signals — i.e. the pile that
+        survives every locked condition across all passes, matching
+        summary.final_total. Using daily_5yr would over-report (Pass 1 only)."""
+        pyramid_path = self._find_latest_pyramid_file(setup)
+        if not pyramid_path:
+            return None
+        try:
+            d = json.loads(Path(pyramid_path).read_text())
+            tier_results = d.get("tier_results", {})
+            final_sigs = None
+            final_tier = None
+            for tname, tdata in tier_results.items():
+                if not isinstance(tdata, dict):
+                    continue
+                fs = tdata.get("final_signals")
+                if isinstance(fs, list) and fs and isinstance(fs[0], dict) and "ticker" in fs[0]:
+                    final_sigs = fs
+                    final_tier = tname
+            if final_sigs is not None:
+                print("[CAUS] Pyramid pile: %d signals from %s (tier=%s)" %
+                      (len(final_sigs), os.path.basename(pyramid_path), final_tier))
+                return final_sigs
+        except Exception as e:
+            print("[CAUS] Pyramid pile parse error: %s" % e)
+        return None
+
+    def _apply_exit_serial(self, signals, setup):
+        """Tier 2 enrichment: apply signal_exit_{setup}.json's top exit to each signal
+        on-the-fly. Adds exit_date, exit_bar, signal_close, exit_close, adr_at_signal,
+        move_pct, move_adr, mfe_adr, capture_eff. Serial; ~5-30s for hundreds of signals."""
+        exit_path = REPO_ROOT / "data" / "signal_exit_grind" / ("signal_exit_%s.json" % setup)
+        if not exit_path.exists():
+            print("[CAUS] No exit file — Tier 1 (signals only)")
+            return signals
+        try:
+            exit_data = json.loads(exit_path.read_text())
+            top = (exit_data.get("top_conditions") or [None])[0]
+            if not top:
+                return signals
+            expr_name = top.get("expression")
+            threshold = top.get("threshold")
+            ex_dir = top.get("direction")
+        except Exception:
+            return signals
+
+        try:
+            with get_db() as db:
+                row = db.execute("SELECT direction FROM setups WHERE setup_type=?", (setup,)).fetchone()
+            trade_dir = (row["direction"] if row else "long") or "long"
+        except Exception:
+            trade_dir = "long"
+
+        sys.path.insert(0, str(REPO_ROOT / "local_runner"))
+        try:
+            from expr_cache_builder import ExprSeriesCache
+        except Exception as e:
+            print("[CAUS] Cannot import ExprSeriesCache: %s" % e)
+            return signals
+        ec = ExprSeriesCache()
+        if not ec.is_valid():
+            print("[CAUS] Expression cache invalid — skipping exit overlay")
+            return signals
+        exit_col = ec.expr_index(expr_name)
+        if exit_col is None:
+            print("[CAUS] Exit expression '%s' not in cache" % expr_name)
+            return signals
+        adr_col = ec.expr_index("adr14")
+
+        if not _ohlcv_cache:
+            print("[CAUS] _ohlcv_cache empty — skipping exit overlay")
+            return signals
+
+        print("[CAUS] Applying exit %s %s %s (trade=%s) to %d signals..." %
+              (expr_name, ex_dir, threshold, trade_dir, len(signals)))
+
+        from PySide6.QtWidgets import QApplication
+        MAX_FORWARD = 120
+        groups = {}
+        for sig in signals:
+            groups.setdefault(sig["ticker"], []).append(sig)
+
+        enriched = []
+        t0 = time.time()
+        for i, (ticker, ticker_sigs) in enumerate(groups.items()):
+            if i % 25 == 0:
+                QApplication.processEvents()
+            df = _ohlcv_cache.get(ticker.upper())
+            if df is None or len(df) < 50:
+                enriched.extend(ticker_sigs); continue
+            try:
+                cached_dates, cached_data = ec.get_ticker(ticker)
+                if cached_dates is None:
+                    enriched.extend(ticker_sigs); continue
+                ohlcv_dates = np.array([str(d)[:10] for d in df["date"].values])
+                closes = df["close"].values.astype(np.float64)
+                highs = df["high"].values.astype(np.float64)
+                lows = df["low"].values.astype(np.float64)
+                n_ohlcv = len(closes)
+                n_cache = len(cached_dates)
+                exit_series = cached_data[:, exit_col]
+            except Exception:
+                enriched.extend(ticker_sigs); continue
+
+            for sig in ticker_sigs:
+                sd = sig.get("date", "")
+                try:
+                    oidx_arr = np.where(ohlcv_dates == sd)[0]
+                    cidx_arr = np.where(cached_dates == sd)[0]
+                    if len(oidx_arr) == 0 or len(cidx_arr) == 0:
+                        enriched.append(sig); continue
+                    oidx = int(oidx_arr[0]); cidx = int(cidx_arr[0])
+
+                    if adr_col is not None and not np.isnan(cached_data[cidx, adr_col]):
+                        adr = float(cached_data[cidx, adr_col])
+                    else:
+                        s = max(0, oidx - 13)
+                        adr = float(np.mean(highs[s:oidx+1] - lows[s:oidx+1]))
+                    if adr <= 0 or np.isnan(adr):
+                        enriched.append(sig); continue
+
+                    signal_close = float(closes[oidx])
+                    actual_fwd = min(MAX_FORWARD, n_cache - cidx - 1, n_ohlcv - oidx - 1)
+                    if actual_fwd < 5:
+                        enriched.append(sig); continue
+
+                    exit_bar = None
+                    for fwd in range(1, actual_fwd + 1):
+                        val = exit_series[cidx + fwd]
+                        if np.isnan(val):
+                            continue
+                        if (ex_dir == ">=" and val >= threshold) or (ex_dir == "<=" and val <= threshold):
+                            exit_bar = fwd; break
+                    if exit_bar is None:
+                        enriched.append(sig); continue
+
+                    exit_close = float(closes[oidx + exit_bar])
+                    exit_date = str(ohlcv_dates[oidx + exit_bar])
+
+                    if trade_dir == "short":
+                        move_pct = (signal_close - exit_close) / signal_close * 100.0
+                        move_adr = (signal_close - exit_close) / adr
+                        mfe_price = float(lows[oidx+1:oidx+exit_bar+1].min())
+                        mfe_adr = (signal_close - mfe_price) / adr
+                    else:
+                        move_pct = (exit_close - signal_close) / signal_close * 100.0
+                        move_adr = (exit_close - signal_close) / adr
+                        mfe_price = float(highs[oidx+1:oidx+exit_bar+1].max())
+                        mfe_adr = (mfe_price - signal_close) / adr
+
+                    enriched.append({
+                        **sig,
+                        "signal_close": round(signal_close, 2),
+                        "adr_at_signal": round(adr, 2),
+                        "exit_bar": int(exit_bar),
+                        "exit_date": exit_date,
+                        "exit_close": round(exit_close, 2),
+                        "move_pct": round(move_pct, 2),
+                        "move_adr": round(move_adr, 2),
+                        "mfe_adr": round(mfe_adr, 2),
+                        "capture_eff": round(move_adr / mfe_adr, 3) if mfe_adr > 0 else 0,
+                    })
+                except Exception:
+                    enriched.append(sig)
+
+        elapsed = time.time() - t0
+        n_enriched = sum(1 for s in enriched if "exit_date" in s)
+        print("[CAUS] Exit overlay: %d/%d signals enriched in %.1fs" %
+              (n_enriched, len(signals), elapsed))
+        return enriched
+
     def _load_causative_signals(self):
-        """Load signals from filtered file — same source the old web UI used.
-        filtered_{setup}.json has exit_date, exit_bar, move_adr, capture_eff on every signal.
+        """Load signals via cascade:
+          Tier 3: filtered_{setup}.json (signal_filter output, full schema)
+          Tier 2: pyramid_{setup}_*.json + signal_exit_{setup}.json (raw + exit on-the-fly)
+          Tier 1: pyramid_{setup}_*.json only (raw signals, no exit overlay)
         """
         setup = self._setup
         try:
@@ -3978,14 +4204,57 @@ class VettingWorkspace(QFrame):
                 len(decisions), len(rejected_set), len(example_set)))
             signals = []
 
-            # Primary source: filtered_{setup}.json (produced by signal_filter.py)
+            # Tier 3 source: filtered_{setup}.json (produced by signal_filter.py)
             filtered_path = REPO_ROOT / "data" / "signal_filter" / ("filtered_%s.json" % setup)
             print("[CAUS] Filtered path: %s  exists=%s" % (filtered_path, filtered_path.exists()))
             if not filtered_path.exists():
-                print("[CAUS] BAIL: file not found")
-                self._signals = []
-                self._apply_filter()
-                self._update_stats()
+                # Cascade: Tier 1 (pyramid raw) ± Tier 2 (exit overlay)
+                print("[CAUS] No filtered file — trying pyramid cascade")
+                pyramid_pile = self._load_pyramid_signal_pile(setup)
+                if pyramid_pile is None:
+                    print("[CAUS] BAIL: no filtered or pyramid file")
+                    self._signals = []
+                    self._apply_filter()
+                    self._update_stats()
+                    return
+                # Also exclude example signal_dates (not just entry_dates from DB).
+                # pyramid output's example_signals has both date (signal bar) + entry_date.
+                pyramid_path = self._find_latest_pyramid_file(setup)
+                if pyramid_path:
+                    try:
+                        _pdata = json.loads(Path(pyramid_path).read_text())
+                        for es in _pdata.get("example_signals", []):
+                            tk = es.get("ticker", "")
+                            sd = es.get("date", "")
+                            ed = es.get("entry_date", "")
+                            if tk and sd:
+                                example_set.add("%s_%s" % (tk, sd))
+                            if tk and ed:
+                                example_set.add("%s_%s" % (tk, ed))
+                    except Exception:
+                        pass
+                enriched_pile = self._apply_exit_serial(pyramid_pile, setup)
+                fallback_signals = []
+                n_excluded = 0
+                for s in enriched_pile:
+                    tk = s.get("ticker", "")
+                    sd = s.get("date", "")
+                    if "%s_%s" % (tk, sd) in example_set:
+                        n_excluded += 1
+                        continue
+                    sig = self._make_signal_dict(tk, sd,
+                        move_adr=s.get("move_adr"), adr_at_signal=s.get("adr_at_signal"),
+                        exit_date=s.get("exit_date"), exit_bar=s.get("exit_bar"),
+                        mfe_adr=s.get("mfe_adr"), capture_eff=s.get("capture_eff"),
+                        move_pct=s.get("move_pct"))
+                    self._apply_verdict(sig, decisions, rejected_set)
+                    fallback_signals.append(sig)
+                self._has_entry_scores = False
+                self._signals = fallback_signals
+                self._style_vet_sort_btns()
+                self._sort_and_refresh()
+                print("[CAUS] CASCADE done: %d signals (%d examples excluded)" %
+                      (len(fallback_signals), n_excluded))
                 return
             try:
                 filt_data = json.loads(filtered_path.read_text())
@@ -4321,20 +4590,24 @@ class VettingWorkspace(QFrame):
         if date_str == "__yes__":
             self._do_verdict("yes")
             return
+        if date_str.startswith("__yes__:"):
+            target = date_str.split(":", 1)[1]
+            self._do_verdict("yes", target_setup=target)
+            return
         # Set entry date
         if self._filtered and 0 <= self._current_idx < len(self._filtered):
             self._filtered[self._current_idx]["entry_date"] = date_str
             self._entry_label.setText("Entry: %s" % date_str)
 
-    def _do_verdict(self, verdict):
+    def _do_verdict(self, verdict, target_setup=None):
         if not self._filtered or self._current_idx >= len(self._filtered):
             return
         try:
-            self._do_verdict_inner(verdict)
+            self._do_verdict_inner(verdict, target_setup=target_setup)
         except Exception:
             pass
 
-    def _do_verdict_inner(self, verdict):
+    def _do_verdict_inner(self, verdict, target_setup=None):
         sig = self._filtered[self._current_idx]
 
         if verdict == "skip":
@@ -4349,33 +4622,46 @@ class VettingWorkspace(QFrame):
             sig["entry_date"] = entry
         sig["verdict"] = verdict
 
-        # Save to vetting JSON
+        # Save to vetting JSON — if routing to another setup, record this setup's decision as "no"
+        # so the signal stops showing in this setup's pile.
         vetting_dir = REPO_ROOT / "data" / "vetting"
         vetting_dir.mkdir(parents=True, exist_ok=True)
         vetting_path = vetting_dir / ("vetting_%s.json" % self._setup)
         decisions = load_json(vetting_path, {})
         key = "%s_%s" % (sig["ticker"], sig["signal_date"])
-        decisions[key] = {
+        recorded_verdict = "no" if target_setup else verdict
+        record = {
             "ticker": sig["ticker"],
             "signal_date": sig["signal_date"],
-            "verdict": verdict,
+            "verdict": recorded_verdict,
             "entry_date": sig.get("entry_date"),
             "timestamp": datetime.now().isoformat(),
         }
+        if target_setup:
+            record["routed_to"] = target_setup
+        decisions[key] = record
         save_json(vetting_path, decisions)
 
-        # Save to DB
+        # Save to DB — target_setup controls where the pending example lands
         if verdict == "yes":
+            dest_setup = target_setup or self._setup
             try:
                 with get_db() as db:
                     if not db.execute(
                         "SELECT id FROM pending_examples WHERE setup_type=? AND ticker=? AND entry_date=?",
-                        (self._setup, sig["ticker"], sig["entry_date"])
+                        (dest_setup, sig["ticker"], sig["entry_date"])
                     ).fetchone():
                         db.execute(
                             "INSERT INTO pending_examples (setup_type, ticker, signal_date, entry_date) "
                             "VALUES (?,?,?,?)",
-                            (self._setup, sig["ticker"], sig["signal_date"], sig["entry_date"])
+                            (dest_setup, sig["ticker"], sig["signal_date"], sig["entry_date"])
+                        )
+                    # Routed to another setup → also reject for the current setup so it's excluded.
+                    if target_setup:
+                        db.execute(
+                            "INSERT OR IGNORE INTO rejected_signals (setup_type, ticker, signal_date) "
+                            "VALUES (?,?,?)",
+                            (self._setup, sig["ticker"], sig["signal_date"])
                         )
             except Exception:
                 pass
