@@ -669,10 +669,10 @@ def _eodhd_to_dataframe(data):
     EODHD returns unadjusted OHLC + adjusted_close. We compute:
         ratio = adjusted_close / close
     and apply it to O, H, L, C to get fully-adjusted prices.
-    Volume stays raw.
+    Volume is preserved as returned by EODHD (already split-adjusted).
 
     Returns DataFrame with columns: date, open, high, low, close, volume
-    or None if data is invalid.
+    — or None if data is invalid.
     """
     if not data or len(data) == 0:
         return None
@@ -690,7 +690,7 @@ def _eodhd_to_dataframe(data):
     df["open"] = pd.to_numeric(df["open"], errors="coerce") * ratio
     df["high"] = pd.to_numeric(df["high"], errors="coerce") * ratio
     df["low"] = pd.to_numeric(df["low"], errors="coerce") * ratio
-    df["close"] = adj_close  # adjusted_close IS the adjusted close
+    df["close"] = adj_close
     df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
     df["date"] = pd.to_datetime(df["date"])
 
@@ -757,10 +757,20 @@ def _eodhd_append_after_date(ticker, after_date):
 def compute_dvol_20d(df):
     """Add 20-day average dollar volume column to an OHLCV DataFrame.
 
-    dvol_20d = rolling 20-bar mean of (close * volume).
-    First 19 bars will be NaN. Computed in-place.
+    dvol_20d = rolling mean of (close * volume) over up to 20 bars. Uses
+    min_periods=1 so short-history tickers (off-IPO HTF/BF candidates) get
+    an expanding-mean fallback for bars 0..18 instead of NaN, and qualify
+    for the tradable filter on whatever history they have.
+
+    EODHD's volume field is already split-adjusted (verified empirically on
+    RGTU's 3:1 / 1:3 split pair: close * volume is smooth across the split,
+    raw_close * volume shows a structural break). So close * volume is the
+    correct dollar-volume formula across all splits.
+
+    Computed in-place.
     """
-    df["dvol_20d"] = (df["close"] * df["volume"]).rolling(20).mean()
+    bar_dollars = df["close"].astype(float) * df["volume"].astype(float)
+    df["dvol_20d"] = bar_dollars.rolling(20, min_periods=1).mean()
     return df
 
 
