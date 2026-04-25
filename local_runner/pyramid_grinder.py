@@ -332,15 +332,13 @@ def compute_tradable_masks(universe_cache, expr_cache):
         lows = df["low"].values.astype(np.float64)
         dvols = df["dvol_20d"].values.astype(np.float64) if "dvol_20d" in df.columns else None
 
-        # Compute 20-bar ADRP using cumsum trick: rolling mean of H/L
-        # Guard against zero/negative lows
+        # Compute ADRP: rolling mean of H/L over up to 20 bars. min_periods=1
+        # so tickers with fewer than 20 bars still qualify for the tradable
+        # filter using whatever bars they have (matches compute_dvol_20d rule).
+        # Guard against zero/negative lows.
         with np.errstate(divide="ignore", invalid="ignore"):
             ratios = np.where(lows > 0, highs / lows, np.nan)
-        cumsum = np.nancumsum(ratios)
-        rolling_mean = np.full(len(ratios), np.nan)
-        if len(ratios) >= 20:
-            # rolling mean over 20 bars: cumsum[t] - cumsum[t-20] / 20
-            rolling_mean[19:] = (cumsum[19:] - np.concatenate(([0.0], cumsum[:-20]))) / 20.0
+        rolling_mean = pd.Series(ratios).rolling(20, min_periods=1).mean().values
         adrp = (rolling_mean - 1.0) * 100.0  # ADRP in %
 
         # Per-bar tradable
@@ -696,15 +694,19 @@ def _build_tier_batch(tickers):
                 results.append((ticker, [], None))
                 continue
 
-            # Determine window in cache coordinates
-            if _w_n_bars_window == 0:
-                start_idx = 50  # skip warmup
+            # Determine window in cache coordinates. n_bars_window > 0 caps
+            # how far back we look; per-expression NaN handling at line 739
+            # already drops bars where any locked condition is NaN, so no
+            # additional warmup floor is needed here.
+            if _w_n_bars_window > 0:
+                start_idx = max(0, cache_n_bars - _w_n_bars_window)
             else:
-                start_idx = max(50, cache_n_bars - _w_n_bars_window)
+                start_idx = 0
 
             # Step 1: Apply locked conditions using cached series
             pass_mask = np.ones(cache_n_bars, dtype=bool)
-            pass_mask[:start_idx] = False
+            if start_idx > 0:
+                pass_mask[:start_idx] = False
             _tp1 = time.perf_counter()
             t_load += _tp1 - _tp0
 
@@ -913,7 +915,7 @@ class PeakSpiderweb:
         avg = float(np.mean(nonzero)) if len(nonzero) > 0 else 0.0
         return peak, avg, total
 
-    def run(self, depth=10, beam_width=50, peak_target=15):
+    def run(self, depth=10, beam_width=50, peak_target=3):
         """Run beam search minimizing peak signals/day.
 
         Returns dict with conditions, stats, progression.
@@ -1881,7 +1883,7 @@ def run_d1_tier(universe_cache, expressions, example_ranges, example_matrix,
 
 def run_historical_tier(tier_name, n_bars_window, universe_cache, expressions,
                         example_ranges, locked_conditions,
-                        beam_width=50, depth=10, peak_target=15,
+                        beam_width=50, depth=10, peak_target=3,
                         expr_cache=None, blackout_map=None, whitelist_map=None,
                         tradable_masks=None):
     """Run a historical tier: build matrix of surviving ticker-day rows, then spiderweb.
@@ -2335,7 +2337,7 @@ def _run_single_pass(pass_name, pass_expressions, pass_tiers,
     return new_conditions, tier_results
 
 
-def run_pyramid(setup_type, peak_target=15, beam_width=50, depth=10,
+def run_pyramid(setup_type, peak_target=3, beam_width=50, depth=10,
                 d1_depth=None, d1_beam=None, multi_pass=True,
                 blackout_map=None, whitelist_map=None,
                 override_example_dfs=None, output_dir=None,
@@ -3097,28 +3099,107 @@ def _gather_raw_signal_clusters(setup_type, conditions_override=None):
         example_date_lookup[ticker].append(entry_date)
     print(f"  Example date lookup: {sum(len(v) for v in example_date_lookup.values())} entries across {len(example_date_lookup)} tickers")
 
-    # Build date→bar_idx mapping per ticker for matching clusters to examples
-    # This converts the OHLCV date column to {date_str: bar_idx} once per ticker
-    _ticker_date_to_idx = {}
-    for ticker in example_date_lookup:
-        df = universe_cache.get(ticker)
-        if df is None:
+    # ── Scan using expression cache (matches pyramid grinder evaluation) ──
+    # The signal_filter.scan_all_signals() uses .im intermediate cache which
+    # can diverge from the .npz expression cache the pyramid grinder uses.
+    # Scan directly from .npz to get consistent results.
+    print(f"\n  Building tradable masks...")
+    tradable_masks = compute_tradable_masks(universe_cache, expr_cache)
+    n_trad_bars = sum(m.sum() for m in tradable_masks.values())
+    n_total_bars = sum(len(m) for m in tradable_masks.values())
+    print(f"  Tradable: {n_trad_bars:,}/{n_total_bars:,} bars ({n_trad_bars/max(n_total_bars,1)*100:.1f}%)")
+
+    print(f"\n  Scanning {len(universe_cache):,} tickers x {len(signal_conditions)} conditions (expr cache)...")
+    t_scan = time.time()
+
+    # Map condition names to expr cache column indices
+    cond_cols = []
+    for cond in signal_conditions:
+        col = expr_cache.expr_index(cond["name"])
+        cond_cols.append(col)
+
+    n_missing = sum(1 for c in cond_cols if c is None)
+    if n_missing:
+        print(f"  WARNING: {n_missing}/{len(signal_conditions)} conditions not in expr cache")
+
+    raw_signals = []
+    n_tickers_scanned = 0
+    for ticker, df in universe_cache.items():
+        if df is None or len(df) < 100:
             continue
-        dates_str = [str(d)[:10] for d in df["date"].values]
-        _ticker_date_to_idx[ticker] = {d: i for i, d in enumerate(dates_str)}
+        cached_dates, cached_data = expr_cache.get_ticker(ticker)
+        if cached_dates is None:
+            continue
+        n_expr_bars = len(cached_dates)
+        if n_expr_bars < 100:
+            continue
 
-    # Build slim cache for scan workers
-    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
-    from signal_filter import scan_all_signals as _scan_all, _build_slim_cache
+        # Align OHLCV to expression cache by date.
+        # Expression cache may start later than OHLCV (e.g., expr from 2020, OHLCV from 2016).
+        # Find the offset in OHLCV where expression cache dates begin.
+        ohlcv_dates = [str(d)[:10] for d in df["date"].values]
+        expr_first_date = str(cached_dates[0])[:10]
+        if expr_first_date in ohlcv_dates:
+            ohlcv_offset = ohlcv_dates.index(expr_first_date)
+        else:
+            # Can't align — skip
+            continue
 
-    slim = _build_slim_cache(universe_cache)
+        n_bars = min(n_expr_bars, len(df) - ohlcv_offset)
+        if n_bars < 100:
+            continue
+
+        # Use expression cache dates (authoritative) and aligned OHLCV closes
+        dates_str = np.array([str(d)[:10] for d in cached_dates[:n_bars]])
+        closes = df["close"].values[ohlcv_offset:ohlcv_offset + n_bars].astype(np.float64)
+
+        # AND all conditions: bar must pass every condition
+        pass_mask = np.ones(n_bars, dtype=bool)
+        if ticker not in example_date_lookup:
+            pass_mask[:50] = False  # warmup (exempt example tickers for IPO setups)
+
+        # Apply tradable filter (price >= $1, dvol >= $4M, ADRP >= 1.8%)
+        # Exempt example tickers — their signal bars must survive regardless
+        if ticker not in example_date_lookup:
+            trad_mask = tradable_masks.get(ticker)
+            if trad_mask is not None:
+                pass_mask &= trad_mask[:n_bars]
+            else:
+                pass_mask[:] = False
+                n_tickers_scanned += 1
+                continue
+
+        if not pass_mask.any():
+            n_tickers_scanned += 1
+            continue
+
+        for ci, cond in enumerate(signal_conditions):
+            col = cond_cols[ci]
+            if col is None:
+                pass_mask[:] = False
+                break
+            series = cached_data[:n_bars, col].astype(np.float64)
+            in_range = (series >= cond["low"]) & (series <= cond["high"])
+            in_range[np.isnan(series)] = False
+            pass_mask &= in_range
+            if not pass_mask.any():
+                break
+
+        signal_indices = np.where(pass_mask)[0]
+        for idx in signal_indices:
+            raw_signals.append({
+                "ticker": ticker,
+                "date": dates_str[idx],
+                "bar_idx": int(idx),  # expr-cache-relative bar index
+                "close": float(closes[idx]),
+            })
+
+        n_tickers_scanned += 1
+        if n_tickers_scanned % 2000 == 0:
+            print(f"    {n_tickers_scanned:,} tickers, {len(raw_signals):,} signals [{time.time()-t_scan:.0f}s]")
+
+    print(f"  Scanned {n_tickers_scanned:,} tickers in {time.time()-t_scan:.0f}s: {len(raw_signals):,} raw signals")
     del universe_cache
-    gc.collect()
-
-    # ── Scan ──
-    n_workers = max(cpu_count() - 1, 1)
-    raw_signals = _scan_all(slim, signal_conditions, n_workers, expr_cache)
-    del slim
     gc.collect()
 
     if not raw_signals:
@@ -3138,7 +3219,57 @@ def _gather_raw_signal_clusters(setup_type, conditions_override=None):
         print(f"  Saved empty cluster file: {out_path}")
         return out_path
 
+    # ── Build example signal set (strict entry-1 matching) ──
+    # For each example, the signal bar is entry_date - 1 trading day. Verify
+    # that conditions fire on that exact bar (presence in raw_signals). Any
+    # example where entry-1 isn't a signal bar is a GRINDER BUG.
+    print(f"\n  Building example signal set (strict entry-1)...")
+    _raw_signals_by_ticker = {}
+    for s in raw_signals:
+        _raw_signals_by_ticker.setdefault(s["ticker"], set()).add(s["bar_idx"])
+
+    _ex_expr_date_to_idx = {}
+    for _tk in example_date_lookup:
+        _cd, _ = expr_cache.get_ticker(_tk)
+        if _cd is None:
+            continue
+        _ex_expr_date_to_idx[_tk] = {str(_d)[:10]: _i for _i, _d in enumerate(_cd)}
+
+    example_signal_set = {}
+    grinder_bugs = []
+    for ex in examples_raw:
+        _tk = ex["ticker"]
+        _ed = ex["entry_date"]
+        _dmap = _ex_expr_date_to_idx.get(_tk, {})
+        if _ed not in _dmap:
+            grinder_bugs.append((_tk, _ed, "entry_date not in expr cache"))
+            continue
+        _eidx = _dmap[_ed]
+        _sidx = _eidx - 1
+        if _sidx < 0:
+            grinder_bugs.append((_tk, _ed, "scan_idx<0"))
+            continue
+        if _sidx not in _raw_signals_by_ticker.get(_tk, set()):
+            grinder_bugs.append((_tk, _ed, f"conditions don't fire on entry-1 (scan_idx={_sidx})"))
+            continue
+        _key = (_tk, _sidx)
+        if _key in example_signal_set:
+            grinder_bugs.append((_tk, _ed, f"duplicate scan_idx shared with {example_signal_set[_key][0]}"))
+            continue
+        example_signal_set[_key] = (_ed, _eidx)
+
+    print(f"  Example signal set: {len(example_signal_set)}/{len(examples_raw)} examples validated at entry-1")
+    if grinder_bugs:
+        print(f"  GRINDER BUGS: {len(grinder_bugs)}")
+        for _tk, _ed, _reason in grinder_bugs[:20]:
+            print(f"    {_tk} {_ed}: {_reason}")
+        if len(grinder_bugs) > 20:
+            print(f"    ... and {len(grinder_bugs) - 20} more")
+
     # ── Cluster consecutive bars ──
+    # Strict matching: when we hit an example signal bar, end the cluster so
+    # entry-1 is always the rightmost of its own cluster. Bars after entry-1
+    # that kept firing form a separate non-example cluster.
     print(f"\n  Clustering {len(raw_signals):,} raw signals...")
     raw_signals.sort(key=lambda s: (s["ticker"], s["bar_idx"]))
 
@@ -3152,6 +3283,10 @@ def _gather_raw_signal_clusters(setup_type, conditions_override=None):
             if raw_signals[j]["ticker"] != ticker:
                 break
             if raw_signals[j]["bar_idx"] != raw_signals[j - 1]["bar_idx"] + 1:
+                break
+            # End cluster if the previous bar was an example signal bar,
+            # so entry-1 becomes the rightmost of its own cluster.
+            if (ticker, raw_signals[j - 1]["bar_idx"]) in example_signal_set:
                 break
             j += 1
 
@@ -3197,39 +3332,46 @@ def _gather_raw_signal_clusters(setup_type, conditions_override=None):
     #   Pass 1: seed distance of 3 bars → compute forward_window
     #   Pass 2: use forward_window as match distance for classification
 
-    def _match_cluster_to_example(cluster, max_distance=3):
-        """Check if this cluster corresponds to a known example.
-        Returns (is_example, entry_date, entry_bar_idx) or (False, None, None).
-
-        Match if ANY bar in the cluster (rightmost or leftward) is within
-        max_distance bars before the example's entry_date.
+    def _match_cluster_to_example(cluster, max_distance=None):
+        """Strict matching: cluster tags as example only if its rightmost bar
+        is an example signal bar (entry_idx - 1). One example, one cluster.
+        max_distance is accepted for backward compat but ignored.
         """
         tk = cluster["ticker"]
-        if tk not in example_date_lookup:
-            return False, None, None
-        all_bar_idxs = [cluster["rightmost"]["bar_idx"]] + [
-            b["bar_idx"] for b in cluster.get("leftward", [])]
-        date_map = _ticker_date_to_idx.get(tk, {})
-        for entry_date in example_date_lookup[tk]:
-            entry_idx = date_map.get(entry_date)
-            if entry_idx is None:
-                continue
-            # Check if ANY cluster bar is within max_distance before entry
-            for bi in all_bar_idxs:
-                distance = entry_idx - bi
-                if 0 < distance <= max_distance:
-                    return True, entry_date, entry_idx
+        rightmost_idx = cluster["rightmost"]["bar_idx"]
+        key = (tk, rightmost_idx)
+        if key in example_signal_set:
+            entry_date, entry_idx = example_signal_set[key]
+            return True, entry_date, entry_idx
         return False, None, None
 
     print(f"\n  Applying exit condition on rightmost bars...")
 
     # Reload daily cache for exit evaluation (freed earlier to save RAM during scan)
+    # Truncate to expression cache window so bar_idx (expr-cache-relative) aligns.
     universe_cache = load_daily_cache()
+    from expr_cache_builder import EXPR_CACHE_START
+    _cache_start = pd.Timestamp(EXPR_CACHE_START)
+    _trunc_count = 0
+    for _tk in list(universe_cache.keys()):
+        _df = universe_cache[_tk]
+        if _df is None or len(_df) < 50:
+            continue
+        if not pd.api.types.is_datetime64_any_dtype(_df["date"]):
+            _dates = pd.to_datetime(_df["date"]).values
+        else:
+            _dates = _df["date"].values
+        _start = int(np.searchsorted(_dates, np.datetime64(_cache_start), side="left"))
+        if _start > 0:
+            universe_cache[_tk] = _df.iloc[_start:].reset_index(drop=True)
+            _trunc_count += 1
+    print(f"  Truncated {_trunc_count} tickers to expr cache window (from {EXPR_CACHE_START})")
 
     exit_expr = exit_cond["expression"]
     exit_thresh = exit_cond["threshold"]
     exit_dir = exit_cond["direction"]
     exit_col = expr_cache.expr_index(exit_expr)
+    adr_col = expr_cache.expr_index("adr14")
     # Look up trade direction from the setups table
     import sqlite3 as _sqlite3
     _db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
@@ -3240,7 +3382,9 @@ def _gather_raw_signal_clusters(setup_type, conditions_override=None):
         print(f"  ERROR: Setup '{setup_type}' not found in setups table")
         return None
     direction = _row[0]
-    print(f"  Trade direction: {direction}")
+    FADE_SETUPS = {"dtss", "3-4db"}
+    setup_class = "fade" if setup_type in FADE_SETUPS else "breakout"
+    print(f"  Trade direction: {direction}, setup class: {setup_class}")
     MAX_FWD = 120  # Ceiling for example exit search (informational only)
 
     if exit_col is None:
@@ -3278,7 +3422,13 @@ def _gather_raw_signal_clusters(setup_type, conditions_override=None):
             cached_dates, cached_data = expr_cache.get_ticker(ticker)
             if cached_dates is None or len(cached_dates) != len(df):
                 continue
-            adr = float(np.mean(df["high"].values[max(0, pre_entry_bar-13):pre_entry_bar+1] - df["low"].values[max(0, pre_entry_bar-13):pre_entry_bar+1]))
+            adr = None
+            if adr_col is not None and pre_entry_bar < len(cached_data):
+                adr = float(cached_data[pre_entry_bar, adr_col])
+            if adr is None or adr <= 0 or np.isnan(adr):
+                h_slice = df["high"].values[max(0, pre_entry_bar-13):pre_entry_bar+1]
+                l_slice = df["low"].values[max(0, pre_entry_bar-13):pre_entry_bar+1]
+                adr = float(np.mean(h_slice - l_slice))
             if adr <= 0 or np.isnan(adr):
                 continue
             sc = float(df["close"].values[pre_entry_bar])
@@ -3328,308 +3478,456 @@ def _gather_raw_signal_clusters(setup_type, conditions_override=None):
         print(f"  ERROR: No example forward windows computed (pass 1 matched {pass1_matched} examples)")
         return None
 
-    # Forward window: max leftmost-to-entry distance + 10%
-    max_fwd_window = max(example_fwd_windows)
-    forward_window = round(max_fwd_window * 1.1)
+    # Forward window: max leftmost-to-entry distance across examples
+    forward_window = max(example_fwd_windows)
     if forward_window < 1:
         forward_window = 1
     n_total_examples = sum(len(v) for v in example_date_lookup.values())
     print(f"\n  Pass 1 (containment): {pass1_matched}/{n_total_examples} examples matched")
-    print(f"  Forward window: max={max_fwd_window} bars, using {forward_window} bars (110%)")
+    print(f"  Forward window: {forward_window} bars (max leftmost-to-entry across examples)")
     if example_adrs:
         print(f"  Example floor (informational): {min(example_adrs):.1f} ADR")
 
-    # ── Compute classification thresholds from examples ──
-    # Winner threshold: worst-case entry distance from signal close in ADR + 1 ADR fill + cushion
-    # Loser threshold: deepest dip (lowest low for longs, highest high for shorts) in FW
-    #   relative to signal close, in ADR, × 1.10 cushion
-    # Breakeven bars: last bar any example dips past winner level before exit fires
-    entry_offsets_adr = []
-    fw_mae_adrs = []
-    for ex_d in example_threshold_data:
-        ticker = ex_d["ticker"]
-        sig_idx = ex_d["signal_idx"]
-        sc = ex_d["signal_close"]
-        adr_val = ex_d["adr"]
-        df = universe_cache.get(ticker)
-        if df is None:
-            continue
+    winner_threshold_adr = None
+    loser_threshold_adr = None
+    breakeven_bars = None
 
-        entry_offsets_adr.append(ex_d["entry_offset_adr"])
+    if setup_class == "fade":
+        # ── Fade classification: ceiling + exit race ──
+        # Ceiling = max(cluster_extreme, forward_window_max_high)
+        # After forward window: close breaches ceiling → LOSS, exit fires → WIN
+        # Held to end of data → WIN. Examples always WIN.
+        print(f"\n  Classifying clusters (ceiling + exit race, forward_window={forward_window})...")
+        t_classify = time.time()
+        n_win = 0
+        n_loss = 0
 
-        # Lowest low (longs) or highest high (shorts) in the forward window
-        fw_start = sig_idx + 1
-        fw_end = min(sig_idx + forward_window, len(df) - 1)
-        if fw_start <= fw_end:
-            if direction == "long":
-                worst_price = float(np.min(df["low"].values[fw_start:fw_end + 1]))
-                mae = (sc - worst_price) / adr_val
-            else:
-                worst_price = float(np.max(df["high"].values[fw_start:fw_end + 1]))
-                mae = (worst_price - sc) / adr_val
-            fw_mae_adrs.append(mae)
+        # Group clusters by ticker for efficient batch processing
+        ticker_groups = {}
+        for c in clusters:
+            tk = c["ticker"]
+            if tk not in ticker_groups:
+                ticker_groups[tk] = []
+            ticker_groups[tk].append(c)
 
-    if not entry_offsets_adr or not fw_mae_adrs:
-        print(f"  ERROR: Could not compute classification thresholds from examples")
-        return None
+        adr_col = expr_cache.expr_index("adr14")
 
-    winner_threshold_adr = max(entry_offsets_adr) + 1.0 + 0.1  # +1 ADR worst fill + 0.1 cushion
-    loser_threshold_adr = max(max(fw_mae_adrs), 0) * 1.10  # floor at 0, +10% cushion
+        n_tickers_done = 0
+        n_tickers_total = len(ticker_groups)
 
-    print(f"\n  Classification thresholds:")
-    print(f"    Winner: {winner_threshold_adr:.2f} ADR (max entry offset {max(entry_offsets_adr):.2f} + 1.0 + 0.1)")
-    print(f"    Loser:  {loser_threshold_adr:.2f} ADR (max FW MAE {max(fw_mae_adrs):.2f} x 1.10)")
+        for ticker, ticker_clusters in ticker_groups.items():
+            df = universe_cache.get(ticker)
+            cd, cdata = None, None
+            highs = lows = closes = es = adr_series = None
 
-    # Compute breakeven bars: last bar any example's low/high crosses the winner level
-    breakeven_bars = 0
-    for ex_d in example_threshold_data:
-        ticker = ex_d["ticker"]
-        sig_idx = ex_d["signal_idx"]
-        sc = ex_d["signal_close"]
-        adr_val = ex_d["adr"]
-        df = universe_cache.get(ticker)
-        if df is None:
-            continue
+            if df is not None and len(df) > 1:
+                cd_raw, cdata_raw = expr_cache.get_ticker(ticker)
+                if cd_raw is not None and len(cd_raw) == len(df):
+                    cd, cdata = cd_raw, cdata_raw
+                    highs = df["high"].values
+                    lows = df["low"].values
+                    closes = df["close"].values
+                    es = cdata[:, exit_col]
+                    if adr_col is not None:
+                        adr_series = cdata[:, adr_col]
 
-        if direction == "long":
-            winner_lvl = sc + winner_threshold_adr * adr_val
-        else:
-            winner_lvl = sc - winner_threshold_adr * adr_val
+            for c in ticker_clusters:
+                bar_idx = c["rightmost"]["bar_idx"]
+                all_bar_idxs = [bar_idx] + [b["bar_idx"] for b in c["leftward"]]
+                is_ex, ex_entry_date, ex_entry_idx = _match_cluster_to_example(c, max_distance=forward_window)
 
-        cached_dates, cached_data = expr_cache.get_ticker(ticker)
-        if cached_dates is None or len(cached_dates) != len(df):
-            continue
-        es_arr = cached_data[:, exit_col]
-        max_check = min(sig_idx + 120, len(df) - 1)
-
-        # Find exit bar for this example
-        exit_bar_abs = None
-        for fi in range(1, max_check - sig_idx + 1):
-            check_i = sig_idx + fi
-            v = es_arr[check_i]
-            if np.isnan(v):
-                continue
-            if exit_dir in (">=", "above") and v >= exit_thresh:
-                exit_bar_abs = check_i
-                break
-            elif exit_dir in ("<=", "below") and v <= exit_thresh:
-                exit_bar_abs = check_i
-                break
-        if exit_bar_abs is None:
-            exit_bar_abs = max_check
-
-        # Find last bar where price is on the wrong side of winner level
-        last_below = 0
-        if direction == "long":
-            for bi in range(sig_idx + 1, exit_bar_abs + 1):
-                if float(df["low"].values[bi]) < winner_lvl:
-                    last_below = bi - sig_idx
-        else:
-            for bi in range(sig_idx + 1, exit_bar_abs + 1):
-                if float(df["high"].values[bi]) > winner_lvl:
-                    last_below = bi - sig_idx
-
-        breakeven_bars = max(breakeven_bars, last_below)
-
-    print(f"    Breakeven bar: {breakeven_bars} (last bar any example crosses winner level)")
-
-    # ── Classify each cluster ──
-    # ADR threshold classification (session 2026-04-13):
-    #   - Loser level = signal_close - loser_threshold_adr × ADR (hard stop, bar lows)
-    #   - Winner level = signal_close + winner_threshold_adr × ADR (exit must clear this)
-    #   - Hard stop active from signal+1 for life of trade (up to 120 bars)
-    #   - Exit condition evaluates after forward window only
-    #   - Race: hard stop hit (bar low) vs exit fire (after FW)
-    #   - Past breakeven bar with no stop hit → AUTO_WIN (at worst a scratch)
-    #   - Examples always AUTO_WIN
-    print(f"\n  Classifying clusters (ADR threshold, match distance={forward_window})...")
-    t_classify = time.time()
-    n_win = 0
-    n_loss = 0
-    n_clear_win = 0
-    n_clear_loss = 0
-    n_ambiguous = 0
-
-    # Group clusters by ticker for efficient batch processing
-    ticker_groups = {}
-    for c in clusters:
-        tk = c["ticker"]
-        if tk not in ticker_groups:
-            ticker_groups[tk] = []
-        ticker_groups[tk].append(c)
-
-    # ADR column for per-signal threshold levels
-    adr_col = expr_cache.expr_index("adr14")
-
-    n_tickers_done = 0
-    n_tickers_total = len(ticker_groups)
-
-    for ticker, ticker_clusters in ticker_groups.items():
-        # Load OHLCV and expr cache ONCE per ticker
-        df = universe_cache.get(ticker)
-        cd, cdata = None, None
-        highs = lows = closes = es = adr_series = None
-
-        if df is not None and len(df) > 1:
-            cd_raw, cdata_raw = expr_cache.get_ticker(ticker)
-            if cd_raw is not None and len(cd_raw) == len(df):
-                cd, cdata = cd_raw, cdata_raw
-                highs = df["high"].values
-                lows = df["low"].values
-                closes = df["close"].values
-                es = cdata[:, exit_col]
-                if adr_col is not None:
-                    adr_series = cdata[:, adr_col]
-
-        for c in ticker_clusters:
-            bar_idx = c["rightmost"]["bar_idx"]
-            is_ex, ex_entry_date, ex_entry_idx = _match_cluster_to_example(c, max_distance=forward_window)
-
-            c["is_example"] = 1 if is_ex else 0
-            if is_ex:
-                c["example_entry_date"] = ex_entry_date
-                c["example_entry_idx"] = ex_entry_idx
-
-            # No data cases
-            if df is None or bar_idx >= len(df) - 1 or cd is None:
-                reason = "no_data" if df is None else "cache_mismatch" if cd is None else "no_data"
+                c["is_example"] = 1 if is_ex else 0
                 if is_ex:
-                    c["classification"] = "AUTO_WIN"
-                    c["classification_reason"] = f"example_{reason}"
-                    n_win += 1
-                else:
-                    c["classification"] = "AUTO_LOSS"
-                    c["classification_reason"] = reason
-                    n_loss += 1
-                continue
+                    c["example_entry_date"] = ex_entry_date
+                    c["example_entry_idx"] = ex_entry_idx
 
-            try:
-                signal_close = float(closes[bar_idx])
-
-                # ADR at signal bar
-                if adr_series is not None:
-                    sig_adr = float(adr_series[bar_idx])
-                else:
-                    h_slice = highs[max(0, bar_idx - 13):bar_idx + 1]
-                    l_slice = lows[max(0, bar_idx - 13):bar_idx + 1]
-                    sig_adr = float(np.mean(h_slice - l_slice))
-
-                if sig_adr <= 0 or np.isnan(sig_adr):
-                    c["classification"] = "AUTO_LOSS"
-                    c["classification_reason"] = "bad_adr"
-                    n_loss += 1
+                # No data cases
+                if df is None or bar_idx >= len(df) - 1 or cd is None:
+                    if is_ex:
+                        c["classification"] = "AUTO_WIN"
+                        c["classification_reason"] = "example_no_data"
+                        n_win += 1
+                    else:
+                        c["classification"] = "AUTO_LOSS"
+                        c["classification_reason"] = "no_data"
+                        n_loss += 1
                     continue
 
-                # Compute levels for this signal
-                if direction == "long":
-                    winner_level = signal_close + winner_threshold_adr * sig_adr
-                    loser_level = signal_close - loser_threshold_adr * sig_adr
-                else:
-                    winner_level = signal_close - winner_threshold_adr * sig_adr
-                    loser_level = signal_close + loser_threshold_adr * sig_adr
+                try:
+                    # Ceiling = direction-aware extreme of cluster + forward window
+                    fw_end = min(bar_idx + forward_window, len(df) - 1)
 
-                c["stop_level"] = round(loser_level, 4)
-                c["winner_level"] = round(winner_level, 4)
+                    if direction == "short":
+                        cluster_extreme = max(float(highs[bi]) for bi in all_bar_idxs if bi < len(highs))
+                        if fw_end > bar_idx:
+                            window_extreme = float(np.max(highs[bar_idx + 1:fw_end + 1]))
+                            ceiling = max(cluster_extreme, window_extreme)
+                        else:
+                            ceiling = cluster_extreme
+                    else:
+                        cluster_extreme = min(float(lows[bi]) for bi in all_bar_idxs if bi < len(lows))
+                        if fw_end > bar_idx:
+                            window_extreme = float(np.min(lows[bar_idx + 1:fw_end + 1]))
+                            ceiling = min(cluster_extreme, window_extreme)
+                        else:
+                            ceiling = cluster_extreme
 
-                # Check window: signal+1 through signal+120 (or end of data)
-                check_start = bar_idx + 1
-                check_end = min(bar_idx + 120, len(df) - 1)
-                fw_end = min(bar_idx + forward_window, len(df) - 1)
+                    c["stop_level"] = round(ceiling, 4)
 
-                if check_start > check_end:
-                    c["classification"] = "AUTO_LOSS"
-                    c["classification_reason"] = "no_data_after_signal"
-                    n_loss += 1
-                    continue
+                    # Race after forward window: ceiling breach vs exit fire
+                    scan_start = fw_end + 1
+                    if scan_start >= len(df):
+                        c["classification"] = "AUTO_WIN"
+                        c["classification_reason"] = "no_data_after_window"
+                        n_win += 1
+                        continue
 
-                # Step 1: Find first hard stop breach (bar lows/highs from signal+1)
-                check_range = slice(check_start, check_end + 1)
-                if direction == "long":
-                    stop_hits = np.where(lows[check_range] < loser_level)[0]
-                else:
-                    stop_hits = np.where(highs[check_range] > loser_level)[0]
-                first_stop_rel = stop_hits[0] if len(stop_hits) > 0 else None
+                    fwd_closes = closes[scan_start:]
 
-                # Step 2: Find first exit fire (after forward window only)
-                exit_scan_start = fw_end + 1
-                first_exit_rel = None  # relative to check_start
-                abs_exit_bar = None
-                if exit_scan_start <= check_end:
-                    fwd_exit = es[exit_scan_start:check_end + 1]
+                    # Vectorized: find first ceiling breach (intraday touch — resting stop fills on any touch)
+                    if direction == "short":
+                        stop_hits = np.where(highs[scan_start:] > ceiling)[0]
+                    else:
+                        stop_hits = np.where(lows[scan_start:] < ceiling)[0]
+                    first_stop = stop_hits[0] if len(stop_hits) > 0 else len(fwd_closes)
+
+                    # Vectorized: find first exit fire
+                    fwd_exit = es[scan_start:]
                     if exit_dir in (">=", "above"):
                         exit_hits = np.where((~np.isnan(fwd_exit)) & (fwd_exit >= exit_thresh))[0]
                     else:
                         exit_hits = np.where((~np.isnan(fwd_exit)) & (fwd_exit <= exit_thresh))[0]
-                    if len(exit_hits) > 0:
-                        abs_exit_bar = exit_scan_start + exit_hits[0]
-                        first_exit_rel = abs_exit_bar - check_start
+                    first_exit = exit_hits[0] if len(exit_hits) > 0 else len(fwd_exit)
 
-                # Step 3: Race — determine classification
-                # Convert stop to same relative base for comparison
-                stop_hit_before_exit = False
-                if first_stop_rel is not None:
-                    if first_exit_rel is None or first_stop_rel < first_exit_rel:
-                        stop_hit_before_exit = True
-
-                if stop_hit_before_exit:
-                    # Hard stop hit before exit — clear loser
-                    c["classification"] = "AUTO_LOSS"
-                    c["classification_reason"] = "mae_breach"
-                    c["breach_bar"] = int(first_stop_rel + 1)  # bars after signal
-                    n_loss += 1
-                    n_clear_loss += 1
-
-                elif abs_exit_bar is not None:
-                    # Exit fired (and stop wasn't hit before it)
-                    exit_close = float(closes[abs_exit_bar])
-                    c["exit_bar"] = int(abs_exit_bar - bar_idx)
-
-                    if direction == "long":
-                        is_above_winner = exit_close > winner_level
-                    else:
-                        is_above_winner = exit_close < winner_level
-
-                    if is_above_winner:
-                        # Clear winner — exit above winner threshold
+                    # Race: which fires first? Tie goes to stop (fade has failed)
+                    if first_stop <= first_exit and first_stop < len(fwd_closes):
+                        c["classification"] = "AUTO_LOSS"
+                        c["classification_reason"] = "ceiling_breach"
+                        c["breach_bar"] = int(first_stop + (scan_start - bar_idx))
+                        n_loss += 1
+                    elif first_exit < len(fwd_exit):
                         c["classification"] = "AUTO_WIN"
-                        c["classification_reason"] = "clear_winner"
+                        c["classification_reason"] = "exit_fired"
+                        c["exit_bar"] = int(first_exit + (scan_start - bar_idx))
                         n_win += 1
-                        n_clear_win += 1
                     else:
-                        # Exit in ambiguous zone — can't confirm profit or loss
-                        c["classification"] = "AMBIGUOUS"
-                        c["classification_reason"] = "exit_in_zone"
-                        n_ambiguous += 1
+                        c["classification"] = "AUTO_WIN"
+                        c["classification_reason"] = "held_to_end"
+                        n_win += 1
 
+                except Exception:
+                    c["classification"] = "AUTO_LOSS"
+                    c["classification_reason"] = "error"
+                    n_loss += 1
+
+                # Examples are always winners regardless of race outcome
+                if is_ex and c.get("classification") != "AUTO_WIN":
+                    c["classification"] = "AUTO_WIN"
+                    c["classification_reason"] = "example"
+                    n_loss -= 1
+                    n_win += 1
+
+            n_tickers_done += 1
+            if n_tickers_done % 500 == 0 or n_tickers_done == n_tickers_total:
+                print(f"    {n_tickers_done}/{n_tickers_total} tickers classified ({time.time()-t_classify:.0f}s)")
+
+        n_total = n_win + n_loss
+        print(f"\n  Classification breakdown ({n_total} total):")
+        if n_total:
+            print(f"    AUTO_WIN:   {n_win} ({n_win/n_total*100:.1f}%)")
+            print(f"    AUTO_LOSS:  {n_loss} ({n_loss/n_total*100:.1f}%)")
+
+    else:
+        # ── Compute classification thresholds from examples ──
+        # Winner threshold: worst-case entry distance from signal close in ADR + 1 ADR fill + cushion
+        # Loser threshold: deepest dip (lowest low for longs, highest high for shorts) in FW
+        #   relative to signal close, in ADR, × 1.10 cushion
+        # Breakeven bars: last bar any example dips past winner level before exit fires
+        entry_offsets_adr = []
+        fw_mae_adrs = []
+        for ex_d in example_threshold_data:
+            ticker = ex_d["ticker"]
+            sig_idx = ex_d["signal_idx"]
+            sc = ex_d["signal_close"]
+            adr_val = ex_d["adr"]
+            df = universe_cache.get(ticker)
+            if df is None:
+                continue
+
+            entry_offsets_adr.append(ex_d["entry_offset_adr"])
+
+            # Lowest low (longs) or highest high (shorts) in the forward window
+            fw_start = sig_idx + 1
+            fw_end = min(sig_idx + forward_window, len(df) - 1)
+            if fw_start <= fw_end:
+                if direction == "long":
+                    worst_price = float(np.min(df["low"].values[fw_start:fw_end + 1]))
+                    mae = (sc - worst_price) / adr_val
                 else:
-                    # Neither stop hit nor exit fired in 120 bars
-                    c["classification"] = "AMBIGUOUS"
-                    c["classification_reason"] = "timeout"
-                    n_ambiguous += 1
+                    worst_price = float(np.max(df["high"].values[fw_start:fw_end + 1]))
+                    mae = (worst_price - sc) / adr_val
+                fw_mae_adrs.append(mae)
 
-            except Exception:
-                c["classification"] = "AUTO_LOSS"
-                c["classification_reason"] = "error"
-                n_loss += 1
+        if not entry_offsets_adr or not fw_mae_adrs:
+            print(f"  ERROR: Could not compute classification thresholds from examples")
+            return None
 
-            # Examples are always winners regardless of race outcome
-            if is_ex and c.get("classification") != "AUTO_WIN":
-                c["classification"] = "AUTO_WIN"
-                c["classification_reason"] = "example"
-                n_loss -= 1
-                n_win += 1
+        winner_threshold_adr = max(entry_offsets_adr) + 1.0 + 0.1  # +1 ADR worst fill + 0.1 cushion
+        loser_threshold_adr = max(max(fw_mae_adrs), 0) * 1.10  # floor at 0, +10% cushion
 
-        n_tickers_done += 1
-        if n_tickers_done % 500 == 0 or n_tickers_done == n_tickers_total:
-            print(f"    {n_tickers_done}/{n_tickers_total} tickers classified ({time.time()-t_classify:.0f}s)")
+        print(f"\n  Classification thresholds:")
+        print(f"    Winner: {winner_threshold_adr:.2f} ADR (max entry offset {max(entry_offsets_adr):.2f} + 1.0 + 0.1)")
+        print(f"    Loser:  {loser_threshold_adr:.2f} ADR (max FW MAE {max(fw_mae_adrs):.2f} x 1.10)")
 
-    n_total = n_win + n_loss + n_ambiguous
-    print(f"\n  Classification breakdown ({n_total} total):")
-    print(f"    AUTO_WIN:   {n_win} ({n_win/n_total*100:.1f}%)" if n_total else "")
-    print(f"      Clear winner: {n_clear_win}")
-    print(f"    AUTO_LOSS:  {n_loss} ({n_loss/n_total*100:.1f}%)" if n_total else "")
-    print(f"      Clear loser:  {n_clear_loss}")
-    print(f"    AMBIGUOUS:  {n_ambiguous} ({n_ambiguous/n_total*100:.1f}%)" if n_total else "")
+        # Compute breakeven bars: last bar any example's low/high crosses the winner level
+        breakeven_bars = 0
+        for ex_d in example_threshold_data:
+            ticker = ex_d["ticker"]
+            sig_idx = ex_d["signal_idx"]
+            sc = ex_d["signal_close"]
+            adr_val = ex_d["adr"]
+            df = universe_cache.get(ticker)
+            if df is None:
+                continue
+
+            if direction == "long":
+                winner_lvl = sc + winner_threshold_adr * adr_val
+            else:
+                winner_lvl = sc - winner_threshold_adr * adr_val
+
+            cached_dates, cached_data = expr_cache.get_ticker(ticker)
+            if cached_dates is None or len(cached_dates) != len(df):
+                continue
+            es_arr = cached_data[:, exit_col]
+            max_check = min(sig_idx + 120, len(df) - 1)
+
+            # Find exit bar for this example
+            exit_bar_abs = None
+            for fi in range(1, max_check - sig_idx + 1):
+                check_i = sig_idx + fi
+                v = es_arr[check_i]
+                if np.isnan(v):
+                    continue
+                if exit_dir in (">=", "above") and v >= exit_thresh:
+                    exit_bar_abs = check_i
+                    break
+                elif exit_dir in ("<=", "below") and v <= exit_thresh:
+                    exit_bar_abs = check_i
+                    break
+            if exit_bar_abs is None:
+                exit_bar_abs = max_check
+
+            # Find last bar where price is on the wrong side of winner level
+            last_below = 0
+            if direction == "long":
+                for bi in range(sig_idx + 1, exit_bar_abs + 1):
+                    if float(df["low"].values[bi]) < winner_lvl:
+                        last_below = bi - sig_idx
+            else:
+                for bi in range(sig_idx + 1, exit_bar_abs + 1):
+                    if float(df["high"].values[bi]) > winner_lvl:
+                        last_below = bi - sig_idx
+
+            breakeven_bars = max(breakeven_bars, last_below)
+
+        print(f"    Breakeven bar: {breakeven_bars} (last bar any example crosses winner level)")
+
+        # ── Classify each cluster ──
+        # ADR threshold classification (session 2026-04-13):
+        #   - Loser level = signal_close - loser_threshold_adr × ADR (hard stop, bar lows)
+        #   - Winner level = signal_close + winner_threshold_adr × ADR (exit must clear this)
+        #   - Hard stop active from signal+1 for life of trade (up to 120 bars)
+        #   - Exit condition evaluates after forward window only
+        #   - Race: hard stop hit (bar low) vs exit fire (after FW)
+        #   - Past breakeven bar with no stop hit → AUTO_WIN (at worst a scratch)
+        #   - Examples always AUTO_WIN
+        print(f"\n  Classifying clusters (ADR threshold, match distance={forward_window})...")
+        t_classify = time.time()
+        n_win = 0
+        n_loss = 0
+        n_clear_win = 0
+        n_clear_loss = 0
+
+        # Group clusters by ticker for efficient batch processing
+        ticker_groups = {}
+        for c in clusters:
+            tk = c["ticker"]
+            if tk not in ticker_groups:
+                ticker_groups[tk] = []
+            ticker_groups[tk].append(c)
+
+        # ADR column for per-signal threshold levels
+        adr_col = expr_cache.expr_index("adr14")
+
+        n_tickers_done = 0
+        n_tickers_total = len(ticker_groups)
+
+        for ticker, ticker_clusters in ticker_groups.items():
+            # Load OHLCV and expr cache ONCE per ticker
+            df = universe_cache.get(ticker)
+            cd, cdata = None, None
+            highs = lows = closes = es = adr_series = None
+
+            if df is not None and len(df) > 1:
+                cd_raw, cdata_raw = expr_cache.get_ticker(ticker)
+                if cd_raw is not None and len(cd_raw) == len(df):
+                    cd, cdata = cd_raw, cdata_raw
+                    highs = df["high"].values
+                    lows = df["low"].values
+                    closes = df["close"].values
+                    es = cdata[:, exit_col]
+                    if adr_col is not None:
+                        adr_series = cdata[:, adr_col]
+
+            for c in ticker_clusters:
+                bar_idx = c["rightmost"]["bar_idx"]
+                is_ex, ex_entry_date, ex_entry_idx = _match_cluster_to_example(c, max_distance=forward_window)
+
+                c["is_example"] = 1 if is_ex else 0
+                if is_ex:
+                    c["example_entry_date"] = ex_entry_date
+                    c["example_entry_idx"] = ex_entry_idx
+
+                # No data cases
+                if df is None or bar_idx >= len(df) - 1 or cd is None:
+                    reason = "no_data" if df is None else "cache_mismatch" if cd is None else "no_data"
+                    if is_ex:
+                        c["classification"] = "AUTO_WIN"
+                        c["classification_reason"] = f"example_{reason}"
+                        n_win += 1
+                    else:
+                        c["classification"] = "AUTO_LOSS"
+                        c["classification_reason"] = reason
+                        n_loss += 1
+                    continue
+
+                try:
+                    signal_close = float(closes[bar_idx])
+
+                    # ADR at signal bar
+                    if adr_series is not None:
+                        sig_adr = float(adr_series[bar_idx])
+                    else:
+                        h_slice = highs[max(0, bar_idx - 13):bar_idx + 1]
+                        l_slice = lows[max(0, bar_idx - 13):bar_idx + 1]
+                        sig_adr = float(np.mean(h_slice - l_slice))
+
+                    if sig_adr <= 0 or np.isnan(sig_adr):
+                        c["classification"] = "AUTO_LOSS"
+                        c["classification_reason"] = "bad_adr"
+                        n_loss += 1
+                        continue
+
+                    # Compute levels for this signal
+                    if direction == "long":
+                        winner_level = signal_close + winner_threshold_adr * sig_adr
+                        loser_level = signal_close - loser_threshold_adr * sig_adr
+                    else:
+                        winner_level = signal_close - winner_threshold_adr * sig_adr
+                        loser_level = signal_close + loser_threshold_adr * sig_adr
+
+                    c["stop_level"] = round(loser_level, 4)
+                    c["winner_level"] = round(winner_level, 4)
+
+                    # Check window: signal+1 through signal+120 (or end of data)
+                    check_start = bar_idx + 1
+                    check_end = min(bar_idx + 120, len(df) - 1)
+                    fw_end = min(bar_idx + forward_window, len(df) - 1)
+
+                    if check_start > check_end:
+                        c["classification"] = "AUTO_LOSS"
+                        c["classification_reason"] = "no_data_after_signal"
+                        n_loss += 1
+                        continue
+
+                    # Step 1: Find first hard stop breach (bar lows/highs from signal+1)
+                    check_range = slice(check_start, check_end + 1)
+                    if direction == "long":
+                        stop_hits = np.where(lows[check_range] < loser_level)[0]
+                    else:
+                        stop_hits = np.where(highs[check_range] > loser_level)[0]
+                    first_stop_rel = stop_hits[0] if len(stop_hits) > 0 else None
+
+                    # Step 2: Find first exit fire (after forward window only)
+                    exit_scan_start = fw_end + 1
+                    first_exit_rel = None  # relative to check_start
+                    abs_exit_bar = None
+                    if exit_scan_start <= check_end:
+                        fwd_exit = es[exit_scan_start:check_end + 1]
+                        if exit_dir in (">=", "above"):
+                            exit_hits = np.where((~np.isnan(fwd_exit)) & (fwd_exit >= exit_thresh))[0]
+                        else:
+                            exit_hits = np.where((~np.isnan(fwd_exit)) & (fwd_exit <= exit_thresh))[0]
+                        if len(exit_hits) > 0:
+                            abs_exit_bar = exit_scan_start + exit_hits[0]
+                            first_exit_rel = abs_exit_bar - check_start
+
+                    # Step 3: Race — determine classification
+                    # Convert stop to same relative base for comparison
+                    stop_hit_before_exit = False
+                    if first_stop_rel is not None:
+                        # Tie goes to stop: intrabar low hits before close triggers exit
+                        if first_exit_rel is None or first_stop_rel <= first_exit_rel:
+                            stop_hit_before_exit = True
+
+                    if stop_hit_before_exit:
+                        # Hard stop hit before exit — clear loser
+                        c["classification"] = "AUTO_LOSS"
+                        c["classification_reason"] = "mae_breach"
+                        c["breach_bar"] = int(first_stop_rel + 1)  # bars after signal
+                        n_loss += 1
+                        n_clear_loss += 1
+
+                    elif abs_exit_bar is not None:
+                        # Exit fired (and stop wasn't hit before it)
+                        exit_close = float(closes[abs_exit_bar])
+                        c["exit_bar"] = int(abs_exit_bar - bar_idx)
+
+                        if direction == "long":
+                            is_above_winner = exit_close > winner_level
+                        else:
+                            is_above_winner = exit_close < winner_level
+
+                        if is_above_winner:
+                            # Clear winner — exit above winner threshold
+                            c["classification"] = "AUTO_WIN"
+                            c["classification_reason"] = "clear_winner"
+                            n_win += 1
+                            n_clear_win += 1
+                        else:
+                            # Exit in zone — count as win (scratches are wins)
+                            c["classification"] = "AUTO_WIN"
+                            c["classification_reason"] = "exit_in_zone"
+                            n_win += 1
+
+                    else:
+                        # Neither stop hit nor exit fired in 120 bars — held, count as win
+                        c["classification"] = "AUTO_WIN"
+                        c["classification_reason"] = "timeout"
+                        n_win += 1
+
+                except Exception:
+                    c["classification"] = "AUTO_LOSS"
+                    c["classification_reason"] = "error"
+                    n_loss += 1
+
+                # Examples are always winners regardless of race outcome
+                if is_ex and c.get("classification") != "AUTO_WIN":
+                    c["classification"] = "AUTO_WIN"
+                    c["classification_reason"] = "example"
+                    n_loss -= 1
+                    n_win += 1
+
+            n_tickers_done += 1
+            if n_tickers_done % 500 == 0 or n_tickers_done == n_tickers_total:
+                print(f"    {n_tickers_done}/{n_tickers_total} tickers classified ({time.time()-t_classify:.0f}s)")
+
+        n_total = n_win + n_loss
+        print(f"\n  Classification breakdown ({n_total} total):")
+        print(f"    AUTO_WIN:   {n_win} ({n_win/n_total*100:.1f}%)" if n_total else "")
+        print(f"      Clear winner: {n_clear_win}")
+        print(f"    AUTO_LOSS:  {n_loss} ({n_loss/n_total*100:.1f}%)" if n_total else "")
+        print(f"      Clear loser:  {n_clear_loss}")
 
     # ── Compute move_adr for each cluster ──
     # entry_high → exit_close, measured in ADR at signal bar.
@@ -3766,6 +4064,12 @@ def _gather_raw_signal_clusters(setup_type, conditions_override=None):
         },
         "forward_window": forward_window,
         "direction": direction,
+        "setup_class": setup_class,
+        "winner_threshold_adr": round(winner_threshold_adr, 4) if winner_threshold_adr is not None else None,
+        "loser_threshold_adr": round(loser_threshold_adr, 4) if loser_threshold_adr is not None else None,
+        "breakeven_bars": breakeven_bars,
+        "n_examples_validated": len(example_signal_set),
+        "grinder_bugs": [f"{tk} {ed}: {reason}" for tk, ed, reason in grinder_bugs],
         "n_raw": len(raw_signals),
         "n_clusters": len(clusters),
         "n_winning_clusters": n_win,
@@ -4454,8 +4758,8 @@ def run_refinement(setup_type, beam_width=10000, depth=100, peak_target=3,
 def main():
     parser = argparse.ArgumentParser(description="Pyramidal Grinder")
     parser.add_argument("--setup", required=True, help="Setup type")
-    parser.add_argument("--peak-target", type=int, default=15,
-                        help="Target peak signals/day (default: 15)")
+    parser.add_argument("--peak-target", type=int, default=3,
+                        help="Target peak signals/day (default: 3)")
     parser.add_argument("--beam", type=int, default=50,
                         help="Beam width for historical tiers")
     parser.add_argument("--depth", type=int, default=10,
@@ -4552,7 +4856,7 @@ def main():
         # Use aggressive defaults for refinement unless explicitly overridden
         ref_beam = args.beam if args.beam != 50 else 500
         ref_depth = args.depth if args.depth != 10 else 100
-        ref_peak = args.peak_target if args.peak_target != 15 else 3
+        ref_peak = args.peak_target
 
         # Load --conditions-file for signal_conditions_override
         ref_signal_override = None
