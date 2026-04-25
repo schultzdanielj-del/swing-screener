@@ -1,0 +1,142 @@
+OHLCV cache: C:/Users/Dan/Documents/ScanPerfect/swing-screener\local_runner\cache
+Universe: 11,842 tickers
+N_daily max=86  W_N max=48
+
+Sampling 5,000 market bars (shared, seed=42)...
+    market sample: 500/5000  (attempts=618, 17.4s)
+    market sample: 1000/5000  (attempts=1215, 34.1s)
+    market sample: 1500/5000  (attempts=1848, 50.5s)
+    market sample: 2000/5000  (attempts=2464, 65.5s)
+    market sample: 2500/5000  (attempts=3052, 79.3s)
+    market sample: 3000/5000  (attempts=3653, 94.9s)
+    market sample: 3500/5000  (attempts=4258, 108.9s)
+    market sample: 4000/5000  (attempts=4855, 122.2s)
+    market sample: 4500/5000  (attempts=5464, 133.9s)
+    market sample: 5000/5000  (attempts=6068, 144.7s)
+  market sample done: daily (5000, 21, 86)  weekly (5000, 15, 48)  (144.7s)
+
+=== HTF
+  n_ex=32  C=1539  (daily 819 + weekly 720)  (0.1s)
+  market_elbow_K=514  admission at K=0: 1.000  at elbow: 0.077  at drop: 0.884  at end: 0.031400
+  loo_drop_K=155 (never=False)  loo_pass at drop: 0.969  at end: 0.531
+  kept_count=154  (cells at ranks [0..153])
+  5 loosest kept: SMA5@D-k1[t=0.0000], SMA8@D-k1[t=0.0000], SMA10@D-k1[t=0.0000], SMA13@D-k1[t=0.0000], SMA20@D-k1[t=0.0000]
+  5 tightest kept: SMA150@D-k16[t=0.0500], SMA200@D-k15[t=0.0506], EMA30@D-k4[t=0.0507], EMA200@D-k15[t=0.0509], EMA100@D-k8[t=0.0514]
+  first LOO-drop examples: ['QUBT/2024-11-20']
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band_ranker\htf_ranker.pkl  and  C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band_ranker\walkup_htf.png
+
+=== BF
+  n_ex=45  C=1689  (daily 1029 + weekly 660)  (0.2s)
+  market_elbow_K=839  admission at K=0: 1.000  at elbow: 0.087  at drop: 0.942  at end: 0.038000
+  loo_drop_K=120 (never=False)  loo_pass at drop: 0.978  at end: 0.600
+  kept_count=119  (cells at ranks [0..118])
+  5 loosest kept: SMA5@D-k1[t=0.0000], SMA8@D-k1[t=0.0000], SMA10@D-k1[t=0.0000], SMA13@D-k1[t=0.0000], SMA20@D-k1[t=0.0000]
+  5 tightest kept: SMA10@D-k3[t=0.0300], EMA5@W-k1[t=0.0304], SMA13@W-k1[t=0.0304], EMA8@D-k4[t=0.0306], EMA3@W-k1[t=0.0310]
+  first LOO-drop examples: ['RGTI/2024-12-06']
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band_ranker\bf_ranker.pkl  and  C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band_ranker\walkup_bf.png
+
+=== BASE
+  n_ex=42  C=1287  (daily 672 + weekly 615)  (0.1s)
+  market_elbow_K=481  admission at K=0: 1.000  at elbow: 0.557  at drop: 0.840  at end: 0.477800
+  loo_drop_K=117 (never=False)  loo_pass at drop: 0.976  at end: 0.595
+  kept_count=116  (cells at ranks [0..115])
+  5 loosest kept: SMA5@D-k1[t=0.0000], SMA8@D-k1[t=0.0000], SMA10@D-k1[t=0.0000], SMA13@D-k1[t=0.0000], SMA20@D-k1[t=0.0000]
+  5 tightest kept: EMA8@D-k4[t=0.0128], SMA150@D-k6[t=0.0128], EMA200@D-k7[t=0.0129], SMA200@D-k7[t=0.0130], EMA150@D-k7[t=0.0133]
+  first LOO-drop examples: ['PSIX/2025-05-12']
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band_ranker\base_ranker.pkl  and  C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band_ranker\walkup_base.png
+
+=== DTSS
+  n_ex=73  C=2046  (daily 1806 + weekly 240)  (0.2s)
+  market_elbow_K=1079  admission at K=0: 1.000  at elbow: 0.608  at drop: 0.928  at end: 0.454400
+  loo_drop_K=148 (never=False)  loo_pass at drop: 0.986  at end: 0.849
+  kept_count=147  (cells at ranks [0..146])
+  5 loosest kept: SMA5@D-k1[t=0.0000], SMA8@D-k1[t=0.0000], SMA10@D-k1[t=0.0000], SMA13@D-k1[t=0.0000], SMA20@D-k1[t=0.0000]
+  5 tightest kept: SMA10@W-k1[t=0.0267], SMA5@D-k3[t=0.0272], SMA30@D-k6[t=0.0273], SMA20@D-k6[t=0.0273], EMA20@D-k6[t=0.0277]
+  first LOO-drop examples: ['BTBT/2025-10-20']
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band_ranker\dtss_ranker.pkl  and  C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band_ranker\walkup_dtss.png
+
+=== 3-4DB
+  n_ex=26  C=1554  (daily 1344 + weekly 210)  (0.1s)
+  market_elbow_K=769  admission at K=0: 1.000  at elbow: 0.111  at drop: 0.937  at end: 0.039800
+  loo_drop_K=171 (never=False)  loo_pass at drop: 0.962  at end: 0.654
+  kept_count=170  (cells at ranks [0..169])
+  5 loosest kept: SMA5@D-k1[t=0.0000], SMA8@D-k1[t=0.0000], SMA10@D-k1[t=0.0000], SMA13@D-k1[t=0.0000], SMA20@D-k1[t=0.0000]
+  5 tightest kept: EMA50@W-k2[t=0.0536], SMA13@D-k6[t=0.0536], SMA100@D-k8[t=0.0542], SMA8@D-k5[t=0.0544], EMA150@D-k9[t=0.0547]
+  first LOO-drop examples: ['GOGO/2025-08-12']
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band_ranker\3-4db_ranker.pkl  and  C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band_ranker\walkup_3-4db.png
+
+=== SUMMARY ===
+{
+  "htf": {
+    "n_ex": 32,
+    "C": 1539,
+    "C_d": 819,
+    "C_w": 720,
+    "market_elbow_K": 514,
+    "loo_drop_K": 155,
+    "kept_count": 154,
+    "admission_at_elbow": 0.0772,
+    "admission_at_drop": 0.8844,
+    "admission_at_end": 0.0314,
+    "loo_pass_at_drop": 0.96875,
+    "loo_pass_at_end": 0.53125
+  },
+  "bf": {
+    "n_ex": 45,
+    "C": 1689,
+    "C_d": 1029,
+    "C_w": 660,
+    "market_elbow_K": 839,
+    "loo_drop_K": 120,
+    "kept_count": 119,
+    "admission_at_elbow": 0.087,
+    "admission_at_drop": 0.942,
+    "admission_at_end": 0.038,
+    "loo_pass_at_drop": 0.9777777777777777,
+    "loo_pass_at_end": 0.6
+  },
+  "base": {
+    "n_ex": 42,
+    "C": 1287,
+    "C_d": 672,
+    "C_w": 615,
+    "market_elbow_K": 481,
+    "loo_drop_K": 117,
+    "kept_count": 116,
+    "admission_at_elbow": 0.5568,
+    "admission_at_drop": 0.84,
+    "admission_at_end": 0.4778,
+    "loo_pass_at_drop": 0.9761904761904762,
+    "loo_pass_at_end": 0.5952380952380952
+  },
+  "dtss": {
+    "n_ex": 73,
+    "C": 2046,
+    "C_d": 1806,
+    "C_w": 240,
+    "market_elbow_K": 1079,
+    "loo_drop_K": 148,
+    "kept_count": 147,
+    "admission_at_elbow": 0.6084,
+    "admission_at_drop": 0.9278,
+    "admission_at_end": 0.4544,
+    "loo_pass_at_drop": 0.9863013698630136,
+    "loo_pass_at_end": 0.8493150684931506
+  },
+  "3-4db": {
+    "n_ex": 26,
+    "C": 1554,
+    "C_d": 1344,
+    "C_w": 210,
+    "market_elbow_K": 769,
+    "loo_drop_K": 171,
+    "kept_count": 170,
+    "admission_at_elbow": 0.1112,
+    "admission_at_drop": 0.9374,
+    "admission_at_end": 0.0398,
+    "loo_pass_at_drop": 0.9615384615384616,
+    "loo_pass_at_end": 0.6538461538461539
+  }
+}
+
+Outputs in C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band_ranker

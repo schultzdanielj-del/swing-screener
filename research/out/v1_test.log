@@ -1,0 +1,86 @@
+Loading OHLCV...
+  11,842 tickers
+Loading expr cache...
+Loading earnings map...
+  earnings dates for 4,683 tickers
+
+=== DTSS ===
+  pyramid: pyramid_dtss_mp_sig1369_pk11_20260413_160519.json
+  direction=short
+  raw signals (pre-dedup): 1369
+  examples:                 73
+  exit: w_ext_slope_xavgc50_off2 >= 0.35498
+  resolved signal bars: 1369  (unresolved: 0)
+  clusters: 1121
+  clusters matched to an example: 61/73
+
+  EXAMPLE CHECK (must all be WIN)
+    V1_win:  61/61
+    V1_loss: 0
+
+  non-example clusters: 1060  (WIN 486, LOSS 574)
+  non-example win rate: 45.8%
+  reason breakdown: {('WIN', 'flat_before_earnings'): 189, ('LOSS', 'stop_hit'): 574, ('WIN', 'exit_fired'): 358}
+
+=== HTF ===
+  pyramid: pyramid_htf_mp_sig545_pk5_20260416_125443.json
+  direction=long
+  raw signals (pre-dedup): 545
+  examples:                 28
+  exit: w_rsi_slope_21_off3 <= -8.459807
+  resolved signal bars: 545  (unresolved: 0)
+  clusters: 495
+  clusters matched to an example: 25/28
+
+  EXAMPLE CHECK (must all be WIN)
+    V1_win:  25/25
+    V1_loss: 0
+
+  non-example clusters: 470  (WIN 170, LOSS 300)
+  non-example win rate: 36.2%
+  reason breakdown: {('LOSS', 'stop_hit'): 300, ('WIN', 'exit_fired'): 109, ('WIN', 'flat_before_earnings'): 86}
+
+=== BF ===
+  pyramid: pyramid_bf_mp_sig530_pk5_20260416_133801.json
+  direction=long
+  raw signals (pre-dedup): 530
+  examples:                 45
+  exit: w_nr_h_maxh2_pct >= 7.746094
+  resolved signal bars: 530  (unresolved: 0)
+  clusters: 445
+  clusters matched to an example: 45/45
+
+  EXAMPLE CHECK (must all be WIN)
+    V1_win:  45/45
+    V1_loss: 0
+
+  non-example clusters: 400  (WIN 152, LOSS 248)
+  non-example win rate: 38.0%
+  reason breakdown: {('WIN', 'flat_before_earnings'): 59, ('LOSS', 'stop_hit'): 248, ('WIN', 'exit_fired'): 138}
+
+=== BASE ===
+  pyramid: pyramid_base_mp_sig646_pk4_20260416_142048.json
+  direction=long
+  raw signals (pre-dedup): 646
+  examples:                 42
+  exit: w_slope_xavgc9_off2_atr14 <= 0.402832
+  resolved signal bars: 646  (unresolved: 0)
+  clusters: 540
+  clusters matched to an example: 37/42
+
+  EXAMPLE CHECK (must all be WIN)
+    V1_win:  37/37
+    V1_loss: 0
+
+  non-example clusters: 503  (WIN 317, LOSS 186)
+  non-example win rate: 63.0%
+  reason breakdown: {('LOSS', 'stop_hit'): 186, ('WIN', 'exit_fired'): 267, ('WIN', 'flat_before_earnings'): 86, ('WIN', 'no_entry_bar'): 1}
+
+===== SUMMARY =====
+setup  dir    pyr_sigs  clusters   ex  ex_win  ex_loss  nex_win  nex_loss  nex_wr%
+dtss   short      1369      1121   61      61        0      486       574     45.8
+htf    long        545       495   25      25        0      170       300     36.2
+bf     long        530       445   45      45        0      152       248     38.0
+base   long        646       540   37      37        0      317       186     63.0
+
+Wrote C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\out\v1_test.json

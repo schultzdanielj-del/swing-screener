@@ -1,0 +1,7 @@
+OHLCV cache: C:/Users/Dan/Documents/ScanPerfect/swing-screener\local_runner\cache
+Universe: 11,842 tickers
+
+=== SCAN  HTF  daily_cells=831  weekly_cells=384  W_N=48
+  [htf] 1000/11,842 tickers  31,555 passes  (95.1s, eta 1031s)
+  [htf] 2000/11,842 tickers  65,295 passes  (147.7s, eta 727s)
+  [htf] 3000/11,842 tickers  90,376 passes  (200.5s, eta 591s)

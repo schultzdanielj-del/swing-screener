@@ -1,0 +1,12 @@
+Loading universe OHLCV...
+  11,842 tickers
+Loading expression cache...
+  16039 expressions
+
+=== DTSS ===
+  conditions=95 from pyramid_dtss_mp_sig3506_pk14_20260413_135033.json
+  exit: w_ext_slope_xavgc50_off2 >= 0.35498
+  direction=short, n_examples=73
+    Building tradable masks...
+    scanned 1000 tickers (125s) -> 593 signals so far
+    scanned 2000 tickers (262s) -> 1152 signals so far

@@ -1,0 +1,68 @@
+{
+  "setup": "3-4db",
+  "gates": {
+    "loo_fail_threshold": 0.0,
+    "min_folds_top_bucket": 5,
+    "top_bucket": 50,
+    "perm_n_trials": 100,
+    "corr_threshold": 0.9
+  },
+  "coverage": {
+    "min_ex_measured": 10,
+    "min_random_frac": 0.5,
+    "min_ne_frac": 0.5
+  },
+  "n_ex_total": 26,
+  "n_ne_total": 524,
+  "n_random_total": 8101,
+  "n_features_surviving": 3,
+  "ex_pass": 26,
+  "ne_pass": 180,
+  "rand_pass": 856,
+  "own_rand_ratio": 3.2509185275023187,
+  "gate_funnel": {
+    "g1_covered_loo0": 3953,
+    "g2_every_fold_top_bucket": 4,
+    "g3_perm_max_beat": 4711,
+    "g1_int_g2_int_g3": 4,
+    "after_g4_decorr": 3
+  },
+  "bands": [
+    {
+      "name": "w_st_xavgc100_rising_30",
+      "feature_index": 8043,
+      "ex_min": 0.0,
+      "ex_max": 0.0,
+      "n_ex_measured": 25,
+      "random_coverage_frac": 0.9359338353289718,
+      "carve_value_random": 0.7015299393299921,
+      "perm_max_carve": 0.10508205399682372,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    },
+    {
+      "name": "w_st_c_gt_avgc100_30",
+      "feature_index": 7112,
+      "ex_min": 0.0,
+      "ex_max": 0.0,
+      "n_ex_measured": 25,
+      "random_coverage_frac": 0.9359338353289718,
+      "carve_value_random": 0.6945396992877869,
+      "perm_max_carve": 0.105214399152991,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    },
+    {
+      "name": "ct_es_ext200_stoch14_lt_50_5",
+      "feature_index": 5045,
+      "ex_min": 4.0,
+      "ex_max": 5.0,
+      "n_ex_measured": 25,
+      "random_coverage_frac": 0.9933341562770028,
+      "carve_value_random": 0.6558966074313409,
+      "perm_max_carve": 0.0,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+variant,n_total,total_win_rate_pct,example_pass_pct,example_n,non_example_n,non_example_win_rate_pct,top_reasons,setup
+V1_entry1,1122,45.99,100.0,73,1049,42.23,"{'stop_hit': 606, 'exit_fired': 515, 'timeout': 1}",dtss
+V2_entryFW,1122,44.92,100.0,73,1049,41.09,"{'stop_hit': 618, 'exit_fired': 471, 'example_override(stop_hit)': 31, 'timeout': 2}",dtss
+V3_fwMinLow,1122,67.91,100.0,73,1049,65.68,"{'exit_fired': 759, 'stop_hit': 360, 'timeout': 3}",dtss
+V4_fwMaxLow,1122,34.58,100.0,73,1049,30.03,"{'stop_hit': 734, 'exit_fired': 354, 'example_override(stop_hit)': 32, 'timeout': 2}",dtss
+V5_anyEntry,1122,20.05,100.0,73,1049,14.49,"{'any_entry_stop': 897, 'all_entries_exit': 188, 'example_override(any_entry_stop)': 37}",dtss
+V6_allEntry,1122,71.84,100.0,73,1049,69.88,"{'some_entry_wins': 806, 'all_entries_stop': 316}",dtss
+V7_adr1,1122,70.77,100.0,73,1049,68.73,"{'exit_fired': 764, 'stop_hit': 328, 'example_override(stop_hit)': 29, 'timeout': 1}",dtss
+V8_sigExtreme,1122,38.06,100.0,73,1049,33.75,"{'stop_hit': 695, 'exit_fired': 363, 'example_override(stop_hit)': 63, 'timeout': 1}",dtss
+V9_clusterExtreme,1122,45.81,100.0,73,1049,42.04,"{'stop_hit': 608, 'exit_fired': 450, 'example_override(stop_hit)': 63, 'timeout': 1}",dtss
+V1_entry1,5518,12.4,100.0,58,5460,11.47,"{'no_data': 4141, 'stop_hit': 736, 'exit_fired': 633, 'timeout': 8}",brko
+V2_entryFW,5518,11.85,100.0,58,5460,10.92,"{'no_data': 4141, 'stop_hit': 766, 'exit_fired': 600, 'timeout': 9, 'example_override(stop_hit)': 2}",brko
+V3_fwMinLow,5518,18.5,100.0,58,5460,17.64,"{'no_data': 4141, 'exit_fired': 967, 'stop_hit': 399, 'timeout': 11}",brko
+V4_fwMaxLow,5518,9.79,100.0,58,5460,8.83,"{'no_data': 4141, 'stop_hit': 880, 'exit_fired': 486, 'timeout': 8, 'example_override(stop_hit)': 3}",brko
+V5_anyEntry,5518,5.6,100.0,58,5460,4.6,"{'no_data': 4141, 'any_entry_stop': 1111, 'all_entries_exit': 260, 'example_override(any_entry_stop)': 6}",brko
+V6_allEntry,5518,18.7,100.0,58,5460,17.84,"{'no_data': 4141, 'some_entry_wins': 989, 'all_entries_stop': 388}",brko
+V7_adr1,5518,18.32,100.0,58,5460,17.45,"{'no_data': 4141, 'exit_fired': 958, 'stop_hit': 409, 'timeout': 10}",brko
+V8_sigExtreme,5518,12.09,100.0,58,5460,11.15,"{'no_data': 4141, 'stop_hit': 753, 'exit_fired': 616, 'timeout': 7, 'example_override(stop_hit)': 1}",brko
+V9_clusterExtreme,5518,18.32,100.0,58,5460,17.45,"{'no_data': 4141, 'exit_fired': 958, 'stop_hit': 409, 'timeout': 10}",brko

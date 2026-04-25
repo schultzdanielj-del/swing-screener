@@ -1,0 +1,55 @@
+====================================================================================================
+R2 — LOO-STABLE FEATURE GATE (applied to v1 pyramid-ne ranking)
+====================================================================================================
+Gate: LOO failure rate <= 0.0
+Ranking uses pyramid non-examples as denominator (v1 style). Compare to R1 step.
+
+----------------------------------------------------------------------------------------------------
+HTF  ex=29  ne=445
+  covered without R2: 13614
+  covered with R2:    4628  (gated out 8986)
+  top-40 -> indep: 29  (v1: 19)
+  EX lenient pass:        29/29 (100.0%)
+  NE lenient pass (R2):   60/445 (13.5%)
+  NE lenient pass (v1):   51/445 (11.5%)
+  v1 top-40 features with LOO>0.0: 40/40 (these would be gated by R2)
+
+----------------------------------------------------------------------------------------------------
+BF  ex=45  ne=400
+  covered without R2: 13127
+  covered with R2:    4992  (gated out 8135)
+  top-40 -> indep: 34  (v1: 19)
+  EX lenient pass:        45/45 (100.0%)
+  NE lenient pass (R2):   66/400 (16.5%)
+  NE lenient pass (v1):   61/400 (15.2%)
+  v1 top-40 features with LOO>0.0: 39/40 (these would be gated by R2)
+
+----------------------------------------------------------------------------------------------------
+BASE  ex=37  ne=503
+  covered without R2: 13631
+  covered with R2:    4703  (gated out 8928)
+  top-40 -> indep: 28  (v1: 25)
+  EX lenient pass:        37/37 (100.0%)
+  NE lenient pass (R2):   72/503 (14.3%)
+  NE lenient pass (v1):   34/503 (6.8%)
+  v1 top-40 features with LOO>0.0: 39/40 (these would be gated by R2)
+
+----------------------------------------------------------------------------------------------------
+DTSS  ex=61  ne=1060
+  covered without R2: 13708
+  covered with R2:    4530  (gated out 9178)
+  top-40 -> indep: 11  (v1: 16)
+  EX lenient pass:        61/61 (100.0%)
+  NE lenient pass (R2):   479/1060 (45.2%)
+  NE lenient pass (v1):   283/1060 (26.7%)
+  v1 top-40 features with LOO>0.0: 18/40 (these would be gated by R2)
+
+----------------------------------------------------------------------------------------------------
+3-4DB  ex=26  ne=524
+  covered without R2: 13523
+  covered with R2:    4056  (gated out 9467)
+  top-40 -> indep: 27  (v1: 21)
+  EX lenient pass:        26/26 (100.0%)
+  NE lenient pass (R2):   31/524 (5.9%)
+  NE lenient pass (v1):   19/524 (3.6%)
+  v1 top-40 features with LOO>0.0: 20/40 (these would be gated by R2)

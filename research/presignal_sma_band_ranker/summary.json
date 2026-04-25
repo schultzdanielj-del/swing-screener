@@ -1,0 +1,72 @@
+{
+  "htf": {
+    "n_ex": 32,
+    "C": 1539,
+    "C_d": 819,
+    "C_w": 720,
+    "market_elbow_K": 514,
+    "loo_drop_K": 155,
+    "kept_count": 154,
+    "admission_at_elbow": 0.0772,
+    "admission_at_drop": 0.8844,
+    "admission_at_end": 0.0314,
+    "loo_pass_at_drop": 0.96875,
+    "loo_pass_at_end": 0.53125
+  },
+  "bf": {
+    "n_ex": 45,
+    "C": 1689,
+    "C_d": 1029,
+    "C_w": 660,
+    "market_elbow_K": 839,
+    "loo_drop_K": 120,
+    "kept_count": 119,
+    "admission_at_elbow": 0.087,
+    "admission_at_drop": 0.942,
+    "admission_at_end": 0.038,
+    "loo_pass_at_drop": 0.9777777777777777,
+    "loo_pass_at_end": 0.6
+  },
+  "base": {
+    "n_ex": 42,
+    "C": 1287,
+    "C_d": 672,
+    "C_w": 615,
+    "market_elbow_K": 481,
+    "loo_drop_K": 117,
+    "kept_count": 116,
+    "admission_at_elbow": 0.5568,
+    "admission_at_drop": 0.84,
+    "admission_at_end": 0.4778,
+    "loo_pass_at_drop": 0.9761904761904762,
+    "loo_pass_at_end": 0.5952380952380952
+  },
+  "dtss": {
+    "n_ex": 73,
+    "C": 2046,
+    "C_d": 1806,
+    "C_w": 240,
+    "market_elbow_K": 1079,
+    "loo_drop_K": 148,
+    "kept_count": 147,
+    "admission_at_elbow": 0.6084,
+    "admission_at_drop": 0.9278,
+    "admission_at_end": 0.4544,
+    "loo_pass_at_drop": 0.9863013698630136,
+    "loo_pass_at_end": 0.8493150684931506
+  },
+  "3-4db": {
+    "n_ex": 26,
+    "C": 1554,
+    "C_d": 1344,
+    "C_w": 210,
+    "market_elbow_K": 769,
+    "loo_drop_K": 171,
+    "kept_count": 170,
+    "admission_at_elbow": 0.1112,
+    "admission_at_drop": 0.9374,
+    "admission_at_end": 0.0398,
+    "loo_pass_at_drop": 0.9615384615384616,
+    "loo_pass_at_end": 0.6538461538461539
+  }
+}

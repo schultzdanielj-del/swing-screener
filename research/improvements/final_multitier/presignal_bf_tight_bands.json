@@ -1,0 +1,358 @@
+{
+  "setup": "bf",
+  "tier": "tight",
+  "rule": "strict AND",
+  "min_pass": 34,
+  "corr_threshold": 0.9,
+  "loo_fail_threshold": 0.1,
+  "min_ex_measured": 10,
+  "min_random_frac": 0.5,
+  "n_ex_total": 45,
+  "n_ne_total": 400,
+  "ex_pass": 45,
+  "ne_pass": 116,
+  "rand_pass": 99,
+  "own_rand_ratio": 23.730202020202018,
+  "bands": [
+    {
+      "name": "w_ext_xavgc13_pct",
+      "feature_index": 5752,
+      "ex_min": 15.9921875,
+      "ex_max": 66.875,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9803727934822861,
+      "carve_value_random": 0.9634852681944095,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "w_ext_xavgc12_pct",
+      "feature_index": 5749,
+      "ex_min": 15.3203125,
+      "ex_max": 65.125,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9825947413899518,
+      "carve_value_random": 0.9623115577889447,
+      "loo_fail_rate": 0.02222222276031971
+    },
+    {
+      "name": "w_ext_xavgc10_pct",
+      "feature_index": 5746,
+      "ex_min": 12.984375,
+      "ex_max": 61.0625,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9859276632514504,
+      "carve_value_random": 0.9575560285463879,
+      "loo_fail_rate": 0.02222222276031971
+    },
+    {
+      "name": "w_ext_xavgc9_pct",
+      "feature_index": 5743,
+      "ex_min": 11.765625,
+      "ex_max": 58.59375,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9880261696086903,
+      "carve_value_random": 0.9545227386306847,
+      "loo_fail_rate": 0.02222222276031971
+    },
+    {
+      "name": "w_ext_xavgc20_pct",
+      "feature_index": 5755,
+      "ex_min": 17.5,
+      "ex_max": 75.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9682755215405505,
+      "carve_value_random": 0.9534676185619582,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "w_ext_xavgc21_pct",
+      "feature_index": 5758,
+      "ex_min": 16.828125,
+      "ex_max": 75.8125,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9669176644858659,
+      "carve_value_random": 0.9498276522405209,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "w_ext_xavgc8_pct",
+      "feature_index": 5740,
+      "ex_min": 10.515625,
+      "ex_max": 55.78125,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9886433773608196,
+      "carve_value_random": 0.9496816081907854,
+      "loo_fail_rate": 0.02222222276031971
+    },
+    {
+      "name": "w_ext_avgc13_pct",
+      "feature_index": 5710,
+      "ex_min": 16.375,
+      "ex_max": 75.9375,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9803727934822861,
+      "carve_value_random": 0.9476202467892219,
+      "loo_fail_rate": 0.02222222276031971
+    },
+    {
+      "name": "w_ext_avgc10_pct",
+      "feature_index": 5707,
+      "ex_min": 13.359375,
+      "ex_max": 69.875,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9859276632514504,
+      "carve_value_random": 0.9404031551270815,
+      "loo_fail_rate": 0.02222222276031971
+    },
+    {
+      "name": "w_ext_avgc20_pct",
+      "feature_index": 5713,
+      "ex_min": 18.421875,
+      "ex_max": 83.0625,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9682755215405505,
+      "carve_value_random": 0.9400815910249872,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "w_ext_avgc21_pct",
+      "feature_index": 5716,
+      "ex_min": 18.734375,
+      "ex_max": 83.6875,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9669176644858659,
+      "carve_value_random": 0.938976126643687,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "w_ext_avgc8_pct",
+      "feature_index": 5704,
+      "ex_min": 11.2890625,
+      "ex_max": 63.78125,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9886433773608196,
+      "carve_value_random": 0.9360719190910226,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "w_roc_8",
+      "feature_index": 6090,
+      "ex_min": 27.8125,
+      "ex_max": 1517.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9881496111591161,
+      "carve_value_random": 0.9340412242348533,
+      "loo_fail_rate": 0.02222222276031971
+    },
+    {
+      "name": "w_ext_xavgc5_pct",
+      "feature_index": 5737,
+      "ex_min": 6.0703125,
+      "ex_max": 43.96875,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9928403900752993,
+      "carve_value_random": 0.927390277259729,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "w_roc_14",
+      "feature_index": 6096,
+      "ex_min": 34.34375,
+      "ex_max": 2422.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9772867547216393,
+      "carve_value_random": 0.9249715801439939,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "w_roc_9",
+      "feature_index": 6091,
+      "ex_min": 25.59375,
+      "ex_max": 1815.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9860511048018763,
+      "carve_value_random": 0.9208813219829745,
+      "loo_fail_rate": 0.02222222276031971
+    },
+    {
+      "name": "ext_avgc100_pct",
+      "feature_index": 365,
+      "ex_min": 16.359375,
+      "ex_max": 72.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9646957165782002,
+      "carve_value_random": 0.9207933461292387,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "m_ext_avgc13_pct",
+      "feature_index": 10925,
+      "ex_min": 22.796875,
+      "ex_max": 77.125,
+      "n_ex_measured": 43,
+      "random_coverage_frac": 0.7802740402419455,
+      "carve_value_random": 0.9172599272267047,
+      "loo_fail_rate": 0.04651162773370743
+    },
+    {
+      "name": "w_ext_avgc30_pct",
+      "feature_index": 5719,
+      "ex_min": 18.25,
+      "ex_max": 87.5,
+      "n_ex_measured": 44,
+      "random_coverage_frac": 0.9353166275768424,
+      "carve_value_random": 0.9157978091592979,
+      "loo_fail_rate": 0.04545454680919647
+    },
+    {
+      "name": "w_roc_6",
+      "feature_index": 6088,
+      "ex_min": 18.796875,
+      "ex_max": 1132.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9896309097642266,
+      "carve_value_random": 0.9154297118622926,
+      "loo_fail_rate": 0.02222222276031971
+    },
+    {
+      "name": "w_slope_xavgc12_off2_atr14",
+      "feature_index": 5831,
+      "ex_min": 0.5546875,
+      "ex_max": 1.6552734375,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.977533637822491,
+      "carve_value_random": 0.9049122363934841,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "m_ext_avgc10_pct",
+      "feature_index": 10922,
+      "ex_min": 17.375,
+      "ex_max": 74.5625,
+      "n_ex_measured": 44,
+      "random_coverage_frac": 0.8902604616713986,
+      "carve_value_random": 0.8971159179145868,
+      "loo_fail_rate": 0.04545454680919647
+    },
+    {
+      "name": "w_slope_xavgc9_off2_adr14",
+      "feature_index": 5816,
+      "ex_min": 0.6279296875,
+      "ex_max": 2.123046875,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9764226638686582,
+      "carve_value_random": 0.8969658659924147,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "m_roc_6",
+      "feature_index": 11303,
+      "ex_min": 36.4375,
+      "ex_max": 1422.0,
+      "n_ex_measured": 44,
+      "random_coverage_frac": 0.9632144179730897,
+      "carve_value_random": 0.8965782391387928,
+      "loo_fail_rate": 0.04545454680919647
+    },
+    {
+      "name": "w_ns_c_minl7_atr14",
+      "feature_index": 5587,
+      "ex_min": 3.23046875,
+      "ex_max": 8.109375,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.977533637822491,
+      "carve_value_random": 0.8956939007450435,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "w_ns_l_minl10_pct",
+      "feature_index": 5599,
+      "ex_min": 22.875,
+      "ex_max": 56.375,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9839525984446365,
+      "carve_value_random": 0.8956216284029608,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "roc_65",
+      "feature_index": 745,
+      "ex_min": 25.296875,
+      "ex_max": 844.5,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9776570793729169,
+      "carve_value_random": 0.8952020202020202,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "m_roc_12",
+      "feature_index": 11309,
+      "ex_min": 54.5,
+      "ex_max": 3254.0,
+      "n_ex_measured": 43,
+      "random_coverage_frac": 0.7806443648932231,
+      "carve_value_random": 0.8886780518659076,
+      "loo_fail_rate": 0.04651162773370743
+    },
+    {
+      "name": "w_ns_ratio_minl7",
+      "feature_index": 5593,
+      "ex_min": 1.3603515625,
+      "ex_max": 17.109375,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9886433773608196,
+      "carve_value_random": 0.8873767012111374,
+      "loo_fail_rate": 0.02222222276031971
+    },
+    {
+      "name": "w_roc_15",
+      "feature_index": 6097,
+      "ex_min": 24.53125,
+      "ex_max": 2874.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9766695469695099,
+      "carve_value_random": 0.8854903943377148,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "w_ext_slope_xavgc100_off7",
+      "feature_index": 6362,
+      "ex_min": 2.259765625,
+      "ex_max": 7.98046875,
+      "n_ex_measured": 35,
+      "random_coverage_frac": 0.501913344031601,
+      "carve_value_random": 0.8834235120511559,
+      "loo_fail_rate": 0.02857142873108387
+    },
+    {
+      "name": "w_roc_12",
+      "feature_index": 6094,
+      "ex_min": 20.96875,
+      "ex_max": 2540.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.980496235032712,
+      "carve_value_random": 0.8827898778798943,
+      "loo_fail_rate": 0.04444444552063942
+    },
+    {
+      "name": "w_ext_peak_xavgc8_lb50",
+      "feature_index": 6318,
+      "ex_min": 0.61767578125,
+      "ex_max": 1.0,
+      "n_ex_measured": 37,
+      "random_coverage_frac": 0.7225033946426367,
+      "carve_value_random": 0.8815991799077396,
+      "loo_fail_rate": 0.027027027681469917
+    },
+    {
+      "name": "ext_avgc50_pct",
+      "feature_index": 359,
+      "ex_min": 8.53125,
+      "ex_max": 55.28125,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9828416244908036,
+      "carve_value_random": 0.8767897513187641,
+      "loo_fail_rate": 0.04444444552063942
+    }
+  ]
+}

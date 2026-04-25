@@ -1,0 +1,158 @@
+OUT: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_weekly_stage_b
+Loading OHLCV: C:/Users/Dan/Documents/ScanPerfect/swing-screener\local_runner\cache\universe_ohlcv_daily.pkl
+Universe: 11842 tickers  (1.3s)
+
+======================================================================
+=== HTF
+======================================================================
+n_ex=32  W_N=48  W_M1=15  W_M2=36  W_M5=12
+  weekly scan 2000/11842  (11s)  cand=2,096,166  wF1=34,037  wLoc=653,132  wBoth=28,825
+  weekly scan 4000/11842  (24s)  cand=4,341,920  wF1=67,308  wLoc=1,418,196  wBoth=57,463
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 6000/11842  (36s)  cand=6,532,617  wF1=99,298  wLoc=2,166,546  wBoth=84,883
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 8000/11842  (48s)  cand=8,609,805  wF1=132,011  wLoc=2,805,230  wBoth=112,403
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 10000/11842  (60s)  cand=10,797,867  wF1=163,485  wLoc=3,521,916  wBoth=139,224
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+Weekly scan done: 71.8s  total_cand=12,760,222
+Weekly clusters  F1=44,487 (ex 32/32, non-ex 44,455)
+                 Loc=368,809 (ex 32/32, non-ex 368,777)
+                 Both=41,748 (ex 32/32, non-ex 41,716)
+Setup elapsed: 114.4s
+
+======================================================================
+=== BF
+======================================================================
+n_ex=45  W_N=44  W_M1=17  W_M2=27  W_M5=18
+  weekly scan 2000/11842  (12s)  cand=2,096,166  wF1=38,903  wLoc=351,106  wBoth=10,339
+  weekly scan 4000/11842  (25s)  cand=4,341,920  wF1=73,997  wLoc=768,803  wBoth=20,116
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 6000/11842  (37s)  cand=6,532,617  wF1=108,219  wLoc=1,169,270  wBoth=28,926
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 8000/11842  (49s)  cand=8,609,805  wF1=145,056  wLoc=1,521,422  wBoth=38,817
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 10000/11842  (61s)  cand=10,797,867  wF1=179,510  wLoc=1,910,322  wBoth=47,459
+Weekly scan done: 72.8s  total_cand=12,760,222
+Weekly clusters  F1=30,178 (ex 45/45, non-ex 30,133)
+                 Loc=362,291 (ex 45/45, non-ex 362,246)
+                 Both=17,873 (ex 45/45, non-ex 17,828)
+Setup elapsed: 104.9s
+
+======================================================================
+=== BASE
+======================================================================
+n_ex=42  W_N=41  W_M1=11  W_M2=14  W_M5=17
+  weekly scan 2000/11842  (11s)  cand=2,096,166  wF1=515,722  wLoc=722,714  wBoth=161,706
+  weekly scan 4000/11842  (23s)  cand=4,341,920  wF1=1,177,024  wLoc=1,540,428  wBoth=412,855
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 6000/11842  (36s)  cand=6,532,617  wF1=1,881,911  wLoc=2,307,076  wBoth=658,480
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 8000/11842  (47s)  cand=8,609,805  wF1=2,367,065  wLoc=3,035,936  wBoth=815,602
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 10000/11842  (59s)  cand=10,797,867  wF1=2,991,910  wLoc=3,802,348  wBoth=1,034,676
+Weekly scan done: 69.8s  total_cand=12,760,222
+Weekly clusters  F1=242,465 (ex 42/42, non-ex 242,423)
+                 Loc=601,909 (ex 42/42, non-ex 601,867)
+                 Both=281,893 (ex 42/42, non-ex 281,851)
+Setup elapsed: 121.4s
+
+======================================================================
+=== DTSS
+======================================================================
+n_ex=73  W_N=16  W_M1=11  W_M2=33  W_M5=9
+  weekly scan 2000/11842  (9s)  cand=2,096,166  wF1=426,060  wLoc=706,455  wBoth=252,106
+  weekly scan 4000/11842  (18s)  cand=4,341,920  wF1=974,835  wLoc=1,521,012  wBoth=587,445
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 6000/11842  (27s)  cand=6,532,617  wF1=1,519,313  wLoc=2,290,764  wBoth=910,497
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 8000/11842  (35s)  cand=8,609,805  wF1=1,929,963  wLoc=2,993,584  wBoth=1,154,138
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 10000/11842  (44s)  cand=10,797,867  wF1=2,432,926  wLoc=3,749,468  wBoth=1,454,249
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+Weekly scan done: 52.1s  total_cand=12,760,222
+Weekly clusters  F1=440,349 (ex 73/73, non-ex 440,276)
+                 Loc=289,551 (ex 73/73, non-ex 289,478)
+                 Both=304,079 (ex 73/73, non-ex 304,006)
+Setup elapsed: 101.3s
+
+======================================================================
+=== 3-4DB
+======================================================================
+n_ex=26  W_N=14  W_M1=17  W_M2=32  W_M5=10
+  weekly scan 2000/11842  (8s)  cand=2,096,166  wF1=129,608  wLoc=428,290  wBoth=58,656
+  weekly scan 4000/11842  (17s)  cand=4,341,920  wF1=268,815  wLoc=926,312  wBoth=121,234
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 6000/11842  (25s)  cand=6,532,617  wF1=401,024  wLoc=1,402,549  wBoth=180,219
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 8000/11842  (34s)  cand=8,609,805  wF1=525,379  wLoc=1,833,268  wBoth=236,478
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  weekly scan 10000/11842  (42s)  cand=10,797,867  wF1=649,926  wLoc=2,301,549  wBoth=292,620
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+Weekly scan done: 49.4s  total_cand=12,760,222
+Weekly clusters  F1=131,827 (ex 26/26, non-ex 131,801)
+                 Loc=360,625 (ex 26/26, non-ex 360,599)
+                 Both=91,404 (ex 26/26, non-ex 91,378)
+Setup elapsed: 90.1s
+
+==============================================================================================================
+=== MASTER - weekly Stage B summary
+==============================================================================================================
+setup   n_ex  W_N      wF1_cl    wLoc_cl   wBoth_cl       wEX   dF1L_cl       dEX     DW_cl     DW_EX
+htf     32    48       44,487    368,809     41,74832/32            120632/32              8332/32      
+bf      45    44       30,178    362,291     17,87345/45            333545/45             44945/45      
+base    42    41      242,465    601,909    281,89342/42           4648242/42            837042/42      
+dtss    73    16      440,349    289,551    304,07973/73            921973/73            125573/73      
+3-4db   26    14      131,827    360,625     91,40426/26             55126/26              5026/26      
+
+Wrote outputs to C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_weekly_stage_b

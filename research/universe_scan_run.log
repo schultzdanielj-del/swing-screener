@@ -1,0 +1,94 @@
+OUT: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\universe_scan
+Loading OHLCV: C:/Users/Dan/Documents/ScanPerfect/swing-screener\local_runner\cache\universe_ohlcv_daily.pkl
+OHLCV tickers: 11842
+Opening expression cache...
+Expr cache: 16039 features x 11503 tickers
+ITERATION MODE: 500 random tickers (seed=42)
+
+=== HTF ===
+  envelope: N_bars=39, n_relevant=7262, NaN bands (under-coverage): 56/283,218
+  scan tickers: 500 sample + 30 example tickers = 530 total
+    50/530 tickers, 3 hits so far, 6.5s
+    100/530 tickers, 6 hits so far, 13.2s
+    150/530 tickers, 10 hits so far, 21.0s
+    200/530 tickers, 11 hits so far, 27.1s
+    250/530 tickers, 15 hits so far, 34.4s
+    300/530 tickers, 17 hits so far, 40.6s
+    350/530 tickers, 20 hits so far, 47.1s
+    400/530 tickers, 22 hits so far, 53.3s
+    450/530 tickers, 27 hits so far, 61.4s
+    500/530 tickers, 29 hits so far, 68.1s
+  scan: 72.1s, 30 hits / 590,217 candidate bars (0.0051%)
+  SANITY FAIL: 2/32 examples missing
+    missing: CRCL 2025-06-13
+    missing: XPEV 2020-11-12
+
+=== BF ===
+  envelope: N_bars=49, n_relevant=8013, NaN bands (under-coverage): 217/392,637
+  scan tickers: 500 sample + 40 example tickers = 540 total
+    50/540 tickers, 7 hits so far, 9.6s
+    100/540 tickers, 11 hits so far, 16.9s
+    150/540 tickers, 12 hits so far, 23.1s
+    200/540 tickers, 15 hits so far, 30.8s
+    250/540 tickers, 15 hits so far, 35.6s
+    300/540 tickers, 21 hits so far, 43.3s
+    350/540 tickers, 28 hits so far, 52.4s
+    400/540 tickers, 29 hits so far, 58.7s
+    450/540 tickers, 36 hits so far, 69.2s
+    500/540 tickers, 40 hits so far, 77.6s
+  scan: 84.2s, 44 hits / 599,814 candidate bars (0.0073%)
+  SANITY FAIL: 1/45 examples missing
+    missing: JD 2020-05-29
+
+=== BASE ===
+  envelope: N_bars=32, n_relevant=8335, NaN bands (under-coverage): 248/266,720
+  scan tickers: 500 sample + 38 example tickers = 538 total
+    50/538 tickers, 7 hits so far, 8.2s
+    100/538 tickers, 11 hits so far, 15.3s
+    150/538 tickers, 11 hits so far, 20.8s
+    200/538 tickers, 13 hits so far, 27.2s
+    250/538 tickers, 16 hits so far, 33.8s
+    300/538 tickers, 19 hits so far, 40.2s
+    350/538 tickers, 27 hits so far, 48.6s
+    400/538 tickers, 28 hits so far, 54.7s
+    450/538 tickers, 34 hits so far, 63.5s
+    500/538 tickers, 40 hits so far, 71.2s
+  scan: 76.5s, 42 hits / 606,566 candidate bars (0.0069%)
+  SANITY OK: all 42 examples appear in candidate CSV
+
+=== DTSS ===
+  envelope: N_bars=86, n_relevant=8675, NaN bands (under-coverage): 1,556/746,050
+  scan tickers: 500 sample + 69 example tickers = 569 total
+    50/569 tickers, 6 hits so far, 13.6s
+    100/569 tickers, 12 hits so far, 26.9s
+    150/569 tickers, 18 hits so far, 39.4s
+    200/569 tickers, 27 hits so far, 55.5s
+    250/569 tickers, 33 hits so far, 68.9s
+    300/569 tickers, 36 hits so far, 78.1s
+    350/569 tickers, 45 hits so far, 96.1s
+    400/569 tickers, 50 hits so far, 107.9s
+    450/569 tickers, 56 hits so far, 121.4s
+    500/569 tickers, 61 hits so far, 133.4s
+    550/569 tickers, 68 hits so far, 148.6s
+  scan: 157.4s, 73 hits / 623,268 candidate bars (0.0117%)
+  SANITY OK: all 73 examples appear in candidate CSV
+
+=== 3-4DB ===
+  envelope: N_bars=64, n_relevant=8836, NaN bands (under-coverage): 817/565,504
+  scan tickers: 500 sample + 25 example tickers = 525 total
+    50/525 tickers, 3 hits so far, 8.0s
+    100/525 tickers, 5 hits so far, 15.0s
+    150/525 tickers, 7 hits so far, 22.5s
+    200/525 tickers, 8 hits so far, 28.5s
+    250/525 tickers, 12 hits so far, 36.6s
+    300/525 tickers, 14 hits so far, 43.3s
+    350/525 tickers, 18 hits so far, 51.7s
+    400/525 tickers, 19 hits so far, 58.4s
+    450/525 tickers, 22 hits so far, 67.2s
+    500/525 tickers, 24 hits so far, 74.0s
+  scan: 78.1s, 25 hits / 566,777 candidate bars (0.0044%)
+  SANITY FAIL: 2/27 examples missing
+    missing: DPST 2026-12-18
+    missing: FIGR 2026-01-29
+
+Wrote summary to C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\universe_scan/summary.txt

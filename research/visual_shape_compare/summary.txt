@@ -1,0 +1,17 @@
+{
+  "setup": "htf",
+  "N_bars": 39,
+  "n_examples_valid": 31,
+  "sample_size_tickers": 500,
+  "total_candidates_scanned": 730570,
+  "F1_survivors": 185,
+  "F2_survivors": 462533,
+  "F3_survivors": 729584,
+  "F1_carve_through_rate": 0.000253226932395253,
+  "F2_carve_through_rate": 0.6331125011976949,
+  "F3_carve_through_rate": 0.9986503688900448,
+  "F3_threshold": 7.833376673283751,
+  "ex_pass_F1": 31,
+  "ex_pass_F2": 31,
+  "ex_pass_F3": 31
+}

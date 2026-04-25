@@ -1,0 +1,61 @@
+Loading OHLCV...
+Universe: 11,842 tickers
+Sampling 10,000 market bars...
+  got 10,000 market vectors (103.9s)
+
+=== HTF
+  31 example feature matrices  (shape (31, 12, 40))
+  reject rate per-cell:  min=0.245  median=0.810  max=0.890
+  top-5 meat cells:
+      EMA20  E-9   reject=0.890
+      EMA20  E-10  reject=0.888
+      EMA20  E-8   reject=0.884
+      SMA20  E-8   reject=0.882
+      EMA20  E-7   reject=0.881
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_ma_heatmap\htf_heatmap.png
+
+=== BF
+  45 example feature matrices  (shape (45, 12, 40))
+  reject rate per-cell:  min=0.173  median=0.888  max=0.955
+  top-5 meat cells:
+      EMA50  E-19  reject=0.955
+      EMA50  E-18  reject=0.955
+      EMA50  E-20  reject=0.954
+      EMA50  E-21  reject=0.953
+      EMA50  E-17  reject=0.953
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_ma_heatmap\bf_heatmap.png
+
+=== BASE
+  42 example feature matrices  (shape (42, 12, 40))
+  reject rate per-cell:  min=0.146  median=0.558  max=0.756
+  top-5 meat cells:
+     EMA100  E-39  reject=0.756
+     EMA100  E-1   reject=0.756
+     EMA100  E-0   reject=0.756
+     EMA100  E-38  reject=0.755
+     EMA100  E-37  reject=0.755
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_ma_heatmap\base_heatmap.png
+
+=== DTSS
+  73 example feature matrices  (shape (73, 12, 40))
+  reject rate per-cell:  min=0.071  median=0.595  max=0.765
+  top-5 meat cells:
+     EMA200  E-1   reject=0.765
+     EMA200  E-0   reject=0.765
+     EMA200  E-2   reject=0.765
+     EMA200  E-3   reject=0.764
+     EMA200  E-4   reject=0.764
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_ma_heatmap\dtss_heatmap.png
+
+=== 3-4DB
+  26 example feature matrices  (shape (26, 12, 40))
+  reject rate per-cell:  min=0.035  median=0.410  max=0.903
+  top-5 meat cells:
+     EMA200  E-16  reject=0.903
+     EMA200  E-20  reject=0.903
+     EMA200  E-15  reject=0.903
+     EMA200  E-19  reject=0.903
+     EMA200  E-14  reject=0.903
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_ma_heatmap\3-4db_heatmap.png
+
+Wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_ma_heatmap

@@ -1,0 +1,287 @@
+[
+  {
+    "setup": "htf",
+    "N_bars": 39,
+    "n_ex_db": 32,
+    "n_ex_valid": 32,
+    "total_candidates": 12759844,
+    "F1_bars": 10951,
+    "F1_clusters": 10032,
+    "F1_ex_matched": 32,
+    "F1_non_example": 10000,
+    "horizons": {
+      "M1_pos": 80,
+      "M2_trend": 190,
+      "M5_vol_ratio": 71
+    },
+    "bounds": {
+      "D1": [
+        0.8114689709347996,
+        1.7183673469387755
+      ],
+      "D2": [
+        -2.754570216737103,
+        1.362128295272707
+      ],
+      "D3": [
+        3.0,
+        504.0
+      ],
+      "D4a": [
+        -2.905383587149843,
+        0.0
+      ],
+      "D4b": [
+        0.35609791618678793,
+        4.733520219870616
+      ],
+      "D5": [
+        0.4616498997868816,
+        2.12023163632478
+      ]
+    },
+    "Location_sanity_pass": 32,
+    "Location_joint_bars": 1354836,
+    "Location_clusters": 662317,
+    "Location_ex_matched": 32,
+    "Location_non_example": 662285,
+    "Location_per_desc_keep": {
+      "D1": 4216114,
+      "D2": 12593353,
+      "D3": 5137212,
+      "D4a": 11743533,
+      "D4b": 8460435,
+      "D5": 11705442
+    },
+    "Intersection_clusters": 1206,
+    "Intersection_ex_matched": 32
+  },
+  {
+    "setup": "bf",
+    "N_bars": 49,
+    "n_ex_db": 45,
+    "n_ex_valid": 45,
+    "total_candidates": 12759844,
+    "F1_bars": 16530,
+    "F1_clusters": 14893,
+    "F1_ex_matched": 45,
+    "F1_non_example": 14848,
+    "horizons": {
+      "M1_pos": 37,
+      "M2_trend": 198,
+      "M5_vol_ratio": 91
+    },
+    "bounds": {
+      "D1": [
+        0.753894080996885,
+        1.506542845082313
+      ],
+      "D2": [
+        -2.855053613186158,
+        3.0233722240415313
+      ],
+      "D3": [
+        5.0,
+        504.0
+      ],
+      "D4a": [
+        -2.5493946033040085,
+        0.0
+      ],
+      "D4b": [
+        0.637820116603349,
+        11.330603860678824
+      ],
+      "D5": [
+        0.2877858310115826,
+        1.4396347436411798
+      ]
+    },
+    "Location_sanity_pass": 45,
+    "Location_joint_bars": 995870,
+    "Location_clusters": 496137,
+    "Location_ex_matched": 45,
+    "Location_non_example": 496092,
+    "Location_per_desc_keep": {
+      "D1": 4652741,
+      "D2": 12687039,
+      "D3": 3814274,
+      "D4a": 11536262,
+      "D4b": 6349471,
+      "D5": 11391094
+    },
+    "Intersection_clusters": 3335,
+    "Intersection_ex_matched": 45
+  },
+  {
+    "setup": "base",
+    "N_bars": 32,
+    "n_ex_db": 42,
+    "n_ex_valid": 42,
+    "total_candidates": 12759844,
+    "F1_bars": 131475,
+    "F1_clusters": 120830,
+    "F1_ex_matched": 42,
+    "F1_non_example": 120788,
+    "horizons": {
+      "M1_pos": 36,
+      "M2_trend": 215,
+      "M5_vol_ratio": 11
+    },
+    "bounds": {
+      "D1": [
+        0.7189695550351289,
+        1.621004566210046
+      ],
+      "D2": [
+        -2.9190023377864316,
+        2.9413608697718643
+      ],
+      "D3": [
+        4.0,
+        504.0
+      ],
+      "D4a": [
+        -6.391064535763748,
+        0.0
+      ],
+      "D4b": [
+        0.4482028895637166,
+        4.26770693714943
+      ],
+      "D5": [
+        0.36085957215694187,
+        2.523144768308677
+      ]
+    },
+    "Location_sanity_pass": 42,
+    "Location_joint_bars": 1394099,
+    "Location_clusters": 707180,
+    "Location_ex_matched": 42,
+    "Location_non_example": 707138,
+    "Location_per_desc_keep": {
+      "D1": 4997518,
+      "D2": 12677348,
+      "D3": 4326833,
+      "D4a": 12553312,
+      "D4b": 7695033,
+      "D5": 11480964
+    },
+    "Intersection_clusters": 46482,
+    "Intersection_ex_matched": 42
+  },
+  {
+    "setup": "dtss",
+    "N_bars": 86,
+    "n_ex_db": 73,
+    "n_ex_valid": 73,
+    "total_candidates": 12759844,
+    "F1_bars": 1002516,
+    "F1_clusters": 294905,
+    "F1_ex_matched": 73,
+    "F1_non_example": 294832,
+    "horizons": {
+      "M1_pos": 34,
+      "M2_trend": 42,
+      "M5_vol_ratio": 73
+    },
+    "bounds": {
+      "D1": [
+        0.5782442748091607,
+        1.3814713896457764
+      ],
+      "D2": [
+        -0.6241543090729939,
+        1.5406412540351913
+      ],
+      "D3": [
+        1.0,
+        504.0
+      ],
+      "D4a": [
+        -10.430596889008962,
+        0.0
+      ],
+      "D4b": [
+        0.45590333617598144,
+        11.396391648714276
+      ],
+      "D5": [
+        0.031100670620954788,
+        1.4980347160865284
+      ]
+    },
+    "Location_sanity_pass": 73,
+    "Location_joint_bars": 3672366,
+    "Location_clusters": 378572,
+    "Location_ex_matched": 73,
+    "Location_non_example": 378499,
+    "Location_per_desc_keep": {
+      "D1": 6213761,
+      "D2": 12484155,
+      "D3": 12762984,
+      "D4a": 12715419,
+      "D4b": 7747485,
+      "D5": 11712858
+    },
+    "Intersection_clusters": 9219,
+    "Intersection_ex_matched": 73
+  },
+  {
+    "setup": "3-4db",
+    "N_bars": 64,
+    "n_ex_db": 26,
+    "n_ex_valid": 26,
+    "total_candidates": 12759844,
+    "F1_bars": 50842,
+    "F1_clusters": 20839,
+    "F1_ex_matched": 26,
+    "F1_non_example": 20813,
+    "horizons": {
+      "M1_pos": 93,
+      "M2_trend": 160,
+      "M5_vol_ratio": 12
+    },
+    "bounds": {
+      "D1": [
+        0.5364181662382176,
+        0.9653506929861403
+      ],
+      "D2": [
+        -1.2290464418780518,
+        3.2860424684120413
+      ],
+      "D3": [
+        1.0,
+        8.0
+      ],
+      "D4a": [
+        -2.0903614317938577,
+        -0.028715102671994033
+      ],
+      "D4b": [
+        0.5011775965505304,
+        5.846133036906171
+      ],
+      "D5": [
+        0.5746946541277612,
+        2.9812909995747776
+      ]
+    },
+    "Location_sanity_pass": 26,
+    "Location_joint_bars": 1542957,
+    "Location_clusters": 434415,
+    "Location_ex_matched": 26,
+    "Location_non_example": 434389,
+    "Location_per_desc_keep": {
+      "D1": 5261016,
+      "D2": 12413191,
+      "D3": 9948300,
+      "D4a": 8618193,
+      "D4b": 7336120,
+      "D5": 9246399
+    },
+    "Intersection_clusters": 551,
+    "Intersection_ex_matched": 26
+  }
+]

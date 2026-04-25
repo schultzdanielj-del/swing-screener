@@ -1,0 +1,29 @@
+{
+  "setups": {
+    "htf": {
+      "n_clusters_scalars": 79,
+      "n_event_rows": 4181,
+      "n_unresolved": 0,
+      "unresolved_sample": [],
+      "scalars_path": "htf_scalars.pkl",
+      "events_path": "htf_events.pkl"
+    },
+    "bf": {
+      "n_clusters_scalars": 87,
+      "n_event_rows": 4066,
+      "n_unresolved": 0,
+      "unresolved_sample": [],
+      "scalars_path": "bf_scalars.pkl",
+      "events_path": "bf_events.pkl"
+    },
+    "base": {
+      "n_clusters_scalars": 96,
+      "n_event_rows": 4023,
+      "n_unresolved": 0,
+      "unresolved_sample": [],
+      "scalars_path": "base_scalars.pkl",
+      "events_path": "base_events.pkl"
+    }
+  },
+  "timestamp": "2026-04-21T16:16:49"
+}

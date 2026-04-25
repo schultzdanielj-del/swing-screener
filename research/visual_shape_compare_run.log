@@ -1,0 +1,38 @@
+OUT: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\visual_shape_compare
+Loading OHLCV: C:/Users/Dan/Documents/ScanPerfect/swing-screener\local_runner\cache\universe_ohlcv_daily.pkl
+Universe tickers: 11842  (loaded in 1.4s)
+HTF examples in DB: 32
+Valid example paths: 31 / 32  (shape (31, 39))
+Building filters...
+  F1: 38 hulls built
+  F2: band_lo range [-0.3502, -0.0240]; band_hi range [0.0444, 0.6562]
+  F3: threshold (max pairwise Euclidean) = 7.8334
+Sanity: 100% EX pass check...
+  F1 example pass: 31/31
+  F2 example pass: 31/31
+  F3 example pass: 31/31
+Full-universe scan: 11842 tickers, date cutoff >= 2020-01-02
+Scanning...
+  1000/11842 tickers (4.8s)  candidates: 1,054,014  F1 bars: 242  F2 bars: 524,496  F3 bars: 1,051,642
+  2000/11842 tickers (9.4s)  candidates: 2,054,564  F1 bars: 468  F2 bars: 1,093,153  F3 bars: 2,048,944
+  3000/11842 tickers (14.2s)  candidates: 3,128,242  F1 bars: 717  F2 bars: 1,694,633  F3 bars: 3,120,505
+  4000/11842 tickers (19.3s)  candidates: 4,263,600  F1 bars: 924  F2 bars: 2,466,436  F3 bars: 4,253,573
+  5000/11842 tickers (24.2s)  candidates: 5,329,184  F1 bars: 1,143  F2 bars: 3,112,562  F3 bars: 5,316,532
+  6000/11842 tickers (29.1s)  candidates: 6,416,486  F1 bars: 1,297  F2 bars: 3,849,299  F3 bars: 6,402,119
+  7000/11842 tickers (33.7s)  candidates: 7,443,678  F1 bars: 1,514  F2 bars: 4,379,670  F3 bars: 7,426,078
+  8000/11842 tickers (38.4s)  candidates: 8,452,137  F1 bars: 1,730  F2 bars: 4,905,891  F3 bars: 8,431,958
+  9000/11842 tickers (43.2s)  candidates: 9,519,207  F1 bars: 1,912  F2 bars: 5,554,046  F3 bars: 9,496,962
+  10000/11842 tickers (48.1s)  candidates: 10,601,674  F1 bars: 2,122  F2 bars: 6,176,373  F3 bars: 10,575,476
+  11000/11842 tickers (53.0s)  candidates: 11,651,098  F1 bars: 2,361  F2 bars: 6,767,019  F3 bars: 11,622,705
+
+Scan complete in 57.0s
+Total candidates scanned (post-2020-01-02): 12,529,121
+
+=== RESULTS — HTF, N=39, 31 examples, full universe, date >= 2020-01-02 ===
+F1 bar-count survivors:       2,534   (0.0202% bar-carve)
+F1 cluster-count (§5.2):      2,405   (example-matched: 31, non-example: 2374)
+F2 bar-count survivors:   7,282,834   (58.1273% bar-carve)
+F3 bar-count survivors:   12,497,901   (99.7508% bar-carve)
+  wrote 2,405 F1 clusters -> F1_clusters.csv
+
+Wrote summary to C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\visual_shape_compare\summary.json

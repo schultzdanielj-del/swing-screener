@@ -1,0 +1,67 @@
+OUT: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\n_derivation_cache
+Loading OHLCV (for preflight count): C:/Users/Dan/Documents/ScanPerfect/swing-screener\local_runner\cache\universe_ohlcv_daily.pkl
+OHLCV tickers: 11842
+Opening expression cache...
+Expr cache: 16039 features × 11503 tickers
+
+=== HTF ===
+  DB examples: 32
+  accumulating per-(offset, feature) stats...
+  loaded 30 tickers, valid examples: 30 (3.0s)
+  computing range curves with coverage gate >= 10...
+  covered cells: 1,728,939 / 1,924,680 (89.8%)
+  relevance filter (Spearman rho > 0)...
+  relevant features: 7262 / 16039 (2.2s)
+  kneedle offset idx: 38  ->  N_bars = 39
+  wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\n_derivation_cache\htf_envelope.npz and C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\n_derivation_cache\htf_summary.json
+  setup elapsed: 5.3s
+
+=== BF ===
+  DB examples: 45
+  accumulating per-(offset, feature) stats...
+  loaded 40 tickers, valid examples: 44 (4.3s)
+  computing range curves with coverage gate >= 10...
+  covered cells: 1,773,555 / 1,924,680 (92.1%)
+  relevance filter (Spearman rho > 0)...
+  relevant features: 8013 / 16039 (2.2s)
+  kneedle offset idx: 48  ->  N_bars = 49
+  wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\n_derivation_cache\bf_envelope.npz and C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\n_derivation_cache\bf_summary.json
+  setup elapsed: 6.6s
+
+=== BASE ===
+  DB examples: 42
+  accumulating per-(offset, feature) stats...
+  loaded 39 tickers, valid examples: 42 (4.1s)
+  computing range curves with coverage gate >= 10...
+  covered cells: 1,777,501 / 1,924,680 (92.4%)
+  relevance filter (Spearman rho > 0)...
+  relevant features: 8335 / 16039 (2.2s)
+  kneedle offset idx: 31  ->  N_bars = 32
+  wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\n_derivation_cache\base_envelope.npz and C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\n_derivation_cache\base_summary.json
+  setup elapsed: 6.4s
+
+=== DTSS ===
+  DB examples: 73
+  accumulating per-(offset, feature) stats...
+  loaded 72 tickers, valid examples: 73 (7.9s)
+  computing range curves with coverage gate >= 10...
+  covered cells: 1,772,331 / 1,924,680 (92.1%)
+  relevance filter (Spearman rho > 0)...
+  relevant features: 8675 / 16039 (2.2s)
+  kneedle offset idx: 85  ->  N_bars = 86
+  wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\n_derivation_cache\dtss_envelope.npz and C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\n_derivation_cache\dtss_summary.json
+  setup elapsed: 10.1s
+
+=== 3-4DB ===
+  DB examples: 27
+  accumulating per-(offset, feature) stats...
+  loaded 26 tickers, valid examples: 25 (2.4s)
+  computing range curves with coverage gate >= 10...
+  covered cells: 1,770,358 / 1,924,680 (92.0%)
+  relevance filter (Spearman rho > 0)...
+  relevant features: 8836 / 16039 (2.4s)
+  kneedle offset idx: 63  ->  N_bars = 64
+  wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\n_derivation_cache\3-4db_envelope.npz and C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\n_derivation_cache\3-4db_summary.json
+  setup elapsed: 4.9s
+
+Wrote rollup to C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\n_derivation_cache\summary.txt

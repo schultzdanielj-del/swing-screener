@@ -1,0 +1,105 @@
+================================================================================
+UNIVERSE SCAN - full-cache envelope + LOO deviation budget
+================================================================================
+ITERATION MODE: 500 random tickers (seed=42)
+Tickers scanned: 500
+
+--------------------------------------------------------------------------------
+HTF  N_bars=39  n_relevant=7262  budget=39/39 (100.0%)
+  candidate bars scanned: 590,042
+  total hits: 590,042  (examples: 31, wild: 590011)  carve 100.0000%
+  unique tickers hit: 529
+  scan time: 250.3s
+  sanity: OK (31/31)
+  hit n_outside_bars: p25=39, p50=39, p75=39, max=39
+  top-10 tickers by hit count:
+    SCPX       1538 hits  (first: 2020-02-28, last: 2026-04-10)
+    ECC        1537 hits  (first: 2020-02-28, last: 2026-04-10)
+    USIO       1537 hits  (first: 2020-02-28, last: 2026-04-10)
+    UTI        1537 hits  (first: 2020-02-28, last: 2026-04-10)
+    SBRA       1537 hits  (first: 2020-02-28, last: 2026-04-10)
+    HAIL       1537 hits  (first: 2020-02-28, last: 2026-04-10)
+    DLN        1537 hits  (first: 2020-02-28, last: 2026-04-10)
+    GBF        1537 hits  (first: 2020-02-28, last: 2026-04-10)
+    HD         1537 hits  (first: 2020-02-28, last: 2026-04-10)
+    EQX        1537 hits  (first: 2020-02-28, last: 2026-04-10)
+
+--------------------------------------------------------------------------------
+BF  N_bars=49  n_relevant=8013  budget=49/49 (100.0%)
+  candidate bars scanned: 599,814
+  total hits: 599,814  (examples: 45, wild: 599769)  carve 100.0000%
+  unique tickers hit: 540
+  scan time: 329.9s
+  sanity: OK (45/45)
+  hit n_outside_bars: p25=49, p50=49, p75=49, max=49
+  top-10 tickers by hit count:
+    TSE        1528 hits  (first: 2020-03-13, last: 2026-04-10)
+    SCPX       1528 hits  (first: 2020-03-13, last: 2026-04-10)
+    IZEA       1527 hits  (first: 2020-03-13, last: 2026-04-10)
+    ECC        1527 hits  (first: 2020-03-13, last: 2026-04-10)
+    USIO       1527 hits  (first: 2020-03-13, last: 2026-04-10)
+    UTI        1527 hits  (first: 2020-03-13, last: 2026-04-10)
+    SBRA       1527 hits  (first: 2020-03-13, last: 2026-04-10)
+    HAIL       1527 hits  (first: 2020-03-13, last: 2026-04-10)
+    DLN        1527 hits  (first: 2020-03-13, last: 2026-04-10)
+    GBF        1527 hits  (first: 2020-03-13, last: 2026-04-10)
+
+--------------------------------------------------------------------------------
+BASE  N_bars=32  n_relevant=8335  budget=32/32 (100.0%)
+  candidate bars scanned: 606,566
+  total hits: 606,566  (examples: 42, wild: 606524)  carve 100.0000%
+  unique tickers hit: 538
+  scan time: 238.4s
+  sanity: OK (42/42)
+  hit n_outside_bars: p25=32, p50=32, p75=32, max=32
+  top-10 tickers by hit count:
+    SCPX       1545 hits  (first: 2020-02-19, last: 2026-04-10)
+    ECC        1544 hits  (first: 2020-02-19, last: 2026-04-10)
+    USIO       1544 hits  (first: 2020-02-19, last: 2026-04-10)
+    UTI        1544 hits  (first: 2020-02-19, last: 2026-04-10)
+    SBRA       1544 hits  (first: 2020-02-19, last: 2026-04-10)
+    HAIL       1544 hits  (first: 2020-02-19, last: 2026-04-10)
+    METC       1544 hits  (first: 2020-02-19, last: 2026-04-10)
+    DLN        1544 hits  (first: 2020-02-19, last: 2026-04-10)
+    GBF        1544 hits  (first: 2020-02-19, last: 2026-04-10)
+    HD         1544 hits  (first: 2020-02-19, last: 2026-04-10)
+
+--------------------------------------------------------------------------------
+DTSS  N_bars=86  n_relevant=8675  budget=86/86 (100.0%)
+  candidate bars scanned: 623,268
+  total hits: 623,268  (examples: 73, wild: 623195)  carve 100.0000%
+  unique tickers hit: 554
+  scan time: 591.8s
+  sanity: OK (73/73)
+  hit n_outside_bars: p25=86, p50=86, p75=86, max=86
+  top-10 tickers by hit count:
+    SCPX       1491 hits  (first: 2020-05-06, last: 2026-04-10)
+    ECC        1490 hits  (first: 2020-05-06, last: 2026-04-10)
+    TRNS       1490 hits  (first: 2020-05-06, last: 2026-04-10)
+    USIO       1490 hits  (first: 2020-05-06, last: 2026-04-10)
+    GRPN       1490 hits  (first: 2020-05-06, last: 2026-04-10)
+    UTI        1490 hits  (first: 2020-05-06, last: 2026-04-10)
+    SBRA       1490 hits  (first: 2020-05-06, last: 2026-04-10)
+    AAOI       1490 hits  (first: 2020-05-06, last: 2026-04-10)
+    MET        1490 hits  (first: 2020-05-06, last: 2026-04-10)
+    HAIL       1490 hits  (first: 2020-05-06, last: 2026-04-10)
+
+--------------------------------------------------------------------------------
+3-4DB  N_bars=64  n_relevant=8836  budget=64/64 (100.0%)
+  candidate bars scanned: 565,265
+  total hits: 565,265  (examples: 26, wild: 565239)  carve 100.0000%
+  unique tickers hit: 520
+  scan time: 410.0s
+  sanity: OK (26/26)
+  hit n_outside_bars: p25=64, p50=64, p75=64, max=64
+  top-10 tickers by hit count:
+    SCPX       1513 hits  (first: 2020-04-03, last: 2026-04-10)
+    ECC        1512 hits  (first: 2020-04-03, last: 2026-04-10)
+    USIO       1512 hits  (first: 2020-04-03, last: 2026-04-10)
+    UTI        1512 hits  (first: 2020-04-03, last: 2026-04-10)
+    SBRA       1512 hits  (first: 2020-04-03, last: 2026-04-10)
+    HAIL       1512 hits  (first: 2020-04-03, last: 2026-04-10)
+    DLN        1512 hits  (first: 2020-04-03, last: 2026-04-10)
+    GBF        1512 hits  (first: 2020-04-03, last: 2026-04-10)
+    HD         1512 hits  (first: 2020-04-03, last: 2026-04-10)
+    CIGI       1512 hits  (first: 2020-04-03, last: 2026-04-10)

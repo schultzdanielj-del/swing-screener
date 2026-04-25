@@ -1,0 +1,42 @@
+{
+  "pool_source": "presignal \u2229 pyramid at signal bar E-1",
+  "setups": [
+    {
+      "setup": "htf",
+      "total": 78,
+      "examples": 29,
+      "non_examples": 49,
+      "pool_path": "htf_pool.json"
+    },
+    {
+      "setup": "bf",
+      "total": 87,
+      "examples": 45,
+      "non_examples": 42,
+      "pool_path": "bf_pool.json"
+    },
+    {
+      "setup": "base",
+      "total": 95,
+      "examples": 37,
+      "non_examples": 58,
+      "pool_path": "base_pool.json"
+    },
+    {
+      "setup": "dtss",
+      "total": 172,
+      "examples": 61,
+      "non_examples": 111,
+      "pool_path": "dtss_pool.json"
+    },
+    {
+      "setup": "3-4db",
+      "total": 79,
+      "examples": 26,
+      "non_examples": 53,
+      "pool_path": "3-4db_pool.json"
+    }
+  ],
+  "alignment_ref": "C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\\research\\presignal_sma_band_scan\\pyramid_alignment.json",
+  "timestamp": "2026-04-21T08:49:43"
+}

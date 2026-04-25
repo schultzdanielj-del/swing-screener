@@ -1,0 +1,21 @@
+{
+  "setup": "htf",
+  "N_bars": 39,
+  "date_cutoff": "2020-01-02",
+  "n_examples_valid": 31,
+  "n_tickers_scanned": 11842,
+  "total_candidates_scanned": 12529121,
+  "F1_bar_count": 2534,
+  "F1_cluster_count": 2405,
+  "F1_cluster_example_matched": 31,
+  "F1_cluster_non_example": 2374,
+  "F2_bar_count": 7282834,
+  "F3_bar_count": 12497901,
+  "F1_bar_carve_rate": 0.00020224882495747308,
+  "F2_bar_carve_rate": 0.5812725409867141,
+  "F3_bar_carve_rate": 0.9975082050847781,
+  "F3_threshold": 7.833376673283751,
+  "ex_pass_F1": 31,
+  "ex_pass_F2": 31,
+  "ex_pass_F3": 31
+}

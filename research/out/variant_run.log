@@ -1,0 +1,34 @@
+
+=== dtss: raw_signal_clusters_dtss.json ===
+  direction=short, FW=3, exit={'expression': 'w_ext_slope_xavgc50_off2', 'threshold': 0.35498, 'direction': '>='}
+  clusters=1122, current WR=798/1122
+  Preloading ticker data...
+    loaded 500/766 tickers (62s)
+  ticker_data ready: 766/766 tickers (97s)
+  V1_entry1    -> TotalWR= 46.0%  NonExWR= 42.2%  ExPass=100.0% (73)  reasons={'stop_hit': 606, 'exit_fired': 515, 'timeout': 1}
+  V2_entryFW   -> TotalWR= 44.9%  NonExWR= 41.1%  ExPass=100.0% (73)  reasons={'stop_hit': 618, 'exit_fired': 471, 'example_override(stop_hit)': 31, 'timeout': 2}
+  V3_fwMinLow  -> TotalWR= 67.9%  NonExWR= 65.7%  ExPass=100.0% (73)  reasons={'exit_fired': 759, 'stop_hit': 360, 'timeout': 3}
+  V4_fwMaxLow  -> TotalWR= 34.6%  NonExWR= 30.0%  ExPass=100.0% (73)  reasons={'stop_hit': 734, 'exit_fired': 354, 'example_override(stop_hit)': 32, 'timeout': 2}
+  V5_anyEntry  -> TotalWR= 20.1%  NonExWR= 14.5%  ExPass=100.0% (73)  reasons={'any_entry_stop': 897, 'all_entries_exit': 188, 'example_override(any_entry_stop)': 37}
+  V6_allEntry  -> TotalWR= 71.8%  NonExWR= 69.9%  ExPass=100.0% (73)  reasons={'some_entry_wins': 806, 'all_entries_stop': 316}
+  V7_adr1      -> TotalWR= 70.8%  NonExWR= 68.7%  ExPass=100.0% (73)  reasons={'exit_fired': 764, 'stop_hit': 328, 'example_override(stop_hit)': 29, 'timeout': 1}
+  V8_sigExtreme -> TotalWR= 38.1%  NonExWR= 33.8%  ExPass=100.0% (73)  reasons={'stop_hit': 695, 'exit_fired': 363, 'example_override(stop_hit)': 63, 'timeout': 1}
+  V9_clusterExtreme -> TotalWR= 45.8%  NonExWR= 42.0%  ExPass=100.0% (73)  reasons={'stop_hit': 608, 'exit_fired': 450, 'example_override(stop_hit)': 63, 'timeout': 1}
+
+=== brko: raw_signal_clusters_brko.json ===
+  direction=long, FW=3, exit={'expression': 'w_adx_slope_7_off1', 'threshold': -6.777344, 'direction': '<='}
+  clusters=5518, current WR=2699/5518
+  Preloading ticker data...
+    loaded 500/2086 tickers (139s)
+  ticker_data ready: 531/2086 tickers (1770s)
+  V1_entry1    -> TotalWR= 12.4%  NonExWR= 11.5%  ExPass=100.0% (58)  reasons={'no_data': 4141, 'stop_hit': 736, 'exit_fired': 633, 'timeout': 8}
+  V2_entryFW   -> TotalWR= 11.8%  NonExWR= 10.9%  ExPass=100.0% (58)  reasons={'no_data': 4141, 'stop_hit': 766, 'exit_fired': 600, 'timeout': 9, 'example_override(stop_hit)': 2}
+  V3_fwMinLow  -> TotalWR= 18.5%  NonExWR= 17.6%  ExPass=100.0% (58)  reasons={'no_data': 4141, 'exit_fired': 967, 'stop_hit': 399, 'timeout': 11}
+  V4_fwMaxLow  -> TotalWR=  9.8%  NonExWR=  8.8%  ExPass=100.0% (58)  reasons={'no_data': 4141, 'stop_hit': 880, 'exit_fired': 486, 'timeout': 8, 'example_override(stop_hit)': 3}
+  V5_anyEntry  -> TotalWR=  5.6%  NonExWR=  4.6%  ExPass=100.0% (58)  reasons={'no_data': 4141, 'any_entry_stop': 1111, 'all_entries_exit': 260, 'example_override(any_entry_stop)': 6}
+  V6_allEntry  -> TotalWR= 18.7%  NonExWR= 17.8%  ExPass=100.0% (58)  reasons={'no_data': 4141, 'some_entry_wins': 989, 'all_entries_stop': 388}
+  V7_adr1      -> TotalWR= 18.3%  NonExWR= 17.4%  ExPass=100.0% (58)  reasons={'no_data': 4141, 'exit_fired': 958, 'stop_hit': 409, 'timeout': 10}
+  V8_sigExtreme -> TotalWR= 12.1%  NonExWR= 11.2%  ExPass=100.0% (58)  reasons={'no_data': 4141, 'stop_hit': 753, 'exit_fired': 616, 'timeout': 7, 'example_override(stop_hit)': 1}
+  V9_clusterExtreme -> TotalWR= 18.3%  NonExWR= 17.4%  ExPass=100.0% (58)  reasons={'no_data': 4141, 'exit_fired': 958, 'stop_hit': 409, 'timeout': 10}
+
+Wrote C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\out\variant_comparison.csv

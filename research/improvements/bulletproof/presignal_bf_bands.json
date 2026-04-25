@@ -1,0 +1,116 @@
+{
+  "setup": "bf",
+  "gates": {
+    "loo_fail_threshold": 0.0,
+    "min_folds_top_bucket": 5,
+    "top_bucket": 50,
+    "perm_n_trials": 100,
+    "corr_threshold": 0.9
+  },
+  "coverage": {
+    "min_ex_measured": 10,
+    "min_random_frac": 0.5,
+    "min_ne_frac": 0.5
+  },
+  "n_ex_total": 45,
+  "n_ne_total": 400,
+  "n_random_total": 8101,
+  "n_features_surviving": 7,
+  "ex_pass": 45,
+  "ne_pass": 354,
+  "rand_pass": 1572,
+  "own_rand_ratio": 4.560677480916031,
+  "gate_funnel": {
+    "g1_covered_loo0": 4992,
+    "g2_every_fold_top_bucket": 7,
+    "g3_perm_max_beat": 5690,
+    "g1_int_g2_int_g3": 7,
+    "after_g4_decorr": 7
+  },
+  "bands": [
+    {
+      "name": "w_st_cci14_gt_100_50",
+      "feature_index": 9032,
+      "ex_min": 0.0,
+      "ex_max": 0.0,
+      "n_ex_measured": 41,
+      "random_coverage_frac": 0.7697815084557462,
+      "carve_value_random": 0.7475946119307249,
+      "perm_max_carve": 0.1248588482013228,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    },
+    {
+      "name": "w_st_cci14_gt_100_5",
+      "feature_index": 9027,
+      "ex_min": 0.0,
+      "ex_max": 0.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9934575978274287,
+      "carve_value_random": 0.7389413518886679,
+      "perm_max_carve": 0.040234911908034486,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    },
+    {
+      "name": "w_st_cci14_gt_100_10",
+      "feature_index": 9028,
+      "ex_min": 0.0,
+      "ex_max": 0.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9865448710035798,
+      "carve_value_random": 0.7371121121121121,
+      "perm_max_carve": 0.08556688058386813,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    },
+    {
+      "name": "w_st_cci14_gt_100_30",
+      "feature_index": 9031,
+      "ex_min": 0.0,
+      "ex_max": 0.0,
+      "n_ex_measured": 44,
+      "random_coverage_frac": 0.9359338353289718,
+      "carve_value_random": 0.735689791611712,
+      "perm_max_carve": 0.11749104893250233,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    },
+    {
+      "name": "w_st_cci14_gt_100_15",
+      "feature_index": 9029,
+      "ex_min": 0.0,
+      "ex_max": 0.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9776570793729169,
+      "carve_value_random": 0.7347222222222223,
+      "perm_max_carve": 0.10868461147790756,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    },
+    {
+      "name": "w_st_cci14_gt_100_20",
+      "feature_index": 9030,
+      "ex_min": 0.0,
+      "ex_max": 0.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9688927292926799,
+      "carve_value_random": 0.733214422219391,
+      "perm_max_carve": 0.14616961311811427,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    },
+    {
+      "name": "w_ct_h_gt_maxh20_1_3",
+      "feature_index": 8221,
+      "ex_min": 1.0,
+      "ex_max": 3.0,
+      "n_ex_measured": 45,
+      "random_coverage_frac": 0.9972842858906308,
+      "carve_value_random": 0.7192721871518752,
+      "perm_max_carve": 0.05538959422454568,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    }
+  ]
+}

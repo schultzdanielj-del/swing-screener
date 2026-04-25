@@ -1,0 +1,9 @@
+================================================================================
+FRONTIER BAR CHECK  per example, how many of its N bars touch
+the envelope min or max on at least one feature?
+================================================================================
+htf       N=39    n_ex_ok=31    frontier_bars: min=39   median=39   max=39    zero-frontier-examples=0
+bf        N=49    n_ex_ok=45    frontier_bars: min=49   median=49   max=49    zero-frontier-examples=0
+base      N=32    n_ex_ok=42    frontier_bars: min=32   median=32   max=32    zero-frontier-examples=0
+dtss      N=86    n_ex_ok=73    frontier_bars: min=86   median=86   max=86    zero-frontier-examples=0
+3-4db     N=64    n_ex_ok=26    frontier_bars: min=64   median=64   max=64    zero-frontier-examples=0

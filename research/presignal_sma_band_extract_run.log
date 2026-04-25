@@ -1,0 +1,117 @@
+OHLCV cache: C:/Users/Dan/Documents/ScanPerfect/swing-screener\local_runner\cache
+Universe: 11,842 tickers
+N_daily per setup: {'htf': 39, 'bf': 49, 'base': 32, 'dtss': 86, '3-4db': 64}
+W_N per setup:    {'htf': 48, 'bf': 44, 'base': 41, 'dtss': 16, '3-4db': 14}
+
+=== HTF  N_daily=39  W_N=48
+  32 examples in DB
+  kept 32 examples  (1.2s)
+  daily tensor  logratio (32, 21, 39)  sigma (32, 21, 39)
+  weekly tensor logratio (32, 15, 48)  sigma (32, 15, 48)
+  NaN rate  daily lr 3.8%  sig 6.0%  |  weekly lr 7.5%  sig 9.8%
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band\htf_trajectories.pkl
+
+=== BF  N_daily=49  W_N=44
+  45 examples in DB
+  kept 45 examples  (1.4s)
+  daily tensor  logratio (45, 21, 49)  sigma (45, 21, 49)
+  weekly tensor logratio (45, 15, 44)  sigma (45, 15, 44)
+  NaN rate  daily lr 0.2%  sig 0.9%  |  weekly lr 1.1%  sig 2.6%
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band\bf_trajectories.pkl
+
+=== BASE  N_daily=32  W_N=41
+  42 examples in DB
+  kept 42 examples  (1.3s)
+  daily tensor  logratio (42, 21, 32)  sigma (42, 21, 32)
+  weekly tensor logratio (42, 15, 41)  sigma (42, 15, 41)
+  NaN rate  daily lr 0.3%  sig 1.0%  |  weekly lr 1.5%  sig 2.9%
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band\base_trajectories.pkl
+
+=== DTSS  N_daily=86  W_N=16
+  73 examples in DB
+  kept 73 examples  (2.9s)
+  daily tensor  logratio (73, 21, 86)  sigma (73, 21, 86)
+  weekly tensor logratio (73, 15, 16)  sigma (73, 15, 16)
+  NaN rate  daily lr 0.1%  sig 0.5%  |  weekly lr 0.1%  sig 0.6%
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band\dtss_trajectories.pkl
+
+=== 3-4DB  N_daily=64  W_N=14
+  26 examples in DB
+  kept 26 examples  (0.5s)
+  daily tensor  logratio (26, 21, 64)  sigma (26, 21, 64)
+  weekly tensor logratio (26, 15, 14)  sigma (26, 15, 14)
+  NaN rate  daily lr 0.6%  sig 1.4%  |  weekly lr 0.9%  sig 2.4%
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band\3-4db_trajectories.pkl
+
+=== HTF × daily × SMA10 tightness cross-check ===
+  per-bar cross-ex SD (k=1..39, k=1 is anchor):
+    k=  1  SD=0.00000
+    k=  2  SD=0.01984
+    k=  3  SD=0.03963
+    k=  4  SD=0.06470
+    k=  5  SD=0.10169
+    k=  6  SD=0.13284
+    k=  7  SD=0.15313
+    k=  8  SD=0.16371
+    k=  9  SD=0.17309
+    k= 10  SD=0.18072
+    k= 11  SD=0.18589
+    k= 12  SD=0.19280
+    k= 13  SD=0.19543
+    k= 14  SD=0.20023
+    k= 15  SD=0.20506
+    k= 16  SD=0.21180
+    k= 17  SD=0.21818
+    k= 18  SD=0.22514
+    k= 19  SD=0.22993
+    k= 20  SD=0.23668
+    k= 21  SD=0.24103
+    k= 22  SD=0.24366
+    k= 23  SD=0.24702
+    k= 24  SD=0.24805
+    k= 25  SD=0.24774
+    k= 26  SD=0.24627
+    k= 27  SD=0.24416
+    k= 28  SD=0.24255
+    k= 29  SD=0.24117
+    k= 30  SD=0.23954
+    k= 31  SD=0.23815
+    k= 32  SD=0.23891
+    k= 33  SD=0.23977
+    k= 34  SD=0.24065
+    k= 35  SD=0.24081
+    k= 36  SD=0.24167
+    k= 37  SD=0.24316
+    k= 38  SD=0.24515
+    k= 39  SD=0.24627
+  kneedle elbow at index=9  (k=10)  -> tight window = last 10 bars from anchor
+  (viz expectation: last ~10 bars)
+
+=== Per-setup tightness + sigma distributions ===
+  htf:
+    daily  tightness  q5/25/50/75/95 = 0.0161 0.0795 0.1462 0.2191 0.2823
+    weekly tightness  q5/25/50/75/95 = 0.0634 0.2243 0.3758 0.4860 0.6520
+    daily  sigma_i    q5/25/50/75/95 = 0.0050 0.0125 0.0264 0.0671 0.1863
+    weekly sigma_i    q5/25/50/75/95 = 0.0079 0.0231 0.0498 0.1018 0.2338
+  bf:
+    daily  tightness  q5/25/50/75/95 = 0.0145 0.1086 0.1894 0.2837 0.3563
+    weekly tightness  q5/25/50/75/95 = 0.0563 0.2579 0.3702 0.4353 0.5519
+    daily  sigma_i    q5/25/50/75/95 = 0.0078 0.0227 0.0496 0.0944 0.1946
+    weekly sigma_i    q5/25/50/75/95 = 0.0156 0.0409 0.0742 0.1319 0.2993
+  base:
+    daily  tightness  q5/25/50/75/95 = 0.0042 0.0251 0.0536 0.0778 0.1211
+    weekly tightness  q5/25/50/75/95 = 0.0214 0.1716 0.3052 0.3732 0.4725
+    daily  sigma_i    q5/25/50/75/95 = 0.0039 0.0114 0.0295 0.0758 0.2115
+    weekly sigma_i    q5/25/50/75/95 = 0.0105 0.0314 0.0600 0.1084 0.3169
+  dtss:
+    daily  tightness  q5/25/50/75/95 = 0.0212 0.1006 0.1904 0.3263 0.3657
+    weekly tightness  q5/25/50/75/95 = 0.0000 0.0707 0.1491 0.2496 0.3366
+    daily  sigma_i    q5/25/50/75/95 = 0.0043 0.0123 0.0269 0.0606 0.1949
+    weekly sigma_i    q5/25/50/75/95 = 0.0082 0.0224 0.0444 0.0905 0.2424
+  3-4db:
+    daily  tightness  q5/25/50/75/95 = 0.0238 0.1466 0.2548 0.3725 0.5709
+    weekly tightness  q5/25/50/75/95 = 0.0000 0.1180 0.2314 0.3618 0.5452
+    daily  sigma_i    q5/25/50/75/95 = 0.0091 0.0257 0.0581 0.1299 0.2772
+    weekly sigma_i    q5/25/50/75/95 = 0.0170 0.0481 0.1050 0.1914 0.3572
+
+Phase 1 complete.

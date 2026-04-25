@@ -1,0 +1,54 @@
+====================================================================================================
+E4 — CLASS CASCADE: union-of-class example filters
+====================================================================================================
+Build breakout-class filter on union(HTF, BF, BASE) examples.
+Build fade-class filter on union(DTSS, 3-4DB) examples.
+Apply class filter to per-setup non-example pools; compare to per-setup filter.
+
+----------------------------------------------------------------------------------------------------
+BREAKOUT class filter  n_ex_union=111  n_ne_union=1348
+  covered features: 6096
+  top-40 -> indep: 30
+  EX union lenient pass:     111/111 (100.0%)
+  NE union lenient pass:     1061/1348 (78.7%)
+  RANDOM lenient pass:       1649/8101 (20.4%)
+  Top-10 features:
+     1. m_st_c_gt_maxc10_1_20                                rand_cv= 66.6%
+     2. m_st_c_gt_maxc10_1_15                                rand_cv= 64.8%
+     3. m_st_h_gt_maxh5_1_20                                 rand_cv= 59.5%
+     4. m_st_h_gt_maxh5_1_15                                 rand_cv= 58.6%
+     5. w_st_h_gt_maxh10_1_50                                rand_cv= 58.2%
+     6. m_aroon_up_7                                         rand_cv= 57.9%
+     7. w_st_l_gt_xavgc21_50                                 rand_cv= 57.7%
+     8. w_st_h_gt_maxh10_1_5                                 rand_cv= 57.7%
+     9. w_st_h_gt_maxh10_1_10                                rand_cv= 57.4%
+    10. w_st_h_gt_maxh10_1_30                                rand_cv= 57.2%
+
+----------------------------------------------------------------------------------------------------
+FADE class filter  n_ex_union=87  n_ne_union=1584
+  covered features: 4812
+  top-40 -> indep: 24
+  EX union lenient pass:     87/87 (100.0%)
+  NE union lenient pass:     1297/1584 (81.9%)
+  RANDOM lenient pass:       947/8101 (11.7%)
+  Top-10 features:
+     1. ct_narrow_range_50                                   rand_cv= 48.8%
+     2. ct_range_lt_half_atr_50                              rand_cv= 48.8%
+     3. w_ct_rsi14_lt_50_20                                  rand_cv= 45.9%
+     4. w_st_l_gt_avgc50_50                                  rand_cv= 45.7%
+     5. w_ct_c_gt_xavgc8_20                                  rand_cv= 45.3%
+     6. w_ct_c_lt_xavgc8_20                                  rand_cv= 44.9%
+     7. w_ct_xavgc8_falling_20                               rand_cv= 44.6%
+     8. w_ct_xavgc8_gt_xavgc21_3                             rand_cv= 44.4%
+     9. w_st_xavgc13_gt_xavgc21_5                            rand_cv= 43.8%
+    10. w_st_xavgc13_gt_xavgc21_10                           rand_cv= 43.4%
+
+====================================================================================================
+CLASS FILTER APPLIED TO PER-SETUP NON-EXAMPLE POOLS (lenient)
+====================================================================================================
+setup     class       ne pass           own-filter ne     delta       
+htf       BREAKOUT    375/445 (84.3%)   
+bf        BREAKOUT    366/400 (91.5%)   
+base      BREAKOUT    320/503 (63.6%)   
+dtss      FADE        965/1060 (91.0%)  
+3-4db     FADE        332/524 (63.4%)   

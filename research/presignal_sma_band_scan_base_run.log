@@ -1,0 +1,38 @@
+Universe: 11,842 tickers
+
+Building bands via scan-path lr for 42 examples...
+  kept 42 examples; bands daily (21, 32), weekly (15, 41)
+
+Pre-flight EX pass check (against freshly-built bands)...
+  42/42 examples pass their own bands (should be 100%)
+
+Scan BASE  N_daily=32  W_N=41  11,842 tickers
+  1000/11,842  passes=195,133  (36.6s)
+  2000/11,842  passes=382,315  (75.1s)
+  3000/11,842  passes=662,791  (115.3s)
+  4000/11,842  passes=929,347  (155.4s)
+  5000/11,842  passes=1,182,227  (194.6s)
+  6000/11,842  passes=1,371,735  (231.3s)
+  7000/11,842  passes=1,578,377  (269.1s)
+  8000/11,842  passes=1,815,311  (307.8s)
+  9000/11,842  passes=2,011,444  (345.0s)
+  10000/11,842  passes=2,253,061  (384.4s)
+  11000/11,842  passes=2,461,776  (421.8s)
+  pre-dedup passes (entry-bar keyed): 2,539,271  (446.5s)
+  post-dedup clusters (signal-bar keyed): 320,628
+  EX end-to-end: 42/42
+  EX pre-dedup pass: 42/42
+
+saved C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_sma_band_scan\base_passes_fixed.pkl
+{
+  "setup": "base",
+  "N_daily": 32,
+  "W_N": 41,
+  "n_ex": 42,
+  "pre_dedup_passes": 2539271,
+  "post_dedup_clusters": 320628,
+  "ex_pre_dedup_pass": 42,
+  "ex_end_to_end": 42,
+  "key_semantic": "signal_bar (E-1)",
+  "scan_seconds": 446.82275915145874
+}

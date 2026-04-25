@@ -1,0 +1,27 @@
+========================================================================================================================
+CROSS-VERSION COMPARISON — NE survival% under each configuration (100% EX preserved everywhere)
+========================================================================================================================
+Random-bar pool: 8101 bars
+
+setup     v1        R1        R2        R1+R2     E1 PCA      E2 sup    R4 kfold    R5 +20%     E4 class    X2 late     BULLETPROOF   
+--------------------------------------------------------------------------------------------------------------------------------------
+htf       11.5%     18.7%     13.5%     52.1%     66.3%       74.2%     71.0%       60.4%       84.3%       8.5%        77.8% (20f)   
+bf        15.2%     36.5%     16.5%     70.5%     79.2%       82.8%     80.0%       73.8%       91.5%       34.2%       88.5% (7f)    
+base      6.8%      12.7%     14.3%     66.6%     66.4%       63.4%     68.2%       67.0%       63.6%       -           72.2% (13f)   
+dtss      26.7%     64.4%     45.2%     92.9%     92.8%       93.4%     92.9%       95.0%       91.0%       -           93.3% (3f)    
+3-4db     3.6%      19.8%     5.9%      7.1%      39.5%       69.5%     20.4%       12.8%       63.4%       -           34.4% (3f)    
+
+Notes:
+  v1 = §6.1.bis numbers (pyramid-ne denom, no LOO gate, top-40 decorrelated, strict AND)
+  R1 = random-bar denom only (no LOO gate)
+  R2 = pyramid-ne denom + LOO gate
+  R1+R2 = random-bar denom + LOO gate + top-40 decorrelated strict AND
+  E1 PCA = R1+R2 top-10 -> PCA ellipsoid bands (lenient NaN)
+  E2 sup = L2 logistic regression on R1+R2 top-20, threshold = min(ex score)
+  R4 kfold = R1+R2 features must survive 4/5 folds top-50
+  R5 +20% = R1+R2 bands expanded by 20% of range
+  E4 class = union-of-class filter applied to setup's NE pool
+  X2 late = NE pass when filter was trained only on pre-cutoff examples
+  BULLETPROOF = 4-gate intersection: LOO==0, every-fold top-50, perm-max beat, decorrelated. (Nf) = surviving feature count.
+
+All values preserve 100% EX pass under lenient NaN (if lower, sanity-failure — see individual step file).

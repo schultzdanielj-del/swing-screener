@@ -1,0 +1,335 @@
+Loading universe...
+  11,842 tickers
+
+======================================================================
+HTF
+======================================================================
+n_ex_kept: 32  W_N: 48
+daily cells: 831  weekly cells: 384
+
+DAILY cells per MA type (offset range):
+      EMA5   34 cells   offsets E-6..E-39
+      EMA8   37 cells   offsets E-0..E-39
+     EMA10   40 cells   offsets E-0..E-39
+     EMA13   40 cells   offsets E-0..E-39
+     EMA20   40 cells   offsets E-0..E-39
+     EMA21   40 cells   offsets E-0..E-39
+     EMA30   40 cells   offsets E-0..E-39
+     EMA50   40 cells   offsets E-0..E-39
+     EMA65   40 cells   offsets E-0..E-39
+    EMA100   40 cells   offsets E-0..E-39
+    EMA150   17 cells   offsets E-0..E-16
+      SMA5   34 cells   offsets E-6..E-39
+      SMA8   37 cells   offsets E-3..E-39
+     SMA10   38 cells   offsets E-1..E-38
+     SMA13   38 cells   offsets E-0..E-37
+     SMA20   38 cells   offsets E-0..E-38
+     SMA21   38 cells   offsets E-0..E-38
+     SMA30   37 cells   offsets E-0..E-36
+     SMA50   28 cells   offsets E-0..E-27
+     SMA65   40 cells   offsets E-0..E-39
+    SMA100   40 cells   offsets E-0..E-39
+    SMA150   40 cells   offsets E-0..E-39
+    SMA200   15 cells   offsets E-0..E-14
+
+WEEKLY cells per MA type:
+      EMA5   36 cells   offsets W-0..W-35
+      EMA8   34 cells   offsets W-0..W-33
+     EMA10   33 cells   offsets W-0..W-32
+     EMA13   30 cells   offsets W-0..W-29
+     EMA20   22 cells   offsets W-0..W-21
+     EMA21   20 cells   offsets W-0..W-19
+     EMA30   13 cells   offsets W-0..W-12
+      SMA5   35 cells   offsets W-0..W-34
+      SMA8   33 cells   offsets W-0..W-32
+     SMA10   31 cells   offsets W-0..W-30
+     SMA13   30 cells   offsets W-0..W-29
+     SMA20   24 cells   offsets W-0..W-23
+     SMA21   23 cells   offsets W-0..W-22
+     SMA30   19 cells   offsets W-0..W-18
+     SMA50    1 cells   offsets W-0..W-0
+
+DAILY corridor widths (slacked hi-lo):
+  n: 831  min: 0.4577  p50: 1.6525  max: 2.7284
+DAILY raw ex range (max-min of examples):
+  min: 0.4341  p50: 1.5527  max: 2.0860
+DAILY slack fraction (slack / raw):
+  p10: 0.02  p50: 0.08  p90: 0.18
+
+WEEKLY corridor widths (slacked hi-lo):
+  n: 384  min: 0.4392  p50: 2.1193  max: 3.9280
+WEEKLY raw ex range (max-min of examples):
+  min: 0.3691  p50: 1.7061  max: 2.5612
+WEEKLY slack fraction (slack / raw):
+  p10: 0.05  p50: 0.25  p90: 0.51
+
+EFFECTIVE RANK  (how many independent dims the cells really form)
+  DAILY  n_cells=831   rank@50%=1   rank@90%=1   rank@99%=4
+  WEEKLY n_cells=384   rank@50%=1   rank@90%=2   rank@99%=5
+  daily singular values (rel to s0): 1.000, 0.232, 0.118, 0.078, 0.055, 0.046, 0.039, 0.030
+  weekly singular values (rel to s0): 1.000, 0.301, 0.143, 0.092, 0.056, 0.048, 0.042, 0.034
+
+======================================================================
+BF
+======================================================================
+n_ex_kept: 45  W_N: 44
+daily cells: 660  weekly cells: 239
+
+DAILY cells per MA type (offset range):
+      EMA5   21 cells   offsets E-0..E-39
+      EMA8   22 cells   offsets E-0..E-39
+     EMA10   22 cells   offsets E-0..E-39
+     EMA13   24 cells   offsets E-0..E-39
+     EMA20   35 cells   offsets E-0..E-39
+     EMA21   36 cells   offsets E-0..E-39
+     EMA30   40 cells   offsets E-0..E-39
+     EMA50   40 cells   offsets E-0..E-39
+     EMA65   40 cells   offsets E-0..E-39
+    EMA100   40 cells   offsets E-0..E-39
+      SMA5   20 cells   offsets E-0..E-39
+      SMA8   21 cells   offsets E-0..E-39
+     SMA10   21 cells   offsets E-19..E-39
+     SMA13   22 cells   offsets E-18..E-39
+     SMA20   28 cells   offsets E-12..E-39
+     SMA21   28 cells   offsets E-12..E-39
+     SMA30   39 cells   offsets E-1..E-39
+     SMA50   40 cells   offsets E-0..E-39
+     SMA65   40 cells   offsets E-0..E-39
+    SMA100   37 cells   offsets E-0..E-36
+    SMA150   22 cells   offsets E-0..E-21
+    SMA200   22 cells   offsets E-0..E-21
+
+WEEKLY cells per MA type:
+      EMA5   20 cells   offsets W-0..W-38
+      EMA8   19 cells   offsets W-0..W-32
+     EMA10   16 cells   offsets W-0..W-15
+     EMA13   16 cells   offsets W-0..W-15
+     EMA20   15 cells   offsets W-0..W-14
+     EMA21   14 cells   offsets W-0..W-13
+      SMA5   20 cells   offsets W-1..W-40
+      SMA8   19 cells   offsets W-0..W-37
+     SMA10   19 cells   offsets W-0..W-35
+     SMA13   23 cells   offsets W-0..W-32
+     SMA20   20 cells   offsets W-0..W-26
+     SMA21   21 cells   offsets W-0..W-25
+     SMA30   17 cells   offsets W-0..W-16
+
+DAILY corridor widths (slacked hi-lo):
+  n: 660  min: 0.3473  p50: 3.0398  max: 4.0240
+DAILY raw ex range (max-min of examples):
+  min: 0.2789  p50: 2.1252  max: 2.6915
+DAILY slack fraction (slack / raw):
+  p10: 0.13  p50: 0.40  p90: 0.48
+
+WEEKLY corridor widths (slacked hi-lo):
+  n: 239  min: 0.4133  p50: 2.9797  max: 3.5675
+WEEKLY raw ex range (max-min of examples):
+  min: 0.2777  p50: 2.0974  max: 2.4008
+WEEKLY slack fraction (slack / raw):
+  p10: 0.20  p50: 0.43  p90: 0.51
+
+EFFECTIVE RANK  (how many independent dims the cells really form)
+  DAILY  n_cells=660   rank@50%=1   rank@90%=1   rank@99%=3
+  WEEKLY n_cells=239   rank@50%=1   rank@90%=2   rank@99%=5
+  daily singular values (rel to s0): 1.000, 0.180, 0.101, 0.069, 0.044, 0.029, 0.024, 0.022
+  weekly singular values (rel to s0): 1.000, 0.343, 0.215, 0.127, 0.085, 0.047, 0.045, 0.038
+
+======================================================================
+BASE
+======================================================================
+n_ex_kept: 42  W_N: 41
+daily cells: 656  weekly cells: 66
+
+DAILY cells per MA type (offset range):
+      EMA5   24 cells   offsets E-0..E-34
+      EMA8   33 cells   offsets E-0..E-34
+     EMA10   35 cells   offsets E-0..E-34
+     EMA13   35 cells   offsets E-0..E-34
+     EMA20   34 cells   offsets E-0..E-33
+     EMA21   34 cells   offsets E-0..E-33
+     EMA30   32 cells   offsets E-0..E-31
+     EMA50   32 cells   offsets E-0..E-31
+     EMA65   35 cells   offsets E-0..E-34
+    EMA100   40 cells   offsets E-0..E-39
+    EMA150    6 cells   offsets E-0..E-5
+      SMA5   19 cells   offsets E-0..E-31
+      SMA8   30 cells   offsets E-0..E-34
+     SMA10   33 cells   offsets E-0..E-32
+     SMA13   30 cells   offsets E-0..E-29
+     SMA20   31 cells   offsets E-0..E-30
+     SMA21   30 cells   offsets E-0..E-29
+     SMA30   23 cells   offsets E-0..E-22
+     SMA50    7 cells   offsets E-0..E-6
+    SMA100   40 cells   offsets E-0..E-39
+    SMA150   40 cells   offsets E-0..E-39
+    SMA200   33 cells   offsets E-0..E-32
+
+WEEKLY cells per MA type:
+      EMA5    3 cells   offsets W-2..W-4
+      EMA8    4 cells   offsets W-0..W-3
+     EMA10    3 cells   offsets W-0..W-2
+     EMA13    4 cells   offsets W-0..W-3
+     EMA20   14 cells   offsets W-0..W-13
+     EMA21   13 cells   offsets W-0..W-12
+      SMA5    3 cells   offsets W-1..W-3
+      SMA8    1 cells   offsets W-0..W-0
+     SMA20    2 cells   offsets W-21..W-22
+     SMA21    4 cells   offsets W-3..W-24
+     SMA30   15 cells   offsets W-0..W-16
+
+DAILY corridor widths (slacked hi-lo):
+  n: 656  min: 0.1408  p50: 0.5677  max: 1.6089
+DAILY raw ex range (max-min of examples):
+  min: 0.1264  p50: 0.4841  max: 1.3395
+DAILY slack fraction (slack / raw):
+  p10: 0.05  p50: 0.15  p90: 0.31
+
+WEEKLY corridor widths (slacked hi-lo):
+  n: 66  min: 0.2217  p50: 0.9004  max: 2.2812
+WEEKLY raw ex range (max-min of examples):
+  min: 0.1900  p50: 0.7847  max: 1.7909
+WEEKLY slack fraction (slack / raw):
+  p10: 0.06  p50: 0.25  p90: 0.35
+
+EFFECTIVE RANK  (how many independent dims the cells really form)
+  DAILY  n_cells=656   rank@50%=1   rank@90%=3   rank@99%=7
+  WEEKLY n_cells=66   rank@50%=1   rank@90%=2   rank@99%=3
+  daily singular values (rel to s0): 1.000, 0.518, 0.277, 0.170, 0.115, 0.081, 0.069, 0.062
+  weekly singular values (rel to s0): 1.000, 0.316, 0.139, 0.065, 0.045, 0.029, 0.026, 0.021
+
+======================================================================
+DTSS
+======================================================================
+n_ex_kept: 73  W_N: 16
+daily cells: 703  weekly cells: 174
+
+DAILY cells per MA type (offset range):
+      EMA5    9 cells   offsets E-8..E-25
+      EMA8   12 cells   offsets E-5..E-25
+     EMA10   15 cells   offsets E-5..E-39
+     EMA13   19 cells   offsets E-5..E-39
+     EMA20   33 cells   offsets E-4..E-39
+     EMA21   34 cells   offsets E-4..E-39
+     EMA30   38 cells   offsets E-2..E-39
+     EMA50   40 cells   offsets E-0..E-39
+     EMA65   40 cells   offsets E-0..E-39
+    EMA100   40 cells   offsets E-0..E-39
+    EMA150   40 cells   offsets E-0..E-39
+    EMA200   40 cells   offsets E-0..E-39
+      SMA5    8 cells   offsets E-8..E-25
+      SMA8   11 cells   offsets E-5..E-24
+     SMA10   12 cells   offsets E-4..E-23
+     SMA13   12 cells   offsets E-7..E-39
+     SMA20   30 cells   offsets E-4..E-39
+     SMA21   30 cells   offsets E-4..E-39
+     SMA30   40 cells   offsets E-0..E-39
+     SMA50   40 cells   offsets E-0..E-39
+     SMA65   40 cells   offsets E-0..E-39
+    SMA100   40 cells   offsets E-0..E-39
+    SMA150   40 cells   offsets E-0..E-39
+    SMA200   40 cells   offsets E-0..E-39
+
+WEEKLY cells per MA type:
+      EMA8    2 cells   offsets W-14..W-15
+     EMA10    5 cells   offsets W-6..W-15
+     EMA13   14 cells   offsets W-0..W-15
+     EMA20   16 cells   offsets W-0..W-15
+     EMA21   16 cells   offsets W-0..W-15
+     EMA30   16 cells   offsets W-0..W-15
+     EMA50   16 cells   offsets W-0..W-15
+     SMA10    3 cells   offsets W-13..W-15
+     SMA13    8 cells   offsets W-3..W-15
+     SMA20   15 cells   offsets W-1..W-15
+     SMA21   16 cells   offsets W-0..W-15
+     SMA30   16 cells   offsets W-0..W-15
+     SMA50   16 cells   offsets W-0..W-15
+     SMA65   15 cells   offsets W-0..W-14
+
+DAILY corridor widths (slacked hi-lo):
+  n: 703  min: 0.4666  p50: 1.3809  max: 1.9975
+DAILY raw ex range (max-min of examples):
+  min: 0.4128  p50: 1.1638  max: 1.7984
+DAILY slack fraction (slack / raw):
+  p10: 0.04  p50: 0.15  p90: 0.30
+
+WEEKLY corridor widths (slacked hi-lo):
+  n: 174  min: 0.8606  p50: 1.9428  max: 2.6328
+WEEKLY raw ex range (max-min of examples):
+  min: 0.6333  p50: 1.7271  max: 2.0907
+WEEKLY slack fraction (slack / raw):
+  p10: 0.03  p50: 0.13  p90: 0.39
+
+EFFECTIVE RANK  (how many independent dims the cells really form)
+  DAILY  n_cells=703   rank@50%=1   rank@90%=2   rank@99%=5
+  WEEKLY n_cells=174   rank@50%=1   rank@90%=1   rank@99%=4
+  daily singular values (rel to s0): 1.000, 0.271, 0.192, 0.073, 0.067, 0.058, 0.037, 0.032
+  weekly singular values (rel to s0): 1.000, 0.206, 0.104, 0.085, 0.057, 0.040, 0.031, 0.027
+
+======================================================================
+3-4DB
+======================================================================
+n_ex_kept: 26  W_N: 14
+daily cells: 287  weekly cells: 173
+
+DAILY cells per MA type (offset range):
+     EMA10    1 cells   offsets E-39..E-39
+     EMA13    2 cells   offsets E-38..E-39
+     EMA20    3 cells   offsets E-37..E-39
+     EMA21    3 cells   offsets E-37..E-39
+     EMA30    6 cells   offsets E-34..E-39
+     EMA50   13 cells   offsets E-27..E-39
+     EMA65   18 cells   offsets E-22..E-39
+    EMA100   29 cells   offsets E-11..E-39
+    EMA150   40 cells   offsets E-0..E-39
+    EMA200   40 cells   offsets E-0..E-39
+      SMA8    1 cells   offsets E-39..E-39
+     SMA10    2 cells   offsets E-38..E-39
+     SMA13    1 cells   offsets E-38..E-38
+     SMA20    2 cells   offsets E-36..E-37
+     SMA21    3 cells   offsets E-36..E-38
+     SMA30    3 cells   offsets E-36..E-38
+     SMA65    7 cells   offsets E-30..E-36
+    SMA100   33 cells   offsets E-7..E-39
+    SMA150   40 cells   offsets E-0..E-39
+    SMA200   40 cells   offsets E-0..E-39
+
+WEEKLY cells per MA type:
+      EMA5    4 cells   offsets W-9..W-12
+      EMA8    5 cells   offsets W-8..W-12
+     EMA10    5 cells   offsets W-8..W-12
+     EMA13    7 cells   offsets W-7..W-13
+     EMA20    9 cells   offsets W-5..W-13
+     EMA21    9 cells   offsets W-5..W-13
+     EMA30   14 cells   offsets W-0..W-13
+     EMA50   14 cells   offsets W-0..W-13
+     EMA65   14 cells   offsets W-0..W-13
+    EMA100    8 cells   offsets W-0..W-7
+      SMA5    1 cells   offsets W-10..W-10
+      SMA8    3 cells   offsets W-8..W-12
+     SMA10    6 cells   offsets W-7..W-12
+     SMA13    7 cells   offsets W-6..W-13
+     SMA20   12 cells   offsets W-2..W-13
+     SMA21   13 cells   offsets W-1..W-13
+     SMA30   14 cells   offsets W-0..W-13
+     SMA50   14 cells   offsets W-0..W-13
+     SMA65   14 cells   offsets W-0..W-13
+
+DAILY corridor widths (slacked hi-lo):
+  n: 287  min: 1.0926  p50: 1.8555  max: 2.6217
+DAILY raw ex range (max-min of examples):
+  min: 0.9172  p50: 1.5909  max: 2.0641
+DAILY slack fraction (slack / raw):
+  p10: 0.10  p50: 0.21  p90: 0.30
+
+WEEKLY corridor widths (slacked hi-lo):
+  n: 173  min: 1.1213  p50: 2.1007  max: 3.7596
+WEEKLY raw ex range (max-min of examples):
+  min: 0.9043  p50: 1.8024  max: 2.6606
+WEEKLY slack fraction (slack / raw):
+  p10: 0.06  p50: 0.21  p90: 0.32
+
+EFFECTIVE RANK  (how many independent dims the cells really form)
+  DAILY  n_cells=287   rank@50%=1   rank@90%=1   rank@99%=2
+  WEEKLY n_cells=173   rank@50%=1   rank@90%=1   rank@99%=3
+  daily singular values (rel to s0): 1.000, 0.144, 0.068, 0.051, 0.031, 0.022, 0.017, 0.015
+  weekly singular values (rel to s0): 1.000, 0.218, 0.090, 0.058, 0.046, 0.029, 0.018, 0.015

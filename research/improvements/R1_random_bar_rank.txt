@@ -1,0 +1,131 @@
+====================================================================================================
+R1 — FEATURE RANKING BY RANDOM-BAR CARVE VALUE
+====================================================================================================
+Random-bar denominator: 8101 bars from universe
+Coverage gates: ex_measured >= 10, random_measured_frac >= 0.5
+R2 OFF here — LOO gate not applied; compare to R2 step to see its marginal.
+
+----------------------------------------------------------------------------------------------------
+HTF  ex=29  ne=445  rand=8101
+  covered features (ex>=10, rand_frac>=0.5): 13054
+  top-40 -> decorrelated indep: 31
+  EX lenient pass (sanity, should be 100%): 29/29 (100.0%)
+  NE lenient pass (own pool):              83/445 (18.7%)
+  RANDOM lenient pass:                     76/8101 (0.9%)
+  own/random ratio: 0.187 / 0.009 = 19.88x
+  Top-15 features by random-bar carve:
+     1. w_ns_c_minl2_atr14                                   [+2.3,+8.09]  rand_cv= 94.7%  loo=  nan%
+     2. w_ext_peak_xavgc8_lb50                               [+0.801,+1]  rand_cv= 94.0%  loo=  nan%
+     3. w_ns_c_minl2_adr14                                   [+2.33,+8.12]  rand_cv= 93.6%  loo=  nan%
+     4. w_ext_peak_xavgc13_lb50                              [+0.845,+1]  rand_cv= 93.3%  loo=  nan%
+     5. w_bb_pctb_15                                         [+0.967,+1.39]  rand_cv= 93.2%  loo=  nan%
+     6. w_ext_peak_xavgc21_lb50                              [+0.867,+1]  rand_cv= 91.4%  loo=  nan%
+     7. m_ext_slope_xavgc21_off2                             [+1.12,+5.53]  rand_cv= 91.3%  loo=  nan%
+     8. w_ns_c_minl3_atr14                                   [+2.31,+8.14]  rand_cv= 90.5%  loo=  nan%
+     9. m_ext_xavgc8_pct                                     [+12.5,+67.4]  rand_cv= 90.2%  loo=  nan%
+    10. w_ext_peak_xavgc50_lb50                              [+0.982,+1]  rand_cv= 90.2%  loo=  nan%
+    11. w_cci_14                                             [+146,+432]  rand_cv= 90.1%  loo=  nan%
+    12. m_ext_xavgc9_pct                                     [+13.2,+70]  rand_cv= 90.1%  loo=  nan%
+    13. m_ext_xavgc10_pct                                    [+13.7,+72.1]  rand_cv= 89.9%  loo=  nan%
+    14. m_roc_2                                              [+19.2,+1.38e+03]  rand_cv= 89.8%  loo=  nan%
+    15. w_ext_peak_xavgc21_lb30                              [+0.921,+1]  rand_cv= 89.6%  loo=  nan%
+
+----------------------------------------------------------------------------------------------------
+BF  ex=45  ne=400  rand=8101
+  covered features (ex>=10, rand_frac>=0.5): 13060
+  top-40 -> decorrelated indep: 27
+  EX lenient pass (sanity, should be 100%): 45/45 (100.0%)
+  NE lenient pass (own pool):              146/400 (36.5%)
+  RANDOM lenient pass:                     110/8101 (1.4%)
+  own/random ratio: 0.365 / 0.014 = 26.88x
+  Top-15 features by random-bar carve:
+     1. w_ext_xavgc13_pct                                    [+16,+66.9]  rand_cv= 96.3%  loo=  nan%
+     2. w_ext_xavgc12_pct                                    [+15.3,+65.1]  rand_cv= 96.2%  loo=  nan%
+     3. w_ext_xavgc10_pct                                    [+13,+61.1]  rand_cv= 95.8%  loo=  nan%
+     4. w_ext_xavgc9_pct                                     [+11.8,+58.6]  rand_cv= 95.5%  loo=  nan%
+     5. w_ext_xavgc20_pct                                    [+17.5,+75]  rand_cv= 95.3%  loo=  nan%
+     6. w_ext_xavgc21_pct                                    [+16.8,+75.8]  rand_cv= 95.0%  loo=  nan%
+     7. w_ext_xavgc8_pct                                     [+10.5,+55.8]  rand_cv= 95.0%  loo=  nan%
+     8. w_ext_avgc13_pct                                     [+16.4,+75.9]  rand_cv= 94.8%  loo=  nan%
+     9. w_ext_avgc10_pct                                     [+13.4,+69.9]  rand_cv= 94.0%  loo=  nan%
+    10. w_ext_avgc20_pct                                     [+18.4,+83.1]  rand_cv= 94.0%  loo=  nan%
+    11. w_ext_avgc21_pct                                     [+18.7,+83.7]  rand_cv= 93.9%  loo=  nan%
+    12. w_ext_avgc8_pct                                      [+11.3,+63.8]  rand_cv= 93.6%  loo=  nan%
+    13. w_roc_8                                              [+27.8,+1.52e+03]  rand_cv= 93.4%  loo=  nan%
+    14. w_roc_7                                              [+25.3,+1.46e+03]  rand_cv= 93.3%  loo=  nan%
+    15. w_ext_xavgc5_pct                                     [+6.07,+44]  rand_cv= 92.7%  loo=  nan%
+
+----------------------------------------------------------------------------------------------------
+BASE  ex=37  ne=503  rand=8101
+  covered features (ex>=10, rand_frac>=0.5): 13071
+  top-40 -> decorrelated indep: 27
+  EX lenient pass (sanity, should be 100%): 37/37 (100.0%)
+  NE lenient pass (own pool):              64/503 (12.7%)
+  RANDOM lenient pass:                     130/8101 (1.6%)
+  own/random ratio: 0.127 / 0.016 = 7.93x
+  Top-15 features by random-bar carve:
+     1. m_roc_12                                             [+43.8,+3.25e+03]  rand_cv= 86.2%  loo=  nan%
+     2. w_ext_xavgc21_pct                                    [+7.27,+51.7]  rand_cv= 83.7%  loo=  nan%
+     3. m_macd_hist_5_13_8                                   [+0.871,+72.1]  rand_cv= 83.4%  loo=  nan%
+     4. w_ext_xavgc20_pct                                    [+6.91,+50.9]  rand_cv= 83.2%  loo=  nan%
+     5. m_roc_7                                              [+24.7,+1.18e+03]  rand_cv= 83.2%  loo=  nan%
+     6. w_ext_avgc30_pct                                     [+10.2,+65.2]  rand_cv= 82.9%  loo=  nan%
+     7. m_roc_11                                             [+32.3,+1.82e+03]  rand_cv= 82.6%  loo=  nan%
+     8. m_macd_hist_slope_8_17_9_off1                        [+0.21,+13.7]  rand_cv= 82.2%  loo=  nan%
+     9. m_di_spread_7                                        [+31.6,+115]  rand_cv= 81.5%  loo=  nan%
+    10. m_roc_2                                              [+9.96,+320]  rand_cv= 80.8%  loo=  nan%
+    11. m_ext_avgc13_pct                                     [+12.9,+74.8]  rand_cv= 80.7%  loo=  nan%
+    12. m_ns_l_minl10_pct                                    [+26.8,+62.8]  rand_cv= 79.6%  loo=  nan%
+    13. w_ext_xavgc13_pct                                    [+4.41,+43]  rand_cv= 78.8%  loo=  nan%
+    14. w_ext_xavgc12_pct                                    [+4.06,+41.5]  rand_cv= 78.3%  loo=  nan%
+    15. w_nr_c_maxh10_adr14                                  [-2.52,+0.428]  rand_cv= 78.0%  loo=  nan%
+
+----------------------------------------------------------------------------------------------------
+DTSS  ex=61  ne=1060  rand=8101
+  covered features (ex>=10, rand_frac>=0.5): 13068
+  top-40 -> decorrelated indep: 18
+  EX lenient pass (sanity, should be 100%): 61/61 (100.0%)
+  NE lenient pass (own pool):              683/1060 (64.4%)
+  RANDOM lenient pass:                     790/8101 (9.8%)
+  own/random ratio: 0.644 / 0.098 = 6.61x
+  Top-15 features by random-bar carve:
+     1. ext_xavgc100_pct                                     [+6.94,+60.1]  rand_cv= 81.9%  loo=  nan%
+     2. ext_xavgc150_pct                                     [+8.52,+66.1]  rand_cv= 81.8%  loo=  nan%
+     3. ext_xavgc200_pct                                     [+9.69,+66.6]  rand_cv= 81.3%  loo=  nan%
+     4. ext_avgc200_pct                                      [+9.44,+77.3]  rand_cv= 76.9%  loo=  nan%
+     5. ext_avgc150_pct                                      [+7.58,+73.9]  rand_cv= 75.9%  loo=  nan%
+     6. es_ext200_sma_3                                      [+2.85,+10.2]  rand_cv= 72.9%  loo=  nan%
+     7. slope_xavgc150_off5_adr14                            [+0.121,+0.497]  rand_cv= 72.9%  loo=  nan%
+     8. ext_avgc100_pct                                      [+5.24,+68.4]  rand_cv= 72.7%  loo=  nan%
+     9. ext_avgc150_adr14                                    [+2.53,+9.81]  rand_cv= 71.7%  loo=  nan%
+    10. es_ext200_sma_5                                      [+2.36,+9.85]  rand_cv= 71.4%  loo=  nan%
+    11. slope_xavgc150_off2_adr14                            [+0.0508,+0.217]  rand_cv= 71.2%  loo=  nan%
+    12. slope_xavgc200_off7_adr14                            [+0.114,+0.561]  rand_cv= 70.9%  loo=  nan%
+    13. slope_xavgc150_off7_adr14                            [+0.129,+0.654]  rand_cv= 70.8%  loo=  nan%
+    14. undercut_avgc200_120_adr14                           [-3.78,+2.49]  rand_cv= 70.8%  loo=  nan%
+    15. slope_xavgc200_off2_adr14                            [+0.0393,+0.185]  rand_cv= 70.3%  loo=  nan%
+
+----------------------------------------------------------------------------------------------------
+3-4DB  ex=26  ne=524  rand=8101
+  covered features (ex>=10, rand_frac>=0.5): 13064
+  top-40 -> decorrelated indep: 26
+  EX lenient pass (sanity, should be 100%): 26/26 (100.0%)
+  NE lenient pass (own pool):              104/524 (19.8%)
+  RANDOM lenient pass:                     59/8101 (0.7%)
+  own/random ratio: 0.198 / 0.007 = 27.25x
+  Top-15 features by random-bar carve:
+     1. roc_126                                              [+31.1,+944]  rand_cv= 87.6%  loo=  nan%
+     2. ext_avgc200_pct                                      [+15.2,+77.9]  rand_cv= 86.3%  loo=  nan%
+     3. ext_avgc150_pct                                      [+12.9,+76.3]  rand_cv= 86.2%  loo=  nan%
+     4. ext_xavgc200_pct                                     [+11.7,+69.9]  rand_cv= 85.1%  loo=  nan%
+     5. w_ns_l_minl35_pct                                    [+33.9,+89.6]  rand_cv= 83.4%  loo=  nan%
+     6. macd_hist_slope_12_26_9_off10                        [-11.6,-0.156]  rand_cv= 82.8%  loo=  nan%
+     7. ns_l_minl65_pct                                      [+22.6,+81]  rand_cv= 81.9%  loo=  nan%
+     8. ns_c_minl65_pct                                      [+25.2,+94.4]  rand_cv= 81.7%  loo=  nan%
+     9. ns_ratio_minl65                                      [+1.34,+17.9]  rand_cv= 81.6%  loo=  nan%
+    10. st_c_gt_maxc50_1_15                                  [+4,+14]  rand_cv= 81.6%  loo=  nan%
+    11. st_c_gt_maxc50_1_20                                  [+4,+14]  rand_cv= 81.5%  loo=  nan%
+    12. w_ns_l_minl45_pct                                    [+36.1,+89.6]  rand_cv= 81.5%  loo=  nan%
+    13. st_c_gt_maxc50_1_30                                  [+4,+14]  rand_cv= 81.5%  loo=  nan%
+    14. w_ns_l_minl40_pct                                    [+33.9,+89.6]  rand_cv= 81.4%  loo=  nan%
+    15. undercut_avgc100_120_adr14                           [-3.08,-0.167]  rand_cv= 81.4%  loo=  nan%

@@ -1,0 +1,51 @@
+{
+  "setup": "htf",
+  "date_cutoff": "2020-01-02",
+  "n_examples_valid": 32,
+  "horizons": {
+    "M1_pos": 80,
+    "M2_trend": 190,
+    "M5_vol_ratio": 71,
+    "TSH_CAP": 504
+  },
+  "bounds": {
+    "D1": [
+      0.8114689709347996,
+      1.7183673469387755
+    ],
+    "D2": [
+      -2.754570216737103,
+      1.362128295272707
+    ],
+    "D3": [
+      3.0,
+      504.0
+    ],
+    "D4a": [
+      -2.905383587149843,
+      0.0
+    ],
+    "D4b": [
+      0.35609791618678793,
+      4.733520219870616
+    ],
+    "D5": [
+      0.4616498997868816,
+      2.12023163632478
+    ]
+  },
+  "ex_pass_location": 32,
+  "total_candidates": 12535773,
+  "per_descriptor_keep": {
+    "D1": 3988903,
+    "D2": 12366142,
+    "D3": 5044525,
+    "D4a": 11516713,
+    "D4b": 8445654,
+    "D5": 11478231
+  },
+  "joint_pass_bars": 1347252,
+  "location_clusters": 658467,
+  "location_clusters_example_matched": 31,
+  "location_clusters_non_example": 658436
+}

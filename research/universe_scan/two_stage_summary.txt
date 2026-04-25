@@ -1,0 +1,95 @@
+================================================================================
+TWO-STAGE UNIVERSE SCAN (PRESIGNAL_GRINDER §13.4)
+================================================================================
+Mode: FULL  |  Tickers scanned: 11,503
+Total scan time: 231.0s
+
+--------------------------------------------------------------------------------
+HTF  N=39  n_rel=7262  stage2_surviving_bands=233,368/283,218  stage1_budget=21
+  candidate bars: 12,302,729
+  hits (passed both stages): 3,207,773 (26.0737%)
+  unique tickers hit: 11,237
+  example self-pass: 31/31  OK
+  top-10 tickers by hit count:
+    ULST         867 hits  (first: 2020-03-02, last: 2026-04-07)
+    VRIG         787 hits  (first: 2020-05-04, last: 2026-04-10)
+    VNLA         781 hits  (first: 2020-02-28, last: 2026-04-10)
+    USTB         765 hits  (first: 2020-02-28, last: 2026-03-10)
+    FLTR         757 hits  (first: 2020-05-18, last: 2026-03-11)
+    QARP         755 hits  (first: 2020-04-14, last: 2026-04-09)
+    PMAR         750 hits  (first: 2020-04-29, last: 2026-03-02)
+    BFEB         739 hits  (first: 2020-04-14, last: 2026-02-10)
+    BJAN         738 hits  (first: 2020-04-14, last: 2026-02-02)
+    UYLD         733 hits  (first: 2023-01-11, last: 2026-04-02)
+
+--------------------------------------------------------------------------------
+BF  N=49  n_rel=8013  stage2_surviving_bands=329,918/392,637  stage1_budget=23
+  candidate bars: 12,187,699
+  hits (passed both stages): 3,858,388 (31.6581%)
+  unique tickers hit: 11,163
+  example self-pass: 45/45  OK
+  top-10 tickers by hit count:
+    PMAR         926 hits  (first: 2020-05-11, last: 2026-03-04)
+    PAPR         918 hits  (first: 2020-04-27, last: 2026-04-10)
+    PFEB         916 hits  (first: 2020-04-28, last: 2026-02-25)
+    NJAN         906 hits  (first: 2020-04-24, last: 2026-02-02)
+    WTPI         899 hits  (first: 2020-04-27, last: 2026-02-11)
+    NAPR         892 hits  (first: 2020-06-11, last: 2026-04-10)
+    BSJQ         891 hits  (first: 2020-05-08, last: 2026-04-10)
+    TEN-PF       890 hits  (first: 2020-04-22, last: 2026-03-12)
+    ULST         887 hits  (first: 2020-05-19, last: 2026-04-10)
+    USTB         884 hits  (first: 2020-05-19, last: 2026-03-11)
+
+--------------------------------------------------------------------------------
+BASE  N=32  n_rel=8335  stage2_surviving_bands=235,456/266,720  stage1_budget=13
+  candidate bars: 12,383,250
+  hits (passed both stages): 5,046,288 (40.7509%)
+  unique tickers hit: 11,428
+  example self-pass: 42/42  OK
+  top-10 tickers by hit count:
+    MEAR        1161 hits  (first: 2020-02-19, last: 2026-03-18)
+    FUMB        1151 hits  (first: 2020-02-21, last: 2026-04-10)
+    AGZD        1085 hits  (first: 2020-02-19, last: 2026-04-10)
+    TEN-PF      1083 hits  (first: 2020-04-13, last: 2026-03-12)
+    PVI         1062 hits  (first: 2020-02-21, last: 2026-04-07)
+    JMST        1041 hits  (first: 2020-02-19, last: 2026-04-10)
+    HYZD        1039 hits  (first: 2020-02-19, last: 2026-04-10)
+    ECCX        1021 hits  (first: 2020-04-24, last: 2026-04-10)
+    FTSD        1021 hits  (first: 2020-02-19, last: 2026-04-10)
+    PGHY        1016 hits  (first: 2020-04-09, last: 2026-04-10)
+
+--------------------------------------------------------------------------------
+DTSS  N=86  n_rel=8675  stage2_surviving_bands=608,724/746,050  stage1_budget=45
+  candidate bars: 11,766,329
+  hits (passed both stages): 6,802,507 (57.8133%)
+  unique tickers hit: 11,051
+  example self-pass: 73/73  OK
+  top-10 tickers by hit count:
+    MEAR        1331 hits  (first: 2020-05-06, last: 2026-04-10)
+    MPLX        1305 hits  (first: 2020-05-08, last: 2026-04-10)
+    ECCX        1303 hits  (first: 2020-05-21, last: 2026-04-10)
+    TEN-PF      1294 hits  (first: 2020-05-20, last: 2026-04-10)
+    FUMB        1292 hits  (first: 2020-05-06, last: 2026-04-10)
+    AGZD        1290 hits  (first: 2020-06-05, last: 2026-04-10)
+    MCK         1289 hits  (first: 2020-05-11, last: 2026-04-10)
+    HYHG        1287 hits  (first: 2020-06-11, last: 2026-04-10)
+    HYZD        1266 hits  (first: 2020-06-09, last: 2026-04-10)
+    PVI         1253 hits  (first: 2020-05-06, last: 2026-04-10)
+
+--------------------------------------------------------------------------------
+3-4DB  N=64  n_rel=8836  stage2_surviving_bands=470,795/565,504  stage1_budget=45
+  candidate bars: 12,015,859
+  hits (passed both stages): 9,174,088 (76.3498%)
+  unique tickers hit: 11,368
+  example self-pass: 26/26  OK
+  top-10 tickers by hit count:
+    PVI         1510 hits  (first: 2020-04-03, last: 2026-04-10)
+    AGZD        1499 hits  (first: 2020-04-03, last: 2026-04-10)
+    ZVZZT       1490 hits  (first: 2020-04-06, last: 2026-04-10)
+    NTIP        1473 hits  (first: 2020-04-03, last: 2026-04-10)
+    MIN         1461 hits  (first: 2020-04-03, last: 2026-04-10)
+    AQNB        1461 hits  (first: 2020-04-03, last: 2026-04-10)
+    FRPH        1459 hits  (first: 2020-04-03, last: 2026-04-10)
+    MPV         1456 hits  (first: 2020-04-06, last: 2026-04-10)
+    FNLC        1453 hits  (first: 2020-04-03, last: 2026-04-10)
+    GEG         1451 hits  (first: 2020-04-03, last: 2026-04-10)

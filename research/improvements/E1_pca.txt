@@ -1,0 +1,111 @@
+====================================================================================================
+E1 — PCA ELLIPSOID BANDS (axes from R1+R2 decorrelated top-N)
+====================================================================================================
+Input feature set: R1+R2 decorrelated (up to 10 features)
+Method: z-score on ex+ne union, PCA on example covariance, band each PC by ex [min,max].
+Cluster passes lenient PCA atom if it has NaN on any input feature OR its projection lies in all PC bands.
+
+----------------------------------------------------------------------------------------------------
+HTF  input features=10
+  examples with full values: 23/29
+  NE full-value rows: 338/445  (NaN rows pass lenient)
+  PC eigenvalue ratios (fraction of variance per PC):
+    PC1:  83.1%  band [-2.14,+1.73]
+    PC2:  11.4%  band [-0.78,+0.81]
+    PC3:   5.4%  band [-0.11,+0.93]
+    PC4:   0.0%  band [+0.06,+0.06]
+    PC5:   0.0%  band [-0.06,-0.06]
+    PC6:   0.0%  band [+0.05,+0.05]
+    PC7:   0.0%  band [-0.05,-0.05]
+    PC8:  -0.0%  band [-0.00,-0.00]
+    PC9:  -0.0%  band [-0.03,-0.03]
+    PC10:  -0.0%  band [+0.02,+0.02]
+  E1 NE pass lenient: 295/445 (66.3%)
+  E1 RANDOM pass lenient: 2349/8101 (29.0%)
+  vs R1+R2 AND tight baseline:
+    R1+R2 NE: 232/445 (52.1%)
+    R1+R2 RANDOM: 233/8101 (2.9%)
+
+----------------------------------------------------------------------------------------------------
+BF  input features=10
+  examples with full values: 35/45
+  NE full-value rows: 232/400  (NaN rows pass lenient)
+  PC eigenvalue ratios (fraction of variance per PC):
+    PC1:  54.6%  band [-1.72,+2.50]
+    PC2:  32.3%  band [-2.40,+1.61]
+    PC3:  11.2%  band [-1.18,+1.02]
+    PC4:   1.8%  band [-0.71,+0.76]
+    PC5:   0.0%  band [-0.21,-0.21]
+    PC6:   0.0%  band [-0.21,-0.21]
+    PC7:   0.0%  band [-0.21,-0.21]
+    PC8:   0.0%  band [-0.21,-0.21]
+    PC9:   0.0%  band [-0.21,-0.21]
+    PC10:  -0.0%  band [+0.20,+0.20]
+  E1 NE pass lenient: 317/400 (79.2%)
+  E1 RANDOM pass lenient: 3411/8101 (42.1%)
+  vs R1+R2 AND tight baseline:
+    R1+R2 NE: 282/400 (70.5%)
+    R1+R2 RANDOM: 344/8101 (4.2%)
+
+----------------------------------------------------------------------------------------------------
+BASE  input features=10
+  examples with full values: 31/37
+  NE full-value rows: 338/503  (NaN rows pass lenient)
+  PC eigenvalue ratios (fraction of variance per PC):
+    PC1:  48.0%  band [-1.12,+4.52]
+    PC2:  30.5%  band [-1.16,+1.67]
+    PC3:  12.3%  band [-1.18,+1.34]
+    PC4:   7.7%  band [-1.15,+0.92]
+    PC5:   1.5%  band [-0.73,+0.08]
+    PC6:   0.0%  band [-0.24,-0.24]
+    PC7:   0.0%  band [+0.06,+0.06]
+    PC8:   0.0%  band [+0.23,+0.23]
+    PC9:  -0.0%  band [+0.61,+0.61]
+    PC10:  -0.0%  band [-0.23,-0.23]
+  E1 NE pass lenient: 334/503 (66.4%)
+  E1 RANDOM pass lenient: 3656/8101 (45.1%)
+  vs R1+R2 AND tight baseline:
+    R1+R2 NE: 335/503 (66.6%)
+    R1+R2 RANDOM: 1565/8101 (19.3%)
+
+----------------------------------------------------------------------------------------------------
+DTSS  input features=10
+  examples with full values: 61/61
+  NE full-value rows: 1060/1060  (NaN rows pass lenient)
+  PC eigenvalue ratios (fraction of variance per PC):
+    PC1:  89.3%  band [-0.17,+9.06]
+    PC2:  10.7%  band [-0.73,+1.78]
+    PC3:   0.0%  band [+0.00,+0.00]
+    PC4:   0.0%  band [+0.00,+0.00]
+    PC5:   0.0%  band [+0.00,+0.00]
+    PC6:   0.0%  band [+0.00,+0.00]
+    PC7:   0.0%  band [+0.03,+0.03]
+    PC8:   0.0%  band [+0.00,+0.00]
+    PC9:   0.0%  band [+0.00,+0.00]
+    PC10:   0.0%  band [+0.06,+0.06]
+  E1 NE pass lenient: 984/1060 (92.8%)
+  E1 RANDOM pass lenient: 2736/8101 (33.8%)
+  vs R1+R2 AND tight baseline:
+    R1+R2 NE: 985/1060 (92.9%)
+    R1+R2 RANDOM: 2463/8101 (30.4%)
+
+----------------------------------------------------------------------------------------------------
+3-4DB  input features=10
+  examples with full values: 25/26
+  NE full-value rows: 450/524  (NaN rows pass lenient)
+  PC eigenvalue ratios (fraction of variance per PC):
+    PC1:  98.9%  band [-4.94,+5.30]
+    PC2:   1.1%  band [-0.80,+0.34]
+    PC3:   0.0%  band [-0.00,+0.00]
+    PC4:   0.0%  band [-0.00,+0.00]
+    PC5:   0.0%  band [-0.00,+0.00]
+    PC6:   0.0%  band [+0.02,+0.02]
+    PC7:  -0.0%  band [-0.00,+0.00]
+    PC8:  -0.0%  band [-0.00,+0.00]
+    PC9:  -0.0%  band [-0.00,+0.00]
+    PC10:  -0.0%  band [-0.00,+0.00]
+  E1 NE pass lenient: 207/524 (39.5%)
+  E1 RANDOM pass lenient: 2412/8101 (29.8%)
+  vs R1+R2 AND tight baseline:
+    R1+R2 NE: 37/524 (7.1%)
+    R1+R2 RANDOM: 9/8101 (0.1%)

@@ -1,0 +1,103 @@
+================================================================================
+UNIVERSE SCAN - full-cache envelope, strict AND, NaN-as-pass
+================================================================================
+ITERATION MODE: 500 random tickers (seed=42)
+Tickers scanned: 500
+
+--------------------------------------------------------------------------------
+HTF  N_bars=39  n_relevant=7262  examples_in_CSV=30/32
+  candidate bars scanned: 590,217
+  candidates passing envelope: 30  (0.0051%)
+  unique tickers hit: 28
+  scan time: 72.1s
+  sanity: FAIL
+  missing examples: 2
+  top-10 tickers by hit count:
+    LMND          2 hits  (first: 2024-11-05, last: 2024-11-06)
+    SOUN          2 hits  (first: 2024-02-26, last: 2024-11-29)
+    MOD           1 hits  (first: 2023-06-02, last: 2023-06-02)
+    RHP           1 hits  (first: 2020-11-13, last: 2020-11-13)
+    EQX           1 hits  (first: 2025-08-22, last: 2025-08-22)
+    HTOO          1 hits  (first: 2020-11-25, last: 2020-11-25)
+    OGI           1 hits  (first: 2021-02-08, last: 2021-02-08)
+    AGO           1 hits  (first: 2023-12-19, last: 2023-12-19)
+    NHI           1 hits  (first: 2024-03-04, last: 2024-03-04)
+    REAL          1 hits  (first: 2024-11-13, last: 2024-11-13)
+
+--------------------------------------------------------------------------------
+BF  N_bars=49  n_relevant=8013  examples_in_CSV=44/45
+  candidate bars scanned: 599,814
+  candidates passing envelope: 44  (0.0073%)
+  unique tickers hit: 39
+  scan time: 84.2s
+  sanity: FAIL
+  missing examples: 1
+  top-10 tickers by hit count:
+    IREN          3 hits  (first: 2024-06-03, last: 2025-06-24)
+    ANF           2 hits  (first: 2023-11-01, last: 2023-11-02)
+    RGTI          2 hits  (first: 2024-12-06, last: 2025-10-02)
+    EOSE          2 hits  (first: 2025-09-12, last: 2025-09-18)
+    BIOA          1 hits  (first: 2025-11-17, last: 2025-11-17)
+    AXON          1 hits  (first: 2021-02-04, last: 2021-02-04)
+    HYMC          1 hits  (first: 2025-12-11, last: 2025-12-11)
+    IONQ          1 hits  (first: 2024-11-07, last: 2024-11-07)
+    HUT           1 hits  (first: 2025-10-01, last: 2025-10-01)
+    KTOS          1 hits  (first: 2025-09-11, last: 2025-09-11)
+
+--------------------------------------------------------------------------------
+BASE  N_bars=32  n_relevant=8335  examples_in_CSV=42/42
+  candidate bars scanned: 606,566
+  candidates passing envelope: 42  (0.0069%)
+  unique tickers hit: 39
+  scan time: 76.5s
+  sanity: OK
+  top-10 tickers by hit count:
+    KTOS          2 hits  (first: 2025-05-16, last: 2025-09-11)
+    FIX           2 hits  (first: 2023-02-23, last: 2025-09-10)
+    SNDK          2 hits  (first: 2025-08-22, last: 2026-01-02)
+    SA            1 hits  (first: 2025-08-29, last: 2025-08-29)
+    SKY           1 hits  (first: 2021-11-03, last: 2021-11-03)
+    STRL          1 hits  (first: 2025-09-10, last: 2025-09-10)
+    IONQ          1 hits  (first: 2025-09-11, last: 2025-09-11)
+    METC          1 hits  (first: 2021-07-26, last: 2021-07-26)
+    APP           1 hits  (first: 2024-09-11, last: 2024-09-11)
+    FTAI          1 hits  (first: 2025-12-30, last: 2025-12-30)
+
+--------------------------------------------------------------------------------
+DTSS  N_bars=86  n_relevant=8675  examples_in_CSV=73/73
+  candidate bars scanned: 623,268
+  candidates passing envelope: 73  (0.0117%)
+  unique tickers hit: 72
+  scan time: 157.4s
+  sanity: OK
+  top-10 tickers by hit count:
+    CVNA          2 hits  (first: 2023-09-15, last: 2026-01-23)
+    FFIC          1 hits  (first: 2024-11-25, last: 2024-11-25)
+    VRTX          1 hits  (first: 2024-11-11, last: 2024-11-11)
+    MOD           1 hits  (first: 2025-01-22, last: 2025-01-22)
+    NUE           1 hits  (first: 2022-01-05, last: 2022-01-05)
+    REPX          1 hits  (first: 2025-01-21, last: 2025-01-21)
+    LABU          1 hits  (first: 2024-11-11, last: 2024-11-11)
+    APP           1 hits  (first: 2025-12-22, last: 2025-12-22)
+    PRKS          1 hits  (first: 2022-04-21, last: 2022-04-21)
+    FTAI          1 hits  (first: 2025-01-10, last: 2025-01-10)
+
+--------------------------------------------------------------------------------
+3-4DB  N_bars=64  n_relevant=8836  examples_in_CSV=25/27
+  candidate bars scanned: 566,777
+  candidates passing envelope: 25  (0.0044%)
+  unique tickers hit: 24
+  scan time: 78.1s
+  sanity: FAIL
+  missing examples: 2
+  top-10 tickers by hit count:
+    AEVA          2 hits  (first: 2025-07-08, last: 2025-07-21)
+    IONQ          1 hits  (first: 2025-10-27, last: 2025-10-27)
+    QS            1 hits  (first: 2025-10-27, last: 2025-10-27)
+    APP           1 hits  (first: 2026-01-14, last: 2026-01-14)
+    OKLO          1 hits  (first: 2025-10-27, last: 2025-10-27)
+    INOD          1 hits  (first: 2025-10-16, last: 2025-10-16)
+    GOGO          1 hits  (first: 2025-08-12, last: 2025-08-12)
+    REAL          1 hits  (first: 2026-01-28, last: 2026-01-28)
+    BTQ           1 hits  (first: 2025-10-27, last: 2025-10-27)
+    ACHR          1 hits  (first: 2025-10-27, last: 2025-10-27)

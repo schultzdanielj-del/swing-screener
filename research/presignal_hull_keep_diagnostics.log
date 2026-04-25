@@ -1,0 +1,180 @@
+OUT: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_diagnostics
+Loading OHLCV...
+Universe: 11,842 tickers
+
+==========================================================================================
+=== PART 1 — F1 hull contributor counts per offset pair
+==========================================================================================
+
+HTF
+  DAILY  N=39  n_ex=32  pairs=38  hull=None: 0 (0.0%)  contrib range [31, 32], median 31
+  WEEKLY W_N=48  n_ex=32  pairs=47  hull=None: 0 (0.0%)  contrib range [29, 31], median 30
+
+BF
+  DAILY  N=49  n_ex=45  pairs=48  hull=None: 0 (0.0%)  contrib range [45, 45], median 45
+  WEEKLY W_N=44  n_ex=45  pairs=43  hull=None: 0 (0.0%)  contrib range [44, 45], median 45
+
+BASE
+  DAILY  N=32  n_ex=42  pairs=31  hull=None: 0 (0.0%)  contrib range [42, 42], median 42
+  WEEKLY W_N=41  n_ex=42  pairs=40  hull=None: 0 (0.0%)  contrib range [41, 42], median 42
+
+DTSS
+  DAILY  N=86  n_ex=73  pairs=85  hull=None: 0 (0.0%)  contrib range [73, 73], median 73
+  WEEKLY W_N=16  n_ex=73  pairs=15  hull=None: 0 (0.0%)  contrib range [73, 73], median 73
+
+3-4DB
+  DAILY  N=64  n_ex=26  pairs=63  hull=None: 0 (0.0%)  contrib range [26, 26], median 26
+  WEEKLY W_N=14  n_ex=26  pairs=13  hull=None: 0 (0.0%)  contrib range [26, 26], median 26
+
+==========================================================================================
+=== PART 3 — per-descriptor keep rates on DAILY (from existing summaries)
+==========================================================================================
+
+HTF  total=12,759,844
+  D1  pos        33.04%   D2  trend    98.70%   D3  tsh    40.26%
+  D4a log_ath    92.04%   D4b log_atl  66.31%   D5  vol    91.74%
+
+BF  total=12,759,844
+  D1  pos        36.46%   D2  trend    99.43%   D3  tsh    29.89%
+  D4a log_ath    90.41%   D4b log_atl  49.76%   D5  vol    89.27%
+
+BASE  total=12,759,844
+  D1  pos        39.17%   D2  trend    99.35%   D3  tsh    33.91%
+  D4a log_ath    98.38%   D4b log_atl  60.31%   D5  vol    89.98%
+
+DTSS  total=12,759,844
+  D1  pos        48.70%   D2  trend    97.84%   D3  tsh   100.02%
+  D4a log_ath    99.65%   D4b log_atl  60.72%   D5  vol    91.79%
+
+3-4DB  total=12,759,844
+  D1  pos        41.23%   D2  trend    97.28%   D3  tsh    77.97%
+  D4a log_ath    67.54%   D4b log_atl  57.49%   D5  vol    72.46%
+
+==========================================================================================
+=== PART 2 — per-descriptor keep rates on WEEKLY Location axis
+==========================================================================================
+
+HTF  W_N=48  W_M1=15  W_M2=36  W_M5=12
+  bounds: {'D1': (0.7769546341657705, 1.9171450812493913), 'D2': (-1.107015699464489, 0.9536024403115124), 'D3': (1.0, 104.0), 'D4a': (-3.0265039322207445, 0.0), 'D4b': (0.0, 4.382026634673881), 'D5': (0.44565687289703265, 2.1666573051711793)}
+  scan 2000/11842 (12s)
+  scan 4000/11842 (25s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 6000/11842 (37s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 8000/11842 (49s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 10000/11842 (62s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  total candidates: 12,760,222
+  D1  pos        38.59%   D2  trend    95.38%   D3  tsh    99.87%
+  D4a log_ath    92.87%   D4b log_atl  99.26%   D5  vol    88.16%
+
+BF  W_N=44  W_M1=17  W_M2=27  W_M5=18
+  bounds: {'D1': (0.7054545454545456, 1.098164530679546), 'D2': (-1.252762968495368, 2.185347235168378), 'D3': (1.0, 104.0), 'D4a': (-2.585323576656674, 0.0), 'D4b': (0.5495044783311022, 11.244610170792475), 'D5': (0.42653311676219147, 1.4050471990991584)}
+  scan 2000/11842 (11s)
+  scan 4000/11842 (23s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 6000/11842 (35s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 8000/11842 (46s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 10000/11842 (58s)
+  total candidates: 12,760,222
+  D1  pos        37.97%   D2  trend    98.18%   D3  tsh    99.87%
+  D4a log_ath    91.00%   D4b log_atl  52.71%   D5  vol    84.16%
+
+BASE  W_N=41  W_M1=11  W_M2=14  W_M5=17
+  bounds: {'D1': (0.198300283286119, 1.055776892430279), 'D2': (-2.0253009663369306, 2.6195896651760946), 'D3': (1.0, 104.0), 'D4a': (-6.1676511153344205, 0.0), 'D4b': (0.4128549834632622, 4.2185663645679385), 'D5': (0.40014535703713405, 1.635377490011125)}
+  scan 2000/11842 (11s)
+  scan 4000/11842 (22s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 6000/11842 (33s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 8000/11842 (44s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 10000/11842 (55s)
+  total candidates: 12,760,222
+  D1  pos        61.13%   D2  trend    99.76%   D3  tsh    99.87%
+  D4a log_ath    98.30%   D4b log_atl  60.45%   D5  vol    89.07%
+
+DTSS  W_N=16  W_M1=11  W_M2=33  W_M5=9
+  bounds: {'D1': (0.40454076367389086, 1.8536585365853657), 'D2': (-0.636645796967023, 1.4197422951874308), 'D3': (1.0, 104.0), 'D4a': (-10.345653126593414, 0.0), 'D4b': (0.44920448965981685, 11.420810176062423), 'D5': (0.029920948070113328, 1.7678223539887439)}
+  scan 2000/11842 (8s)
+  scan 4000/11842 (17s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 6000/11842 (25s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 8000/11842 (33s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 10000/11842 (42s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  total candidates: 12,760,222
+  D1  pos        60.23%   D2  trend    92.18%   D3  tsh    99.87%
+  D4a log_ath    99.63%   D4b log_atl  58.91%   D5  vol    94.58%
+
+3-4DB  W_N=14  W_M1=17  W_M2=32  W_M5=10
+  bounds: {'D1': (0.5824634655532358, 1.096774193548387), 'D2': (-1.1522217392734906, 3.6054978451748854), 'D3': (1.0, 104.0), 'D4a': (-1.920361471147775, 0.0), 'D4b': (0.5493182141026086, 5.908814276027365), 'D5': (0.4169887205803021, 1.8361122043948785)}
+  scan 2000/11842 (8s)
+  scan 4000/11842 (16s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 6000/11842 (24s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 8000/11842 (32s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  scan 10000/11842 (40s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  total candidates: 12,760,222
+  D1  pos        45.56%   D2  trend    97.11%   D3  tsh    99.87%
+  D4a log_ath    86.99%   D4b log_atl  52.38%   D5  vol    86.57%
+
+Wrote outputs to C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_diagnostics

@@ -1,0 +1,65 @@
+Loading OHLCV...
+Universe: 11,842 tickers
+
+=== HTF  W_N=48
+  examples: 32  shape (32, 12, 48)
+  market vectors: 10,000  (39.1s)
+  weekly reject: min=0.036  median=0.106  max=0.833
+  weekly top-5 meat:
+        SMA5w  W-2    reject=0.833
+        EMA5w  W-3    reject=0.831
+       EMA20w  W-2    reject=0.828
+       EMA10w  W-2    reject=0.823
+       EMA10w  W-3    reject=0.816
+  wrote combined daily+weekly image: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_ma_heatmap\htf_heatmap.png
+
+=== BF  W_N=44
+  examples: 45  shape (45, 12, 44)
+  market vectors: 10,000  (39.4s)
+  weekly reject: min=0.041  median=0.127  max=0.929
+  weekly top-5 meat:
+       SMA20w  W-0    reject=0.929
+       SMA20w  W-1    reject=0.927
+       SMA10w  W-5    reject=0.927
+       EMA10w  W-6    reject=0.926
+       EMA10w  W-5    reject=0.925
+  wrote combined daily+weekly image: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_ma_heatmap\bf_heatmap.png
+
+=== BASE  W_N=41
+  examples: 42  shape (42, 12, 41)
+  market vectors: 10,000  (37.8s)
+  weekly reject: min=0.044  median=0.108  max=0.621
+  weekly top-5 meat:
+       EMA20w  W-0    reject=0.621
+       EMA20w  W-1    reject=0.621
+       EMA20w  W-5    reject=0.582
+       EMA20w  W-4    reject=0.564
+       EMA20w  W-2    reject=0.553
+  wrote combined daily+weekly image: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_ma_heatmap\base_heatmap.png
+
+=== DTSS  W_N=16
+  examples: 73  shape (73, 12, 16)
+  market vectors: 10,000  (36.1s)
+  weekly reject: min=0.012  median=0.350  max=0.784
+  weekly top-5 meat:
+       EMA50w  W-0    reject=0.784
+       EMA50w  W-1    reject=0.784
+       EMA50w  W-2    reject=0.778
+       EMA50w  W-3    reject=0.771
+       EMA50w  W-4    reject=0.755
+  wrote combined daily+weekly image: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_ma_heatmap\dtss_heatmap.png
+
+=== 3-4DB  W_N=14
+  examples: 26  shape (26, 12, 14)
+  market vectors: 10,000  (36.1s)
+  weekly reject: min=0.061  median=0.689  max=0.910
+  weekly top-5 meat:
+       EMA50w  W-5    reject=0.910
+       EMA50w  W-6    reject=0.908
+       EMA50w  W-7    reject=0.905
+       EMA50w  W-8    reject=0.903
+       EMA50w  W-4    reject=0.902
+  wrote combined daily+weekly image: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_ma_heatmap\3-4db_heatmap.png
+
+Wrote weekly data to C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_weekly_ma_heatmap
+Combined images at C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_ma_heatmap/{setup}_heatmap.png

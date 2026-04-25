@@ -1,0 +1,57 @@
+{
+  "htf": {
+    "N_daily": 39,
+    "W_N": 48,
+    "n_ex": 32,
+    "pre_dedup_passes": 126480,
+    "post_dedup_clusters": 30319,
+    "ex_pre_dedup_pass": 32,
+    "ex_end_to_end": 32,
+    "key_semantic": "signal_bar (E-1)",
+    "scan_seconds": 372.48042035102844
+  },
+  "bf": {
+    "N_daily": 49,
+    "W_N": 44,
+    "n_ex": 45,
+    "pre_dedup_passes": 105855,
+    "post_dedup_clusters": 19735,
+    "ex_pre_dedup_pass": 45,
+    "ex_end_to_end": 45,
+    "key_semantic": "signal_bar (E-1)",
+    "scan_seconds": 51.14689064025879
+  },
+  "base": {
+    "N_daily": 32,
+    "W_N": 41,
+    "n_ex": 42,
+    "pre_dedup_passes": 601674,
+    "post_dedup_clusters": 111717,
+    "ex_pre_dedup_pass": 42,
+    "ex_end_to_end": 42,
+    "key_semantic": "signal_bar (E-1)",
+    "scan_seconds": 40.2341423034668
+  },
+  "dtss": {
+    "N_daily": 86,
+    "W_N": 16,
+    "n_ex": 73,
+    "pre_dedup_passes": 464796,
+    "post_dedup_clusters": 67085,
+    "ex_pre_dedup_pass": 73,
+    "ex_end_to_end": 73,
+    "key_semantic": "signal_bar (E-1)",
+    "scan_seconds": 75.81001448631287
+  },
+  "3-4db": {
+    "N_daily": 64,
+    "W_N": 14,
+    "n_ex": 26,
+    "pre_dedup_passes": 64011,
+    "post_dedup_clusters": 15546,
+    "ex_pre_dedup_pass": 26,
+    "ex_end_to_end": 26,
+    "key_semantic": "signal_bar (E-1)",
+    "scan_seconds": 59.66769194602966
+  }
+}

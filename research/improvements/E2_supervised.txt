@@ -1,0 +1,112 @@
+====================================================================================================
+E2 — SUPERVISED CLASSIFIER (logistic regression, L2)
+====================================================================================================
+Input feature set: R1+R2 decorrelated top-20
+Method: pure numpy L2 logistic regression. Train on examples=1 vs non-examples=0.
+NaN imputation: feature median from union(ex, ne).
+Score threshold: lowest example score (preserves 100% example pass).
+
+----------------------------------------------------------------------------------------------------
+HTF  features=20
+  score threshold (= min ex score): 0.0546
+  ex scores (min/median/max): 0.055 / 0.073 / 0.087
+  ne scores (min/median/max): 0.008 / 0.064 / 0.087
+  E2 NE pass (score >= thr):     330/445 (74.2%)
+  E2 RANDOM pass (score >= thr): 1054/8101 (13.0%)
+  vs R1+R2 AND tight NE:         232/445 (52.1%)
+  vs R1+R2 AND tight RANDOM:     233/8101 (2.9%)
+  Top-10 features by |coefficient|:
+    w_roc_rank_5_lb50                                    coef=+0.168
+    w_aroon_up_25                                        coef=+0.076
+    w_st_c_gt_maxc20_1_15                                coef=+0.059
+    w_aroon_up_20                                        coef=+0.057
+    w_tir_c_gt_maxc10_1_5                                coef=+0.053
+    w_ct_c_gt_maxc10_1_3                                 coef=+0.050
+    w_st_h_gt_maxh20_1_30                                coef=-0.037
+    w_st_h_gt_maxh20_1_50                                coef=-0.033
+    w_st_h_gt_maxh20_1_20                                coef=-0.033
+    w_st_h_gt_maxh20_1_15                                coef=-0.032
+
+----------------------------------------------------------------------------------------------------
+BF  features=20
+  score threshold (= min ex score): 0.0644
+  ex scores (min/median/max): 0.064 / 0.118 / 0.181
+  ne scores (min/median/max): 0.004 / 0.104 / 0.181
+  E2 NE pass (score >= thr):     331/400 (82.8%)
+  E2 RANDOM pass (score >= thr): 1224/8101 (15.1%)
+  vs R1+R2 AND tight NE:         282/400 (70.5%)
+  vs R1+R2 AND tight RANDOM:     344/8101 (4.2%)
+  Top-10 features by |coefficient|:
+    w_pctrank_close_20                                   coef=+0.193
+    m_st_c_gt_maxc10_1_20                                coef=-0.127
+    w_ct_c_gt_maxc10_1_5                                 coef=+0.113
+    w_ct_h_gt_maxh20_1_3                                 coef=+0.106
+    m_st_h_gt_maxh10_1_20                                coef=-0.073
+    ct_c_gt_bbtop_30                                     coef=+0.055
+    w_ct_c_gt_maxc20_1_3                                 coef=+0.047
+    w_st_c_gt_bbtop_30                                   coef=-0.043
+    w_st_c_gt_bbtop_50                                   coef=-0.042
+    w_st_c_gt_bbtop_20                                   coef=-0.037
+
+----------------------------------------------------------------------------------------------------
+BASE  features=20
+  score threshold (= min ex score): 0.0713
+  ex scores (min/median/max): 0.071 / 0.085 / 0.120
+  ne scores (min/median/max): 0.006 / 0.078 / 0.117
+  E2 NE pass (score >= thr):     319/503 (63.4%)
+  E2 RANDOM pass (score >= thr): 2547/8101 (31.4%)
+  vs R1+R2 AND tight NE:         335/503 (66.6%)
+  vs R1+R2 AND tight RANDOM:     1565/8101 (19.3%)
+  Top-10 features by |coefficient|:
+    m_st_c_gt_maxc10_1_15                                coef=-0.149
+    w_tir_l_gt_xavgc21_10                                coef=-0.126
+    m_st_c_gt_maxc10_1_20                                coef=-0.104
+    w_st_h_gt_maxh10_1_15                                coef=-0.089
+    w_st_h_gt_maxh10_1_20                                coef=-0.088
+    w_st_h_gt_maxh10_1_30                                coef=-0.086
+    w_aroon_up_10                                        coef=+0.079
+    w_st_h_gt_maxh10_1_5                                 coef=+0.070
+    w_st_l_gt_xavgc21_5                                  coef=-0.069
+    w_st_h_gt_maxh10_1_50                                coef=-0.069
+
+----------------------------------------------------------------------------------------------------
+DTSS  features=20
+  score threshold (= min ex score): 0.0495
+  ex scores (min/median/max): 0.049 / 0.056 / 0.168
+  ne scores (min/median/max): 0.029 / 0.056 / 0.154
+  E2 NE pass (score >= thr):     990/1060 (93.4%)
+  E2 RANDOM pass (score >= thr): 3220/8101 (39.7%)
+  vs R1+R2 AND tight NE:         985/1060 (92.9%)
+  vs R1+R2 AND tight RANDOM:     2463/8101 (30.4%)
+  Top-10 features by |coefficient|:
+    stack_3ma_long                                       coef=-0.105
+    tir_l_gt_avgc200_10                                  coef=-0.098
+    w_ct_xavgc8_gt_xavgc21_20                            coef=+0.054
+    ct_avgc100_gt_avgc200_7                              coef=+0.025
+    tir_avgc200_rising_5                                 coef=+0.021
+    ct_avgc50_gt_avgc200_7                               coef=+0.009
+    st_l_gt_avgc200_10                                   coef=+0.000
+    st_l_gt_avgc200_15                                   coef=+0.000
+    st_l_gt_avgc200_30                                   coef=+0.000
+    st_l_gt_avgc200_20                                   coef=+0.000
+
+----------------------------------------------------------------------------------------------------
+3-4DB  features=20
+  score threshold (= min ex score): 0.0353
+  ex scores (min/median/max): 0.035 / 0.087 / 0.130
+  ne scores (min/median/max): 0.010 / 0.044 / 0.151
+  E2 NE pass (score >= thr):     364/524 (69.5%)
+  E2 RANDOM pass (score >= thr): 1136/8101 (14.0%)
+  vs R1+R2 AND tight NE:         37/524 (7.1%)
+  vs R1+R2 AND tight RANDOM:     9/8101 (0.1%)
+  Top-10 features by |coefficient|:
+    w_ct_c_gt_xavgc100_30                                coef=+0.273
+    m_pctrank_range_20                                   coef=+0.177
+    pctrank_atr14_252                                    coef=+0.120
+    ct_aroon_up14_gt_70_30                               coef=+0.114
+    ct_es_ext200_stoch14_lt_50_5                         coef=+0.102
+    ct_l_gt_xavgc21_20                                   coef=+0.037
+    w_ct_aroon_up14_gt_70_3                              coef=+0.032
+    ct_xavgc13_gt_xavgc21_30                             coef=-0.027
+    m_aroon_osc_10                                       coef=+0.026
+    st_c_gt_maxc20_1_50                                  coef=+0.025

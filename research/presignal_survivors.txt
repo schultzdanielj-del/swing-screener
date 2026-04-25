@@ -1,0 +1,521 @@
+PRESIGNAL SURVIVORS — non-example clusters passing decorrelated top-K AND filter
+Filter: top-40 features by carve_value, decorrelated at |r|>=0.9
+
+==========================================================================================
+HTF  verdict: MARGINAL (LOO fragile, small n)
+  deduped: ex=29  ne=445
+  top-40 covered: 40  independent: 19
+  EX pass — strict (NaN=fail):  10/29 (34.5%)
+  EX pass — lenient (NaN=pass): 29/29 (100.0%)   <-- required for 100% ex coverage
+  NE pass — strict (NaN=fail):  9/445 (2.0%)   (misleading — won't pass examples)
+  NE pass — lenient (NaN=pass): 51/445 (11.5%)   <-- honest, symmetric with ex
+  >>> HONEST survivors (lenient, symmetric): 51/445 non-ex pass
+==========================================================================================
+  Examples failing strict AND filter (NaN-as-fail): 19
+    XPEV      2020-11-11
+    RHP       2020-11-12
+    CLNE      2020-11-19
+    AR        2020-12-16
+    HTT       2021-01-11
+    GME       2021-01-21
+    OGI       2021-02-05
+    AFG       2021-02-03
+    PRTA      2021-06-04
+    MOD       2023-06-01
+    CR        2023-10-30
+    SOUN      2024-02-23
+    SOUN      2024-11-27
+    FTDR      2024-08-05
+    QUBT      2024-11-19
+    BB        2024-12-19
+    RR        2024-12-20
+    EOSE      2025-09-17
+    FORM      2026-01-07
+    AFRM      2021-09-14
+    AMBR      2021-01-21, 2021-01-28
+    AMDG      2025-10-17
+    AMSC      2020-10-12
+    AMUU      2025-10-17
+    ANF       2023-08-25
+  * BB        2024-12-11
+    BBAI      2024-11-27
+    BCLI      2020-06-18
+    BCS       2024-04-30
+    BITX      2024-02-22
+    BSBR      2020-11-12
+    CALX      2020-07-29
+    CCJ       2021-02-12
+    CGC       2021-01-12, 2021-01-19
+  * CHEF      2024-11-27
+    CNQ       2026-01-20
+    CSTL      2020-12-18
+    DOCN      2021-09-08
+    FANG      2024-02-23
+    FNKO      2020-12-11
+  * FTDR      2024-08-08
+  * HTT       2021-01-28
+    HWM       2020-11-13, 2020-11-17
+    KURA      2024-01-29
+  * LMND      2024-11-08, 2024-11-13
+    M         2020-11-20
+    NIO       2020-06-12
+    NSPR      2021-01-14
+    NVDA      2020-08-14
+  * OGI       2021-02-02
+    PARR      2026-03-10
+    PK        2020-11-18
+    PLUG      2020-06-17
+  * QUBT      2024-11-12
+    REI       2021-02-02, 2021-02-12
+    SKLZ      2020-12-02
+    STNG      2022-05-19
+    TAN       2020-08-17
+    TIGR      2020-12-30
+    TSAT      2021-01-15
+    VET       2021-02-26
+    WMK       2022-03-14
+    WWD       2020-11-12
+    XPEL      2020-11-19
+    ZM        2020-09-14
+  ── 46 unique tickers, 7 also have labelled example(s) on same ticker (marked *)
+
+==========================================================================================
+BF  verdict: REAL
+  deduped: ex=45  ne=400
+  top-40 covered: 40  independent: 19
+  EX pass — strict (NaN=fail):  35/45 (77.8%)
+  EX pass — lenient (NaN=pass): 45/45 (100.0%)   <-- required for 100% ex coverage
+  NE pass — strict (NaN=fail):  22/400 (5.5%)   (misleading — won't pass examples)
+  NE pass — lenient (NaN=pass): 61/400 (15.2%)   <-- honest, symmetric with ex
+  >>> HONEST survivors (lenient, symmetric): 61/400 non-ex pass
+==========================================================================================
+  Examples failing strict AND filter (NaN-as-fail): 10
+    JD        2020-05-28
+    TSE       2020-12-03
+    DAC       2020-12-03
+    SNBR      2021-01-05
+    BLDP      2021-01-05
+    IZEA      2021-01-07
+    EH        2021-01-04
+    AXON      2021-02-03
+    UPST      2021-08-23
+    BIOA      2025-11-14
+    AAPU      2024-06-25
+  * AMPX      2025-07-02
+    AMSC      2020-10-05, 2020-10-12
+    ATAI      2025-07-10
+    AVAV      2021-02-05
+  * AXON      2021-02-01
+  * BE        2025-07-18
+  * BLDP      2020-12-31
+    CDNA      2020-12-02
+    CDXS      2020-12-30
+    CIFR      2025-09-08
+    CLF       2020-11-19
+    CSIQ      2021-01-12, 2021-01-14
+    CYD       2025-08-21
+  * DAC       2020-12-04
+    DRS       2021-01-15
+  * EOSE      2025-09-09
+    GCO       2021-01-28
+  * HUT       2025-10-01
+  * HYMC      2025-12-04
+  * IONQ      2023-07-20
+  * IZEA      2020-12-31, 2021-01-05
+    JOBY      2025-06-24
+    JOBY-WS   2025-06-24
+    METCB     2025-08-07
+    NBIS      2025-09-17
+    NIO       2020-10-27
+    NUGT      2025-08-20
+    OPFI      2025-01-23
+    OPK       2020-07-16
+    PI        2021-02-03
+    PLUG      2020-06-17
+    PTON      2020-09-17
+  * QBTS      2024-12-04
+    QCLN      2020-11-16
+    QDEL      2020-07-01
+  * REAL      2024-11-18
+    RGTIW     2025-10-01
+    SITM      2020-10-09
+    SJT       2022-04-28
+    SKIN      2021-08-24
+    SLDP      2025-08-06
+    SLP       2020-06-10
+    SMPL      2020-07-17
+    SOXL      2020-11-19
+    SQM       2025-12-09
+    TECL      2020-08-14
+    TMC       2025-06-11
+    TROX      2020-11-20
+  * TSE       2020-11-27
+    TSL       2024-11-29, 2024-12-04
+    TTD       2020-10-27
+    UEC       2021-02-19, 2021-03-25
+    URBN      2021-03-01
+    WOLF      2020-12-31
+    ZM        2020-09-15
+  ── 56 unique tickers, 13 also have labelled example(s) on same ticker (marked *)
+
+==========================================================================================
+BASE  verdict: REAL
+  deduped: ex=37  ne=503
+  top-40 covered: 40  independent: 25
+  EX pass — strict (NaN=fail):  27/37 (73.0%)
+  EX pass — lenient (NaN=pass): 37/37 (100.0%)   <-- required for 100% ex coverage
+  NE pass — strict (NaN=fail):  17/503 (3.4%)   (misleading — won't pass examples)
+  NE pass — lenient (NaN=pass): 34/503 (6.8%)   <-- honest, symmetric with ex
+  >>> HONEST survivors (lenient, symmetric): 34/503 non-ex pass
+==========================================================================================
+  Examples failing strict AND filter (NaN-as-fail): 10
+    RH        2020-07-14
+    SNBR      2020-10-01
+    AMN       2021-04-21
+    LNG       2021-04-22
+    PAG       2021-09-14
+    SKY       2021-11-02
+    SIMO      2021-12-02
+    SNDK      2025-08-21
+    SNDK      2025-12-31
+    IONQ-WS   2025-09-08
+    AMSC      2024-10-29, 2024-10-31
+    BBIO      2020-11-05
+    CCJ       2025-09-09
+    CNK       2024-07-24, 2024-07-26
+    CNTA      2026-03-25
+    CTRA      2022-02-28
+    CYH       2020-10-26
+    DKNG      2020-08-24
+  * EAT       2024-09-16
+    FCG       2021-05-25, 2021-05-28
+    FRPT      2020-07-13
+    GSL       2026-01-23
+  * IONQ      2025-09-08
+  * IONQ-WS   2025-09-10
+  * KTOS      2025-05-16
+    MCK       2022-03-10
+    MUR       2022-02-23
+    NEO       2020-11-16
+    NVDA      2023-05-12
+    PLMR      2025-02-10
+    PTEN      2021-05-26
+    RRC       2022-02-15, 2022-02-17
+    SD        2022-04-07
+    SONO      2020-11-03
+    SYRE      2026-02-12
+    TIGO      2025-07-08
+  * TSLA      2025-09-08
+    UFPT      2024-02-12
+    WINA      2023-11-01
+    WSC       2020-10-21
+  ── 30 unique tickers, 5 also have labelled example(s) on same ticker (marked *)
+
+==========================================================================================
+DTSS  verdict: FAILS permutation null — do not deploy
+  deduped: ex=61  ne=1060
+  top-40 covered: 40  independent: 16
+  EX pass — strict (NaN=fail):  16/61 (26.2%)
+  EX pass — lenient (NaN=pass): 61/61 (100.0%)   <-- required for 100% ex coverage
+  NE pass — strict (NaN=fail):  40/1060 (3.8%)   (misleading — won't pass examples)
+  NE pass — lenient (NaN=pass): 283/1060 (26.7%)   <-- honest, symmetric with ex
+  >>> HONEST survivors (lenient, symmetric): 283/1060 non-ex pass
+==========================================================================================
+  Examples failing strict AND filter (NaN-as-fail): 45
+    HAL       2022-06-08
+    SMCI      2022-06-03
+    ISRG      2021-12-30
+    NUE       2022-01-04
+    PRKS      2022-04-20
+    WAL       2022-01-11
+    WHD       2024-11-22
+    AX        2022-01-12
+    FITB      2022-02-09
+    DELL      2022-02-09
+    MET       2022-04-20
+    INVA      2022-04-04
+    ZIM       2024-07-01
+    AIR       2022-06-07
+    CSL       2022-06-07
+    HCC       2022-06-06
+    PR        2022-06-07
+    VRTX      2024-11-08
+    GFS       2023-03-31
+    PACB      2026-01-22
+    ... and 25 more
+    AAON      2025-01-23
+    ABCB      2024-11-25
+    ACHR-WS   2025-07-17
+    ADAM      2026-03-02
+    ADMA      2023-08-11
+    AESI      2025-01-16
+    AHH       2022-01-03
+    AHRT      2022-01-03
+  * AIR       2022-06-02
+    ALLT      2026-01-06
+    ALXO      2024-04-30
+    AM        2022-06-03
+    AMR       2023-02-28, 2023-03-06
+    AMWD      2024-04-09
+    AMX       2021-01-06
+    ANAB      2024-09-13
+    API       2025-02-06
+    ARCB      2024-04-09
+    ARQQ      2025-07-17
+    ARRY      2023-04-13
+    ASB       2022-02-09
+  * AVAV      2023-05-18
+    AXL       2021-03-09
+    BDN       2024-09-16
+    BLMN      2023-09-01
+    BTAI      2021-02-08
+    BTU       2022-11-29, 2022-12-01
+    BUR       2024-04-10, 2024-05-06
+    BXC       2022-03-16, 2022-03-22
+    CASH      2024-11-11
+    CBU       2024-11-25
+    CBZ       2021-12-29, 2021-12-31
+    CCOI      2024-02-22
+    CE        2023-09-18
+    CEG       2025-02-18
+  * CELH      2024-05-16
+    CENX      2021-03-02
+    CF        2025-01-17
+    CHCO      2024-11-11
+    CMC       2021-12-31
+    CMPR      2021-04-08, 2024-04-03, 2024-04-09
+    CMPS      2026-01-06
+    CNR       2022-11-30
+    CPRX      2025-06-04
+    CPS       2021-03-11
+    CRC       2022-06-07
+    CRI       2021-01-07
+    CRMT      2021-08-02
+    CRNX      2022-01-03
+  * CSL       2022-06-02, 2022-06-08
+    CSTL      2024-10-30
+    CTEV      2025-10-24
+    CVI       2024-04-04
+  * CVNA      2023-09-18, 2026-01-23
+    CW        2021-01-06, 2022-04-19, 2025-01-23
+    CWST      2020-12-17
+    CXW       2022-06-07
+    CYPH      2022-01-03
+    DCH       2021-03-09
+    DCOM      2022-01-13
+    DDL       2024-12-04
+  * DELL      2022-02-10
+    DFIN      2024-09-16
+    DHT       2023-11-01
+  * DNLI      2026-03-23
+    DNOW      2023-02-08
+    DT        2021-04-09
+  * EBC       2025-02-06, 2025-02-11
+    EGO       2021-01-05
+    ELF       2021-10-29, 2024-06-25, 2024-06-27
+    ENVA      2022-02-08, 2022-02-11
+    EQH       2022-02-08
+    ESE       2023-01-13
+    ET        2022-05-27, 2022-06-06, 2022-06-08
+    FCN       2022-06-02, 2022-06-06
+    FFIV      2021-12-28, 2025-10-09
+    FHB       2025-02-18
+    FLNC      2023-02-09, 2023-04-14
+    FN        2024-11-08
+    FRHC      2025-07-29
+    FSK       2022-04-01
+    FVRR      2025-01-17
+    FWONA     2021-03-16
+    FWRG      2023-08-28
+    GBX       2024-05-31
+    GD        2022-04-13
+    GDEN      2022-04-01
+  * GH        2025-06-30
+    GIL       2022-01-04
+    GLNG      2021-11-09
+    GPOR      2026-03-27
+    GRBK      2021-05-04
+    GSIT      2026-03-02, 2026-03-04
+    GT        2022-01-19
+    HAE       2023-07-26
+  * HAL       2021-06-02
+    HBM       2021-05-06
+    HCM       2021-02-16
+    HERE      2025-09-12
+    HGV       2022-01-12
+    HIMS      2023-04-19, 2023-04-21, 2024-07-29
+    HIPO      2025-02-06
+    HLIT      2024-10-22, 2024-10-24
+    HLMN      2024-11-29
+    HP        2021-06-02
+    HTZ       2025-07-23
+    IMCR      2023-02-13
+    IMVT      2024-01-09
+    IP        2024-03-21
+    IRTC      2021-01-20
+    IVVD      2025-12-26
+    JAZZ      2025-03-19
+    JBLU      2025-01-22
+    KFY       2024-09-17
+    KVYO      2025-02-12
+  * KYMR      2024-11-11
+    LC        2025-12-22
+    LCII      2024-11-25
+    LH        2024-11-08
+    LITE      2025-01-21
+    LNW       2024-09-20
+    LOB       2024-11-21, 2024-11-25
+  * LOPE      2024-07-26
+    LPG       2022-08-25
+    LTC       2024-11-08
+  * LTH       2025-05-02
+    LUCK      2023-03-31
+    LUMN      2021-05-18
+    LYFT      2024-03-20
+    MANH      2024-12-06, 2024-12-12
+    MCB       2025-01-29
+    MDB       2021-12-29
+    MEDP      2021-12-27, 2021-12-29
+    MEOH      2022-04-19
+  * MET       2022-03-28
+    MITK      2021-09-01
+    MNDY      2024-03-07
+  * MPC       2023-04-03
+    MPLX      2022-06-08
+    MQ        2024-02-28
+    MTSI      2025-01-16
+    MTW       2026-02-11
+    MUX       2024-05-31
+  * NAIL      2024-10-18
+    NAT       2022-11-15
+    NBR       2021-06-14
+    NEO       2023-05-12
+    NEXT      2025-03-24, 2025-03-26
+    NMM       2022-03-11
+    NOV       2022-06-01
+  * NOW       2023-09-06
+    NRG       2025-02-13, 2025-02-19
+  * NSP       2023-06-12
+    NTGR      2025-10-31
+    NTNX      2021-02-03
+  * NUE       2022-01-05
+    NWBI      2022-11-07
+    NXE       2021-10-13
+    OFG       2024-11-25
+    OIH       2022-06-07
+    OKTA      2023-10-16
+    OLLI      2023-11-07
+    OPRA      2025-02-18
+    OSS       2025-09-22, 2026-03-17
+    OUST      2025-10-27
+  * PACB      2023-07-17
+    PAGP      2022-06-01
+    PARR      2023-03-29
+    PATK      2024-05-10
+    PBF       2021-06-08, 2024-03-18
+    PERI      2021-10-12
+    PGEN      2021-03-15, 2021-03-17
+    PHAT      2021-03-09
+    PINC      2020-12-08
+    PLAB      2022-02-08, 2022-02-15
+    PLNT      2021-02-23
+    PLTR      2023-07-31
+    PM        2022-05-26
+  * PNR       2024-05-15
+    PRCH      2025-03-27
+    PRGS      2021-11-09
+  * PRKS      2022-01-07, 2022-01-11
+    PSX       2025-11-11, 2025-11-14
+    PTC       2023-01-24, 2023-01-27
+    PTGX      2020-11-30
+    RGNX      2026-01-07
+    RHI       2022-03-29
+    RIGL      2021-02-03
+    RNST      2024-11-25
+    RRC       2025-03-24
+    RRGB      2023-07-18
+    RRR       2023-05-02
+    RSI       2025-01-15
+    RTX       2022-04-14
+    RYTM      2025-02-05
+    SBS       2022-11-30
+    SHOP      2021-11-19
+    SIG       2024-06-12
+    SITM      2025-01-16
+  * SLS       2025-10-15
+  * SMCI      2022-06-07
+    SMTC      2021-02-18, 2022-01-03
+    SNPS      2024-06-18, 2024-07-12
+  * SOUN      2023-06-26
+    SPHR      2021-03-10, 2023-10-04
+    SPNT      2024-03-18
+    SPT       2021-11-09
+    SRCE      2024-11-22
+    SSB       2024-11-11
+    STAA      2021-08-31
+    STNE      2023-08-01
+    STRL      2025-01-22
+    SYBT      2025-08-26
+    TBBK      2024-11-25
+    TEN       2022-11-03
+    THO       2021-04-29
+    THRM      2022-01-11
+    TLYS      2021-12-28, 2022-01-03
+    TOWN      2025-02-13
+    TSSI      2025-07-25, 2025-08-06
+    TZA       2022-06-17
+    UNH       2024-11-11
+    UNM       2022-05-09
+    UPBD      2023-07-26
+    URBN      2021-06-23
+  * UTSL      2024-11-27
+    UWMC      2024-03-22
+    VSH       2023-02-01
+    VUZI      2025-12-30, 2026-01-05
+  * WAL       2022-01-13
+    WB        2020-12-22
+    WFG       2021-12-09
+    WGS       2025-11-10
+  * WHD       2024-11-25
+    WKHS      2020-11-27
+    WMS       2024-07-31
+    WSBC      2025-02-06
+    WULF      2024-11-07
+    WYNN      2025-12-02
+    XME       2021-08-11
+  * ZIM       2022-06-01
+  ── 241 unique tickers, 29 also have labelled example(s) on same ticker (marked *)
+
+==========================================================================================
+3-4DB  verdict: REAL
+  deduped: ex=26  ne=524
+  top-40 covered: 40  independent: 21
+  EX pass — strict (NaN=fail):  23/26 (88.5%)
+  EX pass — lenient (NaN=pass): 26/26 (100.0%)   <-- required for 100% ex coverage
+  NE pass — strict (NaN=fail):  15/524 (2.9%)   (misleading — won't pass examples)
+  NE pass — lenient (NaN=pass): 19/524 (3.6%)   <-- honest, symmetric with ex
+  >>> HONEST survivors (lenient, symmetric): 19/524 non-ex pass
+==========================================================================================
+  Examples failing strict AND filter (NaN-as-fail): 3
+    RR        2025-10-24
+    ARM       2025-10-31
+    FIGR      2026-01-28
+  * AEVA      2025-07-09
+    APPS      2025-10-21
+    BILL      2020-05-28
+    BKCH      2021-11-30
+  * BTQ       2025-07-24
+    CXW       2022-04-28
+    DXPE      2026-03-03
+    HTZWW     2021-11-12
+    HUT       2025-10-28, 2025-11-11
+  * INOD      2025-10-16
+  * OKLO      2025-10-29
+  * ONDS      2025-10-27
+    ORN       2026-02-24
+    PBYI      2024-02-28
+    PODD      2020-05-20
+  * QS        2025-10-27
+    RKLB      2026-02-03
+  * SOUN      2025-10-27
+  ── 18 unique tickers, 7 also have labelled example(s) on same ticker (marked *)

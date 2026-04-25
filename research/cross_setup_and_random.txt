@@ -1,0 +1,25 @@
+CROSS-SETUP + RANDOM-BAR BASELINE  (NaN-as-pass lenient AND filter)
+
+==========================================================================================
+CROSS-SETUP FILTER APPLICATION
+==========================================================================================
+Each cell: %% of TARGET setup's non-example pool passing FILTER setup's band-set
+FILTER \\ TARGET      htf       bf        base      dtss      3-4db     
+htf                      11.5%      5.2%      1.6%      0.0%      0.4%  
+bf                       11.7%     15.2%      2.0%      0.0%      1.0%  
+base                     11.9%     16.2%      6.8%      0.4%      2.7%  
+dtss                      1.1%      4.2%      0.8%     26.7%     19.8%  
+3-4db                     4.5%      0.0%      0.2%      1.1%      3.6%  
+  (diagonal = own-pool honest carve; off-diagonal = does filter generalize to other setups' pools?)
+
+==========================================================================================
+RANDOM-BAR BASELINE  (8101 random bars from universe, NOT signal-filtered)
+==========================================================================================
+FILTER                 own-ne pass%    random-bar pass%     ratio (own/rand)
+htf                          11.5%                 1.2%         9.77x
+bf                           15.2%                 0.8%        19.93x
+base                          6.8%                 2.4%         2.85x
+dtss                         26.7%                 3.2%         8.29x
+3-4db                         3.6%                 3.7%         0.97x
+  (ratio > 1 means pyramid signal pool is enriched for filter-passing vs random)
+  (ratio ~= 1 means filter catches same rate on random bars — pyramid adds nothing)

@@ -1,0 +1,50 @@
+====================================================================================================
+X2 — TEMPORAL HOLDOUT VALIDATION
+====================================================================================================
+Split examples at O.1 change-point cutoff per setup (CLASSIFIER_SPEC §12.9).
+Build bands on early period only; evaluate on late examples (required 100% ex pass)
+and on non-example pool (carve rate on late regime).
+
+----------------------------------------------------------------------------------------------------
+HTF  cutoff=2023-11-01  early_ex=11  late_ex=18
+  indep features (trained on early only): 37
+  EX early lenient pass (sanity): 11/11 (100.0%)
+  EX late lenient pass (GENERALIZATION): 4/18 (22.2%)
+  NE lenient pass: 38/445 (8.5%)
+  RANDOM lenient pass: 19/8101 (0.2%)
+  LATE EX FAILING: 14
+    AGO       2023-12-18
+    OSCR      2024-01-23
+    SOUN      2024-02-23
+    SOUN      2024-11-27
+    NHI       2024-03-01
+    FTDR      2024-08-05
+    LMND      2024-11-04
+    LMND      2024-11-05
+    QUBT      2024-11-19
+    CHEF      2024-12-02
+
+----------------------------------------------------------------------------------------------------
+BF  cutoff=2025-06-01  early_ex=24  late_ex=21
+  indep features (trained on early only): 31
+  EX early lenient pass (sanity): 24/24 (100.0%)
+  EX late lenient pass (GENERALIZATION): 7/21 (33.3%)
+  NE lenient pass: 137/400 (34.2%)
+  RANDOM lenient pass: 135/8101 (1.7%)
+  LATE EX FAILING: 14
+    MU        2025-09-30
+    IREN      2025-06-20
+    IREN      2025-06-23
+    RGTI      2025-10-01
+    EQX       2025-08-21
+    QXO       2025-06-05
+    AMPX      2025-07-01
+    GDXU      2025-08-20
+    WULF      2025-09-08
+    KTOS      2025-09-10
+
+BASE cutoff 2024-02-01: early=9 late=28 — insufficient, skipping
+
+DTSS: no change-point cutoff (LOO-only setup) — skipping X2
+
+3-4DB: no change-point cutoff (LOO-only setup) — skipping X2

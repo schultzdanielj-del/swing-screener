@@ -1,0 +1,119 @@
+OUT: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\universe_scan
+Loading OHLCV: C:/Users/Dan/Documents/ScanPerfect/swing-screener\local_runner\cache\universe_ohlcv_daily.pkl
+OHLCV tickers: 11842
+Opening expression cache...
+Expr cache: 16039 features x 11503 tickers
+ITERATION MODE: 500 random tickers (seed=42)
+
+=== HTF ===
+  envelope: N_bars=39, n_relevant=7262
+  re-extracting example windows...
+  31/32 examples loaded  (2.8s)
+  LOO: n_expanding_bars per example min=0 median=39 max=39 of N=39  (0.1s)
+  BUDGET: 39 bars / 39 (100.0%)
+  budget-setting example(s): AFG 2021-02-04, AGO 2023-12-19, AR 2020-12-17...
+  scan tickers: 500 sample + 29 example tickers = 529
+    50/529 tickers, 49,745 hits, 21.4s
+    100/529 tickers, 106,107 hits, 45.5s
+    150/529 tickers, 163,213 hits, 70.2s
+    200/529 tickers, 222,489 hits, 95.8s
+    250/529 tickers, 283,781 hits, 122.3s
+    300/529 tickers, 345,471 hits, 148.0s
+    350/529 tickers, 400,776 hits, 171.0s
+    400/529 tickers, 450,006 hits, 191.6s
+    450/529 tickers, 500,956 hits, 213.0s
+    500/529 tickers, 555,438 hits, 235.8s
+  scan: 250.3s, 590,042 hits / 590,042 cand bars (100.0000%)
+  SANITY OK: all 31 valid examples appear
+  hit n_outside_bars quantiles: p25=39, p50=39, p75=39, max=39
+
+=== BF ===
+  envelope: N_bars=49, n_relevant=8013
+  re-extracting example windows...
+  45/45 examples loaded  (3.7s)
+  LOO: n_expanding_bars per example min=0 median=49 max=49 of N=49  (0.1s)
+  BUDGET: 49 bars / 49 (100.0%)
+  budget-setting example(s): AA 2025-12-11, AMPX 2025-07-02, ANF 2023-11-01...
+  scan tickers: 500 sample + 40 example tickers = 540
+    50/540 tickers, 49,356 hits, 27.0s
+    100/540 tickers, 104,929 hits, 57.2s
+    150/540 tickers, 160,799 hits, 87.7s
+    200/540 tickers, 220,234 hits, 120.2s
+    250/540 tickers, 281,353 hits, 153.8s
+    300/540 tickers, 345,633 hits, 189.2s
+    350/540 tickers, 401,669 hits, 220.2s
+    400/540 tickers, 451,593 hits, 247.8s
+    450/540 tickers, 500,656 hits, 275.0s
+    500/540 tickers, 552,886 hits, 304.0s
+  scan: 329.9s, 599,814 hits / 599,814 cand bars (100.0000%)
+  SANITY OK: all 45 valid examples appear
+  hit n_outside_bars quantiles: p25=49, p50=49, p75=49, max=49
+
+=== BASE ===
+  envelope: N_bars=32, n_relevant=8335
+  re-extracting example windows...
+  42/42 examples loaded  (3.7s)
+  LOO: n_expanding_bars per example min=32 median=32 max=32 of N=32  (0.1s)
+  BUDGET: 32 bars / 32 (100.0%)
+  budget-setting example(s): AAPL 2024-11-25, ALM 2025-09-15, AMN 2021-04-22...
+  scan tickers: 500 sample + 38 example tickers = 538
+    50/538 tickers, 48,809 hits, 19.5s
+    100/538 tickers, 105,053 hits, 41.7s
+    150/538 tickers, 164,282 hits, 64.9s
+    200/538 tickers, 224,907 hits, 88.5s
+    250/538 tickers, 287,748 hits, 113.2s
+    300/538 tickers, 351,906 hits, 138.2s
+    350/538 tickers, 408,154 hits, 160.3s
+    400/538 tickers, 455,034 hits, 178.7s
+    450/538 tickers, 505,846 hits, 198.9s
+    500/538 tickers, 559,820 hits, 220.0s
+  scan: 238.4s, 606,566 hits / 606,566 cand bars (100.0000%)
+  SANITY OK: all 42 valid examples appear
+  hit n_outside_bars quantiles: p25=32, p50=32, p75=32, max=32
+
+=== DTSS ===
+  envelope: N_bars=86, n_relevant=8675
+  re-extracting example windows...
+  73/73 examples loaded  (7.0s)
+  LOO: n_expanding_bars per example min=86 median=86 max=86 of N=86  (0.3s)
+  BUDGET: 86 bars / 86 (100.0%)
+  budget-setting example(s): AAOI 2024-02-16, ACHR 2025-07-18, AEE 2025-11-28...
+  scan tickers: 500 sample + 69 example tickers = 569
+    50/569 tickers, 50,152 hits, 48.7s
+    100/569 tickers, 104,297 hits, 100.8s
+    150/569 tickers, 159,807 hits, 154.4s
+    200/569 tickers, 219,199 hits, 210.3s
+    250/569 tickers, 276,472 hits, 263.7s
+    300/569 tickers, 341,363 hits, 325.0s
+    350/569 tickers, 394,420 hits, 375.3s
+    400/569 tickers, 447,060 hits, 425.4s
+    450/569 tickers, 490,421 hits, 466.7s
+    500/569 tickers, 544,945 hits, 518.2s
+    550/569 tickers, 602,753 hits, 572.6s
+  scan: 591.8s, 623,268 hits / 623,268 cand bars (100.0000%)
+  SANITY OK: all 73 valid examples appear
+  hit n_outside_bars quantiles: p25=86, p50=86, p75=86, max=86
+
+=== 3-4DB ===
+  envelope: N_bars=64, n_relevant=8836
+  re-extracting example windows...
+  26/27 examples loaded  (2.1s)
+  LOO: n_expanding_bars per example min=0 median=64 max=64 of N=64  (0.1s)
+  BUDGET: 64 bars / 64 (100.0%)
+  budget-setting example(s): ACHR 2025-10-27, AEVA 2025-07-08, AEVA 2025-07-21...
+  scan tickers: 500 sample + 24 example tickers = 524
+    50/524 tickers, 48,458 hits, 35.2s
+    100/524 tickers, 102,193 hits, 74.1s
+    150/524 tickers, 157,528 hits, 114.3s
+    200/524 tickers, 215,530 hits, 156.4s
+    250/524 tickers, 275,327 hits, 199.8s
+    300/524 tickers, 336,025 hits, 243.9s
+    350/524 tickers, 388,339 hits, 281.9s
+    400/524 tickers, 434,445 hits, 315.3s
+    450/524 tickers, 483,909 hits, 351.3s
+    500/524 tickers, 537,863 hits, 390.1s
+  scan: 410.0s, 565,265 hits / 565,265 cand bars (100.0000%)
+  SANITY OK: all 26 valid examples appear
+  hit n_outside_bars quantiles: p25=64, p50=64, p75=64, max=64
+
+Wrote summary to C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\universe_scan/deviation_summary.txt

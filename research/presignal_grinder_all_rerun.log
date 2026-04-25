@@ -1,0 +1,389 @@
+OUT: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_grinder_all
+Loading OHLCV: C:/Users/Dan/Documents/ScanPerfect/swing-screener\local_runner\cache\universe_ohlcv_daily.pkl
+Universe: 11842 tickers  (1.3s)
+
+======================================================================
+=== HTF  N=39
+======================================================================
+DB examples: 32
+Valid example paths: 32 / 32  (shape (32, 39))
+F1 sanity OK: 32/32
+  F1 scan 3000/11842  (26s)
+  F1 scan 6000/11842  (44s)
+  F1 scan 9000/11842  (59s)
+F1 scan complete: 74.6s, 12,759,844 candidates
+F1 bars: 10,951  clusters: 10,032  (ex: 32/32, non-ex: 10,000)
+  [D1] M*=80  spread@M*=0.9069  n_valid@M*=30/32  spread range [0.8993, 1.5438]
+  [D2] M*=190  spread@M*=4.1167  n_valid@M*=29/32  spread range [0.4238, 4.1167]
+  [D5] M*=71  spread@M*=1.6586  n_valid@M*=30/32  spread range [1.3011, 3.4781]
+Location horizons: M1=80 M2=190 M5=71
+Location sanity: 32/32
+  Loc scan 3000/11842  (9s)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  Loc scan 6000/11842  (19s)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  Loc scan 9000/11842  (28s)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+Location scan complete: 35.8s
+Location clusters: 662,317  (ex: 32/32, non-ex: 662,285)
+F1 INTERSECT Location: 1,206 clusters  (ex-matched: 32/32)
+Setup elapsed: 111.3s
+
+======================================================================
+=== BF  N=49
+======================================================================
+DB examples: 45
+Valid example paths: 45 / 45  (shape (45, 49))
+F1 sanity OK: 45/45
+  F1 scan 3000/11842  (21s)
+  F1 scan 6000/11842  (44s)
+  F1 scan 9000/11842  (69s)
+F1 scan complete: 94.4s, 12,759,844 candidates
+F1 bars: 16,530  clusters: 14,893  (ex: 45/45, non-ex: 14,848)
+  [D1] M*=37  spread@M*=0.7526  n_valid@M*=45/45  spread range [0.7041, 2.7410]
+  [D2] M*=198  spread@M*=5.8784  n_valid@M*=44/45  spread range [0.6697, 5.8784]
+  [D5] M*=91  spread@M*=1.1518  n_valid@M*=45/45  spread range [1.0533, 2.4891]
+Location horizons: M1=37 M2=198 M5=91
+Location sanity: 45/45
+  Loc scan 3000/11842  (11s)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  Loc scan 6000/11842  (23s)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+  Loc scan 9000/11842  (35s)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+Location scan complete: 48.3s
+Location clusters: 496,137  (ex: 45/45, non-ex: 496,092)
+F1 INTERSECT Location: 3,335 clusters  (ex-matched: 45/45)
+Setup elapsed: 143.8s
+
+======================================================================
+=== BASE  N=32
+======================================================================
+DB examples: 42
+Valid example paths: 42 / 42  (shape (42, 32))
+F1 sanity OK: 42/42
+  F1 scan 3000/11842  (19s)
+  F1 scan 6000/11842  (39s)
+  F1 scan 9000/11842  (56s)
+F1 scan complete: 71.7s, 12,759,844 candidates
+F1 bars: 131,475  clusters: 120,830  (ex: 42/42, non-ex: 120,788)
+  [D1] M*=36  spread@M*=0.9020  n_valid@M*=42/42  spread range [0.6446, 2.7346]
+  [D2] M*=215  spread@M*=5.8604  n_valid@M*=40/42  spread range [0.8230, 5.8604]
+  [D5] M*=11  spread@M*=2.1623  n_valid@M*=42/42  spread range [1.2654, 2.1623]
+Location horizons: M1=36 M2=215 M5=11
+Location sanity: 42/42
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  Loc scan 3000/11842  (8s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  Loc scan 6000/11842  (16s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  Loc scan 9000/11842  (24s)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+Location scan complete: 31.0s
+Location clusters: 707,180  (ex: 42/42, non-ex: 707,138)
+F1 INTERSECT Location: 46,482 clusters  (ex-matched: 42/42)
+Setup elapsed: 103.9s
+
+======================================================================
+=== DTSS  N=86
+======================================================================
+DB examples: 73
+Valid example paths: 73 / 73  (shape (73, 86))
+F1 sanity OK: 73/73
+  F1 scan 3000/11842  (83s)
+  F1 scan 6000/11842  (180s)
+  F1 scan 9000/11842  (271s)
+F1 scan complete: 360.6s, 12,759,844 candidates
+F1 bars: 1,002,516  clusters: 294,905  (ex: 73/73, non-ex: 294,832)
+  [D1] M*=34  spread@M*=0.8032  n_valid@M*=73/73  spread range [0.4293, 2.0979]
+  [D2] M*=42  spread@M*=2.1648  n_valid@M*=73/73  spread range [0.5989, 3.5070]
+  [D5] M*=73  spread@M*=1.4669  n_valid@M*=73/73  spread range [1.4320, 2.3819]
+Location horizons: M1=34 M2=42 M5=73
+Location sanity: 73/73
+  Loc scan 3000/11842  (8s)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  Loc scan 6000/11842  (17s)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+  Loc scan 9000/11842  (25s)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+Location scan complete: 32.5s
+Location clusters: 378,572  (ex: 73/73, non-ex: 378,499)
+F1 INTERSECT Location: 9,219 clusters  (ex-matched: 73/73)
+Setup elapsed: 394.5s
+
+======================================================================
+=== 3-4DB  N=64
+======================================================================
+DB examples: 26
+Valid example paths: 26 / 26  (shape (26, 64))
+F1 sanity OK: 26/26
+  F1 scan 3000/11842  (22s)
+  F1 scan 6000/11842  (45s)
+  F1 scan 9000/11842  (68s)
+F1 scan complete: 88.2s, 12,759,844 candidates
+F1 bars: 50,842  clusters: 20,839  (ex: 26/26, non-ex: 20,813)
+  [D1] M*=93  spread@M*=0.4289  n_valid@M*=26/26  spread range [0.3549, 0.9371]
+  [D2] M*=160  spread@M*=4.5151  n_valid@M*=25/26  spread range [1.1214, 4.7674]
+  [D5] M*=12  spread@M*=2.4066  n_valid@M*=26/26  spread range [0.8834, 2.4066]
+Location horizons: M1=93 M2=160 M5=12
+Location sanity: 26/26
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  Loc scan 3000/11842  (8s)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  Loc scan 6000/11842  (17s)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  Loc scan 9000/11842  (25s)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:323: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:324: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+Location scan complete: 33.2s
+Location clusters: 434,415  (ex: 26/26, non-ex: 434,389)
+F1 INTERSECT Location: 551 clusters  (ex-matched: 26/26)
+Setup elapsed: 121.9s
+
+==========================================================================================
+=== MASTER SUMMARY (post-2020, 100% EX pass F1 + Location)
+==========================================================================================
+setup   N    ex       candidates     F1_cl      Loc_cl    F1_Loc  ex_match
+htf     39   32       12,759,844    10,032     662,317     1,206    32/32 
+bf      49   45       12,759,844    14,893     496,137     3,335    45/45 
+base    32   42       12,759,844   120,830     707,180    46,482    42/42 
+dtss    86   73       12,759,844   294,905     378,572     9,219    73/73 
+3-4db   64   26       12,759,844    20,839     434,415       551    26/26 
+
+Wrote summaries + CSVs to C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\presignal_grinder_all

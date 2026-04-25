@@ -1,0 +1,45 @@
+====================================================================================================
+R4 — K-FOLD CROSS-VALIDATED FEATURE RANKING (K=5)
+====================================================================================================
+Split examples into 5 folds. In each fold, rank features on remaining folds' bands.
+Keep features ranked top-50 in >=4/5 folds. Uses random-bar denominator.
+
+----------------------------------------------------------------------------------------------------
+HTF  ex=29  folds=5
+  features in top-50 in >=4 folds: 35
+  stable_ordered[:40] -> indep: 35
+  EX lenient pass:     29/29 (100.0%)
+  NE lenient pass:     316/445 (71.0%)
+  RANDOM lenient pass: 561/8101 (6.9%)
+
+----------------------------------------------------------------------------------------------------
+BF  ex=45  folds=5
+  features in top-50 in >=4 folds: 24
+  stable_ordered[:40] -> indep: 20
+  EX lenient pass:     45/45 (100.0%)
+  NE lenient pass:     320/400 (80.0%)
+  RANDOM lenient pass: 582/8101 (7.2%)
+
+----------------------------------------------------------------------------------------------------
+BASE  ex=37  folds=5
+  features in top-50 in >=4 folds: 31
+  stable_ordered[:40] -> indep: 16
+  EX lenient pass:     37/37 (100.0%)
+  NE lenient pass:     343/503 (68.2%)
+  RANDOM lenient pass: 1594/8101 (19.7%)
+
+----------------------------------------------------------------------------------------------------
+DTSS  ex=61  folds=5
+  features in top-50 in >=4 folds: 31
+  stable_ordered[:40] -> indep: 12
+  EX lenient pass:     61/61 (100.0%)
+  NE lenient pass:     985/1060 (92.9%)
+  RANDOM lenient pass: 2463/8101 (30.4%)
+
+----------------------------------------------------------------------------------------------------
+3-4DB  ex=26  folds=5
+  features in top-50 in >=4 folds: 10
+  stable_ordered[:40] -> indep: 8
+  EX lenient pass:     26/26 (100.0%)
+  NE lenient pass:     107/524 (20.4%)
+  RANDOM lenient pass: 101/8101 (1.2%)

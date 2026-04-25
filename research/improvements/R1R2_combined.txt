@@ -1,0 +1,135 @@
+====================================================================================================
+R1 + R2 COMBINED — random-bar ranking with LOO-stable gate
+====================================================================================================
+Rank by random-bar carve_value, gate by LOO failure <= 0.0
+Coverage: ex_measured >= 10, random_frac >= 0.5
+
+----------------------------------------------------------------------------------------------------
+HTF  ex=29  ne=445  rand=8101
+  covered features (all 3 gates): 4505
+  top-50 -> indep pool: 50
+  top-40 -> indep tight set: 40
+  EX lenient pass (sanity):   29/29 (100.0%)
+  NE lenient pass (own pool): 232/445 (52.1%)
+  RANDOM lenient pass:        233/8101 (2.9%)
+  own/random ratio: 18.13x
+  Top-15 features by R1+R2 rank (random-bar carve, LOO-stable):
+     1. w_roc_rank_5_lb50                                    [+0.86,+1]  rand_cv= 84.9%  loo=  0.0%
+     2. w_st_c_gt_maxc20_1_50                                [+0,+0]  rand_cv= 83.7%  loo=  0.0%
+     3. w_st_c_gt_maxc20_1_15                                [+0,+0]  rand_cv= 82.8%  loo=  0.0%
+     4. w_st_c_gt_maxc20_1_20                                [+0,+0]  rand_cv= 82.7%  loo=  0.0%
+     5. w_st_c_gt_maxc20_1_30                                [+0,+0]  rand_cv= 82.6%  loo=  0.0%
+     6. w_pctrank_close_20                                   [+100,+100]  rand_cv= 81.6%  loo=  0.0%
+     7. w_ct_c_gt_maxc10_1_3                                 [+2,+3]  rand_cv= 80.8%  loo=  0.0%
+     8. w_st_c_gt_maxc10_1_50                                [+0,+0]  rand_cv= 79.6%  loo=  0.0%
+     9. w_tir_c_gt_maxc10_1_5                                [+1,+5]  rand_cv= 79.1%  loo=  0.0%
+    10. w_st_c_gt_maxc10_1_5                                 [+0,+0]  rand_cv= 79.0%  loo=  0.0%
+    11. w_st_c_gt_maxc10_1_10                                [+0,+0]  rand_cv= 78.8%  loo=  0.0%
+    12. w_st_c_gt_maxc10_1_30                                [+0,+0]  rand_cv= 78.7%  loo=  0.0%
+    13. w_st_c_gt_maxc10_1_15                                [+0,+0]  rand_cv= 78.6%  loo=  0.0%
+    14. w_st_c_gt_maxc10_1_20                                [+0,+0]  rand_cv= 78.6%  loo=  0.0%
+    15. w_aroon_up_25                                        [+96,+100]  rand_cv= 77.5%  loo=  0.0%
+
+----------------------------------------------------------------------------------------------------
+BF  ex=45  ne=400  rand=8101
+  covered features (all 3 gates): 4992
+  top-50 -> indep pool: 42
+  top-40 -> indep tight set: 34
+  EX lenient pass (sanity):   45/45 (100.0%)
+  NE lenient pass (own pool): 282/400 (70.5%)
+  RANDOM lenient pass:        344/8101 (4.2%)
+  own/random ratio: 16.60x
+  Top-15 features by R1+R2 rank (random-bar carve, LOO-stable):
+     1. w_st_cci14_gt_100_50                                 [+0,+0]  rand_cv= 74.8%  loo=  0.0%
+     2. w_st_cci14_gt_100_5                                  [+0,+0]  rand_cv= 73.9%  loo=  0.0%
+     3. w_st_cci14_gt_100_10                                 [+0,+0]  rand_cv= 73.7%  loo=  0.0%
+     4. w_pctrank_close_20                                   [+95,+100]  rand_cv= 73.6%  loo=  0.0%
+     5. w_ext_peak_xavgc50_lb30                              [+0.729,+1]  rand_cv= 73.6%  loo=  0.0%
+     6. w_st_cci14_gt_100_30                                 [+0,+0]  rand_cv= 73.6%  loo=  0.0%
+     7. w_st_cci14_gt_100_15                                 [+0,+0]  rand_cv= 73.5%  loo=  0.0%
+     8. w_st_cci14_gt_100_20                                 [+0,+0]  rand_cv= 73.3%  loo=  0.0%
+     9. w_ct_h_gt_maxh20_1_3                                 [+1,+3]  rand_cv= 71.9%  loo=  0.0%
+    10. ct_c_gt_bbtop_30                                     [+3,+9]  rand_cv= 71.0%  loo=  0.0%
+    11. w_st_c_gt_bbtop_15                                   [+0,+10]  rand_cv= 70.7%  loo=  0.0%
+    12. w_st_c_gt_bbtop_20                                   [+0,+10]  rand_cv= 70.4%  loo=  0.0%
+    13. w_tir_rsi14_gt_60_15                                 [+2,+15]  rand_cv= 70.2%  loo=  0.0%
+    14. w_tir_rsi14_gt_60_5                                  [+2,+5]  rand_cv= 70.2%  loo=  0.0%
+    15. w_tir_rsi14_gt_60_10                                 [+2,+10]  rand_cv= 70.2%  loo=  0.0%
+
+----------------------------------------------------------------------------------------------------
+BASE  ex=37  ne=503  rand=8101
+  covered features (all 3 gates): 4612
+  top-50 -> indep pool: 26
+  top-40 -> indep tight set: 24
+  EX lenient pass (sanity):   37/37 (100.0%)
+  NE lenient pass (own pool): 335/503 (66.6%)
+  RANDOM lenient pass:        1565/8101 (19.3%)
+  own/random ratio: 3.45x
+  Top-15 features by R1+R2 rank (random-bar carve, LOO-stable):
+     1. m_st_c_gt_maxc10_1_20                                [+0,+1]  rand_cv= 66.6%  loo=  0.0%
+     2. w_pctrank_close_50                                   [+88,+100]  rand_cv= 65.6%  loo=  0.0%
+     3. m_st_c_gt_maxc10_1_15                                [+0,+1]  rand_cv= 64.8%  loo=  0.0%
+     4. w_aroon_osc_7                                        [+42.8,+85.7]  rand_cv= 58.9%  loo=  0.0%
+     5. w_st_h_gt_maxh10_1_50                                [+0,+3]  rand_cv= 58.2%  loo=  0.0%
+     6. w_st_l_gt_xavgc21_50                                 [+0,+0]  rand_cv= 57.7%  loo=  0.0%
+     7. w_st_h_gt_maxh10_1_5                                 [+0,+3]  rand_cv= 57.7%  loo=  0.0%
+     8. w_st_h_gt_maxh10_1_10                                [+0,+3]  rand_cv= 57.4%  loo=  0.0%
+     9. w_st_h_gt_maxh10_1_30                                [+0,+3]  rand_cv= 57.2%  loo=  0.0%
+    10. w_tir_l_gt_xavgc21_10                                [+1,+10]  rand_cv= 57.1%  loo=  0.0%
+    11. w_tir_l_gt_xavgc21_5                                 [+1,+5]  rand_cv= 57.1%  loo=  0.0%
+    12. w_tir_l_gt_xavgc21_20                                [+1,+20]  rand_cv= 57.1%  loo=  0.0%
+    13. w_tir_l_gt_xavgc21_15                                [+1,+15]  rand_cv= 57.1%  loo=  0.0%
+    14. w_st_h_gt_maxh10_1_15                                [+0,+3]  rand_cv= 57.0%  loo=  0.0%
+    15. w_st_h_gt_maxh10_1_20                                [+0,+3]  rand_cv= 56.8%  loo=  0.0%
+
+----------------------------------------------------------------------------------------------------
+DTSS  ex=61  ne=1060  rand=8101
+  covered features (all 3 gates): 4417
+  top-50 -> indep pool: 27
+  top-40 -> indep tight set: 18
+  EX lenient pass (sanity):   61/61 (100.0%)
+  NE lenient pass (own pool): 985/1060 (92.9%)
+  RANDOM lenient pass:        2463/8101 (30.4%)
+  own/random ratio: 3.06x
+  Top-15 features by R1+R2 rank (random-bar carve, LOO-stable):
+     1. tir_l_gt_avgc200_10                                  [+4,+10]  rand_cv= 57.9%  loo=  0.0%
+     2. tir_l_gt_avgc200_30                                  [+4,+30]  rand_cv= 57.9%  loo=  0.0%
+     3. tir_l_gt_avgc200_5                                   [+4,+5]  rand_cv= 57.9%  loo=  0.0%
+     4. tir_l_gt_avgc200_15                                  [+4,+15]  rand_cv= 57.9%  loo=  0.0%
+     5. tir_l_gt_avgc200_20                                  [+4,+20]  rand_cv= 57.9%  loo=  0.0%
+     6. tir_c_gt_xavgc200_5                                  [+5,+5]  rand_cv= 57.8%  loo=  0.0%
+     7. ct_c_gt_xavgc200_5                                   [+5,+5]  rand_cv= 57.7%  loo=  0.0%
+     8. w_ct_xavgc8_gt_xavgc21_20                            [+15,+20]  rand_cv= 57.6%  loo=  0.0%
+     9. ct_l_gt_avgc200_3                                    [+3,+3]  rand_cv= 56.8%  loo=  0.0%
+    10. tir_c_gt_avgc200_5                                   [+5,+5]  rand_cv= 56.7%  loo=  0.0%
+    11. ct_c_gt_avgc200_5                                    [+5,+5]  rand_cv= 56.7%  loo=  0.0%
+    12. ct_l_gt_avgc200_5                                    [+4,+5]  rand_cv= 56.6%  loo=  0.0%
+    13. ct_c_gt_xavgc200_3                                   [+3,+3]  rand_cv= 55.9%  loo=  0.0%
+    14. ct_c_gt_avgc200_3                                    [+3,+3]  rand_cv= 55.1%  loo=  0.0%
+    15. ct_l_gt_avgc200_7                                    [+4,+7]  rand_cv= 55.0%  loo=  0.0%
+
+----------------------------------------------------------------------------------------------------
+3-4DB  ex=26  ne=524  rand=8101
+  covered features (all 3 gates): 3953
+  top-50 -> indep pool: 35
+  top-40 -> indep tight set: 29
+  EX lenient pass (sanity):   26/26 (100.0%)
+  NE lenient pass (own pool): 37/524 (7.1%)
+  RANDOM lenient pass:        9/8101 (0.1%)
+  own/random ratio: 63.56x
+  Top-15 features by R1+R2 rank (random-bar carve, LOO-stable):
+     1. st_c_gt_maxc50_1_15                                  [+4,+14]  rand_cv= 81.6%  loo=  0.0%
+     2. st_c_gt_maxc50_1_20                                  [+4,+14]  rand_cv= 81.5%  loo=  0.0%
+     3. st_c_gt_maxc50_1_30                                  [+4,+14]  rand_cv= 81.5%  loo=  0.0%
+     4. st_c_gt_maxc50_1_50                                  [+4,+14]  rand_cv= 81.3%  loo=  0.0%
+     5. st_c_gt_maxc20_1_15                                  [+4,+14]  rand_cv= 72.7%  loo=  0.0%
+     6. st_c_gt_maxc20_1_20                                  [+4,+14]  rand_cv= 72.6%  loo=  0.0%
+     7. st_c_gt_maxc20_1_30                                  [+4,+14]  rand_cv= 72.5%  loo=  0.0%
+     8. st_c_gt_maxc20_1_50                                  [+4,+14]  rand_cv= 72.5%  loo=  0.0%
+     9. pctrank_atr14_252                                    [+73.8,+100]  rand_cv= 71.2%  loo=  0.0%
+    10. w_st_xavgc100_rising_30                              [+0,+0]  rand_cv= 70.2%  loo=  0.0%
+    11. w_st_c_gt_xavgc100_30                                [+0,+0]  rand_cv= 69.9%  loo=  0.0%
+    12. w_st_c_gt_avgc100_30                                 [+0,+0]  rand_cv= 69.5%  loo=  0.0%
+    13. ct_aroon_up14_gt_70_30                               [+16,+28]  rand_cv= 68.9%  loo=  0.0%
+    14. m_aroon_osc_10                                       [+30,+70]  rand_cv= 68.1%  loo=  0.0%
+    15. ct_es_ext200_stoch14_lt_50_5                         [+4,+5]  rand_cv= 65.6%  loo=  0.0%

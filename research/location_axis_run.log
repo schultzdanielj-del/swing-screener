@@ -1,0 +1,71 @@
+OUT: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\location_axis
+Universe tickers: 11842
+Valid examples: 32
+
+Deriving horizons...
+  [D1 pos] M*=80  spread@M*=0.9069  n_valid@M*=30/32  spread range [0.8993, 1.5438]
+  [D2 trend] M*=190  spread@M*=4.1167  n_valid@M*=29/32  spread range [0.4238, 4.1167]
+  [D5 vol_ratio] M*=71  spread@M*=1.6586  n_valid@M*=30/32  spread range [1.3011, 3.4781]
+
+Building bounds at derived M*...
+  D1  pos(M=80)       bounds [0.8115, 1.7184]   n_ex=30/32
+  D2  trend(M=190)     bounds [-2.7546, 1.3621]   n_ex=29/32
+  D3  tsh                    bounds [3, 504]       n_ex=32/32
+  D4a log_ath                bounds [-2.9054, 0.0000]
+  D4b log_atl                bounds [0.3561, 4.7335]
+  D5  vol_ratio(M=71) bounds [0.4616, 2.1202]   n_ex=30/32
+
+Sanity: 100% EX pass check on location axis...
+  EX pass: 32/32
+
+Full-universe location scan, date >= 2020-01-02...
+  2000/11842 tickers (5.8s)  candidates: 2,055,450  loc-pass: 205,250
+  4000/11842 tickers (12.2s)  candidates: 4,265,358  loc-pass: 463,237
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:321: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:322: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  6000/11842 tickers (18.3s)  candidates: 6,419,731  loc-pass: 706,224
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:321: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:322: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+  8000/11842 tickers (24.2s)  candidates: 8,457,003  loc-pass: 911,294
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:321: RuntimeWarning: All-NaN slice encountered
+  w_min = np.nanmin(window, axis=1)
+C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier\research\location_axis.py:322: RuntimeWarning: All-NaN slice encountered
+  w_max = np.nanmax(window, axis=1)
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+C:\Users\Dan\AppData\Roaming\Python\Python314\site-packages\numpy\lib\_nanfunctions_impl.py:1997: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+
+Scan complete in 36.2s
+
+=== LOCATION AXIS — HTF, full universe, date >= 2020-01-02 ===
+Total candidates:  12,535,773
+Per-descriptor KEEP counts (higher = more permissive = that descriptor doing less carving):
+  D1  pos                kept    3,988,903  (31.82%)
+  D2  trend              kept   12,366,142  (98.65%)
+  D3  tsh                kept    5,044,525  (40.24%)
+  D4a log_ath            kept   11,516,713  (91.87%)
+  D4b log_atl            kept    8,445,654  (67.37%)
+  D5  vol_ratio          kept   11,478,231  (91.56%)
+Joint (all 5 pass):        1,347,252  (10.7473% bar carve-through)
+Location clusters (§5.2):  658,467  (example-matched: 31, non-example: 658436)
+
+=== F1 INTERSECT LOCATION (cluster-level intersection) ===
+  F1 clusters:        2,405
+  Location clusters:  658,467
+  F1 INTERSECT Location:      1,141
+  ex-matched in INTERSECT:    31 / 32
+
+Wrote summary + clusters to C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\location_axis

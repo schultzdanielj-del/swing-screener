@@ -1,0 +1,68 @@
+{
+  "setup": "dtss",
+  "gates": {
+    "loo_fail_threshold": 0.0,
+    "min_folds_top_bucket": 5,
+    "top_bucket": 50,
+    "perm_n_trials": 100,
+    "corr_threshold": 0.9
+  },
+  "coverage": {
+    "min_ex_measured": 10,
+    "min_random_frac": 0.5,
+    "min_ne_frac": 0.5
+  },
+  "n_ex_total": 61,
+  "n_ne_total": 1060,
+  "n_random_total": 8101,
+  "n_features_surviving": 3,
+  "ex_pass": 61,
+  "ne_pass": 989,
+  "rand_pass": 2631,
+  "own_rand_ratio": 2.8728186427429128,
+  "gate_funnel": {
+    "g1_covered_loo0": 4417,
+    "g2_every_fold_top_bucket": 12,
+    "g3_perm_max_beat": 4865,
+    "g1_int_g2_int_g3": 12,
+    "after_g4_decorr": 3
+  },
+  "bands": [
+    {
+      "name": "tir_l_gt_avgc200_5",
+      "feature_index": 1979,
+      "ex_min": 4.0,
+      "ex_max": 5.0,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 1.0,
+      "carve_value_random": 0.5786939883964942,
+      "perm_max_carve": 0.0,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    },
+    {
+      "name": "w_ct_xavgc8_gt_xavgc21_20",
+      "feature_index": 7675,
+      "ex_min": 15.0,
+      "ex_max": 20.0,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.9688927292926799,
+      "carve_value_random": 0.5756147279908268,
+      "perm_max_carve": 0.0,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    },
+    {
+      "name": "st_l_gt_avgc200_5",
+      "feature_index": 1973,
+      "ex_min": 0.0,
+      "ex_max": 0.0,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.9982718182940378,
+      "carve_value_random": 0.545937925064919,
+      "perm_max_carve": 0.03227012210316472,
+      "loo_fail_rate": 0.0,
+      "fold_count_top_bucket": 5
+    }
+  ]
+}

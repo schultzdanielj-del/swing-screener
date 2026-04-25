@@ -38,3 +38,6 @@ data/pipeline_logs.json
 data/grinder_agent.json
 local_runner/cache/
 local_runner/grinds/
+
+# Universe scan two-stage candidate CSVs (large generated outputs)
+research/universe_scan/two_stage_*_candidates.csv

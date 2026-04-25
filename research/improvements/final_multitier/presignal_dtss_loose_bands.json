@@ -1,0 +1,168 @@
+{
+  "setup": "dtss",
+  "tier": "loose",
+  "rule": "12/15",
+  "min_pass": 12,
+  "corr_threshold": 0.9,
+  "loo_fail_threshold": 0.1,
+  "min_ex_measured": 10,
+  "min_random_frac": 0.5,
+  "n_ex_total": 61,
+  "n_ne_total": 1060,
+  "ex_pass": 61,
+  "ne_pass": 942,
+  "rand_pass": 1752,
+  "own_rand_ratio": 4.109127035409667,
+  "bands": [
+    {
+      "name": "ext_xavgc100_pct",
+      "feature_index": 407,
+      "ex_min": 6.9375,
+      "ex_max": 60.125,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.9646957165782002,
+      "carve_value_random": 0.8193218170185541,
+      "loo_fail_rate": 0.032786883413791656
+    },
+    {
+      "name": "ext_xavgc150_pct",
+      "feature_index": 410,
+      "ex_min": 8.5234375,
+      "ex_max": 66.0625,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.9069250709788915,
+      "carve_value_random": 0.8178848509595753,
+      "loo_fail_rate": 0.032786883413791656
+    },
+    {
+      "name": "ext_xavgc200_pct",
+      "feature_index": 413,
+      "ex_min": 9.6875,
+      "ex_max": 66.5625,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.8164424145167263,
+      "carve_value_random": 0.8132748714847293,
+      "loo_fail_rate": 0.032786883413791656
+    },
+    {
+      "name": "ext_avgc200_pct",
+      "feature_index": 371,
+      "ex_min": 9.4375,
+      "ex_max": 77.3125,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.8164424145167263,
+      "carve_value_random": 0.7689749017236166,
+      "loo_fail_rate": 0.032786883413791656
+    },
+    {
+      "name": "ext_avgc150_pct",
+      "feature_index": 368,
+      "ex_min": 7.578125,
+      "ex_max": 73.875,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.9069250709788915,
+      "carve_value_random": 0.7586770110249081,
+      "loo_fail_rate": 0.032786883413791656
+    },
+    {
+      "name": "es_ext200_sma_3",
+      "feature_index": 4819,
+      "ex_min": 2.84765625,
+      "ex_max": 10.203125,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.8085421552894705,
+      "carve_value_random": 0.7288549618320611,
+      "loo_fail_rate": 0.032786883413791656
+    },
+    {
+      "name": "slope_xavgc150_off5_adr14",
+      "feature_index": 553,
+      "ex_min": 0.12109375,
+      "ex_max": 0.4970703125,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.8877916306628811,
+      "carve_value_random": 0.728726362625139,
+      "loo_fail_rate": 0.032786883413791656
+    },
+    {
+      "name": "ext_avgc100_pct",
+      "feature_index": 365,
+      "ex_min": 5.2421875,
+      "ex_max": 68.375,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.9646957165782002,
+      "carve_value_random": 0.727447216890595,
+      "loo_fail_rate": 0.032786883413791656
+    },
+    {
+      "name": "undercut_avgc200_120_adr14",
+      "feature_index": 1089,
+      "ex_min": -3.78125,
+      "ex_max": 2.494140625,
+      "n_ex_measured": 59,
+      "random_coverage_frac": 0.6516479446981854,
+      "carve_value_random": 0.7078992233377533,
+      "loo_fail_rate": 0.033898305147886276
+    },
+    {
+      "name": "low_vs_avgc200_adr14",
+      "feature_index": 432,
+      "ex_min": 1.8642578125,
+      "ex_max": 9.96875,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.8160720898654487,
+      "carve_value_random": 0.7023143246104977,
+      "loo_fail_rate": 0.032786883413791656
+    },
+    {
+      "name": "spread_xavgc8_xavgc200_adr14",
+      "feature_index": 681,
+      "ex_min": 1.443359375,
+      "ex_max": 7.734375,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.8079249475373411,
+      "carve_value_random": 0.6990068754774638,
+      "loo_fail_rate": 0.032786883413791656
+    },
+    {
+      "name": "undercut_avgc100_120_adr14",
+      "feature_index": 1077,
+      "ex_min": -4.29296875,
+      "ex_max": 0.52392578125,
+      "n_ex_measured": 60,
+      "random_coverage_frac": 0.7741019627206518,
+      "carve_value_random": 0.6974964120554935,
+      "loo_fail_rate": 0.03333333507180214
+    },
+    {
+      "name": "dist_from_avgc200_adr14",
+      "feature_index": 15916,
+      "ex_min": 2.419921875,
+      "ex_max": 10.8828125,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.8160720898654487,
+      "carve_value_random": 0.6944486461957344,
+      "loo_fail_rate": 0.032786883413791656
+    },
+    {
+      "name": "ext_xavgc150_adr14",
+      "feature_index": 409,
+      "ex_min": 1.8251953125,
+      "ex_max": 8.9453125,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.8958153314405629,
+      "carve_value_random": 0.6895411326994626,
+      "loo_fail_rate": 0.032786883413791656
+    },
+    {
+      "name": "high_vs_avgc200_adr14",
+      "feature_index": 433,
+      "ex_min": 2.474609375,
+      "ex_max": 10.9453125,
+      "n_ex_measured": 61,
+      "random_coverage_frac": 0.8160720898654487,
+      "carve_value_random": 0.6832551807593404,
+      "loo_fail_rate": 0.032786883413791656
+    }
+  ]
+}

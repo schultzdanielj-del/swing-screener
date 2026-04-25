@@ -1,0 +1,58 @@
+[08:37:14] === PRESIGNAL GRINDER IMPROVEMENT RUN ===
+[08:37:14] Worktree: C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier
+[08:37:14] Out dir:  C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\improvements
+[08:37:14] Loading OHLCV: C:/Users/Dan/Documents/ScanPerfect/swing-screener\local_runner\cache\universe_ohlcv_daily.pkl
+[08:37:15] Universe tickers: 11842
+[08:37:15] Expr cache: 16039 expressions, cache path (see expr_cache_builder)
+[08:37:15] Sampling 500×20 = 10000 random bars (seed=42)
+[08:37:16] Sampled 10000 random (ticker, bar) pairs
+[08:37:57] Random matrix: 8101 rows × 16039 features
+[08:37:57] --- Per-setup dedupe + feature matrices ---
+[08:37:57]   htf: loading pyramid + examples
+[08:38:38]     htf: ex=29 ne=445 ex_mat=(29, 16039) ne_mat=(445, 16039)
+[08:38:38]     htf v1 baseline NE pass: 51/445 (11.5%)
+[08:38:38]   bf: loading pyramid + examples
+[08:39:14]     bf: ex=45 ne=400 ex_mat=(45, 16039) ne_mat=(400, 16039)
+[08:39:14]     bf v1 baseline NE pass: 61/400 (15.2%)
+[08:39:14]   base: loading pyramid + examples
+[08:40:02]     base: ex=37 ne=503 ex_mat=(37, 16039) ne_mat=(503, 16039)
+[08:40:02]     base v1 baseline NE pass: 34/503 (6.8%)
+[08:40:02]   dtss: loading pyramid + examples
+[08:41:25]     dtss: ex=61 ne=1060 ex_mat=(61, 16039) ne_mat=(1060, 16039)
+[08:41:25]     dtss v1 baseline NE pass: 283/1060 (26.7%)
+[08:41:25]   3-4db: loading pyramid + examples
+[08:42:11]     3-4db: ex=26 ne=524 ex_mat=(26, 16039) ne_mat=(524, 16039)
+[08:42:11]     3-4db v1 baseline NE pass: 19/524 (3.6%)
+[08:42:11] STEP R1 — rank by random-bar carve_value
+[08:42:15]   wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\improvements\R1_random_bar_rank.txt
+[08:42:15] STEP R2 — LOO-stable gate (v1 ranking, pyramid-ne denominator)
+[08:42:16]   wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\improvements\R2_loo_gate.txt
+[08:42:16] STEP R1+R2 — random-bar rank + LOO gate
+[08:42:21]   wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\improvements\R1R2_combined.txt
+[08:42:21] STEP E1 — PCA ellipsoid bands
+[08:42:21]   wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\improvements\E1_pca.txt
+[08:42:21] STEP E2 — supervised classifier supplement
+[08:42:21]   wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\improvements\E2_supervised.txt
+[08:42:21] STEP R4 — K-fold cross-validated feature ranking
+[08:42:38]   wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\improvements\R4_kfold.txt
+[08:42:38] STEP R5 — band headroom sweep
+[08:42:38]   wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\improvements\R5_headroom.txt
+[08:42:38] STEP E4 — class cascade (breakout/fade union filters)
+[08:42:40]   wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\improvements\E4_cascade.txt
+[08:42:40] STEP X2 — temporal holdout validation
+[08:42:41]   wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\improvements\X2_temporal.txt
+[08:42:41] STEP BULLETPROOF — four-gate intersection, single output per setup
+[08:42:41]   htf: permutation max over 100 trials (n_ex=29, workers=16)
+[08:43:00]     permutation finished in 18.2s
+[08:43:00]   bf: permutation max over 100 trials (n_ex=45, workers=16)
+[08:43:13]     permutation finished in 13.3s
+[08:43:13]   base: permutation max over 100 trials (n_ex=37, workers=16)
+[08:43:25]     permutation finished in 11.6s
+[08:43:25]   dtss: permutation max over 100 trials (n_ex=61, workers=16)
+[08:43:37]     permutation finished in 11.6s
+[08:43:37]   3-4db: permutation max over 100 trials (n_ex=26, workers=16)
+[08:43:48]     permutation finished in 11.4s
+[08:43:48]   wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\improvements\bulletproof.txt
+[08:43:48] STEP COMPARISON — side-by-side table
+[08:43:48]   wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\research\improvements\COMPARISON.txt
+[08:43:48] === DONE in 394.1s ===
