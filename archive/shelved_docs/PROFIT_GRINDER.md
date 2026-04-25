@@ -439,3 +439,25 @@ The scan tuning UI reads the profit grinder output and lets you:
 - Lock in the chosen exit strategy for live nightly scanning
 
 The profit grinder is a pure data engine. All decision-making happens in the UI.
+
+---
+
+## Good Ideas — MFE-capture exploration (parked 2026-04-17)
+
+Generated during the dual-exit worktree's 2026-04-16 MFE-capture push. Objective has since pivoted to classifier-robustness, so these are off the active path. Kept here as concrete starting points for when the profit grinder is re-specced — each one was a working script with produced output.
+
+Scripts listed below live in `archive/shelved_scripts/` of the dual-exit worktree.
+
+- **Exit-lag diagnostic** (`mfe_diagnostic.py`). Per example, measure gap between MFE bar and rule-exit bar. Catches rules that systematically fire late or preempt the move. Earnings cap not respected in original — add before reuse.
+- **Fill-assumption rescore** (`intrabar_rescore.py`). Same picks, rescored under close / mid / peak fills. The peak-vs-close gap is the upper bound on what profit-taking can add over close-bar exits. Useful as a ceiling number to compare any profit-taking rule against.
+- **ADR-multiple take-profit grid** (`take_profit_grinder.py`). Sweep X ∈ {2..50} for a standing limit at `signal_close ± X·ADR`. Earnings-capped forced exit if no fill. Reports per-setup best X. A pure price-target baseline.
+- **Gated dual-exit** (`gated_tp_grinder.py`). Rule condition arms a standing TP limit at `signal_close ± X·ADR` — TP only becomes live after the rule fires. Whichever fills first wins. Sweep X ∈ {3..30}. Finding: rule fires near peak, price retraces, target rarely hits. Keep as a reference for "rule-armed TP" mechanics.
+- **Parallel dual-exit** (`parallel_rule_tp.py`). Rule and TP race from bar 1, not gated. Intrabar TP beats close-bar rule on same bar. Net near 0 vs rule-close — confirms rule timing is already good on capture-maximizing picks.
+- **Per-ticker extension bimodality** (`bimodality_check.py`). Per-example pre-signal `ext_avgc50_adr14` distribution over 504-bar lookback: BC score + where the signal and max-forward values sit in the ticker's own history. Feeds the per-ticker-rank exit idea below.
+- **Per-ticker ext-rank exit** (`per_ticker_ext_rank_exit.py`). Exit when current `ext_avgc50_adr14` crosses the Nth percentile of the ticker's own pre-signal history. Per-ticker calibration instead of a global threshold. Initial T ∈ {0.70..0.95} failed because signals already enter at 86–92nd percentile — T=0.90 triggered at bar 1. Needs a different rank-reference window (post-signal only?) or a different feature.
+- **Example chart renderer** (`render_ext_charts.py`). Multi-panel PNG per example: price + EMA stack / extension lines / ext histogram. Useful when manually vetting which examples the profit grinder should trust.
+
+Defenses worth carrying forward into any profit-grinder rebuild (not script-specific):
+- Earnings cap via numpy searchsorted on `scanperfect.db.earnings_dates` (see `research/notes/earnings_cap_audit.md` in the dual-exit worktree).
+- 70/30 holdout + alt-seed robustness checks on the full deduped pop, not just curated examples.
+- Floor check: any rule must beat forced-exit-at-earnings (captured by `forced_exit_baseline.py`, which stays active).

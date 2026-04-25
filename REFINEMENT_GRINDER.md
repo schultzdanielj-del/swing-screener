@@ -54,29 +54,43 @@ Default parameters when called via `--blackout`: `beam_width=500` (was 10000 pre
 
 ### Classification pipeline (how WIN/LOSS is determined)
 
-Inside `_gather_raw_signal_clusters()`, lines 2555–2693. Direction is hardcoded as "short" for DTSS (line 2475).
+Inside `_gather_raw_signal_clusters()`. Direction comes from the `setups` table. Setup class (fade vs breakout) is hardcoded: `FADE_SETUPS = {"dtss", "3-4db"}`; everything else is breakout. See `SIGNAL_FILTER.md` for the full spec.
 
 **Step 1 — Forward window computation (Pass 1):**
 - Match examples to clusters with tight distance (3 bars)
 - Compute `forward_window` = max(leftmost signal bar to entry bar distance) × 1.1
 
-**Step 2 — Ceiling + exit race (Pass 2):**
-For each cluster:
-1. Find highest high across all signal bars in the cluster (`cluster_high`)
-2. Look forward from rightmost bar by `forward_window` bars, find max high in that window (`entry_window_high`)
-3. `ceiling = max(cluster_high, entry_window_high)`
-4. Starting from `rightmost_bar + forward_window + 1`, race two conditions:
-   - **Close > ceiling** → `AUTO_LOSS` (classification_reason: `ceiling_breach`)
-   - **Exit condition fires** (expression value crosses threshold in the specified direction) → `AUTO_WIN` (classification_reason: `exit_fired`)
-5. If neither fires before end of data → `AUTO_WIN` (classification_reason: `held_to_end`)
+**Step 2 — Classification (branches by setup_class):**
+
+*Fade path (DTSS, 3-4DB):*
+1. Ceiling = max high of cluster bars + forward window bars (for shorts; min low for longs)
+2. Starting from `rightmost_bar + forward_window + 1`, race:
+   - Close breaches ceiling → `AUTO_LOSS` reason `ceiling_breach`
+   - Exit condition fires → `AUTO_WIN` reason `exit_fired`
+   - Neither before end of data → `AUTO_WIN` reason `held_to_end`
+3. Tie goes to stop (ceiling breach wins over exit on same bar).
+
+*Breakout path (BRKO):*
+1. Derive ADR thresholds from examples: `winner_threshold = max(entry_offset) + 1.1` ADR, `loser_threshold = max(FW_MAE) × 1.10` ADR
+2. Per cluster: `winner_level = signal_close ± winner_threshold × ADR`, `loser_level = signal_close ∓ loser_threshold × ADR`
+3. Race (hard stop on bar lows/highs from signal+1, exit evaluated after forward window):
+   - Bar low/high breaches loser_level → `AUTO_LOSS` reason `mae_breach`
+   - Exit fires, close clears winner_level → `AUTO_WIN` reason `clear_winner`
+   - Exit fires, close in zone → `AUTO_WIN` reason `exit_in_zone` (scratch)
+   - Neither in 120 bars → `AUTO_WIN` reason `timeout` (held)
+4. Tie goes to stop (intrabar low breach wins over close-based exit on same bar).
+5. No AMBIGUOUS category. All scratches and timeouts count as wins.
 
 **Step 3 — Example override:**
-- Clusters matched to examples are ALWAYS classified as `AUTO_WIN` regardless of the race outcome (line 2688). The race still runs so they get `ceiling`, `exit_bar`, etc. for informational purposes.
+- Clusters matched to examples are forced to `AUTO_WIN` regardless of race outcome. The race still runs so they get `stop_level`, `winner_level`, `exit_bar`, etc. for informational purposes.
 
 **Step 4 — move_adr computation:**
-- For clusters with `exit_bar`: measure `(entry_high - exit_close) / ADR` for shorts
-- Examples use entry candle high; non-examples use forward window max high
+- For clusters with `exit_bar`: measure `(entry_high − exit_close) / ADR` for shorts, reversed for longs
+- Examples use entry candle high; non-examples use forward window max high (worst-fill assumption)
 - ADR at signal bar from expression cache (`adr14`), fallback to manual 14-bar computation
+
+**Scan-side example exemptions:**
+- Example tickers skip the per-bar tradable filter (price/dvol/ADRP) and the 50-bar warmup mask. Required to guarantee example coverage for IPO setups (CRCL, CRWV) and high-liquidity low-ADRP tickers (MSFT, TJX).
 
 ### Winner bounding box computation (exact min/max, no margin)
 

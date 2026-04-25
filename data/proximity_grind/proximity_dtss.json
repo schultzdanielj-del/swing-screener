@@ -1,0 +1,262 @@
+{
+  "setup_type": "dtss",
+  "timestamp": "20260310_020402",
+  "step": "proximity_grind",
+  "n_proximity_conditions": 12,
+  "proximity_conditions": [
+    {
+      "name": "undercut_xavgc8_120_adr14",
+      "expression_name": "undercut_xavgc8_120_adr14",
+      "expr": "undercut_xavgc8_120_adr14",
+      "category": "ma_cross",
+      "compute": {
+        "op": "ma_undercut_depth",
+        "ma": "xavgc8",
+        "period": 120,
+        "normalizer": "adr14"
+      },
+      "low": -5.520120790600776,
+      "high": -0.5991251558065415,
+      "tier": "proximity",
+      "filter_power": null
+    },
+    {
+      "name": "es_ext50_roc_delta_15_vs5",
+      "expression_name": "es_ext50_roc_delta_15_vs5",
+      "expr": "es_ext50_roc_delta_15_vs5",
+      "category": "extension_structure",
+      "compute": {
+        "op": "on_series",
+        "series": "ext_avgc50_adr14",
+        "inner_op": {
+          "op": "roc_delta",
+          "period": 15,
+          "compare_offset": 5
+        }
+      },
+      "low": -8584.281689453124,
+      "high": 22772.323681640624,
+      "tier": "proximity",
+      "filter_power": null
+    },
+    {
+      "name": "ct_es_ext50_stoch14_gt_80_30",
+      "expression_name": "ct_es_ext50_stoch14_gt_80_30",
+      "expr": "ct_es_ext50_stoch14_gt_80_30",
+      "category": "extension_structure",
+      "compute": {
+        "op": "on_series_bool_agg",
+        "series": "ext_avgc50_adr14",
+        "bool_op": {
+          "op": "stochastic",
+          "period": 14,
+          "threshold": 80,
+          "direction": "gt"
+        },
+        "agg_op": "count_true",
+        "agg_period": 30
+      },
+      "low": -0.9500000000000001,
+      "high": 19.95,
+      "tier": "proximity",
+      "filter_power": null
+    },
+    {
+      "name": "st_es_ext50_stoch14_lt_20_50",
+      "expression_name": "st_es_ext50_stoch14_lt_20_50",
+      "expr": "st_es_ext50_stoch14_lt_20_50",
+      "category": "extension_structure",
+      "compute": {
+        "op": "on_series_bool_agg",
+        "series": "ext_avgc50_adr14",
+        "bool_op": {
+          "op": "stochastic",
+          "period": 14,
+          "threshold": 20,
+          "direction": "lt"
+        },
+        "agg_op": "since_true",
+        "agg_period": 50
+      },
+      "low": -1.4500000000000002,
+      "high": 30.45,
+      "tier": "proximity",
+      "filter_power": null
+    },
+    {
+      "name": "st_es_ext200_cci14_gt_100_15",
+      "expression_name": "st_es_ext200_cci14_gt_100_15",
+      "expr": "st_es_ext200_cci14_gt_100_15",
+      "category": "extension_structure",
+      "compute": {
+        "op": "on_series_bool_agg",
+        "series": "ext_avgc200_adr14",
+        "bool_op": {
+          "op": "cci",
+          "period": 14,
+          "threshold": 100,
+          "direction": "gt"
+        },
+        "agg_op": "since_true",
+        "agg_period": 15
+      },
+      "low": -1.65,
+      "high": 12.65,
+      "tier": "proximity",
+      "filter_power": null
+    },
+    {
+      "name": "algo_lplus3_hivol_touch_count",
+      "expression_name": "algo_lplus3_hivol_touch_count",
+      "expr": "algo_lplus3_hivol_touch_count",
+      "category": "algo_lines",
+      "compute": {
+        "op": "precomputed",
+        "source": "algo",
+        "column": "algo_lplus3_hivol_touch_count"
+      },
+      "low": 0.85,
+      "high": 4.15,
+      "tier": "proximity",
+      "filter_power": null
+    },
+    {
+      "name": "w_st_avgc50_gt_avgc100_20",
+      "expression_name": "w_st_avgc50_gt_avgc100_20",
+      "expr": "w_st_avgc50_gt_avgc100_20",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_st_avgc50_gt_avgc100_20",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "avgc50_gt_avgc100",
+          "period": 20
+        }
+      },
+      "low": -1.05,
+      "high": 0.05,
+      "tier": "proximity",
+      "filter_power": null
+    },
+    {
+      "name": "w_st_big_gap_up_15",
+      "expression_name": "w_st_big_gap_up_15",
+      "expr": "w_st_big_gap_up_15",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_st_big_gap_up_15",
+        "base_compute": {
+          "op": "since_true",
+          "condition": "big_gap_up",
+          "period": 15
+        }
+      },
+      "low": -1.45,
+      "high": 8.45,
+      "tier": "proximity",
+      "filter_power": null
+    },
+    {
+      "name": "w_ct_aroon_up14_gt_70_15",
+      "expression_name": "w_ct_aroon_up14_gt_70_15",
+      "expr": "w_ct_aroon_up14_gt_70_15",
+      "category": "htf_weekly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "w",
+        "column": "w_ct_aroon_up14_gt_70_15",
+        "base_compute": {
+          "op": "count_true",
+          "condition": "aroon_up14_gt_70",
+          "period": 15
+        }
+      },
+      "low": 2.4,
+      "high": 15.6,
+      "tier": "proximity",
+      "filter_power": null
+    },
+    {
+      "name": "m_lower_wick_ratio",
+      "expression_name": "m_lower_wick_ratio",
+      "expr": "m_lower_wick_ratio",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_lower_wick_ratio",
+        "base_compute": {
+          "op": "lower_wick_ratio"
+        }
+      },
+      "low": -0.033894171495921915,
+      "high": 0.843527645827271,
+      "tier": "proximity",
+      "filter_power": null
+    },
+    {
+      "name": "m_cmf_slope_10_off1",
+      "expression_name": "m_cmf_slope_10_off1",
+      "expr": "m_cmf_slope_10_off1",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_cmf_slope_10_off1",
+        "base_compute": {
+          "op": "cmf_slope",
+          "period": 10,
+          "offset": 1
+        }
+      },
+      "low": -0.35845757350325586,
+      "high": 0.2374317578971386,
+      "tier": "proximity",
+      "filter_power": null
+    },
+    {
+      "name": "m_rvol_cum_10d_avg20",
+      "expression_name": "m_rvol_cum_10d_avg20",
+      "expr": "m_rvol_cum_10d_avg20",
+      "category": "htf_monthly",
+      "compute": {
+        "op": "precomputed",
+        "source": "htf",
+        "timeframe": "m",
+        "column": "m_rvol_cum_10d_avg20",
+        "base_compute": {
+          "op": "cumulative_rvol",
+          "period": 10,
+          "avg_period": 20
+        }
+      },
+      "low": -0.2923836946487428,
+      "high": 33.067815804481505,
+      "tier": "proximity",
+      "filter_power": null
+    }
+  ],
+  "metrics": {
+    "win_pile": 436,
+    "sacrifice_before": 364,
+    "sacrifice_trimmed": 37,
+    "sacrifice_remaining": 327,
+    "lose_pile_before": 595,
+    "losers_trimmed": 92,
+    "losers_remaining": 503,
+    "old_total_deduped": 1031,
+    "new_total_deduped": 939,
+    "old_win_rate_pct": 42.3,
+    "new_win_rate_pct": 46.4,
+    "n_proximity_conditions": 12
+  }
+}

@@ -194,12 +194,13 @@ Classification uses a ceiling + exit race:
    - End of available data → AUTO_WIN (setup held, never stopped out)
 4. Example clusters (matched by hardcoded entry_date proximity) → AUTO_WIN regardless
 
-**Example-to-cluster matching** uses the hardcoded `entry_date` from the examples
-table. For each example, find the cluster in the same ticker with ANY signal bar
-(rightmost or leftward) within `forward_window` bars before the entry_date. Two-pass:
-seed distance of 3 bars to compute forward_window, then forward_window as distance
-for classification. NEVER uses bar indices for matching — dates are stable across
-cache rebuilds, bar indices are not.
+**Example-to-cluster matching** (2026-04-14, strict): for each example, the signal
+bar is exactly `entry_idx - 1`. Clustering splits at example signal bars so entry-1
+is always the rightmost of its own cluster. One example → one cluster via
+`(ticker, scan_idx)` set lookup. No proximity, no duplicates. Any example where
+conditions don't fire on entry-1 is logged as `GRINDER BUG`. See SIGNAL_FILTER.md
+Constraints for the rule. Was proximity-based pre-2026-04-14 (regression from
+the 2026-03-10 strict logic in `scripts/signal_filter.py`), fixed by porting.
 
 No ADR floor for pile separation. A scratch or tiny win is not a loser — the
 setup held. The profit side (how much winners win) gets handled by later steps.

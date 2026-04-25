@@ -1,0 +1,156 @@
+{
+  "HROW_2024-06-05": {
+    "ticker": "HROW",
+    "signal_date": "2024-06-05",
+    "verdict": "yes",
+    "entry_date": "2024-09-10",
+    "timestamp": "2026-04-16T12:56:00.939800"
+  },
+  "BE_2025-07-21": {
+    "ticker": "BE",
+    "signal_date": "2025-07-21",
+    "verdict": "yes",
+    "entry_date": "2025-07-23",
+    "timestamp": "2026-04-16T12:56:11.979820"
+  },
+  "ANF_2023-10-31": {
+    "ticker": "ANF",
+    "signal_date": "2023-10-31",
+    "verdict": "yes",
+    "entry_date": "2023-11-01",
+    "timestamp": "2026-04-16T12:57:03.404516"
+  },
+  "BIOA_2025-11-05": {
+    "ticker": "BIOA",
+    "signal_date": "2025-11-05",
+    "verdict": "yes",
+    "entry_date": "2025-11-17",
+    "timestamp": "2026-04-16T13:00:02.012085"
+  },
+  "QBTS_2024-11-20": {
+    "ticker": "QBTS",
+    "signal_date": "2024-11-20",
+    "verdict": "yes",
+    "entry_date": "2024-11-21",
+    "timestamp": "2026-04-16T13:01:28.131479"
+  },
+  "WULF_2025-07-10": {
+    "ticker": "WULF",
+    "signal_date": "2025-07-10",
+    "verdict": "yes",
+    "entry_date": "2025-09-09",
+    "timestamp": "2026-04-16T13:01:48.290791"
+  },
+  "EH_2021-01-06": {
+    "ticker": "EH",
+    "signal_date": "2021-01-06",
+    "verdict": "yes",
+    "entry_date": "2021-01-05",
+    "timestamp": "2026-04-16T13:03:11.451707"
+  },
+  "SNBR_2020-10-26": {
+    "ticker": "SNBR",
+    "signal_date": "2020-10-26",
+    "verdict": "yes",
+    "entry_date": "2021-01-06",
+    "timestamp": "2026-04-16T13:03:52.090450"
+  },
+  "RKLB_2024-10-04": {
+    "ticker": "RKLB",
+    "signal_date": "2024-10-04",
+    "verdict": "yes",
+    "entry_date": "2024-09-11",
+    "timestamp": "2026-04-16T13:05:25.612179"
+  },
+  "IREN_2025-06-03": {
+    "ticker": "IREN",
+    "signal_date": "2025-06-03",
+    "verdict": "yes",
+    "entry_date": "2025-06-23",
+    "timestamp": "2026-04-16T13:07:07.500505"
+  },
+  "EOSE_2025-09-10": {
+    "ticker": "EOSE",
+    "signal_date": "2025-09-10",
+    "verdict": "yes",
+    "entry_date": "2025-09-12",
+    "timestamp": "2026-04-16T13:08:20.780116"
+  },
+  "IZEA_2021-01-05": {
+    "ticker": "IZEA",
+    "signal_date": "2021-01-05",
+    "verdict": "yes",
+    "entry_date": "2021-01-08",
+    "timestamp": "2026-04-16T13:08:47.236044"
+  },
+  "HUT_2025-07-17": {
+    "ticker": "HUT",
+    "signal_date": "2025-07-17",
+    "verdict": "yes",
+    "entry_date": "2025-10-01",
+    "timestamp": "2026-04-16T13:10:17.812133"
+  },
+  "RKLB_2024-10-11": {
+    "ticker": "RKLB",
+    "signal_date": "2024-10-11",
+    "verdict": "yes",
+    "entry_date": "2024-09-11",
+    "timestamp": "2026-04-16T13:11:14.621276"
+  },
+  "BLDP_2020-12-07": {
+    "ticker": "BLDP",
+    "signal_date": "2020-12-07",
+    "verdict": "yes",
+    "entry_date": "2021-01-06",
+    "timestamp": "2026-04-16T13:13:37.963575"
+  },
+  "DAC_2020-12-02": {
+    "ticker": "DAC",
+    "signal_date": "2020-12-02",
+    "verdict": "yes",
+    "entry_date": "2020-12-04",
+    "timestamp": "2026-04-16T13:15:04.676198"
+  },
+  "UAN_2022-02-09": {
+    "ticker": "UAN",
+    "signal_date": "2022-02-09",
+    "verdict": "yes",
+    "entry_date": "2022-03-17",
+    "timestamp": "2026-04-16T13:16:18.708232"
+  },
+  "AMPX_2025-06-25": {
+    "ticker": "AMPX",
+    "signal_date": "2025-06-25",
+    "verdict": "yes",
+    "entry_date": "2025-07-02",
+    "timestamp": "2026-04-16T13:17:19.724626"
+  },
+  "AXON_2020-11-18": {
+    "ticker": "AXON",
+    "signal_date": "2020-11-18",
+    "verdict": "yes",
+    "entry_date": "2021-02-04",
+    "timestamp": "2026-04-16T13:21:31.290885"
+  },
+  "TSE_2020-11-23": {
+    "ticker": "TSE",
+    "signal_date": "2020-11-23",
+    "verdict": "yes",
+    "entry_date": "2020-12-04",
+    "timestamp": "2026-04-16T13:21:55.867709"
+  },
+  "JD_2020-06-24": {
+    "ticker": "JD",
+    "signal_date": "2020-06-24",
+    "verdict": "yes",
+    "entry_date": "2020-05-29",
+    "timestamp": "2026-04-16T13:22:37.379703"
+  },
+  "UAMY_2025-09-29": {
+    "ticker": "UAMY",
+    "signal_date": "2025-09-29",
+    "verdict": "yes",
+    "entry_date": "2025-10-01",
+    "timestamp": "2026-04-16T13:23:02.013226"
+  }
+}

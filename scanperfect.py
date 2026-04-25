@@ -2269,7 +2269,7 @@ class ExamplesWorkspace(QFrame):
                 continue
             candles = _prepare_candles(tk, ed, lookback=80, forward=40)
             if candles:
-                exit_dt = _compute_exit_date(candles, ed, setup=self._setup)
+                exit_dt = _compute_exit_date(candles, ed, setup=self._setup, ticker=tk)
                 profit_dt = getattr(self, "_profit_exit_lookup", {}).get("%s_%s" % (tk, ed))
                 chart.set_data(candles, ed, exit_date=exit_dt, profit_exit_date=profit_dt)
             chart._deferred_ticker = ""
@@ -2527,11 +2527,14 @@ def _get_exit_condition(setup):
     _exit_condition_cache[setup] = result
     return result
 
-def _compute_exit_date(candles, entry_date, setup=None):
-    """Find exit date by applying the exit condition from the exit grind output.
-    Reads condition from signal_exit_{setup}.json. Currently only supports
-    the slope_xavgc21_off7_adr14 expression inline; returns None for other
-    expressions (the exit dates are already in filtered_{setup}.json anyway).
+_cache_expr_series = None  # lazy-init ExprSeriesCache (None = untried, False = unavailable)
+
+
+def _compute_exit_date(candles, entry_date, setup=None, ticker=None):
+    """Find exit date by applying the exit condition from signal_exit_{setup}.json.
+    Two paths:
+      - Inline fast path for slope_xavgc21_off7_adr14 (computes from candle data)
+      - Cache fallback for any other expression, via ExprSeriesCache (requires ticker)
     """
     if not setup:
         return None
@@ -2539,16 +2542,8 @@ def _compute_exit_date(candles, entry_date, setup=None):
     if not cond:
         return None
     expr, direction, threshold = cond
-    # Only support the slope expression inline — other expressions need the expr cache
-    if expr != "slope_xavgc21_off7_adr14":
-        return None
 
-    closes = [c["close"] for c in candles]
-    ranges = [c["high"] - c["low"] for c in candles]
-    ema21 = _compute_ema(closes, 21)
-    adr14 = _compute_sma(ranges, 14)
-
-    # Find entry bar index
+    # Find entry bar index in candles (used by both paths)
     entry_idx = None
     for i, c in enumerate(candles):
         if c["date"] == entry_date:
@@ -2557,20 +2552,63 @@ def _compute_exit_date(candles, entry_date, setup=None):
     if entry_idx is None:
         return None
 
-    # Scan forward from entry
-    for i in range(entry_idx + 1, len(candles)):
-        if i < 7:
-            continue
-        e21_now = ema21[i]
-        e21_ago = ema21[i - 7]
-        adr = adr14[i]
-        if e21_now is None or e21_ago is None or adr is None or adr < 0.001:
-            continue
-        slope = (e21_now - e21_ago) / adr
-        if direction == "<=" and slope <= threshold:
-            return candles[i]["date"]
-        elif direction == ">=" and slope >= threshold:
-            return candles[i]["date"]
+    # Inline fast path
+    if expr == "slope_xavgc21_off7_adr14":
+        closes = [c["close"] for c in candles]
+        ranges = [c["high"] - c["low"] for c in candles]
+        ema21 = _compute_ema(closes, 21)
+        adr14 = _compute_sma(ranges, 14)
+        for i in range(entry_idx + 1, len(candles)):
+            if i < 7:
+                continue
+            e21_now = ema21[i]
+            e21_ago = ema21[i - 7]
+            adr = adr14[i]
+            if e21_now is None or e21_ago is None or adr is None or adr < 0.001:
+                continue
+            slope = (e21_now - e21_ago) / adr
+            if direction == "<=" and slope <= threshold:
+                return candles[i]["date"]
+            elif direction == ">=" and slope >= threshold:
+                return candles[i]["date"]
+        return None
+
+    # Cache fallback for arbitrary expressions
+    if not ticker:
+        return None
+    global _cache_expr_series
+    if _cache_expr_series is None:
+        try:
+            sys.path.insert(0, str(REPO_ROOT / "local_runner"))
+            from expr_cache_builder import ExprSeriesCache
+            ec = ExprSeriesCache()
+            _cache_expr_series = ec if ec.is_valid() else False
+        except Exception:
+            _cache_expr_series = False
+    if _cache_expr_series is False:
+        return None
+    ec = _cache_expr_series
+    exit_col = ec.expr_index(expr)
+    if exit_col is None:
+        return None
+    try:
+        cached_dates, cached_data = ec.get_ticker(ticker)
+        if cached_dates is None:
+            return None
+        idx_arr = np.where(cached_dates == entry_date)[0]
+        if len(idx_arr) == 0:
+            return None
+        cache_entry_idx = int(idx_arr[0])
+        exit_series = cached_data[:, exit_col]
+        max_fwd = min(120, len(cached_dates) - cache_entry_idx - 1)
+        for fwd in range(1, max_fwd + 1):
+            val = exit_series[cache_entry_idx + fwd]
+            if np.isnan(val):
+                continue
+            if (direction == ">=" and val >= threshold) or (direction == "<=" and val <= threshold):
+                return str(cached_dates[cache_entry_idx + fwd])
+    except Exception:
+        pass
     return None
 
 

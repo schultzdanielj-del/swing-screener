@@ -22,6 +22,7 @@ import sys
 import time
 import json
 import pickle
+import sqlite3
 
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -30,11 +31,11 @@ if sys.platform == 'win32':
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
-from itertools import product as iter_product
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCAL_DIR = os.path.join(REPO_ROOT, "local_runner")
 CACHE_DIR = os.path.join(LOCAL_DIR, "cache")
+DB_PATH = os.path.join(REPO_ROOT, "data", "scanperfect.db")
 sys.path.insert(0, REPO_ROOT)
 sys.path.insert(0, LOCAL_DIR)
 
@@ -58,9 +59,7 @@ def load_daily_cache():
 
 def load_setup_direction(setup_type):
     """Get trade direction from setups table."""
-    import sqlite3
-    db_path = os.path.join(REPO_ROOT, "data", "scanperfect.db")
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(DB_PATH)
     row = conn.execute(
         "SELECT direction FROM setups WHERE setup_type=?", (setup_type,)
     ).fetchone()
@@ -84,24 +83,45 @@ def load_exit_condition(setup_type):
     raise ValueError(f"Invalid exit condition file: {exit_path}")
 
 
-def load_clusters(setup_type):
-    """Load raw signal clusters file."""
+def load_forward_window(setup_type):
+    """Load forward_window from raw_signal_clusters file header."""
     cluster_path = os.path.join(CACHE_DIR, f"raw_signal_clusters_{setup_type}.json")
     if not os.path.exists(cluster_path):
-        raise FileNotFoundError(f"No cluster file: {cluster_path}")
+        raise FileNotFoundError(
+            f"No cluster file: {cluster_path}\n"
+            f"Run: python local_runner/pyramid_grinder.py --setup {setup_type} --refine"
+        )
     with open(cluster_path) as f:
         data = json.load(f)
-    return data
+    fw = data.get("forward_window")
+    if fw is None:
+        raise ValueError(f"No forward_window in cluster file: {cluster_path}")
+    return fw
 
 
-def date_to_idx(df, target_date_str):
+def load_examples_from_db(setup_type):
+    """Load examples directly from the examples table in SQLite."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT ticker, entry_date FROM examples WHERE setup_type=? ORDER BY ticker, entry_date",
+        (setup_type,)
+    ).fetchall()
+    conn.close()
+    return [{"ticker": r["ticker"], "entry_date": r["entry_date"]} for r in rows]
+
+
+def date_to_idx(df_dates_str, target_date_str):
     """Find the OHLCV row index for a given date string.
+
+    Args:
+        df_dates_str: list of date strings (pre-computed, YYYY-MM-DD)
+        target_date_str: target date string
 
     Returns index or None if not found.
     """
     target = str(target_date_str)[:10]
-    dates_str = [str(d)[:10] for d in df["date"].values]
-    for i, d in enumerate(dates_str):
+    for i, d in enumerate(df_dates_str):
         if d == target:
             return i
     return None
@@ -122,25 +142,23 @@ def compute_adr14(highs, lows, bar_idx):
 # EXAMPLE EXTRACTION
 # ══════════════════════════════════════════════════════════════
 
-def extract_examples(cluster_data, universe_cache, exit_cond, direction):
-    """Extract per-example data from clusters + OHLCV.
+def extract_examples(db_examples, universe_cache, exit_cond, direction, forward_window):
+    """Extract per-example data from SQLite examples + OHLCV.
 
-    For each example cluster:
-      - Resolve signal bar, entry bar, pre-signal bar by DATE
-      - Validate signal_date < entry_date
+    Signal bar = bar immediately before entry_date (the scan candle).
+    Pre-signal bar = bar before signal bar.
+
+    For each example:
+      - Resolve entry bar, signal bar, pre-signal bar by DATE
       - Extract reference bar prices
       - Compute ADR at entry bar
       - Find exit bar by walking forward and evaluating exit condition
 
-    Returns list of example dicts, each containing all data needed for Parts 1-3.
+    Returns list of example dicts.
     """
     from expr_cache_builder import ExprSeriesCache
 
-    forward_window = cluster_data["forward_window"]
-    clusters = cluster_data["clusters"]
-    example_clusters = [c for c in clusters if c.get("is_example") == 1]
-
-    print(f"  Example clusters in file: {len(example_clusters)}")
+    print(f"  Examples in DB: {len(db_examples)}")
 
     # Load expr cache for exit condition evaluation
     expr_cache = ExprSeriesCache()
@@ -157,24 +175,14 @@ def extract_examples(cluster_data, universe_cache, exit_cond, direction):
     examples = []
     skipped = []
 
-    for c in example_clusters:
-        ticker = c["ticker"]
-        signal_date = str(c["rightmost"]["date"])[:10]
-        entry_date = str(c.get("example_entry_date", ""))[:10]
-
-        if not entry_date:
-            skipped.append(f"{ticker}: no entry_date on cluster")
-            continue
-
-        # Filter: signal must be BEFORE entry
-        if signal_date >= entry_date:
-            skipped.append(f"{ticker} {entry_date}: signal_date {signal_date} >= entry_date")
-            continue
+    for ex_raw in db_examples:
+        ticker = ex_raw["ticker"]
+        entry_date = str(ex_raw["entry_date"])[:10]
 
         # Load OHLCV
         df = universe_cache.get(ticker)
         if df is None:
-            skipped.append(f"{ticker}: not in OHLCV cache")
+            skipped.append(f"{ticker} {entry_date}: not in OHLCV cache")
             continue
 
         df = df.copy()
@@ -185,27 +193,20 @@ def extract_examples(cluster_data, universe_cache, exit_cond, direction):
         highs = df["high"].values.astype(np.float64)
         lows = df["low"].values.astype(np.float64)
         closes = df["close"].values.astype(np.float64)
+        dates_str = [str(d)[:10] for d in df["date"].values]
 
-        # Resolve bar indices by date
-        signal_idx = date_to_idx(df, signal_date)
-        entry_idx = date_to_idx(df, entry_date)
-
-        if signal_idx is None:
-            skipped.append(f"{ticker} {entry_date}: signal_date {signal_date} not in OHLCV")
-            continue
+        # Resolve entry bar by date
+        entry_idx = date_to_idx(dates_str, entry_date)
         if entry_idx is None:
             skipped.append(f"{ticker} {entry_date}: entry_date not in OHLCV")
             continue
 
-        # Double-check with resolved indices
-        if signal_idx >= entry_idx:
-            skipped.append(f"{ticker} {entry_date}: signal_idx {signal_idx} >= entry_idx {entry_idx}")
+        # Signal bar = bar immediately before entry bar
+        signal_idx = entry_idx - 1
+        if signal_idx < 0:
+            skipped.append(f"{ticker} {entry_date}: no bar before entry")
             continue
-
-        pre_signal_idx = signal_idx - 1
-        if pre_signal_idx < 0:
-            skipped.append(f"{ticker} {entry_date}: no bar before signal")
-            continue
+        signal_date = dates_str[signal_idx]
 
         # Forward window bars (from signal bar)
         fw_end_idx = min(signal_idx + forward_window, len(df) - 1)
@@ -213,23 +214,22 @@ def extract_examples(cluster_data, universe_cache, exit_cond, direction):
             skipped.append(f"{ticker} {entry_date}: no forward window bars")
             continue
 
-        fw_highs = highs[signal_idx:fw_end_idx + 1]  # signal bar through fw end
+        fw_highs = highs[signal_idx:fw_end_idx + 1]
         fw_lows = lows[signal_idx:fw_end_idx + 1]
 
-        # Reference bars
+        # Reference bars: 3 bars, each with high and low
         fw_highest_high_offset = int(np.argmax(fw_highs))
         fw_lowest_low_offset = int(np.argmin(fw_lows))
         fw_hh_idx = signal_idx + fw_highest_high_offset
         fw_ll_idx = signal_idx + fw_lowest_low_offset
 
         ref_bars = {
-            "pre_signal": {"idx": pre_signal_idx, "high": float(highs[pre_signal_idx]), "low": float(lows[pre_signal_idx])},
             "signal": {"idx": signal_idx, "high": float(highs[signal_idx]), "low": float(lows[signal_idx])},
             "fw_highest_high": {"idx": fw_hh_idx, "high": float(highs[fw_hh_idx]), "low": float(lows[fw_hh_idx])},
             "fw_lowest_low": {"idx": fw_ll_idx, "high": float(highs[fw_ll_idx]), "low": float(lows[fw_ll_idx])},
         }
 
-        # ADR at entry bar (using bars up to and including entry bar)
+        # ADR at entry bar
         adr_at_entry = compute_adr14(highs, lows, entry_idx)
         if adr_at_entry <= 0 or np.isnan(adr_at_entry):
             skipped.append(f"{ticker} {entry_date}: invalid ADR {adr_at_entry}")
@@ -272,21 +272,16 @@ def extract_examples(cluster_data, universe_cache, exit_cond, direction):
                 break
 
         if exit_bar_idx is None:
-            # No exit found — use end of OHLCV data
             exit_bar_idx = len(df) - 1
         else:
             # exit_bar_idx is cache-relative — convert to OHLCV index via date
             exit_date = cache_dates_str[exit_bar_idx]
-            exit_bar_idx = date_to_idx(df, exit_date)
+            exit_bar_idx = date_to_idx(dates_str, exit_date)
             if exit_bar_idx is None:
                 skipped.append(f"{ticker} {entry_date}: exit date {exit_date} not in OHLCV")
                 continue
 
         exit_bars_from_signal = exit_bar_idx - signal_idx
-
-        # Store complete OHLCV slice from pre-signal through exit
-        slice_start = pre_signal_idx
-        slice_end = exit_bar_idx + 1  # exclusive
 
         examples.append({
             "ticker": ticker,
@@ -294,20 +289,16 @@ def extract_examples(cluster_data, universe_cache, exit_cond, direction):
             "signal_date": signal_date,
             "direction": direction,
             "forward_window": forward_window,
-            # Bar indices (within this ticker's OHLCV)
-            "pre_signal_idx": pre_signal_idx,
             "signal_idx": signal_idx,
             "entry_idx": entry_idx,
             "fw_end_idx": fw_end_idx,
             "exit_bar_idx": exit_bar_idx,
             "exit_bars_from_signal": exit_bars_from_signal,
-            # Reference bars
             "ref_bars": ref_bars,
-            # OHLCV arrays (full ticker, not sliced — indices are absolute)
+            "dates_str": dates_str,
             "highs": highs,
             "lows": lows,
             "closes": closes,
-            # ADR and scoring
             "adr_at_entry": adr_at_entry,
             "worst_entry": worst_entry,
             "entry_low": float(lows[entry_idx]),
@@ -329,14 +320,12 @@ def extract_examples(cluster_data, universe_cache, exit_cond, direction):
 
 # 8 static candidates: high and low of each of 4 reference bars
 STATIC_LABELS = [
-    "pre_signal_low", "pre_signal_high",
     "signal_low", "signal_high",
     "fw_highest_high_low", "fw_highest_high_high",
     "fw_lowest_low_low", "fw_lowest_low_high",
 ]
 
 STATIC_REF_MAP = [
-    ("pre_signal", "low"), ("pre_signal", "high"),
     ("signal", "low"), ("signal", "high"),
     ("fw_highest_high", "low"), ("fw_highest_high", "high"),
     ("fw_lowest_low", "low"), ("fw_lowest_low", "high"),
@@ -344,10 +333,10 @@ STATIC_REF_MAP = [
 
 
 def run_static_stop_test(examples, direction, forward_window):
-    """Part 1: Test 8 static stop candidates across all examples.
+    """Part 1: Test 6 static stop candidates across all examples.
 
     For each candidate, check if the close ever breaches the stop from
-    signal bar through exit bar. 100% survival required.
+    entry bar through exit bar. 100% survival required.
 
     Returns list of result dicts sorted by aggressiveness (tightest first).
     """
@@ -365,12 +354,12 @@ def run_static_stop_test(examples, direction, forward_window):
             # Stop level for this example
             stop_level = ex["ref_bars"][ref_bar_name][price_field]
 
-            signal_idx = ex["signal_idx"]
+            entry_idx = ex["entry_idx"]
             exit_bar_idx = ex["exit_bar_idx"]
             closes = ex["closes"]
 
-            # Check survival: signal bar through exit bar
-            check_closes = closes[signal_idx:exit_bar_idx + 1]
+            # Check survival: entry bar through exit bar (not in trade before entry)
+            check_closes = closes[entry_idx:exit_bar_idx + 1]
 
             if direction == "long":
                 # Breach = close below stop
@@ -419,269 +408,248 @@ def run_static_stop_test(examples, direction, forward_window):
     results.sort(key=lambda r: (0 if r["survival_rate"] == 1.0 else 1, r["avg_risk_adr"]))
 
     n_pass = sum(1 for r in results if r["survival_rate"] == 1.0)
-    print(f"\n  Static: {n_pass}/8 candidates with 100% survival")
+    print(f"\n  Static: {n_pass}/{len(STATIC_LABELS)} candidates with 100% survival")
 
     return results
 
 
 # ══════════════════════════════════════════════════════════════
-# PART 2: RATCHETING STOP TEST
+# PART 2: INDICATOR STOP SWEEP
 # ══════════════════════════════════════════════════════════════
 
-# 10 stop level functions
-RATCHET_LABELS = [
-    "pre_signal_low", "pre_signal_high",
-    "signal_low", "signal_high",
-    "cur_bar_low", "cur_bar_high",
-    "prev_bar_low", "prev_bar_high",
-    "min_low_so_far", "max_high_so_far",
-]
+def _compute_sma(arr, period):
+    """Simple moving average. Returns array same length, NaN-padded at start."""
+    out = np.full(len(arr), np.nan)
+    if period > len(arr):
+        return out
+    cs = np.cumsum(arr)
+    out[period - 1:] = (cs[period - 1:] - np.concatenate(([0], cs[:-period]))) / period
+    return out
 
 
-def _compute_stop_level(func_label, ex, position_idx, direction):
-    """Compute the stop price for a given function label at a given position.
+def _compute_ema(arr, period):
+    """Exponential moving average."""
+    out = np.full(len(arr), np.nan)
+    if period > len(arr):
+        return out
+    alpha = 2.0 / (period + 1)
+    out[period - 1] = np.mean(arr[:period])
+    for i in range(period, len(arr)):
+        out[i] = alpha * arr[i] + (1 - alpha) * out[i - 1]
+    return out
 
-    position_idx: 0 = signal bar, 1 = signal+1, ..., fw = signal+fw
-    The bar at this position is signal_idx + position_idx.
+
+def _compute_atr(highs, lows, closes, period):
+    """Average True Range."""
+    n = len(highs)
+    tr = np.empty(n)
+    tr[0] = highs[0] - lows[0]
+    for i in range(1, n):
+        tr[i] = max(highs[i] - lows[i],
+                     abs(highs[i] - closes[i - 1]),
+                     abs(lows[i] - closes[i - 1]))
+    return _compute_ema(tr, period)
+
+
+def _generate_indicators(highs, lows, closes, direction):
+    """Generate all indicator stop levels from OHLCV arrays.
+
+    Returns list of (label, values_array) where values_array is same length
+    as the input arrays.
     """
-    signal_idx = ex["signal_idx"]
-    cur_idx = signal_idx + position_idx
-    highs = ex["highs"]
-    lows = ex["lows"]
+    n = len(closes)
+    indicators = []
 
-    # Bounds check
-    max_idx = len(highs) - 1
-    cur_idx = min(cur_idx, max_idx)
+    # SMA periods
+    sma_periods = list(range(2, 201))
+    for p in sma_periods:
+        sma = _compute_sma(closes, p)
+        indicators.append((f"sma_{p}", sma))
 
-    if func_label == "pre_signal_low":
-        return float(lows[ex["pre_signal_idx"]])
-    elif func_label == "pre_signal_high":
-        return float(highs[ex["pre_signal_idx"]])
-    elif func_label == "signal_low":
-        return float(lows[signal_idx])
-    elif func_label == "signal_high":
-        return float(highs[signal_idx])
-    elif func_label == "cur_bar_low":
-        return float(lows[cur_idx])
-    elif func_label == "cur_bar_high":
-        return float(highs[cur_idx])
-    elif func_label == "prev_bar_low":
-        prev_idx = max(0, cur_idx - 1)
-        return float(lows[prev_idx])
-    elif func_label == "prev_bar_high":
-        prev_idx = max(0, cur_idx - 1)
-        return float(highs[prev_idx])
-    elif func_label == "min_low_so_far":
-        return float(np.min(lows[signal_idx:cur_idx + 1]))
-    elif func_label == "max_high_so_far":
-        return float(np.max(highs[signal_idx:cur_idx + 1]))
-    else:
-        raise ValueError(f"Unknown stop function: {func_label}")
+    # EMA periods
+    ema_periods = list(range(2, 201))
+    for p in ema_periods:
+        ema = _compute_ema(closes, p)
+        indicators.append((f"ema_{p}", ema))
+
+    # ATR for offset calculations (common periods)
+    atr_periods = [7, 10, 14, 20]
+    atr_cache = {}
+    for ap in atr_periods:
+        atr = _compute_atr(highs, lows, closes, ap)
+        atr_cache[ap] = atr
+
+    # SMA minus N × ATR
+    sma_offset_periods = [5, 8, 10, 13, 20, 21, 50, 100, 200]
+    atr_mults = [x / 10.0 for x in range(1, 51)]  # 0.1 to 5.0
+    for sp in sma_offset_periods:
+        sma = _compute_sma(closes, sp)
+        for ap in atr_periods:
+            atr = atr_cache[ap]
+            for mult in atr_mults:
+                if direction == "long":
+                    vals = sma - mult * atr
+                else:
+                    vals = sma + mult * atr
+                indicators.append((f"sma{sp}_atr{ap}x{mult:.1f}", vals))
+
+    # EMA minus N × ATR
+    ema_offset_periods = [5, 8, 10, 13, 20, 21, 50, 100, 200]
+    for ep in ema_offset_periods:
+        ema = _compute_ema(closes, ep)
+        for ap in atr_periods:
+            atr = atr_cache[ap]
+            for mult in atr_mults:
+                if direction == "long":
+                    vals = ema - mult * atr
+                else:
+                    vals = ema + mult * atr
+                indicators.append((f"ema{ep}_atr{ap}x{mult:.1f}", vals))
+
+    # Bollinger lower/upper band: SMA ± mult × stddev
+    bb_periods = list(range(5, 101))
+    bb_mults = [x / 4.0 for x in range(2, 13)]  # 0.5 to 3.0 in 0.25 steps
+    for bp in bb_periods:
+        sma = _compute_sma(closes, bp)
+        std = np.full(n, np.nan)
+        for i in range(bp - 1, n):
+            std[i] = np.std(closes[i - bp + 1:i + 1], ddof=0)
+        for bm in bb_mults:
+            if direction == "long":
+                vals = sma - bm * std
+            else:
+                vals = sma + bm * std
+            indicators.append((f"bb{bp}_x{bm:.2f}", vals))
+
+    # Keltner lower/upper: EMA ± mult × ATR
+    kelt_ema_periods = [5, 8, 10, 13, 20, 21, 50]
+    kelt_mults = [x / 4.0 for x in range(2, 13)]  # 0.5 to 3.0
+    for kp in kelt_ema_periods:
+        ema = _compute_ema(closes, kp)
+        for ap in atr_periods:
+            atr = atr_cache[ap]
+            for km in kelt_mults:
+                if direction == "long":
+                    vals = ema - km * atr
+                else:
+                    vals = ema + km * atr
+                indicators.append((f"kelt{kp}_atr{ap}x{km:.2f}", vals))
+
+    # Close/High minus N × ATR (no MA, just raw price offset)
+    for ap in atr_periods:
+        atr = atr_cache[ap]
+        for mult in atr_mults:
+            if direction == "long":
+                indicators.append((f"close_atr{ap}x{mult:.1f}", closes - mult * atr))
+                indicators.append((f"high_atr{ap}x{mult:.1f}", highs - mult * atr))
+            else:
+                indicators.append((f"close_atr{ap}x{mult:.1f}", closes + mult * atr))
+                indicators.append((f"low_atr{ap}x{mult:.1f}", lows + mult * atr))
+
+    return indicators
 
 
-def run_ratchet_stop_test(examples, direction, forward_window):
-    """Part 2: Test all ratcheting stop paths across all examples.
+def run_indicator_stop_test(examples, direction):
+    """Part 2: Test thousands of TA indicators as stop levels.
 
-    10 functions × (fw+1) positions = 10^(fw+1) combos.
-    Monotonic constraint: stop can only move favorably (up for long, down for short).
-    100% survival required.
+    Computes indicators directly from OHLCV. Tests each as a stop with
+    both close-below and low-below breach types. Entry through exit.
 
-    Vectorized approach:
-      1. Pre-compute a (n_examples, n_positions, 10) price matrix
-      2. Enumerate all combos, check monotonicity, check survival
-      3. Score survivors by risk-ADR
-
-    Returns (top50_list, total_valid, total_tested).
+    Returns (results_list, n_100pct, n_tested).
     """
-    print(f"\n  ── PART 2: RATCHETING STOP TEST ──")
+    print(f"\n  ── PART 2: INDICATOR STOP SWEEP ──")
 
     n_ex = len(examples)
-    n_positions = forward_window + 1  # 0=signal bar, 1..fw
-    n_funcs = len(RATCHET_LABELS)
-    total_combos = n_funcs ** n_positions
-
-    print(f"  {n_funcs} functions × {n_positions} positions = {total_combos:,} combos")
-
-    # Step 1: Pre-compute price matrix (n_examples, n_positions, n_funcs)
-    print(f"  Building price matrix...")
-    price_matrix = np.zeros((n_ex, n_positions, n_funcs), dtype=np.float64)
-
-    for ei, ex in enumerate(examples):
-        for pos in range(n_positions):
-            for fi, label in enumerate(RATCHET_LABELS):
-                price_matrix[ei, pos, fi] = _compute_stop_level(label, ex, pos, direction)
-
-    # Pre-compute closes at each position for each example (for breach check)
-    # Shape: (n_examples, n_positions)
-    close_at_pos = np.zeros((n_ex, n_positions), dtype=np.float64)
-    for ei, ex in enumerate(examples):
-        for pos in range(n_positions):
-            bar_idx = ex["signal_idx"] + pos
-            bar_idx = min(bar_idx, len(ex["closes"]) - 1)
-            close_at_pos[ei, pos] = ex["closes"][bar_idx]
-
-    # Pre-compute: for post-fw survival, we need closes from fw_end+1 through exit
-    # For each example, check if the FINAL stop level holds through exit
-    # We'll store the worst close (min for long, max for short) post-fw
-    post_fw_worst = np.zeros(n_ex, dtype=np.float64)
-    has_post_fw = np.ones(n_ex, dtype=bool)
-    for ei, ex in enumerate(examples):
-        fw_end_bar = ex["signal_idx"] + forward_window
-        exit_bar = ex["exit_bar_idx"]
-        if fw_end_bar >= exit_bar:
-            has_post_fw[ei] = False
-            continue
-        post_closes = ex["closes"][fw_end_bar + 1:exit_bar + 1]
-        if len(post_closes) == 0:
-            has_post_fw[ei] = False
-            continue
-        if direction == "long":
-            post_fw_worst[ei] = float(np.min(post_closes))
-        else:
-            post_fw_worst[ei] = float(np.max(post_closes))
-
-    # Pre-compute worst-case entry and ADR arrays for scoring
-    worst_entries = np.array([ex["worst_entry"] for ex in examples], dtype=np.float64)
-    adrs = np.array([ex["adr_at_entry"] for ex in examples], dtype=np.float64)
-
-    # Step 2: Enumerate combos in batches
-    # For fw=3: 10^4 = 10,000 combos — small enough to do all at once
-    print(f"  Testing {total_combos:,} combos...")
     t0 = time.time()
 
-    # Generate all combos as array of shape (total_combos, n_positions)
-    # Each value is a function index 0..9
-    combo_indices = np.array(list(iter_product(range(n_funcs), repeat=n_positions)),
-                             dtype=np.int32)
-    # Shape: (total_combos, n_positions)
+    # Generate indicators from first example to get labels and count
+    sample = _generate_indicators(
+        examples[0]["highs"], examples[0]["lows"], examples[0]["closes"], direction)
+    labels = [s[0] for s in sample]
+    n_ind = len(labels)
+    print(f"  Generated {n_ind} indicators")
 
-    # For each combo, extract stop levels per example per position
-    # stop_levels shape: (total_combos, n_examples, n_positions)
-    # price_matrix shape: (n_examples, n_positions, n_funcs)
-    # combo_indices shape: (total_combos, n_positions)
+    # For each example, compute all indicators and test breach
+    close_survive = np.zeros(n_ind, dtype=np.int32)
+    low_survive = np.zeros(n_ind, dtype=np.int32)
 
-    # Vectorized gather: for each combo c and position p, select function combo_indices[c, p]
-    # from price_matrix[:, p, :]
-    stop_levels = np.zeros((len(combo_indices), n_ex, n_positions), dtype=np.float64)
-    for pos in range(n_positions):
-        func_indices = combo_indices[:, pos]  # (total_combos,)
-        # price_matrix[:, pos, :] shape: (n_ex, n_funcs)
-        # Gather: for each combo, pick the func_index column
-        pos_prices = price_matrix[:, pos, :]  # (n_ex, n_funcs)
-        stop_levels[:, :, pos] = pos_prices[:, func_indices].T
-        # pos_prices[:, func_indices] shape: (n_ex, total_combos) → transpose
+    for ei, ex in enumerate(examples):
+        entry_idx = ex["entry_idx"]
+        exit_idx = ex["exit_bar_idx"]
+        trade_closes = ex["closes"][entry_idx:exit_idx + 1]
+        trade_lows = ex["lows"][entry_idx:exit_idx + 1]
+        trade_highs = ex["highs"][entry_idx:exit_idx + 1]
 
-    # Step 3: Monotonicity check
-    # For longs: each step must be >= previous (stop moves up or stays flat)
-    # For shorts: each step must be <= previous (stop moves down or stays flat)
-    if n_positions > 1:
-        diffs = np.diff(stop_levels, axis=2)  # (total_combos, n_ex, n_positions-1)
-        if direction == "long":
-            # Every diff must be >= 0 for ALL examples
-            mono_ok = np.all(diffs >= -1e-10, axis=(1, 2))  # (total_combos,)
-        else:
-            mono_ok = np.all(diffs <= 1e-10, axis=(1, 2))
-    else:
-        mono_ok = np.ones(len(combo_indices), dtype=bool)
+        indicators = _generate_indicators(ex["highs"], ex["lows"], ex["closes"], direction)
 
-    n_mono = int(np.sum(mono_ok))
-    print(f"  Monotonic paths: {n_mono:,} / {total_combos:,}")
+        for ii, (label, vals) in enumerate(indicators):
+            trade_vals = vals[entry_idx:exit_idx + 1]
 
-    if n_mono == 0:
-        print(f"  WARNING: No monotonic paths found")
-        return [], 0, total_combos
+            # Skip if indicator has NaN in trade window
+            if np.any(np.isnan(trade_vals)):
+                # NaN = indicator not yet computed (warmup period)
+                # Treat as survived (stop not defined yet = no stop)
+                close_survive[ii] += 1
+                low_survive[ii] += 1
+                continue
 
-    # Filter to monotonic only
-    mono_indices = np.where(mono_ok)[0]
-    mono_stops = stop_levels[mono_indices]  # (n_mono, n_ex, n_positions)
-    mono_combos = combo_indices[mono_indices]  # (n_mono, n_positions)
-
-    # Step 4: Survival check — breach at each position
-    # close_at_pos shape: (n_ex, n_positions)
-    # mono_stops shape: (n_mono, n_ex, n_positions)
-    close_expanded = close_at_pos[np.newaxis, :, :]  # (1, n_ex, n_positions)
-
-    if direction == "long":
-        # Breach = close < stop at any position for any example
-        breach_mask = close_expanded < mono_stops  # (n_mono, n_ex, n_positions)
-    else:
-        breach_mask = close_expanded > mono_stops
-
-    # Any breach at any position for any example → fail
-    fw_survive = ~np.any(breach_mask, axis=(1, 2))  # (n_mono,)
-
-    # Post-fw survival: final stop must hold through exit
-    final_stops = mono_stops[:, :, -1]  # (n_mono, n_ex)
-    if direction == "long":
-        post_breach = post_fw_worst[np.newaxis, :] < final_stops  # (n_mono, n_ex)
-    else:
-        post_breach = post_fw_worst[np.newaxis, :] > final_stops
-
-    # Only check examples that have post-fw data
-    post_breach[:, ~has_post_fw] = False
-    post_survive = ~np.any(post_breach, axis=1)  # (n_mono,)
-
-    # Combined survival
-    full_survive = fw_survive & post_survive
-    n_valid = int(np.sum(full_survive))
-    print(f"  100% survival paths: {n_valid:,} / {n_mono:,} monotonic")
-
-    if n_valid == 0:
-        print(f"  WARNING: No paths with 100% survival")
-        return [], 0, total_combos
-
-    # Step 5: Score surviving paths by risk-ADR
-    valid_indices = np.where(full_survive)[0]
-    valid_stops = mono_stops[valid_indices]  # (n_valid, n_ex, n_positions)
-    valid_combos = mono_combos[valid_indices]  # (n_valid, n_positions)
-
-    # Risk = distance from worst-case entry to stop, in ADR
-    # worst_entries shape: (n_ex,), adrs shape: (n_ex,)
-    # valid_stops shape: (n_valid, n_ex, n_positions)
-    if direction == "long":
-        risk_per_bar = (worst_entries[np.newaxis, :, np.newaxis] -
-                        valid_stops) / adrs[np.newaxis, :, np.newaxis]
-    else:
-        risk_per_bar = (valid_stops -
-                        worst_entries[np.newaxis, :, np.newaxis]) / adrs[np.newaxis, :, np.newaxis]
-
-    # Average risk across all examples and all positions
-    avg_risk = np.mean(risk_per_bar, axis=(1, 2))  # (n_valid,)
-    median_risk = np.median(risk_per_bar.reshape(n_valid, -1), axis=1)  # (n_valid,)
-
-    # Worst margin: minimum margin across all examples at all positions
-    if direction == "long":
-        margins = (close_at_pos[np.newaxis, :, :] - valid_stops) / valid_stops
-    else:
-        margins = (valid_stops - close_at_pos[np.newaxis, :, :]) / valid_stops
-    worst_margins = np.min(margins, axis=(1, 2))  # (n_valid,)
-
-    # Sort by avg_risk ascending (tightest stop = lowest risk)
-    sort_idx = np.argsort(avg_risk)
-
-    top_n = min(50, n_valid)
-    top50 = []
-    for rank in range(top_n):
-        vi = sort_idx[rank]
-        combo = valid_combos[vi]
-        path_labels = [RATCHET_LABELS[combo[p]] for p in range(n_positions)]
-        top50.append({
-            "path": path_labels,
-            "worst_margin_pct": round(float(worst_margins[vi]) * 100, 2),
-            "avg_risk_adr": round(float(avg_risk[vi]), 4),
-            "median_risk_adr": round(float(median_risk[vi]), 4),
-            "n_survive": n_ex,
-        })
+            if direction == "long":
+                if not np.any(trade_closes < trade_vals):
+                    close_survive[ii] += 1
+                if not np.any(trade_lows < trade_vals):
+                    low_survive[ii] += 1
+            else:
+                if not np.any(trade_closes > trade_vals):
+                    close_survive[ii] += 1
+                if not np.any(trade_highs > trade_vals):
+                    low_survive[ii] += 1
 
     elapsed = time.time() - t0
-    print(f"  Ratchet test completed in {elapsed:.1f}s")
-    print(f"\n  Top 5 ratchet paths:")
-    for i, r in enumerate(top50[:5]):
-        print(f"    {i+1}. {r['path']}  avg_risk={r['avg_risk_adr']:.2f}  "
-              f"median_risk={r['median_risk_adr']:.2f}  "
-              f"worst_margin={r['worst_margin_pct']:.2f}%")
+    n_close_100 = int(np.sum(close_survive == n_ex))
+    n_low_100 = int(np.sum(low_survive == n_ex))
 
-    return top50, n_valid, total_combos
+    print(f"  Completed in {elapsed:.1f}s")
+    print(f"  Close-below 100%: {n_close_100}/{n_ind}")
+    print(f"  Low-below 100%:   {n_low_100}/{n_ind}")
+
+    # Build results for >= 90% survival
+    threshold = int(n_ex * 0.90)
+    results = []
+    for ii in range(n_ind):
+        cs = int(close_survive[ii])
+        ls = int(low_survive[ii])
+        if cs >= threshold or ls >= threshold:
+            results.append({
+                "indicator": labels[ii],
+                "close_survive": cs,
+                "low_survive": ls,
+                "n_total": n_ex,
+                "close_rate": round(cs / n_ex, 4),
+                "low_rate": round(ls / n_ex, 4),
+            })
+
+    # Sort: both 100% first, then close 100%, then by close survival desc
+    results.sort(key=lambda r: (
+        0 if r["close_survive"] == n_ex and r["low_survive"] == n_ex else
+        1 if r["close_survive"] == n_ex else
+        2 if r["low_survive"] == n_ex else 3,
+        -r["close_survive"],
+        -r["low_survive"],
+    ))
+
+    # Print
+    print(f"\n  Indicators >= 90% survival ({len(results)} found):")
+    print(f"  {'Indicator':35s}  {'Close':>10s}  {'Low':>10s}")
+    for r in results[:80]:
+        cs_str = f"{r['close_survive']}/{r['n_total']}"
+        ls_str = f"{r['low_survive']}/{r['n_total']}"
+        c_mark = "✓" if r["close_survive"] == n_ex else " "
+        l_mark = "✓" if r["low_survive"] == n_ex else " "
+        print(f"  {r['indicator']:35s}  {c_mark}{cs_str:>9s}  {l_mark}{ls_str:>9s}")
+    if len(results) > 80:
+        print(f"  ... and {len(results) - 80} more")
+
+    return results, n_close_100, n_ind * 2
 
 
 # ══════════════════════════════════════════════════════════════
@@ -694,9 +662,9 @@ def run_breakeven_window(examples, direction):
     For each example:
       1. Breakeven level = entry bar low + 1 ADR (long) or entry bar high - 1 ADR (short)
          Using ADR at entry bar.
-      2. Walk forward from signal bar. Find the first bar after which price
-         never revisits the breakeven level.
-      3. Breakeven window = max across all examples.
+      2. Walk forward from entry bar. Find the last bar where close revisits
+         the breakeven level.
+      3. Breakeven window = max across all examples (bars from entry).
 
     Returns (breakeven_window_bars, per_example_details).
     """
@@ -707,7 +675,7 @@ def run_breakeven_window(examples, direction):
 
     for ex in examples:
         ticker = ex["ticker"]
-        signal_idx = ex["signal_idx"]
+        entry_idx = ex["entry_idx"]
         exit_bar_idx = ex["exit_bar_idx"]
         closes = ex["closes"]
         adr = ex["adr_at_entry"]
@@ -717,10 +685,10 @@ def run_breakeven_window(examples, direction):
         else:
             breakeven = ex["entry_high"] - adr
 
-        # Walk forward from signal bar to exit bar
+        # Walk forward from entry bar to exit bar
         # Find the LAST bar where close revisits the breakeven level
-        last_revisit = signal_idx  # default: signal bar itself
-        for bi in range(signal_idx, exit_bar_idx + 1):
+        last_revisit = entry_idx  # default: entry bar itself
+        for bi in range(entry_idx, exit_bar_idx + 1):
             if direction == "long":
                 if closes[bi] < breakeven:
                     last_revisit = bi
@@ -728,8 +696,8 @@ def run_breakeven_window(examples, direction):
                 if closes[bi] > breakeven:
                     last_revisit = bi
 
-        # Breakeven window = bars from signal to last revisit
-        be_window = last_revisit - signal_idx
+        # Breakeven window = bars from entry to last revisit
+        be_window = last_revisit - entry_idx
 
         per_example.append({
             "ticker": ticker,
@@ -760,6 +728,7 @@ def run_breakeven_window(examples, direction):
 def main():
     parser = argparse.ArgumentParser(description="Entry Grinder — brute-force stop placement")
     parser.add_argument("--setup", required=True, help="Setup type (e.g. brko)")
+    parser.add_argument("--fw", type=int, default=None, help="Forward window override (skips cluster file)")
     args = parser.parse_args()
     setup_type = args.setup
 
@@ -778,10 +747,15 @@ def main():
     exit_cond = load_exit_condition(setup_type)
     print(f"  Exit condition: {exit_cond['expression']} {exit_cond['direction']} {exit_cond['threshold']}")
 
-    cluster_data = load_clusters(setup_type)
-    forward_window = cluster_data["forward_window"]
-    print(f"  Forward window: {forward_window}")
-    print(f"  Total clusters: {len(cluster_data['clusters'])}")
+    if args.fw is not None:
+        forward_window = args.fw
+        print(f"  Forward window: {forward_window} (override)")
+    else:
+        forward_window = load_forward_window(setup_type)
+        print(f"  Forward window: {forward_window}")
+
+    db_examples = load_examples_from_db(setup_type)
+    print(f"  Examples in DB: {len(db_examples)}")
 
     print(f"\n  Loading OHLCV cache...")
     universe_cache = load_daily_cache()
@@ -789,7 +763,7 @@ def main():
 
     # ── Extract examples ──
     print(f"\n  Extracting examples...")
-    examples = extract_examples(cluster_data, universe_cache, exit_cond, direction)
+    examples = extract_examples(db_examples, universe_cache, exit_cond, direction, forward_window)
 
     if not examples:
         print(f"  ERROR: No valid examples extracted. Cannot proceed.")
@@ -799,7 +773,7 @@ def main():
     del universe_cache
 
     # ── Print example summary ──
-    print(f"\n  ── EXAMPLE SUMMARY ──")
+    print(f"\n  ── EXAMPLE SUMMARY ({len(examples)} examples) ──")
     print(f"  {'Ticker':6s} {'Entry':12s} {'Signal':12s} {'ADR':>8s} "
           f"{'EntryLow':>10s} {'WrstEntry':>10s} {'ExitBars':>8s}")
     for ex in examples:
@@ -810,8 +784,8 @@ def main():
 
     # ── Run Parts ──
     static_results = run_static_stop_test(examples, direction, forward_window)
-    ratchet_top50, ratchet_valid, ratchet_tested = run_ratchet_stop_test(
-        examples, direction, forward_window)
+    ind_results, ind_100, ind_tested = run_indicator_stop_test(
+        examples, direction)
     breakeven_window, be_details = run_breakeven_window(examples, direction)
 
     # ── Build output ──
@@ -829,9 +803,9 @@ def main():
             "direction": exit_cond["direction"],
         },
         "static_stops": static_results,
-        "ratchet_stops_top50": ratchet_top50,
-        "ratchet_stops_total_valid": ratchet_valid,
-        "ratchet_stops_total_tested": ratchet_tested,
+        "indicator_stops": ind_results,
+        "indicator_stops_100pct": ind_100,
+        "indicator_stops_tested": ind_tested,
     }
 
     # ── Save ──

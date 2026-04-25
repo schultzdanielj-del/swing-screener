@@ -43,6 +43,10 @@ The signal grinder's job is to search 15,805 expressions to find the best condit
 
 Before proposing any optimization that touches the expression cache, data format, worker pool, or search algorithm, ask: *does this preserve the full 15,805 search space AND the peak-minimizing search semantics?* If no, reject on sight.
 
+## Nightly refresh speed is sacred
+
+The nightly refresh pipeline (`cache_builder.py`, `scan_engine.py`, `signal_filter.py`, `intermediate_cache_builder.py`, `nightly.py`) runs every evening in production. Consensus runs are infrequent. Any optimization work on the consensus pipeline must not touch the nightly code path — before changing any file, verify it is not imported or called by nightly components. Nightly and grinder paths share the expression cache `.npz` files as a data source but use different code to read them; the shared surface is the data format, not the reader code.
+
 ## Rejected "optimizations"
 
 These were previously listed as candidates. They are quality cuts disguised as speedups and are explicitly **off the table**. Listed here so future sessions don't rediscover and re-propose them.

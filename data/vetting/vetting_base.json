@@ -1,0 +1,107 @@
+{
+  "FIX_2025-07-16": {
+    "ticker": "FIX",
+    "signal_date": "2025-07-16",
+    "verdict": "yes",
+    "entry_date": "2025-09-10",
+    "timestamp": "2026-04-16T13:38:53.075646"
+  },
+  "ATI_2025-12-01": {
+    "ticker": "ATI",
+    "signal_date": "2025-12-01",
+    "verdict": "yes",
+    "entry_date": "2025-12-10",
+    "timestamp": "2026-04-16T13:40:02.027485"
+  },
+  "DRN_2024-07-10": {
+    "ticker": "DRN",
+    "signal_date": "2024-07-10",
+    "verdict": "yes",
+    "entry_date": "2024-07-11",
+    "timestamp": "2026-04-16T13:41:36.764440"
+  },
+  "IONQ-WS_2025-09-10": {
+    "ticker": "IONQ-WS",
+    "signal_date": "2025-09-10",
+    "verdict": "yes",
+    "entry_date": "2025-09-09",
+    "timestamp": "2026-04-16T13:43:27.980228"
+  },
+  "ERO_2025-11-19": {
+    "ticker": "ERO",
+    "signal_date": "2025-11-19",
+    "verdict": "yes",
+    "entry_date": "2025-11-24",
+    "timestamp": "2026-04-16T13:44:13.108415"
+  },
+  "SFM_2024-02-06": {
+    "ticker": "SFM",
+    "signal_date": "2024-02-06",
+    "verdict": "yes",
+    "entry_date": "2023-11-30",
+    "timestamp": "2026-04-16T13:45:22.108168"
+  },
+  "SNBR_2020-12-24": {
+    "ticker": "SNBR",
+    "signal_date": "2020-12-24",
+    "verdict": "yes",
+    "entry_date": "2020-10-02",
+    "timestamp": "2026-04-16T13:46:15.812445"
+  },
+  "SKY_2021-10-29": {
+    "ticker": "SKY",
+    "signal_date": "2021-10-29",
+    "verdict": "yes",
+    "entry_date": "2021-11-03",
+    "timestamp": "2026-04-16T13:49:37.716468"
+  },
+  "TSLA_2025-09-04": {
+    "ticker": "TSLA",
+    "signal_date": "2025-09-04",
+    "verdict": "yes",
+    "entry_date": "2025-09-11",
+    "timestamp": "2026-04-16T13:50:50.508712"
+  },
+  "FIX_2023-02-13": {
+    "ticker": "FIX",
+    "signal_date": "2023-02-13",
+    "verdict": "yes",
+    "entry_date": "2023-02-23",
+    "timestamp": "2026-04-16T13:51:11.660733"
+  },
+  "PAG_2021-09-10": {
+    "ticker": "PAG",
+    "signal_date": "2021-09-10",
+    "verdict": "yes",
+    "entry_date": "2021-09-15",
+    "timestamp": "2026-04-16T13:52:10.908797"
+  },
+  "SIMO_2021-11-29": {
+    "ticker": "SIMO",
+    "signal_date": "2021-11-29",
+    "verdict": "yes",
+    "entry_date": "2021-12-03",
+    "timestamp": "2026-04-16T13:53:38.396214"
+  },
+  "AMN_2021-07-23": {
+    "ticker": "AMN",
+    "signal_date": "2021-07-23",
+    "verdict": "yes",
+    "entry_date": "2021-04-22",
+    "timestamp": "2026-04-16T13:59:46.797003"
+  },
+  "LNG_2021-04-26": {
+    "ticker": "LNG",
+    "signal_date": "2021-04-26",
+    "verdict": "yes",
+    "entry_date": "2021-04-23",
+    "timestamp": "2026-04-16T14:01:54.405513"
+  },
+  "WLDN_2026-01-05": {
+    "ticker": "WLDN",
+    "signal_date": "2026-01-05",
+    "verdict": "yes",
+    "entry_date": "2025-05-09",
+    "timestamp": "2026-04-16T14:05:27.533704"
+  }
+}
