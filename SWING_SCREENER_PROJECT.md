@@ -34,9 +34,10 @@ Automated swing trade screener. Screens ~11,500 tickers nightly (Common Stock + 
 Detailed component status lives in the per-component specs. This section is a short overview; it will go stale fast, so treat it as a pointer, not a source of truth.
 
 - **Expression cache** (15,805 expressions × ~11,500 tickers, float16 on disk): built and operational. Full rebuild via `expr_cache_builder.py --build`. Forward-prop append path exists for nightly updates but is **best-effort** and is NOT what the consensus pipeline uses — see `FORWARD_PROP_SPEC.md` and `CONSENSUS.md`.
+  - **Pending build (2026-04-24):** 3 cache features staged for next rebuild, all spec'd in `EXPRESSION_ENGINE_V2.md` §6 Pending build — Extension Chart Levels (36 expressions), Extension Chart Trendlines (104), MOC (61). Total +201 expressions; cache 16,039 → 16,240. All 3 implemented together in a worktree, then single full rebuild. The OHLCV cache distribution-adjustment fix rebuild completed 2026-04-23 — features validate against the fixed cache.
 - **OHLCV caches** (daily/weekly/monthly): nightly append via `cache_builder.py`. Universe synced against EODHD exchange symbol list, IPOs added, delistings removed. See `OHLCV_CACHE.md`.
 - **Nightly pipeline** (`local_runner/nightly.py`): uses the `.im` intermediate cache (`intermediate_cache_builder.py`) + `scan_engine.py` for the live-scan path. Independent of the grinder's `.npz` expression cache. See `NIGHTLY_REFRESH.md` + `DEPENDENCY_MAP.md` Chain 5.
-- **Consensus pipeline** (`scripts/run_consensus_pipeline.py`): built through Increment 10 (Sessions 1–5). `test_consensus_pipeline.py --setup dtss` passes 9/9. Per-grind cost ~11–13 min at current defaults (BRKO benchmark). Full real run still pending — deferred for quality-preserving speed optimization work in the next session. Active tracker: `CONSENSUS.md`.
+- **Consensus pipeline** (`scripts/run_consensus_pipeline.py`): built through Increment 10 (Sessions 1–5). `test_consensus_pipeline.py --setup dtss` passes 9/9. Per-grind cost ~11–13 min at current defaults (prior BRKO benchmark). Full real run still pending — deferred for quality-preserving speed optimization work in the next session. Active tracker: `CONSENSUS.md`.
 - **Grinders**: signal grind, signal exit grind, refinement grind (`pyramid_grinder.py`). EV grinder and profit grinder exist but are **deferred** from the consensus pipeline — they'll be wired back in during a future "live EV ranked watchlist" build. See the DEFERRED banner in `ENTRY_GRINDER.md` for the entry grinder status.
 - **Native desktop UI** (`scanperfect.py`, PySide6): pipeline flowchart + workspaces. Replaces the legacy HTML UI. Implementation ongoing; design in `UI_FLOW.md`.
 
@@ -44,10 +45,11 @@ Detailed component status lives in the per-component specs. This section is a sh
 
 | Setup | Examples | Status |
 |---|---|---|
-| DTSS (Double Top Short Sell) | ~66–68 | Primary benchmark for consensus pipeline |
-| BRKO | ~51 | Used for grinder benchmarking (12.8 min/grind reference) |
-| 3-4DB | ~21 | Examples loaded, not yet ground |
-| HTF | 0 | Scaffolded only |
+| DTSS (Double Top Short Sell) | 73 | Primary benchmark for consensus pipeline |
+| 3-4DB | 16 | Examples loaded, not yet ground |
+| HTF | 32 | Bootstrap grind complete |
+| BF | 45 | Bootstrap grind complete |
+| BASE | 42 | Bootstrap grind complete |
 
 ---
 
@@ -131,10 +133,11 @@ The auditor maps changed files to their spec docs automatically (e.g. `ev_grinde
 
 | Setup | Status | Examples | Phase 2 Result |
 |-------|--------|----------|----------------|
-| **DTSS** | Phase 2+3 complete, Phase 4 done | 68 | 182 conditions, 78% WR, 6.4 ADR median |
-| **BRKO** | Phase 3 (EV Grinder running) | 51 | 54.9% WR post-refinement, thin — edge in market context |
-| **3-4DB** | Examples loaded | 21 | Not yet ground |
-| **HTF** | Scaffolded | None | — |
+| **DTSS** | Phase 2+3 complete, Phase 4 done | 73 | 182 conditions, 78% WR, 6.4 ADR median |
+| **3-4DB** | Examples loaded | 16 | Not yet ground |
+| **HTF** | Bootstrap grind complete | 32 | 66 conds, 545 signals (5yr, peak_target=3) |
+| **BF** | Bootstrap grind complete | 45 | 59 conds, 530 signals (5yr, peak_target=3) |
+| **BASE** | Bootstrap grind complete | 42 | 78 conds, 646 signals (5yr, peak_target=3) |
 
 ---
 

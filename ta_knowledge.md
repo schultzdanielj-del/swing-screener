@@ -64,6 +64,56 @@
 - **Why big base breakouts are the biggest movers:** A huge base typically has a correction below the 50 embedded in it, which resets the ADR extension potential back to zero. Breaking out of that base = full statistical runway to the max extension ceiling. Same reason post-correction stocks run hardest — the extension counter is reset.
 - **No reset = capped upside:** An extension trendline break WITHOUT a prior flush/correction below the 50 SMA means the extension counter wasn't reset. You may get a move, but don't expect the same height extension as a post-correction breakout. Temper targets accordingly.
 
+### 50-Extension Trendline Structures
+
+The 50-ext series itself prints trendlines that act as support/resistance on the extension and often foreshadow moves before price-chart TA shows anything. Two distinct patterns, both on the 50-ext only (200-ext does not show these cleanly).
+
+**Why these trendlines lead the news.** The big money that moves markets knows and positions weeks-to-months before the catalysts retail uses to explain moves. The extension envelope shows this directly: smooth envelope decay through declining peaks and shallowing troughs, not catalyst-stamped jumps. News bars sit somewhere on trendlines that were already there — the break of the line is where the break was going to happen anyway, and the catalyst just happened to land in that bar. Apparent "paradoxical" reactions (gap-up holding through bearish follow-on news, chop zones resolving against the direction of the last news print) are evidence that positioning preceded the narrative. The envelope math is news-agnostic by construction and quietly exploits this desync. Price and volume tell you everything.
+
+#### Contracting-Range Trendline Pair (topping / cycle reset)
+
+- After a bullish run peaks, the 50-ext prints a declining-peaks pattern. First peak sits at one of the ticker's upside reversal levels (upside_1 or upside_2 from the reversal profile). Dip, then a second peak that doesn't reach the first, then another dip, another peak below, and so on. Each momentum burst is weaker than the last. Connecting the declining peaks gives the upper downtrendline.
+- Mirrored on the downside as a contracting-wedge regime — peaks falling and troughs rising, range contracting into an apex. Lower line is trough-anchored ascending. (Descending-channel regime — parallel-declining peaks and troughs — is structurally excluded by the anchor-type ↔ slope-direction rule below; the primitive emits wedge-only.)
+- **Cascade applies to both sides, not just the upper.** After the initial steep downtrendline forms, breaking it often does NOT launch the next leg — ext typically drops into the chop zone and prints a new, shallower downtrendline on a second set of (weaker) peaks. This can repeat multiple times, each iteration shallower. Longer-term momentum decays through the whole sequence, with each bull flag / push weaker than the last. The lower trendline cascades the same way — multiple stacked valid lower lines, each on a different set of troughs, coexist at the same bar.
+- **The shallowest currently-active downtrendline is the final hurdle.** Two paths to its break:
+  - *Path A (typical):* correction → negative-extension reset → bounce breaks the shallowest line → first flag of the next macro uptrend.
+  - *Path B (hot themes, recent IPOs):* no correction, extended chop, shallowest line eventually breaks on its own → next macro leg up and next big mountain peak.
+- **Base rate:** breaking the terminal (shallowest) downtrendline almost always requires the reset first. The rare exceptions are hot-theme names (recently space stocks, metals miners) — those take path B.
+- The reset is what re-loads upside runway. SPY works the same way — "resetting the charts."
+- The first upside thrust through the shallowest downtrendline *after* the reset has happened is the monster move — the big meat. Break alone is not the signal; break of the terminal line, conditional on reset, is.
+
+**Structural detection rules (locked 2026-04-23):**
+
+Six gates define a valid candidate trendline. Applied uniformly across both feature 1 (Contracting-Range) and feature 2 (Momentum-Channel); only pivot prominence and the cycle-retirement handling differ between the features.
+
+1. **Origin-sign opposition.** Downsloping lines must originate at `v0 ≥ 0`; upsloping lines must originate at `v0 ≤ 0`. The slope sign and the first-anchor sign are opposite (or the first anchor is at zero).
+2. **Same-side anchors.** Both anchors on the same side of zero (`sign(v0) == sign(v1)`). Lines whose anchors straddle zero are not valid.
+3. **Anchor type ↔ slope direction.** Peak-anchored lines are descending only. Trough-anchored lines are ascending only. Downsloping lines only start at peaks; upsloping lines only start at dips.
+4. **Tangency — asymmetric.** Descending lines use an origin-side-only break check — pokes in the post-zero "hill" segment are tolerated (downside-extension is volatile). Ascending lines use a whole-life break check — pokes past the zero-crossing (line has flipped to resistance) are strict breaks. Any legitimate break retires the line.
+5. **Cycle containment (feature 1 only).** Using the reversal-profile constants:
+   - *Anchor check:* for an upper-cascade descending line, `v1` must have descended below `upside_1` (not still at cycle-top magnitude). Symmetric for lower cascade using `downside_1`.
+   - *Between-anchors path:* the opposite reversal level cannot be reached between the two anchors (peaks straddling a valley = different cycles).
+   - *Post-i1 staleness:* a new cycle top (ext reaching `upside_1` after i1) retires the line.
+   - *Projection-in-range:* projection at asof must stay within `[downside_2, upside_2]`. Projections beyond that envelope are overextended.
+6. **Pivot detection.** Anchors are raw local extrema from `find_peaks` at the prominence threshold (1.0 ADR for feature 1 macro structure, 0.5 ADR for feature 2 micro structure). **No anchor sliding** — sliding can pick bars on a descent toward a deeper unreachable trough, creating non-pivot anchors (SPY failure mode: slide picked bar on the descent to an adjacent deeper low, producing an "anchor" that wasn't itself a local minimum).
+
+**Feature 2 (Momentum-Channel) retirement:** no cycle-reset rules applied. During an active mountain climb, ext rising toward `upside_1/2` is the point of the climb, not a retirement trigger. Retirement comes only from rule 4 (line break).
+
+**Rendering note.** A downtrendline running from positive-ext territory into negative-ext territory visually appears "inside" the red histogram bars. That is a histogram-drawing artifact, not a tangency violation — on a line chart the same line is correctly tangent. Tangency is validated against series scalar values (bar tops), not against bar rectangles.
+
+#### Momentum-Channel Trendline Pair (active rise)
+
+- During a live rising leg on the 50-ext (a "mountain"), the ascending side is jagged — the D1 chart resting in little sideways compressions for a few candles prints as micro-dips on the side of the mountain. Snap a trendline across those micro-dips and it tells you where the next pullback bounces.
+- A second trendline across the micro-peaks between those dips gives the upper channel line. Momentum rides between the two trendlines.
+- These work like classic trendline S/R but on the extension series — they predict pullbacks and bounces when the price chart has no visible TA. Parabolic runs are the clearest example (e.g. CAR: the top red rejection candle hit the exact point where the two momentum trendlines converged at the second 5-minute candle of the day).
+- **Break of the lower trendline is a deceleration signal, not a trend-end.** Price typically keeps going up because the 50 SMA is upsloping — the extension just stops accelerating away from it. The trend ends eventually, but the break leads.
+- **Once broken, the line is not reclaimed.** Extension can keep rising in absolute terms but will not cross back above the old trendline — the steeper momentum that defined the line is gone.
+- **Shares the Contracting-Range rule set** (above) at finer pivot prominence (0.5 ADR vs 1.0 ADR), picking up the micro-dips/peaks on the climb. Cycle-retirement rules do NOT apply — a mountain climb is supposed to reach `upside_1/2`. Retirement comes only from line-break detection (tangency rule 4).
+
+#### Flip Rule (applies to all 50-ext trendlines)
+
+Standard TA 101: once a trendline on the 50-ext breaks, it flips polarity and persists as the opposite S/R. The "won't be reclaimed" behavior above is this flip rule at work — the old momentum floor becomes a ceiling on future rally attempts. Same mechanic across every line in both feature pairs.
+
 - Bull channels break one side: either establish steeper channel on top (continuation) or break opposite side for measured move
 - If lower trendline breaks and retest fails → measured move = channel width projected downward
 - 3-4DB setup = channel lower TL break + retest of broken TL from below (flipped to resistance)

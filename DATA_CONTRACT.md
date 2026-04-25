@@ -20,7 +20,7 @@ Authoritative reference for SQLite schemas, cache file formats, and data flow ru
 ## SQLite Tables (`data/scanperfect.db`)
 
 ### `setups`
-Setup type definitions. Seeded with DTSS, 3-4DB, HTF.
+Setup type definitions. Seeded with DTSS, 3-4DB, HTF, BF, BASE.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -82,9 +82,9 @@ These are the authoritative outputs and inputs for all downstream consumers. The
 
 | File | Producer | Contents |
 |---|---|---|
-| `universe_ohlcv_daily.pkl` | `cache_builder.py` | All daily OHLCV for ~11,500 tickers (Common Stock + ETF from EODHD across NYSE, NASDAQ, NYSE ARCA, BATS, NYSE MKT/AMEX). Universe synced nightly — new IPOs added, delisted tickers removed. Dict `{ticker: DataFrame}` with columns `date, open, high, low, close, volume, dvol_20d`. |
-| `universe_ohlcv_weekly.pkl` | `cache_builder.py` | Same, weekly bars. Rebuilt on nightly sync. |
-| `universe_ohlcv_monthly.pkl` | `cache_builder.py` | Same, monthly bars. |
+| `universe_ohlcv_daily.pkl` | `cache_builder.py` | All daily OHLCV for ~11,500 tickers (Common Stock + ETF from EODHD across NYSE, NASDAQ, NYSE ARCA, BATS, NYSE MKT/AMEX). Universe synced nightly — new IPOs added, delisted tickers removed. Dict `{ticker: DataFrame}` with columns `date, open, high, low, close, volume, dvol_20d`. **2026-04-22 adjustment policy:** OHLC is forward-split-adjusted (continuous across split boundaries, IBKR-style) but NOT dividend-adjusted; `volume` is forward-split-adjusted by EODHD/yfinance and passed through unchanged; `dvol_20d` is the 20-bar rolling mean of `close * volume`, smooth across split boundaries. Distribution ex-dates show real price drops (no back-adjustment). |
+| `universe_ohlcv_weekly.pkl` | `cache_builder.py` | Same as daily, weekly bars. Same 2026-04-22 adjustment policy. Nightly append detects splits over the gap window and routes affected tickers to a full-history HTF refetch so weekly stays consistent with daily across split boundaries. |
+| `universe_ohlcv_monthly.pkl` | `cache_builder.py` | Same, monthly bars. Same 2026-04-22 adjustment policy and HTF split-detection behavior as weekly. |
 | `ticker_reference.json` | `cache_builder.py` | First trade date per ticker (for validation). |
 
 ### Expression cache (`expr_series/`)
@@ -124,7 +124,7 @@ These are the authoritative outputs and inputs for all downstream consumers. The
 |---|---|---|
 | `pyramid_{setup}_{mode}[_refinement]_sig{total}_pk{peak}_{timestamp}.json` | `pyramid_grinder.py` (signal grind) | Condition set + summary + per-tier breakdown. `mode` is `mp` (multi-pass) or `sp` (single-pass). `_refinement` present only on refinement runs. |
 | `permuted_{setup}_mp_*.json` | `pyramid_grinder.py --permute` | Permuted-run output. Separate prefix prevents any loader from accidentally grabbing a permuted result as real conditions. |
-| `raw_signal_clusters_{setup}_{timestamp}.json` | `pyramid_grinder.py` (cluster gathering) | All signal clusters with WIN/LOSS classification and forward-window data. |
+| `raw_signal_clusters_{setup}_{timestamp}.json` | `pyramid_grinder.py` (cluster gathering) | All signal clusters with WIN/LOSS classification. Top-level fields: `setup_type`, `forward_window`, `direction`, `setup_class`, `winner_threshold_adr` (breakout only), `loser_threshold_adr` (breakout only), `breakeven_bars` (breakout only), `n_examples_validated`, `grinder_bugs`, cluster counts, and `clusters` array. |
 | `raw_signal_clusters_{setup}.json` | `pyramid_grinder.py` | Latest pointer (copy of most recent timestamped file). |
 | `refinement_{setup}_{description}_{timestamp}.json` | `pyramid_grinder.py --blackout` (refinement grind) | Winner/loser/eliminated signals + combined conditions + `depth_progression` for UI slider. Schema per `REFINEMENT_GRINDER.md`. |
 | `consensus/pyramid_{setup}_mp_*.json` | `pyramid_grinder.py --output-dir .../consensus/` | Real-run outputs during a consensus pipeline run. Same schema as standard grind output. Railway mirror + upload suppressed. |
@@ -139,6 +139,7 @@ These are the authoritative outputs and inputs for all downstream consumers. The
 
 Other cache directories:
 - `data/signal_exit_grind/signal_exit_{setup}.json` — latest pointer to signal exit conditions
+- `data/signal_exit_grind/signal_exit_pool_{setup}.json` — aggregate-P&L pool grinder top-N rules for the breakout classifier. Schema: `{setup_type, grinder_type: "signal_exit_pool_aggregate_pnl", timestamp, n_clusters_pool, n_entered, n_no_entry, n_skipped_missing_data, n_dropped_expr_cache_misalign, trade_lifetime_cap_bars, entry_window_bars, examples_lock_passed, examples_lock_violations, halted, halt_reason, cluster_meta[], top_conditions[]}`. Each `top_conditions` entry: `{expression, direction, threshold, aggregate_pnl_adr, n_loss_by_stop, n_loss_by_exit, n_loss_by_forced_exit, n_win_by_exit, n_win_by_forced_exit, per_cluster_pnl_adr, per_cluster_exit_bar_offset}`. Per-cluster arrays are pool-ordered with `null` for non-entered clusters. Distinct from `signal_exit_{setup}.json` (per-example fit, legacy).
 - `data/signal_filter/filtered_{setup}.json` + `classified_{setup}.json` — full-universe scan outputs
 - `data/exit_grind/exit_grind_{setup}.json` — trade-management exit grinder output (separate from signal exit grinder)
 - `data/vetting/vetting_{setup}.json` — UI vetting state

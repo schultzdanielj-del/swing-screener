@@ -1,10 +1,38 @@
 # CLAUDE.md — ScanPerfect Project Rules
 
 ## WORKFLOW
-Session start: curl SWING_SCREENER_PROJECT.md and DEPENDENCY_MAP.md from the repo (never from project files — there are none). Read the .md spec of any component before working on it. Break into smallest testable increments. Read the spec, list every requirement as a numbered checklist. Propose with checklist visible, Dan vets, gives explicit go-ahead. No code without "go/yes/do it." After code, reconcile: spec says X, code does X in function Y. If sandbox passes, say ready to push.
+Session start: read SWING_SCREENER_PROJECT.md and DEPENDENCY_MAP.md from the repo root. Break into smallest testable increments. Read the spec, list every requirement as a numbered checklist. Propose with checklist visible, Dan vets, gives explicit go-ahead. No code without "go/yes/do it." After code, reconcile: spec says X, code does X in function Y. If sandbox passes, say ready to push.
 
 ## WORKFLOW BEHAVIORS
 FULL STOP after presenting results/plans — no chaining into next steps, creating files, or running code. If you need credentials or access, STOP and ask. Never dump large data (CSV, JSON) into context — process via scripts. When Dan asks "can you do X" — honest answer with constraints and tradeoffs FIRST. If first attempt fails, STOP and explain before trying again.
+
+## DOCUMENTATION
+
+**File layout.** The repo-root doc surface is:
+- **SWING_SCREENER_PROJECT.md** — project architecture overview.
+- **DATA_CONTRACT.md** — SQLite schemas, cache file formats, data-flow rules.
+- **DEPENDENCY_MAP.md** — cross-component inputs/outputs, downstream consumers.
+- **Per-component .md** — one per live component (e.g., SIGNAL_GRINDER.md, SIGNAL_EXIT_GRINDER.md).
+- Plus locked prose: ta_knowledge.md, pcf.md.
+
+**No new .md files.** Exceptions: (1) a new component adds its own spec .md at the repo root; (2) Dan explicitly asks for a new file. Session notes, design drafts, status snapshots, investigation write-ups, session-prompt captures, and any other in-progress content go into the relevant existing component .md under Pending research or Pending build — not into a new file.
+
+**When to edit.** Never modify any of the above unprompted. When Dan says "update the documents" (or similar), propose a plan: which file, exact wording, where it goes. Wait for explicit go-ahead before editing.
+
+**Component .md structure.** Each component .md at the repo root uses these sections in this exact order, each strictly scoped:
+
+1. **Purpose** — what the component does. Stable; rarely changes.
+2. **EXACT spec** — what's currently built. Must fulfill the purpose.
+3. **Details you need to know** — facts not in the spec (operational/architectural constraints like RAM budgets, worker patterns, non-negotiable engineering rules).
+4. **Known bugs** — currently broken behavior.
+5. **Pending research** — problems being considered, tried, or in flight.
+6. **Pending build** — research items committed to building, not yet complete.
+
+Flow: research → pending build → spec. Completed build items fold into spec. Spec describes only current behavior; target/in-progress behavior goes in pending build.
+
+**No cross-component state.** A component's .md describes only its own behavior and its own pending work. Do not write another component's current state, version, open bugs, dates, or pending rebuilds in this doc — those go stale.
+
+Component docs describe BEHAVIOR (what the component does, rules it applies, semantic data it emits). DEPENDENCY_MAP.md describes DATA FLOW (concrete file formats, array shapes, column schemas, who produces, who consumes, edges in the component graph). File contracts and cross-component relationships both live in DEPENDENCY_MAP.md — it is read at session start and always in context.
 
 ## DEPENDENCY AWARENESS
 Before changing any component, check DEPENDENCY_MAP.md for downstream consumers and read those files too. Before pushing, state what downstream consumers exist and confirm they won't break. The code auditor (audit.sh) runs on Dan's machine as a safety net — it is not a replacement for checking dependencies before coding.
