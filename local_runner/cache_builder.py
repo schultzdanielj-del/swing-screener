@@ -450,8 +450,13 @@ def _eodhd_bulk_last_day(date=None):
 def _apply_bulk_bar(universe, bulk_data, tickers_to_append):
     """Apply bulk endpoint bars to the universe cache.
 
-    For each ticker in tickers_to_append, if bulk_data has a bar for it,
-    compute adjusted OHLC, append to existing data, recompute dvol.
+    Policy (2026-04-22): use the RAW `close` field from EODHD bulk; do not
+    apply the `adjusted_close / close` ratio. Tickers that split on this
+    bar's date are excluded upstream by `detect_splits` and routed through
+    the full-refetch path instead, which rewrites the entire ticker history
+    under the new split-adjustment policy. So the new bar is appended at
+    its raw price level and is consistent with the historical bars in the
+    cache (which carry the cumulative-future-split factor as of build time).
 
     Returns (appended_count, no_new_count).
     """
@@ -469,18 +474,13 @@ def _apply_bulk_bar(universe, bulk_data, tickers_to_append):
             no_new += 1
             continue
 
-        # Compute adjusted OHLC from bulk data (same logic as _eodhd_to_dataframe)
-        close_raw = float(bar["close"]) if bar["close"] else 0
-        adj_close = float(bar["adjusted_close"]) if bar["adjusted_close"] else 0
-        ratio = adj_close / close_raw if close_raw > 0 else 1.0
-
         new_row = pd.DataFrame([{
             "date": pd.Timestamp(bar["date"]),
-            "open": float(bar["open"]) * ratio if bar["open"] else 0,
-            "high": float(bar["high"]) * ratio if bar["high"] else 0,
-            "low": float(bar["low"]) * ratio if bar["low"] else 0,
-            "close": adj_close,
-            "volume": float(bar["volume"]) if bar["volume"] else 0,
+            "open": float(bar["open"]) if bar["open"] else 0.0,
+            "high": float(bar["high"]) if bar["high"] else 0.0,
+            "low": float(bar["low"]) if bar["low"] else 0.0,
+            "close": float(bar["close"]) if bar["close"] else 0.0,
+            "volume": float(bar["volume"]) if bar["volume"] else 0.0,
         }])
 
         # Check if this bar is actually new
@@ -504,9 +504,12 @@ def _apply_bulk_bar(universe, bulk_data, tickers_to_append):
 def _yfinance_fill_gaps(universe, stale_tickers, spy_last):
     """Fill tickers missed by EODHD bulk using yfinance batch downloads.
 
-    Uses yf.download() with auto_adjust=False to get raw OHLC + Adj Close,
-    then applies the same adjustment ratio as the EODHD pipeline:
-        ratio = adj_close / close -> applied to O, H, L, C
+    Policy (2026-04-22): use yf.download() with auto_adjust=False and take
+    the raw Open/High/Low/Close + Volume columns directly. yfinance under
+    auto_adjust=False already returns split-forward-adjusted OHLC (NOT
+    dividend-adjusted) — verified empirically on NVDA's 2024-06-10 10:1
+    split. This matches the cache-wide policy, so values stitch directly
+    into the EODHD-derived series without further transformation.
 
     Fetches in small batches (80 tickers) with generous sleep to stay
     well under Yahoo's rate limits. 15-minute budget for ~600 tickers.
@@ -606,7 +609,9 @@ def _yfinance_fill_gaps(universe, stale_tickers, spy_last):
 def _yf_apply_one(universe, ticker, df, target_date):
     """Apply a single yfinance DataFrame row to the universe cache.
 
-    Uses the same adjustment logic as EODHD: ratio = Adj Close / Close.
+    Policy (2026-04-22): take raw Open/High/Low/Close + Volume from yfinance
+    (auto_adjust=False) directly. yfinance has already split-forward-adjusted
+    OHLC and Volume — no further transformation matches the cache-wide policy.
     """
     if df is None or df.empty:
         return
@@ -623,11 +628,8 @@ def _yf_apply_one(universe, ticker, df, target_date):
 
     row = row.iloc[0]
     close_raw = float(row.get("Close", 0) or 0)
-    adj_close = float(row.get("Adj Close", 0) or 0)
-    if close_raw <= 0 or adj_close <= 0:
+    if close_raw <= 0:
         return
-
-    ratio = adj_close / close_raw
 
     existing = universe.get(ticker)
     if existing is None or len(existing) == 0:
@@ -640,10 +642,10 @@ def _yf_apply_one(universe, ticker, df, target_date):
 
     new_row = pd.DataFrame([{
         "date": pd.Timestamp(target_date),
-        "open": float(row.get("Open", 0) or 0) * ratio,
-        "high": float(row.get("High", 0) or 0) * ratio,
-        "low": float(row.get("Low", 0) or 0) * ratio,
-        "close": adj_close,
+        "open": float(row.get("Open", 0) or 0),
+        "high": float(row.get("High", 0) or 0),
+        "low": float(row.get("Low", 0) or 0),
+        "close": close_raw,
         "volume": float(row.get("Volume", 0) or 0),
     }])
 
@@ -663,13 +665,262 @@ def _yf_check_applied(universe, ticker, target_date):
     return str(df["date"].iloc[-1])[:10] >= target_date
 
 
-def _eodhd_to_dataframe(data):
-    """Convert EODHD JSON response to adjusted OHLCV DataFrame.
+def _yf_full_to_df(raw):
+    """Convert yfinance batch-download per-ticker output to our cache schema.
 
-    EODHD returns unadjusted OHLC + adjusted_close. We compute:
-        ratio = adjusted_close / close
-    and apply it to O, H, L, C to get fully-adjusted prices.
-    Volume is preserved as returned by EODHD (already split-adjusted).
+    Per the 2026-04-22 policy: take raw Open/High/Low/Close + Volume directly
+    (yfinance under auto_adjust=False already returns split-forward-adjusted
+    values matching EODHD's volume convention; see verification probe).
+    """
+    if raw is None or raw.empty:
+        return None
+    df = raw.reset_index()
+    rename_map = {"Date": "date", "Datetime": "date",
+                  "Open": "open", "High": "high", "Low": "low",
+                  "Close": "close", "Volume": "volume"}
+    df = df.rename(columns=rename_map)
+    needed = ["date", "open", "high", "low", "close", "volume"]
+    if not all(c in df.columns for c in needed):
+        return None
+    df = df[needed].copy()
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["close"])
+    df = df[df["close"] > 0].sort_values("date").reset_index(drop=True)
+    return df if len(df) > 0 else None
+
+
+def yfinance_full_history_sweep(tickers, batch_size=80, pause=6.0):
+    """Final-resort sweep: fetch full history from yfinance for tickers
+    EODHD couldn't deliver after retries.
+
+    Per policy: auto_adjust=False, take raw OHLC + Volume directly. yfinance
+    has already split-forward-adjusted these values, matching the cache-wide
+    convention. No further transformation.
+
+    Returns (results_dict, failed_list). Pace is gentle (6s between batches
+    of 80) to stay well under Yahoo's unofficial rate limits.
+    """
+    if not tickers:
+        return {}, []
+    try:
+        import yfinance as yf
+    except ImportError:
+        print("  WARNING: yfinance not installed — skipping sweep")
+        return {}, list(tickers)
+
+    print(f"\n  yfinance full-history sweep for {len(tickers)} ticker(s) "
+          f"EODHD couldn't deliver...")
+    n_batches = (len(tickers) + batch_size - 1) // batch_size
+    print(f"    {n_batches} batch(es) of {batch_size}, ~{pause:.0f}s pause")
+
+    results = {}
+    failed = []
+    t0 = time.time()
+    for batch_idx in range(n_batches):
+        b_start = batch_idx * batch_size
+        b_end = min(b_start + batch_size, len(tickers))
+        batch = tickers[b_start:b_end]
+        try:
+            raw = yf.download(
+                batch, start=HISTORY_START,
+                auto_adjust=False, progress=False, threads=True,
+            )
+            if raw is None or raw.empty:
+                failed.extend(batch)
+            elif len(batch) == 1:
+                df = _yf_full_to_df(raw)
+                if df is not None and len(df) >= 3:
+                    results[batch[0]] = df
+                else:
+                    failed.append(batch[0])
+            else:
+                for ticker in batch:
+                    try:
+                        sub = raw.xs(ticker, axis=1, level=1)
+                        df = _yf_full_to_df(sub)
+                        if df is not None and len(df) >= 3:
+                            results[ticker] = df
+                        else:
+                            failed.append(ticker)
+                    except (KeyError, TypeError):
+                        failed.append(ticker)
+        except Exception as e:
+            print(f"    yfinance sweep batch {batch_idx+1} error: {e}")
+            failed.extend(batch)
+        done = b_end
+        print(f"    yfinance sweep: {done}/{len(tickers)} "
+              f"({len(results)} ok, {len(failed)} failed)")
+        if batch_idx < n_batches - 1:
+            time.sleep(pause)
+    elapsed = time.time() - t0
+    print(f"  yfinance sweep done: {len(results)} recovered, "
+          f"{len(failed)} still failed in {elapsed:.0f}s")
+    return results, failed
+
+
+# Module-level cache: avoid re-fetching splits for the same ticker
+# within a single build run. Cleared per-process; not persisted to disk.
+_splits_cache = {}
+
+
+def _eodhd_fetch_splits(ticker):
+    """Fetch the splits history for one US ticker from EODHD.
+
+    Returns a list of {"date": "YYYY-MM-DD", "split": "B/A"} dicts (possibly
+    empty), or [] on transport failure (fail-open: assume no splits).
+    Cached per-process so repeated fetches of the same ticker are free.
+
+    Inline fail-open variant — used by `_eodhd_download` during normal fetch.
+    For full rebuilds, prefer `prefetch_splits()` upstream so the cache is
+    warm and this function never makes a network call.
+    """
+    if ticker in _splits_cache:
+        return _splits_cache[ticker]
+    url = (f"{EODHD_BASE}/splits/{ticker}.US"
+           f"?api_token={EODHD_API_TOKEN}&fmt=json")
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "ScanPerfect/1.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+        if not raw.startswith("["):
+            _splits_cache[ticker] = []
+            return []
+        data = json.loads(raw)
+        _splits_cache[ticker] = data if data else []
+        return _splits_cache[ticker]
+    except Exception:
+        _splits_cache[ticker] = []
+        return []
+
+
+def _eodhd_fetch_splits_strict(ticker):
+    """Same network path as `_eodhd_fetch_splits` but signals transport
+    failure to the caller via a `None` return so `_batched_fetch` can retry.
+
+    Returns (ticker, list-of-splits-or-empty) on success, (ticker, None) on
+    transport failure. Populates `_splits_cache` only on success.
+    """
+    if ticker in _splits_cache:
+        return ticker, _splits_cache[ticker]
+    url = (f"{EODHD_BASE}/splits/{ticker}.US"
+           f"?api_token={EODHD_API_TOKEN}&fmt=json")
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "ScanPerfect/1.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+    except Exception:
+        return ticker, None
+    if not raw.startswith("["):
+        _splits_cache[ticker] = []
+        return ticker, []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return ticker, None
+    _splits_cache[ticker] = data if data else []
+    return ticker, _splits_cache[ticker]
+
+
+def prefetch_splits(tickers, max_workers=20, min_sleep=8.0,
+                    max_sleep=20.0, max_retries=5):
+    """Pre-fetch and cache splits for a ticker list before the OHLCV pass.
+
+    Why this exists: when `_eodhd_download` does both OHLCV and splits inline
+    on the same worker thread, the burst rate is doubled and the adaptive
+    backoff in `_batched_fetch` only sees OHLCV success/failure. Pre-fetching
+    splits in a separate phase under conservative pacing keeps the per-min
+    EODHD request rate predictable and lets the OHLCV phase be a single-
+    endpoint workload.
+
+    Defaults are conservative: 20 workers, 8s min-sleep between batches of
+    100, 5 retry sweeps. Aggregate rate stays well under EODHD's 1000/min
+    limit so adaptive backoff should not fire under normal conditions.
+    """
+    if not tickers:
+        return
+    print(f"\n  Pre-fetching splits for {len(tickers):,} tickers "
+          f"(workers={max_workers}, sleep={min_sleep:.0f}s)...")
+    t0 = time.time()
+    results, failed = _batched_fetch(
+        tickers,
+        fetch_fn=_eodhd_fetch_splits_strict,
+        label="Splits",
+        batch_size=100,
+        max_workers=max_workers,
+        min_sleep=min_sleep,
+        max_sleep=max_sleep,
+        max_retries=max_retries,
+    )
+    elapsed = time.time() - t0
+    n_with_splits = sum(1 for t in tickers if _splits_cache.get(t))
+    print(f"  Splits prefetch done: {len(results):,} resolved, "
+          f"{len(failed)} failed, {n_with_splits} have splits "
+          f"in {elapsed:.0f}s ({elapsed/60:.1f}m)")
+    # Note: failed tickers fall back to inline fail-open ([]) during OHLCV
+    # fetch — safe for tickers that genuinely never split, risky if EODHD
+    # is broken for that ticker. Failures are surfaced in the log above.
+
+
+def _compute_split_factors(dates, splits):
+    """Per-bar cumulative forward-split factor.
+
+    For a split with ratio "B/A" on date S (e.g., "10/1" for a 10:1 forward
+    split where 1 share becomes 10), bars with date < S need their OHLC
+    multiplied by A/B (e.g., 1/10) to match the post-split share count.
+    Bars with date >= S are unchanged.
+
+    Cumulative factor at bar D = product over all splits S where S.date > D
+    of (A/B). Multiplying raw OHLC by this factor yields IBKR-style continuous
+    split-forward-adjusted prices.
+
+    Volume is NOT touched here — EODHD's volume is already forward-split-
+    adjusted (verified empirically on RGTU's 3:1 / 1:3 split pair and on
+    NVDA's 2024-06-10 10:1 split). yfinance's volume under auto_adjust=False
+    is also forward-split-adjusted.
+    """
+    n = len(dates)
+    factors = np.ones(n, dtype=np.float64)
+    if not splits:
+        return factors
+
+    if hasattr(dates, "dt"):
+        date_strs = dates.dt.strftime("%Y-%m-%d").values
+    else:
+        date_strs = np.array([str(d)[:10] for d in dates])
+
+    for s in splits:
+        sd = s.get("date", "")
+        sr = s.get("split", "")
+        try:
+            b_str, a_str = sr.split("/")
+            b = float(b_str)
+            a = float(a_str)
+        except (ValueError, AttributeError):
+            continue
+        if a <= 0 or b <= 0:
+            continue
+        before_mask = date_strs < sd
+        factors[before_mask] *= (a / b)
+
+    return factors
+
+
+def _eodhd_to_dataframe(data, splits=None):
+    """Convert EODHD JSON response to OHLCV DataFrame under the 2026-04-22 policy.
+
+    Policy (matches IBKR-style display):
+      - Distributions: NOT back-adjusted. Use EODHD `close` (raw), never
+        `adjusted_close`.
+      - Splits: forward-adjusted. Pre-split OHLC bars rescaled so the series
+        is continuous across split boundaries. Caller passes the splits list
+        from `_eodhd_fetch_splits()`; if None, no split adjustment is applied
+        (raw output).
+      - Volume: pass through unchanged. EODHD's volume is already split-
+        forward-adjusted, so close × volume gives correct notional dvol.
 
     Returns DataFrame with columns: date, open, high, low, close, volume
     — or None if data is invalid.
@@ -678,24 +929,21 @@ def _eodhd_to_dataframe(data):
         return None
 
     df = pd.DataFrame(data)
-
-    # Compute adjustment ratio
-    close_raw = pd.to_numeric(df["close"], errors="coerce")
-    adj_close = pd.to_numeric(df["adjusted_close"], errors="coerce")
-
-    # Avoid division by zero
-    ratio = np.where(close_raw > 0, adj_close / close_raw, 1.0)
-
-    # Apply ratio to OHLC
-    df["open"] = pd.to_numeric(df["open"], errors="coerce") * ratio
-    df["high"] = pd.to_numeric(df["high"], errors="coerce") * ratio
-    df["low"] = pd.to_numeric(df["low"], errors="coerce") * ratio
-    df["close"] = adj_close
-    df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
     df["date"] = pd.to_datetime(df["date"])
-
+    df["open"] = pd.to_numeric(df["open"], errors="coerce")
+    df["high"] = pd.to_numeric(df["high"], errors="coerce")
+    df["low"] = pd.to_numeric(df["low"], errors="coerce")
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
     df = df[["date", "open", "high", "low", "close", "volume"]]
     df = df.sort_values("date").reset_index(drop=True)
+
+    if splits:
+        factors = _compute_split_factors(df["date"], splits)
+        df["open"]  = df["open"]  * factors
+        df["high"]  = df["high"]  * factors
+        df["low"]   = df["low"]   * factors
+        df["close"] = df["close"] * factors
 
     # Drop rows with NaN close (bad data)
     df = df.dropna(subset=["close"]).reset_index(drop=True)
@@ -707,9 +955,10 @@ def _eodhd_to_dataframe(data):
 
 
 def _eodhd_download(ticker, start=None, interval="d"):
-    """Download OHLCV for one ticker from EODHD.
+    """Download OHLCV for one ticker from EODHD under the 2026-04-22 policy.
 
-    Returns fully-adjusted OHLCV (split + dividend adjusted OHLC).
+    Returns split-forward-adjusted OHLC (no dividend adjustment), with
+    EODHD's already-split-adjusted volume passed through.
 
     Args:
         ticker: stock symbol
@@ -726,7 +975,8 @@ def _eodhd_download(ticker, start=None, interval="d"):
     if data is None:
         return ticker, None
 
-    df = _eodhd_to_dataframe(data)
+    splits = _eodhd_fetch_splits(ticker)
+    df = _eodhd_to_dataframe(data, splits=splits)
     return ticker, df
 
 
@@ -746,7 +996,8 @@ def _eodhd_append_after_date(ticker, after_date):
     if data is None:
         return ticker, None
 
-    df = _eodhd_to_dataframe(data)
+    splits = _eodhd_fetch_splits(ticker)
+    df = _eodhd_to_dataframe(data, splits=splits)
     return ticker, df
 
 
@@ -762,10 +1013,10 @@ def compute_dvol_20d(df):
     an expanding-mean fallback for bars 0..18 instead of NaN, and qualify
     for the tradable filter on whatever history they have.
 
-    EODHD's volume field is already split-adjusted (verified empirically on
-    RGTU's 3:1 / 1:3 split pair: close * volume is smooth across the split,
-    raw_close * volume shows a structural break). So close * volume is the
-    correct dollar-volume formula across all splits.
+    Under the 2026-04-22 OHLCV policy, both close and volume are forward-
+    split-adjusted to match (close via our `_compute_split_factors` helper,
+    volume already pre-adjusted by EODHD/yfinance). So close * volume is
+    smooth across split boundaries and gives correct notional dvol.
 
     Computed in-place.
     """
@@ -879,13 +1130,15 @@ def _batched_fetch(tickers, fetch_fn, label="Fetch", batch_size=100,
             if batch_idx < n_batches - 1:
                 time.sleep(sleep_time)
 
-        # Check if retry made progress
-        if not batch_failed:
-            break  # all succeeded
-        if attempt > 0 and len(batch_failed) >= len(remaining):
-            break  # retry made zero progress — stop
-
+        # Decide whether to break BEFORE reassigning `remaining` so the
+        # "no progress" comparison still references the prior attempt's
+        # ticker count. Then update `remaining` to the actual surviving
+        # failure set so the return value is always correct (in particular,
+        # an empty list when every ticker succeeded).
+        no_progress = (attempt > 0 and len(batch_failed) >= len(remaining))
         remaining = batch_failed
+        if not remaining or no_progress:
+            break
 
     return results, remaining
 
@@ -1026,13 +1279,27 @@ def build_daily_cache(force=False):
     # Remove SPY from fetch list (already fetched)
     fetch_tickers = [t for t in tickers if t != "SPY"]
 
-    print(f"\nFetching daily OHLCV data via EODHD...")
+    # ── Step 2.5: Pre-fetch splits ──
+    # Populates _splits_cache so the OHLCV phase below is a single-endpoint
+    # workload. Keeps per-min EODHD request rate predictable.
+    prefetch_splits(fetch_tickers)
+
+    # Conservative pacing: 20 workers, 8s min-sleep between batches of 100,
+    # 5 retry sweeps. ~570 req/min — well under EODHD's 1000/min limit so
+    # adaptive backoff should not fire during normal conditions. Trades
+    # ~15 extra minutes for predictability and zero rate-limit risk.
+    print(f"\nFetching daily OHLCV data via EODHD (conservative pacing)...")
     t0 = time.time()
 
     results, permanently_failed = _batched_fetch(
         fetch_tickers,
         fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
         label="Daily",
+        batch_size=100,
+        max_workers=20,
+        min_sleep=8.0,
+        max_sleep=30.0,
+        max_retries=5,
     )
 
     # Add SPY to results
@@ -1080,8 +1347,11 @@ def build_daily_cache(force=False):
             stale,
             fetch_fn=lambda t: _eodhd_download(t, HISTORY_START),
             label=f"Retry {retry_round}",
-            min_sleep=0.5,
-            max_retries=2,
+            batch_size=100,
+            max_workers=20,
+            min_sleep=8.0,
+            max_sleep=30.0,
+            max_retries=3,
         )
         permanently_failed.extend(retry_failed)
 
@@ -1126,6 +1396,21 @@ def build_daily_cache(force=False):
     # Save updated reference
     save_ticker_reference(ticker_ref)
 
+    # ── Step 5b: yfinance full-history sweep for EODHD-failed tickers ──
+    # Final-resort: any ticker EODHD permanently failed (rate-limited beyond
+    # retries, or EODHD temporarily had no data) gets a full-history fetch
+    # from yfinance under the same write-time policy (raw OHLC + Volume,
+    # auto_adjust=False, no further adjustment). Without this, failed
+    # tickers would be silently dropped from the rebuilt cache.
+    yf_recovered = {}
+    yf_still_failed = []
+    if permanently_failed:
+        # Dedupe and exclude SPY (already validated)
+        yf_targets = sorted({t for t in permanently_failed if t != "SPY"})
+        if yf_targets:
+            yf_recovered, yf_still_failed = yfinance_full_history_sweep(
+                yf_targets)
+
     # ── Step 6: Build universe and save ──
     universe = {}
     for ticker, df in valid.items():
@@ -1134,13 +1419,22 @@ def build_daily_cache(force=False):
     for ticker, df in unvalidatable.items():
         compute_dvol_20d(df)
         universe[ticker] = df
+    for ticker, df in yf_recovered.items():
+        compute_dvol_20d(df)
+        universe[ticker] = df
 
     elapsed = time.time() - t0
     print(f"\nFetch complete: {len(universe):,} tickers in {elapsed:.0f}s ({elapsed/60:.1f} min)")
-    if permanently_failed:
-        print(f"  Permanently failed: {len(permanently_failed)} tickers")
-        if len(permanently_failed) <= 20:
-            print(f"    {permanently_failed}")
+    if yf_recovered:
+        print(f"  EODHD-failed tickers recovered via yfinance sweep: "
+              f"{len(yf_recovered)}")
+    if yf_still_failed:
+        print(f"  Still failed after yfinance sweep: {len(yf_still_failed)}")
+        if len(yf_still_failed) <= 20:
+            print(f"    {yf_still_failed}")
+    elif permanently_failed and not yf_recovered:
+        # No EODHD failures had to be swept (already filtered or empty list)
+        pass
 
     print(f"\nSaving daily cache...")
     with open(CACHE_DAILY_FILE, "wb") as f:
@@ -1548,7 +1842,12 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
 
     full_sweep=False (nightly append): fetch new bars for each ticker starting
         from the day after its own last cached bar. Uses _merge_htf_bars to
-        append only — history is known-good in this path.
+        append only — history is known-good in this path EXCEPT for tickers
+        that split since their last cached bar. Split detection runs against
+        the EODHD bulk-splits-per-day endpoint over the gap window; flagged
+        tickers are routed to a full HISTORY_START refetch (which re-applies
+        the new cumulative-future-split factor across all bars), bypassing
+        the incremental append.
     full_sweep=True  (--htf / --weekly / --monthly): fetch full history from
         HISTORY_START for stale or missing tickers. Loads existing cache and
         updates in place.
@@ -1644,24 +1943,75 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
         # No existing cache — all tickers need fetching
         to_work = list(all_tickers)
 
+    # ── Split detection (append mode only) ──────────────────────────────
+    # In append mode, any ticker that split since its last cached HTF bar
+    # needs a FULL HTF refetch — not an incremental append. The cached
+    # historical bars carry the OLD cumulative-future-split factor; only
+    # a full refetch re-multiplies them under the current splits state.
+    # Without this, HTF would silently produce a discontinuity across the
+    # split boundary. (Daily has the equivalent logic in append_daily_cache.)
+    to_split_refetch = []
+    if not full_sweep and universe:
+        # Determine split-detection window: oldest HTF last date across the
+        # universe → today. Use SPY's daily date set as the trading calendar.
+        gap_after = min(
+            str(df["date"].iloc[-1])[:10]
+            for df in universe.values()
+            if len(df) > 0
+        )
+        try:
+            spy_df_for_calendar = fetch_spy_reference()
+            spy_dates_calendar = build_spy_date_set(spy_df_for_calendar)
+        except Exception as e:
+            print(f"  WARNING: could not fetch SPY for split-detection "
+                  f"calendar ({e}); skipping HTF split detection")
+            spy_dates_calendar = None
+
+        if spy_dates_calendar:
+            print(f"  Detecting splits since {gap_after} for HTF refetch...")
+            split_tickers = detect_splits(
+                list(universe.keys()), universe, gap_after,
+                spy_dates_calendar)
+            # Restrict to tickers actually in the daily universe
+            to_split_refetch = [t for t in split_tickers if t in daily_set]
+            if to_split_refetch:
+                print(f"  HTF split refetch: {len(to_split_refetch)} ticker(s)")
+
+    # Don't double-process: split refetch supersedes append for those tickers
+    split_set = set(to_split_refetch)
+    to_work = [t for t in to_work if t not in split_set]
+
     print(f"  Total tickers: {len(all_tickers)}")
     print(f"  Already current: {skipped}")
-    print(f"  To fetch: {len(to_work)}")
+    print(f"  To append: {len(to_work)}")
+    if to_split_refetch:
+        print(f"  To full-refetch (splits): {len(to_split_refetch)}")
 
     t0 = time.time()
     updated = 0
     no_change = 0
     new_added = 0
     failed = 0
+    split_refetched = 0
 
     if to_work:
         if full_sweep:
-            # Full sweep: fetch from HISTORY_START, fully replace existing data
+            # Full sweep: fetch from HISTORY_START, fully replace existing data.
+            # Pre-fetch splits so the OHLCV phase is single-endpoint (same
+            # rationale as build_daily_cache; _splits_cache persists across
+            # the weekly+monthly invocations in the same process).
+            prefetch_splits(to_work)
+
             def _fetch_full(ticker):
                 return _eodhd_download(ticker, HISTORY_START, interval)
 
+            # Conservative pacing — match build_daily_cache so HTF stays
+            # well under EODHD's 1000/min limit and adaptive backoff stays
+            # dormant under normal conditions.
             results, failed_list = _batched_fetch(
                 to_work, fetch_fn=_fetch_full, label=f"{label} fetch",
+                batch_size=100, max_workers=20, min_sleep=8.0,
+                max_sleep=30.0, max_retries=5,
             )
             failed += len(failed_list)
 
@@ -1708,6 +2058,24 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
                 else:
                     no_change += 1
 
+    # Split refetch: full HISTORY_START fetch, replaces existing series
+    if to_split_refetch:
+        def _fetch_full_split(ticker):
+            return _eodhd_download(ticker, HISTORY_START, interval)
+
+        results, failed_list = _batched_fetch(
+            to_split_refetch, fetch_fn=_fetch_full_split,
+            label=f"{label} split refetch",
+            batch_size=100, max_workers=20, min_sleep=8.0,
+            max_sleep=30.0, max_retries=5,
+        )
+        failed += len(failed_list)
+
+        for ticker, df in results.items():
+            if df is not None and len(df) >= 3:
+                universe[ticker] = df
+                split_refetched += 1
+
     elapsed = time.time() - t0
 
     # Save
@@ -1721,6 +2089,7 @@ def _sync_htf_cache(interval, output_file, meta_file, label,
     print(f"\n  {label} sync complete:")
     print(f"    Total in cache: {len(universe):,}")
     print(f"    Updated: {updated}, New: {new_added}, "
+          f"Split-refetched: {split_refetched}, "
           f"Unchanged: {no_change}, Failed: {failed}")
     print(f"    File: {output_file} ({size_mb:.1f} MB)")
     print(f"    Time: {elapsed:.0f}s ({elapsed/60:.1f} min)")

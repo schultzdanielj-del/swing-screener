@@ -27,7 +27,7 @@ All files live in `local_runner/cache/`.
 | `cache_monthly_meta.txt` | ISO timestamp of last monthly cache save | tiny |
 | `universe_ohlcv.pkl` | Legacy 300-bar daily cache (kept for backward compat) | deprecated |
 
-Each pickle is a Python dict: `{ticker_string: pandas_DataFrame}`. Each DataFrame has columns: `date`, `open`, `high`, `low`, `close`, `volume`, `dvol_20d`. All OHLC values are fully adjusted (split + dividend). Volume is raw. `dvol_20d` is the 20-bar rolling mean of `close * volume`, computed in-place on every save.
+Each pickle is a Python dict: `{ticker_string: pandas_DataFrame}`. Each DataFrame has columns: `date`, `open`, `high`, `low`, `close`, `volume`, `dvol_20d`. Under the **2026-04-22 OHLCV adjustment policy**, OHLC values are forward-split-adjusted (continuous across split boundaries, IBKR-style) but NOT dividend-adjusted. `volume` is forward-split-adjusted by EODHD/yfinance and passed through unchanged. Both close and volume share the same forward-split-adjusted scale, so `close × volume` is smooth across split boundaries and `dvol_20d` (the 20-bar rolling mean of that product) is correct notional dollar volume across the full history.
 
 `HISTORY_START = "2016-01-01"` is the single constant that controls the start date for all three timeframes.
 
@@ -58,14 +58,20 @@ Plan: $19.99/month EOD Historical Data, 100K calls/day, 1,000/min.
 
 **Endpoints used:**
 
-| Endpoint | Purpose | Cost | Notes |
+**Verify all costs at source:** https://eodhd.com/financial-apis/bulk-api-eod-splits-dividends and https://eodhd.com/pricing. The numbers below are EODHD's documented per-call weights. Do not rely on this table for budgeting — always re-verify on EODHD's site before high-volume operations, since their pricing changes and in-repo notes can drift.
+
+| Endpoint | Purpose | Cost (verified weight) | Notes |
 |----------|---------|------|-------|
 | `exchange-symbol-list/US` | Universe sync — get all tickers, types, exchanges | 1 call | Filtered to Common Stock + ETF on `NYSE`, `NASDAQ`, `NYSE ARCA`, `BATS`, `NYSE MKT`, `AMEX` (the last two added in Session 5, recovered ~297 tickers including AMEX-listed names like EQX, UAMY, REPX, LEU, BTG). Returns ~11,500 tickers. |
-| `eod/{ticker}.US` | Per-ticker historical OHLCV | 1 call each | Returns unadjusted OHLC + `adjusted_close`. Used for full rebuilds and validation retries. |
-| `eod-bulk-last-day/US` | All US tickers' OHLCV for one date | 100 calls | Returns ~50K tickers in one response. Used for nightly append — one call per new trading day. |
-| `eod-bulk-last-day/US?type=splits` | All US splits on a given date | 1 call | One call per trading day in the gap. Used to detect tickers needing full refetch. |
+| `eod/{ticker}.US` | Per-ticker historical OHLCV | 1 call each | Returns raw OHLC + `adjusted_close`. Under the 2026-04-22 policy we use raw `open/high/low/close` and ignore `adjusted_close`. Used for full rebuilds and validation retries. |
+| `splits/{ticker}.US` | Per-ticker split history | 1 call each | Returns all splits for one ticker. Use this for split discovery instead of bulk splits — avoids the 100x weight penalty. |
+| `eod-bulk-last-day/US` | All US tickers' OHLCV for one date | **100 calls per request** | Returns ~50K tickers in one response. Used for nightly append — one call per new trading day. **Daily quota at 100K means at most 1,000 bulk calls/day.** |
+| `eod-bulk-last-day/US?type=splits` | All US splits on a given date | **100 calls per request** | One call per trading day in the gap. Used to detect tickers needing full refetch. **NOT 1 call** — earlier versions of this doc were wrong; the bulk-API pricing applies to every variant of `eod-bulk-last-day`. |
+| `user` | Quota check | 1 call | Returns `apiRequests` (count used today) and `dailyRateLimit`. Poll this before/during high-volume runs to abort at 80% of cap. |
 
-**Adjustment model:** EODHD returns unadjusted OHLC + `adjusted_close`. The ratio `adjusted_close / close` is applied to all four OHLC columns to produce fully-adjusted prices matching the format downstream consumers expect.
+**Adjustment model (2026-04-22 policy):** EODHD's `close` field is RAW (TC2000-style: pre-split bars at their pre-split share price; no dividend back-adjustment). EODHD's `adjusted_close` is split-AND-dividend adjusted and is NOT used. To produce IBKR-style continuous prices we fetch the per-ticker splits list from `splits/{TICKER}.US`, compute a per-bar cumulative forward-split factor (product over all splits S where S.date > bar.date of `A/B` for split ratio `B/A`), and multiply raw OHLC by that factor. EODHD's `volume` is already forward-split-adjusted (verified empirically on RGTU's 3:1 / 1:3 pair and on NVDA's 2024-06-10 10:1 split) and is passed through unchanged. The `_eodhd_to_dataframe` parser accepts an optional `splits=` argument; `_eodhd_download` automatically attaches the per-ticker splits list (with a per-process `_splits_cache` so repeated fetches don't re-hit the splits endpoint).
+
+**Distributions:** NOT back-adjusted. Sub-ADR distribution drops show as real ex-date price drops, matching TC2000 and IBKR. No distributions table is maintained.
 
 **Limitations:**
 - Bulk endpoint for the current day is incomplete until ~6-8 hours after market close. Tickers missing from bulk are backfilled via yfinance.
@@ -73,11 +79,15 @@ Plan: $19.99/month EOD Historical Data, 100K calls/day, 1,000/min.
 - Per-ticker endpoint returns `None` on any HTTP error (including 429 rate limit). `_batched_fetch` retries these internally.
 - Some tickers on the EODHD exchange list have no price data at all (truly dead but not yet delisted). These return `None` and are tracked as permanently failed.
 
-### yfinance (gap fill only)
+### yfinance (gap fill only, plus full-history sweep)
 
-Used only to backfill tickers missing from the EODHD bulk endpoint on the current day. Fetches in batches of 80 with ~6 second pauses between batches. Uses `auto_adjust=False` to get raw OHLC + Adj Close, then applies the same `adjusted_close / close` ratio as EODHD.
+Used in two places under the 2026-04-22 policy:
 
-Not used for historical backfill, weekly, or monthly data.
+1. **Current-day gap fill** (`_yfinance_fill_gaps` / `_yf_apply_one`) — for tickers missing from the EODHD bulk endpoint on the current trading day. Fetches in batches of 80 with ~6s pauses. Uses `auto_adjust=False` and takes raw `Open/High/Low/Close + Volume` directly. yfinance under `auto_adjust=False` returns split-forward-adjusted-not-dividend-adjusted OHLC and forward-split-adjusted Volume — verified empirically on NVDA's 2024-06-10 10:1 split — which matches the cache-wide convention so values stitch directly into the EODHD-derived series with no further transformation.
+
+2. **Full-history sweep at end of `--daily --force`** (`yfinance_full_history_sweep`) — final-resort recovery for any ticker EODHD permanently failed across all retries. Same `auto_adjust=False` + raw values approach. Without this sweep, EODHD-failed tickers would silently disappear from the rebuilt cache.
+
+Not used for HTF (weekly / monthly).
 
 ### Ticker Reference
 
@@ -151,17 +161,21 @@ Rebuilds the entire cache from scratch by fetching full history for every ticker
 1. Fetch SPY as ground truth
 2. Fetch the EODHD universe (~11,500 tickers)
 3. Build/update the ticker reference (first trade dates)
-4. Fetch full history for every ticker via the per-ticker EODHD endpoint, from `HISTORY_START` to present
-5. Validate all tickers (same checks as nightly append)
-6. Save the daily pickle
+4. **Pre-fetch splits** for every ticker via per-ticker `/splits/{TICKER}.US`, populating an in-process splits cache so the OHLCV phase below is single-endpoint
+5. Fetch full history for every ticker via the per-ticker EODHD `/eod/{TICKER}.US` endpoint, from `HISTORY_START` to present. Each per-ticker fetch applies the new policy: raw `close` × cumulative-future-split factor → forward-split-adjusted OHLC; volume passed through unchanged
+6. Validate all tickers (same checks as nightly append)
+7. **yfinance full-history sweep** for any ticker EODHD permanently failed across all retries — final-resort recovery so EODHD-failed tickers do not silently disappear from the rebuild
+8. Save the daily pickle
 
-Uses `_batched_fetch` with 80 concurrent workers, adaptive backoff, and up to 3 retry rounds. Timing depends on EODHD API responsiveness — expect 15-30 minutes for ~11,500 tickers.
+Uses `_batched_fetch` with **conservative pacing** (20 workers, 8s min-sleep between batches of 100, 5 retry sweeps) so the per-min EODHD request rate stays well under the 1000/min limit and the adaptive-backoff branch should not fire under normal conditions. Timing: ~17 min splits prefetch + ~22 min OHLCV main + ~3 min validation = **~45 min for ~11,800 tickers**.
 
 ### Weekly + monthly rebuild
 
 `python local_runner/cache_builder.py --htf --force`
 
-Fetches weekly and monthly bars for every ticker in the daily cache via the per-ticker EODHD endpoint with `period=w` or `period=m`. Uses EODHD's server-side aggregation, not resampled from daily.
+Fetches weekly and monthly bars for every ticker in the daily cache via the per-ticker EODHD endpoint with `period=w` or `period=m`. Uses EODHD's server-side aggregation, not resampled from daily. The new policy is applied identically (raw close × forward-split factor; pass-through volume). Each timeframe runs the same conservative pacing as the daily rebuild; the splits cache populated by weekly is reused by monthly in the same process.
+
+The HTF nightly **append** path also detects splits over the gap window (via `detect_splits` over the daily SPY trading calendar) and routes affected tickers to a full-history HTF refetch — without this, HTF would silently produce a discontinuity at the split boundary because the cached historical bars carry the old cumulative-future-split factor.
 
 ### Full rebuild (all three)
 
@@ -169,13 +183,27 @@ Fetches weekly and monthly bars for every ticker in the daily cache via the per-
 
 Runs daily rebuild, then weekly + monthly rebuild sequentially. Frees daily data from memory before starting HTF to manage RAM.
 
-**After any full rebuild:** The expression cache must also be fully rebuilt, because minor price differences between the old and new data will cause expression values to differ. This is expected and correct.
+---
+
+## Adjustment policy — broker comparison
+
+The cache stores **forward-split-adjusted, NOT dividend-adjusted** OHLC + Volume (effective 2026-04-22). This matches IBKR's display convention: continuous through splits, real ex-date drops on distributions.
+
+| Source | Splits | Distributions |
+|---|---|---|
+| TC2000 | shows as gap on chart | real ex-date price drop |
+| IBKR | continuous (forward-split-adjusted) | real ex-date price drop |
+| **This cache** | **continuous (forward-split-adjusted)** | **real ex-date price drop (no back-adjustment)** |
+
+For non-distribution days the cache equals TC2000's raw display exactly (within rounding). On a dividend ex-date the cache shows the real price drop, while TC2000 shows the same and IBKR shows the same. Across split boundaries the cache and IBKR are continuous; TC2000 shows a gap.
+
+The earlier `backfill_raw_close.py` repair script is superseded under this policy (the new write-time logic produces correct forward-split-adjusted OHLC at the moment data lands in the cache; no missed-split repair pass is ever needed). It has been moved to `archive/shelved_scripts/backfill_raw_close.py` for historical reference only — do not run.
 
 ---
 
 ## Commands
 
-All commands run from the repo root. EODHD API token must be set: `set EODHD_API_TOKEN=69caeae1b24de8.25880244`
+All commands run from the repo root. EODHD API token must be set in your shell environment: `set EODHD_API_TOKEN=<your_token>` (Windows) or `export EODHD_API_TOKEN=<your_token>` (bash). Never paste the literal token into any file in the repo — it leaks to anyone with read access. If you suspect leak, rotate at https://eodhd.com immediately.
 
 | Command | What it does |
 |---------|-------------|
@@ -223,3 +251,29 @@ The validation checks are:
 Tickers that fail the last-date check after a refetch that returns valid data with the same last date are accepted — they genuinely don't trade every day (thinly traded names, halted stocks). This is distinguished from rate limiting because rate-limited requests return `None`, not valid DataFrames.
 
 The previous validation design (exact bar count match against SPY) was removed because ~1,800 tickers legitimately trade fewer days than SPY. These would fail validation on every run, triggering pointless refetches.
+
+---
+
+## Pending research
+
+### Delisted-ticker retention policy change (shelved 2026-04-24)
+
+Current policy deletes delisted tickers on universe sync (`sync_universe()` lines 2354-2358, duplicated in `append_daily_cache()` lines 1547-1549). Two consequences identified 2026-04-24:
+
+1. **Orphaned examples.** Three curated examples (EXAS HTF 2021-01-19, PSTG BF 2024-03-22, NGD BASE 2026-01-05) are now unreadable by the grinder and classifier — their tickers were dropped in the most recent cache rebuild.
+
+2. **Survivorship bias in the training pool.** Every historical bar of a delisted ticker that would have qualified under the per-bar tradable filter disappears from the grinder's scan universe. Setups get trained on "tickers that survived," so backtested WR/EV look better than they will perform forward on a universe that includes eventually-failing names.
+
+**Verified via EODHD probe (2026-04-24):** pre-delisting EOD history is retained and retrievable via `/eod/{TICKER}.US`. TWTR canary returns 9 years of history 3.5 years post-buyout. EXAS/PSTG/NGD all return full history up to their respective last-trade dates (2025-11-19 / 2026-04-16 / 2026-03-23). Recovery is mechanically possible.
+
+**Full 6-phase plan drafted:** `C:\Users\Dan\.claude\plans\curried-booping-key.md`
+
+Phase summary:
+- **B.** Policy change in `cache_builder.py`: parallel `ticker_status.json` + `ticker_anomalies.json` files; mark terminal instead of delete; skip terminals in fetch/validate; handle edge cases (NGD-class anomalies, ticker reuse, reversal of delisting).
+- **A.** Recover the three orphaned examples using Phase B's `insert_terminal_ticker()` helper.
+- **C.** One-time backfill script `backfill_delisted_tickers.py` — fetch EODHD's delisted list filtered to 6 tracked exchanges × Common Stock/ETF × last-trade ≥ 2016-01-01; insert each. Estimated ~12-32K EODHD calls, fits 100K daily quota.
+- **D.** `load_live_tickers()` helper wired into live-scan-path consumers (`intermediate_cache_builder`, `signal_filter`, `scan_engine`, `fetch_fundamentals`). Training-pool consumers intentionally left unfiltered.
+- **E.** Per-ticker expression-cache compute for newly-added terminals via existing `_compute_and_save_ticker()`. No `.state`/`.lookback` needed (forward-prop never triggers for terminals).
+- **F.** Grind provenance tagging — add `training_pool: "survivors_only" | "full"` to grind metadata; retroactively tag existing results as `survivors_only`.
+
+**Not currently committed to.** Decision pending on whether survivorship bias matters enough to pay the complexity cost. The plan file contains the full edge-case table, phase dependencies, verification steps, and open decision points.

@@ -2,7 +2,7 @@
 Market Context Cache Builder — Two-phase: fetch then compute.
 
 PHASE 1 — FETCH  (network, threaded I/O parallelism)
-  Downloads OHLCV for all market instruments from local pickle / EODHD / yfinance / FRED.
+  Downloads OHLCV for all market instruments from local pickle / EODHD / yfinance.
   Stores everything in a single pickle: local_runner/cache/market_ohlcv.pkl
   Zero computation in this phase (except derived breadth instruments).
 
@@ -11,7 +11,6 @@ PHASE 1 — FETCH  (network, threaded I/O parallelism)
     2. EODHD INDX/CC exchanges — indices (VIX, TNX, ...), crypto (BTC-USD),
        breadth internals (ADVN, DECN, TRIN, ...)
     3. yfinance — futures only (ES=F, NQ=F, CL=F, ...)
-    4. FRED — macro series (yield spreads, credit spreads, NFCI, ...)
 
   After all fetches, derived instruments are computed from raw components:
     NYMO_CALC   = McClellan Oscillator = 19-EMA(ADVN-DECN) - 39-EMA(ADVN-DECN)
@@ -101,9 +100,6 @@ PRICE_ONLY = {
     "DXY.INDX", "BCOMCL.INDX",
     # Macro — computed yield spreads
     "T10Y2Y_CALC", "T10Y3M_CALC",
-    # FRED macro (remaining — no EODHD equivalent)
-    "FRED:BAMLH0A0HYM2", "FRED:BAMLC0A0CM",
-    "FRED:NFCI", "FRED:ANFCI",
 }
 
 INSTRUMENTS = {
@@ -234,12 +230,6 @@ INSTRUMENTS = {
         "T10Y2Y_CALC",    # 10yr minus 2yr (was FRED:T10Y2Y)
         "T10Y3M_CALC",    # 10yr minus 3mo (was FRED:T10Y3M)
     ],
-    "macro_fred": [
-        "FRED:BAMLH0A0HYM2",   # HY credit spread (OAS) — no EODHD equivalent
-        "FRED:BAMLC0A0CM",      # IG credit spread (OAS) — no EODHD equivalent
-        "FRED:NFCI",            # Financial Conditions Index — no EODHD equivalent
-        "FRED:ANFCI",           # Adjusted NFCI — no EODHD equivalent
-    ],
 }
 
 # Instruments that are computed from other fetched instruments (not fetched directly)
@@ -267,8 +257,6 @@ def _is_pickle_instrument(symbol):
     if symbol in DERIVED_INSTRUMENTS:
         return False
     if symbol.endswith(".INDX") or symbol.endswith(".CC"):
-        return False
-    if symbol.startswith("FRED:"):
         return False
     if "=" in symbol:    # futures like ES=F
         return False
@@ -330,16 +318,14 @@ def _fetch_eodhd(eodhd_symbol):
             return None
 
         df = pd.DataFrame(data)
-        # EODHD INDX instruments: adjusted_close == close (no splits),
-        # but apply the adjustment pattern for consistency
-        close_raw = pd.to_numeric(df["close"], errors="coerce")
-        adj_close = pd.to_numeric(df["adjusted_close"], errors="coerce")
-        ratio = np.where(close_raw > 0, adj_close / close_raw, 1.0)
-
-        df["open"]   = pd.to_numeric(df["open"], errors="coerce") * ratio
-        df["high"]   = pd.to_numeric(df["high"], errors="coerce") * ratio
-        df["low"]    = pd.to_numeric(df["low"], errors="coerce") * ratio
-        df["close"]  = adj_close
+        # Policy (2026-04-22): use raw `close` from EODHD; do NOT apply the
+        # adjusted_close ratio (no dividend back-adjustment). INDX instruments
+        # do not split and crypto does not have splits in the equity sense,
+        # so no forward-split adjustment is needed for this fetch path.
+        df["open"]   = pd.to_numeric(df["open"], errors="coerce")
+        df["high"]   = pd.to_numeric(df["high"], errors="coerce")
+        df["low"]    = pd.to_numeric(df["low"], errors="coerce")
+        df["close"]  = pd.to_numeric(df["close"], errors="coerce")
         df["volume"] = pd.to_numeric(df.get("volume", 0), errors="coerce").fillna(0.0)
         df["date"]   = pd.to_datetime(df["date"])
 
@@ -349,12 +335,18 @@ def _fetch_eodhd(eodhd_symbol):
 
 
 def _fetch_yfinance(symbol):
-    """Fetch OHLCV from yfinance. Used only for futures (ES=F, etc.)."""
+    """Fetch OHLCV from yfinance. Used only for futures (ES=F, etc.).
+
+    Policy (2026-04-22): auto_adjust=False for uniformity with the rest of
+    the cache (no dividend back-adjustment, raw split-adjusted OHLC). For
+    futures specifically there are no splits or dividends, so the auto_adjust
+    setting does not change the values — this is purely policy alignment.
+    """
     import yfinance as yf
 
     try:
         df = yf.download(
-            symbol, start=HISTORY_START, progress=False, auto_adjust=True
+            symbol, start=HISTORY_START, progress=False, auto_adjust=False
         )
         if df is None or len(df) == 0:
             return None
@@ -374,30 +366,6 @@ def _fetch_yfinance(symbol):
         return None
 
 
-def _fetch_fred(series_id):
-    """Fetch macro series from FRED CSV endpoint."""
-    import urllib.request, io
-
-    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=20) as r:
-            raw = r.read().decode("utf-8")
-        df = pd.read_csv(io.StringIO(raw))
-        if df.empty:
-            return None
-        df.columns = ["date", "value"]
-        df["date"]  = pd.to_datetime(df["date"])
-        df["value"] = pd.to_numeric(df["value"], errors="coerce")
-        df = df.dropna(subset=["value"])
-        df["open"] = df["high"] = df["low"] = df["close"] = df["value"]
-        df["volume"] = 0.0
-        df = df[["date", "open", "high", "low", "close", "volume"]]
-        return _standard_df(df)
-    except Exception:
-        return None
-
-
 def _fetch_one(instrument_id, daily_cache=None):
     """Route an instrument to the correct fetcher.
 
@@ -406,8 +374,6 @@ def _fetch_one(instrument_id, daily_cache=None):
     try:
         if instrument_id in DERIVED_INSTRUMENTS:
             return instrument_id, None  # computed later, not fetched
-        elif instrument_id.startswith("FRED:"):
-            df = _fetch_fred(instrument_id[5:])
         elif instrument_id.endswith(".INDX") or instrument_id.endswith(".CC"):
             df = _fetch_eodhd(instrument_id)
         elif _is_pickle_instrument(instrument_id):
@@ -589,7 +555,7 @@ def fetch_all(force=False, n_threads=16):
 
     print(f"\n  Pickle reads:  {len(pickle_insts)}")
     print(f"  Network fetch: {len(network_insts)} "
-          f"(EODHD + yfinance + FRED)")
+          f"(EODHD + yfinance)")
     print(f"  Derived:       {len(derived_insts)} "
           f"(computed after fetch)")
 
@@ -1220,10 +1186,9 @@ def print_status():
         eodhd_count  = sum(1 for k in cache
                           if k.endswith(".INDX") or k.endswith(".CC"))
         yf_count     = sum(1 for k in cache if "=" in k)
-        fred_count   = sum(1 for k in cache if k.startswith("FRED:"))
         derived_count = sum(1 for k in cache if k in DERIVED_INSTRUMENTS)
         print(f"  Sources: {pickle_count} pickle, {eodhd_count} EODHD, "
-              f"{yf_count} yfinance, {fred_count} FRED, "
+              f"{yf_count} yfinance, "
               f"{derived_count} derived")
     else:
         print("  market_ohlcv.pkl   NOT FOUND -- run --fetch")
