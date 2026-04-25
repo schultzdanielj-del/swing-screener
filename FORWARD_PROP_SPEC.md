@@ -206,7 +206,12 @@ The LSP detector (`lsp_detector_v2.py`) and algo line detector (`algo_line_detec
 
 The .state file does NOT store LSP or algo state.
 
-### Total .state: 129 daily + 138 HTF + 50 ext_struct = **317 values** ≈ ~2.5 KB per ticker, ~28 MB total
+### Total .state: 129 daily + 138 HTF + 50 ext_struct = **317 float64 values** + variable-length keys per ticker:
+- `moc_levels`: list of JSON dicts per active MOC level (~100–500 per ticker, ~50–250 KB).
+- `reversal_profile_state`: dict keyed by ext source (`ext_avgc50_adr14`, `ext_avgc200_adr14`); each value carries L_grid + per-L cumulative crossings/returned arrays + 14-bar pending queues (~5–15 KB per source).
+- `ext50_trendline_state.ext50_history`: float list of full ext_avgc50_adr14 history through the .npz end-bar (~12–22 KB per ticker; sliding-appended on each forward-prop call).
+
+Total per-ticker .state ≈ ~2.5 KB scalar + ~80–300 KB variable. Universe total ≈ ~1–3 GB across .state files.
 
 **Validated (2026-04-02):** `setup_forward_prop.py` produces exactly 317 state keys per ticker. Confirmed on AAPL (single) and 100 random tickers (0 failures, 0.9s/ticker).
 

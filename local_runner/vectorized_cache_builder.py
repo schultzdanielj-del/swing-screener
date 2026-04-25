@@ -46,23 +46,34 @@ def _classify_expressions(expressions):
     ext_struct_indices = []
     lsp_indices = []
     algo_indices = []
+    moc_indices = []
+    reversal_profile_by_source = {}  # input_column -> [(constant_name, j), ...]
+    ext50_trendline_indices = []
     htf_weekly_indices = []
     htf_weekly_base = []
     htf_monthly_indices = []
     htf_monthly_base = []
-    
+
     _ON_SERIES_OPS = {"on_series", "on_series_bool_agg"}
-    
+
     for j, expr in enumerate(expressions):
         compute = expr["compute"]
         op = compute.get("op")
-        
+
         if op == "precomputed":
             source = compute.get("source")
             if source == "lsp":
                 lsp_indices.append(j)
             elif source == "algo":
                 algo_indices.append(j)
+            elif source == "moc":
+                moc_indices.append(j)
+            elif source == "reversal_profile":
+                src_col = compute.get("input_column")
+                cname = compute.get("constant")
+                reversal_profile_by_source.setdefault(src_col, []).append((cname, j))
+            elif source == "ext50_trendlines":
+                ext50_trendline_indices.append(j)
             elif source == "htf":
                 tf = compute.get("timeframe")
                 if tf == "w":
@@ -75,12 +86,15 @@ def _classify_expressions(expressions):
             ext_struct_indices.append(j)
         else:
             daily_indices.append(j)
-    
+
     return {
         "daily": daily_indices,
         "ext_struct": ext_struct_indices,
         "lsp": lsp_indices,
         "algo": algo_indices,
+        "moc": moc_indices,
+        "reversal_profile_by_source": reversal_profile_by_source,
+        "ext50_trendline_indices": ext50_trendline_indices,
         "htf_weekly": (htf_weekly_indices, htf_weekly_base),
         "htf_monthly": (htf_monthly_indices, htf_monthly_base),
     }
@@ -150,17 +164,20 @@ def _ticker_cache_path(ticker):
 
 
 def _compute_lsp_algo_ticker(args):
-    """Per-ticker LSP + algo lines computation. Runs in ProcessPoolExecutor."""
-    ticker, df_dict, lsp_indices, algo_indices, expressions = args
+    """Per-ticker LSP + algo + MOC + reversal_profile + ext50_trendlines.
+    Runs in ProcessPoolExecutor."""
+    (ticker, df_dict, lsp_indices, algo_indices, moc_indices,
+     reversal_profile_by_source, ext_col_idx_by_name,
+     ext50_trendline_indices, level_col_idx_by_key, expressions) = args
     try:
         df = pd.DataFrame(df_dict)
         df["date"] = pd.to_datetime(df["date"])
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-        
+
         n_bars = len(df)
         results = {}
-        
+
         if lsp_indices:
             try:
                 from scripts.lsp_detector_v2 import compute_all_lsp_series
@@ -173,7 +190,7 @@ def _compute_lsp_algo_ticker(args):
                             results[j] = arr.astype(np.float32)
             except Exception:
                 pass
-        
+
         if algo_indices:
             try:
                 from scripts.algo_line_detector import compute_all_algo_series
@@ -186,7 +203,77 @@ def _compute_lsp_algo_ticker(args):
                             results[j] = arr.astype(np.float32)
             except Exception:
                 pass
-        
+
+        if moc_indices:
+            try:
+                from scripts.moc_detector import compute_all_moc_series
+                moc_dict = compute_all_moc_series(df)
+                for j in moc_indices:
+                    col_name = expressions[j]["compute"]["column"]
+                    if col_name in moc_dict:
+                        arr = moc_dict[col_name]
+                        if len(arr) == n_bars:
+                            results[j] = arr.astype(np.float32)
+            except Exception:
+                pass
+
+        # Reversal profile reads daily ext columns from the just-written .npz
+        # (the daily batched pass wrote them before this per-ticker pass).
+        # Trendlines reads daily ext + Levels columns; Levels we just computed
+        # into `results` above, so we layer them in via the merged map below.
+        rp_outputs = {}  # constant_name -> array, per source col, for trendlines to consume
+        if reversal_profile_by_source:
+            try:
+                from scripts.reversal_profile import compute_all_reversal_profile_series
+                from expr_cache_builder import _open_npz
+                path = _ticker_cache_path(ticker)
+                loaded = _open_npz(path)
+                npz_data = loaded["data"]
+                for src_col, entries in reversal_profile_by_source.items():
+                    src_idx = ext_col_idx_by_name.get(src_col)
+                    if src_idx is None:
+                        continue
+                    src_array = npz_data[:, src_idx].astype(np.float64)
+                    rp_dict = compute_all_reversal_profile_series(src_array)
+                    rp_outputs[src_col] = rp_dict
+                    for cname, j in entries:
+                        if cname in rp_dict:
+                            arr = rp_dict[cname]
+                            if len(arr) == n_bars:
+                                results[j] = arr.astype(np.float32)
+            except Exception:
+                pass
+
+        # Trendlines reads ext_avgc50_adr14 + 5 Levels columns. Levels were just
+        # computed in rp_outputs (in-memory), so we don't re-read from .npz.
+        if ext50_trendline_indices:
+            try:
+                from scripts.ext50_trendlines import (
+                    compute_all_ext50_trendline_series, get_ext50_trendline_expression_names,
+                )
+                from expr_cache_builder import _open_npz
+                src_idx = ext_col_idx_by_name.get("ext_avgc50_adr14")
+                if src_idx is not None:
+                    path = _ticker_cache_path(ticker)
+                    loaded = _open_npz(path)
+                    ext50_arr = loaded["data"][:, src_idx].astype(np.float64)
+                    rp50 = rp_outputs.get("ext_avgc50_adr14", {})
+                    levels_at_bar = {}
+                    for level_key in ("upside_1", "upside_2", "downside_1", "downside_2", "chop_upper"):
+                        if level_key in rp50:
+                            levels_at_bar[level_key] = np.asarray(rp50[level_key], dtype=np.float64)
+                        else:
+                            levels_at_bar[level_key] = np.full(n_bars, np.nan, dtype=np.float64)
+                    tl_dict = compute_all_ext50_trendline_series(ext50_arr, levels_at_bar)
+                    for j in ext50_trendline_indices:
+                        col_name = expressions[j]["compute"]["column"]
+                        if col_name in tl_dict:
+                            arr = tl_dict[col_name]
+                            if len(arr) == n_bars:
+                                results[j] = arr.astype(np.float32)
+            except Exception:
+                pass
+
         return ticker, results
     except Exception:
         return ticker, {}
@@ -220,7 +307,9 @@ def build_vectorized(batch_size=25, n_lsp_workers=8):
     print(f"\n  {n_exprs} expressions")
     print(f"    Daily: {n_daily}, ExtStruct: {n_ext}, Boolean: {n_bool}")
     print(f"    HTF: {len(w_indices)} weekly + {len(m_indices)} monthly")
-    print(f"    Per-ticker: {len(groups['lsp'])} LSP + {len(groups['algo'])} algo")
+    n_rp_total = sum(len(v) for v in groups['reversal_profile_by_source'].values())
+    n_tl_total = len(groups['ext50_trendline_indices'])
+    print(f"    Per-ticker: {len(groups['lsp'])} LSP + {len(groups['algo'])} algo + {len(groups['moc'])} MOC + {n_rp_total} reversal_profile + {n_tl_total} ext50_trendlines")
     
     # Load OHLCV
     print(f"\n  Loading OHLCV cache...")
@@ -439,21 +528,38 @@ def build_vectorized(batch_size=25, n_lsp_workers=8):
     import gc; gc.collect()
     
     # ══════════════════════════════════════════════════════════
-    # PER-TICKER PASS: LSP + ALGO LINES
+    # PER-TICKER PASS: LSP + ALGO LINES + MOC
     # ══════════════════════════════════════════════════════════
-    
+
     lsp_indices = groups["lsp"]
     algo_indices = groups["algo"]
-    
-    if lsp_indices or algo_indices:
-        print(f"\n  Per-ticker pass: {len(lsp_indices)} LSP + {len(algo_indices)} algo")
+    moc_indices = groups["moc"]
+    reversal_profile_by_source = groups["reversal_profile_by_source"]
+    ext50_trendline_indices = groups["ext50_trendline_indices"]
+
+    # Name -> index map for ext source columns (reversal_profile + trendlines)
+    ext_col_idx_by_name = {}
+    for j, expr in enumerate(expressions):
+        nm = expr["name"]
+        if nm in reversal_profile_by_source or nm == "ext_avgc50_adr14":
+            ext_col_idx_by_name[nm] = j
+
+    # Levels columns Trendlines reads (kept for reference; the per-ticker
+    # function gets Levels from in-memory rp_outputs, not from the .npz)
+    level_col_idx_by_key = {}
+
+    n_rp = sum(len(v) for v in reversal_profile_by_source.values())
+    n_tl = len(ext50_trendline_indices)
+
+    if lsp_indices or algo_indices or moc_indices or reversal_profile_by_source or ext50_trendline_indices:
+        print(f"\n  Per-ticker pass: {len(lsp_indices)} LSP + {len(algo_indices)} algo + {len(moc_indices)} MOC + {n_rp} reversal_profile + {n_tl} ext50_trendlines")
         print(f"  Workers: {n_lsp_workers}")
-        
-        # Reload OHLCV for per-ticker pass (needed for LSP/algo)
+
+        # Reload OHLCV for per-ticker pass
         _cache_file = CACHE_DAILY_FILE if os.path.exists(CACHE_DAILY_FILE) else CACHE_LEGACY_5YR
         with open(_cache_file, "rb") as f:
             cache = pickle.load(f)
-        
+
         work_items = []
         for ticker in tickers:
             df = cache.get(ticker)
@@ -467,7 +573,9 @@ def build_vectorized(batch_size=25, n_lsp_workers=8):
                 "close": df["close"].values,
                 "volume": df["volume"].values,
             }
-            work_items.append((ticker, df_dict, lsp_indices, algo_indices, expressions))
+            work_items.append((ticker, df_dict, lsp_indices, algo_indices, moc_indices,
+                                reversal_profile_by_source, ext_col_idx_by_name,
+                                ext50_trendline_indices, level_col_idx_by_key, expressions))
         
         del cache
         

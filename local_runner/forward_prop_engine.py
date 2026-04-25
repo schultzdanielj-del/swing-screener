@@ -77,6 +77,9 @@ _fp_ext_struct_indices = []
 _fp_ext_series_name_to_idx = {}
 _fp_lsp_indices = []
 _fp_algo_indices = []
+_fp_moc_indices = []
+_fp_reversal_profile_by_source = {}  # input_column -> [(constant_name, j), ...]
+_fp_ext50_trendline_indices = []
 _fp_htf_weekly_indices = []
 _fp_htf_monthly_indices = []
 _fp_htf_weekly_base = []
@@ -93,7 +96,8 @@ def _init_fp_worker(expressions):
     global _fp_daily_dispatch_indices, _fp_daily_slow_indices, _fp_daily_fallback_indices
     global _fp_daily_bool_ct, _fp_daily_bool_st, _fp_daily_bool_tir
     global _fp_ext_struct_indices, _fp_ext_series_name_to_idx
-    global _fp_lsp_indices, _fp_algo_indices
+    global _fp_lsp_indices, _fp_algo_indices, _fp_moc_indices
+    global _fp_reversal_profile_by_source, _fp_ext50_trendline_indices
     global _fp_htf_weekly_indices, _fp_htf_monthly_indices
     global _fp_htf_weekly_base, _fp_htf_monthly_base
 
@@ -104,6 +108,9 @@ def _init_fp_worker(expressions):
     _fp_ext_struct_indices = []
     _fp_lsp_indices = []
     _fp_algo_indices = []
+    _fp_moc_indices = []
+    _fp_reversal_profile_by_source = {}
+    _fp_ext50_trendline_indices = []
     _fp_htf_weekly_indices = []
     _fp_htf_monthly_indices = []
     _fp_htf_weekly_base = []
@@ -130,6 +137,14 @@ def _init_fp_worker(expressions):
                 _fp_lsp_indices.append(j)
             elif source == "algo":
                 _fp_algo_indices.append(j)
+            elif source == "moc":
+                _fp_moc_indices.append(j)
+            elif source == "reversal_profile":
+                src_col = compute.get("input_column")
+                cname = compute.get("constant")
+                _fp_reversal_profile_by_source.setdefault(src_col, []).append((cname, j))
+            elif source == "ext50_trendlines":
+                _fp_ext50_trendline_indices.append(j)
             elif source == "htf":
                 tf = compute.get("timeframe")
                 if tf == "w":
@@ -588,8 +603,18 @@ def _forward_prop_one_ticker(args):
             npz_tail, npz_tail_start_bar, full_im=_fp_full_im,
         )
 
-        # ── Phase 5: LSP + Algo ──
+        # ── Phase 5: LSP + Algo + MOC + Reversal Profile + Trendlines ──
         _compute_lsp_algo_expressions(expr_row, df_dict)
+        _compute_moc_expressions(expr_row, df_dict, state, new_state)
+        # Reversal profile must run BEFORE ext-struct's prev_ext update would
+        # overwrite state["ext_prev_*"] (which it already did in Phase 4 by
+        # writing to new_state, not state — so reading from state is still
+        # the previous bar's value here). And it must run AFTER Phase 2 wrote
+        # the new ext value into expr_row.
+        _compute_reversal_profile_expressions(expr_row, state, new_state, bar_idx)
+        # Trendlines depends on Levels (just filled into expr_row) + ext50
+        # history (in state). Must run AFTER reversal_profile.
+        _compute_ext50_trendline_expressions(expr_row, state, new_state)
 
         # Save prev_im for next forward-prop's shifted reads
         new_state["prev_im"] = {name: float(im.get(name, 0.0)) for name in INTERMEDIATE_COLUMNS}
@@ -2700,6 +2725,132 @@ def _compute_lsp_algo_expressions(expr_row, df_dict):
                         expr_row[j] = float(arr[-1])
         except Exception:
             pass
+
+
+def _compute_ext50_trendline_expressions(expr_row, state, new_state):
+    """Forward-prop Extension Chart Trendlines at the new bar.
+
+    Path-pure primitive: cascade_at re-derives at the new bar using the full
+    ext50 history from state['ext50_trendline_state']['ext50_history']. Levels
+    at the new bar are read from expr_row (Phase 5d reversal_profile filled
+    them earlier in this same forward-prop call).
+    """
+    if not _fp_ext50_trendline_indices:
+        new_state["ext50_trendline_state"] = state.get("ext50_trendline_state",
+                                                         {"ext50_history": []})
+        return
+    try:
+        from scripts.ext50_trendlines import (
+            step_ext50_trendline_one_bar, get_ext50_trendline_expression_names,
+        )
+        ext50_idx = _fp_ext_series_name_to_idx.get("ext_avgc50_adr14")
+        if ext50_idx is None:
+            new_state["ext50_trendline_state"] = state.get("ext50_trendline_state",
+                                                             {"ext50_history": []})
+            return
+        new_ext = float(expr_row[ext50_idx])
+        # Read Levels at new bar from expr_row by name lookup
+        name_to_idx = {expr["name"]: jj for jj, expr in enumerate(_fp_expressions)}
+        levels_at_new_bar = {}
+        for level_key in ("upside_1", "upside_2", "downside_1", "downside_2", "chop_upper"):
+            col_name = f"ext_avgc50_adr14_{level_key}"
+            jj = name_to_idx.get(col_name)
+            if jj is not None:
+                levels_at_new_bar[level_key] = float(expr_row[jj])
+            else:
+                levels_at_new_bar[level_key] = float("nan")
+        prior = state.get("ext50_trendline_state", {"ext50_history": []})
+        vec, new_tl_state = step_ext50_trendline_one_bar(prior, new_ext, levels_at_new_bar)
+        tl_names = get_ext50_trendline_expression_names()
+        name_to_local_li = {nm: li for li, nm in enumerate(tl_names)}
+        for j in _fp_ext50_trendline_indices:
+            col_name = _fp_expressions[j]["compute"]["column"]
+            li = name_to_local_li.get(col_name)
+            if li is not None:
+                expr_row[j] = float(vec[li])
+        new_state["ext50_trendline_state"] = new_tl_state
+    except Exception:
+        new_state["ext50_trendline_state"] = state.get("ext50_trendline_state",
+                                                         {"ext50_history": []})
+
+
+def _compute_reversal_profile_expressions(expr_row, state, new_state, bar_idx):
+    """Forward-prop Extension Chart Levels (reversal profile) at the new bar.
+
+    Reads:
+      - prev_ext per source from state[f'ext_prev_{label}'] (same key the
+        ext-struct phase already maintains).
+      - new_ext per source from expr_row at the source column index (filled
+        by Phase 2 daily expression dispatch).
+      - prior reversal_profile state per source from state['reversal_profile_state'][source].
+    Writes:
+      - 6 constants per source into expr_row at registered indices.
+      - Updated state in new_state['reversal_profile_state'][source].
+    """
+    if not _fp_reversal_profile_by_source:
+        new_state["reversal_profile_state"] = state.get("reversal_profile_state", {})
+        return
+    try:
+        from scripts.reversal_profile import step_reversal_at_bar, CONSTANT_NAMES
+        prior_all = state.get("reversal_profile_state", {})
+        new_all = {}
+        # Map source ext column → ext_label used in state keys (drops "ext_" prefix
+        # and "_adr14" suffix; matches existing ext_struct convention).
+        ext_label_map = {
+            "ext_avgc50_adr14": "avgc50",
+            "ext_avgc200_adr14": "avgc200",
+        }
+        cname_to_li = {nm: li for li, nm in enumerate(CONSTANT_NAMES)}
+        for src_col, entries in _fp_reversal_profile_by_source.items():
+            src_idx = _fp_ext_series_name_to_idx.get(src_col)
+            if src_idx is None:
+                new_all[src_col] = prior_all.get(src_col, {})
+                continue
+            new_ext = float(expr_row[src_idx])
+            ext_label = ext_label_map.get(src_col, "")
+            prev_ext = float(state.get(f"ext_prev_{ext_label}", 0.0))
+            prior_src = prior_all.get(src_col, {})
+            vec, new_src = step_reversal_at_bar(prior_src, prev_ext, new_ext, int(bar_idx))
+            for cname, j in entries:
+                li = cname_to_li.get(cname)
+                if li is not None:
+                    expr_row[j] = float(vec[li])
+            new_all[src_col] = new_src
+        new_state["reversal_profile_state"] = new_all
+    except Exception:
+        new_state["reversal_profile_state"] = state.get("reversal_profile_state", {})
+
+
+def _compute_moc_expressions(expr_row, df_dict, state, new_state):
+    """Forward-prop MOC level expressions for the new bar.
+
+    Resumes from `state["moc_levels"]` (list of level dicts, possibly empty),
+    applies one bar of MOC mechanics at the last bar of df_dict, writes the
+    61-feature snapshot into expr_row at MOC indices, and stores the updated
+    levels list in `new_state["moc_levels"]` for the next call.
+    """
+    if not _fp_moc_indices:
+        new_state["moc_levels"] = state.get("moc_levels", [])
+        return
+    try:
+        from scripts.moc_detector import step_moc_one_bar, get_moc_expression_names
+        df = pd.DataFrame(df_dict)
+        df["date"] = pd.to_datetime(df["date"])
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        prior = {"levels": state.get("moc_levels", [])}
+        vec, updated = step_moc_one_bar(prior, df)
+        names = get_moc_expression_names()
+        name_to_local_idx = {nm: i for i, nm in enumerate(names)}
+        for j in _fp_moc_indices:
+            col_name = _fp_expressions[j]["compute"]["column"]
+            li = name_to_local_idx.get(col_name)
+            if li is not None:
+                expr_row[j] = float(vec[li])
+        new_state["moc_levels"] = updated["levels"]
+    except Exception:
+        # Preserve prior state so the next call doesn't lose history
+        new_state["moc_levels"] = state.get("moc_levels", [])
 
 
 # ══════════════════════════════════════════════════════════════
