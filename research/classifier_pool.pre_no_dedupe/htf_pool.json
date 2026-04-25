@@ -1,0 +1,988 @@
+{
+  "setup": "htf",
+  "pool_source": "presignal \u2229 pyramid at signal bar E-1",
+  "sources": {
+    "presignal_file": "htf_passes.pkl",
+    "pyramid_file": "pyramid_htf_mp_sig534_pk5_20260417_231416.json",
+    "ohlcv_file": "universe_ohlcv_daily.pkl",
+    "db_file": "scanperfect.db"
+  },
+  "counts": {
+    "total": 79,
+    "examples": 30,
+    "non_examples": 49
+  },
+  "sanity": {
+    "pyramid_signals_read": 534,
+    "pyramid_no_ticker_in_universe": 0,
+    "pyramid_bad_signal_lookup": 0,
+    "raw_match_count_vs_alignment_ref": {
+      "raw": 78,
+      "alignment_ref_aligned_dedup": 78
+    },
+    "db_examples_total": 30,
+    "db_examples_in_native_intersection": 29,
+    "db_examples_unioned_in_via_db": 1,
+    "db_examples_unioned_in_detail": [
+      {
+        "ticker": "CRCL",
+        "signal_bar_idx": 6,
+        "entry_date": "2025-06-13",
+        "entry_idx": 7,
+        "in_presignal_dedup": true,
+        "in_pyramid_final_signals": false
+      }
+    ]
+  },
+  "clusters": [
+    {
+      "cluster_id": 0,
+      "ticker": "AFG",
+      "rightmost": {
+        "bar_idx": 1280,
+        "date": "2021-02-03",
+        "close": 55.544
+      },
+      "is_example": 1,
+      "example_entry_date": "2021-02-04",
+      "example_entry_idx": 1281
+    },
+    {
+      "cluster_id": 1,
+      "ticker": "AGO",
+      "rightmost": {
+        "bar_idx": 2003,
+        "date": "2023-12-18",
+        "close": 69.5268
+      },
+      "is_example": 1,
+      "example_entry_date": "2023-12-19",
+      "example_entry_idx": 2004
+    },
+    {
+      "cluster_id": 2,
+      "ticker": "ALAB",
+      "rightmost": {
+        "bar_idx": 164,
+        "date": "2024-11-12",
+        "close": 90.75
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 3,
+      "ticker": "APLE",
+      "rightmost": {
+        "bar_idx": 1230,
+        "date": "2020-11-19",
+        "close": 9.7699
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 4,
+      "ticker": "AR",
+      "rightmost": {
+        "bar_idx": 1248,
+        "date": "2020-12-16",
+        "close": 4.76
+      },
+      "is_example": 1,
+      "example_entry_date": "2020-12-17",
+      "example_entry_idx": 1249
+    },
+    {
+      "cluster_id": 5,
+      "ticker": "ASTS",
+      "rightmost": {
+        "bar_idx": 1078,
+        "date": "2024-05-24",
+        "close": 4.74
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-05-28",
+      "example_entry_idx": 1079
+    },
+    {
+      "cluster_id": 6,
+      "ticker": "BB",
+      "rightmost": {
+        "bar_idx": 2256,
+        "date": "2024-12-19",
+        "close": 2.98
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-12-20",
+      "example_entry_idx": 2257
+    },
+    {
+      "cluster_id": 7,
+      "ticker": "BBAI",
+      "rightmost": {
+        "bar_idx": 920,
+        "date": "2024-11-27",
+        "close": 2.15
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 8,
+      "ticker": "BCS",
+      "rightmost": {
+        "bar_idx": 2094,
+        "date": "2024-04-30",
+        "close": 9.7375
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 9,
+      "ticker": "BFLY",
+      "rightmost": {
+        "bar_idx": 1100,
+        "date": "2024-11-22",
+        "close": 3.24
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 10,
+      "ticker": "BITX",
+      "rightmost": {
+        "bar_idx": 165,
+        "date": "2024-02-22",
+        "close": 24.3574
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 11,
+      "ticker": "BKSY",
+      "rightmost": {
+        "bar_idx": 1285,
+        "date": "2025-02-03",
+        "close": 15.19
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 12,
+      "ticker": "BMRN",
+      "rightmost": {
+        "bar_idx": 1129,
+        "date": "2020-06-29",
+        "close": 122.18
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 13,
+      "ticker": "CAN",
+      "rightmost": {
+        "bar_idx": 1254,
+        "date": "2024-11-15",
+        "close": 1.65
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 14,
+      "ticker": "CENT",
+      "rightmost": {
+        "bar_idx": 2046,
+        "date": "2024-02-21",
+        "close": 42.78
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 15,
+      "ticker": "CHEF",
+      "rightmost": {
+        "bar_idx": 2243,
+        "date": "2024-12-02",
+        "close": 44.02
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-12-03",
+      "example_entry_idx": 2244
+    },
+    {
+      "cluster_id": 16,
+      "ticker": "CLNE",
+      "rightmost": {
+        "bar_idx": 1230,
+        "date": "2020-11-19",
+        "close": 3.2
+      },
+      "is_example": 1,
+      "example_entry_date": "2020-11-20",
+      "example_entry_idx": 1231
+    },
+    {
+      "cluster_id": 17,
+      "ticker": "COHR",
+      "rightmost": {
+        "bar_idx": 1098,
+        "date": "2020-05-14",
+        "close": 43.28
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 18,
+      "ticker": "CORT",
+      "rightmost": {
+        "bar_idx": 1127,
+        "date": "2020-06-25",
+        "close": 16.92
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 19,
+      "ticker": "CR",
+      "rightmost": {
+        "bar_idx": 148,
+        "date": "2023-10-30",
+        "close": 92.6821
+      },
+      "is_example": 1,
+      "example_entry_date": "2023-10-31",
+      "example_entry_idx": 149
+    },
+    {
+      "cluster_id": 20,
+      "ticker": "CRCL",
+      "rightmost": {
+        "bar_idx": 6,
+        "date": "2025-06-12",
+        "close": 106.54
+      },
+      "is_example": 1,
+      "example_entry_date": "2025-06-13",
+      "example_entry_idx": 7
+    },
+    {
+      "cluster_id": 21,
+      "ticker": "CSTL",
+      "rightmost": {
+        "bar_idx": 355,
+        "date": "2020-12-18",
+        "close": 62.33
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 22,
+      "ticker": "DEI",
+      "rightmost": {
+        "bar_idx": 1299,
+        "date": "2021-03-03",
+        "close": 25.597
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 23,
+      "ticker": "EOSE",
+      "rightmost": {
+        "bar_idx": 1327,
+        "date": "2025-09-17",
+        "close": 8.5
+      },
+      "is_example": 1,
+      "example_entry_date": "2025-09-18",
+      "example_entry_idx": 1328
+    },
+    {
+      "cluster_id": 24,
+      "ticker": "EQX",
+      "rightmost": {
+        "bar_idx": 2268,
+        "date": "2025-08-21",
+        "close": 7.8926
+      },
+      "is_example": 1,
+      "example_entry_date": "2025-08-22",
+      "example_entry_idx": 2269
+    },
+    {
+      "cluster_id": 25,
+      "ticker": "FANG",
+      "rightmost": {
+        "bar_idx": 2048,
+        "date": "2024-02-23",
+        "close": 163.2045
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 26,
+      "ticker": "FNKO",
+      "rightmost": {
+        "bar_idx": 782,
+        "date": "2020-12-11",
+        "close": 10.225
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 27,
+      "ticker": "FORM",
+      "rightmost": {
+        "bar_idx": 2517,
+        "date": "2026-01-07",
+        "close": 62.72
+      },
+      "is_example": 1,
+      "example_entry_date": "2026-01-08",
+      "example_entry_idx": 2518
+    },
+    {
+      "cluster_id": 28,
+      "ticker": "FTDR",
+      "rightmost": {
+        "bar_idx": 1481,
+        "date": "2024-08-05",
+        "close": 43.68
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-08-06",
+      "example_entry_idx": 1482
+    },
+    {
+      "cluster_id": 29,
+      "ticker": "FUTU",
+      "rightmost": {
+        "bar_idx": 1301,
+        "date": "2024-05-08",
+        "close": 67.4252
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 30,
+      "ticker": "GME",
+      "rightmost": {
+        "bar_idx": 1271,
+        "date": "2021-01-21",
+        "close": 10.7575
+      },
+      "is_example": 1,
+      "example_entry_date": "2021-01-22",
+      "example_entry_idx": 1272
+    },
+    {
+      "cluster_id": 31,
+      "ticker": "GVA",
+      "rightmost": {
+        "bar_idx": 1299,
+        "date": "2021-03-03",
+        "close": 34.5438
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 32,
+      "ticker": "HTT",
+      "rightmost": {
+        "bar_idx": 812,
+        "date": "2021-01-11",
+        "close": 1.6
+      },
+      "is_example": 1,
+      "example_entry_date": "2021-01-12",
+      "example_entry_idx": 813
+    },
+    {
+      "cluster_id": 33,
+      "ticker": "HTT",
+      "rightmost": {
+        "bar_idx": 817,
+        "date": "2021-01-19",
+        "close": 1.85
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 34,
+      "ticker": "HTT",
+      "rightmost": {
+        "bar_idx": 824,
+        "date": "2021-01-28",
+        "close": 2.09
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 35,
+      "ticker": "IPAR",
+      "rightmost": {
+        "bar_idx": 1732,
+        "date": "2022-11-17",
+        "close": 80.8496
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 36,
+      "ticker": "IVVD",
+      "rightmost": {
+        "bar_idx": 1053,
+        "date": "2025-10-16",
+        "close": 1.75
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 37,
+      "ticker": "JD",
+      "rightmost": {
+        "bar_idx": 1103,
+        "date": "2020-05-21",
+        "close": 46.1396
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 38,
+      "ticker": "KURA",
+      "rightmost": {
+        "bar_idx": 2030,
+        "date": "2024-01-29",
+        "close": 18.6
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 39,
+      "ticker": "LMND",
+      "rightmost": {
+        "bar_idx": 1092,
+        "date": "2024-11-04",
+        "close": 23.57
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-11-05",
+      "example_entry_idx": 1093
+    },
+    {
+      "cluster_id": 40,
+      "ticker": "LMND",
+      "rightmost": {
+        "bar_idx": 1093,
+        "date": "2024-11-05",
+        "close": 25.05
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-11-06",
+      "example_entry_idx": 1094
+    },
+    {
+      "cluster_id": 41,
+      "ticker": "LMND",
+      "rightmost": {
+        "bar_idx": 1096,
+        "date": "2024-11-08",
+        "close": 28.44
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 42,
+      "ticker": "MLI",
+      "rightmost": {
+        "bar_idx": 1790,
+        "date": "2023-02-13",
+        "close": 34.9332
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 43,
+      "ticker": "MOD",
+      "rightmost": {
+        "bar_idx": 1865,
+        "date": "2023-06-01",
+        "close": 27.14
+      },
+      "is_example": 1,
+      "example_entry_date": "2023-06-02",
+      "example_entry_idx": 1866
+    },
+    {
+      "cluster_id": 44,
+      "ticker": "MSOS",
+      "rightmost": {
+        "bar_idx": 67,
+        "date": "2020-12-08",
+        "close": 34.25
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 45,
+      "ticker": "NHI",
+      "rightmost": {
+        "bar_idx": 2053,
+        "date": "2024-03-01",
+        "close": 51.5923
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-03-04",
+      "example_entry_idx": 2054
+    },
+    {
+      "cluster_id": 46,
+      "ticker": "NUGT",
+      "rightmost": {
+        "bar_idx": 1548,
+        "date": "2022-02-25",
+        "close": 54.8061
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 47,
+      "ticker": "NUVL",
+      "rightmost": {
+        "bar_idx": 1087,
+        "date": "2025-11-25",
+        "close": 109.86
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 48,
+      "ticker": "NVT",
+      "rightmost": {
+        "bar_idx": 723,
+        "date": "2021-03-02",
+        "close": 25.1446
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 49,
+      "ticker": "OGI",
+      "rightmost": {
+        "bar_idx": 1278,
+        "date": "2021-02-05",
+        "close": 9.36
+      },
+      "is_example": 1,
+      "example_entry_date": "2021-02-08",
+      "example_entry_idx": 1279
+    },
+    {
+      "cluster_id": 50,
+      "ticker": "OHI",
+      "rightmost": {
+        "bar_idx": 1228,
+        "date": "2020-11-17",
+        "close": 23.0935
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 51,
+      "ticker": "OKTA",
+      "rightmost": {
+        "bar_idx": 1991,
+        "date": "2025-03-11",
+        "close": 107.0
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 52,
+      "ticker": "OSCR",
+      "rightmost": {
+        "bar_idx": 727,
+        "date": "2024-01-23",
+        "close": 11.17
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-01-24",
+      "example_entry_idx": 728
+    },
+    {
+      "cluster_id": 53,
+      "ticker": "PEBO",
+      "rightmost": {
+        "bar_idx": 2233,
+        "date": "2024-11-15",
+        "close": 33.0783
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 54,
+      "ticker": "PL",
+      "rightmost": {
+        "bar_idx": 1098,
+        "date": "2025-09-10",
+        "close": 8.97
+      },
+      "is_example": 1,
+      "example_entry_date": "2025-09-11",
+      "example_entry_idx": 1099
+    },
+    {
+      "cluster_id": 55,
+      "ticker": "PLAB",
+      "rightmost": {
+        "bar_idx": 1501,
+        "date": "2021-12-17",
+        "close": 17.14
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 56,
+      "ticker": "PNFP",
+      "rightmost": {
+        "bar_idx": 2233,
+        "date": "2024-11-15",
+        "close": 122.1717
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 57,
+      "ticker": "PRTA",
+      "rightmost": {
+        "bar_idx": 1364,
+        "date": "2021-06-04",
+        "close": 28.65
+      },
+      "is_example": 1,
+      "example_entry_date": "2021-06-07",
+      "example_entry_idx": 1365
+    },
+    {
+      "cluster_id": 58,
+      "ticker": "PZZA",
+      "rightmost": {
+        "bar_idx": 1786,
+        "date": "2023-02-07",
+        "close": 83.2051
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 59,
+      "ticker": "QUBT",
+      "rightmost": {
+        "bar_idx": 1598,
+        "date": "2024-11-12",
+        "close": 1.38
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 60,
+      "ticker": "QUBT",
+      "rightmost": {
+        "bar_idx": 1603,
+        "date": "2024-11-19",
+        "close": 2.54
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-11-20",
+      "example_entry_idx": 1604
+    },
+    {
+      "cluster_id": 61,
+      "ticker": "REAL",
+      "rightmost": {
+        "bar_idx": 1353,
+        "date": "2024-11-12",
+        "close": 3.78
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-11-13",
+      "example_entry_idx": 1354
+    },
+    {
+      "cluster_id": 62,
+      "ticker": "REI",
+      "rightmost": {
+        "bar_idx": 1287,
+        "date": "2021-02-12",
+        "close": 2.11
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 63,
+      "ticker": "RF",
+      "rightmost": {
+        "bar_idx": 2233,
+        "date": "2024-11-15",
+        "close": 24.7882
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 64,
+      "ticker": "RHP",
+      "rightmost": {
+        "bar_idx": 1225,
+        "date": "2020-11-12",
+        "close": 47.2396
+      },
+      "is_example": 1,
+      "example_entry_date": "2020-11-13",
+      "example_entry_idx": 1226
+    },
+    {
+      "cluster_id": 65,
+      "ticker": "RR",
+      "rightmost": {
+        "bar_idx": 275,
+        "date": "2024-12-20",
+        "close": 1.27
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-12-23",
+      "example_entry_idx": 276
+    },
+    {
+      "cluster_id": 66,
+      "ticker": "SABR",
+      "rightmost": {
+        "bar_idx": 1910,
+        "date": "2023-08-07",
+        "close": 4.65
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 67,
+      "ticker": "SEMR",
+      "rightmost": {
+        "bar_idx": 793,
+        "date": "2024-05-17",
+        "close": 15.74
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 68,
+      "ticker": "SKWD",
+      "rightmost": {
+        "bar_idx": 213,
+        "date": "2023-11-16",
+        "close": 30.82
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 69,
+      "ticker": "SMH",
+      "rightmost": {
+        "bar_idx": 2030,
+        "date": "2024-01-29",
+        "close": 189.0512
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 70,
+      "ticker": "SOUN",
+      "rightmost": {
+        "bar_idx": 457,
+        "date": "2024-02-23",
+        "close": 3.92
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-02-26",
+      "example_entry_idx": 458
+    },
+    {
+      "cluster_id": 71,
+      "ticker": "SOUN",
+      "rightmost": {
+        "bar_idx": 650,
+        "date": "2024-11-27",
+        "close": 7.88
+      },
+      "is_example": 1,
+      "example_entry_date": "2024-11-29",
+      "example_entry_idx": 651
+    },
+    {
+      "cluster_id": 72,
+      "ticker": "SSNC",
+      "rightmost": {
+        "bar_idx": 2150,
+        "date": "2024-07-22",
+        "close": 66.0655
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 73,
+      "ticker": "TER",
+      "rightmost": {
+        "bar_idx": 2100,
+        "date": "2024-05-08",
+        "close": 119.5085
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 74,
+      "ticker": "UCTT",
+      "rightmost": {
+        "bar_idx": 1312,
+        "date": "2021-03-22",
+        "close": 55.09
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 75,
+      "ticker": "UEC",
+      "rightmost": {
+        "bar_idx": 1311,
+        "date": "2021-03-19",
+        "close": 2.77
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 76,
+      "ticker": "WBS",
+      "rightmost": {
+        "bar_idx": 1299,
+        "date": "2021-03-03",
+        "close": 49.0046
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 77,
+      "ticker": "XNCR",
+      "rightmost": {
+        "bar_idx": 1250,
+        "date": "2020-12-18",
+        "close": 44.83
+      },
+      "is_example": 0,
+      "example_entry_date": null,
+      "example_entry_idx": null
+    },
+    {
+      "cluster_id": 78,
+      "ticker": "XPEV",
+      "rightmost": {
+        "bar_idx": 53,
+        "date": "2020-11-11",
+        "close": 33.53
+      },
+      "is_example": 1,
+      "example_entry_date": "2020-11-12",
+      "example_entry_idx": 54
+    }
+  ],
+  "timestamp": "2026-04-21T15:30:18"
+}

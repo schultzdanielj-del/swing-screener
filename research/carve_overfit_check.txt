@@ -1,0 +1,236 @@
+OVERFIT PROTECTION BATTERY
+N_SPLITS=5  N_PERMUTATIONS=10  CORR_THRESHOLD=0.9
+
+==========================================================================================
+HTF  deduped: ex=29  ne=445
+==========================================================================================
+
+[1] Non-example train/test split (rank on train, measure on test)
+    top-K  train surv%  test surv%   gap (overfit)  
+    10            9.5%         8.2%      -1.4 pp
+    20            5.2%         5.1%      -0.1 pp
+    40            1.8%         1.7%      -0.1 pp
+
+[2] Permutation null (pseudo-examples from non-ex sample)
+    real rank top-40 (covered): 13614 features passed coverage
+    top-K  real surv%   perm mean surv%    perm p90 surv%    
+    10            7.6%             5.0%               12.5%
+    20            3.8%             1.6%                4.3%
+    40            1.8%             0.7%                1.4%
+    (if real surv% << perm mean/p90, real signal discriminates; if similar, overfit)
+
+[3] Example LOO band stability on top-40 features
+    mean LOO failure rate across top-40: 9.9%
+    top-40 features with >10% LOO failure: 27/40
+    (high LOO failure = band is defined by a single outlier example; weak generalization)
+
+[4] Decorrelation of top-40 features
+    top-40 -> 19 independent features (|r| < 0.9)
+    AND-filter with 19 independent features: 9/445 (2.0%)
+    Independent features:
+      m_ext_slope_xavgc21_off2                              [+1.12, +5.53]
+      m_ext_slope_xavgc21_off15                             [+1.71, +5.95]
+      m_ext_slope_xavgc13_off3                              [+0.788, +5.25]
+      m_adx_slope_14_off1                                   [+2.89, +9.41]
+      m_ns_c_minl25_atr14                                   [+3.4, +6.61]
+      w_ns_c_minl2_atr14                                    [+2.3, +8.09]
+      m_adx_slope_7_off10                                   [+6.48, +39.2]
+      m_roc_2                                               [+19.2, +1.38e+03]
+      m_roc_25                                              [+27, +1.45e+03]
+      m_ext_avgc20_adr14                                    [+1.45, +5.94]
+      m_di_spread_7                                         [+33.5, +131]
+      m_rsi_slope_21_off10                                  [+8.36, +57.9]
+      m_adx_slope_14_off5                                   [+2.69, +23.2]
+      m_ext_xavgc20_pct                                     [+16.1, +81.1]
+      m_spread_slope_xavgc13_xavgc21_off10_adr14            [+0.126, +1.5]
+      m_ext_xavgc8_pct                                      [+12.5, +67.4]
+      m_macd_hist_slope_12_26_9_off1                        [+0.0674, +2.39]
+      w_rsi_slope_5_off5                                    [+16.6, +93.8]
+      m_rsi_slope_21_off3                                   [+4.59, +56.2]
+
+==========================================================================================
+BF  deduped: ex=45  ne=400
+==========================================================================================
+
+[1] Non-example train/test split (rank on train, measure on test)
+    top-K  train surv%  test surv%   gap (overfit)  
+    10           10.1%        10.2%      +0.1 pp
+    20           10.3%         9.9%      -0.4 pp
+    40            5.4%         6.5%      +1.1 pp
+
+[2] Permutation null (pseudo-examples from non-ex sample)
+    real rank top-40 (covered): 13127 features passed coverage
+    top-K  real surv%   perm mean surv%    perm p90 surv%    
+    10           11.0%            11.5%               20.9%
+    20           10.8%             5.4%                9.9%
+    40            5.2%             1.3%                3.8%
+    (if real surv% << perm mean/p90, real signal discriminates; if similar, overfit)
+
+[3] Example LOO band stability on top-40 features
+    mean LOO failure rate across top-40: 4.0%
+    top-40 features with >10% LOO failure: 0/40
+    (high LOO failure = band is defined by a single outlier example; weak generalization)
+
+[4] Decorrelation of top-40 features
+    top-40 -> 19 independent features (|r| < 0.9)
+    AND-filter with 19 independent features: 22/400 (5.5%)
+    Independent features:
+      w_ext_slope_xavgc100_off2                             [+0.826, +5.45]
+      m_ext_slope_xavgc8_off10                              [+0.893, +3.94]
+      m_retrace_low_15                                      [+0.0324, +0.717]
+      w_ext_peak_xavgc8_lb50                                [+0.618, +1]
+      w_ext_avgc5_pct                                       [+5.84, +50.4]
+      w_ns_ratio_minl2                                      [+1.14, +3.42]
+      w_ext_xavgc12_pct                                     [+15.3, +65.1]
+      w_ns_c_minl2_adr14                                    [+1.28, +6.96]
+      w_bb_pctb_10                                          [+0.816, +1.12]
+      w_vwap_dist_5_atr14                                   [+0.655, +3.62]
+      w_bb_pctb_5                                           [+0.699, +0.943]
+      m_range_contract_5                                    [+1.38, +39.3]
+      m_efficiency_15                                       [+0.232, +0.968]
+      w_slope_avgc100_off15_adr14                           [-0.92, +1]
+      w_avg_body_ratio_3                                    [+0.339, +0.857]
+      m_ct_c_gt_bbtop_20                                    [+1, +9]
+      m_spread_xavgc13_xavgc21_adr14                        [-0.142, +0.861]
+      w_st_es_ext50_rsi14_gt_70_50                          [+0, +10]
+      w_ct_close_near_low_50                                [+10, +22]
+
+==========================================================================================
+BASE  deduped: ex=37  ne=503
+==========================================================================================
+
+[1] Non-example train/test split (rank on train, measure on test)
+    top-K  train surv%  test surv%   gap (overfit)  
+    10           11.4%        11.3%      -0.0 pp
+    20            5.5%         5.6%      +0.1 pp
+    40            3.0%         3.3%      +0.3 pp
+
+[2] Permutation null (pseudo-examples from non-ex sample)
+    real rank top-40 (covered): 13631 features passed coverage
+    top-K  real surv%   perm mean surv%    perm p90 surv%    
+    10           11.9%             8.0%               13.0%
+    20            5.4%             3.0%                3.9%
+    40            3.4%             1.3%                2.0%
+    (if real surv% << perm mean/p90, real signal discriminates; if similar, overfit)
+
+[3] Example LOO band stability on top-40 features
+    mean LOO failure rate across top-40: 5.8%
+    top-40 features with >10% LOO failure: 0/40
+    (high LOO failure = band is defined by a single outlier example; weak generalization)
+
+[4] Decorrelation of top-40 features
+    top-40 -> 25 independent features (|r| < 0.9)
+    AND-filter with 25 independent features: 17/503 (3.4%)
+    Independent features:
+      m_macd_hist_slope_6_19_9_off1                         [+0.34, +20.5]
+      m_di_spread_7                                         [+31.6, +115]
+      m_ext_peak_xavgc21_lb10                               [+0.896, +1.08]
+      m_roc_2                                               [+9.96, +320]
+      m_ext_slope_xavgc8_off2                               [+0.0706, +3.16]
+      m_cci_7                                               [+101, +233]
+      m_cci_10                                              [+106, +291]
+      m_range_contract_3                                    [+0.855, +7.8]
+      m_ns_c_minl2_pct                                      [+14.5, +81.2]
+      m_ns_l_minl2_pct                                      [+6.96, +49.5]
+      m_bb_bandwidth_30                                     [+0.824, +5.68]
+      m_macd_hist_5_13_8                                    [+0.871, +72.1]
+      m_roc_12                                              [+43.8, +3.25e+03]
+      m_ns_c_minl15_pct                                     [+45.2, +98.5]
+      m_ns_ratio_minl15                                     [+1.83, +67.1]
+      m_roc_7                                               [+24.7, +1.18e+03]
+      m_rsi_slope_28_off3                                   [+0.975, +27.3]
+      m_ext_slope_xavgc8_off3                               [-0.125, +3.24]
+      w_ext_slope_xavgc100_off2                             [+0.597, +3.8]
+      m_ext_slope_xavgc21_off5                              [+0.355, +4.91]
+
+==========================================================================================
+DTSS  deduped: ex=61  ne=1060
+==========================================================================================
+
+[1] Non-example train/test split (rank on train, measure on test)
+    top-K  train surv%  test surv%   gap (overfit)  
+    10           11.7%        12.7%      +1.0 pp
+    20            4.2%         5.3%      +1.1 pp
+    40            4.8%         3.6%      -1.2 pp
+
+[2] Permutation null (pseudo-examples from non-ex sample)
+    real rank top-40 (covered): 13708 features passed coverage
+    top-K  real surv%   perm mean surv%    perm p90 surv%    
+    10            8.9%            20.5%               26.4%
+    20            6.1%            11.8%               18.2%
+    40            3.2%             5.3%               11.0%
+    (if real surv% << perm mean/p90, real signal discriminates; if similar, overfit)
+
+[3] Example LOO band stability on top-40 features
+    mean LOO failure rate across top-40: 1.9%
+    top-40 features with >10% LOO failure: 0/40
+    (high LOO failure = band is defined by a single outlier example; weak generalization)
+
+[4] Decorrelation of top-40 features
+    top-40 -> 16 independent features (|r| < 0.9)
+    AND-filter with 16 independent features: 40/1060 (3.8%)
+    Independent features:
+      m_ext_peak_xavgc8_lb30                                [-1.34, +0.475]
+      m_nr_c_maxh35_pct                                     [+8.55, +6.4e+03]
+      m_nr_ratio_maxh35                                     [+0.0154, +0.921]
+      level_below4_volume_ratio                             [+0.929, +7.23]
+      w_close_position_1                                    [+0.00377, +0.607]
+      m_st_c_lower_half_15                                  [+0, +1]
+      m_rsi_9                                               [+34.2, +76.1]
+      m_st_c_lower_half_5                                   [+0, +1]
+      ext_xavgc100_pct                                      [+6.94, +60.1]
+      w_stoch_50                                            [+15.7, +92]
+      m_st_c_lt_c1_5                                        [+0, +1]
+      m_consecutive_up_days                                 [+0, +1]
+      undercut_avgc200_120_atr14                            [-3.5, +2.31]
+      w_stoch_14                                            [+5.16, +85.9]
+      m_retrace_low_10                                      [+0, +0.695]
+      m_tir_c_gt_o_5                                        [+0, +1]
+
+==========================================================================================
+3-4DB  deduped: ex=26  ne=524
+==========================================================================================
+
+[1] Non-example train/test split (rank on train, measure on test)
+    top-K  train surv%  test surv%   gap (overfit)  
+    10           11.5%        10.6%      -0.8 pp
+    20            6.0%         5.6%      -0.3 pp
+    40            2.5%         2.7%      +0.2 pp
+
+[2] Permutation null (pseudo-examples from non-ex sample)
+    real rank top-40 (covered): 13523 features passed coverage
+    top-K  real surv%   perm mean surv%    perm p90 surv%    
+    10            9.7%             5.7%                9.1%
+    20            4.8%             1.9%                4.8%
+    40            2.5%             0.8%                1.7%
+    (if real surv% << perm mean/p90, real signal discriminates; if similar, overfit)
+
+[3] Example LOO band stability on top-40 features
+    mean LOO failure rate across top-40: 3.1%
+    top-40 features with >10% LOO failure: 0/40
+    (high LOO failure = band is defined by a single outlier example; weak generalization)
+
+[4] Decorrelation of top-40 features
+    top-40 -> 21 independent features (|r| < 0.9)
+    AND-filter with 21 independent features: 15/524 (2.9%)
+    Independent features:
+      w_st_xavgc100_rising_30                               [+0, +0]
+      w_st_c_gt_avgc100_30                                  [+0, +0]
+      w_retrace_low_65                                      [+0.44, +0.755]
+      w_ct_c_gt_xavgc100_30                                 [+4, +30]
+      w_ct_h_gt_maxh65_1_50                                 [+1, +17]
+      w_ct_es_ext50_rsi21_gt_50_30                          [+12, +25]
+      m_aroon_osc_10                                        [+30, +70]
+      w_st_xavgc100_rising_50                               [+0, +0]
+      w_st_c_gt_avgc100_50                                  [+0, +0]
+      m_ct_diplus_gt_diminus_10                             [+6, +10]
+      m_ct_gap_down_7                                       [+3, +6]
+      m_ct_range_gt_atr_7                                   [+3, +7]
+      m_ct_stoch14_gt_50_7                                  [+2, +7]
+      w_retrace_low_120                                     [+0.326, +0.786]
+      w_st_h_gt_maxh65_1_50                                 [+0, +44]
+      w_ct_es_ext50_rsi21_lt_50_30                          [+5, +18]
+      undercut_avgc100_120_adr14                            [-3.08, -0.167]
+      w_slope_avgc50_off20_atr14                            [-0.0566, +1.76]
+      w_es_ext50_adx_slope_20_off10                         [-5.14, +8.57]
+      m_st_xavgc21_rising_10                                [+0, +1]

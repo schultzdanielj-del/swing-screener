@@ -1,0 +1,96 @@
+CARVE ON FULL DEDUPED POOL — top-K AND filter, bands from examples
+
+==========================================================================================
+HTF  examples=29 (deduped) non_examples=445 (deduped)
+  features passing coverage: 13614/16039
+==========================================================================================
+  top- 10 AND-filter: 34/445 non-example clusters survive (7.6%)
+  top- 20 AND-filter: 17/445 non-example clusters survive (3.8%)
+  top- 40 AND-filter: 8/445 non-example clusters survive (1.8%)
+  Top-10 features (ranked on FULL non-example pool):
+     1. m_ext_slope_xavgc21_off2                             [+1.12, +5.53]  carve=59.9%  n_ex=18
+     2. m_ext_slope_xavgc13_off2                             [+0.69, +5.08]  carve=51.5%  n_ex=22
+     3. m_ext_slope_xavgc21_off15                            [+1.71, +5.95]  carve=49.3%  n_ex=16
+     4. m_ext_slope_xavgc8_off15                             [+1.06, +4.66]  carve=48.5%  n_ex=18
+     5. m_ext_slope_xavgc13_off3                             [+0.788, +5.25]  carve=47.7%  n_ex=19
+     6. m_ext_slope_xavgc13_off15                            [+1.42, +5.4]  carve=46.2%  n_ex=17
+     7. m_adx_slope_14_off1                                  [+2.89, +9.41]  carve=45.8%  n_ex=17
+     8. m_ns_c_minl25_atr14                                  [+3.4, +6.61]  carve=45.5%  n_ex=17
+     9. m_ns_c_minl25_adr14                                  [+3.4, +6.63]  carve=44.7%  n_ex=17
+    10. w_ns_c_minl2_atr14                                   [+2.3, +8.09]  carve=44.1%  n_ex=28
+
+==========================================================================================
+BF  examples=45 (deduped) non_examples=400 (deduped)
+  features passing coverage: 13127/16039
+==========================================================================================
+  top- 10 AND-filter: 44/400 non-example clusters survive (11.0%)
+  top- 20 AND-filter: 43/400 non-example clusters survive (10.8%)
+  top- 40 AND-filter: 21/400 non-example clusters survive (5.2%)
+  Top-10 features (ranked on FULL non-example pool):
+     1. w_ext_slope_xavgc100_off2                            [+0.826, +5.45]  carve=56.6%  n_ex=35
+     2. m_ext_slope_xavgc8_off10                             [+0.893, +3.94]  carve=33.3%  n_ex=35
+     3. m_retrace_low_15                                     [+0.0324, +0.717]  carve=33.0%  n_ex=37
+     4. w_ext_peak_xavgc8_lb50                               [+0.618, +1]  carve=31.7%  n_ex=37
+     5. w_ext_avgc5_pct                                      [+5.84, +50.4]  carve=31.5%  n_ex=45
+     6. w_ns_c_minl2_pct                                     [+12.2, +70.8]  carve=31.2%  n_ex=45
+     7. w_ns_ratio_minl2                                     [+1.14, +3.42]  carve=31.2%  n_ex=45
+     8. w_ext_avgc5_atr14                                    [+0.651, +4.8]  carve=31.0%  n_ex=45
+     9. w_ext_xavgc12_pct                                    [+15.3, +65.1]  carve=30.8%  n_ex=45
+    10. w_ext_avgc5_adr14                                    [+0.665, +4.97]  carve=30.8%  n_ex=45
+
+==========================================================================================
+BASE  examples=37 (deduped) non_examples=503 (deduped)
+  features passing coverage: 13631/16039
+==========================================================================================
+  top- 10 AND-filter: 60/503 non-example clusters survive (11.9%)
+  top- 20 AND-filter: 27/503 non-example clusters survive (5.4%)
+  top- 40 AND-filter: 17/503 non-example clusters survive (3.4%)
+  Top-10 features (ranked on FULL non-example pool):
+     1. m_macd_hist_slope_6_19_9_off1                        [+0.34, +20.5]  carve=64.2%  n_ex=27
+     2. m_macd_hist_slope_8_17_9_off1                        [+0.21, +13.7]  carve=60.7%  n_ex=27
+     3. m_macd_hist_slope_12_26_9_off1                       [+0.185, +12.4]  carve=57.4%  n_ex=26
+     4. m_di_spread_7                                        [+31.6, +115]  carve=57.1%  n_ex=37
+     5. m_ext_peak_xavgc21_lb10                              [+0.896, +1.08]  carve=52.8%  n_ex=27
+     6. m_roc_2                                              [+9.96, +320]  carve=49.1%  n_ex=37
+     7. m_ext_slope_xavgc8_off2                              [+0.0706, +3.16]  carve=46.7%  n_ex=33
+     8. m_cci_7                                              [+101, +233]  carve=45.7%  n_ex=37
+     9. m_ext_slope_xavgc13_off2                             [+0.125, +3.77]  carve=43.7%  n_ex=33
+    10. m_cci_10                                             [+106, +291]  carve=43.5%  n_ex=35
+
+==========================================================================================
+DTSS  examples=61 (deduped) non_examples=1060 (deduped)
+  features passing coverage: 13708/16039
+==========================================================================================
+  top- 10 AND-filter: 94/1060 non-example clusters survive (8.9%)
+  top- 20 AND-filter: 65/1060 non-example clusters survive (6.1%)
+  top- 40 AND-filter: 34/1060 non-example clusters survive (3.2%)
+  Top-10 features (ranked on FULL non-example pool):
+     1. m_ext_peak_xavgc8_lb30                               [-1.34, +0.475]  carve=23.3%  n_ex=42
+     2. m_nr_c_maxh35_pct                                    [+8.55, +6.4e+03]  carve=20.5%  n_ex=42
+     3. m_nr_ratio_maxh35                                    [+0.0154, +0.921]  carve=20.5%  n_ex=42
+     4. m_nr_c_maxh35_atr14                                  [+0.578, +208]  carve=18.1%  n_ex=42
+     5. m_nr_c_maxh40_pct                                    [+8.55, +6.4e+03]  carve=18.0%  n_ex=41
+     6. m_nr_ratio_maxh40                                    [+0.0154, +0.921]  carve=18.0%  n_ex=41
+     7. m_nr_c_maxh35_adr14                                  [+0.578, +208]  carve=18.0%  n_ex=42
+     8. level_below4_volume_ratio                            [+0.929, +7.23]  carve=17.8%  n_ex=26
+     9. w_close_position_1                                   [+0.00377, +0.607]  carve=17.5%  n_ex=61
+    10. m_st_c_lower_half_15                                 [+0, +1]  carve=16.7%  n_ex=60
+
+==========================================================================================
+3-4DB  examples=26 (deduped) non_examples=524 (deduped)
+  features passing coverage: 13523/16039
+==========================================================================================
+  top- 10 AND-filter: 51/524 non-example clusters survive (9.7%)
+  top- 20 AND-filter: 25/524 non-example clusters survive (4.8%)
+  top- 40 AND-filter: 13/524 non-example clusters survive (2.5%)
+  Top-10 features (ranked on FULL non-example pool):
+     1. w_st_xavgc100_rising_30                              [+0, +0]  carve=58.4%  n_ex=25
+     2. w_st_c_gt_avgc100_30                                 [+0, +0]  carve=58.0%  n_ex=25
+     3. w_retrace_low_65                                     [+0.44, +0.755]  carve=57.6%  n_ex=25
+     4. w_ct_c_gt_xavgc100_30                                [+4, +30]  carve=57.4%  n_ex=25
+     5. w_st_c_gt_xavgc100_30                                [+0, +0]  carve=57.4%  n_ex=25
+     6. w_ct_c_gt_avgc100_30                                 [+4, +30]  carve=56.6%  n_ex=25
+     7. w_ct_xavgc100_rising_30                              [+3, +30]  carve=56.2%  n_ex=25
+     8. w_ct_h_gt_maxh65_1_50                                [+1, +17]  carve=56.2%  n_ex=25
+     9. w_ct_es_ext50_rsi21_gt_50_30                         [+12, +25]  carve=55.4%  n_ex=25
+    10. m_aroon_osc_10                                       [+30, +70]  carve=55.2%  n_ex=25
