@@ -45,7 +45,7 @@ import pandas as pd
 MAIN_ROOT = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 CACHE_DIR = os.path.join(MAIN_ROOT, "local_runner", "cache")
 DB = os.path.join(MAIN_ROOT, "data", "scanperfect.db")
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 ENV_DIR = os.path.join(WORKTREE, "research", "n_derivation_cache")
 RAND_RANGE_FILE = os.path.join(WORKTREE, "research", "rand_range", "rand_range.npz")
 OUT_DIR = os.path.join(WORKTREE, "research", "universe_scan")

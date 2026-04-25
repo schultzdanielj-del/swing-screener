@@ -18,7 +18,7 @@ from matplotlib.patches import Rectangle
 
 CACHE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/local_runner/cache/universe_ohlcv_daily.pkl"
 DB = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/data/scanperfect.db"
-OUT = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier/research/avwap_anchors_all_113.pdf"
+OUT = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/research/avwap_anchors_all_113.pdf"
 
 with sqlite3.connect(DB) as conn:
     ex_rows = conn.execute(

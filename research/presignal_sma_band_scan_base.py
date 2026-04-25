@@ -22,7 +22,7 @@ import presignal_sma_band_extract as ext
 MAIN_ROOT = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 CACHE_DIR = os.path.join(MAIN_ROOT, "local_runner", "cache")
 DB = os.path.join(MAIN_ROOT, "data", "scanperfect.db")
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 TRAJ_DIR = os.path.join(WORKTREE, "research", "presignal_sma_band")
 OUT_DIR = os.path.join(WORKTREE, "research", "presignal_sma_band_scan")
 

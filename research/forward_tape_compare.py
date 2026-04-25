@@ -25,7 +25,7 @@ import os
 import numpy as np
 import pandas as pd
 
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 PANEL = os.path.join(WORKTREE, "research", "forward_tape_panel")
 SETUPS = ["htf", "bf", "base"]
 

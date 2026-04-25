@@ -16,7 +16,7 @@ from collections import Counter
 
 CACHE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/local_runner/cache/universe_ohlcv_daily.pkl"
 DB = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/data/scanperfect.db"
-POOL_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier/research/classifier_pool"
+POOL_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/research/classifier_pool"
 MA_SET = [("EMA", 3), ("EMA", 8), ("EMA", 21), ("SMA", 50), ("SMA", 200), ("SMA", 330)]
 MA_NAMES = [f"{k}{n}" for k, n in MA_SET]
 D = len(MA_NAMES)

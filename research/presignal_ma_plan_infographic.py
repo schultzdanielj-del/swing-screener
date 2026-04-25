@@ -1,6 +1,6 @@
 """Render a 4-panel infographic explaining the MA-corridor filter plan.
 
-Output: C:/Users/Dan/Documents/ScanPerfect/swing-screener-dual-exit/research/MAplan_infographic.png
+Output: C:/Users/Dan/Documents/ScanPerfect/swing-screener/research/MAplan_infographic.png
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.patches import FancyArrowPatch
 
-OUT_PATH = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-dual-exit/research/MAplan_infographic.png"
+OUT_PATH = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/research/MAplan_infographic.png"
 
 fig = plt.figure(figsize=(16, 10))
 fig.suptitle("MA-corridor filter plan — fundamental idea + stacking", fontsize=14, fontweight="bold", y=0.98)

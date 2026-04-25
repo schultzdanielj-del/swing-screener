@@ -16,7 +16,7 @@ import pandas as pd
 
 CACHE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/local_runner/cache/universe_ohlcv_daily.pkl"
 DB = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/data/scanperfect.db"
-POOL_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier/research/classifier_pool"
+POOL_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/research/classifier_pool"
 
 DAN_PICKS = {
     ("AR",   "2020-12-17"): ("2020-12-11", 5.01),

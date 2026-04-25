@@ -19,7 +19,7 @@ import pandas as pd
 from collections import Counter
 
 CACHE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/local_runner/cache/universe_ohlcv_daily.pkl"
-POOL_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier/research/classifier_pool"
+POOL_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/research/classifier_pool"
 T_LSO = 2.0  # ADR threshold for auto-detect support MA
 T_FOOTHOLD = 1.856  # ADR threshold for foothold (derived from examples max)
 

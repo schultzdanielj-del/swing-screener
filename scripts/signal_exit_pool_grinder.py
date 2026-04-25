@@ -58,7 +58,7 @@ MAIN_REPO_ROOT = os.environ.get(
 )
 CLASSIFIER_REPO = os.environ.get(
     "SCANPERFECT_CLASSIFIER_REPO",
-    r"C:\Users\Dan\Documents\ScanPerfect\swing-screener-win-loss-classifier",
+    r"C:\Users\Dan\Documents\ScanPerfect\swing-screener",
 )
 
 if not os.path.isdir(os.path.join(MAIN_REPO_ROOT, "local_runner", "cache")):

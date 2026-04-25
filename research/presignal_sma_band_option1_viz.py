@@ -15,7 +15,7 @@ import pickle
 import matplotlib.pyplot as plt
 import numpy as np
 
-TRAJ_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier/research/presignal_sma_band"
+TRAJ_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/research/presignal_sma_band"
 
 
 def bands_for_cell(log_ratio, sigma):

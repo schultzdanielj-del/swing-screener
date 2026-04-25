@@ -9,7 +9,7 @@ import pickle
 
 import numpy as np
 
-TRAJ_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier/research/presignal_sma_band"
+TRAJ_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/research/presignal_sma_band"
 
 with open(os.path.join(TRAJ_DIR, "base_trajectories.pkl"), "rb") as f:
     traj = pickle.load(f)

@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 MAIN_ROOT = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 CACHE_DIR = os.path.join(MAIN_ROOT, "local_runner", "cache")
 DB = os.path.join(MAIN_ROOT, "data", "scanperfect.db")
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 F1_CSV = os.path.join(WORKTREE, "research", "visual_shape_compare", "F1_clusters.csv")
 LOC_CSV = os.path.join(WORKTREE, "research", "location_axis", "location_clusters.csv")
 OUT_DIR = os.path.join(WORKTREE, "research", "location_axis")

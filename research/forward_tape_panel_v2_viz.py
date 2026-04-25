@@ -27,7 +27,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 MAIN = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 CACHE = os.path.join(MAIN, "local_runner", "cache")
 DB = os.path.join(MAIN, "data", "scanperfect.db")
 POOL_DIR = os.path.join(WORKTREE, "research", "classifier_pool")

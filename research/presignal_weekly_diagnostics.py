@@ -25,7 +25,7 @@ import visual_shape_compare as vsc
 MAIN_ROOT = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 CACHE_DIR = os.path.join(MAIN_ROOT, "local_runner", "cache")
 DB = os.path.join(MAIN_ROOT, "data", "scanperfect.db")
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 STAGE_B_DIR = os.path.join(WORKTREE, "research", "presignal_weekly_stage_b")
 
 SETUPS = ["htf", "bf", "base", "dtss", "3-4db"]

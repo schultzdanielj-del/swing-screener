@@ -25,7 +25,7 @@ import numpy as np
 
 MAIN_ROOT = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 CACHE_DIR = os.path.join(MAIN_ROOT, "local_runner", "cache")
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 OUT_DIR = os.path.join(WORKTREE, "research", "rand_range")
 OUT_FILE = os.path.join(OUT_DIR, "rand_range.npz")
 META_FILE = os.path.join(OUT_DIR, "meta.json")

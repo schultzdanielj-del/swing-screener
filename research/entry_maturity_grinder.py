@@ -34,7 +34,7 @@ MAIN = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 sys.path.insert(0, os.path.join(MAIN, "local_runner"))
 from expr_cache_builder import _open_npz  # noqa: E402
 
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 CACHE = os.path.join(MAIN, "local_runner", "cache")
 EXPR_CACHE_DIR = os.path.join(CACHE, "expr_series")
 POOL_DIR = os.path.join(WORKTREE, "research", "classifier_pool")

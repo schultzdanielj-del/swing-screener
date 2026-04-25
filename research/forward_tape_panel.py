@@ -60,7 +60,7 @@ import numpy as np
 import pandas as pd
 
 MAIN = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 CACHE = os.path.join(MAIN, "local_runner", "cache")
 DB = os.path.join(MAIN, "data", "scanperfect.db")
 OUT_DIR = os.path.join(WORKTREE, "research", "forward_tape_panel")

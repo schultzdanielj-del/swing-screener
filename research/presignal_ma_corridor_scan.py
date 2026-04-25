@@ -26,7 +26,7 @@ import presignal_ma_corridor as pmc  # reuse compute_mas, build_ticker_cache, we
 MAIN_ROOT = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 CACHE_DIR = os.path.join(MAIN_ROOT, "local_runner", "cache")
 DB = os.path.join(MAIN_ROOT, "data", "scanperfect.db")
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 OUT_DIR = os.path.join(WORKTREE, "research", "presignal_ma_corridor")
 
 SETUPS = ["htf", "bf", "base", "dtss", "3-4db"]

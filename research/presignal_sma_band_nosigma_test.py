@@ -16,8 +16,8 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-TRAJ_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier/research/presignal_sma_band"
-RANKER_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier/research/presignal_sma_band_ranker"
+TRAJ_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/research/presignal_sma_band"
+RANKER_DIR = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener/research/presignal_sma_band_ranker"
 
 SETUPS = ["htf", "bf", "base", "dtss", "3-4db"]
 

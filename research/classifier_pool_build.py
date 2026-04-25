@@ -49,7 +49,7 @@ sys.path.insert(0, HERE)
 import visual_shape_compare as vsc
 
 MAIN_ROOT = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 
 CACHE_DIR = os.path.join(MAIN_ROOT, "local_runner", "cache")
 OHLCV_FILE = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")

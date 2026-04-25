@@ -32,7 +32,7 @@ import pickle
 import numpy as np
 import pandas as pd
 
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 PANEL = os.path.join(WORKTREE, "research", "forward_tape_panel")
 DIRECTION = {"htf": +1, "bf": +1, "base": +1, "dtss": -1, "3-4db": -1}
 BREAKOUT_SETUPS = ["htf", "bf", "base"]

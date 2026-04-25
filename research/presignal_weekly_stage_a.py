@@ -31,7 +31,7 @@ import presignal_weekly_aggregate as wagg
 MAIN_ROOT = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 CACHE_DIR = os.path.join(MAIN_ROOT, "local_runner", "cache")
 DB = os.path.join(MAIN_ROOT, "data", "scanperfect.db")
-WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier"
+WORKTREE = r"C:/Users/Dan/Documents/ScanPerfect/swing-screener"
 OUT_DIR = os.path.join(WORKTREE, "research", "presignal_weekly_stage_a")
 
 SETUPS = ["htf", "bf", "base", "dtss", "3-4db"]
