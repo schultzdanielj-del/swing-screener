@@ -152,13 +152,15 @@ None currently identified as broken. (Bugs that have been fixed fold into the sp
 
 ## 6. Pending build
 
-### Extension Chart Levels
+> **Status note (2026-04-25):** all three sub-features (Extension Chart Levels, Extension Chart Trendlines, MOC) shipped to the worktree branch `feature-build-2026-04-24` on 2026-04-25. Universe rebuild verified: 11,534 tickers × 16,216 expressions (16,039 baseline + 12 Levels + 104 Trendlines + 61 MOC = 16,216). Per CLAUDE.md doc flow ("Completed build items fold into spec"), the three sub-sections below should fold into §2 EXACT spec on the next doc-cleanup pass; left in §6 for now with shipping detail intact.
 
-Per-ticker constants derived from return-rate curve geometry on the 50-SMA and 200-SMA extension series. Adds 36 new expressions to the cache. Purpose: quality MFE capture in the profit_grinder — single-metric reversal levels produce a "mushy median" that misses ticker-specific structure; the 6-constant profile preserves it.
+### Extension Chart Levels — shipped 2026-04-25
 
-#### Per-ticker constants (6 per MA × timeframe)
+Per-ticker constants derived from return-rate curve geometry on the 50-SMA and 200-SMA extension series. Adds **12 new expressions** to the cache (D1 only — D1 50/200 SMA carry the structural TA significance; weekly/monthly extensions of the same MAs do not). Purpose: quality MFE capture in the profit_grinder — single-metric reversal levels produce a "mushy median" that misses ticker-specific structure; the 6-constant profile preserves it.
 
-Per (MA ∈ {ext50, ext200}) × (timeframe ∈ {daily, weekly, monthly}):
+#### Per-ticker constants (6 per MA, D1 only)
+
+Per MA ∈ {ext50, ext200}, daily timeframe only:
 
 | constant | meaning |
 |----------|---------|
@@ -169,13 +171,9 @@ Per (MA ∈ {ext50, ext200}) × (timeframe ∈ {daily, weekly, monthly}):
 | `chop_upper` | upper edge of chop band (positive magnitude) |
 | `chop_lower` | lower edge of chop band (negative magnitude — symmetric around zero) |
 
-**Total:** 6 × 2 MAs × 3 timeframes = **36 new expressions per ticker**.
+**Total:** 6 × 2 MAs = **12 new expressions per ticker** (D1 only).
 
-**Naming convention** (follows existing `ext_avgc50_adr14_*` pattern with HTF `w_` / `m_` prefixes auto-applied):
-- Daily: `ext_avgc50_adr14_upside_1`, `ext_avgc50_adr14_upside_2`, `ext_avgc50_adr14_downside_1`, `ext_avgc50_adr14_downside_2`, `ext_avgc50_adr14_chop_upper`, `ext_avgc50_adr14_chop_lower` (and same 6 for `ext_avgc200_adr14`)
-- Weekly: `w_` prefix on the above (12 total)
-- Monthly: `m_` prefix on the above (12 total)
-- **36 expressions total.** `brute_expressions.py` registers 12 daily expressions; HTF dispatch auto-generates the 24 w_/m_ variants.
+**Naming convention.** `ext_avgc50_adr14_upside_1`, `..._upside_2`, `..._downside_1`, `..._downside_2`, `..._chop_upper`, `..._chop_lower` (and the same 6 for `ext_avgc200_adr14`). No HTF prefix — registered with `op="precomputed", source="reversal_profile"` so the HTF auto-prefix block in `brute_expressions.generate_all()` excludes them.
 
 #### Return-rate curve (the derivation primitive)
 
@@ -230,18 +228,24 @@ For each (ticker × MA × timeframe), compute the per-bar return-rate curve on t
 
 **Nightly append:** extend the running tallies by one bar; recompute 6 constants using new curve. Full rebuild recomputes from scratch.
 
-#### Calibration points (Dan's trading intuition, for validation)
+#### Calibration points (re-locked 2026-04-24 against post-distribution-fix OHLCV)
+
+Values below are derived by `compute_all_reversal_profile_series` on the
+post-2026-04-23 OHLCV cache, at asof 2026-04-10 (D1 ext50). Table is the
+authoritative validation truth for any future re-derivation. The earlier
+table (set against pre-fix OHLCV) is superseded; the AAPL chop band shifted
+most because AAPL's pre-fix ext was distorted by un-adjusted distributions.
 
 | ticker | upside_1 | upside_2 | chop band |
 |--------|----------|----------|-----------|
-| AAPL | ~+4.0 (first-lift) or ~+5.5 (saturation) | ~+7.0 | ~−3 to +3 |
-| MSFT | +4.0 | +7.5 | — |
-| TSLA | +5.0 (workable +3.75) | +8.5 | ~−1.5 to +1.75 |
-| RIVN | +4.5 | — | — |
+| AAPL | +5.5 (saturation; first-lift alt +4.0 from pre-fix data) | +7.5 | −2.5 to +1.5 |
+| MSFT | +4.0 | +7.0 | −2.5 to +2.0 |
+| TSLA | +5.0 (workable +3.75) | +8.5 | −2.5 to +2.0 |
+| RIVN | +4.5 | +6.0 | −3.5 to +1.5 |
 
 **Structural observation (ta_knowledge alignment):** 4.0 and 6.0 are common reversal levels across stocks; big momo stocks hit 7-10 at `upside_2`; fundamental catalyst monsters can reach 13.
 
-**Validation gate post-build:** derived values on these 4 tickers must land within ±1 ADR of the calibration, otherwise the derivation needs rework. v2 validation on AAPL/MSFT/TSLA/RIVN at asof 2026-04-10 lands within ±0.5 ADR.
+**Validation gate post-build:** derived values on these 4 tickers must land within ±0.5 ADR of the calibration, otherwise the derivation needs rework. v2 derivation lands at the calibration values exactly when re-derived on the same post-fix OHLCV cache.
 
 #### Design intent — how grinders use these constants
 
@@ -263,29 +267,29 @@ No pre-computed position expressions in the cache. If a grinder doesn't find the
 
 #### Authoritative source
 
-Derivation implemented in `swing-screener/research/reversal_profile_derive_v2.py`. Not yet ported to `scripts/expression_engine.py._reversal_profile`.
+Production primitive: `scripts/reversal_profile.py` — Option C running tally + bootstrap/step API for forward-prop. Bit-equivalent to `research/reversal_profile_derive_v2.derive_profile()` at the asof bar (validated on 5 sandbox tickers; the research file remains as the algorithm reference but is not called at runtime).
 
-#### Files the build will touch
+#### Files touched at ship (2026-04-25)
 
 | file | change |
 |------|--------|
-| `local_runner/brute_expressions.py` | register 12 new daily expressions (auto-HTF-prefixed to 36) |
-| `scripts/expression_engine.py` | add `_reversal_profile(series)` method returning the 6 constants |
-| `local_runner/expr_cache_builder.py` | wire reversal profile into daily + HTF compute paths |
-| `local_runner/vectorized_cache_builder.py` | parallel update (delegates to vectorized dispatch) |
-| `local_runner/vectorized_dispatch.py` | handle `reversal_profile` op dispatch |
-| `local_runner/intermediate_cache_builder.py` | verify no new intermediates needed (expected: none) |
-| `_manifest.json` | auto-updates (+36 expressions) |
+| `scripts/reversal_profile.py` | new — primitive + bootstrap + step API |
+| `local_runner/brute_expressions.py` | register 12 D1 expressions, op="precomputed", source="reversal_profile" |
+| `local_runner/expr_cache_builder.py` | classifier branch + Phase 2d compute block + worktree-aware OHLCV loader |
+| `local_runner/vectorized_cache_builder.py` | classifier + per-ticker pass extension |
+| `local_runner/forward_prop_engine.py` | `_compute_reversal_profile_expressions` helper + Phase 5 call |
+| `scripts/setup_forward_prop.py` | bootstrap `reversal_profile_state` per ext source |
+| `_manifest.json` | auto-updates (+12 expressions) |
 
 ---
 
-### Extension Chart Trendlines
+### Extension Chart Trendlines — shipped 2026-04-25
 
-Trendlines drawn on the 50-extension chart, emitted per bar, exposed as expression cache columns so grinders can use line geometry as discriminating technical-analysis features. Each daily candle has its own set of valid trendlines — the set evolves with the ticker's extension history. Uses Extension Chart Levels as input.
+Trendlines drawn on the 50-extension chart, emitted per bar, exposed as expression cache columns so grinders can use line geometry as discriminating technical-analysis features. Each daily candle has its own set of valid trendlines — the set evolves with the ticker's extension history. Uses Extension Chart Levels as input. **104 D1-only expressions (16 numeric × 6 lines + 5 aggregates + 3 pass-throughs).**
 
-**Authoritative reference:** `swing-screener/research/trendline_primitive_v7_momentum.py`. The file's code (not its docstring) is the spec. Verified by empirical replay: current on-disk code reproduces approved PNG set `ext50_v7_momentum_{AAPL,CAR,SPY,MSFT,TSLA}_2026-04-10.png` pixel-identical across all 5 tickers.
+**Production primitive:** `scripts/ext50_trendlines.py` — vectorized full-walk via 2D `[pair × bar]` matrices; bit-equivalent to the slow per-bar `cascade_at` reference (kept in same file as `compute_all_ext50_trendline_series_per_pair_loop` for parity testing).
 
-**Naming note:** file is named `v7_momentum` and its docstring describes a "Momentum-Channel" design. Both are stale residue from before the mid-session reframe that collapsed two planned trendline sub-features into one unified feature. Filename and docstring should be updated during port; code behavior is correct as-is.
+**Research reference:** `swing-screener/research/trendline_primitive_v7_momentum.py`. The file's code (not its docstring) was the algorithm reference. Locked PNG truth set: `research/ext50_trendlines_truth_2026-04-24/ext50_trendlines_{AAPL,CAR,SPY,MSFT,TSLA}_2026-04-10.png` (rendered with the post-port primitive on full-history ext, eyeball-locked by Dan).
 
 #### Inputs at bar t
 
@@ -298,14 +302,14 @@ Daily timeframe only. 50-extension only (no weekly/monthly, no ext200).
 
 #### Window
 
-260-bar lookback from bar t. Pivots older than that are ignored.
+**Full ext cache history** (since `EXPR_CACHE_START` 2020-01-02) is the lookback at every bar. Earlier 260-bar cap removed 2026-04-24 — no calibration evidence behind that value (research dir has no `trendline_window_sweep.py` or comparison; the value first appeared in v4 as a default function arg with no justification), and the analogous algo lines feature on price uses full history per ta_knowledge.md ("can span thousands of candles, lines from years ago remain relevant if unbroken"). Per-bar `find_peaks` runs on `ext[:t+1]` only — historical immutability.
 
 #### Pivot detection
 
 - Peaks = local maxima via `scipy.signal.find_peaks` with `prominence = 0.5` ADR.
 - Troughs = local minima (find_peaks on negated series), same prominence.
 - **No slide** — anchors are raw detected pivots only. Slide was removed because it could land on non-pivot bars between real detected pivots during steep descents (observed on SPY during research).
-- Restricted to pivots in [t − 260, t].
+- Restricted to pivots in [0, t]. The fast full-walk pre-computes `t_appear[K]` per pivot (smallest t at which K is detected by `find_peaks(ext[:t+1])`) and gates each pair by `visible_from = max(t_appear[i0], t_appear[i1])`. Pivot detection is empirically monotonic in t on the 5 sandbox tickers (zero disappearances after first detection); production runs assume this holds universe-wide.
 
 #### Candidate enumeration
 
@@ -323,16 +327,16 @@ For each anchor type (peak-anchored pairs, trough-anchored pairs) independently:
    - Ascending lines — entire line life from `i0` to `t` must be unbroken. No sign-flip of `(ext − projection)` across full life.
 7. **Projection-in-range (cycle containment):** projection at bar t must satisfy `downside_2 ≤ proj ≤ upside_2` (uses Extension Chart Levels data). Rejects wildly extrapolated lines. NaN values in these constants pass-through.
 
-#### Per-candidate emitted data (13 fields per surviving line)
+#### Per-candidate emitted data (13 fields per surviving line; 16 numeric columns per slot in cache)
 
 | # | field | meaning |
 |---|-------|---------|
-| 1 | anchors `(i0, v0, i1, v1)` | bar indices and extension values at the two anchors |
+| 1 | anchors `(i0, v0, i1, v1)` | bar indices and extension values at the two anchors (expands to 4 cache columns: `anchor_i0`, `anchor_v0`, `anchor_i1`, `anchor_v1`) |
 | 2 | slope | ADR per bar |
-| 3 | anchor_type | `peak_anchored` (descending) / `trough_anchored` (ascending) |
+| 3 | anchor_type | encoded numerically: 0 = peak_anchored (descending) / 1 = trough_anchored (ascending) |
 | 4 | proj_asof | line value extended to bar t |
 | 5 | signed_dist | `proj_asof − ext[t]` |
-| 6 | zero_bar | bar where projection crosses y=0 (−1 if never in span) |
+| 6 | zero_bar | bar where projection crosses y=0 (−1 if outside [i0, t]) |
 | 7 | pos_bars | bars in [i0, t] with projection ≥ 0 |
 | 8 | neg_bars | bars in [i0, t] with projection < 0 |
 | 9 | touches | pivots within 0.25 ADR of projection, plus 2 anchor touches |
@@ -353,43 +357,43 @@ For each anchor type (peak-anchored pairs, trough-anchored pairs) independently:
 - `nearest_descending_dist`, `nearest_ascending_dist` (NaN if side empty)
 - Pass-through of Extension Chart Levels used: `upside_1`, `upside_2`, `chop_upper`
 
-#### Constants (calibrated, retain during port)
+#### Constants (locked, ship as-is)
 
-`WINDOW_BARS = 260`, `PROMINENCE = 0.5` ADR, `MIN_SPAN_BARS = 15`, `TOUCH_TOL = 0.25` ADR, `TOP_N = 3`.
+`PROMINENCE = 0.5` ADR, `MIN_SPAN_BARS = 15`, `TOUCH_TOL = 0.25` ADR, `TOP_N = 3`. (Earlier `WINDOW_BARS = 260` removed — see Window section above.)
 
-#### Known drift inside the research file (address during port)
+#### Port-time corrections applied (from research file)
 
-- **Docstring-vs-code drift:** the file's top docstring describes an *intended* design that differs from actual code behavior. Docstring claims to drop anchor-type↔slope matching (gate 5) and origin-sign opposition (gate 3); code still applies both. Docstring claims both upper and lower channels ascending; code has upper descending. Docstring claims retirement-when-ext-≤-0; no such logic exists. **Code is authoritative; docstring is stale. Rewrite docstring during port to match actual behavior.**
-- **Dead code:** `ANCHOR_SLIDE_BARS = 3` constant and `slide_to_local_extremum` function defined but never called in the candidate pipeline. Drop during port.
-- **Filename / naming residue:** `v7_momentum` in filename, variable names, and docstring reflect the pre-reframe "Momentum-Channel" sub-feature framing. That sub-feature was scrapped; this is the unified trendline feature. Rename during port (e.g. `_ext50_trendlines`) to eliminate residue.
-- **Non-v2 import path:** the file imports `from reversal_profile_derive import derive_profile` — a non-v2 module name. Port should use the canonical v2 module explicitly.
+- **Filename rename:** research file `trendline_primitive_v7_momentum.py` → production `scripts/ext50_trendlines.py`. The `v7_momentum` residue from the pre-reframe "Momentum-Channel" sub-feature was eliminated.
+- **Dead code removed:** `ANCHOR_SLIDE_BARS = 3` and `slide_to_local_extremum` from research file are NOT in the production primitive.
+- **find_peaks history slicing:** research file feeds the full ext array to find_peaks even when computing a snapshot at an earlier bar (lets future bars influence past peak detection). Production primitive slices `ext[:asof_bar+1]` → historical immutability preserved.
+- **Reversal profile import:** production primitive uses `scripts/reversal_profile.py` (the production port of v2 derivation), not the research `reversal_profile_derive` module.
 
-#### Per-bar vectorization plan
+#### Implementation
 
-Naive per-bar call is expensive. Plan: pre-compute all pivots once per ticker; pre-enumerate all (i0, i1) pairs satisfying MIN_SPAN once per ticker; at each bar t apply vectorized window filter + gate mask + projection + top-3 rank. Target ~0.3s/ticker.
+Vectorized full-walk in `compute_all_ext50_trendline_series(ext, levels_at_bar)`: precompute per-pair cumulative arrays once per ticker via 2D `[pair × bar]` numpy matrices, then per-bar emission reads from the matrices. Empirical per-ticker time on 5 sandbox tickers (1583 bars each): 1.0–1.7s for trendlines alone, ~7s for full `_compute_ticker_full`. The slow per-bar `cascade_at` reference is preserved as `compute_all_ext50_trendline_series_per_pair_loop` for parity diffs.
 
-#### Validation gate for port
+Forward-prop: `cascade_at(ext, asof_bar, levels)` is path-pure (no carried state to roll across bars). State stored in `.state` is just `ext50_trendline_state.ext50_history` (full ext50 history through the .npz end-bar; sliding-appended on each forward-prop call), so the engine doesn't need to load the full .npz to access ext history.
 
-After port, rerun the replay protocol: run the ported primitive on the 5 calibration tickers (AAPL, CAR, SPY, MSFT, TSLA) at asof 2026-04-10, diff against the v7 PNG set pixel-identical. Must match before proceeding to full cache rebuild.
+#### Validation gate
 
-#### Worktree isolation
+PNG pixel-identical replay protocol: run the production primitive at asof 2026-04-10 for AAPL, CAR, SPY, MSFT, TSLA on full ext history (post 2026-04-23 OHLCV distribution-fix). Render via `scripts/render_ext50_trendline_truth.py` to `research/ext50_trendlines_truth_2026-04-24/`. Eyeball-locked by Dan 2026-04-25. Any future re-derivation must reproduce these PNGs pixel-identical.
 
-All port work in a fresh git worktree off v2 branch. Cache read-only via `SCANPERFECT_CACHE_DIR`; worktree writes to its own data dir.
-
-#### Files the build will touch
+#### Files touched at ship (2026-04-25)
 
 | file | change |
 |------|--------|
-| `local_runner/brute_expressions.py` | register expressions (count TBD — enumerate 13 fields × 3 U + 3 L + aggregates during port) |
-| `scripts/expression_engine.py` | add trendline method (rename to drop `momentum` residue, e.g. `_ext50_trendlines(ext_series, levels)`) |
-| `local_runner/expr_cache_builder.py` | wire into compute paths |
-| `local_runner/vectorized_cache_builder.py` | parallel update |
-| `local_runner/vectorized_dispatch.py` | handle new op |
-| `_manifest.json` | auto-updates |
+| `scripts/ext50_trendlines.py` | new — primitive (vectorized + per-pair-loop reference) + bootstrap + step API |
+| `scripts/render_ext50_trendline_truth.py` | new — render utility for the locked PNG truth set |
+| `local_runner/brute_expressions.py` | register 104 D1 expressions, op="precomputed", source="ext50_trendlines" |
+| `local_runner/expr_cache_builder.py` | classifier branch + Phase 2e compute block (after Levels) |
+| `local_runner/vectorized_cache_builder.py` | classifier + per-ticker pass extension (Trendlines reads in-memory rp_outputs to avoid double-reading the .npz) |
+| `local_runner/forward_prop_engine.py` | `_compute_ext50_trendline_expressions` helper + Phase 5 call (after reversal_profile) |
+| `scripts/setup_forward_prop.py` | bootstrap `ext50_trendline_state.ext50_history` from .npz ext50 column |
+| `_manifest.json` | auto-updates (+104 expressions) |
 
 ---
 
-### MOC (Market-On-Close) levels
+### MOC (Market-On-Close) levels — shipped 2026-04-25
 
 D1 horizontal support/resistance levels from high-RVOL candle H/L prints. 61 per-ticker expressions, D1 only. Concept: highs and lows printed on above-average-volume days cluster at specific prices and act as S/R on intraday (5m) charts. The cache emits a per-bar snapshot of the top-weighted levels above and below current close, plus zone-level composites describing the overall landscape.
 
@@ -480,13 +484,14 @@ Grinders load the 61 expressions per ticker via `load_ticker_cache()` — they a
 - `max(0, rvol − 1)` weight subtraction — redundant punt; raw `rvol` performs equivalently, removes the subtraction punt.
 - Data-derived tolerance from pairwise H/L distance distribution — attempted; distribution is a smooth monotone decay with no natural gap. 100× tolerance sweep shows aggregate signal is flat across the range. Tolerance is empirically insensitive, not data-derivable by this methodology; the `√(1/78)` value ships as the middle-of-plateau choice.
 
-#### Files the build will touch
+#### Files touched at ship (2026-04-25)
 
 | file | change |
 |---|---|
-| `local_runner/brute_expressions.py` | register 61 new daily expressions (54 per-level + 7 composites) |
-| `scripts/expression_engine.py` | add `_moc_levels(ohlcv)` method returning 61-feature snapshot per bar |
-| `local_runner/expr_cache_builder.py` | wire MOC into daily compute path (no HTF) |
-| `local_runner/vectorized_cache_builder.py` | parallel update path |
-| `local_runner/vectorized_dispatch.py` | handle MOC op dispatch |
+| `scripts/moc_detector.py` | new — primitive (`compute_all_moc_series`) + bootstrap + step API. Uses pandas `Series.rolling(p, min_periods=1).mean()` for ATR14/RVOL to bit-match the research file's float behavior. |
+| `local_runner/brute_expressions.py` | register 61 D1 expressions (54 per-level + 7 composites), op="precomputed", source="moc" |
+| `local_runner/expr_cache_builder.py` | classifier branch + Phase 2c compute block (no HTF) |
+| `local_runner/vectorized_cache_builder.py` | classifier + per-ticker pass extension |
+| `local_runner/forward_prop_engine.py` | `_compute_moc_expressions` helper + Phase 5 call |
+| `scripts/setup_forward_prop.py` | bootstrap `moc_levels` (variable-length list of active level dicts) |
 | `_manifest.json` | auto-updates (+61 expressions) |

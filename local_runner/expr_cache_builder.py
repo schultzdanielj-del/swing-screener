@@ -250,21 +250,52 @@ def _truncate_to_cache_window(df):
     return df[mask].reset_index(drop=True)
 
 
+def _find_main_repo_cache():
+    """When running in a git worktree, locate the main repo's cache dir.
+
+    Returns the main-repo cache path if this checkout is a worktree and the
+    main repo's cache exists; otherwise returns this checkout's CACHE_DIR.
+    Mirrors the helper in intermediate_cache_builder.py.
+    """
+    git_marker = os.path.join(REPO_ROOT, ".git")
+    if os.path.isfile(git_marker):
+        try:
+            with open(git_marker) as f:
+                line = f.read().strip()
+            if line.startswith("gitdir:"):
+                gitdir = line.split(":", 1)[1].strip()
+                main_repo = os.path.dirname(os.path.dirname(os.path.dirname(gitdir)))
+                main_cache = os.path.join(main_repo, "local_runner", "cache")
+                if os.path.isdir(main_cache):
+                    return main_cache
+        except Exception:
+            pass
+    return CACHE_DIR
+
+
+def _ohlcv_search_dirs():
+    """Order of cache dirs to search for OHLCV pickles. Worktree-first if
+    its own copy exists, else fall back to main."""
+    main_cache = _find_main_repo_cache()
+    if main_cache != CACHE_DIR:
+        return [CACHE_DIR, main_cache]
+    return [CACHE_DIR]
+
+
 def _load_daily_cache():
-    """Load daily OHLCV cache."""
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
-    if not os.path.exists(path):
-        path = os.path.join(CACHE_DIR, "universe_ohlcv_5yr.pkl")
-    if not os.path.exists(path):
-        path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
-    if not os.path.exists(path):
-        raise FileNotFoundError("No OHLCV cache found. Run cache_builder.py --daily first.")
-    with open(path, "rb") as f:
-        return pickle.load(f)
+    """Load daily OHLCV cache. Worktree-aware: searches local CACHE_DIR first,
+    then main repo's cache when running in a worktree."""
+    for cache_dir in _ohlcv_search_dirs():
+        for name in ("universe_ohlcv_daily.pkl", "universe_ohlcv_5yr.pkl", "universe_ohlcv.pkl"):
+            path = os.path.join(cache_dir, name)
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    return pickle.load(f)
+    raise FileNotFoundError("No OHLCV cache found. Run cache_builder.py --daily first.")
 
 
 def _load_htf_cache(timeframe):
-    """Load weekly or monthly HTF OHLCV cache.
+    """Load weekly or monthly HTF OHLCV cache. Worktree-aware fallback to main.
 
     Args:
         timeframe: 'weekly' or 'monthly'
@@ -272,11 +303,12 @@ def _load_htf_cache(timeframe):
     Returns: dict of {ticker: DataFrame} or None if cache doesn't exist.
     """
     filename = f"universe_ohlcv_{timeframe}.pkl"
-    path = os.path.join(CACHE_DIR, filename)
-    if not os.path.exists(path):
-        return None
-    with open(path, "rb") as f:
-        return pickle.load(f)
+    for cache_dir in _ohlcv_search_dirs():
+        path = os.path.join(cache_dir, filename)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                return pickle.load(f)
+    return None
 
 
 def _df_to_dict(df):
@@ -325,6 +357,9 @@ _w_ext_struct_indices = None # indices of on_series/on_series_bool_agg (2nd pass
 _w_ext_series_name_to_idx = None  # map ext series name → column index in data
 _w_lsp_indices = None        # indices of LSP precomputed expressions
 _w_algo_indices = None       # indices of algo line precomputed expressions
+_w_moc_indices = None        # indices of MOC precomputed expressions
+_w_reversal_profile_by_source = None  # dict[input_column -> list of (constant_name, j)]
+_w_ext50_trendline_indices = None  # indices of ext50 trendline expressions
 _w_htf_weekly_indices = None  # indices of weekly HTF expressions
 _w_htf_monthly_indices = None # indices of monthly HTF expressions
 _w_htf_weekly_base = None    # base compute specs for weekly HTF expressions
@@ -342,7 +377,8 @@ def _init_worker(expressions):
     """Initialize worker with expression list and pre-classify indices."""
     global _w_expressions, _w_daily_indices, _w_ext_struct_indices
     global _w_ext_series_name_to_idx
-    global _w_lsp_indices, _w_algo_indices
+    global _w_lsp_indices, _w_algo_indices, _w_moc_indices
+    global _w_reversal_profile_by_source, _w_ext50_trendline_indices
     global _w_htf_weekly_indices, _w_htf_monthly_indices
     global _w_htf_weekly_base, _w_htf_monthly_base
     global _w_daily_slow_indices, _w_daily_dispatch_indices, _w_daily_fallback_indices
@@ -354,6 +390,9 @@ def _init_worker(expressions):
     _w_ext_struct_indices = []
     _w_lsp_indices = []
     _w_algo_indices = []
+    _w_moc_indices = []
+    _w_reversal_profile_by_source = {}
+    _w_ext50_trendline_indices = []
     _w_htf_weekly_indices = []
     _w_htf_monthly_indices = []
     _w_htf_weekly_base = []
@@ -380,6 +419,14 @@ def _init_worker(expressions):
                 _w_lsp_indices.append(j)
             elif source == "algo":
                 _w_algo_indices.append(j)
+            elif source == "moc":
+                _w_moc_indices.append(j)
+            elif source == "reversal_profile":
+                src_col = compute.get("input_column")
+                cname = compute.get("constant")
+                _w_reversal_profile_by_source.setdefault(src_col, []).append((cname, j))
+            elif source == "ext50_trendlines":
+                _w_ext50_trendline_indices.append(j)
             elif source == "htf":
                 tf = compute.get("timeframe")
                 if tf == "w":
@@ -1103,7 +1150,8 @@ def _compute_ticker_full(args):
     ticker, df_dict, weekly_df_dict, monthly_df_dict = args
     global _w_expressions, _w_daily_indices, _w_ext_struct_indices
     global _w_ext_series_name_to_idx
-    global _w_lsp_indices, _w_algo_indices
+    global _w_lsp_indices, _w_algo_indices, _w_moc_indices
+    global _w_reversal_profile_by_source, _w_ext50_trendline_indices
     global _w_htf_weekly_indices, _w_htf_monthly_indices
     global _w_htf_weekly_base, _w_htf_monthly_base
 
@@ -1250,6 +1298,75 @@ def _compute_ticker_full(args):
                             data[:, j] = arr.astype(np.float32)
             except Exception:
                 pass  # Algo lines fail silently — columns stay NaN
+
+        # ── 2c. MOC level expressions (precomputed by moc_detector) ──
+        if _w_moc_indices:
+            try:
+                from scripts.moc_detector import compute_all_moc_series
+                moc_dict = compute_all_moc_series(df)
+                for j in _w_moc_indices:
+                    col_name = _w_expressions[j]["compute"]["column"]
+                    if col_name in moc_dict:
+                        arr = moc_dict[col_name]
+                        if len(arr) == n_bars:
+                            data[:, j] = arr.astype(np.float32)
+            except Exception:
+                pass  # MOC fails silently — columns stay NaN
+
+        # ── 2d. Reversal profile (Extension Chart Levels — D1 only) ──
+        # Reads ext_avgc50_adr14 / ext_avgc200_adr14 from already-filled `data`
+        # columns and emits 6 constants per source.
+        if _w_reversal_profile_by_source:
+            try:
+                from scripts.reversal_profile import compute_all_reversal_profile_series
+                for src_col, entries in _w_reversal_profile_by_source.items():
+                    src_idx = _w_ext_series_name_to_idx.get(src_col)
+                    if src_idx is None:
+                        continue  # source ext column not present in this build
+                    src_array = data[:, src_idx].astype(np.float64)
+                    rp_dict = compute_all_reversal_profile_series(src_array)
+                    for cname, j in entries:
+                        if cname in rp_dict:
+                            arr = rp_dict[cname]
+                            if len(arr) == n_bars:
+                                data[:, j] = arr.astype(np.float32)
+            except Exception:
+                pass  # Reversal profile fails silently — columns stay NaN
+
+        # ── 2e. Extension Chart Trendlines (D1, ext50 only) ──
+        # Depends on Phase 2d (Levels columns must be populated for gates +
+        # pass-throughs). Reads ext50 + the 5 Levels columns from `data`,
+        # walks every bar through cascade_at, writes 104 outputs per bar.
+        if _w_ext50_trendline_indices:
+            try:
+                from scripts.ext50_trendlines import (
+                    compute_all_ext50_trendline_series, get_ext50_trendline_expression_names,
+                )
+                src_idx_50 = _w_ext_series_name_to_idx.get("ext_avgc50_adr14")
+                if src_idx_50 is not None:
+                    ext50_arr = data[:, src_idx_50].astype(np.float64)
+                    # Build the 5-Levels-at-bar dict by name lookup. The Levels
+                    # columns just got written in Phase 2d.
+                    name_to_idx = {expr["name"]: jj for jj, expr in enumerate(_w_expressions)}
+                    levels_at_bar = {}
+                    for level_key in ("upside_1", "upside_2", "downside_1", "downside_2", "chop_upper"):
+                        col_name = f"ext_avgc50_adr14_{level_key}"
+                        col_idx = name_to_idx.get(col_name)
+                        if col_idx is not None:
+                            levels_at_bar[level_key] = data[:, col_idx].astype(np.float64)
+                        else:
+                            levels_at_bar[level_key] = np.full(n_bars, np.nan, dtype=np.float64)
+                    tl_dict = compute_all_ext50_trendline_series(ext50_arr, levels_at_bar)
+                    tl_names = get_ext50_trendline_expression_names()
+                    name_to_local_li = {nm: li for li, nm in enumerate(tl_names)}
+                    for j in _w_ext50_trendline_indices:
+                        col_name = _w_expressions[j]["compute"]["column"]
+                        if col_name in tl_dict:
+                            arr = tl_dict[col_name]
+                            if len(arr) == n_bars:
+                                data[:, j] = arr.astype(np.float32)
+            except Exception:
+                pass  # Trendlines fail silently — columns stay NaN
 
         # ── 3. HTF expressions (weekly + monthly) ──
         # Use pre-fetched HTF OHLCV from pickles when available.

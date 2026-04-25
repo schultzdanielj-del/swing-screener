@@ -1197,6 +1197,118 @@ def generate_all():
         })
 
     # ═══════════════════════════════════════════════════════
+    # MOC (Market-On-Close) levels — D1 horizontal S/R from high-RVOL H/L prints.
+    # Spec: EXPRESSION_ENGINE_V2.md §6 MOC. 61 D1-only expressions, no HTF prefix
+    # (op="precomputed" excludes them from the HTF auto-prefix block below).
+    # ═══════════════════════════════════════════════════════
+    try:
+        import sys as _sys
+        _scripts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+        if _scripts_dir not in _sys.path:
+            _sys.path.insert(0, _scripts_dir)
+        from moc_detector import get_moc_expression_names
+        moc_names = get_moc_expression_names()
+    except ImportError:
+        # Fallback enumeration mirrors moc_detector.get_moc_expression_names
+        _per_level_feats = [
+            "distance", "stack_weight", "stack_count", "max_contributor_rvol",
+            "cross_count", "bars_since_birth", "bars_since_last_contribution",
+            "max_abs_beyond_atr", "contact_count",
+        ]
+        _composite_feats = [
+            "total_weight_above", "total_weight_below",
+            "n_levels_above", "n_levels_below",
+            "n_levels_within_2atr", "top1_spread_atr", "weight_asymmetry",
+        ]
+        moc_names = []
+        for _side in ("above", "below"):
+            for _rank in (1, 2, 3):
+                for _f in _per_level_feats:
+                    moc_names.append(f"moc_{_side}_{_rank}_{_f}")
+        for _c in _composite_feats:
+            moc_names.append(f"moc_composite_{_c}")
+
+    for name in moc_names:
+        exprs.append({
+            "name": name,
+            "category": "moc_levels",
+            "compute": {"op": "precomputed", "source": "moc", "column": name}
+        })
+
+    # ═══════════════════════════════════════════════════════
+    # Extension Chart Levels — 6 reversal-profile constants per (MA × D1).
+    # 12 D1-only expressions. Daily timeframe only (D1 50/200 SMA carry the
+    # structural significance; weekly/monthly versions of the same MAs do not).
+    # op="precomputed" so the HTF auto-prefix block below skips them.
+    # Spec: EXPRESSION_ENGINE_V2.md §6 Extension Chart Levels.
+    # ═══════════════════════════════════════════════════════
+    try:
+        import sys as _sys
+        _scripts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+        if _scripts_dir not in _sys.path:
+            _sys.path.insert(0, _scripts_dir)
+        from reversal_profile import EXT_SOURCE_COLUMNS, CONSTANT_NAMES
+        rp_sources = list(EXT_SOURCE_COLUMNS)
+        rp_constants = list(CONSTANT_NAMES)
+    except ImportError:
+        rp_sources = ["ext_avgc50_adr14", "ext_avgc200_adr14"]
+        rp_constants = ["upside_1", "upside_2", "downside_1", "downside_2",
+                        "chop_upper", "chop_lower"]
+
+    for src in rp_sources:
+        for cname in rp_constants:
+            exprs.append({
+                "name": f"{src}_{cname}",
+                "category": "reversal_profile",
+                "compute": {
+                    "op": "precomputed",
+                    "source": "reversal_profile",
+                    "input_column": src,
+                    "constant": cname,
+                }
+            })
+
+    # ═══════════════════════════════════════════════════════
+    # Extension Chart Trendlines — 104 D1 expressions on 50-ext.
+    # 16 numeric × 6 lines (3 U + 3 L) + 5 aggregates + 3 pass-throughs.
+    # op="precomputed" → no HTF prefix. D1 only, 50-ext only.
+    # Spec: EXPRESSION_ENGINE_V2.md §6 Extension Chart Trendlines.
+    # Reads ext_avgc50_adr14 (already in `data`) and Levels columns
+    # (computed in the prior Phase 2d block) at every bar.
+    # ═══════════════════════════════════════════════════════
+    try:
+        import sys as _sys
+        _scripts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+        if _scripts_dir not in _sys.path:
+            _sys.path.insert(0, _scripts_dir)
+        from ext50_trendlines import get_ext50_trendline_expression_names
+        tl_names = get_ext50_trendline_expression_names()
+    except ImportError:
+        tl_names = []
+        _per_line = [
+            "anchor_i0", "anchor_v0", "anchor_i1", "anchor_v1",
+            "slope", "anchor_type", "proj_asof", "signed_dist",
+            "zero_bar", "pos_bars", "neg_bars", "touches",
+            "last_cross_bar", "last_cross_dir", "total_cross", "span",
+        ]
+        for _kind in ("u", "l"):
+            for _r in (1, 2, 3):
+                for _f in _per_line:
+                    tl_names.append(f"ext50_tl_{_kind}{_r}_{_f}")
+        for _a in ("total_candidates", "count_descending", "count_ascending",
+                   "nearest_descending_dist", "nearest_ascending_dist"):
+            tl_names.append(f"ext50_tl_{_a}")
+        for _p in ("upside_1", "upside_2", "chop_upper"):
+            tl_names.append(f"ext50_tl_{_p}")
+
+    for name in tl_names:
+        exprs.append({
+            "name": name,
+            "category": "ext50_trendlines",
+            "compute": {"op": "precomputed", "source": "ext50_trendlines", "column": name}
+        })
+
+    # ═══════════════════════════════════════════════════════
     # HIGHER TIMEFRAME (HTF) — Weekly + Monthly versions of ALL daily expressions
     # ═══════════════════════════════════════════════════════
     # These are NOT computed live by ExpressionEngine. They're precomputed in

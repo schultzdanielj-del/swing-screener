@@ -553,6 +553,45 @@ def _setup_one_ticker(args):
                 # ATR proxy EMA state — needed for forward-prop DI normalization
                 state[f"ext_{ext_label}_adx_atr_proxy_{p}"] = float(ext_atr[npz_last]) if not np.isnan(ext_atr[npz_last]) else 0.0
 
+        # ── MOC level state (variable-length list, JSON-friendly dicts) ──
+        # Walks the same df the .npz was built from; final state reflects end of .npz.
+        try:
+            from scripts.moc_detector import bootstrap_moc_state
+            moc_state = bootstrap_moc_state(df)
+            state["moc_levels"] = moc_state["levels"]
+        except Exception:
+            state["moc_levels"] = []
+
+        # ── Reversal profile state per ext source (Extension Chart Levels) ──
+        # Walks the same .npz ext columns the cache holds; final tally state
+        # reflects the .npz end-bar. Forward-prop steps the running tallies
+        # one bar at a time using state["ext_prev_*"] + new ext value.
+        try:
+            from scripts.reversal_profile import bootstrap_reversal_state, EXT_SOURCE_COLUMNS
+            rp_state = {}
+            for src_col in EXT_SOURCE_COLUMNS:
+                ext_idx = (_w_ext_name_to_idx or {}).get(src_col)
+                if ext_idx is None:
+                    rp_state[src_col] = {}
+                    continue
+                ext_arr = loaded_npz["data"][:, ext_idx].astype(np.float64)
+                rp_state[src_col] = bootstrap_reversal_state(ext_arr)
+            state["reversal_profile_state"] = rp_state
+        except Exception:
+            state["reversal_profile_state"] = {}
+
+        # ── Trendline state: full ext50 history (for path-pure forward-prop) ──
+        try:
+            from scripts.ext50_trendlines import bootstrap_ext50_trendline_state
+            ext50_idx = (_w_ext_name_to_idx or {}).get("ext_avgc50_adr14")
+            if ext50_idx is not None:
+                ext50_arr = loaded_npz["data"][:, ext50_idx].astype(np.float64)
+                state["ext50_trendline_state"] = bootstrap_ext50_trendline_state(ext50_arr)
+            else:
+                state["ext50_trendline_state"] = {"ext50_history": []}
+        except Exception:
+            state["ext50_trendline_state"] = {"ext50_history": []}
+
         # ── Write .state file ──
         state_path = os.path.join(EXPR_CACHE_DIR, f"{safe_ticker}.state")
         with open(state_path, "w") as f:
@@ -860,25 +899,18 @@ def main():
     print(f"  Extension series indices: {ext_name_to_idx}")
     assert len(ext_name_to_idx) == 2, "Must find both extension series"
 
-    # Load OHLCV caches
+    # Load OHLCV caches — worktree-aware (falls back to main repo's cache).
     print("\n  Loading daily OHLCV cache...")
-    daily_path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
-    with open(daily_path, "rb") as f:
-        universe_cache = pickle.load(f)
+    from local_runner.expr_cache_builder import _load_daily_cache, _load_htf_cache
+    universe_cache = _load_daily_cache()
     print(f"  {len(universe_cache)} tickers in daily cache")
 
-    # Load HTF caches
-    weekly_cache = None
-    monthly_cache = None
-    weekly_path = os.path.join(CACHE_DIR, "universe_ohlcv_weekly.pkl")
-    monthly_path = os.path.join(CACHE_DIR, "universe_ohlcv_monthly.pkl")
-    if os.path.exists(weekly_path):
-        with open(weekly_path, "rb") as f:
-            weekly_cache = pickle.load(f)
+    # Load HTF caches via worktree-aware loader
+    weekly_cache = _load_htf_cache("weekly")
+    monthly_cache = _load_htf_cache("monthly")
+    if weekly_cache:
         print(f"  Weekly HTF: {len(weekly_cache)} tickers")
-    if os.path.exists(monthly_path):
-        with open(monthly_path, "rb") as f:
-            monthly_cache = pickle.load(f)
+    if monthly_cache:
         print(f"  Monthly HTF: {len(monthly_cache)} tickers")
 
     # Find tickers with existing .npz files
