@@ -578,17 +578,19 @@ Direction-symmetric per §15.4–15.5 shorts notes. Not yet validated for DTSS /
 **Built (2026-04-23):**
 - `research/classifier_tag_emit.py` — per-signal TAKE/SKIP-family tag emission under §17.7. Produces `research/classifier_tags/{setup}_tags.json` for breakouts. 100% example ENTRY, 9-17% wild carve.
 
-**Modules pending:**
-- `research/labeler.py` — pure function per §15.1. Entry mechanic locked (§17.7); forward race (stop + exit rule + label) awaits signal_exit_pool_grinder output. When built, reuse entry-detection logic from `classifier_tag_emit.py` rather than duplicate.
-- `research/classify_pool.py` — driver applying labeler to a pool; writes `research/labeler/{setup}_final_labels.json`.
-- `scripts/signal_exit_pool_grinder.py` — built on main-repo worktree branch `signal-exit-pool` off v2 (path `swing-screener-signal-exit-pool/scripts/`). Pending verification run (3 setups: htf, bf, base). Per-setup invocation: `python scripts/signal_exit_pool_grinder.py --setup {htf|bf|base}`. Output written to that worktree's `data/signal_exit_grind/signal_exit_pool_{setup}.json`; merge to v2 after Dan vets the run.
+**Built (2026-04-26 — bakeoff resolved 2026-04-25):**
+- `scripts/signal_exit_pool_grinder.py` — **L14 labeler.** Per-setup `mfe_during_life >= T_setup` where `T_setup = min(example mfe_during_life)`. Lock by construction. No exit rule selected (separated from labeler scope per the EV-after-Profit reorder; realized P&L is profit grinder's job downstream). HTF: 28/28 lock, T=2.376, 38.6% wild WIN. BF: 45/45 lock, T=2.376, 42.4%. BASE: 38/38 lock, T=2.886, 42.3%. Bakeoff write-up + ranking in `SIGNAL_EXIT_GRINDER.md §Pending research`.
 
-Label output schema per cluster:
-`{cluster_id, ticker, signal_bar_idx, is_example, entry_k (or null), effective_entry, stop, adr14_at_entry, exit_bar_offset (or null), exit_close, realized_pnl_adr, final_label}`.
+**Modules pending:**
+- `research/labeler.py` — pure function per §15.1. Now trivially derived from the L14 mechanic; consumes `signal_exit_pool_{setup}.json` and re-emits per-cluster `final_label` if needed alongside per-signal features.
+- `research/classify_pool.py` — driver applying labeler to a pool; writes `research/labeler/{setup}_final_labels.json`.
+
+Label output schema per cluster (from `signal_exit_pool_{setup}.json`):
+`{cluster_id, ticker, is_example, tag, signal_bar_idx, status, reason, entry_k, entry_bar, entry_date, cap_bar, cap_date, cap_cause, horizon, eff_horizon, adr14_at_entry, effective_entry, stop, stop_hit_bar, mfe_during_life, mfe_full_window, final_label}`.
 
 Downstream consumers:
 - **Refinement grinder** reads `final_label` and the pool cluster list.
-- **EV grinder** reads `realized_pnl_adr` per cluster.
+- **EV grinder** reads realized P&L per cluster — but NOT from the labeler. Realized P&L comes from profit grinder under the EV-after-Profit reorder. Until the reorder lands, EV operates on the legacy raw_signal_clusters `move_adr` field.
 
 ---
 

@@ -1,0 +1,93 @@
+==============================================================
+NEXT-SESSION PROMPT — labeler design follow-up
+Generated: 2026-04-26 (Dan asleep run + close-out)
+==============================================================
+
+Paste the block below into the next session.
+
+──────────────────────────────────────────────────────────────
+
+Pick up the labeler design work for the signal-exit-pool grinder. Prior session ran a
+comprehensive bakeoff while I was asleep (2026-04-25 → 2026-04-26). Findings + recommendation
+in SIGNAL_EXIT_GRINDER.md §Pending research "Pool grinder mechanic structurally wrong as
+labeler — bakeoff resolved 2026-04-25". Read that section first, then come back here.
+
+Quick recap of what the bakeoff established (no need to re-run):
+- 18 labeler primitives tested on HTF entered pool. ML labelers (4-refined max-margin,
+  kernel SVM, one-class SVM, K-NN) all failed lock. Envelope/scalar labelers all hold lock.
+- L14 — "WIN iff mfe_during_life >= min(example mfe_during_life)" — scored 10/10 on
+  hand-verified case targets. Generalizes across HTF/BF/BASE: T_HTF=2.376, T_BF=2.376,
+  T_BASE=2.886 ADR. Wild admission 38-42% per setup.
+- L14's threshold has high LOO sensitivity on HTF (drop OSCR → T 2.376→4.216, admission
+  38.6%→26.0%). BF/BASE much less sensitive.
+- Original case targets I had set were wrong because cluster_meta `mfe_adr` is over the
+  full forward window (post-stop dead-tape). Corrected to `mfe_during_life` (pre-stop).
+  TAN_232/HYMC_125/LOGI_149 are NOT round-trips per C2 — their during-life MFEs are
+  1.18/0.59/2.27 ADR, all clear LOSS.
+
+Realized P&L attribution: RESOLVED out of labeler scope. The labeler outputs WIN/LOSS only.
+Realized P&L per cluster is profit grinder's job, downstream. Pipeline reorder is
+`labeler → refinement → entry_candle_scorer → profit_grinder → ev_grinder` (EV consumes
+profit's per-trade detail as outcome variable). The reorder is a separate work item — NOT
+in scope for the labeler ship.
+
+Two open decisions for this session:
+
+1. **Confirm L14 as the labeler.** It's the recommendation. Constraints C1/C2/C3 cleanly
+   met; C4 is partial — "feature ≥ T" reduces to envelope-on-1D-feature, the (5) primitive
+   in its smallest form. Approve, reject, or ask for variants?
+
+2. **HTF LOO sensitivity decision.** OSCR (h=9, full-life-by-earnings-cap) anchors
+   T_HTF=2.376. Without OSCR, T jumps to 4.216. Three options:
+   (a) Accept the OSCR anchor; ship as-is. Sensitivity is real but not pathological.
+   (b) Use a second-quartile fallback when the threshold-setting example is short-horizon
+       (h<10). Adds a dimension, partial punt.
+   (c) Re-vet OSCR's example status. If OSCR is borderline, removing it is a DB change
+       (not a labeler change). Cleanest of the three if the answer is "OSCR shouldn't
+       have been an example anyway."
+   Decide direction here.
+
+Once decisions are settled, replace `scripts/signal_exit_pool_grinder.py` Phase 3-6 with
+L14 mechanic. Phase 1 (cluster meta build) and Phase 2 (forward feature compute, simpler
+under L14 — no expression cache slab needed, just OHLCV forward window) can be reused or
+simplified. Run HTF → verify → BF → BASE. Merge `signal-exit-pool` → v2 after gate-pass.
+
+What NOT to redo:
+- Don't re-run the bakeoff. Results in research/labeler_bakeoff/.
+- Don't re-derive case targets. Verified in mfe_during_life terms.
+- Don't re-litigate (5)-on-close-MAs (7 variants tested, all ranked below L14 + L17 + L18).
+- Don't try (4-refined) again. Lock-fail at 27/28 isn't a hyperparameter problem.
+- Don't bundle the pipeline reorder (EV-after-Profit, raw_signal_clusters schema cleanup,
+  refinement-takes-per-signal-pre-dedup) into the labeler ship. That's its own session.
+
+Verification before any code:
+1. Read SIGNAL_EXIT_GRINDER.md §Pending research to confirm understanding.
+2. Dan picks options 1 + 2.
+3. Plain-language rule statement back before any code change.
+
+Pipeline state: v2 head 94f2c41 unchanged. OHLCV 11,859 tickers, expr cache fingerprint
+505a20afa75726fa. HALTED file at data/signal_exit_grind/signal_exit_pool_htf_HALTED_20260425_202509.json
+preserved as reference. Stages 4b/4c blocked on labeler design (now resolved pending L14
+confirmation). 5 worktrees + stale branches retained.
+
+Diagnostic artifacts to inspect at any time:
+- research/labeler_bakeoff.py — bakeoff harness (18 labelers)
+- research/labeler_bakeoff_bf_base.py — cross-setup L14 check
+- research/labeler_bakeoff/results.json — full per-labeler metrics
+- research/labeler_bakeoff/summary.txt — ranked summary
+- research/labeler_bakeoff/bf_base_l14_check.json — cross-setup L14 numbers
+- research/forward_envelope_diag.py — earlier (5)-on-close-MA diagnostic, superseded but
+  useful for pullback-failure analysis.
+
+Pipeline reorder (separate future session, not this one):
+- EV-after-Profit ordering: profit grinder produces per-trade realized_pnl; EV consumes
+  it as outcome variable. Currently EV-before-Profit per DEPENDENCY_MAP.md.
+- raw_signal_clusters_*.json schema cleanup: drop exit_bar/move_adr/exit_date (those
+  were exit-rule-derived under the old mechanic). Add per-signal label + mfe_during_life
+  + eff_horizon + stop_hit_bar.
+- Refinement grinder unit shifts from cluster-aware (rightmost+leftward) to per-signal
+  pre-dedup. Per-signal labels from L14 attached, beam search scores against per-signal
+  rows (not clusters). Curve-fit defense (consensus + binomial significance) carries over.
+
+──────────────────────────────────────────────────────────────
+End of prompt.

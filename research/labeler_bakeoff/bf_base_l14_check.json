@@ -1,0 +1,107 @@
+{
+  "htf": {
+    "setup": "htf",
+    "n_entry": 243,
+    "n_processed": 243,
+    "n_examples": 28,
+    "n_wild": 215,
+    "T": 2.3760488176964163,
+    "setting_example": {
+      "cluster_id": 177,
+      "ticker": "OSCR",
+      "is_example": 1,
+      "horizon": 9,
+      "stop_hit_bar": 9,
+      "eff_horizon": 9,
+      "mfe_during_life": 2.3760488176964163,
+      "entry_date": "2024-01-24"
+    },
+    "examples_lock_pass": 28,
+    "n_wild_win": 83,
+    "wild_win_rate": 0.386046511627907,
+    "example_mfe_distribution": {
+      "min": 2.3760488176964163,
+      "max": 76.78816615466809,
+      "median": 12.081134127257776,
+      "p25": 8.080665568526346,
+      "p75": 23.049945096618647
+    },
+    "wild_mfe_distribution": {
+      "min": -0.8473200429748112,
+      "max": 68.37171325258306,
+      "median": 1.4274521021671336,
+      "p25": 0.42397706915084044,
+      "p75": 4.340699488516301
+    }
+  },
+  "bf": {
+    "setup": "bf",
+    "n_entry": 298,
+    "n_processed": 295,
+    "n_examples": 45,
+    "n_wild": 250,
+    "T": 2.3760488176964163,
+    "setting_example": {
+      "cluster_id": 229,
+      "ticker": "OSCR",
+      "is_example": 1,
+      "horizon": 9,
+      "stop_hit_bar": 9,
+      "eff_horizon": 9,
+      "mfe_during_life": 2.3760488176964163,
+      "entry_date": "2024-01-24"
+    },
+    "examples_lock_pass": 45,
+    "n_wild_win": 106,
+    "wild_win_rate": 0.424,
+    "example_mfe_distribution": {
+      "min": 2.3760488176964163,
+      "max": 75.94980079681275,
+      "median": 12.721843748220966,
+      "p25": 8.066737279087047,
+      "p75": 19.537808119234985
+    },
+    "wild_mfe_distribution": {
+      "min": -0.5931211327275779,
+      "max": 26.665372527269373,
+      "median": 1.806945834331703,
+      "p25": 0.2126929674099495,
+      "p75": 5.233209019292713
+    }
+  },
+  "base": {
+    "setup": "base",
+    "n_entry": 474,
+    "n_processed": 464,
+    "n_examples": 38,
+    "n_wild": 426,
+    "T": 2.885567890691714,
+    "setting_example": {
+      "cluster_id": 47,
+      "ticker": "AXTI",
+      "is_example": 1,
+      "horizon": 3,
+      "stop_hit_bar": 3,
+      "eff_horizon": 3,
+      "mfe_during_life": 2.885567890691714,
+      "entry_date": "2025-10-24"
+    },
+    "examples_lock_pass": 38,
+    "n_wild_win": 180,
+    "wild_win_rate": 0.4225352112676056,
+    "example_mfe_distribution": {
+      "min": 2.885567890691714,
+      "max": 78.75318107827498,
+      "median": 13.996401644962305,
+      "p25": 6.382978723404253,
+      "p75": 19.152260880106674
+    },
+    "wild_mfe_distribution": {
+      "min": -0.566913580246914,
+      "max": 19.75717067451842,
+      "median": 2.33392645314353,
+      "p25": 0.5266177037587315,
+      "p75": 4.61398949704943
+    }
+  }
+}

@@ -1,0 +1,1534 @@
+{
+  "generated_at": "2026-04-25T23:58:08",
+  "setup": "htf",
+  "n_examples": 28,
+  "n_wild": 215,
+  "case_targets": [
+    {
+      "ticker": "TAN",
+      "cluster_id": 231,
+      "want": "WIN"
+    },
+    {
+      "ticker": "TAN",
+      "cluster_id": 232,
+      "want": "LOSS"
+    },
+    {
+      "ticker": "HYMC",
+      "cluster_id": 125,
+      "want": "LOSS"
+    },
+    {
+      "ticker": "LOGI",
+      "cluster_id": 149,
+      "want": "LOSS"
+    },
+    {
+      "ticker": "CRSR",
+      "cluster_id": 67,
+      "want": "LOSS"
+    },
+    {
+      "ticker": "GOSS",
+      "cluster_id": 108,
+      "want": "LOSS"
+    },
+    {
+      "ticker": "VNDA",
+      "cluster_id": 251,
+      "want": "LOSS"
+    },
+    {
+      "ticker": "AGI",
+      "cluster_id": 6,
+      "want": "WIN"
+    },
+    {
+      "ticker": "BZH",
+      "cluster_id": 41,
+      "want": "WIN"
+    },
+    {
+      "ticker": "APLS",
+      "cluster_id": 13,
+      "want": "LOSS"
+    }
+  ],
+  "results_ranked": [
+    {
+      "name": "L14_scalar_mfe_above_min_ex",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 83,
+      "wild_win_rate": 0.386046511627907,
+      "crosstab": {
+        "wild_win": {
+          "n": 83,
+          "mfe_median": 5.6017622103774585,
+          "stop_hit_median": 39.0,
+          "early_stop_rate": 0.30120481927710846,
+          "n_above_median": 39.0,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 132,
+          "mfe_median": 0.6102021287842763,
+          "stop_hit_median": 3.0,
+          "early_stop_rate": 0.9318181818181818,
+          "n_above_median": 1.0,
+          "rule_consensus_median": 0.0
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 1.0,
+      "mfe_gap": 4.991560081593182,
+      "rc_gap": 50.0,
+      "description": "Pure scalar: WIN iff mfe_during_life >= min(example mfe_during_life)",
+      "composite_score": 2.249578004079659
+    },
+    {
+      "name": "L17_composite_L14_AND_L13",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 83,
+      "wild_win_rate": 0.386046511627907,
+      "crosstab": {
+        "wild_win": {
+          "n": 83,
+          "mfe_median": 5.6017622103774585,
+          "stop_hit_median": 39.0,
+          "early_stop_rate": 0.30120481927710846,
+          "n_above_median": 39.0,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 132,
+          "mfe_median": 0.6102021287842763,
+          "stop_hit_median": 3.0,
+          "early_stop_rate": 0.9318181818181818,
+          "n_above_median": 1.0,
+          "rule_consensus_median": 0.0
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 1.0,
+      "mfe_gap": 4.991560081593182,
+      "rc_gap": 50.0,
+      "description": "L14 AND L13: mfe_life >= min_ex_mfe AND at least one bar closed above eff",
+      "composite_score": 2.249578004079659
+    },
+    {
+      "name": "L18_composite_L14_AND_L04",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 48,
+      "wild_win_rate": 0.22325581395348837,
+      "crosstab": {
+        "wild_win": {
+          "n": 48,
+          "mfe_median": 7.126814442807829,
+          "stop_hit_median": 40.5,
+          "early_stop_rate": 0.20833333333333334,
+          "n_above_median": 40.0,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 167,
+          "mfe_median": 0.9143051848486555,
+          "stop_hit_median": 5.0,
+          "early_stop_rate": 0.8263473053892215,
+          "n_above_median": 2.0,
+          "rule_consensus_median": 2.0
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 0.9,
+      "mfe_gap": 6.212509257959174,
+      "rc_gap": 48.0,
+      "description": "L14 AND L04: scalar mfe gate AND per-bar MFE envelope",
+      "composite_score": 2.1706254628979584
+    },
+    {
+      "name": "L04_5_mfe_lower_full",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 53,
+      "wild_win_rate": 0.24651162790697675,
+      "crosstab": {
+        "wild_win": {
+          "n": 53,
+          "mfe_median": 6.20212412877531,
+          "stop_hit_median": 38.0,
+          "early_stop_rate": 0.22641509433962265,
+          "n_above_median": 38.0,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 162,
+          "mfe_median": 0.8837583455076269,
+          "stop_hit_median": 6.0,
+          "early_stop_rate": 0.8395061728395061,
+          "n_above_median": 2.0,
+          "rule_consensus_median": 1.5
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 0.8,
+      "mfe_gap": 5.318365783267683,
+      "rc_gap": 48.5,
+      "description": "(5) one-sided lower envelope on MFE-by-bar (locked at stop), full window",
+      "composite_score": 2.0359182891633845
+    },
+    {
+      "name": "L06_5_close_by_bar_lower_full",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 34,
+      "wild_win_rate": 0.15813953488372093,
+      "crosstab": {
+        "wild_win": {
+          "n": 34,
+          "mfe_median": 8.395249852868439,
+          "stop_hit_median": 38.5,
+          "early_stop_rate": 0.08823529411764706,
+          "n_above_median": 38.5,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 181,
+          "mfe_median": 1.0705685403386773,
+          "stop_hit_median": 7.0,
+          "early_stop_rate": 0.8011049723756906,
+          "n_above_median": 3.0,
+          "rule_consensus_median": 7.0
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 0.7,
+      "mfe_gap": 7.324681312529761,
+      "rc_gap": 43.0,
+      "description": "(5) one-sided lower envelope on raw close-by-bar (no MA smoothing), full window",
+      "composite_score": 1.9262340656264878
+    },
+    {
+      "name": "L07_5_combined_mfe_AND_closema_stopwin",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 33,
+      "wild_win_rate": 0.15348837209302327,
+      "crosstab": {
+        "wild_win": {
+          "n": 33,
+          "mfe_median": 7.625300429910974,
+          "stop_hit_median": 34.0,
+          "early_stop_rate": 0.18181818181818182,
+          "n_above_median": 34.0,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 182,
+          "mfe_median": 1.06904961805474,
+          "stop_hit_median": 7.0,
+          "early_stop_rate": 0.7802197802197802,
+          "n_above_median": 3.0,
+          "rule_consensus_median": 5.5
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 0.7,
+      "mfe_gap": 6.556250811856234,
+      "rc_gap": 44.5,
+      "description": "(5) MFE-lower-full AND close-MA-lower-stopwin",
+      "composite_score": 1.917812540592812
+    },
+    {
+      "name": "L08_5_combined_mfe_AND_closema_full",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 27,
+      "wild_win_rate": 0.12558139534883722,
+      "crosstab": {
+        "wild_win": {
+          "n": 27,
+          "mfe_median": 7.625300429910974,
+          "stop_hit_median": 34.0,
+          "early_stop_rate": 0.037037037037037035,
+          "n_above_median": 34.0,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 188,
+          "mfe_median": 1.104098291432113,
+          "stop_hit_median": 7.0,
+          "early_stop_rate": 0.7819148936170213,
+          "n_above_median": 4.0,
+          "rule_consensus_median": 7.5
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 0.7,
+      "mfe_gap": 6.521202138478861,
+      "rc_gap": 42.5,
+      "description": "(5) MFE-lower-full AND close-MA-bilateral-full",
+      "composite_score": 1.8760601069239429
+    },
+    {
+      "name": "L02_5_lower_close_ma_full",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 35,
+      "wild_win_rate": 0.16279069767441862,
+      "crosstab": {
+        "wild_win": {
+          "n": 35,
+          "mfe_median": 7.193614928881535,
+          "stop_hit_median": 22.0,
+          "early_stop_rate": 0.14285714285714285,
+          "n_above_median": 22.0,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 180,
+          "mfe_median": 1.0870669526820722,
+          "stop_hit_median": 7.0,
+          "early_stop_rate": 0.7944444444444444,
+          "n_above_median": 3.5,
+          "rule_consensus_median": 7.5
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 0.4,
+      "mfe_gap": 6.106547976199463,
+      "rc_gap": 42.5,
+      "description": "(5) one-sided lower envelope on close-MA, full window",
+      "composite_score": 1.5553273988099732
+    },
+    {
+      "name": "L01_5_bilateral_close_ma_full",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 34,
+      "wild_win_rate": 0.15813953488372093,
+      "crosstab": {
+        "wild_win": {
+          "n": 34,
+          "mfe_median": 6.879645785753732,
+          "stop_hit_median": 21.5,
+          "early_stop_rate": 0.14705882352941177,
+          "n_above_median": 21.5,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 181,
+          "mfe_median": 1.103565365025467,
+          "stop_hit_median": 7.0,
+          "early_stop_rate": 0.7900552486187845,
+          "n_above_median": 4.0,
+          "rule_consensus_median": 8.0
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 0.4,
+      "mfe_gap": 5.776080420728265,
+      "rc_gap": 42.0,
+      "description": "(5) bilateral envelope on close-MA log-ratios, full window",
+      "composite_score": 1.528804021036413
+    },
+    {
+      "name": "L13_scalar_closed_above_eff",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 157,
+      "wild_win_rate": 0.7302325581395349,
+      "crosstab": {
+        "wild_win": {
+          "n": 157,
+          "mfe_median": 2.8079908722316187,
+          "stop_hit_median": 15.0,
+          "early_stop_rate": 0.5859872611464968,
+          "n_above_median": 14.0,
+          "rule_consensus_median": 30.0
+        },
+        "wild_loss": {
+          "n": 58,
+          "mfe_median": 0.06792548117858045,
+          "stop_hit_median": 1.0,
+          "early_stop_rate": 0.9655172413793104,
+          "n_above_median": 0.0,
+          "rule_consensus_median": 0.0
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 0.7,
+      "mfe_gap": 2.7400653910530384,
+      "rc_gap": 30.0,
+      "description": "Pure scalar: WIN iff trade life had any bar close above effective_entry",
+      "composite_score": 1.437003269552652
+    },
+    {
+      "name": "L05_5_mfe_lower_stopwin",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 127,
+      "wild_win_rate": 0.5906976744186047,
+      "crosstab": {
+        "wild_win": {
+          "n": 127,
+          "mfe_median": 2.037717289777562,
+          "stop_hit_median": 8.0,
+          "early_stop_rate": 0.6771653543307087,
+          "n_above_median": 6.0,
+          "rule_consensus_median": 27.0
+        },
+        "wild_loss": {
+          "n": 88,
+          "mfe_median": 0.9466926891983579,
+          "stop_hit_median": 9.0,
+          "early_stop_rate": 0.7045454545454546,
+          "n_above_median": 4.5,
+          "rule_consensus_median": 6.5
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        }
+      },
+      "case_score": 0.2,
+      "mfe_gap": 1.0910246005792041,
+      "rc_gap": 20.5,
+      "description": "(5) one-sided lower envelope on MFE-by-bar (no lock), stop-window",
+      "composite_score": 0.6645512300289602
+    },
+    {
+      "name": "L03_5_lower_close_ma_stopwin",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 77,
+      "wild_win_rate": 0.3581395348837209,
+      "crosstab": {
+        "wild_win": {
+          "n": 77,
+          "mfe_median": 1.8036914205947707,
+          "stop_hit_median": 6.0,
+          "early_stop_rate": 0.6103896103896104,
+          "n_above_median": 5.0,
+          "rule_consensus_median": 16.0
+        },
+        "wild_loss": {
+          "n": 138,
+          "mfe_median": 1.2401343624071082,
+          "stop_hit_median": 9.0,
+          "early_stop_rate": 0.7318840579710145,
+          "n_above_median": 5.0,
+          "rule_consensus_median": 16.5
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 0.3,
+      "mfe_gap": 0.5635570581876626,
+      "rc_gap": -0.5,
+      "description": "(5) one-sided lower close-MA, stop-window (Fix B)",
+      "composite_score": 0.3181778529093831
+    },
+    {
+      "name": "L15_scalar_kneedle_mfe",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 215,
+      "wild_win_rate": 1.0,
+      "crosstab": {
+        "wild_win": {
+          "n": 215,
+          "mfe_median": 1.4274521021671336,
+          "stop_hit_median": 8.0,
+          "early_stop_rate": 0.6883720930232559,
+          "n_above_median": 5.0,
+          "rule_consensus_median": 16.0
+        },
+        "wild_loss": {
+          "n": 0,
+          "mfe_median": null,
+          "stop_hit_median": null,
+          "early_stop_rate": null,
+          "n_above_median": null,
+          "rule_consensus_median": null
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        }
+      },
+      "case_score": 0.3,
+      "mfe_gap": null,
+      "rc_gap": null,
+      "description": "Kneedle elbow on combined examples + obvious-losers MFE distribution",
+      "composite_score": -0.2
+    },
+    {
+      "name": "L16_mahalanobis",
+      "status": "ok",
+      "examples_lock": 28,
+      "n_wild_win": 211,
+      "wild_win_rate": 0.9813953488372092,
+      "crosstab": {
+        "wild_win": {
+          "n": 211,
+          "mfe_median": 1.4008489993935735,
+          "stop_hit_median": 8.0,
+          "early_stop_rate": 0.6919431279620853,
+          "n_above_median": 5.0,
+          "rule_consensus_median": 15.0
+        },
+        "wild_loss": {
+          "n": 4,
+          "mfe_median": 12.745679616812545,
+          "stop_hit_median": 104.5,
+          "early_stop_rate": 0.5,
+          "n_above_median": 101.0,
+          "rule_consensus_median": 50.0
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "WIN",
+          "match": false
+        }
+      },
+      "case_score": 0.2,
+      "mfe_gap": -11.344830617418971,
+      "rc_gap": -35.0,
+      "description": "Mahalanobis distance from example centroid; radius = max example distance",
+      "composite_score": -1.5672415308709484
+    }
+  ],
+  "results_unranked": [
+    {
+      "name": "L09_4refined_max_margin_linear",
+      "status": "LOCK_FAIL (27/28)",
+      "examples_lock": 27,
+      "n_wild_win": 73,
+      "wild_win_rate": 0.3395348837209302,
+      "crosstab": {
+        "wild_win": {
+          "n": 73,
+          "mfe_median": 6.565676642625929,
+          "stop_hit_median": 44.0,
+          "early_stop_rate": 0.2054794520547945,
+          "n_above_median": 44.0,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 142,
+          "mfe_median": 0.7047769496754175,
+          "stop_hit_median": 4.0,
+          "early_stop_rate": 0.9366197183098591,
+          "n_above_median": 1.0,
+          "rule_consensus_median": 0.0
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 1.0,
+      "mfe_gap": 5.860899692950512,
+      "rc_gap": 50.0,
+      "description": "(4-refined) linear max-margin separator, examples vs structural obvious-losers"
+    },
+    {
+      "name": "L10_4refined_kernel_svm_rbf",
+      "status": "LOCK_FAIL (27/28)",
+      "examples_lock": 27,
+      "n_wild_win": 78,
+      "wild_win_rate": 0.3627906976744186,
+      "crosstab": {
+        "wild_win": {
+          "n": 78,
+          "mfe_median": 5.742517374078776,
+          "stop_hit_median": 42.5,
+          "early_stop_rate": 0.2948717948717949,
+          "n_above_median": 41.0,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 137,
+          "mfe_median": 0.6335746294381237,
+          "stop_hit_median": 4.0,
+          "early_stop_rate": 0.9124087591240876,
+          "n_above_median": 1.0,
+          "rule_consensus_median": 0.0
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 1.0,
+      "mfe_gap": 5.108942744640652,
+      "rc_gap": 50.0,
+      "description": "(4-refined) RBF-kernel SVM on examples vs obvious-losers"
+    },
+    {
+      "name": "L11_one_class_svm_examples",
+      "status": "LOCK_FAIL (23/28)",
+      "examples_lock": 23,
+      "n_wild_win": 54,
+      "wild_win_rate": 0.25116279069767444,
+      "crosstab": {
+        "wild_win": {
+          "n": 54,
+          "mfe_median": 6.812845299680026,
+          "stop_hit_median": 42.0,
+          "early_stop_rate": 0.14814814814814814,
+          "n_above_median": 41.5,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 161,
+          "mfe_median": 0.8471301987706565,
+          "stop_hit_median": 5.0,
+          "early_stop_rate": 0.8695652173913043,
+          "n_above_median": 2.0,
+          "rule_consensus_median": 0.0
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 0.9,
+      "mfe_gap": 5.965715100909369,
+      "rc_gap": 50.0,
+      "description": "One-class SVM trained on examples only, RBF kernel"
+    },
+    {
+      "name": "L12_knn_examples_vs_losers_K5",
+      "status": "LOCK_FAIL (26/28)",
+      "examples_lock": 26,
+      "n_wild_win": 52,
+      "wild_win_rate": 0.24186046511627907,
+      "crosstab": {
+        "wild_win": {
+          "n": 52,
+          "mfe_median": 8.578060124029083,
+          "stop_hit_median": 55.0,
+          "early_stop_rate": 0.09615384615384616,
+          "n_above_median": 54.5,
+          "rule_consensus_median": 50.0
+        },
+        "wild_loss": {
+          "n": 163,
+          "mfe_median": 0.8472952667167571,
+          "stop_hit_median": 5.0,
+          "early_stop_rate": 0.8773006134969326,
+          "n_above_median": 2.0,
+          "rule_consensus_median": 1.0
+        }
+      },
+      "cases": {
+        "TAN_cid231": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "TAN_cid232": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "HYMC_cid125": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "LOGI_cid149": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "CRSR_cid67": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "GOSS_cid108": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "VNDA_cid251": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        },
+        "AGI_cid6": {
+          "want": "WIN",
+          "got": "LOSS",
+          "match": false
+        },
+        "BZH_cid41": {
+          "want": "WIN",
+          "got": "WIN",
+          "match": true
+        },
+        "APLS_cid13": {
+          "want": "LOSS",
+          "got": "LOSS",
+          "match": true
+        }
+      },
+      "case_score": 0.9,
+      "mfe_gap": 7.730764857312326,
+      "rc_gap": 49.0,
+      "description": "K-NN K=5 against examples + obvious-losers"
+    }
+  ]
+}

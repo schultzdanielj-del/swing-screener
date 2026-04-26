@@ -1,0 +1,259 @@
+Labeler bakeoff — HTF
+======================================================================
+
+Examples: 28, Wild ENTERED: 215
+Generated: 2026-04-25T23:58:08
+
+Ranked (lock-passing only):
+
+1. L14_scalar_mfe_above_min_ex  score=2.250
+   Pure scalar: WIN iff mfe_during_life >= min(example mfe_during_life)
+   Lock: 28/28  Wild WIN: 83/215 (38.6%)
+   MFE-gap (WIN-LOSS): 4.991560081593182  RC-gap: 50.0
+   Cases: 10/10 correct
+      [OK ]           TAN_cid231  want=WIN  got=WIN
+      [OK ]           TAN_cid232  want=LOSS  got=LOSS
+      [OK ]          HYMC_cid125  want=LOSS  got=LOSS
+      [OK ]          LOGI_cid149  want=LOSS  got=LOSS
+      [OK ]           CRSR_cid67  want=LOSS  got=LOSS
+      [OK ]          GOSS_cid108  want=LOSS  got=LOSS
+      [OK ]          VNDA_cid251  want=LOSS  got=LOSS
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [OK ]            BZH_cid41  want=WIN  got=WIN
+      [OK ]           APLS_cid13  want=LOSS  got=LOSS
+   WIN  cluster crosstab: mfe=5.6017622103774585  early_stop=0.30120481927710846  rc_med=50.0
+   LOSS cluster crosstab: mfe=0.6102021287842763  early_stop=0.9318181818181818  rc_med=0.0
+
+2. L17_composite_L14_AND_L13  score=2.250
+   L14 AND L13: mfe_life >= min_ex_mfe AND at least one bar closed above eff
+   Lock: 28/28  Wild WIN: 83/215 (38.6%)
+   MFE-gap (WIN-LOSS): 4.991560081593182  RC-gap: 50.0
+   Cases: 10/10 correct
+      [OK ]           TAN_cid231  want=WIN  got=WIN
+      [OK ]           TAN_cid232  want=LOSS  got=LOSS
+      [OK ]          HYMC_cid125  want=LOSS  got=LOSS
+      [OK ]          LOGI_cid149  want=LOSS  got=LOSS
+      [OK ]           CRSR_cid67  want=LOSS  got=LOSS
+      [OK ]          GOSS_cid108  want=LOSS  got=LOSS
+      [OK ]          VNDA_cid251  want=LOSS  got=LOSS
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [OK ]            BZH_cid41  want=WIN  got=WIN
+      [OK ]           APLS_cid13  want=LOSS  got=LOSS
+   WIN  cluster crosstab: mfe=5.6017622103774585  early_stop=0.30120481927710846  rc_med=50.0
+   LOSS cluster crosstab: mfe=0.6102021287842763  early_stop=0.9318181818181818  rc_med=0.0
+
+3. L18_composite_L14_AND_L04  score=2.171
+   L14 AND L04: scalar mfe gate AND per-bar MFE envelope
+   Lock: 28/28  Wild WIN: 48/215 (22.3%)
+   MFE-gap (WIN-LOSS): 6.212509257959174  RC-gap: 48.0
+   Cases: 9/10 correct
+      [OK ]           TAN_cid231  want=WIN  got=WIN
+      [OK ]           TAN_cid232  want=LOSS  got=LOSS
+      [OK ]          HYMC_cid125  want=LOSS  got=LOSS
+      [OK ]          LOGI_cid149  want=LOSS  got=LOSS
+      [OK ]           CRSR_cid67  want=LOSS  got=LOSS
+      [OK ]          GOSS_cid108  want=LOSS  got=LOSS
+      [OK ]          VNDA_cid251  want=LOSS  got=LOSS
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [BAD]            BZH_cid41  want=WIN  got=LOSS
+      [OK ]           APLS_cid13  want=LOSS  got=LOSS
+   WIN  cluster crosstab: mfe=7.126814442807829  early_stop=0.20833333333333334  rc_med=50.0
+   LOSS cluster crosstab: mfe=0.9143051848486555  early_stop=0.8263473053892215  rc_med=2.0
+
+4. L04_5_mfe_lower_full  score=2.036
+   (5) one-sided lower envelope on MFE-by-bar (locked at stop), full window
+   Lock: 28/28  Wild WIN: 53/215 (24.7%)
+   MFE-gap (WIN-LOSS): 5.318365783267683  RC-gap: 48.5
+   Cases: 8/10 correct
+      [OK ]           TAN_cid231  want=WIN  got=WIN
+      [OK ]           TAN_cid232  want=LOSS  got=LOSS
+      [OK ]          HYMC_cid125  want=LOSS  got=LOSS
+      [OK ]          LOGI_cid149  want=LOSS  got=LOSS
+      [BAD]           CRSR_cid67  want=LOSS  got=WIN
+      [OK ]          GOSS_cid108  want=LOSS  got=LOSS
+      [OK ]          VNDA_cid251  want=LOSS  got=LOSS
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [BAD]            BZH_cid41  want=WIN  got=LOSS
+      [OK ]           APLS_cid13  want=LOSS  got=LOSS
+   WIN  cluster crosstab: mfe=6.20212412877531  early_stop=0.22641509433962265  rc_med=50.0
+   LOSS cluster crosstab: mfe=0.8837583455076269  early_stop=0.8395061728395061  rc_med=1.5
+
+5. L06_5_close_by_bar_lower_full  score=1.926
+   (5) one-sided lower envelope on raw close-by-bar (no MA smoothing), full window
+   Lock: 28/28  Wild WIN: 34/215 (15.8%)
+   MFE-gap (WIN-LOSS): 7.324681312529761  RC-gap: 43.0
+   Cases: 7/10 correct
+      [BAD]           TAN_cid231  want=WIN  got=LOSS
+      [OK ]           TAN_cid232  want=LOSS  got=LOSS
+      [OK ]          HYMC_cid125  want=LOSS  got=LOSS
+      [OK ]          LOGI_cid149  want=LOSS  got=LOSS
+      [OK ]           CRSR_cid67  want=LOSS  got=LOSS
+      [BAD]          GOSS_cid108  want=LOSS  got=WIN
+      [OK ]          VNDA_cid251  want=LOSS  got=LOSS
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [BAD]            BZH_cid41  want=WIN  got=LOSS
+      [OK ]           APLS_cid13  want=LOSS  got=LOSS
+   WIN  cluster crosstab: mfe=8.395249852868439  early_stop=0.08823529411764706  rc_med=50.0
+   LOSS cluster crosstab: mfe=1.0705685403386773  early_stop=0.8011049723756906  rc_med=7.0
+
+6. L07_5_combined_mfe_AND_closema_stopwin  score=1.918
+   (5) MFE-lower-full AND close-MA-lower-stopwin
+   Lock: 28/28  Wild WIN: 33/215 (15.3%)
+   MFE-gap (WIN-LOSS): 6.556250811856234  RC-gap: 44.5
+   Cases: 7/10 correct
+      [BAD]           TAN_cid231  want=WIN  got=LOSS
+      [OK ]           TAN_cid232  want=LOSS  got=LOSS
+      [OK ]          HYMC_cid125  want=LOSS  got=LOSS
+      [OK ]          LOGI_cid149  want=LOSS  got=LOSS
+      [BAD]           CRSR_cid67  want=LOSS  got=WIN
+      [OK ]          GOSS_cid108  want=LOSS  got=LOSS
+      [OK ]          VNDA_cid251  want=LOSS  got=LOSS
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [BAD]            BZH_cid41  want=WIN  got=LOSS
+      [OK ]           APLS_cid13  want=LOSS  got=LOSS
+   WIN  cluster crosstab: mfe=7.625300429910974  early_stop=0.18181818181818182  rc_med=50.0
+   LOSS cluster crosstab: mfe=1.06904961805474  early_stop=0.7802197802197802  rc_med=5.5
+
+7. L08_5_combined_mfe_AND_closema_full  score=1.876
+   (5) MFE-lower-full AND close-MA-bilateral-full
+   Lock: 28/28  Wild WIN: 27/215 (12.6%)
+   MFE-gap (WIN-LOSS): 6.521202138478861  RC-gap: 42.5
+   Cases: 7/10 correct
+      [BAD]           TAN_cid231  want=WIN  got=LOSS
+      [OK ]           TAN_cid232  want=LOSS  got=LOSS
+      [OK ]          HYMC_cid125  want=LOSS  got=LOSS
+      [OK ]          LOGI_cid149  want=LOSS  got=LOSS
+      [BAD]           CRSR_cid67  want=LOSS  got=WIN
+      [OK ]          GOSS_cid108  want=LOSS  got=LOSS
+      [OK ]          VNDA_cid251  want=LOSS  got=LOSS
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [BAD]            BZH_cid41  want=WIN  got=LOSS
+      [OK ]           APLS_cid13  want=LOSS  got=LOSS
+   WIN  cluster crosstab: mfe=7.625300429910974  early_stop=0.037037037037037035  rc_med=50.0
+   LOSS cluster crosstab: mfe=1.104098291432113  early_stop=0.7819148936170213  rc_med=7.5
+
+8. L02_5_lower_close_ma_full  score=1.555
+   (5) one-sided lower envelope on close-MA, full window
+   Lock: 28/28  Wild WIN: 35/215 (16.3%)
+   MFE-gap (WIN-LOSS): 6.106547976199463  RC-gap: 42.5
+   Cases: 4/10 correct
+      [BAD]           TAN_cid231  want=WIN  got=LOSS
+      [OK ]           TAN_cid232  want=LOSS  got=LOSS
+      [OK ]          HYMC_cid125  want=LOSS  got=LOSS
+      [BAD]          LOGI_cid149  want=LOSS  got=WIN
+      [BAD]           CRSR_cid67  want=LOSS  got=WIN
+      [BAD]          GOSS_cid108  want=LOSS  got=WIN
+      [BAD]          VNDA_cid251  want=LOSS  got=WIN
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [BAD]            BZH_cid41  want=WIN  got=LOSS
+      [OK ]           APLS_cid13  want=LOSS  got=LOSS
+   WIN  cluster crosstab: mfe=7.193614928881535  early_stop=0.14285714285714285  rc_med=50.0
+   LOSS cluster crosstab: mfe=1.0870669526820722  early_stop=0.7944444444444444  rc_med=7.5
+
+9. L01_5_bilateral_close_ma_full  score=1.529
+   (5) bilateral envelope on close-MA log-ratios, full window
+   Lock: 28/28  Wild WIN: 34/215 (15.8%)
+   MFE-gap (WIN-LOSS): 5.776080420728265  RC-gap: 42.0
+   Cases: 4/10 correct
+      [BAD]           TAN_cid231  want=WIN  got=LOSS
+      [OK ]           TAN_cid232  want=LOSS  got=LOSS
+      [OK ]          HYMC_cid125  want=LOSS  got=LOSS
+      [BAD]          LOGI_cid149  want=LOSS  got=WIN
+      [BAD]           CRSR_cid67  want=LOSS  got=WIN
+      [BAD]          GOSS_cid108  want=LOSS  got=WIN
+      [BAD]          VNDA_cid251  want=LOSS  got=WIN
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [BAD]            BZH_cid41  want=WIN  got=LOSS
+      [OK ]           APLS_cid13  want=LOSS  got=LOSS
+   WIN  cluster crosstab: mfe=6.879645785753732  early_stop=0.14705882352941177  rc_med=50.0
+   LOSS cluster crosstab: mfe=1.103565365025467  early_stop=0.7900552486187845  rc_med=8.0
+
+10. L13_scalar_closed_above_eff  score=1.437
+   Pure scalar: WIN iff trade life had any bar close above effective_entry
+   Lock: 28/28  Wild WIN: 157/215 (73.0%)
+   MFE-gap (WIN-LOSS): 2.7400653910530384  RC-gap: 30.0
+   Cases: 7/10 correct
+      [OK ]           TAN_cid231  want=WIN  got=WIN
+      [BAD]           TAN_cid232  want=LOSS  got=WIN
+      [OK ]          HYMC_cid125  want=LOSS  got=LOSS
+      [BAD]          LOGI_cid149  want=LOSS  got=WIN
+      [BAD]           CRSR_cid67  want=LOSS  got=WIN
+      [OK ]          GOSS_cid108  want=LOSS  got=LOSS
+      [OK ]          VNDA_cid251  want=LOSS  got=LOSS
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [OK ]            BZH_cid41  want=WIN  got=WIN
+      [OK ]           APLS_cid13  want=LOSS  got=LOSS
+   WIN  cluster crosstab: mfe=2.8079908722316187  early_stop=0.5859872611464968  rc_med=30.0
+   LOSS cluster crosstab: mfe=0.06792548117858045  early_stop=0.9655172413793104  rc_med=0.0
+
+11. L05_5_mfe_lower_stopwin  score=0.665
+   (5) one-sided lower envelope on MFE-by-bar (no lock), stop-window
+   Lock: 28/28  Wild WIN: 127/215 (59.1%)
+   MFE-gap (WIN-LOSS): 1.0910246005792041  RC-gap: 20.5
+   Cases: 2/10 correct
+      [OK ]           TAN_cid231  want=WIN  got=WIN
+      [BAD]           TAN_cid232  want=LOSS  got=WIN
+      [BAD]          HYMC_cid125  want=LOSS  got=WIN
+      [BAD]          LOGI_cid149  want=LOSS  got=WIN
+      [BAD]           CRSR_cid67  want=LOSS  got=WIN
+      [BAD]          GOSS_cid108  want=LOSS  got=WIN
+      [BAD]          VNDA_cid251  want=LOSS  got=WIN
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [BAD]            BZH_cid41  want=WIN  got=LOSS
+      [BAD]           APLS_cid13  want=LOSS  got=WIN
+   WIN  cluster crosstab: mfe=2.037717289777562  early_stop=0.6771653543307087  rc_med=27.0
+   LOSS cluster crosstab: mfe=0.9466926891983579  early_stop=0.7045454545454546  rc_med=6.5
+
+12. L03_5_lower_close_ma_stopwin  score=0.318
+   (5) one-sided lower close-MA, stop-window (Fix B)
+   Lock: 28/28  Wild WIN: 77/215 (35.8%)
+   MFE-gap (WIN-LOSS): 0.5635570581876626  RC-gap: -0.5
+   Cases: 3/10 correct
+      [BAD]           TAN_cid231  want=WIN  got=LOSS
+      [BAD]           TAN_cid232  want=LOSS  got=WIN
+      [OK ]          HYMC_cid125  want=LOSS  got=LOSS
+      [BAD]          LOGI_cid149  want=LOSS  got=WIN
+      [BAD]           CRSR_cid67  want=LOSS  got=WIN
+      [BAD]          GOSS_cid108  want=LOSS  got=WIN
+      [BAD]          VNDA_cid251  want=LOSS  got=WIN
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [BAD]            BZH_cid41  want=WIN  got=LOSS
+      [OK ]           APLS_cid13  want=LOSS  got=LOSS
+   WIN  cluster crosstab: mfe=1.8036914205947707  early_stop=0.6103896103896104  rc_med=16.0
+   LOSS cluster crosstab: mfe=1.2401343624071082  early_stop=0.7318840579710145  rc_med=16.5
+
+13. L15_scalar_kneedle_mfe  score=-0.200
+   Kneedle elbow on combined examples + obvious-losers MFE distribution
+   Lock: 28/28  Wild WIN: 215/215 (100.0%)
+   MFE-gap (WIN-LOSS): None  RC-gap: None
+   Cases: 3/10 correct
+      [OK ]           TAN_cid231  want=WIN  got=WIN
+      [BAD]           TAN_cid232  want=LOSS  got=WIN
+      [BAD]          HYMC_cid125  want=LOSS  got=WIN
+      [BAD]          LOGI_cid149  want=LOSS  got=WIN
+      [BAD]           CRSR_cid67  want=LOSS  got=WIN
+      [BAD]          GOSS_cid108  want=LOSS  got=WIN
+      [BAD]          VNDA_cid251  want=LOSS  got=WIN
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [OK ]            BZH_cid41  want=WIN  got=WIN
+      [BAD]           APLS_cid13  want=LOSS  got=WIN
+   WIN  cluster crosstab: mfe=1.4274521021671336  early_stop=0.6883720930232559  rc_med=16.0
+   LOSS cluster crosstab: mfe=None  early_stop=None  rc_med=None
+
+14. L16_mahalanobis  score=-1.567
+   Mahalanobis distance from example centroid; radius = max example distance
+   Lock: 28/28  Wild WIN: 211/215 (98.1%)
+   MFE-gap (WIN-LOSS): -11.344830617418971  RC-gap: -35.0
+   Cases: 2/10 correct
+      [BAD]           TAN_cid231  want=WIN  got=LOSS
+      [BAD]           TAN_cid232  want=LOSS  got=WIN
+      [BAD]          HYMC_cid125  want=LOSS  got=WIN
+      [BAD]          LOGI_cid149  want=LOSS  got=WIN
+      [BAD]           CRSR_cid67  want=LOSS  got=WIN
+      [BAD]          GOSS_cid108  want=LOSS  got=WIN
+      [BAD]          VNDA_cid251  want=LOSS  got=WIN
+      [OK ]             AGI_cid6  want=WIN  got=WIN
+      [OK ]            BZH_cid41  want=WIN  got=WIN
+      [BAD]           APLS_cid13  want=LOSS  got=WIN
+   WIN  cluster crosstab: mfe=1.4008489993935735  early_stop=0.6919431279620853  rc_med=15.0
+   LOSS cluster crosstab: mfe=12.745679616812545  early_stop=0.5  rc_med=50.0
