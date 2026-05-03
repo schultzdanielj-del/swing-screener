@@ -75,10 +75,10 @@ fundamentally alters what conditions the beam search finds. It stays fixed.
 Seven nodes in the UI flowchart. The vetting loop (Examples → Causative Processing → Vetting) repeats until convergence (no new
 examples found). After convergence: Correlative Targeting → Scan Tuning ↔ Optimal Management → Summary.
 
-**Nightly auto-refresh (4:30pm ET, fully automated):**
-  OHLCV append (daily/weekly/monthly) → intermediate cache rebuild (196 intermediates per ticker, ~1.7 min) → nightly scan of locked conditions (~35 sec) → universe matrix → earnings → market cache → fundamentals → seed vault backup. See `NIGHTLY_REFRESH.md` for the current step list.
-  The nightly **does NOT update the expression cache `.npz` files**. The `.npz` cache is the grinder cache, rebuilt manually via `expr_cache_builder.py --build` when needed for a consensus pipeline run. The nightly live-scan path uses a separate 196-intermediate `.im` cache built by `intermediate_cache_builder.py`, consumed by `scan_engine.py`. These are two independent caches with different purposes — do not conflate them.
-  When you sit down in the morning, the live watchlist is current. No manual refresh needed for daily operation.
+**Nightly auto-refresh (7:00am ET daily, fully automated):**
+  OHLCV append (daily/weekly/monthly) → intermediate cache rebuild (196 intermediates per ticker, ~1.7 min) → universe matrix → earnings → market cache → fundamentals → seed vault backup. See `NIGHTLY_REFRESH.md` for the current step list.
+  The nightly is **infrastructure-only — no scanning or signal output**. Live scan / watchlist generation runs separately via `scan_engine.py`'s CLI against the refreshed `.im` cache. The nightly **does NOT update the expression cache `.npz` files** either. The `.npz` cache is the grinder cache, rebuilt manually via `expr_cache_builder.py --build` when needed for a consensus pipeline run. `.im` and `.npz` are two independent caches with different purposes — do not conflate them.
+  When you sit down in the morning, OHLCV + intermediates are current and `scan_engine.py` is ready to produce a fresh watchlist on demand.
 
 ```
 The Vetting Loop (repeat until convergence):

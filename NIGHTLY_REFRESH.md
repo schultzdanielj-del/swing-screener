@@ -2,7 +2,7 @@
 
 **Goal:** Nightly refresh of the OHLCV + intermediate cache + market cache + fundamentals, producing a fresh live-scan watchlist. Zero Railway dependency for data; Railway is seed-vault backup only.
 
-**Entry point:** `local_runner/nightly.py` — triggered manually or via Windows Task Scheduler at 4:30pm ET.
+**Entry point:** `local_runner/nightly.py` — triggered manually or via Windows Task Scheduler at 7:00am ET, daily. Schedule moved from 4:30pm because EODHD bulk data isn't reliably ready by then; running the next morning is fine since scans are fast.
 
 Refer to the authoritative step list in `DEPENDENCY_MAP.md` under `nightly.py`. This file documents the intent, known issues, and non-obvious design decisions.
 

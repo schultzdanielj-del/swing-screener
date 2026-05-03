@@ -796,7 +796,7 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 ### nightly.py
 **Location:** `local_runner/nightly.py`
 **Spec:** `NIGHTLY_REFRESH.md`
-**What it does:** Orchestrates the 10-step nightly data refresh pipeline. Infrastructure-only — no scanning or signal output. Runs via Windows Task Scheduler at 4:30pm ET. Step 5 uses intermediate cache architecture — full rebuild of 196-column .im files (~1.7 min), replacing the previous 19-min forward-prop expression cache append.
+**What it does:** Orchestrates the 10-step nightly data refresh pipeline. Infrastructure-only — no scanning or signal output. Runs via Windows Task Scheduler at 7:00am ET, daily. Step 5 uses intermediate cache architecture — full rebuild of 196-column .im files (~1.7 min), replacing the previous 19-min forward-prop expression cache append.
 
 **Calls (in order):**
 1. `cache_builder.check_freshness()` — gate (alias `check_yfinance_freshness` for compat)
