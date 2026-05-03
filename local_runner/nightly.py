@@ -11,8 +11,7 @@ What it does (in order):
     2. Appends local daily OHLCV cache (EODHD)
     3. Appends weekly OHLCV cache (EODHD)
     4. Appends monthly OHLCV cache (EODHD)
-    5a. Appends intermediate cache (196 indicators per ticker, ~1-2 min)
-    5b. Runs scans against intermediate cache (~35 sec)
+    5. Appends intermediate cache (196 indicators per ticker, ~1-2 min)
     6. Rebuilds D1 universe matrix
     7. Refreshes earnings dates
     8. Appends market context cache (256 instruments)
@@ -123,17 +122,14 @@ def step_4_monthly_cache():
 
 
 def step_5_intermediate_cache():
-    """Append new bars to intermediate cache + run scans.
+    """Append new bars to intermediate cache.
 
-    Two sub-steps:
-      5a. Compute 196 intermediates for today's bar for all tickers (~1-2 min)
-      5b. Run locked scan conditions against intermediates (~35 sec)
+    Computes 196 intermediates for today's bar for all tickers (~1-2 min).
     """
-    step_header(5, TOTAL_STEPS, "Intermediate Cache - Append + Scan")
+    step_header(5, TOTAL_STEPS, "Intermediate Cache - Append")
 
     im_cache_dir = os.path.join(LOCAL_DIR, "cache", "intermediate_series")
 
-    # ── 5a: Append intermediates ──
     if not os.path.exists(im_cache_dir) or len(os.listdir(im_cache_dir)) < 100:
         print("  No intermediate cache found. Running full rebuild...")
         from intermediate_cache_builder import load_daily_cache, build_full
@@ -143,51 +139,12 @@ def step_5_intermediate_cache():
         elapsed = time.time() - t0
         print(f"  OK Full intermediate rebuild done in {elapsed:.1f}s")
     else:
-        # Incremental: rebuild all .im files from current OHLCV
-        # (Simple approach: full rebuild is fast enough at ~1.7 min)
         from intermediate_cache_builder import load_daily_cache, build_full
         daily_cache = load_daily_cache()
         t0 = time.time()
         build_full(daily_cache, workers=14)
         elapsed = time.time() - t0
         print(f"  OK Intermediate cache rebuild done in {elapsed:.1f}s")
-
-    # ── 5b: Run scans ──
-    print()
-    print(f"  {'-'*40}")
-    print(f"  Scanning locked conditions...")
-    print(f"  {'-'*40}")
-
-    scan_results = {}
-    # Discover available setups
-    setup_files = []
-    data_dir = os.path.join(os.path.dirname(LOCAL_DIR), "data")
-    if os.path.isdir(data_dir):
-        for f in os.listdir(data_dir):
-            if f.startswith("pyramid_results_") and f.endswith(".json"):
-                setup_type = f.replace("pyramid_results_", "").replace(".json", "")
-                setup_files.append(setup_type)
-
-    if not setup_files:
-        print("  WARN No pyramid_results files found. Skipping scans.")
-        return
-
-    from scan_engine import scan_setup
-    for setup_type in setup_files:
-        try:
-            print(f"\n  Setup: {setup_type}")
-            signals = scan_setup(setup_type, daily_cache, workers=14)
-            scan_results[setup_type] = signals
-            if signals:
-                for s in signals:
-                    print(f"    SIGNAL: {s['ticker']:>6s}  {s['date']}  ${s['close']:.2f}")
-        except FileNotFoundError as e:
-            print(f"  WARN {e}")
-        except Exception as e:
-            print(f"  FAIL Scan failed for {setup_type}: {e}")
-
-    total_signals = sum(len(v) for v in scan_results.values())
-    print(f"\n  OK Scans complete: {total_signals} signals across {len(setup_files)} setups")
 
 
 def step_6_matrix():

@@ -394,7 +394,9 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 
 ### scan_engine.py
 **Location:** `local_runner/scan_engine.py`
-**What it does:** Evaluates locked scan conditions against intermediate cache for daily signal detection. Classifies conditions into dispatch (fast, from intermediates), other (ExpressionEngine fallback), and LSP (expensive, late-eval). Dispatch conditions that fail automatically defer to ExpressionEngine.
+**What it does:** Standalone live-scan tool. Evaluates locked scan conditions against intermediate cache for daily signal detection. Classifies conditions into dispatch (fast, from intermediates), other (ExpressionEngine fallback), and LSP (expensive, late-eval). Dispatch conditions that fail automatically defer to ExpressionEngine.
+
+**Not invoked by `nightly.py`** — nightly is infrastructure-only. Run scan_engine via its own CLI when you want a watchlist.
 
 **Inputs:**
 - `local_runner/cache/intermediate_series/{TICKER}.im` — via `read_im_as_dict()`
@@ -402,11 +404,10 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 - `local_runner/cache/universe_ohlcv_daily.pkl` — for ExpressionEngine fallback + LSP conditions
 
 **Outputs:**
-- Signal list (in-memory): `[{ticker, date, close}, ...]`
-- Printed to stdout by `nightly.py` step 5b
+- Signal list (in-memory): `[{ticker, date, close}, ...]` printed to stdout
 
 **Key functions called by others:**
-- `scan_setup(setup_type, daily_cache, workers=14)` — called by `nightly.py` step 5b
+- `scan_setup(setup_type, daily_cache, workers=14)` — invoked by CLI
 - `load_conditions(setup_type)` — loads from pyramid_results JSON
 - `classify_conditions(conditions)` — splits into dispatch/other/LSP buckets
 - `validate_scan(setup_type, daily_cache)` — compares results vs `signal_filter.py`
@@ -417,7 +418,7 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 - `--validate dtss` — validate against signal_filter.py (requires valid expr cache)
 
 **Downstream Consumers:**
-- `nightly.py` — reads signal output for step 5b logging
+- None automated. Manual CLI use only.
 
 ---
 
@@ -762,20 +763,47 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 
 ---
 
+### avatar_phase_probe.py
+**Location:** `research/avatar_phase_probe.py`
+**Spec:** `Avatar_Correlator.md`
+**Status:** Research-stage. Single-anchor approach-A probe; multi-anchor 1-NN refactor pending per Avatar_Correlator.md §6.3.
+**What it does:** Setup-agnostic phase-decomposition shape recognizer. Per setup, takes a single bank example with phase boundaries and produces a ranked top-N list of universe candidates by Euclidean distance in 6-per-phase generic signature space. Replaces the prior log-close Pearson viability gate (research/avatar_viability_bank.py).
+
+**Key design facts:**
+- 6-dim per-phase signature (length_frac, end_level, max_level, min_level, directness, argmax_position) — log-return anchored at window-start, no setup-specific math.
+- Hard structural constraint inside DP fit for K ≥ 2: `phase_0_max_level ≥ close[asof]_level`. Replaces buggy §3.10 fade filter for retrace-length-exceeding-exclude_last cases.
+- Two-stage parallel pipeline: sequential pre-pass (tradable + class filter + finite-window check) → numba `prange` DP fit over flat eligible-end-idxs → sequential per-ticker greedy non-overlap dedup → global heap top-N.
+- Per-ticker eligibility uses `fundamentals_cache.json`: skip industries in EXCLUDED_INDUSTRIES (currently {"Biotechnology"}); ETFs/ETNs without fundamentals pass through (market cap check skipped when shares_outstanding missing).
+- Bank entries hardcoded in BANK list at top of script; phase boundaries pulled from "Setup phases" Google Sheet (public-share + curl `gviz/tq?sheet=<name>` endpoint, or Drive MCP XLSX export as fallback).
+
+**Inputs:**
+- `local_runner/cache/universe_ohlcv_daily.pkl` — universe OHLCV
+- `local_runner/cache/fundamentals_cache.json` — sector/industry/shares_outstanding for industry exclusion + market cap filter
+- Google Sheet "Setup phases" (file id `1hG2Pm0KeRNNaUam_oKiUuDQtT8xaqYnUxFE-ry_fCF8`) — bank phase boundary dates per setup tab. Read via Drive MCP or public-share `/gviz/tq?tqx=out:csv&sheet=<setup>` endpoint.
+
+**Outputs (per setup, written to `research/avatar_viability_bank/`):**
+- `<setup>_phase_probe_results.json` — bank metadata + top-N ranked candidates with fit boundaries
+- `<setup>_phase_probe_top<N>.png` — 5×6 grid of log-close overlays
+- `<setup>_all_dedup_distances.npy` — full dedup'd per-candidate distance distribution (used by percentile flag, §6.4 of Avatar_Correlator.md — partial implementation, not yet validated end-to-end)
+- `<setup>_per_day_min_distances.npy` — per-day-min distance distribution (day-strength context, §6.4)
+
+**Downstream consumers:** None yet built. Per Avatar_Correlator.md §3.6, the joint EV surface combines ranked candidates with classifier W/L outcomes and EV grinder regime scores. Integration pending the multi-anchor refactor (§6.3) and the classifier hookup.
+
+---
+
 ## Layer 4 — Infrastructure
 
 ### nightly.py
 **Location:** `local_runner/nightly.py`
 **Spec:** `NIGHTLY_REFRESH.md`
-**What it does:** Orchestrates the 10-step nightly data refresh pipeline. Runs via Windows Task Scheduler at 4:30pm ET. Step 5 uses intermediate cache architecture — full rebuild of 196-column .im files (~1.7 min) then scans locked conditions (~35 sec), replacing the previous 19-min forward-prop expression cache append.
+**What it does:** Orchestrates the 10-step nightly data refresh pipeline. Infrastructure-only — no scanning or signal output. Runs via Windows Task Scheduler at 4:30pm ET. Step 5 uses intermediate cache architecture — full rebuild of 196-column .im files (~1.7 min), replacing the previous 19-min forward-prop expression cache append.
 
 **Calls (in order):**
 1. `cache_builder.check_freshness()` — gate (alias `check_yfinance_freshness` for compat)
 2. `cache_builder.append_daily_cache()` — daily OHLCV
 3. `cache_builder.append_weekly()` — weekly OHLCV
 4. `cache_builder.append_monthly()` — monthly OHLCV
-5a. `intermediate_cache_builder.build_full()` — intermediate cache rebuild (196 intermediates per ticker)
-5b. `scan_engine.scan_setup()` — scan locked conditions against intermediates (per discovered setup)
+5. `intermediate_cache_builder.build_full()` — intermediate cache rebuild (196 intermediates per ticker)
 6. `matrix_builder.get_universe_matrix()` — universe matrix rebuild (graceful skip if expr cache missing)
 7. Railway API `/api/universe/refresh-earnings` — earnings dates
 8. `market_cache_builder.append_new_bars()` — market cache
@@ -1050,14 +1078,13 @@ scanperfect.db
   └── pending_examples table → scanperfect.py, agent.py
 ```
 
-### Chain 5: Nightly Scan Path (separate from grinder cache)
+### Chain 5: Standalone Live Scan (not in nightly)
 ```
 cache_builder.py (daily .pkl)
   → intermediate_cache_builder.py (.im files, 196 intermediate columns per ticker)
-    → scan_engine.py (reads .im, applies locked conditions, produces nightly signals)
-      → nightly.py step 5b (invokes scan_setup per discovered setup)
+    → scan_engine.py (reads .im, applies locked conditions, produces signals via CLI)
 ```
-**This chain is independent of the grinder's `.npz` expression cache.** The nightly scan uses a stripped-down 196-intermediate format because it only needs the ~42 dispatchable expression types, not all 15,805. Grinders cannot use `.im` (they need the full expression library). These are two parallel caches with different purposes: `.im` is nightly-scan-only, `.npz` is grinder-only. Do not conflate them.
+**This chain is independent of the grinder's `.npz` expression cache, and is NOT part of nightly.** Nightly only refreshes the upstream caches (daily .pkl + .im files); `scan_engine.py` is invoked separately via its own CLI when a watchlist is wanted. The live scan uses a stripped-down 196-intermediate format because it only needs the ~42 dispatchable expression types, not all 15,805. Grinders cannot use `.im` (they need the full expression library). These are two parallel caches with different purposes: `.im` is live-scan-only, `.npz` is grinder-only. Do not conflate them.
 
 ---
 

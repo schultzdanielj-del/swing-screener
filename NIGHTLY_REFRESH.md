@@ -16,8 +16,7 @@ Refer to the authoritative step list in `DEPENDENCY_MAP.md` under `nightly.py`. 
 | 2 | `cache_builder.append_daily_cache()` | Append new daily bars to `universe_ohlcv_daily.pkl`, sync universe (IPOs + delistings) against the EODHD exchange symbol list |
 | 3 | `cache_builder.append_weekly()` | Append to `universe_ohlcv_weekly.pkl` |
 | 4 | `cache_builder.append_monthly()` | Append to `universe_ohlcv_monthly.pkl` |
-| 5a | `intermediate_cache_builder.build_full()` | Rebuild `.im` files — 196 numeric intermediates per ticker (SMA, ATR, RSI, etc). Pure-numpy compute, no ExpressionEngine, ~1.7 min for all tickers at 14 workers. |
-| 5b | `scan_engine.scan_setup()` | For each discovered setup, evaluate locked signal conditions against the intermediate cache. Produces in-memory signal list logged to nightly output. |
+| 5 | `intermediate_cache_builder.build_full()` | Rebuild `.im` files — 196 numeric intermediates per ticker (SMA, ATR, RSI, etc). Pure-numpy compute, no ExpressionEngine, ~1.7 min for all tickers at 14 workers. |
 | 6 | `matrix_builder.get_universe_matrix()` | Rebuild D1 universe matrix for the grinder (graceful skip if expression cache missing). |
 | 7 | Earnings refresh | Currently **BROKEN** — Railway endpoints don't exist. Needs a local Yahoo Finance scraper. |
 | 8 | `market_cache_builder.append_new_bars()` | Append market context instruments (US ETFs + EODHD indices/crypto/breadth + yfinance futures + FRED macro). |
@@ -25,6 +24,8 @@ Refer to the authoritative step list in `DEPENDENCY_MAP.md` under `nightly.py`. 
 | 10 | `seed_vault.backup()` | Push SQLite tables + grind result JSONs to Railway for backup. Intentional Railway dependency. |
 
 **The nightly pipeline does NOT update the expression cache `.npz` files.** The grinder's expression cache is a separate artifact, rebuilt manually via `expr_cache_builder.py --build` when needed for a consensus pipeline run. Step 5 uses the new intermediate-cache architecture (`.im` files) which is independent of the grinder's `.npz` cache — they have different purposes and different column sets. See `DATA_CONTRACT.md` for the format details and `DEPENDENCY_MAP.md` Chain 5 for the dependency graph.
+
+**The nightly pipeline does NOT scan or generate signals.** Nightly is infrastructure-only: cache builds, matrix rebuild, market context, fundamentals, seed vault. Live scan / watchlist generation runs separately via `scan_engine.py`'s own CLI (`--setup` / `--all`).
 
 **Killed:** Old step 2 (300-bar daily OHLCV cache rebuild from Railway). Nothing reads this cache — everything uses the daily pickle. Removed 2026-03-25.
 
