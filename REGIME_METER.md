@@ -24,7 +24,7 @@ Not yet built. See Pending build.
   - `local_runner/cache/universe_ohlcv_daily.pkl` — full tradable universe OHLCV (~11,500 tickers)
   - `local_runner/cache/expr_series/SPY.npz` and `QQQ.npz` — ext zone display labels only (universe expression cache; 2020-onward)
 - **History window**: 2016-01-01 onward (matches `HISTORY_START` in `market_cache_builder.py`).
-- **No new data ingestion** required. Every column derives from existing caches.
+- **One new data source required**: NAAIM Exposure Index, weekly CSV from naaim.org. Forward-filled across daily bars (each day carries the most recent Wednesday release). Source not currently in `market_cache_builder.py` — needs to be added as a new derived instrument before step 1 build can run. All other 23 columns derive from existing caches.
 - **Refresh cadence**: daily after market close. Hooks into `local_runner/nightly.py` once the pipeline is end-to-end verified.
 - **Worktree isolation**: this component lives on the `regime-meter` branch and writes only to its own subdirectory until merged.
 
@@ -51,7 +51,7 @@ None.
 
 Build the regime-similarity engine and per-sector forward-projection cones. Fully scoped; no remaining design decisions.
 
-### Regime vector — 23 columns
+### Regime vector — 24 columns
 
 The similarity-math input. Z-scored over the 10-year history once; all subsequent distance computations use z-scored values.
 
@@ -80,6 +80,7 @@ The similarity-math input. Z-scored over the 10-year history once; all subsequen
 | Stockbee breadth | Count of stocks up 25%+ over last quarter (63 bars) | derive from `universe_ohlcv_daily.pkl` (tradable filter) |
 | Stockbee breadth | Count of stocks down 25%+ over last quarter (63 bars) | derive from `universe_ohlcv_daily.pkl` (tradable filter) |
 | Stockbee breadth | RSP / SPY ratio | derive |
+| Positioning / sentiment | NAAIM Exposure Index (raw weekly value, forward-filled to daily) | derived from NAAIM public CSV — new data ingestion required |
 
 **Display-layer columns** (not in similarity math, surfaced as plain-English labels in the dashboard only):
 
@@ -117,15 +118,16 @@ Applied to all 4 universe-aggregate columns (% above 50-MA, 10-day 4% up/down ra
 - Pick the horizon at which the conditional-vs-unconditional divergence is largest. Divergence metric: KS-statistic by default, KL-divergence as alternative (decided at implementation).
 - System reports the picked horizon and the divergence magnitude (confidence indicator displayed next to each cone)
 
-### Build checklist (item numbers continue from the session log)
+### Build checklist
 
-3. Build `regime_vector(date) -> 23-column vector` function. Validates non-NaN before returning.
-4. Run that function over every trading day 2016-01-01 → today. Persist as `regime_vector_history.parquet`.
-5. Compute z-score normalization (per-column mean + std). Persist as `regime_vector_normalization.json`.
-6. For each of 11 SPDR sector ETFs: compute forward log-return paths for horizons {5, 10, 20, 40 bars} from every historical anchor day. Persist as `sector_forward_paths/{sector}.npz`.
-7. Implement K-NN similarity lookup over z-scored vector.
-8. Implement signal-vs-noise horizon selector.
-9. Output for today: similar-day list, picked horizon, per-sector forward-path heatmap data (sufficient to render later in step 2's UI).
+1. **NAAIM ingestion** (prerequisite): add `NAAIM_CALC` to `market_cache_builder.py` instrument registry; fetch from NAAIM public CSV at naaim.org; forward-fill weekly Wednesday readings to daily bars. Verify 2006+ history available before downstream work.
+2. Build `regime_vector(date) -> 24-column vector` function. Validates non-NaN before returning.
+3. Run that function over every trading day 2016-01-01 → today. Persist as `regime_vector_history.parquet`.
+4. Compute z-score normalization (per-column mean + std). Persist as `regime_vector_normalization.json`.
+5. For each of 11 SPDR sector ETFs: compute forward log-return paths for horizons {5, 10, 20, 40 bars} from every historical anchor day. Persist as `sector_forward_paths/{sector}.npz`.
+6. Implement K-NN similarity lookup over z-scored vector.
+7. Implement signal-vs-noise horizon selector.
+8. Output for today: similar-day list, picked horizon, per-sector forward-path heatmap data (sufficient to render later in step 2's UI).
 
 ### Storage layout
 
