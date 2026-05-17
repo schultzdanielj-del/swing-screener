@@ -121,7 +121,9 @@ Applied to all 4 universe-aggregate columns (% above 50-MA, 10-day 4% up/down ra
 ### Build checklist
 
 1. **NAAIM ingestion** (prerequisite, worktree-local): `regime_meter/naaim_ingest.py` discovers the current xlsx URL on naaim.org each run, downloads, parses with alias-tolerant header detection, forward-fills weekly Wednesday readings across SPY's trading-day calendar (read from main-repo `market_ohlcv.pkl` read-only), writes `regime_meter/cache/naaim_daily.parquet`. Default re-fetches network each run; `--no-fetch` re-derives from cached raw xlsx. Verify 2006+ history available before downstream work.
-2. Build `regime_vector(date) -> 24-column vector` function. Validates non-NaN before returning.
+2. Build `regime_vector(date) -> 24-column vector` assembly. Two parts:
+   - **2a** (worktree-local precompute): `regime_meter/breadth_ingest.py` reads the main-repo `universe_ohlcv_daily.pkl` read-only, applies the per-bar tradable filter, and writes the 4 universe-aggregate breadth columns (`pct_above_50ma`, `stockbee_4pct_ratio_10d`, `stockbee_25pct_up_count_63d`, `stockbee_25pct_down_count_63d`) to `regime_meter/cache/breadth_daily.parquet` over SPY's trading-day calendar. Default re-runs full rebuild each invocation.
+   - **2b**: Build `regime_vector(date) -> 24-column vector` function that assembles the 24 columns from NAAIM parquet (item 1), breadth parquet (2a), market_series .npz (extension + yield-spread columns), and raw closes from `market_ohlcv.pkl` (trend slopes, ratios, %-distance-from-200MA, VIX percentile). Validates non-NaN before returning.
 3. Run that function over every trading day 2016-01-01 → today. Persist as `regime_vector_history.parquet`.
 4. Compute z-score normalization (per-column mean + std). Persist as `regime_vector_normalization.json`.
 5. For each of 11 SPDR sector ETFs: compute forward log-return paths for horizons {5, 10, 20, 40 bars} from every historical anchor day. Persist as `sector_forward_paths/{sector}.npz`.
@@ -134,6 +136,7 @@ Applied to all 4 universe-aggregate columns (% above 50-MA, 10-day 4% up/down ra
 Within `regime_meter/cache/` (worktree-local):
 
 - `naaim_daily.parquet` — daily forward-filled NAAIM Exposure Index, two columns (date, naaim_mean), built by `regime_meter/naaim_ingest.py`
+- `breadth_daily.parquet` — daily universe-aggregate breadth, five columns (date + the four aggregates listed in build-checklist item 2a), built by `regime_meter/breadth_ingest.py`
 - `regime_vector_history.parquet` — one row per trading day, 24 columns + date
 - `regime_vector_normalization.json` — per-column z-score parameters (mean, std)
 - `sector_forward_paths/{sector}.npz` — forward log-return tensors per sector (one file per SPDR)
