@@ -17,14 +17,14 @@ Not yet built. See Pending build.
 
 ## Details you need to know
 
-- **Storage**: `local_runner/cache/regime_meter/` (separate from existing caches; merged into main repo cache only after end-to-end verification).
+- **Storage**: `regime_meter/cache/` inside this worktree (separate from main-repo caches; merged into main repo only after end-to-end verification).
 - **Data sources** (read-only):
   - `local_runner/cache/market_series/` — per-instrument expression cache, ~272 instruments, 2016-onward
   - `local_runner/cache/market_ohlcv.pkl` — raw market OHLCV
   - `local_runner/cache/universe_ohlcv_daily.pkl` — full tradable universe OHLCV (~11,500 tickers)
   - `local_runner/cache/expr_series/SPY.npz` and `QQQ.npz` — ext zone display labels only (universe expression cache; 2020-onward)
 - **History window**: 2016-01-01 onward (matches `HISTORY_START` in `market_cache_builder.py`).
-- **One new data source required**: NAAIM Exposure Index, weekly CSV from naaim.org. Forward-filled across daily bars (each day carries the most recent Wednesday release). Source not currently in `market_cache_builder.py` — needs to be added as a new derived instrument before step 1 build can run. All other 23 columns derive from existing caches.
+- **One new data source required**: NAAIM Exposure Index, weekly xlsx from naaim.org. Worktree-local ingestion via `regime_meter/naaim_ingest.py` — discovers the current week's xlsx URL by scraping naaim.org each run, downloads, forward-fills weekly Wednesday readings across SPY's trading-day calendar, writes `regime_meter/cache/naaim_daily.parquet`. Does NOT modify the main repo's `market_cache_builder.py`. All other 23 columns derive from main-repo caches read-only.
 - **Refresh cadence**: daily after market close. Hooks into `local_runner/nightly.py` once the pipeline is end-to-end verified.
 - **Worktree isolation**: this component lives on the `regime-meter` branch and writes only to its own subdirectory until merged.
 
@@ -80,7 +80,7 @@ The similarity-math input. Z-scored over the 10-year history once; all subsequen
 | Stockbee breadth | Count of stocks up 25%+ over last quarter (63 bars) | derive from `universe_ohlcv_daily.pkl` (tradable filter) |
 | Stockbee breadth | Count of stocks down 25%+ over last quarter (63 bars) | derive from `universe_ohlcv_daily.pkl` (tradable filter) |
 | Stockbee breadth | RSP / SPY ratio | derive |
-| Positioning / sentiment | NAAIM Exposure Index (raw weekly value, forward-filled to daily) | derived from NAAIM public CSV — new data ingestion required |
+| Positioning / sentiment | NAAIM Exposure Index (raw weekly value, forward-filled to daily) | `regime_meter/cache/naaim_daily.parquet` via `regime_meter/naaim_ingest.py` |
 
 **Display-layer columns** (not in similarity math, surfaced as plain-English labels in the dashboard only):
 
@@ -120,7 +120,7 @@ Applied to all 4 universe-aggregate columns (% above 50-MA, 10-day 4% up/down ra
 
 ### Build checklist
 
-1. **NAAIM ingestion** (prerequisite): add `NAAIM_CALC` to `market_cache_builder.py` instrument registry; fetch from NAAIM public CSV at naaim.org; forward-fill weekly Wednesday readings to daily bars. Verify 2006+ history available before downstream work.
+1. **NAAIM ingestion** (prerequisite, worktree-local): `regime_meter/naaim_ingest.py` discovers the current xlsx URL on naaim.org each run, downloads, parses with alias-tolerant header detection, forward-fills weekly Wednesday readings across SPY's trading-day calendar (read from main-repo `market_ohlcv.pkl` read-only), writes `regime_meter/cache/naaim_daily.parquet`. Default re-fetches network each run; `--no-fetch` re-derives from cached raw xlsx. Verify 2006+ history available before downstream work.
 2. Build `regime_vector(date) -> 24-column vector` function. Validates non-NaN before returning.
 3. Run that function over every trading day 2016-01-01 → today. Persist as `regime_vector_history.parquet`.
 4. Compute z-score normalization (per-column mean + std). Persist as `regime_vector_normalization.json`.
@@ -131,8 +131,9 @@ Applied to all 4 universe-aggregate columns (% above 50-MA, 10-day 4% up/down ra
 
 ### Storage layout
 
-Within `local_runner/cache/regime_meter/`:
+Within `regime_meter/cache/` (worktree-local):
 
-- `regime_vector_history.parquet` — one row per trading day, 23 columns + date
+- `naaim_daily.parquet` — daily forward-filled NAAIM Exposure Index, two columns (date, naaim_mean), built by `regime_meter/naaim_ingest.py`
+- `regime_vector_history.parquet` — one row per trading day, 24 columns + date
 - `regime_vector_normalization.json` — per-column z-score parameters (mean, std)
 - `sector_forward_paths/{sector}.npz` — forward log-return tensors per sector (one file per SPDR)
