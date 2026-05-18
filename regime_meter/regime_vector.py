@@ -31,6 +31,7 @@ CACHE_DIR     = os.path.join(SCRIPT_DIR, "cache")
 
 NAAIM_PARQUET   = os.path.join(CACHE_DIR, "naaim_daily.parquet")
 BREADTH_PARQUET = os.path.join(CACHE_DIR, "breadth_daily.parquet")
+VIX_PARQUET     = os.path.join(CACHE_DIR, "vix_daily.parquet")
 
 MAIN_REPO_CACHE   = r"C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache"
 MARKET_OHLCV_PKL  = os.path.join(MAIN_REPO_CACHE, "market_ohlcv.pkl")
@@ -69,11 +70,19 @@ SECTOR_KEYS = [
     "XLV", "XLF", "XLK", "XLU", "XLRE", "XLC",
 ]
 
-# Instruments we need a close-series-on-SPY-calendar for.
+# XLC inception (created out of XLK on 2018-06-19). Before this date, the
+# close_matrix's XLC column is XLK chain-linked by the price ratio at
+# inception, so 20-bar log returns remain continuous across the splice.
+XLC_INCEPTION = pd.Timestamp("2018-06-19")
+
+# Instruments we need a close-series-on-SPY-calendar for. VIX is NOT here:
+# its history starts 2016-01-04 in market_ohlcv.pkl, which is insufficient
+# for a 5y percentile on 2016-01-04. VIX comes from regime_meter/cache/
+# vix_daily.parquet, extended back to 2011 via regime_meter/vix_ingest.py.
 ALL_OHLCV_KEYS = sorted(set([
     KEY_SPY, KEY_QQQ, KEY_RSP,
     KEY_DXY, KEY_GLD, KEY_BTC,
-    KEY_VIX, KEY_VX3M,
+    KEY_VX3M,
     KEY_HYG, KEY_IEF,
     KEY_XLY, KEY_XLP,
     KEY_T2T10,
@@ -128,6 +137,35 @@ def _load_market_ohlcv() -> dict:
         return pickle.load(f)
 
 
+def _chain_link_xlc(xlc: pd.Series, xlk: pd.Series) -> pd.Series:
+    """Chain-link XLC backward onto XLK before XLC_INCEPTION.
+
+    XLC was created out of XLK on 2018-06-19. Pre-inception dates in the
+    aligned XLC series are NaN. To make 20-bar log returns straddling the
+    splice continuous, scale pre-inception XLK closes by
+    ratio = XLC[inception] / XLK[inception], then splice in.
+    """
+    spy_dates = xlc.index
+    inception_pos = spy_dates.get_indexer([XLC_INCEPTION], method="bfill")[0]
+    if inception_pos < 0:
+        raise ValueError(f"XLC inception {XLC_INCEPTION.date()} past SPY calendar end")
+    inception_date = spy_dates[inception_pos]
+
+    xlc_at_inception = xlc.iloc[inception_pos]
+    xlk_at_inception = xlk.iloc[inception_pos]
+    if pd.isna(xlc_at_inception) or pd.isna(xlk_at_inception) or xlk_at_inception <= 0:
+        raise ValueError(
+            f"XLC chain-link splice failed at {inception_date.date()}: "
+            f"xlc={xlc_at_inception}, xlk={xlk_at_inception}"
+        )
+    ratio = float(xlc_at_inception) / float(xlk_at_inception)
+
+    chained = xlc.copy()
+    pre_mask = chained.index < inception_date
+    chained.loc[pre_mask] = xlk.loc[pre_mask] * ratio
+    return chained
+
+
 @lru_cache(maxsize=1)
 def _load_close_matrix() -> pd.DataFrame:
     """All needed instruments' closes reindexed to SPY calendar, forward-filled.
@@ -135,6 +173,8 @@ def _load_close_matrix() -> pd.DataFrame:
     Columns = ALL_OHLCV_KEYS. Index = SPY trading-day DatetimeIndex.
     FRED/BTC series get forward-filled to cover non-trading-day gaps; the
     target-date row is always a SPY trading day so the value is well-defined.
+
+    XLC column is chain-linked to XLK before 2018-06-19 (see _chain_link_xlc).
     """
     cache = _load_market_ohlcv()
     spy_dates = _load_spy_calendar()
@@ -150,7 +190,33 @@ def _load_close_matrix() -> pd.DataFrame:
             .reindex(spy_dates, method="ffill")
         )
         cols[k] = s
+
+    # Replace XLC with the XLK-chain-linked version (pre-2018-06-19 is XLK
+    # scaled to XLC's level at inception). Cross-check: XLK must already be
+    # in the dict because it's in SECTOR_KEYS.
+    if "XLC" not in cols or "XLK" not in cols:
+        raise ValueError("XLC chain-link requires both XLC and XLK in close_matrix")
+    cols["XLC"] = _chain_link_xlc(cols["XLC"], cols["XLK"])
+
     return pd.DataFrame(cols, index=spy_dates)
+
+
+@lru_cache(maxsize=1)
+def _load_vix_extended() -> pd.Series:
+    """VIX close series indexed by its native (extended) date range, 2011+.
+
+    Source: regime_meter/cache/vix_daily.parquet, built by
+    regime_meter/vix_ingest.py. NOT reindexed to SPY's 2016+ calendar — the
+    5y trailing percentile needs the deeper history.
+    """
+    if not os.path.exists(VIX_PARQUET):
+        raise ValueError(
+            f"vix parquet missing at {VIX_PARQUET} "
+            "(run regime_meter/vix_ingest.py)"
+        )
+    df = pd.read_parquet(VIX_PARQUET)
+    df["date"] = pd.to_datetime(df["date"])
+    return df.set_index("date")["close"].sort_index()
 
 
 @lru_cache(maxsize=1)
@@ -229,15 +295,17 @@ def _trend_slope_20(close: pd.Series, target: pd.Timestamp) -> float:
     return float(slope)
 
 
-def _vix_pctile_5y(close: pd.Series, target: pd.Timestamp) -> float:
-    end = close.index.get_loc(target)
+def _vix_pctile_5y(vix_extended: pd.Series, target: pd.Timestamp) -> float:
+    if target not in vix_extended.index:
+        raise ValueError(f"target {target.date()} not in extended VIX series")
+    end = vix_extended.index.get_loc(target)
     start = end - VIX_PCTILE_BARS
     if start < 0:
         raise ValueError(
-            f"insufficient history for VIX 5y percentile at {target.date()} "
+            f"insufficient extended VIX history for 5y percentile at {target.date()} "
             f"(need {VIX_PCTILE_BARS + 1} bars, have {end + 1})"
         )
-    window = close.iloc[start : end + 1].to_numpy(dtype=float)
+    window = vix_extended.iloc[start : end + 1].to_numpy(dtype=float)
     n = window.size
     rank = int((window < window[-1]).sum() + 1)
     return float((rank - 1) / (n - 1))
@@ -275,16 +343,20 @@ def regime_vector(date) -> pd.Series:
     spy_dates = _load_spy_calendar()
     if target not in spy_dates:
         raise ValueError(f"target {target.date()} not in SPY trading-day calendar")
-    end_pos = spy_dates.get_loc(target)
-    if end_pos < VIX_PCTILE_BARS:
-        raise ValueError(
-            f"target {target.date()} too early for VIX 5y percentile "
-            f"(need {VIX_PCTILE_BARS} prior bars, have {end_pos})"
-        )
 
-    closes = _load_close_matrix()
+    closes  = _load_close_matrix()
     naaim   = _load_naaim_daily()
     breadth = _load_breadth_daily()
+    vix_ext = _load_vix_extended()
+
+    if target not in vix_ext.index:
+        raise ValueError(f"target {target.date()} not in extended VIX parquet")
+    vix_pos = vix_ext.index.get_loc(target)
+    if vix_pos < VIX_PCTILE_BARS:
+        raise ValueError(
+            f"target {target.date()} too early for VIX 5y percentile "
+            f"(need {VIX_PCTILE_BARS} prior VIX bars, have {vix_pos})"
+        )
 
     if target not in naaim.index:
         raise ValueError(f"target {target.date()} not in naaim_daily.parquet")
@@ -306,9 +378,9 @@ def regime_vector(date) -> pd.Series:
     vals["gold_trend_slope_20"] = _trend_slope_20(closes[KEY_GLD], target)
     vals["btc_trend_slope_20"]  = _trend_slope_20(closes[KEY_BTC], target)
 
-    # col 10-11: volatility
-    vals["vix_pctile_5y"]    = _vix_pctile_5y(closes[KEY_VIX], target)
-    vals["vix_vix3m_ratio"]  = float(closes[KEY_VIX].loc[target] / closes[KEY_VX3M].loc[target])
+    # col 10-11: volatility (VIX from extended parquet, VIX3M from main pkl)
+    vals["vix_pctile_5y"]    = _vix_pctile_5y(vix_ext, target)
+    vals["vix_vix3m_ratio"]  = float(vix_ext.loc[target] / closes[KEY_VX3M].loc[target])
 
     # col 12: breadth parquet
     vals["pct_above_50ma"] = float(breadth.loc[target, "pct_above_50ma"])
