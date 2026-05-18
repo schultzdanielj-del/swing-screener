@@ -108,7 +108,7 @@ app/                       # HTML UI (LEGACY — replaced by scanperfect.py)
 - **`ta_knowledge.md`** — TA concepts reference
 - **`pcf.md`** — TC2000 PCF language reference
 - **`ENTRY_GRINDER.md`** — entry grinder (deferred — see banner)
-- **`REGIME_METER.md`** — per-sector market regime meter + setup-class management-technique heatmaps (worktree `regime-meter`, pre-build)
+- **`REGIME_METER.md`** — per-sector market regime meter + setup-class management-technique heatmaps (worktree `regime-meter`)
 
 Deferred / archived on 2026-04-11 (in `archive/shelved_docs/`):
 - `archive/shelved_docs/EV_GRINDER.md` — EV grinder spec (deferred to "live EV ranked watchlist" build)
