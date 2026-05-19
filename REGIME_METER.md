@@ -2,12 +2,12 @@
 
 ## Purpose
 
-Daily, after-close, per-sector market regime read for swing-trading posture. Two outputs:
+Daily, pre-open, market regime read for swing-trading posture. Two scopes (overall market AND per-sector) across two output types:
 
-1. **Per-sector forward-projection cones**: for each of 11 SPDR sector ETFs, a heatmap of historically-similar-day forward paths. Tells you where the market is statistically likely to go from here given today's regime.
+1. **Forward-projection cones — overall market AND per-sector**: heatmaps of historically-similar-day forward paths. Built for SPY and QQQ (overall market) and the 11 SPDR sector ETFs (sector breakdown). Tells you where the market and each sector is statistically likely to go from here given today's regime.
 2. **Per-sector 4-cell setup-class grids**: fade-long, fade-short, breakout-long, breakout-short. Each cell shows win-rate decile under a baseline exit and a ranked list of management techniques.
 
-Regime-similarity-driven: today's 24-column market-state vector is matched against 10 years of history via K-nearest-neighbors. Every aggregate the dashboard surfaces is conditional on similar-day historical behavior, not unconditional averages.
+Regime-similarity-driven: today's 24-column market-state vector is matched against history via K-nearest-neighbors. History depth: as far back as data allows per column, with variable-dimension distance handling so dot-com era anchors are usable. Every aggregate the dashboard surfaces is conditional on similar-day historical behavior, not unconditional averages.
 
 Setup-agnostic by design — bypasses real setup detection. Uses synthetic-firing mechanics over the tradable universe to measure what's currently paying in current market conditions.
 
@@ -131,19 +131,104 @@ None.
 
 ## Pending research
 
-- **Step 2 — UI design via Claude Design** (claude.ai/design). Output is HTML/web prototype. Implementation framework decided after design lands. Candidates: local web app (served from host machine), Tauri-wrapped web app (desktop feel + web frontend), or static HTML report regenerated nightly.
+- **Step 2 — UI design and local implementation**:
+  - **Shipped (Dashboard v1)**: Claude Design produced an HTML/React/CSS dashboard system under `regime_meter/dashboard/` — per-sector cones (DENSITY / FAN / PATHS viz toggle), header strip (target date, picked horizon, KS match strength, sector bias bar), 4×3 grid layout with legend + neighbor-distance histogram. `build_dashboard.py` inlines data + JSX so the page opens via `file://`; a Windows `.lnk` launches it chromeless in Edge for a desktop-app feel.
+  - **Step 2 extensions** are in Pending Build below.
 - **Step 3 — setup-class heatmaps** (per-sector 4-cell grid):
   - Cells = (mechanic × direction): fade-long, fade-short, breakout-long, breakout-short
-  - Breakout-long firing rule: D1 Darvas / N-bar high (locked)
+  - Breakout-long firing rule (locked): D1 Darvas / N-bar high
   - Breakout-short firing rule: pending Dan's spec
   - Fade-long firing rule: pending Dan's spec
-  - Fade-short firing rule: extension past statistical peak on 50-ext — anchored on existing extension chart features. Pending confirmation.
+  - Fade-short firing rule (locked): extension past statistical peak on 50-ext — anchored on existing extension chart features
   - Management technique candidate set: pending Dan's spec
-  - Cell win-rate definition: % positive under a baseline exit (e.g. 1R target, 1-ADR stop)
-  - Cell "best management technique" metric: maximum captured MFE on historically-similar-day firings
-  - Display per cell: win-rate decile (0–9) + ranked list of management techniques (top-3 or full ranking)
-  - Low-sample cell handling: pending decision (hide / mark / always show)
+  - Cell win-rate definition (locked): % positive under a baseline exit of 1R target, 1-ADR stop
+  - Cell "best management technique" metric (locked): maximum captured MFE on historically-similar-day firings
+  - Display per cell (locked): win-rate decile (0–9) + full ranked list of management techniques (top-3 or all)
+  - Low-sample cell handling: pending Dan's decision (hide / mark / always show)
+- **Three-view dashboard toggle — specific views** (locked as a requirement; intent pending Dan's clarification): shipped Claude Design dashboard interpreted "three toggleable views" as viz-style (DENSITY / FAN / PATHS); original May 16/17 picker context suggests time-window oriented (today-snapshot / recent-trend / historically-similar-days). Pending Dan's confirmation of which intent the build should target.
 
 ## Pending build
 
-None. Step 1 is shipped (see EXACT spec). Step 2 and Step 3 stay in Pending research until their open design questions are resolved.
+Dashboard v1 (cone grid + header strip from Claude Design) is shipped. Everything below extends it. Phases are ordered by dependency — later phases depend on data structures or scripts produced by earlier phases.
+
+### Phase A — Spec consolidation
+Lock the Step 3 wording from May 16/17 transcripts (done in this doc). Reflect Dashboard v1 shipping in Step 2 (done). No code work — this section is the audit trail.
+
+### Phase B — Cache extension to inception
+Goal: every regime-vector input instrument extends back to the earliest date EODHD has data, not the current 2016-01-04 fetch floor. Required so dot-com era (1998-2002) is usable as anchor history — the current macro analogue.
+
+- Refetch every instrument used by `regime_vector.py` (SPY, QQQ, 11 SPDR sectors, DXY.INDX, GLD, BTC-USD.CC, VIX.INDX, VIX3M.INDX, HYG, IEF, RSP, T10Y2Y_CALC) from its EODHD-earliest date.
+- Write to a worktree-local extended cache file: `regime_meter/cache/market_ohlcv_extended.pkl`. Main repo's `market_ohlcv.pkl` is NOT modified — extension stays worktree-local until verified end-to-end, then proposed for absorption.
+- Add **XLRE chain-link from XLF** (mirror the existing XLC-from-XLK pattern): pre-2015-10-08, XLRE close = XLF close × (XLRE[2015-10-08] / XLF[2015-10-08]). Without this, XLRE pre-2015 is empty and the SPDR sector dispersion column gets a discontinuity at the carve-out.
+- Re-extend `regime_meter/cache/vix_daily.parquet` against the longer VIX history.
+- Verify NAAIM ingestion captures full history back to July 2006 (the source's earliest publication). If naaim.org publishes only recent xlsx, combine multiple historical files.
+- Skip extension of `universe_ohlcv_daily.pkl` (breadth universe). Out of scope per Dan's instruction — market + sectors only.
+
+### Phase C — NaN-tolerant regime vector
+Goal: regime vector can be computed for any date with partial column availability instead of raising on first missing input.
+
+- `regime_vector.py` returns a vector with NaN for any column whose inputs aren't available at the target date, instead of raising. Drop the all-non-NaN assertion.
+- `regime_vector_history.py` walks from the earliest date where the resulting vector has ≥ 12 non-NaN columns (the minimum threshold; below that the regime vector is too thin to encode a regime). Persists every row including its column-availability mask. Drop the "auto-probe earliest viable date walking from 2016-01-04" — replace with "walk from earliest date with any column populated, persist rows with ≥ 12 cols."
+- `normalization_build.py` per-column mean/std uses only the dates where that column is non-NaN. Output JSON records the first non-NaN date per column.
+
+### Phase D — Distance + similarity refactor (the "non-naive" part)
+Goal: distance metric handles variable column counts without biasing toward sparser anchors. Per-sector admissibility for forward paths.
+
+- `regime_meter_today.py` distance metric: **mean squared difference over the intersection of columns available in BOTH today's vector AND the anchor's vector**, then sqrt for Euclidean-like scale. Replaces sum-squared Euclidean — kills the "fewer columns mechanically lower distance" bias.
+- Hard floor: anchors with fewer than 12 of 24 columns excluded from candidate pool entirely.
+- **Per-sector anchor admissibility**: engine picks top-K candidate anchors using MSD across all available columns. For each sector, filter that candidate list to anchors where the sector has price data at the anchor date AND for the +H trading days after. Effective K varies per sector — sectors with longer histories see deeper anchor pools.
+- Payload schema additions: per-anchor column count, per-sector effective K, anchor-era distribution (count of anchors per decade or 3-year bucket).
+
+### Phase E — SPY/QQQ overall-market cones
+Goal: dashboard's first-class "where is the overall market headed" cones, alongside the sector breakdown.
+
+- Extend `forward_paths_build.py` to also build forward-path tensors for SPY and QQQ. Stored alongside sector tensors in `regime_meter/cache/sector_forward_paths/{SPY,QQQ}.npz`. Treat them as just-another-sector for path computation.
+- Extend `regime_meter_today.py` payload to surface SPY/QQQ paths in a separate `overall_market_paths` dict (distinct from `sector_paths`) so the dashboard can render them as a hero row, not buried in the sector grid.
+
+### Phase F — Baseline % up reference
+Goal: every "% of paths ending positive" number has unconditional baseline context ("vs baseline +Npp").
+
+- New build script: `baseline_hit_rate.py`. For each instrument (SPY, QQQ, 11 sectors) × each candidate horizon (5, 10, 20, 40), compute the unconditional % of historical N-day forward windows that ended positive over the full available history.
+- Persist as `regime_meter/cache/baseline_hit_rates.json`.
+- `regime_meter_today.py` includes the relevant baseline per instrument × picked-horizon in the payload alongside the conditional % up.
+
+### Phase G — Percentile context precompute
+Goal: every conditional % up has a percentile rank in the distribution of all historical conditional % up values for that instrument × horizon.
+
+- New build script: `conditional_distribution_build.py`. Walks every historical anchor date through the regime engine (using the Phase D refactored MSD-with-admissibility logic). For each anchor + each instrument + the picked horizon: compute the conditional % up. Aggregate into a distribution per instrument × horizon.
+- Persist as `regime_meter/cache/conditional_distributions.npz`.
+- `regime_meter_today.py` includes today's percentile rank per instrument in the payload.
+- Expensive one-shot precompute; re-runs only when the underlying history/regime-vector pipeline changes meaningfully, not daily.
+
+### Phase H — Regime-context panel data
+Goal: dashboard can show today's raw regime context (breadth, VIX percentile, NAAIM, cross-asset ratios) as plain-English rows so user can sanity-check what the engine sees.
+
+- Extend `regime_meter_today.py` payload to expose the raw 24-column regime vector values for today, along with column name and human-readable label per column.
+- No new build script needed; this is purely a payload extension.
+
+### Phase I — Dashboard updates
+Goal: surface everything from Phases E–H + the engine-v2 metadata from Phase D in the existing dashboard. Resolve the three-view toggle question.
+
+- Render SPY/QQQ overall cones as a hero row above the sector grid (or sized larger to distinguish).
+- Each cone shows: median final % (existing), % up at picked horizon (new), vs-baseline (+Npp) (new), percentile rank (new), effective K used (new — may be < 30 for younger sectors).
+- New regime-context panel: rows showing today's breadth %, VIX percentile, VIX/VIX3M, NAAIM, cross-asset ratios (XLY/XLP, HYG/IEF, RSP/SPY), DXY/Gold/BTC 200-MA distance, 2s10s. Plain-language labels.
+- Anchor-era distribution mini-viz somewhere in the header (e.g., decade buckets showing where today's analogs cluster — "anchors cluster in 1999-2001 + 2018").
+- Resolve the three-view toggle (Dan clarifies time-window vs viz-style intent) and ship that resolution.
+- Update `build_dashboard.py` to inline the extended payload structure.
+
+### Phase J — refresh.py orchestration
+Goal: morning scheduled task runs every build step in correct order, including new phases.
+
+- Add new build scripts to `refresh.py`'s step list in dependency order.
+- Confirm `build_dashboard.py` runs as the final step so the chromeless Edge launcher always opens latest data.
+- Phase G (percentile precompute) wired as one-shot, not daily.
+
+### Dependency map
+- B blocks C, D, E, F, G, H
+- C blocks D, H
+- D blocks E, G
+- E blocks F (path tensors include overall market) and is co-requisite of G
+- F is independent of G
+- H is independent after C
+- I depends on E, F, G, H
+- J depends on all build scripts existing
