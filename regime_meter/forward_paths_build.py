@@ -1,18 +1,25 @@
 """
-Per-sector forward log-return path tensors (worktree-local).
+Forward log-return path tensors (worktree-local).
 
-For each of the 11 SPDR sector ETFs, for every history anchor where that
-sector has native (non-chain-linked) price data at the anchor AND for the
-next 40 trading days, compute the forward log-return path:
+For each instrument (11 SPDR sector ETFs + SPY + QQQ), for every history
+anchor where that instrument has native (non-chain-linked) price data at
+the anchor AND for the next 40 trading days, compute the forward
+log-return path:
 
     path[i, k] = log(close[anchor_i + k + 1] / close[anchor_i])
 
 for k in 0..39. Column k is the (k+1)-bar-forward log return.
 
-Per-sector anchor counts vary: XLE/XLB/XLI/XLY/XLP/XLV/XLF/XLK/XLU all
-have data back to 1998-12-22, XLRE only from 2015-10-08, XLC only from
-2018-06-19. The K-NN admissibility filter in regime_meter_today.py
-exploits these per-sector pool depths.
+Per-instrument anchor counts vary: XLE/XLB/XLI/XLY/XLP/XLV/XLF/XLK/XLU
+all have data back to 1998-12-22, XLRE only from 2015-10-08, XLC only
+from 2018-06-19, SPY back to 1993-02-26, QQQ back to 1999-03-10. The
+K-NN admissibility filter in regime_meter_today.py exploits these per-
+instrument pool depths.
+
+SPY and QQQ are built into the same output directory but are kept
+separate from the sector list -- regime_meter_today.py loads them
+independently so they render alongside the sector cones but do NOT
+contribute to the sectors-only KS horizon-picker.
 
 NOTE: chain-linked closes are used for the regime vector's sector-
 dispersion column (so that scalar is continuous across XLC/XLRE
@@ -21,12 +28,13 @@ today's XLC forward returns against a 1999 anchor's XLC forward
 returns shouldn't fall back to XLK -- that would be a misleading
 match. Sector-admissibility correctly drops pre-2018 anchors for XLC.
 
-Output: regime_meter/cache/sector_forward_paths/{sector}.npz per sector.
-  - anchor_dates: shape (n_sector,)     datetime64[ns]
-  - paths:        shape (n_sector, 40)  float64
-  - bars_forward: shape (40,)           int64, values 1..40
+Output: regime_meter/cache/sector_forward_paths/{key}.npz per instrument
+key (11 sectors + SPY + QQQ).
+  - anchor_dates: shape (n_key,)     datetime64[ns]
+  - paths:        shape (n_key, 40)  float64
+  - bars_forward: shape (40,)        int64, values 1..40
 
-n_sector varies across sectors.
+n_key varies across instruments.
 
 Reads market_ohlcv_extended.pkl and regime_vector_history.parquet.
 Writes only inside the worktree.
@@ -59,6 +67,11 @@ HISTORY_PARQUET = os.path.join(CACHE_DIR, "regime_vector_history.parquet")
 OUT_DIR         = os.path.join(CACHE_DIR, "sector_forward_paths")
 
 MAX_HORIZON = 40
+
+# Built alongside SECTOR_KEYS but kept separate -- regime_meter_today.py
+# loads these independently so they render alongside the sector cones
+# without entering the sectors-only KS horizon picker pool.
+OVERALL_MARKET_KEYS = ("SPY", "QQQ")
 
 
 def _assert_inside_worktree(path):
@@ -179,11 +192,12 @@ def main():
     print("=" * 70)
 
     _assert_inside_worktree(OUT_DIR)
-    print(f"  Worktree root: {WORKTREE_ROOT}")
-    print(f"  Output dir:    {OUT_DIR}")
-    print(f"  Sectors:       {SECTOR_KEYS}")
-    print(f"  Horizon:       1..{MAX_HORIZON} bars")
-    print(f"  Note:          Native close only (no chain-link). Per-sector "
+    print(f"  Worktree root:  {WORKTREE_ROOT}")
+    print(f"  Output dir:     {OUT_DIR}")
+    print(f"  Sectors:        {SECTOR_KEYS}")
+    print(f"  Overall market: {OVERALL_MARKET_KEYS}")
+    print(f"  Horizon:        1..{MAX_HORIZON} bars")
+    print(f"  Note:           Native close only (no chain-link). Per-instrument "
           f"anchor counts vary.")
 
     print()
@@ -201,21 +215,35 @@ def main():
     print()
     print(f"  Building forward-path tensors:")
     t0 = time.time()
-    summaries = []
+    sector_summaries = []
     for sector in SECTOR_KEYS:
         log_closes = native_sector_log_closes(ohlcv, sector, spy_dates)
         anchors, paths = build_sector_paths(log_closes, eligible, eligible_pos)
         out_path, size_kb = write_sector(sector, anchors, paths, OUT_DIR)
-        summaries.append((sector, anchors, paths, size_kb))
+        sector_summaries.append((sector, anchors, paths, size_kb))
+
+    overall_summaries = []
+    for key in OVERALL_MARKET_KEYS:
+        log_closes = native_sector_log_closes(ohlcv, key, spy_dates)
+        anchors, paths = build_sector_paths(log_closes, eligible, eligible_pos)
+        out_path, size_kb = write_sector(key, anchors, paths, OUT_DIR)
+        overall_summaries.append((key, anchors, paths, size_kb))
+
     elapsed = time.time() - t0
-    print(f"  Built {len(SECTOR_KEYS)} sectors in {elapsed:.2f}s")
+    print(f"  Built {len(SECTOR_KEYS)} sectors + {len(OVERALL_MARKET_KEYS)} "
+          f"overall-market in {elapsed:.2f}s")
 
     print(f"\n  Per-sector summary:")
-    for sector, anchors, paths, _ in summaries:
+    for sector, anchors, paths, _ in sector_summaries:
         print_sector_summary(sector, anchors, paths)
 
-    total_kb = sum(s[3] for s in summaries)
-    print(f"\n  Wrote {len(SECTOR_KEYS)} files, total {total_kb:.1f} KB")
+    print(f"\n  Overall-market summary:")
+    for key, anchors, paths, _ in overall_summaries:
+        print_sector_summary(key, anchors, paths)
+
+    total_kb = sum(s[3] for s in sector_summaries) + sum(s[3] for s in overall_summaries)
+    n_files = len(SECTOR_KEYS) + len(OVERALL_MARKET_KEYS)
+    print(f"\n  Wrote {n_files} files, total {total_kb:.1f} KB")
 
     print("\n  DONE.")
 

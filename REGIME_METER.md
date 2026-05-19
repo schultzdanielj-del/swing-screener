@@ -13,7 +13,7 @@ Setup-agnostic by design — bypasses real setup detection. Uses synthetic-firin
 
 ## EXACT spec
 
-Engine v2 — extended OHLCV cache + NaN-tolerant regime vector + shrinkage-weighted MSD distance + per-sector admissibility — is built. Dashboard v1 ships against the engine-v1 payload schema; Phase I will rebuild it against the engine-v2 schema. Step 3 (setup-class heatmaps) remains in Pending research.
+Engine v2 — extended OHLCV cache + NaN-tolerant regime vector + shrinkage-weighted MSD distance + per-sector admissibility + SPY/QQQ overall-market cones — is built. Dashboard v1 ships against the engine-v1 payload schema; Phase I will rebuild it against the engine-v2 schema. Step 3 (setup-class heatmaps) remains in Pending research.
 
 ### Pipeline
 
@@ -32,7 +32,7 @@ Ten scripts under `regime_meter/`, all worktree-local. Each is idempotent; re-ru
 6. `regime_vector.py` — `regime_vector(date) -> pd.Series` assembly function returning the 24 columns. NaN-tolerant: each per-column computer returns NaN when its inputs aren't sufficient (insufficient warmup, missing source date, non-positive close). The only raise is when `target` is not in SPY's trading-day calendar at all. Reads only worktree-local caches: `market_ohlcv_extended.pkl`, worktree `market_series/{SPY,QQQ}.npz`, and the three worktree parquets. XLC chain-linked to XLK pre-2018-06-19 and XLRE chain-linked to XLF pre-2015-10-08 inside the close matrix (used for the sector-dispersion column only — see Details).
 7. `regime_vector_history.py` — walks every SPY trading day from extended calendar start (1993-01-29) through today. Persists every row where at least one of the 24 regime columns is non-NaN. Output parquet schema: `date` + 24 float columns + 24 boolean mask columns (`mask_<colname>` = True iff that column is non-NaN). The first ~19 SPY days are skipped because no column has finished its 20-bar warmup yet. Writes `cache/regime_vector_history.parquet`.
 8. `normalization_build.py` — per-column mean + sample std (ddof=1) computed over only the rows where that column is non-NaN (each column normalizes against its own population, not against a row-intersection). Aborts if any std is degenerate. Output JSON records per-column `first_non_nan_date` and `n_non_nan_rows` alongside `mean` and `std`. Writes `cache/regime_vector_normalization.json`.
-9. `forward_paths_build.py` — for each of the 11 SPDR sector ETFs, builds a forward log-return path tensor using **native** (not chain-linked) sector closes. Per-sector `anchor_dates` lengths vary: the 9 SPDR sectors carry ~6852 anchors back to 1998-12-22, XLRE carries ~2627 back to 2015-10-08, XLC carries ~1949 back to 2018-06-19. Writes one npz per sector with that sector's own `anchor_dates`, `paths` (n_sector × 40), `bars_forward`.
+9. `forward_paths_build.py` — for each instrument (11 SPDR sector ETFs + SPY + QQQ), builds a forward log-return path tensor using **native** (not chain-linked) closes. Per-instrument `anchor_dates` lengths vary: the 9 SPDR sectors carry ~6852 anchors back to 1998-12-22, XLRE carries ~2627 back to 2015-10-08, XLC carries ~1949 back to 2018-06-19, SPY carries ~8323 anchors back to 1993-02-26, QQQ carries ~6800 back to 1999-03-10. Writes one npz per instrument with that instrument's own `anchor_dates`, `paths` (n × 40), `bars_forward`. SPY and QQQ are stored alongside the sector tensors but kept logically separate downstream — they render alongside the sector cones but do not enter the KS horizon-picker pool.
 10. `regime_meter_today.py` — for a target date, builds its regime vector, z-scores against persisted normalization params, finds the K nearest history anchors via shrinkage-weighted MSD distance (see Similarity engine), filters per-sector by admissibility, picks the horizon in {5, 10, 20, 40} with the largest KS-statistic vs the per-sector union unconditional pool, writes `cache/regime_meter_today.json`. Default target = latest history row; `--date YYYY-MM-DD` and `--k N` override.
 
 ### Regime vector — 24 columns
@@ -98,6 +98,7 @@ Applied to all 4 universe-aggregate breadth columns. Same filter across all four
 - After global top-K selection via shrinkage-weighted MSD, for each of the 11 SPDR sectors independently: filter the K candidates to those whose dates appear in that sector's own `anchor_dates` list (i.e. that sector has native data at the anchor AND for the next 40 trading days).
 - Effective K per sector varies. The 9 SPDR sectors (XLE, XLB, XLI, XLY, XLP, XLV, XLF, XLK, XLU) have ~6852 admissible anchors back to 1998-12-22. XLRE has ~2627 back to 2015-10-08. XLC has ~1949 back to 2018-06-19.
 - Pre-1999 candidate anchors have eff_K = 0 across every sector. They can still appear in the `neighbors` list (as similar regimes) but contribute no cones.
+- SPY and QQQ are admitted via the same date-membership filter against their own `anchor_dates`. SPY has ~8323 admissible anchors back to 1993-02-26; QQQ has ~6800 back to 1999-03-10. Overall-market admissibility is computed and surfaced independently from sector admissibility — SPY/QQQ effective K does not affect the horizon picker (see Horizon selector below).
 
 ### Forward-projection cones (consumed by step 2 UI)
 
@@ -110,6 +111,7 @@ Applied to all 4 universe-aggregate breadth columns. Same filter across all four
 - Unconditional pool = union of every sector's full `anchor_dates` × that horizon column (every available historical forward window across all 11 sectors).
 - Compute the Kolmogorov-Smirnov 2-sample statistic between conditional and unconditional pools.
 - Pick the horizon with the largest KS-statistic. All four per-horizon KS-stats and p-values are reported in the daily payload.
+- SPY and QQQ are deliberately excluded from both the conditional and unconditional pools. They are rendered at the picked horizon for visual context but do not contribute to picking it (locked design decision 2026-05-18). Rationale: SPY/QQQ are weighted averages of the 11 sectors — including them would double-count broad-market signal — and per-instrument KS picking (K=30 vs the sector pool's K×11=330) would be statistically weak.
 
 ### Daily output payload
 
@@ -122,8 +124,10 @@ Applied to all 4 universe-aggregate breadth columns. Same filter across all four
 - `divergence_by_horizon` — per-horizon `ks_stat`, `ks_pvalue`, `n_conditional`, `n_unconditional`
 - `neighbors` — list of K objects, each `{date, distance, n_cols_non_nan}`, sorted by distance ascending
 - `sector_effective_k` — dict `{sector: int}` showing how many of the K candidates survived each sector's admissibility filter
+- `overall_market_effective_k` — dict `{SPY, QQQ: int}` showing how many of the K candidates survived each overall-market instrument's admissibility filter
 - `anchor_era_distribution` — dict `{decade_label: count}` across the K neighbors. Labels: `1990s`, `2000s`, `2010s`, `2020s`.
 - `sector_paths` — dict keyed by sector ticker; value is an `eff_K × picked_horizon` list of log returns relative to anchor close. Per-sector lengths vary with admissibility.
+- `overall_market_paths` — dict keyed by SPY/QQQ; same shape convention as `sector_paths` (eff_K × picked_horizon list of log returns relative to anchor close). Rendered as the dashboard's hero row in Phase I.
 - `bars_forward` — 1..picked_horizon
 
 ## Details you need to know
@@ -175,13 +179,6 @@ None.
 
 Engine v2 (Phases A–D, plus the Phase B.5 SPY/QQQ market_series rebuild) shipped. Dashboard v1 still reads its own copy of the engine-v1 payload — Phase I will rebuild it against the engine-v2 schema after Phases E–H land. Phases are ordered by dependency.
 
-### Phase E — SPY/QQQ overall-market cones
-Goal: dashboard's first-class "where is the overall market headed" cones, alongside the sector breakdown.
-
-- Extend `forward_paths_build.py` to also build forward-path tensors for SPY and QQQ. Treat them as just-another-sector for path computation (per-instrument `anchor_dates` from native closes — SPY back to ~1993-02-26, QQQ back to ~1999-03-10). Stored alongside sector tensors as `regime_meter/cache/sector_forward_paths/{SPY,QQQ}.npz`.
-- Extend `regime_meter_today.py` payload to surface SPY/QQQ paths in a separate `overall_market_paths` dict (distinct from `sector_paths`) so the dashboard can render them as a hero row, not buried in the sector grid.
-- **Locked design decision (2026-05-18): horizon picker uses sectors-only.** SPY and QQQ are rendered at the same picked horizon as the sectors but DO NOT contribute to the KS divergence calculation. Reasons: (a) SPY/QQQ are essentially weighted averages of the 11 sectors, so including them in the picker would double-count broad-market signal; (b) visual coherence — all 13 cones (11 sectors + SPY + QQQ) on the same x-axis range; (c) per-instrument KS picking would be statistically weak (K=30 vs the sector pool's K × 11 = 330). The picker stays balanced; SPY/QQQ provide overall-market visual context.
-
 ### Phase F — Baseline % up reference
 Goal: every "% of paths ending positive" number has unconditional baseline context ("vs baseline +Npp").
 
@@ -221,8 +218,7 @@ Goal: morning scheduled task runs every build step in correct order, including n
 - Phase G (percentile precompute) wired as one-shot, not daily.
 
 ### Dependency map
-- E blocks F (path tensors include overall market) and is co-requisite of G.
 - F is independent of G.
 - H is independent (depends only on engine-v2 which is already shipped).
-- I depends on E, F, G, H.
+- I depends on F, G, H.
 - J depends on all build scripts existing.

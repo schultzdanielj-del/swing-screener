@@ -60,6 +60,10 @@ DEFAULT_K          = 30
 HORIZON_CANDIDATES = (5, 10, 20, 40)
 DECADE_LABELS      = ("1990s", "2000s", "2010s", "2020s")
 
+# SPY/QQQ render at the same horizon the sector picker chooses but do NOT
+# enter the KS-divergence pools (locked design decision 2026-05-18).
+OVERALL_MARKET_KEYS = ("SPY", "QQQ")
+
 # Expected squared difference between two independent z-scored values.
 # Each column has unit variance after z-scoring, so for independent draws
 # E[(z_a - z_b)^2] = Var(z_a) + Var(z_b) = 2. Used as the prior contribution
@@ -102,12 +106,11 @@ def load_normalization():
     return means, stds
 
 
-def load_forward_paths():
-    """Returns dict[sector] -> (anchors, paths) where anchors and paths can
-    have different lengths across sectors (per-sector admissibility)."""
+def _load_paths_for_keys(keys):
+    """Returns dict[key] -> (anchors, paths). Per-key anchor lengths vary."""
     out = {}
-    for sector in SECTOR_KEYS:
-        path = os.path.join(FORWARD_PATHS_DIR, f"{sector}.npz")
+    for key in keys:
+        path = os.path.join(FORWARD_PATHS_DIR, f"{key}.npz")
         if not os.path.exists(path):
             raise ValueError(
                 f"forward-paths file missing at {path} "
@@ -115,8 +118,19 @@ def load_forward_paths():
             )
         z = np.load(path, allow_pickle=True)
         anchors = pd.DatetimeIndex(pd.to_datetime(z["anchor_dates"]))
-        out[sector] = (anchors, z["paths"])
+        out[key] = (anchors, z["paths"])
     return out
+
+
+def load_forward_paths():
+    """Per-sector forward-path tensors. Feeds the KS horizon picker."""
+    return _load_paths_for_keys(SECTOR_KEYS)
+
+
+def load_overall_market_paths():
+    """SPY/QQQ forward-path tensors. Rendered at the sector-picked horizon
+    but NOT included in the KS-divergence calculation."""
+    return _load_paths_for_keys(OVERALL_MARKET_KEYS)
 
 
 # --- Distance --------------------------------------------------------------
@@ -294,12 +308,18 @@ def anchor_era_distribution(neighbor_dates):
 def build_payload(target_date, k=DEFAULT_K):
     target = pd.Timestamp(target_date).normalize()
 
-    paths_by_sector = load_forward_paths()
+    paths_by_sector  = load_forward_paths()
+    paths_by_overall = load_overall_market_paths()
     neighbor_dates, distances, n_cols = find_neighbors(target, k=k)
 
-    per_sector_pos = per_sector_positions(neighbor_dates, paths_by_sector)
-    eff_k          = sector_effective_k(per_sector_pos)
+    per_sector_pos  = per_sector_positions(neighbor_dates, paths_by_sector)
+    per_overall_pos = per_sector_positions(neighbor_dates, paths_by_overall)
+    eff_k           = sector_effective_k(per_sector_pos)
+    eff_k_overall   = sector_effective_k(per_overall_pos)
 
+    # Horizon picker uses sectors-only pool. SPY/QQQ are NOT included
+    # (locked design decision 2026-05-18: avoid double-counting broad
+    # market signal; keep the picker statistically strong).
     picked, per_horizon = pick_horizon(per_sector_pos, paths_by_sector)
 
     # Per-sector forward-path slices at the picked horizon.
@@ -311,6 +331,16 @@ def build_payload(target_date, k=DEFAULT_K):
         else:
             sliced = arr[positions, :picked]
             sector_paths[sector] = sliced.tolist()
+
+    # Overall-market forward-path slices at the same picked horizon.
+    overall_market_paths = {}
+    for key, positions in per_overall_pos.items():
+        arr = paths_by_overall[key][1]
+        if len(positions) == 0:
+            overall_market_paths[key] = []
+        else:
+            sliced = arr[positions, :picked]
+            overall_market_paths[key] = sliced.tolist()
 
     payload = {
         "target_date":           target.strftime("%Y-%m-%d"),
@@ -324,10 +354,12 @@ def build_payload(target_date, k=DEFAULT_K):
              "n_cols_non_nan": int(n)}
             for d, dist, n in zip(neighbor_dates, distances, n_cols)
         ],
-        "sector_effective_k":       eff_k,
-        "anchor_era_distribution":  anchor_era_distribution(neighbor_dates),
-        "sector_paths":             sector_paths,
-        "bars_forward":             list(range(1, picked + 1)),
+        "sector_effective_k":         eff_k,
+        "overall_market_effective_k": eff_k_overall,
+        "anchor_era_distribution":    anchor_era_distribution(neighbor_dates),
+        "sector_paths":               sector_paths,
+        "overall_market_paths":       overall_market_paths,
+        "bars_forward":               list(range(1, picked + 1)),
     }
     return payload
 
@@ -389,6 +421,10 @@ def main():
     print(f"\n  Per-sector effective K:")
     for sector, eff in payload["sector_effective_k"].items():
         print(f"    {sector:<5s}  {eff:>3d}/{payload['k']}")
+
+    print(f"\n  Overall-market effective K:")
+    for key, eff in payload["overall_market_effective_k"].items():
+        print(f"    {key:<5s}  {eff:>3d}/{payload['k']}")
 
     print(f"\n  Anchor-era distribution:")
     for label, cnt in payload["anchor_era_distribution"].items():
