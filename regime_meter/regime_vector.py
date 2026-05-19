@@ -70,10 +70,15 @@ SECTOR_KEYS = [
     "XLV", "XLF", "XLK", "XLU", "XLRE", "XLC",
 ]
 
-# XLC inception (created out of XLK on 2018-06-19). Before this date, the
-# close_matrix's XLC column is XLK chain-linked by the price ratio at
-# inception, so 20-bar log returns remain continuous across the splice.
-XLC_INCEPTION = pd.Timestamp("2018-06-19")
+# Chain-link inception dates: a child ETF carved out of a parent ETF later
+# than the parent's own inception. Before the child's inception, the
+# close_matrix's child column is the parent column scaled by
+# ratio = child[inception] / parent[inception], so 20-bar log returns
+# remain continuous across the splice.
+#   XLC  was carved out of XLK on 2018-06-19.
+#   XLRE was carved out of XLF on 2015-10-08.
+XLC_INCEPTION  = pd.Timestamp("2018-06-19")
+XLRE_INCEPTION = pd.Timestamp("2015-10-08")
 
 # Instruments we need a close-series-on-SPY-calendar for. VIX is NOT here:
 # its history starts 2016-01-04 in market_ohlcv.pkl, which is insufficient
@@ -137,32 +142,38 @@ def _load_market_ohlcv() -> dict:
         return pickle.load(f)
 
 
-def _chain_link_xlc(xlc: pd.Series, xlk: pd.Series) -> pd.Series:
-    """Chain-link XLC backward onto XLK before XLC_INCEPTION.
+def _chain_link(child: pd.Series, parent: pd.Series,
+                inception_date: pd.Timestamp,
+                child_name: str, parent_name: str) -> pd.Series:
+    """Chain-link `child` backward onto `parent` before `inception_date`.
 
-    XLC was created out of XLK on 2018-06-19. Pre-inception dates in the
-    aligned XLC series are NaN. To make 20-bar log returns straddling the
-    splice continuous, scale pre-inception XLK closes by
-    ratio = XLC[inception] / XLK[inception], then splice in.
+    Pre-inception dates in the aligned child series are NaN. To make 20-bar
+    log returns straddling the splice continuous, scale pre-inception parent
+    closes by ratio = child[inception] / parent[inception] and splice them
+    into the child series.
     """
-    spy_dates = xlc.index
-    inception_pos = spy_dates.get_indexer([XLC_INCEPTION], method="bfill")[0]
+    spy_dates = child.index
+    inception_pos = spy_dates.get_indexer([inception_date], method="bfill")[0]
     if inception_pos < 0:
-        raise ValueError(f"XLC inception {XLC_INCEPTION.date()} past SPY calendar end")
-    inception_date = spy_dates[inception_pos]
-
-    xlc_at_inception = xlc.iloc[inception_pos]
-    xlk_at_inception = xlk.iloc[inception_pos]
-    if pd.isna(xlc_at_inception) or pd.isna(xlk_at_inception) or xlk_at_inception <= 0:
         raise ValueError(
-            f"XLC chain-link splice failed at {inception_date.date()}: "
-            f"xlc={xlc_at_inception}, xlk={xlk_at_inception}"
+            f"{child_name} inception {inception_date.date()} past SPY calendar end"
         )
-    ratio = float(xlc_at_inception) / float(xlk_at_inception)
+    splice_date = spy_dates[inception_pos]
 
-    chained = xlc.copy()
-    pre_mask = chained.index < inception_date
-    chained.loc[pre_mask] = xlk.loc[pre_mask] * ratio
+    child_at_inception  = child.iloc[inception_pos]
+    parent_at_inception = parent.iloc[inception_pos]
+    if (pd.isna(child_at_inception) or pd.isna(parent_at_inception)
+            or parent_at_inception <= 0):
+        raise ValueError(
+            f"{child_name}<-{parent_name} chain-link splice failed at "
+            f"{splice_date.date()}: child={child_at_inception}, "
+            f"parent={parent_at_inception}"
+        )
+    ratio = float(child_at_inception) / float(parent_at_inception)
+
+    chained = child.copy()
+    pre_mask = chained.index < splice_date
+    chained.loc[pre_mask] = parent.loc[pre_mask] * ratio
     return chained
 
 
@@ -174,7 +185,8 @@ def _load_close_matrix() -> pd.DataFrame:
     FRED/BTC series get forward-filled to cover non-trading-day gaps; the
     target-date row is always a SPY trading day so the value is well-defined.
 
-    XLC column is chain-linked to XLK before 2018-06-19 (see _chain_link_xlc).
+    XLC column is chain-linked to XLK before 2018-06-19 and XLRE column
+    is chain-linked to XLF before 2015-10-08 (see _chain_link).
     """
     cache = _load_market_ohlcv()
     spy_dates = _load_spy_calendar()
@@ -191,12 +203,19 @@ def _load_close_matrix() -> pd.DataFrame:
         )
         cols[k] = s
 
-    # Replace XLC with the XLK-chain-linked version (pre-2018-06-19 is XLK
-    # scaled to XLC's level at inception). Cross-check: XLK must already be
-    # in the dict because it's in SECTOR_KEYS.
-    if "XLC" not in cols or "XLK" not in cols:
-        raise ValueError("XLC chain-link requires both XLC and XLK in close_matrix")
-    cols["XLC"] = _chain_link_xlc(cols["XLC"], cols["XLK"])
+    # Chain-link carve-out children to their parent ETF for pre-inception
+    # dates. No-op for date ranges where the child already has native data.
+    for child, parent, inception in [
+        ("XLC",  "XLK", XLC_INCEPTION),
+        ("XLRE", "XLF", XLRE_INCEPTION),
+    ]:
+        if child not in cols or parent not in cols:
+            raise ValueError(
+                f"{child} chain-link requires both {child} and {parent} "
+                "in close_matrix"
+            )
+        cols[child] = _chain_link(cols[child], cols[parent], inception,
+                                  child, parent)
 
     return pd.DataFrame(cols, index=spy_dates)
 

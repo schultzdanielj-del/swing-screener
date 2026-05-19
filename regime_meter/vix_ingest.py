@@ -1,20 +1,19 @@
 """
 Extended VIX history ingestion (worktree-local).
 
-Fetches VIX.INDX from EODHD back to 2011-01-01 so that the 5-year (1259-bar)
-VIX percentile is computable on every regime-vector date >= 2016-01-04.
-The main-repo market_ohlcv.pkl only goes back to 2016 and is read-only from
-this worktree, hence this side-channel cache.
+Fetches VIX.INDX from EODHD back to its inception (1990-01-02) so the
+5-year (1259-bar) VIX percentile is computable as deep into history as
+the underlying series allows. The main-repo market_ohlcv.pkl only goes
+back to 2016 and is read-only from this worktree, hence this side-
+channel cache.
 
 Default: re-fetch from network. --no-fetch: re-derive from cached raw JSON.
 
-Writes only inside the worktree. Reads main-repo SPY calendar read-only for
-sanity checks; never modifies the main repo.
+Writes only inside the worktree. No main-repo access.
 """
 import argparse
 import json
 import os
-import pickle
 import sys
 import urllib.error
 import urllib.request
@@ -29,18 +28,16 @@ CACHE_DIR     = os.path.join(SCRIPT_DIR, "cache")
 RAW_JSON_PATH = os.path.join(CACHE_DIR, "vix_raw.json")
 DAILY_PARQUET = os.path.join(CACHE_DIR, "vix_daily.parquet")
 
-MAIN_REPO_CACHE = r"C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache"
-SPY_PICKLE_PATH = os.path.join(MAIN_REPO_CACHE, "market_ohlcv.pkl")
-
 # --- EODHD -----------------------------------------------------------------
 EODHD_BASE      = "https://eodhd.com/api"
 EODHD_SYMBOL    = "VIX.INDX"
-FETCH_START     = "2011-01-01"
+FETCH_START     = "1990-01-01"
 HTTP_HEADERS    = {"User-Agent": "ScanPerfect-RegimeMeter/1.0"}
 HTTP_TIMEOUT_S  = 30
 
 # --- Sanity bounds ---------------------------------------------------------
-EARLIEST_REQUIRED   = "2011-01-04"   # first parsed bar must be on or before
+EARLIEST_REQUIRED   = "1990-01-04"   # first parsed bar must be on or before
+MIN_TOTAL_BARS      = 1259           # series must have at least this many bars total
 RECENT_STALENESS_DAYS = 5            # last bar must be within this many calendar days of today
 
 
@@ -110,16 +107,6 @@ def parse_json(raw_path):
     return df
 
 
-def load_spy_calendar():
-    if not os.path.exists(SPY_PICKLE_PATH):
-        sys.exit(f"ABORT: SPY pickle missing at {SPY_PICKLE_PATH}")
-    with open(SPY_PICKLE_PATH, "rb") as f:
-        cache = pickle.load(f)
-    if "SPY" not in cache:
-        sys.exit("ABORT: SPY not in market_ohlcv.pkl")
-    return pd.to_datetime(cache["SPY"]["date"]).sort_values().reset_index(drop=True)
-
-
 def run_sanity_checks(df):
     print("\n  Sanity checks:")
 
@@ -148,16 +135,14 @@ def run_sanity_checks(df):
     print(f"    NaN closes:   0")
     print(f"    Row count:    {len(df)}")
 
-    # Confirm we have 1259 bars before 2016-01-04 (the first SPY trading day)
-    spy_dates = load_spy_calendar()
-    first_spy = pd.Timestamp(spy_dates.iloc[0])
-    before_count = int((df["date"] < first_spy).sum())
-    if before_count < 1259:
+    # Series must be long enough for the 5y percentile to be computable somewhere.
+    total_bars = len(df)
+    if total_bars < MIN_TOTAL_BARS:
         sys.exit(
-            f"ABORT: only {before_count} VIX bars before SPY's first trading day "
-            f"({first_spy.date()}); need >= 1259 for 5y percentile on that date."
+            f"ABORT: only {total_bars} total VIX bars; need >= {MIN_TOTAL_BARS} "
+            "for 5y percentile to be computable anywhere in the series."
         )
-    print(f"    Bars before first SPY day ({first_spy.date()}): {before_count} (>= 1259, OK)")
+    print(f"    Total bars:   {total_bars} (>= {MIN_TOTAL_BARS}, OK)")
 
 
 def write_parquet(df, out_path):
@@ -188,7 +173,6 @@ def main():
     print(f"  Worktree root: {WORKTREE_ROOT}")
     print(f"  Raw JSON:      {RAW_JSON_PATH}")
     print(f"  Output:        {DAILY_PARQUET}")
-    print(f"  Main repo:     {MAIN_REPO_CACHE} (SPY calendar, read-only)")
 
     if args.no_fetch:
         if not os.path.exists(RAW_JSON_PATH):
