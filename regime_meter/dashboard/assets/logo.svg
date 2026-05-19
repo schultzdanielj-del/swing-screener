@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 48" width="220" height="48">
+  <rect x="2" y="2" width="44" height="44" rx="0" fill="#0a0d12" stroke="#000" stroke-width="1"></rect>
+  <path d="M11 32 V16 H21 a4 4 0 0 1 0 8 H15" fill="none" stroke="#d8dee5" stroke-width="2.4" stroke-linecap="square" stroke-linejoin="miter"></path>
+  <path d="M27 16 V32 M27 16 h7 a4 4 0 0 1 0 8 h-7" fill="none" stroke="#d8dee5" stroke-width="2.4" stroke-linecap="square" stroke-linejoin="miter"></path>
+  <rect x="37" y="14" width="3" height="20" fill="#4fc3f7"></rect>
+  <text x="58" y="32" font-family="Segoe UI, Tahoma, Verdana, sans-serif" font-weight="700" font-size="22" letter-spacing="-0.2" fill="#d8dee5">ScanPerfect</text>
+</svg>

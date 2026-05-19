@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 280" width="600" height="280">
+  <rect width="600" height="280" fill="#0f141b"></rect>
+  
+  <g stroke="#1a212b" stroke-width="1">
+    <line x1="0" y1="56" x2="600" y2="56"></line>
+    <line x1="0" y1="112" x2="600" y2="112"></line>
+    <line x1="0" y1="168" x2="600" y2="168"></line>
+    <line x1="0" y1="224" x2="600" y2="224"></line>
+  </g>
+  
+  <g shape-rendering="crispEdges">
+    
+    
+    <g fill="#26d07c" stroke="#26d07c" stroke-width="1">
+      <line x1="17" y1="180" x2="17" y2="120"></line>  <rect x="11" y="140" width="12" height="30"></rect>
+      <line x1="37" y1="170" x2="37" y2="110"></line>  <rect x="31" y="130" width="12" height="32"></rect>
+      <line x1="77" y1="155" x2="77" y2="95"></line>   <rect x="71" y="115" width="12" height="30"></rect>
+      <line x1="117" y1="140" x2="117" y2="80"></line> <rect x="111" y="100" width="12" height="32"></rect>
+      <line x1="157" y1="125" x2="157" y2="65"></line> <rect x="151" y="85" width="12" height="30"></rect>
+      <line x1="197" y1="110" x2="197" y2="55"></line> <rect x="191" y="70" width="12" height="32"></rect>
+      <line x1="237" y1="100" x2="237" y2="50"></line> <rect x="231" y="60" width="12" height="34"></rect>
+      <line x1="297" y1="98" x2="297" y2="55"></line> <rect x="291" y="65" width="12" height="28"></rect>
+      <line x1="337" y1="105" x2="337" y2="60"></line> <rect x="331" y="70" width="12" height="30"></rect>
+      <line x1="397" y1="110" x2="397" y2="58"></line> <rect x="391" y="72" width="12" height="32"></rect>
+      <line x1="457" y1="105" x2="457" y2="50"></line> <rect x="451" y="58" width="12" height="40"></rect>
+      <line x1="497" y1="92" x2="497" y2="40"></line> <rect x="491" y="46" width="12" height="38"></rect>
+      <line x1="537" y1="80" x2="537" y2="28"></line> <rect x="531" y="34" width="12" height="40"></rect>
+      <line x1="577" y1="68" x2="577" y2="20"></line> <rect x="571" y="26" width="12" height="38"></rect>
+    </g>
+    
+    <g fill="#ff4d5e" stroke="#ff4d5e" stroke-width="1">
+      <line x1="57" y1="165" x2="57" y2="105"></line>  <rect x="51" y="118" width="12" height="32"></rect>
+      <line x1="97" y1="150" x2="97" y2="90"></line>   <rect x="91" y="104" width="12" height="30"></rect>
+      <line x1="137" y1="130" x2="137" y2="78"></line> <rect x="131" y="92" width="12" height="28"></rect>
+      <line x1="177" y1="118" x2="177" y2="60"></line> <rect x="171" y="74" width="12" height="32"></rect>
+      <line x1="217" y1="105" x2="217" y2="48"></line> <rect x="211" y="60" width="12" height="32"></rect>
+      <line x1="257" y1="95" x2="257" y2="45"></line> <rect x="251" y="58" width="12" height="30"></rect>
+      <line x1="277" y1="98" x2="277" y2="48"></line> <rect x="271" y="60" width="12" height="30"></rect>
+      <line x1="317" y1="100" x2="317" y2="55"></line> <rect x="311" y="68" width="12" height="28"></rect>
+      <line x1="357" y1="108" x2="357" y2="60"></line> <rect x="351" y="74" width="12" height="28"></rect>
+      <line x1="377" y1="115" x2="377" y2="62"></line> <rect x="371" y="76" width="12" height="32"></rect>
+      <line x1="417" y1="118" x2="417" y2="60"></line> <rect x="411" y="76" width="12" height="34"></rect>
+      <line x1="437" y1="115" x2="437" y2="55"></line> <rect x="431" y="68" width="12" height="38"></rect>
+      <line x1="477" y1="105" x2="477" y2="48"></line> <rect x="471" y="60" width="12" height="38"></rect>
+      <line x1="517" y1="95" x2="517" y2="40"></line> <rect x="511" y="52" width="12" height="36"></rect>
+      <line x1="557" y1="80" x2="557" y2="32"></line> <rect x="551" y="40" width="12" height="32"></rect>
+    </g>
+  </g>
+  
+  <g font-family="JetBrains Mono, monospace" font-size="9" fill="#5a6473" text-anchor="end">
+    <text x="595" y="59">192.40</text>
+    <text x="595" y="115">186.20</text>
+    <text x="595" y="171">180.00</text>
+    <text x="595" y="227">173.80</text>
+  </g>
+</svg>

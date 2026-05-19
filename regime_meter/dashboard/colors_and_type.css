@@ -1,0 +1,221 @@
+/* ============================================================
+   ScanPerfect Design System — tokens
+   TC2000-flavored: Windows-chrome dark UI, cyan accent, sharp corners
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root,
+[data-theme="dark"] {
+  /* ---------- Surfaces ----------
+     TC2000: data fills the screen. Gray chrome is reserved for thin title
+     bars and toolbars only. The canvas itself reads as black. */
+  --bg-canvas:        #000000;   /* outer canvas — black like the data panels */
+  --bg-panel:         #000000;   /* data area — pure black */
+  --bg-elevated:      #6a6f78;   /* title bar / button face (top of gradient) */
+  --bg-overlay:       #4a4f58;   /* dropdown, popover, modal */
+  --bg-row-hover:     #0d0d0f;
+  --bg-row-selected:  #1c2030;
+
+  /* Win9x-style raised gradients — used ONLY for thin chrome strips */
+  --bg-title-grad:  linear-gradient(180deg, #6e737d 0%, #535860 100%);
+  --bg-button-grad: linear-gradient(180deg, #707580 0%, #4d525a 100%);
+  --bg-button-grad-active: linear-gradient(180deg, #444851 0%, #5a5f68 100%);
+
+  /* ---------- Borders ---------- */
+  --border-faint:     #1a1a1c;
+  --border:           #000000;
+  --border-soft:      #2a2c30;
+  --border-strong:    #7a8088;
+
+  /* ---------- Foreground ---------- */
+  --fg-primary:       #ffffff;
+  --fg-secondary:     #c8ccd2;
+  --fg-tertiary:      #888c92;
+  --fg-on-accent:     #2a1a00;
+  --fg-on-chrome:     #ffffff;
+
+  /* ---------- Brand / accent ---------- */
+  /* TC2000 uses TWO accents: gold for active UI state, cyan for chart price/axis */
+  --accent:           #ffcc00;   /* yellow/gold — selected tab, brand */
+  --accent-hover:     #ffd633;
+  --accent-dim:       #4a3a00;
+  --accent-soft:      rgba(255, 204, 0, 0.18);
+
+  --accent-info:      #5fc8ff;   /* cyan — chart price labels, median line */
+  --accent-info-soft: rgba(95, 200, 255, 0.16);
+
+  /* ---------- Signal colors ---------- */
+  --up:               #1eff1e;   /* pure bright green */
+  --up-soft:          rgba(30, 255, 30, 0.18);
+  --up-flash:         rgba(30, 255, 30, 0.30);
+
+  --down:             #ff3030;   /* pure bright red */
+  --down-soft:        rgba(255, 48, 48, 0.18);
+  --down-flash:       rgba(255, 48, 48, 0.30);
+
+  --warn:             #ffcc00;
+  --warn-soft:        rgba(255, 204, 0, 0.18);
+
+  --info:             #5fc8ff;
+  --info-soft:        rgba(95, 200, 255, 0.16);
+
+  --neutral:          #c8ccd2;
+
+  /* ---------- Type families ---------- */
+  /* Windows-native system stack — closest to TC2000's Tahoma/Segoe defaults */
+  --font-sans: 'Segoe UI', Tahoma, 'MS Sans Serif', Verdana, sans-serif;
+  --font-mono: 'Consolas', 'Lucida Console', 'JetBrains Mono', monospace;
+
+  /* ---------- Type scale ---------- */
+  --fs-10: 10px;
+  --fs-11: 11px;
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-16: 16px;
+  --fs-18: 18px;
+  --fs-22: 22px;
+  --fs-28: 28px;
+  --fs-36: 36px;
+
+  /* ---------- Line heights ---------- */
+  --lh-tight: 1.15;
+  --lh-snug:  1.25;
+  --lh-base:  1.35;
+
+  /* ---------- Spacing (4px base) ---------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+
+  /* ---------- Radii — zero everywhere (Windows-native sharpness) ---------- */
+  --r-0: 0;
+  --r-1: 0;
+  --r-2: 0;
+  --r-3: 0;
+  --r-4: 0;
+
+  /* ---------- Shadows — used sparingly, hard-edged ---------- */
+  --shadow-popover: 0 2px 0 rgba(0, 0, 0, 0.6), 0 0 0 1px #000;
+  --shadow-modal:   0 4px 16px rgba(0, 0, 0, 0.8), 0 0 0 1px #000;
+
+  /* ---------- Motion ---------- */
+  --t-fast: 80ms ease-out;
+  --t-base: 120ms ease-out;
+  --t-flash: 600ms ease-out;
+
+  /* ---------- Z ---------- */
+  --z-base: 1;
+  --z-sticky: 10;
+  --z-popover: 100;
+  --z-modal: 1000;
+}
+
+/* ============================================================
+   Base resets + body
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+
+body {
+  background: var(--bg-canvas);
+  color: var(--fg-primary);
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  line-height: var(--lh-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================================
+   Semantic type roles
+   ============================================================ */
+.t-display {
+  font-family: var(--font-sans);
+  font-size: var(--fs-36);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: var(--lh-tight);
+  color: var(--fg-primary);
+}
+
+.t-h1 {
+  font-size: var(--fs-28);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: var(--lh-tight);
+  color: var(--fg-primary);
+}
+
+.t-h2 {
+  font-size: var(--fs-22);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: var(--lh-snug);
+}
+
+.t-h3 {
+  font-size: var(--fs-18);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: var(--lh-snug);
+}
+
+/* Panel header strip — UPPER, tight, secondary color */
+.t-panel-title {
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--fg-secondary);
+}
+
+.t-body { font-size: var(--fs-13); line-height: var(--lh-base); color: var(--fg-primary); }
+.t-small { font-size: var(--fs-12); line-height: var(--lh-snug); color: var(--fg-secondary); }
+.t-caption { font-size: var(--fs-11); line-height: var(--lh-snug); color: var(--fg-tertiary); }
+
+/* Column header for dense tables */
+.t-col-header {
+  font-size: var(--fs-11);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-secondary);
+}
+
+/* Any number that represents price/%/volume/time/ticker */
+.num,
+.t-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum', 'zero';
+}
+
+/* Function code / keyboard shortcut */
+.t-fn {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: var(--r-2);
+}
+
+/* Signal classes — apply directly to numbers/text */
+.up   { color: var(--up); }
+.down { color: var(--down); }
+.warn { color: var(--warn); }
+.info { color: var(--info); }
+.muted { color: var(--fg-secondary); }
+.dim   { color: var(--fg-tertiary); }

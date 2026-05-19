@@ -1,0 +1,52 @@
+<!doctype html>
+<html data-theme="dark"><head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html, body { background: var(--bg-canvas); }
+  body { padding: 20px; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .label { font-size: 11px; color: var(--fg-secondary); text-transform: uppercase; letter-spacing: 0.08em; }
+  .sub { font-size: 11px; color: var(--fg-tertiary); }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .swatch { border-radius: 6px; border: 1px solid var(--border); }
+  .swatch-block { display: flex; flex-direction: column; gap: 6px; }
+  .swatch-block .meta { display: flex; flex-direction: column; gap: 2px; }
+  .swatch-block .name { font-size: 12px; color: var(--fg-primary); }
+  .swatch-block .hex  { font-family: var(--font-mono); font-size: 11px; color: var(--fg-tertiary); }
+</style>
+</head><body>
+<div class="col" style="gap:10px;">
+
+  <div class="row" style="gap:14px;">
+    <div class="swatch" style="width:60px;height:42px;background:#e6ecf3;border-radius:4px;"></div>
+    <div style="flex:1;">
+      <div style="font-size:14px;color:#e6ecf3;font-weight:500;">Primary — The quick brown fox</div>
+      <div class="sub" style="margin-top:2px;">Default body text, key numbers</div>
+    </div>
+    <div class="mono" style="font-size:11px;color:var(--fg-tertiary);text-align:right;">
+      <div>#e6ecf3</div><div>--fg-primary</div>
+    </div>
+  </div>
+  <div class="row" style="gap:14px;">
+    <div class="swatch" style="width:60px;height:42px;background:#8a94a3;border-radius:4px;"></div>
+    <div style="flex:1;">
+      <div style="font-size:14px;color:#8a94a3;font-weight:500;">Secondary — The quick brown fox</div>
+      <div class="sub" style="margin-top:2px;">Labels, column headers, secondary data</div>
+    </div>
+    <div class="mono" style="font-size:11px;color:var(--fg-tertiary);text-align:right;">
+      <div>#8a94a3</div><div>--fg-secondary</div>
+    </div>
+  </div>
+  <div class="row" style="gap:14px;">
+    <div class="swatch" style="width:60px;height:42px;background:#5a6473;border-radius:4px;"></div>
+    <div style="flex:1;">
+      <div style="font-size:14px;color:#5a6473;font-weight:500;">Tertiary — The quick brown fox</div>
+      <div class="sub" style="margin-top:2px;">Placeholders, disabled, captions</div>
+    </div>
+    <div class="mono" style="font-size:11px;color:var(--fg-tertiary);text-align:right;">
+      <div>#5a6473</div><div>--fg-tertiary</div>
+    </div>
+  </div>
+</div></body></html>

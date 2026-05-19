@@ -1,0 +1,51 @@
+<!doctype html>
+<html data-theme="dark"><head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html, body { background: var(--bg-canvas); }
+  body { padding: 20px; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .label { font-size: 11px; color: var(--fg-secondary); text-transform: uppercase; letter-spacing: 0.08em; }
+  .sub { font-size: 11px; color: var(--fg-tertiary); }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .swatch { border-radius: 6px; border: 1px solid var(--border); }
+  .swatch-block { display: flex; flex-direction: column; gap: 6px; }
+  .swatch-block .meta { display: flex; flex-direction: column; gap: 2px; }
+  .swatch-block .name { font-size: 12px; color: var(--fg-primary); }
+  .swatch-block .hex  { font-family: var(--font-mono); font-size: 11px; color: var(--fg-tertiary); }
+</style>
+</head><body>
+<div class="col" style="gap:12px;">
+  <div class="col" style="gap:4px;">
+    <span class="label">Text input</span>
+    <input value="AAPL" style="background:var(--bg-elevated);color:var(--fg-primary);border:1px solid var(--border);padding:6px 10px;font-family:var(--font-mono);font-size:12px;border-radius:4px;width:240px;"/>
+  </div>
+  <div class="row" style="gap:14px;align-items:flex-end;">
+    <div class="col" style="gap:4px;">
+      <span class="label">Number</span>
+      <input value="50.00" style="background:var(--bg-elevated);color:var(--fg-primary);border:1px solid var(--border);padding:6px 10px;font-family:var(--font-mono);font-size:12px;border-radius:4px;width:120px;text-align:right;"/>
+    </div>
+    <div class="col" style="gap:4px;">
+      <span class="label">Select</span>
+      <div style="display:inline-flex;align-items:center;gap:8px;background:var(--bg-elevated);color:var(--fg-primary);border:1px solid var(--border);padding:6px 10px;font-size:12px;border-radius:4px;width:160px;">
+        <span>Last 5 days</span>
+        <span style="margin-left:auto;color:var(--fg-tertiary);">▾</span>
+      </div>
+    </div>
+    <div class="col" style="gap:4px;">
+      <span class="label">Search</span>
+      <div style="display:inline-flex;align-items:center;gap:6px;background:var(--bg-elevated);color:var(--fg-primary);border:1px solid var(--accent);padding:6px 10px;font-size:12px;border-radius:4px;width:200px;">
+        <span style="color:var(--fg-tertiary);">⌕</span>
+        <span style="color:var(--fg-tertiary);">Ticker or function</span>
+        <span class="t-fn" style="margin-left:auto;">/</span>
+      </div>
+    </div>
+  </div>
+  <div class="row" style="gap:14px;">
+    <label style="display:inline-flex;align-items:center;gap:8px;font-size:12px;"><span style="width:14px;height:14px;background:var(--accent);border:1px solid var(--accent);border-radius:2px;display:inline-flex;align-items:center;justify-content:center;color:var(--fg-on-accent);font-size:10px;font-weight:700;">✓</span> Above 50 MA</label>
+    <label style="display:inline-flex;align-items:center;gap:8px;font-size:12px;"><span style="width:14px;height:14px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:2px;"></span> Above 200 MA</label>
+    <label style="display:inline-flex;align-items:center;gap:8px;font-size:12px;"><span style="width:30px;height:16px;background:var(--accent);border-radius:10px;position:relative;display:inline-block;"><span style="position:absolute;right:1px;top:1px;width:14px;height:14px;background:#0a0d12;border-radius:50%;"></span></span> Live data</label>
+  </div>
+</div></body></html>

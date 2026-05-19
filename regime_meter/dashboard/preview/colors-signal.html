@@ -1,0 +1,57 @@
+<!doctype html>
+<html data-theme="dark"><head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html, body { background: var(--bg-canvas); }
+  body { padding: 20px; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .label { font-size: 11px; color: var(--fg-secondary); text-transform: uppercase; letter-spacing: 0.08em; }
+  .sub { font-size: 11px; color: var(--fg-tertiary); }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .swatch { border-radius: 6px; border: 1px solid var(--border); }
+  .swatch-block { display: flex; flex-direction: column; gap: 6px; }
+  .swatch-block .meta { display: flex; flex-direction: column; gap: 2px; }
+  .swatch-block .name { font-size: 12px; color: var(--fg-primary); }
+  .swatch-block .hex  { font-family: var(--font-mono); font-size: 11px; color: var(--fg-tertiary); }
+</style>
+</head><body>
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+
+  <div class="swatch-block">
+    <div style="height:54px;border-radius:6px;background:#26d07c;display:flex;align-items:center;justify-content:center;color:#0a0d12;font-family:var(--font-mono);font-weight:600;font-size:14px;">+2.84%</div>
+    <div class="meta"><div class="name">Up / long</div><div class="hex">#26d07c</div><div class="hex" style="color:var(--fg-secondary)">--up</div></div>
+  </div>
+  <div class="swatch-block">
+    <div style="height:54px;border-radius:6px;background:#ff4d5e;display:flex;align-items:center;justify-content:center;color:#0a0d12;font-family:var(--font-mono);font-weight:600;font-size:14px;">−1.12%</div>
+    <div class="meta"><div class="name">Down / short</div><div class="hex">#ff4d5e</div><div class="hex" style="color:var(--fg-secondary)">--down</div></div>
+  </div>
+  <div class="swatch-block">
+    <div style="height:54px;border-radius:6px;background:#ffb648;display:flex;align-items:center;justify-content:center;color:#0a0d12;font-family:var(--font-mono);font-weight:600;font-size:14px;">HALT</div>
+    <div class="meta"><div class="name">Warn / accent</div><div class="hex">#ffb648</div><div class="hex" style="color:var(--fg-secondary)">--warn</div></div>
+  </div>
+  <div class="swatch-block">
+    <div style="height:54px;border-radius:6px;background:#4493f8;display:flex;align-items:center;justify-content:center;color:#0a0d12;font-family:var(--font-mono);font-weight:600;font-size:14px;">NEWS</div>
+    <div class="meta"><div class="name">Info</div><div class="hex">#4493f8</div><div class="hex" style="color:var(--fg-secondary)">--info</div></div>
+  </div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:10px;">
+
+  <div class="swatch-block">
+    <div class="swatch" style="height:36px;background:rgba(38,208,124,0.14);border:1px solid var(--border);"></div>
+    <div class="meta"><div class="hex" style="color:var(--fg-secondary)">Up soft</div></div>
+  </div>
+  <div class="swatch-block">
+    <div class="swatch" style="height:36px;background:rgba(255,77,94,0.14);border:1px solid var(--border);"></div>
+    <div class="meta"><div class="hex" style="color:var(--fg-secondary)">Down soft</div></div>
+  </div>
+  <div class="swatch-block">
+    <div class="swatch" style="height:36px;background:rgba(255,182,72,0.12);border:1px solid var(--border);"></div>
+    <div class="meta"><div class="hex" style="color:var(--fg-secondary)">Warn soft</div></div>
+  </div>
+  <div class="swatch-block">
+    <div class="swatch" style="height:36px;background:rgba(68,147,248,0.14);border:1px solid var(--border);"></div>
+    <div class="meta"><div class="hex" style="color:var(--fg-secondary)">Info soft</div></div>
+  </div>
+</div></body></html>
