@@ -7,6 +7,11 @@ is z-scored against these parameters before Euclidean distance is computed.
 Standard deviation uses sample-std (ddof=1) so the params survive cleanly
 if the history later grows.
 
+NaN-tolerant: per-column mean/std use only the rows where that column is
+non-NaN (each column normalizes against its own population, not against
+a row-intersection). Each column's first non-NaN date and non-NaN count
+are recorded alongside the params.
+
 Reads + writes only inside the worktree.
 """
 import argparse
@@ -59,27 +64,41 @@ def load_history():
     if missing:
         sys.exit(f"ABORT: history parquet missing columns: {missing}")
 
-    n_nan = int(df[OUTPUT_COLUMNS].isna().sum().sum())
-    if n_nan != 0:
-        sys.exit(f"ABORT: history parquet has {n_nan} NaN cells; rebuild it first")
-
     print(f"  Loaded history: {len(df)} rows, "
           f"{df['date'].iloc[0].date()} -> {df['date'].iloc[-1].date()}")
     return df
 
 
 def compute_params(df):
-    print(f"\n  Computing per-column mean + std (ddof=1) ...")
+    """Per-column mean + sample std (ddof=1) computed over only the rows
+    where that column is non-NaN. Each column is normalized against its
+    own population, not against a row-intersection.
+    """
+    print(f"\n  Computing per-column mean + std (ddof=1) over non-NaN values ...")
     params = {}
     for c in OUTPUT_COLUMNS:
         s = df[c].astype("float64")
-        mean = float(s.mean())
-        std  = float(s.std(ddof=1))
+        nn = s.notna()
+        n_nn = int(nn.sum())
+        if n_nn == 0:
+            sys.exit(f"ABORT: column {c!r} has zero non-NaN values")
+        sub = s[nn]
+        mean = float(sub.mean())
+        std  = float(sub.std(ddof=1))
         if not np.isfinite(mean) or not np.isfinite(std):
-            sys.exit(f"ABORT: non-finite mean/std for column {c!r}: mean={mean}, std={std}")
+            sys.exit(
+                f"ABORT: non-finite mean/std for column {c!r}: "
+                f"mean={mean}, std={std}"
+            )
         if std < MIN_STD:
             sys.exit(f"ABORT: column {c!r} std={std} below MIN_STD={MIN_STD}")
-        params[c] = {"mean": mean, "std": std}
+        first_nn_date = df.loc[nn, "date"].iloc[0].strftime("%Y-%m-%d")
+        params[c] = {
+            "mean":              mean,
+            "std":               std,
+            "n_non_nan_rows":    n_nn,
+            "first_non_nan_date": first_nn_date,
+        }
     return params
 
 
@@ -96,12 +115,14 @@ def build_output(df, params):
 
 def print_summary(params):
     print(f"\n  Per-column normalization parameters:")
-    print(f"    {'column':<35s} {'mean':>12s}  {'std':>12s}")
-    print(f"    {'-'*35} {'-'*12}  {'-'*12}")
+    print(f"    {'column':<35s} {'mean':>12s}  {'std':>12s} {'n':>6s} {'first-non-NaN':<14s}")
+    print(f"    {'-'*35} {'-'*12}  {'-'*12} {'-'*6} {'-'*14}")
     for c in OUTPUT_COLUMNS:
         m = params[c]["mean"]
         s = params[c]["std"]
-        print(f"    {c:<35s} {m:>+12.4f}  {s:>12.4f}")
+        n = params[c]["n_non_nan_rows"]
+        d = params[c]["first_non_nan_date"]
+        print(f"    {c:<35s} {m:>+12.4f}  {s:>12.4f} {n:>6d} {d:<14s}")
 
 
 def write_output(payload, out_path):

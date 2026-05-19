@@ -125,6 +125,10 @@ def find_neighbors(target_date, k=DEFAULT_K, eligible_dates=None):
 
     means, stds = load_normalization()
     history = load_history()
+    # Phase C stopgap: restrict K-NN to anchors with all 24 cols non-NaN.
+    # Pre-2016 thin-row anchors are stored but ignored until Phase D's
+    # MSD-over-intersection distance lands and admissibility kicks in.
+    history = history.dropna(subset=OUTPUT_COLUMNS).reset_index(drop=True)
     history_dates = pd.DatetimeIndex(history["date"])
 
     target_vec = regime_vector(target).to_numpy(dtype="float64")
@@ -250,8 +254,18 @@ def write_payload(payload, out_path):
 
 # --- CLI -------------------------------------------------------------------
 def _latest_target_date():
+    """Latest history date whose row has all 24 cols non-NaN.
+
+    Phase C stopgap: pre-2016 anchors live in the parquet with NaN cols and
+    don't yet support K-NN. Likewise the very latest few days may lag in one
+    or more upstream parquets (e.g. breadth hasn't ingested today yet).
+    Take the most recent fully-available row as default target.
+    """
     history = load_history()
-    return pd.Timestamp(history["date"].iloc[-1]).normalize()
+    full = history.dropna(subset=OUTPUT_COLUMNS)
+    if full.empty:
+        raise ValueError("history has no rows with all 24 cols non-NaN")
+    return pd.Timestamp(full["date"].iloc[-1]).normalize()
 
 
 def main():

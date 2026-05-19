@@ -1,15 +1,19 @@
 """
-Build regime_vector_history.parquet — one row per SPY trading day from the
-earliest fully-computable date through today.
+Build regime_vector_history.parquet -- one row per SPY trading day from
+the earliest extended-pickle SPY date through today.
 
-The earliest date is auto-probed by walking forward from 2016-01-04 and
-trying regime_vector(date) on each; the first one that doesn't raise is
-the start. After that, any raised ValueError is treated as a real bug and
-aborts the run. (Today's binding constraint is the 200-MA distance window
-on DXY/Gold/BTC, putting the start at ~2016-10-19.)
+NaN-tolerant: each row carries the 24 regime-vector values plus 24
+matching boolean mask columns (`mask_<colname>` = True iff that column
+is non-NaN for that date). Downstream code uses the mask to decide
+which anchors to use and at what column overlap.
 
-Reads main-repo caches read-only via regime_vector(). Writes only inside
-the worktree.
+A row is persisted only if at least one of its 24 columns is non-NaN.
+There is no minimum-non-NaN-count gate at storage time -- the query
+layer (Phase D distance + admissibility) is responsible for deciding
+what's usable.
+
+Reads worktree-local caches only via regime_vector(). Writes only
+inside the worktree.
 """
 import argparse
 import os
@@ -38,8 +42,9 @@ WORKTREE_ROOT = os.path.dirname(SCRIPT_DIR)
 CACHE_DIR     = os.path.join(SCRIPT_DIR, "cache")
 OUT_PARQUET   = os.path.join(CACHE_DIR, "regime_vector_history.parquet")
 
-PROBE_FLOOR     = pd.Timestamp("2016-01-04")
-PROGRESS_EVERY  = 250
+PROGRESS_EVERY = 250
+
+MASK_COLUMNS = [f"mask_{c}" for c in OUTPUT_COLUMNS]
 
 
 def _assert_inside_worktree(path):
@@ -51,78 +56,87 @@ def _assert_inside_worktree(path):
         )
 
 
-def probe_start(spy_dates):
-    """Walk forward from PROBE_FLOOR; return the first date for which
-    regime_vector(date) returns without raising."""
-    candidates = spy_dates[spy_dates >= PROBE_FLOOR]
-    print(f"  Probing earliest computable date from {candidates[0].date()} ...")
-    last_err = None
-    for d in candidates:
-        try:
-            regime_vector(d)
-            print(f"  -> first computable date: {d.date()}")
-            return d
-        except ValueError as e:
-            last_err = e
-            continue
-    sys.exit(f"ABORT: no date in SPY calendar produces a valid regime vector. Last error: {last_err}")
-
-
-def build_history(spy_dates, start_date):
-    targets = spy_dates[spy_dates >= start_date]
-    n = len(targets)
+def build_history(spy_dates):
+    n = len(spy_dates)
     print(f"  Building history over {n} trading days "
-          f"({targets[0].date()} -> {targets[-1].date()}) ...")
+          f"({spy_dates[0].date()} -> {spy_dates[-1].date()}) ...")
 
     rows = []
+    skipped_empty = 0
     t0 = time.time()
-    for i, d in enumerate(targets):
+    for i, d in enumerate(spy_dates):
         try:
             v = regime_vector(d)
         except ValueError as e:
             sys.exit(
-                f"ABORT: regime_vector({d.date()}) raised after probe succeeded: {e}\n"
-                "This is a real data gap, not a start-of-history issue."
+                f"ABORT: regime_vector({d.date()}) raised unexpectedly: {e}\n"
+                "Phase C should only raise when target is not in SPY calendar, "
+                "but the loop iterates the SPY calendar itself."
             )
-        rows.append((d, *v.values))
+        mask = v.notna().values
+        if not mask.any():
+            skipped_empty += 1
+            continue
+        row = [d] + list(v.values) + list(mask.tolist())
+        rows.append(row)
 
         if (i + 1) % PROGRESS_EVERY == 0 or (i + 1) == n:
             elapsed = time.time() - t0
             rate = (i + 1) / elapsed if elapsed > 0 else 0
-            print(f"    {i + 1}/{n} ({d.date()})  {rate:.0f} rows/s")
+            print(f"    {i + 1}/{n} ({d.date()})  {rate:.0f} rows/s  "
+                  f"kept {len(rows)}, skipped {skipped_empty}")
 
-    df = pd.DataFrame(rows, columns=["date"] + OUTPUT_COLUMNS)
+    df = pd.DataFrame(rows, columns=["date"] + OUTPUT_COLUMNS + MASK_COLUMNS)
     df["date"] = pd.to_datetime(df["date"])
-    return df
+    for c in MASK_COLUMNS:
+        df[c] = df[c].astype(bool)
+    return df, skipped_empty
 
 
-def run_sanity_checks(df):
+def run_sanity_checks(df, skipped_empty):
     print("\n  Sanity checks:")
     print(f"    Output rows:    {len(df)}")
+    print(f"    Skipped (all-NaN): {skipped_empty}")
     print(f"    First date:     {df['date'].iloc[0].date()}")
     print(f"    Last date:      {df['date'].iloc[-1].date()}")
-    print(f"    Column count:   {len(df.columns)}  (expected 25 = date + 24)")
+    expected_cols = 1 + len(OUTPUT_COLUMNS) + len(MASK_COLUMNS)
+    print(f"    Column count:   {len(df.columns)}  (expected {expected_cols} "
+          f"= date + {len(OUTPUT_COLUMNS)} values + {len(MASK_COLUMNS)} masks)")
 
-    if len(df.columns) != 25:
-        sys.exit(f"ABORT: expected 25 columns, got {len(df.columns)}")
+    if len(df.columns) != expected_cols:
+        sys.exit(f"ABORT: expected {expected_cols} columns, got {len(df.columns)}")
 
-    n_nan = int(df[OUTPUT_COLUMNS].isna().sum().sum())
-    if n_nan != 0:
-        bad = df[OUTPUT_COLUMNS].isna().sum()
-        bad = bad[bad > 0]
-        sys.exit(f"ABORT: {n_nan} NaN values present:\n{bad}")
-    print(f"    NaN cells:      0")
-
-    n_inf = int(np.isinf(df[OUTPUT_COLUMNS].to_numpy()).sum())
-    if n_inf != 0:
-        sys.exit(f"ABORT: {n_inf} infinite values present")
-    print(f"    Inf cells:      0")
-
-    # Per-column min/max sanity print so Dan can eyeball.
-    print(f"\n  Per-column ranges:")
+    # Sanity: mask must match value notna()
     for c in OUTPUT_COLUMNS:
-        s = df[c]
-        print(f"    {c:<35s} min={s.min():+10.4f}  max={s.max():+10.4f}  mean={s.mean():+10.4f}")
+        m = df[f"mask_{c}"]
+        v = df[c]
+        if (m != v.notna()).any():
+            n_mismatch = int((m != v.notna()).sum())
+            sys.exit(
+                f"ABORT: mask_{c} disagrees with notna({c}) on {n_mismatch} rows"
+            )
+
+    # Per-column non-NaN coverage
+    print(f"\n  Per-column non-NaN coverage:")
+    print(f"    {'column':<35s} {'first non-NaN':<14s} {'count':>8s} {'pct':>8s}")
+    print(f"    {'-'*35} {'-'*14} {'-'*8} {'-'*8}")
+    for c in OUTPUT_COLUMNS:
+        nn = df[c].notna()
+        cnt = int(nn.sum())
+        pct = (cnt / len(df)) * 100 if len(df) else 0.0
+        if cnt > 0:
+            first_d = df.loc[nn, "date"].iloc[0].date()
+        else:
+            first_d = "(none)"
+        print(f"    {c:<35s} {str(first_d):<14s} {cnt:>8d} {pct:>7.1f}%")
+
+    # Per-row mask distribution
+    counts = df[MASK_COLUMNS].sum(axis=1)
+    print(f"\n  Per-row non-NaN count distribution (across {len(df)} rows):")
+    for thr in [1, 7, 12, 18, 24]:
+        n_ge = int((counts >= thr).sum())
+        pct_ge = (n_ge / len(df)) * 100 if len(df) else 0.0
+        print(f"    rows with >= {thr:>2d} cols non-NaN: {n_ge:>5d}  ({pct_ge:>5.1f}%)")
 
 
 def write_output(df, out_path):
@@ -154,11 +168,8 @@ def main():
           f"({spy_dates[0].date()} -> {spy_dates[-1].date()})")
 
     print()
-    start = probe_start(spy_dates)
-
-    print()
-    df = build_history(spy_dates, start)
-    run_sanity_checks(df)
+    df, skipped = build_history(spy_dates)
+    run_sanity_checks(df, skipped)
     write_output(df, OUT_PARQUET)
 
     print("\n  DONE.")

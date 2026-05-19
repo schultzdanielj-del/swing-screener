@@ -5,14 +5,15 @@ Per-run flow:
   1. Discover this week's xlsx URL by scraping naaim.org's NAAIM Exposure Index page.
   2. Download xlsx -> save raw to regime_meter/cache/naaim_raw.xlsx.
   3. Parse xlsx, keep Date + Mean/Average columns only.
-  4. Forward-fill to SPY's trading-day calendar from the main repo (read-only).
+  4. Forward-fill onto the extended SPY trading-day calendar from
+     regime_meter/cache/market_ohlcv_extended.pkl (worktree).
   5. Write daily series to regime_meter/cache/naaim_daily.parquet.
+     Dates before the first raw NAAIM reading (2006-07-05) keep NaN.
   6. Print sanity checks.
 
 Default: re-fetch from network. --no-fetch: re-derive from cached raw xlsx.
 
-All writes stay inside the regime-meter worktree. The main repo's
-market_ohlcv.pkl is opened read-only for the SPY trading-day calendar.
+Reads and writes only inside the regime-meter worktree.
 """
 import argparse
 import os
@@ -32,8 +33,7 @@ CACHE_DIR     = os.path.join(SCRIPT_DIR, "cache")
 RAW_XLSX_PATH = os.path.join(CACHE_DIR, "naaim_raw.xlsx")
 DAILY_PARQUET = os.path.join(CACHE_DIR, "naaim_daily.parquet")
 
-MAIN_REPO_CACHE = r"C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache"
-SPY_PICKLE_PATH = os.path.join(MAIN_REPO_CACHE, "market_ohlcv.pkl")
+SPY_PICKLE_PATH = os.path.join(CACHE_DIR, "market_ohlcv_extended.pkl")
 
 # --- Network ---------------------------------------------------------------
 NAAIM_PAGE_URL = "https://www.naaim.org/programs/naaim-exposure-index/"
@@ -54,8 +54,7 @@ MEAN_HEADER_ALIASES = [
     "number",
 ]
 
-# --- Window / sanity-check bounds -----------------------------------------
-HISTORY_START   = "2016-01-01"
+# --- Sanity-check bounds --------------------------------------------------
 EARLIEST_NAAIM  = "2006-08-01"   # first raw reading must be on or before this
 GAP_WARN_DAYS   = 14
 
@@ -162,13 +161,15 @@ def parse_xlsx(path):
 
 def load_spy_calendar():
     if not os.path.exists(SPY_PICKLE_PATH):
-        sys.exit(f"ABORT: SPY pickle missing at {SPY_PICKLE_PATH}")
+        sys.exit(
+            f"ABORT: extended SPY pickle missing at {SPY_PICKLE_PATH} "
+            "(run regime_meter/extended_ohlcv_ingest.py first)"
+        )
     with open(SPY_PICKLE_PATH, "rb") as f:
         cache = pickle.load(f)
     if "SPY" not in cache:
-        sys.exit("ABORT: SPY not in market_ohlcv.pkl")
+        sys.exit("ABORT: SPY not in market_ohlcv_extended.pkl")
     dates = pd.to_datetime(cache["SPY"]["date"]).sort_values().reset_index(drop=True)
-    dates = dates[dates >= pd.Timestamp(HISTORY_START)].reset_index(drop=True)
     print(
         f"  SPY calendar: {len(dates)} trading days "
         f"({dates.iloc[0].date()} -> {dates.iloc[-1].date()})"
@@ -217,10 +218,30 @@ def run_sanity_checks(weekly, daily, spy_dates):
         )
     print(f"    Daily rows:        {len(daily)} (matches SPY calendar)")
 
-    n_nan = int(daily["naaim_mean"].isna().sum())
-    if n_nan != 0:
-        sys.exit(f"ABORT: {n_nan} NaN values in daily series after forward-fill")
-    print(f"    NaN in daily:      0")
+    # SPY dates before the first raw NAAIM reading have nothing to ffill from
+    # and remain NaN. Phase C consumers treat that as a missing column on those
+    # dates. After first_raw, every SPY date must be non-NaN.
+    pre_mask  = daily["date"] <  first_raw
+    post_mask = daily["date"] >= first_raw
+
+    n_nan_pre  = int(daily.loc[pre_mask,  "naaim_mean"].isna().sum())
+    n_nan_post = int(daily.loc[post_mask, "naaim_mean"].isna().sum())
+
+    n_pre  = int(pre_mask.sum())
+    n_post = int(post_mask.sum())
+
+    if n_nan_pre != n_pre:
+        sys.exit(
+            f"ABORT: pre-first-reading rows have {n_pre - n_nan_pre} unexpected "
+            f"non-NaN values (expected all {n_pre} NaN)"
+        )
+    if n_nan_post != 0:
+        sys.exit(
+            f"ABORT: {n_nan_post} NaN values in daily series on or after "
+            f"first raw reading ({first_raw.date()})"
+        )
+    print(f"    Pre-first-reading rows (NaN expected):  {n_nan_pre}/{n_pre}")
+    print(f"    Post-first-reading rows (non-NaN):      {n_post - n_nan_post}/{n_post}")
 
     gaps_days = weekly["date"].diff().dt.days.dropna()
     if len(gaps_days) > 0:
@@ -264,7 +285,7 @@ def main():
     print(f"  Cache dir:        {CACHE_DIR}")
     print(f"  Raw xlsx path:    {RAW_XLSX_PATH}")
     print(f"  Daily output:     {DAILY_PARQUET}")
-    print(f"  Main repo cache:  {MAIN_REPO_CACHE}")
+    print(f"  Extended pickle:  {SPY_PICKLE_PATH}")
 
     if args.no_fetch:
         if not os.path.exists(RAW_XLSX_PATH):
