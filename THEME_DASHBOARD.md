@@ -85,8 +85,72 @@ Cache rules applied at startup:
 
 ## Pending research
 
-None.
+**Theme narrative writeup + per-ticker rationale for non-obvious placements.**
+
+Each theme in `local_runner/theme_map.py` needs a one-line `narrative`
+field describing the trader story behind the basket (not the GICS bucket).
+Hand-written, evidence-based. Examples of the right tone:
+- `ai_optics`: "800G/1.6T transceivers and optical components feeding
+  hyperscaler AI buildouts — beneficiaries of every step-up in DC bandwidth."
+- `nuclear_renaissance`: "AI power demand + Big Tech PPAs reviving nuclear
+  baseload; SMR pure-plays the speculative leg."
+- `bitcoin_treasury`: "Equity proxies for Bitcoin via balance-sheet hoarding;
+  convertible-debt leverage on BTC price."
+
+For non-obvious cross-narrative placements (MOD in datacenter_buildout,
+TEM in ai_apps_platforms, IREN in neoclouds, TLN in neoclouds, MPWR in
+power_demand_for_ai, etc.) — add an inline `# rationale: ...` comment
+next to the ticker in `theme_map.py` explaining why it fits despite its
+GICS classification. Obvious placements (NVDA in ai_compute, FSLR in
+solar) need no comment.
+
+Authoritative source for narrative: WebSearch on the theme name + recent
+catalysts (e.g., "neoclouds CoreWeave Stargate," "AI optics 800G
+transceiver," "uranium China export tariff trade"). Cite the source in
+the narrative or rationale. Zero confabulation.
+
+**Priority order** — narrative-heaviest themes first: AI buildout cluster,
+crypto, nuclear/uranium, critical minerals, biotech sub-baskets, defense,
+quantum, drones. Industry-shaped themes (restaurants, airlines, packaging)
+last — the existing GICS validator is mostly sufficient there.
 
 ## Pending build
 
-None.
+1. **`scripts/fetch_company_meta.py`** — mirrors `scripts/fetch_fundamentals.py`
+   (Yahoo `quoteSummary` / `assetProfile` module) but saves `longName` +
+   `longBusinessSummary` per ticker. Runs over `theme_map.UNIVERSE` only
+   (~470 tickers, ~8-10 min with rate limiting). Output:
+   `local_runner/cache/company_meta.json` keyed by ticker as
+   `{ticker: {longName, longBusinessSummary}}`.
+
+2. **`local_runner/theme_map.py` schema bump** — add `THEME_NARRATIVES`
+   dict (theme_key → 1-2 sentence narrative string) alongside the existing
+   `THEMES` and `THEME_LABELS`. Loaded by `theme_dashboard.py` and rendered
+   under the theme title annotation.
+
+3. **Dashboard UI — `local_runner/theme_dashboard.py`:**
+   - **Member mini-chart card** — extend `build_mini_svg()` so the SVG
+     header shows `TICKER` on line 1 and the `longName` (truncated to card
+     width) on line 2. Add an SVG `<title>` element containing the first
+     1-2 sentences of `longBusinessSummary` so mouse hover surfaces it as
+     a native tooltip.
+   - **Composite chart title overlay** — extend `build_composite_figure()`
+     so the existing top-left title annotation gets a third line beneath
+     the member-list with the theme narrative.
+
+4. **Validator extension** — when `company_meta.json` is present,
+   `validate_theme_sectors()` prints `longName` + first sentence of
+   `longBusinessSummary` alongside each ticker so manual review is
+   evidence-based rather than label-based.
+
+**Out of scope (do not build):**
+- News fetchers
+- Catalyst calendars
+- Earnings tracking
+- Per-ticker research reports
+- Sentiment scoring
+- Trade-management features (entries, exits, position sizing, ADR-based logic, squeeze mechanics, setup classification)
+
+The dashboard's purpose is **identity + narrative surfacing**, not a
+research terminal or a trade-management tool. Dan handles all trade
+decisions himself.
