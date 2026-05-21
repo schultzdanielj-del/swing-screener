@@ -34,6 +34,10 @@ sys.path.insert(0, LOCAL_DIR)
 
 from vectorized_indicators import sma_2d, ema_2d, macd_2d, atr_2d  # noqa: E402
 from theme_map import THEMES, THEME_LABELS, UNIVERSE  # noqa: E402
+try:
+    from theme_map import THEME_NARRATIVES  # noqa: E402
+except ImportError:
+    THEME_NARRATIVES = {}
 
 # ────────────────────────────────────────────────────────────
 # Palette (mirrors regime_meter/dashboard/colors_and_type.css)
@@ -76,12 +80,79 @@ def load_fundamentals():
         return {}
 
 
-def validate_theme_sectors(themes, fundamentals):
+def load_company_meta():
+    """Load per-ticker longName + longBusinessSummary from company_meta.json. Returns {} when missing."""
+    path = os.path.join(CACHE_DIR, "company_meta.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        import json
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("tickers", {})
+    except Exception as exc:
+        print(f"WARNING: could not load company_meta: {exc}")
+        return {}
+
+
+def _first_sentences(text, n=2):
+    """Return first n sentences of text, joined.
+
+    Standard period-splitting breaks on company suffixes like "Inc.", "Corp.", "Ltd.",
+    "N.V." and "Co." — which would clip business descriptions to just the company name.
+    We mask those tokens before splitting so the first real sentence survives.
+    """
+    if not text:
+        return ""
+    import re
+    SAFE = ""
+    abbrevs = [
+        "Inc.", "Corp.", "Ltd.", "LLC.", "L.L.C.", "L.P.", "LP.", "Co.",
+        "PLC.", "Plc.", "plc.", "N.V.", "S.A.", "A.G.", "Pty.", "Pte.",
+        "St.", "Mr.", "Mrs.", "Ms.", "Dr.", "Jr.", "Sr.",
+        "U.S.", "U.K.", "U.S.A.", "E.U.",
+        "vs.", "etc.", "e.g.", "i.e.", "No.",
+    ]
+    masked = text
+    for ab in abbrevs:
+        masked = masked.replace(ab, ab.replace(".", SAFE))
+    parts = re.split(r'(?<=[.!?])\s+', masked.strip())
+    joined = " ".join(parts[:n])
+    return joined.replace(SAFE, ".")
+
+
+def _xml_escape(s):
+    """Escape XML special characters for safe insertion into SVG text/attributes."""
+    if s is None:
+        return ""
+    return (str(s)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;"))
+
+
+def _truncate(s, n):
+    """Truncate to n chars with an ellipsis if it overflows."""
+    if not s:
+        return ""
+    s = str(s)
+    return s if len(s) <= n else (s[: n - 1].rstrip() + "…")
+
+
+def validate_theme_sectors(themes, fundamentals, company_meta=None):
     """Cross-check every ticker in THEMES against its GICS sector from fundamentals.
 
     For each theme, finds the dominant sector(s) of its members. Any member
     whose sector is not among the top 2 most-common is flagged as a likely
     miscategorization (e.g., a solar ticker accidentally placed in Payments).
+
+    When ``company_meta`` (from company_meta.json) is provided, each flagged
+    ticker is printed with its ``longName`` and the first sentence of its
+    ``longBusinessSummary`` so the human review is evidence-based rather than
+    label-based. The sector cross-check remains the primary safety net — the
+    longName / summary lines are added context, not a replacement.
 
     Prints a warning block on stdout. Does not halt — humans review and edit.
 
@@ -91,10 +162,13 @@ def validate_theme_sectors(themes, fundamentals):
         print("WARNING: no fundamentals_cache available — skipping sector cross-check.")
         return []
 
+    company_meta = company_meta or {}
     from collections import Counter
     outliers = []
     print("\n" + "=" * 78)
     print("SECTOR CROSS-CHECK against fundamentals_cache.json")
+    if company_meta:
+        print("(longName + first sentence of longBusinessSummary added from company_meta.json)")
     print("=" * 78)
 
     for theme_key, tickers in themes.items():
@@ -129,6 +203,18 @@ def validate_theme_sectors(themes, fundamentals):
                 info = fundamentals.get(tk, {})
                 industry = info.get("industry") if isinstance(info, dict) else None
                 print(f"    {tk:6s}  sector={sec:25s}  industry={industry}")
+                meta_info = company_meta.get(tk) if isinstance(company_meta, dict) else None
+                if isinstance(meta_info, dict):
+                    long_name = meta_info.get("longName") or ""
+                    long_summary = meta_info.get("longBusinessSummary") or ""
+                    first_sent = _first_sentences(long_summary, n=1) if long_summary else ""
+                    if long_name or first_sent:
+                        if long_name:
+                            print(f"           name: {long_name}")
+                        if first_sent:
+                            # Keep the printed line readable — clip very long sentences
+                            clipped = first_sent if len(first_sent) <= 200 else (first_sent[:197].rstrip() + "...")
+                            print(f"           biz : {clipped}")
         print("\nIf any of these are actually correct (overlapping narrative), ignore.")
         print("Otherwise, edit local_runner/theme_map.py and rerun.")
     else:
@@ -486,7 +572,7 @@ def build_composite(theme_tickers, cache, n_bars=250):
 # COMPOSITE CHART (Plotly)
 # ════════════════════════════════════════════════════════════
 
-def build_composite_figure(composite_df, theme_label, used_tickers, divergences=None):
+def build_composite_figure(composite_df, theme_label, used_tickers, divergences=None, narrative=None):
     df = composite_df
     close = df["close"].values.reshape(1, -1).astype(np.float64)
     high = df["high"].values.reshape(1, -1).astype(np.float64)
@@ -618,6 +704,7 @@ def build_composite_figure(composite_df, theme_label, used_tickers, divergences=
     )
     member_str = ", ".join(used_tickers)
     wrapped = textwrap.fill(member_str, width=32)
+    member_line_count = wrapped.count("\n") + 1
     fig.add_annotation(
         text=wrapped.replace("\n", "<br>"),
         xref="paper", yref="paper",
@@ -626,6 +713,23 @@ def build_composite_figure(composite_df, theme_label, used_tickers, divergences=
         font=dict(family="Segoe UI, Tahoma, sans-serif", size=11, color=COLOR_TEXT_DIM),
         align="left",
     )
+
+    # ── Optional 4th line: theme narrative beneath the member list ──
+    if narrative:
+        # Place narrative below member list — each wrapped member-list line ≈ 0.025 y-units
+        narrative_y = 0.85 - (member_line_count * 0.025) - 0.025
+        # Clamp so a very long member list does not push the narrative below the candle panel
+        if narrative_y < 0.45:
+            narrative_y = 0.45
+        wrapped_narrative = textwrap.fill(narrative, width=58)
+        fig.add_annotation(
+            text=wrapped_narrative.replace("\n", "<br>"),
+            xref="paper", yref="paper",
+            x=0.008, y=narrative_y, xanchor="left", yanchor="top",
+            showarrow=False,
+            font=dict(family="Segoe UI, Tahoma, sans-serif", size=11, color=COLOR_GOLD),
+            align="left",
+        )
 
     # Small panel labels in top-left of volume / MACD panels (TC2000 style)
     fig.add_annotation(
@@ -699,7 +803,15 @@ def build_composite_figure(composite_df, theme_label, used_tickers, divergences=
 # MEMBER MINI-CHART (hand-built SVG)
 # ════════════════════════════════════════════════════════════
 
-def build_mini_svg(df, ticker, n_bars=100, width=300, height=210):
+def build_mini_svg(df, ticker, n_bars=100, width=300, height=210, meta=None):
+    """Render a per-ticker mini-chart SVG.
+
+    When ``meta`` is a dict containing ``longName`` and/or ``longBusinessSummary``,
+    the header grows to two lines (ticker on line 1, truncated longName on line 2)
+    and an SVG ``<title>`` element is added so mouse-hover surfaces the first 1-2
+    sentences of the business summary as a native browser tooltip. When ``meta`` is
+    None or empty, the card falls back to the original single-line header layout.
+    """
     if df is None or len(df) < 2:
         return f'<svg width="{width}" height="{height}" style="background:#000;display:block"></svg>'
     df = df.tail(n_bars).reset_index(drop=True)
@@ -716,7 +828,11 @@ def build_mini_svg(df, ticker, n_bars=100, width=300, height=210):
     pct = (last_close / prev_close - 1.0) * 100.0 if prev_close > 0 else 0.0
     pct_color = COLOR_UP if pct >= 0 else COLOR_DOWN
 
-    header_h = 24
+    # ── Header sizing — grows when company-meta is available ──
+    long_name = (meta or {}).get("longName") if isinstance(meta, dict) else None
+    long_summary = (meta or {}).get("longBusinessSummary") if isinstance(meta, dict) else None
+    has_meta_line = bool(long_name)
+    header_h = 38 if has_meta_line else 24
     chart_top = header_h + 1
     chart_bot = height - 2
     chart_h = chart_bot - chart_top
@@ -739,26 +855,40 @@ def build_mini_svg(df, ticker, n_bars=100, width=300, height=210):
     body_w = max(1.4, bar_w * 0.72)
     x_off = 2.0
 
+    # SVG <title> child becomes the native browser hover tooltip for the entire card.
+    tooltip_text = _xml_escape(_first_sentences(long_summary, n=2)) if long_summary else ""
+    tooltip_el = f'<title>{tooltip_text}</title>' if tooltip_text else ''
+
     parts = [
         f'<svg width="{width}" height="{height}" xmlns="http://www.w3.org/2000/svg" '
         f'style="background:#000;display:block">',
-        # Header strip — gray gradient
+        tooltip_el,
+        # Header strip — gray gradient (grows to 38px when longName is available)
         f'<defs><linearGradient id="g_{ticker}" x1="0" y1="0" x2="0" y2="1">'
         f'<stop offset="0%" stop-color="{COLOR_CHROME_TOP}"/>'
         f'<stop offset="100%" stop-color="{COLOR_CHROME_BOT}"/>'
         f'</linearGradient></defs>',
         f'<rect x="0" y="0" width="{width}" height="{header_h}" fill="url(#g_{ticker})"/>',
         f'<line x1="0" y1="{header_h-0.5}" x2="{width}" y2="{header_h-0.5}" stroke="#000" stroke-width="1"/>',
-        # Ticker (left)
+        # Ticker (left, line 1)
         f'<text x="8" y="16" font-family="Segoe UI,Tahoma,sans-serif" font-size="12" '
         f'font-weight="700" fill="#ffffff" letter-spacing="0.04em" style="text-shadow:0 1px 0 rgba(0,0,0,0.6)">{ticker}</text>',
-        # Price + chg% (right)
+        # Price + chg% (right, line 1)
         f'<text x="{width-8}" y="16" text-anchor="end" font-family="Consolas,monospace" '
         f'font-size="11" fill="{COLOR_TEXT}" style="text-shadow:0 1px 0 rgba(0,0,0,0.6)">'
         f'<tspan>{last_close:.2f}</tspan>'
         f'<tspan> </tspan>'
         f'<tspan fill="{pct_color}" font-weight="700">{pct:+.1f}%</tspan></text>',
     ]
+
+    # ── Optional second header line — truncated longName when meta is present ──
+    if has_meta_line:
+        truncated_name = _xml_escape(_truncate(long_name, 38))
+        parts.append(
+            f'<text x="8" y="32" font-family="Segoe UI,Tahoma,sans-serif" font-size="10" '
+            f'font-weight="400" fill="{COLOR_TEXT_DIM}" letter-spacing="0.02em" '
+            f'style="text-shadow:0 1px 0 rgba(0,0,0,0.5)">{truncated_name}</text>'
+        )
 
     for i in range(n):
         cx = x_off + bar_w * i + bar_w / 2
@@ -1261,36 +1391,43 @@ def _ohlc_strip_html(vals, bar_count, pct_200, pos_label, pos_css, divergences, 
     )
 
 
-def build_dashboard(theme_keys, cache, n_bars):
+def build_dashboard(theme_keys, cache, n_bars, company_meta=None):
     sections_html = []
     sidebar_links = []
     skipped = []
     all_missing = []
+    company_meta = company_meta or {}
 
-    # ── Compute SPY benchmark using Dan's TC2000 RS PCF (5-bar AND 20-bar) ──
+    # ── Compute SPY benchmark using Dan's TC2000 RS PCF (1-bar, 5-bar, 20-bar) ──
+    spy_rs_1 = None
     spy_rs_5 = None
     spy_rs_20 = None
     spy_5d = None
     spy_adr = None
     if "SPY" in cache:
         spy_df = cache["SPY"]
+        spy_rs_1  = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
+                                  spy_df["low"].values,  spy_df["close"].values, n_bars=1)
         spy_rs_5  = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
                                   spy_df["low"].values,  spy_df["close"].values, n_bars=5)
         spy_rs_20 = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
                                   spy_df["low"].values,  spy_df["close"].values, n_bars=20)
         spy_5d = n_period_return(spy_df["close"].values, 5)
         spy_adr = adr_pct(spy_df["high"].values, spy_df["low"].values, 20)
+    if spy_rs_1 is None or spy_rs_1 == 0:
+        print("\nWARNING: SPY 1-bar RS could not be computed; using 1.0 as fallback.")
+        spy_rs_1 = 1.0
     if spy_rs_5 is None or spy_rs_5 == 0:
-        print("\nWARNING: SPY 5-bar RS could not be computed; using 1.0 as fallback.")
+        print("WARNING: SPY 5-bar RS could not be computed; using 1.0 as fallback.")
         spy_rs_5 = 1.0
     if spy_rs_20 is None or spy_rs_20 == 0:
         print("WARNING: SPY 20-bar RS could not be computed; using 1.0 as fallback.")
         spy_rs_20 = 1.0
-    print(f"\nSPY TC2000 RS  5d={spy_rs_5:+.4f}  20d={spy_rs_20:+.4f}  "
+    print(f"\nSPY TC2000 RS  1d={spy_rs_1:+.4f}  5d={spy_rs_5:+.4f}  20d={spy_rs_20:+.4f}  "
           f"5d return={spy_5d:+.2f}%  ADR%={spy_adr:.2f}%")
 
-    # ── First pass: build composites, compute 5d + 20d RS ratios ──
-    print("\nBuilding composites and computing TC2000 RS ratios (theme / SPY) for 5d and 20d...")
+    # ── First pass: build composites, compute 1d + 5d + 20d RS ratios ──
+    print("\nBuilding composites and computing TC2000 RS ratios (theme / SPY) for 1d, 5d, 20d...")
     theme_pack = {}
     for tk_theme in theme_keys:
         members = THEMES[tk_theme]
@@ -1301,19 +1438,22 @@ def build_dashboard(theme_keys, cache, n_bars):
             skipped.append((tk_theme, len(used)))
             print(f"  SKIP {tk_theme}: insufficient data ({len(used)} usable members)")
             continue
+        theme_rs_1  = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
+                                    composite_df["low"].values,  composite_df["close"].values, n_bars=1)
         theme_rs_5  = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
                                     composite_df["low"].values,  composite_df["close"].values, n_bars=5)
         theme_rs_20 = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
                                     composite_df["low"].values,  composite_df["close"].values, n_bars=20)
         theme_5d  = n_period_return(composite_df["close"].values, 5)
         theme_adr = adr_pct(composite_df["high"].values, composite_df["low"].values, 20)
+        rs1_ratio  = (theme_rs_1  / spy_rs_1)  if theme_rs_1  is not None else -1e9
         rs5_ratio  = (theme_rs_5  / spy_rs_5)  if theme_rs_5  is not None else -1e9
         rs20_ratio = (theme_rs_20 / spy_rs_20) if theme_rs_20 is not None else -1e9
         theme_pack[tk_theme] = dict(
             composite_df=composite_df, used=used,
             theme_5d=theme_5d, theme_adr=theme_adr,
-            theme_rs_5=theme_rs_5, theme_rs_20=theme_rs_20,
-            rs5_ratio=rs5_ratio, rs20_ratio=rs20_ratio,
+            theme_rs_1=theme_rs_1, theme_rs_5=theme_rs_5, theme_rs_20=theme_rs_20,
+            rs1_ratio=rs1_ratio, rs5_ratio=rs5_ratio, rs20_ratio=rs20_ratio,
         )
 
     # ── Initial sort: by 5d RS ratio desc (user can re-sort interactively) ──
@@ -1327,6 +1467,7 @@ def build_dashboard(theme_keys, cache, n_bars):
         pack = theme_pack[tk_theme]
         composite_df = pack["composite_df"]
         used = pack["used"]
+        rs1_val  = pack["rs1_ratio"]
         rs5_val  = pack["rs5_ratio"]
         rs20_val = pack["rs20_ratio"]
         theme_5d = pack["theme_5d"]
@@ -1334,7 +1475,8 @@ def build_dashboard(theme_keys, cache, n_bars):
         label = THEME_LABELS.get(tk_theme, tk_theme.replace("_", " ").title())
 
         divergences = detect_divergences(composite_df)
-        fig, last_vals = build_composite_figure(composite_df, label, used, divergences)
+        narrative = THEME_NARRATIVES.get(tk_theme)
+        fig, last_vals = build_composite_figure(composite_df, label, used, divergences, narrative=narrative)
         pct_200, pos_label, pos_css = position_vs_200d(composite_df)
         chart_div = fig.to_html(
             include_plotlyjs=False, full_html=False,
@@ -1343,7 +1485,7 @@ def build_dashboard(theme_keys, cache, n_bars):
         )
 
         member_svgs = "".join(
-            f'<div class="member-card">{build_mini_svg(cache[tk], tk)}</div>'
+            f'<div class="member-card">{build_mini_svg(cache[tk], tk, meta=company_meta.get(tk))}</div>'
             for tk in used
         )
 
@@ -1379,6 +1521,7 @@ def build_dashboard(theme_keys, cache, n_bars):
         watchlist_rows.append(dict(
             theme_id=tk_theme,
             label=label,
+            rs1=rs1_val if rs1_val is not None and rs1_val > -1e8 else None,
             rs5=rs5_val if rs5_val is not None and rs5_val > -1e8 else None,
             rs20=rs20_val if rs20_val is not None and rs20_val > -1e8 else None,
             pct_200=pct_200,
@@ -1389,6 +1532,7 @@ def build_dashboard(theme_keys, cache, n_bars):
         ))
 
         pct_str  = f"{pct_200:+.1f}%" if pct_200 is not None else "n/a"
+        rs1_str  = f"{rs1_val:+.2f}"  if rs1_val  is not None and rs1_val  > -1e8 else "n/a"
         rs5_str  = f"{rs5_val:+.2f}"  if rs5_val  is not None and rs5_val  > -1e8 else "n/a"
         rs20_str = f"{rs20_val:+.2f}" if rs20_val is not None and rs20_val > -1e8 else "n/a"
         t5d_str = f"{theme_5d:+.2f}%" if theme_5d is not None else "n/a"
@@ -1396,7 +1540,7 @@ def build_dashboard(theme_keys, cache, n_bars):
         div_str = ""
         if has_bull: div_str += " BULLDIV"
         if has_bear: div_str += " BEARDIV"
-        print(f"  5d={rs5_str:>7}x  20d={rs20_str:>7}x  {tk_theme:35s} "
+        print(f"  1d={rs1_str:>7}x  5d={rs5_str:>7}x  20d={rs20_str:>7}x  {tk_theme:35s} "
               f"5dret={t5d_str:>7}  ADR={adr_str:>6}  200D={pct_str:>7}{div_str}")
 
     if all_missing:
@@ -1414,7 +1558,7 @@ def build_dashboard(theme_keys, cache, n_bars):
 
     if ungrouped_in_cache:
         member_svgs = "".join(
-            f'<div class="member-card">{build_mini_svg(cache[tk], tk)}</div>'
+            f'<div class="member-card">{build_mini_svg(cache[tk], tk, meta=company_meta.get(tk))}</div>'
             for tk in ungrouped_in_cache
         )
         ungrouped_section = (
@@ -1468,14 +1612,16 @@ def build_dashboard(theme_keys, cache, n_bars):
     watchlist_body_rows = []
     for r in watchlist_rows:
         below_cls = " below-200" if r["below_200"] else ""
-        rs5 = r["rs5"]; rs20 = r["rs20"]
+        rs1 = r["rs1"]; rs5 = r["rs5"]; rs20 = r["rs20"]
+        rs1_attr  = f"{rs1:.4f}"  if rs1  is not None else "-1e9"
         rs5_attr  = f"{rs5:.4f}"  if rs5  is not None else "-1e9"
         rs20_attr = f"{rs20:.4f}" if rs20 is not None else "-1e9"
         watchlist_body_rows.append(
             f'<tr class="watchlist-row{below_cls}" data-theme-id="{r["theme_id"]}"'
-            f' data-label="{r["label"]}" data-rs5="{rs5_attr}" data-rs20="{rs20_attr}"'
+            f' data-label="{r["label"]}" data-rs1="{rs1_attr}" data-rs5="{rs5_attr}" data-rs20="{rs20_attr}"'
             f' data-n="{r["count"]}">'
             f'<td class="theme-name">{r["label"]}</td>'
+            f'{_num_cell(rs1)}'
             f'{_num_cell(rs5)}'
             f'{_num_cell(rs20)}'
             f'<td class="num count">{r["count"]}</td>'
@@ -1484,12 +1630,13 @@ def build_dashboard(theme_keys, cache, n_bars):
 
     watchlist_html = (
         '<div class="watchlist-controls">'
-        '<label><input type="checkbox" id="toggle-hide-below"/> Hide below 200D</label>'
+        '<label><input type="checkbox" id="toggle-hide-below" checked/> Hide below 200D</label>'
         '<span class="wl-count" id="wl-visible-count"></span>'
         '</div>'
         '<table class="watchlist-table" id="watchlist">'
         '<thead><tr>'
         '<th data-sort-key="label" data-sort-type="text">Theme</th>'
+        '<th data-sort-key="rs1"   data-sort-type="num">1d RS</th>'
         '<th data-sort-key="rs5"   data-sort-type="num" class="sort-active">5d RS</th>'
         '<th data-sort-key="rs20"  data-sort-type="num">20d RS</th>'
         '<th data-sort-key="n"     data-sort-type="num">N</th>'
@@ -1792,7 +1939,12 @@ def main():
 
     # Cross-check theme assignments against fundamentals sectors
     fundamentals = load_fundamentals()
-    validate_theme_sectors(THEMES, fundamentals)
+    company_meta = load_company_meta()
+    if company_meta:
+        print(f"Loaded company_meta.json: {len(company_meta)} tickers with longName / longBusinessSummary")
+    else:
+        print("company_meta.json not present — mini-cards will render without longName / hover tooltip")
+    validate_theme_sectors(THEMES, fundamentals, company_meta=company_meta)
 
     if args.theme:
         if args.theme not in THEMES:
@@ -1806,7 +1958,7 @@ def main():
     n_unique = len({tk for k in theme_keys for tk in THEMES[k]})
     print(f"Unique tickers across themes: {n_unique}")
 
-    html, skipped = build_dashboard(theme_keys, cache, args.bars)
+    html, skipped = build_dashboard(theme_keys, cache, args.bars, company_meta=company_meta)
 
     os.makedirs(os.path.dirname(OUTPUT_HTML), exist_ok=True)
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
