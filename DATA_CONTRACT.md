@@ -136,6 +136,7 @@ These are the authoritative outputs and inputs for all downstream consumers. The
 | `profit_{setup}.json` | `profit_grinder.py` | Latest pointer. |
 | `scan_settings_{setup}.json` | Scan Tuning UI | Locked slider settings read by the nightly scan. |
 | `fundamentals_cache.json` | `fetch_fundamentals.py` | Per-ticker sector, shares outstanding, float. |
+| `theme_dashboard.html` | `theme_dashboard.py` | Single self-contained browsable HTML. One section per theme (equal-weight synthetic OHLC composite chart + member mini-charts) + an "Ungrouped" section. Embeds Plotly figures and inline SVG. Theme membership read from `local_runner/theme_map.py`. Not a pipeline input — visualization-only. |
 
 Other cache directories:
 - `data/signal_exit_grind/signal_exit_{setup}.json` — latest pointer to signal exit conditions

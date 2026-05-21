@@ -360,7 +360,7 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 **Location:** `local_runner/vectorized_indicators.py`
 **What it does:** Pure computation — 2D versions of all TA indicators (SMA, EMA, RSI, ATR, etc.). No file I/O.
 
-**Called by:** `vectorized_dispatch.py`, `vectorized_cache_builder.py`
+**Called by:** `vectorized_dispatch.py`, `vectorized_cache_builder.py`, `theme_dashboard.py`
 
 ---
 
@@ -1007,6 +1007,24 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 
 ---
 
+### theme_dashboard.py
+**Location:** `local_runner/theme_dashboard.py`
+**Spec:** `THEME_DASHBOARD.md`
+**What it does:** Builds a single self-contained HTML browsable dashboard of market themes. Reads the OHLCV pickle and the theme/universe map, computes per-theme equal-weight synthetic OHLC composites, MACD-line divergences (trendline-clean validated), 5-bar and 20-bar TC2000 RS PCF ratios vs SPY, position vs 200-day SMA. Renders one section per theme (composite chart + member mini-charts) plus an "Ungrouped" section for universe tickers not assigned to any theme. Output is consumed by humans in a browser; not a pipeline input.
+
+**Inputs:**
+- `local_runner/cache/universe_ohlcv_daily.pkl` — OHLCV cache
+- `local_runner/theme_map.py` — `THEMES`, `THEME_LABELS`, `UNIVERSE`
+
+**Outputs:**
+- `local_runner/cache/theme_dashboard.html` — overwritten each run
+
+**Calls:** `vectorized_indicators.py` (`sma_2d`, `ema_2d`, `macd_2d`, `atr_2d`)
+
+**Called by:** nobody (on-demand only — not in `nightly.py`)
+
+---
+
 ### server.py
 **Location:** repo root
 **What it does:** FastAPI server. Runs on Railway (production) and locally (development). Manages SQLite, serves APIs for examples, vetting, pipeline control.
@@ -1124,3 +1142,5 @@ cache_builder.py (daily .pkl)
 | `data/vetting/vetting_{setup}.json` | JSON | scanperfect (UI) | scanperfect, server |
 | `data/pipeline_state.json` | JSON | server, scanperfect | scanperfect |
 | `data/pipeline_logs.json` | JSON | server, scanperfect | scanperfect |
+| `local_runner/theme_map.py` | Python (hand-edited) | human | theme_dashboard |
+| `local_runner/cache/theme_dashboard.html` | HTML (Plotly + inline SVG) | theme_dashboard | browser (human) |
