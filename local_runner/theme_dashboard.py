@@ -61,6 +61,82 @@ PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 # DATA LOADING
 # ════════════════════════════════════════════════════════════
 
+def load_fundamentals():
+    """Load per-ticker sector/industry from fundamentals_cache.json. Returns {} on failure."""
+    path = os.path.join(CACHE_DIR, "fundamentals_cache.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        import json
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("tickers", {})
+    except Exception as exc:
+        print(f"WARNING: could not load fundamentals_cache: {exc}")
+        return {}
+
+
+def validate_theme_sectors(themes, fundamentals):
+    """Cross-check every ticker in THEMES against its GICS sector from fundamentals.
+
+    For each theme, finds the dominant sector(s) of its members. Any member
+    whose sector is not among the top 2 most-common is flagged as a likely
+    miscategorization (e.g., a solar ticker accidentally placed in Payments).
+
+    Prints a warning block on stdout. Does not halt — humans review and edit.
+
+    Returns list of (theme_key, ticker, ticker_sector, theme_dominant_sector) outliers.
+    """
+    if not fundamentals:
+        print("WARNING: no fundamentals_cache available — skipping sector cross-check.")
+        return []
+
+    from collections import Counter
+    outliers = []
+    print("\n" + "=" * 78)
+    print("SECTOR CROSS-CHECK against fundamentals_cache.json")
+    print("=" * 78)
+
+    for theme_key, tickers in themes.items():
+        ticker_sectors = []
+        unknown_sector = []
+        for tk in tickers:
+            info = fundamentals.get(tk, {})
+            sec = info.get("sector") if isinstance(info, dict) else None
+            if sec:
+                ticker_sectors.append((tk, sec))
+            else:
+                unknown_sector.append(tk)
+        if len(ticker_sectors) < 2:
+            continue  # need at least 2 members to derive a "dominant" sector
+
+        sector_counts = Counter(s for _, s in ticker_sectors)
+        top_two = [s for s, _ in sector_counts.most_common(2)]
+        for tk, sec in ticker_sectors:
+            if sec not in top_two:
+                outliers.append((theme_key, tk, sec, top_two[0]))
+
+    if outliers:
+        print(f"\n[!] {len(outliers)} potential miscategorizations "
+              f"(ticker's sector != theme's dominant sector):\n")
+        # Group by theme
+        by_theme = {}
+        for theme_key, tk, sec, dominant in outliers:
+            by_theme.setdefault(theme_key, []).append((tk, sec, dominant))
+        for theme_key in sorted(by_theme.keys()):
+            print(f"  Theme '{theme_key}' (dominant sector: {by_theme[theme_key][0][2]}):")
+            for tk, sec, _ in by_theme[theme_key]:
+                info = fundamentals.get(tk, {})
+                industry = info.get("industry") if isinstance(info, dict) else None
+                print(f"    {tk:6s}  sector={sec:25s}  industry={industry}")
+        print("\nIf any of these are actually correct (overlapping narrative), ignore.")
+        print("Otherwise, edit local_runner/theme_map.py and rerun.")
+    else:
+        print("\n[OK] No outliers - every ticker's sector matches its theme's dominant sector.")
+    print("=" * 78 + "\n")
+    return outliers
+
+
 def load_daily_cache():
     path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
     if not os.path.exists(path):
@@ -1713,6 +1789,10 @@ def main():
     print(f"BARS:      {args.bars}")
 
     cache = load_daily_cache()
+
+    # Cross-check theme assignments against fundamentals sectors
+    fundamentals = load_fundamentals()
+    validate_theme_sectors(THEMES, fundamentals)
 
     if args.theme:
         if args.theme not in THEMES:

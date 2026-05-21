@@ -15,16 +15,16 @@ THEMES = {
     # ═══════════════════════════════════════════════════
     "ai_compute":               ["NVDA", "AMD", "AVGO", "MRVL", "TXN", "QCOM", "MCHP", "ON", "NXPI", "INTC", "MU", "GFS", "WOLF", "ALAB", "RMBS", "MPWR", "LSCC", "SWKS", "QRVO", "SITM", "ALGM", "CRUS", "SMTC", "AMKR", "SYNA", "TSEM", "CRDO", "NVTS", "MXL"],
     "ai_optics":                ["AAOI", "AXTI", "CIEN", "COHR", "CRDO", "FN", "GLW", "LITE", "LWLG", "MKSI", "MTSI", "POET", "VIAV", "MRVL", "AVGO"],
-    "ai_networking":            ["ANET", "CRDO", "ALAB", "AAOI", "FN", "CIEN", "NET", "AKAM", "UI", "IDCC"],
+    "ai_networking":            ["ANET", "CRDO", "ALAB", "AAOI", "FN", "CIEN", "NET", "AKAM", "UI"],
     "ai_connectivity":          ["ALAB", "MRVL", "AVGO", "MXL", "CRDO", "SLAB", "MPWR", "ADI", "TXN"],
     "semiconductor_ip":         ["ARM", "SNPS", "CDNS", "CEVA"],
     "memory_cycle":             ["MU", "SNDK", "STX", "WDC", "MRAM"],
-    "semi_equipment":           ["LRCX", "AMAT", "KLAC", "ENTG", "FORM", "TER", "NVMI", "ONTO", "AEHR", "ACLS", "MKSI"],
-    "datacenter_buildout":      ["VRT", "DELL", "HPE", "HPQ", "CLS", "SMCI", "JBL", "FLEX", "SANM", "PENG", "ANET", "CRDO", "MOD", "AAON", "BE", "MPWR", "NVT", "AEIS", "WSO", "CDW"],
+    "semi_equipment":           ["LRCX", "AMAT", "KLAC", "ENTG", "FORM", "TER", "NVMI", "ONTO", "AEHR", "ACLS", "MKSI", "ICHR", "UCTT", "Q"],
+    "datacenter_buildout":      ["VRT", "DELL", "HPE", "HPQ", "CLS", "SMCI", "JBL", "FLEX", "SANM", "PENG", "ANET", "CRDO", "MOD", "AAON", "BE", "MPWR", "NVT", "AEIS", "CDW"],
     "ai_gpu_clouds":            ["CRWV", "NBIS", "APLD", "IREN", "RXT", "DOCN"],
-    "neoclouds":                ["CRWV", "NBIS", "APLD", "IREN", "CIFR", "WULF", "CORZ", "BTDR", "HIVE", "HUT", "RIOT", "MARA", "CLSK", "ORCL", "TLN"],
+    "neoclouds":                ["CRWV", "NBIS", "APLD", "IREN", "CIFR", "WULF", "CORZ", "BTDR", "HIVE", "HUT", "RIOT", "MARA", "CLSK", "TLN"],
     "datacenters_gpu_hosting":  ["NBIS", "IREN", "HUT", "RIOT", "CRWV", "WULF", "CIFR", "APLD", "CORZ", "BTDR", "HIVE", "CLSK", "MARA", "KEEL"],
-    "semiconductor_testing":    ["TER", "KLAC", "FORM", "ONTO", "NVMI", "AEHR", "COHU", "CAMT", "ICHR", "UCTT"],
+    "semiconductor_testing":    ["TER", "KLAC", "FORM", "ONTO", "NVMI", "AEHR", "COHU", "CAMT"],
     "ai_apps_platforms":        ["PLTR", "APP", "TEM", "BBAI", "SOUN", "PATH", "IOT", "DUOL", "INOD", "U", "TTD", "ZETA"],
     "quantum_computing":        ["IONQ", "QBTS", "RGTI", "QUBT"],
 
@@ -34,7 +34,7 @@ THEMES = {
     "power_demand_for_ai":      ["CEG", "VST", "NRG", "TLN", "GEV", "ETN", "VRT", "GNRC", "AEIS", "NVT", "POWL", "MPWR", "MOD", "AAON", "BE", "SOLS"],
     "nuclear_renaissance":      ["CCJ", "OKLO", "SMR", "LEU", "BWXT", "UEC", "UUUU", "CEG", "VST", "NRG", "TLN"],
     "uranium_pure_plays":       ["CCJ", "LEU", "UEC", "UUUU", "DNN"],
-    "solar":                    ["FSLR", "ENPH", "SEDG", "RUN", "NXT", "FLNC"],
+    "solar":                    ["FSLR", "ENPH", "SEDG", "RUN", "NXT", "TE"],
     "energy_storage":           ["FLNC", "EOSE", "AMPX", "QS"],
     "fuel_cells_hydrogen":      ["FCEL", "PLUG", "BE"],
 
@@ -43,7 +43,7 @@ THEMES = {
     # ═══════════════════════════════════════════════════
     "ev_makers":                ["TSLA", "RIVN", "LCID", "F", "EZGO"],
     "ev_supply_chain":          ["NVTS", "MOD", "BWA", "APTV", "ALB", "AMPX", "ST", "ALSN"],
-    "autonomous_driving":       ["TSLA", "AUR", "IOT", "PATH", "LYFT"],
+    "autonomous_driving":       ["TSLA", "AUR", "IOT", "LYFT"],
 
     # ═══════════════════════════════════════════════════
     #  CRYPTO REVIVAL
@@ -63,9 +63,9 @@ THEMES = {
     # ═══════════════════════════════════════════════════
     #  DEFENSE & GEOPOLITICAL
     # ═══════════════════════════════════════════════════
-    "defense_tech":             ["KTOS", "AVAV", "BWXT", "AXON", "OSK", "KRMN", "RCAT", "ONDS", "RKLB", "TTMI", "LDOS", "BAH", "CACI"],
+    "defense_tech":             ["KTOS", "AVAV", "BWXT", "AXON", "OSK", "KRMN", "RCAT", "ONDS", "RKLB", "TTMI", "LDOS", "BAH", "CACI", "SARO"],
     "critical_minerals":        ["MP", "USAR", "UAMY", "CRML", "UUUU", "LEU", "ALB", "HBM", "UEC"],
-    "specialty_aero_metals":    ["CRS", "ATI", "CSL"],
+    "specialty_aero_metals":    ["CRS", "ATI"],
 
     # ═══════════════════════════════════════════════════
     #  PRECIOUS METALS & MINING
@@ -77,17 +77,17 @@ THEMES = {
     # ═══════════════════════════════════════════════════
     #  CYBERSECURITY & ENTERPRISE SOFTWARE
     # ═══════════════════════════════════════════════════
-    "cybersecurity":            ["PANW", "CRWD", "FTNT", "ZS", "OKTA", "NET", "S", "RBRK", "CHKP", "GEN", "AKAM", "Q", "BB", "FSLY"],
+    "cybersecurity":            ["PANW", "CRWD", "FTNT", "ZS", "OKTA", "NET", "S", "RBRK", "CHKP", "GEN", "AKAM", "BB", "FSLY"],
     "data_devops_platforms":    ["DDOG", "MDB", "SNOW", "DT", "GTLB", "FROG", "TEAM", "DBX", "ORCL"],
     "cloud_infra":              ["NET", "FSLY", "NTNX", "RXT", "DBX", "DOCN", "AKAM", "GDDY", "TWLO"],
     "productivity_saas":        ["NOW", "WDAY", "MNDY", "TEAM", "INTU", "DOCU", "ZM", "FIG", "HUBS", "KVYO"],
-    "vertical_saas":            ["TOST", "VEEV", "COMP", "GWRE", "PCOR", "TYL", "DOCS", "SHOP", "PAYC"],
+    "vertical_saas":            ["TOST", "VEEV", "GWRE", "PCOR", "TYL", "DOCS", "SHOP", "PAYC"],
     "ad_tech_marketing":        ["APP", "TTD", "RDDT", "PINS", "SNAP", "ZETA", "PSKY", "HUBS", "KVYO"],
 
     # ═══════════════════════════════════════════════════
     #  HEALTHCARE NARRATIVES
     # ═══════════════════════════════════════════════════
-    "medtech_devices":          ["PODD", "DXCM", "GKOS", "TMDX", "ALGN", "GMED", "INSM", "BAX"],
+    "medtech_devices":          ["PODD", "DXCM", "GKOS", "TMDX", "ALGN", "GMED", "BAX"],
     "diagnostics_tools":        ["GH", "NTRA", "ILMN", "RGEN", "TECH", "IQV", "ICLR", "CRL", "BIO", "WAT", "MTD", "DOCS", "RVTY"],
     "managed_care":             ["HUM", "CNC", "OSCR", "MOH", "UHS", "ALHC", "THC", "DVA", "BTSG", "OPCH"],
     "animal_health":            ["ZTS", "ELAN"],
@@ -95,7 +95,7 @@ THEMES = {
     # ═══════════════════════════════════════════════════
     #  FINTECH & FINANCIALS
     # ═══════════════════════════════════════════════════
-    "fintech_disruptors":       ["SOFI", "HOOD", "AFRM", "UPST", "DAVE", "LMND", "CHYM", "FIGR", "RKT", "OPEN", "GRAB", "TE"],
+    "fintech_disruptors":       ["SOFI", "HOOD", "AFRM", "UPST", "DAVE", "LMND", "CHYM", "FIGR", "RKT", "GRAB"],
     "payments":                 ["CPAY", "GPN", "RELY"],
     "alt_asset_managers":       ["TPG", "OWL", "ARES", "CG", "LPLA", "SEI", "EVR"],
     "specialty_insurance":      ["RYAN", "KNSL", "LMND"],
@@ -106,7 +106,7 @@ THEMES = {
     "reshoring_construction":   ["FIX", "PWR", "MTZ", "IESC", "PRIM", "MYRG", "AGX", "STRL", "ACM", "ECG", "J", "TTEK", "DY", "FLR"],
     "electrical_grid":          ["ETN", "VRT", "GEV", "GNRC", "NRG", "POWL", "AEIS", "NVT", "RRX", "SPXC", "FLS"],
     "hvac_cooling":             ["AAON", "MOD", "WSO"],
-    "building_products":        ["FBIN", "POOL", "FND", "WHR", "IBP", "SWK", "MHK", "RH", "OC", "SITE", "BLDR", "TPL", "TSCO", "CSL", "SN"],
+    "building_products":        ["FBIN", "POOL", "FND", "WHR", "IBP", "SWK", "MHK", "RH", "OC", "SITE", "BLDR", "TSCO", "CSL", "SN"],
     "industrial_distribution":  ["WCC", "ARW", "CDW", "QXO"],
     "trucking_logistics":       ["KNX", "ODFL", "SAIA", "XPO", "CHRW"],
     "aviation_aero_leasing":    ["FTAI", "FLY"],
@@ -115,18 +115,18 @@ THEMES = {
     #  ENERGY (TRADITIONAL)
     # ═══════════════════════════════════════════════════
     "oil_gas_ep":               ["APA", "SM", "PBF", "TPL"],
-    "oil_gas_services":         ["DINO", "WFRD", "RIG", "LBRT", "KGS", "MUSA"],
+    "oil_gas_services":         ["DINO", "WFRD", "RIG", "LBRT", "KGS"],
     "lng_natgas":               ["VG"],
     "fertilizer":               ["CF", "MOS"],
 
     # ═══════════════════════════════════════════════════
     #  CONSUMER & TRAVEL
     # ═══════════════════════════════════════════════════
-    "energy_drinks_wellness":   ["CELH", "BROS", "COCO", "HIMS", "COKE"],
+    "energy_drinks_wellness":   ["CELH", "BROS", "COCO", "COKE"],
     "restaurants_fast_casual":  ["CAVA", "WING", "SHAK", "EAT", "BROS"],
-    "footwear_apparel":         ["CROX", "ONON", "BOOT", "AS", "GAP", "VFC", "BBWI"],
-    "beauty":                   ["ELF", "EL"],
-    "discount_retail":          ["DG", "DLTR", "FIVE", "OLLI", "SFM"],
+    "footwear_apparel":         ["CROX", "ONON", "BOOT", "AS", "GAP", "VFC"],
+    "beauty":                   ["ELF", "EL", "BBWI"],
+    "discount_retail":          ["DG", "DLTR", "FIVE", "OLLI", "SFM", "MUSA"],
     "ecommerce":                ["ETSY", "RH", "W", "EBAY", "CHWY", "CART", "CVNA", "SHOP", "CPNG", "WIX", "DASH"],
     "online_travel":            ["BKNG", "EXPE"],
     "cruise":                   ["CCL", "NCLH", "RCL", "VIK"],
@@ -157,7 +157,7 @@ THEMES = {
     # ═══════════════════════════════════════════════════
     #  BIOTECH — placed last, isolated from the rest
     # ═══════════════════════════════════════════════════
-    "biotech":                  ["TEM", "ORKA", "RVMD", "AXSM", "CELC", "MIRM", "GH", "NTRA", "PTCT", "ARWR", "BBIO", "ALNY", "INSM", "MDGL", "PRAX", "TVTX", "MRNA", "NTLA", "CYTK", "HALO", "ABVX", "AKAN", "ERAS", "SARO", "ROIV", "HIMS"],
+    "biotech":                  ["TEM", "ORKA", "RVMD", "AXSM", "CELC", "MIRM", "GH", "NTRA", "PTCT", "ARWR", "BBIO", "ALNY", "INSM", "MDGL", "PRAX", "TVTX", "MRNA", "NTLA", "CYTK", "HALO", "ABVX", "AKAN", "ERAS", "ROIV", "HIMS"],
 }
 
 
