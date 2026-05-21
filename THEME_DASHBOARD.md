@@ -69,9 +69,27 @@ Ungrouped section:
 - Tickers missing from the OHLCV cache (e.g., `BF.B` → cache key `BF-B`) are reported on stdout and counted in the header's universe summary but not rendered.
 
 Cache rules applied at startup:
-- Loads `local_runner/cache/universe_ohlcv_daily.pkl` (falls back to legacy `universe_ohlcv.pkl`).
-- Prints cache path, ticker count, and SPY last-bar date.
+- Cache source selection: if `local_runner/cache/universe_ohlcv_daily_intraday.pkl` exists AND its mtime is newer than `local_runner/cache/universe_ohlcv_daily.pkl`'s mtime, load the intraday pickle. Otherwise load `universe_ohlcv_daily.pkl` (legacy `universe_ohlcv.pkl` as last fallback). `load_daily_cache()` returns `(cache, source_meta)` where `source_meta["source"]` is `"intraday"` or `"main"` and downstream renderers branch on it.
+- Prints cache path, ticker count, source label, and SPY last-bar date.
 - Halts if ticker count < 11,200.
+- Header "Cache Last Bar" cell: renders `YYYY-MM-DD (intraday 4:20pm)` in gold accent when source = intraday; plain `YYYY-MM-DD` when source = main.
+
+Intraday refresh (`local_runner/intraday_refresh.py`):
+- Purpose: an after-close glance at where the day landed, ~20 minutes after the regular session close, before the next morning's nightly bulk EOD lands. Statistical / informational only — no commentary, no signals.
+- Scope: the theme dashboard universe only — union of `THEMES` ticker lists, `UNIVERSE` list, and `BENCHMARK_TICKERS` (currently `["SPY"]`). SPY is included even though it isn't a theme member because the dashboard reads it directly for the header date and every theme/SPY TC2000 RS ratio.
+- Source: EODHD `/real-time/` endpoint, batched 18 tickers per call. Roughly 51 API calls per run, ~50–100 quota total, well inside the standard tier's 1,000-req/min HTTP cap.
+- Last-bar substitution: for each ticker with a valid quote, if the main pickle's last bar date matches today (America/New_York), overwrite O/H/L/C/V in place; otherwise append a new row at today's date. Tickers in the theme universe but missing from the main pickle (e.g., `BF.B` vs `BF-B`) are reported and skipped.
+- Output: `local_runner/cache/universe_ohlcv_daily_intraday.pkl` — full ticker dict copy of the main pickle with theme universe tickers mutated. Atomic write via `.tmp` + rename. Sidecar `universe_ohlcv_daily_intraday.meta` JSON file carries `{snapshot_et, written_at, quotes_received, bars_updated, bars_appended, label}`.
+- Failure modes: EODHD unreachable, token rejected, sub-70% quote success rate, or every quote matching the prior close (likely closed market) → log, exit non-zero, do NOT touch the intraday pickle. Dashboard then continues to read whichever pickle is currently newer.
+- Dashboard regen: on success the script invokes `theme_dashboard.main()` directly with `--bars 250` (no `--open`), so the HTML is rewritten against the freshly-mutated pickle in the same process.
+- Reconciliation: the next morning's nightly overwrites `universe_ohlcv_daily.pkl` with the official MOC close; the intraday pickle is then older than main and silently ignored — source-of-truth remains nightly.
+
+Scheduled task (Windows Task Scheduler):
+- Task name: `ScanPerfect Intraday Refresh`. XML template at `local_runner/cache/intraday_refresh_task.xml` (mirrors the existing two task XMLs; gitignored alongside them).
+- Trigger: daily at 16:20 local (ET on the host).
+- Action: `cmd.exe /c python local_runner\intraday_refresh.py > local_runner\cache\intraday_log.txt 2>&1`, working directory = repo root.
+- `MultipleInstancesPolicy=StopExisting`, `ExecutionTimeLimit=PT30M`, `StartWhenAvailable=true`, `LogonType=InteractiveToken`. Matches the footgun-free pattern used by `ScanPerfect Nightly Refresh` and `ScanPerfect Theme Dashboard`.
+- Register on a new host with: `schtasks /Create /XML local_runner\cache\intraday_refresh_task.xml /TN "ScanPerfect Intraday Refresh" /F`.
 
 ## Details you need to know
 
@@ -96,7 +114,7 @@ None currently active.
 
 ## Pending build
 
-**1. Market index internals + composite score tab.** A second tab/page
+**Market index internals + composite score tab.** A second tab/page
 in the dashboard HTML showing market breadth and a single derived
 composite score that compresses internals into one "what's the market
 doing right now" number with regime labels. Candidate internals:
@@ -107,48 +125,6 @@ regime-bucketed) — not a trade signal. Same single-HTML self-contained
 delivery model as the existing theme page, served as a second tab
 alongside the existing themes view, sharing the same chrome / sidebar /
 status bar.
-
-**2. Daily 4:20 PM ET intraday close-snapshot refresh.** A new
-`local_runner/intraday_refresh.py` script and Windows scheduled task that
-fires daily at 4:20 PM ET, pulls EODHD `/real-time/` quotes for the
-theme-dashboard universe only (~915 tickers, not the full 11k OHLCV
-cache), and regenerates `theme_dashboard.html` with the live snapshot
-substituted into the last daily bar. Purpose: an after-dinner glance at
-where the day landed before the next morning's official EODHD bulk close
-arrives.
-
-Constraints / design points:
-- **Scope: theme-dashboard universe only.** Do not refresh the full 11k
-  OHLCV cache here — that's nightly's job. This task touches only the
-  ~915 tickers needed by the theme view.
-- **EODHD endpoint: `/real-time/{ticker}?s=...` batched at ~15-20 tickers
-  per call.** Costs roughly 50-100 API quota per run. Within tier budget
-  (the standard All World tier at 100K/day already absorbs ~700 quota
-  for nightly with thousands of quota to spare).
-- **Storage: separate file, not in-place mutation.** Write a
-  `universe_ohlcv_daily_intraday.pkl` (or similar) alongside the main
-  pickle. Theme dashboard prefers the intraday pickle when its mtime is
-  newer than the main pickle's mtime, otherwise reads the main file.
-  Avoids contaminating the official daily cache with synthetic snapshots.
-- **Reconciliation: nightly overwrites the synthetic.** Next morning's
-  EODHD bulk EOD lands the official MOC auction print into the main
-  pickle; the intraday pickle is then older and ignored. Source of truth
-  remains nightly.
-- **UI marker.** The dashboard header should show that the last bar is
-  an intraday snapshot (e.g., "Cache Last Bar: 2026-05-21 (intraday
-  4:20pm)") when reading the intraday pickle, so it's never ambiguous
-  whether you're looking at synthetic or official data.
-- **Scheduled task template.** Same footgun-free pattern as the existing
-  two tasks: `cmd /c python local_runner/intraday_refresh.py > local_runner/cache/intraday_log.txt 2>&1`,
-  MultipleInstancesPolicy=StopExisting.
-- **Failure mode.** When EODHD is unreachable or the live endpoint
-  errors, the intraday refresh logs the failure and exits without
-  touching the intraday pickle. The dashboard then continues to read the
-  most recent successful intraday or the main pickle.
-
-Out of scope for this task: pulling intraday/live for the full 11k
-universe; running multiple times per day; bullish/bearish commentary on
-the snapshot levels; trade signals.
 
 **Out of scope (do not build):**
 - News fetchers

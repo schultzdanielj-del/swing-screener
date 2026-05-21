@@ -224,23 +224,58 @@ def validate_theme_sectors(themes, fundamentals, company_meta=None):
 
 
 def load_daily_cache():
-    path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
-    if not os.path.exists(path):
-        path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"No OHLCV cache found in {CACHE_DIR}. Run cache_builder.py first.")
-    print(f"Loading {path}...")
-    with open(path, "rb") as f:
+    """Load the OHLCV daily cache.
+
+    Prefers `universe_ohlcv_daily_intraday.pkl` when it exists AND its mtime
+    is newer than the main `universe_ohlcv_daily.pkl`'s mtime. This is the
+    handoff contract with `local_runner/intraday_refresh.py`: the intraday
+    refresh writes the intraday pickle at ~4:20 PM ET; next morning's
+    nightly overwrites the main pickle (mtime advances), so the intraday
+    pickle is automatically ignored from that point on.
+
+    Returns a tuple ``(cache, source_meta)`` where ``source_meta`` is a dict
+    with keys ``source`` ('main' | 'intraday'), ``last_bar_date`` (string
+    YYYY-MM-DD or '?'), ``label`` (display label suffix or '').
+    """
+    main_path = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
+    intraday_path = os.path.join(CACHE_DIR, "universe_ohlcv_daily_intraday.pkl")
+    legacy_path = os.path.join(CACHE_DIR, "universe_ohlcv.pkl")
+
+    chosen = None
+    source = None
+    if os.path.exists(intraday_path) and os.path.exists(main_path):
+        if os.path.getmtime(intraday_path) > os.path.getmtime(main_path):
+            chosen = intraday_path
+            source = "intraday"
+    if chosen is None:
+        if os.path.exists(main_path):
+            chosen = main_path
+            source = "main"
+        elif os.path.exists(legacy_path):
+            chosen = legacy_path
+            source = "main"
+        else:
+            raise FileNotFoundError(f"No OHLCV cache found in {CACHE_DIR}. Run cache_builder.py first.")
+
+    print(f"Loading {chosen}  (source={source})")
+    with open(chosen, "rb") as f:
         cache = pickle.load(f)
     n = len(cache)
     print(f"  {n} tickers in cache")
     if n < 11_200:
         raise RuntimeError(f"Cache has only {n} tickers (expected ~11,500). Aborting.")
-    # SPY last-bar sanity check
+
+    last_bar = "?"
     if "SPY" in cache:
-        last_date = cache["SPY"]["date"].iloc[-1]
-        print(f"  SPY last bar: {last_date}")
-    return cache
+        try:
+            last_bar = str(cache["SPY"]["date"].iloc[-1])[:10]
+            print(f"  SPY last bar: {last_bar}")
+        except Exception:
+            pass
+
+    label = "(intraday 4:20pm)" if source == "intraday" else ""
+    source_meta = {"source": source, "last_bar_date": last_bar, "label": label}
+    return cache, source_meta
 
 
 # ════════════════════════════════════════════════════════════
@@ -974,6 +1009,14 @@ body {
 .rm-val.accent { color: var(--accent-info); }
 .rm-val.up { color: var(--up); }
 .rm-val.down { color: var(--down); }
+.rm-val.intraday { color: var(--accent); }
+.intraday-marker {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  margin-left: 4px;
+  letter-spacing: 0.02em;
+}
 .rm-h-sub { font-size: 10px; color: #e0e4ea; letter-spacing: 0.02em; text-shadow: 0 1px 0 rgba(0,0,0,0.4); }
 .rm-fn-grow { flex: 1; }
 
@@ -1391,12 +1434,13 @@ def _ohlc_strip_html(vals, bar_count, pct_200, pos_label, pos_css, divergences, 
     )
 
 
-def build_dashboard(theme_keys, cache, n_bars, company_meta=None):
+def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=None):
     sections_html = []
     sidebar_links = []
     skipped = []
     all_missing = []
     company_meta = company_meta or {}
+    source_meta = source_meta or {"source": "main", "last_bar_date": "?", "label": ""}
 
     # ── Compute SPY benchmark using Dan's TC2000 RS PCF (1-bar, 5-bar, 20-bar) ──
     spy_rs_1 = None
@@ -1602,6 +1646,17 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None):
         except Exception:
             pass
 
+    # Intraday source marker — appended to the "Cache Last Bar" cell when
+    # the dashboard is reading universe_ohlcv_daily_intraday.pkl. Gold-tinted
+    # accent so it's unambiguous whether the bars are official MOC or
+    # synthetic 4:20 PM ET snapshot.
+    is_intraday = source_meta.get("source") == "intraday"
+    intraday_label = source_meta.get("label", "")
+    last_bar_value_cls = "rm-val intraday" if is_intraday else "rm-val accent"
+    last_bar_inner = spy_last
+    if is_intraday and intraday_label:
+        last_bar_inner = f'{spy_last} <span class="intraday-marker">{intraday_label}</span>'
+
     # ── Build the sortable watchlist HTML ──
     def _num_cell(val, fmt="{:+.2f}"):
         if val is None:
@@ -1674,7 +1729,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None):
     </div>
     <div>
       <span class="rm-label">Cache Last Bar</span>
-      <span class="rm-val accent">{spy_last}</span>
+      <span class="{last_bar_value_cls}">{last_bar_inner}</span>
     </div>
     <div>
       <span class="rm-label">SPY 5d  ·  ADR</span>
@@ -1935,7 +1990,9 @@ def main():
     print(f"OUTPUT:    {OUTPUT_HTML}")
     print(f"BARS:      {args.bars}")
 
-    cache = load_daily_cache()
+    cache, source_meta = load_daily_cache()
+    if source_meta.get("source") == "intraday":
+        print(f"Source: INTRADAY snapshot {source_meta.get('label', '')}")
 
     # Cross-check theme assignments against fundamentals sectors
     fundamentals = load_fundamentals()
@@ -1958,7 +2015,9 @@ def main():
     n_unique = len({tk for k in theme_keys for tk in THEMES[k]})
     print(f"Unique tickers across themes: {n_unique}")
 
-    html, skipped = build_dashboard(theme_keys, cache, args.bars, company_meta=company_meta)
+    html, skipped = build_dashboard(theme_keys, cache, args.bars,
+                                    company_meta=company_meta,
+                                    source_meta=source_meta)
 
     os.makedirs(os.path.dirname(OUTPUT_HTML), exist_ok=True)
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
