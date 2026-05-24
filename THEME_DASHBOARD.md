@@ -126,6 +126,196 @@ delivery model as the existing theme page, served as a second tab
 alongside the existing themes view, sharing the same chrome / sidebar /
 status bar.
 
+---
+
+**Full per-ticker theme placement audit — investigation pass complete; follow-up workstreams remain.**
+
+Resumable, multi-session curation pass over every ticker in the dashboard
+universe. Goal: every placement is the product of actual business
+understanding + recent-news context, not Yahoo-summary keyword
+matching. Existing placements get validated; ungrouped names get
+placed where a single dominant narrative exists; cross-listings get
+added where peer-theme parity warrants. Truly diversified names stay
+ungrouped *with story explaining why* — never silent-skipped.
+
+The investigation pass is complete. Authoritative output lives in
+`local_runner/cache/theme_placement_output.json` (one record per
+ticker, schema below). Two follow-up workstreams remain before audit
+results land in `local_runner/theme_map.py`:
+
+1. **Apply B-bucket cross-listings.** Append each ticker to its
+   `secondary_themes_add` themes in `theme_map.py`, with a rationale
+   comment matching `theme_reasoning`. Mechanical; no judgment calls.
+
+2. **Resolve C-bucket flags with Dan.** Each C row carries a proposed
+   primary-theme change or cross-listing removal. Surface one at a time;
+   apply only after explicit go-ahead.
+
+Bucket A and D do nothing further.
+
+### Why this exists
+
+Earlier auto-classification passes used industry-signature + keyword
+matching against business summaries. Two failures that drove the
+rewrite:
+
+- **NOK** was missed entirely. Yahoo summary leads with "mobile network
+  solutions," so keyword matching gave up. The actual story — Feb 2024
+  Infinera acquisition ($2.3B) added ICE6 800G + ICE7 1.6T coherent
+  optical engines, making Nokia top-2 coherent transport vendor
+  alongside CIEN — required web search for recent corporate actions,
+  not just summary reading.
+- **AAP** was placed shallowly. The first auto-pass would have given
+  "aftermarket parts retailer" as the rationale. The full story is the
+  Pro/DIFM channel mix shift, Worldpac divestiture late 2024, ~500
+  store closures, market-hub regional distribution rollout — and the
+  fact that those moves push the business model TOWARD LKQ's wholesale
+  positioning, tightening the `auto_parts_tech` placement.
+
+The lesson encoded in the methodology: **even "obvious" placements get
+web-searched. No punting.**
+
+### State files
+
+All under `local_runner/cache/` (gitignored alongside other working
+cache):
+
+| File | Schema | Purpose |
+|---|---|---|
+| `theme_placement_input.json` | `{records: [{ticker, long_name, sector, industry, business_summary, current_themes, currently_ungrouped}], theme_context: {themes: {theme_id: {label, narrative, members}}}}` | Frozen snapshot of every ticker + the theme structure at audit start. Read-only after creation. |
+| `theme_placement_queue.json` | `{remaining: [ticker, ...], processed: [ticker, ...]}` | Workflow state. `remaining` is processed head-first; ungrouped tickers come first, then existing placements (for validation pass). |
+| `theme_placement_output.json` | `{placements: [<placement record>, ...]}` | Appended one placement at a time. Each entry is a structured record (see schema below). |
+
+The input file is built once via the helper at the start of
+`scripts/propose_theme_placements.py` (or equivalent inline script); it
+is NOT regenerated mid-audit so the dataset stays consistent across
+sessions.
+
+### Per-ticker investigation pipeline — locked, no shortcuts
+
+Every ticker, every time. Even when the Yahoo summary looks
+unambiguous. Even on the validation pass for already-placed tickers.
+
+1. **Read the full `business_summary`** from the input file. Not the
+   first sentence. Most descriptions bury segment-level revenue and
+   strategic story below the lead.
+2. **Read `sector` + `industry`** for baseline classification.
+3. **Web search 1 — segments / revenue / financial state.** Query:
+   `"<ticker> business segments revenue 2025 2026"`. Surfaces actual
+   revenue mix, current strategic narrative, recent earnings
+   trajectory. Mandatory on every ticker. No exceptions.
+4. **Web search 2 — strategy / corporate actions.** Query:
+   `"<ticker> strategy pivot acquisition 2025 2026"`. Catches M&A,
+   divestitures, management changes, segment exits, regulatory events.
+   Mandatory on every ticker. No exceptions.
+5. **Optional WebFetch into SEC filings / press releases / earnings
+   transcripts.** Only when steps 3-4 surface a major action that needs
+   verification, OR when the search results are marketing-fluff and you
+   need actual segment-revenue percentages. Skip when not needed.
+6. **Peer-theme check.** Look at which themes currently roster the
+   company's closest competitors. AAP → LKQ in `auto_parts_tech`. NOK →
+   CIEN in `ai_optics` + `ai_networking`. Peer parity is the strongest
+   single signal for narrative fit when it exists.
+7. **Reason through theme candidates against narrative-level criteria.**
+   What drives the stock for the next ~24 months? What's the secular
+   tailwind? Bull case / bear case? Use the `theme_context.themes` map
+   in the input file as your reference for what each theme captures.
+8. **Self-critique.** Identify the runner-up theme. Why does it lose?
+   If the runner-up is genuinely competitive (~80% as good a fit),
+   either propose a cross-listing OR downgrade confidence and route to
+   bucket C (review).
+
+### Output schema (one record per ticker)
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `ticker` | string | yes | |
+| `current_themes` | string[] | yes | Whatever was in input. Empty list if ungrouped. |
+| `proposed_themes` | string[] | yes | Final placement. Empty list = stays ungrouped. May contain >1 entry for cross-listings. |
+| `bucket` | string | yes | One of A / B / C / D / E (see below). |
+| `confidence` | string | yes | `high` / `medium` / `low`. |
+| `runner_up` | string \| null | yes | Theme ID of the second-best fit, or null if none competitive. |
+| `company_story` | string | yes | 200-400 words. Positioning in industry, ownership / history relevant to narrative, recent-news context (1-2 years), bull / bear case as currently traded. **This is the quality bar.** Anything shorter or shallower is a failure. |
+| `theme_reasoning` | string | yes | 50-150 words. Why this theme, why not the runner-up. Explicit peer-theme citation when applicable. |
+| `investigation_sources` | string[] | yes | Which steps from the pipeline were actually used. Example: `["yahoo_summary", "industry_classification", "peer_theme_check (LKQ in auto_parts_tech)", "web_search: segments revenue 2025 2026", "web_search: strategy pivot acquisition 2025 2026"]` |
+
+### Bucket definitions
+
+| Bucket | Meaning | Auto-apply on completion? |
+|---|---|---|
+| **A** — `A_ungrouped_to_theme` | Was ungrouped; you're proposing single-theme placement | Yes |
+| **B** — `B_cross_listing_added` | Currently placed in theme X; you're proposing X + new theme Y | Yes |
+| **C** — `C_change_requires_review` | Proposed REMOVAL from current theme OR primary-theme CHANGE | No — surfaces to Dan as a review list |
+| **D** — `D_confirmed_no_change` | Existing placement is correct, no change. Story still gets written; confirms validation. | No change applied |
+| **E** — `E_stays_ungrouped` | Was ungrouped, after investigation no single theme captures it. Story explains why. | No change applied |
+
+### Locked rules
+
+- **Existing placements are a strong Bayesian prior.** If `current_themes` is non-empty, the user has already curated that placement. Only propose REMOVAL or primary-theme CHANGE when evidence is overwhelming (recent business pivot, divested key segment, etc.). Default to confirming existing placements.
+- **Cross-listings are allowed and encouraged** when a ticker has real exposure to multiple narratives. See MRVL (ai_compute + ai_connectivity + ai_optics) for the existing pattern. NOK → ai_optics + ai_networking (cross-list parallel to CIEN) is the canonical example added by this audit.
+- **No punting on "obvious" cases.** Web search 1 + web search 2 are mandatory on every ticker. Skipping them was the failure mode that produced the shallow first AAP analysis.
+- **Truly diversified names stay ungrouped, but the story still gets written.** Bucket E placements must include a `company_story` and a `theme_reasoning` explaining why no single theme captures the dominant exposure.
+
+### Quality bar
+
+The AAP entry in `theme_placement_output.json` is the reference.
+Anything shallower than that level of company-story depth + recent-news
+detail + peer-theme reasoning is unacceptable. Future sessions can
+spot-check by reading `theme_placement_output.json[0]` to recover the
+discipline.
+
+### Resume protocol for new sessions
+
+1. Read this section of `THEME_DASHBOARD.md` to recover the methodology.
+2. The investigation pass is complete; the queue is empty. New work is
+   bucket B application + bucket C review, not new-ticker processing.
+   If a future need arises to re-investigate or add new tickers, the
+   pipeline below still applies.
+3. Read `local_runner/cache/theme_placement_output.json[0]` (the AAP
+   entry) as a quality-bar reference before processing any new
+   tickers.
+4. Read `local_runner/cache/theme_placement_input.json` to load the
+   per-ticker dataset + the frozen `theme_context`.
+5. Process tickers one at a time per Dan's pace. Never bulk-process
+   without an explicit ask. After each ticker: append to output, move
+   from `remaining` to `processed`.
+6. Bucket B placements append the ticker to each `secondary_themes_add`
+   theme list in `local_runner/theme_map.py` with a rationale comment
+   matching `theme_reasoning`. Bucket C surfaces as a review list for
+   Dan — surface one flag at a time; apply only after he confirms each.
+
+### Anti-patterns (the explicit do-NOTs)
+
+- **No scratch JSONs outside `local_runner/cache/`.** State files live
+  there; nowhere else. Memory rule against project-scratch files
+  applies.
+- **No skipping web search 1 or web search 2.** Even on "obvious"
+  cases. The NOK and AAP examples are why.
+- **No auto-applying bucket C.** Removals and primary-theme changes
+  require Dan's review.
+- **No degrading rationale depth below the AAP bar.** If a ticker has
+  no notable recent news, the `company_story` still covers positioning,
+  history, competitive context, and bull/bear case at the AAP depth.
+- **No bulk-processing without explicit ask.** Default to one ticker at
+  a time so token usage spreads across sessions.
+
+### Token budget per ticker
+
+Rough estimate at the locked pipeline depth:
+
+| Component | Tokens |
+|---|---|
+| Read input record + theme context | ~500 |
+| Web search 1 (results + analysis) | ~3,000 |
+| Web search 2 (results + analysis) | ~3,000 |
+| Optional WebFetch (when used, ~30% of tickers) | ~3,000 |
+| Reasoning + self-critique | ~1,500 |
+| `company_story` + `theme_reasoning` output | ~700 |
+| **Per ticker total** | **~8-11K tokens** |
+
+Across 918 tickers: ~7-10M tokens spread across multiple Max sessions.
+Pace dictated by user; no auto-pacing.
+
 **Out of scope (do not build):**
 - News fetchers
 - Catalyst calendars
