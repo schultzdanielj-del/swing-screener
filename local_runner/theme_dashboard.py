@@ -603,6 +603,148 @@ def build_composite(theme_tickers, cache, n_bars=250):
     return composite_df, used_tickers, missing
 
 
+def _round_list(arr, ndigits=4):
+    """Round a 1-D numeric array, replacing NaN with None for JSON."""
+    out = []
+    for v in arr:
+        if v is None:
+            out.append(None)
+        elif isinstance(v, float) and np.isnan(v):
+            out.append(None)
+        else:
+            out.append(round(float(v), ndigits))
+    return out
+
+
+def compute_ticker_pack(ticker, df, spy_rs_1, spy_rs_3, spy_rs_5, spy_rs_20,
+                        spy_rs_65, spy_rs_130, n_bars,
+                        company_meta=None, fundamentals=None):
+    """Compute everything needed to render a single ticker in the dashboard:
+
+    - sidebar row stats (1d / 5d / 20d RS ratios vs SPY, position vs 200D)
+    - chart data arrays (date axis + OHLCV for the last n_bars) ready for
+      Plotly to render lazily in JS
+    - MACD-line divergence pairs detected on the same window
+
+    Returns None only when the ticker has fewer than 10 bars (matches
+    the per-theme `build_composite` admission rule). Tickers with 10–50
+    bars are still tradable in the tree: the chart renders against
+    whatever bars exist, and the RS columns simply show `—` because
+    `tc2000_rs_raw` returns None when the 50-bar lookback isn't satisfied
+    yet. Without this, recent IPOs that show up in a theme's composite
+    silently dropped from the sidebar expansion.
+    """
+    if df is None or len(df) < 10:
+        return None
+
+    win = df.tail(n_bars).reset_index(drop=True)
+    if len(win) < 10:
+        return None
+
+    open_v  = win["open"].values.astype(np.float64)
+    high_v  = win["high"].values.astype(np.float64)
+    low_v   = win["low"].values.astype(np.float64)
+    close_v = win["close"].values.astype(np.float64)
+    vol_v   = win["volume"].values.astype(np.float64)
+    dates   = [str(d)[:10] for d in win["date"].tolist()]
+
+    # Per-ticker RS uses the FULL df history (needs 50-bar lookback) just
+    # like the theme composite's RS does. Result is the ratio against SPY.
+    rs1_raw   = tc2000_rs_raw(df["open"].values, df["high"].values,
+                               df["low"].values, df["close"].values, n_bars=1)
+    rs3_raw   = tc2000_rs_raw(df["open"].values, df["high"].values,
+                               df["low"].values, df["close"].values, n_bars=3)
+    rs5_raw   = tc2000_rs_raw(df["open"].values, df["high"].values,
+                               df["low"].values, df["close"].values, n_bars=5)
+    rs20_raw  = tc2000_rs_raw(df["open"].values, df["high"].values,
+                               df["low"].values, df["close"].values, n_bars=20)
+    rs65_raw  = tc2000_rs_raw(df["open"].values, df["high"].values,
+                               df["low"].values, df["close"].values, n_bars=65)
+    rs130_raw = tc2000_rs_raw(df["open"].values, df["high"].values,
+                               df["low"].values, df["close"].values, n_bars=130)
+    rs1   = (rs1_raw   / spy_rs_1)   if (rs1_raw   is not None and spy_rs_1)   else None
+    rs3   = (rs3_raw   / spy_rs_3)   if (rs3_raw   is not None and spy_rs_3)   else None
+    rs5   = (rs5_raw   / spy_rs_5)   if (rs5_raw   is not None and spy_rs_5)   else None
+    rs20  = (rs20_raw  / spy_rs_20)  if (rs20_raw  is not None and spy_rs_20)  else None
+    rs65  = (rs65_raw  / spy_rs_65)  if (rs65_raw  is not None and spy_rs_65)  else None
+    rs130 = (rs130_raw / spy_rs_130) if (rs130_raw is not None and spy_rs_130) else None
+
+    pct_200, pos_label, pos_css = position_vs_200d(df)
+    below_200 = (pos_css == "pos-below")
+
+    last_close = float(close_v[-1]) if not np.isnan(close_v[-1]) else None
+    prev_close = float(close_v[-2]) if len(close_v) >= 2 and not np.isnan(close_v[-2]) else last_close
+    if last_close is not None and prev_close and prev_close > 0:
+        day_chg     = last_close - prev_close
+        day_chg_pct = (last_close / prev_close - 1.0) * 100.0
+    else:
+        day_chg = 0.0
+        day_chg_pct = 0.0
+    vol_last = float(vol_v[-1]) if not np.isnan(vol_v[-1]) else 0.0
+
+    five_d = n_period_return(close_v, 5)
+    adr20  = adr_pct(high_v, low_v, 20)
+
+    # Today's candle range as a ratio of the 20-day ADR. The "tight day"
+    # filter on the Tickers view shows only tickers whose current daily
+    # candle is tighter than 1.10 * ADR. (TC2000 ADR convention.)
+    today_adr_ratio = None
+    if adr20 is not None and adr20 > 0:
+        h_last = float(high_v[-1]) if not np.isnan(high_v[-1]) else None
+        l_last = float(low_v[-1])  if not np.isnan(low_v[-1])  else None
+        if h_last is not None and l_last is not None and l_last > 0:
+            todays_range_pct = (h_last / l_last - 1.0) * 100.0
+            today_adr_ratio = todays_range_pct / adr20
+
+    # MACD-line divergences were removed from the dashboard 2026-05-22.
+    # The MACD line + signal still render in the lower panel, but we no
+    # longer detect or draw divergence pairs anywhere.
+
+    long_name = ""
+    long_summary = ""
+    if company_meta and ticker in company_meta:
+        long_name    = company_meta[ticker].get("longName", "") or ""
+        long_summary = company_meta[ticker].get("longBusinessSummary", "") or ""
+
+    # Sector / industry lookup for the filter panel. fundamentals_cache.json
+    # is the source of truth; tickers without an entry get the "Unknown"
+    # bucket so they remain togglable in the filter. Industry is exposed
+    # separately so the panel can add narrower filters (e.g. Biotech) that
+    # cut across sectors.
+    sector = "Unknown"
+    industry = "Unknown"
+    if fundamentals and ticker in fundamentals:
+        sec = fundamentals[ticker].get("sector")
+        if sec:
+            sector = sec
+        ind = fundamentals[ticker].get("industry")
+        if ind:
+            industry = ind
+
+    return dict(
+        ticker=ticker,
+        long_name=long_name,
+        long_summary=long_summary,
+        dates=dates,
+        open=_round_list(open_v, 4),
+        high=_round_list(high_v, 4),
+        low=_round_list(low_v, 4),
+        close=_round_list(close_v, 4),
+        volume=_round_list(vol_v, 0),
+        rs1=rs1, rs3=rs3, rs5=rs5, rs20=rs20, rs65=rs65, rs130=rs130,
+        pct_200=pct_200,
+        pos_label=pos_label,
+        below_200=below_200,
+        last_close=last_close,
+        day_chg=day_chg, day_chg_pct=day_chg_pct,
+        vol_last=vol_last,
+        adr=adr20, five_d_return=five_d,
+        today_adr_ratio=today_adr_ratio,
+        sector=sector,
+        industry=industry,
+    )
+
+
 # ════════════════════════════════════════════════════════════
 # COMPOSITE CHART (Plotly)
 # ════════════════════════════════════════════════════════════
@@ -670,57 +812,6 @@ def build_composite_figure(composite_df, theme_label, used_tickers, divergences=
                              line=dict(color=COLOR_ORANGE, width=1.6),
                              showlegend=False, name="Signal", hoverinfo="skip"), row=3, col=1)
     fig.add_hline(y=0, line=dict(color=COLOR_BORDER_STRONG, width=0.6), row=3, col=1)
-
-    # ── MACD divergence lines + markers ──────────────────
-    # Lines are drawn at the MACD-line values (EMA6 − EMA20), not the histogram.
-    # All divergences across the window are drawn; only the most recent one
-    # per direction gets a text label to keep the chart readable.
-    if divergences:
-        for kind in ("bull", "bear"):
-            div_list = divergences.get(kind, [])
-            if not div_list:
-                continue
-            is_bull = (kind == "bull")
-            col_line = COLOR_UP if is_bull else COLOR_DOWN
-            for div_i, div in enumerate(div_list):
-                is_most_recent = (div_i == len(div_list) - 1)
-                # Older divergences drawn slightly translucent to declutter
-                opacity = 1.0 if is_most_recent else 0.55
-                d1  = pd.to_datetime(df["date"].iloc[div["p1_idx"]])
-                d2  = pd.to_datetime(df["date"].iloc[div["p2_idx"]])
-                dm1 = pd.to_datetime(df["date"].iloc[div["m1_idx"]])
-                dm2 = pd.to_datetime(df["date"].iloc[div["m2_idx"]])
-                # Price-pivot line on candle panel
-                fig.add_trace(go.Scatter(
-                    x=[d1, d2], y=[div["p1_price"], div["p2_price"]],
-                    mode="lines+markers",
-                    line=dict(color=col_line, width=1.5, dash="dot"),
-                    marker=dict(color=col_line, size=7, symbol="circle"),
-                    opacity=opacity,
-                    showlegend=False, hoverinfo="skip", name="",
-                ), row=1, col=1)
-                # MACD-line pivot line on MACD panel
-                fig.add_trace(go.Scatter(
-                    x=[dm1, dm2], y=[div["m1_macd"], div["m2_macd"]],
-                    mode="lines+markers",
-                    line=dict(color=col_line, width=1.5, dash="dot"),
-                    marker=dict(color=col_line, size=5, symbol="circle"),
-                    opacity=opacity,
-                    showlegend=False, hoverinfo="skip", name="",
-                ), row=3, col=1)
-                # Only label the most recent divergence per direction
-                if is_most_recent:
-                    label_text = "BULL DIV" if is_bull else "BEAR DIV"
-                    fig.add_annotation(
-                        x=d2, y=div["p2_price"],
-                        xref="x", yref="y",
-                        text=f"<b>{label_text}</b>",
-                        showarrow=True, arrowhead=2, arrowcolor=col_line,
-                        arrowsize=1, arrowwidth=1.2,
-                        ax=20, ay=30 if is_bull else -30,
-                        bgcolor="#000000", bordercolor=col_line, borderwidth=1,
-                        font=dict(family="Segoe UI, sans-serif", size=10, color=col_line),
-                    )
 
     # ── TC2000-style canvas annotations (top-left of candle panel) ──
     fig.add_annotation(
@@ -832,6 +923,56 @@ def build_composite_figure(composite_df, theme_label, used_tickers, divergences=
         "sma50": float(sma50[-1]) if not np.isnan(sma50[-1]) else None,
         "sma200": float(sma200[-1]) if not np.isnan(sma200[-1]) else None,
     }
+
+
+def build_ticker_layout_template():
+    """Build a Plotly layout dict that mirrors the composite chart's
+    three-panel structure (candles + volume + MACD). JS clones this for
+    every per-ticker chart so the layout / colors / spike-lines / axis
+    formatting stay identical to the composite chart without having to
+    re-encode all of it in JS. JS fills in the data traces, the ticker
+    label annotation, and the date range; everything else carries
+    through unchanged.
+    """
+    fig = make_subplots(
+        rows=3, cols=1, shared_xaxes=True,
+        row_heights=[0.62, 0.13, 0.25],
+        vertical_spacing=0.012,
+    )
+    spike_args = dict(showspikes=True, spikecolor=COLOR_CYAN, spikethickness=1,
+                      spikemode="across", spikesnap="cursor", spikedash="dot")
+    rangebreaks = [dict(bounds=["sat", "mon"])]
+    fig.update_layout(
+        paper_bgcolor=COLOR_BG, plot_bgcolor=COLOR_BG,
+        font=dict(family="Consolas, monospace", size=11, color=COLOR_TEXT_DIM),
+        margin=dict(l=10, r=58, t=2, b=18),
+        height=640,
+        showlegend=False, hovermode="x unified", dragmode="pan", bargap=0.15,
+        xaxis=dict(rangeslider=dict(visible=False), gridcolor=COLOR_GRID,
+                   color=COLOR_TEXT_MUTED, rangebreaks=rangebreaks, **spike_args),
+        xaxis2=dict(gridcolor=COLOR_GRID, color=COLOR_TEXT_MUTED,
+                    rangebreaks=rangebreaks, **spike_args),
+        xaxis3=dict(gridcolor=COLOR_GRID, color=COLOR_TEXT_MUTED,
+                    rangebreaks=rangebreaks, **spike_args),
+        yaxis=dict(gridcolor=COLOR_GRID, color=COLOR_TEXT_DIM, side="right",
+                   tickfont=dict(color=COLOR_TEXT_DIM, family="Consolas, monospace", size=10)),
+        yaxis2=dict(gridcolor=COLOR_GRID, color=COLOR_TEXT_DIM, side="right",
+                    tickfont=dict(color=COLOR_TEXT_DIM, family="Consolas, monospace", size=10),
+                    showticklabels=True),
+        yaxis3=dict(gridcolor=COLOR_GRID, color=COLOR_TEXT_DIM, side="right",
+                    tickfont=dict(color=COLOR_TEXT_DIM, family="Consolas, monospace", size=10)),
+    )
+    # Panel labels: ticker name goes in the candle panel via JS so we can
+    # swap it per ticker; the volume + MACD labels are static.
+    fig.add_annotation(text="<b>Volume</b>", xref="paper", yref="paper",
+                       x=0.008, y=0.36, xanchor="left", yanchor="top",
+                       showarrow=False,
+                       font=dict(family="Consolas, monospace", size=10, color=COLOR_TEXT_DIM))
+    fig.add_annotation(text="<b>MACD (6, 20, 9)</b>", xref="paper", yref="paper",
+                       x=0.008, y=0.22, xanchor="left", yanchor="top",
+                       showarrow=False,
+                       font=dict(family="Consolas, monospace", size=10, color=COLOR_TEXT_DIM))
+    return fig.to_dict()["layout"]
 
 
 # ════════════════════════════════════════════════════════════
@@ -1180,48 +1321,8 @@ section.theme.is-active { display: block; }
   border-left-color: var(--down);
 }
 
-/* High-interest: below 200-day AND bullish MACD divergence (Peoplewish divergence-pivot setup) */
-.sidebar-link.sidebar-bull-under-200 {
-  color: #1eff1e;
-  border-left: 3px solid #1eff1e;
-  background: rgba(30, 255, 30, 0.12);
-  font-weight: 700;
-}
-.sidebar-link.sidebar-bull-under-200:hover {
-  background: rgba(30, 255, 30, 0.22);
-}
-.sidebar-link.sidebar-bull-under-200.is-active {
-  background: rgba(30, 255, 30, 0.32);
-  color: #ffffff;
-}
-
-/* Divergence tags in the chart info bar */
-.div-tag {
-  display: inline-block;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  padding: 2px 8px;
-  margin-left: 6px;
-  border: 1px solid currentColor;
-}
-.div-tag.div-bull { color: #1eff1e; background: rgba(30, 255, 30, 0.10); }
-.div-tag.div-bear { color: #ff3030; background: rgba(255, 48, 48, 0.10); }
-
-/* Divergence chip in sidebar */
-.sidebar-div-chip {
-  display: inline-block;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 700;
-  padding: 1px 4px;
-  margin-left: 4px;
-  letter-spacing: 0.05em;
-  border: 1px solid currentColor;
-}
-.sidebar-div-chip.div-bull { color: #1eff1e; }
-.sidebar-div-chip.div-bear { color: #ff3030; }
+/* MACD divergence styles (div-tag / sidebar-bull-under-200 / sidebar-div-chip)
+   were removed 2026-05-22 along with the divergence feature itself. */
 .chart-info-bar .spacer { flex: 1; }
 .chart-info-bar .muted-meta { color: var(--fg-tertiary); }
 .chart-info-bar .muted-meta .val { color: var(--fg-secondary); }
@@ -1352,6 +1453,384 @@ section.theme.is-active { display: block; }
 
 .watchlist-table tbody.hide-below tr.below-200 { display: none; }
 
+/* Tighten number-column widths so 7 columns fit the 320px sidebar */
+.watchlist-table th { padding: 4px 2px; font-size: 10px; }
+.watchlist-table td { padding: 3px 2px; }
+.watchlist-table th[data-sort-type="num"],
+.watchlist-table td.num {
+  font-size: 10px;
+  min-width: 32px;
+  text-align: right;
+  padding-right: 4px;
+}
+.watchlist-table th[data-sort-key="label"],
+.watchlist-table th[data-sort-key="theme-label"],
+.watchlist-table td.theme-name,
+.watchlist-table td.ticker-symbol-cell,
+.watchlist-table td.theme-membership-cell { text-align: left; }
+
+/* Flag column (leftmost). Theme rows get a clickable flag SVG;
+   ticker child rows leave the cell empty (flags live at theme level). */
+.watchlist-table th.flag-col,
+.watchlist-table td.flag-cell {
+  width: 18px; min-width: 18px; max-width: 18px;
+  padding: 0; text-align: center;
+}
+.watchlist-table td.flag-cell .flag-icon {
+  display: inline-block;
+  width: 12px; height: 12px;
+  cursor: pointer;
+  vertical-align: middle;
+  opacity: 0.55;
+  transition: opacity 0.08s ease;
+}
+.watchlist-table td.flag-cell .flag-icon:hover { opacity: 1.0; }
+.watchlist-table td.flag-cell .flag-icon polygon {
+  fill: none;
+  stroke: var(--fg-tertiary, #888);
+  stroke-width: 1.5;
+}
+.watchlist-table td.flag-cell .flag-icon.is-flagged {
+  opacity: 1.0;
+}
+.watchlist-table td.flag-cell .flag-icon.is-flagged polygon {
+  fill: var(--accent, #5fc8ff);
+  stroke: var(--accent, #5fc8ff);
+}
+/* Header flag column — non-interactive icon */
+.watchlist-table th.flag-col .flag-icon-static {
+  display: inline-block; width: 10px; height: 10px;
+  vertical-align: middle; opacity: 0.5;
+}
+.watchlist-table th.flag-col .flag-icon-static polygon {
+  fill: none; stroke: var(--fg-tertiary, #888); stroke-width: 1.5;
+}
+
+/* Right-click context menu for flag operations */
+.flag-context-menu {
+  position: fixed;
+  z-index: 9999;
+  background: var(--bg-secondary, #0a0a0c);
+  border: 1px solid var(--border-soft, #2a2a2c);
+  font-family: var(--font-chrome, Segoe UI, sans-serif);
+  font-size: 11px;
+  color: var(--fg-primary);
+  min-width: 130px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+}
+.flag-context-menu-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.flag-context-menu-item:hover {
+  background: var(--bg-row-hover, #1a1a1c);
+}
+
+/* Tree-view expansion: theme caret + ticker child rows */
+.watchlist-table tr.theme-row td.theme-name {
+  display: flex; align-items: center; gap: 4px;
+}
+.watchlist-table tr.theme-row .tree-caret {
+  display: inline-block;
+  width: 12px;
+  color: var(--fg-tertiary);
+  font-size: 10px;
+  transition: transform 0.12s ease;
+  user-select: none;
+}
+.watchlist-table tr.theme-row[data-expanded="1"] .tree-caret {
+  color: var(--accent);
+  transform: rotate(90deg);
+}
+.watchlist-table tr.theme-row[data-expanded="1"] .tree-caret::before {
+  content: "▸";
+}
+.watchlist-table tr.theme-row .theme-label { flex: 1; }
+.watchlist-table tr.ticker-row td.theme-name {
+  display: flex; align-items: center; gap: 4px;
+  padding-left: 6px;
+}
+.watchlist-table tr.ticker-row .tree-indent {
+  display: inline-block;
+  width: 16px;
+  border-left: 1px solid var(--border-soft);
+  align-self: stretch;
+}
+.watchlist-table tr.ticker-row .tree-bullet {
+  color: var(--fg-tertiary);
+  font-size: 9px;
+}
+.watchlist-table tr.ticker-row .ticker-symbol {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-primary);
+}
+.watchlist-table tr.ticker-row.below-200 .ticker-symbol { color: var(--down); }
+.watchlist-table tr.ticker-row.is-active .ticker-symbol { color: var(--accent); font-weight: 700; }
+.watchlist-table tr.ticker-row.child-collapsed { display: none; }
+.watchlist-table tr.ungrouped-row .theme-label { color: var(--accent-gold, #ffcc00); }
+
+/* Tickers-view flat table — all rows visible by default; JS applyFilter()
+   sets inline `display: none` when Tight D1 / Hot / hide-below filters fire. */
+.tickers-table tbody.hide-below tr.tickers-row.below-200 { display: none; }
+.tickers-table td.ticker-symbol-cell { padding-left: 10px; }
+.tickers-table td.ticker-symbol-cell .ticker-symbol {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--fg-primary);
+}
+.tickers-table tr.tickers-row.below-200 .ticker-symbol { color: var(--down); }
+.tickers-table tr.tickers-row.is-active { background: var(--bg-row-selected); }
+.tickers-table tr.tickers-row.is-active .ticker-symbol { color: var(--accent); font-weight: 700; }
+.tickers-table td.theme-membership-cell {
+  font-family: var(--font-chrome);
+  font-size: 11px;
+  color: var(--fg-secondary);
+  max-width: 130px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tickers-table tr.ungrouped-ticker td.theme-membership-cell { color: var(--accent-gold, #ffcc00); }
+.tickers-table td.num.adr { color: var(--fg-primary); font-weight: 600; }
+.tickers-table td.nul { color: var(--fg-tertiary); }
+
+.tickers-empty {
+  padding: 20px 12px;
+  font-size: 12px;
+  color: var(--fg-tertiary);
+  text-align: center;
+  font-style: italic;
+  display: none;
+}
+
+/* Generated cell → refresh button (native-window mode only) */
+.rm-refresh-cell {
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+}
+.rm-refresh-cell:hover { background: var(--bg-overlay, rgba(255,255,255,0.05)); }
+.rm-refresh-cell.is-active { background: var(--bg-row-selected, rgba(255,255,255,0.10)); }
+.rm-refresh-cell.is-refreshing { color: var(--accent); cursor: progress; }
+.rm-refresh-cell.is-disabled {
+  cursor: default;
+}
+.rm-refresh-cell.is-disabled:hover { background: transparent; }
+.rm-refresh-spinner {
+  display: none;
+  margin-left: 6px;
+  width: 10px; height: 10px;
+  border: 1.5px solid rgba(255,204,0,0.25);
+  border-top-color: var(--accent-gold, #ffcc00);
+  border-radius: 50%;
+  animation: rm-spin 0.7s linear infinite;
+  vertical-align: middle;
+}
+.rm-refresh-cell.is-refreshing .rm-refresh-spinner { display: inline-block; }
+.rm-refresh-cell.is-refreshing .rm-val { color: var(--accent-gold, #ffcc00); }
+@keyframes rm-spin { to { transform: rotate(360deg); } }
+
+.rm-refresh-toast {
+  position: fixed;
+  top: 50px; right: 20px;
+  z-index: 2000;
+  background: var(--bg-secondary, #0a0a0c);
+  color: var(--down);
+  border: 1px solid var(--down);
+  padding: 8px 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  display: none;
+}
+.rm-refresh-toast.is-visible { display: block; }
+
+/* Filter icon button (lives in the watchlist controls bar) */
+.filter-icon-btn {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 22px;
+  margin-left: auto;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-secondary);
+  cursor: pointer;
+}
+.filter-icon-btn:hover {
+  color: var(--accent);
+  background: var(--bg-overlay, rgba(255,255,255,0.05));
+  border-color: var(--border-soft);
+}
+.filter-icon-btn.is-open {
+  color: var(--accent);
+  background: var(--bg-row-selected, rgba(255,255,255,0.10));
+  border-color: var(--accent);
+}
+.filter-icon-btn .filter-icon-dot {
+  display: none;
+  position: absolute;
+  top: 2px; right: 2px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent-gold, #ffcc00);
+  box-shadow: 0 0 4px rgba(255,204,0,0.6);
+}
+.filter-icon-btn.has-exclusions .filter-icon-dot { display: block; }
+
+.filter-panel {
+  position: fixed;
+  /* Anchored below the watchlist controls; left edge aligned with sidebar */
+  top: 80px;
+  left: 12px;
+  width: 540px;
+  max-height: 70vh;
+  background: var(--bg-primary, #000);
+  border: 1px solid var(--border-strong, #7a8088);
+  box-shadow: 4px 4px 12px rgba(0,0,0,0.6);
+  z-index: 1000;
+  display: flex; flex-direction: column;
+  font-family: var(--font-chrome);
+  font-size: 12px;
+}
+.filter-panel-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 10px;
+  background: linear-gradient(to bottom, #2a2c30, #1a1c20);
+  border-bottom: 1px solid var(--border-strong);
+}
+.filter-panel-title {
+  font-family: var(--font-chrome);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--fg-primary);
+}
+.filter-reset-link, .filter-close-link, .filter-link {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 11px;
+  text-decoration: none;
+}
+.filter-reset-link:hover, .filter-close-link:hover, .filter-link:hover { text-decoration: underline; }
+.filter-close-link { margin-left: auto; color: var(--fg-secondary); }
+.filter-panel-body {
+  display: flex; gap: 0;
+  overflow: hidden;
+  flex: 1;
+}
+.filter-section {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--border-soft);
+}
+.filter-section:last-child { border-right: 0; }
+.filter-section-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px;
+  background: var(--bg-secondary, #0a0a0c);
+  border-bottom: 1px solid var(--border-soft);
+}
+.filter-section-title {
+  flex: 1;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-secondary);
+}
+.filter-search {
+  margin: 6px 10px;
+  padding: 4px 8px;
+  background: var(--bg-secondary, #0a0a0c);
+  border: 1px solid var(--border-soft);
+  color: var(--fg-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.filter-search:focus {
+  outline: 0;
+  border-color: var(--accent);
+}
+.filter-section-list {
+  flex: 1; overflow-y: auto;
+  padding: 4px 0;
+}
+.filter-section-list label {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 11px;
+  color: var(--fg-primary);
+}
+.filter-section-list label:hover { background: var(--bg-row-hover); }
+.filter-section-list label.hidden-by-search { display: none; }
+.filter-section-list input[type="checkbox"] {
+  accent-color: var(--accent, #5fc8ff);
+}
+.filter-section-list .filter-item-label {
+  flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.filter-section-list .filter-item-sector {
+  font-size: 10px;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+}
+
+/* Header brand toggle (Themes/Tickers) */
+.rm-fn-brand {
+  cursor: pointer;
+  user-select: none;
+}
+.rm-fn-brand:hover { background: var(--bg-overlay, rgba(255,255,255,0.05)); }
+.rm-fn-brand:active { background: var(--bg-row-selected, rgba(255,255,255,0.10)); }
+.rm-fn-brand .rm-fn-title { transition: color 0.12s ease; }
+.rm-fn-brand .rm-status-dot { transition: background 0.12s ease; }
+body.view-tickers .rm-fn-brand .rm-status-dot { background: var(--accent-gold, #ffcc00); }
+body.view-tickers .watchlist-pane.themes-pane { display: none; }
+body.view-tickers .watchlist-pane.tickers-pane { display: block !important; }
+body.view-themes .watchlist-pane.themes-pane { display: block; }
+body.view-themes .watchlist-pane.tickers-pane { display: none !important; }
+
+/* Per-ticker chart section */
+.ticker-view {
+  display: block;
+  background: var(--bg-primary, #000);
+  padding: 0;
+}
+.ticker-view .ticker-strip {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
+  padding: 8px 12px;
+  background: linear-gradient(to bottom, #2a2c30, #1a1c20);
+  border-bottom: 1px solid var(--border-strong);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-primary);
+}
+.ticker-view .ticker-strip .ticker-name {
+  font-family: var(--font-chrome);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+.ticker-view .ticker-strip .long-name { color: var(--fg-secondary); font-size: 11px; }
+.ticker-view .ticker-strip .lbl { color: var(--fg-tertiary); margin-right: 3px; }
+.ticker-view .ticker-strip .val { color: var(--fg-primary); }
+.ticker-view .ticker-strip .pos { color: var(--up); }
+.ticker-view .ticker-strip .neg { color: var(--down); }
+.ticker-view .ticker-strip .sep { color: var(--border-strong); padding: 0 4px; }
+.ticker-view .ticker-chart { width: 100%; }
+.ticker-view .ticker-summary {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  line-height: 1.5;
+  background: var(--bg-secondary, #0a0a0c);
+  border-top: 1px solid var(--border-soft);
+}
+.ticker-view .ticker-summary:empty { display: none; }
+
 @media (max-width: 900px) {
   .body-grid { grid-template-columns: 240px 1fr; }
 }
@@ -1375,22 +1854,14 @@ def _sma_val(v):
 
 
 def _ohlc_strip_html(vals, bar_count, pct_200, pos_label, pos_css, divergences, rs_val, theme_5d, theme_adr):
+    # `divergences` is retained in the signature so existing callers don't
+    # break, but the BULL DIV / BEAR DIV tags were removed 2026-05-22.
     chg_cls = "up" if vals["chg"] >= 0 else "down"
     pct_str = f"{pct_200:+.1f}%" if pct_200 is not None else "—"
     rs_str = f"{rs_val:+.2f}" if rs_val is not None and rs_val > -1e8 else "—"
     t5d_str = f"{theme_5d:+.2f}%" if theme_5d is not None else "—"
     adr_str = f"{theme_adr:.2f}%" if theme_adr is not None else "—"
     rs_cls = "rs-up" if (rs_val is not None and rs_val >= 0) else "rs-down"
-    div_tags = ""
-    if divergences:
-        bull_n = len(divergences.get("bull", []))
-        bear_n = len(divergences.get("bear", []))
-        if bull_n:
-            suffix = f" ×{bull_n}" if bull_n > 1 else ""
-            div_tags += f'<span class="div-tag div-bull">BULL DIV{suffix}</span>'
-        if bear_n:
-            suffix = f" ×{bear_n}" if bear_n > 1 else ""
-            div_tags += f'<span class="div-tag div-bear">BEAR DIV{suffix}</span>'
     return (
         f'<div class="chart-info-bar">'
         f'<span class="cluster rs-cluster {rs_cls}">'
@@ -1404,7 +1875,6 @@ def _ohlc_strip_html(vals, bar_count, pct_200, pos_label, pos_css, divergences, 
         f'<span class="pos200-pct">{pct_str}</span>'
         f'<span class="pos200-label">{pos_label}</span>'
         f'</span>'
-        f'{div_tags}'
         f'<span class="sep">|</span>'
         f'<span class="cluster">'
         f'<span class="date">{vals["date"]}</span>'
@@ -1434,7 +1904,8 @@ def _ohlc_strip_html(vals, bar_count, pct_200, pos_label, pos_css, divergences, 
     )
 
 
-def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=None):
+def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=None,
+                    fundamentals=None):
     sections_html = []
     sidebar_links = []
     skipped = []
@@ -1442,32 +1913,42 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     company_meta = company_meta or {}
     source_meta = source_meta or {"source": "main", "last_bar_date": "?", "label": ""}
 
-    # ── Compute SPY benchmark using Dan's TC2000 RS PCF (1-bar, 5-bar, 20-bar) ──
+    # ── Compute SPY benchmark using Dan's TC2000 RS PCF (1, 3, 5, 20, 65, 130 bars) ──
     spy_rs_1 = None
+    spy_rs_3 = None
     spy_rs_5 = None
     spy_rs_20 = None
+    spy_rs_65 = None
+    spy_rs_130 = None
     spy_5d = None
     spy_adr = None
     if "SPY" in cache:
         spy_df = cache["SPY"]
-        spy_rs_1  = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
-                                  spy_df["low"].values,  spy_df["close"].values, n_bars=1)
-        spy_rs_5  = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
-                                  spy_df["low"].values,  spy_df["close"].values, n_bars=5)
-        spy_rs_20 = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
-                                  spy_df["low"].values,  spy_df["close"].values, n_bars=20)
+        spy_rs_1   = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
+                                    spy_df["low"].values,  spy_df["close"].values, n_bars=1)
+        spy_rs_3   = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
+                                    spy_df["low"].values,  spy_df["close"].values, n_bars=3)
+        spy_rs_5   = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
+                                    spy_df["low"].values,  spy_df["close"].values, n_bars=5)
+        spy_rs_20  = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
+                                    spy_df["low"].values,  spy_df["close"].values, n_bars=20)
+        spy_rs_65  = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
+                                    spy_df["low"].values,  spy_df["close"].values, n_bars=65)
+        spy_rs_130 = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
+                                    spy_df["low"].values,  spy_df["close"].values, n_bars=130)
         spy_5d = n_period_return(spy_df["close"].values, 5)
         spy_adr = adr_pct(spy_df["high"].values, spy_df["low"].values, 20)
-    if spy_rs_1 is None or spy_rs_1 == 0:
-        print("\nWARNING: SPY 1-bar RS could not be computed; using 1.0 as fallback.")
-        spy_rs_1 = 1.0
-    if spy_rs_5 is None or spy_rs_5 == 0:
-        print("WARNING: SPY 5-bar RS could not be computed; using 1.0 as fallback.")
-        spy_rs_5 = 1.0
-    if spy_rs_20 is None or spy_rs_20 == 0:
-        print("WARNING: SPY 20-bar RS could not be computed; using 1.0 as fallback.")
-        spy_rs_20 = 1.0
-    print(f"\nSPY TC2000 RS  1d={spy_rs_1:+.4f}  5d={spy_rs_5:+.4f}  20d={spy_rs_20:+.4f}  "
+    for name in ("spy_rs_1", "spy_rs_3", "spy_rs_5", "spy_rs_20", "spy_rs_65", "spy_rs_130"):
+        if locals().get(name) is None or locals().get(name) == 0:
+            print(f"\nWARNING: SPY {name} could not be computed; using 1.0 as fallback.")
+    spy_rs_1   = spy_rs_1   if (spy_rs_1   is not None and spy_rs_1   != 0) else 1.0
+    spy_rs_3   = spy_rs_3   if (spy_rs_3   is not None and spy_rs_3   != 0) else 1.0
+    spy_rs_5   = spy_rs_5   if (spy_rs_5   is not None and spy_rs_5   != 0) else 1.0
+    spy_rs_20  = spy_rs_20  if (spy_rs_20  is not None and spy_rs_20  != 0) else 1.0
+    spy_rs_65  = spy_rs_65  if (spy_rs_65  is not None and spy_rs_65  != 0) else 1.0
+    spy_rs_130 = spy_rs_130 if (spy_rs_130 is not None and spy_rs_130 != 0) else 1.0
+    print(f"\nSPY TC2000 RS  1d={spy_rs_1:+.4f}  3d={spy_rs_3:+.4f}  5d={spy_rs_5:+.4f}  "
+          f"20d={spy_rs_20:+.4f}  65d={spy_rs_65:+.4f}  130d={spy_rs_130:+.4f}  "
           f"5d return={spy_5d:+.2f}%  ADR%={spy_adr:.2f}%")
 
     # ── First pass: build composites, compute 1d + 5d + 20d RS ratios ──
@@ -1482,22 +1963,30 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             skipped.append((tk_theme, len(used)))
             print(f"  SKIP {tk_theme}: insufficient data ({len(used)} usable members)")
             continue
-        theme_rs_1  = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
-                                    composite_df["low"].values,  composite_df["close"].values, n_bars=1)
-        theme_rs_5  = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
-                                    composite_df["low"].values,  composite_df["close"].values, n_bars=5)
-        theme_rs_20 = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
-                                    composite_df["low"].values,  composite_df["close"].values, n_bars=20)
+        theme_rs_1   = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
+                                      composite_df["low"].values,  composite_df["close"].values, n_bars=1)
+        theme_rs_5   = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
+                                      composite_df["low"].values,  composite_df["close"].values, n_bars=5)
+        theme_rs_20  = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
+                                      composite_df["low"].values,  composite_df["close"].values, n_bars=20)
+        theme_rs_65  = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
+                                      composite_df["low"].values,  composite_df["close"].values, n_bars=65)
+        theme_rs_130 = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
+                                      composite_df["low"].values,  composite_df["close"].values, n_bars=130)
         theme_5d  = n_period_return(composite_df["close"].values, 5)
         theme_adr = adr_pct(composite_df["high"].values, composite_df["low"].values, 20)
-        rs1_ratio  = (theme_rs_1  / spy_rs_1)  if theme_rs_1  is not None else -1e9
-        rs5_ratio  = (theme_rs_5  / spy_rs_5)  if theme_rs_5  is not None else -1e9
-        rs20_ratio = (theme_rs_20 / spy_rs_20) if theme_rs_20 is not None else -1e9
+        rs1_ratio   = (theme_rs_1   / spy_rs_1)   if theme_rs_1   is not None else -1e9
+        rs5_ratio   = (theme_rs_5   / spy_rs_5)   if theme_rs_5   is not None else -1e9
+        rs20_ratio  = (theme_rs_20  / spy_rs_20)  if theme_rs_20  is not None else -1e9
+        rs65_ratio  = (theme_rs_65  / spy_rs_65)  if theme_rs_65  is not None else -1e9
+        rs130_ratio = (theme_rs_130 / spy_rs_130) if theme_rs_130 is not None else -1e9
         theme_pack[tk_theme] = dict(
             composite_df=composite_df, used=used,
             theme_5d=theme_5d, theme_adr=theme_adr,
             theme_rs_1=theme_rs_1, theme_rs_5=theme_rs_5, theme_rs_20=theme_rs_20,
+            theme_rs_65=theme_rs_65, theme_rs_130=theme_rs_130,
             rs1_ratio=rs1_ratio, rs5_ratio=rs5_ratio, rs20_ratio=rs20_ratio,
+            rs65_ratio=rs65_ratio, rs130_ratio=rs130_ratio,
         )
 
     # ── Initial sort: by 5d RS ratio desc (user can re-sort interactively) ──
@@ -1511,17 +2000,33 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         pack = theme_pack[tk_theme]
         composite_df = pack["composite_df"]
         used = pack["used"]
-        rs1_val  = pack["rs1_ratio"]
-        rs5_val  = pack["rs5_ratio"]
-        rs20_val = pack["rs20_ratio"]
+        rs1_val   = pack["rs1_ratio"]
+        rs5_val   = pack["rs5_ratio"]
+        rs20_val  = pack["rs20_ratio"]
+        rs65_val  = pack["rs65_ratio"]
+        rs130_val = pack["rs130_ratio"]
         theme_5d = pack["theme_5d"]
         theme_adr = pack["theme_adr"]
         label = THEME_LABELS.get(tk_theme, tk_theme.replace("_", " ").title())
 
-        divergences = detect_divergences(composite_df)
+        # Divergences were removed 2026-05-22 — pass an empty dict to keep
+        # the figure builder's optional divergence parameter happy without
+        # actually drawing any overlays.
         narrative = THEME_NARRATIVES.get(tk_theme)
-        fig, last_vals = build_composite_figure(composite_df, label, used, divergences, narrative=narrative)
+        fig, last_vals = build_composite_figure(composite_df, label, used,
+                                                divergences=None, narrative=narrative)
         pct_200, pos_label, pos_css = position_vs_200d(composite_df)
+
+        # Theme-composite Today/ADR ratio — feeds the "Tight D1 only"
+        # filter on the watchlist. Same convention as per-ticker:
+        # today's range % / 20-day ADR%.
+        theme_today_adr = None
+        if theme_adr is not None and theme_adr > 0:
+            h_last = float(composite_df["high"].iloc[-1])
+            l_last = float(composite_df["low"].iloc[-1])
+            if l_last and l_last > 0:
+                theme_today_adr = ((h_last / l_last - 1.0) * 100.0) / theme_adr
+
         chart_div = fig.to_html(
             include_plotlyjs=False, full_html=False,
             div_id=f"chart_{tk_theme}",
@@ -1533,27 +2038,11 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             for tk in used
         )
 
-        has_bull = bool(divergences.get("bull"))
-        has_bear = bool(divergences.get("bear"))
         is_below_200 = (pos_css == "pos-below")
-        is_high_interest = is_below_200 and has_bull   # bullish divergence on under-200 theme
-
-        sidebar_extra_cls = ""
-        if is_high_interest:
-            sidebar_extra_cls = " sidebar-bull-under-200"
-        elif is_below_200:
-            sidebar_extra_cls = " sidebar-below200"
-
-        chip_text = f"{pct_200:+.1f}%" if pct_200 is not None else "—"
-        sidebar_div_chip = ""
-        if has_bull:
-            sidebar_div_chip = '<span class="sidebar-div-chip div-bull">BULL</span>'
-        if has_bear:
-            sidebar_div_chip += '<span class="sidebar-div-chip div-bear">BEAR</span>'
 
         section_html = (
             f'<section class="theme" id="{tk_theme}">'
-            f'{_ohlc_strip_html(last_vals, len(composite_df), pct_200, pos_label, pos_css, divergences, rs5_val, theme_5d, theme_adr)}'
+            f'{_ohlc_strip_html(last_vals, len(composite_df), pct_200, pos_label, pos_css, None, rs5_val, theme_5d, theme_adr)}'
             f'<div class="composite-chart">{chart_div}</div>'
             f'<div class="member-grid">{member_svgs}</div>'
             f'<div class="theme-foot"><span class="theme-foot-name">{label}</span>'
@@ -1561,18 +2050,18 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             f'</section>'
         )
         sections_html.append(section_html)
-        # Collect data for the sortable watchlist table
         watchlist_rows.append(dict(
             theme_id=tk_theme,
             label=label,
-            rs1=rs1_val if rs1_val is not None and rs1_val > -1e8 else None,
-            rs5=rs5_val if rs5_val is not None and rs5_val > -1e8 else None,
-            rs20=rs20_val if rs20_val is not None and rs20_val > -1e8 else None,
+            rs1=rs1_val   if rs1_val   is not None and rs1_val   > -1e8 else None,
+            rs5=rs5_val   if rs5_val   is not None and rs5_val   > -1e8 else None,
+            rs20=rs20_val if rs20_val  is not None and rs20_val  > -1e8 else None,
+            rs65=rs65_val if rs65_val  is not None and rs65_val  > -1e8 else None,
+            rs130=rs130_val if rs130_val is not None and rs130_val > -1e8 else None,
             pct_200=pct_200,
             count=len(used),
             below_200=is_below_200,
-            has_bull=has_bull,
-            has_bear=has_bear,
+            today_adr_ratio=theme_today_adr,
         ))
 
         pct_str  = f"{pct_200:+.1f}%" if pct_200 is not None else "n/a"
@@ -1581,11 +2070,8 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         rs20_str = f"{rs20_val:+.2f}" if rs20_val is not None and rs20_val > -1e8 else "n/a"
         t5d_str = f"{theme_5d:+.2f}%" if theme_5d is not None else "n/a"
         adr_str = f"{theme_adr:.2f}%" if theme_adr is not None else "n/a"
-        div_str = ""
-        if has_bull: div_str += " BULLDIV"
-        if has_bear: div_str += " BEARDIV"
         print(f"  1d={rs1_str:>7}x  5d={rs5_str:>7}x  20d={rs20_str:>7}x  {tk_theme:35s} "
-              f"5dret={t5d_str:>7}  ADR={adr_str:>6}  200D={pct_str:>7}{div_str}")
+              f"5dret={t5d_str:>7}  ADR={adr_str:>6}  200D={pct_str:>7}")
 
     if all_missing:
         print(f"\n{len(all_missing)} ticker references missing from OHLCV cache:")
@@ -1629,6 +2115,107 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         print(f"\nUngrouped AND missing from cache: {len(ungrouped_missing)}")
         print(f"  {', '.join(ungrouped_missing)}")
 
+    # ── Per-ticker packs powering the tree-view sidebar expansion ──
+    # For every theme member and every ungrouped ticker, build a pack that
+    # carries the per-row stats (1d / 5d / 20d RS vs SPY, position-vs-200D)
+    # and the per-ticker chart arrays (date axis + OHLCV + divergence
+    # pairs). JS lazy-renders the chart on first focus by feeding these
+    # arrays into a layout template; SMAs / MACD are computed in JS to
+    # keep the embedded payload lean.
+    print("\nComputing per-ticker packs for tree-view expansion...")
+    ticker_packs = {}
+    members_by_theme = {}     # theme_id -> ordered list of tickers with packs
+    for tk_theme in sorted_keys:
+        ordered = []
+        for tk in theme_pack[tk_theme]["used"]:
+            if tk in ticker_packs:
+                ordered.append(tk)
+                continue
+            pack = compute_ticker_pack(tk, cache[tk], spy_rs_1, spy_rs_3, spy_rs_5, spy_rs_20,
+                                       spy_rs_65, spy_rs_130,
+                                       n_bars, company_meta, fundamentals)
+            if pack is not None:
+                ticker_packs[tk] = pack
+                ordered.append(tk)
+        members_by_theme[tk_theme] = ordered
+    ungrouped_with_packs = []
+    for tk in ungrouped_in_cache:
+        if tk in ticker_packs:
+            ungrouped_with_packs.append(tk)
+            continue
+        pack = compute_ticker_pack(tk, cache[tk], spy_rs_1, spy_rs_3, spy_rs_5, spy_rs_20,
+                                       spy_rs_65, spy_rs_130,
+                                   n_bars, company_meta, fundamentals=fundamentals)
+        if pack is not None:
+            ticker_packs[tk] = pack
+            ungrouped_with_packs.append(tk)
+    print(f"  Built {len(ticker_packs)} ticker packs "
+          f"({sum(len(v) for v in members_by_theme.values())} across themes, "
+          f"{len(ungrouped_with_packs)} ungrouped).")
+
+    # Reverse index: for the Tickers view, each ticker row carries the
+    # list of theme labels it belongs to so the Theme cell can name them.
+    # Built from the sorted theme order so the visible label is stable.
+    themes_by_ticker = {}
+    theme_ids_by_ticker = {}   # ticker -> [theme_id, ...] (raw keys for filter JS)
+    for tk_theme in sorted_keys:
+        label = THEME_LABELS.get(tk_theme, tk_theme.replace("_", " ").title())
+        for tk in members_by_theme.get(tk_theme, []):
+            themes_by_ticker.setdefault(tk, []).append(label)
+            theme_ids_by_ticker.setdefault(tk, []).append(tk_theme)
+    # Ungrouped tickers get a sentinel — rendered in gold in the cell.
+    for tk in ungrouped_with_packs:
+        themes_by_ticker.setdefault(tk, []).append("Ungrouped")
+        theme_ids_by_ticker.setdefault(tk, []).append("ungrouped")
+
+    # Dominant sector + industry per theme — most common values among the
+    # theme's members. Powers the "filter by sector / industry" effect on
+    # the Themes view.
+    from collections import Counter
+    theme_dominant_sector = {}
+    theme_dominant_industry = {}
+    for tk_theme in sorted_keys:
+        sectors = []
+        industries = []
+        for tk in members_by_theme.get(tk_theme, []):
+            sectors.append(ticker_packs[tk].get("sector") or "Unknown")
+            industries.append(ticker_packs[tk].get("industry") or "Unknown")
+        if sectors:
+            theme_dominant_sector[tk_theme] = Counter(sectors).most_common(1)[0][0]
+        else:
+            theme_dominant_sector[tk_theme] = "Unknown"
+        if industries:
+            theme_dominant_industry[tk_theme] = Counter(industries).most_common(1)[0][0]
+        else:
+            theme_dominant_industry[tk_theme] = "Unknown"
+    # Ungrouped pseudo-theme has no dominant sector / industry.
+    theme_dominant_sector["ungrouped"] = "Unknown"
+    theme_dominant_industry["ungrouped"] = "Unknown"
+
+    # Sectors available for the filter panel — union over all ticker packs.
+    available_sectors = sorted({(p.get("sector") or "Unknown") for p in ticker_packs.values()})
+    # Industries surfaced in the filter alongside sectors. Each entry maps
+    # a display label to the Yahoo Finance industry string we'll match on.
+    # Only Biotech for now; easy to add more sub-sector rollups later.
+    available_industries = [
+        {"label": "Biotech", "match": "Biotechnology"},
+    ]
+
+    # Add an 'ungrouped' pseudo-theme row to the watchlist so it can be
+    # expanded the same way real themes can. RS columns stay blank because
+    # there is no Ungrouped composite to compute against.
+    if ungrouped_with_packs:
+        watchlist_rows.append(dict(
+            theme_id="ungrouped",
+            label="UNGROUPED",
+            rs1=None, rs5=None, rs20=None, rs65=None, rs130=None,
+            pct_200=None,
+            count=len(ungrouped_with_packs),
+            below_200=False,
+            today_adr_ratio=None,
+            is_ungrouped=True,
+        ))
+
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     n_themes = len([s for s in sections_html if 'id="ungrouped"' not in s])
     n_universe = len(universe_dedup)
@@ -1664,40 +2251,288 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         cls = "pos" if val >= 0 else "neg"
         return f'<td class="num {cls}">{fmt.format(val)}</td>'
 
-    watchlist_body_rows = []
-    for r in watchlist_rows:
-        below_cls = " below-200" if r["below_200"] else ""
-        rs1 = r["rs1"]; rs5 = r["rs5"]; rs20 = r["rs20"]
-        rs1_attr  = f"{rs1:.4f}"  if rs1  is not None else "-1e9"
-        rs5_attr  = f"{rs5:.4f}"  if rs5  is not None else "-1e9"
-        rs20_attr = f"{rs20:.4f}" if rs20 is not None else "-1e9"
-        watchlist_body_rows.append(
-            f'<tr class="watchlist-row{below_cls}" data-theme-id="{r["theme_id"]}"'
-            f' data-label="{r["label"]}" data-rs1="{rs1_attr}" data-rs5="{rs5_attr}" data-rs20="{rs20_attr}"'
-            f' data-n="{r["count"]}">'
-            f'<td class="theme-name">{r["label"]}</td>'
+    def _ticker_child_html(tk_theme, tk):
+        """Build one child <tr> for a ticker under its parent theme.
+
+        Initially hidden via the `child-collapsed` class; the JS strips that
+        class when the parent is expanded.
+        """
+        p = ticker_packs[tk]
+        below_cls = " below-200" if p["below_200"] else ""
+        rs1 = p["rs1"]; rs5 = p["rs5"]; rs20 = p["rs20"]
+        rs65 = p["rs65"]; rs130 = p["rs130"]
+        adr_ratio = p.get("today_adr_ratio")
+        rs1_attr   = f"{rs1:.4f}"   if rs1   is not None else "-1e9"
+        rs5_attr   = f"{rs5:.4f}"   if rs5   is not None else "-1e9"
+        rs20_attr  = f"{rs20:.4f}"  if rs20  is not None else "-1e9"
+        rs65_attr  = f"{rs65:.4f}"  if rs65  is not None else "-1e9"
+        rs130_attr = f"{rs130:.4f}" if rs130 is not None else "-1e9"
+        adr_attr   = f"{adr_ratio:.4f}" if adr_ratio is not None else "1e9"
+        row_id = f"{tk_theme}__{tk}"
+        return (
+            f'<tr class="watchlist-row ticker-row child-collapsed{below_cls}"'
+            f' data-row-id="{row_id}" data-row-kind="ticker"'
+            f' data-theme-id="{tk_theme}" data-ticker="{tk}"'
+            f' data-label="{tk}"'
+            f' data-rs1="{rs1_attr}" data-rs5="{rs5_attr}" data-rs20="{rs20_attr}"'
+            f' data-rs65="{rs65_attr}" data-rs130="{rs130_attr}"'
+            f' data-adr="{adr_attr}" data-n="-1">'
+            f'<td class="flag-cell"></td>'
+            f'<td class="theme-name"><span class="tree-indent"></span>'
+            f'<span class="tree-bullet">▪</span>'
+            f'<span class="ticker-symbol">{tk}</span></td>'
             f'{_num_cell(rs1)}'
             f'{_num_cell(rs5)}'
             f'{_num_cell(rs20)}'
-            f'<td class="num count">{r["count"]}</td>'
+            f'{_num_cell(rs65)}'
+            f'{_num_cell(rs130)}'
+            f'<td class="num count">—</td>'
             f'</tr>'
         )
 
+    watchlist_body_rows = []
+    for r in watchlist_rows:
+        below_cls = " below-200" if r["below_200"] else ""
+        is_ungrouped_row = bool(r.get("is_ungrouped"))
+        rs1 = r["rs1"]; rs5 = r["rs5"]; rs20 = r["rs20"]
+        rs65 = r.get("rs65"); rs130 = r.get("rs130")
+        adr_ratio = r.get("today_adr_ratio")
+        rs1_attr   = f"{rs1:.4f}"   if rs1   is not None else "-1e9"
+        rs5_attr   = f"{rs5:.4f}"   if rs5   is not None else "-1e9"
+        rs20_attr  = f"{rs20:.4f}"  if rs20  is not None else "-1e9"
+        rs65_attr  = f"{rs65:.4f}"  if rs65  is not None else "-1e9"
+        rs130_attr = f"{rs130:.4f}" if rs130 is not None else "-1e9"
+        adr_attr   = f"{adr_ratio:.4f}" if adr_ratio is not None else "1e9"
+        # Theme row gets a caret cell. The ▸/▾ glyph is the toggle target,
+        # but pressing → / ← on the row also fires it (JS handles both).
+        extra_classes = " theme-row"
+        if is_ungrouped_row:
+            extra_classes += " ungrouped-row"
+        watchlist_body_rows.append(
+            f'<tr class="watchlist-row{extra_classes}{below_cls}"'
+            f' data-row-id="{r["theme_id"]}" data-row-kind="theme"'
+            f' data-theme-id="{r["theme_id"]}"'
+            f' data-label="{r["label"]}"'
+            f' data-rs1="{rs1_attr}" data-rs5="{rs5_attr}" data-rs20="{rs20_attr}"'
+            f' data-rs65="{rs65_attr}" data-rs130="{rs130_attr}"'
+            f' data-adr="{adr_attr}"'
+            f' data-n="{r["count"]}" data-expanded="0">'
+            f'<td class="flag-cell">'
+            f'<svg class="flag-icon" viewBox="0 0 12 12" data-flag-theme="{r["theme_id"]}">'
+            f'<polygon points="2,1 10,4 2,7"/></svg>'
+            f'</td>'
+            f'<td class="theme-name">'
+            f'<span class="tree-caret">▸</span>'
+            f'<span class="theme-label">{r["label"]}</span></td>'
+            f'{_num_cell(rs1)}'
+            f'{_num_cell(rs5)}'
+            f'{_num_cell(rs20)}'
+            f'{_num_cell(rs65)}'
+            f'{_num_cell(rs130)}'
+            f'<td class="num count">{r["count"]}</td>'
+            f'</tr>'
+        )
+        # Emit child ticker rows in the parent theme's declared order.
+        # JS re-sorts them whenever the user changes the sort column.
+        if is_ungrouped_row:
+            children = ungrouped_with_packs
+        else:
+            children = members_by_theme.get(r["theme_id"], [])
+        for tk in children:
+            watchlist_body_rows.append(_ticker_child_html(r["theme_id"], tk))
+
+    # ── Tickers-view flat table — all rows visible by default ──
+    # One row per ticker that has a pack. ADR-tight + Hot N filters are
+    # applied client-side via JS inline display styles based on checkbox
+    # state; the `tight-adr` class is kept as a row marker so sorting
+    # doesn't lose the filter state. We also stash theme membership as a
+    # comma-separated label string per row for the Theme column.
+    ADR_TIGHT_THRESHOLD = 1.10
+    tickers_body_rows = []
+    for tk in sorted(ticker_packs.keys()):
+        p = ticker_packs[tk]
+        theme_labels_for_tk = themes_by_ticker.get(tk, ["Ungrouped"])
+        theme_cell_text = ", ".join(theme_labels_for_tk)
+        theme_ids_for_tk = theme_ids_by_ticker.get(tk, ["ungrouped"])
+        theme_ids_attr = ",".join(theme_ids_for_tk)
+        is_ungrouped_tk = (theme_labels_for_tk == ["Ungrouped"])
+        # Per-ticker stats
+        rs1 = p["rs1"]; rs3 = p["rs3"]; rs5 = p["rs5"]; rs20 = p["rs20"]
+        rs65 = p["rs65"]; rs130 = p["rs130"]
+        adr_ratio = p["today_adr_ratio"]
+        is_tight = (adr_ratio is not None and adr_ratio < ADR_TIGHT_THRESHOLD)
+        below_cls = " below-200" if p["below_200"] else ""
+        tight_cls = " tight-adr" if is_tight else ""
+        ungrouped_cls = " ungrouped-ticker" if is_ungrouped_tk else ""
+        rs1_attr   = f"{rs1:.4f}"   if rs1   is not None else "-1e9"
+        rs3_attr   = f"{rs3:.4f}"   if rs3   is not None else "-1e9"
+        rs5_attr   = f"{rs5:.4f}"   if rs5   is not None else "-1e9"
+        rs20_attr  = f"{rs20:.4f}"  if rs20  is not None else "-1e9"
+        rs65_attr  = f"{rs65:.4f}"  if rs65  is not None else "-1e9"
+        rs130_attr = f"{rs130:.4f}" if rs130 is not None else "-1e9"
+        adr_attr   = f"{adr_ratio:.4f}" if adr_ratio is not None else "1e9"
+        rs1_str   = f"{rs1:+.2f}"   if rs1   is not None else "—"
+        rs3_str   = f"{rs3:+.2f}"   if rs3   is not None else "—"
+        rs65_str  = f"{rs65:+.2f}"  if rs65  is not None else "—"
+        rs130_str = f"{rs130:+.2f}" if rs130 is not None else "—"
+        adr_str   = f"{adr_ratio:.2f}" if adr_ratio is not None else "—"
+        def _rs_cls(v):
+            return "pos" if (v is not None and v >= 0) else ("neg" if v is not None else "nul")
+        tickers_body_rows.append(
+            f'<tr class="tickers-row{below_cls}{tight_cls}{ungrouped_cls}"'
+            f' data-row-id="tk__{tk}" data-row-kind="ticker-flat"'
+            f' data-ticker="{tk}" data-label="{tk}" data-theme-label="{theme_cell_text}"'
+            f' data-theme-ids="{theme_ids_attr}"'
+            f' data-rs1="{rs1_attr}" data-rs3="{rs3_attr}"'
+            f' data-rs5="{rs5_attr}" data-rs20="{rs20_attr}"'
+            f' data-rs65="{rs65_attr}" data-rs130="{rs130_attr}" data-adr="{adr_attr}">'
+            f'<td class="ticker-symbol-cell"><span class="ticker-symbol">{tk}</span></td>'
+            f'<td class="theme-membership-cell" title="{theme_cell_text}">{theme_cell_text}</td>'
+            f'<td class="num {_rs_cls(rs1)}">{rs1_str}</td>'
+            f'<td class="num {_rs_cls(rs3)}">{rs3_str}</td>'
+            f'<td class="num {_rs_cls(rs65)}">{rs65_str}</td>'
+            f'<td class="num {_rs_cls(rs130)}">{rs130_str}</td>'
+            f'<td class="num adr">{adr_str}</td>'
+            f'</tr>'
+        )
+
+    tickers_table_html = (
+        '<table class="watchlist-table tickers-table" id="tickers-watchlist">'
+        '<thead><tr>'
+        '<th data-sort-key="label"        data-sort-type="text">Ticker</th>'
+        '<th data-sort-key="theme-label"  data-sort-type="text">Theme</th>'
+        '<th data-sort-key="rs1"          data-sort-type="num" class="sort-active">1d</th>'
+        '<th data-sort-key="rs3"          data-sort-type="num">3d</th>'
+        '<th data-sort-key="rs65"         data-sort-type="num">65d</th>'
+        '<th data-sort-key="rs130"        data-sort-type="num">130d</th>'
+        '<th data-sort-key="adr"          data-sort-type="num">ADR</th>'
+        '</tr></thead>'
+        f'<tbody id="tickers-watchlist-body">{"".join(tickers_body_rows)}</tbody>'
+        '</table>'
+    )
+
+    # Filter icon — the 3-horizontal-sliders glyph. Lives in the watchlist
+    # controls bar so the toggle is right next to the visible-row counter,
+    # not buried in the header chrome. A small gold dot sits in the corner
+    # when any exclusions are active.
+    filter_icon_svg = (
+        '<svg viewBox="0 0 24 24" width="18" height="18" fill="none"'
+        ' stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+        ' stroke-linejoin="round">'
+        '<line x1="4" y1="6"  x2="20" y2="6"/>'
+        '<circle cx="9"  cy="6"  r="2" fill="currentColor"/>'
+        '<line x1="4" y1="12" x2="20" y2="12"/>'
+        '<circle cx="15" cy="12" r="2" fill="currentColor"/>'
+        '<line x1="4" y1="18" x2="20" y2="18"/>'
+        '<circle cx="7"  cy="18" r="2" fill="currentColor"/>'
+        '</svg>'
+    )
     watchlist_html = (
         '<div class="watchlist-controls">'
-        '<label><input type="checkbox" id="toggle-hide-below" checked/> Hide below 200D</label>'
+        '<label><input type="checkbox" id="toggle-hide-below" checked/> Hide &lt; 200D</label>'
+        '<label title="Today candle range &lt; 1.10 × ADR"><input type="checkbox" id="toggle-tight-only"/> Tight D1</label>'
+        '<label title="Show only rows belonging to flagged themes"><input type="checkbox" id="toggle-flagged-only"/> Flagged</label>'
         '<span class="wl-count" id="wl-visible-count"></span>'
+        f'<button type="button" class="filter-icon-btn" id="filter-cell" title="Filter sectors and themes">{filter_icon_svg}'
+        '<span class="filter-icon-dot" id="filter-badge"></span>'
+        '</button>'
         '</div>'
+        '<div class="watchlist-pane themes-pane" id="themes-pane">'
         '<table class="watchlist-table" id="watchlist">'
         '<thead><tr>'
+        '<th class="flag-col" id="watchlist-flag-header" title="Right-click for flag options">'
+        '<svg class="flag-icon-static" viewBox="0 0 12 12"><polygon points="2,1 10,4 2,7"/></svg>'
+        '</th>'
         '<th data-sort-key="label" data-sort-type="text">Theme</th>'
-        '<th data-sort-key="rs1"   data-sort-type="num">1d RS</th>'
-        '<th data-sort-key="rs5"   data-sort-type="num" class="sort-active">5d RS</th>'
-        '<th data-sort-key="rs20"  data-sort-type="num">20d RS</th>'
+        '<th data-sort-key="rs1"   data-sort-type="num">1d</th>'
+        '<th data-sort-key="rs5"   data-sort-type="num" class="sort-active">5d</th>'
+        '<th data-sort-key="rs20"  data-sort-type="num">20d</th>'
+        '<th data-sort-key="rs65"  data-sort-type="num">65d</th>'
+        '<th data-sort-key="rs130" data-sort-type="num">130d</th>'
         '<th data-sort-key="n"     data-sort-type="num">N</th>'
         '</tr></thead>'
         f'<tbody id="watchlist-body">{"".join(watchlist_body_rows)}</tbody>'
         '</table>'
+        '</div>'
+        '<div class="watchlist-pane tickers-pane" id="tickers-pane" style="display:none">'
+        f'{tickers_table_html}'
+        '<div class="tickers-empty" id="tickers-empty">No tickers under 1.10 ADR right now.</div>'
+        '</div>'
+    )
+
+    # ── Append a single ticker-view section to <main>. ──
+    # The chart, header strip, and ticker label are filled in by JS the
+    # first time a ticker row is focused — we ship one shared container
+    # rather than 900+ pre-rendered Plotly sections to keep the HTML
+    # under a sane size.
+    sections_html.append(
+        '<section class="ticker-view" id="__ticker_view__" style="display:none">'
+        '<div class="ticker-strip" id="ticker-strip"></div>'
+        '<div class="ticker-chart" id="ticker-chart"></div>'
+        '<div class="ticker-summary" id="ticker-summary"></div>'
+        '</section>'
+    )
+
+    # ── Embed per-ticker data + Plotly layout template ──
+    # TICKER_DATA carries OHLCV + dates + divergences for every ticker the
+    # tree can show. SMAs and MACD are derived in JS to keep the embedded
+    # JSON lean. TICKER_LAYOUT is the Plotly layout shared by all per-ticker
+    # charts — same panels / spacing / colors as the composite chart.
+    import json as _json
+    ticker_data_json = _json.dumps(
+        {tk: {
+            "dates": p["dates"],
+            "open":   p["open"],   "high":   p["high"],
+            "low":    p["low"],    "close":  p["close"],
+            "volume": p["volume"],
+            "rs1": p["rs1"], "rs3": p["rs3"], "rs5": p["rs5"], "rs20": p["rs20"],
+            "rs65": p["rs65"], "rs130": p["rs130"],
+            "pct_200": p["pct_200"], "pos_label": p["pos_label"],
+            "below_200": p["below_200"],
+            "last_close": p["last_close"],
+            "day_chg": p["day_chg"], "day_chg_pct": p["day_chg_pct"],
+            "vol_last": p["vol_last"],
+            "adr": p["adr"], "five_d_return": p["five_d_return"],
+            "today_adr_ratio": p["today_adr_ratio"],
+            "themes": themes_by_ticker.get(tk, []),
+            "long_name": p["long_name"],
+            "long_summary": p["long_summary"],
+        } for tk, p in ticker_packs.items()},
+        separators=(",", ":"), default=lambda o: None,
+    )
+    ticker_layout_json = _json.dumps(
+        build_ticker_layout_template(), separators=(",", ":"), default=str
+    )
+    # FILTER_DATA powers the live filter panel. JS keeps a Set of unchecked
+    # sectors and a Set of unchecked themes; on toggle it walks the rows
+    # and hides anything that fails either criterion.
+    # Themes sorted alphabetically by label for the filter list. Easier to
+    # scan when toggling than the dashboard's 5d-RS sort order.
+    _themes_for_filter = [
+        {"id": k, "label": THEME_LABELS.get(k, k.replace("_", " ").title()),
+         "sector": theme_dominant_sector.get(k, "Unknown")}
+        for k in sorted_keys
+    ]
+    if ungrouped_with_packs:
+        _themes_for_filter.append({"id": "ungrouped", "label": "Ungrouped",
+                                   "sector": "Unknown"})
+    _themes_for_filter.sort(key=lambda t: t["label"].lower())
+
+    filter_data_json = _json.dumps({
+        "sectors": available_sectors,
+        "industries": available_industries,
+        "themes": _themes_for_filter,
+        "themeIdsByTicker": theme_ids_by_ticker,
+        "tickerSector":   {tk: (p.get("sector")   or "Unknown") for tk, p in ticker_packs.items()},
+        "tickerIndustry": {tk: (p.get("industry") or "Unknown") for tk, p in ticker_packs.items()},
+        "themeDominantSector":   theme_dominant_sector,
+        "themeDominantIndustry": theme_dominant_industry,
+    }, separators=(",", ":"), default=str)
+
+    embedded_data_script = (
+        f'<script>window.TICKER_DATA = {ticker_data_json};'
+        f'window.TICKER_LAYOUT = {ticker_layout_json};'
+        f'window.FILTER_DATA = {filter_data_json};</script>'
     )
 
     html = f"""<!DOCTYPE html>
@@ -1707,6 +2542,9 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
 <title>Hot Theme Dashboard</title>
 <style>{CSS}</style>
 <script src="{PLOTLY_CDN}"></script>
+<!-- Qt WebChannel bridge: loads only when the page is hosted by QWebEngineView -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+{embedded_data_script}
 </head>
 <body>
 <div class="app">
@@ -1715,9 +2553,10 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       <span class="rm-status-dot"></span>
       <span class="rm-fn-title">Hot Theme Dashboard</span>
     </div>
-    <div>
+    <div class="rm-refresh-cell" id="refresh-cell" role="button" tabindex="0" title="Refresh intraday data (native window only)">
       <span class="rm-label">Generated</span>
-      <span class="rm-val">{now}</span>
+      <span class="rm-val" id="refresh-timestamp">{now}</span>
+      <span class="rm-refresh-spinner" id="refresh-spinner"></span>
     </div>
     <div>
       <span class="rm-label">Bars</span>
@@ -1745,7 +2584,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     </div>
     <div>
       <span class="rm-label">Navigate</span>
-      <span class="rm-h-sub mono">← → arrows · sidebar click</span>
+      <span class="rm-h-sub mono">↑↓ rows · →← expand/collapse</span>
     </div>
     <div class="rm-fn-grow">
       <span class="rm-label">Universe</span>
@@ -1765,8 +2604,46 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     <span class="mono">Cache: {spy_last}</span>
     <span class="mono" id="footer-current"></span>
     <span style="flex:1"></span>
-    <span class="mono">← →  ↑↓  Home End  · ScanPerfect Theme Dashboard · {now}</span>
+    <span class="mono">↑↓ rows · →← tree · Home/End · ScanPerfect Theme Dashboard · {now}</span>
   </footer>
+  <div class="filter-panel" id="filter-panel" style="display:none">
+    <div class="filter-panel-head">
+      <span class="filter-panel-title">Filter</span>
+      <a class="filter-reset-link" id="filter-reset-link">Reset all</a>
+      <a class="filter-close-link" id="filter-close-link">Close</a>
+    </div>
+    <div class="filter-panel-body">
+      <div class="filter-section">
+        <div class="filter-section-head">
+          <span class="filter-section-title">Sectors</span>
+          <a class="filter-link" data-filter-section="sector" data-filter-action="all">All</a>
+          <a class="filter-link" data-filter-section="sector" data-filter-action="none">Clear</a>
+        </div>
+        <div class="filter-section-list" id="filter-sectors-list"></div>
+      </div>
+      <div class="filter-section">
+        <div class="filter-section-head">
+          <span class="filter-section-title">Themes</span>
+          <a class="filter-link" data-filter-section="theme" data-filter-action="all">All</a>
+          <a class="filter-link" data-filter-section="theme" data-filter-action="none">Clear</a>
+        </div>
+        <input type="text" class="filter-search" id="filter-themes-search" placeholder="Search themes..." />
+        <div class="filter-section-list" id="filter-themes-list"></div>
+      </div>
+      <div class="filter-section">
+        <div class="filter-section-head">
+          <span class="filter-section-title">Strength</span>
+          <a class="filter-link" data-filter-section="strength" data-filter-action="none">Clear</a>
+        </div>
+        <div class="filter-section-list" id="filter-strength-list">
+          <label title="5d RS &gt;= 1.20"><input type="checkbox" id="toggle-hot-5"/> Hot 5</label>
+          <label title="20d RS &gt;= 1.20"><input type="checkbox" id="toggle-hot-20"/> Hot 20</label>
+          <label title="65d RS &gt;= 1.20"><input type="checkbox" id="toggle-hot-65"/> Hot 65</label>
+          <label title="130d RS &gt;= 1.20"><input type="checkbox" id="toggle-hot-130"/> Hot 130</label>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 <script>
 (function() {{
@@ -1774,22 +2651,96 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   var footerCurrent= document.getElementById('footer-current');
   var visibleCount = document.getElementById('wl-visible-count');
   var tbody        = document.getElementById('watchlist-body');
+  var tickersBody  = document.getElementById('tickers-watchlist-body');
   var sidebar      = document.querySelector('aside.sidebar');
   var toggleHide   = document.getElementById('toggle-hide-below');
+  var brandBtn     = document.querySelector('.rm-fn-brand');
+  var brandTitle   = brandBtn && brandBtn.querySelector('.rm-fn-title');
+  var tickersEmpty = document.getElementById('tickers-empty');
+  var toggleTightOnly = document.getElementById('toggle-tight-only');
+  var toggleFlaggedOnly = document.getElementById('toggle-flagged-only');
+  // Flagged theme set — persisted in localStorage. Click a flag icon to
+  // toggle. "Flagged" checkbox filters all views to rows that belong to
+  // at least one flagged theme.
+  var flaggedThemes = new Set();
+  try {{
+    var savedFlags = window.localStorage && window.localStorage.getItem('themeDashboard.flaggedThemes');
+    if (savedFlags) JSON.parse(savedFlags).forEach(function(id) {{ flaggedThemes.add(id); }});
+  }} catch(e) {{}}
+  // Hot N filters live in the filter panel — one checkbox per RS window.
+  // Each is independent; row passes if rsN >= 1.20 for AT LEAST ONE of
+  // the checked windows (OR semantics). Theme rows have all 4 windows;
+  // flat ticker rows only have rs65/rs130 (no rs5/rs20), so Hot 5 / Hot 20
+  // simply skip ticker rows for those windows.
+  var hotToggles = {{
+    5:   document.getElementById('toggle-hot-5'),
+    20:  document.getElementById('toggle-hot-20'),
+    65:  document.getElementById('toggle-hot-65'),
+    130: document.getElementById('toggle-hot-130'),
+  }};
 
-  // Sort state
+  // Filter thresholds. "Hot N" = rsN >= 1.20 in the named window.
+  // "Tight" = today_adr_ratio < 1.10. Persisted in localStorage.
+  var HOT_RS_THRESHOLD   = 1.20;
+  var TIGHT_ADR_CEILING  = 1.10;
+  try {{
+    Object.keys(hotToggles).forEach(function(n) {{
+      var key = 'themeDashboard.hot' + n;
+      var saved = window.localStorage && window.localStorage.getItem(key);
+      if (saved === '1' && hotToggles[n]) hotToggles[n].checked = true;
+    }});
+    var savedTight = window.localStorage && window.localStorage.getItem('themeDashboard.tightOnly');
+    if (savedTight === '1' && toggleTightOnly) toggleTightOnly.checked = true;
+    var savedFlagged = window.localStorage && window.localStorage.getItem('themeDashboard.flaggedOnly');
+    if (savedFlagged === '1' && toggleFlaggedOnly) toggleFlaggedOnly.checked = true;
+  }} catch(e) {{}}
+
+  // View state: 'themes' (default tree) or 'tickers' (flat ADR-tight list).
+  // Persisted in localStorage so refresh keeps the active view.
+  var activeView = 'themes';
+  try {{
+    var saved = window.localStorage && window.localStorage.getItem('themeDashboard.view');
+    if (saved === 'tickers' || saved === 'themes') activeView = saved;
+  }} catch(e) {{}}
+
+  // Sort state — applies to theme rows globally AND ticker children within each parent.
+  // Tickers view keeps its own sort state independent of the tree.
   var sortKey  = 'rs5';
   var sortDir  = -1;  // -1 desc, 1 asc
   var sortType = 'num';
+  var tkSortKey  = 'rs1';
+  var tkSortDir  = -1;
+  var tkSortType = 'num';
 
-  function rows() {{ return Array.prototype.slice.call(tbody.querySelectorAll('tr.watchlist-row')); }}
+  // ── Row utilities ──────────────────────────────────────────
+  function rows()        {{ return Array.prototype.slice.call(tbody.querySelectorAll('tr.watchlist-row')); }}
+  function themeRows()   {{ return rows().filter(function(r) {{ return r.dataset.rowKind === 'theme'; }}); }}
+  function tickerRows()  {{ return rows().filter(function(r) {{ return r.dataset.rowKind === 'ticker'; }}); }}
+  function childrenOf(themeRow) {{
+    return tickerRows().filter(function(r) {{ return r.dataset.themeId === themeRow.dataset.themeId; }});
+  }}
   function visibleRows() {{
+    if (activeView === 'tickers') {{
+      return tickerFlatRows().filter(function(r) {{
+        // CSS hides non-tight rows + hide-below-200 (when checked); also
+        // hides inline display:none rows set elsewhere.
+        var s = window.getComputedStyle(r);
+        return s.display !== 'none';
+      }});
+    }}
     return rows().filter(function(r) {{
-      var hidden = r.style.display === 'none' || r.classList.contains('hidden-by-filter');
-      return !hidden;
+      if (r.style.display === 'none') return false;
+      if (r.classList.contains('hidden-by-filter')) return false;
+      if (r.classList.contains('child-collapsed')) return false;
+      return true;
     }});
   }}
+  function tickerFlatRows() {{
+    if (!tickersBody) return [];
+    return Array.prototype.slice.call(tickersBody.querySelectorAll('tr.tickers-row'));
+  }}
 
+  // ── Sort: theme rows globally, ticker children within their parent. ──
   function applyHeaderIndicators() {{
     document.querySelectorAll('#watchlist th').forEach(function(th) {{
       th.classList.remove('sort-active', 'sort-asc');
@@ -1801,78 +2752,364 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     }}
   }}
 
+  function compareRows(a, b) {{
+    var av, bv;
+    if (sortType === 'num') {{
+      av = parseFloat(a.dataset[sortKey] || '-1e9');
+      bv = parseFloat(b.dataset[sortKey] || '-1e9');
+      if (isNaN(av)) av = -1e9;
+      if (isNaN(bv)) bv = -1e9;
+      return (av - bv) * sortDir;
+    }} else {{
+      av = (a.dataset.label || '').toLowerCase();
+      bv = (b.dataset.label || '').toLowerCase();
+      return av.localeCompare(bv) * sortDir;
+    }}
+  }}
+
   function sortRows() {{
-    var all = rows();
-    all.sort(function(a, b) {{
-      var av, bv;
-      if (sortType === 'num') {{
-        av = parseFloat(a.dataset[sortKey === 'pct' ? 'pct' : sortKey === 'n' ? 'n' : sortKey] || '-1e9');
-        bv = parseFloat(b.dataset[sortKey === 'pct' ? 'pct' : sortKey === 'n' ? 'n' : sortKey] || '-1e9');
-        if (isNaN(av)) av = -1e9;
-        if (isNaN(bv)) bv = -1e9;
-        return (av - bv) * sortDir;
-      }} else if (sortKey === 'div') {{
-        // bull > both > bear > none, just text-compare to keep stable
-        function rank(r) {{
-          var hasBull = r.querySelector('.div-cell .bull') ? 1 : 0;
-          var hasBear = r.querySelector('.div-cell .bear') ? 1 : 0;
-          return hasBull * 2 + hasBear;
-        }}
-        return (rank(a) - rank(b)) * sortDir;
-      }} else {{
-        av = (a.dataset.label || '').toLowerCase();
-        bv = (b.dataset.label || '').toLowerCase();
-        return av.localeCompare(bv) * sortDir;
-      }}
+    // Sort themes globally; for each theme, sort its children, then
+    // re-append theme + children in that order. Tickers always stay grouped
+    // under their parent — sort never breaks the hierarchy.
+    var themes = themeRows().slice();
+    themes.sort(compareRows);
+    themes.forEach(function(theme) {{
+      tbody.appendChild(theme);
+      var kids = childrenOf(theme).slice();
+      kids.sort(compareRows);
+      kids.forEach(function(kid) {{ tbody.appendChild(kid); }});
     }});
-    all.forEach(function(r) {{ tbody.appendChild(r); }});
     applyHeaderIndicators();
+  }}
+
+  // ── Filter: hide rows below their own 200D. ────────────────
+  // Applies independently to theme rows, ticker child rows (inside the
+  // tree), and ticker-flat rows (Tickers view). Each row checks its own
+  // below-200 flag. All show/hide is driven by inline `display` on the
+  // row; no CSS default-hide. When a filter is unchecked, applyFilter()
+  // clears the inline style so rows revert to their normal visibility.
+  function rowFailsHotOrTight(r) {{
+    // "Hot N" = rsN >= 1.20. OR semantics across checked windows: the
+    // row passes if ANY checked Hot N has rsN >= 1.20. If no Hot box is
+    // checked, this branch is skipped entirely (no Hot filtering).
+    // All row types (theme, ticker child, flat ticker) carry rs5/rs20/
+    // rs65/rs130 data attrs. Missing values use -1e9 as sentinel.
+    var anyHotChecked = false;
+    var passesAnyHot  = false;
+    var hotWindows = [5, 20, 65, 130];
+    for (var i = 0; i < hotWindows.length; i++) {{
+      var n = hotWindows[i];
+      var tog = hotToggles[n];
+      if (!tog || !tog.checked) continue;
+      anyHotChecked = true;
+      var v = parseFloat(r.dataset['rs' + n] || '-1e9');
+      if (!isNaN(v) && v >= HOT_RS_THRESHOLD) {{ passesAnyHot = true; break; }}
+    }}
+    if (anyHotChecked && !passesAnyHot) return true;
+    // "Tight D1" = today's candle range / 20d ADR < 1.10. Missing data
+    // (no ADR, fresh IPO, etc.) gets a sentinel of 1e9 which fails.
+    if (toggleTightOnly && toggleTightOnly.checked) {{
+      var adr = parseFloat(r.dataset.adr || '1e9');
+      if (isNaN(adr) || adr >= TIGHT_ADR_CEILING) return true;
+    }}
+    // "Flagged only" = row must belong to at least one flagged theme.
+    // Theme rows use their own theme-id; ticker child rows use their parent
+    // theme-id; flat ticker rows use their comma-separated theme-ids attr
+    // (a flat ticker can belong to multiple themes — pass if ANY is flagged).
+    if (toggleFlaggedOnly && toggleFlaggedOnly.checked) {{
+      if (flaggedThemes.size === 0) return true;
+      var ids = [];
+      if (r.dataset.rowKind === 'theme')        ids = [r.dataset.themeId];
+      else if (r.dataset.rowKind === 'ticker')  ids = [r.dataset.themeId];
+      else if (r.dataset.themeIds)              ids = r.dataset.themeIds.split(',');
+      var matched = false;
+      for (var j = 0; j < ids.length; j++) {{
+        if (flaggedThemes.has(ids[j])) {{ matched = true; break; }}
+      }}
+      if (!matched) return true;
+    }}
+    return false;
   }}
 
   function applyFilter() {{
     var hideBelow = toggleHide && toggleHide.checked;
     rows().forEach(function(r) {{
       var below = r.classList.contains('below-200');
-      r.style.display = (hideBelow && below) ? 'none' : '';
+      var filteredOut = r.classList.contains('filtered-out');
+      var hotTight   = rowFailsHotOrTight(r);
+      var hide = filteredOut || (hideBelow && below) || hotTight;
+      r.style.display = hide ? 'none' : '';
+    }});
+    tickerFlatRows().forEach(function(r) {{
+      var below = r.classList.contains('below-200');
+      var filteredOut = r.classList.contains('filtered-out');
+      var hotTight   = rowFailsHotOrTight(r);
+      var hide = filteredOut || (hideBelow && below) || hotTight;
+      r.style.display = hide ? 'none' : '';
     }});
     if (visibleCount) visibleCount.textContent = visibleRows().length + ' visible';
   }}
 
-  // ── Section nav driven by the watchlist row order ──
-  var activeThemeId = null;
+  // ── Tree expand / collapse ─────────────────────────────────
+  function isExpanded(themeRow)   {{ return themeRow.dataset.expanded === '1'; }}
+  function setExpanded(themeRow, on) {{
+    themeRow.dataset.expanded = on ? '1' : '0';
+    var kids = childrenOf(themeRow);
+    kids.forEach(function(kid) {{
+      kid.classList.toggle('child-collapsed', !on);
+    }});
+    var caret = themeRow.querySelector('.tree-caret');
+    if (caret) caret.textContent = on ? '▾' : '▸';
+    if (visibleCount) visibleCount.textContent = visibleRows().length + ' visible';
+  }}
 
-  function setActiveByThemeId(themeId, opts) {{
-    if (!themeId) return;
+  function expandTheme(themeRow)   {{ if (themeRow && themeRow.dataset.rowKind === 'theme' && !isExpanded(themeRow)) setExpanded(themeRow, true); }}
+  function collapseTheme(themeRow) {{ if (themeRow && themeRow.dataset.rowKind === 'theme' &&  isExpanded(themeRow)) setExpanded(themeRow, false); }}
+
+  // ── Per-ticker chart rendering ─────────────────────────────
+  // SMA: NaN until `period` consecutive valid bars seen in the window;
+  // matches Python sma_2d (mirrors pandas min_periods=period).
+  function smaJS(arr, p) {{
+    var out = new Array(arr.length);
+    var sum = 0, count = 0;
+    for (var i = 0; i < arr.length; i++) {{
+      var v = arr[i];
+      if (v !== null && v !== undefined && !isNaN(v)) {{ sum += v; count++; }}
+      if (i >= p) {{
+        var old = arr[i - p];
+        if (old !== null && old !== undefined && !isNaN(old)) {{ sum -= old; count--; }}
+      }}
+      out[i] = (i >= p - 1 && count === p) ? sum / p : null;
+    }}
+    return out;
+  }}
+  // EMA: seed at first valid bar, alpha=2/(p+1); NaN until p valid bars seen.
+  function emaJS(arr, p) {{
+    var out = new Array(arr.length);
+    var alpha = 2 / (p + 1);
+    var ema = null;
+    var count = 0;
+    for (var i = 0; i < arr.length; i++) {{
+      var v = arr[i];
+      if (v === null || v === undefined || isNaN(v)) {{ out[i] = null; continue; }}
+      ema = (ema === null) ? v : (alpha * v + (1 - alpha) * ema);
+      count++;
+      out[i] = (count >= p) ? ema : null;
+    }}
+    return out;
+  }}
+  function subArr(a, b) {{
+    var out = new Array(a.length);
+    for (var i = 0; i < a.length; i++) {{
+      out[i] = (a[i] === null || b[i] === null) ? null : a[i] - b[i];
+    }}
+    return out;
+  }}
+
+  function fmtNum(v, dec, sign) {{
+    if (v === null || v === undefined || isNaN(v)) return '—';
+    dec = (dec === undefined) ? 2 : dec;
+    return ((sign && v >= 0) ? '+' : '') + v.toFixed(dec);
+  }}
+  function fmtPct(v, dec, sign) {{
+    if (v === null || v === undefined || isNaN(v)) return '—';
+    dec = (dec === undefined) ? 2 : dec;
+    return ((sign && v >= 0) ? '+' : '') + v.toFixed(dec) + '%';
+  }}
+  function fmtVol(v) {{
+    if (v === null || v === undefined || isNaN(v)) return '—';
+    if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+    if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+    if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K';
+    return v.toFixed(0);
+  }}
+  function clsForVal(v) {{ return (v !== null && v >= 0) ? 'pos' : 'neg'; }}
+
+  function buildTickerStrip(ticker) {{
+    var d = window.TICKER_DATA[ticker];
+    var strip = document.getElementById('ticker-strip');
+    if (!d || !strip) return;
+    var pos200cls = d.below_200 ? 'neg' : 'pos';
+    var html = '';
+    html += '<span class="ticker-name">' + ticker + '</span>';
+    if (d.long_name) html += '<span class="long-name">' + d.long_name + '</span>';
+    html += '<span class="sep">|</span>';
+    html += '<span><span class="lbl">C</span><span class="val">' + fmtNum(d.last_close) + '</span></span>';
+    html += '<span><span class="lbl">Chg</span><span class="' + clsForVal(d.day_chg) + '">' + fmtNum(d.day_chg, 2, true) + '</span> '
+         +  '<span class="' + clsForVal(d.day_chg_pct) + '">' + fmtPct(d.day_chg_pct, 2, true) + '</span></span>';
+    html += '<span><span class="lbl">Vol</span><span class="val">' + fmtVol(d.vol_last) + '</span></span>';
+    html += '<span class="sep">|</span>';
+    html += '<span><span class="lbl">vs 200D</span><span class="' + pos200cls + '">' + fmtPct(d.pct_200, 1, true) + '</span></span>';
+    html += '<span><span class="lbl">5d ret</span><span class="' + clsForVal(d.five_d_return) + '">' + fmtPct(d.five_d_return, 2, true) + '</span></span>';
+    html += '<span><span class="lbl">ADR</span><span class="val">' + fmtPct(d.adr) + '</span></span>';
+    html += '<span class="sep">|</span>';
+    html += '<span><span class="lbl">1d RS</span><span class="' + clsForVal(d.rs1) + '">' + fmtNum(d.rs1, 2, true) + 'x</span></span>';
+    html += '<span><span class="lbl">5d RS</span><span class="' + clsForVal(d.rs5) + '">' + fmtNum(d.rs5, 2, true) + 'x</span></span>';
+    html += '<span><span class="lbl">20d RS</span><span class="' + clsForVal(d.rs20) + '">' + fmtNum(d.rs20, 2, true) + 'x</span></span>';
+    // MACD divergence tags removed 2026-05-22.
+    strip.innerHTML = html;
+    var sumDiv = document.getElementById('ticker-summary');
+    if (sumDiv) sumDiv.textContent = d.long_summary || '';
+  }}
+
+  function renderTicker(ticker) {{
+    var d = window.TICKER_DATA[ticker];
+    var div = document.getElementById('ticker-chart');
+    if (!d || !div || !window.Plotly) return;
+
+    var dates = d.dates;
+    var close = d.close;
+    var sma5   = smaJS(close, 5);
+    var sma10  = smaJS(close, 10);
+    var sma20  = smaJS(close, 20);
+    var sma50  = smaJS(close, 50);
+    var sma200 = smaJS(close, 200);
+    var emaFast = emaJS(close, 6);
+    var emaSlow = emaJS(close, 20);
+    var macdLine = subArr(emaFast, emaSlow);
+    var signal   = emaJS(macdLine, 9);
+
+    var volColors = [];
+    for (var i = 0; i < close.length; i++) {{
+      var up = (close[i] !== null && d.open[i] !== null && close[i] >= d.open[i]);
+      volColors.push(up ? '#1eff1e' : '#ff3030');
+    }}
+
+    var traces = [
+      {{ type: 'candlestick', x: dates, open: d.open, high: d.high, low: d.low, close: d.close,
+         increasing: {{ line: {{ color: '#1eff1e', width: 1 }}, fillcolor: '#1eff1e' }},
+         decreasing: {{ line: {{ color: '#ff3030', width: 1 }}, fillcolor: '#ff3030' }},
+         showlegend: false, name: '', xaxis: 'x', yaxis: 'y',
+         hoverlabel: {{ font: {{ family: 'Consolas, monospace', size: 11 }} }} }},
+      {{ type: 'scatter', x: dates, y: sma5,   mode: 'lines', line: {{color:'#ff8800', width:1.2}}, showlegend: false, hoverinfo: 'skip', xaxis: 'x', yaxis: 'y', name: 'SMA 5' }},
+      {{ type: 'scatter', x: dates, y: sma10,  mode: 'lines', line: {{color:'#5fc8ff', width:1.2}}, showlegend: false, hoverinfo: 'skip', xaxis: 'x', yaxis: 'y', name: 'SMA 10' }},
+      {{ type: 'scatter', x: dates, y: sma20,  mode: 'lines', line: {{color:'#e8c890', width:1.2}}, showlegend: false, hoverinfo: 'skip', xaxis: 'x', yaxis: 'y', name: 'SMA 20' }},
+      {{ type: 'scatter', x: dates, y: sma50,  mode: 'lines', line: {{color:'#ffcc00', width:1.2}}, showlegend: false, hoverinfo: 'skip', xaxis: 'x', yaxis: 'y', name: 'SMA 50' }},
+      {{ type: 'scatter', x: dates, y: sma200, mode: 'lines', line: {{color:'#ffffff', width:1.5}}, showlegend: false, hoverinfo: 'skip', xaxis: 'x', yaxis: 'y', name: 'SMA 200' }},
+      {{ type: 'bar', x: dates, y: d.volume, marker: {{ color: volColors, line: {{ width: 0 }} }}, showlegend: false, hoverinfo: 'skip', xaxis: 'x2', yaxis: 'y2', name: '' }},
+      {{ type: 'scatter', x: dates, y: macdLine, mode: 'lines', line: {{color:'#5fc8ff', width:1.6}}, showlegend: false, hoverinfo: 'skip', xaxis: 'x3', yaxis: 'y3', name: 'MACD' }},
+      {{ type: 'scatter', x: dates, y: signal,   mode: 'lines', line: {{color:'#ff8800', width:1.6}}, showlegend: false, hoverinfo: 'skip', xaxis: 'x3', yaxis: 'y3', name: 'Signal' }}
+    ];
+
+    // MACD divergences were removed 2026-05-22 — no overlay traces drawn.
+
+    // Clone the layout template and set the x-range with weekend padding.
+    var layout = JSON.parse(JSON.stringify(window.TICKER_LAYOUT));
+    var firstDate = dates[0];
+    var lastDate  = dates[dates.length - 1];
+    var lastDt = new Date(lastDate + 'T00:00:00');
+    lastDt.setDate(lastDt.getDate() + 30);
+    var rightPad = lastDt.toISOString().slice(0, 10);
+    if (!layout.xaxis)  layout.xaxis  = {{}};
+    if (!layout.xaxis2) layout.xaxis2 = {{}};
+    if (!layout.xaxis3) layout.xaxis3 = {{}};
+    layout.xaxis.range  = [firstDate, rightPad];
+    layout.xaxis2.range = [firstDate, rightPad];
+    layout.xaxis3.range = [firstDate, rightPad];
+
+    // Ticker label annotation (top-left of candle panel)
+    layout.annotations = (layout.annotations || []).slice();
+    layout.annotations.push({{
+      text: '<b>' + ticker + ', D</b>',
+      xref: 'paper', yref: 'paper',
+      x: 0.008, y: 0.98, xanchor: 'left', yanchor: 'top',
+      showarrow: false,
+      font: {{ family: 'Segoe UI, Tahoma, sans-serif', size: 34, color: '#ffffff' }}
+    }});
+    if (d.long_name) {{
+      layout.annotations.push({{
+        text: d.long_name,
+        xref: 'paper', yref: 'paper',
+        x: 0.008, y: 0.90, xanchor: 'left', yanchor: 'top',
+        showarrow: false,
+        font: {{ family: 'Segoe UI, Tahoma, sans-serif', size: 12, color: '#c8ccd2' }}
+      }});
+    }}
+
+    Plotly.newPlot(div, traces, layout, {{ displayModeBar: false, scrollZoom: true, doubleClick: 'reset' }});
+  }}
+
+  // ── Section nav ────────────────────────────────────────────
+  var activeRowId = null;
+  var tickerView = document.getElementById('__ticker_view__');
+
+  function showThemeSection(themeId) {{
+    document.querySelectorAll('section.theme').forEach(function(s) {{
+      s.style.display = (s.id === themeId) ? '' : 'none';
+      s.classList.toggle('is-active', s.id === themeId);
+    }});
+    if (tickerView) tickerView.style.display = 'none';
     var sec = document.getElementById(themeId);
-    if (!sec) return;
-    document.querySelectorAll('section.theme').forEach(function(s) {{ s.classList.remove('is-active'); }});
-    sec.classList.add('is-active');
-    rows().forEach(function(r) {{ r.classList.toggle('is-active', r.dataset.themeId === themeId); }});
-    activeThemeId = themeId;
-    var pdiv = sec.querySelector('.plotly-graph-div');
+    var pdiv = sec && sec.querySelector('.plotly-graph-div');
     if (pdiv && window.Plotly && Plotly.Plots && Plotly.Plots.resize) {{
       try {{ Plotly.Plots.resize(pdiv); }} catch(e) {{}}
     }}
-    // Scroll selected row into view
-    var activeRow = tbody.querySelector('tr.is-active');
-    if (activeRow && sidebar) {{
-      var rTop = activeRow.offsetTop, rBot = rTop + activeRow.offsetHeight;
+  }}
+
+  function showTickerSection(ticker) {{
+    document.querySelectorAll('section.theme').forEach(function(s) {{ s.style.display = 'none'; }});
+    if (tickerView) tickerView.style.display = '';
+    buildTickerStrip(ticker);
+    renderTicker(ticker);
+  }}
+
+  function setActiveByRowId(rowId, opts) {{
+    if (!rowId) return;
+    // Tickers-view rows live in a separate tbody. Look up in whichever
+    // is active first; fall back to the other to support deep-link hashes.
+    var row = null;
+    if (activeView === 'tickers' && tickersBody) {{
+      row = tickersBody.querySelector('tr[data-row-id="' + rowId + '"]');
+    }}
+    if (!row) row = tbody.querySelector('tr[data-row-id="' + rowId + '"]');
+    if (!row && tickersBody) row = tickersBody.querySelector('tr[data-row-id="' + rowId + '"]');
+    if (!row) return;
+    activeRowId = rowId;
+    rows().forEach(function(r) {{ r.classList.toggle('is-active', r.dataset.rowId === rowId); }});
+    tickerFlatRows().forEach(function(r) {{ r.classList.toggle('is-active', r.dataset.rowId === rowId); }});
+
+    if (row.dataset.rowKind === 'ticker-flat') {{
+      showTickerSection(row.dataset.ticker);
+    }} else if (row.dataset.rowKind === 'ticker') {{
+      var parent = tbody.querySelector('tr.theme-row[data-theme-id="' + row.dataset.themeId + '"]');
+      if (parent && !isExpanded(parent)) setExpanded(parent, true);
+      showTickerSection(row.dataset.ticker);
+    }} else {{
+      showThemeSection(row.dataset.themeId);
+    }}
+
+    // Scroll active row into view
+    if (sidebar) {{
+      var rTop = row.offsetTop, rBot = rTop + row.offsetHeight;
       if (rTop < sidebar.scrollTop || rBot > sidebar.scrollTop + sidebar.clientHeight) {{
-        activeRow.scrollIntoView({{block: 'nearest'}});
+        row.scrollIntoView({{block: 'nearest'}});
       }}
     }}
+
     var visible = visibleRows();
     var idx = -1;
     for (var i = 0; i < visible.length; i++) {{
-      if (visible[i].dataset.themeId === themeId) {{ idx = i; break; }}
+      if (visible[i].dataset.rowId === rowId) {{ idx = i; break; }}
     }}
     if (indicator) indicator.textContent = (idx >= 0 ? (idx+1) : '—') + ' / ' + visible.length;
     if (footerCurrent) {{
-      footerCurrent.textContent = activeRow ? activeRow.dataset.label : '';
+      var lbl = row.dataset.label;
+      if (row.dataset.rowKind === 'ticker') lbl = row.dataset.themeId + ' / ' + lbl;
+      else if (row.dataset.rowKind === 'ticker-flat') lbl = 'TICKERS / ' + lbl;
+      footerCurrent.textContent = lbl;
     }}
     window.scrollTo(0, 0);
+
     if (!opts || !opts.skipHash) {{
-      try {{ history.replaceState(null, '', '#' + themeId); }} catch(e) {{}}
+      var part;
+      if (row.dataset.rowKind === 'ticker-flat') {{
+        part = 'tickers/' + row.dataset.ticker;
+      }} else if (row.dataset.rowKind === 'ticker') {{
+        part = row.dataset.themeId + '/' + row.dataset.ticker;
+      }} else {{
+        part = row.dataset.themeId;
+      }}
+      try {{ history.replaceState(null, '', '#' + part); }} catch(e) {{}}
     }}
   }}
 
@@ -1881,15 +3118,28 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     if (!visible.length) return;
     var idx = -1;
     for (var i = 0; i < visible.length; i++) {{
-      if (visible[i].dataset.themeId === activeThemeId) {{ idx = i; break; }}
+      if (visible[i].dataset.rowId === activeRowId) {{ idx = i; break; }}
     }}
     var next = (idx < 0 ? 0 : idx + delta);
     if (next < 0) next = visible.length - 1;
     if (next >= visible.length) next = 0;
-    setActiveByThemeId(visible[next].dataset.themeId);
+    setActiveByRowId(visible[next].dataset.rowId);
   }}
 
-  // Header click → sort
+  function currentRow() {{
+    if (!activeRowId) return null;
+    if (activeView === 'tickers' && tickersBody) {{
+      return tickersBody.querySelector('tr[data-row-id="' + activeRowId + '"]');
+    }}
+    return tbody.querySelector('tr[data-row-id="' + activeRowId + '"]');
+  }}
+
+  function parentThemeOf(tickerRow) {{
+    return tbody.querySelector('tr.theme-row[data-theme-id="' + tickerRow.dataset.themeId + '"]');
+  }}
+
+  // ── Event wiring ───────────────────────────────────────────
+  // Header click → sort.
   document.querySelectorAll('#watchlist th').forEach(function(th) {{
     th.addEventListener('click', function() {{
       var k = th.dataset.sortKey;
@@ -1899,68 +3149,640 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     }});
   }});
 
-  // Row click → activate
+  // Row click: caret toggles expansion in place; everything else activates.
   tbody.addEventListener('click', function(e) {{
+    var caret = e.target.closest('.tree-caret');
     var tr = e.target.closest('tr.watchlist-row');
     if (!tr) return;
-    setActiveByThemeId(tr.dataset.themeId);
+    if (caret && tr.dataset.rowKind === 'theme') {{
+      setExpanded(tr, !isExpanded(tr));
+      return;
+    }}
+    setActiveByRowId(tr.dataset.rowId);
   }});
 
-  // Toggle hide-below-200
+  // Toggle hide-below-200.
   if (toggleHide) toggleHide.addEventListener('change', function() {{
     applyFilter();
-    // If active row got hidden, jump to first visible
-    if (activeThemeId) {{
-      var activeRow = tbody.querySelector('tr.is-active');
-      if (activeRow && activeRow.style.display === 'none') {{
-        var visible = visibleRows();
-        if (visible.length) setActiveByThemeId(visible[0].dataset.themeId);
-      }}
+    var row = currentRow();
+    if (row && row.style.display === 'none') {{
+      var visible = visibleRows();
+      if (visible.length) setActiveByRowId(visible[0].dataset.rowId);
     }}
   }});
+  function onHotTightChange() {{
+    try {{
+      if (window.localStorage) {{
+        Object.keys(hotToggles).forEach(function(n) {{
+          var tog = hotToggles[n];
+          window.localStorage.setItem('themeDashboard.hot' + n,
+            (tog && tog.checked) ? '1' : '0');
+        }});
+        window.localStorage.setItem('themeDashboard.tightOnly',
+          (toggleTightOnly && toggleTightOnly.checked) ? '1' : '0');
+        window.localStorage.setItem('themeDashboard.flaggedOnly',
+          (toggleFlaggedOnly && toggleFlaggedOnly.checked) ? '1' : '0');
+      }}
+    }} catch(e) {{}}
+    applyFilter();
+    updateFilterBadge();
+    var row = currentRow();
+    if (row && row.style.display === 'none') {{
+      var visible = visibleRows();
+      if (visible.length) setActiveByRowId(visible[0].dataset.rowId);
+    }}
+  }}
+  Object.keys(hotToggles).forEach(function(n) {{
+    var tog = hotToggles[n];
+    if (tog) tog.addEventListener('change', onHotTightChange);
+  }});
+  if (toggleTightOnly)   toggleTightOnly.addEventListener('change', onHotTightChange);
+  if (toggleFlaggedOnly) toggleFlaggedOnly.addEventListener('change', onHotTightChange);
 
-  // Keyboard navigation
+  // ── Flag system ────────────────────────────────────────────
+  // Persist the flagged-themes set to localStorage on every change.
+  function persistFlags() {{
+    try {{
+      if (window.localStorage) {{
+        var arr = [];
+        flaggedThemes.forEach(function(id) {{ arr.push(id); }});
+        window.localStorage.setItem('themeDashboard.flaggedThemes', JSON.stringify(arr));
+      }}
+    }} catch(e) {{}}
+  }}
+  // Repaint every flag icon's is-flagged class from the current set.
+  function repaintFlagIcons() {{
+    document.querySelectorAll('svg.flag-icon[data-flag-theme]').forEach(function(svg) {{
+      var id = svg.dataset.flagTheme;
+      svg.classList.toggle('is-flagged', flaggedThemes.has(id));
+    }});
+  }}
+  // Initial paint from persisted set.
+  repaintFlagIcons();
+  // Click on a flag toggles it; stop propagation so the row click doesn't fire.
+  document.addEventListener('click', function(e) {{
+    var svg = e.target && e.target.closest && e.target.closest('svg.flag-icon[data-flag-theme]');
+    if (!svg) return;
+    e.preventDefault(); e.stopPropagation();
+    var id = svg.dataset.flagTheme;
+    if (flaggedThemes.has(id)) flaggedThemes.delete(id);
+    else                       flaggedThemes.add(id);
+    svg.classList.toggle('is-flagged', flaggedThemes.has(id));
+    persistFlags();
+    updateFilterBadge();
+    if (toggleFlaggedOnly && toggleFlaggedOnly.checked) applyFilter();
+  }});
+  // Right-click on flag (or flag header) opens a tiny menu with Unflag all.
+  var openFlagMenu = null;
+  function closeFlagMenu() {{
+    if (openFlagMenu && openFlagMenu.parentNode) openFlagMenu.parentNode.removeChild(openFlagMenu);
+    openFlagMenu = null;
+  }}
+  document.addEventListener('contextmenu', function(e) {{
+    var inFlag =
+      (e.target && e.target.closest && (e.target.closest('svg.flag-icon[data-flag-theme]')
+                                       || e.target.closest('.flag-cell')
+                                       || e.target.closest('th.flag-col')));
+    if (!inFlag) return;
+    e.preventDefault();
+    closeFlagMenu();
+    var menu = document.createElement('div');
+    menu.className = 'flag-context-menu';
+    menu.style.left = e.clientX + 'px';
+    menu.style.top  = e.clientY + 'px';
+    var item = document.createElement('div');
+    item.className = 'flag-context-menu-item';
+    item.textContent = 'Unflag all';
+    item.addEventListener('click', function() {{
+      flaggedThemes.clear();
+      persistFlags();
+      repaintFlagIcons();
+      updateFilterBadge();
+      if (toggleFlaggedOnly && toggleFlaggedOnly.checked) applyFilter();
+      closeFlagMenu();
+    }});
+    menu.appendChild(item);
+    document.body.appendChild(menu);
+    openFlagMenu = menu;
+  }});
+  // Close menu on any outside click or Escape.
+  document.addEventListener('click', function(e) {{
+    if (openFlagMenu && !openFlagMenu.contains(e.target)) closeFlagMenu();
+  }});
+  document.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape') closeFlagMenu();
+  }});
+
+  // Keyboard navigation.
   document.addEventListener('keydown', function(e) {{
     var t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     var k = e.key;
-    if (k === 'ArrowRight' || k === 'ArrowDown' || k === 'j' || k === 'J' || k === ' ' || k === 'PageDown') {{
+    var row = currentRow();
+
+    if (k === 'ArrowRight') {{
+      e.preventDefault();
+      if (!row) return;
+      if (row.dataset.rowKind === 'theme') {{
+        if (!isExpanded(row)) {{
+          setExpanded(row, true);
+        }} else {{
+          // Already expanded — drop focus into the first child.
+          var kids = childrenOf(row).filter(function(c) {{ return c.style.display !== 'none'; }});
+          if (kids.length) setActiveByRowId(kids[0].dataset.rowId);
+        }}
+      }}
+      // → on a ticker row is a no-op.
+    }} else if (k === 'ArrowLeft') {{
+      e.preventDefault();
+      if (!row) return;
+      if (row.dataset.rowKind === 'ticker') {{
+        var parent = parentThemeOf(row);
+        if (parent) {{
+          setActiveByRowId(parent.dataset.rowId);
+          setExpanded(parent, false);
+        }}
+      }} else {{
+        // ← on a theme row collapses it.
+        if (isExpanded(row)) setExpanded(row, false);
+      }}
+    }} else if (k === 'ArrowDown' || k === 'j' || k === 'J' || k === ' ' || k === 'PageDown') {{
       e.preventDefault(); moveActive(+1);
-    }} else if (k === 'ArrowLeft' || k === 'ArrowUp' || k === 'k' || k === 'K' || k === 'PageUp') {{
+    }} else if (k === 'ArrowUp' || k === 'k' || k === 'K' || k === 'PageUp') {{
       e.preventDefault(); moveActive(-1);
     }} else if (k === 'Home') {{
       e.preventDefault();
       var v = visibleRows();
-      if (v.length) setActiveByThemeId(v[0].dataset.themeId);
+      if (v.length) setActiveByRowId(v[0].dataset.rowId);
     }} else if (k === 'End') {{
       e.preventDefault();
       var v = visibleRows();
-      if (v.length) setActiveByThemeId(v[v.length-1].dataset.themeId);
+      if (v.length) setActiveByRowId(v[v.length-1].dataset.rowId);
     }}
   }});
 
-  // Initial activate
+  // ── Filter panel (sectors + themes; shared across both views) ──
+  var filterCell    = document.getElementById('filter-cell');
+  var filterPanel   = document.getElementById('filter-panel');
+  var filterBadge   = document.getElementById('filter-badge');
+  var filterSectorsList = document.getElementById('filter-sectors-list');
+  var filterThemesList  = document.getElementById('filter-themes-list');
+  var filterThemesSearch= document.getElementById('filter-themes-search');
+  var filterResetLink   = document.getElementById('filter-reset-link');
+  var filterCloseLink   = document.getElementById('filter-close-link');
+
+  var fd = window.FILTER_DATA || {{
+    sectors: [], industries: [], themes: [],
+    themeIdsByTicker: {{}}, tickerSector: {{}}, tickerIndustry: {{}},
+    themeDominantSector: {{}}, themeDominantIndustry: {{}},
+  }};
+  // Excluded sets: start from localStorage so refresh keeps state.
+  var excludedSectors    = new Set();
+  var excludedThemes     = new Set();
+  var excludedIndustries = new Set();   // matches against tickerIndustry / themeDominantIndustry
+  try {{
+    var raw = window.localStorage && window.localStorage.getItem('themeDashboard.filter');
+    if (raw) {{
+      var parsed = JSON.parse(raw);
+      (parsed.excludedSectors    || []).forEach(function(s) {{ excludedSectors.add(s); }});
+      (parsed.excludedThemes     || []).forEach(function(t) {{ excludedThemes.add(t); }});
+      (parsed.excludedIndustries || []).forEach(function(i) {{ excludedIndustries.add(i); }});
+    }}
+  }} catch(e) {{}}
+
+  function persistFilter() {{
+    try {{
+      if (!window.localStorage) return;
+      window.localStorage.setItem('themeDashboard.filter', JSON.stringify({{
+        excludedSectors:    Array.from(excludedSectors),
+        excludedThemes:     Array.from(excludedThemes),
+        excludedIndustries: Array.from(excludedIndustries),
+      }}));
+    }} catch(e) {{}}
+  }}
+
+  function renderFilterPanel() {{
+    // Sector checkboxes — actual sectors first (alphabetical), then any
+    // industry-based rollups (Biotech, etc.) listed after so they read
+    // as further refinements within the Sectors column.
+    if (filterSectorsList) {{
+      var sectorHtml = fd.sectors.map(function(s) {{
+        var checked = excludedSectors.has(s) ? '' : 'checked';
+        return '<label data-filter-key="' + s + '">'
+             + '<input type="checkbox" data-filter-section="sector" data-filter-key="' + s + '" ' + checked + ' />'
+             + '<span class="filter-item-label">' + s + '</span>'
+             + '</label>';
+      }}).join('');
+      var industryHtml = (fd.industries || []).map(function(ind) {{
+        var checked = excludedIndustries.has(ind.match) ? '' : 'checked';
+        return '<label data-filter-key="' + ind.match + '">'
+             + '<input type="checkbox" data-filter-section="industry" data-filter-key="' + ind.match + '" ' + checked + ' />'
+             + '<span class="filter-item-label">' + ind.label + '</span>'
+             + '<span class="filter-item-sector">industry</span>'
+             + '</label>';
+      }}).join('');
+      filterSectorsList.innerHTML = sectorHtml + industryHtml;
+    }}
+    // Theme checkboxes. Show theme label + dominant sector chip.
+    if (filterThemesList) {{
+      filterThemesList.innerHTML = fd.themes.map(function(t) {{
+        var checked = excludedThemes.has(t.id) ? '' : 'checked';
+        return '<label data-filter-key="' + t.id + '" data-filter-label="' + t.label.toLowerCase() + '">'
+             + '<input type="checkbox" data-filter-section="theme" data-filter-key="' + t.id + '" ' + checked + ' />'
+             + '<span class="filter-item-label">' + t.label + '</span>'
+             + '<span class="filter-item-sector">' + t.sector + '</span>'
+             + '</label>';
+      }}).join('');
+    }}
+  }}
+
+  function updateFilterBadge() {{
+    var n = excludedSectors.size + excludedThemes.size + excludedIndustries.size;
+    var hotN = 0;
+    Object.keys(hotToggles).forEach(function(k) {{
+      var tog = hotToggles[k];
+      if (tog && tog.checked) hotN++;
+    }});
+    var flaggedActive = (toggleFlaggedOnly && toggleFlaggedOnly.checked) ? flaggedThemes.size : 0;
+    var total = n + hotN + flaggedActive;
+    if (filterCell) {{
+      filterCell.classList.toggle('has-exclusions', total > 0);
+      filterCell.title = total > 0
+        ? ('Filter (' + n + ' excluded, ' + hotN + ' Hot N, ' + flaggedActive + ' flagged-only)')
+        : 'Filter sectors, themes, strength, and flagged';
+    }}
+  }}
+
+  function themeRowPassesFilter(themeId) {{
+    if (excludedThemes.has(themeId)) return false;
+    var sec = fd.themeDominantSector[themeId] || 'Unknown';
+    if (excludedSectors.has(sec)) return false;
+    var ind = fd.themeDominantIndustry[themeId] || 'Unknown';
+    if (excludedIndustries.has(ind)) return false;
+    return true;
+  }}
+  function tickerRowPassesFilter(ticker) {{
+    var sec = fd.tickerSector[ticker] || 'Unknown';
+    if (excludedSectors.has(sec)) return false;
+    var ind = fd.tickerIndustry[ticker] || 'Unknown';
+    if (excludedIndustries.has(ind)) return false;
+    var themeIds = fd.themeIdsByTicker[ticker] || [];
+    if (themeIds.length === 0) {{
+      // Truly unmapped — treat as Ungrouped.
+      return !excludedThemes.has('ungrouped');
+    }}
+    // Pass if at least one theme is checked.
+    for (var i = 0; i < themeIds.length; i++) {{
+      if (!excludedThemes.has(themeIds[i])) return true;
+    }}
+    return false;
+  }}
+
+  function applyFiltersToRows() {{
+    // Themes pane: hide a theme row (and by extension its expanded
+    // children) when its theme or dominant sector is excluded.
+    rows().forEach(function(r) {{
+      if (r.dataset.rowKind === 'theme') {{
+        var ok = themeRowPassesFilter(r.dataset.themeId);
+        r.classList.toggle('filtered-out', !ok);
+      }} else if (r.dataset.rowKind === 'ticker') {{
+        var ok2 = tickerRowPassesFilter(r.dataset.ticker);
+        r.classList.toggle('filtered-out', !ok2);
+      }}
+    }});
+    // Tickers pane: hide ticker-flat rows individually.
+    tickerFlatRows().forEach(function(r) {{
+      var ok = tickerRowPassesFilter(r.dataset.ticker);
+      r.classList.toggle('filtered-out', !ok);
+    }});
+    // Reapply the below-200 filter so inline display is recomputed on top.
+    applyFilter();
+  }}
+
+  // Wire checkbox toggling (sectors + industries + themes).
+  function onFilterCheckboxChange(e) {{
+    var input = e.target;
+    if (!input || input.tagName !== 'INPUT') return;
+    var section = input.dataset.filterSection;
+    var key     = input.dataset.filterKey;
+    if (!section || !key) return;
+    var set;
+    if      (section === 'sector')   set = excludedSectors;
+    else if (section === 'industry') set = excludedIndustries;
+    else                              set = excludedThemes;
+    if (input.checked) set.delete(key);
+    else               set.add(key);
+    persistFilter();
+    updateFilterBadge();
+    applyFiltersToRows();
+  }}
+  if (filterSectorsList) filterSectorsList.addEventListener('change', onFilterCheckboxChange);
+  if (filterThemesList)  filterThemesList.addEventListener('change', onFilterCheckboxChange);
+
+  // Select all / Clear shortcuts. The Sectors column owns both sectors
+  // and industry rollups (Biotech), so its links sweep both at once.
+  document.querySelectorAll('.filter-link').forEach(function(el) {{
+    el.addEventListener('click', function() {{
+      var section = el.dataset.filterSection;
+      var action  = el.dataset.filterAction;
+      if (section === 'sector') {{
+        if (action === 'all')  {{ excludedSectors.clear(); excludedIndustries.clear(); }}
+        if (action === 'none') {{
+          fd.sectors.forEach(function(s) {{ excludedSectors.add(s); }});
+          (fd.industries || []).forEach(function(i) {{ excludedIndustries.add(i.match); }});
+        }}
+      }} else if (section === 'theme') {{
+        if (action === 'all')  excludedThemes.clear();
+        if (action === 'none') fd.themes.forEach(function(t) {{ excludedThemes.add(t.id); }});
+      }} else if (section === 'strength') {{
+        // Clear = uncheck all Hot N boxes (no "All" — that would over-restrict)
+        if (action === 'none') {{
+          Object.keys(hotToggles).forEach(function(n) {{
+            var tog = hotToggles[n];
+            if (tog) tog.checked = false;
+          }});
+          onHotTightChange();
+          return;
+        }}
+      }}
+      persistFilter();
+      renderFilterPanel();
+      updateFilterBadge();
+      applyFiltersToRows();
+    }});
+  }});
+
+  // Reset everything.
+  if (filterResetLink) {{
+    filterResetLink.addEventListener('click', function() {{
+      excludedSectors.clear();
+      excludedThemes.clear();
+      excludedIndustries.clear();
+      Object.keys(hotToggles).forEach(function(n) {{
+        var tog = hotToggles[n];
+        if (tog) tog.checked = false;
+      }});
+      persistFilter();
+      renderFilterPanel();
+      updateFilterBadge();
+      applyFiltersToRows();
+      onHotTightChange();
+    }});
+  }}
+
+  // Themes search box: substring-match filters which checkboxes show.
+  if (filterThemesSearch) {{
+    filterThemesSearch.addEventListener('input', function() {{
+      var q = filterThemesSearch.value.toLowerCase().trim();
+      filterThemesList.querySelectorAll('label').forEach(function(lbl) {{
+        var lab = lbl.dataset.filterLabel || '';
+        lbl.classList.toggle('hidden-by-search', q && lab.indexOf(q) === -1);
+      }});
+    }});
+  }}
+
+  // Open / close behavior.
+  function openFilterPanel() {{
+    filterPanel.style.display = '';
+    filterCell.classList.add('is-open');
+  }}
+  function closeFilterPanel() {{
+    filterPanel.style.display = 'none';
+    filterCell.classList.remove('is-open');
+  }}
+  if (filterCell) {{
+    filterCell.addEventListener('click', function() {{
+      if (filterPanel.style.display === 'none') openFilterPanel();
+      else closeFilterPanel();
+    }});
+    filterCell.addEventListener('keydown', function(e) {{
+      if (e.key === 'Enter' || e.key === ' ') {{
+        e.preventDefault();
+        filterCell.click();
+      }}
+    }});
+  }}
+  if (filterCloseLink) filterCloseLink.addEventListener('click', closeFilterPanel);
+  document.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape' && filterPanel && filterPanel.style.display !== 'none') {{
+      e.preventDefault();
+      closeFilterPanel();
+    }}
+  }});
+  document.addEventListener('click', function(e) {{
+    if (!filterPanel || filterPanel.style.display === 'none') return;
+    if (filterPanel.contains(e.target)) return;
+    if (filterCell && filterCell.contains(e.target)) return;
+    closeFilterPanel();
+  }});
+
+  // Render the checkboxes once, paint state, apply persisted filter to rows.
+  renderFilterPanel();
+  updateFilterBadge();
+  applyFiltersToRows();
+
+  // ── Tickers-view sort + click + brand toggle ───────────────
+  function applyTickersHeaderIndicators() {{
+    document.querySelectorAll('#tickers-watchlist th').forEach(function(th) {{
+      th.classList.remove('sort-active', 'sort-asc');
+    }});
+    var active = document.querySelector('#tickers-watchlist th[data-sort-key="' + tkSortKey + '"]');
+    if (active) {{
+      active.classList.add('sort-active');
+      if (tkSortDir === 1) active.classList.add('sort-asc');
+    }}
+  }}
+  function sortTickersRows() {{
+    if (!tickersBody) return;
+    var all = tickerFlatRows().slice();
+    all.sort(function(a, b) {{
+      if (tkSortType === 'num') {{
+        var av = parseFloat(a.dataset[tkSortKey] || '-1e9');
+        var bv = parseFloat(b.dataset[tkSortKey] || '-1e9');
+        if (isNaN(av)) av = -1e9;
+        if (isNaN(bv)) bv = -1e9;
+        return (av - bv) * tkSortDir;
+      }} else {{
+        var ak = (tkSortKey === 'theme-label') ? 'themeLabel' : tkSortKey;
+        var sa = (a.dataset[ak] || '').toLowerCase();
+        var sb = (b.dataset[ak] || '').toLowerCase();
+        return sa.localeCompare(sb) * tkSortDir;
+      }}
+    }});
+    all.forEach(function(r) {{ tickersBody.appendChild(r); }});
+    applyTickersHeaderIndicators();
+  }}
+  document.querySelectorAll('#tickers-watchlist th').forEach(function(th) {{
+    th.addEventListener('click', function() {{
+      var k = th.dataset.sortKey;
+      var t = th.dataset.sortType;
+      if (tkSortKey === k) {{ tkSortDir = -tkSortDir; }} else {{ tkSortKey = k; tkSortType = t; tkSortDir = -1; }}
+      sortTickersRows();
+    }});
+  }});
+  if (tickersBody) {{
+    tickersBody.addEventListener('click', function(e) {{
+      var tr = e.target.closest('tr.tickers-row');
+      if (!tr) return;
+      setActiveByRowId(tr.dataset.rowId);
+    }});
+  }}
+
+  function applyTickersFilter() {{
+    // Update the empty-state notice and the visible counter.
+    if (!tickersBody) return;
+    var visible = visibleRows();
+    if (activeView === 'tickers') {{
+      if (tickersEmpty) tickersEmpty.style.display = visible.length === 0 ? 'block' : 'none';
+      if (visibleCount) visibleCount.textContent = visible.length + ' visible';
+    }}
+  }}
+
+  function setView(name, opts) {{
+    activeView = (name === 'tickers') ? 'tickers' : 'themes';
+    document.body.classList.toggle('view-tickers', activeView === 'tickers');
+    document.body.classList.toggle('view-themes',  activeView === 'themes');
+    if (brandTitle) brandTitle.textContent = (activeView === 'tickers')
+      ? 'HOT TICKERS DASHBOARD' : 'HOT THEME DASHBOARD';
+    try {{
+      if (window.localStorage) window.localStorage.setItem('themeDashboard.view', activeView);
+    }} catch(e) {{}}
+    // Re-derive visible counter + empty-state for the newly active pane.
+    if (activeView === 'tickers') {{
+      applyTickersFilter();
+      // Active row in the OTHER pane is irrelevant for nav — pick first
+      // visible in this pane unless caller suppressed.
+      if (!opts || !opts.preserveActive) {{
+        var v = visibleRows();
+        if (v.length) setActiveByRowId(v[0].dataset.rowId);
+      }}
+    }} else {{
+      applyFilter();
+      if (!opts || !opts.preserveActive) {{
+        var v2 = visibleRows();
+        if (v2.length) setActiveByRowId(v2[0].dataset.rowId);
+      }}
+    }}
+  }}
+  if (brandBtn) {{
+    brandBtn.addEventListener('click', function() {{
+      setView(activeView === 'tickers' ? 'themes' : 'tickers');
+    }});
+  }}
+
+  // ── Initial activate ───────────────────────────────────────
   applyFilter();
   applyHeaderIndicators();
-  var hash = (window.location.hash || '').slice(1);
-  var initialId = null;
-  if (hash) {{
-    var hashRow = tbody.querySelector('tr[data-theme-id="' + hash + '"]');
-    if (hashRow) initialId = hashRow.dataset.themeId;
-  }}
-  if (!initialId) {{
-    var v = visibleRows();
-    if (v.length) initialId = v[0].dataset.themeId;
-  }}
-  if (initialId) setActiveByThemeId(initialId, {{skipHash: true}});
+  applyTickersHeaderIndicators();
 
+  var hash = (window.location.hash || '').slice(1);
+  var initialRowId = null;
+  if (hash) {{
+    var slash = hash.indexOf('/');
+    if (slash >= 0) {{
+      var part1 = hash.slice(0, slash);
+      var part2 = hash.slice(slash + 1);
+      if (part1 === 'tickers') {{
+        // `#tickers/MRVL` — switch to Tickers view, focus that row.
+        activeView = 'tickers';
+        var flatId = 'tk__' + part2;
+        var flatRow = tickersBody && tickersBody.querySelector('tr[data-row-id="' + flatId + '"]');
+        if (flatRow) initialRowId = flatId;
+      }} else {{
+        var themeId = part1;
+        var ticker  = part2;
+        var childId = themeId + '__' + ticker;
+        var childRow = tbody.querySelector('tr[data-row-id="' + childId + '"]');
+        if (childRow) initialRowId = childId;
+        var parent = tbody.querySelector('tr.theme-row[data-theme-id="' + themeId + '"]');
+        if (parent) setExpanded(parent, true);
+      }}
+    }} else if (hash === 'tickers') {{
+      activeView = 'tickers';
+    }} else {{
+      var themeRow = tbody.querySelector('tr.theme-row[data-theme-id="' + hash + '"]');
+      if (themeRow) initialRowId = themeRow.dataset.rowId;
+    }}
+  }}
+  // Apply the view (CSS classes + brand text) before picking the initial row.
+  setView(activeView, {{preserveActive: true}});
+  if (!initialRowId) {{
+    var v0 = visibleRows();
+    if (v0.length) initialRowId = v0[0].dataset.rowId;
+  }}
+  if (initialRowId) setActiveByRowId(initialRowId, {{skipHash: true}});
+
+  // ── Refresh button (native --app mode only) ───────────────
+  // Wires the "Generated" header cell to the QWebChannel bridge that
+  // the Qt-window launcher registers. When loaded in a regular browser
+  // (no qt.webChannelTransport), the cell stays clickable but the click
+  // is a no-op with a tooltip explaining the requirement.
+  var refreshCell    = document.getElementById('refresh-cell');
+  var refreshToast   = null;
+  var refreshInFlight = false;
+
+  function showRefreshError(msg) {{
+    if (!refreshToast) {{
+      refreshToast = document.createElement('div');
+      refreshToast.className = 'rm-refresh-toast';
+      document.body.appendChild(refreshToast);
+    }}
+    refreshToast.textContent = 'Refresh failed: ' + msg;
+    refreshToast.classList.add('is-visible');
+    setTimeout(function() {{ refreshToast.classList.remove('is-visible'); }}, 6000);
+  }}
+
+  function triggerRefresh() {{
+    if (refreshInFlight) return;
+    if (!window.bridge || typeof window.bridge.refresh !== 'function') {{
+      showRefreshError('only available in native window (run: python local_runner/theme_dashboard.py --app)');
+      return;
+    }}
+    refreshInFlight = true;
+    refreshCell.classList.add('is-refreshing');
+    window.bridge.refresh();
+  }}
+
+  if (refreshCell) {{
+    refreshCell.addEventListener('click', triggerRefresh);
+    refreshCell.addEventListener('keydown', function(e) {{
+      if (e.key === 'Enter' || e.key === ' ') {{ e.preventDefault(); triggerRefresh(); }}
+    }});
+  }}
+
+  // QWebChannel transport is injected only when the page is loaded by
+  // PySide6's QWebEngineView with a registered channel. Set up the bridge
+  // here so the refresh button can find it.
+  if (typeof QWebChannel !== 'undefined' && typeof qt !== 'undefined' && qt.webChannelTransport) {{
+    new QWebChannel(qt.webChannelTransport, function(channel) {{
+      window.bridge = channel.objects.bridge;
+      if (window.bridge && window.bridge.refreshFinished && window.bridge.refreshFinished.connect) {{
+        window.bridge.refreshFinished.connect(function(ok, msg) {{
+          refreshInFlight = false;
+          refreshCell.classList.remove('is-refreshing');
+          if (!ok) showRefreshError(msg || 'unknown error');
+          // On success the Qt side calls view.reload() which re-runs this script,
+          // so no explicit reload() needed here.
+        }});
+      }}
+    }});
+  }}
+
+  // Resize handler: re-fit whatever Plotly chart is currently visible.
   window.addEventListener('resize', function() {{
-    var sec = activeThemeId ? document.getElementById(activeThemeId) : null;
-    if (sec) {{
-      var pdiv = sec.querySelector('.plotly-graph-div');
+    var row = currentRow();
+    if (!row) return;
+    if (row.dataset.rowKind === 'ticker') {{
+      var pdiv = document.getElementById('ticker-chart');
       if (pdiv && window.Plotly && Plotly.Plots) {{
         try {{ Plotly.Plots.resize(pdiv); }} catch(e) {{}}
+      }}
+    }} else {{
+      var sec = document.getElementById(row.dataset.themeId);
+      var pdiv2 = sec && sec.querySelector('.plotly-graph-div');
+      if (pdiv2 && window.Plotly && Plotly.Plots) {{
+        try {{ Plotly.Plots.resize(pdiv2); }} catch(e) {{}}
       }}
     }}
   }});
@@ -1976,25 +3798,23 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
 # MAIN
 # ════════════════════════════════════════════════════════════
 
-def main():
-    ap = argparse.ArgumentParser(description="Build hot theme dashboard HTML.")
-    ap.add_argument("--theme", default=None, help="Render only one theme by key (e.g., optics_photonics).")
-    ap.add_argument("--bars", type=int, default=250, help="Bars to show in composite chart (default 250).")
-    ap.add_argument("--open", action="store_true", help="Open the resulting HTML in your default browser.")
-    args = ap.parse_args()
+def _build_html_to_disk(theme=None, bars=250):
+    """Run the full build pipeline (load cache, compute, write HTML).
 
+    Pulled out of main() so the native-window mode can rebuild on demand
+    without re-parsing argv or re-spawning a subprocess.
+    """
     print("=" * 70)
     print("Hot Theme Dashboard")
     print("=" * 70)
     print(f"CACHE_DIR: {CACHE_DIR}")
     print(f"OUTPUT:    {OUTPUT_HTML}")
-    print(f"BARS:      {args.bars}")
+    print(f"BARS:      {bars}")
 
     cache, source_meta = load_daily_cache()
     if source_meta.get("source") == "intraday":
         print(f"Source: INTRADAY snapshot {source_meta.get('label', '')}")
 
-    # Cross-check theme assignments against fundamentals sectors
     fundamentals = load_fundamentals()
     company_meta = load_company_meta()
     if company_meta:
@@ -2003,11 +3823,11 @@ def main():
         print("company_meta.json not present — mini-cards will render without longName / hover tooltip")
     validate_theme_sectors(THEMES, fundamentals, company_meta=company_meta)
 
-    if args.theme:
-        if args.theme not in THEMES:
+    if theme:
+        if theme not in THEMES:
             available = ", ".join(sorted(THEMES.keys()))
-            raise SystemExit(f"Theme '{args.theme}' not in theme_map.py. Available: {available}")
-        theme_keys = [args.theme]
+            raise SystemExit(f"Theme '{theme}' not in theme_map.py. Available: {available}")
+        theme_keys = [theme]
     else:
         theme_keys = list(THEMES.keys())
 
@@ -2015,9 +3835,10 @@ def main():
     n_unique = len({tk for k in theme_keys for tk in THEMES[k]})
     print(f"Unique tickers across themes: {n_unique}")
 
-    html, skipped = build_dashboard(theme_keys, cache, args.bars,
+    html, skipped = build_dashboard(theme_keys, cache, bars,
                                     company_meta=company_meta,
-                                    source_meta=source_meta)
+                                    source_meta=source_meta,
+                                    fundamentals=fundamentals)
 
     os.makedirs(os.path.dirname(OUTPUT_HTML), exist_ok=True)
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
@@ -2027,6 +3848,138 @@ def main():
     print(f"\nWrote {OUTPUT_HTML} ({size_mb:.1f} MB)")
     if skipped:
         print(f"Skipped {len(skipped)} themes for insufficient data: {[s[0] for s in skipped]}")
+    return OUTPUT_HTML
+
+
+def launch_native_window(theme=None, bars=250, rebuild=True):
+    """Open the dashboard in a native Qt window.
+
+    Single in-process app: the "Generated" header button triggers a real
+    intraday refresh via a QWebChannel JS↔Python bridge, no localhost / no
+    Task Scheduler hop. The refresh runs on a background thread so the UI
+    stays responsive; on completion the view reloads from disk against
+    the freshly-rebuilt HTML.
+    """
+    import threading
+    from PySide6.QtCore import QObject, QUrl, Signal, Slot, Qt
+    from PySide6.QtWebChannel import QWebChannel
+    from PySide6.QtWebEngineCore import (
+        QWebEngineSettings, QWebEngineProfile, QWebEnginePage,
+    )
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    from PySide6.QtWidgets import QApplication, QMainWindow
+
+    # Build once up front so the window has something to load immediately.
+    if rebuild or not os.path.exists(OUTPUT_HTML):
+        _build_html_to_disk(theme=theme, bars=bars)
+    else:
+        print(f"--no-rebuild: reusing existing {OUTPUT_HTML}")
+
+    qt_app = QApplication.instance() or QApplication(sys.argv)
+
+    class Bridge(QObject):
+        # Signals fire on whichever thread emits them; QWebChannel marshals
+        # them onto the GUI thread automatically for the JS side.
+        refreshStarted  = Signal()
+        refreshFinished = Signal(bool, str)
+
+        @Slot()
+        def refresh(self):
+            """Kick off intraday_refresh.main() on a worker thread."""
+            self.refreshStarted.emit()
+            def worker():
+                ok = True
+                msg = ""
+                try:
+                    saved_argv = sys.argv
+                    try:
+                        sys.argv = ["intraday_refresh.py"]
+                        import intraday_refresh
+                        # Reload so any in-place edits get picked up.
+                        import importlib
+                        importlib.reload(intraday_refresh)
+                        intraday_refresh.main()
+                    finally:
+                        sys.argv = saved_argv
+                except SystemExit as exc:
+                    code = getattr(exc, "code", 1)
+                    if code not in (0, None):
+                        ok = False
+                        msg = f"intraday_refresh exited with code {code}"
+                except Exception as exc:
+                    ok = False
+                    msg = f"{type(exc).__name__}: {exc}"
+                self.refreshFinished.emit(ok, msg)
+            threading.Thread(target=worker, daemon=True).start()
+
+    bridge = Bridge()
+    channel = QWebChannel()
+    channel.registerObject("bridge", bridge)
+
+    win = QMainWindow()
+    win.setWindowTitle("ScanPerfect — Theme Dashboard")
+    win.resize(1600, 1000)
+
+    # Named persistent profile so localStorage (filter checkboxes, active
+    # view, hide-below-200 state) survives app exit. QWebEngineProfile's
+    # default profile is off-the-record and wipes localStorage on close;
+    # giving the profile a name + persistent storage path keeps state
+    # written between launches.
+    profile_data_dir = os.path.join(CACHE_DIR, "qtwebengine_profile")
+    os.makedirs(profile_data_dir, exist_ok=True)
+    profile = QWebEngineProfile("scanperfect_dashboard", qt_app)
+    profile.setPersistentStoragePath(profile_data_dir)
+    profile.setCachePath(os.path.join(profile_data_dir, "cache"))
+    profile.setPersistentCookiesPolicy(QWebEngineProfile.AllowPersistentCookies)
+    profile.setHttpCacheType(QWebEngineProfile.DiskHttpCache)
+
+    view = QWebEngineView()
+    page = QWebEnginePage(profile, view)
+    view.setPage(page)
+
+    # By default Qt WebEngine blocks file:// pages from loading remote
+    # resources (Plotly CDN) and other file:// resources. Both are
+    # required by our dashboard — composites + ticker charts pull Plotly
+    # from cdn.plot.ly. Enabling these flags is safe because the only
+    # page we load is our own dashboard.
+    settings = view.settings()
+    settings.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
+    settings.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls,   True)
+    settings.setAttribute(QWebEngineSettings.JavascriptEnabled,               True)
+    settings.setAttribute(QWebEngineSettings.AllowRunningInsecureContent,     True)
+    settings.setAttribute(QWebEngineSettings.LocalStorageEnabled,             True)
+
+    view.page().setWebChannel(channel)
+    view.load(QUrl.fromLocalFile(os.path.abspath(OUTPUT_HTML)))
+    win.setCentralWidget(view)
+
+    # When the refresh worker thread completes, reload the HTML from disk
+    # so the freshly rendered file is what the user sees.
+    def on_refresh_finished(ok, msg):
+        if ok:
+            view.reload()
+        else:
+            print(f"[refresh failed] {msg}")
+    bridge.refreshFinished.connect(on_refresh_finished, Qt.QueuedConnection)
+
+    win.show()
+    sys.exit(qt_app.exec())
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Build hot theme dashboard HTML.")
+    ap.add_argument("--theme", default=None, help="Render only one theme by key (e.g., optics_photonics).")
+    ap.add_argument("--bars", type=int, default=250, help="Bars to show in composite chart (default 250).")
+    ap.add_argument("--open", action="store_true", help="Open the resulting HTML in your default browser.")
+    ap.add_argument("--app",  action="store_true", help="Open the dashboard in a native PySide6 window with an in-process refresh button (no server, no Task Scheduler dependency).")
+    ap.add_argument("--no-rebuild", action="store_true", help="With --app: skip the initial HTML rebuild and reuse the existing file on disk (faster relaunch).")
+    args = ap.parse_args()
+
+    if args.app:
+        launch_native_window(theme=args.theme, bars=args.bars, rebuild=not args.no_rebuild)
+        return
+
+    _build_html_to_disk(theme=args.theme, bars=args.bars)
 
     if args.open:
         webbrowser.open("file:///" + OUTPUT_HTML.replace("\\", "/"))
