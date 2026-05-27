@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Browse the active-trading universe organized into market themes (Optics, Space, Memory, Cybersecurity, Uranium, Drones, Batteries, AI Compute, Neoclouds, etc.). Each theme produces an equal-weight synthetic composite candle chart plus a grid of member mini-charts. Output is a single self-contained HTML file so the dashboard runs in any browser — no server, no PySide6 launch — and one theme is shown at a time with arrow-key navigation through a sortable watchlist sidebar.
+Browse the active-trading universe organized into market themes (Optics, Space, Memory, Cybersecurity, Uranium, Drones, Batteries, AI Compute, Neoclouds, etc.). Each theme produces an equal-weight synthetic composite candle chart plus a grid of member mini-charts. The same chrome hosts three pages cycled via the header brand: **Themes** (theme tree), **Tickers** (flat per-ticker table), and **Setups** (scanner-style flat table of pattern matches, currently Extension Peek). Output is a single self-contained HTML file so the dashboard runs in any browser — no server, no PySide6 launch — and one row at a time is active with arrow-key navigation through a sortable watchlist sidebar.
 
 ## EXACT spec
 
@@ -25,13 +25,15 @@ Composite OHLC math (per theme):
 
 Per-theme metrics computed at the last bar:
 - **Position vs 200-day SMA** as a signed percentage. Themes below 200-day get flagged red.
-- **TC2000 RS PCF** in three windows (1-bar, 5-bar, 20-bar):
-  - `avg = mean over last N bars of (close/open − 1) × 100`
-  - `mult = ((close + close_50_bars_ago) / 2) / ATR50`
-  - `theme_RS = avg × mult`
-  - SPY RS computed with the same formula. Ratio = `theme_RS / SPY_RS` for 5d / 20d / 65d / 130d windows.
-  - 1-bar form collapses to `(close/open − 1) × 100` for the most recent bar, multiplied by the same 50-bar multiplier.
-  - **1d uses difference, not ratio:** `1d_strength = theme_RS_1 − SPY_RS_1`. The ratio breaks down for the 1-bar window because SPY's open-to-close can be near-zero or sign-flip on flat days, which inverts the ratio's sign. Difference stays monotonic: positive = outperformed SPY today; negative = underperformed. All other windows remain ratios (SPY's avg over 5+ bars is reliably positive in normal markets, so the ratio convention holds).
+- **Relative Strength PCF** in seven windows: **0D** (intraday today) + 1d / 5d / 20d / 65d / 130d (day-over-day):
+  - **Multi-bar windows (1d / 5d / 20d / 65d / 130d):**
+    - `avg = mean over last N bars of (close / prev_close − 1) × 100` — day-over-day return, NOT same-day close/open. A gap-up-and-fade that still closes green counts as a positive day, matching end-of-day P&L.
+    - `mult = ((close + close_50_bars_ago) / 2) / ATR50` (TC2000 PCF multiplier).
+    - `theme_RS = avg × mult`.
+  - **0D (intraday today):**
+    - Same formula but the "today's strength" term is single-bar `(close / open − 1) × 100`. Captures intraday participation (who controlled the tape today) instead of day-over-day P&L.
+  - **Benchmark = equal-weight Universe composite**, NOT SPY. SPY is cap-weighted and dominated by mag7, which is structurally inconsistent with the equal-weight theme composites. The Universe composite is built once from all `UNIVERSE` tickers using the same `build_composite` machinery the themes use. Self-contribution from a theme's own members into the denominator is accepted — even the largest themes are ≤ ~3% of UNIVERSE.
+  - **Ratio uses abs() in the denominator:** `displayed = theme_RS / abs(bench_RS)`. Sign of the displayed ratio always follows the theme's own raw RS direction — without abs(), a negative-benchmark window (broad gap-up-and-fade) would flip every theme's sign. With abs(): positive ratio = theme outperformed in the same direction as universe magnitude; negative = theme underperformed.
 - **MACD-line divergences** (price pivots paired with EMA6 − EMA20 pivots):
   - Pivot window 3 bars on each side; lookback 240 bars; minimum spacing 6 bars; MACD-pivot offset tolerance ±10 bars.
   - For each price pivot, scan backward through prior price pivots and accept the FIRST pair whose connecting trendline is *not pierced* by an intervening bar (low must not break a bullish trendline; high must not break a bearish trendline). One divergence per anchor pivot.
@@ -39,6 +41,7 @@ Per-theme metrics computed at the last bar:
 
 Composite chart (interactive Plotly, one per theme):
 - Three panels: candles + SMAs (62%), volume (13%), MACD 6/20/9 (25%).
+- (Per-ticker chart — separate template used when a single ticker row is active — has **four** panels: candles (50%), volume (10%), MACD (18%), "X ADR to 50sma" extension panel (22%). The extension panel shows the ext50 series as a green/red histogram plus any unbroken descending u1/u2/u3 trendlines from the day's snapshot drawn as line overlays.)
 - SMAs drawn: 5 (orange `#ff8800`), 10 (cyan `#5fc8ff`), 20 (beige `#e8c890`), 50 (yellow `#ffcc00`), 200 (white).
 - MACD panel: MACD line (cyan), signal line (orange), zero line. **No histogram bars.**
 - All MACD-line divergence pairs over the lookback window draw a dotted connector on both panels (green for bullish, red for bearish). Older divergences drawn at 55% opacity; the most recent in each direction draws at full opacity with a text label arrow pointing at the second pivot.
@@ -64,14 +67,35 @@ HTML shell:
 - Filter gear icon opens a slide-out filter panel with three sections:
   - **Sectors** — checkbox per GICS sector across the universe; unchecked = excluded.
   - **Themes** — checkbox per theme; unchecked = excluded. Includes a search box.
-  - **Strength** — Hot 5 / Hot 20 / Hot 65 / Hot 130 checkboxes. **OR semantics:** a row passes when rsN ≥ 1.20 for at least one checked window. Theme rows carry all four windows; flat ticker rows also carry rs5/rs20/rs65/rs130. Persisted per-window in `localStorage`.
-- Tickers view (second sidebar pane, toggled via the brand header): flat sortable table, one row per ticker that has a price pack. Columns: ticker, theme membership (comma-separated labels), 1d / 3d / 65d / 130d RS, ADR, 5d return. All rows visible by default; the Tight D1 / Flagged / Hot N checkboxes hide rows via inline `display` styles. Carries `data-theme-ids="t1,t2,..."` per row so the Flagged filter can match any theme the ticker belongs to.
+  - **Strength** — two parallel sets of checkboxes, one window per row:
+    - **Hot N** = rsN ≥ 1.20 (Hot 0D / Hot 5 / Hot 20 / Hot 65 / Hot 130)
+    - **Cold N** = rsN < 1.20 (Cold 0D / Cold 5 / Cold 20 / Cold 65 / Cold 130)
+    - **AND semantics across all checked boxes** (Hot + Cold can mix; e.g. Hot 0D + Cold 65 = intraday-strong AND quarter-weak — a fade/pump-and-dump candidate).
+    - Missing rsN sentinel −1e9 fails any Hot check; trivially passes any Cold check (don't hide rows with no data from a weakness scan).
+    - Persisted per-window in `localStorage`.
+- **Sidebar width = 600px** (480px under 1200px viewport). Sized to fit Flag + Theme/Ticker + 0D/1d/5d/20d/65d/130d + Comp + N columns without truncation.
+- **Compression column "Comp N"** (theme rows + ticker-flat rows): N-bar range / 20-bar ADR. `comp_N = (maxH[-N:] / minL[-N:] − 1) × 100 / ADR20%`. Lower = tighter consolidation. Period picker: **left-click sorts**, **right-click pops up a radio menu** (3 / 5 / 10 / 20 / 30 bars). Default period = 10, persisted in `localStorage`. Lines that can't be computed get sentinel `1e9` so they sort to the bottom on ascending (tightest-first) sort.
+- **Tickers view** (second sidebar pane, toggled via the brand header): flat sortable table, one row per ticker that has a price pack. Columns: Ticker, Theme membership, 0D, 1d, 3d, 65d, 130d RS, Comp, ADR. All rows visible by default; the Hide / Tight / Flagged / Hot N / Cold N checkboxes hide rows via inline `display` styles. Carries `data-theme-ids="t1,t2,..."` per row so the Flagged filter can match any theme the ticker belongs to.
+- **Setups view** (third sidebar pane, toggled via the brand header — cycle is Themes → Tickers → Setups → Themes): flat sortable table of pattern matches. The first setup type is **Extension Peek** — see the "Setups" section below. Columns: Ticker, Theme(s), Line (which slot peeked, u1/u2/u3), |Peek| (ADRs above the descending line today), Yest sd (ADRs the line was above price yesterday), Drop (anchor-to-anchor line drop in ADRs), 0D, 1d, Comp10, ADR. Default sort: tightest |Peek| first (ascending). Every Setup row carries the SAME per-ticker data attrs as the Tickers view, so the existing Hide/Tight/Flagged/Sector/Theme/Hot/Cold filters all apply uniformly.
 - Only the active theme's section is visible at a time; all others have `display: none`. Click a row → activate that theme. Click a column header → resort the table.
 - Keyboard navigation: ← / ↑ / k / PageUp = previous visible row; → / ↓ / j / Space / PageDown = next visible row; Home / End = first / last visible. The sequence respects the current sort and filter.
 - URL hash updates on each navigation (e.g., `#optics_photonics`) for deep-linking.
 - Each chart section has its own thin pure-black info bar above the chart: `RS 5d vs SPY` cell, `vs 200D` cell, optional `BULL DIV` / `BEAR DIV` tags (with ×N count if more than one), date, OHLC, Chg, Chg%, Vol, APTR, SMAs values.
 - Fixed gray-gradient status bar at the bottom: live indicator, cache date, active theme label.
 - All CSS inlined. Plotly.js loaded from cdn.plot.ly. No other external assets.
+
+Setups page (Extension Peek — first and currently only setup type):
+- **Definition:** a ticker whose intraday close just crossed above an unbroken descending 50-SMA-extension trendline that survived a strict break-enforcement filter. The setup historically rips the next day even when the price-chart signal looked ambiguous on the day (the extension chart's resistance break is the "tell").
+- **Inputs:** reads `local_runner/cache/ext50_trendline_snapshots.json` (produced by `local_runner/ext50_trendline_snapshot_builder.py` — see `EXT50_TRENDLINE_SNAPSHOTS.md`). The snapshot fixes the day's u1/u2/u3 line equations as of the most recent EOD bar; the dashboard projects each line forward one bar and compares against today's live ext50 (computed in-process from the intraday OHLCV cache).
+- **Peek detection (per ticker, per slot u1/u2/u3):**
+  - `proj_today = v1 + slope × (today_bar − i1)` — project the snapshot line to today.
+  - `today_sd = proj_today − today_ext` (locked sign convention from `scripts/ext50_trendlines.py`).
+  - Peek = `today_sd < 0 AND yest_sd ≥ 0` — today's price above the line, yesterday's price at-or-below. First slot that qualifies wins; the ticker shows up once.
+- **Live ext50 formula** (must match the snapshot builder):
+  - `adr20 = mean((H / L − 1) × 100)` over the last 20 bars.
+  - `ext50 = ((close − SMA50) / SMA50 × 100) / adr20` — extension expressed as "ADRs above SMA50."
+- **Snapshot rebuild semantics:** trendlines do NOT re-fit during the trading day. The intraday bar is partial and is not allowed to create new pivots. The snapshot builder runs at the start of every `_build_html_to_disk` call (via direct `build()` import from `ext50_trendline_snapshot_builder`); intraday refreshes and ad-hoc rebuilds within the day can pass `--skip-snapshot` to reuse the morning's lines.
+- **No 200-SMA gate.** Tested — APP's canonical "perfect peek" (2026-05-26) was below its 200-SMA at the time; the gate would have hidden it. Setups stays open; the user vets via the chart.
 
 Ungrouped section:
 - Computed from `UNIVERSE` — any ticker in the universe list that is not in any theme is rendered as a final section at the bottom titled "Ungrouped", with member mini-charts only (no composite). The watchlist row for it is highlighted gold.
@@ -107,6 +131,7 @@ Scheduled task (Windows Task Scheduler):
 - Optional input: `local_runner/cache/company_meta.json` (produced by `scripts/fetch_company_meta.py`). When present, the dashboard surfaces per-ticker `longName` and `longBusinessSummary` in three places: the mini-card SVG header (longName as the second line, longBusinessSummary as a native `<title>` hover tooltip), the validator output (longName + first sentence of longBusinessSummary printed beneath each flagged outlier), and indirectly in the composite chart via `THEME_NARRATIVES` (which is written by hand using the per-ticker summaries as source material). When `company_meta.json` is absent, every consumer falls back gracefully to its pre-meta layout.
 - Sentence splitter for SVG hover tooltips + validator output masks common company-suffix abbreviations (`Inc.`, `Corp.`, `Ltd.`, `N.V.`, `Co.`, `LLC.`, `PLC.`, etc.) before splitting on `.!?` so the first real sentence survives instead of getting clipped at the company name's period.
 - Generation is on-demand only — not wired into `nightly.py`. The pipeline does not consume the dashboard output. Regenerate when you want a fresh view.
+- **Step 0 of every dashboard build is the ext50-trendline snapshot rebuild** (calls `ext50_trendline_snapshot_builder.build()` directly). Costs ~2 min with multiprocessing. Pass `--skip-snapshot` for fast interactive rebuilds when the morning snapshot is still valid for the day. `intraday_refresh.py` passes `--skip-snapshot` automatically (the 4:20 PM refresh doesn't change the day's trendline set — see EXT50_TRENDLINE_SNAPSHOTS.md for the locked "snapshot stays fixed for the trading day" semantic).
 - Tickers can appear in multiple themes; overlap is expected and intentional (e.g., MRVL in optics, AI compute, AI connectivity).
 - Tickers in the theme map but missing from the OHLCV cache are reported on stdout and silently dropped from that theme's composite. The dashboard's universe-summary count reflects what's actually placed vs ungrouped vs missing-from-cache.
 - Theme rendering requires the composite to have at least 51 bars (for the TC2000 RS formula's `C50_ago` reference and ATR50).

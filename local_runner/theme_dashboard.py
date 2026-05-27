@@ -467,31 +467,160 @@ def adr_pct(high_arr, low_arr, period=20):
     return val if val > 0 else None
 
 
+def load_extension_peek_snapshot():
+    """Load the ext50-trendline snapshot built by ext50_trendline_snapshot_builder.
+
+    Returns the parsed JSON doc or None if missing / unreadable. The doc
+    carries each ticker's u1/u2/u3 + l1/l2/l3 line equations as of the
+    most recent EOD bar. The dashboard's live Extension-Peek scan
+    projects those lines forward and compares against today's live ext50.
+    """
+    import json as _json
+    path = os.path.join(CACHE_DIR, "ext50_trendline_snapshots.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception:
+        return None
+
+
+def _compute_ext50_series_for_chart(df, adr_period=20):
+    """Full ext50 series aligned to the ticker's full OHLCV history.
+
+    Same 20-bar ADR formula as the snapshot builder + the live peek check.
+    Returns an array of len(df); leading bars before the SMA50/ADR20
+    lookback are NaN. None if < 50 bars.
+    """
+    c = df["close"].values.astype(np.float64)
+    h = df["high"].values.astype(np.float64)
+    l = df["low"].values.astype(np.float64)
+    n = len(c)
+    if n < 50:
+        return None
+    sma50 = sma_2d(c.reshape(1, -1), 50)[0]
+    adr = np.full(n, np.nan, dtype=np.float64)
+    for i in range(adr_period - 1, n):
+        win_h = h[i - (adr_period - 1):i + 1]
+        win_l = l[i - (adr_period - 1):i + 1]
+        mask = (~np.isnan(win_h)) & (~np.isnan(win_l)) & (win_l > 0)
+        if mask.sum() < 1:
+            continue
+        adr[i] = float(np.mean((win_h[mask] / win_l[mask] - 1.0) * 100.0))
+    pct_dev = (c - sma50) / np.where(sma50 > 0, sma50, np.nan) * 100.0
+    ext = pct_dev / np.where(adr > 0, adr, np.nan)
+    return ext
+
+
+def _live_ext50_for_peek(df, adr_period=20):
+    """Today's ext50 value using 20-bar ADR. Matches the snapshot builder."""
+    c = df["close"].values.astype(np.float64)
+    h = df["high"].values.astype(np.float64)
+    l = df["low"].values.astype(np.float64)
+    n = len(c)
+    if n < 50:
+        return None
+    sma50 = sma_2d(c.reshape(1, -1), 50)[0]
+    win_h = h[-adr_period:]
+    win_l = l[-adr_period:]
+    mask = (~np.isnan(win_h)) & (~np.isnan(win_l)) & (win_l > 0)
+    if mask.sum() < 1:
+        return None
+    adr = float(np.mean((win_h[mask] / win_l[mask] - 1.0) * 100.0))
+    if adr <= 0 or sma50[-1] <= 0:
+        return None
+    return ((c[-1] - sma50[-1]) / sma50[-1] * 100.0) / adr
+
+
+def compute_extension_peeks(snapshot_doc, cache, universe):
+    """Scan UNIVERSE for tickers peeking above a descending 50-SMA-extension
+    trendline today.
+
+    Peek rule (per locked sign convention signed_dist = proj - ext):
+      - Yesterday's stored signed_dist >= 0 (price was at/below the line)
+      - Today's live signed_dist  <  0 (price has crossed above)
+
+    Sorted ascending by |today_sd| — tightest peek first (the "just barely
+    poked through" candidates that historically rip the next day).
+
+    Returns a list of dicts; empty if snapshot_doc is None.
+    """
+    if not snapshot_doc or "tickers" not in snapshot_doc:
+        return []
+    snap_tickers = snapshot_doc["tickers"]
+    matches = []
+    for tk in universe:
+        snap = snap_tickers.get(tk)
+        if not snap or not snap.get("u"):
+            continue
+        df = cache.get(tk)
+        if df is None:
+            continue
+        today_ext = _live_ext50_for_peek(df)
+        if today_ext is None:
+            continue
+        today_bar = len(df) - 1
+        # Check u1/u2/u3 in proximity order — keep the first that peeks.
+        for slot_idx, u in enumerate(snap["u"], 1):
+            proj_today = u["v1"] + u["slope"] * (today_bar - u["i1"])
+            today_sd = proj_today - today_ext   # locked convention
+            yest_sd  = u["signed_dist"]
+            if today_sd < 0 and yest_sd >= 0:
+                matches.append(dict(
+                    ticker=tk,
+                    slot=slot_idx,
+                    today_sd=today_sd,        # negative = above line
+                    today_sd_abs=abs(today_sd),
+                    yest_sd=yest_sd,
+                    today_ext=today_ext,
+                    proj_today=proj_today,
+                    slope=float(u["slope"]),
+                    v0=float(u["v0"]),
+                    v1=float(u["v1"]),
+                    i0=int(u["i0"]),
+                    i1=int(u["i1"]),
+                    line_drop=float(u["v0"] - u["v1"]),
+                    span=int(u.get("span", 0)),
+                ))
+                break  # tightest line per ticker only
+    matches.sort(key=lambda m: m["today_sd_abs"])
+    return matches
+
+
 def tc2000_rs_raw(open_arr, high_arr, low_arr, close_arr, n_bars=5):
-    """Dan's TC2000 PCF relative strength, averaged over n_bars bars.
+    """Relative-strength PCF, averaged over n_bars bars.
 
     PCF:
-        avg = mean over last n_bars of (close/open - 1) * 100
+        avg = mean over last n_bars of (close / prev_close - 1) * 100
         mult = ((close + close_50_bars_ago) / 2) / ATR50
         RS = avg * mult
 
+    The "today's strength" component measures CLOSE vs PREVIOUS CLOSE
+    (day-over-day return), not close vs same-day open. So a market that
+    gaps up and fades intraday still reads as a positive day, matching
+    end-of-day P&L. ``open_arr`` is retained in the signature for caller
+    compatibility but is no longer used.
+
     Returns None if insufficient data.
     """
-    if open_arr is None or close_arr is None or high_arr is None or low_arr is None:
+    if close_arr is None or high_arr is None or low_arr is None:
         return None
     n = len(close_arr)
-    if n < max(51, n_bars):
+    # Need n_bars closes plus one prior close for the day-over-day return,
+    # and the 50-bar lookback for the multiplier.
+    if n < max(51, n_bars + 1):
         return None
-    o = np.asarray(open_arr,  dtype=np.float64)
     h = np.asarray(high_arr,  dtype=np.float64)
     l = np.asarray(low_arr,   dtype=np.float64)
     c = np.asarray(close_arr, dtype=np.float64)
 
-    # Average open-to-close % change over last n_bars bars
-    o_win = o[-n_bars:]; c_win = c[-n_bars:]
-    if np.any(np.isnan(o_win)) or np.any(np.isnan(c_win)) or np.any(o_win == 0):
+    # Average close-to-PREVIOUS-close % change over last n_bars bars
+    c_win  = c[-n_bars:]
+    c_prev = c[-n_bars - 1:-1]
+    if np.any(np.isnan(c_win)) or np.any(np.isnan(c_prev)) or np.any(c_prev == 0):
         return None
-    pct_changes = (c_win / o_win - 1.0) * 100.0
+    pct_changes = (c_win / c_prev - 1.0) * 100.0
     avg_change = float(np.mean(pct_changes))
 
     # Close, and close 50 bars ago
@@ -507,6 +636,73 @@ def tc2000_rs_raw(open_arr, high_arr, low_arr, close_arr, n_bars=5):
         return None
 
     multiplier = (float(c_last) + float(c_50ago)) / 2.0 / float(atr50)
+    return avg_change * multiplier
+
+
+def compression_n(high_arr, low_arr, n_bars, adr_value):
+    """N-bar range as a multiple of the 20-bar ADR%.
+
+        comp = (maxH[-n:] / minL[-n:] - 1) * 100 / ADR%
+
+    Lower = tighter consolidation. A value of 1.0 means the N-bar
+    range equals one typical day's range. Returns None on insufficient
+    data or invalid ADR.
+    """
+    if high_arr is None or low_arr is None or adr_value is None or adr_value <= 0:
+        return None
+    if len(high_arr) < n_bars or len(low_arr) < n_bars:
+        return None
+    h = np.asarray(high_arr[-n_bars:], dtype=np.float64)
+    l = np.asarray(low_arr[-n_bars:],  dtype=np.float64)
+    mask = (~np.isnan(h)) & (~np.isnan(l)) & (l > 0)
+    if not np.any(mask):
+        return None
+    max_h = float(np.max(h[mask]))
+    min_l = float(np.min(l[mask]))
+    if min_l <= 0:
+        return None
+    range_pct = (max_h / min_l - 1.0) * 100.0
+    return range_pct / float(adr_value)
+
+
+def tc2000_rs_intraday(open_arr, high_arr, low_arr, close_arr):
+    """Intraday version of tc2000_rs_raw — single bar, today only.
+
+    PCF (identical to tc2000_rs_raw, only the "today's strength" term
+    is intraday close-vs-open instead of close-vs-previous-close):
+        avg = (close / open - 1) * 100        # today only, single bar
+        mult = ((close + close_50_bars_ago) / 2) / ATR50
+        RS = avg * mult
+
+    The same price-per-ATR multiplier means the score is comparable
+    across tickers with different ADRs, identical to the existing
+    multi-bar windows.
+
+    Returns None if insufficient data.
+    """
+    if open_arr is None or close_arr is None or high_arr is None or low_arr is None:
+        return None
+    n = len(close_arr)
+    if n < 51:
+        return None
+    o = np.asarray(open_arr,  dtype=np.float64)
+    h = np.asarray(high_arr,  dtype=np.float64)
+    l = np.asarray(low_arr,   dtype=np.float64)
+    c = np.asarray(close_arr, dtype=np.float64)
+
+    o_today = o[-1]; c_today = c[-1]
+    if np.isnan(o_today) or np.isnan(c_today) or o_today == 0:
+        return None
+    avg_change = (c_today / o_today - 1.0) * 100.0
+
+    c_50ago = c[-51]
+    if np.isnan(c_50ago) or c_50ago <= 0:
+        return None
+    atr_arr = atr_2d(h.reshape(1, -1), l.reshape(1, -1), c.reshape(1, -1), 50)[0]
+    atr50 = atr_arr[-1]
+    if np.isnan(atr50) or atr50 <= 0:
+        return None
+    multiplier = (float(c_today) + float(c_50ago)) / 2.0 / float(atr50)
     return avg_change * multiplier
 
 
@@ -616,12 +812,12 @@ def _round_list(arr, ndigits=4):
     return out
 
 
-def compute_ticker_pack(ticker, df, spy_rs_1, spy_rs_3, spy_rs_5, spy_rs_20,
-                        spy_rs_65, spy_rs_130, n_bars,
+def compute_ticker_pack(ticker, df, bench_rs_0d, bench_rs_1, bench_rs_3, bench_rs_5, bench_rs_20,
+                        bench_rs_65, bench_rs_130, n_bars,
                         company_meta=None, fundamentals=None):
     """Compute everything needed to render a single ticker in the dashboard:
 
-    - sidebar row stats (1d / 5d / 20d RS ratios vs SPY, position vs 200D)
+    - sidebar row stats (1d / 5d / 20d RS ratios vs Universe, position vs 200D)
     - chart data arrays (date axis + OHLCV for the last n_bars) ready for
       Plotly to render lazily in JS
     - MACD-line divergence pairs detected on the same window
@@ -649,7 +845,10 @@ def compute_ticker_pack(ticker, df, spy_rs_1, spy_rs_3, spy_rs_5, spy_rs_20,
     dates   = [str(d)[:10] for d in win["date"].tolist()]
 
     # Per-ticker RS uses the FULL df history (needs 50-bar lookback) just
-    # like the theme composite's RS does. Result is the ratio against SPY.
+    # like the theme composite's RS does. Result is the ratio against the
+    # Universe composite (equal-weight of all UNIVERSE tickers).
+    rs0d_raw  = tc2000_rs_intraday(df["open"].values, df["high"].values,
+                                    df["low"].values, df["close"].values)
     rs1_raw   = tc2000_rs_raw(df["open"].values, df["high"].values,
                                df["low"].values, df["close"].values, n_bars=1)
     rs3_raw   = tc2000_rs_raw(df["open"].values, df["high"].values,
@@ -662,12 +861,18 @@ def compute_ticker_pack(ticker, df, spy_rs_1, spy_rs_3, spy_rs_5, spy_rs_20,
                                df["low"].values, df["close"].values, n_bars=65)
     rs130_raw = tc2000_rs_raw(df["open"].values, df["high"].values,
                                df["low"].values, df["close"].values, n_bars=130)
-    rs1   = (rs1_raw   / spy_rs_1)   if (rs1_raw   is not None and spy_rs_1)   else None
-    rs3   = (rs3_raw   / spy_rs_3)   if (rs3_raw   is not None and spy_rs_3)   else None
-    rs5   = (rs5_raw   / spy_rs_5)   if (rs5_raw   is not None and spy_rs_5)   else None
-    rs20  = (rs20_raw  / spy_rs_20)  if (rs20_raw  is not None and spy_rs_20)  else None
-    rs65  = (rs65_raw  / spy_rs_65)  if (rs65_raw  is not None and spy_rs_65)  else None
-    rs130 = (rs130_raw / spy_rs_130) if (rs130_raw is not None and spy_rs_130) else None
+    # Divide by abs(bench) so the sign of the displayed ratio always follows
+    # the theme/ticker's own raw RS direction. Without abs(), a negative
+    # benchmark day (e.g. broad gap-up-and-fade) would flip the sign of
+    # every ratio — making intraday-strong themes display as weak and
+    # intraday-weak themes display as strong.
+    rs0d  = (rs0d_raw  / abs(bench_rs_0d))  if (rs0d_raw  is not None and bench_rs_0d)  else None
+    rs1   = (rs1_raw   / abs(bench_rs_1))   if (rs1_raw   is not None and bench_rs_1)   else None
+    rs3   = (rs3_raw   / abs(bench_rs_3))   if (rs3_raw   is not None and bench_rs_3)   else None
+    rs5   = (rs5_raw   / abs(bench_rs_5))   if (rs5_raw   is not None and bench_rs_5)   else None
+    rs20  = (rs20_raw  / abs(bench_rs_20))  if (rs20_raw  is not None and bench_rs_20)  else None
+    rs65  = (rs65_raw  / abs(bench_rs_65))  if (rs65_raw  is not None and bench_rs_65)  else None
+    rs130 = (rs130_raw / abs(bench_rs_130)) if (rs130_raw is not None and bench_rs_130) else None
 
     pct_200, pos_label, pos_css = position_vs_200d(df)
     below_200 = (pos_css == "pos-below")
@@ -695,6 +900,17 @@ def compute_ticker_pack(ticker, df, spy_rs_1, spy_rs_3, spy_rs_5, spy_rs_20,
         if h_last is not None and l_last is not None and l_last > 0:
             todays_range_pct = (h_last / l_last - 1.0) * 100.0
             today_adr_ratio = todays_range_pct / adr20
+
+    # Compression: N-bar range as a multiple of 20-bar ADR. Lower = tighter
+    # consolidation. Uses the FULL df history (not the visible window) so
+    # the value isn't truncated by the dashboard's display window.
+    full_h = df["high"].values
+    full_l = df["low"].values
+    comp3  = compression_n(full_h, full_l, 3,  adr20)
+    comp5  = compression_n(full_h, full_l, 5,  adr20)
+    comp10 = compression_n(full_h, full_l, 10, adr20)
+    comp20 = compression_n(full_h, full_l, 20, adr20)
+    comp30 = compression_n(full_h, full_l, 30, adr20)
 
     # MACD-line divergences were removed from the dashboard 2026-05-22.
     # The MACD line + signal still render in the lower panel, but we no
@@ -731,7 +947,8 @@ def compute_ticker_pack(ticker, df, spy_rs_1, spy_rs_3, spy_rs_5, spy_rs_20,
         low=_round_list(low_v, 4),
         close=_round_list(close_v, 4),
         volume=_round_list(vol_v, 0),
-        rs1=rs1, rs3=rs3, rs5=rs5, rs20=rs20, rs65=rs65, rs130=rs130,
+        rs0d=rs0d, rs1=rs1, rs3=rs3, rs5=rs5, rs20=rs20, rs65=rs65, rs130=rs130,
+        comp3=comp3, comp5=comp5, comp10=comp10, comp20=comp20, comp30=comp30,
         pct_200=pct_200,
         pos_label=pos_label,
         below_200=below_200,
@@ -926,18 +1143,21 @@ def build_composite_figure(composite_df, theme_label, used_tickers, divergences=
 
 
 def build_ticker_layout_template():
-    """Build a Plotly layout dict that mirrors the composite chart's
-    three-panel structure (candles + volume + MACD). JS clones this for
-    every per-ticker chart so the layout / colors / spike-lines / axis
-    formatting stay identical to the composite chart without having to
-    re-encode all of it in JS. JS fills in the data traces, the ticker
-    label annotation, and the date range; everything else carries
-    through unchanged.
+    """Build a Plotly layout dict for the per-ticker chart: 4 panels stacked
+    (candles + volume + MACD + ext50). JS clones this for every per-ticker
+    chart so the layout / colors / spike-lines / axis formatting stay
+    consistent across the dashboard. JS fills in the data traces, the
+    ticker label annotation, the date range, and any trendline overlays.
+
+    The ext50 panel (bottom) shows the 50-SMA-extension series — same
+    indicator your TC2000 "X ADR to 50sma" panel does — with the
+    Extension Peek descending trendlines drawn on top when the ticker
+    has a snapshot.
     """
     fig = make_subplots(
-        rows=3, cols=1, shared_xaxes=True,
-        row_heights=[0.62, 0.13, 0.25],
-        vertical_spacing=0.012,
+        rows=4, cols=1, shared_xaxes=True,
+        row_heights=[0.50, 0.10, 0.18, 0.22],
+        vertical_spacing=0.010,
     )
     spike_args = dict(showspikes=True, spikecolor=COLOR_CYAN, spikethickness=1,
                       spikemode="across", spikesnap="cursor", spikedash="dot")
@@ -946,13 +1166,15 @@ def build_ticker_layout_template():
         paper_bgcolor=COLOR_BG, plot_bgcolor=COLOR_BG,
         font=dict(family="Consolas, monospace", size=11, color=COLOR_TEXT_DIM),
         margin=dict(l=10, r=58, t=2, b=18),
-        height=640,
+        height=720,
         showlegend=False, hovermode="x unified", dragmode="pan", bargap=0.15,
         xaxis=dict(rangeslider=dict(visible=False), gridcolor=COLOR_GRID,
                    color=COLOR_TEXT_MUTED, rangebreaks=rangebreaks, **spike_args),
         xaxis2=dict(gridcolor=COLOR_GRID, color=COLOR_TEXT_MUTED,
                     rangebreaks=rangebreaks, **spike_args),
         xaxis3=dict(gridcolor=COLOR_GRID, color=COLOR_TEXT_MUTED,
+                    rangebreaks=rangebreaks, **spike_args),
+        xaxis4=dict(gridcolor=COLOR_GRID, color=COLOR_TEXT_MUTED,
                     rangebreaks=rangebreaks, **spike_args),
         yaxis=dict(gridcolor=COLOR_GRID, color=COLOR_TEXT_DIM, side="right",
                    tickfont=dict(color=COLOR_TEXT_DIM, family="Consolas, monospace", size=10)),
@@ -961,15 +1183,21 @@ def build_ticker_layout_template():
                     showticklabels=True),
         yaxis3=dict(gridcolor=COLOR_GRID, color=COLOR_TEXT_DIM, side="right",
                     tickfont=dict(color=COLOR_TEXT_DIM, family="Consolas, monospace", size=10)),
+        yaxis4=dict(gridcolor=COLOR_GRID, color=COLOR_TEXT_DIM, side="right",
+                    tickfont=dict(color=COLOR_TEXT_DIM, family="Consolas, monospace", size=10),
+                    zeroline=True, zerolinecolor="#555", zerolinewidth=1),
     )
-    # Panel labels: ticker name goes in the candle panel via JS so we can
-    # swap it per ticker; the volume + MACD labels are static.
+    # Panel labels — y positions reflect the new 4-panel row heights.
     fig.add_annotation(text="<b>Volume</b>", xref="paper", yref="paper",
-                       x=0.008, y=0.36, xanchor="left", yanchor="top",
+                       x=0.008, y=0.49, xanchor="left", yanchor="top",
                        showarrow=False,
                        font=dict(family="Consolas, monospace", size=10, color=COLOR_TEXT_DIM))
     fig.add_annotation(text="<b>MACD (6, 20, 9)</b>", xref="paper", yref="paper",
-                       x=0.008, y=0.22, xanchor="left", yanchor="top",
+                       x=0.008, y=0.38, xanchor="left", yanchor="top",
+                       showarrow=False,
+                       font=dict(family="Consolas, monospace", size=10, color=COLOR_TEXT_DIM))
+    fig.add_annotation(text="<b>X ADR to 50sma</b>", xref="paper", yref="paper",
+                       x=0.008, y=0.20, xanchor="left", yanchor="top",
                        showarrow=False,
                        font=dict(family="Consolas, monospace", size=10, color=COLOR_TEXT_DIM))
     return fig.to_dict()["layout"]
@@ -1170,7 +1398,9 @@ body {
 /* ---------- layout: sidebar + main ---------- */
 .body-grid {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  /* Sidebar holds the watchlist table — sized to fit all columns
+     (Flag + Theme/Ticker + 0D/1d/5d/20d/65d/130d + Comp + N). */
+  grid-template-columns: 600px 1fr;
   flex: 1; min-height: 0;
 }
 aside.sidebar {
@@ -1280,7 +1510,7 @@ section.theme.is-active { display: block; }
 .pos-below { color: var(--down); }
 .pos-na    { color: var(--fg-tertiary); }
 
-/* RS-vs-SPY cell in info bar */
+/* RS-vs-Universe cell in info bar */
 .rs-cluster {
   padding: 2px 8px;
   border: 1px solid currentColor;
@@ -1382,7 +1612,7 @@ section.theme.is-active { display: block; }
 .rm-statusbar .mono { font-family: var(--font-mono); }
 
 /* ─────────────────── WATCHLIST TABLE (sidebar) ─────────────────── */
-.body-grid { grid-template-columns: 320px 1fr; }   /* widen sidebar for the table */
+.body-grid { grid-template-columns: 600px 1fr; }   /* widen sidebar — needs to fit Flag/Theme + 0D/1d/5d/20d/65d/130d/Comp/N */
 
 .watchlist-controls {
   display: flex; align-items: center; gap: 8px;
@@ -1453,15 +1683,17 @@ section.theme.is-active { display: block; }
 
 .watchlist-table tbody.hide-below tr.below-200 { display: none; }
 
-/* Tighten number-column widths so 7 columns fit the 320px sidebar */
-.watchlist-table th { padding: 4px 2px; font-size: 10px; }
-.watchlist-table td { padding: 3px 2px; }
+/* Number-column sizing for the wider sidebar (~600px). All 8 num
+   columns (0D / 1d / 5d / 20d / 65d / 130d / Comp / N) get a
+   comfortable fixed width without crowding. */
+.watchlist-table th { padding: 4px 4px; font-size: 10px; }
+.watchlist-table td { padding: 3px 4px; }
 .watchlist-table th[data-sort-type="num"],
 .watchlist-table td.num {
   font-size: 10px;
-  min-width: 32px;
+  min-width: 42px;
   text-align: right;
-  padding-right: 4px;
+  padding-right: 6px;
 }
 .watchlist-table th[data-sort-key="label"],
 .watchlist-table th[data-sort-key="theme-label"],
@@ -1787,10 +2019,22 @@ section.theme.is-active { display: block; }
 .rm-fn-brand .rm-fn-title { transition: color 0.12s ease; }
 .rm-fn-brand .rm-status-dot { transition: background 0.12s ease; }
 body.view-tickers .rm-fn-brand .rm-status-dot { background: var(--accent-gold, #ffcc00); }
-body.view-tickers .watchlist-pane.themes-pane { display: none; }
+body.view-setups  .rm-fn-brand .rm-status-dot { background: var(--accent, #4dd0ff); }
+/* Three panes; only the active one shows. Use !important to override
+   the inline style="display:none" baked into the markup. */
+body.view-themes  .watchlist-pane.themes-pane  { display: block; }
+body.view-themes  .watchlist-pane.tickers-pane { display: none !important; }
+body.view-themes  .watchlist-pane.setups-pane  { display: none !important; }
+body.view-tickers .watchlist-pane.themes-pane  { display: none; }
 body.view-tickers .watchlist-pane.tickers-pane { display: block !important; }
-body.view-themes .watchlist-pane.themes-pane { display: block; }
-body.view-themes .watchlist-pane.tickers-pane { display: none !important; }
+body.view-tickers .watchlist-pane.setups-pane  { display: none !important; }
+body.view-setups  .watchlist-pane.themes-pane  { display: none; }
+body.view-setups  .watchlist-pane.tickers-pane { display: none !important; }
+body.view-setups  .watchlist-pane.setups-pane  { display: block !important; }
+.setups-meta {
+  padding: 4px 10px; font-size: 11px; color: var(--fg-tertiary);
+  font-family: var(--font-sans); border-bottom: 1px solid var(--border-faint);
+}
 
 /* Per-ticker chart section */
 .ticker-view {
@@ -1831,8 +2075,10 @@ body.view-themes .watchlist-pane.tickers-pane { display: none !important; }
 }
 .ticker-view .ticker-summary:empty { display: none; }
 
-@media (max-width: 900px) {
-  .body-grid { grid-template-columns: 240px 1fr; }
+/* Narrow-window fallback. Sidebar still needs to fit the full
+   column set so it scales modestly rather than dropping to 240px. */
+@media (max-width: 1200px) {
+  .body-grid { grid-template-columns: 540px 1fr; }
 }
 """
 
@@ -1865,7 +2111,7 @@ def _ohlc_strip_html(vals, bar_count, pct_200, pos_label, pos_css, divergences, 
     return (
         f'<div class="chart-info-bar">'
         f'<span class="cluster rs-cluster {rs_cls}">'
-        f'<span class="lbl">TC2000 RS / SPY</span>'
+        f'<span class="lbl">TC2000 RS / Universe</span>'
         f'<span class="rs-val">{rs_str}x</span>'
         f'<span class="lbl">5d</span><span class="rs-theme">{t5d_str}</span>'
         f'<span class="lbl">ADR</span><span class="rs-theme">{adr_str}</span>'
@@ -1913,46 +2159,53 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     company_meta = company_meta or {}
     source_meta = source_meta or {"source": "main", "last_bar_date": "?", "label": ""}
 
-    # ── Compute SPY benchmark using Dan's TC2000 RS PCF (1, 3, 5, 20, 65, 130 bars) ──
-    spy_rs_1 = None
-    spy_rs_3 = None
-    spy_rs_5 = None
-    spy_rs_20 = None
-    spy_rs_65 = None
-    spy_rs_130 = None
-    spy_5d = None
-    spy_adr = None
-    if "SPY" in cache:
-        spy_df = cache["SPY"]
-        spy_rs_1   = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
-                                    spy_df["low"].values,  spy_df["close"].values, n_bars=1)
-        spy_rs_3   = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
-                                    spy_df["low"].values,  spy_df["close"].values, n_bars=3)
-        spy_rs_5   = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
-                                    spy_df["low"].values,  spy_df["close"].values, n_bars=5)
-        spy_rs_20  = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
-                                    spy_df["low"].values,  spy_df["close"].values, n_bars=20)
-        spy_rs_65  = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
-                                    spy_df["low"].values,  spy_df["close"].values, n_bars=65)
-        spy_rs_130 = tc2000_rs_raw(spy_df["open"].values, spy_df["high"].values,
-                                    spy_df["low"].values,  spy_df["close"].values, n_bars=130)
-        spy_5d = n_period_return(spy_df["close"].values, 5)
-        spy_adr = adr_pct(spy_df["high"].values, spy_df["low"].values, 20)
-    for name in ("spy_rs_1", "spy_rs_3", "spy_rs_5", "spy_rs_20", "spy_rs_65", "spy_rs_130"):
+    # ── Compute Universe benchmark: equal-weight composite of all UNIVERSE
+    # tickers, then Dan's TC2000 RS PCF (1, 3, 5, 20, 65, 130 bars). Replaces
+    # the cap-weighted SPY benchmark so themes are scored against the same
+    # equal-weight construction they themselves use. Self-contribution from
+    # each theme's own members into the universe denominator is accepted —
+    # tiny themes (<2%) are noise-level; biggest themes (~3%) damp contrast
+    # by a fraction that's easier to reason about than 72 sliding denoms.
+    print(f"\nBuilding equal-weight Universe composite from {len(UNIVERSE)} tickers...")
+    bench_comp_df, bench_used, bench_missing = build_composite(UNIVERSE, cache, n_bars)
+    if bench_comp_df is None or len(bench_comp_df) < 51:
+        raise RuntimeError(
+            f"Universe composite has insufficient data ({0 if bench_comp_df is None else len(bench_comp_df)} bars, {len(bench_used)} used members). Aborting."
+        )
+    print(f"  Universe composite: {len(bench_used)} members, {len(bench_comp_df)} bars, "
+          f"last bar {str(bench_comp_df['date'].iloc[-1])[:10]}")
+    if bench_missing:
+        print(f"  ({len(bench_missing)} UNIVERSE tickers missing from cache, excluded from benchmark)")
+
+    bench_o = bench_comp_df["open"].values
+    bench_h = bench_comp_df["high"].values
+    bench_l = bench_comp_df["low"].values
+    bench_c = bench_comp_df["close"].values
+    bench_rs_0d  = tc2000_rs_intraday(bench_o, bench_h, bench_l, bench_c)
+    bench_rs_1   = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=1)
+    bench_rs_3   = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=3)
+    bench_rs_5   = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=5)
+    bench_rs_20  = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=20)
+    bench_rs_65  = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=65)
+    bench_rs_130 = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=130)
+    bench_5d  = n_period_return(bench_c, 5)
+    bench_adr = adr_pct(bench_h, bench_l, 20)
+    for name in ("bench_rs_0d", "bench_rs_1", "bench_rs_3", "bench_rs_5", "bench_rs_20", "bench_rs_65", "bench_rs_130"):
         if locals().get(name) is None or locals().get(name) == 0:
-            print(f"\nWARNING: SPY {name} could not be computed; using 1.0 as fallback.")
-    spy_rs_1   = spy_rs_1   if (spy_rs_1   is not None and spy_rs_1   != 0) else 1.0
-    spy_rs_3   = spy_rs_3   if (spy_rs_3   is not None and spy_rs_3   != 0) else 1.0
-    spy_rs_5   = spy_rs_5   if (spy_rs_5   is not None and spy_rs_5   != 0) else 1.0
-    spy_rs_20  = spy_rs_20  if (spy_rs_20  is not None and spy_rs_20  != 0) else 1.0
-    spy_rs_65  = spy_rs_65  if (spy_rs_65  is not None and spy_rs_65  != 0) else 1.0
-    spy_rs_130 = spy_rs_130 if (spy_rs_130 is not None and spy_rs_130 != 0) else 1.0
-    print(f"\nSPY TC2000 RS  1d={spy_rs_1:+.4f}  3d={spy_rs_3:+.4f}  5d={spy_rs_5:+.4f}  "
-          f"20d={spy_rs_20:+.4f}  65d={spy_rs_65:+.4f}  130d={spy_rs_130:+.4f}  "
-          f"5d return={spy_5d:+.2f}%  ADR%={spy_adr:.2f}%")
+            print(f"\nWARNING: Universe {name} could not be computed; using 1.0 as fallback.")
+    bench_rs_0d  = bench_rs_0d  if (bench_rs_0d  is not None and bench_rs_0d  != 0) else 1.0
+    bench_rs_1   = bench_rs_1   if (bench_rs_1   is not None and bench_rs_1   != 0) else 1.0
+    bench_rs_3   = bench_rs_3   if (bench_rs_3   is not None and bench_rs_3   != 0) else 1.0
+    bench_rs_5   = bench_rs_5   if (bench_rs_5   is not None and bench_rs_5   != 0) else 1.0
+    bench_rs_20  = bench_rs_20  if (bench_rs_20  is not None and bench_rs_20  != 0) else 1.0
+    bench_rs_65  = bench_rs_65  if (bench_rs_65  is not None and bench_rs_65  != 0) else 1.0
+    bench_rs_130 = bench_rs_130 if (bench_rs_130 is not None and bench_rs_130 != 0) else 1.0
+    print(f"Universe TC2000 RS  0D={bench_rs_0d:+.4f}  1d={bench_rs_1:+.4f}  3d={bench_rs_3:+.4f}  "
+          f"5d={bench_rs_5:+.4f}  20d={bench_rs_20:+.4f}  65d={bench_rs_65:+.4f}  130d={bench_rs_130:+.4f}  "
+          f"5d return={bench_5d:+.2f}%  ADR%={bench_adr:.2f}%")
 
     # ── First pass: build composites, compute 1d + 5d + 20d RS ratios ──
-    print("\nBuilding composites and computing TC2000 RS ratios (theme / SPY) for 1d, 5d, 20d...")
+    print("\nBuilding composites and computing TC2000 RS ratios (theme / Universe) for 1d, 5d, 20d...")
     theme_pack = {}
     for tk_theme in theme_keys:
         members = THEMES[tk_theme]
@@ -1963,6 +2216,8 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             skipped.append((tk_theme, len(used)))
             print(f"  SKIP {tk_theme}: insufficient data ({len(used)} usable members)")
             continue
+        theme_rs_0d  = tc2000_rs_intraday(composite_df["open"].values, composite_df["high"].values,
+                                           composite_df["low"].values,  composite_df["close"].values)
         theme_rs_1   = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
                                       composite_df["low"].values,  composite_df["close"].values, n_bars=1)
         theme_rs_5   = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
@@ -1975,31 +2230,46 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
                                       composite_df["low"].values,  composite_df["close"].values, n_bars=130)
         theme_5d  = n_period_return(composite_df["close"].values, 5)
         theme_adr = adr_pct(composite_df["high"].values, composite_df["low"].values, 20)
-        rs1_ratio   = (theme_rs_1   / spy_rs_1)   if theme_rs_1   is not None else -1e9
-        rs5_ratio   = (theme_rs_5   / spy_rs_5)   if theme_rs_5   is not None else -1e9
-        rs20_ratio  = (theme_rs_20  / spy_rs_20)  if theme_rs_20  is not None else -1e9
-        rs65_ratio  = (theme_rs_65  / spy_rs_65)  if theme_rs_65  is not None else -1e9
-        rs130_ratio = (theme_rs_130 / spy_rs_130) if theme_rs_130 is not None else -1e9
+        # abs(bench) so a negative-benchmark window doesn't flip the sign
+        # of every theme's ratio (see compute_ticker_pack for the same fix).
+        rs0d_ratio  = (theme_rs_0d  / abs(bench_rs_0d))  if theme_rs_0d  is not None else -1e9
+        rs1_ratio   = (theme_rs_1   / abs(bench_rs_1))   if theme_rs_1   is not None else -1e9
+        rs5_ratio   = (theme_rs_5   / abs(bench_rs_5))   if theme_rs_5   is not None else -1e9
+        rs20_ratio  = (theme_rs_20  / abs(bench_rs_20))  if theme_rs_20  is not None else -1e9
+        rs65_ratio  = (theme_rs_65  / abs(bench_rs_65))  if theme_rs_65  is not None else -1e9
+        rs130_ratio = (theme_rs_130 / abs(bench_rs_130)) if theme_rs_130 is not None else -1e9
+        comp_h = composite_df["high"].values
+        comp_l = composite_df["low"].values
+        theme_comp3  = compression_n(comp_h, comp_l, 3,  theme_adr)
+        theme_comp5  = compression_n(comp_h, comp_l, 5,  theme_adr)
+        theme_comp10 = compression_n(comp_h, comp_l, 10, theme_adr)
+        theme_comp20 = compression_n(comp_h, comp_l, 20, theme_adr)
+        theme_comp30 = compression_n(comp_h, comp_l, 30, theme_adr)
         theme_pack[tk_theme] = dict(
             composite_df=composite_df, used=used,
             theme_5d=theme_5d, theme_adr=theme_adr,
+            theme_rs_0d=theme_rs_0d,
             theme_rs_1=theme_rs_1, theme_rs_5=theme_rs_5, theme_rs_20=theme_rs_20,
             theme_rs_65=theme_rs_65, theme_rs_130=theme_rs_130,
+            rs0d_ratio=rs0d_ratio,
             rs1_ratio=rs1_ratio, rs5_ratio=rs5_ratio, rs20_ratio=rs20_ratio,
             rs65_ratio=rs65_ratio, rs130_ratio=rs130_ratio,
+            comp3=theme_comp3, comp5=theme_comp5, comp10=theme_comp10,
+            comp20=theme_comp20, comp30=theme_comp30,
         )
 
     # ── Initial sort: by 5d RS ratio desc (user can re-sort interactively) ──
     sorted_keys = sorted(theme_pack.keys(), key=lambda k: -theme_pack[k]["rs5_ratio"])
 
     # ── Second pass: emit HTML in sorted order ──
-    print("\nEmitting themes sorted by 5-day RS vs SPY (descending)...")
+    print("\nEmitting themes sorted by 5-day RS vs Universe (descending)...")
     watchlist_rows = []  # collected for the sortable watchlist table
 
     for tk_theme in sorted_keys:
         pack = theme_pack[tk_theme]
         composite_df = pack["composite_df"]
         used = pack["used"]
+        rs0d_val  = pack["rs0d_ratio"]
         rs1_val   = pack["rs1_ratio"]
         rs5_val   = pack["rs5_ratio"]
         rs20_val  = pack["rs20_ratio"]
@@ -2053,6 +2323,10 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         watchlist_rows.append(dict(
             theme_id=tk_theme,
             label=label,
+            comp3=pack.get("comp3"), comp5=pack.get("comp5"),
+            comp10=pack.get("comp10"), comp20=pack.get("comp20"),
+            comp30=pack.get("comp30"),
+            rs0d=rs0d_val if rs0d_val is not None and rs0d_val > -1e8 else None,
             rs1=rs1_val   if rs1_val   is not None and rs1_val   > -1e8 else None,
             rs5=rs5_val   if rs5_val   is not None and rs5_val   > -1e8 else None,
             rs20=rs20_val if rs20_val  is not None and rs20_val  > -1e8 else None,
@@ -2065,12 +2339,13 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         ))
 
         pct_str  = f"{pct_200:+.1f}%" if pct_200 is not None else "n/a"
+        rs0d_str = f"{rs0d_val:+.2f}" if rs0d_val is not None and rs0d_val > -1e8 else "n/a"
         rs1_str  = f"{rs1_val:+.2f}"  if rs1_val  is not None and rs1_val  > -1e8 else "n/a"
         rs5_str  = f"{rs5_val:+.2f}"  if rs5_val  is not None and rs5_val  > -1e8 else "n/a"
         rs20_str = f"{rs20_val:+.2f}" if rs20_val is not None and rs20_val > -1e8 else "n/a"
         t5d_str = f"{theme_5d:+.2f}%" if theme_5d is not None else "n/a"
         adr_str = f"{theme_adr:.2f}%" if theme_adr is not None else "n/a"
-        print(f"  1d={rs1_str:>7}x  5d={rs5_str:>7}x  20d={rs20_str:>7}x  {tk_theme:35s} "
+        print(f"  0D={rs0d_str:>7}x  1d={rs1_str:>7}x  5d={rs5_str:>7}x  20d={rs20_str:>7}x  {tk_theme:35s} "
               f"5dret={t5d_str:>7}  ADR={adr_str:>6}  200D={pct_str:>7}")
 
     if all_missing:
@@ -2117,7 +2392,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
 
     # ── Per-ticker packs powering the tree-view sidebar expansion ──
     # For every theme member and every ungrouped ticker, build a pack that
-    # carries the per-row stats (1d / 5d / 20d RS vs SPY, position-vs-200D)
+    # carries the per-row stats (1d / 5d / 20d RS vs Universe, position-vs-200D)
     # and the per-ticker chart arrays (date axis + OHLCV + divergence
     # pairs). JS lazy-renders the chart on first focus by feeding these
     # arrays into a layout template; SMAs / MACD are computed in JS to
@@ -2131,8 +2406,8 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             if tk in ticker_packs:
                 ordered.append(tk)
                 continue
-            pack = compute_ticker_pack(tk, cache[tk], spy_rs_1, spy_rs_3, spy_rs_5, spy_rs_20,
-                                       spy_rs_65, spy_rs_130,
+            pack = compute_ticker_pack(tk, cache[tk], bench_rs_0d, bench_rs_1, bench_rs_3, bench_rs_5, bench_rs_20,
+                                       bench_rs_65, bench_rs_130,
                                        n_bars, company_meta, fundamentals)
             if pack is not None:
                 ticker_packs[tk] = pack
@@ -2143,8 +2418,8 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         if tk in ticker_packs:
             ungrouped_with_packs.append(tk)
             continue
-        pack = compute_ticker_pack(tk, cache[tk], spy_rs_1, spy_rs_3, spy_rs_5, spy_rs_20,
-                                       spy_rs_65, spy_rs_130,
+        pack = compute_ticker_pack(tk, cache[tk], bench_rs_0d, bench_rs_1, bench_rs_3, bench_rs_5, bench_rs_20,
+                                       bench_rs_65, bench_rs_130,
                                    n_bars, company_meta, fundamentals=fundamentals)
         if pack is not None:
             ticker_packs[tk] = pack
@@ -2152,6 +2427,29 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     print(f"  Built {len(ticker_packs)} ticker packs "
           f"({sum(len(v) for v in members_by_theme.values())} across themes, "
           f"{len(ungrouped_with_packs)} ungrouped).")
+
+    # ── Extension Peek scan (Setups page) ──────────────────────────────
+    # Reads the JSON snapshot built by ext50_trendline_snapshot_builder.py
+    # (intended to run at 7:30 AM after EOD bar lands), projects each
+    # ticker's u1/u2/u3 descending lines forward to today's bar, and
+    # surfaces tickers whose live ext50 just crossed above a clean line.
+    print("\nLoading Extension Peek snapshot...")
+    peek_snapshot = load_extension_peek_snapshot()
+    if peek_snapshot is None:
+        print("  WARNING: ext50_trendline_snapshots.json not found.")
+        print("  Run: python local_runner/ext50_trendline_snapshot_builder.py")
+        extension_peeks = []
+        peek_asof_date = "?"
+    else:
+        # asof_date lives per-ticker; all entries share the same value
+        # (the builder uses one cache + one drop-last-bar rule). Pull one.
+        sample = next(iter(peek_snapshot.get("tickers", {}).values()), None)
+        peek_asof_date = (sample or {}).get("asof_date") or "?"
+        built = peek_snapshot.get("built_at") or "?"
+        n_snap = peek_snapshot.get("n_snapshots") or 0
+        print(f"  snapshot asof={peek_asof_date}  built_at={built[:19]}  n_snapshots={n_snap}")
+        extension_peeks = compute_extension_peeks(peek_snapshot, cache, UNIVERSE)
+        print(f"  {len(extension_peeks)} Extension Peek matches in UNIVERSE today")
 
     # Reverse index: for the Tickers view, each ticker row carries the
     # list of theme labels it belongs to so the Theme cell can name them.
@@ -2208,7 +2506,8 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         watchlist_rows.append(dict(
             theme_id="ungrouped",
             label="UNGROUPED",
-            rs1=None, rs5=None, rs20=None, rs65=None, rs130=None,
+            rs0d=None, rs1=None, rs5=None, rs20=None, rs65=None, rs130=None,
+            comp3=None, comp5=None, comp10=None, comp20=None, comp30=None,
             pct_200=None,
             count=len(ungrouped_with_packs),
             below_200=False,
@@ -2222,8 +2521,8 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     n_in_themes = len([tk for tk in universe_dedup if tk in tickers_in_themes])
     n_ungrouped = len(ungrouped_in_cache) + len(ungrouped_missing)
     universe_summary = f"{n_universe} total · {n_in_themes} in themes · {n_ungrouped} ungrouped"
-    spy_5d_str = f"{spy_5d:+.2f}%"
-    spy_5d_cls = "up" if spy_5d >= 0 else "down"
+    bench_5d_str = f"{bench_5d:+.2f}%"
+    bench_5d_cls = "up" if bench_5d >= 0 else "down"
 
     # SPY last date for the status bar
     spy_last = "?"
@@ -2259,33 +2558,47 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         """
         p = ticker_packs[tk]
         below_cls = " below-200" if p["below_200"] else ""
-        rs1 = p["rs1"]; rs5 = p["rs5"]; rs20 = p["rs20"]
+        rs0d = p["rs0d"]; rs1 = p["rs1"]; rs5 = p["rs5"]; rs20 = p["rs20"]
         rs65 = p["rs65"]; rs130 = p["rs130"]
         adr_ratio = p.get("today_adr_ratio")
+        comp3 = p.get("comp3"); comp5 = p.get("comp5"); comp10 = p.get("comp10")
+        comp20 = p.get("comp20"); comp30 = p.get("comp30")
+        rs0d_attr  = f"{rs0d:.4f}"  if rs0d  is not None else "-1e9"
         rs1_attr   = f"{rs1:.4f}"   if rs1   is not None else "-1e9"
         rs5_attr   = f"{rs5:.4f}"   if rs5   is not None else "-1e9"
         rs20_attr  = f"{rs20:.4f}"  if rs20  is not None else "-1e9"
         rs65_attr  = f"{rs65:.4f}"  if rs65  is not None else "-1e9"
         rs130_attr = f"{rs130:.4f}" if rs130 is not None else "-1e9"
         adr_attr   = f"{adr_ratio:.4f}" if adr_ratio is not None else "1e9"
+        # Compression: lower = tighter; missing values get sentinel 1e9 so
+        # they sort to the bottom on ascending (tightest-first) sort.
+        comp3_attr  = f"{comp3:.4f}"  if comp3  is not None else "1e9"
+        comp5_attr  = f"{comp5:.4f}"  if comp5  is not None else "1e9"
+        comp10_attr = f"{comp10:.4f}" if comp10 is not None else "1e9"
+        comp20_attr = f"{comp20:.4f}" if comp20 is not None else "1e9"
+        comp30_attr = f"{comp30:.4f}" if comp30 is not None else "1e9"
         row_id = f"{tk_theme}__{tk}"
         return (
             f'<tr class="watchlist-row ticker-row child-collapsed{below_cls}"'
             f' data-row-id="{row_id}" data-row-kind="ticker"'
             f' data-theme-id="{tk_theme}" data-ticker="{tk}"'
             f' data-label="{tk}"'
-            f' data-rs1="{rs1_attr}" data-rs5="{rs5_attr}" data-rs20="{rs20_attr}"'
+            f' data-rs0d="{rs0d_attr}" data-rs1="{rs1_attr}" data-rs5="{rs5_attr}" data-rs20="{rs20_attr}"'
             f' data-rs65="{rs65_attr}" data-rs130="{rs130_attr}"'
+            f' data-comp3="{comp3_attr}" data-comp5="{comp5_attr}" data-comp10="{comp10_attr}"'
+            f' data-comp20="{comp20_attr}" data-comp30="{comp30_attr}"'
             f' data-adr="{adr_attr}" data-n="-1">'
             f'<td class="flag-cell"></td>'
             f'<td class="theme-name"><span class="tree-indent"></span>'
             f'<span class="tree-bullet">▪</span>'
             f'<span class="ticker-symbol">{tk}</span></td>'
+            f'{_num_cell(rs0d)}'
             f'{_num_cell(rs1)}'
             f'{_num_cell(rs5)}'
             f'{_num_cell(rs20)}'
             f'{_num_cell(rs65)}'
             f'{_num_cell(rs130)}'
+            f'<td class="num comp-cell"></td>'
             f'<td class="num count">—</td>'
             f'</tr>'
         )
@@ -2294,15 +2607,23 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     for r in watchlist_rows:
         below_cls = " below-200" if r["below_200"] else ""
         is_ungrouped_row = bool(r.get("is_ungrouped"))
-        rs1 = r["rs1"]; rs5 = r["rs5"]; rs20 = r["rs20"]
+        rs0d = r.get("rs0d"); rs1 = r["rs1"]; rs5 = r["rs5"]; rs20 = r["rs20"]
         rs65 = r.get("rs65"); rs130 = r.get("rs130")
         adr_ratio = r.get("today_adr_ratio")
+        comp3 = r.get("comp3"); comp5 = r.get("comp5"); comp10 = r.get("comp10")
+        comp20 = r.get("comp20"); comp30 = r.get("comp30")
+        rs0d_attr  = f"{rs0d:.4f}"  if rs0d  is not None else "-1e9"
         rs1_attr   = f"{rs1:.4f}"   if rs1   is not None else "-1e9"
         rs5_attr   = f"{rs5:.4f}"   if rs5   is not None else "-1e9"
         rs20_attr  = f"{rs20:.4f}"  if rs20  is not None else "-1e9"
         rs65_attr  = f"{rs65:.4f}"  if rs65  is not None else "-1e9"
         rs130_attr = f"{rs130:.4f}" if rs130 is not None else "-1e9"
         adr_attr   = f"{adr_ratio:.4f}" if adr_ratio is not None else "1e9"
+        comp3_attr  = f"{comp3:.4f}"  if comp3  is not None else "1e9"
+        comp5_attr  = f"{comp5:.4f}"  if comp5  is not None else "1e9"
+        comp10_attr = f"{comp10:.4f}" if comp10 is not None else "1e9"
+        comp20_attr = f"{comp20:.4f}" if comp20 is not None else "1e9"
+        comp30_attr = f"{comp30:.4f}" if comp30 is not None else "1e9"
         # Theme row gets a caret cell. The ▸/▾ glyph is the toggle target,
         # but pressing → / ← on the row also fires it (JS handles both).
         extra_classes = " theme-row"
@@ -2313,8 +2634,10 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             f' data-row-id="{r["theme_id"]}" data-row-kind="theme"'
             f' data-theme-id="{r["theme_id"]}"'
             f' data-label="{r["label"]}"'
-            f' data-rs1="{rs1_attr}" data-rs5="{rs5_attr}" data-rs20="{rs20_attr}"'
+            f' data-rs0d="{rs0d_attr}" data-rs1="{rs1_attr}" data-rs5="{rs5_attr}" data-rs20="{rs20_attr}"'
             f' data-rs65="{rs65_attr}" data-rs130="{rs130_attr}"'
+            f' data-comp3="{comp3_attr}" data-comp5="{comp5_attr}" data-comp10="{comp10_attr}"'
+            f' data-comp20="{comp20_attr}" data-comp30="{comp30_attr}"'
             f' data-adr="{adr_attr}"'
             f' data-n="{r["count"]}" data-expanded="0">'
             f'<td class="flag-cell">'
@@ -2324,11 +2647,13 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             f'<td class="theme-name">'
             f'<span class="tree-caret">▸</span>'
             f'<span class="theme-label">{r["label"]}</span></td>'
+            f'{_num_cell(rs0d)}'
             f'{_num_cell(rs1)}'
             f'{_num_cell(rs5)}'
             f'{_num_cell(rs20)}'
             f'{_num_cell(rs65)}'
             f'{_num_cell(rs130)}'
+            f'<td class="num comp-cell"></td>'
             f'<td class="num count">{r["count"]}</td>'
             f'</tr>'
         )
@@ -2357,13 +2682,16 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         theme_ids_attr = ",".join(theme_ids_for_tk)
         is_ungrouped_tk = (theme_labels_for_tk == ["Ungrouped"])
         # Per-ticker stats
-        rs1 = p["rs1"]; rs3 = p["rs3"]; rs5 = p["rs5"]; rs20 = p["rs20"]
+        rs0d = p["rs0d"]; rs1 = p["rs1"]; rs3 = p["rs3"]; rs5 = p["rs5"]; rs20 = p["rs20"]
         rs65 = p["rs65"]; rs130 = p["rs130"]
+        comp3  = p.get("comp3"); comp5  = p.get("comp5"); comp10 = p.get("comp10")
+        comp20 = p.get("comp20"); comp30 = p.get("comp30")
         adr_ratio = p["today_adr_ratio"]
         is_tight = (adr_ratio is not None and adr_ratio < ADR_TIGHT_THRESHOLD)
         below_cls = " below-200" if p["below_200"] else ""
         tight_cls = " tight-adr" if is_tight else ""
         ungrouped_cls = " ungrouped-ticker" if is_ungrouped_tk else ""
+        rs0d_attr  = f"{rs0d:.4f}"  if rs0d  is not None else "-1e9"
         rs1_attr   = f"{rs1:.4f}"   if rs1   is not None else "-1e9"
         rs3_attr   = f"{rs3:.4f}"   if rs3   is not None else "-1e9"
         rs5_attr   = f"{rs5:.4f}"   if rs5   is not None else "-1e9"
@@ -2371,6 +2699,12 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         rs65_attr  = f"{rs65:.4f}"  if rs65  is not None else "-1e9"
         rs130_attr = f"{rs130:.4f}" if rs130 is not None else "-1e9"
         adr_attr   = f"{adr_ratio:.4f}" if adr_ratio is not None else "1e9"
+        comp3_attr  = f"{comp3:.4f}"  if comp3  is not None else "1e9"
+        comp5_attr  = f"{comp5:.4f}"  if comp5  is not None else "1e9"
+        comp10_attr = f"{comp10:.4f}" if comp10 is not None else "1e9"
+        comp20_attr = f"{comp20:.4f}" if comp20 is not None else "1e9"
+        comp30_attr = f"{comp30:.4f}" if comp30 is not None else "1e9"
+        rs0d_str  = f"{rs0d:+.2f}"  if rs0d  is not None else "—"
         rs1_str   = f"{rs1:+.2f}"   if rs1   is not None else "—"
         rs3_str   = f"{rs3:+.2f}"   if rs3   is not None else "—"
         rs65_str  = f"{rs65:+.2f}"  if rs65  is not None else "—"
@@ -2383,15 +2717,20 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             f' data-row-id="tk__{tk}" data-row-kind="ticker-flat"'
             f' data-ticker="{tk}" data-label="{tk}" data-theme-label="{theme_cell_text}"'
             f' data-theme-ids="{theme_ids_attr}"'
-            f' data-rs1="{rs1_attr}" data-rs3="{rs3_attr}"'
+            f' data-rs0d="{rs0d_attr}" data-rs1="{rs1_attr}" data-rs3="{rs3_attr}"'
             f' data-rs5="{rs5_attr}" data-rs20="{rs20_attr}"'
-            f' data-rs65="{rs65_attr}" data-rs130="{rs130_attr}" data-adr="{adr_attr}">'
+            f' data-rs65="{rs65_attr}" data-rs130="{rs130_attr}"'
+            f' data-comp3="{comp3_attr}" data-comp5="{comp5_attr}" data-comp10="{comp10_attr}"'
+            f' data-comp20="{comp20_attr}" data-comp30="{comp30_attr}"'
+            f' data-adr="{adr_attr}">'
             f'<td class="ticker-symbol-cell"><span class="ticker-symbol">{tk}</span></td>'
             f'<td class="theme-membership-cell" title="{theme_cell_text}">{theme_cell_text}</td>'
+            f'<td class="num {_rs_cls(rs0d)}">{rs0d_str}</td>'
             f'<td class="num {_rs_cls(rs1)}">{rs1_str}</td>'
             f'<td class="num {_rs_cls(rs3)}">{rs3_str}</td>'
             f'<td class="num {_rs_cls(rs65)}">{rs65_str}</td>'
             f'<td class="num {_rs_cls(rs130)}">{rs130_str}</td>'
+            f'<td class="num comp-cell"></td>'
             f'<td class="num adr">{adr_str}</td>'
             f'</tr>'
         )
@@ -2401,13 +2740,112 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         '<thead><tr>'
         '<th data-sort-key="label"        data-sort-type="text">Ticker</th>'
         '<th data-sort-key="theme-label"  data-sort-type="text">Theme</th>'
-        '<th data-sort-key="rs1"          data-sort-type="num" class="sort-active">1d</th>'
+        '<th data-sort-key="rs0d"         data-sort-type="num" class="sort-active">0D</th>'
+        '<th data-sort-key="rs1"          data-sort-type="num">1d</th>'
         '<th data-sort-key="rs3"          data-sort-type="num">3d</th>'
         '<th data-sort-key="rs65"         data-sort-type="num">65d</th>'
         '<th data-sort-key="rs130"        data-sort-type="num">130d</th>'
+        '<th data-sort-key="comp"         data-sort-type="num" class="comp-header" title="Left-click to sort; right-click to pick period">Comp <span class="comp-period">10</span></th>'
         '<th data-sort-key="adr"          data-sort-type="num">ADR</th>'
         '</tr></thead>'
         f'<tbody id="tickers-watchlist-body">{"".join(tickers_body_rows)}</tbody>'
+        '</table>'
+    )
+
+    # ── Setups view: Extension Peek table ────────────────────────────
+    # Built from the extension_peeks list computed above. Sort default is
+    # tightest-peek-first (smallest |today_sd|). Each row reuses the
+    # existing ticker_packs data attributes so the JS click-to-render
+    # pipeline works exactly like the Tickers view.
+    setups_body_rows = []
+    for m in extension_peeks:
+        tk = m["ticker"]
+        p = ticker_packs.get(tk)
+        if p is None:
+            continue
+        # Reuse same per-ticker stats the Tickers view shows. Setups rows
+        # must carry the SAME data attrs as ticker-flat rows so the existing
+        # Hot N / Cold N / Tight / Hide < 200 / Sector / Theme / Flagged
+        # filters all apply uniformly.
+        rs0d = p["rs0d"]; rs1 = p["rs1"]
+        rs5 = p["rs5"]; rs20 = p["rs20"]
+        rs65 = p["rs65"]; rs130 = p["rs130"]
+        comp10 = p.get("comp10")
+        adr_pct_val = p.get("adr")
+        today_adr_ratio = p.get("today_adr_ratio")
+        sector = p.get("sector", "")
+        below_200 = bool(p.get("below_200"))
+        theme_labels = ", ".join(themes_by_ticker.get(tk, ["Ungrouped"]))
+        theme_ids_for_tk = theme_ids_by_ticker.get(tk, ["ungrouped"])
+        theme_ids_attr_val = ",".join(theme_ids_for_tk)
+
+        def _f(v, fmt="{:+.2f}"):
+            if v is None: return "—"
+            try: return fmt.format(v)
+            except Exception: return str(v)
+
+        def _f_attr(v, sentinel="-1e9"):
+            try: return f"{float(v):.4f}"
+            except Exception: return sentinel
+
+        peek_attr   = f"{m['today_sd_abs']:.4f}"
+        yest_attr   = f"{m['yest_sd']:.4f}"
+        drop_attr   = f"{m['line_drop']:.4f}"
+        slope_attr  = f"{m['slope']:.6f}"
+        rs0d_attr   = _f_attr(rs0d)
+        rs1_attr    = _f_attr(rs1)
+        rs5_attr    = _f_attr(rs5)
+        rs20_attr   = _f_attr(rs20)
+        rs65_attr   = _f_attr(rs65)
+        rs130_attr  = _f_attr(rs130)
+        comp10_attr = f"{comp10:.4f}" if comp10 is not None else "1e9"
+        adr_attr_val = _f_attr(today_adr_ratio, sentinel="1e9")
+        adr_pct_attr = _f_attr(adr_pct_val)
+        cls_rs0d = "pos" if (rs0d is not None and rs0d >= 0) else ("neg" if rs0d is not None else "nul")
+        cls_rs1  = "pos" if (rs1  is not None and rs1  >= 0) else ("neg" if rs1  is not None else "nul")
+        below_cls = " below-200" if below_200 else ""
+
+        setups_body_rows.append(
+            f'<tr class="setups-row tickers-row{below_cls}"'
+            f' data-row-id="setup__{tk}" data-row-kind="setup"'
+            f' data-ticker="{tk}" data-label="{tk}" data-theme-label="{theme_labels}"'
+            f' data-theme-ids="{theme_ids_attr_val}"'
+            f' data-sector="{sector}"'
+            f' data-peek="{peek_attr}" data-yest-sd="{yest_attr}"'
+            f' data-drop="{drop_attr}" data-slope="{slope_attr}"'
+            f' data-rs0d="{rs0d_attr}" data-rs1="{rs1_attr}"'
+            f' data-rs5="{rs5_attr}" data-rs20="{rs20_attr}"'
+            f' data-rs65="{rs65_attr}" data-rs130="{rs130_attr}"'
+            f' data-comp10="{comp10_attr}" data-adr="{adr_attr_val}"'
+            f' data-slot="u{m["slot"]}">'
+            f'<td class="ticker-symbol-cell"><span class="ticker-symbol">{tk}</span></td>'
+            f'<td class="theme-membership-cell" title="{theme_labels}">{theme_labels}</td>'
+            f'<td class="num">u{m["slot"]}</td>'
+            f'<td class="num pos">+{m["today_sd_abs"]:.3f}</td>'
+            f'<td class="num">{m["yest_sd"]:+.3f}</td>'
+            f'<td class="num">{m["line_drop"]:+.2f}</td>'
+            f'<td class="num {cls_rs0d}">{_f(rs0d)}</td>'
+            f'<td class="num {cls_rs1}">{_f(rs1)}</td>'
+            f'<td class="num">{_f(comp10, "{:.2f}")}</td>'
+            f'<td class="num adr">{_f(adr_pct_val, "{:.2f}")}</td>'
+            f'</tr>'
+        )
+
+    setups_table_html = (
+        '<table class="watchlist-table tickers-table setups-table" id="setups-watchlist">'
+        '<thead><tr>'
+        '<th data-sort-key="label"        data-sort-type="text">Ticker</th>'
+        '<th data-sort-key="theme-label"  data-sort-type="text">Theme</th>'
+        '<th data-sort-key="slot"         data-sort-type="text" title="Which descending line slot peeked (u1 = nearest)">Line</th>'
+        '<th data-sort-key="peek"         data-sort-type="num" class="sort-active" title="ADRs above the descending trendline today">|Peek|</th>'
+        '<th data-sort-key="yest-sd"      data-sort-type="num" title="ADRs the line was above price yesterday (larger = bigger setup)">Yest sd</th>'
+        '<th data-sort-key="drop"         data-sort-type="num" title="ADRs the line dropped from anchor 0 to anchor 1">Drop</th>'
+        '<th data-sort-key="rs0d"         data-sort-type="num">0D</th>'
+        '<th data-sort-key="rs1"          data-sort-type="num">1d</th>'
+        '<th data-sort-key="comp10"       data-sort-type="num">Comp10</th>'
+        '<th data-sort-key="adr"          data-sort-type="num">ADR</th>'
+        '</tr></thead>'
+        f'<tbody id="setups-watchlist-body">{"".join(setups_body_rows)}</tbody>'
         '</table>'
     )
 
@@ -2444,11 +2882,13 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         '<svg class="flag-icon-static" viewBox="0 0 12 12"><polygon points="2,1 10,4 2,7"/></svg>'
         '</th>'
         '<th data-sort-key="label" data-sort-type="text">Theme</th>'
+        '<th data-sort-key="rs0d"  data-sort-type="num">0D</th>'
         '<th data-sort-key="rs1"   data-sort-type="num">1d</th>'
         '<th data-sort-key="rs5"   data-sort-type="num" class="sort-active">5d</th>'
         '<th data-sort-key="rs20"  data-sort-type="num">20d</th>'
         '<th data-sort-key="rs65"  data-sort-type="num">65d</th>'
         '<th data-sort-key="rs130" data-sort-type="num">130d</th>'
+        '<th data-sort-key="comp"  data-sort-type="num" class="comp-header" title="Left-click to sort; right-click to pick period">Comp <span class="comp-period">10</span></th>'
         '<th data-sort-key="n"     data-sort-type="num">N</th>'
         '</tr></thead>'
         f'<tbody id="watchlist-body">{"".join(watchlist_body_rows)}</tbody>'
@@ -2457,6 +2897,13 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         '<div class="watchlist-pane tickers-pane" id="tickers-pane" style="display:none">'
         f'{tickers_table_html}'
         '<div class="tickers-empty" id="tickers-empty">No tickers under 1.10 ADR right now.</div>'
+        '</div>'
+        '<div class="watchlist-pane setups-pane" id="setups-pane" style="display:none">'
+        f'<div class="setups-meta">Extension Peek — '
+        f'{len(extension_peeks)} matches  ·  snapshot asof '
+        f'{peek_asof_date}</div>'
+        f'{setups_table_html}'
+        '<div class="tickers-empty" id="setups-empty">No Extension Peek matches right now.</div>'
         '</div>'
     )
 
@@ -2479,12 +2926,94 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     # JSON lean. TICKER_LAYOUT is the Plotly layout shared by all per-ticker
     # charts — same panels / spacing / colors as the composite chart.
     import json as _json
-    ticker_data_json = _json.dumps(
-        {tk: {
+
+    # Pre-compute ext50 series + trendline overlay points per ticker.
+    # The series powers the bottom panel; the trendline overlay endpoints
+    # come from the snapshot's u1/u2/u3 (descending lines that survived
+    # the strict break filter). All coordinates are in (date_string, value)
+    # form so the JS can plot directly without further bar→date lookup.
+    peek_snap_tickers = (peek_snapshot or {}).get("tickers", {})
+
+    def _build_ext50_chart_data(tk, pack):
+        """Return (ext50_series_aligned_to_pack_dates, [trendline_dicts]).
+
+        The series uses the pack's already-truncated date window. Trendline
+        endpoints span from anchor_i0 (clipped to the visible window if
+        off-chart) through anchor_i1, today, and ~30 bars of forward
+        projection so the line continues past the right edge.
+        """
+        df_full = cache.get(tk)
+        if df_full is None:
+            return [], []
+        ext_full = _compute_ext50_series_for_chart(df_full)
+        if ext_full is None:
+            return [], []
+        # Align to the pack's dates (the chart's visible window).
+        n_pack = len(pack["dates"])
+        offset = len(df_full) - n_pack
+        if offset < 0:
+            offset = 0
+        ext_window = [
+            (None if (i < 0 or i >= len(ext_full) or np.isnan(ext_full[i])) else float(ext_full[i]))
+            for i in range(offset, offset + n_pack)
+        ]
+        # Look up snapshot for this ticker
+        snap = peek_snap_tickers.get(tk)
+        lines = []
+        if snap:
+            # Map absolute bar idx -> date string. Use the full df's dates.
+            full_dates = [str(d)[:10] for d in df_full["date"].tolist()]
+            today_idx = len(full_dates) - 1
+            # Project past today by ~30 calendar days. Use the last available
+            # date + 30 days as the right endpoint; JS just sees a date string.
+            try:
+                _last_dt = pd.to_datetime(full_dates[today_idx])
+                _right_dt = _last_dt + pd.Timedelta(days=30)
+                right_date = _right_dt.strftime("%Y-%m-%d")
+                right_bar_offset = 22  # ~22 trading bars in 30 calendar days
+            except Exception:
+                right_date = full_dates[today_idx]
+                right_bar_offset = 0
+            for slot_name, slot_list in (("u", snap.get("u") or []), ("l", snap.get("l") or [])):
+                for rank, u in enumerate(slot_list[:3], 1):
+                    i0 = int(u["i0"]); v0 = float(u["v0"])
+                    i1 = int(u["i1"]); v1 = float(u["v1"])
+                    slope = float(u["slope"])
+                    # Build a list of (date, val) endpoints. Clip i0 to the
+                    # chart window start so the line stays on-screen.
+                    points = []
+                    win_start_idx = offset
+                    if i0 < win_start_idx:
+                        # Project line back to chart start
+                        proj_at_winstart = v1 + slope * (win_start_idx - i1)
+                        points.append([full_dates[win_start_idx], proj_at_winstart])
+                    else:
+                        points.append([full_dates[i0], v0])
+                    points.append([full_dates[i1], v1])
+                    # Today
+                    points.append([full_dates[today_idx], v1 + slope * (today_idx - i1)])
+                    # Forward projection past today
+                    points.append([right_date, v1 + slope * (today_idx + right_bar_offset - i1)])
+                    lines.append({
+                        "name": f"{slot_name}{rank}",
+                        "slot": slot_name,
+                        "rank": rank,
+                        "slope": slope,
+                        "points": points,
+                    })
+        return ext_window, lines
+
+    ticker_data_payload = {}
+    for tk, p in ticker_packs.items():
+        ext_window, lines = _build_ext50_chart_data(tk, p)
+        ticker_data_payload[tk] = {
             "dates": p["dates"],
             "open":   p["open"],   "high":   p["high"],
             "low":    p["low"],    "close":  p["close"],
             "volume": p["volume"],
+            "ext50":  ext_window,
+            "trendlines": lines,
+            "rs0d": p["rs0d"],
             "rs1": p["rs1"], "rs3": p["rs3"], "rs5": p["rs5"], "rs20": p["rs20"],
             "rs65": p["rs65"], "rs130": p["rs130"],
             "pct_200": p["pct_200"], "pos_label": p["pos_label"],
@@ -2497,7 +3026,9 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             "themes": themes_by_ticker.get(tk, []),
             "long_name": p["long_name"],
             "long_summary": p["long_summary"],
-        } for tk, p in ticker_packs.items()},
+        }
+    ticker_data_json = _json.dumps(
+        ticker_data_payload,
         separators=(",", ":"), default=lambda o: None,
     )
     ticker_layout_json = _json.dumps(
@@ -2571,12 +3102,12 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       <span class="{last_bar_value_cls}">{last_bar_inner}</span>
     </div>
     <div>
-      <span class="rm-label">SPY 5d  ·  ADR</span>
-      <span class="rm-val {spy_5d_cls}">{spy_5d_str}  ·  {spy_adr:.2f}%</span>
+      <span class="rm-label">Universe 5d  ·  ADR</span>
+      <span class="rm-val {bench_5d_cls}">{bench_5d_str}  ·  {bench_adr:.2f}%</span>
     </div>
     <div>
       <span class="rm-label">Sort</span>
-      <span class="rm-h-sub">TC2000 RS PCF · theme/SPY · desc</span>
+      <span class="rm-h-sub">TC2000 RS PCF · theme/Universe · desc</span>
     </div>
     <div>
       <span class="rm-label">Showing</span>
@@ -2636,10 +3167,16 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
           <a class="filter-link" data-filter-section="strength" data-filter-action="none">Clear</a>
         </div>
         <div class="filter-section-list" id="filter-strength-list">
+          <label title="0D RS &gt;= 1.20"><input type="checkbox" id="toggle-hot-0d"/> Hot 0D</label>
           <label title="5d RS &gt;= 1.20"><input type="checkbox" id="toggle-hot-5"/> Hot 5</label>
           <label title="20d RS &gt;= 1.20"><input type="checkbox" id="toggle-hot-20"/> Hot 20</label>
           <label title="65d RS &gt;= 1.20"><input type="checkbox" id="toggle-hot-65"/> Hot 65</label>
           <label title="130d RS &gt;= 1.20"><input type="checkbox" id="toggle-hot-130"/> Hot 130</label>
+          <label title="0D RS &lt; 1.20"><input type="checkbox" id="toggle-cold-0d"/> Cold 0D</label>
+          <label title="5d RS &lt; 1.20"><input type="checkbox" id="toggle-cold-5"/> Cold 5</label>
+          <label title="20d RS &lt; 1.20"><input type="checkbox" id="toggle-cold-20"/> Cold 20</label>
+          <label title="65d RS &lt; 1.20"><input type="checkbox" id="toggle-cold-65"/> Cold 65</label>
+          <label title="130d RS &lt; 1.20"><input type="checkbox" id="toggle-cold-130"/> Cold 130</label>
         </div>
       </div>
     </div>
@@ -2673,10 +3210,21 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   // flat ticker rows only have rs65/rs130 (no rs5/rs20), so Hot 5 / Hot 20
   // simply skip ticker rows for those windows.
   var hotToggles = {{
-    5:   document.getElementById('toggle-hot-5'),
-    20:  document.getElementById('toggle-hot-20'),
-    65:  document.getElementById('toggle-hot-65'),
-    130: document.getElementById('toggle-hot-130'),
+    '0d': document.getElementById('toggle-hot-0d'),
+    5:    document.getElementById('toggle-hot-5'),
+    20:   document.getElementById('toggle-hot-20'),
+    65:   document.getElementById('toggle-hot-65'),
+    130:  document.getElementById('toggle-hot-130'),
+  }};
+  // Parallel "Cold" set — same windows, opposite condition. AND across all
+  // checked Cold boxes, AND with the checked Hot boxes. Mixing is allowed:
+  // Hot 0D + Cold 65 = intraday-strong, quarter-weak.
+  var coldToggles = {{
+    '0d': document.getElementById('toggle-cold-0d'),
+    5:    document.getElementById('toggle-cold-5'),
+    20:   document.getElementById('toggle-cold-20'),
+    65:   document.getElementById('toggle-cold-65'),
+    130:  document.getElementById('toggle-cold-130'),
   }};
 
   // Filter thresholds. "Hot N" = rsN >= 1.20 in the named window.
@@ -2689,6 +3237,11 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       var saved = window.localStorage && window.localStorage.getItem(key);
       if (saved === '1' && hotToggles[n]) hotToggles[n].checked = true;
     }});
+    Object.keys(coldToggles).forEach(function(n) {{
+      var key = 'themeDashboard.cold' + n;
+      var saved = window.localStorage && window.localStorage.getItem(key);
+      if (saved === '1' && coldToggles[n]) coldToggles[n].checked = true;
+    }});
     var savedTight = window.localStorage && window.localStorage.getItem('themeDashboard.tightOnly');
     if (savedTight === '1' && toggleTightOnly) toggleTightOnly.checked = true;
     var savedFlagged = window.localStorage && window.localStorage.getItem('themeDashboard.flaggedOnly');
@@ -2700,7 +3253,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   var activeView = 'themes';
   try {{
     var saved = window.localStorage && window.localStorage.getItem('themeDashboard.view');
-    if (saved === 'tickers' || saved === 'themes') activeView = saved;
+    if (saved === 'tickers' || saved === 'themes' || saved === 'setups') activeView = saved;
   }} catch(e) {{}}
 
   // Sort state — applies to theme rows globally AND ticker children within each parent.
@@ -2708,9 +3261,20 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   var sortKey  = 'rs5';
   var sortDir  = -1;  // -1 desc, 1 asc
   var sortType = 'num';
-  var tkSortKey  = 'rs1';
+  var tkSortKey  = 'rs0d';
   var tkSortDir  = -1;
   var tkSortType = 'num';
+
+  // Compression column: state is shared by both tables. Period (3/5/10/20/30)
+  // selected via right-click on the Comp header; sort direction toggled via
+  // left-click like every other column. Default = 10 bars.
+  var currentCompPeriod = 10;
+  try {{
+    var savedComp = window.localStorage && window.localStorage.getItem('themeDashboard.compPeriod');
+    if (savedComp && ['3','5','10','20','30'].indexOf(savedComp) >= 0) {{
+      currentCompPeriod = parseInt(savedComp, 10);
+    }}
+  }} catch(e) {{}}
 
   // ── Row utilities ──────────────────────────────────────────
   function rows()        {{ return Array.prototype.slice.call(tbody.querySelectorAll('tr.watchlist-row')); }}
@@ -2722,8 +3286,12 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   function visibleRows() {{
     if (activeView === 'tickers') {{
       return tickerFlatRows().filter(function(r) {{
-        // CSS hides non-tight rows + hide-below-200 (when checked); also
-        // hides inline display:none rows set elsewhere.
+        var s = window.getComputedStyle(r);
+        return s.display !== 'none';
+      }});
+    }}
+    if (activeView === 'setups') {{
+      return setupsFlatRows().filter(function(r) {{
         var s = window.getComputedStyle(r);
         return s.display !== 'none';
       }});
@@ -2755,10 +3323,15 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   function compareRows(a, b) {{
     var av, bv;
     if (sortType === 'num') {{
-      av = parseFloat(a.dataset[sortKey] || '-1e9');
-      bv = parseFloat(b.dataset[sortKey] || '-1e9');
-      if (isNaN(av)) av = -1e9;
-      if (isNaN(bv)) bv = -1e9;
+      // 'comp' is a virtual sort key — resolve to comp{{N}} for the active
+      // period. Missing values use 1e9 so they sort to the bottom when
+      // ascending (tightest first).
+      var key = (sortKey === 'comp') ? ('comp' + currentCompPeriod) : sortKey;
+      var miss = (sortKey === 'comp') ? '1e9' : '-1e9';
+      av = parseFloat(a.dataset[key] || miss);
+      bv = parseFloat(b.dataset[key] || miss);
+      if (isNaN(av)) av = parseFloat(miss);
+      if (isNaN(bv)) bv = parseFloat(miss);
       return (av - bv) * sortDir;
     }} else {{
       av = (a.dataset.label || '').toLowerCase();
@@ -2789,23 +3362,29 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   // row; no CSS default-hide. When a filter is unchecked, applyFilter()
   // clears the inline style so rows revert to their normal visibility.
   function rowFailsHotOrTight(r) {{
-    // "Hot N" = rsN >= 1.20. OR semantics across checked windows: the
-    // row passes if ANY checked Hot N has rsN >= 1.20. If no Hot box is
-    // checked, this branch is skipped entirely (no Hot filtering).
-    // All row types (theme, ticker child, flat ticker) carry rs5/rs20/
-    // rs65/rs130 data attrs. Missing values use -1e9 as sentinel.
-    var anyHotChecked = false;
-    var passesAnyHot  = false;
-    var hotWindows = [5, 20, 65, 130];
-    for (var i = 0; i < hotWindows.length; i++) {{
-      var n = hotWindows[i];
-      var tog = hotToggles[n];
-      if (!tog || !tog.checked) continue;
-      anyHotChecked = true;
-      var v = parseFloat(r.dataset['rs' + n] || '-1e9');
-      if (!isNaN(v) && v >= HOT_RS_THRESHOLD) {{ passesAnyHot = true; break; }}
+    // "Hot N" = rsN >= 1.20. AND semantics across checked windows: the
+    // row must pass EVERY checked Hot N. If no Hot box is checked, this
+    // branch is skipped entirely (no Hot filtering). Missing values use
+    // -1e9 as sentinel, which always fails the threshold.
+    // "Cold N" = rsN < 1.20. Same AND semantics, applied independently
+    // and combined with the Hot set — mixing is allowed (e.g. Hot 0D +
+    // Cold 65 picks intraday-strong, quarter-weak). Missing values use
+    // -1e9 sentinel which trivially passes Cold (we'd rather show a row
+    // with missing data than hide it from a weakness scan).
+    var hotColdWindows = ['0d', 5, 20, 65, 130];
+    for (var i = 0; i < hotColdWindows.length; i++) {{
+      var n = hotColdWindows[i];
+      var hotTog = hotToggles[n];
+      if (hotTog && hotTog.checked) {{
+        var hv = parseFloat(r.dataset['rs' + n] || '-1e9');
+        if (isNaN(hv) || hv < HOT_RS_THRESHOLD) return true;
+      }}
+      var coldTog = coldToggles[n];
+      if (coldTog && coldTog.checked) {{
+        var cv = parseFloat(r.dataset['rs' + n]);
+        if (!isNaN(cv) && cv >= HOT_RS_THRESHOLD) return true;
+      }}
     }}
-    if (anyHotChecked && !passesAnyHot) return true;
     // "Tight D1" = today's candle range / 20d ADR < 1.10. Missing data
     // (no ADR, fresh IPO, etc.) gets a sentinel of 1e9 which fails.
     if (toggleTightOnly && toggleTightOnly.checked) {{
@@ -2833,21 +3412,23 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
 
   function applyFilter() {{
     var hideBelow = toggleHide && toggleHide.checked;
-    rows().forEach(function(r) {{
+    var applyTo = function(r) {{
       var below = r.classList.contains('below-200');
       var filteredOut = r.classList.contains('filtered-out');
       var hotTight   = rowFailsHotOrTight(r);
       var hide = filteredOut || (hideBelow && below) || hotTight;
       r.style.display = hide ? 'none' : '';
-    }});
-    tickerFlatRows().forEach(function(r) {{
-      var below = r.classList.contains('below-200');
-      var filteredOut = r.classList.contains('filtered-out');
-      var hotTight   = rowFailsHotOrTight(r);
-      var hide = filteredOut || (hideBelow && below) || hotTight;
-      r.style.display = hide ? 'none' : '';
-    }});
+    }};
+    rows().forEach(applyTo);
+    tickerFlatRows().forEach(applyTo);
+    setupsFlatRows().forEach(applyTo);
     if (visibleCount) visibleCount.textContent = visibleRows().length + ' visible';
+    // Setups empty-state notice
+    var setupsEmpty = document.getElementById('setups-empty');
+    if (setupsEmpty && activeView === 'setups') {{
+      var anyVisible = setupsFlatRows().some(function(r) {{ return r.style.display !== 'none'; }});
+      setupsEmpty.style.display = anyVisible ? 'none' : 'block';
+    }}
   }}
 
   // ── Tree expand / collapse ─────────────────────────────────
@@ -2943,6 +3524,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     html += '<span><span class="lbl">5d ret</span><span class="' + clsForVal(d.five_d_return) + '">' + fmtPct(d.five_d_return, 2, true) + '</span></span>';
     html += '<span><span class="lbl">ADR</span><span class="val">' + fmtPct(d.adr) + '</span></span>';
     html += '<span class="sep">|</span>';
+    html += '<span><span class="lbl">0D RS</span><span class="' + clsForVal(d.rs0d) + '">' + fmtNum(d.rs0d, 2, true) + 'x</span></span>';
     html += '<span><span class="lbl">1d RS</span><span class="' + clsForVal(d.rs1) + '">' + fmtNum(d.rs1, 2, true) + 'x</span></span>';
     html += '<span><span class="lbl">5d RS</span><span class="' + clsForVal(d.rs5) + '">' + fmtNum(d.rs5, 2, true) + 'x</span></span>';
     html += '<span><span class="lbl">20d RS</span><span class="' + clsForVal(d.rs20) + '">' + fmtNum(d.rs20, 2, true) + 'x</span></span>';
@@ -2993,6 +3575,40 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
 
     // MACD divergences were removed 2026-05-22 — no overlay traces drawn.
 
+    // ── ext50 panel: histogram of the 50-SMA extension + descending
+    //    trendline overlays from the snapshot. Bars colored green if the
+    //    ext value is positive (price above SMA50), red if negative.
+    if (d.ext50 && d.ext50.length) {{
+      var extColors = d.ext50.map(function(v) {{
+        if (v === null || v === undefined || isNaN(v)) return 'rgba(0,0,0,0)';
+        return v >= 0 ? '#1eff1e' : '#ff3030';
+      }});
+      traces.push({{
+        type: 'bar', x: dates, y: d.ext50,
+        marker: {{ color: extColors, line: {{ width: 0 }} }},
+        showlegend: false, hoverinfo: 'skip',
+        xaxis: 'x4', yaxis: 'y4', name: 'ext50'
+      }});
+    }}
+    // Trendline overlays. Colors: u-slot in white (descending resistance),
+    // l-slot in dim cyan (ascending support). Rank 1 thickest.
+    if (d.trendlines && d.trendlines.length) {{
+      d.trendlines.forEach(function(tl) {{
+        if (!tl.points || tl.points.length < 2) return;
+        var lineX = tl.points.map(function(p) {{ return p[0]; }});
+        var lineY = tl.points.map(function(p) {{ return p[1]; }});
+        var color = (tl.slot === 'u') ? '#ffffff' : '#5fc8ff';
+        var width = (tl.rank === 1) ? 2.0 : (tl.rank === 2 ? 1.2 : 0.8);
+        var dash  = (tl.rank === 1) ? 'solid' : (tl.rank === 2 ? 'dot' : 'dashdot');
+        traces.push({{
+          type: 'scatter', x: lineX, y: lineY,
+          mode: 'lines', line: {{ color: color, width: width, dash: dash }},
+          showlegend: false, hoverinfo: 'skip',
+          xaxis: 'x4', yaxis: 'y4', name: tl.name
+        }});
+      }});
+    }}
+
     // Clone the layout template and set the x-range with weekend padding.
     var layout = JSON.parse(JSON.stringify(window.TICKER_LAYOUT));
     var firstDate = dates[0];
@@ -3003,9 +3619,11 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     if (!layout.xaxis)  layout.xaxis  = {{}};
     if (!layout.xaxis2) layout.xaxis2 = {{}};
     if (!layout.xaxis3) layout.xaxis3 = {{}};
+    if (!layout.xaxis4) layout.xaxis4 = {{}};
     layout.xaxis.range  = [firstDate, rightPad];
     layout.xaxis2.range = [firstDate, rightPad];
     layout.xaxis3.range = [firstDate, rightPad];
+    layout.xaxis4.range = [firstDate, rightPad];
 
     // Ticker label annotation (top-left of candle panel)
     layout.annotations = (layout.annotations || []).slice();
@@ -3053,22 +3671,33 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     renderTicker(ticker);
   }}
 
+  var setupsBody = document.getElementById('setups-watchlist-body');
+  function setupsFlatRows() {{
+    if (!setupsBody) return [];
+    return Array.prototype.slice.call(setupsBody.querySelectorAll('tr.setups-row'));
+  }}
+
   function setActiveByRowId(rowId, opts) {{
     if (!rowId) return;
-    // Tickers-view rows live in a separate tbody. Look up in whichever
-    // is active first; fall back to the other to support deep-link hashes.
+    // Tickers + Setups rows live in separate tbodies. Look up in whichever
+    // is active first; fall back to the others to support deep-link hashes.
     var row = null;
     if (activeView === 'tickers' && tickersBody) {{
       row = tickersBody.querySelector('tr[data-row-id="' + rowId + '"]');
     }}
+    if (!row && activeView === 'setups' && setupsBody) {{
+      row = setupsBody.querySelector('tr[data-row-id="' + rowId + '"]');
+    }}
     if (!row) row = tbody.querySelector('tr[data-row-id="' + rowId + '"]');
     if (!row && tickersBody) row = tickersBody.querySelector('tr[data-row-id="' + rowId + '"]');
+    if (!row && setupsBody) row = setupsBody.querySelector('tr[data-row-id="' + rowId + '"]');
     if (!row) return;
     activeRowId = rowId;
     rows().forEach(function(r) {{ r.classList.toggle('is-active', r.dataset.rowId === rowId); }});
     tickerFlatRows().forEach(function(r) {{ r.classList.toggle('is-active', r.dataset.rowId === rowId); }});
+    setupsFlatRows().forEach(function(r) {{ r.classList.toggle('is-active', r.dataset.rowId === rowId); }});
 
-    if (row.dataset.rowKind === 'ticker-flat') {{
+    if (row.dataset.rowKind === 'ticker-flat' || row.dataset.rowKind === 'setup') {{
       showTickerSection(row.dataset.ticker);
     }} else if (row.dataset.rowKind === 'ticker') {{
       var parent = tbody.querySelector('tr.theme-row[data-theme-id="' + row.dataset.themeId + '"]');
@@ -3131,6 +3760,9 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     if (activeView === 'tickers' && tickersBody) {{
       return tickersBody.querySelector('tr[data-row-id="' + activeRowId + '"]');
     }}
+    if (activeView === 'setups' && setupsBody) {{
+      return setupsBody.querySelector('tr[data-row-id="' + activeRowId + '"]');
+    }}
     return tbody.querySelector('tr[data-row-id="' + activeRowId + '"]');
   }}
 
@@ -3178,6 +3810,11 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
           window.localStorage.setItem('themeDashboard.hot' + n,
             (tog && tog.checked) ? '1' : '0');
         }});
+        Object.keys(coldToggles).forEach(function(n) {{
+          var tog = coldToggles[n];
+          window.localStorage.setItem('themeDashboard.cold' + n,
+            (tog && tog.checked) ? '1' : '0');
+        }});
         window.localStorage.setItem('themeDashboard.tightOnly',
           (toggleTightOnly && toggleTightOnly.checked) ? '1' : '0');
         window.localStorage.setItem('themeDashboard.flaggedOnly',
@@ -3194,6 +3831,10 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   }}
   Object.keys(hotToggles).forEach(function(n) {{
     var tog = hotToggles[n];
+    if (tog) tog.addEventListener('change', onHotTightChange);
+  }});
+  Object.keys(coldToggles).forEach(function(n) {{
+    var tog = coldToggles[n];
     if (tog) tog.addEventListener('change', onHotTightChange);
   }});
   if (toggleTightOnly)   toggleTightOnly.addEventListener('change', onHotTightChange);
@@ -3404,12 +4045,17 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       var tog = hotToggles[k];
       if (tog && tog.checked) hotN++;
     }});
+    var coldN = 0;
+    Object.keys(coldToggles).forEach(function(k) {{
+      var tog = coldToggles[k];
+      if (tog && tog.checked) coldN++;
+    }});
     var flaggedActive = (toggleFlaggedOnly && toggleFlaggedOnly.checked) ? flaggedThemes.size : 0;
-    var total = n + hotN + flaggedActive;
+    var total = n + hotN + coldN + flaggedActive;
     if (filterCell) {{
       filterCell.classList.toggle('has-exclusions', total > 0);
       filterCell.title = total > 0
-        ? ('Filter (' + n + ' excluded, ' + hotN + ' Hot N, ' + flaggedActive + ' flagged-only)')
+        ? ('Filter (' + n + ' excluded, ' + hotN + ' Hot, ' + coldN + ' Cold, ' + flaggedActive + ' flagged-only)')
         : 'Filter sectors, themes, strength, and flagged';
     }}
   }}
@@ -3456,6 +4102,11 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       var ok = tickerRowPassesFilter(r.dataset.ticker);
       r.classList.toggle('filtered-out', !ok);
     }});
+    // Setups pane: same per-ticker rule as the Tickers pane.
+    setupsFlatRows().forEach(function(r) {{
+      var ok = tickerRowPassesFilter(r.dataset.ticker);
+      r.classList.toggle('filtered-out', !ok);
+    }});
     // Reapply the below-200 filter so inline display is recomputed on top.
     applyFilter();
   }}
@@ -3496,10 +4147,14 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         if (action === 'all')  excludedThemes.clear();
         if (action === 'none') fd.themes.forEach(function(t) {{ excludedThemes.add(t.id); }});
       }} else if (section === 'strength') {{
-        // Clear = uncheck all Hot N boxes (no "All" — that would over-restrict)
+        // Clear = uncheck all Hot N + Cold N boxes (no "All" — that would over-restrict)
         if (action === 'none') {{
           Object.keys(hotToggles).forEach(function(n) {{
             var tog = hotToggles[n];
+            if (tog) tog.checked = false;
+          }});
+          Object.keys(coldToggles).forEach(function(n) {{
+            var tog = coldToggles[n];
             if (tog) tog.checked = false;
           }});
           onHotTightChange();
@@ -3521,6 +4176,10 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       excludedIndustries.clear();
       Object.keys(hotToggles).forEach(function(n) {{
         var tog = hotToggles[n];
+        if (tog) tog.checked = false;
+      }});
+      Object.keys(coldToggles).forEach(function(n) {{
+        var tog = coldToggles[n];
         if (tog) tog.checked = false;
       }});
       persistFilter();
@@ -3598,10 +4257,12 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     var all = tickerFlatRows().slice();
     all.sort(function(a, b) {{
       if (tkSortType === 'num') {{
-        var av = parseFloat(a.dataset[tkSortKey] || '-1e9');
-        var bv = parseFloat(b.dataset[tkSortKey] || '-1e9');
-        if (isNaN(av)) av = -1e9;
-        if (isNaN(bv)) bv = -1e9;
+        var key = (tkSortKey === 'comp') ? ('comp' + currentCompPeriod) : tkSortKey;
+        var miss = (tkSortKey === 'comp') ? '1e9' : '-1e9';
+        var av = parseFloat(a.dataset[key] || miss);
+        var bv = parseFloat(b.dataset[key] || miss);
+        if (isNaN(av)) av = parseFloat(miss);
+        if (isNaN(bv)) bv = parseFloat(miss);
         return (av - bv) * tkSortDir;
       }} else {{
         var ak = (tkSortKey === 'theme-label') ? 'themeLabel' : tkSortKey;
@@ -3621,12 +4282,144 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       sortTickersRows();
     }});
   }});
+
+  // ── Compression column: cell rendering + period picker ──────────
+  // Each row carries comp3/comp5/comp10/comp20/comp30 data attrs. The visible
+  // cell (.comp-cell) is populated from the data attr matching the current
+  // period. Right-click on the .comp-header opens a small popup to switch
+  // periods; left-click sorts via the existing th click handler.
+  function fmtComp(v) {{
+    if (v == null || isNaN(v) || v >= 1e8) return '—';
+    return v.toFixed(2);
+  }}
+  function applyCompCells() {{
+    var key = 'comp' + currentCompPeriod;
+    document.querySelectorAll('td.comp-cell').forEach(function(cell) {{
+      var row = cell.closest('tr');
+      if (!row) return;
+      var v = parseFloat(row.dataset[key]);
+      cell.textContent = fmtComp(v);
+    }});
+    document.querySelectorAll('.comp-period').forEach(function(span) {{
+      span.textContent = String(currentCompPeriod);
+    }});
+  }}
+  function setCompPeriod(n) {{
+    if (![3, 5, 10, 20, 30].includes(n)) return;
+    currentCompPeriod = n;
+    try {{ window.localStorage && window.localStorage.setItem('themeDashboard.compPeriod', String(n)); }} catch(e) {{}}
+    applyCompCells();
+    if (sortKey === 'comp') sortRows();
+    if (tkSortKey === 'comp') sortTickersRows();
+  }}
+
+  // Right-click popup. Reused across both tables. Anchored at cursor.
+  var compPopup = null;
+  function hideCompPopup() {{
+    if (compPopup && compPopup.parentNode) compPopup.parentNode.removeChild(compPopup);
+    compPopup = null;
+  }}
+  function showCompPopup(x, y) {{
+    hideCompPopup();
+    compPopup = document.createElement('div');
+    compPopup.style.cssText =
+      'position:fixed;z-index:9999;left:' + x + 'px;top:' + y + 'px;' +
+      'background:var(--bg-panel,#1a1a1a);border:1px solid var(--border,#333);' +
+      'border-radius:4px;padding:6px 0;font-size:12px;' +
+      'box-shadow:0 4px 12px rgba(0,0,0,0.4);min-width:90px;';
+    [3, 5, 10, 20, 30].forEach(function(n) {{
+      var row = document.createElement('div');
+      var active = (n === currentCompPeriod);
+      row.textContent = (active ? '● ' : '○ ') + n + ' bars';
+      row.style.cssText =
+        'padding:5px 14px;cursor:pointer;color:' +
+        (active ? 'var(--accent,#ffcc00)' : 'var(--fg-primary,#eee)') + ';';
+      row.addEventListener('mouseenter', function() {{ row.style.background = 'var(--bg-row-hover,#222)'; }});
+      row.addEventListener('mouseleave', function() {{ row.style.background = 'transparent'; }});
+      row.addEventListener('click', function() {{
+        setCompPeriod(n);
+        hideCompPopup();
+      }});
+      compPopup.appendChild(row);
+    }});
+    document.body.appendChild(compPopup);
+  }}
+  document.querySelectorAll('th.comp-header').forEach(function(th) {{
+    th.addEventListener('contextmenu', function(e) {{
+      e.preventDefault();
+      showCompPopup(e.clientX, e.clientY);
+    }});
+  }});
+  document.addEventListener('click', function(e) {{
+    if (compPopup && !compPopup.contains(e.target)) hideCompPopup();
+  }});
+  // Render initial values + label.
+  applyCompCells();
   if (tickersBody) {{
     tickersBody.addEventListener('click', function(e) {{
       var tr = e.target.closest('tr.tickers-row');
+      // setups-row also carries the tickers-row class for shared styling;
+      // skip those here, they get their own handler below.
+      if (!tr || tr.classList.contains('setups-row')) return;
+      setActiveByRowId(tr.dataset.rowId);
+    }});
+  }}
+
+  // ── Setups view: sort + click-to-render ──────────────────────────
+  var stSortKey  = 'peek';
+  var stSortDir  = -1;   // -1 desc / 1 asc; "peek" sorts asc-by-default for tightest first → flip dir on init
+  var stSortType = 'num';
+  // For Setups the default is ASCENDING (tightest peek first). Other num
+  // columns toggle ascending on first click as elsewhere; the |Peek| column
+  // gets -1 here so the initial sort renders tightest-first.
+  stSortDir = 1;
+
+  function sortSetupsRows() {{
+    if (!setupsBody) return;
+    var rows = setupsFlatRows().slice();
+    rows.sort(function(a, b) {{
+      if (stSortType === 'num') {{
+        // dataset attribute names are kebab→camel, e.g. data-yest-sd → yestSd
+        var attr = stSortKey;
+        if (attr === 'yest-sd') attr = 'yestSd';
+        var av = parseFloat(a.dataset[attr]);
+        var bv = parseFloat(b.dataset[attr]);
+        if (isNaN(av)) av = -1e9;
+        if (isNaN(bv)) bv = -1e9;
+        return (av - bv) * stSortDir;
+      }} else {{
+        var ak = (stSortKey === 'theme-label') ? 'themeLabel' : stSortKey;
+        var sa = (a.dataset[ak] || '').toLowerCase();
+        var sb = (b.dataset[ak] || '').toLowerCase();
+        return sa.localeCompare(sb) * stSortDir;
+      }}
+    }});
+    rows.forEach(function(r) {{ setupsBody.appendChild(r); }});
+    // Header indicators
+    document.querySelectorAll('#setups-watchlist th').forEach(function(th) {{
+      th.classList.remove('sort-active', 'sort-asc');
+    }});
+    var active = document.querySelector('#setups-watchlist th[data-sort-key="' + stSortKey + '"]');
+    if (active) {{
+      active.classList.add('sort-active');
+      if (stSortDir === 1) active.classList.add('sort-asc');
+    }}
+  }}
+  document.querySelectorAll('#setups-watchlist th').forEach(function(th) {{
+    th.addEventListener('click', function() {{
+      var k = th.dataset.sortKey;
+      var t = th.dataset.sortType;
+      if (stSortKey === k) {{ stSortDir = -stSortDir; }} else {{ stSortKey = k; stSortType = t; stSortDir = -1; }}
+      sortSetupsRows();
+    }});
+  }});
+  if (setupsBody) {{
+    setupsBody.addEventListener('click', function(e) {{
+      var tr = e.target.closest('tr.setups-row');
       if (!tr) return;
       setActiveByRowId(tr.dataset.rowId);
     }});
+    sortSetupsRows();  // initial sort: tightest |Peek| first (asc)
   }}
 
   function applyTickersFilter() {{
@@ -3640,34 +4433,42 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   }}
 
   function setView(name, opts) {{
-    activeView = (name === 'tickers') ? 'tickers' : 'themes';
-    document.body.classList.toggle('view-tickers', activeView === 'tickers');
+    if (name !== 'tickers' && name !== 'themes' && name !== 'setups') name = 'themes';
+    activeView = name;
     document.body.classList.toggle('view-themes',  activeView === 'themes');
-    if (brandTitle) brandTitle.textContent = (activeView === 'tickers')
-      ? 'HOT TICKERS DASHBOARD' : 'HOT THEME DASHBOARD';
+    document.body.classList.toggle('view-tickers', activeView === 'tickers');
+    document.body.classList.toggle('view-setups',  activeView === 'setups');
+    if (brandTitle) {{
+      brandTitle.textContent = (activeView === 'tickers') ? 'HOT TICKERS DASHBOARD'
+                              : (activeView === 'setups') ? 'SETUPS · EXTENSION PEEK'
+                              : 'HOT THEME DASHBOARD';
+    }}
     try {{
       if (window.localStorage) window.localStorage.setItem('themeDashboard.view', activeView);
     }} catch(e) {{}}
     // Re-derive visible counter + empty-state for the newly active pane.
     if (activeView === 'tickers') {{
       applyTickersFilter();
-      // Active row in the OTHER pane is irrelevant for nav — pick first
-      // visible in this pane unless caller suppressed.
-      if (!opts || !opts.preserveActive) {{
-        var v = visibleRows();
-        if (v.length) setActiveByRowId(v[0].dataset.rowId);
-      }}
+    }} else if (activeView === 'setups') {{
+      // Setups view honors the same filters (Hide < 200, Tight D1,
+      // Flagged, Sector / Theme / Industry excludes, Hot N, Cold N).
+      // applyFilter walks setupsFlatRows alongside the other panes.
+      applyFilter();
     }} else {{
       applyFilter();
-      if (!opts || !opts.preserveActive) {{
-        var v2 = visibleRows();
-        if (v2.length) setActiveByRowId(v2[0].dataset.rowId);
-      }}
+    }}
+    if (!opts || !opts.preserveActive) {{
+      var v = visibleRows();
+      if (v.length) setActiveByRowId(v[0].dataset.rowId);
     }}
   }}
   if (brandBtn) {{
     brandBtn.addEventListener('click', function() {{
-      setView(activeView === 'tickers' ? 'themes' : 'tickers');
+      // Cycle: themes → tickers → setups → themes
+      var next = (activeView === 'themes')   ? 'tickers'
+               : (activeView === 'tickers')  ? 'setups'
+               :                                'themes';
+      setView(next);
     }});
   }}
 
@@ -3798,11 +4599,16 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
 # MAIN
 # ════════════════════════════════════════════════════════════
 
-def _build_html_to_disk(theme=None, bars=250):
+def _build_html_to_disk(theme=None, bars=250, skip_snapshot=False):
     """Run the full build pipeline (load cache, compute, write HTML).
 
     Pulled out of main() so the native-window mode can rebuild on demand
     without re-parsing argv or re-spawning a subprocess.
+
+    Step 0 (always-on unless ``skip_snapshot``): rebuild the ext50-trendline
+    snapshot. The Setups page reads this JSON; the morning scheduled run
+    needs a fresh snapshot before the dashboard renders. Set
+    ``skip_snapshot=True`` for fast interactive iterations during the day.
     """
     print("=" * 70)
     print("Hot Theme Dashboard")
@@ -3810,6 +4616,17 @@ def _build_html_to_disk(theme=None, bars=250):
     print(f"CACHE_DIR: {CACHE_DIR}")
     print(f"OUTPUT:    {OUTPUT_HTML}")
     print(f"BARS:      {bars}")
+
+    if not skip_snapshot:
+        print("\n" + "-" * 70)
+        print("Step 0: ext50-trendline snapshot rebuild")
+        print("-" * 70)
+        try:
+            from ext50_trendline_snapshot_builder import build as _build_snapshot
+            _build_snapshot(verbose=True)
+        except Exception as exc:
+            print(f"  WARNING: snapshot rebuild failed: {exc!r}")
+            print(f"  (dashboard will fall back to whatever snapshot file exists)")
 
     cache, source_meta = load_daily_cache()
     if source_meta.get("source") == "intraday":
@@ -3973,13 +4790,14 @@ def main():
     ap.add_argument("--open", action="store_true", help="Open the resulting HTML in your default browser.")
     ap.add_argument("--app",  action="store_true", help="Open the dashboard in a native PySide6 window with an in-process refresh button (no server, no Task Scheduler dependency).")
     ap.add_argument("--no-rebuild", action="store_true", help="With --app: skip the initial HTML rebuild and reuse the existing file on disk (faster relaunch).")
+    ap.add_argument("--skip-snapshot", action="store_true", help="Skip the ext50-trendline snapshot rebuild step (~2 min). For fast interactive rebuilds when the morning snapshot is still fresh.")
     args = ap.parse_args()
 
     if args.app:
         launch_native_window(theme=args.theme, bars=args.bars, rebuild=not args.no_rebuild)
         return
 
-    _build_html_to_disk(theme=args.theme, bars=args.bars)
+    _build_html_to_disk(theme=args.theme, bars=args.bars, skip_snapshot=args.skip_snapshot)
 
     if args.open:
         webbrowser.open("file:///" + OUTPUT_HTML.replace("\\", "/"))

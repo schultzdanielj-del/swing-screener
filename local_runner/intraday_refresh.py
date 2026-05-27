@@ -338,7 +338,10 @@ def regenerate_dashboard():
     # Save & restore sys.argv so the dashboard's argparse sees clean args.
     saved_argv = sys.argv
     try:
-        sys.argv = ["theme_dashboard.py", "--bars", "250"]
+        # --skip-snapshot: the morning 7:15 task already rebuilt the
+        # ext50-trendline snapshot for today's EOD. Intraday refresh
+        # (4:20 PM) is the same trading day, so no new bar to fold in.
+        sys.argv = ["theme_dashboard.py", "--bars", "250", "--skip-snapshot"]
         import theme_dashboard  # imported here so the import-time prints land in our log
         theme_dashboard.main()
     finally:

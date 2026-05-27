@@ -1010,16 +1010,55 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 ### theme_dashboard.py
 **Location:** `local_runner/theme_dashboard.py`
 **Spec:** `THEME_DASHBOARD.md`
-**What it does:** Builds a single self-contained HTML browsable dashboard of market themes. Reads the OHLCV pickle and the theme/universe map, computes per-theme equal-weight synthetic OHLC composites, MACD-line divergences (trendline-clean validated), 5-bar and 20-bar TC2000 RS PCF ratios vs SPY, position vs 200-day SMA. Renders one section per theme (composite chart + member mini-charts) plus an "Ungrouped" section for universe tickers not assigned to any theme. Output is consumed by humans in a browser; not a pipeline input.
+**What it does:** Builds a single self-contained HTML browsable dashboard. Three pages cycled by the brand header: Themes (theme tree with composite charts), Tickers (flat per-ticker table), and Setups (currently Extension Peek — flat table of pattern matches). Reads the OHLCV pickle, theme/universe map, optional company meta, and the ext50-trendline snapshot JSON; computes equal-weight synthetic theme composites, MACD divergences, multi-window RS ratios against an equal-weight UNIVERSE composite (NOT SPY), 0D intraday RS, position vs 200-day, per-ticker N-bar compression, and Extension Peek matches via live projection of the morning snapshot's u1/u2/u3 lines. Output is consumed by humans in a browser; not a pipeline input.
 
 **Inputs:**
-- `local_runner/cache/universe_ohlcv_daily.pkl` — OHLCV cache
+- `local_runner/cache/universe_ohlcv_daily.pkl` (or `_intraday.pkl` when newer) — OHLCV cache
 - `local_runner/theme_map.py` — `THEMES`, `THEME_LABELS`, `UNIVERSE`
+- `local_runner/cache/company_meta.json` — optional, identity-surfacing data (longName + longBusinessSummary)
+- `local_runner/cache/ext50_trendline_snapshots.json` — Setups page input; written by `ext50_trendline_snapshot_builder.py`. Optional — missing snapshot logs a warning and produces an empty Extension Peek list.
 
 **Outputs:**
 - `local_runner/cache/theme_dashboard.html` — overwritten each run
 
-**Calls:** `vectorized_indicators.py` (`sma_2d`, `ema_2d`, `macd_2d`, `atr_2d`)
+**Calls:** `vectorized_indicators.py` (`sma_2d`, `ema_2d`, `macd_2d`, `atr_2d`); `ext50_trendline_snapshot_builder.build()` as Step 0 of `_build_html_to_disk` (unless `--skip-snapshot`).
+
+**Called by:** nobody (on-demand only — not in `nightly.py`); `intraday_refresh.py` invokes `theme_dashboard.main()` with `--skip-snapshot` after writing the intraday pickle.
+
+---
+
+### ext50_trendline_snapshot_builder.py
+**Location:** `local_runner/ext50_trendline_snapshot_builder.py`
+**Spec:** `EXT50_TRENDLINE_SNAPSHOTS.md`
+**What it does:** Pre-computes the u1/u2/u3 + l1/l2/l3 50-SMA-extension trendline equations for every UNIVERSE ticker at the most recent EOD bar. Drops the intraday partial bar before fitting so the day's trendline set is fixed at yesterday's close. Re-runs the locked `cascade_at` + applies a strict full-line break filter (`_has_line_break`) to descending candidates — drops broken lines the locked algorithm's lenient `_has_origination_side_break` would otherwise wave through. Multiprocessing via `ProcessPoolExecutor` (default workers = cpu_count − 2); typical wall time ~2 min for ~916 tickers.
+
+**Inputs:**
+- `local_runner/cache/universe_ohlcv_daily.pkl` (or `_intraday.pkl` when newer)
+- `local_runner/theme_map.UNIVERSE`
+- `scripts/ext50_trendlines.py` (locked algorithm: `cascade_at`, `_has_line_break`)
+- `scripts/reversal_profile.py` (locked algorithm: `compute_all_reversal_profile_series`)
+
+**Outputs:**
+- `local_runner/cache/ext50_trendline_snapshots.json` — per-ticker line equations; see DATA_CONTRACT.md and EXT50_TRENDLINE_SNAPSHOTS.md.
+
+**Calls:** `vectorized_indicators.sma_2d`; `scripts/ext50_trendlines.cascade_at`, `scripts/ext50_trendlines._has_line_break`; `scripts/reversal_profile.compute_all_reversal_profile_series`.
+
+**Called by:** `theme_dashboard._build_html_to_disk` as Step 0 (unless `--skip-snapshot`). Standalone CLI: `python local_runner/ext50_trendline_snapshot_builder.py`.
+
+---
+
+### fetch_company_meta.py
+**Location:** `scripts/fetch_company_meta.py`
+**Spec:** `THEME_DASHBOARD.md` (Pending build → spec when UI wiring lands)
+**What it does:** Fetches `longName` + `longBusinessSummary` from Yahoo Finance's `quoteSummary` endpoint (modules: `assetProfile,quoteType`) for every ticker in `theme_map.UNIVERSE`. Mirrors the structure of `fetch_fundamentals.py` — same cookie+crumb auth, same retry-on-429 with re-auth, same incremental save and resume-from-cache. Bounded run (UNIVERSE-sized, not full 11.5k OHLCV cache).
+
+**Inputs:**
+- `local_runner/theme_map.py` — `UNIVERSE` list
+
+**Outputs:**
+- `local_runner/cache/company_meta.json`
+
+**Calls:** Yahoo Finance `quoteSummary` (urllib + cookiejar)
 
 **Called by:** nobody (on-demand only — not in `nightly.py`)
 
@@ -1125,6 +1164,7 @@ cache_builder.py (daily .pkl)
 | `local_runner/cache/universe_matrix.pkl` | pickle dict | matrix_builder | pyramid_grinder |
 | `local_runner/cache/brute_expressions.json` | JSON | brute_expressions | matrix_builder |
 | `local_runner/cache/fundamentals_cache.json` | JSON | fetch_fundamentals | ev_grinder |
+| `local_runner/cache/company_meta.json` | JSON (UTF-8) | fetch_company_meta | theme_dashboard (planned UI wiring) |
 | `local_runner/cache/pyramid_{setup}_*.json` | JSON | pyramid_grinder | signal_exit_grinder, signal_filter, consensus_engine |
 | `local_runner/cache/raw_signal_clusters_{setup}.json` | JSON | pyramid_grinder | entry_grinder, entry_candle_scorer, ev_grinder, profit_grinder, scanperfect |
 | `local_runner/cache/refinement_{setup}_*.json` | JSON | pyramid_grinder | entry_candle_scorer, ev_grinder, consensus_engine, scanperfect |
@@ -1144,3 +1184,4 @@ cache_builder.py (daily .pkl)
 | `data/pipeline_logs.json` | JSON | server, scanperfect | scanperfect |
 | `local_runner/theme_map.py` | Python (hand-edited) | human | theme_dashboard |
 | `local_runner/cache/theme_dashboard.html` | HTML (Plotly + inline SVG) | theme_dashboard | browser (human) |
+| `local_runner/cache/ext50_trendline_snapshots.json` | JSON (UTF-8) | ext50_trendline_snapshot_builder | theme_dashboard (Setups page) |
