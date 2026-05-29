@@ -94,21 +94,27 @@ WINDOWS = {"D": (40, 60, 80, 100, 130),
 
 
 def _check_triangle(h, l, c_last):
-    """Triangle test on a slice: compare percentile bounds of the first vs
-    the last third. Highs lower (90th pct end < 90th pct start), lows higher
-    (10th pct end > 10th pct start), recent envelope narrower than start.
-    Single wicks don't break it. Returns the score (contraction) or None.
+    """Shape test that excludes the most recent bars from envelope definition,
+    then projects the wedge's trendlines forward to the current bar and
+    rejects if the current close has broken outside the projection.
+
+    Without the margin, a recent breakout *expands* the "last third" envelope
+    so the broken-out close still tests as "inside" — that was the bug.
     """
-    n = len(c_last) if hasattr(c_last, '__len__') else None  # not used here
     L = len(h)
-    if L < 24:
+    if L < 30:
         return None
-    third = max(8, L // 3)
+    # Reserve the last ~10% of the window (min 5 bars) as the breakout zone —
+    # those bars are NOT used to define the wedge envelope.
+    margin = max(5, L // 10)
+    Ls = L - margin
+    third = max(8, Ls // 3)
+
     # 90th / 10th percentiles smooth one-off spikes vs absolute max/min.
     s_hi = float(np.percentile(h[:third], 90))
     s_lo = float(np.percentile(l[:third], 10))
-    e_hi = float(np.percentile(h[-third:], 90))
-    e_lo = float(np.percentile(l[-third:], 10))
+    e_hi = float(np.percentile(h[Ls - third:Ls], 90))
+    e_lo = float(np.percentile(l[Ls - third:Ls], 10))
     if not (e_hi < s_hi):         # highs descended
         return None
     if not (e_lo > s_lo):         # lows ascended
@@ -118,27 +124,65 @@ def _check_triangle(h, l, c_last):
     if s_range <= 0:
         return None
     contract = e_range / s_range
-    if contract > 0.70:           # need >=30% contraction
+    if contract > 0.85:           # need >=15% contraction (margin excluded so threshold is looser)
         return None
-    # Use the EXTREMES (max high, min low) of the end third as the visible band,
-    # and percentile bounds of the start third as the wedge mouth.
-    end_hi_abs = float(np.max(h[-third:]))
-    end_lo_abs = float(np.min(l[-third:]))
+
+    # Project the trendlines from segment centers (in the SHAPE window) forward
+    # to the most recent bar in the FULL window. That's the test point.
+    s_center = third // 2
+    e_center = Ls - 1 - third // 2
+    span = e_center - s_center
+    if span <= 0:
+        return None
+    slope_r = (e_hi - s_hi) / span
+    slope_s = (e_lo - s_lo) / span
+    if not (slope_r < 0 and slope_s > 0):
+        return None
+    n = L - 1
+    res_proj = e_hi + slope_r * (n - e_center)
+    sup_proj = e_lo + slope_s * (n - e_center)
+    if res_proj <= sup_proj:                  # apex already passed
+        return None
+
+    # Breakout check. An intact tightening range has price COILING inside the
+    # contracting envelope — sitting in the body of the band, not pinned to or
+    # piercing its upper edge. Once the close reaches the upper boundary it is
+    # breaking out (or already has). Two gates:
+    #   1) Position-in-band: where the latest close sits between the envelope
+    #      floor (0.0) and ceiling (1.0). Require it in the lower ~80% of the
+    #      band — pressing the ceiling (>0.80) means breaking out the top; below
+    #      the floor (<0.0) means it broke down.
+    #   2) Margin guard: the recent (margin) bars must not have poked decisively
+    #      past the pre-margin envelope (more than 20% of the band beyond it).
+    e_range = e_hi - e_lo
+    pos = (c_last - e_lo) / e_range          # 0 = at floor, 1 = at ceiling
+    if pos > 0.80:
+        return None                          # close pressing / above the top = breaking out up
+    if pos < 0.0:
+        return None                          # close below the floor = broken down
+    margin_tol = 0.20 * e_range
+    margin_h_max = float(np.max(h[Ls:]))
+    margin_l_min = float(np.min(l[Ls:]))
+    if margin_h_max > e_hi + margin_tol:
+        return None                          # recent bar decisively broke out the top
+    if margin_l_min < e_lo - margin_tol:
+        return None                          # recent bar decisively broke down
+
     return {
         "s_hi": s_hi, "s_lo": s_lo, "e_hi": e_hi, "e_lo": e_lo,
-        "end_hi_abs": end_hi_abs, "end_lo_abs": end_lo_abs,
-        "contract": contract, "third": third, "L": L,
+        "res_proj": float(res_proj), "sup_proj": float(sup_proj),
+        "slope_r": float(slope_r), "slope_s": float(slope_s),
+        "contract": float(contract), "third": int(third), "L": int(L), "Ls": int(Ls),
     }
 
 
 def _fit_wedge(r, tf="D"):
     """Detect a triangle SHAPE across multiple lookback windows; pick the
-    tightest one that fires. No trendline fitting — just envelope contraction
-    measured by percentile bounds of the first vs last third.
+    tightest one that fires AND is still intact (no breakout in the margin).
     """
     full = r.reset_index(drop=True)
     c_full = full["close"].values.astype(np.float64)
-    if len(c_full) < 24:
+    if len(c_full) < 30:
         return None
     dates_full = [str(x)[:10] for x in full["date"].tolist()]
     close_last = float(c_full[-1])
@@ -152,44 +196,33 @@ def _fit_wedge(r, tf="D"):
         info = _check_triangle(h, l, close_last)
         if info is None:
             continue
-        # Price must be inside the recent envelope (not breaking out).
-        if not (info["end_lo_abs"] <= close_last <= info["end_hi_abs"]):
+        mid_norm = ((info["slope_r"] + info["slope_s"]) / 2.0) / close_last
+        # Apex direction: allow a mild downward tilt (resistance falling a bit
+        # faster than support rises is still a valid converging triangle), but
+        # reject structures whose midline points clearly down — those are
+        # falling wedges / bear patterns, not tightening ranges. The floor is a
+        # small per-bar fractional drift, not a hard "must be flat-or-up".
+        if mid_norm < -0.0015:
             continue
-        # Slopes for apex direction + bars_to_apex (approximate, from segment centers).
-        third = info["third"]; L = info["L"]
-        s_center = third // 2
-        e_center = L - 1 - third // 2
-        span_bars = max(1, e_center - s_center)
-        slope_r = (info["e_hi"] - info["s_hi"]) / span_bars
-        slope_s = (info["e_lo"] - info["s_lo"]) / span_bars
-        if slope_s <= slope_r:
-            continue
-        mid_norm = ((slope_r + slope_s) / 2.0) / close_last
-        if mid_norm < 0:
-            continue
-        # Score: tightest end range wins.
-        band_now = info["end_hi_abs"] - info["end_lo_abs"]
-        cand = {
-            "W": W, "info": info, "slope_r": slope_r, "slope_s": slope_s,
-            "mid_norm": mid_norm, "band_now": band_now, "span_bars": span_bars,
-        }
+        band_now = info["res_proj"] - info["sup_proj"]
+        cand = {"W": W, "info": info, "mid_norm": mid_norm, "band_now": band_now}
         if best is None or band_now < best["band_now"]:
             best = cand
     if best is None:
         return None
     info = best["info"]
-    slope_r = best["slope_r"]; slope_s = best["slope_s"]
     band_now = best["band_now"]
     h_all = full["high"].values.astype(np.float64)
     l_all = full["low"].values.astype(np.float64)
     adr_win = min(20, len(h_all))
     adr = float(np.mean((h_all[-adr_win:] / l_all[-adr_win:] - 1.0) * 100.0))
     adr_px = adr / 100.0 * close_last if adr > 0 else close_last * 0.02
+    slope_r = info["slope_r"]; slope_s = info["slope_s"]
     bars_to_apex = band_now / (slope_s - slope_r) if slope_s > slope_r else 9999.0
     n = len(full) - 1
     return {
-        "res": float(info["end_hi_abs"]),
-        "sup": float(info["end_lo_abs"]),
+        "res": float(info["res_proj"]),
+        "sup": float(info["sup_proj"]),
         "band_pct": float(band_now / close_last * 100.0),
         "band_adr": float(band_now / adr_px) if adr_px > 0 else 999.0,
         "bars_to_apex": float(bars_to_apex),
