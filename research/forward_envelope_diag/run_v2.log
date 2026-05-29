@@ -1,0 +1,63 @@
+C:\Users\Dan\Documents\ScanPerfect\swing-screener\research\forward_envelope_diag.py:168: RuntimeWarning: All-NaN slice encountered
+  sub_lower = np.nanmin(sub, axis=0)
+Loading HALTED HTF JSON...
+  entered clusters: 243  examples: 28  wild: 215
+  example horizons: min=2  max=120  median=56
+Loading OHLCV...
+  OHLCV tickers: 11,859
+  MA basis: 21 types  (10 SMA + 11 EMA)
+Building forward lr tensors...
+  lr_ex shape (28, 120, 21)  max_h=120  in 8.0s
+  lr_wild shape (215, 120, 21)  max_h=120
+  unified max_h=120
+Building bands (Fix A: one-sided Lower only)...
+  Lower band cells active: 2520 / 2520
+  Lower band: median=0.2079  p25=0.0534  p75=0.5717  p95=0.7420
+
+  Effective horizons (Fix B: window=1..stop_hit_bar):
+    examples (never stop):  min=2  median=55  max=120
+    wild:                   min=1  median=8  max=120
+
+Verifying examples lock by construction (Fix A + Fix B)...
+  examples passing lower-only strict-AND: 28 / 28 (must be 28/28)
+
+SVD effective rank (unchanged from v1 — band primitive does not affect this)...
+  rank @ 50%/90%/99%: 1 / 4 / 12
+
+LOO drop pattern (one-sided lower)...
+  drops per held-out example: median=0  mean=71.2  min=0  max=714  p90=218
+
+Wild admission (Fix A + Fix B)...
+  wild WIN under (5'): 77 / 215  (35.8%)
+  wild pass-rate distribution:  min_pass=12  max_pass=2416  median=168
+
+Sanity cross-tabs...
+  WILD WIN  (under (5)):  mfe median=5.40  stop_hit median=6  early_stop_rate=62.3%
+  WILD LOSS (under (5)):  mfe median=3.44  stop_hit median=8  early_stop_rate=75.4%
+  HALTED top-50 rule consensus on WIN clusters under (5):  median=16/50
+  HALTED top-50 rule consensus on LOSS clusters under (5):  median=16/50
+  HALTED top-50 rule consensus on examples (all label WIN under (5)):  median=50/50  min=32  max=50
+
+Per-MA carving check (uses HALTED top-50 rule consensus as external label)...
+  external WIN/LOSS by rule consensus (>=25/50):  WIN=122 / LOSS=121
+  Top 10 MAs by mean |Cohen's d| (averaged across offsets):
+          MA   mean|d|  median|d|   signed_d   admit_W   admit_L     gap
+        EMA3     0.740      0.710      0.740     0.598     0.455   0.144
+        EMA5     0.725      0.728      0.725     0.656     0.636   0.019
+        SMA5     0.706      0.711      0.706     0.697     0.777  -0.080
+        EMA8     0.700      0.712      0.700     0.738     0.793  -0.056
+       EMA10     0.684      0.699      0.684     0.770     0.868  -0.097
+       EMA13     0.662      0.676      0.662     0.787     0.917  -0.130
+        SMA8     0.661      0.684      0.661     0.754     0.876  -0.122
+       SMA10     0.634      0.638      0.634     0.697     0.760  -0.064
+       EMA20     0.618      0.627      0.618     0.811     0.983  -0.172
+       SMA13     0.611      0.621      0.611     0.770     0.860  -0.089
+  Bottom 5 MAs by mean |Cohen's d|:
+      EMA200     0.429      0.425      0.429     0.918     1.000  -0.082
+       SMA50     0.421      0.422      0.421     0.893     1.000  -0.107
+      SMA100     0.393      0.389      0.393     0.910     0.967  -0.057
+      SMA200     0.383      0.345      0.383     0.975     1.000  -0.025
+      SMA150     0.378      0.373      0.378     0.943     0.992  -0.049
+
+Diagnostic written: C:/Users/Dan/Documents/ScanPerfect/swing-screener\research\forward_envelope_diag\htf_diag.json
+Per-cluster details: C:/Users/Dan/Documents/ScanPerfect/swing-screener\research\forward_envelope_diag\htf_per_cluster.json

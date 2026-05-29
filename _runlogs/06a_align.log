@@ -1,0 +1,10 @@
+setup    pyr_sigs  presig_pre  presig_ded  alg_pre  alg_ded  cov_pre  prec_pre  prec_ded file                  
+--------------------------------------------------------------------------------------------------------------
+htf           812     102,935      25,807      272       85   33.5%    0.26%    0.33% htf_passes.pkl        
+bf            582     114,963      20,801      344       79   59.1%    0.30%    0.38% bf_passes.pkl         
+base          675     592,607     110,844      522       97   77.3%    0.09%    0.09% base_passes.pkl       
+dtss        1,368     398,214      60,546      756      175   55.3%    0.19%    0.29% dtss_passes.pkl       
+3-4db         653      61,830      15,030      239       79   36.6%    0.39%    0.53% 3-4db_passes.pkl      
+
+saved C:/Users/Dan/Documents/ScanPerfect/swing-screener\research\presignal_sma_band_scan\pyramid_alignment.json
+EXIT=0

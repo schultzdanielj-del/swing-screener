@@ -1,0 +1,84 @@
+{
+  "setup_type": "dtss",
+  "timestamp": "2026-04-11T01:06:37.506304",
+  "grinder_type": "signal_exit",
+  "computation_path": "expression_cache_only",
+  "n_examples": 9,
+  "n_expressions_tested": 16039,
+  "n_candidates_found": 0,
+  "examples": [
+    {
+      "ticker": "AAOI",
+      "signal_date": "2024-02-15",
+      "entry_date": "2024-02-16",
+      "signal_close": 22.41,
+      "adr_at_signal": 1.7078,
+      "mfe_adr": 9.2
+    },
+    {
+      "ticker": "ACHR",
+      "signal_date": "2025-07-17",
+      "entry_date": "2025-07-18",
+      "signal_close": 13.4,
+      "adr_at_signal": 0.6562,
+      "mfe_adr": 10.44
+    },
+    {
+      "ticker": "ALTS",
+      "signal_date": "2025-02-19",
+      "entry_date": "2025-02-20",
+      "signal_close": 7.41,
+      "adr_at_signal": 0.64,
+      "mfe_adr": 6.11
+    },
+    {
+      "ticker": "APP",
+      "signal_date": "2025-12-19",
+      "entry_date": "2025-12-22",
+      "signal_close": 721.37,
+      "adr_at_signal": 31.548,
+      "mfe_adr": 11.49
+    },
+    {
+      "ticker": "ASST",
+      "signal_date": "2025-09-09",
+      "entry_date": "2025-09-10",
+      "signal_close": 125.6,
+      "adr_at_signal": 20.047,
+      "mfe_adr": 5.92
+    },
+    {
+      "ticker": "CEPU",
+      "signal_date": "2023-08-28",
+      "entry_date": "2023-08-29",
+      "signal_close": 6.45,
+      "adr_at_signal": 0.2959,
+      "mfe_adr": 6.25
+    },
+    {
+      "ticker": "EME",
+      "signal_date": "2025-01-21",
+      "entry_date": "2025-01-22",
+      "signal_close": 526.07,
+      "adr_at_signal": 13.3592,
+      "mfe_adr": 15.41
+    },
+    {
+      "ticker": "NOW",
+      "signal_date": "2023-09-08",
+      "entry_date": "2023-09-11",
+      "signal_close": 120.01,
+      "adr_at_signal": 2.5859,
+      "mfe_adr": 5.63
+    },
+    {
+      "ticker": "WAL",
+      "signal_date": "2022-01-11",
+      "entry_date": "2022-01-12",
+      "signal_close": 110.78,
+      "adr_at_signal": 3.1412,
+      "mfe_adr": 15.29
+    }
+  ],
+  "top_conditions": []
+}

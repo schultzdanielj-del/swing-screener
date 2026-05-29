@@ -275,3 +275,29 @@ Why these work for this system specifically: the beam search doesn't care whethe
 - **Tradable filter is per-bar, not per-ticker.** Historical bars from currently-illiquid tickers are kept if they were tradable at that time; present-day tradable tickers only contribute bars from dates where they qualified.
 - **Consensus pipeline runs isolated from the standard cache directory.** All grind JSONs, permuted runs, and intermediate outputs write to `local_runner/cache/consensus/` (or `.../consensus/test/` for the test runner). Only the final consensus output reaches the standard cache. If the z-gate fails, nothing in the live pipeline is touched.
 - **Single-run bootstrapping path must never regress.** `pyramid_grinder.py --setup X` with no consensus flags is how new setups go from ~20 examples to ~100+ before consensus is useful. All consensus flags are additive.
+
+---
+
+## Pending research — overfit-protected pyramid on §6-prefiltered universe
+
+The pyramid + stability-selection consensus pipeline (15 real + 15 permuted, z>3 gate) was designed to handle pyramid's beam-search non-determinism. It has not been measured on BF. PRESIGNAL_GRINDER.md §6 stack admits ~14.5% of universe and is forward-stable but too loose to deploy alone. Open question: does §6-then-pyramid-stability-selection produce a forward-stable, deployable condition set — §6 picks structurally BF-shaped candidate bars, pyramid + stability selection picks the precise condition set those candidates must satisfy.
+
+### Approach
+
+1. §6 stack wild scan over the universe produces a per-ticker, cache-aligned bool mask marking signal bars (E−1) where the stack passes. Bars at labelled example signal bars are force-included in the mask to preserve pyramid's 100% example-pass invariant.
+2. From the worktree orchestrator, monkeypatch `pyramid_grinder.compute_tradable_masks` to AND the §6 mask into its per-ticker output (only narrowing, never relaxing). No `local_runner/` edits.
+3. Run the existing Increment 10 stability-selection pipeline against the pre-filtered universe: 15 real grinds (subsample=0.5, all 45 examples, seeds 0..14, zero_margin=True) + 15 permuted grinds (same subsample but permute=True, seeds 100..114). Each grind operates on a candidate pool ~6.9× smaller than normal.
+4. Reuse `scripts/consensus_engine.py` (read-only import) for z-score / gating. z > 3 required to lock conditions; 5% margin applied at output by consensus_engine.
+
+### Open questions
+
+- With the candidate universe pre-restricted to BF-shaped bars, do pyramid's standard params (peak_target=3, beam=50, depth=10) still find non-trivial conditions, or does the pre-filter compress the search to where few additional axes carve usefully?
+- Permuted runs draw fake examples from the full universe (per consensus pipeline default) but search the §6-filtered candidate pool. Real-vs-permuted z-gate measures significance at that filtered scope, which matches the deployment use case.
+
+### Validation
+
+Walk-forward on the chronological 30/15 split: build §6 + run stability selection on training-30 only, test held-out 15 against the locked condition set.
+
+### Rejected approach: pyramid example-subsample consensus (2026-04-28)
+
+10 pyramid runs each on a different random 80% subsample of training examples; conditions intersected by name. Failed: only 2 of ~40 conditions per run survived 10/10 strict intersection (the 2 broadest in pyramid's repertoire). Walk-forward 14/15 coverage was misleading — the 2-cond union-band filter admitted ~26% of the wild universe (lift only ~3.6× over random). Root cause: the 10 runs varied two independent variance sources at once — example-subsample variance (intended) AND pyramid beam-search non-determinism. Stability selection was always the right tool for the latter. Run-level data in worktree `.claude/worktrees/presignal-quality-research/research/` (bf_pyramid_consensus_*).

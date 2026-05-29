@@ -2,56 +2,56 @@
   "htf": {
     "N_daily": 39,
     "W_N": 48,
-    "n_ex": 32,
-    "pre_dedup_passes": 126480,
-    "post_dedup_clusters": 30319,
-    "ex_pre_dedup_pass": 32,
-    "ex_end_to_end": 32,
+    "n_ex": 28,
+    "pre_dedup_passes": 102935,
+    "post_dedup_clusters": 25807,
+    "ex_pre_dedup_pass": 28,
+    "ex_end_to_end": 28,
     "key_semantic": "signal_bar (E-1)",
-    "scan_seconds": 372.48042035102844
+    "scan_seconds": 364.35362458229065
   },
   "bf": {
     "N_daily": 49,
     "W_N": 44,
     "n_ex": 45,
-    "pre_dedup_passes": 105855,
-    "post_dedup_clusters": 19735,
+    "pre_dedup_passes": 114963,
+    "post_dedup_clusters": 20801,
     "ex_pre_dedup_pass": 45,
     "ex_end_to_end": 45,
     "key_semantic": "signal_bar (E-1)",
-    "scan_seconds": 51.14689064025879
+    "scan_seconds": 51.087043046951294
   },
   "base": {
     "N_daily": 32,
     "W_N": 41,
-    "n_ex": 42,
-    "pre_dedup_passes": 601674,
-    "post_dedup_clusters": 111717,
-    "ex_pre_dedup_pass": 42,
-    "ex_end_to_end": 42,
+    "n_ex": 38,
+    "pre_dedup_passes": 592607,
+    "post_dedup_clusters": 110844,
+    "ex_pre_dedup_pass": 38,
+    "ex_end_to_end": 38,
     "key_semantic": "signal_bar (E-1)",
-    "scan_seconds": 40.2341423034668
+    "scan_seconds": 40.43707036972046
   },
   "dtss": {
     "N_daily": 86,
     "W_N": 16,
-    "n_ex": 73,
-    "pre_dedup_passes": 464796,
-    "post_dedup_clusters": 67085,
-    "ex_pre_dedup_pass": 73,
-    "ex_end_to_end": 73,
+    "n_ex": 62,
+    "pre_dedup_passes": 398214,
+    "post_dedup_clusters": 60546,
+    "ex_pre_dedup_pass": 62,
+    "ex_end_to_end": 62,
     "key_semantic": "signal_bar (E-1)",
-    "scan_seconds": 75.81001448631287
+    "scan_seconds": 77.29759001731873
   },
   "3-4db": {
     "N_daily": 64,
     "W_N": 14,
     "n_ex": 26,
-    "pre_dedup_passes": 64011,
-    "post_dedup_clusters": 15546,
+    "pre_dedup_passes": 61830,
+    "post_dedup_clusters": 15030,
     "ex_pre_dedup_pass": 26,
     "ex_end_to_end": 26,
     "key_semantic": "signal_bar (E-1)",
-    "scan_seconds": 59.66769194602966
+    "scan_seconds": 60.48522210121155
   }
 }

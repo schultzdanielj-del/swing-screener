@@ -1,0 +1,792 @@
+
+======================================================================
+  PYRAMIDAL GRINDER -- MULTI-PASS
+======================================================================
+  Setup: BF
+  Peak target: <=3 signals/day
+  D1: beam=50, depth=10
+  Historical tiers: beam=50, depth=10
+  Mode: 3-pass (daily->weekly->monthly)
+
+  Loading OHLCV cache...
+  11859 tickers loaded
+
+  Loading examples...
+  Loaded 45 examples from local DB
+  45 examples loaded
+
+  Loading expressions...
+  15970 signal expressions for grinding
+    Daily+LSP+Algo: 5504  Weekly: 5233  Monthly: 5233
+
+  Detecting expression cache...
+  Expression series cache: 11534 tickers, 16216 expressions
+
+  Building tradable masks (per-bar liquidity filter)...
+  Tradable filter: 4,121,661/12,815,833 bars qualify (32.2%) across 11534 tickers (325 skipped)
+  Tradable mask build: 2.4s
+
+▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+  Pass 1 (Daily+LSP+Algo)
+  5504 candidate expressions, 0 locked conditions
+  Tiers: D1 → 1wk → 1mo → 6mo → 1yr → 5yr
+▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+  Loaded from expr cache: 241,186 values (97.4% fill)
+  4730 expressions have valid ranges for this pass
+
+──────────────────────────────────────────────────────────────────────
+  TIER: D1 — Today (last bar) [Pass 1 (Daily+LSP+Algo)]
+  Locked: 0 conditions from prior passes/tiers
+──────────────────────────────────────────────────────────────────────
+
+  ═══ D1: Loading universe matrix (cached if fresh) ═══
+  [matrix] Matrix is fresh -- loading from cache...
+  [matrix] Cache OK: 11534 tickers x 15970 expressions (built 2026-04-25T20:03:40.709406+00:00)
+  D1 matrix: 11534 tickers × 5504 expressions (2.1s)
+  Precomputed: 2804 useful expressions out of 5504 (0.15s)
+
+  Spiderweb: depth=10, beam=50, 2804 valid expressions
+  Level  1: 13.80% (1,592 tickers) | 50 paths | 100 nodes | 0.0s
+  Level  2:  5.81% (670 tickers) | 50 paths | 140,300 nodes | 0.1s
+  Level  3:  2.79% (322 tickers) | 50 paths | 280,500 nodes | 0.1s
+  Level  4:  1.75% (202 tickers) | 50 paths | 420,700 nodes | 0.1s
+  Level  5:  1.14% (132 tickers) | 50 paths | 560,900 nodes | 0.1s
+  Level  6:  0.75% (87 tickers) | 50 paths | 701,100 nodes | 0.2s
+  Level  7:  0.50% (58 tickers) | 50 paths | 841,300 nodes | 0.2s
+  Level  8:  0.31% (36 tickers) | 50 paths | 981,500 nodes | 0.2s
+  Level  9:  0.21% (24 tickers) | 50 paths | 1,121,700 nodes | 0.2s
+  Level 10:  0.12% (14 tickers) | 50 paths | 1,261,900 nodes | 0.2s
+
+  D1 result: 10 conditions, 14 tickers passing (0.12%)
+
+  Validating examples after D1...
+
+──────────────────────────────────────────────────────────────────────
+  TIER: 1wk — 5 trading days [Pass 1 (Daily+LSP+Algo)]
+  Locked: 10 conditions (pass-inherited + this pass)
+──────────────────────────────────────────────────────────────────────
+
+  ═══ 1wk: Building tier matrix (11859 tickers × 4720 candidates, window=5 bars) ═══
+  Locked conditions: 10
+  Using expression series cache (16216 expressions)
+  15 workers, 61 batches of ~197 tickers
+    12/61 batches [20s, 27 surviving rows]
+    24/61 batches [29s, 56 surviving rows]
+    36/61 batches [38s, 78 surviving rows]
+    48/61 batches [49s, 104 surviving rows]
+    60/61 batches [55s, 144 surviving rows]
+    61/61 batches [56s, 148 surviving rows]
+  1wk matrix: 148 rows × 4,720 candidates (56s)
+    PeakSpiderweb: 148 rows, 5 dates, 2856 useful candidates out of 4720
+
+    PeakSpiderweb: depth=10, beam=50, target peak<3
+    Baseline: 148 signals, peak=39/day, avg=29.6/day
+    Level  1: peak=  27/day  avg= 20.0/day  total=    100  |  50 paths  2,856 nodes  0.0s
+    Level  2: peak=  19/day  avg= 14.0/day  total=     70  |  50 paths  5,711 nodes  0.0s
+    Level  3: peak=  13/day  avg= 10.2/day  total=     51  |  50 paths  8,565 nodes  0.0s
+    Level  4: peak=   9/day  avg=  7.6/day  total=     38  |  50 paths  11,418 nodes  0.1s
+    Level  5: peak=   7/day  avg=  5.6/day  total=     28  |  50 paths  14,270 nodes  0.1s
+    Level  6: peak=   5/day  avg=  4.0/day  total=     20  |  50 paths  17,121 nodes  0.1s
+    Level  7: peak=   3/day  avg=  2.6/day  total=     13  |  50 paths  19,971 nodes  0.1s
+
+    ✓ Peak target reached: 3/day ≤ 3
+
+  1wk added 7 conditions:
+    + [      near_support] ns_c_minl3_pct
+    + [              macd] macd_hist_slope_8_17_9_off10
+    + [           boolean] st_avgc200_rising_50
+    + [           boolean] ct_outside_bar_50
+    + [           boolean] ct_stoch14_gt_50_50
+    + [           boolean] ct_c_gt_bbtop_30
+    + [        moc_levels] moc_below_1_bars_since_birth
+  Peak: 39 → 3/day
+
+  Validating examples after 1wk...
+
+──────────────────────────────────────────────────────────────────────
+  TIER: 1mo — 1 month [Pass 1 (Daily+LSP+Algo)]
+  Locked: 17 conditions (pass-inherited + this pass)
+──────────────────────────────────────────────────────────────────────
+
+  ═══ 1mo: Building tier matrix (11859 tickers × 4713 candidates, window=21 bars) ═══
+  Locked conditions: 17
+  Using expression series cache (16216 expressions)
+  15 workers, 61 batches of ~197 tickers
+    12/61 batches [21s, 25 surviving rows]
+    24/61 batches [29s, 58 surviving rows]
+    36/61 batches [38s, 77 surviving rows]
+    48/61 batches [50s, 104 surviving rows]
+    60/61 batches [55s, 130 surviving rows]
+    61/61 batches [56s, 132 surviving rows]
+  1mo matrix: 132 rows × 4,713 candidates (57s)
+    PeakSpiderweb: 132 rows, 21 dates, 2821 useful candidates out of 4713
+
+    PeakSpiderweb: depth=10, beam=50, target peak<3
+    Baseline: 132 signals, peak=11/day, avg=6.3/day
+    Level  1: peak=   9/day  avg=  5.4/day  total=    114  |  50 paths  2,821 nodes  0.0s
+    Level  2: peak=   7/day  avg=  4.2/day  total=     85  |  50 paths  5,641 nodes  0.0s
+    Level  3: peak=   6/day  avg=  3.8/day  total=     76  |  50 paths  8,460 nodes  0.0s
+    Level  4: peak=   5/day  avg=  3.4/day  total=     67  |  50 paths  11,278 nodes  0.1s
+    Level  5: peak=   4/day  avg=  2.7/day  total=     52  |  50 paths  14,095 nodes  0.1s
+    Level  6: peak=   3/day  avg=  2.2/day  total=     42  |  50 paths  16,911 nodes  0.1s
+
+    ✓ Peak target reached: 3/day ≤ 3
+
+  1mo added 6 conditions:
+    + [             range] upper_wick_ratio
+    + [  volume_character] cmf_slope_20_off3
+    + [           boolean] ct_avgc200_falling_7
+    + [           boolean] ct_c_gt_maxc10_1_50
+    + [           boolean] tir_bop14_positive_30
+    + [               lsp] level_below1_break_count
+  Peak: 11 → 3/day
+
+  Validating examples after 1mo...
+
+──────────────────────────────────────────────────────────────────────
+  TIER: 6mo — 6 months [Pass 1 (Daily+LSP+Algo)]
+  Locked: 23 conditions (pass-inherited + this pass)
+──────────────────────────────────────────────────────────────────────
+
+  ═══ 6mo: Building tier matrix (11859 tickers × 4707 candidates, window=126 bars) ═══
+  Locked conditions: 23
+  Using expression series cache (16216 expressions)
+  15 workers, 61 batches of ~197 tickers
+    12/61 batches [21s, 297 surviving rows]
+    24/61 batches [29s, 596 surviving rows]
+    36/61 batches [38s, 838 surviving rows]
+    48/61 batches [50s, 1,127 surviving rows]
+    60/61 batches [55s, 1,410 surviving rows]
+    61/61 batches [56s, 1,454 surviving rows]
+  6mo matrix: 1,454 rows × 4,707 candidates (56s)
+    PeakSpiderweb: 1,454 rows, 123 dates, 3474 useful candidates out of 4707
+
+    PeakSpiderweb: depth=10, beam=50, target peak<3
+    Baseline: 1,454 signals, peak=36/day, avg=11.8/day
+    Level  1: peak=  27/day  avg=  9.8/day  total=  1,191  |  50 paths  3,474 nodes  0.0s
+    Level  2: peak=  23/day  avg=  8.9/day  total=  1,065  |  50 paths  6,947 nodes  0.1s
+    Level  3: peak=  21/day  avg=  8.1/day  total=    969  |  50 paths  10,419 nodes  0.1s
+    Level  4: peak=  18/day  avg=  7.5/day  total=    889  |  50 paths  13,890 nodes  0.1s
+    Level  5: peak=  16/day  avg=  6.8/day  total=    814  |  50 paths  17,360 nodes  0.1s
+    Level  6: peak=  14/day  avg=  6.3/day  total=    733  |  50 paths  20,829 nodes  0.2s
+    Level  7: peak=  13/day  avg=  5.2/day  total=    613  |  50 paths  24,297 nodes  0.2s
+    Level  8: peak=  11/day  avg=  4.5/day  total=    521  |  50 paths  27,764 nodes  0.2s
+    Level  9: peak=  10/day  avg=  4.2/day  total=    476  |  50 paths  31,230 nodes  0.3s
+    Level 10: peak=   9/day  avg=  4.1/day  total=    466  |  50 paths  34,695 nodes  0.3s
+
+  6mo added 10 conditions:
+    + [      near_support] ns_c_minl2_atr14
+    + [          momentum] roc_delta_3_vs10
+    + [               gap] gap_count_50_t0.5
+    + [           boolean] ct_c_gt_c1_20
+    + [           boolean] ct_v_gt_avgv10_20
+    + [           boolean] ct_adx14_gt_30_20
+    + [extension_structure] es_ext50_ch_pos_5
+    + [extension_structure] es_ext50_pullback_20
+    + [        moc_levels] moc_below_2_bars_since_last_contribution
+    + [        moc_levels] moc_composite_n_levels_above
+  Peak: 36 → 9/day
+
+  Validating examples after 6mo...
+
+──────────────────────────────────────────────────────────────────────
+  TIER: 1yr — 1 year [Pass 1 (Daily+LSP+Algo)]
+  Locked: 33 conditions (pass-inherited + this pass)
+──────────────────────────────────────────────────────────────────────
+
+  ═══ 1yr: Building tier matrix (11859 tickers × 4697 candidates, window=252 bars) ═══
+  Locked conditions: 33
+  Using expression series cache (16216 expressions)
+  15 workers, 61 batches of ~197 tickers
+    12/61 batches [21s, 227 surviving rows]
+    24/61 batches [30s, 404 surviving rows]
+    36/61 batches [38s, 614 surviving rows]
+    48/61 batches [50s, 838 surviving rows]
+    60/61 batches [56s, 1,096 surviving rows]
+    61/61 batches [57s, 1,120 surviving rows]
+  1yr matrix: 1,120 rows × 4,697 candidates (57s)
+    PeakSpiderweb: 1,120 rows, 223 dates, 3450 useful candidates out of 4697
+
+    PeakSpiderweb: depth=10, beam=50, target peak<3
+    Baseline: 1,120 signals, peak=19/day, avg=5.0/day
+    Level  1: peak=  15/day  avg=  4.7/day  total=  1,039  |  50 paths  3,450 nodes  0.0s
+    Level  2: peak=  13/day  avg=  4.5/day  total=    999  |  50 paths  6,899 nodes  0.1s
+    Level  3: peak=  11/day  avg=  4.4/day  total=    962  |  50 paths  10,347 nodes  0.1s
+    Level  4: peak=  10/day  avg=  4.1/day  total=    905  |  50 paths  13,794 nodes  0.1s
+    Level  5: peak=   9/day  avg=  4.0/day  total=    878  |  50 paths  17,240 nodes  0.1s
+    Level  6: peak=   9/day  avg=  4.0/day  total=    869  |  50 paths  20,685 nodes  0.2s
+
+    ▓ Peak ceiling at level 6 (9/day)
+
+  1yr added 6 conditions:
+    + [   near_resistance] nr_c_maxh2_atr14
+    + [   near_resistance] nr_h_maxh2_atr14
+    + [   near_resistance] nr_c_maxh3_atr14
+    + [      near_support] ns_l_minl60_atr14
+    + [          momentum] rsi_slope_28_off5
+    + [           boolean] st_big_gap_up_20
+  Peak: 19 → 9/day
+
+  Validating examples after 1yr...
+
+──────────────────────────────────────────────────────────────────────
+  TIER: 5yr — Full history [Pass 1 (Daily+LSP+Algo)]
+  Locked: 39 conditions (pass-inherited + this pass)
+──────────────────────────────────────────────────────────────────────
+
+  ═══ 5yr: Building tier matrix (11859 tickers × 4691 candidates, window=all bars) ═══
+  Locked conditions: 39
+  Using expression series cache (16216 expressions)
+  15 workers, 61 batches of ~197 tickers
+    12/61 batches [21s, 1,267 surviving rows]
+    24/61 batches [30s, 2,366 surviving rows]
+    36/61 batches [39s, 3,457 surviving rows]
+    48/61 batches [51s, 4,730 surviving rows]
+    60/61 batches [57s, 5,849 surviving rows]
+    61/61 batches [57s, 5,951 surviving rows]
+  5yr matrix: 5,951 rows × 4,691 candidates (58s)
+    PeakSpiderweb: 5,951 rows, 1,246 dates, 3611 useful candidates out of 4691
+
+    PeakSpiderweb: depth=10, beam=50, target peak<3
+    Baseline: 5,951 signals, peak=54/day, avg=4.8/day
+    Level  1: peak=  40/day  avg=  4.6/day  total=  5,655  |  50 paths  3,611 nodes  0.1s
+    Level  2: peak=  33/day  avg=  4.1/day  total=  4,918  |  50 paths  7,221 nodes  0.1s
+    Level  3: peak=  28/day  avg=  3.7/day  total=  4,235  |  50 paths  10,830 nodes  0.2s
+    Level  4: peak=  23/day  avg=  3.5/day  total=  3,950  |  50 paths  14,438 nodes  0.3s
+    Level  5: peak=  21/day  avg=  3.4/day  total=  3,797  |  50 paths  18,045 nodes  0.3s
+    Level  6: peak=  19/day  avg=  3.3/day  total=  3,592  |  50 paths  21,651 nodes  0.4s
+    Level  7: peak=  18/day  avg=  3.1/day  total=  3,212  |  50 paths  25,256 nodes  0.5s
+    Level  8: peak=  17/day  avg=  3.0/day  total=  3,086  |  50 paths  28,860 nodes  0.6s
+    Level  9: peak=  16/day  avg=  3.0/day  total=  2,920  |  50 paths  32,463 nodes  0.6s
+    Level 10: peak=  16/day  avg=  3.0/day  total=  2,919  |  50 paths  36,065 nodes  0.7s
+
+    ▓ Peak ceiling at level 10 (16/day)
+
+  5yr added 10 conditions:
+    + [   near_resistance] nr_c_maxh2_adr14
+    + [          ma_slope] slope_xavgc9_off3_adr14
+    + [          momentum] rsi_slope_14_off1
+    + [               gap] gap_today_atr14
+    + [    candle_pattern] nr_ratio_10
+    + [   percentile_rank] roc_rank_50_lb50
+    + [           boolean] st_l_lt_l1_5
+    + [           boolean] ct_v_gt_avgv10_3
+    + [           boolean] st_v_gt_3x_avgv20_15
+    + [        algo_lines] algo_lplus1_distance
+  Peak: 54 → 16/day
+
+  Validating examples after 5yr...
+
+  ═══ Pass 1 (Daily+LSP+Algo) complete: +49 conditions (49 total) [315s] ═══
+
+▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+  Pass 2 (Weekly)
+  5233 candidate expressions, 49 locked conditions
+  Tiers: 1mo → 6mo → 1yr → 5yr
+▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+  Loaded from expr cache: 216,736 values (92.0% fill)
+  2816 expressions have valid ranges for this pass
+
+──────────────────────────────────────────────────────────────────────
+  TIER: 1mo — 1 month [Pass 2 (Weekly)]
+  Locked: 49 conditions (pass-inherited + this pass)
+──────────────────────────────────────────────────────────────────────
+
+  ═══ 1mo: Building tier matrix (11859 tickers × 2816 candidates, window=21 bars) ═══
+  Locked conditions: 49
+  Using expression series cache (16216 expressions)
+  15 workers, 61 batches of ~197 tickers
+    12/61 batches [21s, 0 surviving rows]
+    24/61 batches [30s, 2 surviving rows]
+    36/61 batches [39s, 2 surviving rows]
+    48/61 batches [51s, 2 surviving rows]
+    60/61 batches [56s, 5 surviving rows]
+    61/61 batches [57s, 5 surviving rows]
+  1mo matrix: 5 rows × 2,816 candidates (57s)
+    PeakSpiderweb: 5 rows, 4 dates, 297 useful candidates out of 2816
+
+    PeakSpiderweb: depth=10, beam=50, target peak<3
+    Baseline: 5 signals, peak=2/day, avg=1.2/day
+    Already below target. No conditions needed.
+  1mo: No conditions added (peak ≤3 or ceiling)
+
+──────────────────────────────────────────────────────────────────────
+  TIER: 6mo — 6 months [Pass 2 (Weekly)]
+  Locked: 49 conditions (pass-inherited + this pass)
+──────────────────────────────────────────────────────────────────────
+
+  ═══ 6mo: Building tier matrix (11859 tickers × 2816 candidates, window=126 bars) ═══
+  Locked conditions: 49
+  Using expression series cache (16216 expressions)
+  15 workers, 61 batches of ~197 tickers
+    12/61 batches [21s, 37 surviving rows]
+    24/61 batches [29s, 84 surviving rows]
+    36/61 batches [38s, 117 surviving rows]
+    48/61 batches [50s, 156 surviving rows]
+    60/61 batches [56s, 200 surviving rows]
+    61/61 batches [57s, 200 surviving rows]
+  6mo matrix: 200 rows × 2,816 candidates (57s)
+    PeakSpiderweb: 200 rows, 84 dates, 1481 useful candidates out of 2816
+
+    PeakSpiderweb: depth=10, beam=50, target peak<3
+    Baseline: 200 signals, peak=6/day, avg=2.4/day
+    Level  1: peak=   4/day  avg=  1.6/day  total=     81  |  50 paths  1,481 nodes  0.0s
+    Level  2: peak=   3/day  avg=  1.5/day  total=     71  |  50 paths  2,961 nodes  0.0s
+
+    ✓ Peak target reached: 3/day ≤ 3
+
+  6mo added 2 conditions:
+    + [        htf_weekly] w_ns_c_minl5_atr14
+    + [        htf_weekly] w_ns_c_minl7_atr14
+  Peak: 6 → 3/day
+
+  Validating examples after 6mo...
+
+──────────────────────────────────────────────────────────────────────
+  TIER: 1yr — 1 year [Pass 2 (Weekly)]
+  Locked: 51 conditions (pass-inherited + this pass)
+──────────────────────────────────────────────────────────────────────
+
+  ═══ 1yr: Building tier matrix (11859 tickers × 2814 candidates, window=252 bars) ═══
+  Locked conditions: 51
+  Using expression series cache (16216 expressions)
+  15 workers, 61 batches of ~197 tickers
+    12/61 batches [21s, 40 surviving rows]
+    24/61 batches [29s, 77 surviving rows]
+    36/61 batches [39s, 107 surviving rows]
+    48/61 batches [51s, 148 surviving rows]
+    60/61 batches [56s, 179 surviving rows]
+    61/61 batches [57s, 180 surviving rows]
+  1yr matrix: 180 rows × 2,814 candidates (57s)
+    PeakSpiderweb: 180 rows, 118 dates, 1174 useful candidates out of 2814
+
+    PeakSpiderweb: depth=10, beam=50, target peak<3
+    Baseline: 180 signals, peak=5/day, avg=1.5/day
+    Level  1: peak=   4/day  avg=  1.5/day  total=    179  |  50 paths  1,174 nodes  0.0s
+    Level  2: peak=   4/day  avg=  1.5/day  total=    177  |  50 paths  2,347 nodes  0.0s
+
+    ▓ Peak ceiling at level 2 (4/day)
+
+  1yr added 2 conditions:
+    + [        htf_weekly] w_nr_c_maxh2_atr14
+    + [        htf_weekly] w_ns_l_minl5_pct
+  Peak: 5 → 4/day
+
+  Validating examples after 1yr...
+
+──────────────────────────────────────────────────────────────────────
+  TIER: 5yr — Full history [Pass 2 (Weekly)]
+  Locked: 53 conditions (pass-inherited + this pass)
+──────────────────────────────────────────────────────────────────────
+
+  ═══ 5yr: Building tier matrix (11859 tickers × 2812 candidates, window=all bars) ═══
+  Locked conditions: 53
+  Using expression series cache (16216 expressions)
+  15 workers, 61 batches of ~197 tickers
+    12/61 batches [21s, 202 surviving rows]
+    24/61 batches [30s, 362 surviving rows]
+    36/61 batches [38s, 554 surviving rows]
+    48/61 batches [50s, 749 surviving rows]
+    60/61 batches [56s, 931 surviving rows]
+    61/61 batches [57s, 944 surviving rows]
+  5yr matrix: 944 rows × 2,812 candidates (57s)
+    PeakSpiderweb: 944 rows, 558 dates, 1584 useful candidates out of 2812
+
+    PeakSpiderweb: depth=10, beam=50, target peak<3
+    Baseline: 944 signals, peak=10/day, avg=1.7/day
+    Level  1: peak=   8/day  avg=  1.6/day  total=    761  |  50 paths  1,584 nodes  0.0s
+    Level  2: peak=   7/day  avg=  1.6/day  total=    726  |  50 paths  3,167 nodes  0.0s
+    Level  3: peak=   6/day  avg=  1.5/day  total=    645  |  50 paths  4,749 nodes  0.0s
+    Level  4: peak=   6/day  avg=  1.5/day  total=    644  |  50 paths  6,330 nodes  0.0s
+
+    ▓ Peak ceiling at level 4 (6/day)
+
+  5yr added 4 conditions:
+    + [        htf_weekly] w_nr_c_maxh2_adr14
+    + [        htf_weekly] w_ns_c_minl2_pct
+    + [        htf_weekly] w_stoch_9
+    + [        htf_weekly] w_pctrank_volume_20
+  Peak: 10 → 6/day
+
+  Validating examples after 5yr...
+
+  ═══ Pass 2 (Weekly) complete: +8 conditions (57 total) [243s] ═══
+
+▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+  Pass 3 (Monthly)
+  5233 candidate expressions, 57 locked conditions
+  Tiers: 6mo → 1yr → 5yr
+▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+  Loaded from expr cache: 154,288 values (65.5% fill)
+  1317 expressions have valid ranges for this pass
+
+──────────────────────────────────────────────────────────────────────
+  TIER: 6mo — 6 months [Pass 3 (Monthly)]
+  Locked: 57 conditions (pass-inherited + this pass)
+──────────────────────────────────────────────────────────────────────
+
+  ═══ 6mo: Building tier matrix (11859 tickers × 1317 candidates, window=126 bars) ═══
+  Locked conditions: 57
+  Using expression series cache (16216 expressions)
+  15 workers, 61 batches of ~197 tickers
+    12/61 batches [21s, 9 surviving rows]
+    24/61 batches [30s, 23 surviving rows]
+    36/61 batches [38s, 25 surviving rows]
+    48/61 batches [50s, 39 surviving rows]
+    60/61 batches [56s, 51 surviving rows]
+    61/61 batches [57s, 51 surviving rows]
+  6mo matrix: 51 rows × 1,317 candidates (57s)
+    PeakSpiderweb: 51 rows, 37 dates, 234 useful candidates out of 1317
+
+    PeakSpiderweb: depth=10, beam=50, target peak<3
+    Baseline: 51 signals, peak=3/day, avg=1.4/day
+    Already below target. No conditions needed.
+  6mo: No conditions added (peak ≤3 or ceiling)
+
+──────────────────────────────────────────────────────────────────────
+  TIER: 1yr — 1 year [Pass 3 (Monthly)]
+  Locked: 57 conditions (pass-inherited + this pass)
+──────────────────────────────────────────────────────────────────────
+
+  ═══ 1yr: Building tier matrix (11859 tickers × 1317 candidates, window=252 bars) ═══
+  Locked conditions: 57
+  Using expression series cache (16216 expressions)
+  15 workers, 61 batches of ~197 tickers
+    12/61 batches [21s, 26 surviving rows]
+    24/61 batches [29s, 55 surviving rows]
+    36/61 batches [38s, 72 surviving rows]
+    48/61 batches [50s, 112 surviving rows]
+    60/61 batches [56s, 136 surviving rows]
+    61/61 batches [56s, 136 surviving rows]
+  1yr matrix: 136 rows × 1,317 candidates (57s)
+    PeakSpiderweb: 136 rows, 98 dates, 299 useful candidates out of 1317
+
+    PeakSpiderweb: depth=10, beam=50, target peak<3
+    Baseline: 136 signals, peak=4/day, avg=1.4/day
+    Level  1: peak=   4/day  avg=  1.4/day  total=    132  |  50 paths  299 nodes  0.0s
+    Level  2: peak=   4/day  avg=  1.4/day  total=    129  |  50 paths  894 nodes  0.0s
+
+    ▓ Peak ceiling at level 2 (4/day)
+
+  1yr added 2 conditions:
+    + [       htf_monthly] m_ns_c_minl2_pct
+    + [       htf_monthly] m_ns_l_minl2_pct
+  Peak: 4 → 4/day
+
+  Validating examples after 1yr...
+
+──────────────────────────────────────────────────────────────────────
+  TIER: 5yr — Full history [Pass 3 (Monthly)]
+  Locked: 59 conditions (pass-inherited + this pass)
+──────────────────────────────────────────────────────────────────────
+
+  ═══ 5yr: Building tier matrix (11859 tickers × 1315 candidates, window=all bars) ═══
+  Locked conditions: 59
+  Using expression series cache (16216 expressions)
+  15 workers, 61 batches of ~197 tickers
+    12/61 batches [21s, 122 surviving rows]
+    24/61 batches [30s, 223 surviving rows]
+    36/61 batches [39s, 340 surviving rows]
+    48/61 batches [51s, 465 surviving rows]
+    60/61 batches [56s, 579 surviving rows]
+    61/61 batches [57s, 584 surviving rows]
+  5yr matrix: 584 rows × 1,315 candidates (58s)
+    PeakSpiderweb: 584 rows, 397 dates, 411 useful candidates out of 1315
+
+    PeakSpiderweb: depth=10, beam=50, target peak<3
+    Baseline: 584 signals, peak=6/day, avg=1.5/day
+    Level  1: peak=   6/day  avg=  1.5/day  total=    582  |  50 paths  411 nodes  0.0s
+    Level  2: peak=   6/day  avg=  1.5/day  total=    582  |  50 paths  821 nodes  0.0s
+
+    ▓ Peak ceiling at level 2 (6/day)
+
+  5yr added 1 conditions:
+    + [       htf_monthly] m_nr_c_maxh2_pct
+  Peak: 6 → 6/day
+
+  Validating examples after 5yr...
+
+  ═══ Pass 3 (Monthly) complete: +3 conditions (60 total) [181s] ═══
+
+======================================================================
+  PYRAMID COMPLETE — MULTI-PASS
+======================================================================
+  Total conditions: 60
+  Total time: 748s (12.5 min)
+
+  Pass summary:
+    Pass 1 (Daily+LSP+Algo): +49 conditions [315s]
+    Pass 2 (Weekly): +8 conditions [243s]
+    Pass 3 (Monthly): +3 conditions [181s]
+
+  Conditions by tier:
+     1mo: 6 conditions
+     1wk: 7 conditions
+     1yr: 10 conditions
+     5yr: 15 conditions
+     6mo: 12 conditions
+      D1: 10 conditions
+
+  Conditions by timeframe:
+       daily: 48
+         lsp: 1
+     monthly: 3
+      weekly: 8
+
+  All conditions:
+     1. [  D1] [      near_support] ns_c_minl60_pct                     [25.4359 — 93.5328]
+     2. [  D1] [          ma_slope] slope_xavgc21_off3_adr14            [-0.0572 — 0.7976]
+     3. [  D1] [          momentum] adx_slope_7_off1                    [-14.6110 — 3.8161]
+     4. [  D1] [extension_dynamics] ext_slope_xavgc8_off2               [-0.7653 — 1.5045]
+     5. [  D1] [  volume_character] cmf_slope_30_off1                   [-0.0354 — 0.0623]
+     6. [  D1] [           boolean] ct_l_gt_xavgc8_50                   [13.2000 — 30.8000]
+     7. [  D1] [           boolean] ct_h_gt_maxh65_1_20                 [1.5000 — 12.5000]
+     8. [  D1] [           boolean] ct_gap_up_50                        [20.1500 — 38.8500]
+     9. [  D1] [           boolean] ct_aroon_up14_gt_70_20              [5.5000 — 16.5000]
+    10. [  D1] [extension_structure] ct_es_ext50_slope1_neg_10           [3.8500 — 7.1500]
+    11. [ 1wk] [      near_support] ns_c_minl3_pct                      [2.2580 — 16.4334]
+    12. [ 1wk] [              macd] macd_hist_slope_8_17_9_off10        [-6.4650 — 0.5849]
+    13. [ 1wk] [           boolean] st_avgc200_rising_50                [-1.0500 — 0.0500]
+    14. [ 1wk] [           boolean] ct_outside_bar_50                   [-0.3000 — 6.3000]
+    15. [ 1wk] [           boolean] ct_stoch14_gt_50_50                 [18.8000 — 45.2000]
+    16. [ 1wk] [           boolean] ct_c_gt_bbtop_30                    [2.7000 — 9.3000]
+    17. [ 1wk] [        moc_levels] moc_below_1_bars_since_birth        [27.1500 — 1497.8500]
+    18. [ 1mo] [             range] upper_wick_ratio                    [-0.0303 — 0.6357]
+    19. [ 1mo] [  volume_character] cmf_slope_20_off3                   [-0.1436 — 0.0990]
+    20. [ 1mo] [           boolean] ct_avgc200_falling_7                [0.0000 — 0.0000]
+    21. [ 1mo] [           boolean] ct_c_gt_maxc10_1_50                 [7.4500 — 19.5500]
+    22. [ 1mo] [           boolean] tir_bop14_positive_30               [-1.1500 — 24.1500]
+    23. [ 1mo] [               lsp] level_below1_break_count            [-3072.0000 — 64512.0000]
+    24. [ 6mo] [      near_support] ns_c_minl2_atr14                    [-0.3405 — 1.9703]
+    25. [ 6mo] [          momentum] roc_delta_3_vs10                    [-32.6012 — 11.5621]
+    26. [ 6mo] [               gap] gap_count_50_t0.5                   [1.3500 — 15.6500]
+    27. [ 6mo] [           boolean] ct_c_gt_c1_20                       [9.6500 — 17.3500]
+    28. [ 6mo] [           boolean] ct_v_gt_avgv10_20                   [4.6000 — 13.4000]
+    29. [ 6mo] [           boolean] ct_adx14_gt_30_20                   [4.2500 — 20.7500]
+    30. [ 6mo] [extension_structure] es_ext50_ch_pos_5                   [-1.1218 — 1.3005]
+    31. [ 6mo] [extension_structure] es_ext50_pullback_20                [0.0345 — 4.8559]
+    32. [ 6mo] [        moc_levels] moc_below_2_bars_since_last_contribution [-11.1500 — 432.1500]
+    33. [ 6mo] [        moc_levels] moc_composite_n_levels_above        [-7.1000 — 149.1000]
+    34. [ 1yr] [   near_resistance] nr_c_maxh2_atr14                    [-0.6557 — 1.2988]
+    35. [ 1yr] [   near_resistance] nr_h_maxh2_atr14                    [-0.9233 — 0.9028]
+    36. [ 1yr] [   near_resistance] nr_c_maxh3_atr14                    [-0.6693 — 1.5828]
+    37. [ 1yr] [      near_support] ns_l_minl60_atr14                   [2.4989 — 10.4718]
+    38. [ 1yr] [          momentum] rsi_slope_28_off5                   [-15.0871 — 9.6887]
+    39. [ 1yr] [           boolean] st_big_gap_up_20                    [-1.9000 — 17.9000]
+    40. [ 5yr] [   near_resistance] nr_c_maxh2_adr14                    [-0.6901 — 1.5378]
+    41. [ 5yr] [          ma_slope] slope_xavgc9_off3_adr14             [-0.3202 — 0.9872]
+    42. [ 5yr] [          momentum] rsi_slope_14_off1                   [-6.6447 — 9.6877]
+    43. [ 5yr] [               gap] gap_today_atr14                     [-0.3188 — 0.9262]
+    44. [ 5yr] [    candle_pattern] nr_ratio_10                         [0.2274 — 1.0368]
+    45. [ 5yr] [   percentile_rank] roc_rank_50_lb50                    [0.1391 — 1.0410]
+    46. [ 5yr] [           boolean] st_l_lt_l1_5                        [-0.1500 — 3.1500]
+    47. [ 5yr] [           boolean] ct_v_gt_avgv10_3                    [-0.1000 — 2.1000]
+    48. [ 5yr] [           boolean] st_v_gt_3x_avgv20_15                [-1.5000 — 9.5000]
+    49. [ 5yr] [        algo_lines] algo_lplus1_distance                [-0.4022 — 0.7061]
+    50. [ 6mo] [        htf_weekly] w_ns_c_minl5_atr14                  [2.2380 — 8.3890]
+    51. [ 6mo] [        htf_weekly] w_ns_c_minl7_atr14                  [2.9886 — 8.3532]
+    52. [ 1yr] [        htf_weekly] w_nr_c_maxh2_atr14                  [-3.9269 — 1.4249]
+    53. [ 1yr] [        htf_weekly] w_ns_l_minl5_pct                    [6.6230 — 56.6816]
+    54. [ 5yr] [        htf_weekly] w_nr_c_maxh2_adr14                  [-4.0634 — 1.4560]
+    55. [ 5yr] [        htf_weekly] w_ns_c_minl2_pct                    [9.2840 — 73.6770]
+    56. [ 5yr] [        htf_weekly] w_stoch_9                           [72.0375 — 97.3375]
+    57. [ 5yr] [        htf_weekly] w_pctrank_volume_20                 [21.2500 — 103.7500]
+    58. [ 1yr] [       htf_monthly] m_ns_c_minl2_pct                    [15.2055 — 95.5914]
+    59. [ 1yr] [       htf_monthly] m_ns_l_minl2_pct                    [5.6836 — 61.1133]
+    60. [ 5yr] [       htf_monthly] m_nr_c_maxh2_pct                    [-67.0062 — 172.3812]
+
+  Signal count (from monthly_5yr): 582 raw → 582 deduped, peak 6/day
+
+  Final example validation:
+    45/45 examples pass all conditions
+
+  Saved: C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\pyramid_bf_mp_sig582_pk6_20260425_162827.json
+  [mirror] OK local_runner/cache/pyramid_bf_mp_sig582_pk6_20260425_162827.json (499 KB)
+
+────────────────────────────────────────────────────────────
+  GRIND UPLOAD — signal_grind / bf
+────────────────────────────────────────────────────────────
+  [uploader] Creating cycle bf_signal_grind_20260425_202828...
+  [uploader] Uploading 60 conditions...
+  [uploader] Verifying upload...
+  [uploader] ✓ Verified: 60 conditions in Railway.
+  [uploader] Activating cycle as current...
+  [uploader] ✓ Upload complete: bf_signal_grind_20260425_202828
+  [uploader] ✓ Railway cycle: bf_signal_grind_20260425_202828
+  [uploader] ✓ Local file:    C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\pyramid_bf_mp_sig582_pk6_20260425_162827.json
+
+══════════════════════════════════════════════════════════════════════════════
+  TIMING SUMMARY
+══════════════════════════════════════════════════════════════════════════════
+    load_ohlcv_cache                                     1.25s       (  0.0%)
+    load_examples                                        0.05s       (  0.0%)
+    load_expressions                                     0.78s       (  0.0%)
+    init_expr_cache_and_filter_examples                  4.19s       (  0.0%)
+    compute_tradable_masks                               2.38s       (  0.0%)
+    pass1_daily_d1_matrix_load                           1.65s       (  0.0%)
+    pass1_daily_d1_spiderweb_init                        0.15s       (  0.0%)
+    pass1_daily_d1_spiderweb_run                         0.22s       (  0.0%)
+    pass1_daily_tier_1wk_w_load_cpu_sum                662.62s       (  4.0%)
+    pass1_daily_tier_1wk_w_load_decompress_cpu_sum     628.41s       (  3.8%)
+    pass1_daily_tier_1wk_w_load_cast_cpu_sum             0.01s       (  0.0%)
+    pass1_daily_tier_1wk_w_load_append_cpu_sum           0.77s       (  0.0%)
+    pass1_daily_tier_1wk_w_mask_trad_cpu_sum             0.12s       (  0.0%)
+    pass1_daily_tier_1wk_w_mask_locked_cpu_sum          32.21s       (  0.2%)
+    pass1_daily_tier_1wk_w_cand_extract_cpu_sum          0.91s       (  0.0%)
+    pass1_daily_tier_1wk_w_build_dates_cpu_sum           0.00s       (  0.0%)
+    pass1_daily_tier_1wk_matrix_build                   56.13s       (  0.3%)
+    pass1_daily_tier_1wk_beam_init                       0.02s       (  0.0%)
+    pass1_daily_tier_1wk_beam_run                        0.10s       (  0.0%)
+    pass1_daily_tier_1mo_w_load_cpu_sum                662.34s       (  4.0%)
+    pass1_daily_tier_1mo_w_load_decompress_cpu_sum     628.21s       (  3.8%)
+    pass1_daily_tier_1mo_w_load_cast_cpu_sum             0.01s       (  0.0%)
+    pass1_daily_tier_1mo_w_load_append_cpu_sum           0.78s       (  0.0%)
+    pass1_daily_tier_1mo_w_mask_trad_cpu_sum             0.12s       (  0.0%)
+    pass1_daily_tier_1mo_w_mask_locked_cpu_sum          34.53s       (  0.2%)
+    pass1_daily_tier_1mo_w_cand_extract_cpu_sum          0.73s       (  0.0%)
+    pass1_daily_tier_1mo_w_build_dates_cpu_sum           0.00s       (  0.0%)
+    pass1_daily_tier_1mo_matrix_build                   56.52s       (  0.3%)
+    pass1_daily_tier_1mo_beam_init                       0.02s       (  0.0%)
+    pass1_daily_tier_1mo_beam_run                        0.09s       (  0.0%)
+    pass1_daily_tier_6mo_w_load_cpu_sum                657.19s       (  3.9%)
+    pass1_daily_tier_6mo_w_load_decompress_cpu_sum     623.22s       (  3.7%)
+    pass1_daily_tier_6mo_w_load_cast_cpu_sum             0.01s       (  0.0%)
+    pass1_daily_tier_6mo_w_load_append_cpu_sum           0.77s       (  0.0%)
+    pass1_daily_tier_6mo_w_mask_trad_cpu_sum             0.11s       (  0.0%)
+    pass1_daily_tier_6mo_w_mask_locked_cpu_sum          36.92s       (  0.2%)
+    pass1_daily_tier_6mo_w_cand_extract_cpu_sum          5.68s       (  0.0%)
+    pass1_daily_tier_6mo_w_build_dates_cpu_sum           0.01s       (  0.0%)
+    pass1_daily_tier_6mo_matrix_build                   56.43s       (  0.3%)
+    pass1_daily_tier_6mo_beam_init                       0.06s       (  0.0%)
+    pass1_daily_tier_6mo_beam_run                        0.28s       (  0.0%)
+    pass1_daily_tier_1yr_w_load_cpu_sum                663.52s       (  4.0%)
+    pass1_daily_tier_1yr_w_load_decompress_cpu_sum     629.55s       (  3.8%)
+    pass1_daily_tier_1yr_w_load_cast_cpu_sum             0.01s       (  0.0%)
+    pass1_daily_tier_1yr_w_load_append_cpu_sum           0.78s       (  0.0%)
+    pass1_daily_tier_1yr_w_mask_trad_cpu_sum             0.11s       (  0.0%)
+    pass1_daily_tier_1yr_w_mask_locked_cpu_sum          40.20s       (  0.2%)
+    pass1_daily_tier_1yr_w_cand_extract_cpu_sum          4.95s       (  0.0%)
+    pass1_daily_tier_1yr_w_build_dates_cpu_sum           0.01s       (  0.0%)
+    pass1_daily_tier_1yr_matrix_build                   57.02s       (  0.3%)
+    pass1_daily_tier_1yr_beam_init                       0.04s       (  0.0%)
+    pass1_daily_tier_1yr_beam_run                        0.16s       (  0.0%)
+    pass1_daily_tier_5yr_w_load_cpu_sum                655.81s       (  3.9%)
+    pass1_daily_tier_5yr_w_load_decompress_cpu_sum     622.35s       (  3.7%)
+    pass1_daily_tier_5yr_w_load_cast_cpu_sum             0.01s       (  0.0%)
+    pass1_daily_tier_5yr_w_load_append_cpu_sum           0.77s       (  0.0%)
+    pass1_daily_tier_5yr_w_mask_trad_cpu_sum             0.11s       (  0.0%)
+    pass1_daily_tier_5yr_w_mask_locked_cpu_sum          41.00s       (  0.2%)
+    pass1_daily_tier_5yr_w_cand_extract_cpu_sum         18.88s       (  0.1%)
+    pass1_daily_tier_5yr_w_build_dates_cpu_sum           0.03s       (  0.0%)
+    pass1_daily_tier_5yr_matrix_build                   57.69s       (  0.3%)
+    pass1_daily_tier_5yr_beam_init                       0.51s       (  0.0%)
+    pass1_daily_tier_5yr_beam_run                        0.70s       (  0.0%)
+    pass2_weekly_tier_1mo_w_load_cpu_sum               662.60s       (  4.0%)
+    pass2_weekly_tier_1mo_w_load_decompress_cpu_sum    628.69s       (  3.8%)
+    pass2_weekly_tier_1mo_w_load_cast_cpu_sum            0.01s       (  0.0%)
+    pass2_weekly_tier_1mo_w_load_append_cpu_sum          0.77s       (  0.0%)
+    pass2_weekly_tier_1mo_w_mask_trad_cpu_sum            0.11s       (  0.0%)
+    pass2_weekly_tier_1mo_w_mask_locked_cpu_sum         45.59s       (  0.3%)
+    pass2_weekly_tier_1mo_w_cand_extract_cpu_sum         0.02s       (  0.0%)
+    pass2_weekly_tier_1mo_w_build_dates_cpu_sum          0.00s       (  0.0%)
+    pass2_weekly_tier_1mo_matrix_build                  57.18s       (  0.3%)
+    pass2_weekly_tier_1mo_beam_init                      0.01s       (  0.0%)
+    pass2_weekly_tier_1mo_beam_run                       0.00s       (  0.0%)
+    pass2_weekly_tier_6mo_w_load_cpu_sum               661.41s       (  4.0%)
+    pass2_weekly_tier_6mo_w_load_decompress_cpu_sum    627.41s       (  3.7%)
+    pass2_weekly_tier_6mo_w_load_cast_cpu_sum            0.01s       (  0.0%)
+    pass2_weekly_tier_6mo_w_load_append_cpu_sum          0.79s       (  0.0%)
+    pass2_weekly_tier_6mo_w_mask_trad_cpu_sum            0.11s       (  0.0%)
+    pass2_weekly_tier_6mo_w_mask_locked_cpu_sum         45.20s       (  0.3%)
+    pass2_weekly_tier_6mo_w_cand_extract_cpu_sum         0.94s       (  0.0%)
+    pass2_weekly_tier_6mo_w_build_dates_cpu_sum          0.00s       (  0.0%)
+    pass2_weekly_tier_6mo_matrix_build                  57.17s       (  0.3%)
+    pass2_weekly_tier_6mo_beam_init                      0.02s       (  0.0%)
+    pass2_weekly_tier_6mo_beam_run                       0.02s       (  0.0%)
+    pass2_weekly_tier_1yr_w_load_cpu_sum               663.47s       (  4.0%)
+    pass2_weekly_tier_1yr_w_load_decompress_cpu_sum    629.47s       (  3.8%)
+    pass2_weekly_tier_1yr_w_load_cast_cpu_sum            0.01s       (  0.0%)
+    pass2_weekly_tier_1yr_w_load_append_cpu_sum          0.77s       (  0.0%)
+    pass2_weekly_tier_1yr_w_mask_trad_cpu_sum            0.11s       (  0.0%)
+    pass2_weekly_tier_1yr_w_mask_locked_cpu_sum         46.05s       (  0.3%)
+    pass2_weekly_tier_1yr_w_cand_extract_cpu_sum         0.84s       (  0.0%)
+    pass2_weekly_tier_1yr_w_build_dates_cpu_sum          0.00s       (  0.0%)
+    pass2_weekly_tier_1yr_matrix_build                  57.36s       (  0.3%)
+    pass2_weekly_tier_1yr_beam_init                      0.01s       (  0.0%)
+    pass2_weekly_tier_1yr_beam_run                       0.01s       (  0.0%)
+    pass2_weekly_tier_5yr_w_load_cpu_sum               661.62s       (  4.0%)
+    pass2_weekly_tier_5yr_w_load_decompress_cpu_sum    627.68s       (  3.8%)
+    pass2_weekly_tier_5yr_w_load_cast_cpu_sum            0.01s       (  0.0%)
+    pass2_weekly_tier_5yr_w_load_append_cpu_sum          0.78s       (  0.0%)
+    pass2_weekly_tier_5yr_w_mask_trad_cpu_sum            0.11s       (  0.0%)
+    pass2_weekly_tier_5yr_w_mask_locked_cpu_sum         46.68s       (  0.3%)
+    pass2_weekly_tier_5yr_w_cand_extract_cpu_sum         4.12s       (  0.0%)
+    pass2_weekly_tier_5yr_w_build_dates_cpu_sum          0.01s       (  0.0%)
+    pass2_weekly_tier_5yr_matrix_build                  57.21s       (  0.3%)
+    pass2_weekly_tier_5yr_beam_init                      0.02s       (  0.0%)
+    pass2_weekly_tier_5yr_beam_run                       0.05s       (  0.0%)
+    pass3_monthly_tier_6mo_w_load_cpu_sum              664.45s       (  4.0%)
+    pass3_monthly_tier_6mo_w_load_decompress_cpu_sum   630.38s       (  3.8%)
+    pass3_monthly_tier_6mo_w_load_cast_cpu_sum           0.01s       (  0.0%)
+    pass3_monthly_tier_6mo_w_load_append_cpu_sum         0.78s       (  0.0%)
+    pass3_monthly_tier_6mo_w_mask_trad_cpu_sum           0.11s       (  0.0%)
+    pass3_monthly_tier_6mo_w_mask_locked_cpu_sum        48.04s       (  0.3%)
+    pass3_monthly_tier_6mo_w_cand_extract_cpu_sum        0.16s       (  0.0%)
+    pass3_monthly_tier_6mo_w_build_dates_cpu_sum         0.00s       (  0.0%)
+    pass3_monthly_tier_6mo_matrix_build                 57.38s       (  0.3%)
+    pass3_monthly_tier_6mo_beam_init                     0.01s       (  0.0%)
+    pass3_monthly_tier_6mo_beam_run                      0.00s       (  0.0%)
+    pass3_monthly_tier_1yr_w_load_cpu_sum              658.24s       (  3.9%)
+    pass3_monthly_tier_1yr_w_load_decompress_cpu_sum   623.96s       (  3.7%)
+    pass3_monthly_tier_1yr_w_load_cast_cpu_sum           0.01s       (  0.0%)
+    pass3_monthly_tier_1yr_w_load_append_cpu_sum         0.77s       (  0.0%)
+    pass3_monthly_tier_1yr_w_mask_trad_cpu_sum           0.11s       (  0.0%)
+    pass3_monthly_tier_1yr_w_mask_locked_cpu_sum        48.28s       (  0.3%)
+    pass3_monthly_tier_1yr_w_cand_extract_cpu_sum        0.34s       (  0.0%)
+    pass3_monthly_tier_1yr_w_build_dates_cpu_sum         0.00s       (  0.0%)
+    pass3_monthly_tier_1yr_matrix_build                 56.67s       (  0.3%)
+    pass3_monthly_tier_1yr_beam_init                     0.01s       (  0.0%)
+    pass3_monthly_tier_1yr_beam_run                      0.01s       (  0.0%)
+    pass3_monthly_tier_5yr_w_load_cpu_sum              663.97s       (  4.0%)
+    pass3_monthly_tier_5yr_w_load_decompress_cpu_sum   630.04s       (  3.8%)
+    pass3_monthly_tier_5yr_w_load_cast_cpu_sum           0.01s       (  0.0%)
+    pass3_monthly_tier_5yr_w_load_append_cpu_sum         0.81s       (  0.0%)
+    pass3_monthly_tier_5yr_w_mask_trad_cpu_sum           0.11s       (  0.0%)
+    pass3_monthly_tier_5yr_w_mask_locked_cpu_sum        48.52s       (  0.3%)
+    pass3_monthly_tier_5yr_w_cand_extract_cpu_sum        1.38s       (  0.0%)
+    pass3_monthly_tier_5yr_w_build_dates_cpu_sum         0.01s       (  0.0%)
+    pass3_monthly_tier_5yr_matrix_build                 57.56s       (  0.3%)
+    pass3_monthly_tier_5yr_beam_init                     0.01s       (  0.0%)
+    pass3_monthly_tier_5yr_beam_run                      0.01s       (  0.0%)
+    final_validate                                       4.04s       (  0.0%)
+    save_output                                          0.03s       (  0.0%)
+    railway_upload                                       3.67s       (  0.0%)
+    -------------------------------------------------------------------------
+    TOTAL (sum of phases)                            16734.61s
+
+  Resource stats (1Hz psutil sampling, tagged by innermost phase):
+    phase                                   n      cpu avg/peak   disk avg MB/s   mem peak GB
+    load_ohlcv_cache                        1    18.2%/  18.2%         771.5          20.3
+    load_expressions                        1     9.6%/   9.6%         191.8          20.5
+    init_expr_cache_and_filter_examples     4    10.2%/  12.1%          52.1          20.8
+    compute_tradable_masks                  2    11.3%/  11.7%           0.0          20.7
+    pass1_daily_d1_matrix_load              1     9.3%/   9.3%        1390.5          22.2
+    pass1_daily_tier_1wk_matrix_build      56    85.3%/ 100.0%         798.0          23.9
+    pass1_daily_tier_1mo_matrix_build      56    85.6%/ 100.0%         797.0          23.8
+    pass1_daily_tier_6mo_matrix_build      56    85.8%/ 100.0%         796.0          23.7
+    pass1_daily_tier_1yr_matrix_build      56    86.3%/ 100.0%         796.7          23.7
+    pass1_daily_tier_5yr_matrix_build      57    86.0%/  99.9%         782.5          23.8
+    pass1_daily_tier_5yr_beam_run           1    11.5%/  11.5%           0.0          21.1
+    pass2_weekly_tier_1mo_matrix_build     57    85.4%/ 100.0%         784.0          23.9
+    pass2_weekly_tier_6mo_matrix_build     56    87.1%/ 100.0%         798.8          23.7
+    pass2_weekly_tier_6mo_beam_init         1    27.2%/  27.2%          96.2          21.0
+    pass2_weekly_tier_1yr_matrix_build     56    86.9%/ 100.0%         797.0          23.8
+    pass2_weekly_tier_5yr_matrix_build     57    85.6%/ 100.0%         784.2          24.4
+    pass3_monthly_tier_6mo_matrix_build    56    87.1%/ 100.0%         798.2          23.8
+    pass3_monthly_tier_1yr_matrix_build    56    86.3%/  99.9%         796.5          23.9
+    pass3_monthly_tier_5yr_matrix_build    57    85.6%/ 100.0%         781.8          24.1
+    final_validate                          4     8.1%/   8.6%           3.2          21.4
+    railway_upload                          4     4.6%/   7.1%           1.3          21.2
+    idle                                   51    13.0%/  30.7%          51.9          22.5
+══════════════════════════════════════════════════════════════════════════════
+EXIT=0

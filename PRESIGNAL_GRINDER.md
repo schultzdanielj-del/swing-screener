@@ -190,7 +190,43 @@ Full §3.5 data (walk-up curves, LOO first-drop examples per setup, tightness di
 
 ---
 
-## 4. Current direction — no-σ bounding-box filter with tradable gate (2026-04-21)
+### 3.6 Carve-greedy weekly chain (2026-04-27)
+
+**Architecture.** Chain of binary OHLCV/MA-derived events fired across the W_N=44 weekly lookback. Each chain element advances state when its event fires at a bar strictly later than the previous step's bar. Universal-event filter retains events firing in 100% of BF examples in their lookback. Chain build = carve-greedy: at each step, score candidates by conditional universe-rejection on a random sample; add the lowest-pass under 100% example pass; stop when no candidate keeps all examples advancing.
+
+**Failure mode — structural anchor-pinning.** The chain capped at length 4 on BF. The first three steps were all "new k-week high" events (20w, 10w, 5w) — the right structural picks. But because BF setups make their fresh high AT THE ANCHOR (entry bar), several examples had their last chain step land on the anchor itself, leaving zero room for a 5th step. With strict 100% example pass + monotone advance + breakouts at the anchor, no candidate event can extend the chain regardless of pool depth.
+
+**Triangulation.** Pyramid-signal pass-rate on the chain was very high; random universe pass-rate was also high; both groups had chain endings spread across the lookback rather than clustered at the anchor. The chain doesn't anchor-pin: it admits any chart that's had a new-high cascade somewhere in the past 44 weeks, regardless of when. This is the symmetric reason it can't extend AND can't standalone-deploy.
+
+**Survives.** Chain forward-stable on its own (low walk-forward FR in the late-prior regime). Carve-greedy build mechanism is reusable. Universal-event filter logic reusable. Structurally-needed companion is a complementary anchor-pinned filter — see §6.
+
+**Takeaway.** Event-chain primitive with strict 100% pass + monotone-advance is fundamentally incompatible with breakout setups whose terminal events fire at the anchor. The chain captures real BF cascade structure but can't compound carve alone; pair with a per-offset anchored filter (§6).
+
+### 3.7 Expression-trajectory sign-coherence (2026-04-27)
+
+**Architecture.** Sign-only extension of §4 cells to the full ~16k-expression cache. For each (expression, daily offset k), cell asks: sign of `expr[E-1-k]` minus `expr[E-1]`. Threshold = zero (structural). Cells kept iff 100% of examples agree on the sign.
+
+**Failure mode — high-dim overfit despite 100% agreement gate.** Pool of ~778k candidate cells against 45 examples. Many cells survive 100% example agreement by chance, not by structural signal. Walk-forward FR in the late-prior regime is far above target — cells passing 45 examples don't extend to held-out examples. Per-cell admission rate against null is very high (cells are statistically real), but "above null" is not the same as "generalizes forward" when example budget is small relative to candidate pool.
+
+**Random-subsample consensus does not fix this.** Drawing N independent random 80% subsets of examples and intersecting kept-cells reduces tautologically to the same set: a cell where 100% of all 45 agree also has 100% agreement in any subset of those 45; a cell where one example disagrees fails enough random subsets to drop out of the intersection. Either way, random-consensus equals the full-set 100%-agreement set.
+
+**Takeaway.** Sign-coherence on a high-dimensional cell pool overfits regardless of ensemble approach when 100%-agreement is the selection rule. To use the expression cache for a forward-stable filter, dimensionality must be reduced first (structural pre-selection of expressions) or a different selection rule must be used.
+
+### 3.8 Pyramid walk-forward — disqualified as operational closer (2026-04-27)
+
+**Test.** Single chronological 30/15 split. Train pyramid grinder on first 30 BF examples (entry dates 2020-05 through 2025-08), test whether the 15 held-out examples (2025-08 through 2025-12) appear in pyramid's wild-signal output. Same params as the existing pyramid_bf_mp_sig582 run. Output redirected to a worktree directory to skip Railway mirror.
+
+**Result.** Zero of 15 held-outs appear in pyramid signals. Forward false-rejection = 100%. Pyramid does not generalize across an ~8-month gap in training data.
+
+**Implication.** Pyramid intersection numbers in the spec (e.g., §4.6's BF = 87 over 5.5y) reflect pyramid's agreement with training-set examples, not forward-validation. Treating pyramid as an operational closer is unsafe — its conditions are too narrow. The existing universe-subsample consensus pipeline addresses one kind of overfit (universe-condition fit) but not example-level overfit. **Pyramid example-subsample consensus is the open hypothesis** — see §7.
+
+---
+
+## 4. Bbox direction (2026-04-21, superseded for forward deployment 2026-04-27)
+
+> **Note (2026-04-27):** §4 walk-forward FR is 73–90% across setups (per §6.1 of the prior session's spec, now folded into §3.6 history above). The §4 bbox does not generalize forward; it relies on `[nanmin, nanmax]` numerical bounds derived from individual examples (point memorization). The current deployable filter is the sign-coherence MA cells + carve-greedy chain stack — see new §6 below. §4 retained here for historical context and because some of its components (weekly anchor rule, cluster dedup, tradable filter, partial-week patch) survive into §6.
+
+
 
 Plain strict-AND across every (MA type, scale, bar offset) cell, with each cell's band = `[nanmin_i lr_i, nanmax_i lr_i]` over the example set. No σ. No cell ranking. No LOO. No walk-up driver. Output keyed by signal bar (E−1). Tradable filter applied at the signal bar, examples bypass.
 
@@ -317,7 +353,99 @@ Forward-scan pattern: at day close, compute presignal-positive tickers for tomor
 
 ### 5.6 Next work phases
 
-1. **Handoff to classifier labeler** — primary downstream purpose of the presignal grinder. Tighter pre-classifier pool (presignal ∩ pyramid) should improve W/L/BE separation. Labeler mechanic spec'd in `CLASSIFIER_SPEC.md §15`.
-2. **Pyramid pipeline optimization** — pyramid now only needs to grind on the presignal-reduced subset (not the full 11,842-ticker universe), which drastically speeds up consensus runs.
-3. **Whole-pipeline overfit protection phase** — not presignal-specific; permutation null / stability selection / walk-forward to apply at the consensus layer once the pipeline is end-to-end.
-4. **Forward-scan runner** — post-close script that evaluates presignal for tomorrow-entry AND pyramid-fires-today, intersects, emits tomorrow's watchlist.
+1. **Pyramid example-subsample consensus pipeline** — see §7. Replaces the prior "pyramid pipeline optimization" (now folded in) and the prior "whole-pipeline overfit protection phase" (partially addressed by §6 sign-coherence + chain; the rest is in §7).
+2. **Replicate §6 stack on HTF and BASE** — same setup-agnostic algorithm with per-setup parameters from data. DTSS / 3-4DB are fade-class and out of scope.
+3. **Handoff to classifier labeler** — gated on §7. Tighter pre-classifier pool (§6 stack ∩ §7 consensus pyramid) should improve labeler separation. Labeler mechanic spec'd in `CLASSIFIER_SPEC.md §15`.
+4. **Forward-scan runner** — post-close script that evaluates §6 stack for tomorrow-entry AND consensus pyramid fires today, intersects, emits tomorrow's watchlist. Gated on §7 validation.
+
+---
+
+## 6. Current direction — sign-coherence MA cells + carve-greedy chain stack (2026-04-27)
+
+The deployable presignal filter for BF is the stack of two forward-stable mechanisms. Each is binary, threshold-free (zero is the only threshold), and validated chronologically. Both replace the §4 bbox for forward use; the §4 cells survive in concept (sign-only version embedded into §6.1 below).
+
+### 6.1 Sign-coherence MA cells
+
+For each (MA period × weekly offset × sign-test-type) cell, keep the cell only if 100% of BF examples agree on the sign at that cell. Threshold = zero (structural, not example-derived). Sign tests:
+
+- `close vs MA` — was close above or below MA at offset k weeks before entry.
+- `MA short vs MA long` — was short MA above long MA at offset k.
+- `MA slope (1-week)` — was MA[t] above MA[t-1] at offset k.
+- `MA trajectory` — sign of MA[anchor-k] vs MA[anchor]; the §4 cell, sign-only version.
+
+Each surviving cell is binary at a specific weekly offset before entry. Per-offset anchoring gives the filter a natural "this is happening now" property the chain alone lacks.
+
+NaN-lenient: an example or candidate with NaN at a cell auto-passes that cell. All-finite gate on examples (n_finite == n_ex) at filter-build time prevents short-history examples from creating spurious cells. Per-example pre-flight self-pass check before scan.
+
+### 6.2 Carve-greedy chain (4 events on BF)
+
+State-machine chain over universal weekly events, built carve-greedy under 100% example pass. For BF, captures the new-k-week-high cascade structure (20w, 10w, 5w highs into entry) plus a state transition. Chain length is structurally capped by the breakout-at-anchor mechanic (§3.6); carve-greedy build optimization doesn't extend it further. Forward-stable on its own via chronological hold-out.
+
+### 6.3 Stack mechanic
+
+Both filters must pass for a candidate to admit. The two are mostly independent (correlation ratio close to 1 in compound-admission tests), so combined carve compounds. Stack walk-forward FR is approximately the sum of each filter's failures (the two filters fail on different examples), which sits modestly above the ≤10% target — the trade-off for adding the chain's complementary signal on top of the MA-only filter.
+
+### 6.4 What survives from prior architectures
+
+- Weekly anchor rule (§3.3): anchor week truncated at close[E-1]. Reused unchanged.
+- §5.2 cluster dedup logic: applied to stack output before consumer.
+- Per-setup `N_daily` and `W_N` from `research/n_derivation_cache/` and `research/presignal_weekly_stage_a/`. Reused unchanged.
+- §4.3 tradable filter at signal bar E-1: same three criteria, same threshold values, applied to the stack output.
+- §4.5 example eligibility: every labelled example's E forced into the eligibility set regardless of date cutoff or tradable status.
+
+### 6.5 What this filter is NOT
+
+- **Not pyramid-validated.** Earlier "pyramid intersection" numbers reflect agreement with a curve-fit pyramid that itself fails forward (§3.8). Stack deployment relies on the stack alone, not on pyramid intersection as a closer.
+- **Not at the few-per-week operational target.** Standalone admission across the universe is too high to deploy without a downstream forward-validated closer. The natural closer would be a forward-validated pyramid — see §7.
+- **Not setup-portable verbatim.** §6 was derived on BF only. HTF and BASE need their own runs (same algorithm, per-setup parameters from data; setup-agnostic code path per §2.1). DTSS / 3-4DB are fade-class setups and out of scope per `feedback_classifier_breakout_scope` memory.
+
+### 6.6 Implementation files
+
+In `presignal-quality-research` worktree, `research/`:
+- `bf_weekly_universality.py` — universal-event filter (events firing in 100% of BF examples in their W_N=44 weekly lookback).
+- `bf_chain_carve_greedy_weekly.py` — carve-greedy chain build (max marginal universe-rejection per step under 100% example pass).
+- `bf_chain_stop_diagnostic.py` — chain-length-cap diagnostic (per-example end-bar tally, candidate-blocking analysis).
+- `bf_chain_triangulate.py` — pyramid signals through chain + chain-end-bar distribution.
+- `bf_sign_coherence_weekly.py` — sign-coherence cells (close-vs-MA, MA-vs-MA, MA-slope, MA-trajectory) and admission test.
+- `bf_sign_coherence_walkforward.py` — chronological hold-out FR for sign-coherence.
+- `bf_walkforward_chain_stack.py` — chronological hold-out FR for chain, sign-coherence, and stack.
+- `bf_stack_test.py` — chain × sign-coherence stack admission test (examples, samples, pyramid signals).
+- `bf_pyramid_walkforward.py` — pyramid 30/15 chronological hold-out (§3.8).
+- `bf_expr_trajectory_filter.py` / `bf_expr_trajectory_walkforward.py` / `bf_expr_trajectory_random_consensus.py` — failed expression-cache extension (§3.7).
+
+Result JSONs in same dir; counts/dates live there, not in this doc.
+
+### 6.7 Rejected a priori (extending §2.2)
+
+- **Point-value envelopes on cell values** (bbox, σ-envelope, hulls). Walk-forward demonstrated they don't generalize at the example budget available — §3.6 and §6.1 confirm.
+- **Threshold-defined behaviors** in any cell or chain event. Behaviors must be transitions or comparisons against zero, not range membership.
+- **Universe-subsample consensus alone as overfit protection.** The existing pyramid pipeline does this, and pyramid still fails 100% forward (§3.8). Universe-subsample addresses a different overfit mode than what's actually killing forward generalization.
+- **Random example-subsample consensus on sign-coherence cells.** Tautologically equals the full-set 100%-agreement filter (§3.7).
+
+The §6 stack is the current best presignal model. Verified this session via independent re-eval.
+
+---
+
+## 7. Pending build — pyramid example-subsample consensus pipeline
+
+Pyramid's 100% forward-FR (§3.8) disqualifies the existing pyramid pipeline as operational closer. The deployable §6 stack is forward-stable but admits too much for standalone deployment without a closer. The hypothesis to test next is **example-subsample consensus** on pyramid: many runs on different random 80% subsets of examples, conditions intersected across runs. Analogous to the existing universe-subsample consensus pipeline but along the example axis, which is where the overfit lives.
+
+### 7.1 Plan
+
+1. **Pre-filter universe via §6 stack** for speed. Each pyramid run operates on the subset that passes the stack instead of the full universe, cutting per-grind cost substantially.
+2. **Run pyramid N times** (initial N ≈ 10) with different random 80% subsets of the BF example set. Use the existing `override_example_dfs` parameter to `run_pyramid()`. Output redirected to a worktree directory (skips Railway mirror).
+3. **Intersect conditions across the N runs.** Conditions surviving in all (or most) subsets are example-set-robust.
+4. **Validate the intersected conditions via walk-forward chronological hold-out** — same 30/15 split used for the disqualifying test in §3.8, plus more folds if needed.
+
+### 7.2 Success criteria
+
+- Pre-filter must be lossless on examples (§2.1's 100% example pass) — already validated for the §6 stack.
+- Walk-forward held-out coverage substantially above zero (the §3.8 baseline). Target: ≥80% held-out coverage, i.e. ≤20% FR per fold.
+- Operational pool size (chosen-conditions-fired bars, post-dedup): in the range the original spec §4.6 targeted (low hundreds per setup over 5.5y).
+
+### 7.3 What's not yet tested
+
+- Whether pyramid's beam search is sensitive enough to example-subsample variation to actually produce different conditions per run. If pyramid converges to the same conditions regardless of which 80% is used, consensus won't help and a different mechanism is needed.
+- Whether 80% is the right subset fraction. Smaller subsamples produce more diverse conditions per run but fewer survive the intersection. Tune from initial runs.
+- Whether the §6 pre-filter introduces forward bias when stacked with consensus pyramid. Safe guess is no since pre-filter is example-pass-by-construction and pyramid wouldn't see filtered-out bars, but worth verifying with a pre-filter-off control.
+- Whether the pipeline replicates on HTF and BASE with the same algorithm (§2.1's setup-agnostic invariant). Run BF first; if it works, replicate.

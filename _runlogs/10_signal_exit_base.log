@@ -1,0 +1,40 @@
+  SCRIPT_DIR     = C:\Users\Dan\Documents\ScanPerfect\swing-screener\scripts
+  WORKTREE_ROOT  = C:\Users\Dan\Documents\ScanPerfect\swing-screener
+  MAIN_REPO_ROOT = C:\Users\Dan\Documents\ScanPerfect\swing-screener
+  CLASSIFIER_REPO= C:\Users\Dan\Documents\ScanPerfect\swing-screener
+  OUTPUT_DIR     = C:\Users\Dan\Documents\ScanPerfect\swing-screener\data\signal_exit_grind
+  Loading OHLCV cache from C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\universe_ohlcv_daily.pkl
+  OHLCV tickers: 11,859
+  Loading earnings dates from C:\Users\Dan\Documents\ScanPerfect\swing-screener\data\scanperfect.db
+  Earnings tickers: 4,683  rows: 94,334
+
+============================================================
+  SIGNAL EXIT POOL GRINDER — BASE (L14 labeler)
+============================================================
+  Tags base: 522 clusters  (ENTRY=474  REDUNDANT=48  NOENTRY=0  MISSING=0)
+
+  PHASE 1: build cluster meta (ADR14, eff_entry, stop, cap, stop_hit_bar, mfe_during_life)
+  meta built in 0.2s — entered=464  not_entry=48  skipped_missing=10
+
+  PHASE 2: apply L14 labeler (T = min(example mfe_during_life))
+  T = 2.8856 ADR  set by AXTI cluster 47  (horizon=3, stop_hit_bar=3, eff_horizon=3, mfe_during_life=2.886)
+  examples_lock: 38/38  (PASS)
+
+  PHASE 3: summary + write
+  Wild WIN: 180/426 (42.3%)  LOSS: 246
+  Top 5 wild WIN by mfe_during_life:
+      NAIL cid= 327  mfe= 19.76  horizon=120  stop_hit=120
+      ARKF cid=  34  mfe= 19.13  horizon=120  stop_hit=120
+       NTR cid= 343  mfe= 16.99  horizon= 45  stop_hit=45
+    IONQ-WS cid= 232  mfe= 16.39  horizon=120  stop_hit=45
+      TTGT cid= 469  mfe= 15.31  horizon= 24  stop_hit=24
+  Bottom 5 wild LOSS by mfe_during_life:
+       CCJ cid=  85  mfe= -0.57  horizon= 38  stop_hit=0
+       HAE cid= 202  mfe= -0.56  horizon= 13  stop_hit=0
+        WD cid= 503  mfe= -0.51  horizon= 44  stop_hit=0
+      ALSN cid=  15  mfe= -0.48  horizon= 39  stop_hit=0
+       JLL cid= 248  mfe= -0.44  horizon= 33  stop_hit=0
+  Wrote C:\Users\Dan\Documents\ScanPerfect\swing-screener\data\signal_exit_grind\signal_exit_pool_base.json
+
+  TOTAL: 0.2s
+EXIT=0

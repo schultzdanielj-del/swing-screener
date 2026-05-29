@@ -1,0 +1,161 @@
+Universe: 11,859 tickers
+
+=== SCAN HTF
+  N_daily=39  W_N=48  examples kept=28
+  pre-flight EX pass: 28/28
+  [htf] 1000/11,859  passes=11,213  (31.3s)
+  [htf] 2000/11,859  passes=19,658  (59.6s)
+  [htf] 3000/11,859  passes=29,186  (90.7s)
+  [htf] 4000/11,859  passes=36,375  (123.5s)
+  [htf] 5000/11,859  passes=45,003  (154.2s)
+  [htf] 6000/11,859  passes=51,538  (185.2s)
+  [htf] 7000/11,859  passes=60,818  (214.5s)
+  [htf] 8000/11,859  passes=70,164  (245.7s)
+  [htf] 9000/11,859  passes=78,090  (276.6s)
+  [htf] 10000/11,859  passes=86,851  (307.6s)
+  [htf] 11000/11,859  passes=97,405  (340.9s)
+  pre-dedup passes: 102,935  (364.3s)
+  post-dedup clusters: 25,807
+  EX end-to-end: 28/28
+  EX pre-dedup pass: 28/28
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener\research\presignal_sma_band_scan\htf_passes.pkl
+
+=== SCAN BF
+  N_daily=49  W_N=44  examples kept=45
+  pre-flight EX pass: 45/45
+  [bf] 1000/11,859  passes=13,204  (5.1s)
+  [bf] 2000/11,859  passes=22,088  (9.3s)
+  [bf] 3000/11,859  passes=33,373  (14.0s)
+  [bf] 4000/11,859  passes=41,238  (18.2s)
+  [bf] 5000/11,859  passes=50,396  (22.5s)
+  [bf] 6000/11,859  passes=57,432  (26.2s)
+  [bf] 7000/11,859  passes=67,612  (30.6s)
+  [bf] 8000/11,859  passes=78,022  (35.1s)
+  [bf] 9000/11,859  passes=87,014  (39.1s)
+  [bf] 10000/11,859  passes=96,521  (43.2s)
+  [bf] 11000/11,859  passes=108,931  (48.0s)
+  pre-dedup passes: 114,963  (51.1s)
+  post-dedup clusters: 20,801
+  EX end-to-end: 45/45
+  EX pre-dedup pass: 45/45
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener\research\presignal_sma_band_scan\bf_passes.pkl
+
+=== SCAN BASE
+  N_daily=32  W_N=41  examples kept=38
+  pre-flight EX pass: 38/38
+  [base] 1000/11,859  passes=60,602  (3.8s)
+  [base] 2000/11,859  passes=110,720  (7.2s)
+  [base] 3000/11,859  passes=167,130  (10.8s)
+  [base] 4000/11,859  passes=215,897  (14.2s)
+  [base] 5000/11,859  passes=266,267  (17.6s)
+  [base] 6000/11,859  passes=309,427  (20.7s)
+  [base] 7000/11,859  passes=363,517  (24.2s)
+  [base] 8000/11,859  passes=417,590  (27.7s)
+  [base] 9000/11,859  passes=460,427  (30.9s)
+  [base] 10000/11,859  passes=503,912  (34.2s)
+  [base] 11000/11,859  passes=558,336  (37.9s)
+  pre-dedup passes: 592,607  (40.3s)
+  post-dedup clusters: 110,844
+  EX end-to-end: 38/38
+  EX pre-dedup pass: 38/38
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener\research\presignal_sma_band_scan\base_passes.pkl
+
+=== SCAN DTSS
+  N_daily=86  W_N=16  examples kept=62
+  pre-flight EX pass: 62/62
+  [dtss] 1000/11,859  passes=41,882  (7.7s)
+  [dtss] 2000/11,859  passes=74,872  (14.1s)
+  [dtss] 3000/11,859  passes=112,685  (21.2s)
+  [dtss] 4000/11,859  passes=142,363  (27.3s)
+  [dtss] 5000/11,859  passes=175,620  (33.6s)
+  [dtss] 6000/11,859  passes=203,041  (39.4s)
+  [dtss] 7000/11,859  passes=239,450  (46.1s)
+  [dtss] 8000/11,859  passes=274,902  (53.0s)
+  [dtss] 9000/11,859  passes=304,757  (59.2s)
+  [dtss] 10000/11,859  passes=337,002  (65.4s)
+  [dtss] 11000/11,859  passes=377,632  (72.5s)
+  pre-dedup passes: 398,214  (77.2s)
+  post-dedup clusters: 60,546
+  EX end-to-end: 62/62
+  EX pre-dedup pass: 62/62
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener\research\presignal_sma_band_scan\dtss_passes.pkl
+
+=== SCAN 3-4DB
+  N_daily=64  W_N=14  examples kept=26
+  pre-flight EX pass: 26/26
+  [3-4db] 1000/11,859  passes=6,796  (6.0s)
+  [3-4db] 2000/11,859  passes=11,633  (10.9s)
+  [3-4db] 3000/11,859  passes=17,764  (16.5s)
+  [3-4db] 4000/11,859  passes=21,883  (21.3s)
+  [3-4db] 5000/11,859  passes=26,914  (26.3s)
+  [3-4db] 6000/11,859  passes=30,995  (30.8s)
+  [3-4db] 7000/11,859  passes=36,156  (36.1s)
+  [3-4db] 8000/11,859  passes=41,587  (41.5s)
+  [3-4db] 9000/11,859  passes=46,506  (46.3s)
+  [3-4db] 10000/11,859  passes=51,797  (51.2s)
+  [3-4db] 11000/11,859  passes=58,807  (56.8s)
+  pre-dedup passes: 61,830  (60.5s)
+  post-dedup clusters: 15,030
+  EX end-to-end: 26/26
+  EX pre-dedup pass: 26/26
+  saved C:/Users/Dan/Documents/ScanPerfect/swing-screener\research\presignal_sma_band_scan\3-4db_passes.pkl
+
+=== SUMMARY ===
+{
+  "htf": {
+    "N_daily": 39,
+    "W_N": 48,
+    "n_ex": 28,
+    "pre_dedup_passes": 102935,
+    "post_dedup_clusters": 25807,
+    "ex_pre_dedup_pass": 28,
+    "ex_end_to_end": 28,
+    "key_semantic": "signal_bar (E-1)",
+    "scan_seconds": 364.35362458229065
+  },
+  "bf": {
+    "N_daily": 49,
+    "W_N": 44,
+    "n_ex": 45,
+    "pre_dedup_passes": 114963,
+    "post_dedup_clusters": 20801,
+    "ex_pre_dedup_pass": 45,
+    "ex_end_to_end": 45,
+    "key_semantic": "signal_bar (E-1)",
+    "scan_seconds": 51.087043046951294
+  },
+  "base": {
+    "N_daily": 32,
+    "W_N": 41,
+    "n_ex": 38,
+    "pre_dedup_passes": 592607,
+    "post_dedup_clusters": 110844,
+    "ex_pre_dedup_pass": 38,
+    "ex_end_to_end": 38,
+    "key_semantic": "signal_bar (E-1)",
+    "scan_seconds": 40.43707036972046
+  },
+  "dtss": {
+    "N_daily": 86,
+    "W_N": 16,
+    "n_ex": 62,
+    "pre_dedup_passes": 398214,
+    "post_dedup_clusters": 60546,
+    "ex_pre_dedup_pass": 62,
+    "ex_end_to_end": 62,
+    "key_semantic": "signal_bar (E-1)",
+    "scan_seconds": 77.29759001731873
+  },
+  "3-4db": {
+    "N_daily": 64,
+    "W_N": 14,
+    "n_ex": 26,
+    "pre_dedup_passes": 61830,
+    "post_dedup_clusters": 15030,
+    "ex_pre_dedup_pass": 26,
+    "ex_end_to_end": 26,
+    "key_semantic": "signal_bar (E-1)",
+    "scan_seconds": 60.48522210121155
+  }
+}
+EXIT=0

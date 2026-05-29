@@ -1,0 +1,202 @@
+panel: 201,978 samples, 9,102 unique tickers
+manifest: 16,216 expressions, chunk=2000, workers=4
+tickers in panel: 9,102
+
+running 9 chunks of 2000 features each
+
+[chunk 1/9] cols 0:2000 (2000 features)
+  matrix allocated: 808 MB
+    [2000/9102] 37s elapsed
+    [4000/9102] 70s elapsed
+    [6000/9102] 100s elapsed
+    [8000/9102] 125s elapsed
+  fill done: 134s · errors: 0
+  screen done: 31s · broad survivors: 1343, matched: 1316
+  cumulative: broad=1343, matched=1316
+
+[chunk 2/9] cols 2000:4000 (2000 features)
+  matrix allocated: 808 MB
+    [2000/9102] 36s elapsed
+    [4000/9102] 67s elapsed
+    [6000/9102] 95s elapsed
+    [8000/9102] 117s elapsed
+  fill done: 126s · errors: 0
+  screen done: 19s · broad survivors: 89, matched: 82
+  cumulative: broad=1432, matched=1398
+
+[chunk 3/9] cols 4000:6000 (2000 features)
+  matrix allocated: 808 MB
+    [2000/9102] 36s elapsed
+    [4000/9102] 67s elapsed
+    [6000/9102] 95s elapsed
+    [8000/9102] 116s elapsed
+  fill done: 125s · errors: 0
+  screen done: 26s · broad survivors: 601, matched: 579
+  cumulative: broad=2033, matched=1977
+
+[chunk 4/9] cols 6000:8000 (2000 features)
+  matrix allocated: 808 MB
+    [2000/9102] 35s elapsed
+    [4000/9102] 66s elapsed
+    [6000/9102] 94s elapsed
+    [8000/9102] 116s elapsed
+  fill done: 125s · errors: 0
+  screen done: 24s · broad survivors: 411, matched: 405
+  cumulative: broad=2444, matched=2382
+
+[chunk 5/9] cols 8000:10000 (2000 features)
+  matrix allocated: 808 MB
+    [2000/9102] 36s elapsed
+    [4000/9102] 66s elapsed
+    [6000/9102] 95s elapsed
+    [8000/9102] 116s elapsed
+  fill done: 125s · errors: 0
+  screen done: 20s · broad survivors: 57, matched: 49
+  cumulative: broad=2501, matched=2431
+
+[chunk 6/9] cols 10000:12000 (2000 features)
+  matrix allocated: 808 MB
+    [2000/9102] 36s elapsed
+    [4000/9102] 67s elapsed
+    [6000/9102] 95s elapsed
+    [8000/9102] 116s elapsed
+  fill done: 125s · errors: 0
+  screen done: 15s · broad survivors: 69, matched: 69
+  cumulative: broad=2570, matched=2500
+
+[chunk 7/9] cols 12000:14000 (2000 features)
+  matrix allocated: 808 MB
+    [2000/9102] 36s elapsed
+    [4000/9102] 67s elapsed
+    [6000/9102] 94s elapsed
+    [8000/9102] 116s elapsed
+  fill done: 125s · errors: 0
+  screen done: 16s · broad survivors: 31, matched: 25
+  cumulative: broad=2601, matched=2525
+
+[chunk 8/9] cols 14000:16000 (2000 features)
+  matrix allocated: 808 MB
+    [2000/9102] 36s elapsed
+    [4000/9102] 66s elapsed
+    [6000/9102] 94s elapsed
+    [8000/9102] 116s elapsed
+  fill done: 125s · errors: 0
+  screen done: 11s · broad survivors: 23, matched: 23
+  cumulative: broad=2624, matched=2548
+
+[chunk 9/9] cols 16000:16216 (216 features)
+  matrix allocated: 87 MB
+    [2000/9102] 36s elapsed
+    [4000/9102] 67s elapsed
+    [6000/9102] 95s elapsed
+    [8000/9102] 116s elapsed
+  fill done: 125s · errors: 0
+  screen done: 3s · broad survivors: 132, matched: 125
+  cumulative: broad=2756, matched=2673
+
+
+=== TOP 50 EXPRESSION FEATURES vs BROAD ===
+  pctrank_close_50                         sp=18.19pp  D1=18.35%  D10= 0.15%  descending 
+  ext_xavgc9_pct                           sp=15.17pp  D1=15.58%  D10= 0.41%  descending 
+  ext_xavgc8_pct                           sp=15.14pp  D1=15.55%  D10= 0.41%  descending 
+  ext_xavgc5_pct                           sp=15.09pp  D1=15.41%  D10= 0.33%  descending 
+  ext_xavgc10_pct                          sp=15.08pp  D1=15.52%  D10= 0.44%  descending 
+  ext_xavgc12_pct                          sp=14.92pp  D1=15.37%  D10= 0.45%  descending 
+  ext_xavgc13_pct                          sp=14.86pp  D1=15.30%  D10= 0.44%  descending 
+  ext_avgc8_pct                            sp=14.77pp  D1=15.13%  D10= 0.37%  descending 
+  ext_avgc10_pct                           sp=14.70pp  D1=15.14%  D10= 0.44%  descending 
+  ext_avgc5_pct                            sp=14.57pp  D1=14.87%  D10= 0.31%  descending 
+  ext_avgc13_pct                           sp=14.57pp  D1=15.07%  D10= 0.50%  descending 
+  ext_xavgc20_pct                          sp=14.36pp  D1=14.84%  D10= 0.48%  descending 
+  ext_xavgc21_pct                          sp=14.27pp  D1=14.76%  D10= 0.49%  descending 
+  ext_avgc20_pct                           sp=14.10pp  D1=14.64%  D10= 0.54%  descending 
+  ext_avgc21_pct                           sp=13.96pp  D1=14.52%  D10= 0.56%  descending 
+  pctrank_close_65                         sp=13.80pp  D1=13.94%  D10= 0.14%  descending 
+  roc_4                                    sp=13.77pp  D1=14.20%  D10= 0.43%  descending 
+  ext_xavgc30_pct                          sp=13.71pp  D1=14.30%  D10= 0.59%  descending 
+  pullback_7_pct                           sp=13.63pp  D1= 0.02%  D10=13.65%  ascending  
+  roc_6                                    sp=13.61pp  D1=14.12%  D10= 0.51%  descending 
+  nr_ratio_maxh5                           sp=13.59pp  D1=13.70%  D10= 0.10%  descending 
+  pullback_5_pct                           sp=13.59pp  D1= 0.02%  D10=13.61%  ascending  
+  nr_ratio_maxh3                           sp=13.56pp  D1=13.73%  D10= 0.16%  descending 
+  nr_c_maxh5_pct                           sp=13.54pp  D1= 0.11%  D10=13.65%  ascending  
+  nr_c_maxh3_pct                           sp=13.52pp  D1= 0.17%  D10=13.69%  ascending  
+  ns_c_minl45_adr14                        sp=13.50pp  D1=13.61%  D10= 0.11%  descending 
+  roc_5                                    sp=13.47pp  D1=13.88%  D10= 0.42%  descending 
+  ns_c_minl45_atr14                        sp=13.45pp  D1=13.57%  D10= 0.12%  descending 
+  ext_avgc30_pct                           sp=13.38pp  D1=13.99%  D10= 0.62%  descending 
+  roc_7                                    sp=13.38pp  D1=13.96%  D10= 0.58%  descending 
+  ns_c_minl50_adr14                        sp=13.35pp  D1=13.47%  D10= 0.12%  descending 
+  ns_c_minl50_atr14                        sp=13.33pp  D1=13.47%  D10= 0.14%  descending 
+  nr_c_maxh7_pct                           sp=13.32pp  D1= 0.11%  D10=13.43%  ascending  
+  nr_ratio_maxh7                           sp=13.32pp  D1=13.43%  D10= 0.11%  descending 
+  roc_3                                    sp=13.30pp  D1=13.69%  D10= 0.40%  descending 
+  pullback_10_pct                          sp=13.30pp  D1= 0.02%  D10=13.32%  ascending  
+  ns_c_minl40_atr14                        sp=13.25pp  D1=13.42%  D10= 0.16%  descending 
+  ns_c_minl40_adr14                        sp=13.24pp  D1=13.39%  D10= 0.14%  descending 
+  nr_ratio_maxh10                          sp=13.18pp  D1=13.28%  D10= 0.09%  descending 
+  ns_c_minl35_atr14                        sp=13.17pp  D1=13.35%  D10= 0.17%  descending 
+  nr_c_maxh10_pct                          sp=13.16pp  D1= 0.10%  D10=13.26%  ascending  
+  ns_c_minl35_adr14                        sp=13.16pp  D1=13.32%  D10= 0.16%  descending 
+  pullback_3_pct                           sp=13.10pp  D1= 0.03%  D10=13.13%  ascending  
+  roc_9                                    sp=13.06pp  D1=13.68%  D10= 0.62%  descending 
+  ns_c_minl30_adr14                        sp=13.05pp  D1=13.21%  D10= 0.16%  descending 
+  roc_8                                    sp=13.05pp  D1=13.68%  D10= 0.63%  descending 
+  nr_ratio_maxh2                           sp=13.01pp  D1=13.20%  D10= 0.19%  descending 
+  ns_c_minl30_atr14                        sp=12.97pp  D1=13.20%  D10= 0.22%  descending 
+  nr_c_maxh2_pct                           sp=12.94pp  D1= 0.19%  D10=13.13%  ascending  
+  ext_xavgc50_pct                          sp=12.85pp  D1=13.55%  D10= 0.70%  descending 
+
+=== TOP 50 EXPRESSION FEATURES vs MATCHED ===
+  st_es_ext50_rsi7_gt_70_50                sp=14.04pp  D1=16.65%  D10= 2.60%  descending 
+  pctrank_close_65                         sp=13.98pp  D1=14.17%  D10= 0.19%  descending 
+  ext_xavgc9_pct                           sp=13.57pp  D1=14.01%  D10= 0.44%  descending 
+  ext_xavgc10_pct                          sp=13.52pp  D1=13.97%  D10= 0.45%  descending 
+  ext_xavgc8_pct                           sp=13.48pp  D1=13.91%  D10= 0.43%  descending 
+  ext_xavgc5_pct                           sp=13.41pp  D1=13.78%  D10= 0.36%  descending 
+  ext_xavgc12_pct                          sp=13.37pp  D1=13.83%  D10= 0.46%  descending 
+  ext_xavgc13_pct                          sp=13.37pp  D1=13.83%  D10= 0.46%  descending 
+  ext_avgc10_pct                           sp=13.14pp  D1=13.60%  D10= 0.46%  descending 
+  ext_avgc13_pct                           sp=13.07pp  D1=13.57%  D10= 0.50%  descending 
+  ext_avgc8_pct                            sp=13.04pp  D1=13.48%  D10= 0.44%  descending 
+  ext_xavgc20_pct                          sp=12.90pp  D1=13.39%  D10= 0.50%  descending 
+  ext_avgc5_pct                            sp=12.87pp  D1=13.19%  D10= 0.32%  descending 
+  ext_xavgc21_pct                          sp=12.82pp  D1=13.32%  D10= 0.51%  descending 
+  ext_avgc20_pct                           sp=12.62pp  D1=13.19%  D10= 0.56%  descending 
+  ext_avgc21_pct                           sp=12.49pp  D1=13.09%  D10= 0.60%  descending 
+  ext_xavgc30_pct                          sp=12.34pp  D1=12.97%  D10= 0.63%  descending 
+  roc_4                                    sp=12.29pp  D1=12.76%  D10= 0.46%  descending 
+  pullback_7_pct                           sp=12.28pp  D1= 0.02%  D10=12.30%  ascending  
+  nr_ratio_maxh5                           sp=12.24pp  D1=12.36%  D10= 0.12%  descending 
+  roc_6                                    sp=12.23pp  D1=12.76%  D10= 0.53%  descending 
+  pullback_5_pct                           sp=12.20pp  D1= 0.03%  D10=12.23%  ascending  
+  nr_c_maxh5_pct                           sp=12.18pp  D1= 0.12%  D10=12.30%  ascending  
+  pullback_10_pct                          sp=12.11pp  D1= 0.02%  D10=12.13%  ascending  
+  nr_ratio_maxh3                           sp=12.05pp  D1=12.21%  D10= 0.16%  descending 
+  nr_ratio_maxh7                           sp=12.04pp  D1=12.14%  D10= 0.10%  descending 
+  ext_avgc30_pct                           sp=12.04pp  D1=12.67%  D10= 0.64%  descending 
+  nr_c_maxh7_pct                           sp=12.03pp  D1= 0.11%  D10=12.14%  ascending  
+  roc_7                                    sp=12.03pp  D1=12.64%  D10= 0.61%  descending 
+  nr_ratio_maxh10                          sp=12.00pp  D1=12.10%  D10= 0.10%  descending 
+  nr_c_maxh3_pct                           sp=11.99pp  D1= 0.17%  D10=12.16%  ascending  
+  nr_c_maxh10_pct                          sp=11.97pp  D1= 0.10%  D10=12.07%  ascending  
+  pullback_3_pct                           sp=11.87pp  D1= 0.03%  D10=11.90%  ascending  
+  roc_5                                    sp=11.85pp  D1=12.33%  D10= 0.48%  descending 
+  roc_8                                    sp=11.84pp  D1=12.49%  D10= 0.65%  descending 
+  pctrank_close_120                        sp=11.84pp  D1=12.04%  D10= 0.20%  descending 
+  roc_3                                    sp=11.80pp  D1=12.23%  D10= 0.42%  descending 
+  nr_ratio_maxh2                           sp=11.75pp  D1=11.94%  D10= 0.18%  descending 
+  nr_c_maxh2_pct                           sp=11.71pp  D1= 0.19%  D10=11.90%  ascending  
+  pullback_15_pct                          sp=11.70pp  D1= 0.02%  D10=11.72%  ascending  
+  roc_10                                   sp=11.60pp  D1=12.30%  D10= 0.70%  descending 
+  roc_9                                    sp=11.58pp  D1=12.24%  D10= 0.66%  descending 
+  ns_c_minl45_adr14                        sp=11.56pp  D1=11.68%  D10= 0.12%  descending 
+  ns_c_minl50_atr14                        sp=11.55pp  D1=11.69%  D10= 0.14%  descending 
+  ns_c_minl50_adr14                        sp=11.55pp  D1=11.71%  D10= 0.15%  descending 
+  roc_11                                   sp=11.52pp  D1=12.23%  D10= 0.71%  descending 
+  ext_xavgc50_pct                          sp=11.48pp  D1=12.29%  D10= 0.82%  descending 
+  ns_c_minl45_atr14                        sp=11.46pp  D1=11.59%  D10= 0.13%  descending 
+  nr_ratio_maxh15                          sp=11.41pp  D1=11.51%  D10= 0.11%  descending 
+  nr_c_maxh15_pct                          sp=11.40pp  D1= 0.10%  D10=11.50%  ascending  
+
+wall total: 1300.0s

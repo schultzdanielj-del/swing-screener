@@ -1,0 +1,301 @@
+{
+  "setup": "BASE",
+  "klass": "breakout",
+  "n_bars": 261,
+  "bank_ticker": "ASTS",
+  "bank_asof": "2025-06-02",
+  "bank_phase_types": [
+    "uptrend",
+    "range"
+  ],
+  "bank_phase_boundary_bars": [
+    65
+  ],
+  "bank_signature": [
+    0.24904214559386972,
+    2.2594859005121934,
+    2.2594859005121934,
+    0.0,
+    0.48892112313382535,
+    0.9846153846153847,
+    0.7509578544061303,
+    1.7905180041399902,
+    2.201900696433166,
+    1.480927569218343,
+    0.03886973780321228,
+    0.00510204081632653
+  ],
+  "adr_anchor": 1.5543000000000005,
+  "top": [
+    {
+      "rank": 1,
+      "ticker": "BBBY",
+      "asof": "2021-05-13",
+      "dist": 0.02738554301835236,
+      "fit_boundaries": [
+        80
+      ]
+    },
+    {
+      "rank": 2,
+      "ticker": "HIVE",
+      "asof": "2021-12-03",
+      "dist": 0.051722791827648745,
+      "fit_boundaries": [
+        61
+      ]
+    },
+    {
+      "rank": 3,
+      "ticker": "ALTO",
+      "asof": "2021-08-05",
+      "dist": 0.052237669721352756,
+      "fit_boundaries": [
+        63
+      ]
+    },
+    {
+      "rank": 4,
+      "ticker": "ONDS",
+      "asof": "2021-12-07",
+      "dist": 0.06985056158323318,
+      "fit_boundaries": [
+        63
+      ]
+    },
+    {
+      "rank": 5,
+      "ticker": "KOPN",
+      "asof": "2021-11-09",
+      "dist": 0.07705956834157861,
+      "fit_boundaries": [
+        76
+      ]
+    },
+    {
+      "rank": 6,
+      "ticker": "MGNI",
+      "asof": "2021-09-27",
+      "dist": 0.08149922961560324,
+      "fit_boundaries": [
+        100
+      ]
+    },
+    {
+      "rank": 7,
+      "ticker": "BLNK",
+      "asof": "2021-09-23",
+      "dist": 0.09540815454517888,
+      "fit_boundaries": [
+        94
+      ]
+    },
+    {
+      "rank": 8,
+      "ticker": "SENS",
+      "asof": "2021-12-16",
+      "dist": 0.09708556698567375,
+      "fit_boundaries": [
+        53
+      ]
+    },
+    {
+      "rank": 9,
+      "ticker": "KC",
+      "asof": "2025-10-09",
+      "dist": 0.09857289429943526,
+      "fit_boundaries": [
+        98
+      ]
+    },
+    {
+      "rank": 10,
+      "ticker": "DDD",
+      "asof": "2021-10-14",
+      "dist": 0.09947168651406027,
+      "fit_boundaries": [
+        93
+      ]
+    },
+    {
+      "rank": 11,
+      "ticker": "AMTX",
+      "asof": "2022-01-03",
+      "dist": 0.10369039417706104,
+      "fit_boundaries": [
+        62
+      ]
+    },
+    {
+      "rank": 12,
+      "ticker": "PDYN",
+      "asof": "2025-09-22",
+      "dist": 0.13992804101328027,
+      "fit_boundaries": [
+        79
+      ]
+    },
+    {
+      "rank": 13,
+      "ticker": "PACB",
+      "asof": "2021-08-24",
+      "dist": 0.143511949647104,
+      "fit_boundaries": [
+        127
+      ]
+    },
+    {
+      "rank": 14,
+      "ticker": "TNK",
+      "asof": "2020-11-25",
+      "dist": 0.14922725814400475,
+      "fit_boundaries": [
+        113
+      ]
+    },
+    {
+      "rank": 15,
+      "ticker": "BOXL",
+      "asof": "2021-04-06",
+      "dist": 0.1551434071516994,
+      "fit_boundaries": [
+        80
+      ]
+    },
+    {
+      "rank": 16,
+      "ticker": "ORIO",
+      "asof": "2021-11-15",
+      "dist": 0.15622840254614506,
+      "fit_boundaries": [
+        72
+      ]
+    },
+    {
+      "rank": 17,
+      "ticker": "EBS",
+      "asof": "2025-02-21",
+      "dist": 0.1604118058372842,
+      "fit_boundaries": [
+        116
+      ]
+    },
+    {
+      "rank": 18,
+      "ticker": "GEVO",
+      "asof": "2021-11-30",
+      "dist": 0.17252460895333196,
+      "fit_boundaries": [
+        68
+      ]
+    },
+    {
+      "rank": 19,
+      "ticker": "CDE",
+      "asof": "2017-02-03",
+      "dist": 0.17527333560040995,
+      "fit_boundaries": [
+        132
+      ]
+    },
+    {
+      "rank": 20,
+      "ticker": "TBCH",
+      "asof": "2019-04-12",
+      "dist": 0.17626004054259775,
+      "fit_boundaries": [
+        74
+      ]
+    },
+    {
+      "rank": 21,
+      "ticker": "MSTR",
+      "asof": "2021-08-19",
+      "dist": 0.1765894763732032,
+      "fit_boundaries": [
+        128
+      ]
+    },
+    {
+      "rank": 22,
+      "ticker": "RIOT",
+      "asof": "2021-12-02",
+      "dist": 0.17667865855739293,
+      "fit_boundaries": [
+        59
+      ]
+    },
+    {
+      "rank": 23,
+      "ticker": "SINT",
+      "asof": "2021-03-30",
+      "dist": 0.1776654109479131,
+      "fit_boundaries": [
+        89
+      ]
+    },
+    {
+      "rank": 24,
+      "ticker": "YRD",
+      "asof": "2017-02-28",
+      "dist": 0.17858386651585048,
+      "fit_boundaries": [
+        129
+      ]
+    },
+    {
+      "rank": 25,
+      "ticker": "CRON",
+      "asof": "2018-07-05",
+      "dist": 0.1819905473493101,
+      "fit_boundaries": [
+        138
+      ]
+    },
+    {
+      "rank": 26,
+      "ticker": "GRRR",
+      "asof": "2025-10-06",
+      "dist": 0.18789049691704432,
+      "fit_boundaries": [
+        113
+      ]
+    },
+    {
+      "rank": 27,
+      "ticker": "CLPT",
+      "asof": "2021-09-07",
+      "dist": 0.1952092291841085,
+      "fit_boundaries": [
+        119
+      ]
+    },
+    {
+      "rank": 28,
+      "ticker": "AMRN",
+      "asof": "2019-05-08",
+      "dist": 0.2005329934557486,
+      "fit_boundaries": [
+        135
+      ]
+    },
+    {
+      "rank": 29,
+      "ticker": "FSLY",
+      "asof": "2021-03-29",
+      "dist": 0.20781571425454815,
+      "fit_boundaries": [
+        98
+      ]
+    },
+    {
+      "rank": 30,
+      "ticker": "GRWG",
+      "asof": "2021-08-06",
+      "dist": 0.21182784208942912,
+      "fit_boundaries": [
+        137
+      ]
+    }
+  ]
+}

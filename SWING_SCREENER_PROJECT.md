@@ -76,6 +76,7 @@ scripts/                   # Analysis scripts
 ├── entry_candle_scorer.py # Vetting sort utility
 ├── seed_vault.py          # Backup/restore to Railway
 ├── fetch_fundamentals.py  # Yahoo Finance fundamentals
+├── fetch_company_meta.py  # Yahoo Finance longName + longBusinessSummary (UNIVERSE-scoped, theme dashboard input)
 └── signal_filter.py       # Signal scan (standalone analysis)
 
 data/                      # Local data

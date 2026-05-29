@@ -1,0 +1,77 @@
+
+############################################################
+  TEST CONSENSUS PIPELINE -- DTSS
+  Test dir: C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test
+############################################################
+
+============================================================
+  Step 0: Single-run backward compat
+============================================================
+
+    Running: C:\Python314\python.exe -u local_runner\pyramid_grinder.py --setup dtss --beam 10 --depth 2 --seed 1 --subsample 0.2 --output-dir C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step0
+  [PASS] Step 0: Single-run backward compat -- 8 conditions, file=pyramid_dtss_mp_sig2718_pk11_20260411_130350.json
+
+============================================================
+  Step 1: Consensus grind (real)
+============================================================
+
+    Running: C:\Python314\python.exe -u local_runner\pyramid_grinder.py --setup dtss --beam 10 --depth 2 --seed 42 --subsample 0.2 --zero-margin --no-peak-target --pass-order 2,1,3 --output-dir C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step1
+  [PASS] Step 1: Consensus grind (real) -- 15 conditions, params verified, file=pyramid_dtss_mp_sig16_pk1_20260411_130816.json
+
+============================================================
+  Step 2: Determinism check
+============================================================
+
+    Running: C:\Python314\python.exe -u local_runner\pyramid_grinder.py --setup dtss --beam 10 --depth 2 --seed 42 --subsample 0.2 --zero-margin --no-peak-target --pass-order 1,2,3 --output-dir C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step2\run0
+
+    Running: C:\Python314\python.exe -u local_runner\pyramid_grinder.py --setup dtss --beam 10 --depth 2 --seed 42 --subsample 0.2 --zero-margin --no-peak-target --pass-order 1,2,3 --output-dir C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step2\run1
+  [PASS] Step 2: Determinism check -- both runs: 15 identical conditions
+
+============================================================
+  Step 3: Permuted run (Inc 4)
+============================================================
+
+    Running: C:\Python314\python.exe -u local_runner\pyramid_grinder.py --setup dtss --beam 10 --depth 2 --seed 99 --subsample 0.2 --zero-margin --no-peak-target --pass-order 3,1,2 --permute --output-dir C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step3
+  [PASS] Step 3: Permuted run (Inc 4) -- file=permuted_dtss_mp_sig20554_pk165_20260411_131826.json, 15 conditions
+
+============================================================
+  Step 4: Scan-only mode (Inc 5)
+============================================================
+
+    Running: C:\Python314\python.exe -u local_runner\pyramid_grinder.py --setup dtss --scan-only --conditions-file C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step1\pyramid_dtss_mp_sig16_pk1_20260411_130816.json
+  [PASS] Step 4: Scan-only mode (Inc 5) -- 0 clusters in raw_signal_clusters_dtss.json
+
+============================================================
+  Step 5: Refinement path (Inc 6)
+============================================================
+
+    Running: C:\Python314\python.exe -u local_runner\pyramid_grinder.py --setup dtss --blackout --skip-gather --subsample-losers --seed 1 --conditions-file C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step1\pyramid_dtss_mp_sig16_pk1_20260411_130816.json --output-dir C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step5
+  [PASS] Step 5: Refinement path (Inc 6) -- wiring OK (abort expected — empty clusters from test data), --conditions-file loaded
+
+============================================================
+  Step 6: Exit grinder --conditions-file (Inc 7)
+============================================================
+
+    Running: C:\Python314\python.exe -u scripts\signal_exit_grinder.py --setup dtss --conditions-file C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step1\pyramid_dtss_mp_sig16_pk1_20260411_130816.json
+  [PASS] Step 6: Exit grinder --conditions-file (Inc 7) -- exit grinder completed with supplied conditions
+
+============================================================
+  Step 7: Consensus engine — signal mode (Inc 8)
+============================================================
+
+    Running: C:\Python314\python.exe -u scripts\consensus_engine.py --setup dtss --stage signal --threshold 0.7 --input-dir C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step7_input --output-dir C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step7
+  [PASS] Step 7: Consensus engine — signal mode (Inc 8) -- z=0.0, gate_pass=False, 0 conditions locked
+
+============================================================
+  Step 8: Consensus engine — refinement mode (Inc 9)
+============================================================
+  No step5 output — using synthetic refinement data for wiring test
+  Cluster file: found (C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\raw_signal_clusters_dtss.json)
+
+    Running: C:\Python314\python.exe -u scripts\consensus_engine.py --setup dtss --stage refinement --threshold 0.7 --input-dir C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step8_input --output-dir C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\consensus\test\step8 --cluster-file C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\raw_signal_clusters_dtss.json
+  [PASS] Step 8: Consensus engine — refinement mode (Inc 9) -- Test1=3 Test2=3, 3 refinement, 3 combined, 3 depth levels
+
+############################################################
+  RESULT: 9/9 PASSED (1169s)
+############################################################
+

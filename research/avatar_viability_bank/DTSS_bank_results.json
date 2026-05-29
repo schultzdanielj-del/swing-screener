@@ -1,0 +1,520 @@
+{
+  "setup": "DTSS",
+  "klass": "fade",
+  "n_bars": 86,
+  "bank_size": 60,
+  "bank": [
+    {
+      "ticker": "ISRG",
+      "asof": "2021-12-30",
+      "entry_date": "2021-12-31"
+    },
+    {
+      "ticker": "NUE",
+      "asof": "2022-01-04",
+      "entry_date": "2022-01-05"
+    },
+    {
+      "ticker": "WAL",
+      "asof": "2022-01-11",
+      "entry_date": "2022-01-12"
+    },
+    {
+      "ticker": "AX",
+      "asof": "2022-01-12",
+      "entry_date": "2022-01-13"
+    },
+    {
+      "ticker": "DELL",
+      "asof": "2022-02-09",
+      "entry_date": "2022-02-10"
+    },
+    {
+      "ticker": "FITB",
+      "asof": "2022-02-09",
+      "entry_date": "2022-02-10"
+    },
+    {
+      "ticker": "INVA",
+      "asof": "2022-04-04",
+      "entry_date": "2022-04-05"
+    },
+    {
+      "ticker": "MET",
+      "asof": "2022-04-20",
+      "entry_date": "2022-04-21"
+    },
+    {
+      "ticker": "PRKS",
+      "asof": "2022-04-20",
+      "entry_date": "2022-04-21"
+    },
+    {
+      "ticker": "SMCI",
+      "asof": "2022-06-03",
+      "entry_date": "2022-06-06"
+    },
+    {
+      "ticker": "HCC",
+      "asof": "2022-06-06",
+      "entry_date": "2022-06-07"
+    },
+    {
+      "ticker": "AIR",
+      "asof": "2022-06-07",
+      "entry_date": "2022-06-08"
+    },
+    {
+      "ticker": "CSL",
+      "asof": "2022-06-07",
+      "entry_date": "2022-06-08"
+    },
+    {
+      "ticker": "PR",
+      "asof": "2022-06-07",
+      "entry_date": "2022-06-08"
+    },
+    {
+      "ticker": "HAL",
+      "asof": "2022-06-08",
+      "entry_date": "2022-06-09"
+    },
+    {
+      "ticker": "GFS",
+      "asof": "2023-03-31",
+      "entry_date": "2023-04-03"
+    },
+    {
+      "ticker": "MPC",
+      "asof": "2023-03-31",
+      "entry_date": "2023-04-03"
+    },
+    {
+      "ticker": "AVAV",
+      "asof": "2023-05-22",
+      "entry_date": "2023-05-23"
+    },
+    {
+      "ticker": "NSP",
+      "asof": "2023-06-08",
+      "entry_date": "2023-06-09"
+    },
+    {
+      "ticker": "SOUN",
+      "asof": "2023-06-28",
+      "entry_date": "2023-06-29"
+    },
+    {
+      "ticker": "NOW",
+      "asof": "2023-09-11",
+      "entry_date": "2023-09-12"
+    },
+    {
+      "ticker": "CVNA",
+      "asof": "2023-09-14",
+      "entry_date": "2023-09-15"
+    },
+    {
+      "ticker": "AAOI",
+      "asof": "2024-02-15",
+      "entry_date": "2024-02-16"
+    },
+    {
+      "ticker": "WGO",
+      "asof": "2024-03-28",
+      "entry_date": "2024-04-01"
+    },
+    {
+      "ticker": "ROOT",
+      "asof": "2024-04-30",
+      "entry_date": "2024-05-01"
+    },
+    {
+      "ticker": "PNR",
+      "asof": "2024-05-14",
+      "entry_date": "2024-05-15"
+    },
+    {
+      "ticker": "CELH",
+      "asof": "2024-05-21",
+      "entry_date": "2024-05-22"
+    },
+    {
+      "ticker": "GAP",
+      "asof": "2024-05-31",
+      "entry_date": "2024-06-03"
+    },
+    {
+      "ticker": "ZIM",
+      "asof": "2024-07-01",
+      "entry_date": "2024-07-02"
+    },
+    {
+      "ticker": "TRNS",
+      "asof": "2024-07-23",
+      "entry_date": "2024-07-24"
+    },
+    {
+      "ticker": "LOPE",
+      "asof": "2024-07-31",
+      "entry_date": "2024-08-01"
+    },
+    {
+      "ticker": "WING",
+      "asof": "2024-09-23",
+      "entry_date": "2024-09-24"
+    },
+    {
+      "ticker": "NAIL",
+      "asof": "2024-10-17",
+      "entry_date": "2024-10-18"
+    },
+    {
+      "ticker": "DNTH",
+      "asof": "2024-11-07",
+      "entry_date": "2024-11-08"
+    },
+    {
+      "ticker": "DNLI",
+      "asof": "2024-11-08",
+      "entry_date": "2024-11-11"
+    },
+    {
+      "ticker": "KYMR",
+      "asof": "2024-11-08",
+      "entry_date": "2024-11-11"
+    },
+    {
+      "ticker": "LABU",
+      "asof": "2024-11-08",
+      "entry_date": "2024-11-11"
+    },
+    {
+      "ticker": "VRTX",
+      "asof": "2024-11-08",
+      "entry_date": "2024-11-11"
+    },
+    {
+      "ticker": "WHD",
+      "asof": "2024-11-22",
+      "entry_date": "2024-11-25"
+    },
+    {
+      "ticker": "UTSL",
+      "asof": "2024-11-26",
+      "entry_date": "2024-11-27"
+    },
+    {
+      "ticker": "SERV",
+      "asof": "2025-01-03",
+      "entry_date": "2025-01-06"
+    },
+    {
+      "ticker": "FTAI",
+      "asof": "2025-01-08",
+      "entry_date": "2025-01-10"
+    },
+    {
+      "ticker": "MOD",
+      "asof": "2025-01-21",
+      "entry_date": "2025-01-22"
+    },
+    {
+      "ticker": "VCTR",
+      "asof": "2025-02-07",
+      "entry_date": "2025-02-10"
+    },
+    {
+      "ticker": "GH",
+      "asof": "2025-04-30",
+      "entry_date": "2025-05-01"
+    },
+    {
+      "ticker": "LTH",
+      "asof": "2025-05-07",
+      "entry_date": "2025-05-08"
+    },
+    {
+      "ticker": "SFM",
+      "asof": "2025-06-02",
+      "entry_date": "2025-06-03"
+    },
+    {
+      "ticker": "ACHR",
+      "asof": "2025-07-17",
+      "entry_date": "2025-07-18"
+    },
+    {
+      "ticker": "GRPN",
+      "asof": "2025-08-06",
+      "entry_date": "2025-08-07"
+    },
+    {
+      "ticker": "ASST",
+      "asof": "2025-09-09",
+      "entry_date": "2025-09-10"
+    },
+    {
+      "ticker": "FUBO",
+      "asof": "2025-09-22",
+      "entry_date": "2025-09-23"
+    },
+    {
+      "ticker": "PSIX",
+      "asof": "2025-09-23",
+      "entry_date": "2025-09-24"
+    },
+    {
+      "ticker": "BTBT",
+      "asof": "2025-10-17",
+      "entry_date": "2025-10-20"
+    },
+    {
+      "ticker": "SLS",
+      "asof": "2025-10-17",
+      "entry_date": "2025-10-20"
+    },
+    {
+      "ticker": "BETR",
+      "asof": "2025-10-23",
+      "entry_date": "2025-10-24"
+    },
+    {
+      "ticker": "MSFU",
+      "asof": "2025-10-27",
+      "entry_date": "2025-10-28"
+    },
+    {
+      "ticker": "GTM",
+      "asof": "2025-11-03",
+      "entry_date": "2025-11-04"
+    },
+    {
+      "ticker": "APP",
+      "asof": "2025-12-19",
+      "entry_date": "2025-12-22"
+    },
+    {
+      "ticker": "CVNA",
+      "asof": "2026-01-22",
+      "entry_date": "2026-01-23"
+    },
+    {
+      "ticker": "PACB",
+      "asof": "2026-01-22",
+      "entry_date": "2026-01-23"
+    }
+  ],
+  "top_pearson": [
+    {
+      "rank": 1,
+      "ticker": "ACHR-WS",
+      "asof": "2025-07-17",
+      "r": 1.0,
+      "best_avatar": "ACHR 2025-07-17"
+    },
+    {
+      "rank": 2,
+      "ticker": "STNE",
+      "asof": "2024-01-22",
+      "r": 0.9904927275421656,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 3,
+      "ticker": "MSFL",
+      "asof": "2025-10-27",
+      "r": 0.9901993824473483,
+      "best_avatar": "MSFU 2025-10-27"
+    },
+    {
+      "rank": 4,
+      "ticker": "IOVA",
+      "asof": "2018-03-27",
+      "r": 0.989600318418143,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 5,
+      "ticker": "WD",
+      "asof": "2017-04-13",
+      "r": 0.9895659372559237,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 6,
+      "ticker": "GFF",
+      "asof": "2017-01-20",
+      "r": 0.9890977847790297,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 7,
+      "ticker": "ESE",
+      "asof": "2017-01-19",
+      "r": 0.9875829798936893,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 8,
+      "ticker": "PACS",
+      "asof": "2026-01-27",
+      "r": 0.9873460256973096,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 9,
+      "ticker": "TBCH",
+      "asof": "2018-06-12",
+      "r": 0.9868501743095788,
+      "best_avatar": "BETR 2025-10-23"
+    },
+    {
+      "rank": 10,
+      "ticker": "SATS",
+      "asof": "2026-02-12",
+      "r": 0.9867806667029517,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 11,
+      "ticker": "RPRX",
+      "asof": "2025-03-19",
+      "r": 0.9866402305824531,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 12,
+      "ticker": "CRNT",
+      "asof": "2025-01-29",
+      "r": 0.9866245534024662,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 13,
+      "ticker": "NSIT",
+      "asof": "2018-07-09",
+      "r": 0.986178291585992,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 14,
+      "ticker": "KMPR",
+      "asof": "2018-07-03",
+      "r": 0.985906337957318,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 15,
+      "ticker": "BNGO",
+      "asof": "2021-03-08",
+      "r": 0.9857836469315258,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 16,
+      "ticker": "HSAI",
+      "asof": "2025-02-05",
+      "r": 0.9857156718237265,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 17,
+      "ticker": "MTRN",
+      "asof": "2017-01-13",
+      "r": 0.9856266984907842,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 18,
+      "ticker": "FFBC",
+      "asof": "2017-01-19",
+      "r": 0.9855866025274248,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 19,
+      "ticker": "CASH",
+      "asof": "2016-12-14",
+      "r": 0.9854700545826895,
+      "best_avatar": "BETR 2025-10-23"
+    },
+    {
+      "rank": 20,
+      "ticker": "TMHC",
+      "asof": "2024-10-17",
+      "r": 0.9854594868006269,
+      "best_avatar": "NAIL 2024-10-17"
+    },
+    {
+      "rank": 21,
+      "ticker": "PRLB",
+      "asof": "2017-07-03",
+      "r": 0.9854112857556616,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 22,
+      "ticker": "NSSC",
+      "asof": "2025-10-29",
+      "r": 0.985197205162226,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 23,
+      "ticker": "MDB",
+      "asof": "2023-07-07",
+      "r": 0.9851765283693561,
+      "best_avatar": "BETR 2025-10-23"
+    },
+    {
+      "rank": 24,
+      "ticker": "SLM",
+      "asof": "2017-01-19",
+      "r": 0.9851135471582849,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 25,
+      "ticker": "OUT",
+      "asof": "2026-01-15",
+      "r": 0.9851091952301178,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 26,
+      "ticker": "GRBK",
+      "asof": "2024-10-17",
+      "r": 0.9849137151864384,
+      "best_avatar": "NAIL 2024-10-17"
+    },
+    {
+      "rank": 27,
+      "ticker": "CRS",
+      "asof": "2024-06-04",
+      "r": 0.9847224922271863,
+      "best_avatar": "BETR 2025-10-23"
+    },
+    {
+      "rank": 28,
+      "ticker": "IDCC",
+      "asof": "2024-01-18",
+      "r": 0.9846307049535954,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 29,
+      "ticker": "P",
+      "asof": "2023-08-03",
+      "r": 0.9846003321584681,
+      "best_avatar": "ROOT 2024-04-30"
+    },
+    {
+      "rank": 30,
+      "ticker": "VZ",
+      "asof": "2026-04-08",
+      "r": 0.984549302871784,
+      "best_avatar": "ROOT 2024-04-30"
+    }
+  ]
+}

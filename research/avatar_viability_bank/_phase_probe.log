@@ -1,0 +1,48 @@
+OHLCV cache path: C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\universe_ohlcv_daily.pkl
+Loading OHLCV pickle ...
+  11859 tickers, 1.3s
+
+=== DTSS phase-DP probe (1 bank example: CELH) ===
+  bank window: n_bars=86, asof=2024-05-21
+  bank phase boundary bars (window-relative): [38, 64]
+    phase 0 (uptrend): bars [0..37], len=0.442, end=0.614, max=0.614, min=-0.041, directness=0.595, argmax_pos=0.974
+    phase 1 (pullback): bars [38..63], len=0.302, end=0.281, max=0.586, min=0.281, directness=0.475, argmax_pos=0.000
+    phase 2 (retrace): bars [64..85], len=0.256, end=0.613, max=0.614, min=0.294, directness=0.687, argmax_pos=0.909
+  pre-pass: filtering candidates per ticker...
+    skipped: 618 biotech
+    5788 tickers, 4,359,797 eligible candidates, 18.3s
+  parallel DP fit (3-phase) over 4,359,797 candidates...
+    DP fit done, 22.9s
+  per-ticker dedup + global top-30...
+    aggregation done, 1.5s; total 42.7s
+  saved C:\Users\Dan\Documents\ScanPerfect\swing-screener\research\avatar_viability_bank\DTSS_phase_probe_results.json
+  saved C:\Users\Dan\Documents\ScanPerfect\swing-screener\research\avatar_viability_bank\DTSS_phase_probe_top30.png
+
+=== BASE phase-DP probe (1 bank example: ASTS) ===
+  bank window: n_bars=261, asof=2025-06-02
+  bank phase boundary bars (window-relative): [65]
+    phase 0 (uptrend): bars [0..64], len=0.249, end=2.259, max=2.259, min=0.000, directness=0.489, argmax_pos=0.985
+    phase 1 (range): bars [65..260], len=0.751, end=1.791, max=2.202, min=1.481, directness=0.039, argmax_pos=0.005
+  pre-pass: filtering candidates per ticker...
+    skipped: 608 biotech
+    5386 tickers, 3,187,269 eligible candidates, 19.1s
+  parallel DP fit (2-phase) over 3,187,269 candidates...
+    DP fit done, 3.1s
+  per-ticker dedup + global top-30...
+    aggregation done, 0.8s; total 23.0s
+  saved C:\Users\Dan\Documents\ScanPerfect\swing-screener\research\avatar_viability_bank\BASE_phase_probe_results.json
+  saved C:\Users\Dan\Documents\ScanPerfect\swing-screener\research\avatar_viability_bank\BASE_phase_probe_top30.png
+
+=== PARS phase-DP probe (1 bank example: CAR) ===
+  bank window: n_bars=21, asof=2026-04-21
+  bank phase boundary bars (window-relative): []
+    phase 0 (uptrend): bars [0..20], len=1.000, end=1.895, max=1.895, min=0.000, directness=0.879, argmax_pos=0.952
+  pre-pass: filtering candidates per ticker...
+    skipped: 623 biotech
+    6048 tickers, 5,105,429 eligible candidates, 17.4s
+  parallel DP fit (1-phase) over 5,105,429 candidates...
+    DP fit done, 0.7s
+  per-ticker dedup + global top-30...
+    aggregation done, 2.8s; total 20.9s
+  saved C:\Users\Dan\Documents\ScanPerfect\swing-screener\research\avatar_viability_bank\PARS_phase_probe_results.json
+  saved C:\Users\Dan\Documents\ScanPerfect\swing-screener\research\avatar_viability_bank\PARS_phase_probe_top30.png

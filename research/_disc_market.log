@@ -1,0 +1,139 @@
+=== PHASE A: positives vs broad ===
+[broad] 34/34 curated instruments × 15793 exprs · 101,978 samples · 2 workers
+  [1/34] QQQ            (126s)  elapsed: 127s  ETA: 4202s  surv: 30
+  [2/34] SPY            (128s)  elapsed: 129s  ETA: 2061s  surv: 60
+  [3/34] IWM            (131s)  elapsed: 258s  ETA: 2669s  surv: 90
+  [4/34] MDY            (131s)  elapsed: 259s  ETA: 1946s  surv: 120
+  [5/34] RSP            (131s)  elapsed: 389s  ETA: 2255s  surv: 150
+  [6/34] DIA            (130s)  elapsed: 389s  ETA: 1817s  surv: 180
+  [7/34] VIX.INDX       (126s)  elapsed: 515s  ETA: 1985s  surv: 210
+  [8/34] VVIX.INDX      (127s)  elapsed: 516s  ETA: 1677s  surv: 240
+  [9/34] VXX            (126s)  elapsed: 642s  ETA: 1784s  surv: 270
+  [10/34] VIX3M.INDX     (128s)  elapsed: 643s  ETA: 1542s  surv: 300
+  [11/34] ADVQ.INDX      (121s)  elapsed: 763s  ETA: 1596s  surv: 330
+  [12/34] ADVN.INDX      (122s)  elapsed: 764s  ETA: 1401s  surv: 360
+  [13/34] XLK            (137s)  elapsed: 900s  ETA: 1454s  surv: 390
+  [14/34] XLF            (140s)  elapsed: 904s  ETA: 1292s  surv: 420
+  [15/34] XLV            (151s)  elapsed: 1055s  ETA: 1337s  surv: 450
+  [16/34] XLE            (156s)  elapsed: 1056s  ETA: 1188s  surv: 480
+  [17/34] XLY            (155s)  elapsed: 1211s  ETA: 1211s  surv: 510
+  [18/34] XLI            (157s)  elapsed: 1212s  ETA: 1077s  surv: 540
+  [19/34] XLP            (152s)  elapsed: 1363s  ETA: 1076s  surv: 570
+  [20/34] XLB            (157s)  elapsed: 1369s  ETA: 958s  surv: 600
+  [21/34] XLC            (144s)  elapsed: 1507s  ETA: 933s  surv: 630
+  [22/34] XLRE           (151s)  elapsed: 1520s  ETA: 829s  surv: 660
+  [23/34] XLU            (155s)  elapsed: 1662s  ETA: 795s  surv: 690
+  [24/34] HYG            (157s)  elapsed: 1677s  ETA: 699s  surv: 720
+  [25/34] TLT            (152s)  elapsed: 1814s  ETA: 653s  surv: 750
+  [26/34] IEF            (153s)  elapsed: 1830s  ETA: 563s  surv: 780
+  [27/34] GLD            (153s)  elapsed: 1967s  ETA: 510s  surv: 810
+  [28/34] IWD            (161s)  elapsed: 1990s  ETA: 427s  surv: 840
+  [29/34] IWF            (159s)  elapsed: 2125s  ETA: 366s  surv: 870
+  [30/34] IWN            (166s)  elapsed: 2157s  ETA: 288s  surv: 900
+  [31/34] IWO            (160s)  elapsed: 2285s  ETA: 221s  surv: 930
+  [32/34] MTUM           (156s)  elapsed: 2313s  ETA: 145s  surv: 960
+  [33/34] SPHB           (151s)  elapsed: 2437s  ETA: 74s  surv: 990
+  [34/34] SPLV           (145s)  elapsed: 2457s  ETA: 0s  surv: 1020
+  saved 1020 survivors
+
+=== PHASE B: positives vs matched ===
+[matched] 34/34 curated instruments × 15793 exprs · 101,978 samples · 2 workers
+  [1/34] QQQ            (132s)  elapsed: 134s  ETA: 4406s  surv: 30
+  [2/34] SPY            (134s)  elapsed: 135s  ETA: 2154s  surv: 60
+  [3/34] IWM            (140s)  elapsed: 273s  ETA: 2825s  surv: 90
+  [4/34] MDY            (139s)  elapsed: 274s  ETA: 2052s  surv: 120
+  [5/34] RSP            (139s)  elapsed: 412s  ETA: 2392s  surv: 150
+  [6/34] DIA            (140s)  elapsed: 413s  ETA: 1928s  surv: 180
+  [7/34] VIX.INDX       (129s)  elapsed: 542s  ETA: 2089s  surv: 210
+  [8/34] VVIX.INDX      (131s)  elapsed: 544s  ETA: 1767s  surv: 240
+  [9/34] VIX3M.INDX     (128s)  elapsed: 670s  ETA: 1861s  surv: 270
+  [10/34] VXX            (128s)  elapsed: 672s  ETA: 1613s  surv: 300
+  [11/34] ADVN.INDX      (119s)  elapsed: 789s  ETA: 1650s  surv: 330
+  [12/34] ADVQ.INDX      (120s)  elapsed: 792s  ETA: 1451s  surv: 360
+  [13/34] XLK            (129s)  elapsed: 918s  ETA: 1482s  surv: 390
+  [14/34] XLF            (132s)  elapsed: 924s  ETA: 1320s  surv: 420
+  [15/34] XLE            (133s)  elapsed: 1050s  ETA: 1331s  surv: 450
+  [16/34] XLV            (129s)  elapsed: 1052s  ETA: 1184s  surv: 480
+  [17/34] XLI            (131s)  elapsed: 1181s  ETA: 1181s  surv: 510
+  [18/34] XLY            (131s)  elapsed: 1183s  ETA: 1051s  surv: 540
+  [19/34] XLP            (129s)  elapsed: 1310s  ETA: 1034s  surv: 570
+  [20/34] XLB            (131s)  elapsed: 1314s  ETA: 920s  surv: 600
+  [21/34] XLC            (126s)  elapsed: 1436s  ETA: 889s  surv: 630
+  [22/34] XLRE           (131s)  elapsed: 1445s  ETA: 788s  surv: 660
+  [23/34] XLU            (129s)  elapsed: 1565s  ETA: 749s  surv: 690
+  [24/34] HYG            (131s)  elapsed: 1576s  ETA: 657s  surv: 720
+  [25/34] TLT            (129s)  elapsed: 1694s  ETA: 610s  surv: 750
+  [26/34] IEF            (129s)  elapsed: 1705s  ETA: 525s  surv: 780
+  [27/34] GLD            (125s)  elapsed: 1819s  ETA: 472s  surv: 810
+  [28/34] IWD            (131s)  elapsed: 1835s  ETA: 393s  surv: 840
+  [29/34] IWF            (131s)  elapsed: 1950s  ETA: 336s  surv: 870
+  [30/34] IWN            (134s)  elapsed: 1970s  ETA: 263s  surv: 900
+  [31/34] IWO            (128s)  elapsed: 2078s  ETA: 201s  surv: 930
+  [32/34] MTUM           (124s)  elapsed: 2094s  ETA: 131s  surv: 960
+  [33/34] SPHB           (122s)  elapsed: 2200s  ETA: 67s  surv: 990
+  [34/34] SPLV           (119s)  elapsed: 2213s  ETA: 0s  surv: 1020
+  saved 1020 survivors
+
+=== TOP 30 MARKET FEATURES (broad) ===
+  VIX.INDX__w_tir_rsi14_gt_50_30                     sp=32.36pp  D1=34.19%  D10= 1.83%  descending 
+  XLV__st_es_ext50_cci14_gt_100_50                   sp=30.70pp  D1=32.63%  D10= 1.92%  descending 
+  XLE__m_st_obv_rising_50                            sp=15.52pp  D1=16.32%  D10= 0.81%  descending 
+  DIA__m_ct_cmf20_positive_3                         sp=15.30pp  D1=16.32%  D10= 1.03%  descending 
+  XLF__m_ct_v_gt_1_5x_avgv20_3                       sp=15.30pp  D1=16.32%  D10= 1.03%  descending 
+  HYG__m_ct_h_gt_maxh65_1_3                          sp=14.97pp  D1=16.32%  D10= 1.35%  descending 
+  VIX3M.INDX__m_ct_es_ext50_stoch14_lt_50_3          sp=14.84pp  D1=16.32%  D10= 1.48%  descending 
+  IWN__st_h_gt_maxh10_1_50                           sp=13.75pp  D1=19.11%  D10= 5.36%  descending 
+  VIX3M.INDX__ct_h_lt_xavgc8_20                      sp=12.64pp  D1=13.63%  D10= 0.99%  descending 
+  VXX__ct_h_lt_xavgc8_15                             sp=12.38pp  D1=12.99%  D10= 0.61%  descending 
+  ADVQ.INDX__m_ct_es_ext50_cci14_gt_100_3            sp=11.87pp  D1=13.13%  D10= 1.25%  descending 
+  XLE__w_st_c_gt_maxc10_1_50                         sp=11.80pp  D1=13.10%  D10= 1.30%  descending 
+  IWM__w_st_macd_negative_50                         sp=11.40pp  D1=12.61%  D10= 1.21%  descending 
+  XLP__m_st_avgc50_gt_avgc100_30                     sp=11.10pp  D1=11.63%  D10= 0.53%  descending 
+  XLP__m_st_es_ext50_roc5_neg_15                     sp=11.03pp  D1=11.63%  D10= 0.60%  descending 
+  SPY__ct_c_gt_xavgc13_15                            sp=10.96pp  D1=11.68%  D10= 0.73%  descending 
+  SPY__ct_xavgc13_rising_15                          sp=10.96pp  D1=11.68%  D10= 0.73%  descending 
+  XLB__m_st_es_ext50_adx14_lt_20_20                  sp=10.96pp  D1=11.63%  D10= 0.67%  descending 
+  IWN__ct_c_gt_maxc10_1_50                           sp=10.93pp  D1=11.56%  D10= 0.63%  descending 
+  VIX3M.INDX__m_es_ext200_roc_3                      sp=10.82pp  D1=11.63%  D10= 0.81%  descending 
+  ADVN.INDX__m_st_h_gt_maxh65_1_15                   sp=10.79pp  D1=11.66%  D10= 0.87%  descending 
+  ADVQ.INDX__w_st_xavgc8_rising_15                   sp=10.74pp  D1=11.69%  D10= 0.95%  descending 
+  HYG__aroon_osc_10                                  sp=10.65pp  D1=11.35%  D10= 0.70%  descending 
+  XLRE__m_st_xavgc50_falling_30                      sp=10.57pp  D1=11.63%  D10= 1.06%  descending 
+  ADVN.INDX__ct_stoch14_gt_50_50                     sp=10.56pp  D1=11.41%  D10= 0.85%  descending 
+  VIX.INDX__m_st_xavgc8_rising_30                    sp=10.47pp  D1=11.63%  D10= 1.16%  descending 
+  XLE__ct_c_gt_maxc10_1_30                           sp=10.46pp  D1=11.44%  D10= 0.98%  descending 
+  QQQ__ct_h_gt_maxh5_1_15                            sp=10.43pp  D1=11.37%  D10= 0.94%  descending 
+  VIX3M.INDX__m_st_xavgc8_rising_30                  sp=10.42pp  D1=11.63%  D10= 1.20%  descending 
+  VVIX.INDX__m_st_c_lt_avgc200_30                    sp=10.41pp  D1=11.63%  D10= 1.22%  descending 
+
+=== TOP 30 MARKET FEATURES (matched) ===
+  IWO__st_es_ext50_rsi7_gt_70_50                     sp=18.69pp  D1=20.47%  D10= 1.78%  descending 
+  VIX.INDX__w_tir_rsi14_gt_50_30                     sp=18.26pp  D1=20.02%  D10= 1.76%  descending 
+  XLF__st_es_ext50_cci14_gt_100_50                   sp=16.54pp  D1=17.82%  D10= 1.28%  descending 
+  XLE__st_c_gt_maxc10_1_50                           sp=15.82pp  D1=17.68%  D10= 1.86%  descending 
+  XLV__st_es_ext50_cci14_gt_100_50                   sp=15.31pp  D1=18.08%  D10= 2.77%  descending 
+  IWO__st_es_ext200_rsi7_gt_70_50                    sp=15.30pp  D1=17.99%  D10= 2.69%  descending 
+  VIX3M.INDX__m_es_ext200_roc_3                      sp=14.23pp  D1=15.21%  D10= 0.98%  descending 
+  IWF__w_st_obv_rising_50                            sp=14.20pp  D1=15.95%  D10= 1.75%  descending 
+  IWM__m_ct_v_gt_2x_avgv20_3                         sp=14.11pp  D1=15.21%  D10= 1.10%  descending 
+  DIA__m_ct_cmf20_positive_3                         sp=14.07pp  D1=15.21%  D10= 1.15%  descending 
+  XLF__m_ct_v_gt_1_5x_avgv20_3                       sp=14.07pp  D1=15.21%  D10= 1.15%  descending 
+  SPLV__m_ct_v_gt_1_5x_avgv20_3                      sp=14.07pp  D1=15.21%  D10= 1.14%  descending 
+  XLE__m_st_obv_rising_50                            sp=14.05pp  D1=15.21%  D10= 1.17%  descending 
+  SPLV__m_ct_v_gt_avgv20_3                           sp=14.05pp  D1=15.21%  D10= 1.16%  descending 
+  VVIX.INDX__m_st_es_ext50_cci14_lt_neg100_15        sp=14.02pp  D1=15.21%  D10= 1.19%  descending 
+  XLRE__m_st_xavgc50_falling_30                      sp=13.99pp  D1=15.21%  D10= 1.22%  descending 
+  GLD__m_st_avgc50_gt_avgc100_30                     sp=13.94pp  D1=15.21%  D10= 1.27%  descending 
+  XLE__m_st_es_ext50_adx14_gt_25_20                  sp=13.89pp  D1=15.21%  D10= 1.33%  descending 
+  VIX.INDX__m_st_xavgc8_rising_30                    sp=13.88pp  D1=15.21%  D10= 1.33%  descending 
+  HYG__m_ct_h_gt_maxh65_1_3                          sp=13.87pp  D1=15.21%  D10= 1.34%  descending 
+  VIX3M.INDX__m_ct_es_ext50_stoch14_lt_50_3          sp=13.81pp  D1=15.21%  D10= 1.40%  descending 
+  XLRE__m_st_xavgc8_rising_20                        sp=13.80pp  D1=15.21%  D10= 1.41%  descending 
+  RSP__m_ct_v_gt_avgv20_3                            sp=13.73pp  D1=15.21%  D10= 1.49%  descending 
+  VVIX.INDX__m_st_es_ext50_stoch14_lt_20_15          sp=13.71pp  D1=15.21%  D10= 1.50%  descending 
+  VVIX.INDX__m_st_c_lt_avgc200_30                    sp=13.67pp  D1=15.21%  D10= 1.55%  descending 
+  IEF__m_st_avgc50_gt_avgc100_15                     sp=13.67pp  D1=15.21%  D10= 1.55%  descending 
+  SPHB__m_nr_ratio_maxh85                            sp=13.54pp  D1=14.81%  D10= 1.27%  descending 
+  QQQ__m_nr_h_maxh100_adr14                          sp=13.48pp  D1=14.81%  D10= 1.33%  descending 
+  XLP__m_st_es_ext50_roc5_neg_15                     sp=13.46pp  D1=15.21%  D10= 1.76%  descending 
+  XLE__st_es_ext200_rsi7_gt_70_50                    sp=13.09pp  D1=14.31%  D10= 1.22%  descending 

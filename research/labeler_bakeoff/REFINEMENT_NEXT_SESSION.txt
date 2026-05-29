@@ -1,0 +1,158 @@
+==============================================================
+NEXT-SESSION KICKOFF PROMPT — refinement grinder redesign
+Generated: 2026-04-26 (signal-exit-pool labeler ship + cleanup)
+==============================================================
+
+Paste the block below into the next session.
+
+──────────────────────────────────────────────────────────────
+
+Begin work on the refinement grinder redesign for the L14-era classifier pipeline.
+
+Read first (in this order):
+- SIGNAL_EXIT_GRINDER.md — full file, especially §Pending build "Pipeline reorder" and
+  §Pending research bakeoff write-up. Background on what just shipped.
+- REFINEMENT_GRINDER.md — full file. Existing spec describes the cluster-aware
+  (rightmost+leftward, run-collapsing) mechanic from the pre-L14 era. Note where this
+  no longer fits the per-signal pre-dedup labeler output.
+- DEPENDENCY_MAP.md — current pipeline ordering (refinement → entry_candle_scorer →
+  ev_grinder → profit_grinder). The EV-after-Profit reorder is a separate work item;
+  refinement redesign should be neutral to that ordering.
+- PRESIGNAL_GRINDER.md §3-4 — for the consensus + binomial significance test pattern
+  that should carry over to refinement's curve-fit defense.
+- ~/.claude/projects/C--Users-Dan/memory/MEMORY.md — especially:
+    - feedback_classifier_pool_stays_per_signal (the per-signal pre-dedup discipline)
+    - feedback_classifier_logic_is_the_work
+    - feedback_setup_agnostic_code
+    - feedback_self_inferring_scoring
+    - feedback_research_discipline (zero-punt zone)
+- data/signal_exit_grind/signal_exit_pool_{htf,bf,base}.json — L14 labeler outputs.
+  These are refinement's primary inputs. Per cluster: cluster_id, ticker, is_example,
+  tag, signal_bar_idx, status, entry_bar, entry_date, cap_bar, horizon, eff_horizon,
+  effective_entry, stop, stop_hit_bar, mfe_during_life, mfe_full_window, final_label.
+
+Pipeline state at session start:
+- v2 head 039aa17. Signal-exit-pool labeler (L14) shipped 2026-04-26. All 10 stages
+  exit clean; logs in _runlogs/01-10.
+- DB: HTF=28 examples, BF=45, BASE=38. L14 labeler outputs:
+    HTF: 28 ex + 83 wild WIN + 132 wild LOSS = 111 winners, 132 losers
+    BF:  45 ex + 106 wild WIN + 144 wild LOSS = 151 winners, 144 losers
+    BASE: 38 ex + 180 wild WIN + 246 wild LOSS = 218 winners, 246 losers
+- Two leftover worktree directories (signal-exit-pool, win-loss-classifier) on disk
+  but git-untracked; harmless, manual delete when convenient.
+- Three branches with unique commits parked for future review (v2-consensus,
+  worktree-expr-cache-opt, claude/sleepy-haslett, worktree-consensus-s2). Don't touch.
+
+What's changed about the refinement grinder from the existing spec:
+
+The existing REFINEMENT_GRINDER.md describes a CLUSTER-AWARE mechanic where each cluster
+has a rightmost bar (the "real" signal) and leftward bars (predecessor bars, sacrificial).
+A loser CLUSTER is eliminated only when ALL its bars fail at least one condition.
+Winner-cluster leftward bars are also expendable.
+
+Under the L14 labeler era, the unit is the INDIVIDUAL DOUBLE-SIGNAL (per-firing,
+pre-dedup). Each row is one double-signal that fired both pyramid + presignal. The
+labeler attaches WIN or LOSS to each row independently. There is no run-collapsing.
+
+Refinement's job in plain language (Dan 2026-04-26): "take the winner pile of double
+signal entries and the loser pile of double signal entries. find ways to carve out more
+losing double signal entries without sacrificing winner pile double signal entries. it
+can sacrifice a combination of the pyramid grind signals that are either duplicates or
+non double signals in the process. it needs strong logic so that it's able to provide
+benefit without huge curve fit issues. so the job of it is to essentially work on the
+win/loss piles and increase win rate without overfit."
+
+Translated to spec terms:
+
+  Winner pile  = ENTRY-tagged clusters with final_label == "WIN" (examples + wild WINs).
+                 Per-row, no rightmost/leftward distinction. Winners must all pass.
+  Loser pile   = ENTRY-tagged clusters with final_label == "LOSS". Per-row.
+                 Carve as many as possible.
+  Sacrificable = the live-scan pool (pyramid signals not in the labeled double-signal
+                 pool, plus any signals that are deduplicates of labeled rows in some
+                 setup-aware sense). Refinement conditions may eliminate these as
+                 collateral with no penalty.
+
+Open design questions for this session (these are what to engage with — not pick-one
+options, derive answers from data):
+
+1. **Bounding-box semantics under per-signal piles.** Existing spec uses exact
+   min/max of winner expression values across all winners (no margin) as the
+   bounding box, and conditions are "[low, high] bands per expression." Under
+   per-signal piles with 111-218 winners (vs the old ~30-50 example winners),
+   the bounding box is wider. How does that affect carve power and curve-fit
+   risk? The §3.4 SVD effective rank diagnostic from PRESIGNAL_GRINDER.md
+   should transfer — measure it on the new winner pile to see how many
+   genuinely independent constraints exist.
+
+2. **Loser elimination semantics.** Existing spec: cluster eliminated iff
+   every bar in cluster fails some condition (cluster-conservative). Per-
+   signal: eliminate iff the row's expression value falls outside [low, high]
+   on some condition. Simpler. But loses the cluster-conservatism that
+   prevented coincidental single-bar eliminations from killing whole runs.
+   Question: does any of the cluster-conservatism transfer meaningfully to
+   per-signal piles, or is the simpler semantics correct?
+
+3. **Curve-fit defense.** Existing spec has two-test validation (consensus
+   stability across 50%-loser subsamples + per-condition binomial significance
+   against universe baseline). Per-signal piles should still use both tests
+   but the implementation details shift:
+     - Subsampling: which rows? 50% of loser rows per run.
+     - Binomial test: universe baseline computed per expression as before;
+       loser exclusion rate is now per-row (not per-cluster-bar). The
+       statistical test is the same shape.
+   Carry both tests over with implementation adjustments.
+
+4. **Sacrificable pool boundary.** "Pyramid-only signals" (pyramid fired but
+   presignal didn't) and "duplicates" are sacrificable. How is "duplicate"
+   defined here — same ticker on consecutive bars? Same setup-instance? This
+   affects what gets eliminated as collateral and what stays. Ground in the
+   data: look at the per-ticker double-signal density, identify natural
+   "instances" and "duplicates."
+
+5. **What input format does refinement read?** The current refinement reads
+   raw_signal_clusters_*.json (cluster-aware schema). Under L14, refinement
+   reads signal_exit_pool_{setup}.json (per-cluster, per-signal labels). The
+   schema shift means the load path needs rewriting. Decide: rewrite
+   refinement to read signal_exit_pool directly, OR add a translation layer
+   that produces a per-signal raw_signal_clusters-like format. The first is
+   cleaner; the second is less invasive to existing code.
+
+What to NOT do:
+
+- Don't bundle the EV-after-Profit pipeline reorder into refinement's redesign.
+  Refinement should ship in a way that's neutral to that reorder (it just produces
+  filter conditions; doesn't depend on profit grinder ordering).
+- Don't propose a clean-slate rewrite when the existing cluster_aware_refinement_search
+  beam search code is salvageable. The mechanism (numpy bool arrays, matmul cluster
+  set pre-computation, partial sort via argpartition) is solid. The unit (cluster vs
+  per-signal) is what changes.
+- Don't punt on curve-fit. The two-test validation IS the strong logic. If you can't
+  defend curve-fit resistance you don't ship.
+- Don't drift into related side-projects. Refinement is a focused redesign on the
+  carve mechanism. EV/profit/pipeline-ordering are separate sessions.
+
+Verification gates before any code:
+
+1. Read all the docs above. Restate the per-signal vs cluster-aware distinction
+   plainly to Dan.
+2. Look at the actual per-signal data in signal_exit_pool_{setup}.json. Eyeball
+   distributions: how many winners per setup, what fraction are examples vs wild,
+   how do mfe_during_life distributions compare across the labeled pile.
+3. Propose the per-signal refinement design (bounding box, elimination, curve-fit
+   defense) with each of the 5 open questions above engaged with — derive answers
+   from data, not by analogy to the existing spec.
+4. Get Dan's buy-in on the design BEFORE writing code. Pseudocode + plain language,
+   not raw code blocks.
+5. After buy-in: implement, run on htf first, verify lock + carve quality + curve-fit
+   tests pass, then bf and base. Update REFINEMENT_GRINDER.md accordingly.
+
+Diagnostic artifacts already on disk (use as historical reference):
+- research/labeler_bakeoff/results.json (18-labeler bakeoff write-up)
+- research/labeler_bakeoff/summary.txt
+- research/forward_envelope_diag/htf_diag.json
+- data/signal_exit_grind/signal_exit_pool_htf_HALTED_20260425_202509.json (the
+  wrong-mechanic state that motivated the L14 ship — historical only)
+
+──────────────────────────────────────────────────────────────
+End of prompt.

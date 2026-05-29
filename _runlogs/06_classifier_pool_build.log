@@ -1,0 +1,13 @@
+Loading OHLCV: C:/Users/Dan/Documents/ScanPerfect/swing-screener\local_runner\cache\universe_ohlcv_daily.pkl
+  tickers in universe: 11,859
+
+setup    pyr_sigs  pool_total  examples   non_ex   db_ex  ex_native  ex_unioned
+-------------------------------------------------------------------------------------
+htf           812         272        28      244      28         28           0
+bf            582         344        45      299      45         45           0
+base          675         522        38      484      38         38           0
+dtss        1,369         757        62      695      62         61           1
+3-4db         653         239        26      213      26         26           0
+
+wrote C:/Users/Dan/Documents/ScanPerfect/swing-screener\research\classifier_pool\pool_summary.json
+EXIT=0

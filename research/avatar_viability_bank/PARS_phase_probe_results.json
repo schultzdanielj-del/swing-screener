@@ -1,0 +1,232 @@
+{
+  "setup": "PARS",
+  "klass": "parabolic",
+  "n_bars": 21,
+  "bank_ticker": "CAR",
+  "bank_asof": "2026-04-21",
+  "bank_phase_types": [
+    "uptrend"
+  ],
+  "bank_phase_boundary_bars": [],
+  "bank_signature": [
+    1.0,
+    1.8953987056767083,
+    1.8953987056767083,
+    0.0,
+    0.8794090290326867,
+    0.9523809523809523
+  ],
+  "adr_anchor": 55.93700000000001,
+  "top": [
+    {
+      "rank": 1,
+      "ticker": "ROOT",
+      "asof": "2024-03-18",
+      "dist": 0.0033338921714708425,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 2,
+      "ticker": "RGTU",
+      "asof": "2025-10-06",
+      "dist": 0.003539139373431894,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 3,
+      "ticker": "RGTX",
+      "asof": "2025-10-06",
+      "dist": 0.004248560759421984,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 4,
+      "ticker": "AMC",
+      "asof": "2021-06-02",
+      "dist": 0.005257877688846797,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 5,
+      "ticker": "WIMI",
+      "asof": "2020-07-13",
+      "dist": 0.006721440293775076,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 6,
+      "ticker": "GMET",
+      "asof": "2026-02-27",
+      "dist": 0.007469812177899644,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 7,
+      "ticker": "BNGO",
+      "asof": "2020-12-31",
+      "dist": 0.007802599868158182,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 8,
+      "ticker": "SENS",
+      "asof": "2021-01-19",
+      "dist": 0.010295949044610717,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 9,
+      "ticker": "WKHS",
+      "asof": "2020-07-01",
+      "dist": 0.010377936637926573,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 10,
+      "ticker": "AMRN",
+      "asof": "2018-10-18",
+      "dist": 0.010697175040078805,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 11,
+      "ticker": "NEGG",
+      "asof": "2021-07-07",
+      "dist": 0.01072814234641864,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 12,
+      "ticker": "EPSM",
+      "asof": "2025-09-09",
+      "dist": 0.011771189672188168,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 13,
+      "ticker": "NNNN",
+      "asof": "2025-07-09",
+      "dist": 0.012840886128441245,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 14,
+      "ticker": "LUMN",
+      "asof": "2024-08-07",
+      "dist": 0.013937041428260723,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 15,
+      "ticker": "DFLI",
+      "asof": "2025-10-03",
+      "dist": 0.015094594426885603,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 16,
+      "ticker": "STI",
+      "asof": "2025-10-14",
+      "dist": 0.01541003797387713,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 17,
+      "ticker": "LWLG",
+      "asof": "2021-06-29",
+      "dist": 0.015767685677805517,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 18,
+      "ticker": "SDEV",
+      "asof": "2025-12-22",
+      "dist": 0.017280195038424782,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 19,
+      "ticker": "SDEV",
+      "asof": "2025-09-04",
+      "dist": 0.018148538275511397,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 20,
+      "ticker": "AEMD",
+      "asof": "2021-06-09",
+      "dist": 0.018825775564450548,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 21,
+      "ticker": "MFI",
+      "asof": "2025-06-11",
+      "dist": 0.02367250826701782,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 22,
+      "ticker": "GNS",
+      "asof": "2023-01-19",
+      "dist": 0.023800228057760997,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 23,
+      "ticker": "TIRX",
+      "asof": "2021-03-01",
+      "dist": 0.02385349823938164,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 24,
+      "ticker": "DOMH",
+      "asof": "2025-02-11",
+      "dist": 0.0238635908560139,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 25,
+      "ticker": "ZJYL",
+      "asof": "2023-12-19",
+      "dist": 0.02593195082342895,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 26,
+      "ticker": "MBOT",
+      "asof": "2016-08-16",
+      "dist": 0.029396240533047156,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 27,
+      "ticker": "SERV",
+      "asof": "2024-07-25",
+      "dist": 0.03169113958466674,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 28,
+      "ticker": "PED",
+      "asof": "2018-06-29",
+      "dist": 0.03335204842066526,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 29,
+      "ticker": "SGLY",
+      "asof": "2016-11-16",
+      "dist": 0.03457369029643845,
+      "fit_boundaries": []
+    },
+    {
+      "rank": 30,
+      "ticker": "INHD",
+      "asof": "2025-09-04",
+      "dist": 0.03614834065700629,
+      "fit_boundaries": []
+    }
+  ]
+}

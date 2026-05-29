@@ -3,40 +3,40 @@
   "setups": [
     {
       "setup": "htf",
-      "total": 249,
-      "examples": 30,
-      "non_examples": 219,
+      "total": 272,
+      "examples": 28,
+      "non_examples": 244,
       "pool_path": "htf_pool.json"
     },
     {
       "setup": "bf",
-      "total": 353,
+      "total": 344,
       "examples": 45,
-      "non_examples": 308,
+      "non_examples": 299,
       "pool_path": "bf_pool.json"
     },
     {
       "setup": "base",
-      "total": 503,
+      "total": 522,
       "examples": 38,
-      "non_examples": 465,
+      "non_examples": 484,
       "pool_path": "base_pool.json"
     },
     {
       "setup": "dtss",
-      "total": 900,
+      "total": 757,
       "examples": 62,
-      "non_examples": 838,
+      "non_examples": 695,
       "pool_path": "dtss_pool.json"
     },
     {
       "setup": "3-4db",
-      "total": 242,
+      "total": 239,
       "examples": 26,
-      "non_examples": 216,
+      "non_examples": 213,
       "pool_path": "3-4db_pool.json"
     }
   ],
-  "alignment_ref": "C:/Users/Dan/Documents/ScanPerfect/swing-screener-win-loss-classifier\\research\\presignal_sma_band_scan\\pyramid_alignment.json",
-  "timestamp": "2026-04-21T21:49:27"
+  "alignment_ref": "C:/Users/Dan/Documents/ScanPerfect/swing-screener\\research\\presignal_sma_band_scan\\pyramid_alignment.json",
+  "timestamp": "2026-04-25T20:22:51"
 }

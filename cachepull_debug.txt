@@ -1,0 +1,2092 @@
+Microsoft Windows [Version 10.0.26200.8037]
+(c) Microsoft Corporation. All rights reserved.
+
+C:\Users\Dan\Documents\ScanPerfect\swing-screener>git pull
+remote: Enumerating objects: 12, done.
+remote: Counting objects: 100% (12/12), done.
+remote: Compressing objects: 100% (8/8), done.
+remote: Total 8 (delta 6), reused 0 (delta 0), pack-reused 0 (from 0)
+Unpacking objects: 100% (8/8), 1.63 KiB | 42.00 KiB/s, done.
+From https://github.com/schultzdanielj-del/swing-screener
+   a0d0092..868a056  v2         -> origin/v2
+Updating a0d0092..868a056
+Fast-forward
+ Code_Auditor.md               | 16 ++++++++--------
+ local_runner/cache_builder.py | 27 ++++++++++++++++++++-------
+ 2 files changed, 28 insertions(+), 15 deletions(-)
+
+C:\Users\Dan\Documents\ScanPerfect\swing-screener>del local_runner\cache\universe_ohlcv_daily.pkl
+Could Not Find C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\universe_ohlcv_daily.pkl
+
+C:\Users\Dan\Documents\ScanPerfect\swing-screener>python local_runner/cache_builder.py --all --force
+============================================================
+  DAILY CACHE BUILDER — Full history via yfinance
+============================================================
+
+Getting ticker list...
+  10856 tickers from existing cache
+  Start date: 2016-01-01
+
+Fetching daily OHLCV data via yfinance...
+    Daily: 50/10,856 (49 ok, 1 failed, w=20 sleep=1s) [0.0m elapsed, ~6.5m left]
+    Daily: 100/10,856 (99 ok, 1 failed, w=20 sleep=1s) [0.1m elapsed, ~6.0m left]
+    Daily: 150/10,856 (149 ok, 1 failed, w=20 sleep=1s) [0.1m elapsed, ~5.6m left]
+    Daily: 200/10,856 (185 ok, 15 failed, w=18 sleep=2s) [0.1m elapsed, ~5.6m left]
+    Daily: 250/10,856 (205 ok, 45 failed, w=16 sleep=2s) [0.1m elapsed, ~5.8m left]
+    Daily: 300/10,856 (255 ok, 45 failed, w=16 sleep=2s) [0.2m elapsed, ~6.5m left]
+    Daily: 350/10,856 (299 ok, 51 failed, w=14 sleep=3s) [0.2m elapsed, ~6.9m left]
+    Daily: 400/10,856 (349 ok, 51 failed, w=14 sleep=3s) [0.3m elapsed, ~7.7m left]
+    Daily: 450/10,856 (385 ok, 65 failed, w=12 sleep=5s) [0.4m elapsed, ~8.2m left]
+    Daily: 500/10,856 (435 ok, 65 failed, w=12 sleep=5s) [0.5m elapsed, ~9.4m left]
+    Daily: 550/10,856 (471 ok, 79 failed, w=10 sleep=8s) [0.6m elapsed, ~10.4m left]
+    Daily: 600/10,856 (511 ok, 89 failed, w=8 sleep=11s) [0.7m elapsed, ~12.0m left]
+    Daily: 650/10,856 (553 ok, 97 failed, w=6 sleep=17s) [0.9m elapsed, ~14.4m left]
+    Daily: 700/10,856 (580 ok, 120 failed, w=4 sleep=26s) [1.2m elapsed, ~17.9m left]
+    Daily: 750/10,856 (621 ok, 129 failed, w=3 sleep=30s) [1.7m elapsed, ~22.8m left]
+    Daily: 800/10,856 (660 ok, 140 failed, w=3 sleep=30s) [2.2m elapsed, ~28.1m left]
+    Daily: 850/10,856 (710 ok, 140 failed, w=3 sleep=30s) [2.8m elapsed, ~32.8m left]
+    Daily: 900/10,856 (746 ok, 154 failed, w=3 sleep=30s) [3.3m elapsed, ~36.9m left]
+    Daily: 950/10,856 (787 ok, 163 failed, w=3 sleep=30s) [3.9m elapsed, ~40.4m left]
+    Daily: 1,000/10,856 (831 ok, 169 failed, w=3 sleep=30s) [4.4m elapsed, ~43.5m left]
+    Daily: 1,050/10,856 (881 ok, 169 failed, w=3 sleep=30s) [5.0m elapsed, ~46.4m left]
+    Daily: 1,100/10,856 (923 ok, 177 failed, w=3 sleep=30s) [5.5m elapsed, ~48.9m left]
+    Daily: 1,150/10,856 (973 ok, 177 failed, w=3 sleep=30s) [6.1m elapsed, ~51.1m left]
+    Daily: 1,200/10,856 (1,012 ok, 188 failed, w=3 sleep=30s) [6.6m elapsed, ~53.1m left]
+    Daily: 1,250/10,856 (1,059 ok, 191 failed, w=3 sleep=30s) [7.1m elapsed, ~54.9m left]
+    Daily: 1,300/10,856 (1,099 ok, 201 failed, w=3 sleep=30s) [7.7m elapsed, ~56.5m left]
+HTTP Error 401: {"finance":{"result":null,"error":{"code":"Unauthorized","description":"Invalid Crumb"}}}
+    Daily: 1,350/10,856 (1,149 ok, 201 failed, w=3 sleep=30s) [8.3m elapsed, ~58.1m left]
+HTTP Error 401: {"finance":{"result":null,"error":{"code":"Unauthorized","description":"User is unable to access this feature - https://bit.ly/yahoo-finance-api-feedback"}}}
+    Daily: 1,400/10,856 (1,186 ok, 214 failed, w=3 sleep=30s) [8.8m elapsed, ~59.5m left]
+    Daily: 1,450/10,856 (1,231 ok, 219 failed, w=3 sleep=30s) [9.4m elapsed, ~60.7m left]
+    Daily: 1,500/10,856 (1,277 ok, 223 failed, w=3 sleep=30s) [9.9m elapsed, ~61.9m left]
+    Daily: 1,550/10,856 (1,324 ok, 226 failed, w=4 sleep=21s) [10.5m elapsed, ~62.8m left]
+    Daily: 1,600/10,856 (1,370 ok, 230 failed, w=5 sleep=15s) [10.9m elapsed, ~62.8m left]
+    Daily: 1,650/10,856 (1,411 ok, 239 failed, w=3 sleep=22s) [11.1m elapsed, ~62.1m left]
+    Daily: 1,700/10,856 (1,459 ok, 241 failed, w=3 sleep=22s) [11.5m elapsed, ~62.2m left]
+    Daily: 1,750/10,856 (1,501 ok, 249 failed, w=3 sleep=30s) [12.0m elapsed, ~62.3m left]
+    Daily: 1,800/10,856 (1,541 ok, 259 failed, w=3 sleep=30s) [12.5m elapsed, ~63.1m left]
+    Daily: 1,850/10,856 (1,583 ok, 267 failed, w=3 sleep=30s) [13.1m elapsed, ~63.7m left]
+    Daily: 1,900/10,856 (1,628 ok, 272 failed, w=3 sleep=30s) [13.6m elapsed, ~64.2m left]
+    Daily: 1,950/10,856 (1,670 ok, 280 failed, w=3 sleep=30s) [14.2m elapsed, ~64.8m left]
+    Daily: 2,000/10,856 (1,709 ok, 291 failed, w=3 sleep=30s) [14.7m elapsed, ~65.3m left]
+    Daily: 2,050/10,856 (1,755 ok, 295 failed, w=3 sleep=30s) [15.3m elapsed, ~65.7m left]
+    Daily: 2,100/10,856 (1,802 ok, 298 failed, w=3 sleep=30s) [15.8m elapsed, ~66.0m left]
+    Daily: 2,150/10,856 (1,847 ok, 303 failed, w=4 sleep=21s) [16.4m elapsed, ~66.4m left]
+    Daily: 2,200/10,856 (1,893 ok, 307 failed, w=5 sleep=15s) [16.8m elapsed, ~66.1m left]
+    Daily: 2,250/10,856 (1,938 ok, 312 failed, w=6 sleep=10s) [17.1m elapsed, ~65.3m left]
+    Daily: 2,300/10,856 (1,982 ok, 318 failed, w=4 sleep=15s) [17.3m elapsed, ~64.2m left]
+    Daily: 2,350/10,856 (2,027 ok, 323 failed, w=4 sleep=15s) [17.6m elapsed, ~63.6m left]
+    Daily: 2,400/10,856 (2,064 ok, 336 failed, w=3 sleep=23s) [17.9m elapsed, ~62.9m left]
+    Daily: 2,450/10,856 (2,103 ok, 347 failed, w=3 sleep=30s) [18.3m elapsed, ~62.8m left]
+    Daily: 2,500/10,856 (2,140 ok, 360 failed, w=3 sleep=30s) [18.9m elapsed, ~63.0m left]
+    Daily: 2,550/10,856 (2,184 ok, 366 failed, w=3 sleep=30s) [19.4m elapsed, ~63.2m left]
+    Daily: 2,600/10,856 (2,225 ok, 375 failed, w=3 sleep=30s) [20.0m elapsed, ~63.4m left]
+    Daily: 2,650/10,856 (2,272 ok, 378 failed, w=3 sleep=30s) [20.5m elapsed, ~63.5m left]
+    Daily: 2,700/10,856 (2,314 ok, 386 failed, w=3 sleep=30s) [21.1m elapsed, ~63.6m left]
+    Daily: 2,750/10,856 (2,355 ok, 395 failed, w=3 sleep=30s) [21.6m elapsed, ~63.7m left]
+    Daily: 2,800/10,856 (2,402 ok, 398 failed, w=3 sleep=30s) [22.2m elapsed, ~63.8m left]
+    Daily: 2,850/10,856 (2,443 ok, 407 failed, w=3 sleep=30s) [22.7m elapsed, ~63.8m left]
+    Daily: 2,900/10,856 (2,482 ok, 418 failed, w=3 sleep=30s) [23.3m elapsed, ~63.8m left]
+    Daily: 2,950/10,856 (2,526 ok, 424 failed, w=3 sleep=30s) [23.8m elapsed, ~63.8m left]
+    Daily: 3,000/10,856 (2,566 ok, 434 failed, w=3 sleep=30s) [24.4m elapsed, ~63.8m left]
+    Daily: 3,050/10,856 (2,608 ok, 442 failed, w=3 sleep=30s) [24.9m elapsed, ~63.8m left]
+    Daily: 3,100/10,856 (2,658 ok, 442 failed, w=3 sleep=30s) [25.5m elapsed, ~63.7m left]
+    Daily: 3,150/10,856 (2,700 ok, 450 failed, w=3 sleep=30s) [26.0m elapsed, ~63.7m left]
+    Daily: 3,200/10,856 (2,744 ok, 456 failed, w=3 sleep=30s) [26.6m elapsed, ~63.6m left]
+    Daily: 3,250/10,856 (2,789 ok, 461 failed, w=3 sleep=30s) [27.1m elapsed, ~63.5m left]
+    Daily: 3,300/10,856 (2,836 ok, 464 failed, w=3 sleep=30s) [27.7m elapsed, ~63.4m left]
+    Daily: 3,350/10,856 (2,875 ok, 475 failed, w=3 sleep=30s) [28.2m elapsed, ~63.3m left]
+    Daily: 3,400/10,856 (2,910 ok, 490 failed, w=3 sleep=30s) [28.8m elapsed, ~63.1m left]
+    Daily: 3,450/10,856 (2,954 ok, 496 failed, w=3 sleep=30s) [29.3m elapsed, ~63.0m left]
+    Daily: 3,500/10,856 (2,983 ok, 517 failed, w=3 sleep=30s) [29.9m elapsed, ~62.8m left]
+    Daily: 3,550/10,856 (3,027 ok, 523 failed, w=3 sleep=30s) [30.4m elapsed, ~62.7m left]
+    Daily: 3,600/10,856 (3,062 ok, 538 failed, w=3 sleep=30s) [31.0m elapsed, ~62.5m left]
+    Daily: 3,650/10,856 (3,101 ok, 549 failed, w=3 sleep=30s) [31.6m elapsed, ~62.3m left]
+    Daily: 3,700/10,856 (3,146 ok, 554 failed, w=3 sleep=30s) [32.1m elapsed, ~62.1m left]
+    Daily: 3,750/10,856 (3,188 ok, 562 failed, w=3 sleep=30s) [32.7m elapsed, ~61.9m left]
+    Daily: 3,800/10,856 (3,231 ok, 569 failed, w=3 sleep=30s) [33.2m elapsed, ~61.7m left]
+    Daily: 3,850/10,856 (3,275 ok, 575 failed, w=3 sleep=30s) [33.8m elapsed, ~61.4m left]
+    Daily: 3,900/10,856 (3,311 ok, 589 failed, w=3 sleep=30s) [34.3m elapsed, ~61.2m left]
+    Daily: 3,950/10,856 (3,352 ok, 598 failed, w=3 sleep=30s) [34.9m elapsed, ~61.0m left]
+    Daily: 4,000/10,856 (3,398 ok, 602 failed, w=3 sleep=30s) [35.4m elapsed, ~60.7m left]
+    Daily: 4,050/10,856 (3,436 ok, 614 failed, w=3 sleep=30s) [36.0m elapsed, ~60.5m left]
+    Daily: 4,100/10,856 (3,480 ok, 620 failed, w=3 sleep=30s) [36.5m elapsed, ~60.2m left]
+    Daily: 4,150/10,856 (3,516 ok, 634 failed, w=3 sleep=30s) [37.1m elapsed, ~59.9m left]
+    Daily: 4,200/10,856 (3,558 ok, 642 failed, w=3 sleep=30s) [37.6m elapsed, ~59.7m left]
+    Daily: 4,250/10,856 (3,602 ok, 648 failed, w=3 sleep=30s) [38.2m elapsed, ~59.4m left]
+    Daily: 4,300/10,856 (3,647 ok, 653 failed, w=3 sleep=30s) [38.7m elapsed, ~59.1m left]
+    Daily: 4,350/10,856 (3,691 ok, 659 failed, w=3 sleep=30s) [39.3m elapsed, ~58.8m left]
+    Daily: 4,400/10,856 (3,735 ok, 665 failed, w=3 sleep=30s) [39.8m elapsed, ~58.4m left]
+    Daily: 4,450/10,856 (3,778 ok, 672 failed, w=3 sleep=30s) [40.4m elapsed, ~58.1m left]
+    Daily: 4,500/10,856 (3,823 ok, 677 failed, w=3 sleep=30s) [40.9m elapsed, ~57.8m left]
+$HOFV: possibly delisted; no timezone found
+
+1 Failed download:
+['HOFV']: possibly delisted; no timezone found
+
+1 Failed download:
+['HOFV']: possibly delisted; no timezone found
+
+1 Failed download:
+['HOFV']: possibly delisted; no timezone found
+    Daily: 4,550/10,856 (3,870 ok, 680 failed, w=3 sleep=30s) [41.5m elapsed, ~57.6m left]
+    Daily: 4,600/10,856 (3,912 ok, 688 failed, w=3 sleep=30s) [42.1m elapsed, ~57.2m left]
+    Daily: 4,650/10,856 (3,954 ok, 696 failed, w=3 sleep=30s) [42.7m elapsed, ~56.9m left]
+    Daily: 4,700/10,856 (3,992 ok, 708 failed, w=3 sleep=30s) [43.2m elapsed, ~56.6m left]
+    Daily: 4,750/10,856 (4,034 ok, 716 failed, w=3 sleep=30s) [43.8m elapsed, ~56.2m left]
+    Daily: 4,800/10,856 (4,071 ok, 729 failed, w=3 sleep=30s) [44.3m elapsed, ~55.9m left]
+    Daily: 4,850/10,856 (4,111 ok, 739 failed, w=3 sleep=30s) [44.9m elapsed, ~55.6m left]
+    Daily: 4,900/10,856 (4,154 ok, 746 failed, w=3 sleep=30s) [45.5m elapsed, ~55.3m left]
+    Daily: 4,950/10,856 (4,201 ok, 749 failed, w=3 sleep=30s) [46.0m elapsed, ~54.9m left]
+    Daily: 5,000/10,856 (4,251 ok, 749 failed, w=3 sleep=30s) [46.6m elapsed, ~54.6m left]
+    Daily: 5,050/10,856 (4,299 ok, 751 failed, w=4 sleep=21s) [47.1m elapsed, ~54.2m left]
+$IRBTQ: possibly delisted; no price data found  (1d 2016-01-01 -> 2026-03-30) (Yahoo error = "No data found, symbol may be delisted")
+
+1 Failed download:
+['IRBTQ']: possibly delisted; no price data found  (1d 2016-01-01 -> 2026-03-30) (Yahoo error = "No data found, symbol may be delisted")
+    Daily: 5,100/10,856 (4,342 ok, 758 failed, w=3 sleep=30s) [47.5m elapsed, ~53.7m left]
+    Daily: 5,150/10,856 (4,385 ok, 765 failed, w=3 sleep=30s) [48.1m elapsed, ~53.3m left]
+    Daily: 5,200/10,856 (4,410 ok, 790 failed, w=3 sleep=30s) [48.7m elapsed, ~52.9m left]
+    Daily: 5,250/10,856 (4,446 ok, 804 failed, w=3 sleep=30s) [49.2m elapsed, ~52.6m left]
+    Daily: 5,300/10,856 (4,488 ok, 812 failed, w=3 sleep=30s) [49.8m elapsed, ~52.2m left]
+    Daily: 5,350/10,856 (4,531 ok, 819 failed, w=3 sleep=30s) [50.3m elapsed, ~51.8m left]
+    Daily: 5,400/10,856 (4,576 ok, 824 failed, w=3 sleep=30s) [50.9m elapsed, ~51.4m left]
+    Daily: 5,450/10,856 (4,616 ok, 834 failed, w=3 sleep=30s) [51.4m elapsed, ~51.0m left]
+    Daily: 5,500/10,856 (4,666 ok, 834 failed, w=3 sleep=30s) [52.0m elapsed, ~50.6m left]
+    Daily: 5,550/10,856 (4,708 ok, 842 failed, w=3 sleep=30s) [52.5m elapsed, ~50.2m left]
+    Daily: 5,600/10,856 (4,751 ok, 849 failed, w=3 sleep=30s) [53.1m elapsed, ~49.8m left]
+    Daily: 5,650/10,856 (4,797 ok, 853 failed, w=3 sleep=30s) [53.6m elapsed, ~49.4m left]
+    Daily: 5,700/10,856 (4,842 ok, 858 failed, w=3 sleep=30s) [54.2m elapsed, ~49.0m left]
+    Daily: 5,750/10,856 (4,880 ok, 870 failed, w=3 sleep=30s) [54.8m elapsed, ~48.6m left]
+    Daily: 5,800/10,856 (4,918 ok, 882 failed, w=3 sleep=30s) [55.3m elapsed, ~48.2m left]
+    Daily: 5,850/10,856 (4,962 ok, 888 failed, w=3 sleep=30s) [55.9m elapsed, ~47.8m left]
+    Daily: 5,900/10,856 (4,996 ok, 904 failed, w=3 sleep=30s) [56.4m elapsed, ~47.4m left]
+    Daily: 5,950/10,856 (5,034 ok, 916 failed, w=3 sleep=30s) [57.0m elapsed, ~47.0m left]
+    Daily: 6,000/10,856 (5,078 ok, 922 failed, w=3 sleep=30s) [57.5m elapsed, ~46.6m left]
+    Daily: 6,050/10,856 (5,124 ok, 926 failed, w=3 sleep=30s) [58.1m elapsed, ~46.1m left]
+    Daily: 6,100/10,856 (5,171 ok, 929 failed, w=3 sleep=30s) [58.6m elapsed, ~45.7m left]
+    Daily: 6,150/10,856 (5,218 ok, 932 failed, w=4 sleep=21s) [59.2m elapsed, ~45.3m left]
+    Daily: 6,200/10,856 (5,252 ok, 948 failed, w=3 sleep=30s) [59.6m elapsed, ~44.7m left]
+    Daily: 6,250/10,856 (5,294 ok, 956 failed, w=3 sleep=30s) [60.1m elapsed, ~44.3m left]
+    Daily: 6,300/10,856 (5,334 ok, 966 failed, w=3 sleep=30s) [60.7m elapsed, ~43.9m left]
+    Daily: 6,350/10,856 (5,378 ok, 972 failed, w=3 sleep=30s) [61.2m elapsed, ~43.4m left]
+    Daily: 6,400/10,856 (5,424 ok, 976 failed, w=3 sleep=30s) [61.8m elapsed, ~43.0m left]
+    Daily: 6,450/10,856 (5,467 ok, 983 failed, w=3 sleep=30s) [62.3m elapsed, ~42.6m left]
+$MTEMQ: possibly delisted; no timezone found
+    Daily: 6,500/10,856 (5,513 ok, 987 failed, w=3 sleep=30s) [62.9m elapsed, ~42.1m left]
+    Daily: 6,550/10,856 (5,560 ok, 990 failed, w=3 sleep=30s) [63.4m elapsed, ~41.7m left]
+    Daily: 6,600/10,856 (5,598 ok, 1002 failed, w=3 sleep=30s) [64.0m elapsed, ~41.3m left]
+    Daily: 6,650/10,856 (5,647 ok, 1003 failed, w=3 sleep=30s) [64.5m elapsed, ~40.8m left]
+    Daily: 6,700/10,856 (5,681 ok, 1019 failed, w=3 sleep=30s) [65.1m elapsed, ~40.4m left]
+    Daily: 6,750/10,856 (5,728 ok, 1022 failed, w=3 sleep=30s) [65.6m elapsed, ~39.9m left]
+    Daily: 6,800/10,856 (5,766 ok, 1034 failed, w=3 sleep=30s) [66.2m elapsed, ~39.5m left]
+    Daily: 6,850/10,856 (5,814 ok, 1036 failed, w=3 sleep=30s) [66.7m elapsed, ~39.0m left]
+    Daily: 6,900/10,856 (5,855 ok, 1045 failed, w=3 sleep=30s) [67.3m elapsed, ~38.6m left]
+    Daily: 6,950/10,856 (5,899 ok, 1051 failed, w=3 sleep=30s) [67.8m elapsed, ~38.1m left]
+    Daily: 7,000/10,856 (5,941 ok, 1059 failed, w=3 sleep=30s) [68.3m elapsed, ~37.6m left]
+    Daily: 7,050/10,856 (5,989 ok, 1061 failed, w=3 sleep=30s) [68.9m elapsed, ~37.2m left]
+    Daily: 7,100/10,856 (6,031 ok, 1069 failed, w=3 sleep=30s) [69.5m elapsed, ~36.7m left]
+    Daily: 7,150/10,856 (6,078 ok, 1072 failed, w=3 sleep=30s) [70.0m elapsed, ~36.3m left]
+    Daily: 7,200/10,856 (6,119 ok, 1081 failed, w=3 sleep=30s) [70.5m elapsed, ~35.8m left]
+    Daily: 7,250/10,856 (6,152 ok, 1098 failed, w=3 sleep=30s) [71.1m elapsed, ~35.4m left]
+    Daily: 7,300/10,856 (6,193 ok, 1107 failed, w=3 sleep=30s) [71.6m elapsed, ~34.9m left]
+    Daily: 7,350/10,856 (6,242 ok, 1108 failed, w=3 sleep=30s) [72.2m elapsed, ~34.4m left]
+    Daily: 7,400/10,856 (6,282 ok, 1118 failed, w=3 sleep=30s) [72.8m elapsed, ~34.0m left]
+    Daily: 7,450/10,856 (6,332 ok, 1118 failed, w=3 sleep=30s) [73.3m elapsed, ~33.5m left]
+    Daily: 7,500/10,856 (6,377 ok, 1123 failed, w=3 sleep=30s) [73.9m elapsed, ~33.1m left]
+    Daily: 7,550/10,856 (6,426 ok, 1124 failed, w=4 sleep=21s) [74.4m elapsed, ~32.6m left]
+    Daily: 7,600/10,856 (6,470 ok, 1130 failed, w=3 sleep=30s) [74.8m elapsed, ~32.0m left]
+    Daily: 7,650/10,856 (6,519 ok, 1131 failed, w=3 sleep=30s) [75.3m elapsed, ~31.6m left]
+    Daily: 7,700/10,856 (6,562 ok, 1138 failed, w=3 sleep=30s) [75.9m elapsed, ~31.1m left]
+    Daily: 7,750/10,856 (6,602 ok, 1148 failed, w=3 sleep=30s) [76.5m elapsed, ~30.6m left]
+    Daily: 7,800/10,856 (6,649 ok, 1151 failed, w=3 sleep=30s) [77.0m elapsed, ~30.2m left]
+    Daily: 7,850/10,856 (6,696 ok, 1154 failed, w=3 sleep=30s) [77.6m elapsed, ~29.7m left]
+    Daily: 7,900/10,856 (6,739 ok, 1161 failed, w=3 sleep=30s) [78.1m elapsed, ~29.2m left]
+    Daily: 7,950/10,856 (6,785 ok, 1165 failed, w=3 sleep=30s) [78.7m elapsed, ~28.8m left]
+    Daily: 8,000/10,856 (6,823 ok, 1177 failed, w=3 sleep=30s) [79.2m elapsed, ~28.3m left]
+    Daily: 8,050/10,856 (6,866 ok, 1184 failed, w=3 sleep=30s) [79.8m elapsed, ~27.8m left]
+    Daily: 8,100/10,856 (6,911 ok, 1189 failed, w=3 sleep=30s) [80.3m elapsed, ~27.3m left]
+    Daily: 8,150/10,856 (6,953 ok, 1197 failed, w=3 sleep=30s) [80.9m elapsed, ~26.9m left]
+    Daily: 8,200/10,856 (6,998 ok, 1202 failed, w=3 sleep=30s) [81.4m elapsed, ~26.4m left]
+    Daily: 8,250/10,856 (7,041 ok, 1209 failed, w=3 sleep=30s) [82.0m elapsed, ~25.9m left]
+    Daily: 8,300/10,856 (7,082 ok, 1218 failed, w=3 sleep=30s) [82.5m elapsed, ~25.4m left]
+    Daily: 8,350/10,856 (7,124 ok, 1226 failed, w=3 sleep=30s) [83.1m elapsed, ~24.9m left]
+    Daily: 8,400/10,856 (7,174 ok, 1226 failed, w=3 sleep=30s) [83.6m elapsed, ~24.5m left]
+    Daily: 8,450/10,856 (7,219 ok, 1231 failed, w=3 sleep=30s) [84.2m elapsed, ~24.0m left]
+    Daily: 8,500/10,856 (7,265 ok, 1235 failed, w=4 sleep=21s) [84.7m elapsed, ~23.5m left]
+    Daily: 8,550/10,856 (7,311 ok, 1239 failed, w=5 sleep=15s) [85.1m elapsed, ~23.0m left]
+    Daily: 8,600/10,856 (7,352 ok, 1248 failed, w=3 sleep=22s) [85.4m elapsed, ~22.4m left]
+    Daily: 8,650/10,856 (7,387 ok, 1263 failed, w=3 sleep=30s) [85.8m elapsed, ~21.9m left]
+    Daily: 8,700/10,856 (7,433 ok, 1267 failed, w=3 sleep=30s) [86.4m elapsed, ~21.4m left]
+    Daily: 8,750/10,856 (7,476 ok, 1274 failed, w=3 sleep=30s) [86.9m elapsed, ~20.9m left]
+    Daily: 8,800/10,856 (7,522 ok, 1278 failed, w=3 sleep=30s) [87.5m elapsed, ~20.4m left]
+    Daily: 8,850/10,856 (7,563 ok, 1287 failed, w=3 sleep=30s) [88.0m elapsed, ~20.0m left]
+    Daily: 8,900/10,856 (7,609 ok, 1291 failed, w=3 sleep=30s) [88.6m elapsed, ~19.5m left]
+    Daily: 8,950/10,856 (7,643 ok, 1307 failed, w=3 sleep=30s) [89.1m elapsed, ~19.0m left]
+    Daily: 9,000/10,856 (7,690 ok, 1310 failed, w=3 sleep=30s) [89.7m elapsed, ~18.5m left]
+    Daily: 9,050/10,856 (7,731 ok, 1319 failed, w=3 sleep=30s) [90.2m elapsed, ~18.0m left]
+    Daily: 9,100/10,856 (7,770 ok, 1330 failed, w=3 sleep=30s) [90.8m elapsed, ~17.5m left]
+    Daily: 9,150/10,856 (7,820 ok, 1330 failed, w=3 sleep=30s) [91.3m elapsed, ~17.0m left]
+    Daily: 9,200/10,856 (7,864 ok, 1336 failed, w=3 sleep=30s) [91.9m elapsed, ~16.5m left]
+    Daily: 9,250/10,856 (7,908 ok, 1342 failed, w=3 sleep=30s) [92.4m elapsed, ~16.0m left]
+    Daily: 9,300/10,856 (7,952 ok, 1348 failed, w=3 sleep=30s) [93.0m elapsed, ~15.6m left]
+    Daily: 9,350/10,856 (7,996 ok, 1354 failed, w=3 sleep=30s) [93.5m elapsed, ~15.1m left]
+    Daily: 9,400/10,856 (8,034 ok, 1366 failed, w=3 sleep=30s) [94.1m elapsed, ~14.6m left]
+    Daily: 9,450/10,856 (8,081 ok, 1369 failed, w=3 sleep=30s) [94.6m elapsed, ~14.1m left]
+    Daily: 9,500/10,856 (8,125 ok, 1375 failed, w=3 sleep=30s) [95.2m elapsed, ~13.6m left]
+    Daily: 9,550/10,856 (8,163 ok, 1387 failed, w=3 sleep=30s) [95.7m elapsed, ~13.1m left]
+    Daily: 9,600/10,856 (8,202 ok, 1398 failed, w=3 sleep=30s) [96.3m elapsed, ~12.6m left]
+    Daily: 9,650/10,856 (8,242 ok, 1408 failed, w=3 sleep=30s) [96.8m elapsed, ~12.1m left]
+    Daily: 9,700/10,856 (8,274 ok, 1426 failed, w=3 sleep=30s) [97.4m elapsed, ~11.6m left]
+    Daily: 9,750/10,856 (8,314 ok, 1436 failed, w=3 sleep=30s) [97.9m elapsed, ~11.1m left]
+    Daily: 9,800/10,856 (8,355 ok, 1445 failed, w=3 sleep=30s) [98.5m elapsed, ~10.6m left]
+    Daily: 9,850/10,856 (8,395 ok, 1455 failed, w=3 sleep=30s) [99.0m elapsed, ~10.1m left]
+    Daily: 9,900/10,856 (8,437 ok, 1463 failed, w=3 sleep=30s) [99.6m elapsed, ~9.6m left]
+    Daily: 9,950/10,856 (8,479 ok, 1471 failed, w=3 sleep=30s) [100.1m elapsed, ~9.1m left]
+    Daily: 10,000/10,856 (8,518 ok, 1482 failed, w=3 sleep=30s) [100.7m elapsed, ~8.6m left]
+    Daily: 10,050/10,856 (8,554 ok, 1496 failed, w=3 sleep=30s) [101.2m elapsed, ~8.1m left]
+    Daily: 10,100/10,856 (8,599 ok, 1501 failed, w=3 sleep=30s) [101.8m elapsed, ~7.6m left]
+$VIRX: possibly delisted; no timezone found
+
+1 Failed download:
+['VIRX']: possibly delisted; no timezone found
+
+1 Failed download:
+    Daily: 10,150/10,856 (8,641 ok, 1509 failed, w=3 sleep=30s) [102.4m elapsed, ~7.1m left]
+    Daily: 10,200/10,856 (8,677 ok, 1523 failed, w=3 sleep=30s) [102.9m elapsed, ~6.6m left]
+    Daily: 10,250/10,856 (8,720 ok, 1530 failed, w=3 sleep=30s) [103.5m elapsed, ~6.1m left]
+$VTLE: possibly delisted; no timezone found
+
+1 Failed download:
+['VTLE']: possibly delisted; no timezone found
+
+1 Failed download:
+['VTLE']: possibly delisted; no timezone found
+    Daily: 10,300/10,856 (8,763 ok, 1537 failed, w=3 sleep=30s) [104.0m elapsed, ~5.6m left]
+    Daily: 10,350/10,856 (8,800 ok, 1550 failed, w=3 sleep=30s) [104.6m elapsed, ~5.1m left]
+    Daily: 10,400/10,856 (8,842 ok, 1558 failed, w=3 sleep=30s) [105.1m elapsed, ~4.6m left]
+    Daily: 10,450/10,856 (8,874 ok, 1576 failed, w=3 sleep=30s) [105.7m elapsed, ~4.1m left]
+    Daily: 10,500/10,856 (8,915 ok, 1585 failed, w=3 sleep=30s) [106.3m elapsed, ~3.6m left]
+    Daily: 10,550/10,856 (8,954 ok, 1596 failed, w=3 sleep=30s) [106.8m elapsed, ~3.1m left]
+    Daily: 10,600/10,856 (8,995 ok, 1605 failed, w=3 sleep=30s) [107.4m elapsed, ~2.6m left]
+    Daily: 10,650/10,856 (9,034 ok, 1616 failed, w=3 sleep=30s) [107.9m elapsed, ~2.1m left]
+    Daily: 10,700/10,856 (9,073 ok, 1627 failed, w=3 sleep=30s) [108.5m elapsed, ~1.6m left]
+    Daily: 10,750/10,856 (9,113 ok, 1637 failed, w=3 sleep=30s) [109.0m elapsed, ~1.1m left]
+    Daily: 10,800/10,856 (9,158 ok, 1642 failed, w=3 sleep=30s) [109.6m elapsed, ~0.6m left]
+    Daily: 10,850/10,856 (9,199 ok, 1651 failed, w=3 sleep=30s) [110.1m elapsed, ~0.1m left]
+    Daily: 10,856/10,856 (9,202 ok, 1654 failed, w=3 sleep=30s) [110.6m elapsed, ~0.0m left]
+
+  Daily retry 1/3 — 1654 tickers to retry (10 workers, 3s sleep)...
+    Daily: 50/1,654 (9,249 ok, 3 failed, w=10 sleep=3s) [0.0m elapsed, ~0.5m left]
+    Daily: 100/1,654 (9,288 ok, 14 failed, w=8 sleep=4s) [0.1m elapsed, ~1.3m left]
+    Daily: 150/1,654 (9,324 ok, 28 failed, w=6 sleep=7s) [0.2m elapsed, ~1.8m left]
+    Daily: 200/1,654 (9,366 ok, 36 failed, w=4 sleep=10s) [0.3m elapsed, ~2.4m left]
+    Daily: 250/1,654 (9,405 ok, 47 failed, w=3 sleep=15s) [0.5m elapsed, ~2.9m left]
+    Daily: 300/1,654 (9,449 ok, 53 failed, w=3 sleep=23s) [0.8m elapsed, ~3.7m left]
+    Daily: 350/1,654 (9,485 ok, 67 failed, w=3 sleep=30s) [1.3m elapsed, ~4.7m left]
+    Daily: 400/1,654 (9,535 ok, 67 failed, w=3 sleep=30s) [1.8m elapsed, ~5.6m left]
+    Daily: 450/1,654 (9,578 ok, 74 failed, w=3 sleep=30s) [2.3m elapsed, ~6.3m left]
+    Daily: 500/1,654 (9,628 ok, 74 failed, w=3 sleep=30s) [2.9m elapsed, ~6.7m left]
+    Daily: 550/1,654 (9,675 ok, 77 failed, w=3 sleep=30s) [3.4m elapsed, ~6.9m left]
+    Daily: 600/1,654 (9,723 ok, 79 failed, w=4 sleep=21s) [4.0m elapsed, ~7.0m left]
+    Daily: 650/1,654 (9,765 ok, 87 failed, w=3 sleep=30s) [4.4m elapsed, ~6.8m left]
+    Daily: 700/1,654 (9,808 ok, 94 failed, w=3 sleep=30s) [4.9m elapsed, ~6.7m left]
+    Daily: 750/1,654 (9,855 ok, 97 failed, w=3 sleep=30s) [5.5m elapsed, ~6.6m left]
+$IRBTQ: possibly delisted; no price data found  (1d 2016-01-01 -> 2026-03-30) (Yahoo error = "No data found, symbol may be delisted")
+
+1 Failed download:
+['IRBTQ']: possibly delisted; no price data found  (1d 2016-01-01 -> 2026-03-30) (Yahoo error = "No data found, symbol may be delisted")
+
+1 Failed download:
+['IRBTQ']: possibly delisted; no price data found  (1d 2016-01-01 -> 2026-03-30) (Yahoo error = "No data found, symbol may be delisted")
+    Daily: 800/1,654 (9,892 ok, 110 failed, w=3 sleep=30s) [6.0m elapsed, ~6.4m left]
+    Daily: 850/1,654 (9,940 ok, 112 failed, w=3 sleep=30s) [6.6m elapsed, ~6.2m left]
+    Daily: 900/1,654 (9,987 ok, 115 failed, w=3 sleep=30s) [7.1m elapsed, ~6.0m left]
+    Daily: 950/1,654 (10,027 ok, 125 failed, w=3 sleep=30s) [7.7m elapsed, ~5.7m left]
+    Daily: 1,000/1,654 (10,072 ok, 130 failed, w=3 sleep=30s) [8.2m elapsed, ~5.4m left]
+    Daily: 1,050/1,654 (10,119 ok, 133 failed, w=3 sleep=30s) [8.8m elapsed, ~5.0m left]
+    Daily: 1,100/1,654 (10,163 ok, 139 failed, w=3 sleep=30s) [9.3m elapsed, ~4.7m left]
+    Daily: 1,150/1,654 (10,208 ok, 144 failed, w=3 sleep=30s) [9.9m elapsed, ~4.3m left]
+    Daily: 1,200/1,654 (10,254 ok, 148 failed, w=3 sleep=30s) [10.4m elapsed, ~3.9m left]
+    Daily: 1,250/1,654 (10,299 ok, 153 failed, w=4 sleep=21s) [11.0m elapsed, ~3.5m left]
+    Daily: 1,300/1,654 (10,333 ok, 169 failed, w=3 sleep=30s) [11.4m elapsed, ~3.1m left]
+    Daily: 1,350/1,654 (10,375 ok, 177 failed, w=3 sleep=30s) [11.9m elapsed, ~2.7m left]
+    Daily: 1,400/1,654 (10,418 ok, 184 failed, w=3 sleep=30s) [12.5m elapsed, ~2.3m left]
+    Daily: 1,450/1,654 (10,459 ok, 193 failed, w=3 sleep=30s) [13.0m elapsed, ~1.8m left]
+    Daily: 1,500/1,654 (10,494 ok, 208 failed, w=3 sleep=30s) [13.6m elapsed, ~1.4m left]
+    Daily: 1,550/1,654 (10,535 ok, 217 failed, w=3 sleep=30s) [14.1m elapsed, ~0.9m left]
+    Daily: 1,600/1,654 (10,582 ok, 220 failed, w=3 sleep=30s) [14.7m elapsed, ~0.5m left]
+    Daily: 1,650/1,654 (10,625 ok, 227 failed, w=3 sleep=30s) [15.2m elapsed, ~0.0m left]
+    Daily: 1,654/1,654 (10,629 ok, 227 failed, w=3 sleep=30s) [15.7m elapsed, ~0.0m left]
+
+  Daily retry 2/3 — 227 tickers to retry (10 workers, 3s sleep)...
+    Daily: 50/227 (10,666 ok, 13 failed, w=8 sleep=4s) [0.0m elapsed, ~0.1m left]
+    Daily: 100/227 (10,708 ok, 21 failed, w=6 sleep=7s) [0.1m elapsed, ~0.2m left]
+    Daily: 150/227 (10,748 ok, 31 failed, w=4 sleep=10s) [0.3m elapsed, ~0.1m left]
+    Daily: 200/227 (10,788 ok, 41 failed, w=3 sleep=15s) [0.5m elapsed, ~0.1m left]
+    Daily: 227/227 (10,815 ok, 41 failed, w=3 sleep=15s) [0.8m elapsed, ~0.0m left]
+
+  Daily retry 3/3 — 41 tickers to retry (10 workers, 3s sleep)...
+    Daily: 41/41 (10,855 ok, 1 failed, w=10 sleep=3s) [0.0m elapsed, ~0.0m left]
+
+Fetch complete: 10,855 tickers in 7632s (127.2 min)
+  Permanently failed: 1 tickers
+
+Saving daily cache...
+  Saved: C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\universe_ohlcv_daily.pkl (817.0 MB)
+  Total rows: 15,167,562
+  Avg bars/ticker: 1397
+  Min/Max bars: 21/2573
+  File size: 817 MB
+
+Daily cache ready: 10855 tickers
+
+============================================================
+  HTF CACHE — Weekly + Monthly OHLCV from yfinance
+============================================================
+
+  WEEKLY OHLCV Cache — Full Sweep
+  Existing cache: 8670 tickers
+  Total tickers: 10855
+  Already current: 8653
+  To update (stale): 16
+  To fetch (missing): 2186
+$BICK: possibly delisted; no price data found  (1wk 2026-01-29 -> 2026-03-30)
+    WEEKLY update: 16/16 (16 ok, 0 failed, w=20 sleep=1s) [0.0m elapsed, ~0.0m left]
+
+  Fetching 2186 missing tickers (start=2016-01-01)...
+    WEEKLY fetch: 50/2,186 (50 ok, 0 failed, w=20 sleep=1s) [0.0m elapsed, ~0.8m left]
+    WEEKLY fetch: 100/2,186 (86 ok, 14 failed, w=18 sleep=2s) [0.0m elapsed, ~0.9m left]
+    WEEKLY fetch: 150/2,186 (123 ok, 27 failed, w=16 sleep=2s) [0.1m elapsed, ~1.0m left]
+    WEEKLY fetch: 200/2,186 (154 ok, 46 failed, w=14 sleep=3s) [0.1m elapsed, ~1.2m left]
+    WEEKLY fetch: 250/2,186 (182 ok, 68 failed, w=12 sleep=5s) [0.2m elapsed, ~1.5m left]
+$BRKB: possibly delisted; no timezone found
+    WEEKLY fetch: 300/2,186 (219 ok, 81 failed, w=10 sleep=8s) [0.3m elapsed, ~1.8m left]
+    WEEKLY fetch: 350/2,186 (253 ok, 97 failed, w=8 sleep=11s) [0.4m elapsed, ~2.3m left]
+    WEEKLY fetch: 400/2,186 (302 ok, 98 failed, w=8 sleep=11s) [0.7m elapsed, ~2.9m left]
+    WEEKLY fetch: 450/2,186 (352 ok, 98 failed, w=8 sleep=11s) [0.9m elapsed, ~3.4m left]
+    WEEKLY fetch: 500/2,186 (400 ok, 100 failed, w=9 sleep=8s) [1.1m elapsed, ~3.6m left]
+    WEEKLY fetch: 550/2,186 (443 ok, 107 failed, w=7 sleep=12s) [1.2m elapsed, ~3.7m left]
+    WEEKLY fetch: 600/2,186 (481 ok, 119 failed, w=5 sleep=18s) [1.5m elapsed, ~3.9m left]
+    WEEKLY fetch: 650/2,186 (517 ok, 133 failed, w=3 sleep=27s) [1.8m elapsed, ~4.2m left]
+    WEEKLY fetch: 700/2,186 (564 ok, 136 failed, w=3 sleep=27s) [2.3m elapsed, ~4.9m left]
+    WEEKLY fetch: 750/2,186 (600 ok, 150 failed, w=3 sleep=30s) [2.8m elapsed, ~5.3m left]
+    WEEKLY fetch: 800/2,186 (635 ok, 165 failed, w=3 sleep=30s) [3.3m elapsed, ~5.8m left]
+    WEEKLY fetch: 850/2,186 (674 ok, 176 failed, w=3 sleep=30s) [3.9m elapsed, ~6.1m left]
+    WEEKLY fetch: 900/2,186 (715 ok, 185 failed, w=3 sleep=30s) [4.4m elapsed, ~6.4m left]
+    WEEKLY fetch: 950/2,186 (762 ok, 188 failed, w=3 sleep=30s) [5.0m elapsed, ~6.5m left]
+    WEEKLY fetch: 1,000/2,186 (805 ok, 195 failed, w=3 sleep=30s) [5.5m elapsed, ~6.6m left]
+    WEEKLY fetch: 1,050/2,186 (853 ok, 197 failed, w=3 sleep=30s) [6.1m elapsed, ~6.6m left]
+    WEEKLY fetch: 1,100/2,186 (900 ok, 200 failed, w=3 sleep=30s) [6.6m elapsed, ~6.5m left]
+    WEEKLY fetch: 1,150/2,186 (947 ok, 203 failed, w=4 sleep=21s) [7.2m elapsed, ~6.5m left]
+$MTEMQ: possibly delisted; no timezone found
+
+1 Failed download:
+['MTEMQ']: possibly delisted; no timezone found
+    WEEKLY fetch: 1,200/2,186 (990 ok, 210 failed, w=3 sleep=30s) [7.6m elapsed, ~6.2m left]
+    WEEKLY fetch: 1,250/2,186 (1,027 ok, 223 failed, w=3 sleep=30s) [8.1m elapsed, ~6.1m left]
+    WEEKLY fetch: 1,300/2,186 (1,068 ok, 232 failed, w=3 sleep=30s) [8.6m elapsed, ~5.9m left]
+    WEEKLY fetch: 1,350/2,186 (1,115 ok, 235 failed, w=3 sleep=30s) [9.2m elapsed, ~5.7m left]
+    WEEKLY fetch: 1,400/2,186 (1,153 ok, 247 failed, w=3 sleep=30s) [9.8m elapsed, ~5.5m left]
+    WEEKLY fetch: 1,450/2,186 (1,200 ok, 250 failed, w=3 sleep=30s) [10.3m elapsed, ~5.2m left]
+    WEEKLY fetch: 1,500/2,186 (1,246 ok, 254 failed, w=3 sleep=30s) [10.8m elapsed, ~5.0m left]
+    WEEKLY fetch: 1,550/2,186 (1,277 ok, 273 failed, w=3 sleep=30s) [11.4m elapsed, ~4.7m left]
+    WEEKLY fetch: 1,600/2,186 (1,314 ok, 286 failed, w=3 sleep=30s) [11.9m elapsed, ~4.4m left]
+    WEEKLY fetch: 1,650/2,186 (1,353 ok, 297 failed, w=3 sleep=30s) [12.5m elapsed, ~4.1m left]
+    WEEKLY fetch: 1,700/2,186 (1,397 ok, 303 failed, w=3 sleep=30s) [13.0m elapsed, ~3.7m left]
+    WEEKLY fetch: 1,750/2,186 (1,440 ok, 310 failed, w=3 sleep=30s) [13.6m elapsed, ~3.4m left]
+    WEEKLY fetch: 1,800/2,186 (1,483 ok, 317 failed, w=3 sleep=30s) [14.1m elapsed, ~3.0m left]
+    WEEKLY fetch: 1,850/2,186 (1,525 ok, 325 failed, w=3 sleep=30s) [14.7m elapsed, ~2.7m left]
+    WEEKLY fetch: 1,900/2,186 (1,570 ok, 330 failed, w=3 sleep=30s) [15.2m elapsed, ~2.3m left]
+    WEEKLY fetch: 1,950/2,186 (1,616 ok, 334 failed, w=3 sleep=30s) [15.8m elapsed, ~1.9m left]
+    WEEKLY fetch: 2,000/2,186 (1,660 ok, 340 failed, w=3 sleep=30s) [16.3m elapsed, ~1.5m left]
+    WEEKLY fetch: 2,050/2,186 (1,697 ok, 353 failed, w=3 sleep=30s) [16.9m elapsed, ~1.1m left]
+    WEEKLY fetch: 2,100/2,186 (1,740 ok, 360 failed, w=3 sleep=30s) [17.4m elapsed, ~0.7m left]
+    WEEKLY fetch: 2,150/2,186 (1,789 ok, 361 failed, w=3 sleep=30s) [17.9m elapsed, ~0.3m left]
+    WEEKLY fetch: 2,186/2,186 (1,822 ok, 364 failed, w=3 sleep=30s) [18.5m elapsed, ~0.0m left]
+
+  WEEKLY fetch retry 1/3 — 364 tickers to retry (10 workers, 3s sleep)...
+    WEEKLY fetch: 50/364 (1,862 ok, 10 failed, w=8 sleep=4s) [0.0m elapsed, ~0.1m left]
+    WEEKLY fetch: 100/364 (1,905 ok, 17 failed, w=6 sleep=7s) [0.1m elapsed, ~0.3m left]
+    WEEKLY fetch: 150/364 (1,949 ok, 23 failed, w=4 sleep=10s) [0.3m elapsed, ~0.4m left]
+    WEEKLY fetch: 200/364 (1,995 ok, 27 failed, w=4 sleep=10s) [0.5m elapsed, ~0.4m left]
+    WEEKLY fetch: 250/364 (2,044 ok, 28 failed, w=4 sleep=10s) [0.7m elapsed, ~0.3m left]
+    WEEKLY fetch: 300/364 (2,084 ok, 38 failed, w=3 sleep=15s) [0.9m elapsed, ~0.2m left]
+    WEEKLY fetch: 350/364 (2,132 ok, 40 failed, w=3 sleep=15s) [1.2m elapsed, ~0.0m left]
+    WEEKLY fetch: 364/364 (2,144 ok, 42 failed, w=3 sleep=23s) [1.4m elapsed, ~0.0m left]
+
+  WEEKLY fetch retry 2/3 — 42 tickers to retry (10 workers, 3s sleep)...
+    WEEKLY fetch: 42/42 (2,176 ok, 10 failed, w=8 sleep=4s) [0.0m elapsed, ~0.0m left]
+
+  WEEKLY fetch retry 3/3 — 10 tickers to retry (10 workers, 3s sleep)...
+    WEEKLY fetch: 10/10 (2,186 ok, 0 failed, w=10 sleep=3s) [0.0m elapsed, ~0.0m left]
+
+  WEEKLY sync complete:
+    Total in cache: 10,856
+    Updated: 16, New: 2186, Unchanged: 0, Failed: 26
+    File: C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\universe_ohlcv_weekly.pkl (184.3 MB)
+    Time: 1197s (19.9 min)
+
+  MONTHLY OHLCV Cache — Full Sweep
+  Existing cache: 10837 tickers
+  Total tickers: 10855
+  Already current: 8144
+  To update (stale): 2692
+  To fetch (missing): 19
+    MONTHLY update: 50/2,692 (0 ok, 50 failed, w=18 sleep=2s) [0.0m elapsed, ~0.8m left]
+$APRQ: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$APRD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 100/2,692 (0 ok, 100 failed, w=16 sleep=2s) [0.1m elapsed, ~1.4m left]
+    MONTHLY update: 150/2,692 (0 ok, 150 failed, w=14 sleep=3s) [0.1m elapsed, ~2.0m left]
+$BSJO: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 200/2,692 (0 ok, 200 failed, w=12 sleep=5s) [0.2m elapsed, ~2.5m left]
+    MONTHLY update: 250/2,692 (0 ok, 250 failed, w=10 sleep=8s) [0.3m elapsed, ~3.0m left]
+$CHB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHIS: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHNA: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHIU: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHIK: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHIH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 300/2,692 (0 ok, 300 failed, w=8 sleep=11s) [0.5m elapsed, ~3.6m left]
+    MONTHLY update: 350/2,692 (0 ok, 350 failed, w=6 sleep=17s) [0.7m elapsed, ~4.5m left]
+$CYB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CYB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 400/2,692 (0 ok, 400 failed, w=4 sleep=26s) [1.0m elapsed, ~5.7m left]
+$DGLDF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DGLDF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DGLDF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+    MONTHLY update: 450/2,692 (0 ok, 450 failed, w=3 sleep=30s) [1.5m elapsed, ~7.3m left]
+$DMRS: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DMRL: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DMRM: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DMRI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DRW: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DRW']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 500/2,692 (0 ok, 500 failed, w=3 sleep=30s) [2.0m elapsed, ~8.9m left]
+$ENAV: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ENAV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ENAV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$EURZ: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 550/2,692 (0 ok, 550 failed, w=3 sleep=30s) [2.6m elapsed, ~10.1m left]
+    MONTHLY update: 600/2,692 (0 ok, 600 failed, w=3 sleep=30s) [3.2m elapsed, ~11.1m left]
+    MONTHLY update: 650/2,692 (0 ok, 650 failed, w=3 sleep=30s) [3.8m elapsed, ~11.8m left]
+$FNI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$FNGZ: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$FNTC: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 700/2,692 (0 ok, 700 failed, w=3 sleep=30s) [4.3m elapsed, ~12.4m left]
+$GDVD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GDVD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GDVD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GDVD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$GHEE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GHEE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 750/2,692 (0 ok, 750 failed, w=3 sleep=30s) [4.9m elapsed, ~12.8m left]
+$GLIBR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$GOAT: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GOAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['GOAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['GOAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 800/2,692 (0 ok, 800 failed, w=3 sleep=30s) [5.5m elapsed, ~13.0m left]
+$GXF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$GSP: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$HAPR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HAPR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HAPR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$HDIV: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HDIV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['HDIV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['HDIV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 850/2,692 (0 ok, 850 failed, w=3 sleep=30s) [6.1m elapsed, ~13.2m left]
+$HYIH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['HYIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['HYIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$IAUF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['IAUF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IAUF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IAUF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$IBHA: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$IBDM: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['IBDM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IBDM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IBDM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 900/2,692 (0 ok, 900 failed, w=3 sleep=30s) [6.7m elapsed, ~13.2m left]
+$IDLB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IDLB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IDLB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$IGIH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IGIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IGIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 950/2,692 (0 ok, 950 failed, w=3 sleep=30s) [7.2m elapsed, ~13.2m left]
+    MONTHLY update: 1,000/2,692 (0 ok, 1000 failed, w=3 sleep=30s) [7.8m elapsed, ~13.1m left]
+$ISZE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,050/2,692 (0 ok, 1050 failed, w=3 sleep=30s) [8.3m elapsed, ~13.0m left]
+$JGLD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['JGLD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['JGLD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,100/2,692 (0 ok, 1100 failed, w=3 sleep=30s) [8.9m elapsed, ~12.9m left]
+    MONTHLY update: 1,150/2,692 (0 ok, 1150 failed, w=3 sleep=30s) [9.5m elapsed, ~12.7m left]
+$LD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['LD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['LD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['LD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,200/2,692 (0 ok, 1200 failed, w=3 sleep=30s) [10.1m elapsed, ~12.5m left]
+$LNGG: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,250/2,692 (0 ok, 1250 failed, w=3 sleep=30s) [10.6m elapsed, ~12.3m left]
+$MJXL: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['MJXL']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['MJXL']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,300/2,692 (0 ok, 1300 failed, w=3 sleep=30s) [11.2m elapsed, ~12.0m left]
+$MLPY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 1,350/2,692 (0 ok, 1350 failed, w=3 sleep=30s) [11.8m elapsed, ~11.7m left]
+    MONTHLY update: 1,400/2,692 (0 ok, 1400 failed, w=3 sleep=30s) [12.3m elapsed, ~11.4m left]
+$OEUR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['OEUR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 1,450/2,692 (0 ok, 1450 failed, w=3 sleep=30s) [12.9m elapsed, ~11.1m left]
+    MONTHLY update: 1,500/2,692 (0 ok, 1500 failed, w=3 sleep=30s) [13.5m elapsed, ~10.7m left]
+    MONTHLY update: 1,550/2,692 (0 ok, 1550 failed, w=3 sleep=30s) [14.1m elapsed, ~10.4m left]
+$PLAT: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['PLAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,600/2,692 (0 ok, 1600 failed, w=3 sleep=30s) [14.6m elapsed, ~10.0m left]
+    MONTHLY update: 1,650/2,692 (0 ok, 1650 failed, w=3 sleep=30s) [15.2m elapsed, ~9.6m left]
+$PSMC: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$RBND: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['RBND']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 1,700/2,692 (0 ok, 1700 failed, w=3 sleep=30s) [15.8m elapsed, ~9.2m left]
+$RDMX: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,750/2,692 (0 ok, 1750 failed, w=3 sleep=30s) [16.3m elapsed, ~8.8m left]
+    MONTHLY update: 1,800/2,692 (0 ok, 1800 failed, w=3 sleep=30s) [16.9m elapsed, ~8.4m left]
+    MONTHLY update: 1,850/2,692 (0 ok, 1850 failed, w=3 sleep=30s) [17.5m elapsed, ~7.9m left]
+$SMI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['SMI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['SMI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,900/2,692 (0 ok, 1900 failed, w=3 sleep=30s) [18.0m elapsed, ~7.5m left]
+$STLV: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$SYUS: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,950/2,692 (0 ok, 1950 failed, w=3 sleep=30s) [18.6m elapsed, ~7.1m left]
+    MONTHLY update: 2,000/2,692 (0 ok, 2000 failed, w=3 sleep=30s) [19.2m elapsed, ~6.6m left]
+$TDSE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,050/2,692 (0 ok, 2050 failed, w=3 sleep=30s) [19.7m elapsed, ~6.2m left]
+    MONTHLY update: 2,100/2,692 (0 ok, 2100 failed, w=3 sleep=30s) [20.3m elapsed, ~5.7m left]
+$USBF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$VIRX: possibly delisted; no timezone found
+
+1 Failed download:
+$VR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$VTLE: possibly delisted; no timezone found
+
+1 Failed download:
+['VTLE']: possibly delisted; no timezone found
+
+1 Failed download:
+['VTLE']: possibly delisted; no timezone found
+$VSPY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['VSPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['VSPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['VSPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,150/2,692 (0 ok, 2150 failed, w=3 sleep=30s) [20.9m elapsed, ~5.3m left]
+$XBUY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['XBUY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['XBUY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['XBUY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,200/2,692 (0 ok, 2200 failed, w=3 sleep=30s) [21.4m elapsed, ~4.8m left]
+$ZCAN: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,250/2,692 (0 ok, 2250 failed, w=3 sleep=30s) [22.0m elapsed, ~4.3m left]
+$ZDEU: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['ZDEU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['ZDEU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['ZDEU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,300/2,692 (0 ok, 2300 failed, w=3 sleep=30s) [22.6m elapsed, ~3.8m left]
+$CHLD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,350/2,692 (0 ok, 2350 failed, w=3 sleep=30s) [23.1m elapsed, ~3.4m left]
+$FLQG: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$FLQH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+    MONTHLY update: 2,400/2,692 (0 ok, 2400 failed, w=3 sleep=30s) [23.7m elapsed, ~2.9m left]
+$GIGU: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$IXSE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['IXSE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IXSE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,450/2,692 (0 ok, 2450 failed, w=3 sleep=30s) [24.3m elapsed, ~2.4m left]
+$KDFI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['KDFI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['KDFI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['KDFI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,500/2,692 (0 ok, 2500 failed, w=3 sleep=30s) [24.8m elapsed, ~1.9m left]
+    MONTHLY update: 2,550/2,692 (0 ok, 2550 failed, w=3 sleep=30s) [25.4m elapsed, ~1.4m left]
+$STMB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['STMB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['STMB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['STMB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,600/2,692 (0 ok, 2600 failed, w=3 sleep=30s) [25.9m elapsed, ~0.9m left]
+$WKLY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['WKLY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['WKLY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$BCM: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,650/2,692 (0 ok, 2650 failed, w=3 sleep=30s) [26.5m elapsed, ~0.4m left]
+    MONTHLY update: 2,692/2,692 (0 ok, 2692 failed, w=3 sleep=30s) [27.1m elapsed, ~0.0m left]
+
+  MONTHLY update retry 1/3 — 2692 tickers to retry (10 workers, 3s sleep)...
+    MONTHLY update: 50/2,692 (0 ok, 50 failed, w=8 sleep=4s) [0.0m elapsed, ~1.3m left]
+$APRQ: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$APRD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['APRD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 100/2,692 (0 ok, 100 failed, w=6 sleep=7s) [0.1m elapsed, ~3.4m left]
+    MONTHLY update: 150/2,692 (0 ok, 150 failed, w=4 sleep=10s) [0.3m elapsed, ~4.8m left]
+$BSJO: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 200/2,692 (0 ok, 200 failed, w=3 sleep=15s) [0.5m elapsed, ~6.2m left]
+$CHNA: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+2 Failed downloads:
+['CHNA', 'CHB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+2 Failed downloads:
+['CHNA', 'CHB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+2 Failed downloads:
+$CHIS: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHIH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+2 Failed downloads:
+['CHIS', 'CHIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+2 Failed downloads:
+['CHIS', 'CHIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+2 Failed downloads:
+$CHIU: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CHIU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CHIU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHIK: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CHIK']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['CHIK']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 250/2,692 (0 ok, 250 failed, w=3 sleep=23s) [0.9m elapsed, ~8.4m left]
+    MONTHLY update: 300/2,692 (0 ok, 300 failed, w=3 sleep=30s) [1.3m elapsed, ~10.4m left]
+    MONTHLY update: 350/2,692 (0 ok, 350 failed, w=3 sleep=30s) [1.9m elapsed, ~12.5m left]
+$CYB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CYB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CYB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 400/2,692 (0 ok, 400 failed, w=3 sleep=30s) [2.4m elapsed, ~14.0m left]
+$DGLDF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DGLDF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DMRL: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DMRL', 'DMRM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DMRM: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DMRS: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 450/2,692 (0 ok, 450 failed, w=3 sleep=30s) [3.0m elapsed, ~15.0m left]
+$DMRI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DRW: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DRW']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DRW']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 500/2,692 (3 ok, 497 failed, w=3 sleep=30s) [3.6m elapsed, ~15.7m left]
+$ENAV: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$EURZ: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 550/2,692 (3 ok, 547 failed, w=3 sleep=30s) [4.1m elapsed, ~16.1m left]
+    MONTHLY update: 600/2,692 (3 ok, 597 failed, w=3 sleep=30s) [4.7m elapsed, ~16.4m left]
+$FNI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FNI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FNI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 650/2,692 (3 ok, 647 failed, w=3 sleep=30s) [5.3m elapsed, ~16.5m left]
+$FNGZ: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$FNTC: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 700/2,692 (3 ok, 697 failed, w=3 sleep=30s) [5.8m elapsed, ~16.6m left]
+$GDVD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$GHEE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+    MONTHLY update: 750/2,692 (3 ok, 747 failed, w=3 sleep=30s) [6.4m elapsed, ~16.6m left]
+$GLIBR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['GLIBR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['GLIBR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['GLIBR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$GOAT: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GOAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GOAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 800/2,692 (3 ok, 797 failed, w=3 sleep=30s) [7.0m elapsed, ~16.5m left]
+$GXF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$GSP: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$HAPR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HAPR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HAPR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HAPR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$HDIV: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HDIV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+    MONTHLY update: 850/2,692 (3 ok, 847 failed, w=3 sleep=30s) [7.5m elapsed, ~16.3m left]
+$HYIH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$IAUF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IAUF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$IBDM: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IBDM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$IBHA: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 900/2,692 (3 ok, 897 failed, w=3 sleep=30s) [8.1m elapsed, ~16.1m left]
+$IDLB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IDLB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$IGIH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IGIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 950/2,692 (3 ok, 947 failed, w=3 sleep=30s) [8.7m elapsed, ~15.9m left]
+    MONTHLY update: 1,000/2,692 (3 ok, 997 failed, w=3 sleep=30s) [9.2m elapsed, ~15.6m left]
+$ISZE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 1,050/2,692 (3 ok, 1047 failed, w=3 sleep=30s) [9.8m elapsed, ~15.3m left]
+$JGLD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['JGLD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['JGLD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['JGLD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,100/2,692 (3 ok, 1097 failed, w=3 sleep=30s) [10.4m elapsed, ~15.0m left]
+    MONTHLY update: 1,150/2,692 (3 ok, 1147 failed, w=3 sleep=30s) [10.9m elapsed, ~14.7m left]
+$LD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['LD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['LD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,200/2,692 (3 ok, 1197 failed, w=3 sleep=30s) [11.5m elapsed, ~14.3m left]
+$LNGG: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['LNGG']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['LNGG']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,250/2,692 (3 ok, 1247 failed, w=3 sleep=30s) [12.1m elapsed, ~13.9m left]
+    MONTHLY update: 1,300/2,692 (3 ok, 1297 failed, w=3 sleep=30s) [12.6m elapsed, ~13.5m left]
+$MJXL: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$MLPY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['MLPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,350/2,692 (3 ok, 1347 failed, w=3 sleep=30s) [13.2m elapsed, ~13.1m left]
+    MONTHLY update: 1,400/2,692 (3 ok, 1397 failed, w=3 sleep=30s) [13.8m elapsed, ~12.7m left]
+    MONTHLY update: 1,450/2,692 (3 ok, 1447 failed, w=3 sleep=30s) [14.3m elapsed, ~12.3m left]
+$OEUR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,500/2,692 (3 ok, 1497 failed, w=3 sleep=30s) [14.9m elapsed, ~11.8m left]
+    MONTHLY update: 1,550/2,692 (3 ok, 1547 failed, w=3 sleep=30s) [15.4m elapsed, ~11.4m left]
+$PLAT: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['PLAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['PLAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 1,600/2,692 (3 ok, 1597 failed, w=3 sleep=30s) [16.0m elapsed, ~10.9m left]
+    MONTHLY update: 1,650/2,692 (3 ok, 1647 failed, w=3 sleep=30s) [16.5m elapsed, ~10.4m left]
+$PSMC: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['PSMC']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['PSMC']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['PSMC']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$RBND: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['RBND']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,700/2,692 (3 ok, 1697 failed, w=3 sleep=30s) [17.1m elapsed, ~10.0m left]
+$RDMX: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,750/2,692 (4 ok, 1746 failed, w=3 sleep=30s) [17.7m elapsed, ~9.5m left]
+    MONTHLY update: 1,800/2,692 (4 ok, 1796 failed, w=3 sleep=30s) [18.2m elapsed, ~9.0m left]
+    MONTHLY update: 1,850/2,692 (4 ok, 1846 failed, w=3 sleep=30s) [18.8m elapsed, ~8.6m left]
+$SMI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['SMI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['SMI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 1,900/2,692 (4 ok, 1896 failed, w=3 sleep=30s) [19.4m elapsed, ~8.1m left]
+$STLV: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['STLV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['STLV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['STLV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,950/2,692 (4 ok, 1946 failed, w=3 sleep=30s) [19.9m elapsed, ~7.6m left]
+$SYUS: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,000/2,692 (4 ok, 1996 failed, w=3 sleep=30s) [20.5m elapsed, ~7.1m left]
+$TDSE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,050/2,692 (6 ok, 2044 failed, w=3 sleep=30s) [21.0m elapsed, ~6.6m left]
+    MONTHLY update: 2,100/2,692 (6 ok, 2094 failed, w=3 sleep=30s) [21.6m elapsed, ~6.1m left]
+$USBF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$VIRX: possibly delisted; no timezone found
+
+1 Failed download:
+['VIRX']: possibly delisted; no timezone found
+$VR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['VR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['VR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['VR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$VSPY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['VSPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['VSPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['VSPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$VTLE: possibly delisted; no timezone found
+
+1 Failed download:
+['VTLE']: possibly delisted; no timezone found
+    MONTHLY update: 2,150/2,692 (6 ok, 2144 failed, w=3 sleep=30s) [22.2m elapsed, ~5.6m left]
+$XBUY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,200/2,692 (6 ok, 2194 failed, w=3 sleep=30s) [22.7m elapsed, ~5.1m left]
+$ZCAN: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['ZCAN']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ZCAN']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['ZCAN']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,250/2,692 (6 ok, 2244 failed, w=3 sleep=30s) [23.3m elapsed, ~4.6m left]
+$ZDEU: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ZDEU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ZDEU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,300/2,692 (6 ok, 2294 failed, w=3 sleep=30s) [23.9m elapsed, ~4.1m left]
+$CHLD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,350/2,692 (6 ok, 2344 failed, w=3 sleep=30s) [24.5m elapsed, ~3.6m left]
+$FLQG: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FLQG']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['FLQG']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['FLQG']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$FLQH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['FLQH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FLQH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,400/2,692 (6 ok, 2394 failed, w=3 sleep=30s) [25.1m elapsed, ~3.0m left]
+$GIGU: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$IXSE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,450/2,692 (6 ok, 2444 failed, w=3 sleep=30s) [25.6m elapsed, ~2.5m left]
+$KDFI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,500/2,692 (6 ok, 2494 failed, w=3 sleep=30s) [26.2m elapsed, ~2.0m left]
+    MONTHLY update: 2,550/2,692 (6 ok, 2544 failed, w=3 sleep=30s) [26.8m elapsed, ~1.5m left]
+$STMB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['STMB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,600/2,692 (6 ok, 2594 failed, w=3 sleep=30s) [27.3m elapsed, ~1.0m left]
+$WKLY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['WKLY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['WKLY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$BCM: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,650/2,692 (6 ok, 2644 failed, w=3 sleep=30s) [27.9m elapsed, ~0.4m left]
+    MONTHLY update: 2,692/2,692 (6 ok, 2686 failed, w=3 sleep=30s) [28.5m elapsed, ~0.0m left]
+
+  MONTHLY update retry 2/3 — 2686 tickers to retry (10 workers, 3s sleep)...
+    MONTHLY update: 50/2,686 (6 ok, 50 failed, w=8 sleep=4s) [0.0m elapsed, ~1.3m left]
+$APRQ: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['APRQ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['APRQ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['APRQ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['APRQ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['APRQ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['APRQ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['APRQ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['APRQ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$APRD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['APRD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['APRD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['APRD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['APRD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['APRD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 100/2,686 (6 ok, 100 failed, w=6 sleep=7s) [0.1m elapsed, ~3.5m left]
+    MONTHLY update: 150/2,686 (6 ok, 150 failed, w=4 sleep=10s) [0.3m elapsed, ~5.0m left]
+$BSJO: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 200/2,686 (6 ok, 200 failed, w=3 sleep=15s) [0.5m elapsed, ~6.4m left]
+$CHIS: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+2 Failed downloads:
+
+2 Failed downloads:
+
+2 Failed downloads:
+['CHIS', 'CHB', 'CHNA']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['CHIS', 'CHB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHNA: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['CHIS', 'CHB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHIU: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['CHIU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CHIU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['CHIU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHIH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHIK: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CHIK']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 250/2,686 (6 ok, 250 failed, w=3 sleep=23s) [0.9m elapsed, ~8.4m left]
+    MONTHLY update: 300/2,686 (6 ok, 300 failed, w=3 sleep=30s) [1.3m elapsed, ~10.7m left]
+    MONTHLY update: 350/2,686 (6 ok, 350 failed, w=3 sleep=30s) [1.9m elapsed, ~12.8m left]
+$CYB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 400/2,686 (6 ok, 400 failed, w=3 sleep=30s) [2.5m elapsed, ~14.2m left]
+$DGLDF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DGLDF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DGLDF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DGLDF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DMRM: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DMRM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DMRS: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DMRL: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+2 Failed downloads:
+['DMRS', 'DMRL']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+2 Failed downloads:
+
+2 Failed downloads:
+    MONTHLY update: 450/2,686 (6 ok, 450 failed, w=3 sleep=30s) [3.1m elapsed, ~15.2m left]
+$DMRI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DRW: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DRW']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DRW']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 500/2,686 (6 ok, 500 failed, w=3 sleep=30s) [3.6m elapsed, ~15.8m left]
+$ENAV: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ENAV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+$EURZ: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['EURZ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['EURZ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['EURZ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 550/2,686 (6 ok, 550 failed, w=3 sleep=30s) [4.2m elapsed, ~16.2m left]
+    MONTHLY update: 600/2,686 (6 ok, 600 failed, w=3 sleep=30s) [4.7m elapsed, ~16.5m left]
+$FNI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FNI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$FNGZ: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FNGZ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FNGZ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$FNTC: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FNTC']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FNTC']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FNTC']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 650/2,686 (6 ok, 650 failed, w=3 sleep=30s) [5.3m elapsed, ~16.7m left]
+    MONTHLY update: 700/2,686 (6 ok, 700 failed, w=3 sleep=30s) [5.9m elapsed, ~16.7m left]
+$GDVD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$GHEE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 750/2,686 (6 ok, 750 failed, w=3 sleep=30s) [6.4m elapsed, ~16.6m left]
+$GLIBR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['GLIBR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GLIBR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['GLIBR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$GOAT: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$GSP: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GSP']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 800/2,686 (6 ok, 800 failed, w=3 sleep=30s) [7.0m elapsed, ~16.5m left]
+$GXF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$HAPR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$HDIV: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HDIV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HDIV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 850/2,686 (6 ok, 850 failed, w=3 sleep=30s) [7.6m elapsed, ~16.4m left]
+$HYIH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HYIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['HYIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$IAUF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IAUF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IAUF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$IBHA: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IBHA']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['IBHA']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IBHA']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$IBDM: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IBDM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IBDM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 900/2,686 (6 ok, 900 failed, w=3 sleep=30s) [8.2m elapsed, ~16.2m left]
+$IDLB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IDLB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IDLB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$IGIH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IGIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 950/2,686 (6 ok, 950 failed, w=3 sleep=30s) [8.7m elapsed, ~15.9m left]
+    MONTHLY update: 1,000/2,686 (6 ok, 1000 failed, w=3 sleep=30s) [9.3m elapsed, ~15.6m left]
+$ISZE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ISZE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['ISZE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['ISZE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,050/2,686 (6 ok, 1050 failed, w=3 sleep=30s) [9.8m elapsed, ~15.3m left]
+$JGLD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['JGLD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['JGLD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['JGLD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,100/2,686 (6 ok, 1100 failed, w=3 sleep=30s) [10.4m elapsed, ~15.0m left]
+    MONTHLY update: 1,150/2,686 (6 ok, 1150 failed, w=3 sleep=30s) [11.0m elapsed, ~14.7m left]
+$LD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['LD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['LD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,200/2,686 (6 ok, 1200 failed, w=3 sleep=30s) [11.5m elapsed, ~14.3m left]
+$LNGG: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,250/2,686 (6 ok, 1250 failed, w=3 sleep=30s) [12.1m elapsed, ~13.9m left]
+$MJXL: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,300/2,686 (6 ok, 1300 failed, w=3 sleep=30s) [12.7m elapsed, ~13.5m left]
+$MLPY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['MLPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['MLPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 1,350/2,686 (6 ok, 1350 failed, w=3 sleep=30s) [13.2m elapsed, ~13.1m left]
+    MONTHLY update: 1,400/2,686 (6 ok, 1400 failed, w=3 sleep=30s) [13.8m elapsed, ~12.7m left]
+$OEUR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['OEUR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['OEUR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 1,450/2,686 (6 ok, 1450 failed, w=3 sleep=30s) [14.4m elapsed, ~12.3m left]
+    MONTHLY update: 1,500/2,686 (6 ok, 1500 failed, w=3 sleep=30s) [14.9m elapsed, ~11.8m left]
+    MONTHLY update: 1,550/2,686 (6 ok, 1550 failed, w=3 sleep=30s) [15.5m elapsed, ~11.4m left]
+$PLAT: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['PLAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 1,600/2,686 (6 ok, 1600 failed, w=3 sleep=30s) [16.1m elapsed, ~11.0m left]
+    MONTHLY update: 1,650/2,686 (6 ok, 1650 failed, w=3 sleep=30s) [16.7m elapsed, ~10.5m left]
+$PSMC: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['PSMC']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['PSMC']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['PSMC']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$RBND: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['RBND']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['RBND']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,700/2,686 (6 ok, 1700 failed, w=3 sleep=30s) [17.3m elapsed, ~10.0m left]
+$RDMX: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,750/2,686 (8 ok, 1748 failed, w=3 sleep=30s) [17.8m elapsed, ~9.5m left]
+    MONTHLY update: 1,800/2,686 (8 ok, 1798 failed, w=3 sleep=30s) [18.4m elapsed, ~9.1m left]
+    MONTHLY update: 1,850/2,686 (8 ok, 1848 failed, w=3 sleep=30s) [19.0m elapsed, ~8.6m left]
+$SMI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['SMI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,900/2,686 (8 ok, 1898 failed, w=3 sleep=30s) [19.6m elapsed, ~8.1m left]
+$STLV: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['STLV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['STLV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['STLV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,950/2,686 (8 ok, 1948 failed, w=3 sleep=30s) [20.1m elapsed, ~7.6m left]
+$SYUS: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$TDSE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['TDSE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['TDSE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,000/2,686 (8 ok, 1998 failed, w=3 sleep=30s) [20.7m elapsed, ~7.1m left]
+    MONTHLY update: 2,050/2,686 (8 ok, 2048 failed, w=3 sleep=30s) [21.3m elapsed, ~6.6m left]
+$USBF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['USBF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['USBF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['USBF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,100/2,686 (8 ok, 2098 failed, w=3 sleep=30s) [21.9m elapsed, ~6.1m left]
+$VIRX: possibly delisted; no timezone found
+
+1 Failed download:
+['VIRX']: possibly delisted; no timezone found
+
+1 Failed download:
+$VR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['VR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['VR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$VTLE: possibly delisted; no timezone found
+
+1 Failed download:
+['VTLE']: possibly delisted; no timezone found
+
+1 Failed download:
+['VTLE']: possibly delisted; no timezone found
+
+1 Failed download:
+$VSPY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['VSPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['VSPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['VSPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,150/2,686 (8 ok, 2148 failed, w=3 sleep=30s) [22.4m elapsed, ~5.6m left]
+$XBUY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['XBUY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,200/2,686 (8 ok, 2198 failed, w=3 sleep=30s) [23.0m elapsed, ~5.1m left]
+$ZCAN: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ZCAN']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ZCAN']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 2,250/2,686 (8 ok, 2248 failed, w=3 sleep=30s) [23.5m elapsed, ~4.6m left]
+$ZDEU: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ZDEU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,300/2,686 (8 ok, 2298 failed, w=3 sleep=30s) [24.1m elapsed, ~4.0m left]
+$CHLD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,350/2,686 (8 ok, 2348 failed, w=3 sleep=30s) [24.7m elapsed, ~3.5m left]
+$FLQG: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FLQG']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['FLQG']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$FLQH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$GIGU: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GIGU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GIGU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,400/2,686 (8 ok, 2398 failed, w=3 sleep=30s) [25.3m elapsed, ~3.0m left]
+$IXSE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['IXSE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IXSE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IXSE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,450/2,686 (8 ok, 2448 failed, w=3 sleep=30s) [25.9m elapsed, ~2.5m left]
+$KDFI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['KDFI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['KDFI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 2,500/2,686 (8 ok, 2498 failed, w=3 sleep=30s) [26.4m elapsed, ~2.0m left]
+    MONTHLY update: 2,550/2,686 (8 ok, 2548 failed, w=3 sleep=30s) [27.0m elapsed, ~1.4m left]
+$STMB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,600/2,686 (8 ok, 2598 failed, w=3 sleep=30s) [27.6m elapsed, ~0.9m left]
+$WKLY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$BCM: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['BCM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['BCM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['BCM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,650/2,686 (8 ok, 2648 failed, w=3 sleep=30s) [28.1m elapsed, ~0.4m left]
+    MONTHLY update: 2,686/2,686 (8 ok, 2684 failed, w=3 sleep=30s) [28.7m elapsed, ~0.0m left]
+
+  MONTHLY update retry 3/3 — 2684 tickers to retry (10 workers, 3s sleep)...
+    MONTHLY update: 50/2,684 (8 ok, 50 failed, w=8 sleep=4s) [0.0m elapsed, ~1.2m left]
+$APRQ: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['APRQ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['APRQ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$APRD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 100/2,684 (8 ok, 100 failed, w=6 sleep=7s) [0.1m elapsed, ~3.2m left]
+    MONTHLY update: 150/2,684 (8 ok, 150 failed, w=4 sleep=10s) [0.3m elapsed, ~4.6m left]
+$BSJO: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 200/2,684 (8 ok, 200 failed, w=3 sleep=15s) [0.5m elapsed, ~5.9m left]
+$CHNA: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CHNA']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CHNA']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHIS: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+2 Failed downloads:
+['CHB', 'CHIS']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+2 Failed downloads:
+
+2 Failed downloads:
+['CHB', 'CHIS']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['CHB', 'CHIS']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHIU: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CHIU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CHIU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$CHIH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['CHIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['CHIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['CHIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$CHIK: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 250/2,684 (8 ok, 250 failed, w=3 sleep=23s) [0.8m elapsed, ~7.7m left]
+    MONTHLY update: 300/2,684 (8 ok, 300 failed, w=3 sleep=30s) [1.2m elapsed, ~9.8m left]
+    MONTHLY update: 350/2,684 (8 ok, 350 failed, w=3 sleep=30s) [1.8m elapsed, ~11.9m left]
+$CYB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CYB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CYB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['CYB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 400/2,684 (8 ok, 400 failed, w=3 sleep=30s) [2.3m elapsed, ~13.4m left]
+$DGLDF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DGLDF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DGLDF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['DGLDF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 450/2,684 (8 ok, 450 failed, w=3 sleep=30s) [2.9m elapsed, ~14.3m left]
+$DMRM: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DMRI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DMRL: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DMRS: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$DRW: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 500/2,684 (8 ok, 500 failed, w=3 sleep=30s) [3.5m elapsed, ~15.1m left]
+$ENAV: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ENAV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ENAV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$EURZ: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['EURZ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['EURZ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 550/2,684 (8 ok, 550 failed, w=3 sleep=30s) [4.0m elapsed, ~15.6m left]
+    MONTHLY update: 600/2,684 (8 ok, 600 failed, w=3 sleep=30s) [4.6m elapsed, ~16.0m left]
+$FNGZ: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FNGZ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FNGZ']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$FNI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FNI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 650/2,684 (8 ok, 650 failed, w=3 sleep=30s) [5.2m elapsed, ~16.1m left]
+$FNTC: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$GDVD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['GDVD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['GDVD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 700/2,684 (8 ok, 700 failed, w=3 sleep=30s) [5.7m elapsed, ~16.3m left]
+$GHEE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['GHEE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['GHEE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['GHEE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 750/2,684 (8 ok, 750 failed, w=3 sleep=30s) [6.3m elapsed, ~16.3m left]
+$GLIBR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$GOAT: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['GOAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GOAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['GOAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 800/2,684 (8 ok, 800 failed, w=3 sleep=30s) [6.9m elapsed, ~16.2m left]
+$GSP: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$GXF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$HAPR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$HDIV: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 850/2,684 (8 ok, 850 failed, w=3 sleep=30s) [7.4m elapsed, ~16.1m left]
+$HYIH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HYIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HYIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['HYIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$IAUF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IAUF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['IAUF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IAUF']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$IBHA: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['IBHA']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IBHA']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$IBDM: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IBHA', 'IBDM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 900/2,684 (8 ok, 900 failed, w=3 sleep=30s) [8.0m elapsed, ~15.9m left]
+$IDLB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['IDLB']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+$IGIH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['IGIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IGIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IGIH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 950/2,684 (8 ok, 950 failed, w=3 sleep=30s) [8.6m elapsed, ~15.6m left]
+    MONTHLY update: 1,000/2,684 (8 ok, 1000 failed, w=3 sleep=30s) [9.1m elapsed, ~15.4m left]
+$ISZE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['ISZE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['ISZE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['ISZE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,050/2,684 (8 ok, 1050 failed, w=3 sleep=30s) [9.7m elapsed, ~15.1m left]
+$JGLD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['JGLD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['JGLD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 1,100/2,684 (8 ok, 1100 failed, w=3 sleep=30s) [10.3m elapsed, ~14.8m left]
+    MONTHLY update: 1,150/2,684 (8 ok, 1150 failed, w=3 sleep=30s) [10.8m elapsed, ~14.5m left]
+$LD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['LD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['LD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['LD']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,200/2,684 (8 ok, 1200 failed, w=3 sleep=30s) [11.4m elapsed, ~14.1m left]
+$LNGG: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,250/2,684 (8 ok, 1250 failed, w=3 sleep=30s) [11.9m elapsed, ~13.7m left]
+$MJXL: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['MJXL']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['MJXL']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['MJXL']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,300/2,684 (8 ok, 1300 failed, w=3 sleep=30s) [12.5m elapsed, ~13.3m left]
+$MLPY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['MLPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['MLPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 1,350/2,684 (8 ok, 1350 failed, w=3 sleep=30s) [13.1m elapsed, ~12.9m left]
+    MONTHLY update: 1,400/2,684 (8 ok, 1400 failed, w=3 sleep=30s) [13.6m elapsed, ~12.5m left]
+$OEUR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['OEUR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['OEUR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['OEUR']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,450/2,684 (8 ok, 1450 failed, w=3 sleep=30s) [14.2m elapsed, ~12.1m left]
+    MONTHLY update: 1,500/2,684 (8 ok, 1500 failed, w=3 sleep=30s) [14.8m elapsed, ~11.7m left]
+    MONTHLY update: 1,550/2,684 (8 ok, 1550 failed, w=3 sleep=30s) [15.4m elapsed, ~11.2m left]
+$PLAT: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['PLAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['PLAT']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+    MONTHLY update: 1,600/2,684 (8 ok, 1600 failed, w=3 sleep=30s) [15.9m elapsed, ~10.8m left]
+    MONTHLY update: 1,650/2,684 (8 ok, 1650 failed, w=3 sleep=30s) [16.5m elapsed, ~10.3m left]
+$PSMC: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['PSMC']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['PSMC']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['PSMC']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$RBND: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['RBND']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['RBND']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,700/2,684 (8 ok, 1700 failed, w=3 sleep=30s) [17.1m elapsed, ~9.9m left]
+$RDMX: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,750/2,684 (8 ok, 1750 failed, w=3 sleep=30s) [17.6m elapsed, ~9.4m left]
+    MONTHLY update: 1,800/2,684 (8 ok, 1800 failed, w=3 sleep=30s) [18.2m elapsed, ~8.9m left]
+    MONTHLY update: 1,850/2,684 (8 ok, 1850 failed, w=3 sleep=30s) [18.7m elapsed, ~8.5m left]
+$SMI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['SMI']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+    MONTHLY update: 1,900/2,684 (8 ok, 1900 failed, w=3 sleep=30s) [19.3m elapsed, ~8.0m left]
+$STLV: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['STLV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['STLV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['STLV']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$SYUS: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 1,950/2,684 (8 ok, 1950 failed, w=3 sleep=30s) [19.9m elapsed, ~7.5m left]
+$TDSE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,000/2,684 (8 ok, 2000 failed, w=3 sleep=30s) [20.5m elapsed, ~7.0m left]
+    MONTHLY update: 2,050/2,684 (8 ok, 2050 failed, w=3 sleep=30s) [21.0m elapsed, ~6.5m left]
+    MONTHLY update: 2,100/2,684 (8 ok, 2100 failed, w=3 sleep=30s) [21.6m elapsed, ~6.0m left]
+$USBF: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$VIRX: possibly delisted; no timezone found
+
+1 Failed download:
+['VIRX']: possibly delisted; no timezone found
+$VR: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$VSPY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['VSPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['VSPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['VSPY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$VTLE: possibly delisted; no timezone found
+
+1 Failed download:
+['VTLE']: possibly delisted; no timezone found
+
+1 Failed download:
+['VTLE']: possibly delisted; no timezone found
+
+1 Failed download:
+    MONTHLY update: 2,150/2,684 (8 ok, 2150 failed, w=3 sleep=30s) [22.2m elapsed, ~5.5m left]
+$XBUY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['XBUY']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,200/2,684 (8 ok, 2200 failed, w=3 sleep=30s) [22.8m elapsed, ~5.0m left]
+$ZCAN: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['ZCAN']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,250/2,684 (8 ok, 2250 failed, w=3 sleep=30s) [23.3m elapsed, ~4.5m left]
+$ZDEU: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,300/2,684 (8 ok, 2300 failed, w=3 sleep=30s) [23.9m elapsed, ~4.0m left]
+$CHLD: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,350/2,684 (8 ok, 2350 failed, w=3 sleep=30s) [24.5m elapsed, ~3.5m left]
+$FLQH: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FLQH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['FLQH']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$FLQG: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+$GIGU: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['GIGU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+['GIGU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['GIGU']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,400/2,684 (8 ok, 2400 failed, w=3 sleep=30s) [25.0m elapsed, ~3.0m left]
+$IXSE: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+
+1 Failed download:
+
+1 Failed download:
+['IXSE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IXSE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+['IXSE']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,450/2,684 (8 ok, 2450 failed, w=3 sleep=30s) [25.6m elapsed, ~2.4m left]
+$KDFI: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,500/2,684 (8 ok, 2500 failed, w=3 sleep=30s) [26.2m elapsed, ~1.9m left]
+    MONTHLY update: 2,550/2,684 (8 ok, 2550 failed, w=3 sleep=30s) [26.7m elapsed, ~1.4m left]
+$STMB: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,600/2,684 (8 ok, 2600 failed, w=3 sleep=30s) [27.3m elapsed, ~0.9m left]
+$WKLY: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+$BCM: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['BCM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+
+1 Failed download:
+['BCM']: possibly delisted; no price data found  (1mo 2026-01-29 -> 2026-03-30)
+    MONTHLY update: 2,650/2,684 (8 ok, 2650 failed, w=3 sleep=30s) [27.8m elapsed, ~0.4m left]
+    MONTHLY update: 2,684/2,684 (8 ok, 2684 failed, w=3 sleep=30s) [28.4m elapsed, ~0.0m left]
+
+  Fetching 19 missing tickers (start=2016-01-01)...
+    MONTHLY fetch: 19/19 (0 ok, 19 failed, w=18 sleep=2s) [0.0m elapsed, ~0.0m left]
+
+  MONTHLY fetch retry 1/3 — 19 tickers to retry (10 workers, 3s sleep)...
+    MONTHLY fetch: 19/19 (19 ok, 0 failed, w=10 sleep=3s) [0.0m elapsed, ~0.0m left]
+
+  MONTHLY sync complete:
+    Total in cache: 10,856
+    Updated: 0, New: 19, Unchanged: 8, Failed: 2703
+    File: C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\universe_ohlcv_monthly.pkl (46.9 MB)
+    Time: 6757s (112.6 min)
+
+C:\Users\Dan\Documents\ScanPerfect\swing-screener>

@@ -1,7 +1,7 @@
 {
   "setup_type": "base",
   "grinder_type": "signal_exit_pool_l14_labeler",
-  "timestamp": "2026-04-26T09:18:40.688042",
+  "timestamp": "2026-04-26T10:17:50.467602",
   "adr_source": "ADR14_at_entry (recomputed from OHLCV)",
   "trade_lifetime_cap_bars": 120,
   "T_threshold_adr": 2.885567890691714,

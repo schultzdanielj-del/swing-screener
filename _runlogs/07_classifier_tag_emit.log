@@ -1,0 +1,5 @@
+OHLCV cache: 11859 tickers
+  htf: wrote research\classifier_tags\htf_tags.json  (total=272, examples_ENTRY=28/28, wild_ENTRY=215)
+  bf: wrote research\classifier_tags\bf_tags.json  (total=344, examples_ENTRY=45/45, wild_ENTRY=253)
+  base: wrote research\classifier_tags\base_tags.json  (total=522, examples_ENTRY=38/38, wild_ENTRY=436)
+EXIT=0

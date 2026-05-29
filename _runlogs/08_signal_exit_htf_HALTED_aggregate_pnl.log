@@ -1,0 +1,60 @@
+  SCRIPT_DIR     = C:\Users\Dan\Documents\ScanPerfect\swing-screener\scripts
+  WORKTREE_ROOT  = C:\Users\Dan\Documents\ScanPerfect\swing-screener
+  MAIN_REPO_ROOT = C:\Users\Dan\Documents\ScanPerfect\swing-screener
+  CLASSIFIER_REPO= C:\Users\Dan\Documents\ScanPerfect\swing-screener
+  OUTPUT_DIR     = C:\Users\Dan\Documents\ScanPerfect\swing-screener\data\signal_exit_grind
+
+  Loading expression cache...
+  Expression cache: 16,216 expressions
+  Loading OHLCV cache from C:\Users\Dan\Documents\ScanPerfect\swing-screener\local_runner\cache\universe_ohlcv_daily.pkl
+  OHLCV tickers: 11,859
+  Loading earnings dates from C:\Users\Dan\Documents\ScanPerfect\swing-screener\data\scanperfect.db
+  Earnings tickers: 4,683  rows: 94,334
+
+============================================================
+  SIGNAL EXIT POOL GRINDER — HTF
+============================================================
+  Tags htf: 272 clusters  (ENTRY=243  REDUNDANT=19  NOENTRY=10  MISSING=0)
+
+  PHASE 1: build cluster meta (ADR14 at entry, cap, stop_hit_bar, mfe_adr)
+  meta built in 0.1s — entered=243  not_entry=29  skipped_missing=0
+
+  PHASE 2: build forward expression slab
+  Building forward slab: 243 entered x 120 bars x 16216 exprs (~1.89 GB)
+  Slab built. Loaded 209 unique tickers in 20.5s, fill 0.7s, dropped 0.
+
+  PHASE 3: grind
+  Grinding 16,216 expressions x ~20 thresholds x 2 directions
+  Population: 243 entered clusters, max horizon 120 bars
+    [1000/16216] 105 expr/s  39,782 candidates  current top agg=528.73
+    [2000/16216] 128 expr/s  64,024 candidates  current top agg=528.73
+    [3000/16216] 161 expr/s  75,288 candidates  current top agg=528.73
+    [4000/16216] 181 expr/s  88,916 candidates  current top agg=540.83
+    [5000/16216] 174 expr/s  115,696 candidates  current top agg=540.83
+    [6000/16216] 164 expr/s  146,424 candidates  current top agg=673.48
+    [7000/16216] 156 expr/s  180,516 candidates  current top agg=673.48
+    [8000/16216] 163 expr/s  196,254 candidates  current top agg=673.48
+    [9000/16216] 172 expr/s  207,844 candidates  current top agg=673.48
+    [10000/16216] 175 expr/s  226,560 candidates  current top agg=673.48
+    [11000/16216] 177 expr/s  247,176 candidates  current top agg=673.48
+    [12000/16216] 175 expr/s  272,410 candidates  current top agg=673.48
+    [13000/16216] 177 expr/s  290,504 candidates  current top agg=673.48
+    [14000/16216] 184 expr/s  299,784 candidates  current top agg=673.48
+    [15000/16216] 186 expr/s  316,020 candidates  current top agg=673.48
+    [16000/16216] 195 expr/s  321,146 candidates  current top agg=673.48
+  Done. 327,656 candidates scored in 84.2s. Top 50 kept.
+
+  PHASE 4: enrich top with labels + aggregate summary
+
+  PHASE 5: expand per-cluster arrays to pool order
+
+  PHASE 6: verify
+  examples_lock: FAIL  (2 violations)
+  aggregate>0:   PASS  (top aggregate = 673.48)
+  HALTED — examples-lock violations:
+    cluster 172 NHI pnl_adr=-0.5957
+    cluster 266 XPEV pnl_adr=-1.0
+  Wrote C:\Users\Dan\Documents\ScanPerfect\swing-screener\data\signal_exit_grind\signal_exit_pool_htf_HALTED_20260425_202509.json
+
+  TOTAL: 106.2s
+EXIT=0
