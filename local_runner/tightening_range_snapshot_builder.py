@@ -92,6 +92,43 @@ WINDOWS = {"D": (40, 60, 80, 100, 130),
            "W": (24, 36, 50, 65),
            "M": (18, 28, 40)}
 
+# A tightening range is only tradeable once it has coiled tight enough that the
+# stop fits inside the range. The live band (trendlines projected to today) must
+# be no wider than this fraction of price. Names whose range is still a quarter
+# to half the stock price are "too soon" / too wide to trade and are dropped.
+# Sits in the natural gap above the widest acceptable keeper (CRML ~20%).
+MAX_BAND_PCT = 25.0
+
+
+def _ray_to_today(h, l):
+    """Fit the two trendlines as rays anchored on the window's price extremes
+    and read them at the most recent bar ("today").
+
+    Resistance is the ray from the highest high that just grazes the highest of
+    the later highs — the shallowest descending line off the peak that still
+    sits above every subsequent high (the upper hull's final segment). Support
+    is the mirror: the ray from the lowest low grazing the highest-constraining
+    of the later lows. Reading those rays at the current bar gives the LIVE
+    range a trader would draw, instead of the wedge's wide (old) mouth.
+
+    This is the fix for the "range is way too wide at current day" problem: the
+    old code reported the last-third percentile box, which scoops up month-old
+    extremes; these rays converge forward to today.
+
+    Returns (res_today, sup_today, slope_r, slope_s) per bar, or None when an
+    extreme is the last bar (no forward span to define the ray).
+    """
+    n = len(h) - 1
+    pk = int(np.argmax(h))
+    tr = int(np.argmin(l))
+    if pk >= n or tr >= n:
+        return None
+    slope_r = max((h[j] - h[pk]) / (j - pk) for j in range(pk + 1, n + 1))
+    slope_s = min((l[j] - l[tr]) / (j - tr) for j in range(tr + 1, n + 1))
+    res_today = h[pk] + slope_r * (n - pk)
+    sup_today = l[tr] + slope_s * (n - tr)
+    return res_today, sup_today, slope_r, slope_s
+
 
 def _check_triangle(h, l, c_last):
     """Shape test that excludes the most recent bars from envelope definition,
@@ -168,10 +205,26 @@ def _check_triangle(h, l, c_last):
     if margin_l_min < e_lo - margin_tol:
         return None                          # recent bar decisively broke down
 
+    # Live trendlines projected to TODAY (the range a trader actually draws).
+    # The percentile slopes above already confirmed the body tapers; these rays
+    # give the current band off the real price extremes. Require the two lines
+    # to still converge at today (resistance above support) — otherwise the
+    # apex has passed and there is no range left.
+    rays = _ray_to_today(h, l)
+    if rays is None:
+        return None
+    res_today, sup_today, rslope_r, rslope_s = rays
+    if not (rslope_r < 0 and rslope_s > 0):
+        return None                          # resistance must fall, support must rise
+    if res_today <= sup_today:
+        return None                          # lines already crossed = apex passed
+
     return {
         "s_hi": s_hi, "s_lo": s_lo, "e_hi": e_hi, "e_lo": e_lo,
         "res_proj": float(res_proj), "sup_proj": float(sup_proj),
         "slope_r": float(slope_r), "slope_s": float(slope_s),
+        "res_today": float(res_today), "sup_today": float(sup_today),
+        "rslope_r": float(rslope_r), "rslope_s": float(rslope_s),
         "contract": float(contract), "third": int(third), "L": int(L), "Ls": int(Ls),
     }
 
@@ -196,16 +249,20 @@ def _fit_wedge(r, tf="D"):
         info = _check_triangle(h, l, close_last)
         if info is None:
             continue
-        mid_norm = ((info["slope_r"] + info["slope_s"]) / 2.0) / close_last
-        # Apex direction: allow a mild downward tilt (resistance falling a bit
-        # faster than support rises is still a valid converging triangle), but
-        # reject structures whose midline points clearly down — those are
-        # falling wedges / bear patterns, not tightening ranges. The floor is a
-        # small per-bar fractional drift, not a hard "must be flat-or-up".
+        # Apex direction from the LIVE (ray) trendlines: allow a mild downward
+        # tilt (resistance falling a bit faster than support rises is still a
+        # valid converging triangle), but reject structures whose midline points
+        # clearly down — falling wedges / bear patterns, not tightening ranges.
+        mid_norm = ((info["rslope_r"] + info["rslope_s"]) / 2.0) / close_last
         if mid_norm < -0.0015:
             continue
-        band_now = info["res_proj"] - info["sup_proj"]
+        # Band = the trendlines projected to TODAY (not the old wide mouth).
+        band_now = info["res_today"] - info["sup_today"]
+        if band_now / close_last * 100.0 > MAX_BAND_PCT:
+            continue                         # current range too wide to trade
         cand = {"W": W, "info": info, "mid_norm": mid_norm, "band_now": band_now}
+        # Pick the window whose live range is tightest — i.e. the one caught
+        # nearest the apex, which is the tradeable one.
         if best is None or band_now < best["band_now"]:
             best = cand
     if best is None:
@@ -217,12 +274,12 @@ def _fit_wedge(r, tf="D"):
     adr_win = min(20, len(h_all))
     adr = float(np.mean((h_all[-adr_win:] / l_all[-adr_win:] - 1.0) * 100.0))
     adr_px = adr / 100.0 * close_last if adr > 0 else close_last * 0.02
-    slope_r = info["slope_r"]; slope_s = info["slope_s"]
-    bars_to_apex = band_now / (slope_s - slope_r) if slope_s > slope_r else 9999.0
+    rslope_r = info["rslope_r"]; rslope_s = info["rslope_s"]
+    bars_to_apex = band_now / (rslope_s - rslope_r) if rslope_s > rslope_r else 9999.0
     n = len(full) - 1
     return {
-        "res": float(info["res_proj"]),
-        "sup": float(info["sup_proj"]),
+        "res": float(info["res_today"]),
+        "sup": float(info["sup_today"]),
         "band_pct": float(band_now / close_last * 100.0),
         "band_adr": float(band_now / adr_px) if adr_px > 0 else 999.0,
         "bars_to_apex": float(bars_to_apex),

@@ -27,16 +27,21 @@ Invocation:
 
 Per-timeframe detector (function `_fit_wedge`, applied for `tf ∈ {D, W, M}`):
 1. **Resample.** Daily bars are used as-is. Weekly is `W-FRI` OHLC aggregation; monthly is `ME` (period-end). The partial intraday daily bar (when the cache is the intraday pickle) is dropped before resampling, so the current week / month bar reflects the EOD-completed days only.
-2. **Window sweep.** Per timeframe, try a fixed set of lookback windows — D: `{40, 60, 80, 100, 130}`, W: `{24, 36, 50, 65}`, M: `{18, 28, 40}`. For each window, run the shape test below. The match is the **tightest** window that qualifies (smallest end-range).
-3. **Shape test on each window** (split into thirds):
-   - **Highs descended:** 90th-percentile of highs in the last third < 90th-percentile of highs in the first third.
-   - **Lows ascended:** 10th-percentile of lows in the last third > 10th-percentile of lows in the first third.
-   - **Contracting envelope:** `end_range / start_range ≤ 0.70` (≥30% contraction). `range = high_p90 − low_p10` per third.
-   - **Price inside.** Current close is between the absolute max-high and absolute min-low of the last third.
-   - **Apex not pointing down.** Approximate the two trendlines from segment-center anchors (first-third midpoint and last-third midpoint), require resistance slope < 0, support slope > 0, and the normalized midline slope `((res_slope + sup_slope) / 2) / close ≥ 0`.
-4. Among the windows that pass, keep the one with the tightest end-range — that's the match.
+2. **Window sweep.** Per timeframe, try a fixed set of lookback windows — D: `{40, 60, 80, 100, 130}`, W: `{24, 36, 50, 65}`, M: `{18, 28, 40}`. For each window, run the shape screen + line fit below. The match is the window whose **live band is tightest** (the one caught nearest the apex).
+3. **Shape screen on each window** (`_check_triangle`, split into thirds). The last ~10% of the window (min 5 bars) is reserved as a breakout zone and excluded from the envelope, so a recent breakout can't inflate the envelope and disguise itself as "inside":
+   - **Highs descended:** 90th-percentile of highs in the last third < 90th-percentile in the first third.
+   - **Lows ascended:** 10th-percentile of lows in the last third > 10th-percentile in the first third.
+   - **Contracting envelope:** `end_range / start_range ≤ 0.85` (≥15% contraction; the floor is loose because the breakout zone is excluded). `range = high_p90 − low_p10` per third.
+   - **Not broken out.** The latest close must sit in the lower 80% of the (pre-margin) envelope band — pressing the ceiling means it is breaking out the top, below the floor means it broke down. Additionally the recent (margin) bars must not have poked more than 20% of the band past the envelope. This is what keeps freshly-broken-out names (the canonical reject list) out of the scan.
+4. **Live trendlines projected to today** (`_ray_to_today`). The range a trader actually draws — not the wedge's wide mouth:
+   - **Resistance** is the ray from the window's highest high that just grazes the highest of the later highs (the upper hull's final segment — the shallowest descending line off the peak that still sits above every later high).
+   - **Support** is the mirror: the ray from the lowest low grazing the constraining later lows.
+   - Both are read at the current bar to give `res_today` / `sup_today`. Require the lines to still **converge at today** — resistance slope < 0, support slope > 0, and `res_today > sup_today` (apex not yet passed).
+5. **Apex direction.** The normalized midline slope of the live lines `((res_slope + sup_slope) / 2) / close ≥ −0.0015` — a mild downward tilt is allowed (resistance falling a bit faster than support rises is still a valid converging triangle), but a clearly down-pointing midline (falling wedge / bear pattern) is rejected.
+6. **Tradeable tightness.** The live band `res_today − sup_today` must be ≤ `MAX_BAND_PCT` (25%) of price. A range that is still a quarter-to-half the stock price is too soon / too wide to trade (the stop wouldn't fit) and is dropped.
+7. Among the windows that pass all of the above, keep the one with the tightest live band — that's the match.
 
-Percentile bounds (90th / 10th) instead of absolute max / min mean a single wick at the edge of a segment doesn't blow up the shape test — the detector tolerates jitters and noise. The window sweep means wedges of different lengths all get a fair look.
+Percentile bounds (90th / 10th) instead of absolute max / min mean a single wick at the edge of a segment doesn't blow up the shape screen. The trendlines, by contrast, are anchored on the true price extremes and projected forward, because the trader needs the live band at today — the percentile box would report the wedge's old, wide mouth. The window sweep means wedges of different lengths all get a fair look.
 
 Output JSON top-level fields:
 - `built_at` — ISO timestamp (UTC).
@@ -51,13 +56,13 @@ Output JSON top-level fields:
 - `tickers` — dict mapping ticker → `{tf: payload}` for each matched timeframe.
 
 Per-(ticker, timeframe) payload schema:
-- `res`, `sup` — current envelope (absolute max-high / min-low of the matched window's last third).
-- `band_pct`, `band_adr` — current band width as a % of price and as a multiple of 20-bar ADR.
-- `bars_to_apex` — approximate bars until the segment-center-anchored lines would meet.
+- `res`, `sup` — the live trendlines projected to today (`res_today` / `sup_today`): resistance and support as they read at the current bar. Approximate (window-dependent); the trader draws the exact lines on the chart.
+- `band_pct`, `band_adr` — current live band width (`res − sup`) as a % of price and as a multiple of 20-bar ADR. `band_pct ≤ 25` always (the tightness gate).
+- `bars_to_apex` — approximate bars until the live lines would meet.
 - `wedge_span` — bars in the matched window.
-- `mid_norm` — normalized midline slope (≥ 0 always; non-negative apex direction).
+- `mid_norm` — normalized midline slope of the live lines (≥ −0.0015 always; mild downward tilt allowed).
 - `asof_date` — the last bar's date (YYYY-MM-DD) at this timeframe.
-- `contraction` — `end_range / start_range` from the shape test (≤ 0.70 always).
+- `contraction` — `end_range / start_range` from the shape screen (≤ 0.85 always).
 - `window_bars` — which window length matched (e.g. 40 for the tightest daily fit).
 - `start_hi`, `start_lo` — first-third percentile bounds (the wedge "mouth").
 
@@ -65,7 +70,9 @@ Partial-bar drop semantics: when the source is the intraday pickle, the producer
 
 ## Details you need to know
 
-- The detector is **shape-based, not trendline-fitting**. Earlier attempts that fit specific lines (regression through last-K pivots, envelope/convex-hull tangent lines, touch-count) all overfit and either missed obvious triangles or fit fake wedges to choppy pivots. The percentile-of-thirds shape test side-steps the line-fit entirely — it just asks "does the envelope taper?". The trendlines reported in the payload are coarse approximations from segment centers, only used for the dashboard table's apex / band columns.
+- **Shape screen first, then lines.** The percentile-of-thirds screen ("does the envelope taper, and has price not broken out?") is the gate; only names that pass it get trendlines fit. Earlier attempts that *started* from a line fit (regression through last-K pivots, full convex-hull tangents, touch-count) overfit — they either missed obvious triangles or fit fake wedges to choppy pivots. Screening on the shape first and only then anchoring rays on the true extremes avoids that.
+- **The reported range is the lines projected to today, not the wedge mouth.** This was a real bug: the old payload reported the last-third percentile box as the range, which scoops up month-old extremes and reports a band 2–3× too wide (e.g. CRML read $7.50–$13.96 when the live coil was ~$10.25–$12.64). The `_ray_to_today` lines converge forward to the current bar, which is what the trader sees and what the tightness gate measures.
+- **The line values are approximate and window-dependent.** A single tall spike can swing a ray's slope, and the window sweep picks the tightest-band fit, which may not be the same anchor the trader would eyeball. The reported `res`/`sup` are good enough to gate tightness and seed the dashboard columns; the user draws the exact lines on the chart.
 - **Tuned for recall.** The scan surfaces candidates; the user vets each chart and draws their own lines. Sloppy contractions (no clean triangle, but the envelope did taper) can slip through and are accepted as sift noise.
 - The Setups page's `[D][W][M]` toggle is a row-level sub-filter on a single table — the producer outputs one payload per (ticker, matched timeframe), and the toggle hides the rows whose `data-tighttf` doesn't match the active timeframe. No table swapping.
 - Daily-cache history must reach back at least `WINDOWS[tf][-1]` bars on the chosen timeframe for the largest sweep window to be tested. The current universe daily cache has 5+ years per ticker — plenty for D / W / M.
@@ -87,4 +94,4 @@ None currently active.
 
 - Pixel-perfect trendline drawing. The scan surfaces candidates; the user draws lines and picks entries on the chart.
 - Flat-top / horizontal resistance variants (ascending triangles, breakouts from key levels). Those belong to a separate "key level" setup, not Tightening Range.
-- Bearish (descending-triangle) variants. The match rule requires the midline to not point down — i.e. a non-bearish converging wedge or symmetrical triangle, not a falling wedge / bear pattern.
+- Bearish (descending-triangle) variants. The match rule requires the midline to not point clearly down (normalized slope ≥ −0.0015) — a converging wedge or symmetrical triangle with at most a mild downward lean, not a falling wedge / bear pattern.
