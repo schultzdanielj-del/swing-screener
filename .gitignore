@@ -41,3 +41,9 @@ local_runner/grinds/
 
 # Universe scan two-stage candidate CSVs (large generated outputs)
 research/universe_scan/two_stage_*_candidates.csv
+
+# Local agent state (Claude Code settings + nested worktrees)
+.claude/
+
+# Large local OHLCV snapshot — exceeds GitHub's 100MB per-file limit
+universe_ohlcv_5yr.pkl
