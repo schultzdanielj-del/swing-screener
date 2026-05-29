@@ -543,6 +543,45 @@ def compute_first_flags(snapshot_doc, cache):
     return out, asof_date
 
 
+def load_tightening_range_snapshot():
+    """Load the Tightening Range snapshot built by tightening_range_snapshot_builder.
+
+    Returns the parsed JSON doc or None if missing / unreadable. The doc carries
+    each ticker's converging-wedge state per timeframe (daily/weekly/monthly).
+    """
+    import json as _json
+    path = os.path.join(CACHE_DIR, "tightening_range_snapshots.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception:
+        return None
+
+
+def compute_tightening_ranges(snapshot_doc):
+    """Flatten the Tightening Range snapshot into match rows (one per ticker ×
+    matched timeframe). The wedge lines are fixed for the trading day; no live
+    refresh. Returns (list_of_rows, asof_date) where each row is
+    {ticker, tf, ...payload}.
+    """
+    if not snapshot_doc:
+        return [], "?"
+    tickers = snapshot_doc.get("tickers", {})
+    asof_date = "?"
+    out = []
+    for tk, per_tf in tickers.items():
+        for tf, p in per_tf.items():
+            row = dict(p)
+            row["ticker"] = tk
+            row["tf"] = tf
+            out.append(row)
+            if asof_date == "?":
+                asof_date = p.get("asof_date") or "?"
+    return out, asof_date
+
+
 def _compute_ext50_series_for_chart(df, adr_period=20):
     """Full ext50 series aligned to the ticker's full OHLCV history.
 
@@ -2147,6 +2186,20 @@ body.view-setups  .watchlist-pane.setups-pane  { display: block !important; }
   color: var(--accent-info); background: var(--bg-canvas);
   box-shadow: inset 0 -2px 0 var(--accent-info);
 }
+/* Tightening Range D/W/M sub-toggle — smaller, secondary. */
+.tighten-tf-tabs {
+  display: flex; gap: 6px; padding: 4px 10px;
+  border-bottom: 1px solid var(--border-faint);
+}
+.tighten-tf-tab {
+  appearance: none; cursor: pointer; padding: 2px 12px;
+  font-family: var(--font-sans); font-size: 10px; font-weight: 700;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--fg-tertiary); background: var(--bg-elevated);
+  border: 1px solid var(--border); border-radius: 0;
+}
+.tighten-tf-tab:hover { color: #ffffff; }
+.tighten-tf-tab.is-active { color: #000; background: var(--accent-info); }
 
 /* Per-ticker chart section */
 .ticker-view {
@@ -2582,6 +2635,23 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         print(f"  snapshot asof={ff_asof_date}  built_at={built[:19]}  "
               f"n_matches={ff_snapshot.get('n_matches', 0)}")
         print(f"  {len(first_flags)} First Flags matches in UNIVERSE")
+
+    # ── Tightening Range scan (Setups page, third setup type) ───────────
+    # Reads tightening_range_snapshots.json: a converging wedge (descending
+    # resistance + rising support, price inside, band contracting, apex not
+    # pointing down) on daily / weekly / monthly. Lines are fixed for the day.
+    print("\nLoading Tightening Range snapshot...")
+    tr_snapshot = load_tightening_range_snapshot()
+    if tr_snapshot is None:
+        print("  WARNING: tightening_range_snapshots.json not found.")
+        print("  Run: python local_runner/tightening_range_snapshot_builder.py")
+        tightening_ranges = []
+        tr_asof_date = "?"
+    else:
+        tightening_ranges, tr_asof_date = compute_tightening_ranges(tr_snapshot)
+        by_tf = tr_snapshot.get("n_matches_by_tf", {})
+        print(f"  asof={tr_asof_date}  by_tf={by_tf}  "
+              f"{len(tightening_ranges)} Tightening Range rows (D/W/M)")
 
     # Reverse index: for the Tickers view, each ticker row carries the
     # list of theme labels it belongs to so the Theme cell can name them.
@@ -3075,6 +3145,87 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         '</table>'
     )
 
+    # ── Tightening Range table (Setups page, third tab) ────────────────
+    # One table holds all D/W/M matches, each tagged data-tighttf; the
+    # [D][W][M] buttons sub-filter by timeframe (reusing the filter machinery).
+    # Same per-ticker data attrs as the other setups so shared filters apply.
+    tighten_body_rows = []
+    for m in sorted(tightening_ranges, key=lambda r: r.get("band_adr", 9e9)):
+        tk = m["ticker"]; tf = m["tf"]
+        p = ticker_packs.get(tk)
+        if p is None:
+            continue
+        rs0d = p["rs0d"]; rs1 = p["rs1"]; rs5 = p["rs5"]; rs20 = p["rs20"]
+        rs65 = p["rs65"]; rs130 = p["rs130"]
+        comp10 = p.get("comp10"); adr_pct_val = p.get("adr")
+        today_adr_ratio = p.get("today_adr_ratio")
+        sector = p.get("sector", ""); below_200 = bool(p.get("below_200"))
+        theme_labels = ", ".join(themes_by_ticker.get(tk, ["Ungrouped"]))
+        theme_ids_attr_val = ",".join(theme_ids_by_ticker.get(tk, ["ungrouped"]))
+
+        def _tra(v, sentinel="-1e9"):
+            try: return f"{float(v):.4f}"
+            except Exception: return sentinel
+        def _trd(v, fmt="{:+.2f}"):
+            if v is None: return "—"
+            try: return fmt.format(v)
+            except Exception: return str(v)
+
+        band = m.get("band_adr"); apex = m.get("bars_to_apex"); span = m.get("wedge_span")
+        hi = m.get("res"); lo = m.get("sup")
+        comp10_attr = f"{comp10:.4f}" if comp10 is not None else "1e9"
+        adr_attr_val = _tra(today_adr_ratio, sentinel="1e9")
+        below_cls = " below-200" if below_200 else ""
+        cls_rs0d = "pos" if (rs0d is not None and rs0d >= 0) else ("neg" if rs0d is not None else "nul")
+        cls_rs1  = "pos" if (rs1  is not None and rs1  >= 0) else ("neg" if rs1  is not None else "nul")
+
+        tighten_body_rows.append(
+            f'<tr class="setups-row tickers-row{below_cls}"'
+            f' data-row-id="tighten{tf}__{tk}" data-row-kind="setup"'
+            f' data-ticker="{tk}" data-label="{tk}" data-theme-label="{theme_labels}"'
+            f' data-theme-ids="{theme_ids_attr_val}" data-sector="{sector}"'
+            f' data-tighttf="{tf}"'
+            f' data-band="{_tra(band)}" data-apex="{_tra(apex)}" data-span="{_tra(span)}"'
+            f' data-rangehi="{_tra(hi)}" data-rangelo="{_tra(lo)}"'
+            f' data-rs0d="{_tra(rs0d)}" data-rs1="{_tra(rs1)}"'
+            f' data-rs5="{_tra(rs5)}" data-rs20="{_tra(rs20)}"'
+            f' data-rs65="{_tra(rs65)}" data-rs130="{_tra(rs130)}"'
+            f' data-comp10="{comp10_attr}" data-adr="{adr_attr_val}">'
+            f'<td class="ticker-symbol-cell"><span class="ticker-symbol">{tk}</span></td>'
+            f'<td class="theme-membership-cell" title="{theme_labels}">{theme_labels}</td>'
+            f'<td class="num">{tf}</td>'
+            f'<td class="num">{_trd(lo, "{:.2f}")}</td>'
+            f'<td class="num">{_trd(hi, "{:.2f}")}</td>'
+            f'<td class="num">{_trd(band, "{:.1f}")}</td>'
+            f'<td class="num">{_trd(apex, "{:.0f}")}</td>'
+            f'<td class="num">{_trd(span, "{:.0f}")}</td>'
+            f'<td class="num {cls_rs0d}">{_trd(rs0d)}</td>'
+            f'<td class="num {cls_rs1}">{_trd(rs1)}</td>'
+            f'<td class="num">{_trd(comp10, "{:.2f}")}</td>'
+            f'<td class="num adr">{_trd(adr_pct_val, "{:.2f}")}</td>'
+            f'</tr>'
+        )
+
+    tighten_table_html = (
+        '<table class="watchlist-table tickers-table setups-table" id="tighten-watchlist">'
+        '<thead><tr>'
+        '<th data-sort-key="label"       data-sort-type="text">Ticker</th>'
+        '<th data-sort-key="theme-label" data-sort-type="text">Theme</th>'
+        '<th data-sort-key="tighttf"     data-sort-type="text">TF</th>'
+        '<th data-sort-key="rangelo"     data-sort-type="num" title="Support line at the last bar">Range lo</th>'
+        '<th data-sort-key="rangehi"     data-sort-type="num" title="Resistance line at the last bar">Range hi</th>'
+        '<th data-sort-key="band"        data-sort-type="num" class="sort-active sort-asc" title="Current band width in ADRs (tightest first)">Width</th>'
+        '<th data-sort-key="apex"        data-sort-type="num" title="Bars until the lines would meet">Apex</th>'
+        '<th data-sort-key="span"        data-sort-type="num" title="Bars in the wedge">Span</th>'
+        '<th data-sort-key="rs0d"        data-sort-type="num">0D</th>'
+        '<th data-sort-key="rs1"         data-sort-type="num">1d</th>'
+        '<th data-sort-key="comp10"      data-sort-type="num">Comp10</th>'
+        '<th data-sort-key="adr"         data-sort-type="num">ADR</th>'
+        '</tr></thead>'
+        f'<tbody id="tighten-watchlist-body">{"".join(tighten_body_rows)}</tbody>'
+        '</table>'
+    )
+
     # Filter icon — the 3-horizontal-sliders glyph. Lives in the watchlist
     # controls bar so the toggle is right next to the visible-row counter,
     # not buried in the header chrome. A small gold dot sits in the corner
@@ -3129,6 +3280,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         '<div class="setups-tabs" role="tablist">'
         '<button type="button" class="setups-tab is-active" data-setup="extpeek">Extension Peek</button>'
         '<button type="button" class="setups-tab" data-setup="firstflags">First Flags</button>'
+        '<button type="button" class="setups-tab" data-setup="tightenrange">Tightening Range</button>'
         '</div>'
         '<div class="setups-content" id="setups-content-extpeek">'
         f'<div class="setups-meta">Extension Peek — {len(extension_peeks)} matches  ·  snapshot asof {peek_asof_date}</div>'
@@ -3139,6 +3291,16 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         f'<div class="setups-meta">First Flags — {len(first_flags)} matches  ·  snapshot asof {ff_asof_date}</div>'
         f'{firstflags_table_html}'
         '<div class="tickers-empty" id="firstflags-empty">No First Flags matches right now.</div>'
+        '</div>'
+        '<div class="setups-content" id="setups-content-tightenrange" style="display:none">'
+        f'<div class="setups-meta">Tightening Range — converging wedge · {len(tightening_ranges)} across D/W/M · asof {tr_asof_date}</div>'
+        '<div class="tighten-tf-tabs">'
+        '<button type="button" class="tighten-tf-tab is-active" data-tf="D">Daily</button>'
+        '<button type="button" class="tighten-tf-tab" data-tf="W">Weekly</button>'
+        '<button type="button" class="tighten-tf-tab" data-tf="M">Monthly</button>'
+        '</div>'
+        f'{tighten_table_html}'
+        '<div class="tickers-empty" id="tighten-empty">No tightening ranges on this timeframe right now.</div>'
         '</div>'
         '</div>'
     )
@@ -3641,6 +3803,10 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       var ext = parseFloat(r.dataset.ext50);
       if (isNaN(ext) || ext < NEAR50_LO || ext > NEAR50_HI) return true;
     }}
+    // Tightening Range timeframe sub-toggle: hide tighten rows whose timeframe
+    // isn't the active one. Only tighten rows carry data-tighttf, so this is a
+    // no-op for every other row.
+    if (r.dataset.tighttf && r.dataset.tighttf !== activeTightenTF) return true;
     // "Flagged only" = row must belong to at least one flagged theme.
     // Theme rows use their own theme-id; ticker child rows use their parent
     // theme-id; flat ticker rows use their comma-separated theme-ids attr
@@ -3925,13 +4091,20 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   // helpers (sort / filter / nav) always operate on the ACTIVE table; we just
   // repoint setupsBody + setupsTableId when a tab is clicked.
   var SETUP_TABLES = {{
-    extpeek:    {{ body:'setups-watchlist-body',     table:'setups-watchlist',     empty:'setups-empty',     content:'setups-content-extpeek',     label:'EXTENSION PEEK', defSort:'peek', defDir:1 }},
-    firstflags: {{ body:'firstflags-watchlist-body', table:'firstflags-watchlist', empty:'firstflags-empty', content:'setups-content-firstflags', label:'FIRST FLAGS',     defSort:'days', defDir:1 }}
+    extpeek:     {{ body:'setups-watchlist-body',     table:'setups-watchlist',     empty:'setups-empty',     content:'setups-content-extpeek',     label:'EXTENSION PEEK',   defSort:'peek', defDir:1 }},
+    firstflags:  {{ body:'firstflags-watchlist-body', table:'firstflags-watchlist', empty:'firstflags-empty', content:'setups-content-firstflags', label:'FIRST FLAGS',      defSort:'days', defDir:1 }},
+    tightenrange:{{ body:'tighten-watchlist-body',    table:'tighten-watchlist',    empty:'tighten-empty',   content:'setups-content-tightenrange', label:'TIGHTENING RANGE', defSort:'band', defDir:1 }}
   }};
   var activeSetup = 'extpeek';
   try {{
     var savedSetup = window.localStorage && window.localStorage.getItem('themeDashboard.activeSetup');
     if (savedSetup && SETUP_TABLES[savedSetup]) activeSetup = savedSetup;
+  }} catch(e) {{}}
+  // Tightening Range timeframe sub-toggle (one tighten table, rows tagged by tf).
+  var activeTightenTF = 'D';
+  try {{
+    var savedTF = window.localStorage && window.localStorage.getItem('themeDashboard.tightenTF');
+    if (savedTF === 'D' || savedTF === 'W' || savedTF === 'M') activeTightenTF = savedTF;
   }} catch(e) {{}}
   var setupsBody = document.getElementById(SETUP_TABLES[activeSetup].body);
   var setupsTableId = SETUP_TABLES[activeSetup].table;
@@ -4669,7 +4842,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   }}
 
   // Header clicks — wired on every setup table; only the active one is visible.
-  document.querySelectorAll('#setups-watchlist th, #firstflags-watchlist th').forEach(function(th) {{
+  document.querySelectorAll('#setups-watchlist th, #firstflags-watchlist th, #tighten-watchlist th').forEach(function(th) {{
     th.addEventListener('click', function() {{
       var k = th.dataset.sortKey;
       var t = th.dataset.sortType;
@@ -4726,6 +4899,31 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
 
   document.querySelectorAll('.setups-tab').forEach(function(tab) {{
     tab.addEventListener('click', function() {{ selectSetup(tab.dataset.setup); }});
+  }});
+
+  // Tightening Range D/W/M sub-toggle. One table holds all timeframes; the
+  // row-level tf gate (in rowFailsHotOrTight) hides the non-active ones, so
+  // switching is just: set the tf, re-filter, re-sort, re-pick a visible row.
+  function selectTightenTF(tf) {{
+    if (tf !== 'D' && tf !== 'W' && tf !== 'M') tf = 'D';
+    activeTightenTF = tf;
+    try {{ if (window.localStorage) window.localStorage.setItem('themeDashboard.tightenTF', tf); }} catch(e) {{}}
+    document.querySelectorAll('.tighten-tf-tab').forEach(function(b) {{
+      b.classList.toggle('is-active', b.dataset.tf === tf);
+    }});
+    if (activeSetup === 'tightenrange') {{
+      sortSetupsRows();
+      applyFilter();
+      var cur = currentRow();
+      if (!cur || cur.style.display === 'none') {{
+        var vis = visibleRows();
+        if (vis.length) setActiveByRowId(vis[0].dataset.rowId);
+      }}
+    }}
+  }}
+  document.querySelectorAll('.tighten-tf-tab').forEach(function(b) {{
+    b.addEventListener('click', function() {{ selectTightenTF(b.dataset.tf); }});
+    b.classList.toggle('is-active', b.dataset.tf === activeTightenTF);
   }});
 
   // Initial tab state: restore persisted choice + sort the active table.
@@ -4945,6 +5143,15 @@ def _build_html_to_disk(theme=None, bars=250, skip_snapshot=False):
         except Exception as exc:
             print(f"  WARNING: First Flags snapshot rebuild failed: {exc!r}")
             print(f"  (dashboard will fall back to whatever snapshot file exists)")
+        print("\n" + "-" * 70)
+        print("Step 0c: Tightening Range snapshot rebuild")
+        print("-" * 70)
+        try:
+            from tightening_range_snapshot_builder import build as _build_tighten
+            _build_tighten(verbose=True)
+        except Exception as exc:
+            print(f"  WARNING: Tightening Range snapshot rebuild failed: {exc!r}")
+            print(f"  (dashboard will fall back to whatever snapshot file exists)")
 
     cache, source_meta = load_daily_cache()
     if source_meta.get("source") == "intraday":
@@ -5108,7 +5315,7 @@ def main():
     ap.add_argument("--open", action="store_true", help="Open the resulting HTML in your default browser.")
     ap.add_argument("--app",  action="store_true", help="Open the dashboard in a native PySide6 window with an in-process refresh button (no server, no Task Scheduler dependency).")
     ap.add_argument("--no-rebuild", action="store_true", help="With --app: skip the initial HTML rebuild and reuse the existing file on disk (faster relaunch).")
-    ap.add_argument("--skip-snapshot", action="store_true", help="Skip the Step 0 snapshot rebuilds (ext50 trendlines + First Flags). For fast interactive rebuilds when the morning snapshots are still fresh.")
+    ap.add_argument("--skip-snapshot", action="store_true", help="Skip the Step 0 snapshot rebuilds (ext50 trendlines + First Flags + Tightening Range). For fast interactive rebuilds when the morning snapshots are still fresh.")
     args = ap.parse_args()
 
     if args.app:

@@ -1018,11 +1018,12 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 - `local_runner/cache/company_meta.json` — optional, identity-surfacing data (longName + longBusinessSummary)
 - `local_runner/cache/ext50_trendline_snapshots.json` — Setups page (Extension Peek tab) input; written by `ext50_trendline_snapshot_builder.py`. Optional — missing snapshot logs a warning and produces an empty Extension Peek list.
 - `local_runner/cache/first_flags_snapshots.json` — Setups page (First Flags tab) input; written by `first_flags_snapshot_builder.py`. Optional — missing snapshot logs a warning and produces an empty First Flags list.
+- `local_runner/cache/tightening_range_snapshots.json` — Setups page (Tightening Range tab, all three D/W/M timeframes) input; written by `tightening_range_snapshot_builder.py`. Optional — missing snapshot logs a warning and produces an empty Tightening Range list.
 
 **Outputs:**
 - `local_runner/cache/theme_dashboard.html` — overwritten each run
 
-**Calls:** `vectorized_indicators.py` (`sma_2d`, `ema_2d`, `macd_2d`, `atr_2d`); `ext50_trendline_snapshot_builder.build()` as Step 0 and `first_flags_snapshot_builder.build()` as Step 0b of `_build_html_to_disk` (unless `--skip-snapshot`).
+**Calls:** `vectorized_indicators.py` (`sma_2d`, `ema_2d`, `macd_2d`, `atr_2d`); `ext50_trendline_snapshot_builder.build()` as Step 0, `first_flags_snapshot_builder.build()` as Step 0b, and `tightening_range_snapshot_builder.build()` as Step 0c of `_build_html_to_disk` (unless `--skip-snapshot`).
 
 **Called by:** nobody (on-demand only — not in `nightly.py`); `intraday_refresh.py` invokes `theme_dashboard.main()` with `--skip-snapshot` after writing the intraday pickle.
 
@@ -1064,6 +1065,24 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 **Calls:** `vectorized_indicators` (`sma_2d`, `macd_2d`, `ema_2d`); `theme_dashboard.detect_divergences`.
 
 **Called by:** `theme_dashboard._build_html_to_disk` as Step 0b (unless `--skip-snapshot`). Standalone CLI: `python local_runner/first_flags_snapshot_builder.py`.
+
+---
+
+### tightening_range_snapshot_builder.py
+**Location:** `local_runner/tightening_range_snapshot_builder.py`
+**Spec:** `TIGHTENING_RANGE_SNAPSHOTS.md`
+**What it does:** Scans every UNIVERSE ticker for contracting-triangle ("Tightening Range") patterns on three timeframes — daily as-is, weekly (W-FRI), monthly (ME) resampled from the daily cache. The match is shape-based, not trendline-fitted: for each timeframe the producer sweeps several lookback windows, splits each into thirds, and accepts the window where the 90th-percentile of highs descended, the 10th-percentile of lows ascended, the last-third range is ≤70% of the first-third range, the close is inside the recent envelope, and the apex doesn't point down. The tightest qualifying window per timeframe is stored. Percentile bounds (not absolute max/min) make the shape test robust to single-bar wicks. Multiprocessing via `ProcessPoolExecutor`; well under a minute for ~916 tickers.
+
+**Inputs:**
+- `local_runner/cache/universe_ohlcv_daily.pkl` (or `_intraday.pkl` when newer)
+- `local_runner/theme_map.UNIVERSE`
+
+**Outputs:**
+- `local_runner/cache/tightening_range_snapshots.json` — per-(ticker, timeframe) match payload; see TIGHTENING_RANGE_SNAPSHOTS.md.
+
+**Calls:** none beyond numpy / pandas / `theme_map.UNIVERSE`. Self-contained shape detector.
+
+**Called by:** `theme_dashboard._build_html_to_disk` as Step 0c (unless `--skip-snapshot`). Standalone CLI: `python local_runner/tightening_range_snapshot_builder.py`.
 
 ---
 
@@ -1206,3 +1225,4 @@ cache_builder.py (daily .pkl)
 | `local_runner/cache/theme_dashboard.html` | HTML (Plotly + inline SVG) | theme_dashboard | browser (human) |
 | `local_runner/cache/ext50_trendline_snapshots.json` | JSON (UTF-8) | ext50_trendline_snapshot_builder | theme_dashboard (Setups page) |
 | `local_runner/cache/first_flags_snapshots.json` | JSON (UTF-8) | first_flags_snapshot_builder | theme_dashboard (Setups page) |
+| `local_runner/cache/tightening_range_snapshots.json` | JSON (UTF-8) | tightening_range_snapshot_builder | theme_dashboard (Setups page) |
