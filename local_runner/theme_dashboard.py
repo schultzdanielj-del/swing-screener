@@ -486,6 +486,63 @@ def load_extension_peek_snapshot():
         return None
 
 
+def load_first_flags_snapshot():
+    """Load the First Flags snapshot built by first_flags_snapshot_builder.
+
+    Returns the parsed JSON doc or None if missing / unreadable. The doc
+    carries every ticker whose most-recent bullish MACD 6/20 divergence
+    bottomed below its 200-SMA and has since produced a >=25% pole.
+    """
+    import json as _json
+    path = os.path.join(CACHE_DIR, "first_flags_snapshots.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception:
+        return None
+
+
+def compute_first_flags(snapshot_doc, cache):
+    """Turn the First Flags snapshot into match rows, refreshing the pullback
+    against today's live close.
+
+    The snapshot fixes the bottom + pole for the trading day (computed at the
+    prior EOD bar). Here we only re-derive how far the live close sits below
+    that pole, so the "Pullback %" column tracks the intraday tape. No
+    divergence re-detection — pivots stay fixed for the day.
+
+    Returns (list_of_match_dicts, asof_date).
+    """
+    if not snapshot_doc:
+        return [], "?"
+    tickers = snapshot_doc.get("tickers", {})
+    sample = next(iter(tickers.values()), None)
+    asof_date = (sample or {}).get("asof_date") or "?"
+    out = []
+    for tk, p in tickers.items():
+        pole_high = p.get("pole_high_price") or 0.0
+        last_close = p.get("bottom_close")
+        df = cache.get(tk)
+        if df is not None and len(df) > 0:
+            try:
+                lc = float(df["close"].iloc[-1])
+                if not np.isnan(lc):
+                    last_close = lc
+            except Exception:
+                pass
+        if pole_high > 0 and last_close is not None:
+            pullback = max(0.0, (pole_high - last_close) / pole_high * 100.0)
+        else:
+            pullback = p.get("pullback_pct", 0.0)
+        row = dict(p)
+        row["ticker"] = tk
+        row["live_pullback_pct"] = pullback
+        out.append(row)
+    return out, asof_date
+
+
 def _compute_ext50_series_for_chart(df, adr_period=20):
     """Full ext50 series aligned to the ticker's full OHLCV history.
 
@@ -2072,6 +2129,24 @@ body.view-setups  .watchlist-pane.setups-pane  { display: block !important; }
   padding: 4px 10px; font-size: 11px; color: var(--fg-tertiary);
   font-family: var(--font-sans); border-bottom: 1px solid var(--border-faint);
 }
+/* Setups page tab bar — click a tab to switch setup type (single click). */
+.setups-tabs {
+  display: flex; gap: 0; background: var(--bg-title-grad);
+  border-bottom: 1px solid var(--border);
+}
+.setups-tab {
+  appearance: none; border: 0; cursor: pointer;
+  padding: 6px 14px; font-family: var(--font-sans);
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--fg-secondary);
+  background: transparent; border-right: 1px solid #000;
+  box-shadow: inset -1px 0 0 rgba(255,255,255,0.10);
+}
+.setups-tab:hover { color: #ffffff; background: rgba(255,255,255,0.06); }
+.setups-tab.is-active {
+  color: var(--accent-info); background: var(--bg-canvas);
+  box-shadow: inset 0 -2px 0 var(--accent-info);
+}
 
 /* Per-ticker chart section */
 .ticker-view {
@@ -2488,6 +2563,26 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         extension_peeks = compute_extension_peeks(peek_snapshot, cache, UNIVERSE)
         print(f"  {len(extension_peeks)} Extension Peek matches in UNIVERSE today")
 
+    # ── First Flags scan (Setups page, second setup type) ──────────────
+    # Reads first_flags_snapshots.json: most-recent bullish MACD 6/20
+    # divergence that bottomed below the 200-SMA, then a >=25% pole, with the
+    # close above the 50-SMA for 10 bars straight AND the 6/20 MACD still under
+    # its 9-EMA signal. Here we only refresh today's pullback — no divergence
+    # re-detection; pivots are fixed for the day.
+    print("\nLoading First Flags snapshot...")
+    ff_snapshot = load_first_flags_snapshot()
+    if ff_snapshot is None:
+        print("  WARNING: first_flags_snapshots.json not found.")
+        print("  Run: python local_runner/first_flags_snapshot_builder.py")
+        first_flags = []
+        ff_asof_date = "?"
+    else:
+        first_flags, ff_asof_date = compute_first_flags(ff_snapshot, cache)
+        built = ff_snapshot.get("built_at") or "?"
+        print(f"  snapshot asof={ff_asof_date}  built_at={built[:19]}  "
+              f"n_matches={ff_snapshot.get('n_matches', 0)}")
+        print(f"  {len(first_flags)} First Flags matches in UNIVERSE")
+
     # Reverse index: for the Tickers view, each ticker row carries the
     # list of theme labels it belongs to so the Theme cell can name them.
     # Built from the sorted theme order so the visible label is stable.
@@ -2890,6 +2985,96 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         '</table>'
     )
 
+    # ── First Flags table (Setups page, second setup tab) ────────────
+    # Each row reuses the SAME per-ticker data attrs as the Tickers /
+    # Extension Peek rows so the existing Hide / Tight / Flagged / Sector /
+    # Theme / Hot / Cold filters all apply uniformly. (Near 50SMA stays
+    # Tickers-view-only, so no ext50 attr is needed here.)
+    firstflags_body_rows = []
+    for m in first_flags:
+        tk = m["ticker"]
+        p = ticker_packs.get(tk)
+        if p is None:
+            continue
+        rs0d = p["rs0d"]; rs1 = p["rs1"]; rs5 = p["rs5"]; rs20 = p["rs20"]
+        rs65 = p["rs65"]; rs130 = p["rs130"]
+        comp10 = p.get("comp10")
+        adr_pct_val = p.get("adr")
+        today_adr_ratio = p.get("today_adr_ratio")
+        sector = p.get("sector", "")
+        below_200 = bool(p.get("below_200"))
+        theme_labels = ", ".join(themes_by_ticker.get(tk, ["Ungrouped"]))
+        theme_ids_attr_val = ",".join(theme_ids_by_ticker.get(tk, ["ungrouped"]))
+
+        def _ffa(v, sentinel="-1e9"):
+            try: return f"{float(v):.4f}"
+            except Exception: return sentinel
+        def _ffd(v, fmt="{:+.2f}"):
+            if v is None: return "—"
+            try: return fmt.format(v)
+            except Exception: return str(v)
+
+        below200 = m.get("below_200_pct")
+        pole = m.get("pole_pct")
+        days = m.get("bars_since_bottom")
+        pullback = m.get("live_pullback_pct")
+        bottom_date = m.get("bottom_date", "")
+
+        below200_str  = f"{below200:.1f}" if below200 is not None else "—"
+        pole_str      = f"+{pole:.0f}" if pole is not None else "—"
+        days_str      = f"{int(days)}" if days is not None else "—"
+        pullback_str  = f"{pullback:.1f}" if pullback is not None else "—"
+        comp10_attr   = f"{comp10:.4f}" if comp10 is not None else "1e9"
+        adr_attr_val  = _ffa(today_adr_ratio, sentinel="1e9")
+        below_cls     = " below-200" if below_200 else ""
+        cls_rs0d = "pos" if (rs0d is not None and rs0d >= 0) else ("neg" if rs0d is not None else "nul")
+        cls_rs1  = "pos" if (rs1  is not None and rs1  >= 0) else ("neg" if rs1  is not None else "nul")
+
+        firstflags_body_rows.append(
+            f'<tr class="setups-row tickers-row{below_cls}"'
+            f' data-row-id="firstflag__{tk}" data-row-kind="setup"'
+            f' data-ticker="{tk}" data-label="{tk}" data-theme-label="{theme_labels}"'
+            f' data-theme-ids="{theme_ids_attr_val}" data-sector="{sector}"'
+            f' data-bottomdate="{bottom_date}"'
+            f' data-below200="{_ffa(below200)}" data-pole="{_ffa(pole)}"'
+            f' data-days="{_ffa(days)}" data-pullback="{_ffa(pullback)}"'
+            f' data-rs0d="{_ffa(rs0d)}" data-rs1="{_ffa(rs1)}"'
+            f' data-rs5="{_ffa(rs5)}" data-rs20="{_ffa(rs20)}"'
+            f' data-rs65="{_ffa(rs65)}" data-rs130="{_ffa(rs130)}"'
+            f' data-comp10="{comp10_attr}" data-adr="{adr_attr_val}">'
+            f'<td class="ticker-symbol-cell"><span class="ticker-symbol">{tk}</span></td>'
+            f'<td class="theme-membership-cell" title="{theme_labels}">{theme_labels}</td>'
+            f'<td class="num">{bottom_date}</td>'
+            f'<td class="num neg">{below200_str}</td>'
+            f'<td class="num pos">{pole_str}</td>'
+            f'<td class="num">{days_str}</td>'
+            f'<td class="num">{pullback_str}</td>'
+            f'<td class="num {cls_rs0d}">{_ffd(rs0d)}</td>'
+            f'<td class="num {cls_rs1}">{_ffd(rs1)}</td>'
+            f'<td class="num">{_ffd(comp10, "{:.2f}")}</td>'
+            f'<td class="num adr">{_ffd(adr_pct_val, "{:.2f}")}</td>'
+            f'</tr>'
+        )
+
+    firstflags_table_html = (
+        '<table class="watchlist-table tickers-table setups-table" id="firstflags-watchlist">'
+        '<thead><tr>'
+        '<th data-sort-key="label"       data-sort-type="text">Ticker</th>'
+        '<th data-sort-key="theme-label" data-sort-type="text">Theme</th>'
+        '<th data-sort-key="bottomdate"  data-sort-type="text" title="Date of the divergence bottom">Bottom</th>'
+        '<th data-sort-key="below200"    data-sort-type="num" title="How far below the 200-SMA the bottom closed (%)">B&lt;200%</th>'
+        '<th data-sort-key="pole"        data-sort-type="num" title="Move from the bottom low to the highest high since (%)">Pole%</th>'
+        '<th data-sort-key="days"        data-sort-type="num" class="sort-active sort-asc" title="Trading days since the bottom (freshest first)">Days</th>'
+        '<th data-sort-key="pullback"    data-sort-type="num" title="How far the live close sits below the pole high (%)">Pullback%</th>'
+        '<th data-sort-key="rs0d"        data-sort-type="num">0D</th>'
+        '<th data-sort-key="rs1"         data-sort-type="num">1d</th>'
+        '<th data-sort-key="comp10"      data-sort-type="num">Comp10</th>'
+        '<th data-sort-key="adr"         data-sort-type="num">ADR</th>'
+        '</tr></thead>'
+        f'<tbody id="firstflags-watchlist-body">{"".join(firstflags_body_rows)}</tbody>'
+        '</table>'
+    )
+
     # Filter icon — the 3-horizontal-sliders glyph. Lives in the watchlist
     # controls bar so the toggle is right next to the visible-row counter,
     # not buried in the header chrome. A small gold dot sits in the corner
@@ -2941,11 +3126,20 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         '<div class="tickers-empty" id="tickers-empty">No tickers under 1.10 ADR right now.</div>'
         '</div>'
         '<div class="watchlist-pane setups-pane" id="setups-pane" style="display:none">'
-        f'<div class="setups-meta">Extension Peek — '
-        f'{len(extension_peeks)} matches  ·  snapshot asof '
-        f'{peek_asof_date}</div>'
+        '<div class="setups-tabs" role="tablist">'
+        '<button type="button" class="setups-tab is-active" data-setup="extpeek">Extension Peek</button>'
+        '<button type="button" class="setups-tab" data-setup="firstflags">First Flags</button>'
+        '</div>'
+        '<div class="setups-content" id="setups-content-extpeek">'
+        f'<div class="setups-meta">Extension Peek — {len(extension_peeks)} matches  ·  snapshot asof {peek_asof_date}</div>'
         f'{setups_table_html}'
         '<div class="tickers-empty" id="setups-empty">No Extension Peek matches right now.</div>'
+        '</div>'
+        '<div class="setups-content" id="setups-content-firstflags" style="display:none">'
+        f'<div class="setups-meta">First Flags — {len(first_flags)} matches  ·  snapshot asof {ff_asof_date}</div>'
+        f'{firstflags_table_html}'
+        '<div class="tickers-empty" id="firstflags-empty">No First Flags matches right now.</div>'
+        '</div>'
         '</div>'
     )
 
@@ -3480,7 +3674,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     setupsFlatRows().forEach(applyTo);
     if (visibleCount) visibleCount.textContent = visibleRows().length + ' visible';
     // Setups empty-state notice
-    var setupsEmpty = document.getElementById('setups-empty');
+    var setupsEmpty = document.getElementById(SETUP_TABLES[activeSetup].empty);
     if (setupsEmpty && activeView === 'setups') {{
       var anyVisible = setupsFlatRows().some(function(r) {{ return r.style.display !== 'none'; }});
       setupsEmpty.style.display = anyVisible ? 'none' : 'block';
@@ -3727,7 +3921,20 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     renderTicker(ticker);
   }}
 
-  var setupsBody = document.getElementById('setups-watchlist-body');
+  // Setups page hosts multiple setup types, one per tab. The shared setups
+  // helpers (sort / filter / nav) always operate on the ACTIVE table; we just
+  // repoint setupsBody + setupsTableId when a tab is clicked.
+  var SETUP_TABLES = {{
+    extpeek:    {{ body:'setups-watchlist-body',     table:'setups-watchlist',     empty:'setups-empty',     content:'setups-content-extpeek',     label:'EXTENSION PEEK', defSort:'peek', defDir:1 }},
+    firstflags: {{ body:'firstflags-watchlist-body', table:'firstflags-watchlist', empty:'firstflags-empty', content:'setups-content-firstflags', label:'FIRST FLAGS',     defSort:'days', defDir:1 }}
+  }};
+  var activeSetup = 'extpeek';
+  try {{
+    var savedSetup = window.localStorage && window.localStorage.getItem('themeDashboard.activeSetup');
+    if (savedSetup && SETUP_TABLES[savedSetup]) activeSetup = savedSetup;
+  }} catch(e) {{}}
+  var setupsBody = document.getElementById(SETUP_TABLES[activeSetup].body);
+  var setupsTableId = SETUP_TABLES[activeSetup].table;
   function setupsFlatRows() {{
     if (!setupsBody) return [];
     return Array.prototype.slice.call(setupsBody.querySelectorAll('tr.setups-row'));
@@ -4424,14 +4631,10 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     }});
   }}
 
-  // ── Setups view: sort + click-to-render ──────────────────────────
-  var stSortKey  = 'peek';
-  var stSortDir  = -1;   // -1 desc / 1 asc; "peek" sorts asc-by-default for tightest first → flip dir on init
+  // ── Setups view: tabbed setup types + sort + click-to-render ─────────
+  var stSortKey  = SETUP_TABLES[activeSetup].defSort;
+  var stSortDir  = SETUP_TABLES[activeSetup].defDir;   // 1 asc / -1 desc
   var stSortType = 'num';
-  // For Setups the default is ASCENDING (tightest peek first). Other num
-  // columns toggle ascending on first click as elsewhere; the |Peek| column
-  // gets -1 here so the initial sort renders tightest-first.
-  stSortDir = 1;
 
   function sortSetupsRows() {{
     if (!setupsBody) return;
@@ -4454,32 +4657,79 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       }}
     }});
     rows.forEach(function(r) {{ setupsBody.appendChild(r); }});
-    // Header indicators
-    document.querySelectorAll('#setups-watchlist th').forEach(function(th) {{
+    // Header indicators on the ACTIVE setup table only.
+    document.querySelectorAll('#' + setupsTableId + ' th').forEach(function(th) {{
       th.classList.remove('sort-active', 'sort-asc');
     }});
-    var active = document.querySelector('#setups-watchlist th[data-sort-key="' + stSortKey + '"]');
+    var active = document.querySelector('#' + setupsTableId + ' th[data-sort-key="' + stSortKey + '"]');
     if (active) {{
       active.classList.add('sort-active');
       if (stSortDir === 1) active.classList.add('sort-asc');
     }}
   }}
-  document.querySelectorAll('#setups-watchlist th').forEach(function(th) {{
+
+  // Header clicks — wired on every setup table; only the active one is visible.
+  document.querySelectorAll('#setups-watchlist th, #firstflags-watchlist th').forEach(function(th) {{
     th.addEventListener('click', function() {{
       var k = th.dataset.sortKey;
       var t = th.dataset.sortType;
-      if (stSortKey === k) {{ stSortDir = -stSortDir; }} else {{ stSortKey = k; stSortType = t; stSortDir = -1; }}
+      if (stSortKey === k) {{ stSortDir = -stSortDir; }} else {{ stSortKey = k; stSortType = t; stSortDir = (t === 'num') ? -1 : 1; }}
       sortSetupsRows();
     }});
   }});
-  if (setupsBody) {{
-    setupsBody.addEventListener('click', function(e) {{
+
+  // Row clicks → activate that ticker's chart — wired on every setup body.
+  Object.keys(SETUP_TABLES).forEach(function(k) {{
+    var b = document.getElementById(SETUP_TABLES[k].body);
+    if (b) b.addEventListener('click', function(e) {{
       var tr = e.target.closest('tr.setups-row');
       if (!tr) return;
       setActiveByRowId(tr.dataset.rowId);
     }});
-    sortSetupsRows();  // initial sort: tightest |Peek| first (asc)
+  }});
+
+  function updateSetupBrand() {{
+    if (activeView === 'setups' && brandTitle) {{
+      brandTitle.textContent = 'SETUPS · ' + SETUP_TABLES[activeSetup].label;
+    }}
   }}
+
+  // Switch the active setup type (single click on a tab).
+  function selectSetup(name) {{
+    if (!SETUP_TABLES[name]) name = 'extpeek';
+    activeSetup = name;
+    try {{ if (window.localStorage) window.localStorage.setItem('themeDashboard.activeSetup', name); }} catch(e) {{}}
+    Object.keys(SETUP_TABLES).forEach(function(k) {{
+      var c = document.getElementById(SETUP_TABLES[k].content);
+      if (c) c.style.display = (k === name) ? '' : 'none';
+    }});
+    document.querySelectorAll('.setups-tab').forEach(function(t) {{
+      t.classList.toggle('is-active', t.dataset.setup === name);
+    }});
+    // Repoint shared helpers + reset to this table's default sort.
+    setupsBody = document.getElementById(SETUP_TABLES[name].body);
+    setupsTableId = SETUP_TABLES[name].table;
+    stSortKey = SETUP_TABLES[name].defSort;
+    stSortDir = SETUP_TABLES[name].defDir;
+    stSortType = 'num';
+    sortSetupsRows();
+    if (activeView === 'setups') {{
+      applyFilter();
+      var cur = currentRow();
+      if (!cur || cur.style.display === 'none') {{
+        var vis = visibleRows();
+        if (vis.length) setActiveByRowId(vis[0].dataset.rowId);
+      }}
+      updateSetupBrand();
+    }}
+  }}
+
+  document.querySelectorAll('.setups-tab').forEach(function(tab) {{
+    tab.addEventListener('click', function() {{ selectSetup(tab.dataset.setup); }});
+  }});
+
+  // Initial tab state: restore persisted choice + sort the active table.
+  selectSetup(activeSetup);
 
   function applyTickersFilter() {{
     // Update the empty-state notice and the visible counter.
@@ -4499,7 +4749,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     document.body.classList.toggle('view-setups',  activeView === 'setups');
     if (brandTitle) {{
       brandTitle.textContent = (activeView === 'tickers') ? 'HOT TICKERS DASHBOARD'
-                              : (activeView === 'setups') ? 'SETUPS · EXTENSION PEEK'
+                              : (activeView === 'setups') ? ('SETUPS · ' + SETUP_TABLES[activeSetup].label)
                               : 'HOT THEME DASHBOARD';
     }}
     try {{
@@ -4684,7 +4934,16 @@ def _build_html_to_disk(theme=None, bars=250, skip_snapshot=False):
             from ext50_trendline_snapshot_builder import build as _build_snapshot
             _build_snapshot(verbose=True)
         except Exception as exc:
-            print(f"  WARNING: snapshot rebuild failed: {exc!r}")
+            print(f"  WARNING: ext50 snapshot rebuild failed: {exc!r}")
+            print(f"  (dashboard will fall back to whatever snapshot file exists)")
+        print("\n" + "-" * 70)
+        print("Step 0b: First Flags snapshot rebuild")
+        print("-" * 70)
+        try:
+            from first_flags_snapshot_builder import build as _build_first_flags
+            _build_first_flags(verbose=True)
+        except Exception as exc:
+            print(f"  WARNING: First Flags snapshot rebuild failed: {exc!r}")
             print(f"  (dashboard will fall back to whatever snapshot file exists)")
 
     cache, source_meta = load_daily_cache()
@@ -4849,7 +5108,7 @@ def main():
     ap.add_argument("--open", action="store_true", help="Open the resulting HTML in your default browser.")
     ap.add_argument("--app",  action="store_true", help="Open the dashboard in a native PySide6 window with an in-process refresh button (no server, no Task Scheduler dependency).")
     ap.add_argument("--no-rebuild", action="store_true", help="With --app: skip the initial HTML rebuild and reuse the existing file on disk (faster relaunch).")
-    ap.add_argument("--skip-snapshot", action="store_true", help="Skip the ext50-trendline snapshot rebuild step (~2 min). For fast interactive rebuilds when the morning snapshot is still fresh.")
+    ap.add_argument("--skip-snapshot", action="store_true", help="Skip the Step 0 snapshot rebuilds (ext50 trendlines + First Flags). For fast interactive rebuilds when the morning snapshots are still fresh.")
     args = ap.parse_args()
 
     if args.app:

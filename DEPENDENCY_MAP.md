@@ -1010,18 +1010,19 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 ### theme_dashboard.py
 **Location:** `local_runner/theme_dashboard.py`
 **Spec:** `THEME_DASHBOARD.md`
-**What it does:** Builds a single self-contained HTML browsable dashboard. Three pages cycled by the brand header: Themes (theme tree with composite charts), Tickers (flat per-ticker table), and Setups (currently Extension Peek — flat table of pattern matches). Reads the OHLCV pickle, theme/universe map, optional company meta, and the ext50-trendline snapshot JSON; computes equal-weight synthetic theme composites, MACD divergences, multi-window RS ratios against an equal-weight UNIVERSE composite (NOT SPY), 0D intraday RS, position vs 200-day, per-ticker N-bar compression, and Extension Peek matches via live projection of the morning snapshot's u1/u2/u3 lines. Output is consumed by humans in a browser; not a pipeline input.
+**What it does:** Builds a single self-contained HTML browsable dashboard. Three pages cycled by the brand header: Themes (theme tree with composite charts), Tickers (flat per-ticker table), and Setups (flat tables of pattern matches with setup-type tabs: Extension Peek + First Flags). Reads the OHLCV pickle, theme/universe map, optional company meta, and the ext50-trendline + First Flags snapshot JSONs; computes equal-weight synthetic theme composites, MACD divergences, multi-window RS ratios against an equal-weight UNIVERSE composite (NOT SPY), 0D intraday RS, position vs 200-day, per-ticker N-bar compression, and Extension Peek matches via live projection of the morning snapshot's u1/u2/u3 lines. Output is consumed by humans in a browser; not a pipeline input.
 
 **Inputs:**
 - `local_runner/cache/universe_ohlcv_daily.pkl` (or `_intraday.pkl` when newer) — OHLCV cache
 - `local_runner/theme_map.py` — `THEMES`, `THEME_LABELS`, `UNIVERSE`
 - `local_runner/cache/company_meta.json` — optional, identity-surfacing data (longName + longBusinessSummary)
-- `local_runner/cache/ext50_trendline_snapshots.json` — Setups page input; written by `ext50_trendline_snapshot_builder.py`. Optional — missing snapshot logs a warning and produces an empty Extension Peek list.
+- `local_runner/cache/ext50_trendline_snapshots.json` — Setups page (Extension Peek tab) input; written by `ext50_trendline_snapshot_builder.py`. Optional — missing snapshot logs a warning and produces an empty Extension Peek list.
+- `local_runner/cache/first_flags_snapshots.json` — Setups page (First Flags tab) input; written by `first_flags_snapshot_builder.py`. Optional — missing snapshot logs a warning and produces an empty First Flags list.
 
 **Outputs:**
 - `local_runner/cache/theme_dashboard.html` — overwritten each run
 
-**Calls:** `vectorized_indicators.py` (`sma_2d`, `ema_2d`, `macd_2d`, `atr_2d`); `ext50_trendline_snapshot_builder.build()` as Step 0 of `_build_html_to_disk` (unless `--skip-snapshot`).
+**Calls:** `vectorized_indicators.py` (`sma_2d`, `ema_2d`, `macd_2d`, `atr_2d`); `ext50_trendline_snapshot_builder.build()` as Step 0 and `first_flags_snapshot_builder.build()` as Step 0b of `_build_html_to_disk` (unless `--skip-snapshot`).
 
 **Called by:** nobody (on-demand only — not in `nightly.py`); `intraday_refresh.py` invokes `theme_dashboard.main()` with `--skip-snapshot` after writing the intraday pickle.
 
@@ -1044,6 +1045,25 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 **Calls:** `vectorized_indicators.sma_2d`; `scripts/ext50_trendlines.cascade_at`, `scripts/ext50_trendlines._has_line_break`; `scripts/reversal_profile.compute_all_reversal_profile_series`.
 
 **Called by:** `theme_dashboard._build_html_to_disk` as Step 0 (unless `--skip-snapshot`). Standalone CLI: `python local_runner/ext50_trendline_snapshot_builder.py`.
+
+---
+
+### first_flags_snapshot_builder.py
+**Location:** `local_runner/first_flags_snapshot_builder.py`
+**Spec:** `FIRST_FLAGS_SNAPSHOTS.md`
+**What it does:** Scans every UNIVERSE ticker for "First Flags" bottom-reversal candidates at the most recent EOD bar (drops the intraday partial bar). Match rule: the most-recent bullish MACD 6/20-line divergence bottomed below the 200-SMA, price then rose ≥25% off the bottom low (the pole), the close has held above the 50-SMA for the last 10 bars straight, and the 6/20 MACD line is still below its 9-EMA signal. Divergence detection is imported from `theme_dashboard.detect_divergences` (single source of truth — no second copy). Multiprocessing via `ProcessPoolExecutor`; well under a minute for ~916 tickers.
+
+**Inputs:**
+- `local_runner/cache/universe_ohlcv_daily.pkl` (or `_intraday.pkl` when newer)
+- `local_runner/theme_map.UNIVERSE`
+- `theme_dashboard.detect_divergences` (lazy-imported inside the worker)
+
+**Outputs:**
+- `local_runner/cache/first_flags_snapshots.json` — per-ticker match payloads (bottom, pole, MACD, pullback); see FIRST_FLAGS_SNAPSHOTS.md.
+
+**Calls:** `vectorized_indicators` (`sma_2d`, `macd_2d`, `ema_2d`); `theme_dashboard.detect_divergences`.
+
+**Called by:** `theme_dashboard._build_html_to_disk` as Step 0b (unless `--skip-snapshot`). Standalone CLI: `python local_runner/first_flags_snapshot_builder.py`.
 
 ---
 
@@ -1185,3 +1205,4 @@ cache_builder.py (daily .pkl)
 | `local_runner/theme_map.py` | Python (hand-edited) | human | theme_dashboard |
 | `local_runner/cache/theme_dashboard.html` | HTML (Plotly + inline SVG) | theme_dashboard | browser (human) |
 | `local_runner/cache/ext50_trendline_snapshots.json` | JSON (UTF-8) | ext50_trendline_snapshot_builder | theme_dashboard (Setups page) |
+| `local_runner/cache/first_flags_snapshots.json` | JSON (UTF-8) | first_flags_snapshot_builder | theme_dashboard (Setups page) |
