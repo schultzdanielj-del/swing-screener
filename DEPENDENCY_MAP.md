@@ -1051,7 +1051,7 @@ Approximate total scalar state size: ~212 float64 values (plus variable-length L
 ### first_flags_snapshot_builder.py
 **Location:** `local_runner/first_flags_snapshot_builder.py`
 **Spec:** `FIRST_FLAGS_SNAPSHOTS.md`
-**What it does:** Scans every UNIVERSE ticker for "First Flags" bottom-reversal candidates at the most recent EOD bar (drops the intraday partial bar). Match rule: the most-recent bullish MACD 6/20-line divergence bottomed below the 200-SMA, price then rose ≥25% off the bottom low (the pole), the close has held above the 50-SMA for the last 10 bars straight, and the 6/20 MACD line is still below its 9-EMA signal. Divergence detection is imported from `theme_dashboard.detect_divergences` (single source of truth — no second copy). Multiprocessing via `ProcessPoolExecutor`; well under a minute for ~916 tickers.
+**What it does:** Scans every UNIVERSE ticker for "First Flags" bottom-reversal candidates at the most recent EOD bar (drops the intraday partial bar). Match rule: the most-recent bullish MACD 6/20-line divergence bottomed below the 200-SMA and at least 2% below the prior pivot low (a real lower-low); the 10/20/50 SMAs then stacked in order (the trend, no fixed % move) and are still stacked; at most 2 swing highs since the stack (first/early flag); and price is currently below the highest high since the stack (pulled back) and riding within 5% of the 10/20 SMA. Divergence detection + pivots are imported from `theme_dashboard` (single source of truth — no second copy). Multiprocessing via `ProcessPoolExecutor`; well under a minute for ~916 tickers.
 
 **Inputs:**
 - `local_runner/cache/universe_ohlcv_daily.pkl` (or `_intraday.pkl` when newer)

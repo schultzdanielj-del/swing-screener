@@ -2564,11 +2564,11 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         print(f"  {len(extension_peeks)} Extension Peek matches in UNIVERSE today")
 
     # ── First Flags scan (Setups page, second setup type) ──────────────
-    # Reads first_flags_snapshots.json: most-recent bullish MACD 6/20
-    # divergence that bottomed below the 200-SMA, then a >=25% pole, with the
-    # close above the 50-SMA for 10 bars straight AND the 6/20 MACD still under
-    # its 9-EMA signal. Here we only refresh today's pullback — no divergence
-    # re-detection; pivots are fixed for the day.
+    # Reads first_flags_snapshots.json: a real bullish MACD 6/20 divergence
+    # below the 200-SMA, then the 10/20/50 SMAs stacked (the trend) and still
+    # stacked, in its first pullback (<=2 swing highs since the stack) below the
+    # post-stack high and riding the fast MA. Here we only refresh today's
+    # pullback — no divergence re-detection; pivots are fixed for the day.
     print("\nLoading First Flags snapshot...")
     ff_snapshot = load_first_flags_snapshot()
     if ff_snapshot is None:

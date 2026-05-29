@@ -4,12 +4,12 @@
 
 Pre-compute the day's "First Flags" matches for the theme-dashboard universe
 (`UNIVERSE` in `theme_map.py`) at the most recent EOD bar. A First Flag is a
-bottom-reversal continuation candidate: a bullish MACD 6/20 divergence that
-bottomed below the 200-day SMA, followed by a thrust up, where price has
-reclaimed the 50-day SMA but the MACD has rolled back under its signal — the
-first flag (entry pullback) actively forming. The dashboard's Setups page reads
-the resulting JSON and renders the matches; the flag itself is vetted on the
-chart, not auto-detected. Divergence pivots do not refit during the trading day.
+bottom-reversal continuation candidate: a real bullish MACD 6/20 divergence that
+bottomed below the 200-day SMA, followed by an uptrend (the 10/20/50 SMAs
+stacked in order) now in its first pullback — the flag — riding the fast MA. The
+dashboard's Setups page reads the resulting JSON and renders the matches; the
+exact entry is vetted on the chart. Divergence pivots do not refit during the
+trading day.
 
 ## EXACT spec
 
@@ -26,22 +26,24 @@ Invocation:
 - Called directly from `theme_dashboard._build_html_to_disk` as Step 0b; pass `--skip-snapshot` to the dashboard CLI to bypass when the morning snapshot is still valid.
 
 Match rule (per ticker, worker function `_ticker_snapshot`):
-1. **Most recent bullish divergence.** Run `detect_divergences`; take the last (most recent) bullish entry. Its anchor low (`p2`) is the bottom.
-2. **Bottom below the 200-SMA.** The bottom bar's close is below its 200-day SMA. Tickers with fewer than 210 bars can't qualify (no SMA200 at the bottom).
-3. **≥25% pole.** Price has risen ≥25% from the bottom low to the highest high after it, through the as-of bar.
-4. **Above the 50-SMA, held.** The close has been above the 50-day SMA for the last 10 bars straight.
-5. **MACD still in bear cross.** The 6/20 MACD line is below its 9-EMA signal at the as-of bar (the flag is forming, not yet released).
+1. **Most recent bullish divergence, below the 200.** Run `detect_divergences`; take the last bullish entry. Its anchor low (`p2`) is the bottom, and that bar's close must be below its 200-day SMA. Tickers with fewer than 210 bars can't qualify (no SMA200 at the bottom).
+2. **Real divergence.** The anchor low must be at least `DIV_MIN_LL_PCT` (2%) below the prior pivot low — drops the `-0.1%` micro "divergences" the detector would otherwise count.
+3. **Trend / pole: 10/20/50 stacked.** After the bottom, the 10/20/50 SMAs stack in order (10 > 20 > 50) at some bar. No fixed % move — the MA stack IS the trend.
+4. **Stack still intact** at the scan bar (10 > 20 > 50 right now).
+5. **First / early flag.** At most `MAX_SWING_HIGHS` (2) swing highs (3-bar pivots) since the stack formed — drops multi-leg runners that already ran far past the divergence.
+6. **Pulled back.** Price (close) is currently below the highest high made since the stack formed, and that high is in the past (not a fresh breakout today).
+7. **Riding the fast MA.** Close is within `RIDE_PCT` (5%) of the 10 or 20 SMA — the flag hugging the rising MAs.
 
-Only tickers passing all five are written. Indicator math (`sma_2d`, `macd_2d`, `ema_2d`) reuses `vectorized_indicators.py`; the MACD line is `EMA6 − EMA20` and the signal is its `EMA9`, matching the composite chart.
+Only tickers passing all of the above are written. SMAs (`sma_2d`) match TC2000's Avg 10/20/50/200. Conditions 2 and 5 were derived from a labeled set of A+ first flags vs clear fails; `RIDE_PCT`, `DIV_MIN_LL_PCT`, `MAX_SWING_HIGHS` are the dials. The scan is tuned for recall — it only needs to surface a name on SOME day during its flag; the user takes it to a TC2000 watchlist.
 
 Output JSON top-level fields:
 - `built_at` — ISO timestamp (UTC) when the builder ran.
 - `built_in_seconds` — wall time of the build.
 - `source_cache` — basename of the OHLCV pickle the build read.
 - `intraday_partial_dropped` — `true` when the source was the intraday pickle (the as-of bar reflects the prior EOD, not today's partial). `false` when the source was the EOD-only pickle.
-- `move_min_pct` — the pole threshold in effect (25.0).
-- `above50_bars` — the 50-SMA hold length in effect (10).
-- `requires_macd_bearcross` — `true`.
+- `ride_pct` — the riding band in effect (5.0).
+- `div_min_ll_pct` — the minimum divergence lower-low % in effect (2.0).
+- `max_swing_highs` — the max swing highs since the stack in effect (2).
 - `n_universe` — count of UNIVERSE tickers.
 - `n_matches` — count of tickers that matched.
 - `n_errors` — count of tickers that errored.
@@ -50,13 +52,14 @@ Output JSON top-level fields:
 Per-ticker payload schema:
 - `asof_bar` (int), `asof_date` (YYYY-MM-DD) — last EOD bar (intraday partial dropped).
 - `bottom_idx`, `bottom_date`, `bottom_low`, `bottom_close` — the divergence bottom.
-- `sma200_at_bottom`, `below_200_pct` — the bottom's 200-SMA and how far below it closed.
-- `prior_low_idx`, `prior_low_date`, `prior_low_price` — the divergence's earlier (higher) price low.
-- `macd_prior`, `macd_bottom` — the MACD-line values at the two divergence pivots (MACD higher-low confirms the divergence).
-- `pole_high_idx`, `pole_high_date`, `pole_high_price`, `pole_pct` — the pole peak and its % gain off the bottom low.
-- `bars_since_bottom` — trading bars from the bottom to the as-of bar.
-- `pullback_pct` — how far the as-of close sits below the pole high.
-- `macd_line`, `macd_signal` — the 6/20 MACD line and its 9-EMA signal at the as-of bar (`macd_line < macd_signal` for every match).
+- `below_200_pct` — how far below its 200-SMA the bottom closed.
+- `div_ll_pct` — how far the anchor low is below the prior pivot low (the divergence's lower-low; ≤ −2 for every match).
+- `stack_start_idx`, `stack_start_date` — the first bar after the bottom where 10/20/50 stacked in order.
+- `swing_highs_since_stack` — swing-high pivots since the stack formed (≤ 2 for every match).
+- `pole_high_idx`, `pole_high_date`, `pole_high_price`, `pole_pct` — the highest high since the stack and its % gain off the bottom low.
+- `bars_since_bottom`, `bars_since_stack` — trading bars from the bottom / from the stack to the as-of bar.
+- `pullback_pct` — how far the as-of close sits below that pole high (the flag depth).
+- `ride_pct` — distance from the close to the nearer of the 10/20 SMA (≤ 5 for every match).
 
 Partial-bar drop semantics:
 - When the source is the intraday pickle, the builder drops the last (partial) row before scanning, so the as-of bar is the most recent EOD bar (typically yesterday) and the divergence pivots are fixed at that close. The intraday bar is not allowed to create new pivots.
@@ -76,7 +79,7 @@ None currently active.
 
 ## Pending research
 
-- **Filter set is still being tuned.** The five-condition rule above is the current cut; additional gates (e.g. pole-relative pullback depth, distance from the 50, volume) are likely to be added as the candidate list is vetted visually. Threshold choices are driven by chart-vetting, not picked to hit a count target.
+- **Dials.** `RIDE_PCT` (5%), `DIV_MIN_LL_PCT` (2%), and `MAX_SWING_HIGHS` (2) are the recall/precision dials, derived from a labeled win/fail set rather than eyeballed. A few borderline names (recent, real divergence, few legs) still pass and are sifted by eye — tightening further risks dropping A+ names, and the user prefers recall + sifting over missing setups. "No real divergence but kickass post-earnings flag" setups are accepted as missed by design.
 
 ## Pending build
 
@@ -84,6 +87,6 @@ None currently active.
 
 ## Out of scope
 
-- Detecting the flag/pullback entry itself. This component surfaces the bottom-reversal candidates; the entry is vetted on the chart. Auto-detecting the pullback is a separate, deferred layer.
+- Pinpointing the exact entry trigger. The scan surfaces names currently in a first flag; the precise entry (breakout bar, stop) is vetted on the chart.
 - Persisting historical snapshots (one JSON per day). Today's snapshot overwrites yesterday's.
 - Fitting divergences on indicators other than the 6/20 MACD line, or detecting bearish-divergence setups — First Flags is a bullish bottom-reversal scan only.

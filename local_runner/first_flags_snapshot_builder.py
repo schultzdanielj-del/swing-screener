@@ -7,14 +7,23 @@ Output: local_runner/cache/first_flags_snapshots.json
 A "First Flag" is a bottom-reversal continuation candidate:
   1. A bullish MACD 6/20-line divergence (price lower-low, MACD higher-low) —
      detected by theme_dashboard.detect_divergences, the SAME detector the
-     composite chart uses. We take the MOST RECENT bullish divergence.
-  2. Its bottom (the anchor low) closed BELOW the 200-day SMA at that bar.
-  3. Price has since risen >= 25% from the bottom low to the highest high
-     after it (the flagpole).
-  4. The close has held ABOVE the 50-day SMA for the last 10 bars straight
-     (the reversal has reclaimed the 50 — health gate).
-  5. The 6/20 MACD line is STILL below its 9-EMA signal at the as-of bar
-     (bear cross intact — the flag is actively forming, timing gate).
+     composite chart uses. We take the MOST RECENT bullish divergence, and its
+     bottom (the anchor low) must have closed BELOW the 200-day SMA.
+  2. After the bottom the 10/20/50 SMAs stacked in order (10 > 20 > 50) — the
+     trend / "pole." No fixed % move; the MA stack IS the trend.
+  3. The 10/20/50 stack is STILL intact at the scan bar.
+  4. Price is currently BELOW the highest high made since the stack formed —
+     pulled back into a flag, not a fresh breakout.
+  5. That pullback is RIDING the fast MA — close within a few % of the 10 or
+     20 SMA (the flag hugging the rising MAs).
+  6. The divergence is REAL — the anchor low is at least 2% below the prior
+     pivot low (drops the -0.1% micro "divergences").
+  7. It's the FIRST / early flag — at most 2 swing highs since the stack
+     formed (drops multi-leg runners that already ran far past the divergence).
+
+Conditions 6-7 were derived from a labeled set of A+ first flags vs clear
+fails, not eyeballed. Tuned for recall: the scan only needs to surface a name
+on SOME day during its flag; the user takes it to a TC2000 watchlist.
 
 The dashboard's Setups page reads this snapshot and renders the matches; the
 first flag (entry pullback) itself is vetted on the chart, not auto-detected.
@@ -43,12 +52,14 @@ sys.path.insert(0, THIS_DIR)
 sys.path.insert(0, PROJECT_ROOT)
 
 from theme_map import UNIVERSE  # noqa: E402
-from vectorized_indicators import sma_2d, macd_2d, ema_2d  # noqa: E402
+from vectorized_indicators import sma_2d  # noqa: E402
 
-# Match rule constants (Dan's given numbers — not tuned here).
-MOVE_MIN_PCT = 25.0     # >= 25% pole off the divergence bottom
-ABOVE50_BARS = 10       # close must hold above the 50-SMA this many bars straight
-MIN_BARS = 210          # need SMA200 at the bottom bar + a little room
+# Match rule constants. RIDE_PCT is a recall dial (looser = catches the flag on
+# more days); the rest of the rule is threshold-free MA structure.
+RIDE_PCT = 5.0            # flag: close within this % of the 10 or 20 SMA (riding the fast MA)
+DIV_MIN_LL_PCT = 2.0      # divergence anchor low must be >= this % below the prior pivot low (a real lower-low)
+MAX_SWING_HIGHS = 2       # at most this many swing highs since the stack formed (first/early flag)
+MIN_BARS = 210            # need SMA200 at the bottom bar + a little room
 
 
 # ── Cache I/O ────────────────────────────────────────────────
@@ -98,8 +109,8 @@ def _ticker_snapshot(args):
         if len(df) < MIN_BARS:
             return ticker, None, None
 
-        # Single source of truth for divergence detection.
-        from theme_dashboard import detect_divergences
+        # Single source of truth for divergence detection + pivots.
+        from theme_dashboard import detect_divergences, _find_pivots
 
         close = df["close"].values.astype(np.float64)
         high = df["high"].values.astype(np.float64)
@@ -121,6 +132,13 @@ def _ticker_snapshot(args):
         if bottom_low <= 0 or bottom_idx >= asof_bar:
             return ticker, None, None
 
+        # Real divergence: the anchor low must be a meaningful lower-low vs the
+        # prior pivot low — drops -0.1% micro "divergences" the detector counts.
+        prior_low = float(d["p1_price"])
+        div_ll_pct = (bottom_low / prior_low - 1.0) * 100.0 if prior_low > 0 else 0.0
+        if div_ll_pct > -DIV_MIN_LL_PCT:
+            return ticker, None, None
+
         # 200-SMA at the bottom bar — the divergence must have happened below it.
         sma200 = sma_2d(close.reshape(1, -1), 200)[0]
         s200 = sma200[bottom_idx]
@@ -130,36 +148,50 @@ def _ticker_snapshot(args):
             return ticker, None, None
         below_200_pct = (bottom_close / s200 - 1.0) * 100.0
 
-        # Pole: highest high after the bottom through the as-of bar.
-        post_high = high[bottom_idx + 1:]
-        if post_high.size == 0:
-            return ticker, None, None
-        pole_off = int(np.nanargmax(post_high))
-        pole_high_idx = bottom_idx + 1 + pole_off
-        pole_high_price = float(post_high[pole_off])
-        pole_pct = (pole_high_price / bottom_low - 1.0) * 100.0
-        if pole_pct < MOVE_MIN_PCT:
-            return ticker, None, None
-
-        # Health gate: close has held above the 50-SMA for the last 10 bars.
+        # ── The trend / "pole": 10/20/50 SMAs stacked in order ──────────────
+        # SMAs to match TC2000's Avg 10 / 20 / 50. No fixed % move — the stack
+        # IS the trend. The stack must FORM after the bottom and still be intact.
+        sma10 = sma_2d(close.reshape(1, -1), 10)[0]
+        sma20 = sma_2d(close.reshape(1, -1), 20)[0]
         sma50 = sma_2d(close.reshape(1, -1), 50)[0]
-        c10 = close[-ABOVE50_BARS:]
-        s10 = sma50[-ABOVE50_BARS:]
-        if np.any(np.isnan(s10)) or not np.all(c10 > s10):
+        stack_start = None
+        for i in range(bottom_idx + 1, asof_bar + 1):
+            if (not (np.isnan(sma10[i]) or np.isnan(sma20[i]) or np.isnan(sma50[i]))
+                    and sma10[i] > sma20[i] > sma50[i]):
+                stack_start = i
+                break
+        if stack_start is None:
+            return ticker, None, None
+        if not (sma10[asof_bar] > sma20[asof_bar] > sma50[asof_bar]):
             return ticker, None, None
 
-        # Timing gate: the 6/20 MACD line is still below its 9-EMA signal
-        # (bear cross intact) — the flag is actively forming, not yet released.
-        macd_line = macd_2d(close.reshape(1, -1), 6, 20)[0]
-        macd_signal = ema_2d(macd_line.reshape(1, -1), 9)[0]
-        ml = macd_line[asof_bar]
-        sg = macd_signal[asof_bar]
-        if np.isnan(ml) or np.isnan(sg) or not (ml < sg):
+        # First / early flag: not many legs since the stack formed. Counting
+        # swing highs since the stack keeps it to the first pullback or two and
+        # drops multi-leg runners that already ran far past the divergence.
+        swing_highs = [p for p in _find_pivots(high, 3, "high") if p > stack_start]
+        if len(swing_highs) > MAX_SWING_HIGHS:
             return ticker, None, None
 
+        # ── Pulled back into a flag ─────────────────────────────────────────
+        # Highest high since the stack formed; price must currently be BELOW it
+        # (a pullback), and that high must be in the past (not a fresh breakout).
+        seg_high = high[stack_start:asof_bar + 1]
+        peak_off = int(np.nanargmax(seg_high))
+        peak_idx = stack_start + peak_off
+        peak_high = float(seg_high[peak_off])
         last_close = float(close[asof_bar])
-        pullback_pct = ((pole_high_price - last_close) / pole_high_price * 100.0
-                        if pole_high_price > 0 else 0.0)
+        if peak_idx >= asof_bar or last_close >= peak_high:
+            return ticker, None, None
+
+        # ── Flag = riding the fast MA: close within RIDE_PCT of the 10 or 20 ──
+        ride_pct = min(abs(last_close / sma10[asof_bar] - 1.0),
+                       abs(last_close / sma20[asof_bar] - 1.0)) * 100.0
+        if ride_pct > RIDE_PCT:
+            return ticker, None, None
+
+        pole_pct = (peak_high / bottom_low - 1.0) * 100.0
+        pullback_pct = ((peak_high - last_close) / peak_high * 100.0
+                        if peak_high > 0 else 0.0)
 
         payload = {
             "asof_bar":         asof_bar,
@@ -168,21 +200,19 @@ def _ticker_snapshot(args):
             "bottom_date":      str(dates[bottom_idx])[:10],
             "bottom_low":       bottom_low,
             "bottom_close":     bottom_close,
-            "sma200_at_bottom": float(s200),
             "below_200_pct":    below_200_pct,
-            "prior_low_idx":    int(d["p1_idx"]),
-            "prior_low_date":   str(dates[int(d["p1_idx"])])[:10],
-            "prior_low_price":  float(d["p1_price"]),
-            "macd_prior":       float(d["m1_macd"]),
-            "macd_bottom":      float(d["m2_macd"]),
-            "pole_high_idx":    pole_high_idx,
-            "pole_high_date":   str(dates[pole_high_idx])[:10],
-            "pole_high_price":  pole_high_price,
+            "stack_start_idx":  stack_start,
+            "stack_start_date": str(dates[stack_start])[:10],
+            "pole_high_idx":    peak_idx,
+            "pole_high_date":   str(dates[peak_idx])[:10],
+            "pole_high_price":  peak_high,
             "pole_pct":         pole_pct,
             "bars_since_bottom": asof_bar - bottom_idx,
+            "bars_since_stack": asof_bar - stack_start,
             "pullback_pct":     pullback_pct,
-            "macd_line":        float(ml),
-            "macd_signal":      float(sg),
+            "ride_pct":         ride_pct,
+            "div_ll_pct":       div_ll_pct,
+            "swing_highs_since_stack": len(swing_highs),
         }
         return ticker, payload, None
     except Exception as exc:
@@ -254,9 +284,9 @@ def build(workers=None, verbose=True, cache_dir=None, out_dir=None):
         "built_in_seconds": round(elapsed, 1),
         "source_cache": os.path.basename(src_path),
         "intraday_partial_dropped": bool(is_intraday),
-        "move_min_pct": MOVE_MIN_PCT,
-        "above50_bars": ABOVE50_BARS,
-        "requires_macd_bearcross": True,
+        "ride_pct": RIDE_PCT,
+        "div_min_ll_pct": DIV_MIN_LL_PCT,
+        "max_swing_highs": MAX_SWING_HIGHS,
         "n_universe": len(UNIVERSE),
         "n_matches": len(out),
         "n_errors": len(errors),
