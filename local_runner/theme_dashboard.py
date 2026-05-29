@@ -912,6 +912,11 @@ def compute_ticker_pack(ticker, df, bench_rs_0d, bench_rs_1, bench_rs_3, bench_r
     comp20 = compression_n(full_h, full_l, 20, adr20)
     comp30 = compression_n(full_h, full_l, 30, adr20)
 
+    # Distance from the 50-day SMA in ADRs — the same metric the Setups page
+    # and the per-ticker extension panel use (positive = above the 50). Powers
+    # the "Near 50SMA" filter on the Tickers view. None when < 50 bars.
+    ext50 = _live_ext50_for_peek(df)
+
     # MACD-line divergences were removed from the dashboard 2026-05-22.
     # The MACD line + signal still render in the lower panel, but we no
     # longer detect or draw divergence pairs anywhere.
@@ -957,6 +962,7 @@ def compute_ticker_pack(ticker, df, bench_rs_0d, bench_rs_1, bench_rs_3, bench_r
         vol_last=vol_last,
         adr=adr20, five_d_return=five_d,
         today_adr_ratio=today_adr_ratio,
+        ext50=ext50,
         sector=sector,
         industry=industry,
     )
@@ -1218,9 +1224,16 @@ def build_mini_svg(df, ticker, n_bars=100, width=300, height=210, meta=None):
     """
     if df is None or len(df) < 2:
         return f'<svg width="{width}" height="{height}" style="background:#000;display:block"></svg>'
+    # SMAs need full history — a 100-bar window alone can't seed SMA50/200 —
+    # so compute on the full close series first, then tail to the visible window.
+    full_close = df["close"].values.astype(np.float64)
+    sma_specs = [(5, "#ff8800", 0.9), (10, "#5fc8ff", 0.9), (20, "#e8c890", 0.9),
+                 (50, "#ffcc00", 0.9), (200, "#ffffff", 1.1)]
+    full_smas = {p: sma_2d(full_close.reshape(1, -1), p)[0] for p, _, _ in sma_specs}
     df = df.tail(n_bars).reset_index(drop=True)
     if len(df) < 2:
         return f'<svg width="{width}" height="{height}" style="background:#000;display:block"></svg>'
+    smas = {p: arr[-len(df):] for p, arr in full_smas.items()}
 
     o = df["open"].values.astype(float)
     h = df["high"].values.astype(float)
@@ -1271,7 +1284,9 @@ def build_mini_svg(df, ticker, n_bars=100, width=300, height=210, meta=None):
         f'<defs><linearGradient id="g_{ticker}" x1="0" y1="0" x2="0" y2="1">'
         f'<stop offset="0%" stop-color="{COLOR_CHROME_TOP}"/>'
         f'<stop offset="100%" stop-color="{COLOR_CHROME_BOT}"/>'
-        f'</linearGradient></defs>',
+        f'</linearGradient>'
+        f'<clipPath id="clip_{ticker}"><rect x="0" y="{chart_top:.2f}" width="{width}" height="{chart_h:.2f}"/></clipPath>'
+        f'</defs>',
         f'<rect x="0" y="0" width="{width}" height="{header_h}" fill="url(#g_{ticker})"/>',
         f'<line x1="0" y1="{header_h-0.5}" x2="{width}" y2="{header_h-0.5}" stroke="#000" stroke-width="1"/>',
         # Ticker (left, line 1)
@@ -1304,6 +1319,28 @@ def build_mini_svg(df, ticker, n_bars=100, width=300, height=210, meta=None):
         bb = y_px(min(o[i], c[i]))
         bh = max(1.0, bb - bt)
         parts.append(f'<rect x="{cx - body_w/2:.2f}" y="{bt:.2f}" width="{body_w:.2f}" height="{bh:.2f}" fill="{col}"/>')
+
+    # ── SMA overlay — same palette as the composite chart, drawn over the candles ──
+    # Clipped to the chart rect: a long MA that runs off the bottom in a strong
+    # trend simply disappears; the candles keep their full price-based height.
+    parts.append(f'<g clip-path="url(#clip_{ticker})" fill="none">')
+    for p, color, lw in sma_specs:
+        vals = smas[p]
+        seg = []
+        for i in range(n):
+            v = vals[i]
+            if np.isnan(v):
+                if len(seg) >= 2:
+                    pts = " ".join(seg)
+                    parts.append(f'<polyline points="{pts}" stroke="{color}" stroke-width="{lw}" stroke-linejoin="round"/>')
+                seg = []
+                continue
+            cx = x_off + bar_w * i + bar_w / 2
+            seg.append(f'{cx:.2f},{y_px(v):.2f}')
+        if len(seg) >= 2:
+            pts = " ".join(seg)
+            parts.append(f'<polyline points="{pts}" stroke="{color}" stroke-width="{lw}" stroke-linejoin="round"/>')
+    parts.append('</g>')
 
     parts.append("</svg>")
     return "".join(parts)
@@ -2687,6 +2724,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         comp3  = p.get("comp3"); comp5  = p.get("comp5"); comp10 = p.get("comp10")
         comp20 = p.get("comp20"); comp30 = p.get("comp30")
         adr_ratio = p["today_adr_ratio"]
+        ext50 = p.get("ext50")
         is_tight = (adr_ratio is not None and adr_ratio < ADR_TIGHT_THRESHOLD)
         below_cls = " below-200" if p["below_200"] else ""
         tight_cls = " tight-adr" if is_tight else ""
@@ -2704,6 +2742,9 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         comp10_attr = f"{comp10:.4f}" if comp10 is not None else "1e9"
         comp20_attr = f"{comp20:.4f}" if comp20 is not None else "1e9"
         comp30_attr = f"{comp30:.4f}" if comp30 is not None else "1e9"
+        # ext50 attr: real value when computable; "nan" sentinel for < 50-bar
+        # IPOs so the Near 50SMA filter hides what it can't confirm.
+        ext50_attr = f"{ext50:.4f}" if ext50 is not None else "nan"
         rs0d_str  = f"{rs0d:+.2f}"  if rs0d  is not None else "—"
         rs1_str   = f"{rs1:+.2f}"   if rs1   is not None else "—"
         rs3_str   = f"{rs3:+.2f}"   if rs3   is not None else "—"
@@ -2722,7 +2763,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             f' data-rs65="{rs65_attr}" data-rs130="{rs130_attr}"'
             f' data-comp3="{comp3_attr}" data-comp5="{comp5_attr}" data-comp10="{comp10_attr}"'
             f' data-comp20="{comp20_attr}" data-comp30="{comp30_attr}"'
-            f' data-adr="{adr_attr}">'
+            f' data-adr="{adr_attr}" data-ext50="{ext50_attr}">'
             f'<td class="ticker-symbol-cell"><span class="ticker-symbol">{tk}</span></td>'
             f'<td class="theme-membership-cell" title="{theme_cell_text}">{theme_cell_text}</td>'
             f'<td class="num {_rs_cls(rs0d)}">{rs0d_str}</td>'
@@ -2869,6 +2910,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         '<div class="watchlist-controls">'
         '<label><input type="checkbox" id="toggle-hide-below" checked/> Hide &lt; 200D</label>'
         '<label title="Today candle range &lt; 1.10 × ADR"><input type="checkbox" id="toggle-tight-only"/> Tight D1</label>'
+        '<label title="Tickers view only: price within -2.0 to +4.1 ADR of the 50-day SMA"><input type="checkbox" id="toggle-near-50sma"/> Near 50SMA</label>'
         '<label title="Show only rows belonging to flagged themes"><input type="checkbox" id="toggle-flagged-only"/> Flagged</label>'
         '<span class="wl-count" id="wl-visible-count"></span>'
         f'<button type="button" class="filter-icon-btn" id="filter-cell" title="Filter sectors and themes">{filter_icon_svg}'
@@ -3195,6 +3237,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   var brandTitle   = brandBtn && brandBtn.querySelector('.rm-fn-title');
   var tickersEmpty = document.getElementById('tickers-empty');
   var toggleTightOnly = document.getElementById('toggle-tight-only');
+  var toggleNear50 = document.getElementById('toggle-near-50sma');
   var toggleFlaggedOnly = document.getElementById('toggle-flagged-only');
   // Flagged theme set — persisted in localStorage. Click a flag icon to
   // toggle. "Flagged" checkbox filters all views to rows that belong to
@@ -3231,6 +3274,9 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   // "Tight" = today_adr_ratio < 1.10. Persisted in localStorage.
   var HOT_RS_THRESHOLD   = 1.20;
   var TIGHT_ADR_CEILING  = 1.10;
+  // "Near 50SMA" band: ext50 (ADRs from the 50-day SMA) within [lo, hi].
+  var NEAR50_LO = -2.0;
+  var NEAR50_HI = 4.1;
   try {{
     Object.keys(hotToggles).forEach(function(n) {{
       var key = 'themeDashboard.hot' + n;
@@ -3244,6 +3290,8 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     }});
     var savedTight = window.localStorage && window.localStorage.getItem('themeDashboard.tightOnly');
     if (savedTight === '1' && toggleTightOnly) toggleTightOnly.checked = true;
+    var savedNear50 = window.localStorage && window.localStorage.getItem('themeDashboard.near50sma');
+    if (savedNear50 === '1' && toggleNear50) toggleNear50.checked = true;
     var savedFlagged = window.localStorage && window.localStorage.getItem('themeDashboard.flaggedOnly');
     if (savedFlagged === '1' && toggleFlaggedOnly) toggleFlaggedOnly.checked = true;
   }} catch(e) {{}}
@@ -3390,6 +3438,14 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     if (toggleTightOnly && toggleTightOnly.checked) {{
       var adr = parseFloat(r.dataset.adr || '1e9');
       if (isNaN(adr) || adr >= TIGHT_ADR_CEILING) return true;
+    }}
+    // "Near 50SMA" = ext50 within [-2.0, +4.1]. Tickers view ONLY — the theme
+    // page (theme rows + their tree children) and the Setups view are exempt.
+    // Missing ext50 (< 50-bar IPO) is NaN, which fails — we hide what we can't
+    // confirm is near the 50.
+    if (toggleNear50 && toggleNear50.checked && r.dataset.rowKind === 'ticker-flat') {{
+      var ext = parseFloat(r.dataset.ext50);
+      if (isNaN(ext) || ext < NEAR50_LO || ext > NEAR50_HI) return true;
     }}
     // "Flagged only" = row must belong to at least one flagged theme.
     // Theme rows use their own theme-id; ticker child rows use their parent
@@ -3817,6 +3873,8 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         }});
         window.localStorage.setItem('themeDashboard.tightOnly',
           (toggleTightOnly && toggleTightOnly.checked) ? '1' : '0');
+        window.localStorage.setItem('themeDashboard.near50sma',
+          (toggleNear50 && toggleNear50.checked) ? '1' : '0');
         window.localStorage.setItem('themeDashboard.flaggedOnly',
           (toggleFlaggedOnly && toggleFlaggedOnly.checked) ? '1' : '0');
       }}
@@ -3838,6 +3896,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     if (tog) tog.addEventListener('change', onHotTightChange);
   }});
   if (toggleTightOnly)   toggleTightOnly.addEventListener('change', onHotTightChange);
+  if (toggleNear50)      toggleNear50.addEventListener('change', onHotTightChange);
   if (toggleFlaggedOnly) toggleFlaggedOnly.addEventListener('change', onHotTightChange);
 
   // ── Flag system ────────────────────────────────────────────
