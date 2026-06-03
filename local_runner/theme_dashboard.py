@@ -273,7 +273,21 @@ def load_daily_cache():
         except Exception:
             pass
 
-    label = "(intraday 4:20pm)" if source == "intraday" else ""
+    label = ""
+    if source == "intraday":
+        # Use the human label the refresh wrote alongside the pickle (e.g.
+        # "intraday 9:44am" / "intraday 4:20pm"); fall back to a generic tag
+        # if the marker is missing or unreadable.
+        label = "(intraday)"
+        import json
+        marker_path = os.path.join(CACHE_DIR, "universe_ohlcv_daily_intraday.meta")
+        try:
+            with open(marker_path, encoding="utf-8") as mf:
+                lbl = json.load(mf).get("label", "").strip()
+            if lbl:
+                label = f"({lbl})"
+        except (OSError, ValueError):
+            pass
     source_meta = {"source": source, "last_bar_date": last_bar, "label": label}
     return cache, source_meta
 

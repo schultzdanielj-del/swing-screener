@@ -193,6 +193,48 @@ def _quote_is_valid(q):
         return False
 
 
+def _quote_session_date(q):
+    """ET calendar date of the quote's last update, derived from its EODHD
+    `timestamp` (epoch seconds). Returns a normalized (midnight), tz-naive
+    pandas.Timestamp matching the cache's `date` dtype, or None when the
+    timestamp field is missing or unparseable."""
+    ts = q.get("timestamp")
+    try:
+        ts = float(ts)
+    except (TypeError, ValueError):
+        return None
+    if ts != ts or ts <= 0:  # NaN / non-positive
+        return None
+    return pd.Timestamp(datetime.fromtimestamp(ts, ET).date())
+
+
+def _quote_is_stale(q, today_ts):
+    """True when a real-time quote is a prior-session echo rather than today's
+    live tape.
+
+    Right after the open the (delayed) feed briefly keeps reporting the last
+    completed daily bar — same open/low/close as yesterday, `close` equal to
+    `previousClose` — which, if written, just duplicates yesterday's candle
+    onto today's date (the morning "doubled D1 candle" bug). Two independent
+    signals flag that echo:
+
+      1. the quote's `timestamp` resolves to an ET date earlier than today, or
+      2. its `close` equals its own `previousClose` to the cent.
+
+    Either is enough to skip the ticker for this run; once the feed advances to
+    the real session, both clear and the bar is written normally.
+    """
+    sess = _quote_session_date(q)
+    if sess is not None and sess < today_ts:
+        return True
+    try:
+        if abs(float(q.get("close")) - float(q.get("previousClose"))) < 1e-9:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return False
+
+
 # ──────────────────────────────────────────────────────────────────
 # SUBSTITUTION
 # ──────────────────────────────────────────────────────────────────
@@ -206,15 +248,16 @@ def substitute_last_bars(cache, quotes, today_et):
     today_et: pandas.Timestamp at ET date (no time).
 
     Returns (n_updated, n_appended, n_skipped_missing_cache, n_no_movement,
-             n_invalid_quote).
+             n_invalid_quote, n_stale).
     """
     n_updated = 0
     n_appended = 0
     n_skipped_missing_cache = 0
     n_no_movement = 0
     n_invalid_quote = 0
+    n_stale = 0
 
-    today_ts = pd.Timestamp(today_et)
+    today_ts = pd.Timestamp(today_et).normalize()
 
     for ticker, q in quotes.items():
         if not _quote_is_valid(q):
@@ -227,6 +270,12 @@ def substitute_last_bars(cache, quotes, today_et):
         df = cache[ticker]
         if df is None or df.empty:
             n_skipped_missing_cache += 1
+            continue
+
+        # Reject prior-session echoes before they can be written as today's
+        # bar (the morning "doubled D1 candle" bug — see _quote_is_stale).
+        if _quote_is_stale(q, today_ts):
+            n_stale += 1
             continue
 
         # Build row from the quote. Open/High/Low may be missing on the EODHD
@@ -247,16 +296,28 @@ def substitute_last_bars(cache, quotes, today_et):
         low_v = _num("low", close_v)
         vol_v = _num("volume", 0.0)
 
-        last_date = df["date"].iloc[-1]
+        # Date the bar from the quote's own session timestamp, not the wall
+        # clock — a quote must never be stamped with a date its data doesn't
+        # belong to. Falls back to today only when the timestamp is absent
+        # (those quotes have already cleared the close==previousClose gate).
+        bar_date = _quote_session_date(q)
+        if bar_date is None:
+            bar_date = today_ts
+
+        last_date = pd.Timestamp(df["date"].iloc[-1]).normalize()
         last_close = float(df["close"].iloc[-1])
 
-        # "No movement" check happens only when the bar already exists at
-        # today; for an appended bar there's nothing to compare against.
-        if pd.Timestamp(last_date).normalize() == today_ts.normalize():
+        if bar_date < last_date:
+            # Quote is older than the newest cached bar — never rewrite
+            # history. (Shouldn't reach here after the staleness gate; guard.)
+            n_stale += 1
+            continue
+        elif bar_date == last_date:
+            # The bar for this session already exists → update it in place,
+            # unless the price hasn't moved (nothing to refresh).
             if abs(close_v - last_close) < 1e-9:
                 n_no_movement += 1
                 continue
-            # Update existing today's bar.
             idx = df.index[-1]
             df.at[idx, "open"] = open_v
             df.at[idx, "high"] = high_v
@@ -265,9 +326,9 @@ def substitute_last_bars(cache, quotes, today_et):
             df.at[idx, "volume"] = vol_v
             n_updated += 1
         else:
-            # Append a new row for today.
+            # Append a new row for the quote's session date.
             new_row = {col: pd.NA for col in df.columns}
-            new_row["date"] = today_ts
+            new_row["date"] = bar_date
             new_row["open"] = open_v
             new_row["high"] = high_v
             new_row["low"] = low_v
@@ -278,7 +339,8 @@ def substitute_last_bars(cache, quotes, today_et):
             )
             n_appended += 1
 
-    return n_updated, n_appended, n_skipped_missing_cache, n_no_movement, n_invalid_quote
+    return (n_updated, n_appended, n_skipped_missing_cache, n_no_movement,
+            n_invalid_quote, n_stale)
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -310,13 +372,18 @@ def write_marker(today_et, n_updated, n_appended, quote_count):
     """Write a tiny JSON marker alongside the intraday pickle so downstream
     consumers (and humans) can see exactly what snapshot is in the pickle.
     """
+    now_et = datetime.now(ET)
+    # Human label reflecting when the snapshot was actually taken, e.g.
+    # "intraday 9:44am" for a morning manual refresh or "intraday 4:20pm" for
+    # the scheduled close run — the dashboard header shows this verbatim.
+    clock = now_et.strftime("%I:%M%p").lstrip("0").lower()
     meta = {
-        "snapshot_et": today_et.strftime("%Y-%m-%d 16:20:00 ET"),
-        "written_at": datetime.now(ET).isoformat(),
+        "snapshot_et": f"{today_et.strftime('%Y-%m-%d')} {now_et.strftime('%H:%M:%S')} ET",
+        "written_at": now_et.isoformat(),
         "quotes_received": quote_count,
         "bars_updated": n_updated,
         "bars_appended": n_appended,
-        "label": "intraday 4:20pm",
+        "label": f"intraday {clock}",
     }
     with open(INTRADAY_MARKER_FILE, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
@@ -406,13 +473,14 @@ def main():
     # Substitute.
     today_et = pd.Timestamp(datetime.now(ET).date())
     _log(f"Substituting last bars (today = {today_et.date()} ET)…")
-    n_upd, n_app, n_skip, n_nomove, n_invalid = substitute_last_bars(cache, valid_quotes, today_et)
+    n_upd, n_app, n_skip, n_nomove, n_invalid, n_stale = substitute_last_bars(
+        cache, valid_quotes, today_et)
     _log(f"  updated: {n_upd}  appended: {n_app}  skipped (not in cache): {n_skip}  "
-         f"no-movement: {n_nomove}  invalid: {n_invalid}")
+         f"no-movement: {n_nomove}  stale (prior-session echo): {n_stale}  invalid: {n_invalid}")
 
     if n_upd + n_app == 0:
-        _log("No bars were updated or appended (likely market closed / no movement). "
-             "Intraday pickle untouched.")
+        _log("No bars were updated or appended (market closed / no movement / "
+             "feed still echoing the prior session). Intraday pickle untouched.")
         return 4
 
     # Atomic write.
