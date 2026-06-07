@@ -1,46 +1,50 @@
-"""Intraday close-snapshot refresh for the Theme Dashboard.
+"""Live intraday-snapshot refresh for the Theme Dashboard.
 
-Fires daily at 4:20 PM ET (20 min after the regular-session close). Pulls
-EODHD `/real-time/` quotes for the theme-dashboard universe only
-(~THEMES ∪ UNIVERSE from theme_map.py, hundreds of tickers — NOT the
-full 11k OHLCV cache), substitutes those quotes into the last daily bar
-of an in-memory copy of `universe_ohlcv_daily.pkl`, writes the modified
-cache atomically to `universe_ohlcv_daily_intraday.pkl`, and regenerates
-`theme_dashboard.html` against the new pickle.
+Pulls **real-time** quotes from Yahoo's batched `/v7/finance/quote` endpoint
+for the theme-dashboard universe only (~THEMES ∪ UNIVERSE from theme_map.py,
+hundreds of tickers — NOT the full 11k OHLCV cache), writes today's live bar
+into an in-memory copy of `universe_ohlcv_daily.pkl`, saves it atomically to
+`universe_ohlcv_daily_intraday.pkl`, and regenerates `theme_dashboard.html`
+against the new pickle.
 
-Reconciliation: next morning's `nightly.py` overwrites the main pickle
-with the official EODHD MOC close. From then on the main pickle's
-mtime is newer than the intraday pickle's and the dashboard ignores
-the intraday file. Source of truth always remains nightly.
+Why Yahoo, not EODHD: EODHD's REST real-time is 15–20 min delayed on the
+All-World plan (confirmed in their docs). Yahoo's quote endpoint is real-time
+for US equities (`exchangeDataDelayedBy = 0`), free, and batches ~100 symbols
+per call, so the whole theme universe refreshes in ~10 calls / a few seconds.
+EODHD is still the source for prior-day EOD history (its bulk endpoint); Yahoo
+only supplies today's live bar.
 
-Failure modes:
-  - EODHD unreachable / 5xx / token rejected: log + exit non-zero,
-    intraday pickle untouched. Dashboard continues reading the prior
-    intraday pickle (if still newer than main) or the main pickle.
-  - Partial batch failure: if < 70% of theme-universe tickers got
-    valid quotes, treat as outage and exit without writing.
-  - Quote stale (e.g. weekend / holiday / market closed): if every
-    valid quote's close equals the main pickle's last-bar close for
-    that ticker, log "no movement detected" and exit without writing.
+Reconciliation: next morning's `nightly.py` overwrites the main pickle with the
+official EOD close. From then on the main pickle's mtime is newer than the
+intraday pickle's and the dashboard ignores the intraday file. Source of truth
+always remains nightly.
 
-Out of scope (do NOT add here): full 11k universe intraday, multiple
-runs per day, bullish/bearish commentary on the snapshot, trade signals.
+Readiness gate: a today bar is only written for a ticker whose quote's
+`regularMarketTime` resolves to today's ET date. Before the open (pre-market),
+that timestamp is still yesterday for everyone, so if fewer than
+MIN_TODAY_FRACTION of the universe has today-session data the run treats it as
+"market not open / feed not ready" and writes nothing — which is also what
+prevents a pre-market run from stamping yesterday's prices onto today.
+
+Out of scope (do NOT add here): full 11k universe intraday, bullish/bearish
+commentary, trade signals.
 
 Run manually:
     python local_runner/intraday_refresh.py
 Scheduled task XML at local_runner/cache/intraday_refresh_task.xml.
 """
 
+import http.cookiejar
 import json
 import os
 import pickle
-import shutil
 import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -62,13 +66,21 @@ BENCHMARK_TICKERS = ["SPY"]
 # ──────────────────────────────────────────────────────────────────
 # CONFIG
 # ──────────────────────────────────────────────────────────────────
-EODHD_API_TOKEN = os.environ.get("EODHD_API_TOKEN", "")
-EODHD_BASE = "https://eodhd.com/api"
-BATCH_SIZE = 18  # tickers per /real-time/ call (spec window 15-20)
+YAHOO_QUOTE_URL = "https://query1.finance.yahoo.com/v7/finance/quote"
+YAHOO_CRUMB_URL = "https://query1.finance.yahoo.com/v1/test/getcrumb"
+YAHOO_COOKIE_URL = "https://fc.yahoo.com"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+
+BATCH_SIZE = 100          # symbols per /v7/finance/quote call (Yahoo allows ~200)
 HTTP_TIMEOUT = 30
-INTER_BATCH_SLEEP = 0.10  # 18*60 = 1080 → ~600/min, safely under 1000/min limit
 MAX_BATCH_RETRIES = 3
-MIN_SUCCESS_FRACTION = 0.70  # below this → treat as outage
+# Rate-limit headroom: the whole universe is only ~10 batched calls, so instead
+# of firing them back-to-back we space them out by REFRESH_BUDGET_SEC/n_batches.
+# With ~10 batches that's ~4.5s between calls; add the ~14s of request + crumb
+# overhead and a full refresh lands ~55s — under the ~60s ceiling Dan OK'd, and
+# cheap insurance against Yahoo throttling.
+REFRESH_BUDGET_SEC = 45
+MIN_TODAY_FRACTION = 0.60  # below this share with today-session data → treat as market-closed/not-ready
 
 MAIN_PICKLE = os.path.join(CACHE_DIR, "universe_ohlcv_daily.pkl")
 INTRADAY_PICKLE = os.path.join(CACHE_DIR, "universe_ohlcv_daily_intraday.pkl")
@@ -89,9 +101,6 @@ def build_theme_universe():
     """Return sorted list of unique tickers covered by the theme dashboard.
 
     = tickers in any THEMES list ∪ tickers in UNIVERSE ∪ BENCHMARK_TICKERS.
-    The benchmark tickers (SPY today) are included even when they aren't
-    theme members because the dashboard reads them directly for the header
-    "Cache Last Bar" date and the theme/SPY TC2000 RS ratios.
     """
     tickers = set(UNIVERSE)
     for members in THEMES.values():
@@ -101,138 +110,134 @@ def build_theme_universe():
 
 
 # ──────────────────────────────────────────────────────────────────
-# EODHD /real-time/ FETCH
+# YAHOO /v7/finance/quote FETCH  (real-time, batched)
 # ──────────────────────────────────────────────────────────────────
 
-def _eodhd_realtime_batch(batch):
-    """Fetch a batch of /real-time/ quotes.
+def _yahoo_opener():
+    cj = http.cookiejar.CookieJar()
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    # Only a User-Agent — the crumb endpoint returns plain text and 406s if we
+    # demand Accept: application/json. The quote endpoint returns JSON regardless.
+    op.addheaders = [("User-Agent", USER_AGENT)]
+    return op
 
-    batch: list of ticker symbols (BATCH_SIZE or fewer).
 
-    EODHD real-time batched form: one ticker in the URL path, the rest in
-    the `s=` query parameter as comma-separated values. With multiple
-    tickers the response is a JSON array; with a single ticker it's
-    a single JSON object — we normalize to a list.
-
-    Returns list of dicts with at least `code, open, high, low, close,
-    volume, previousClose`. On HTTP / parsing failure, returns [].
+def _yahoo_crumb(op):
+    """Yahoo's quote endpoint requires a per-session crumb. Prime the cookie
+    jar against fc.yahoo.com (may 404 — that's fine, it still sets the cookie),
+    then fetch the crumb token. Returns the crumb string, or "" on failure.
     """
-    if not batch:
-        return []
-
-    # EODHD expects exchange-suffixed symbols (e.g. AAPL.US). Caching
-    # in the OHLCV pickle uses unsuffixed; we add .US for the call.
-    first = batch[0] + ".US"
-    rest = ",".join(t + ".US" for t in batch[1:])
-    if rest:
-        url = (f"{EODHD_BASE}/real-time/{first}"
-               f"?s={rest}&api_token={EODHD_API_TOKEN}&fmt=json")
-    else:
-        url = (f"{EODHD_BASE}/real-time/{first}"
-               f"?api_token={EODHD_API_TOKEN}&fmt=json")
-
-    last_err = None
-    for attempt in range(MAX_BATCH_RETRIES):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "ScanPerfect-Intraday/1.0"})
-            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-            if isinstance(payload, dict):
-                payload = [payload]
-            return payload
-        except urllib.error.HTTPError as e:
-            last_err = f"HTTP {e.code}"
-            if e.code in (429, 500, 502, 503, 504):
-                time.sleep(0.5 * (attempt + 1))
-                continue
-            break  # 4xx (other than 429) won't fix with retry
-        except Exception as e:
-            last_err = repr(e)
-            time.sleep(0.5 * (attempt + 1))
-
-    _log(f"  batch fetch failed [{batch[0]}…{batch[-1]}]: {last_err}")
-    return []
+    try:
+        op.open(YAHOO_COOKIE_URL, timeout=HTTP_TIMEOUT)
+    except Exception:
+        pass  # 404 is expected; we only need the Set-Cookie side effect
+    try:
+        return op.open(YAHOO_CRUMB_URL, timeout=HTTP_TIMEOUT).read().decode("utf-8").strip()
+    except Exception as e:
+        _log(f"  crumb fetch failed: {e!r}")
+        return ""
 
 
-def fetch_realtime_quotes(tickers):
-    """Fetch real-time quotes for all tickers, returning {ticker: quote_dict}.
-
-    Strips the .US suffix from response codes before keying.
+def fetch_yahoo_quotes(tickers):
+    """Fetch real-time quotes for all tickers via Yahoo's batched quote
+    endpoint. Returns {ticker: quote_dict} keyed by the symbol we sent
+    (which is the OHLCV cache key — already Yahoo's dash format).
     """
+    op = _yahoo_opener()
+    crumb = _yahoo_crumb(op)
+    if not crumb:
+        _log("FATAL: could not obtain a Yahoo crumb. Cannot fetch quotes.")
+        return {}
+
     quotes = {}
     n = len(tickers)
     n_batches = (n + BATCH_SIZE - 1) // BATCH_SIZE
-    _log(f"Fetching {n} tickers in {n_batches} batches of {BATCH_SIZE}…")
+    # Spread the ~10 calls across the budget so we're gentle on Yahoo.
+    inter_sleep = max(0.5, REFRESH_BUDGET_SEC / max(1, n_batches))
+    _log(f"Fetching {n} tickers from Yahoo in {n_batches} batches of {BATCH_SIZE} "
+         f"(~{inter_sleep:.1f}s between calls)…")
 
     for i in range(0, n, BATCH_SIZE):
         batch = tickers[i:i + BATCH_SIZE]
-        results = _eodhd_realtime_batch(batch)
-        for q in results:
-            code = q.get("code", "")
-            # Code comes back as e.g. "AAPL.US" — strip exchange suffix.
-            if "." in code:
-                code = code.split(".", 1)[0]
-            if not code:
-                continue
-            quotes[code] = q
-        time.sleep(INTER_BATCH_SLEEP)
-        if ((i // BATCH_SIZE) + 1) % 10 == 0:
-            _log(f"  …{i + len(batch)} / {n} done ({len(quotes)} quotes received)")
 
-    _log(f"Received {len(quotes)} / {n} quotes ({len(quotes)/n*100:.1f}%)")
+        def _build_url(cr):
+            return (f"{YAHOO_QUOTE_URL}?symbols={urllib.parse.quote(','.join(batch))}"
+                    f"&crumb={urllib.parse.quote(cr)}")
+
+        url = _build_url(crumb)
+        last_err = None
+        for attempt in range(MAX_BATCH_RETRIES):
+            try:
+                with op.open(url, timeout=HTTP_TIMEOUT) as resp:
+                    js = json.loads(resp.read().decode("utf-8"))
+                for q in js.get("quoteResponse", {}).get("result", []):
+                    sym = q.get("symbol", "")
+                    if sym:
+                        quotes[sym] = q
+                last_err = None
+                break
+            except urllib.error.HTTPError as e:
+                last_err = f"HTTP {e.code}"
+                if e.code == 401:  # crumb expired → refresh once and retry
+                    crumb = _yahoo_crumb(op)
+                    url = _build_url(crumb)
+                    time.sleep(1.0)
+                    continue
+                if e.code == 429:  # throttled → back off hard before retrying
+                    time.sleep(min(15.0, 5.0 * (attempt + 1)))
+                    continue
+                if e.code in (500, 502, 503, 504):
+                    time.sleep(1.0 * (attempt + 1))
+                    continue
+                break  # other 4xx won't fix with a retry
+            except Exception as e:
+                last_err = repr(e)
+                time.sleep(1.0 * (attempt + 1))
+        if last_err:
+            _log(f"  batch {i // BATCH_SIZE + 1} failed [{batch[0]}…{batch[-1]}]: {last_err}")
+        # Pace between batches (skip the wait after the final batch).
+        if i + BATCH_SIZE < n:
+            time.sleep(inter_sleep)
+
+    _log(f"Received {len(quotes)} / {n} quotes ({len(quotes) / max(1, n) * 100:.1f}%)")
     return quotes
 
 
-def _quote_is_valid(q):
-    """Real-time row is usable iff close is a finite positive number."""
-    c = q.get("close")
-    try:
-        c = float(c)
-        return c > 0 and not (c != c)  # NaN check
-    except (TypeError, ValueError):
-        return False
+def _yq_today_bar(q, today_ts):
+    """Return (open, high, low, close, volume) from a Yahoo quote IF it carries
+    valid regular-session data for TODAY, else None.
 
-
-def _quote_session_date(q):
-    """ET calendar date of the quote's last update, derived from its EODHD
-    `timestamp` (epoch seconds). Returns a normalized (midnight), tz-naive
-    pandas.Timestamp matching the cache's `date` dtype, or None when the
-    timestamp field is missing or unparseable."""
-    ts = q.get("timestamp")
-    try:
-        ts = float(ts)
-    except (TypeError, ValueError):
-        return None
-    if ts != ts or ts <= 0:  # NaN / non-positive
-        return None
-    return pd.Timestamp(datetime.fromtimestamp(ts, ET).date())
-
-
-def _quote_is_stale(q, today_ts):
-    """True when a real-time quote is a prior-session echo rather than today's
-    live tape.
-
-    Right after the open the (delayed) feed briefly keeps reporting the last
-    completed daily bar — same open/low/close as yesterday, `close` equal to
-    `previousClose` — which, if written, just duplicates yesterday's candle
-    onto today's date (the morning "doubled D1 candle" bug). Two independent
-    signals flag that echo:
-
-      1. the quote's `timestamp` resolves to an ET date earlier than today, or
-      2. its `close` equals its own `previousClose` to the cent.
-
-    Either is enough to skip the ticker for this run; once the feed advances to
-    the real session, both clear and the bar is written normally.
+    Yahoo is real-time (exchangeDataDelayedBy = 0), so there is no stale-echo
+    window to guard against — we only confirm the quote belongs to today's
+    session (its last regular trade is today, not a pre-market carryover of
+    yesterday's close) and that the price is a finite positive number.
     """
-    sess = _quote_session_date(q)
-    if sess is not None and sess < today_ts:
-        return True
+    t = q.get("regularMarketTime")
     try:
-        if abs(float(q.get("close")) - float(q.get("previousClose"))) < 1e-9:
-            return True
+        t = float(t)
     except (TypeError, ValueError):
-        pass
-    return False
+        return None
+    if t != t or t <= 0:  # NaN / non-positive
+        return None
+    if pd.Timestamp(datetime.fromtimestamp(t, ET).date()) != today_ts:
+        return None  # last regular trade was a prior session
+
+    def num(key, default=None):
+        v = q.get(key)
+        try:
+            v = float(v)
+            return default if v != v else v
+        except (TypeError, ValueError):
+            return default
+
+    close_v = num("regularMarketPrice")
+    if close_v is None or close_v <= 0:
+        return None
+    open_v = num("regularMarketOpen", close_v)
+    high_v = num("regularMarketDayHigh", close_v)
+    low_v = num("regularMarketDayLow", close_v)
+    vol_v = num("regularMarketVolume", 0.0)
+    return open_v, high_v, low_v, close_v, vol_v
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -240,84 +245,40 @@ def _quote_is_stale(q, today_ts):
 # ──────────────────────────────────────────────────────────────────
 
 def substitute_last_bars(cache, quotes, today_et):
-    """Mutate cache in place: for each ticker with a valid quote, update or
-    append today's bar with the real-time O/H/L/C/V.
+    """Mutate cache in place: write today's live bar for every ticker whose
+    Yahoo quote carries valid today-session data.
 
     cache: dict {ticker: DataFrame[date, open, high, low, close, volume, ...]}
-    quotes: dict {ticker: real-time quote dict}
+    quotes: dict {ticker: Yahoo quote dict}
     today_et: pandas.Timestamp at ET date (no time).
 
-    Returns (n_updated, n_appended, n_skipped_missing_cache, n_no_movement,
-             n_invalid_quote, n_stale).
+    Returns (n_updated, n_appended, n_skipped_missing_cache, n_no_today_data).
     """
     n_updated = 0
     n_appended = 0
-    n_skipped_missing_cache = 0
-    n_no_movement = 0
-    n_invalid_quote = 0
-    n_stale = 0
+    n_skipped = 0
+    n_no_today = 0
 
     today_ts = pd.Timestamp(today_et).normalize()
 
     for ticker, q in quotes.items():
-        if not _quote_is_valid(q):
-            n_invalid_quote += 1
-            continue
         if ticker not in cache:
-            n_skipped_missing_cache += 1
+            n_skipped += 1
             continue
-
         df = cache[ticker]
         if df is None or df.empty:
-            n_skipped_missing_cache += 1
+            n_skipped += 1
             continue
 
-        # Reject prior-session echoes before they can be written as today's
-        # bar (the morning "doubled D1 candle" bug — see _quote_is_stale).
-        if _quote_is_stale(q, today_ts):
-            n_stale += 1
+        bar = _yq_today_bar(q, today_ts)
+        if bar is None:
+            n_no_today += 1  # no real today-session trade yet (rare during hours)
             continue
-
-        # Build row from the quote. Open/High/Low may be missing on the EODHD
-        # response (rare); fall back to close so the bar is still valid.
-        def _num(k, default=None):
-            v = q.get(k)
-            try:
-                v = float(v)
-                if v != v:  # NaN
-                    return default
-                return v
-            except (TypeError, ValueError):
-                return default
-
-        close_v = _num("close")
-        open_v = _num("open", close_v)
-        high_v = _num("high", close_v)
-        low_v = _num("low", close_v)
-        vol_v = _num("volume", 0.0)
-
-        # Date the bar from the quote's own session timestamp, not the wall
-        # clock — a quote must never be stamped with a date its data doesn't
-        # belong to. Falls back to today only when the timestamp is absent
-        # (those quotes have already cleared the close==previousClose gate).
-        bar_date = _quote_session_date(q)
-        if bar_date is None:
-            bar_date = today_ts
+        open_v, high_v, low_v, close_v, vol_v = bar
 
         last_date = pd.Timestamp(df["date"].iloc[-1]).normalize()
-        last_close = float(df["close"].iloc[-1])
-
-        if bar_date < last_date:
-            # Quote is older than the newest cached bar — never rewrite
-            # history. (Shouldn't reach here after the staleness gate; guard.)
-            n_stale += 1
-            continue
-        elif bar_date == last_date:
-            # The bar for this session already exists → update it in place,
-            # unless the price hasn't moved (nothing to refresh).
-            if abs(close_v - last_close) < 1e-9:
-                n_no_movement += 1
-                continue
+        if last_date == today_ts:
+            # Today's bar already present (e.g. a prior refresh this session) → update it.
             idx = df.index[-1]
             df.at[idx, "open"] = open_v
             df.at[idx, "high"] = high_v
@@ -325,22 +286,21 @@ def substitute_last_bars(cache, quotes, today_et):
             df.at[idx, "close"] = close_v
             df.at[idx, "volume"] = vol_v
             n_updated += 1
-        else:
-            # Append a new row for the quote's session date.
+        elif last_date < today_ts:
             new_row = {col: pd.NA for col in df.columns}
-            new_row["date"] = bar_date
+            new_row["date"] = today_ts
             new_row["open"] = open_v
             new_row["high"] = high_v
             new_row["low"] = low_v
             new_row["close"] = close_v
             new_row["volume"] = vol_v
-            cache[ticker] = pd.concat(
-                [df, pd.DataFrame([new_row])], ignore_index=True
-            )
+            cache[ticker] = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
             n_appended += 1
+        else:
+            # Cache already newer than today (shouldn't happen) — never rewrite history.
+            n_skipped += 1
 
-    return (n_updated, n_appended, n_skipped_missing_cache, n_no_movement,
-            n_invalid_quote, n_stale)
+    return n_updated, n_appended, n_skipped, n_no_today
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -348,18 +308,14 @@ def substitute_last_bars(cache, quotes, today_et):
 # ──────────────────────────────────────────────────────────────────
 
 def atomic_write_pickle(obj, target_path):
-    """Write pickle to target_path atomically (tmp file + rename).
-
-    Avoids the case where the dashboard observes a half-written file.
-    """
+    """Write pickle to target_path atomically (tmp file + rename)."""
     target_dir = os.path.dirname(target_path)
     os.makedirs(target_dir, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".tmp_intraday_", dir=target_dir)
     try:
         with os.fdopen(fd, "wb") as f:
             pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
-        # On Windows, os.replace overwrites atomically.
-        os.replace(tmp, target_path)
+        os.replace(tmp, target_path)  # atomic on Windows too
     except Exception:
         try:
             os.unlink(tmp)
@@ -373,13 +329,11 @@ def write_marker(today_et, n_updated, n_appended, quote_count):
     consumers (and humans) can see exactly what snapshot is in the pickle.
     """
     now_et = datetime.now(ET)
-    # Human label reflecting when the snapshot was actually taken, e.g.
-    # "intraday 9:44am" for a morning manual refresh or "intraday 4:20pm" for
-    # the scheduled close run — the dashboard header shows this verbatim.
-    clock = now_et.strftime("%I:%M%p").lstrip("0").lower()
+    clock = now_et.strftime("%I:%M%p").lstrip("0").lower()  # e.g. "9:44am" / "4:20pm"
     meta = {
         "snapshot_et": f"{today_et.strftime('%Y-%m-%d')} {now_et.strftime('%H:%M:%S')} ET",
         "written_at": now_et.isoformat(),
+        "source": "yahoo-realtime",
         "quotes_received": quote_count,
         "bars_updated": n_updated,
         "bars_appended": n_appended,
@@ -394,22 +348,14 @@ def write_marker(today_et, n_updated, n_appended, quote_count):
 # ──────────────────────────────────────────────────────────────────
 
 def regenerate_dashboard():
-    """Invoke theme_dashboard.main() with default args (bars=250, no --open).
-
-    Done in-process for fast feedback in the scheduled-task log. If the
-    dashboard module raises, the exception propagates to the caller —
-    intraday pickle is already written, so a regen failure leaves the
-    pickle in place for the next dashboard load.
-    """
+    """Invoke theme_dashboard.main() with default args (bars=250, no --open)."""
     _log("Regenerating theme_dashboard.html against intraday pickle…")
-    # Save & restore sys.argv so the dashboard's argparse sees clean args.
     saved_argv = sys.argv
     try:
-        # --skip-snapshot: the morning 7:15 task already rebuilt the
-        # ext50-trendline snapshot for today's EOD. Intraday refresh
-        # (4:20 PM) is the same trading day, so no new bar to fold in.
+        # --skip-snapshot: intraday refresh is the same trading day, so the
+        # morning ext50/first-flags/tightening snapshots are still valid.
         sys.argv = ["theme_dashboard.py", "--bars", "250", "--skip-snapshot"]
-        import theme_dashboard  # imported here so the import-time prints land in our log
+        import theme_dashboard
         theme_dashboard.main()
     finally:
         sys.argv = saved_argv
@@ -421,12 +367,8 @@ def regenerate_dashboard():
 
 def main():
     _log("=" * 70)
-    _log("ScanPerfect Intraday Refresh")
+    _log("ScanPerfect Intraday Refresh (Yahoo real-time)")
     _log("=" * 70)
-
-    if not EODHD_API_TOKEN:
-        _log("FATAL: EODHD_API_TOKEN env var not set. Cannot proceed.")
-        return 2
 
     if not os.path.exists(MAIN_PICKLE):
         _log(f"FATAL: main pickle missing at {MAIN_PICKLE}.")
@@ -443,9 +385,6 @@ def main():
         _log(f"FATAL: main pickle has only {len(cache)} tickers (expected ~11,500). Aborting.")
         return 2
 
-    # Restrict the fetch to tickers that exist in the cache (the
-    # `BF.B`-style cases that miss the cache get dropped, matching the
-    # dashboard's own behavior).
     universe_in_cache = [t for t in universe if t in cache]
     missing_from_cache = [t for t in universe if t not in cache]
     if missing_from_cache:
@@ -453,51 +392,47 @@ def main():
              f"{missing_from_cache[:10]}{'...' if len(missing_from_cache) > 10 else ''}")
     _log(f"  {len(universe_in_cache)} theme tickers will be quoted")
 
-    # Fetch quotes.
+    # Fetch live quotes.
     t0 = time.time()
-    quotes = fetch_realtime_quotes(universe_in_cache)
-    fetch_dur = time.time() - t0
-    _log(f"Fetch complete in {fetch_dur:.1f}s. ~{len(universe_in_cache) // BATCH_SIZE + 1} API calls.")
+    quotes = fetch_yahoo_quotes(universe_in_cache)
+    _log(f"Fetch complete in {time.time() - t0:.1f}s.")
 
-    valid_quotes = {t: q for t, q in quotes.items() if _quote_is_valid(q)}
-    success_frac = len(valid_quotes) / max(1, len(universe_in_cache))
-    _log(f"Valid quotes: {len(valid_quotes)} / {len(universe_in_cache)} "
-         f"({success_frac*100:.1f}%)")
-
-    if success_frac < MIN_SUCCESS_FRACTION:
-        _log(f"FATAL: success rate {success_frac*100:.1f}% < threshold "
-             f"{MIN_SUCCESS_FRACTION*100:.0f}%. Treating as outage. "
-             f"Intraday pickle untouched.")
-        return 3
-
-    # Substitute.
+    # Readiness gate: how many have a real today-session bar?
     today_et = pd.Timestamp(datetime.now(ET).date())
-    _log(f"Substituting last bars (today = {today_et.date()} ET)…")
-    n_upd, n_app, n_skip, n_nomove, n_invalid, n_stale = substitute_last_bars(
-        cache, valid_quotes, today_et)
+    today_ts = today_et.normalize()
+    n_today = sum(1 for t, q in quotes.items()
+                  if t in cache and _yq_today_bar(q, today_ts) is not None)
+    frac = n_today / max(1, len(universe_in_cache))
+    _log(f"Tickers with today-session data: {n_today} / {len(universe_in_cache)} ({frac * 100:.1f}%)")
+
+    if frac < MIN_TODAY_FRACTION:
+        _log(f"Below {MIN_TODAY_FRACTION * 100:.0f}% — market likely not open / feed not ready. "
+             f"Intraday pickle untouched.")
+        return 4
+
+    # Substitute today's live bar.
+    _log(f"Writing today's bars (today = {today_et.date()} ET)…")
+    n_upd, n_app, n_skip, n_no_today = substitute_last_bars(cache, quotes, today_et)
     _log(f"  updated: {n_upd}  appended: {n_app}  skipped (not in cache): {n_skip}  "
-         f"no-movement: {n_nomove}  stale (prior-session echo): {n_stale}  invalid: {n_invalid}")
+         f"no-today-data: {n_no_today}")
 
     if n_upd + n_app == 0:
-        _log("No bars were updated or appended (market closed / no movement / "
-             "feed still echoing the prior session). Intraday pickle untouched.")
+        _log("No bars written. Intraday pickle untouched.")
         return 4
 
     # Atomic write.
     _log(f"Writing intraday pickle: {INTRADAY_PICKLE}")
     t0 = time.time()
     atomic_write_pickle(cache, INTRADAY_PICKLE)
-    write_marker(today_et, n_upd, n_app, len(valid_quotes))
-    write_dur = time.time() - t0
+    write_marker(today_et, n_upd, n_app, n_today)
     size_mb = os.path.getsize(INTRADAY_PICKLE) / (1024 * 1024)
-    _log(f"  wrote {size_mb:.1f} MB in {write_dur:.1f}s")
+    _log(f"  wrote {size_mb:.1f} MB in {time.time() - t0:.1f}s")
 
     # Regen the dashboard against the freshly written intraday pickle.
     try:
         regenerate_dashboard()
     except Exception as e:
         _log(f"WARNING: dashboard regen failed: {e!r}")
-        # Pickle is already on disk; user can manually re-run theme_dashboard.
         return 5
 
     _log("=" * 70)
