@@ -38,6 +38,14 @@ try:
     from theme_map import THEME_NARRATIVES  # noqa: E402
 except ImportError:
     THEME_NARRATIVES = {}
+try:
+    from theme_map import (  # noqa: E402
+        MACROTHEMES, NARRATIVE_ZONES, THEME_CHAIN_POSITION,
+        TICKER_ZONE_OVERRIDE, NARRATIVE_ZONE_PRIORITY,
+    )
+except ImportError:
+    MACROTHEMES, NARRATIVE_ZONES, THEME_CHAIN_POSITION = {}, {}, {}
+    TICKER_ZONE_OVERRIDE, NARRATIVE_ZONE_PRIORITY = {}, []
 
 # ────────────────────────────────────────────────────────────
 # Palette (mirrors regime_meter/dashboard/colors_and_type.css)
@@ -643,6 +651,12 @@ def _live_ext50_for_peek(df, adr_period=20):
     return ((c[-1] - sma50[-1]) / sma50[-1] * 100.0) / adr
 
 
+# Extension Peek upper bound: skip breaks where price has already extended
+# this many ADRs (or more) above the 50-day SMA. Keeps the setup to early
+# breaks, not chases. Tune here.
+EXT50_PEEK_MAX_EXTENSION_ADR = 4.5
+
+
 def compute_extension_peeks(snapshot_doc, cache, universe):
     """Scan UNIVERSE for tickers peeking above a descending 50-SMA-extension
     trendline today.
@@ -650,6 +664,8 @@ def compute_extension_peeks(snapshot_doc, cache, universe):
     Peek rule (per locked sign convention signed_dist = proj - ext):
       - Yesterday's stored signed_dist >= 0 (price was at/below the line)
       - Today's live signed_dist  <  0 (price has crossed above)
+      - Today's ext50 < EXT50_PEEK_MAX_EXTENSION_ADR (not already stretched
+        too far above the 50 SMA — keeps the setup to early breaks)
 
     Sorted ascending by |today_sd| — tightest peek first (the "just barely
     poked through" candidates that historically rip the next day).
@@ -669,6 +685,12 @@ def compute_extension_peeks(snapshot_doc, cache, universe):
             continue
         today_ext = _live_ext50_for_peek(df)
         if today_ext is None:
+            continue
+        # Don't include breaks that have already run too far above the 50 SMA.
+        # today_ext is the signed extension in ADR units (positive = above SMA).
+        # Names peeking from below the SMA (negative) still pass — only those
+        # already stretched >= EXT50_PEEK_MAX_EXTENSION_ADR above it are dropped.
+        if today_ext >= EXT50_PEEK_MAX_EXTENSION_ADR:
             continue
         today_bar = len(df) - 1
         # Check u1/u2/u3 in proximity order — keep the first that peeks.
@@ -922,6 +944,42 @@ def _round_list(arr, ndigits=4):
     return out
 
 
+def is_momo(df):
+    """A "momo": a >=30% low-to-high run over the last ~50 bars. Take the lowest
+    low in the window and the highest high AT OR AFTER it; True if that high is
+    >=30% above the low — a stock that bottomed and ran (not one that fell)."""
+    if df is None or len(df) < 2:
+        return False
+    n = min(50, len(df))
+    h = np.asarray(df["high"].values[-n:], dtype=np.float64)
+    l = np.asarray(df["low"].values[-n:], dtype=np.float64)
+    if np.any(np.isnan(l)) or np.any(np.isnan(h)):
+        return False
+    lo_i = int(np.argmin(l))
+    lo = float(l[lo_i])
+    if lo <= 0:
+        return False
+    return bool((float(np.max(h[lo_i:])) / lo - 1.0) >= 0.30)
+
+
+def is_tight_d1(df):
+    """A "tight day": today's candle range is under 1.10 x the 20-bar ADR — the
+    same definition the Tickers-view "Tight D1" filter uses (TC2000 ADR
+    convention). False when there isn't enough history to form a 20-bar ADR."""
+    if df is None or len(df) < 21:
+        return False
+    high_v = df["high"].values.astype(np.float64)
+    low_v = df["low"].values.astype(np.float64)
+    adr20 = adr_pct(high_v, low_v, 20)
+    if adr20 is None or adr20 <= 0:
+        return False
+    h_last = float(high_v[-1]); l_last = float(low_v[-1])
+    if np.isnan(h_last) or np.isnan(l_last) or l_last <= 0:
+        return False
+    todays_range_pct = (h_last / l_last - 1.0) * 100.0
+    return bool((todays_range_pct / adr20) < 1.10)
+
+
 def compute_ticker_pack(ticker, df, bench_rs_0d, bench_rs_1, bench_rs_3, bench_rs_5, bench_rs_20,
                         bench_rs_65, bench_rs_130, n_bars,
                         company_meta=None, fundamentals=None):
@@ -1052,6 +1110,8 @@ def compute_ticker_pack(ticker, df, bench_rs_0d, bench_rs_1, bench_rs_3, bench_r
         if ind:
             industry = ind
 
+    momo = is_momo(df)   # >=30% low-to-high run over the last ~50 bars
+
     return dict(
         ticker=ticker,
         long_name=long_name,
@@ -1075,6 +1135,7 @@ def compute_ticker_pack(ticker, df, bench_rs_0d, bench_rs_1, bench_rs_3, bench_r
         ext50=ext50,
         sector=sector,
         industry=industry,
+        momo=momo,
     )
 
 
@@ -1334,6 +1395,7 @@ def build_mini_svg(df, ticker, n_bars=100, width=300, height=210, meta=None):
     """
     if df is None or len(df) < 2:
         return f'<svg width="{width}" height="{height}" style="background:#000;display:block"></svg>'
+    momo = is_momo(df)   # >=30% low-to-high run over the last ~50 bars (computed on full df, before tailing)
     # SMAs need full history — a 100-bar window alone can't seed SMA50/200 —
     # so compute on the full close series first, then tail to the visible window.
     full_close = df["close"].values.astype(np.float64)
@@ -1410,6 +1472,15 @@ def build_mini_svg(df, ticker, n_bars=100, width=300, height=210, meta=None):
         f'<tspan fill="{pct_color}" font-weight="700">{pct:+.1f}%</tspan></text>',
     ]
 
+    # ── Momo badge — a little green circle by the ticker when the stock had a
+    # 30%+ low-to-high run in the last 50 bars. <title> gives a native tooltip. ──
+    if momo:
+        momo_x = min(width - 72, 8.0 + len(ticker) * 8.0 + 8.0)
+        parts.append(
+            f'<circle cx="{momo_x:.1f}" cy="11" r="3.6" fill="#27e83a" stroke="#0a0a0a" stroke-width="0.7">'
+            f'<title>Momo · 30%+ low→high in 50d</title></circle>'
+        )
+
     # ── Optional second header line — truncated longName when meta is present ──
     if has_meta_line:
         truncated_name = _xml_escape(_truncate(long_name, 38))
@@ -1451,6 +1522,20 @@ def build_mini_svg(df, ticker, n_bars=100, width=300, height=210, meta=None):
             pts = " ".join(seg)
             parts.append(f'<polyline points="{pts}" stroke="{color}" stroke-width="{lw}" stroke-linejoin="round"/>')
     parts.append('</g>')
+
+    # ── Per-ticker flag — top-right of the chart, in the empty right padding so it
+    #    scales with the thumbnail and never covers the header price/%. The <g>
+    #    carries data-flag-ticker; a delegated click handler toggles it, and the
+    #    is-tflagged class (set in JS) fills it magenta. Transparent rect = hit area.
+    fx = width - 21.0
+    fy = header_h + 5.0
+    parts.append(
+        f'<g class="tflag-icon" data-flag-ticker="{ticker}" style="cursor:pointer">'
+        f'<title>Flag / unflag {ticker}</title>'
+        f'<rect x="{fx-4:.1f}" y="{fy-4:.1f}" width="22" height="20" fill="transparent"/>'
+        f'<polygon points="{fx:.1f},{fy:.1f} {fx+11:.1f},{fy+3.5:.1f} {fx:.1f},{fy+7:.1f}"/>'
+        f'</g>'
+    )
 
     parts.append("</svg>")
     return "".join(parts)
@@ -1738,8 +1823,26 @@ section.theme.is-active { display: block; }
   border-bottom: 1px solid var(--border-faint);
   background: #000;
   overflow: hidden;
+  position: relative;
 }
 .member-card svg { width: 100%; height: auto; display: block; }
+/* Per-ticker flag — independent of the gold theme flag. Magenta when set, and it
+   shows on every place that ticker appears (thumbnails, Tickers rows, Setups rows). */
+.tflag-icon { cursor: pointer; }
+.tflag-icon polygon { fill: none; stroke: #9aa0a6; stroke-width: 1.3; }
+.tflag-icon.is-tflagged polygon { fill: #ff3fa0; stroke: #ff3fa0; }
+/* Card flag is a <g> inside the thumbnail SVG (scales with the chart). */
+.member-card .tflag-icon { opacity: 0.45; }
+.member-card:hover .tflag-icon, .member-card .tflag-icon.is-tflagged { opacity: 1; }
+.member-card .tflag-icon:hover polygon { stroke: #ff7fc4; }
+/* Row flag is a standalone inline SVG in the ticker-symbol cell. */
+.tflag-row {
+  width: 11px; height: 11px; margin-right: 5px; vertical-align: -1px;
+  opacity: 0.4; flex-shrink: 0;
+}
+.tflag-row:hover { opacity: 0.85; }
+.tflag-row.is-tflagged { opacity: 1; }
+.ticker-symbol-cell { white-space: nowrap; }
 
 /* ---------- status bar ---------- */
 .rm-statusbar {
@@ -1763,6 +1866,7 @@ section.theme.is-active { display: block; }
 
 .watchlist-controls {
   display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap; row-gap: 4px;
   padding: 6px 10px;
   background: #060608;
   border-bottom: 1px solid var(--border-faint);
@@ -1772,6 +1876,13 @@ section.theme.is-active { display: block; }
 .watchlist-controls label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
 .watchlist-controls input[type="checkbox"] { accent-color: var(--accent); }
 .watchlist-controls .wl-count { margin-left: auto; color: var(--fg-tertiary); font-family: var(--font-mono); }
+/* Rotation-quadrant filter (Chart-view theme rows) — labels colored to match
+   the RRG quadrants, doubling as a legend. */
+.watchlist-controls .wl-quad-group { display: inline-flex; align-items: center; gap: 8px; }
+.watchlist-controls .wl-quad-lbl.quad-improving { color: #5fc8ff; }
+.watchlist-controls .wl-quad-lbl.quad-leading   { color: #1eff1e; }
+.watchlist-controls .wl-quad-lbl.quad-weakening { color: #ffcc00; }
+.watchlist-controls .wl-quad-lbl.quad-lagging   { color: #ff3030; }
 
 .watchlist-table {
   width: 100%; border-collapse: collapse;
@@ -1821,6 +1932,13 @@ section.theme.is-active { display: block; }
 .watchlist-table tr.is-active { background: var(--bg-row-selected); }
 .watchlist-table tr.is-active td.theme-name { color: var(--accent); font-weight: 700; }
 .watchlist-table tbody tr.below-200 td.theme-name { color: var(--down); }
+/* Theme-name colored by its current RRG quadrant (set by JS from ROTATION_DATA).
+   Sits on the .theme-label span so it overrides the below-200 red; the active
+   row keeps its bold + selected background. */
+.watchlist-table td.theme-name .theme-label.quad-leading   { color: #1eff1e; }
+.watchlist-table td.theme-name .theme-label.quad-improving { color: #5fc8ff; }
+.watchlist-table td.theme-name .theme-label.quad-weakening { color: #ffcc00; }
+.watchlist-table td.theme-name .theme-label.quad-lagging   { color: #ff3030; }
 
 .watchlist-table .pos { color: var(--up); }
 .watchlist-table .neg { color: var(--down); }
@@ -2178,6 +2296,370 @@ body.view-tickers .watchlist-pane.setups-pane  { display: none !important; }
 body.view-setups  .watchlist-pane.themes-pane  { display: none; }
 body.view-setups  .watchlist-pane.tickers-pane { display: none !important; }
 body.view-setups  .watchlist-pane.setups-pane  { display: block !important; }
+body.view-candidates .watchlist-pane.themes-pane     { display: none; }
+body.view-candidates .watchlist-pane.tickers-pane    { display: none !important; }
+body.view-candidates .watchlist-pane.setups-pane     { display: none !important; }
+body.view-candidates .watchlist-pane.candidates-pane { display: flex !important; flex-direction: column; height: 100%; }
+body.view-candidates .rm-fn-brand .rm-status-dot     { background: #cc88ff; }
+/* ── Themes sub-views: Chart / Heatmap / History ─────────── */
+body.view-themes.tv-heatmap .body-grid { display: none; }
+body.view-themes.tv-heatmap .heatmap-page { display: flex; }
+.heatmap-page { display: none; flex: 1; min-height: 0; flex-direction: column; background: #000; }
+.heatmap-controls {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 8px 14px; border-bottom: 1px solid var(--border-faint);
+  background: var(--bg-title-grad);
+}
+.heatmap-controls .hm-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: #fff; margin-right: 4px;
+}
+.hm-win-btn {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+  color: var(--fg-secondary); background: #111;
+  border: 1px solid var(--border-faint); padding: 4px 12px; cursor: pointer;
+}
+.hm-win-btn:hover { color: var(--up); }
+.hm-win-btn.is-active { color: #000; background: var(--accent); border-color: var(--accent); }
+.heatmap-grid {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+  gap: 6px; padding: 12px; align-content: start;
+}
+.hm-tile {
+  display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  min-height: 86px; padding: 9px 11px; color: #fff;
+  border: 1px solid rgba(255,255,255,0.10); cursor: pointer; overflow: hidden;
+}
+.hm-tile:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
+.hm-tile .hm-name {
+  font-family: var(--font-sans); font-size: 12px; font-weight: 600;
+  line-height: 1.18; max-height: 2.4em; overflow: hidden;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+}
+.hm-tile .hm-meta { display: flex; justify-content: space-between; align-items: baseline; }
+.hm-tile .hm-rs {
+  font-family: var(--font-mono); font-size: 16px; font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+}
+.hm-tile .hm-n { font-family: var(--font-mono); font-size: 10px; opacity: 0.75; }
+.hm-tile.is-null { background: #161618 !important; color: var(--fg-tertiary); }
+/* expanded theme → member thumbnails */
+.heatmap-page.is-expanded .heatmap-controls,
+.heatmap-page.is-expanded .heatmap-grid { display: none; }
+.heatmap-expand { display: none; flex: 1; min-height: 0; flex-direction: column; }
+.heatmap-page.is-expanded .heatmap-expand { display: flex; }
+.hm-expand-head {
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+  padding: 8px 14px; border-bottom: 1px solid var(--border-faint);
+  background: var(--bg-title-grad);
+}
+.hm-expand-title {
+  font-family: var(--font-sans); font-size: 14px; font-weight: 700;
+  color: var(--fg-primary); letter-spacing: 0.03em;
+}
+.hm-back-btn, .hm-viewchart-btn {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+  color: var(--accent); background: #111;
+  border: 1px solid var(--border-faint); padding: 4px 12px; cursor: pointer;
+}
+.hm-back-btn:hover, .hm-viewchart-btn:hover { color: #000; background: var(--accent); }
+.hm-viewchart-btn { margin-left: auto; }
+.hm-expand-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+.hm-expand-body .member-card { cursor: pointer; }
+.hm-expand-body .member-card:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* History view (RS lines of flagged themes) — lives in <main>, sidebar stays */
+body.view-themes.tv-history main > section.theme,
+body.view-themes.tv-history #__ticker_view__ { display: none !important; }
+body.view-themes.tv-history #history-page { display: flex; }
+.history-page { display: none; flex-direction: column; min-width: 0; background: #000; height: calc(100vh - 70px); }
+.history-head {
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+  padding: 8px 14px; border-bottom: 1px solid var(--border-faint);
+  background: var(--bg-title-grad);
+}
+.history-head .history-title { font-family: var(--font-sans); font-size: 14px; font-weight: 700; color: var(--fg-primary); white-space: nowrap; }
+.history-head .history-hint { font-family: var(--font-sans); font-size: 11px; color: var(--fg-tertiary); }
+.hist-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-left: 8px; }
+.hist-grp { display: flex; align-items: center; }
+.hist-grp .hist-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #fff; letter-spacing: 0.04em; margin-right: 6px; }
+.hist-btn {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  color: var(--fg-secondary); background: #111;
+  border: 1px solid var(--border-faint); border-right: 0; padding: 3px 9px; cursor: pointer;
+}
+.hist-grp .hist-btn:last-of-type { border-right: 1px solid var(--border-faint); }
+.hist-btn:hover { color: var(--up); }
+.hist-btn.is-active { color: #000; background: var(--accent); border-color: var(--accent); }
+.hist-smooth { width: 110px; accent-color: var(--accent); cursor: pointer; }
+.hist-smooth-val { font-family: var(--font-mono); font-size: 11px; color: var(--accent); margin-left: 6px; min-width: 30px; }
+.history-head .history-hint { margin-left: auto; }
+.history-chart { flex: 1; min-height: 0; }
+.history-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  color: var(--fg-tertiary); font-family: var(--font-sans); font-size: 14px; text-align: center; padding: 0 24px;
+}
+/* View toggle in the header (replaces the old SORT cell) */
+.rm-view-btns { display: flex; gap: 0; margin-top: 2px; }
+.rm-view-btn {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  color: var(--fg-secondary); background: #111;
+  border: 1px solid var(--border-faint); border-right: 0;
+  padding: 2px 9px; cursor: pointer;
+}
+.rm-view-btn:last-child { border-right: 1px solid var(--border-faint); }
+.rm-view-btn:hover { color: var(--up); }
+.rm-view-btn.is-active { color: #000; background: var(--accent); border-color: var(--accent); }
+/* ── Narrative Map view — full-width, sidebar hidden ─────────── */
+body.view-themes.tv-map .body-grid { display: none; }
+body.view-themes.tv-map .map-page { display: flex; }
+.map-page { display: none; flex: 1; min-height: 0; flex-direction: column; background: #000; }
+.map-controls {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 8px 14px; border-bottom: 1px solid var(--border-faint); background: var(--bg-title-grad);
+}
+.map-controls .map-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  color: #fff; margin-right: 4px;
+}
+.map-win { display: flex; align-items: center; }
+.map-win .map-win-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #fff; letter-spacing: 0.04em; margin-right: 6px; }
+.map-win-btn {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--fg-secondary);
+  background: #111; border: 1px solid var(--border-faint); border-right: 0; padding: 4px 12px; cursor: pointer;
+}
+.map-win-btn:last-of-type { border-right: 1px solid var(--border-faint); }
+.map-win-btn:hover { color: var(--up); }
+.map-win-btn.is-active { color: #000; background: var(--accent); border-color: var(--accent); }
+.map-body { flex: 1; min-height: 0; overflow: hidden; padding: 0; position: relative; }
+.map-graph { display: block; width: 100%; height: 100%; }
+.map-graph text { font-family: var(--font-sans); fill: #fff; }
+.map-graph text.mono { font-family: var(--font-mono); }
+.map-graph .map-node { cursor: pointer; }
+.map-graph .map-node:hover circle { stroke: var(--accent); stroke-width: 2.5; }
+/* macro band */
+.map-macro { margin-bottom: 16px; border: 1px solid var(--border-faint); background: #0a0a0b; }
+.map-macro.macro-buildout { border-color: #1f5f80; }
+.map-macro.macro-output   { border-color: #1f6b4a; }
+.map-macro.macro-noise    { opacity: 0.72; border-style: dashed; }
+.map-macro-head {
+  display: flex; align-items: center; gap: 12px; padding: 7px 12px;
+  background: var(--bg-title-grad); border-bottom: 1px solid var(--border-faint);
+}
+.map-macro-title { font-family: var(--font-sans); font-size: 13px; font-weight: 800; letter-spacing: 0.06em; color: var(--fg-primary); }
+.map-flow { font-family: var(--font-mono); font-size: 11px; font-weight: 700; display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.map-flow .flow-in  { color: var(--up); }
+.map-flow .flow-out { color: var(--down); }
+.map-flow .flow-flat { color: var(--fg-tertiary); }
+.map-flow .map-rsnums { color: var(--fg-tertiary); font-weight: 400; }
+/* zone sub-band */
+.map-zone { padding: 9px 12px 12px; border-top: 1px solid #141416; }
+.map-zone:first-of-type { border-top: 0; }
+.map-zone-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.map-zone-name { font-family: var(--font-sans); font-size: 11px; font-weight: 700; color: var(--fg-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+.map-zone-strength { font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
+.map-chain-arrow { text-align: center; color: #2f7fa6; font-size: 13px; line-height: 1; margin: 0 0 4px; letter-spacing: 0.3em; }
+.map-straddle-note { font-family: var(--font-mono); font-size: 10px; color: var(--accent); padding: 4px 12px 0; }
+/* theme nodes */
+.map-nodes { display: flex; flex-wrap: wrap; gap: 6px; }
+.map-node {
+  position: relative; display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  padding: 7px 10px; min-width: 92px; max-width: 210px; color: #fff;
+  border: 1px solid rgba(255,255,255,0.12); cursor: pointer; overflow: hidden;
+}
+.map-node:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
+.map-node .mn-name { font-family: var(--font-sans); font-size: 11px; font-weight: 600; line-height: 1.15; max-height: 2.3em; overflow: hidden; text-shadow: 0 1px 2px rgba(0,0,0,0.7); }
+.map-node .mn-rs { font-family: var(--font-mono); font-size: 12px; font-weight: 700; text-shadow: 0 1px 2px rgba(0,0,0,0.7); }
+.map-node.mn-null { background: #161618 !important; color: var(--fg-tertiary); }
+.map-node.mn-straddle { border-style: dashed; border-color: var(--accent); }
+.map-node.mn-drift { box-shadow: inset 0 0 0 2px var(--accent); }
+/* expand overlay (member charts) — mirrors heatmap expand */
+.map-page.is-expanded .map-controls, .map-page.is-expanded .map-body { display: none; }
+.map-expand { display: none; flex: 1; min-height: 0; flex-direction: column; }
+.map-page.is-expanded .map-expand { display: flex; }
+.map-expand-head { display: flex; align-items: center; gap: 12px; flex-shrink: 0; padding: 8px 14px; border-bottom: 1px solid var(--border-faint); background: var(--bg-title-grad); }
+.map-expand-title { font-family: var(--font-sans); font-size: 14px; font-weight: 700; color: var(--fg-primary); }
+.map-expand-narr { font-family: var(--font-sans); font-size: 11px; color: var(--accent); font-style: italic; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-back-btn, .map-viewchart-btn { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--accent); background: #111; border: 1px solid var(--border-faint); padding: 4px 12px; cursor: pointer; }
+.map-back-btn:hover, .map-viewchart-btn:hover { color: #000; background: var(--accent); }
+.map-expand-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+.map-expand-body .member-card { cursor: pointer; }
+.map-expand-body .member-card:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* Rotation (RRG) view — full-width, sidebar hidden */
+body.view-themes.tv-rotation .body-grid { display: none; }
+body.view-themes.tv-rotation .rotation-page { display: flex; }
+.rotation-page { display: none; flex: 1; min-height: 0; flex-direction: column; background: #000; }
+.rotation-controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 16px; flex-shrink: 0;
+  padding: 8px 14px; border-bottom: 1px solid var(--border-faint); background: var(--bg-title-grad);
+}
+.rot-grp { display: flex; align-items: center; }
+.rot-grp .rot-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #fff; letter-spacing: 0.04em; margin-right: 6px; }
+.rot-thrust { width: 120px; accent-color: var(--accent); cursor: pointer; }
+.rot-thrust-val { font-family: var(--font-mono); font-size: 11px; color: var(--accent); margin-left: 6px; min-width: 54px; }
+.rot-btn {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  color: var(--fg-secondary); background: #111;
+  border: 1px solid var(--border-faint); border-right: 0; padding: 3px 9px; cursor: pointer;
+}
+.rot-grp .rot-btn:last-of-type, .rot-toggle { border-right: 1px solid var(--border-faint); }
+.rot-btn:hover { color: var(--up); }
+.rot-btn.is-active { color: #000; background: var(--accent); border-color: var(--accent); }
+.rotation-body { flex: 1; min-height: 0; display: flex; position: relative; }
+.rotation-chart { flex: 1; min-width: 0; min-height: 0; position: relative; z-index: 1; }
+#rotation-trail-canvas { position: absolute; top: 0; left: 0; pointer-events: auto; z-index: 3; cursor: default; }
+.rot-tooltip {
+  position: absolute; z-index: 4; pointer-events: none; display: none;
+  background: rgba(8,8,10,0.94); border: 1px solid var(--border-faint);
+  padding: 5px 8px; font-family: var(--font-sans); font-size: 11px; color: var(--fg-secondary);
+  white-space: nowrap; max-width: 260px;
+}
+.rot-tooltip b { color: #fff; }
+.rotation-side { width: 250px; flex-shrink: 0; border-left: 1px solid var(--border-faint); display: flex; flex-direction: column; min-height: 0; }
+.rotation-side-head { display: flex; flex-shrink: 0; border-bottom: 1px solid var(--border-faint); }
+.rot-side-btn {
+  flex: 1; font-family: var(--font-sans); font-size: 11px; font-weight: 700;
+  color: var(--fg-secondary); background: #111; border: 0; border-right: 1px solid var(--border-faint);
+  padding: 6px 4px; cursor: pointer;
+}
+.rot-side-btn:last-child { border-right: 0; }
+.rot-side-btn.is-active { color: var(--accent); background: var(--bg-row-selected); }
+.rotation-side-list { flex: 1; min-height: 0; overflow-y: auto; }
+.rot-item {
+  display: flex; align-items: center; gap: 7px; padding: 5px 10px;
+  border-bottom: 1px solid var(--border-faint); cursor: pointer;
+  font-family: var(--font-sans); font-size: 12px; color: var(--fg-primary);
+}
+.rot-item:hover { background: var(--bg-row-hover); }
+.rot-item .rot-dot { width: 9px; height: 9px; flex-shrink: 0; }
+.rot-item .rot-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rot-item .rot-bd { font-family: var(--font-mono); font-size: 10px; color: var(--fg-tertiary); }
+.rotation-scrub {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  padding: 9px 16px; border-top: 1px solid var(--border-faint); background: #0a0a0b;
+}
+.rotation-scrub .rot-scrub-lbl {
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--fg-tertiary); white-space: nowrap;
+}
+.rotation-scrub input[type="range"] {
+  flex: 1; -webkit-appearance: none; appearance: none; height: 4px;
+  background: #333; border-radius: 2px; cursor: pointer; outline: none;
+}
+.rotation-scrub input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 15px; height: 15px;
+  border-radius: 50%; background: var(--accent); cursor: pointer; border: 0;
+}
+.rotation-scrub input[type="range"]::-moz-range-thumb {
+  width: 15px; height: 15px; border-radius: 50%; background: var(--accent); cursor: pointer; border: 0;
+}
+.rotation-scrub .rot-scrub-date {
+  font-family: var(--font-mono); font-size: 11px; color: var(--fg-secondary);
+  min-width: 82px; text-align: right;
+}
+/* Click-a-dot overlay: the theme's synthetic chart + member thumbnails over the map */
+.rot-overlay {
+  position: fixed; left: 0; right: 0; top: 48px; bottom: 22px; z-index: 200;
+  background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center;
+}
+.rot-overlay-panel {
+  width: 92%; max-width: 1150px; height: 90%;
+  background: #000; border: 1px solid var(--border-faint);
+  display: flex; flex-direction: column; box-shadow: 0 10px 50px rgba(0,0,0,0.75);
+}
+.rot-overlay-head {
+  display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+  padding: 8px 14px; background: var(--bg-title-grad); border-bottom: 1px solid var(--border-faint);
+}
+.rot-overlay-title { font-family: var(--font-sans); font-size: 14px; font-weight: 700; color: var(--fg-primary); }
+.rot-overlay-close { background: transparent; border: 0; color: var(--fg-secondary); font-size: 15px; cursor: pointer; padding: 2px 8px; }
+.rot-overlay-close:hover { color: var(--up); }
+.rot-overlay-body { flex: 1; min-height: 0; overflow-y: auto; }
+.rot-overlay-body section.theme { display: block !important; }
+/* Ball-overlay filter toolbar: replaces the per-theme stats strip (which we
+   hide inside the overlay only — the Themes page keeps it). */
+.rot-ovf-bar { display: flex; align-items: center; gap: 0; flex-wrap: wrap; }
+.rot-ovf-sep { width: 12px; flex-shrink: 0; }
+.rot-overlay-body .chart-info-bar { display: none; }
+.rot-overlay-body.ovf-no-synth .composite-chart { display: none; }
+.rot-overlay-body .member-card.ovf-hidden { display: none; }
+.member-sub-panel {
+  display: block; width: 100%; height: 54px; background: #000;
+  border-top: 1px solid #1c1c1c;
+}
+/* ── Candidates pane ────────────────────────────────────── */
+.candidates-controls {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  padding: 6px 8px; border-bottom: 1px solid var(--border-faint);
+  background: var(--bg-title-grad);
+}
+#candidates-input {
+  flex: 1; background: rgba(255,255,255,0.07);
+  border: 1px solid var(--border); border-radius: 3px;
+  color: var(--fg-primary); font-family: var(--font-mono); font-size: 12px;
+  padding: 3px 7px; outline: none; text-transform: uppercase;
+}
+#candidates-input:focus { border-color: var(--accent); }
+#candidates-add-btn {
+  appearance: none; border: 1px solid var(--border); border-radius: 3px;
+  background: rgba(255,255,255,0.07); color: var(--fg-secondary);
+  font-family: var(--font-sans); font-size: 11px; font-weight: 700;
+  padding: 3px 10px; cursor: pointer; letter-spacing: 0.04em; white-space: nowrap;
+}
+#candidates-add-btn:hover { background: var(--accent); color: #000; border-color: var(--accent); }
+.candidates-scroll { flex: 1; overflow-y: auto; }
+.candidates-table { width: 100%; border-collapse: collapse; }
+.candidates-table th {
+  text-align: left; font-size: 10px; font-family: var(--font-chrome);
+  font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--fg-tertiary); border-bottom: 1px solid var(--border);
+  padding: 4px 8px; position: sticky; top: 0; background: #000;
+}
+.candidates-table td {
+  padding: 5px 8px; border-bottom: 1px solid var(--border-faint);
+  font-size: 12px; vertical-align: middle;
+}
+.candidates-table tr { cursor: pointer; }
+.candidates-table tr:hover td { background: var(--bg-row-hover); }
+.candidates-table tr.cand-active td { background: var(--bg-row-selected); }
+.candidates-table tr.cand-active .cand-ticker { color: var(--accent); font-weight: 700; }
+.cand-ticker { font-family: var(--font-mono); font-weight: 600; font-size: 13px; color: var(--fg-primary); }
+.cand-name   { font-size: 11px; font-family: var(--font-sans); color: var(--fg-secondary);
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+.cand-sector { font-size: 10px; font-family: var(--font-sans); color: var(--fg-tertiary); }
+.cand-price  { font-family: var(--font-mono); font-size: 11px; color: var(--fg-primary); text-align: right; }
+.cand-chg-pos { font-family: var(--font-mono); font-size: 11px; color: var(--up); text-align: right; }
+.cand-chg-neg { font-family: var(--font-mono); font-size: 11px; color: var(--down); text-align: right; }
+.cand-unknown { color: var(--fg-tertiary); font-style: italic; font-size: 11px; }
+.cand-remove {
+  background: none; border: none; cursor: pointer; color: var(--fg-tertiary);
+  font-size: 15px; line-height: 1; padding: 0 4px; opacity: 0.4; display: block;
+}
+.cand-remove:hover { color: var(--down); opacity: 1; }
+.theme-chip {
+  display: inline-block; padding: 1px 5px; border-radius: 3px;
+  font-size: 10px; font-family: var(--font-sans); font-weight: 600;
+  margin: 1px 2px 1px 0; white-space: nowrap;
+}
+.theme-chip-hot  { background: rgba(30,255,30,0.14); color: var(--up);   border: 1px solid rgba(30,255,30,0.28); }
+.theme-chip-warm { background: rgba(255,200,0,0.12); color: #ffcc00;      border: 1px solid rgba(255,200,0,0.25); }
+.theme-chip-cold { background: rgba(255,255,255,0.05); color: var(--fg-tertiary); border: 1px solid var(--border-faint); }
+/* ── Hot-theme confluence (Tickers view) ───────────────── */
+.tickers-table th.hot-col, .tickers-table td.hot-cell {
+  text-align: center; width: 34px;
+}
+.tickers-table td.hot-cell {
+  font-variant-numeric: tabular-nums; font-weight: 700; color: var(--fg-tertiary);
+}
+.tickers-table td.hot-cell.hot-1 { color: #1eff1e; }
+.tickers-table td.hot-cell.hot-2 { color: #1eff1e; }
+.tickers-table td.hot-cell.hot-3plus { color: #000; background: #1eff1e; border-radius: 3px; }
+/* Row highlight when a ticker sits in 2+ flagged themes */
+.tickers-table tr.tickers-row.hot-confluence td { background: rgba(30,255,30,0.06); }
+.tickers-table tr.tickers-row.hot-confluence:hover td { background: rgba(30,255,30,0.12); }
+/* Individual hot themes greened inside the membership cell */
+.theme-membership-cell .mem-theme.is-hot { color: #1eff1e; font-weight: 700; }
+.theme-membership-cell .mem-theme { color: inherit; }
 .setups-meta {
   padding: 4px 10px; font-size: 11px; color: var(--fg-tertiary);
   font-family: var(--font-sans); border-bottom: 1px solid var(--border-faint);
@@ -2364,18 +2846,20 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     bench_rs_1   = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=1)
     bench_rs_3   = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=3)
     bench_rs_5   = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=5)
+    bench_rs_10  = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=10)
     bench_rs_20  = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=20)
     bench_rs_65  = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=65)
     bench_rs_130 = tc2000_rs_raw(bench_o, bench_h, bench_l, bench_c, n_bars=130)
     bench_5d  = n_period_return(bench_c, 5)
     bench_adr = adr_pct(bench_h, bench_l, 20)
-    for name in ("bench_rs_0d", "bench_rs_1", "bench_rs_3", "bench_rs_5", "bench_rs_20", "bench_rs_65", "bench_rs_130"):
+    for name in ("bench_rs_0d", "bench_rs_1", "bench_rs_3", "bench_rs_5", "bench_rs_10", "bench_rs_20", "bench_rs_65", "bench_rs_130"):
         if locals().get(name) is None or locals().get(name) == 0:
             print(f"\nWARNING: Universe {name} could not be computed; using 1.0 as fallback.")
     bench_rs_0d  = bench_rs_0d  if (bench_rs_0d  is not None and bench_rs_0d  != 0) else 1.0
     bench_rs_1   = bench_rs_1   if (bench_rs_1   is not None and bench_rs_1   != 0) else 1.0
     bench_rs_3   = bench_rs_3   if (bench_rs_3   is not None and bench_rs_3   != 0) else 1.0
     bench_rs_5   = bench_rs_5   if (bench_rs_5   is not None and bench_rs_5   != 0) else 1.0
+    bench_rs_10  = bench_rs_10  if (bench_rs_10  is not None and bench_rs_10  != 0) else 1.0
     bench_rs_20  = bench_rs_20  if (bench_rs_20  is not None and bench_rs_20  != 0) else 1.0
     bench_rs_65  = bench_rs_65  if (bench_rs_65  is not None and bench_rs_65  != 0) else 1.0
     bench_rs_130 = bench_rs_130 if (bench_rs_130 is not None and bench_rs_130 != 0) else 1.0
@@ -2383,11 +2867,66 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
           f"5d={bench_rs_5:+.4f}  20d={bench_rs_20:+.4f}  65d={bench_rs_65:+.4f}  130d={bench_rs_130:+.4f}  "
           f"5d return={bench_5d:+.2f}%  ADR%={bench_adr:.2f}%")
 
+    # ── Synthetic narrative themes: one equal-weight composite per story group
+    # (each zone + the Buildout roll-up), folded into the SAME pipeline as real
+    # themes so they are flaggable + graphable everywhere (watchlist / History /
+    # Rotation / Heatmap). In these shared views they score vs the universe like
+    # every theme; the Map scores them vs SPY. Member set = the group's deduped
+    # tickers (THEME_CHAIN_POSITION + TICKER_ZONE_OVERRIDE straddlers in each).
+    NARRATIVE_THEME_IDS = []
+    _synth_members = {}
+    if NARRATIVE_ZONES and THEME_CHAIN_POSITION:
+        def _prio(z):
+            try:
+                return NARRATIVE_ZONE_PRIORITY.index(z)
+            except ValueError:
+                return 999
+        _tk_zones = {}
+        for _th, _mem in THEMES.items():
+            _z0 = THEME_CHAIN_POSITION.get(_th)
+            if not _z0:
+                continue
+            for _tk in _mem:
+                _tk_zones.setdefault(_tk, set()).add(_z0)
+        _tk_final = {}
+        for _tk, _zs in _tk_zones.items():
+            if _tk in TICKER_ZONE_OVERRIDE:
+                _tk_final[_tk] = [z for z in TICKER_ZONE_OVERRIDE[_tk] if z in NARRATIVE_ZONES]
+            else:
+                _tk_final[_tk] = [min(_zs, key=_prio)]
+        for _tk in TICKER_ZONE_OVERRIDE:
+            if _tk not in _tk_final:
+                _zz = [z for z in TICKER_ZONE_OVERRIDE[_tk] if z in NARRATIVE_ZONES]
+                if _zz:
+                    _tk_final[_tk] = _zz
+        _zlabel = {"hub": "Hub", "infrastructure": "Infrastructure", "power": "Power",
+                   "materials": "Materials", "output": "Output", "adjacent": "Adjacent",
+                   "crypto": "Crypto", "noise": "Noise"}
+        for _z in NARRATIVE_ZONES:
+            _ms = sorted({tk for tk, zs in _tk_final.items() if _z in zs})
+            if len(_ms) >= 3:
+                _sid = "nm_" + _z
+                _synth_members[_sid] = _ms
+                THEME_LABELS.setdefault(_sid, "✦ " + _zlabel.get(_z, _z.title()))
+                NARRATIVE_THEME_IDS.append(_sid)
+        _bo = sorted({tk for tk, zs in _tk_final.items()
+                      if any(z in ("hub", "infrastructure", "power", "materials") for z in zs)})
+        if len(_bo) >= 3:
+            _synth_members["nm_buildout"] = _bo
+            THEME_LABELS.setdefault("nm_buildout", "✦ Buildout (all)")
+            NARRATIVE_THEME_IDS.append("nm_buildout")
+        for _sid in NARRATIVE_THEME_IDS:
+            THEME_NARRATIVES.setdefault(_sid, "Synthetic narrative composite — equal-weight blend of every stock in this story group. Flag and graph it like any theme.")
+    NARRATIVE_THEME_SET = set(NARRATIVE_THEME_IDS)
+    themes_all = {**THEMES, **_synth_members}
+    theme_keys = list(theme_keys) + NARRATIVE_THEME_IDS
+
     # ── First pass: build composites, compute 1d + 5d + 20d RS ratios ──
     print("\nBuilding composites and computing TC2000 RS ratios (theme / Universe) for 1d, 5d, 20d...")
+    print(f"  (+{len(NARRATIVE_THEME_IDS)} synthetic narrative themes)")
     theme_pack = {}
     for tk_theme in theme_keys:
-        members = THEMES[tk_theme]
+        members = themes_all[tk_theme]
         composite_df, used, missing = build_composite(members, cache, n_bars)
         if missing:
             all_missing.extend([(tk_theme, m) for m in missing])
@@ -2399,8 +2938,12 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
                                            composite_df["low"].values,  composite_df["close"].values)
         theme_rs_1   = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
                                       composite_df["low"].values,  composite_df["close"].values, n_bars=1)
+        theme_rs_3   = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
+                                      composite_df["low"].values,  composite_df["close"].values, n_bars=3)
         theme_rs_5   = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
                                       composite_df["low"].values,  composite_df["close"].values, n_bars=5)
+        theme_rs_10  = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
+                                      composite_df["low"].values,  composite_df["close"].values, n_bars=10)
         theme_rs_20  = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
                                       composite_df["low"].values,  composite_df["close"].values, n_bars=20)
         theme_rs_65  = tc2000_rs_raw(composite_df["open"].values, composite_df["high"].values,
@@ -2413,7 +2956,9 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         # of every theme's ratio (see compute_ticker_pack for the same fix).
         rs0d_ratio  = (theme_rs_0d  / abs(bench_rs_0d))  if theme_rs_0d  is not None else -1e9
         rs1_ratio   = (theme_rs_1   / abs(bench_rs_1))   if theme_rs_1   is not None else -1e9
+        rs3_ratio   = (theme_rs_3   / abs(bench_rs_3))   if theme_rs_3   is not None else -1e9
         rs5_ratio   = (theme_rs_5   / abs(bench_rs_5))   if theme_rs_5   is not None else -1e9
+        rs10_ratio  = (theme_rs_10  / abs(bench_rs_10))  if theme_rs_10  is not None else -1e9
         rs20_ratio  = (theme_rs_20  / abs(bench_rs_20))  if theme_rs_20  is not None else -1e9
         rs65_ratio  = (theme_rs_65  / abs(bench_rs_65))  if theme_rs_65  is not None else -1e9
         rs130_ratio = (theme_rs_130 / abs(bench_rs_130)) if theme_rs_130 is not None else -1e9
@@ -2428,10 +2973,12 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             composite_df=composite_df, used=used,
             theme_5d=theme_5d, theme_adr=theme_adr,
             theme_rs_0d=theme_rs_0d,
-            theme_rs_1=theme_rs_1, theme_rs_5=theme_rs_5, theme_rs_20=theme_rs_20,
+            theme_rs_1=theme_rs_1, theme_rs_3=theme_rs_3, theme_rs_5=theme_rs_5,
+            theme_rs_10=theme_rs_10, theme_rs_20=theme_rs_20,
             theme_rs_65=theme_rs_65, theme_rs_130=theme_rs_130,
             rs0d_ratio=rs0d_ratio,
-            rs1_ratio=rs1_ratio, rs5_ratio=rs5_ratio, rs20_ratio=rs20_ratio,
+            rs1_ratio=rs1_ratio, rs3_ratio=rs3_ratio, rs5_ratio=rs5_ratio,
+            rs10_ratio=rs10_ratio, rs20_ratio=rs20_ratio,
             rs65_ratio=rs65_ratio, rs130_ratio=rs130_ratio,
             comp3=theme_comp3, comp5=theme_comp5, comp10=theme_comp10,
             comp20=theme_comp20, comp30=theme_comp30,
@@ -2482,9 +3029,15 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             config={"displayModeBar": False, "scrollZoom": True, "doubleClick": "reset"},
         )
 
+        # Synthetic narrative themes can span hundreds of tickers; cap their
+        # member grid so the HTML doesn't balloon (their value is the composite).
+        _grid_used = used[:30] if tk_theme in NARRATIVE_THEME_SET else used
         member_svgs = "".join(
-            f'<div class="member-card">{build_mini_svg(cache[tk], tk, meta=company_meta.get(tk))}</div>'
-            for tk in used
+            f'<div class="member-card" data-ticker="{tk}" '
+            f'data-momo="{1 if is_momo(cache[tk]) else 0}" '
+            f'data-tight="{1 if is_tight_d1(cache[tk]) else 0}">'
+            f'{build_mini_svg(cache[tk], tk, meta=company_meta.get(tk))}</div>'
+            for tk in _grid_used
         )
 
         is_below_200 = (pos_css == "pos-below")
@@ -2542,7 +3095,10 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
 
     if ungrouped_in_cache:
         member_svgs = "".join(
-            f'<div class="member-card">{build_mini_svg(cache[tk], tk, meta=company_meta.get(tk))}</div>'
+            f'<div class="member-card" data-ticker="{tk}" '
+            f'data-momo="{1 if is_momo(cache[tk]) else 0}" '
+            f'data-tight="{1 if is_tight_d1(cache[tk]) else 0}">'
+            f'{build_mini_svg(cache[tk], tk, meta=company_meta.get(tk))}</div>'
             for tk in ungrouped_in_cache
         )
         ungrouped_section = (
@@ -2942,9 +3498,10 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             f' data-rs65="{rs65_attr}" data-rs130="{rs130_attr}"'
             f' data-comp3="{comp3_attr}" data-comp5="{comp5_attr}" data-comp10="{comp10_attr}"'
             f' data-comp20="{comp20_attr}" data-comp30="{comp30_attr}"'
-            f' data-adr="{adr_attr}" data-ext50="{ext50_attr}">'
-            f'<td class="ticker-symbol-cell"><span class="ticker-symbol">{tk}</span></td>'
+            f' data-adr="{adr_attr}" data-ext50="{ext50_attr}" data-momo="{1 if p.get("momo") else 0}" data-hot="0">'
+            f'<td class="ticker-symbol-cell"><svg class="tflag-icon tflag-row" viewBox="0 0 12 12" data-flag-ticker="{tk}" title="Flag / unflag {tk}"><polygon points="2,1 10,4 2,7"/></svg><span class="ticker-symbol">{tk}</span></td>'
             f'<td class="theme-membership-cell" title="{theme_cell_text}">{theme_cell_text}</td>'
+            f'<td class="num hot-cell"></td>'
             f'<td class="num {_rs_cls(rs0d)}">{rs0d_str}</td>'
             f'<td class="num {_rs_cls(rs1)}">{rs1_str}</td>'
             f'<td class="num {_rs_cls(rs3)}">{rs3_str}</td>'
@@ -2960,6 +3517,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         '<thead><tr>'
         '<th data-sort-key="label"        data-sort-type="text">Ticker</th>'
         '<th data-sort-key="theme-label"  data-sort-type="text">Theme</th>'
+        '<th data-sort-key="hot"          data-sort-type="num" class="hot-col" title="How many of your flagged (hot) themes this ticker belongs to. Flag themes in the Themes view; click to sort confluence names to the top.">Hot</th>'
         '<th data-sort-key="rs0d"         data-sort-type="num" class="sort-active">0D</th>'
         '<th data-sort-key="rs1"          data-sort-type="num">1d</th>'
         '<th data-sort-key="rs3"          data-sort-type="num">3d</th>'
@@ -3038,7 +3596,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             f' data-rs65="{rs65_attr}" data-rs130="{rs130_attr}"'
             f' data-comp10="{comp10_attr}" data-adr="{adr_attr_val}"'
             f' data-slot="u{m["slot"]}">'
-            f'<td class="ticker-symbol-cell"><span class="ticker-symbol">{tk}</span></td>'
+            f'<td class="ticker-symbol-cell"><svg class="tflag-icon tflag-row" viewBox="0 0 12 12" data-flag-ticker="{tk}" title="Flag / unflag {tk}"><polygon points="2,1 10,4 2,7"/></svg><span class="ticker-symbol">{tk}</span></td>'
             f'<td class="theme-membership-cell" title="{theme_labels}">{theme_labels}</td>'
             f'<td class="num">u{m["slot"]}</td>'
             f'<td class="num pos">+{m["today_sd_abs"]:.3f}</td>'
@@ -3126,7 +3684,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             f' data-rs5="{_ffa(rs5)}" data-rs20="{_ffa(rs20)}"'
             f' data-rs65="{_ffa(rs65)}" data-rs130="{_ffa(rs130)}"'
             f' data-comp10="{comp10_attr}" data-adr="{adr_attr_val}">'
-            f'<td class="ticker-symbol-cell"><span class="ticker-symbol">{tk}</span></td>'
+            f'<td class="ticker-symbol-cell"><svg class="tflag-icon tflag-row" viewBox="0 0 12 12" data-flag-ticker="{tk}" title="Flag / unflag {tk}"><polygon points="2,1 10,4 2,7"/></svg><span class="ticker-symbol">{tk}</span></td>'
             f'<td class="theme-membership-cell" title="{theme_labels}">{theme_labels}</td>'
             f'<td class="num">{bottom_date}</td>'
             f'<td class="num neg">{below200_str}</td>'
@@ -3205,7 +3763,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
             f' data-rs5="{_tra(rs5)}" data-rs20="{_tra(rs20)}"'
             f' data-rs65="{_tra(rs65)}" data-rs130="{_tra(rs130)}"'
             f' data-comp10="{comp10_attr}" data-adr="{adr_attr_val}">'
-            f'<td class="ticker-symbol-cell"><span class="ticker-symbol">{tk}</span></td>'
+            f'<td class="ticker-symbol-cell"><svg class="tflag-icon tflag-row" viewBox="0 0 12 12" data-flag-ticker="{tk}" title="Flag / unflag {tk}"><polygon points="2,1 10,4 2,7"/></svg><span class="ticker-symbol">{tk}</span></td>'
             f'<td class="theme-membership-cell" title="{theme_labels}">{theme_labels}</td>'
             f'<td class="num">{tf}</td>'
             f'<td class="num">{_trd(lo, "{:.2f}")}</td>'
@@ -3261,7 +3819,14 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         '<label><input type="checkbox" id="toggle-hide-below" checked/> Hide &lt; 200D</label>'
         '<label title="Today candle range &lt; 1.10 × ADR"><input type="checkbox" id="toggle-tight-only"/> Tight D1</label>'
         '<label title="Tickers view only: price within -2.0 to +4.1 ADR of the 50-day SMA"><input type="checkbox" id="toggle-near-50sma"/> Near 50SMA</label>'
+        '<label title="Tickers view only: a 30%+ low-to-high run in the last 50 days (momo)"><input type="checkbox" id="toggle-momo"/> Momo</label>'
         '<label title="Show only rows belonging to flagged themes"><input type="checkbox" id="toggle-flagged-only"/> Flagged</label>'
+        '<span class="wl-quad-group" title="Hide rows by their rotation quadrant (Chart: theme rows; Tickers: stocks whose themes are all in hidden quadrants)">'
+        '<label class="wl-quad-lbl quad-improving"><input type="checkbox" id="wl-quad-improving" data-quad="improving" checked/> Improving</label>'
+        '<label class="wl-quad-lbl quad-leading"><input type="checkbox" id="wl-quad-leading" data-quad="leading" checked/> Leading</label>'
+        '<label class="wl-quad-lbl quad-weakening"><input type="checkbox" id="wl-quad-weakening" data-quad="weakening" checked/> Weakening</label>'
+        '<label class="wl-quad-lbl quad-lagging"><input type="checkbox" id="wl-quad-lagging" data-quad="lagging" checked/> Lagging</label>'
+        '</span>'
         '<span class="wl-count" id="wl-visible-count"></span>'
         f'<button type="button" class="filter-icon-btn" id="filter-cell" title="Filter sectors and themes">{filter_icon_svg}'
         '<span class="filter-icon-dot" id="filter-badge"></span>'
@@ -3315,6 +3880,27 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         '</div>'
         f'{tighten_table_html}'
         '<div class="tickers-empty" id="tighten-empty">No tightening ranges on this timeframe right now.</div>'
+        '</div>'
+        '</div>'
+        '<div class="watchlist-pane candidates-pane" id="candidates-pane" style="display:none">'
+        '<div class="candidates-controls">'
+        '<input type="text" id="candidates-input" placeholder="Add ticker…" autocomplete="off" spellcheck="false"/>'
+        '<button type="button" id="candidates-add-btn">Add</button>'
+        '<span class="wl-count" id="candidates-count"></span>'
+        '</div>'
+        '<div class="candidates-scroll">'
+        '<table class="candidates-table" id="candidates-table">'
+        '<thead><tr>'
+        '<th style="width:24px"></th>'
+        '<th>Ticker</th>'
+        '<th>Name</th>'
+        '<th>Themes</th>'
+        '<th>Sector</th>'
+        '<th style="text-align:right">Last</th>'
+        '<th style="text-align:right">Day%</th>'
+        '</tr></thead>'
+        '<tbody id="candidates-tbody"></tbody>'
+        '</table>'
         '</div>'
         '</div>'
     )
@@ -3472,10 +4058,456 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         "themeDominantIndustry": theme_dominant_industry,
     }, separators=(",", ":"), default=str)
 
+    _theme_rank_order = sorted_keys  # ordered best-to-worst by 5d RS
+    _theme_labels_map = {k: THEME_LABELS.get(k, k.replace("_", " ").title()) for k in sorted_keys}
+    _theme_rs5_map = {
+        k: float(theme_pack[k]["rs5_ratio"])
+        for k in sorted_keys
+        if theme_pack[k]["rs5_ratio"] is not None and theme_pack[k]["rs5_ratio"] > -1e8
+    }
+    theme_rank_order_json = _json.dumps(_theme_rank_order, separators=(",", ":"))
+    theme_labels_map_json = _json.dumps(_theme_labels_map, separators=(",", ":"))
+    theme_rs5_map_json    = _json.dumps(_theme_rs5_map,    separators=(",", ":"), default=float)
+
+    # Theme heatmap data: every theme with its RS-vs-Universe ratio in five
+    # windows (0d/1d/3d/5d/10d). The Heatmap page colors + sorts by whichever
+    # window is toggled; sentinel/None ratios become null (greyed tiles).
+    def _hm_val(v):
+        return float(v) if (v is not None and v > -1e8) else None
+    _heatmap_data = [
+        {
+            "id": k,
+            "label": _theme_labels_map[k],
+            "n": len(theme_pack[k]["used"]),
+            "rs": {
+                "0d":  _hm_val(theme_pack[k]["rs0d_ratio"]),
+                "1d":  _hm_val(theme_pack[k]["rs1_ratio"]),
+                "3d":  _hm_val(theme_pack[k]["rs3_ratio"]),
+                "5d":  _hm_val(theme_pack[k]["rs5_ratio"]),
+                "10d": _hm_val(theme_pack[k]["rs10_ratio"]),
+            },
+        }
+        for k in sorted_keys
+    ]
+    heatmap_data_json = _json.dumps(_heatmap_data, separators=(",", ":"), default=float)
+
+    # ── Narrative Map data (MAP_DATA) — the "Map" sub-view ──────────────
+    # Story-space arrangement: every theme placed in its zone, tinted by its
+    # strength vs SPY (the research-validated benchmark, NOT the equal-weight
+    # universe the other sub-views use). Region headers carry equal-weight-
+    # composite strength + money in/out flow. See NARRATIVE_MAP.md.
+    _spy_df_map = cache.get("SPY")
+    _spy_series_map = None
+    if _spy_df_map is not None and len(_spy_df_map):
+        _sd = _spy_df_map.copy()
+        _sd["date"] = pd.to_datetime(_sd["date"])
+        _spy_series_map = _sd.sort_values("date").set_index("date")["close"].astype(float)
+        _spy_series_map = _spy_series_map[~_spy_series_map.index.duplicated(keep="last")]
+
+    def _rs_vs_spy(comp_df, n):
+        """Simple cumulative-return RS of a composite vs SPY over the last n bars,
+        in points (theme return minus SPY return). None if unavailable."""
+        if comp_df is None or _spy_series_map is None or len(comp_df) < n + 1:
+            return None
+        closes = comp_df["close"].values
+        c_now, c_then = float(closes[-1]), float(closes[-1 - n])
+        if not (c_then > 0):
+            return None
+        d_now = pd.to_datetime(comp_df["date"].iloc[-1])
+        d_then = pd.to_datetime(comp_df["date"].iloc[-1 - n])
+        s_now = _spy_series_map.asof(d_now); s_then = _spy_series_map.asof(d_then)
+        if s_now != s_now or s_then != s_then or not s_then or float(s_then) <= 0:
+            return None
+        return ((c_now / c_then) - (float(s_now) / float(s_then))) * 100.0
+
+    # ── Drift-alarm: market-neutral co-movement of each theme vs the AI core,
+    # flagging themes whose tape disagrees with their filed zone. Market-neutral
+    # (residualize vs SPY first) because raw corr-to-AI tracks market beta and
+    # false-flags big names. Threshold is DERIVED from the data — the midpoint
+    # between the buildout cohort's median neutral-corr and the noise cohort's —
+    # not picked by eye.
+    _ai_core_comp, _, _ = build_composite(
+        ["NVDA", "AVGO", "AMD", "MU", "CRWV", "NBIS", "VRT", "ANET", "AMAT", "LRCX"], cache, n_bars)
+    def _ret_by_date(comp_df):
+        if comp_df is None or len(comp_df) < 2:
+            return None
+        s = pd.Series(np.asarray(comp_df["close"].values, dtype=float),
+                      index=pd.to_datetime(comp_df["date"]))
+        return s[~s.index.duplicated(keep="last")].sort_index().pct_change()
+    _ai_ret = _ret_by_date(_ai_core_comp)
+    _spy_ret = _spy_series_map.pct_change() if _spy_series_map is not None else None
+    def _neutral_corr(cdf):
+        tr = _ret_by_date(cdf)
+        if tr is None or _ai_ret is None or _spy_ret is None:
+            return None
+        d = pd.concat([tr, _ai_ret, _spy_ret], axis=1, keys=["t", "ai", "s"]).dropna()
+        if len(d) < 30:
+            return None
+        d = d.iloc[-63:]
+        s = d["s"].values; vs = float(np.var(s))
+        if vs <= 0:
+            return None
+        def _resid(y):
+            return y - (np.cov(y, s)[0, 1] / vs) * s
+        et, ea = _resid(d["t"].values), _resid(d["ai"].values)
+        if np.std(et) == 0 or np.std(ea) == 0:
+            return None
+        return float(np.corrcoef(et, ea)[0, 1])
+    _neu = {}
+    for k in sorted_keys:
+        if k in NARRATIVE_THEME_SET:
+            continue
+        _neu[k] = _neutral_corr(theme_pack[k]["composite_df"])
+    _bo_v = [v for k, v in _neu.items()
+             if THEME_CHAIN_POSITION.get(k) in ("hub", "infrastructure", "power", "materials") and v is not None]
+    _no_v = [v for k, v in _neu.items() if THEME_CHAIN_POSITION.get(k) == "noise" and v is not None]
+    # Conservative, high-confidence flags only: a name must cross fully into the
+    # OPPOSITE cohort's territory (the buildout median / the noise median), not
+    # merely past a midpoint. Buildout/Hub are NOT flagged — the physical build
+    # is definitionally the AI story, so co-movement can't disconfirm it. Output
+    # is the "application-branch" claim the tape CAN disconfirm (SaaS disruption).
+    _med_bo = float(np.median(_bo_v)) if _bo_v else 0.30
+    _med_no = float(np.median(_no_v)) if _no_v else 0.05
+    _drift_flags = {}
+    for k, v in _neu.items():
+        if v is None:
+            continue
+        macro = NARRATIVE_ZONES.get(THEME_CHAIN_POSITION.get(k), {}).get("macro", "noise")
+        if macro == "output" and v < _med_no:
+            _drift_flags[k] = "filed in Output but trades independent of the AI core (corr %.2f < noise median %.2f)" % (v, _med_no)
+        elif macro in ("adjacent", "crypto", "noise") and v > _med_bo:
+            _drift_flags[k] = "filed off-narrative but trades like the AI buildout (corr %.2f > buildout median %.2f)" % (v, _med_bo)
+    if _drift_flags:
+        print("\nDRIFT-ALARM (buildout median %.2f, noise median %.2f) — high-confidence zone discrepancies:" % (_med_bo, _med_no))
+        for k in sorted(_drift_flags, key=lambda x: _theme_labels_map.get(x, x)):
+            print("  [%-13s] %s: %s" % (THEME_CHAIN_POSITION.get(k), _theme_labels_map.get(k, k), _drift_flags[k]))
+    else:
+        print("\nDRIFT-ALARM — no high-confidence zone discrepancies flagged.")
+
+    # theme nodes (the real themes), placed by zone + tinted vs SPY
+    _map_themes = []
+    for k in sorted_keys:
+        zone = THEME_CHAIN_POSITION.get(k)
+        if zone is None:
+            continue
+        cdf = theme_pack[k]["composite_df"]
+        _map_themes.append({
+            "id": k, "label": _theme_labels_map[k], "zone": zone,
+            "macro": NARRATIVE_ZONES.get(zone, {}).get("macro", "noise"),
+            "n": len(theme_pack[k]["used"]),
+            "rs5": _rs_vs_spy(cdf, 5), "rs20": _rs_vs_spy(cdf, 20), "rs65": _rs_vs_spy(cdf, 65),
+            "narrative": THEME_NARRATIVES.get(k, ""),
+            "drift": _drift_flags.get(k),
+        })
+
+    # ticker -> zone(s): override straddles; else primary by narrative priority
+    def _priority_idx(z):
+        try:
+            return NARRATIVE_ZONE_PRIORITY.index(z)
+        except ValueError:
+            return 999
+    _ticker_zones = {}
+    for tk, th_ids in theme_ids_by_ticker.items():
+        if tk in TICKER_ZONE_OVERRIDE:
+            zs = [z for z in TICKER_ZONE_OVERRIDE[tk] if z in NARRATIVE_ZONES]
+        else:
+            cand = sorted({THEME_CHAIN_POSITION[t] for t in th_ids if t in THEME_CHAIN_POSITION},
+                          key=_priority_idx)
+            zs = cand[:1]
+        if zs:
+            _ticker_zones[tk] = zs
+    for tk in TICKER_ZONE_OVERRIDE:                       # ensure override-only names land
+        if tk not in _ticker_zones:
+            zs = [z for z in TICKER_ZONE_OVERRIDE[tk] if z in NARRATIVE_ZONES]
+            if zs:
+                _ticker_zones[tk] = zs
+    _straddlers = sorted([tk for tk, zs in _ticker_zones.items() if len(set(zs)) > 1])
+
+    def _tickers_in_zones(zone_set):
+        return [tk for tk, zs in _ticker_zones.items() if any(z in zone_set for z in zs)]
+
+    def _region_rs(tickers):
+        comp, used, _ = build_composite(list(tickers), cache, n_bars)
+        if comp is None:
+            return {"rs5": None, "rs20": None, "rs65": None, "n": 0, "flow": "flat"}
+        rs5 = _rs_vs_spy(comp, 5); rs20 = _rs_vs_spy(comp, 20); rs65 = _rs_vs_spy(comp, 65)
+        flow = "flat"
+        if rs5 is not None and rs20 is not None:
+            if rs5 >= rs20 and rs5 > 0:
+                flow = "in"
+            elif rs5 < rs20:
+                flow = "out"
+        return {"rs5": rs5, "rs20": rs20, "rs65": rs65, "n": len(used), "flow": flow}
+
+    _map_zones = []
+    for z, meta in sorted(NARRATIVE_ZONES.items(), key=lambda kv: kv[1].get("order", 99)):
+        agg = _region_rs(_tickers_in_zones({z}))
+        _map_zones.append({"id": z, "label": meta["label"], "macro": meta["macro"],
+                           "order": meta.get("order", 99), **agg})
+    _map_macros = []
+    for m, meta in sorted(MACROTHEMES.items(), key=lambda kv: kv[1].get("order", 99)):
+        zset = {z for z, zm in NARRATIVE_ZONES.items() if zm.get("macro") == m}
+        agg = _region_rs(_tickers_in_zones(zset))
+        _map_macros.append({"id": m, "label": meta["label"], "order": meta.get("order", 99), **agg})
+
+    _map_data = {"themes": _map_themes, "zones": _map_zones, "macros": _map_macros,
+                 "straddlers": _straddlers}
+    map_data_json = _json.dumps(_map_data, separators=(",", ":"), default=float)
+
+    # Historical relative-strength series for the Themes "History" view: each
+    # theme's composite close ÷ the Universe composite close, aligned by date
+    # and normalized to 100 at the theme's first in-window bar. Rising = the
+    # theme is outperforming the equal-weight universe. All themes share the
+    # universe's date axis (null before a theme's first bar / where missing).
+    _uni_close = {}
+    for _d, _c in zip(bench_comp_df["date"], bench_comp_df["close"]):
+        _c = float(_c)
+        if _c == _c and _c > 0:
+            _uni_close[str(_d)[:10]] = _c
+    # History view embeds the last 130 trading days of FOUR per-theme series; the
+    # browser slices to the chosen length (20/65/130), re-indexes the relative
+    # ones, smooths, and picks which metric to draw. All four come off each
+    # theme's equal-weight composite (the same composite used everywhere else):
+    #   rs   = composite close ÷ universe composite close (raw ratio; JS indexes to 100)
+    #   move = composite close (raw; JS turns into % change from the window start)
+    #   ext  = composite distance from its 50-SMA in ADRs (same metric as ext50)
+    #   rvol = composite volume ÷ its 20-bar average volume (1.0 = average)
+    HISTORY_BARS = 130
+    _history_dates = [str(_d)[:10] for _d in bench_comp_df["date"]][-HISTORY_BARS:]
+    _history_series = {}
+    for k in sorted_keys:
+        _cdf = theme_pack[k]["composite_df"]
+        _dates_k = [str(_d)[:10] for _d in _cdf["date"]]
+        _idx_k = {ds: i for i, ds in enumerate(_dates_k)}
+        _close_k = np.asarray(_cdf["close"].values, dtype=np.float64)
+        _vol_k = np.asarray(_cdf["volume"].values, dtype=np.float64)
+        _ext_full = _compute_ext50_series_for_chart(_cdf)        # ADR units; None if < 50 bars
+        _volsma = sma_2d(_vol_k.reshape(1, -1), 20)[0]
+        _rvol_full = _vol_k / np.where(_volsma > 0, _volsma, np.nan)
+        _rs = []; _mv = []; _ex = []; _rv = []
+        for _ds in _history_dates:
+            _i = _idx_k.get(_ds)
+            _tc = _close_k[_i] if _i is not None else np.nan
+            _uc = _uni_close.get(_ds)
+            _rs.append(round(_tc / _uc, 5) if (_i is not None and _uc and _tc == _tc and _tc > 0) else None)
+            _mv.append(round(float(_tc), 4) if (_i is not None and _tc == _tc and _tc > 0) else None)
+            _ev = _ext_full[_i] if (_ext_full is not None and _i is not None) else np.nan
+            _ex.append(round(float(_ev), 3) if (_ev == _ev) else None)
+            _rvv = _rvol_full[_i] if _i is not None else np.nan
+            _rv.append(round(float(_rvv), 3) if (_rvv == _rvv) else None)
+        _history_series[k] = {"rs": _rs, "move": _mv, "ext": _ex, "rvol": _rv}
+    history_dates_json  = _json.dumps(_history_dates, separators=(",", ":"))
+    history_series_json = _json.dumps(_history_series, separators=(",", ":"), default=float)
+
+    # ── Rotation (RRG) data for the Themes "Rotation" view ──
+    # Strength (x) and momentum (y) are standardized CROSS-SECTIONALLY: at each
+    # day every theme is z-scored against the OTHER themes that day, not against
+    # its own history. Strength = ~20-day relative outperformance vs the universe
+    # (log of the theme's RS line today ÷ 20 bars ago — independent of the
+    # composite's start-at-100 scale, so it compares across themes); momentum =
+    # the 5-day change in that strength. This is what lets sustained leaders sit
+    # to the right and volatile rippers land out where they're ripping, instead
+    # of each theme normalizing its own move away. Per theme we also carry a
+    # fixed-length daily tail (one (x,y) per path day so the scrubber/comets
+    # interpolate), quadrant, "mover"/"turn" scores, and per-day breadth + rvol.
+    RRG_RSWIN, RRG_MOMSPAN = 20, 5     # 20-bar relative outperformance; 5-bar change = momentum
+    RRG_PATH_STEP, RRG_PATH_N, RRG_TURN_LB = 1, 60, 10  # daily path, last 60 days; 10-bar turn/mover lookback
+    RRG_MIN_PEERS = 4                  # need ≥ this many themes present on a day to standardize it
+    _rrg_dates = [str(_d)[:10] for _d in bench_comp_df["date"]]
+    _ND = len(_rrg_dates)
+    # Shared daily date axis for the Rotation "Play" animation — the dates at
+    # the same bar offsets every theme's path is sampled at (oldest → newest).
+    _rotation_dates = []
+    for _pj in range(RRG_PATH_N - 1, -1, -1):
+        _pidx = _ND - 1 - _pj * RRG_PATH_STEP
+        if _pidx >= 0:
+            _rotation_dates.append(_rrg_dates[_pidx])
+    _rrg_uni = {}
+    for _d, _c in zip(bench_comp_df["date"], bench_comp_df["close"]):
+        _c = float(_c)
+        if _c == _c and _c > 0:
+            _rrg_uni[str(_d)[:10]] = _c
+
+    # Pass 1 — per theme, raw (not-yet-standardized) strength + momentum series
+    # aligned to _rrg_dates. Standardization is cross-sectional, done in pass 2.
+    _themes_raw = []
+    for k in sorted_keys:
+        _cdf = theme_pack[k]["composite_df"]
+        _tcl = {}
+        for _d, _c in zip(_cdf["date"], _cdf["close"]):
+            _c = float(_c)
+            if _c == _c and _c > 0:
+                _tcl[str(_d)[:10]] = _c
+        _rs = np.array([(_tcl[ds] / _rrg_uni[ds]) if (ds in _tcl and ds in _rrg_uni) else np.nan
+                        for ds in _rrg_dates], dtype=np.float64)
+        if np.count_nonzero(~np.isnan(_rs)) < RRG_RSWIN + RRG_MOMSPAN + 1:
+            continue
+        _lrs = np.full(_ND, np.nan)
+        _pos = _rs > 0
+        _lrs[_pos] = np.log(_rs[_pos])
+        _str = np.full(_ND, np.nan)     # 20-bar relative outperformance vs universe
+        for i in range(RRG_RSWIN, _ND):
+            a, b = _lrs[i], _lrs[i - RRG_RSWIN]
+            if a == a and b == b:
+                _str[i] = a - b
+        _mom = np.full(_ND, np.nan)     # 5-bar change in that outperformance
+        for i in range(RRG_MOMSPAN, _ND):
+            a, b = _str[i], _str[i - RRG_MOMSPAN]
+            if a == a and b == b:
+                _mom[i] = a - b
+        _themes_raw.append({"k": k, "cdf": _cdf, "str": _str, "mom": _mom})
+
+    # Pass 2 — cross-sectional z per day: for each date, z-score the field of
+    # themes that have a finite value (need ≥ RRG_MIN_PEERS) so the spread
+    # reflects how a theme stacks up against its peers that day.
+    _M = len(_themes_raw)
+    _XZ = np.full((_M, _ND), np.nan)
+    _YZ = np.full((_M, _ND), np.nan)
+    if _M:
+        _STR = np.vstack([t["str"] for t in _themes_raw])
+        _MOM = np.vstack([t["mom"] for t in _themes_raw])
+
+        def _xsec_z(col):
+            out = np.full(len(col), np.nan)
+            fin = ~np.isnan(col)
+            if np.count_nonzero(fin) >= RRG_MIN_PEERS:
+                sd = col[fin].std()
+                if sd > 0:
+                    out[fin] = (col[fin] - col[fin].mean()) / sd
+            return out
+
+        for _t in range(_ND):
+            _XZ[:, _t] = _xsec_z(_STR[:, _t])
+            _YZ[:, _t] = _xsec_z(_MOM[:, _t])
+
+    # Pass 3 — assemble per-theme dots from the standardized series.
+    _rotation_data = []
+    for _mi, _tr in enumerate(_themes_raw):
+        k = _tr["k"]
+        _cdf = _tr["cdf"]
+        _xs = _XZ[_mi]
+        _ys = _YZ[_mi]
+        if np.isnan(_xs[-1]) or np.isnan(_ys[-1]):
+            continue
+        _xc, _yc = float(_xs[-1]), float(_ys[-1])
+        # Fixed-length tail (one slot per _rotation_dates entry; None where the
+        # theme lacks a standardized value that far back) so animation frame j
+        # aligns with date j across every theme.
+        _tail = []
+        for j in range(RRG_PATH_N - 1, -1, -1):
+            idx = _ND - 1 - j * RRG_PATH_STEP
+            if idx >= 0 and not (np.isnan(_xs[idx]) or np.isnan(_ys[idx])):
+                _tail.append([round(float(_xs[idx]), 3), round(float(_ys[idx]), 3)])
+            else:
+                _tail.append(None)
+        # mover ("already moving") = net displacement over the last RRG_TURN_LB
+        # bars; turn ("just turning") = how much momentum has risen over the same
+        # window. Net displacement avoids accumulating daily wiggle.
+        _ix2 = _ND - 1 - RRG_TURN_LB
+        if _ix2 >= 0 and not (np.isnan(_xs[_ix2]) or np.isnan(_ys[_ix2])):
+            _mover = float(((_xc - _xs[_ix2]) ** 2 + (_yc - _ys[_ix2]) ** 2) ** 0.5)
+            _turn = float(_yc - _ys[_ix2])
+        else:
+            _mover = 0.0
+            _turn = 0.0
+        _quad = ("leading" if (_xc >= 0 and _yc >= 0) else
+                 "weakening" if (_xc >= 0 and _yc < 0) else
+                 "lagging" if (_xc < 0 and _yc < 0) else "improving")
+        # Per-day breadth: % of member stocks above their own 20-day SMA AS OF
+        # each path day (participation can lead RS). Built per path day so the
+        # Breadth colour/size track the scrubber, not just today.
+        _used = theme_pack[k]["used"]
+        _mem_series = []
+        for _m in _used:
+            _mdf = cache.get(_m)
+            if _mdf is None or len(_mdf) < 20:
+                continue
+            _mem_series.append((
+                {str(_md)[:10]: _ci for _ci, _md in enumerate(_mdf["date"])},
+                np.asarray(_mdf["close"].values, dtype=np.float64),
+            ))
+
+        def _breadth_at(_ds):
+            _above = _tot = 0
+            for _dmap, _cl in _mem_series:
+                _bi = _dmap.get(_ds)
+                if _bi is None or _bi < 19:
+                    continue
+                _w = _cl[_bi - 19:_bi + 1]
+                if np.any(np.isnan(_w)):
+                    continue
+                _sma = _w.mean()
+                if _sma > 0:
+                    _tot += 1
+                    if _cl[_bi] > _sma:
+                        _above += 1
+            return round(_above / _tot, 3) if _tot else None
+
+        _breadthp = [_breadth_at(_ds) for _ds in _rotation_dates]
+        _breadth = _breadthp[-1] if _breadthp else None
+        # Relative volume per path-day (conviction tracks the scrubber): rvol at a
+        # bar = recent 5-day vs prior 25-day composite volume, using bars BEFORE
+        # that day (never the partial intraday bar itself). >1 = volume hot.
+        _cvol = np.asarray(_cdf["volume"].values, dtype=np.float64)
+        _cdmap = {str(_cd2)[:10]: _ci for _ci, _cd2 in enumerate(_cdf["date"])}
+
+        def _rvol_at(_idx):
+            if _idx is None or _idx < 25:
+                return None
+            _r = np.nanmean(_cvol[_idx - 5:_idx])
+            _bv = np.nanmean(_cvol[_idx - 25:_idx])
+            return round(float(_r / _bv), 3) if (_bv == _bv and _bv > 0 and _r == _r) else None
+
+        _rvolp = [_rvol_at(_cdmap.get(_ds)) for _ds in _rotation_dates]
+        _rvol = _rvolp[-1] if _rvolp else None
+        # Thrust: how smoothly the theme is climbing UP-AND-RIGHT (toward Leading)
+        # over the last ~5 days. = net up-right displacement × path straightness.
+        # A clean diagonal climb scores high; a wiggle, or a down/left drift, low.
+        # (Δx+Δy is maximal for a balanced 45° move and negative for down-left;
+        # straightness = net distance / total path travelled, 0..1, kills the noise.)
+        _THR_W = 5
+        _tw = [_p for _p in _tail[-(_THR_W + 1):] if _p is not None]
+        if len(_tw) >= 2:
+            _dxx = _tw[-1][0] - _tw[0][0]
+            _dyy = _tw[-1][1] - _tw[0][1]
+            _netd = (_dxx * _dxx + _dyy * _dyy) ** 0.5
+            _plen = 0.0
+            for _pi in range(len(_tw) - 1):
+                _plen += ((_tw[_pi + 1][0] - _tw[_pi][0]) ** 2 + (_tw[_pi + 1][1] - _tw[_pi][1]) ** 2) ** 0.5
+            _straight = (_netd / _plen) if _plen > 1e-9 else 0.0
+            _thrust = (_dxx + _dyy) * _straight
+        else:
+            _thrust = -1e9
+        _rotation_data.append({
+            "id": k, "label": _theme_labels_map[k], "n": len(_used),
+            "x": round(_xc, 3), "y": round(_yc, 3), "quad": _quad,
+            "tail": _tail, "mover": round(_mover, 3), "turn": round(_turn, 3),
+            "breadth": _breadth, "breadthp": _breadthp, "rvol": _rvol, "rvolp": _rvolp,
+            "thrust": round(_thrust, 4),
+        })
+    # Rank-percentile every theme by thrust (0 = weakest climb, 1 = strongest) so
+    # the top-bar slider can hide the bottom X% off the screen.
+    if _rotation_data:
+        _by_thr = sorted(range(len(_rotation_data)), key=lambda _j: _rotation_data[_j]["thrust"])
+        _thr_denom = max(1, len(_rotation_data) - 1)
+        for _ri, _j in enumerate(_by_thr):
+            _rotation_data[_j]["thrustRank"] = round(_ri / _thr_denom, 4)
+    rotation_data_json = _json.dumps(_rotation_data, separators=(",", ":"), default=float)
+    rotation_dates_json = _json.dumps(_rotation_dates, separators=(",", ":"))
+
     embedded_data_script = (
         f'<script>window.TICKER_DATA = {ticker_data_json};'
         f'window.TICKER_LAYOUT = {ticker_layout_json};'
-        f'window.FILTER_DATA = {filter_data_json};</script>'
+        f'window.FILTER_DATA = {filter_data_json};'
+        f'window.THEME_RANK_ORDER = {theme_rank_order_json};'
+        f'window.THEME_LABELS = {theme_labels_map_json};'
+        f'window.THEME_RS5 = {theme_rs5_map_json};'
+        f'window.HEATMAP_DATA = {heatmap_data_json};'
+        f'window.HISTORY_DATES = {history_dates_json};'
+        f'window.HISTORY_SERIES = {history_series_json};'
+        f'window.ROTATION_DATA = {rotation_data_json};'
+        f'window.ROTATION_DATES = {rotation_dates_json};'
+        f'window.MAP_DATA = {map_data_json};</script>'
     )
 
     html = f"""<!DOCTYPE html>
@@ -3517,9 +4549,15 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       <span class="rm-label">Universe 5d  ·  ADR</span>
       <span class="rm-val {bench_5d_cls}">{bench_5d_str}  ·  {bench_adr:.2f}%</span>
     </div>
-    <div>
-      <span class="rm-label">Sort</span>
-      <span class="rm-h-sub">TC2000 RS PCF · theme/Universe · desc</span>
+    <div class="rm-view-cell" id="view-cell">
+      <span class="rm-label">View</span>
+      <div class="rm-view-btns">
+        <button type="button" class="rm-view-btn" data-tv="chart">Chart</button>
+        <button type="button" class="rm-view-btn" data-tv="heatmap">Heatmap</button>
+        <button type="button" class="rm-view-btn" data-tv="history">History</button>
+        <button type="button" class="rm-view-btn" data-tv="rotation">Rotation</button>
+        <button type="button" class="rm-view-btn" data-tv="map">Map</button>
+      </div>
     </div>
     <div>
       <span class="rm-label">Showing</span>
@@ -3540,7 +4578,135 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     </aside>
     <main>
       {''.join(sections_html)}
+      <div class="history-page" id="history-page">
+        <div class="history-head">
+          <span class="history-title" id="history-title">Relative Strength · flagged themes</span>
+          <span class="hist-controls">
+            <span class="hist-grp">
+              <button type="button" class="hist-btn" data-hmetric="rs" title="Composite vs universe, indexed to 100 at the window start">Rel strength</button>
+              <button type="button" class="hist-btn" data-hmetric="ext" title="Composite distance from its 50-day SMA, in ADRs">ADR ext</button>
+              <button type="button" class="hist-btn" data-hmetric="rvol" title="Composite volume ÷ its 20-bar average (1.0 = average)">RVOL</button>
+              <button type="button" class="hist-btn" data-hmetric="move" title="Composite price change from the window start, in %">% move</button>
+            </span>
+            <span class="hist-grp"><span class="hist-lbl">Bars</span>
+              <button type="button" class="hist-btn" data-hbars="20">20</button>
+              <button type="button" class="hist-btn" data-hbars="65">65</button>
+              <button type="button" class="hist-btn" data-hbars="130">130</button>
+            </span>
+            <span class="hist-grp" title="Smooth every line with a simple N-day moving average">
+              <span class="hist-lbl">Smooth</span>
+              <input type="range" class="hist-smooth" id="hist-smooth" min="1" max="10" value="1" step="1"/>
+              <span class="hist-smooth-val" id="hist-smooth-val">raw</span>
+            </span>
+          </span>
+          <span class="history-hint">flag themes in the watchlist</span>
+        </div>
+        <div class="history-chart" id="history-chart"></div>
+      </div>
     </main>
+  </div>
+  <div class="heatmap-page" id="heatmap-page">
+    <div class="heatmap-controls">
+      <span class="hm-label">RS vs Universe</span>
+      <button type="button" class="hm-win-btn" data-win="0d">0d</button>
+      <button type="button" class="hm-win-btn" data-win="1d">1d</button>
+      <button type="button" class="hm-win-btn" data-win="3d">3d</button>
+      <button type="button" class="hm-win-btn" data-win="5d">5d</button>
+      <button type="button" class="hm-win-btn" data-win="10d">10d</button>
+      <span class="rm-h-sub" style="margin-left:auto">green = beating the universe · red = lagging · click a tile to open the theme</span>
+    </div>
+    <div class="heatmap-grid" id="heatmap-grid"></div>
+    <div class="heatmap-expand" id="heatmap-expand">
+      <div class="hm-expand-head">
+        <button type="button" class="hm-back-btn" id="hm-back-btn">← Heatmap</button>
+        <span class="hm-expand-title" id="hm-expand-title"></span>
+        <button type="button" class="hm-viewchart-btn" id="hm-viewchart-btn">View theme chart →</button>
+      </div>
+      <div class="hm-expand-body" id="hm-expand-body"></div>
+    </div>
+  </div>
+  <div class="rotation-page" id="rotation-page">
+    <div class="rotation-controls">
+      <span class="rot-grp"><span class="rot-lbl">Emphasis</span>
+        <button type="button" class="rot-btn" data-rot="emph" data-val="none">None</button>
+        <button type="button" class="rot-btn" data-rot="emph" data-val="movers">Already moving</button>
+        <button type="button" class="rot-btn" data-rot="emph" data-val="turns">Just turning</button>
+        <button type="button" class="rot-btn" data-rot="emph" data-val="leaders">Leaders</button>
+      </span>
+      <span class="rot-grp"><span class="rot-lbl">Color</span>
+        <button type="button" class="rot-btn" data-rot="color" data-val="quad">Corner</button>
+        <button type="button" class="rot-btn" data-rot="color" data-val="breadth">Breadth</button>
+      </span>
+      <span class="rot-grp"><span class="rot-lbl">Size</span>
+        <button type="button" class="rot-btn" data-rot="size" data-val="uniform">Uniform</button>
+        <button type="button" class="rot-btn" data-rot="size" data-val="breadth">Breadth</button>
+        <button type="button" class="rot-btn" data-rot="size" data-val="n">Theme size</button>
+        <button type="button" class="rot-btn" data-rot="size" data-val="rvol">RVOL</button>
+      </span>
+      <span class="rot-grp">
+        <button type="button" class="rot-btn rot-toggle" data-rot="tails">Tails</button>
+        <button type="button" class="rot-btn rot-toggle" data-rot="labels">Labels</button>
+        <button type="button" class="rot-btn rot-toggle" data-rot="tophalf">Top half</button>
+      </span>
+      <span class="rot-grp" title="Hide the bottom % of themes by how smoothly they're climbing up-and-right over 5 days">
+        <span class="rot-lbl">Thrust</span>
+        <input type="range" class="rot-thrust" id="rot-thrust-slider" min="0" max="100" value="0" step="1"/>
+        <span class="rot-thrust-val" id="rot-thrust-val">all</span>
+      </span>
+      <span class="rot-grp">
+        <button type="button" class="rot-btn" id="rot-filter-btn" title="Filter out sectors / themes">⚙ Filter</button>
+      </span>
+    </div>
+    <div class="rotation-body">
+      <canvas id="rotation-trail-canvas"></canvas>
+      <div class="rotation-chart" id="rotation-chart"></div>
+      <div class="rot-tooltip" id="rot-tooltip"></div>
+    </div>
+    <div class="rotation-scrub">
+      <span class="rot-scrub-lbl">scrub time</span>
+      <input type="range" id="rot-scrub-input" min="0" max="10000" value="10000" step="1"/>
+      <span class="rot-scrub-date" id="rot-scrub-date"></span>
+    </div>
+    <div class="rot-overlay" id="rot-overlay" style="display:none">
+      <div class="rot-overlay-panel">
+        <div class="rot-overlay-head">
+          <span class="rot-overlay-title" id="rot-overlay-title"></span>
+          <span class="rot-ovf-bar">
+            <button type="button" class="rot-btn rot-toggle" data-ovf="synth" title="Show / hide the big composite chart">Synthetic chart</button>
+            <span class="rot-ovf-sep"></span>
+            <button type="button" class="rot-btn rot-toggle" data-ovf="momo" title="Show only thumbnails flagged momo (30%+ low&rarr;high run in 50 bars)">Momo</button>
+            <button type="button" class="rot-btn rot-toggle" data-ovf="tight" title="Show only thumbnails whose today candle is tight (&lt; 1.10 &times; ADR)">Tight D1</button>
+            <span class="rot-ovf-sep"></span>
+            <button type="button" class="rot-btn rot-toggle" data-ovf="macd" title="Draw a MACD (6/20/9) panel under each thumbnail">MACD</button>
+            <button type="button" class="rot-btn rot-toggle" data-ovf="ext" title="Draw a 50-SMA extension panel (ADR units) under each thumbnail">Extension</button>
+          </span>
+          <button type="button" class="rot-overlay-close" id="rot-overlay-close" title="close (Esc)">✕</button>
+        </div>
+        <div class="rot-overlay-body" id="rot-overlay-body"></div>
+      </div>
+    </div>
+  </div>
+  <div class="map-page" id="map-page">
+    <div class="map-controls">
+      <span class="map-label">Narrative Map · strength vs SPY</span>
+      <span class="map-win">
+        <span class="map-win-lbl">Window</span>
+        <button type="button" class="map-win-btn" data-mwin="rs5">5d</button>
+        <button type="button" class="map-win-btn" data-mwin="rs20">20d</button>
+        <button type="button" class="map-win-btn" data-mwin="rs65">65d</button>
+      </span>
+      <span class="rm-h-sub" style="margin-left:auto">green = beating SPY · red = lagging · ▲ money in · ▼ out · click a theme for its charts</span>
+    </div>
+    <div class="map-body" id="map-body"></div>
+    <div class="map-expand" id="map-expand">
+      <div class="map-expand-head">
+        <button type="button" class="map-back-btn" id="map-back-btn">← Map</button>
+        <span class="map-expand-title" id="map-expand-title"></span>
+        <span class="map-expand-narr" id="map-expand-narr"></span>
+        <button type="button" class="map-viewchart-btn" id="map-viewchart-btn">View theme chart →</button>
+      </div>
+      <div class="map-expand-body" id="map-expand-body"></div>
+    </div>
   </div>
   <footer class="rm-statusbar">
     <span><span class="rm-status-dot"></span>LIVE</span>
@@ -3605,10 +4771,24 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   var toggleHide   = document.getElementById('toggle-hide-below');
   var brandBtn     = document.querySelector('.rm-fn-brand');
   var brandTitle   = brandBtn && brandBtn.querySelector('.rm-fn-title');
+  var viewBtns     = Array.prototype.slice.call(document.querySelectorAll('.rm-view-btn'));
   var tickersEmpty = document.getElementById('tickers-empty');
   var toggleTightOnly = document.getElementById('toggle-tight-only');
   var toggleNear50 = document.getElementById('toggle-near-50sma');
+  var toggleMomo = document.getElementById('toggle-momo');
   var toggleFlaggedOnly = document.getElementById('toggle-flagged-only');
+  // Rotation-quadrant filter (Chart-view theme rows). themeQuad maps theme id →
+  // its current RRG quadrant (from the rotation computation), so the watchlist
+  // can hide rows by quadrant and tint each theme name. wlQuadBoxes are the four
+  // checkboxes; default all checked (all quadrants shown).
+  var wlQuadBoxes = {{
+    improving: document.getElementById('wl-quad-improving'),
+    leading:   document.getElementById('wl-quad-leading'),
+    weakening: document.getElementById('wl-quad-weakening'),
+    lagging:   document.getElementById('wl-quad-lagging')
+  }};
+  var themeQuad = {{}};
+  (window.ROTATION_DATA || []).forEach(function(d) {{ if (d && d.id && d.quad) themeQuad[d.id] = d.quad; }});
   // Flagged theme set — persisted in localStorage. Click a flag icon to
   // toggle. "Flagged" checkbox filters all views to rows that belong to
   // at least one flagged theme.
@@ -3662,13 +4842,24 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     if (savedTight === '1' && toggleTightOnly) toggleTightOnly.checked = true;
     var savedNear50 = window.localStorage && window.localStorage.getItem('themeDashboard.near50sma');
     if (savedNear50 === '1' && toggleNear50) toggleNear50.checked = true;
+    var savedMomo = window.localStorage && window.localStorage.getItem('themeDashboard.momoOnly');
+    if (savedMomo === '1' && toggleMomo) toggleMomo.checked = true;
     var savedFlagged = window.localStorage && window.localStorage.getItem('themeDashboard.flaggedOnly');
     if (savedFlagged === '1' && toggleFlaggedOnly) toggleFlaggedOnly.checked = true;
+    Object.keys(wlQuadBoxes).forEach(function(q) {{
+      var savedQ = window.localStorage && window.localStorage.getItem('themeDashboard.wlQuad.' + q);
+      if (savedQ === '0' && wlQuadBoxes[q]) wlQuadBoxes[q].checked = false;  // default on
+    }});
   }} catch(e) {{}}
 
   // View state: 'themes' (default tree) or 'tickers' (flat ADR-tight list).
   // Persisted in localStorage so refresh keeps the active view.
   var activeView = 'themes';
+  var themesView = 'chart';
+  try {{
+    var savedTV = window.localStorage && window.localStorage.getItem('themeDashboard.themesView');
+    if (savedTV === 'chart' || savedTV === 'heatmap' || savedTV === 'history' || savedTV === 'rotation' || savedTV === 'map') themesView = savedTV;
+  }} catch(e) {{}}
   try {{
     var saved = window.localStorage && window.localStorage.getItem('themeDashboard.view');
     if (saved === 'tickers' || saved === 'themes' || saved === 'setups') activeView = saved;
@@ -3817,6 +5008,11 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       var ext = parseFloat(r.dataset.ext50);
       if (isNaN(ext) || ext < NEAR50_LO || ext > NEAR50_HI) return true;
     }}
+    // "Momo" = a >=30% low-to-high run in the last 50 bars. Tickers view ONLY
+    // (the green-circle badge marks these on the theme/rotation thumbnails).
+    if (toggleMomo && toggleMomo.checked && r.dataset.rowKind === 'ticker-flat') {{
+      if (r.dataset.momo !== '1') return true;
+    }}
     // Tightening Range timeframe sub-toggle: hide tighten rows whose timeframe
     // isn't the active one. Only tighten rows carry data-tighttf, so this is a
     // no-op for every other row.
@@ -3964,10 +5160,12 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     if (sumDiv) sumDiv.textContent = d.long_summary || '';
   }}
 
+  var currentChartTicker = null;
   function renderTicker(ticker) {{
     var d = window.TICKER_DATA[ticker];
     var div = document.getElementById('ticker-chart');
     if (!d || !div || !window.Plotly) return;
+    if (ticker === currentChartTicker) return;  // already drawn for this ticker — skip the redraw
 
     var dates = d.dates;
     var close = d.close;
@@ -4075,6 +5273,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     }}
 
     Plotly.newPlot(div, traces, layout, {{ displayModeBar: false, scrollZoom: true, doubleClick: 'reset' }});
+    currentChartTicker = ticker;
   }}
 
   // ── Section nav ────────────────────────────────────────────
@@ -4094,11 +5293,24 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     }}
   }}
 
+  // Defer the heavy Plotly redraw so the tab/row switch paints immediately;
+  // the chart fills in on the next tick. Rapid navigation collapses to one
+  // redraw of the final ticker (single timer in flight).
+  var pendingChartTicker = null;
+  var chartRenderTimer = null;
+  function scheduleTickerRender(ticker) {{
+    pendingChartTicker = ticker;
+    if (chartRenderTimer) return;
+    chartRenderTimer = setTimeout(function() {{
+      chartRenderTimer = null;
+      renderTicker(pendingChartTicker);
+    }}, 0);
+  }}
   function showTickerSection(ticker) {{
     document.querySelectorAll('section.theme').forEach(function(s) {{ s.style.display = 'none'; }});
     if (tickerView) tickerView.style.display = '';
-    buildTickerStrip(ticker);
-    renderTicker(ticker);
+    buildTickerStrip(ticker);          // cheap → instant feedback
+    scheduleTickerRender(ticker);      // heavy chart → next tick, after the switch paints
   }}
 
   // Setups page hosts multiple setup types, one per tab. The shared setups
@@ -4269,6 +5481,8 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
           (toggleTightOnly && toggleTightOnly.checked) ? '1' : '0');
         window.localStorage.setItem('themeDashboard.near50sma',
           (toggleNear50 && toggleNear50.checked) ? '1' : '0');
+        window.localStorage.setItem('themeDashboard.momoOnly',
+          (toggleMomo && toggleMomo.checked) ? '1' : '0');
         window.localStorage.setItem('themeDashboard.flaggedOnly',
           (toggleFlaggedOnly && toggleFlaggedOnly.checked) ? '1' : '0');
       }}
@@ -4291,7 +5505,30 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   }});
   if (toggleTightOnly)   toggleTightOnly.addEventListener('change', onHotTightChange);
   if (toggleNear50)      toggleNear50.addEventListener('change', onHotTightChange);
+  if (toggleMomo)        toggleMomo.addEventListener('change', onHotTightChange);
   if (toggleFlaggedOnly) toggleFlaggedOnly.addEventListener('change', onHotTightChange);
+  // Rotation-quadrant checkboxes: persist + restamp filtered-out on theme rows.
+  Object.keys(wlQuadBoxes).forEach(function(q) {{
+    var box = wlQuadBoxes[q];
+    if (!box) return;
+    box.addEventListener('change', function() {{
+      try {{ if (window.localStorage) window.localStorage.setItem('themeDashboard.wlQuad.' + q, box.checked ? '1' : '0'); }} catch(e) {{}}
+      applyFiltersToRows();
+      var row = currentRow();
+      if (row && row.style.display === 'none') {{
+        var vis = visibleRows();
+        if (vis.length) setActiveByRowId(vis[0].dataset.rowId);
+      }}
+    }});
+  }});
+  // Ticking "Flagged" auto-sorts the Tickers view by Hot (most flagged
+  // themes first) — the confluence names rise to the top.
+  if (toggleFlaggedOnly) toggleFlaggedOnly.addEventListener('change', function() {{
+    if (toggleFlaggedOnly.checked) {{
+      tkSortKey = 'hot'; tkSortType = 'num'; tkSortDir = -1;
+      sortTickersRows();
+    }}
+  }});
 
   // ── Flag system ────────────────────────────────────────────
   // Persist the flagged-themes set to localStorage on every change.
@@ -4324,7 +5561,11 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     svg.classList.toggle('is-flagged', flaggedThemes.has(id));
     persistFlags();
     updateFilterBadge();
+    applyHotCounts();
+    if (tkSortKey === 'hot') sortTickersRows();
     if (toggleFlaggedOnly && toggleFlaggedOnly.checked) applyFilter();
+    if (activeView === 'themes' && themesView === 'history') renderHistory();
+    if (activeView === 'themes' && themesView === 'rotation') renderRotation();
   }});
   // Right-click on flag (or flag header) opens a tiny menu with Unflag all.
   var openFlagMenu = null;
@@ -4352,7 +5593,11 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       persistFlags();
       repaintFlagIcons();
       updateFilterBadge();
+      applyHotCounts();
+      if (tkSortKey === 'hot') sortTickersRows();
       if (toggleFlaggedOnly && toggleFlaggedOnly.checked) applyFilter();
+      if (activeView === 'themes' && themesView === 'history') renderHistory();
+      if (activeView === 'themes' && themesView === 'rotation') renderRotation();
       closeFlagMenu();
     }});
     menu.appendChild(item);
@@ -4366,6 +5611,40 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   document.addEventListener('keydown', function(e) {{
     if (e.key === 'Escape') closeFlagMenu();
   }});
+
+  // ── Per-ticker flags (independent of the theme flags above) ──────────────
+  // Flag a ticker from its thumbnail or any Tickers/Setups row; the flag is the
+  // same set everywhere, so it lights up on every copy of that ticker. Persisted.
+  var flaggedTickers = new Set();
+  try {{
+    var savedTF = window.localStorage && window.localStorage.getItem('themeDashboard.flaggedTickers');
+    if (savedTF) JSON.parse(savedTF).forEach(function(tk) {{ flaggedTickers.add(tk); }});
+  }} catch(e) {{}}
+  function persistTickerFlags() {{
+    try {{
+      if (window.localStorage) {{
+        var arr = []; flaggedTickers.forEach(function(tk) {{ arr.push(tk); }});
+        window.localStorage.setItem('themeDashboard.flaggedTickers', JSON.stringify(arr));
+      }}
+    }} catch(e) {{}}
+  }}
+  function repaintTickerFlags() {{
+    document.querySelectorAll('.tflag-icon[data-flag-ticker]').forEach(function(el) {{
+      el.classList.toggle('is-tflagged', flaggedTickers.has(el.getAttribute('data-flag-ticker')));
+    }});
+  }}
+  repaintTickerFlags();   // initial paint from the persisted set
+  // Capture phase so the toggle fires BEFORE row-select / card handlers (which
+  // bubble from below) and can stop them — clicking a flag only flags.
+  document.addEventListener('click', function(e) {{
+    var el = e.target && e.target.closest && e.target.closest('.tflag-icon[data-flag-ticker]');
+    if (!el) return;
+    e.preventDefault(); e.stopPropagation();
+    var tk = el.getAttribute('data-flag-ticker');
+    if (flaggedTickers.has(tk)) flaggedTickers.delete(tk); else flaggedTickers.add(tk);
+    persistTickerFlags();
+    repaintTickerFlags();   // update every copy of this ticker's flag across the UI
+  }}, true);
 
   // Keyboard navigation.
   document.addEventListener('keydown', function(e) {{
@@ -4485,7 +5764,6 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
         return '<label data-filter-key="' + t.id + '" data-filter-label="' + t.label.toLowerCase() + '">'
              + '<input type="checkbox" data-filter-section="theme" data-filter-key="' + t.id + '" ' + checked + ' />'
              + '<span class="filter-item-label">' + t.label + '</span>'
-             + '<span class="filter-item-sector">' + t.sector + '</span>'
              + '</label>';
       }}).join('');
     }}
@@ -4537,31 +5815,75 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     }}
     return false;
   }}
+  // Rotation-quadrant gate (Chart view). A theme (or its child ticker rows, via
+  // the parent theme id) is hidden when its current RRG quadrant is unchecked.
+  // Themes with no rotation quadrant (ungrouped / too little history) always pass.
+  function quadPasses(themeId) {{
+    var q = themeQuad[themeId];
+    if (!q) return true;
+    var box = wlQuadBoxes[q];
+    return !box || box.checked;
+  }}
+  // Tickers view: a flat ticker passes the rotation-quadrant filter when at
+  // least one of its themes sits in a checked quadrant (mirrors the sector/
+  // theme "any theme checked" rule). Tickers whose themes carry no quadrant
+  // (ungrouped / too little history) always pass.
+  function tickerQuadPasses(ticker) {{
+    var themeIds = fd.themeIdsByTicker[ticker] || [];
+    var sawQuad = false;
+    for (var i = 0; i < themeIds.length; i++) {{
+      var q = themeQuad[themeIds[i]];
+      if (!q) continue;
+      sawQuad = true;
+      var box = wlQuadBoxes[q];
+      if (!box || box.checked) return true;
+    }}
+    return !sawQuad;
+  }}
+  // One-time: tint each theme-name by its quadrant (overrides the below-200 red).
+  function initThemeQuads() {{
+    rows().forEach(function(r) {{
+      if (r.dataset.rowKind !== 'theme') return;
+      var q = themeQuad[r.dataset.themeId];
+      if (!q) return;
+      var lbl = r.querySelector('.theme-label');
+      if (lbl) lbl.classList.add('quad-' + q);
+    }});
+  }}
 
   function applyFiltersToRows() {{
     // Themes pane: hide a theme row (and by extension its expanded
-    // children) when its theme or dominant sector is excluded.
+    // children) when its theme or dominant sector is excluded, or its
+    // rotation quadrant is toggled off.
     rows().forEach(function(r) {{
       if (r.dataset.rowKind === 'theme') {{
-        var ok = themeRowPassesFilter(r.dataset.themeId);
+        var ok = themeRowPassesFilter(r.dataset.themeId) && quadPasses(r.dataset.themeId);
         r.classList.toggle('filtered-out', !ok);
       }} else if (r.dataset.rowKind === 'ticker') {{
-        var ok2 = tickerRowPassesFilter(r.dataset.ticker);
+        var ok2 = tickerRowPassesFilter(r.dataset.ticker) && quadPasses(r.dataset.themeId);
         r.classList.toggle('filtered-out', !ok2);
       }}
     }});
-    // Tickers pane: hide ticker-flat rows individually.
+    // Tickers pane: hide ticker-flat rows individually (sector/theme + quadrant).
     tickerFlatRows().forEach(function(r) {{
-      var ok = tickerRowPassesFilter(r.dataset.ticker);
+      var ok = tickerRowPassesFilter(r.dataset.ticker) && tickerQuadPasses(r.dataset.ticker);
       r.classList.toggle('filtered-out', !ok);
     }});
-    // Setups pane: same per-ticker rule as the Tickers pane.
-    setupsFlatRows().forEach(function(r) {{
+    // Setups pane: same per-ticker rule as the Tickers pane. Stamp ALL
+    // setup tables (Extension Peek / First Flags / Tightening Range), not
+    // just the active one — otherwise an exclusion set while one tab is open
+    // never reaches the other tabs' rows, and they show through on switch.
+    document.querySelectorAll('tr.setups-row').forEach(function(r) {{
       var ok = tickerRowPassesFilter(r.dataset.ticker);
       r.classList.toggle('filtered-out', !ok);
     }});
     // Reapply the below-200 filter so inline display is recomputed on top.
     applyFilter();
+    // Keep the rotation map in sync with sector/theme exclusions.
+    if (typeof rotDrawFrame === 'function' && activeView === 'themes' && themesView === 'rotation') {{
+      rotUpdateThrustReadout();
+      rotDrawFrame(rotCurDi, rotCurFrac, rotCurK);
+    }}
   }}
 
   // Wire checkbox toggling (sectors + industries + themes).
@@ -4692,6 +6014,7 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   // Render the checkboxes once, paint state, apply persisted filter to rows.
   renderFilterPanel();
   updateFilterBadge();
+  initThemeQuads();          // tint theme names by RRG quadrant (one-time)
   applyFiltersToRows();
 
   // ── Tickers-view sort + click + brand toggle ───────────────
@@ -4735,6 +6058,49 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       sortTickersRows();
     }});
   }});
+
+  // ── Hot-theme confluence (Tickers view) ─────────────────────────
+  // For each flat ticker row, count how many of its themes are currently
+  // flagged ("hot"). Writes the count to data-hot (so the Hot column sorts),
+  // fills the Hot cell, highlights rows in 2+ hot themes, and re-renders the
+  // Theme cell so the flagged themes show greened. Recomputed on every flag
+  // change — flags are client-side, so this can't be baked at build time.
+  function hotThemeLabel(id) {{
+    if (window.THEME_LABELS && window.THEME_LABELS[id]) return window.THEME_LABELS[id];
+    if (id === 'ungrouped') return 'Ungrouped';
+    return id;
+  }}
+  function applyHotCounts() {{
+    var anyFlagged = flaggedThemes.size > 0;
+    tickerFlatRows().forEach(function(r) {{
+      var ids = (r.dataset.themeIds || '').split(',').filter(Boolean);
+      var hotCount = 0;
+      var parts = [];
+      for (var i = 0; i < ids.length; i++) {{
+        var id = ids[i];
+        var isHot = flaggedThemes.has(id);
+        if (isHot) hotCount++;
+        var lbl = hotThemeLabel(id).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        parts.push('<span class="mem-theme' + (isHot ? ' is-hot' : '') + '">' + lbl + '</span>');
+      }}
+      r.dataset.hot = hotCount;
+      var memCell = r.querySelector('.theme-membership-cell');
+      if (memCell) memCell.innerHTML = parts.join(', ');
+      var hotCell = r.querySelector('.hot-cell');
+      if (hotCell) {{
+        hotCell.classList.remove('hot-1', 'hot-2', 'hot-3plus');
+        if (!anyFlagged || hotCount === 0) {{
+          hotCell.textContent = anyFlagged ? '·' : '';
+        }} else {{
+          hotCell.textContent = String(hotCount);
+          if (hotCount >= 3) hotCell.classList.add('hot-3plus');
+          else if (hotCount === 2) hotCell.classList.add('hot-2');
+          else hotCell.classList.add('hot-1');
+        }}
+      }}
+      r.classList.toggle('hot-confluence', hotCount >= 2);
+    }});
+  }}
 
   // ── Compression column: cell rendering + period picker ──────────
   // Each row carries comp3/comp5/comp10/comp20/comp30 data attrs. The visible
@@ -4954,14 +6320,24 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
   }}
 
   function setView(name, opts) {{
-    if (name !== 'tickers' && name !== 'themes' && name !== 'setups') name = 'themes';
+    rotCloseOverlay();  // never leave a theme section orphaned in the overlay when navigating
+    if (name !== 'tickers' && name !== 'themes' && name !== 'setups' && name !== 'candidates') name = 'themes';
     activeView = name;
-    document.body.classList.toggle('view-themes',  activeView === 'themes');
-    document.body.classList.toggle('view-tickers', activeView === 'tickers');
-    document.body.classList.toggle('view-setups',  activeView === 'setups');
+    document.body.classList.toggle('view-themes',     activeView === 'themes');
+    document.body.classList.toggle('view-tickers',    activeView === 'tickers');
+    document.body.classList.toggle('view-setups',     activeView === 'setups');
+    document.body.classList.toggle('view-candidates', activeView === 'candidates');
+    // Themes sub-view classes (only take effect via the .view-themes compound CSS).
+    document.body.classList.toggle('tv-chart',    themesView === 'chart');
+    document.body.classList.toggle('tv-heatmap',  themesView === 'heatmap');
+    document.body.classList.toggle('tv-history',  themesView === 'history');
+    document.body.classList.toggle('tv-rotation', themesView === 'rotation');
+    document.body.classList.toggle('tv-map',      themesView === 'map');
+    viewBtns.forEach(function(b) {{ b.classList.toggle('is-active', b.dataset.tv === themesView); }});
     if (brandTitle) {{
-      brandTitle.textContent = (activeView === 'tickers') ? 'HOT TICKERS DASHBOARD'
-                              : (activeView === 'setups') ? ('SETUPS · ' + SETUP_TABLES[activeSetup].label)
+      brandTitle.textContent = (activeView === 'tickers')    ? 'HOT TICKERS DASHBOARD'
+                              : (activeView === 'setups')    ? ('SETUPS · ' + SETUP_TABLES[activeSetup].label)
+                              : (activeView === 'candidates') ? 'CANDIDATES'
                               : 'HOT THEME DASHBOARD';
     }}
     try {{
@@ -4978,20 +6354,1226 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
     }} else {{
       applyFilter();
     }}
-    if (!opts || !opts.preserveActive) {{
+    var themesSub = (activeView === 'themes') ? themesView : null;
+    if (themesSub === 'heatmap') {{
+      renderHeatmap();
+    }} else if (themesSub === 'history') {{
+      renderHistory();
+    }} else if (themesSub === 'rotation') {{
+      renderRotation();
+    }} else if (themesSub === 'map') {{
+      renderMap();
+    }} else if (!opts || !opts.preserveActive) {{
       var v = visibleRows();
       if (v.length) setActiveByRowId(v[0].dataset.rowId);
+    }} else if (activeView === 'themes' && activeRowId) {{
+      setActiveByRowId(activeRowId, {{skipHash: true}});
     }}
   }}
   if (brandBtn) {{
     brandBtn.addEventListener('click', function() {{
-      // Cycle: themes → tickers → setups → themes
-      var next = (activeView === 'themes')   ? 'tickers'
-               : (activeView === 'tickers')  ? 'setups'
-               :                                'themes';
+      // Cycle: themes → tickers → setups → candidates → themes
+      var next = (activeView === 'themes')      ? 'tickers'
+               : (activeView === 'tickers')     ? 'setups'
+               : (activeView === 'setups')      ? 'candidates'
+               :                                  'themes';
       setView(next);
     }});
   }}
+
+  // ── Theme heatmap (RS vs Universe, switchable window) ───────
+  var HM_WINDOWS = ['0d','1d','3d','5d','10d'];
+  var hmWindow = '5d';
+  try {{
+    var hmSaved = window.localStorage && window.localStorage.getItem('themeDashboard.hmWindow');
+    if (hmSaved && HM_WINDOWS.indexOf(hmSaved) >= 0) hmWindow = hmSaved;
+  }} catch(e) {{}}
+  var hmGrid = document.getElementById('heatmap-grid');
+  var hmBtns = Array.prototype.slice.call(document.querySelectorAll('.hm-win-btn'));
+  var hmPage = document.getElementById('heatmap-page');
+  var hmExpandBody = document.getElementById('hm-expand-body');
+  var hmExpandTitle = document.getElementById('hm-expand-title');
+  var hmExpandTheme = null;
+
+  function hmAbsCap(vals) {{
+    var a = vals.filter(function(v) {{ return v !== null && isFinite(v); }})
+                .map(Math.abs).sort(function(x, y) {{ return x - y; }});
+    if (!a.length) return 1;
+    var c = a[Math.floor(0.90 * (a.length - 1))];
+    return (c && c > 0) ? c : 1;
+  }}
+  function hmColor(v, cap) {{
+    if (v === null || !isFinite(v)) return null;
+    var t = v / cap; if (t > 1) t = 1; if (t < -1) t = -1;
+    var base = [32, 32, 36];
+    var tgt = (t >= 0) ? [24, 150, 24] : [184, 40, 40];
+    var a = Math.abs(t);
+    return 'rgb(' + Math.round(base[0] + a * (tgt[0] - base[0])) + ','
+                  + Math.round(base[1] + a * (tgt[1] - base[1])) + ','
+                  + Math.round(base[2] + a * (tgt[2] - base[2])) + ')';
+  }}
+  function hmFmt(v) {{
+    if (v === null || !isFinite(v)) return '—';
+    return (v >= 0 ? '+' : '') + v.toFixed(2) + '×';
+  }}
+  function renderHeatmap() {{
+    if (!hmGrid || !window.HEATMAP_DATA) return;
+    if (hmPage) hmPage.classList.remove('is-expanded');
+    hmBtns.forEach(function(b) {{ b.classList.toggle('is-active', b.dataset.win === hmWindow); }});
+    var data = window.HEATMAP_DATA.slice();
+    var cap = hmAbsCap(data.map(function(d) {{ return d.rs[hmWindow]; }}));
+    data.sort(function(x, y) {{
+      var xv = x.rs[hmWindow], yv = y.rs[hmWindow];
+      if (xv === null && yv === null) return 0;
+      if (xv === null) return 1;
+      if (yv === null) return -1;
+      return yv - xv;
+    }});
+    var html = '';
+    for (var i = 0; i < data.length; i++) {{
+      var d = data[i];
+      var v = d.rs[hmWindow];
+      var col = hmColor(v, cap);
+      var cls = 'hm-tile' + (col === null ? ' is-null' : '');
+      var sty = (col === null) ? '' : (' style="background:' + col + '"');
+      html += '<div class="' + cls + '" data-theme-id="' + d.id + '"' + sty + '>'
+            +   '<div class="hm-name">' + d.label + '</div>'
+            +   '<div class="hm-meta"><span class="hm-rs">' + hmFmt(v) + '</span>'
+            +   '<span class="hm-n">n=' + d.n + '</span></div>'
+            + '</div>';
+    }}
+    hmGrid.innerHTML = html;
+  }}
+  hmBtns.forEach(function(b) {{
+    b.addEventListener('click', function() {{
+      hmWindow = b.dataset.win;
+      try {{ if (window.localStorage) window.localStorage.setItem('themeDashboard.hmWindow', hmWindow); }} catch(e) {{}}
+      renderHeatmap();
+    }});
+  }});
+  function hmOpenExpand(themeId, label) {{
+    if (!hmPage || !hmExpandBody) return;
+    hmExpandTheme = themeId;
+    var section = document.getElementById(themeId);
+    var grid = section ? section.querySelector('.member-grid') : null;
+    hmExpandBody.innerHTML = '';
+    if (grid) {{ hmExpandBody.appendChild(grid.cloneNode(true)); }}
+    else {{ hmExpandBody.textContent = 'No member charts available for this theme.'; }}
+    if (hmExpandTitle) hmExpandTitle.textContent = label || themeId;
+    hmPage.classList.add('is-expanded');
+    hmExpandBody.scrollTop = 0;
+  }}
+  function hmCloseExpand() {{ if (hmPage) hmPage.classList.remove('is-expanded'); }}
+  if (hmGrid) {{
+    hmGrid.addEventListener('click', function(e) {{
+      var tile = e.target && e.target.closest ? e.target.closest('.hm-tile') : null;
+      if (!tile || !tile.dataset.themeId) return;
+      var nm = tile.querySelector('.hm-name');
+      hmOpenExpand(tile.dataset.themeId, nm ? nm.textContent : tile.dataset.themeId);
+    }});
+  }}
+  var hmBackBtn = document.getElementById('hm-back-btn');
+  if (hmBackBtn) hmBackBtn.addEventListener('click', hmCloseExpand);
+  var hmViewChartBtn = document.getElementById('hm-viewchart-btn');
+  if (hmViewChartBtn) hmViewChartBtn.addEventListener('click', function() {{
+    if (!hmExpandTheme) return;
+    var id = hmExpandTheme;
+    setThemesView('chart');
+    setActiveByRowId(id);
+  }});
+  if (hmExpandBody) {{
+    hmExpandBody.addEventListener('click', function(e) {{
+      var card = e.target && e.target.closest ? e.target.closest('.member-card') : null;
+      if (!card || !card.dataset.ticker) return;
+      setView('tickers', {{preserveActive: true}});
+      setActiveByRowId('tk__' + card.dataset.ticker);
+    }});
+  }}
+
+  // ── Narrative Map (story-space placement, strength vs SPY) ──────
+  var mapWindow = 'rs20';
+  try {{
+    var mwSaved = window.localStorage && window.localStorage.getItem('themeDashboard.mapWindow');
+    if (mwSaved === 'rs5' || mwSaved === 'rs20' || mwSaved === 'rs65') mapWindow = mwSaved;
+  }} catch(e) {{}}
+  var mapBody = document.getElementById('map-body');
+  var mapPage = document.getElementById('map-page');
+  var mapExpandBody = document.getElementById('map-expand-body');
+  var mapExpandTitle = document.getElementById('map-expand-title');
+  var mapExpandNarr = document.getElementById('map-expand-narr');
+  var mapExpandTheme = null;
+  var mapWinBtns = Array.prototype.slice.call(document.querySelectorAll('.map-win-btn'));
+  // themes whose tickers bridge Crypto<->Hub (drawn dashed)
+  var MAP_STRADDLE_THEMES = {{'crypto_miners': 1}};
+
+  function mapAbsCap(vals) {{
+    var a = vals.filter(function(v) {{ return v !== null && isFinite(v); }})
+                .map(Math.abs).sort(function(x, y) {{ return x - y; }});
+    if (!a.length) return 1;
+    var c = a[Math.floor(0.90 * (a.length - 1))];
+    return (c && c > 0) ? c : 1;
+  }}
+  function mapColor(v, cap) {{
+    if (v === null || !isFinite(v)) return null;
+    var t = v / cap; if (t > 1) t = 1; if (t < -1) t = -1;
+    var base = [32, 32, 36];
+    var tgt = (t >= 0) ? [24, 150, 24] : [184, 40, 40];
+    var a = Math.abs(t);
+    return 'rgb(' + Math.round(base[0] + a*(tgt[0]-base[0])) + ','
+                  + Math.round(base[1] + a*(tgt[1]-base[1])) + ','
+                  + Math.round(base[2] + a*(tgt[2]-base[2])) + ')';
+  }}
+  function mapFmt(v) {{
+    if (v === null || v === undefined || !isFinite(v)) return '—';
+    return (v >= 0 ? '+' : '') + v.toFixed(1);
+  }}
+  function mapFlowChip(region) {{
+    var cls = region.flow === 'in' ? 'flow-in' : (region.flow === 'out' ? 'flow-out' : 'flow-flat');
+    var arrow = region.flow === 'in' ? '▲ money in' : (region.flow === 'out' ? '▼ distributing out' : '· flat');
+    var nums = 'RS 5/20/65 ' + mapFmt(region.rs5) + ' / ' + mapFmt(region.rs20) + ' / ' + mapFmt(region.rs65);
+    return '<span class="map-flow"><span class="' + cls + '">' + arrow + '</span>'
+         + '<span class="map-rsnums">' + nums + '</span></span>';
+  }}
+  function mapNodeHTML(node, cap) {{
+    var v = node[mapWindow];
+    var col = mapColor(v, cap);
+    var cls = 'map-node' + (col === null ? ' mn-null' : '') + (MAP_STRADDLE_THEMES[node.id] ? ' mn-straddle' : '') + (node.drift ? ' mn-drift' : '');
+    var sty = (col === null) ? '' : (' style="background:' + col + '"');
+    var tip = node.drift ? ('⚠ DRIFT: ' + node.drift + (node.narrative ? ('  —  ' + node.narrative) : ''))
+                         : (node.narrative || '');
+    var title = tip ? (' title="' + String(tip).replace(/"/g, '&quot;') + '"') : '';
+    return '<div class="' + cls + '" data-theme-id="' + node.id + '"' + sty + title + '>'
+         +   '<div class="mn-name">' + (node.drift ? '⚠ ' : '') + node.label + '</div>'
+         +   '<div class="mn-rs">' + mapFmt(v) + '</div>'
+         + '</div>';
+  }}
+  function mapShortLabel(s) {{
+    s = String(s).split('·')[0].split('—')[0].split(' - ')[0].trim();
+    return s.length > 15 ? s.slice(0, 14) + '…' : s;
+  }}
+  var MAP_NS = 'http://www.w3.org/2000/svg';
+  function svgEl(t, attrs) {{
+    var e = document.createElementNS(MAP_NS, t);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }}
+  function mapFlowColor(f) {{
+    return f === 'in' ? 'rgba(30,255,30,0.55)' : (f === 'out' ? 'rgba(255,48,48,0.5)' : 'rgba(150,150,160,0.30)');
+  }}
+  function renderMap() {{
+    if (!mapBody || !window.MAP_DATA) return;
+    if (mapPage) mapPage.classList.remove('is-expanded');
+    mapWinBtns.forEach(function(b) {{ b.classList.toggle('is-active', b.dataset.mwin === mapWindow); }});
+    var data = window.MAP_DATA;
+    var themes = data.themes || [];
+    var zones = data.zones || [];
+    var straddlers = data.straddlers || [];
+    var cap = mapAbsCap(themes.map(function(t) {{ return t[mapWindow]; }}));
+    var W = Math.max(900, (mapBody.clientWidth || 1200));
+    var H = Math.max(620, (mapBody.clientHeight || 760));
+
+    // Designed narrative backbone: zone-hub anchor positions (fractional).
+    var ZP = {{
+      crypto:[0.11,0.17], hub:[0.33,0.17], infrastructure:[0.33,0.40],
+      power:[0.33,0.63], materials:[0.31,0.85], output:[0.76,0.26],
+      adjacent:[0.63,0.62], noise:[0.86,0.86]
+    }};
+    var BACK = [
+      ['materials','power','chain'], ['power','infrastructure','chain'],
+      ['infrastructure','hub','chain'], ['hub','output','enable'],
+      ['power','adjacent','branch'], ['hub','crypto','straddle']
+    ];
+    var zoneById = {{}}; zones.forEach(function(z) {{ zoneById[z.id] = z; }});
+
+    var nodes = [], nodeIndex = {{}};
+    function addNode(o) {{ nodes.push(o); nodeIndex[o.id] = o; }}
+    Object.keys(ZP).forEach(function(z) {{
+      var zd = zoneById[z] || {{}};
+      addNode({{ id:'zone_'+z, zone:z, hub:true, fixed:true,
+        x: ZP[z][0]*W, y: ZP[z][1]*H, r: 16,
+        label:(zd.label||z).split('—')[0].split('·')[0].trim(),
+        flow: zd.flow, rs: (zd[mapWindow] != null ? zd[mapWindow] : zd.rs20) }});
+    }});
+    var maxN = 1; themes.forEach(function(t) {{ if (t.n > maxN) maxN = t.n; }});
+    themes.forEach(function(t, idx) {{
+      var anchor = nodeIndex['zone_'+t.zone]; if (!anchor) return;
+      var ang = idx * 2.399963;   // golden angle — deterministic spread
+      addNode({{ id:t.id, zone:t.zone, hub:false, data:t,
+        x: anchor.x + Math.cos(ang)*55, y: anchor.y + Math.sin(ang)*55,
+        r: 7 + 17*Math.sqrt(t.n/maxN) }});
+    }});
+
+    // Force relaxation: leaves repel each other + spring to their own hub.
+    for (var it=0; it<150; it++) {{
+      for (var a=0; a<nodes.length; a++) {{
+        var na = nodes[a];
+        for (var b=a+1; b<nodes.length; b++) {{
+          var nb = nodes[b];
+          var dx = na.x-nb.x, dy = na.y-nb.y, d2 = dx*dx+dy*dy+0.01, d = Math.sqrt(d2);
+          var rep = (na.r*nb.r*0.85)/d2, mind = na.r+nb.r+7;
+          if (d < mind) rep += (mind-d)*0.5/d;
+          var fx = dx/d*rep, fy = dy/d*rep;
+          if (!na.fixed) {{ na.x += fx; na.y += fy; }}
+          if (!nb.fixed) {{ nb.x -= fx; nb.y -= fy; }}
+        }}
+      }}
+      for (var c=0; c<nodes.length; c++) {{
+        var nc = nodes[c]; if (nc.fixed) continue;
+        var hb = nodeIndex['zone_'+nc.zone]; if (!hb) continue;
+        var ex = hb.x-nc.x, ey = hb.y-nc.y, ed = Math.sqrt(ex*ex+ey*ey)+0.01;
+        var k = (ed-(hb.r+nc.r+26))*0.06;
+        nc.x += ex/ed*k; nc.y += ey/ed*k;
+        nc.x = Math.max(nc.r+4, Math.min(W-nc.r-4, nc.x));
+        nc.y = Math.max(nc.r+26, Math.min(H-nc.r-6, nc.y));
+      }}
+    }}
+
+    var svg = svgEl('svg', {{width:W, height:H, viewBox:'0 0 '+W+' '+H, 'class':'map-graph'}});
+    // spokes (theme -> its hub)
+    nodes.forEach(function(n) {{
+      if (n.fixed) return;
+      var hb = nodeIndex['zone_'+n.zone]; if (!hb) return;
+      svg.appendChild(svgEl('line', {{x1:hb.x,y1:hb.y,x2:n.x,y2:n.y, stroke:'rgba(120,124,132,0.16)','stroke-width':1}}));
+    }});
+    // backbone edges
+    BACK.forEach(function(e) {{
+      var s = nodeIndex['zone_'+e[0]], t = nodeIndex['zone_'+e[1]]; if (!s || !t) return;
+      var mx = (s.x+t.x)/2, my = (s.y+t.y)/2 - 24;
+      svg.appendChild(svgEl('path', {{d:'M'+s.x+','+s.y+' Q'+mx+','+my+' '+t.x+','+t.y, fill:'none',
+        stroke: mapFlowColor((zoneById[e[1]]||{{}}).flow), 'stroke-width': e[2]==='chain'?3:2,
+        'stroke-dasharray': e[2]==='straddle'?'5 4':''}}));
+      if (e[2]==='enable') {{
+        var tx = svgEl('text', {{x:mx, y:my-4, fill:'#ffcc00', 'font-size':10, 'text-anchor':'middle'}});
+        tx.textContent = 'AI enables →'; svg.appendChild(tx);
+      }}
+      if (e[2]==='straddle') {{
+        var sx = svgEl('text', {{x:mx, y:my-4, fill:'#ffcc00', 'font-size':9, 'text-anchor':'middle'}});
+        sx.textContent = '↔ straddle'; svg.appendChild(sx);
+      }}
+    }});
+    // nodes
+    nodes.forEach(function(n) {{
+      var g = svgEl('g', {{'class':'map-node'+(n.hub?' mn-hub':''), 'data-theme-id': n.hub?'':n.id}});
+      if (n.hub) {{
+        var zc = n.flow==='in'?'#1eff1e':(n.flow==='out'?'#ff3030':'#888c92');
+        g.appendChild(svgEl('circle', {{cx:n.x,cy:n.y,r:n.r, fill:'#15151a', stroke:zc, 'stroke-width':2}}));
+        var h1 = svgEl('text', {{x:n.x, y:n.y-n.r-7, fill:'#fff','font-size':12,'font-weight':'700','text-anchor':'middle'}});
+        h1.textContent = n.label.toUpperCase(); g.appendChild(h1);
+        var h2 = svgEl('text', {{x:n.x, y:n.y+4, fill:zc,'font-size':10,'font-weight':'700','text-anchor':'middle','class':'mono'}});
+        h2.textContent = (n.flow==='in'?'▲':(n.flow==='out'?'▼':'·')) + ' ' + mapFmt(n.rs); g.appendChild(h2);
+      }} else {{
+        var v = n.data[mapWindow], col = mapColor(v, cap) || '#161618';
+        var isStr = straddlers.indexOf(n.id) >= 0;
+        g.setAttribute('data-label', n.data.label);
+        g.setAttribute('data-tip', n.data.drift ? ('⚠ DRIFT: '+n.data.drift+(n.data.narrative?('  —  '+n.data.narrative):'')) : (n.data.narrative||''));
+        var circ = svgEl('circle', {{cx:n.x,cy:n.y,r:n.r, fill:col,
+          stroke:(n.data.drift||isStr)?'#ffcc00':'rgba(255,255,255,0.28)', 'stroke-width':(n.data.drift?2:1)}});
+        if (isStr) circ.setAttribute('stroke-dasharray','3 2');
+        var ttl = svgEl('title'); ttl.textContent = (n.data.drift?'⚠ ':'')+n.data.label+' ('+mapFmt(v)+')'+(n.data.narrative?('\\n'+n.data.narrative):''); circ.appendChild(ttl);
+        g.appendChild(circ);
+        if (n.r >= 13) {{
+          var lt = svgEl('text', {{x:n.x, y:n.y+3, fill:'#fff','font-size':9,'text-anchor':'middle','pointer-events':'none'}});
+          lt.setAttribute('style','text-shadow:0 1px 2px #000,0 0 2px #000');
+          lt.textContent = (n.data.drift?'⚠':'') + mapShortLabel(n.data.label); g.appendChild(lt);
+        }}
+      }}
+      svg.appendChild(g);
+    }});
+    mapBody.innerHTML = '';
+    mapBody.appendChild(svg);
+  }}
+  function mapOpenExpand(themeId, label, narrative) {{
+    if (!mapPage || !mapExpandBody) return;
+    mapExpandTheme = themeId;
+    var section = document.getElementById(themeId);
+    var grid = section ? section.querySelector('.member-grid') : null;
+    mapExpandBody.innerHTML = '';
+    if (grid) mapExpandBody.appendChild(grid.cloneNode(true));
+    else mapExpandBody.textContent = 'No member charts available for this theme.';
+    if (mapExpandTitle) mapExpandTitle.textContent = label || themeId;
+    if (mapExpandNarr) mapExpandNarr.textContent = narrative || '';
+    mapPage.classList.add('is-expanded');
+    mapExpandBody.scrollTop = 0;
+  }}
+  function mapCloseExpand() {{ if (mapPage) mapPage.classList.remove('is-expanded'); }}
+  if (mapBody) {{
+    mapBody.addEventListener('click', function(e) {{
+      var node = e.target && e.target.closest ? e.target.closest('.map-node') : null;
+      if (!node || !node.dataset || !node.dataset.themeId) return;
+      mapOpenExpand(node.dataset.themeId, node.dataset.label || node.dataset.themeId, node.dataset.tip || '');
+    }});
+  }}
+  var mapBackBtn = document.getElementById('map-back-btn');
+  if (mapBackBtn) mapBackBtn.addEventListener('click', mapCloseExpand);
+  var mapViewChartBtn = document.getElementById('map-viewchart-btn');
+  if (mapViewChartBtn) mapViewChartBtn.addEventListener('click', function() {{
+    if (!mapExpandTheme) return;
+    var id = mapExpandTheme;
+    setThemesView('chart');
+    setActiveByRowId(id);
+  }});
+  if (mapExpandBody) {{
+    mapExpandBody.addEventListener('click', function(e) {{
+      var card = e.target && e.target.closest ? e.target.closest('.member-card') : null;
+      if (!card || !card.dataset.ticker) return;
+      setView('tickers', {{preserveActive: true}});
+      setActiveByRowId('tk__' + card.dataset.ticker);
+    }});
+  }}
+  mapWinBtns.forEach(function(b) {{
+    b.addEventListener('click', function() {{
+      mapWindow = b.dataset.mwin;
+      try {{ if (window.localStorage) window.localStorage.setItem('themeDashboard.mapWindow', mapWindow); }} catch(e) {{}}
+      renderMap();
+    }});
+  }});
+
+  // ── Themes View toggle: Chart / Heatmap / History ───────────
+  function setThemesView(mode) {{
+    if (mode !== 'chart' && mode !== 'heatmap' && mode !== 'history' && mode !== 'rotation' && mode !== 'map') mode = 'chart';
+    themesView = mode;
+    try {{ if (window.localStorage) window.localStorage.setItem('themeDashboard.themesView', mode); }} catch(e) {{}}
+    setView('themes', {{preserveActive: true}});
+  }}
+  viewBtns.forEach(function(b) {{
+    b.addEventListener('click', function() {{ setThemesView(b.dataset.tv); }});
+  }});
+
+  // ── Historical relative-strength chart (one line per flagged theme) ──
+  var HISTORY_COLORS = ['#5fc8ff','#ff8800','#1eff1e','#ff3030','#ffcc00','#cc88ff','#e8c890','#33e0c0','#ff6ec7','#9acd32','#ffffff','#7fb0ff','#ffa64d','#66d9ff'];
+  // History view: four selectable metrics, a length selector, and a simple
+  // moving-average smoother — all persisted. Each series is per flagged theme.
+  var HIST_META = {{
+    rs:   {{ title: 'Relative strength · flagged themes', yaxis: 'RS · start = 100',  fmt: '.1f', reindex: 'base100' }},
+    ext:  {{ title: 'ADR extension from 50 SMA · flagged themes', yaxis: 'ADRs from 50 SMA', fmt: '.2f', reindex: 'none' }},
+    rvol: {{ title: 'Relative volume · flagged themes', yaxis: 'RVOL (1.0 = avg)', fmt: '.2f', reindex: 'none' }},
+    move: {{ title: '% move · flagged themes', yaxis: '% from start', fmt: '.1f', reindex: 'pct' }}
+  }};
+  var histMetric = 'rs', histBars = 65, histSmooth = 1;
+  try {{
+    var LSH = window.localStorage;
+    if (LSH) {{
+      var _hm = LSH.getItem('themeDashboard.histMetric'); if (HIST_META[_hm]) histMetric = _hm;
+      var _hb = parseInt(LSH.getItem('themeDashboard.histBars'), 10); if (_hb === 20 || _hb === 65 || _hb === 130) histBars = _hb;
+      var _hs = parseInt(LSH.getItem('themeDashboard.histSmooth'), 10); if (_hs >= 1 && _hs <= 10) histSmooth = _hs;
+    }}
+  }} catch(e) {{}}
+  function histPersist() {{
+    try {{ if (window.localStorage) {{
+      window.localStorage.setItem('themeDashboard.histMetric', histMetric);
+      window.localStorage.setItem('themeDashboard.histBars', String(histBars));
+      window.localStorage.setItem('themeDashboard.histSmooth', String(histSmooth));
+    }} }} catch(e) {{}}
+  }}
+  // Simple N-period moving average, null-aware, expanding at the start so the line
+  // spans the whole window rather than clipping the first N-1 points.
+  function histSmoothArr(arr, period) {{
+    if (period <= 1) return arr.slice();
+    var out = new Array(arr.length);
+    for (var i = 0; i < arr.length; i++) {{
+      var sum = 0, cnt = 0;
+      for (var j = Math.max(0, i - period + 1); j <= i; j++) {{
+        var v = arr[j]; if (v != null && !isNaN(v)) {{ sum += v; cnt++; }}
+      }}
+      out[i] = cnt ? (sum / cnt) : null;
+    }}
+    return out;
+  }}
+  function histSyncControls() {{
+    document.querySelectorAll('.hist-btn[data-hmetric]').forEach(function(b) {{ b.classList.toggle('is-active', b.dataset.hmetric === histMetric); }});
+    document.querySelectorAll('.hist-btn[data-hbars]').forEach(function(b) {{ b.classList.toggle('is-active', +b.dataset.hbars === histBars); }});
+    var sl = document.getElementById('hist-smooth'); if (sl) sl.value = histSmooth;
+    var sv = document.getElementById('hist-smooth-val'); if (sv) sv.textContent = (histSmooth <= 1) ? 'raw' : (histSmooth + 'd');
+    var ti = document.getElementById('history-title'); if (ti) ti.textContent = HIST_META[histMetric].title;
+  }}
+  function renderHistory() {{
+    var div = document.getElementById('history-chart');
+    if (!div || !window.Plotly || !window.HISTORY_SERIES || !window.HISTORY_DATES) return;
+    histSyncControls();
+    var meta = HIST_META[histMetric] || HIST_META.rs;
+    var ids = [];
+    flaggedThemes.forEach(function(id) {{ if (window.HISTORY_SERIES[id]) ids.push(id); }});
+    ids.sort(function(a, b) {{
+      var la = (window.THEME_LABELS && window.THEME_LABELS[a]) || a;
+      var lb = (window.THEME_LABELS && window.THEME_LABELS[b]) || b;
+      return la < lb ? -1 : (la > lb ? 1 : 0);
+    }});
+    if (!ids.length) {{
+      if (window.Plotly.purge) {{ try {{ Plotly.purge(div); }} catch(e) {{}} }}
+      div.innerHTML = '<div class="history-empty">No themes flagged yet. Switch to Chart view and click the flag next to any theme in the watchlist to plot it here.</div>';
+      return;
+    }}
+    var nAll = window.HISTORY_DATES.length;
+    var start = Math.max(0, nAll - histBars);
+    var xdates = window.HISTORY_DATES.slice(start);
+    var traces = ids.map(function(id, i) {{
+      var lbl = (window.THEME_LABELS && window.THEME_LABELS[id]) || id;
+      var raw = (window.HISTORY_SERIES[id][histMetric] || []).slice(start);
+      var y;
+      if (meta.reindex === 'base100' || meta.reindex === 'pct') {{
+        var base = null;
+        for (var b = 0; b < raw.length; b++) {{ if (raw[b] != null && !isNaN(raw[b]) && raw[b] !== 0) {{ base = raw[b]; break; }} }}
+        y = raw.map(function(v) {{
+          if (v == null || isNaN(v) || base == null) return null;
+          return (meta.reindex === 'base100') ? (v / base * 100.0) : ((v / base - 1.0) * 100.0);
+        }});
+      }} else {{
+        y = raw.slice();
+      }}
+      y = histSmoothArr(y, histSmooth);
+      return {{
+        type: 'scatter', mode: 'lines', x: xdates, y: y,
+        name: lbl, connectgaps: false,
+        line: {{ color: HISTORY_COLORS[i % HISTORY_COLORS.length], width: 1.6 }},
+        hovertemplate: '%{{y:' + meta.fmt + '}}<extra>' + lbl + '</extra>'
+      }};
+    }});
+    var layout = {{
+      paper_bgcolor: '#000', plot_bgcolor: '#000',
+      margin: {{ l: 50, r: 16, t: 8, b: 34 }},
+      xaxis: {{ type: 'date', gridcolor: '#1a1a1c', color: '#aaa' }},
+      yaxis: {{ gridcolor: '#1a1a1c', color: '#aaa', title: {{ text: meta.yaxis, font: {{ size: 11, color: '#aaa' }} }} }},
+      legend: {{ orientation: 'h', y: 1.06, font: {{ color: '#ddd', size: 11 }} }},
+      showlegend: true, hovermode: 'x unified'
+    }};
+    Plotly.newPlot(div, traces, layout, {{ displayModeBar: false, responsive: true }});
+  }}
+  // History control wiring — metric / length buttons + smoothing slider.
+  (function() {{
+    document.querySelectorAll('.hist-btn[data-hmetric]').forEach(function(b) {{
+      b.addEventListener('click', function() {{ histMetric = b.dataset.hmetric; histPersist(); renderHistory(); }});
+    }});
+    document.querySelectorAll('.hist-btn[data-hbars]').forEach(function(b) {{
+      b.addEventListener('click', function() {{ histBars = +b.dataset.hbars; histPersist(); renderHistory(); }});
+    }});
+    var sl = document.getElementById('hist-smooth');
+    if (sl) sl.addEventListener('input', function() {{ histSmooth = +sl.value; histPersist(); renderHistory(); }});
+    histSyncControls();
+  }})();
+
+  // ── Rotation (RRG) map ──────────────────────────────────────
+  var ROT_QUAD_COLORS = {{ leading: '#1eff1e', weakening: '#ffcc00', lagging: '#ff3030', improving: '#5fc8ff' }};
+  var ROT_QUAD_RGB = {{ leading: [30, 255, 30], weakening: [255, 204, 0], lagging: [255, 48, 48], improving: [95, 200, 255] }};
+  // Pre-built rgba stroke strings (quad × alpha levels) so the per-frame trail
+  // draw LOOKS UP a colour string instead of allocating one per segment (~3000 a
+  // frame). 24 levels reads as a continuous fade.
+  var ROT_TRAIL_ALEVELS = 24;
+  var _rotStroke = {{}};
+  (function() {{
+    Object.keys(ROT_QUAD_RGB).forEach(function(q) {{
+      var c = ROT_QUAD_RGB[q], arr = [];
+      for (var l = 0; l <= ROT_TRAIL_ALEVELS; l++) arr.push('rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + (l / ROT_TRAIL_ALEVELS).toFixed(3) + ')');
+      _rotStroke[q] = arr;
+    }});
+  }})();
+  var ROT_COMET_LEN = 6;   // ~5-day fading trail behind each dot (head + 5 prior days)
+  function rotHexA(hex, a) {{
+    var h = hex.replace('#', '');
+    return 'rgba(' + parseInt(h.substr(0, 2), 16) + ',' + parseInt(h.substr(2, 2), 16) + ',' + parseInt(h.substr(4, 2), 16) + ',' + a + ')';
+  }}
+  // Tails: a smooth, marker-free line per theme that fades from the dot backward
+  // over the last ROT_COMET_LEN days (no dots on the trail). EACH THEME OWNS ITS
+  // OWN traces (one per fade band) — never grouped or null-joined across themes —
+  // so trails can't cross-connect or scramble colours, and because Plotly's
+  // spline is local, sliding the window one day only nudges the head/tail, never
+  // warps the middle. Colour is locked to the theme's quadrant.
+  var ROT_TRAIL_SAMPLES = 44;    // dense points along the ~5-day Catmull-Rom trail (canvas: smooth curve + smooth fade)
+  // Build the comet trace data for the CONTINUOUS day position di+frac (same
+  // fraction the dots interpolate with) so trails glide smoothly with their dots
+  // instead of snapping per day. To stay fast, ALL themes share a fixed set of 12
+  // traces — one per (quadrant × fade band) — bucketed by the theme's own quadrant
+  // (colours never shuffle) and null-separated between themes. Rendered LINEAR so
+  // the null gaps break cleanly (no cross-theme lines) and nothing overshoots.
+  // Older points ride the smoothed path; the head rides the raw path (= the dot).
+  //
+  // Smoothly interpolate arr at the continuous index idx+frac with UNIFORM
+  // Catmull-Rom. Closed-form (the standard basis), and ALLOCATION-FREE: it writes
+  // the result into a single shared scratch (_rotPt) that the caller reads
+  // immediately. The old version built ~6 little [x,y] arrays per call; at
+  // ~3000 calls per scrub frame that churned ~20k arrays/frame and the periodic
+  // GC pauses showed up as the "freeze" at day boundaries. Uniform spacing →
+  // continuous speed across the joins; overshoot is negligible for this data.
+  var _rotPt = [0, 0];
+  function rotCRAt(arr, idx, frac) {{
+    var p1 = (idx >= 0 && idx < arr.length) ? arr[idx] : null;
+    var p2 = (idx + 1 >= 0 && idx + 1 < arr.length) ? arr[idx + 1] : null;
+    if (!p1 && !p2) return null;
+    if (!p1) return p2;
+    if (!p2) return p1;
+    var p0 = (idx - 1 >= 0 && arr[idx - 1]) ? arr[idx - 1] : p1;
+    var p3 = (idx + 2 < arr.length && arr[idx + 2]) ? arr[idx + 2] : p2;
+    var t = frac, t2 = t * t, t3 = t2 * t;
+    _rotPt[0] = 0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3);
+    _rotPt[1] = 0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3);
+    return _rotPt;
+  }}
+  // Draw the WHOLE rotation frame (trails + dots) onto the canvas at the
+  // continuous day di+frac. Allocation-free per frame (no Plotly restyle, no temp
+  // arrays/strings) so there is nothing for GC to periodically stall on — that
+  // periodic stall was the boundary "freeze". Plotly only paints the static
+  // chrome (axes / grid / quad shading / corner labels) underneath; the canvas
+  // (on top) paints everything that moves. The trail piece colours each tiny
+  // segment by the quadrant it sits in (multicolour) with a continuous fade alpha;
+  // the dot piece replaces what Plotly markers used to do.
+  function rotDrawFrame(di, frac, k) {{
+    var div = document.getElementById('rotation-chart');
+    var cv = document.getElementById('rotation-trail-canvas');
+    if (!div || !cv) return;
+    var fl = div._fullLayout;
+    if (!fl || !fl.xaxis || !fl.yaxis) return;
+    var xa = fl.xaxis, ya = fl.yaxis;
+    var ctx = cv.getContext('2d');
+    var w = div.clientWidth, h = div.clientHeight;
+    var dpr = window.devicePixelRatio || 1;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {{
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+      cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    }}
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    var span = ROT_COMET_LEN - 1, M = ROT_TRAIL_SAMPLES;
+    var shown = window.ROTATION_DATA || [];
+    var ti, d, p, X, Y;
+    // ── Trails ──
+    if (rotTails) {{
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      for (ti = 0; ti < shown.length; ti++) {{
+        d = shown[ti];
+        if (!d.tail || !rotVisible(d)) continue;
+        var pX = null, pY = null, pA = 1;
+        for (var i = 0; i < M; i++) {{
+          var age = (M - 1 - i) / (M - 1);
+          var s = (di + frac) - age * span;
+          var fr = Math.floor(s);
+          p = rotCRAt(d.tail, fr, s - fr);
+          if (!p) {{ pX = null; continue; }}
+          X = xa._offset + xa.l2p(p[0]);
+          Y = ya._offset + ya.l2p(p[1]);
+          if (pX != null) {{
+            var opa = 1 - (age + pA) / 2;             // 1 at head → 0 at tail (continuous)
+            if (opa > 0.04) {{
+              var stc = _rotStroke[rotQuadOfPos(p[0], p[1]) || d.quad] || _rotStroke.leading;
+              ctx.strokeStyle = stc[opa >= 1 ? ROT_TRAIL_ALEVELS : (opa * ROT_TRAIL_ALEVELS) | 0];
+              ctx.lineWidth = 0.8 + opa * 1.9;        // taper: thicker at head
+              ctx.beginPath(); ctx.moveTo(pX, pY); ctx.lineTo(X, Y); ctx.stroke();
+            }}
+          }}
+          pX = X; pY = Y; pA = age;
+        }}
+      }}
+    }}
+    // ── Dots (replaces the per-frame Plotly marker restyle) ──
+    var emph = rotEmphAtK(shown, k);
+    ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff';
+    ctx.font = '10px "Segoe UI", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    var labels = null;
+    for (ti = 0; ti < shown.length; ti++) {{
+      d = shown[ti];
+      if (!rotVisible(d)) continue;
+      p = (d.tail) ? rotCRAt(d.tail, di, frac) : null;
+      if (!p) continue;
+      var dxv = p[0], dyv = p[1];
+      X = xa._offset + xa.l2p(dxv);
+      Y = ya._offset + ya.l2p(dyv);
+      var e = !!emph[d.id];
+      var bd = rotInterpArr(d.breadthp, di, frac, (d.breadth == null ? null : d.breadth));
+      var rv = rotInterpArr(d.rvolp, di, frac, d.rvol);
+      var sz = (rotSize === 'breadth') ? (6 + (bd || 0) * 16)
+             : (rotSize === 'n') ? (6 + Math.min(d.n, 30) / 30 * 16)
+             : (rotSize === 'rvol') ? rotRvolSize(rv)
+             : 9;
+      var rad = sz / 2;
+      ctx.globalAlpha = e ? 1 : (rotEmph === 'none' ? 0.85 : 0.25);
+      ctx.fillStyle = (rotColor === 'breadth') ? rotBreadthColor(bd) : (ROT_QUAD_COLORS[rotQuadOfPos(dxv, dyv)] || ROT_QUAD_COLORS[d.quad]);
+      ctx.beginPath(); ctx.arc(X, Y, rad, 0, 6.283185); ctx.fill();
+      if (e) {{ ctx.globalAlpha = 1; ctx.stroke(); }}           // white outline on emphasized
+      // Labels: every visible dot when the toggle is on (thin the field with the
+      // Thrust slider). Independent of emphasis — emphasis only brightens dots.
+      if (rotLabels) {{ (labels || (labels = [])).push(d.label, X, Y - rad - 5); }}
+    }}
+    ctx.globalAlpha = 1;
+    if (labels) {{ ctx.fillStyle = '#ddd'; for (ti = 0; ti < labels.length; ti += 3) ctx.fillText(labels[ti], labels[ti + 1], labels[ti + 2]); }}
+  }}
+  // "Just turning" rank, weighted by relative volume so volume-backed turns lead
+  // and quiet curls sink; the x>0 penalty keeps weak (left-side) themes on top.
+  function rotTurnScore(d) {{ return (d.turn * (d.rvol == null ? 1 : d.rvol)) - (d.x > 0 ? 1000 : 0); }}
+  // ── Per-day versions (computed off the path) so emphasis, colour and the
+  //    quadrant a theme sits in all reflect the day the scrubber is on, not today.
+  var ROT_TURN_LB = 10;
+  function rotPosTuple(d, k) {{ return (d.tail && k >= 0 && k < d.tail.length && d.tail[k]) ? d.tail[k] : null; }}
+  function rotQuadAtK(d, k) {{
+    var p = rotPosTuple(d, k) || [d.x, d.y];
+    return (p[0] >= 0 && p[1] >= 0) ? 'leading' : (p[0] >= 0 && p[1] < 0) ? 'weakening' : (p[0] < 0 && p[1] < 0) ? 'lagging' : 'improving';
+  }}
+  function rotTurnAtK(d, k) {{
+    var a = rotPosTuple(d, k), b = rotPosTuple(d, k - ROT_TURN_LB);
+    if (!a) return -1e9;
+    var turn = b ? (a[1] - b[1]) : 0;
+    var rv = (d.rvolp && d.rvolp[k] != null) ? d.rvolp[k] : (d.rvol == null ? 1 : d.rvol);
+    return (turn * rv) - (a[0] > 0 ? 1000 : 0);
+  }}
+  function rotMoverAtK(d, k) {{
+    var a = rotPosTuple(d, k), b = rotPosTuple(d, k - ROT_TURN_LB);
+    if (!a || !b) return 0;
+    return Math.sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]));
+  }}
+  // Strength at day k = the dot's x (strength axis) position that day.
+  function rotStrengthAtK(d, k) {{ var p = rotPosTuple(d, k); return p ? p[0] : (d.x == null ? -1e9 : d.x); }}
+  // Breadth at day k = % of members above their 20-day SMA that day (per-day
+  // series if present, else the current-day scalar).
+  function rotBreadthAtK(d, k) {{ return (d.breadthp && d.breadthp[k] != null) ? d.breadthp[k] : (d.breadth == null ? null : d.breadth); }}
+  function rotEmphAtK(shownList, k) {{
+    var set = {{}};
+    flaggedThemes.forEach(function(id) {{ set[id] = true; }});
+    if (rotEmph !== 'none') {{
+      var sc = shownList.map(function(d) {{
+        var s = (rotEmph === 'movers') ? rotMoverAtK(d, k)
+              : (rotEmph === 'leaders') ? rotStrengthAtK(d, k)
+              : rotTurnAtK(d, k);
+        return {{ id: d.id, s: s }};
+      }});
+      sc.sort(function(a, b) {{ return b.s - a.s; }});
+      sc.slice(0, 10).forEach(function(o) {{ set[o.id] = true; }});
+    }}
+    return set;
+  }}
+  // Square curve so the spread is exaggerated: quiet themes (rvol<1) shrink, loud
+  // themes (rvol>1.5) balloon. rvol 0.7→~5, 1.0→~7.5, 1.7→~16, 2.5→~31, 2.8→~38.
+  function rotRvolSize(rv) {{ var v = Math.min(Math.max(rv == null ? 1 : rv, 0.3), 2.8); return 3 + v * v * 4.5; }}
+  var rotScrubState = null;  // {{shown}} stashed by renderRotation for the scrubber
+  var rotCurDi = 0, rotCurFrac = 0, rotCurK = 0;  // current scrub position, so redraws (resize/click) use the right day
+  var rotOverlaySection = null;  // theme <section> currently lifted into the click overlay
+  function rotCloseOverlay() {{
+    var ov = document.getElementById('rot-overlay');
+    if (ov) ov.style.display = 'none';
+    if (rotOverlaySection) {{
+      rotOverlaySection.style.display = 'none';     // sections live hidden in <main>
+      var mainEl = document.querySelector('main');
+      if (mainEl) mainEl.appendChild(rotOverlaySection);  // drop it back where it belongs
+      rotOverlaySection = null;
+    }}
+  }}
+  function rotOpenOverlay(themeId, label) {{
+    var ov = document.getElementById('rot-overlay');
+    var body = document.getElementById('rot-overlay-body');
+    var section = document.getElementById(themeId);
+    if (!ov || !body || !section) return;
+    rotCloseOverlay();
+    rotOverlaySection = section;
+    body.appendChild(section);                       // lift the real section (chart + thumbnails)
+    section.style.display = 'block';
+    var ttl = document.getElementById('rot-overlay-title');
+    if (ttl) ttl.textContent = label || themeId;
+    ov.style.display = 'flex';
+    body.scrollTop = 0;
+    rotApplyOverlayFilters();                         // synthetic toggle + thumbnail filters + sub-panels
+    var pdiv = section.querySelector('.plotly-graph-div');
+    if (pdiv && window.Plotly && Plotly.Plots && Plotly.Plots.resize) {{
+      window.setTimeout(function() {{ try {{ Plotly.Plots.resize(pdiv); }} catch(e) {{}} }}, 40);
+    }}
+  }}
+  var rotEmph = 'turns', rotColor = 'quad', rotSize = 'rvol', rotSide = 'turn';
+  var rotTails = true, rotLabels = true, rotTopHalf = false;
+  var rotThrustMin = 0;   // hide themes whose thrust percentile is below this (0 = show all)
+  // Ball-overlay (click-a-dot) filter toolbar state. Persisted so every theme
+  // ball opens with the same filters. Synthetic chart on by default; rest off.
+  var ovfSynth = true, ovfMomo = false, ovfTight = false, ovfMacd = false, ovfExt = false;
+  // A theme passes the thrust filter if its climb rank is at/above the slider %.
+  function rotThrustVisible(d) {{ return (d.thrustRank == null) ? true : (d.thrustRank * 100 >= rotThrustMin - 0.0001); }}
+  // A theme is drawn on the map only if it passes BOTH the thrust slider and the
+  // gear-panel sector/theme exclusions (the same filter the ticker page uses).
+  function rotVisible(d) {{ return rotThrustVisible(d) && themeRowPassesFilter(d.id); }}
+  function rotUpdateThrustReadout() {{
+    var el = document.getElementById('rot-thrust-val'); if (!el) return;
+    var n = 0, list = window.ROTATION_DATA || [];
+    for (var i = 0; i < list.length; i++) if (rotVisible(list[i])) n++;
+    el.textContent = (n >= list.length) ? 'all' : (n + ' shown');
+  }}
+  try {{
+    var LS = window.localStorage;
+    if (LS) {{
+      rotEmph  = LS.getItem('themeDashboard.rotEmph')  || rotEmph;
+      rotColor = LS.getItem('themeDashboard.rotColor') || rotColor;
+      rotSize  = LS.getItem('themeDashboard.rotSize')  || rotSize;
+      rotSide  = LS.getItem('themeDashboard.rotSide')  || rotSide;
+      if (LS.getItem('themeDashboard.rotTails') === '0') rotTails = false;
+      if (LS.getItem('themeDashboard.rotLabels') === '0') rotLabels = false;
+      if (LS.getItem('themeDashboard.rotTopHalf') === '1') rotTopHalf = true;
+      var _rtm = LS.getItem('themeDashboard.rotThrustMin'); if (_rtm != null) {{ var _v = parseInt(_rtm, 10); if (_v >= 0 && _v <= 100) rotThrustMin = _v; }}
+      if (LS.getItem('themeDashboard.ovfSynth') === '0') ovfSynth = false;
+      if (LS.getItem('themeDashboard.ovfMomo')  === '1') ovfMomo  = true;
+      if (LS.getItem('themeDashboard.ovfTight') === '1') ovfTight = true;
+      if (LS.getItem('themeDashboard.ovfMacd')  === '1') ovfMacd  = true;
+      if (LS.getItem('themeDashboard.ovfExt')   === '1') ovfExt   = true;
+    }}
+  }} catch(e) {{}}
+  function rotPersist() {{
+    try {{
+      var LS2 = window.localStorage; if (!LS2) return;
+      LS2.setItem('themeDashboard.rotEmph', rotEmph);
+      LS2.setItem('themeDashboard.rotColor', rotColor);
+      LS2.setItem('themeDashboard.rotSize', rotSize);
+      LS2.setItem('themeDashboard.rotSide', rotSide);
+      LS2.setItem('themeDashboard.rotTails', rotTails ? '1' : '0');
+      LS2.setItem('themeDashboard.rotLabels', rotLabels ? '1' : '0');
+      LS2.setItem('themeDashboard.rotTopHalf', rotTopHalf ? '1' : '0');
+      LS2.setItem('themeDashboard.rotThrustMin', String(rotThrustMin));
+      LS2.setItem('themeDashboard.ovfSynth', ovfSynth ? '1' : '0');
+      LS2.setItem('themeDashboard.ovfMomo',  ovfMomo  ? '1' : '0');
+      LS2.setItem('themeDashboard.ovfTight', ovfTight ? '1' : '0');
+      LS2.setItem('themeDashboard.ovfMacd',  ovfMacd  ? '1' : '0');
+      LS2.setItem('themeDashboard.ovfExt',   ovfExt   ? '1' : '0');
+    }} catch(e) {{}}
+  }}
+  // ── Ball-overlay filter toolbar ──────────────────────────────
+  // Reflect the toolbar buttons' active state from the persisted toggles.
+  function rotOvfSyncButtons() {{
+    var map = {{ synth: ovfSynth, momo: ovfMomo, tight: ovfTight, macd: ovfMacd, ext: ovfExt }};
+    document.querySelectorAll('.rot-btn[data-ovf]').forEach(function(b) {{
+      b.classList.toggle('is-active', !!map[b.dataset.ovf]);
+    }});
+  }}
+  function rotClearMemberPanels(card) {{
+    var olds = card.querySelectorAll('.member-sub-panel');
+    for (var i = 0; i < olds.length; i++) olds[i].parentNode.removeChild(olds[i]);
+  }}
+  // MACD (6/20/9) mini-panel — same math as the per-ticker chart (emaJS/subArr),
+  // drawn over the last 100 bars to line up under the thumbnail candles.
+  function rotBuildMacdCanvas(d, w) {{
+    var h = 54, cv = document.createElement('canvas');
+    cv.className = 'member-sub-panel';
+    var dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    var ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+    var close = d.close; if (!close || close.length < 2) return cv;
+    var macd = subArr(emaJS(close, 6), emaJS(close, 20));
+    var sig  = emaJS(macd, 9);
+    var N = close.length, vis = Math.min(100, N), s = N - vis, k;
+    var lo = Infinity, hi = -Infinity;
+    for (k = s; k < N; k++) {{
+      var trio = [macd[k], sig[k], (macd[k] != null && sig[k] != null) ? (macd[k] - sig[k]) : null];
+      for (var j = 0; j < 3; j++) {{ var v = trio[j]; if (v != null && !isNaN(v)) {{ if (v < lo) lo = v; if (v > hi) hi = v; }} }}
+    }}
+    if (lo === Infinity) return cv;
+    if (hi <= lo) hi = lo + 1;
+    var pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+    var x0 = 2, cw = (w - 4) * 0.82, bw = cw / vis;
+    function yp(v) {{ return (1 - (v - lo) / (hi - lo)) * (h - 2) + 1; }}
+    var zy = (lo < 0 && hi > 0) ? yp(0) : yp(lo);
+    if (lo < 0 && hi > 0) {{ ctx.strokeStyle = '#444'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x0, zy); ctx.lineTo(x0 + cw, zy); ctx.stroke(); }}
+    for (k = s; k < N; k++) {{
+      var hv = (macd[k] != null && sig[k] != null) ? (macd[k] - sig[k]) : null;
+      if (hv == null || isNaN(hv)) continue;
+      var x = x0 + (k - s) * bw, y = yp(hv);
+      ctx.fillStyle = hv >= 0 ? 'rgba(30,255,30,0.5)' : 'rgba(255,48,48,0.5)';
+      ctx.fillRect(x, Math.min(y, zy), Math.max(1, bw * 0.8), Math.max(0.5, Math.abs(y - zy)));
+    }}
+    function line(arr, color) {{
+      ctx.strokeStyle = color; ctx.lineWidth = 1.3; ctx.beginPath(); var started = false;
+      for (var k2 = s; k2 < N; k2++) {{
+        var v = arr[k2]; if (v == null || isNaN(v)) {{ started = false; continue; }}
+        var x = x0 + (k2 - s) * bw + bw * 0.5, y = yp(v);
+        if (!started) {{ ctx.moveTo(x, y); started = true; }} else ctx.lineTo(x, y);
+      }}
+      ctx.stroke();
+    }}
+    line(macd, '#5fc8ff'); line(sig, '#ff8800');
+    return cv;
+  }}
+  // 50-SMA extension mini-panel — the embedded ext50 series (ADR units), the
+  // exact same series the per-ticker chart's bottom panel uses.
+  function rotBuildExtCanvas(d, w) {{
+    var h = 54, cv = document.createElement('canvas');
+    cv.className = 'member-sub-panel';
+    var dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    var ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+    var ext = d.ext50; if (!ext || !ext.length) return cv;
+    var N = ext.length, vis = Math.min(100, N), s = N - vis, k;
+    var lo = Infinity, hi = -Infinity;
+    for (k = s; k < N; k++) {{ var v = ext[k]; if (v != null && !isNaN(v)) {{ if (v < lo) lo = v; if (v > hi) hi = v; }} }}
+    if (lo === Infinity) return cv;
+    if (hi <= lo) hi = lo + 1;
+    var pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+    var x0 = 2, cw = (w - 4) * 0.82, bw = cw / vis;
+    function yp(v) {{ return (1 - (v - lo) / (hi - lo)) * (h - 2) + 1; }}
+    var zy = (lo < 0 && hi > 0) ? yp(0) : yp(lo);
+    if (lo < 0 && hi > 0) {{ ctx.strokeStyle = '#444'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x0, zy); ctx.lineTo(x0 + cw, zy); ctx.stroke(); }}
+    for (k = s; k < N; k++) {{
+      var ev = ext[k]; if (ev == null || isNaN(ev)) continue;
+      var x = x0 + (k - s) * bw, y = yp(ev);
+      ctx.fillStyle = ev >= 0 ? '#1eff1e' : '#ff3030';
+      ctx.fillRect(x, Math.min(y, zy), Math.max(1, bw * 0.8), Math.max(0.5, Math.abs(y - zy)));
+    }}
+    return cv;
+  }}
+  function rotDrawMemberPanels(card) {{
+    rotClearMemberPanels(card);
+    if (!ovfMacd && !ovfExt) return;
+    var tk = card.getAttribute('data-ticker');
+    var d = window.TICKER_DATA && window.TICKER_DATA[tk];
+    if (!d) return;
+    var w = card.clientWidth || 300;
+    if (ovfMacd) card.appendChild(rotBuildMacdCanvas(d, w));
+    if (ovfExt)  card.appendChild(rotBuildExtCanvas(d, w));
+  }}
+  // Apply the toolbar to whatever theme section is lifted into the overlay.
+  function rotApplyOverlayFilters() {{
+    var body = document.getElementById('rot-overlay-body');
+    var section = rotOverlaySection;
+    if (!body || !section) return;
+    body.classList.toggle('ovf-no-synth', !ovfSynth);
+    if (ovfSynth) {{
+      var pdiv = section.querySelector('.plotly-graph-div');   // re-show may need a resize
+      if (pdiv && window.Plotly && Plotly.Plots && Plotly.Plots.resize) {{
+        window.setTimeout(function() {{ try {{ Plotly.Plots.resize(pdiv); }} catch(e) {{}} }}, 30);
+      }}
+    }}
+    var cards = section.querySelectorAll('.member-card');
+    for (var i = 0; i < cards.length; i++) {{
+      var card = cards[i];
+      var hide = (ovfMomo && card.getAttribute('data-momo') !== '1')
+              || (ovfTight && card.getAttribute('data-tight') !== '1');
+      card.classList.toggle('ovf-hidden', hide);
+      if (hide) rotClearMemberPanels(card); else rotDrawMemberPanels(card);
+    }}
+  }}
+  function rotBreadthColor(b) {{
+    if (b === null || b === undefined) return '#666';
+    var r, g;
+    if (b < 0.5) {{ r = 200; g = Math.round(60 + b * 2 * 90); }}
+    else {{ r = Math.round(200 - (b - 0.5) * 2 * 160); g = 150 + Math.round((b - 0.5) * 2 * 50); }}
+    return 'rgb(' + r + ',' + g + ',60)';
+  }}
+  // Single source of truth for one animation frame. Given the shown list, an
+  // interpolation anchor (di + frac between two path days) and the discrete day
+  // k it rounds to, returns parallel arrays for the dot trace. BOTH the initial
+  // render and the scrubber call this, so emphasis / colour / size / breadth
+  // can never again be honoured at "today" but frozen while scrubbing.
+  // Interpolate a per-day array (rvolp / breadthp) at the continuous position
+  // di+frac so size/breadth glide instead of snapping at each day boundary.
+  function rotInterpArr(arr, di, frac, fb) {{
+    if (!arr) return fb;
+    var a = (di >= 0 && di < arr.length) ? arr[di] : null;
+    var b = (di + 1 >= 0 && di + 1 < arr.length) ? arr[di + 1] : null;
+    if (a == null && b == null) return fb;
+    if (a == null) return b;
+    if (b == null) return a;
+    return a + (b - a) * frac;
+  }}
+  // Quadrant from a (continuous, interpolated) position — so the dot's colour
+  // flips exactly when it crosses an axis, not in a discrete jump at day k.
+  function rotQuadOfPos(x, y) {{
+    if (x == null || y == null) return null;
+    return (x >= 0 && y >= 0) ? 'leading' : (x >= 0 && y < 0) ? 'weakening' : (x < 0 && y < 0) ? 'lagging' : 'improving';
+  }}
+  // The auto-fit axis ranges renderRotation computes — kept so scroll-wheel zoom
+  // can reset back to "fit" on a double-click.
+  var rotFitX = null, rotFitY = null;
+  function renderRotation() {{
+    var div = document.getElementById('rotation-chart');
+    if (!div || !window.Plotly || !window.ROTATION_DATA) return;
+    document.querySelectorAll('.rot-btn[data-rot="emph"]').forEach(function(b) {{ b.classList.toggle('is-active', b.dataset.val === rotEmph); }});
+    document.querySelectorAll('.rot-btn[data-rot="color"]').forEach(function(b) {{ b.classList.toggle('is-active', b.dataset.val === rotColor); }});
+    document.querySelectorAll('.rot-btn[data-rot="size"]').forEach(function(b) {{ b.classList.toggle('is-active', b.dataset.val === rotSize); }});
+    document.querySelectorAll('.rot-btn[data-rot="tails"]').forEach(function(b) {{ b.classList.toggle('is-active', rotTails); }});
+    document.querySelectorAll('.rot-btn[data-rot="labels"]').forEach(function(b) {{ b.classList.toggle('is-active', rotLabels); }});
+    document.querySelectorAll('.rot-btn[data-rot="tophalf"]').forEach(function(b) {{ b.classList.toggle('is-active', rotTopHalf); }});
+    document.querySelectorAll('.rot-side-btn').forEach(function(b) {{ b.classList.toggle('is-active', b.dataset.side === rotSide); }});
+
+    var shown = window.ROTATION_DATA;   // every theme is on the map (Show filter removed)
+    var lastK = (window.ROTATION_DATES || []).length - 1;
+    // Axis ranges fit the data robustly and stay fixed for the whole scrub (so
+    // they never jump). Use a high percentile of all path positions — a rare
+    // outlier day can't blow the frame out and crush today into the middle — but
+    // always keep today's dots inside. x and y are sized independently so the
+    // dots fill the wide chart. (A few extreme past-day positions clip when you
+    // scrub to them; bubbles are never removed.)
+    function rotPctMax(extract) {{
+      var vals = [];
+      shown.forEach(function(d) {{ if (d.tail) d.tail.forEach(function(p) {{ if (p) {{ var v = extract(p); if (v != null) vals.push(v); }} }}); }});
+      if (!vals.length) return 0;
+      vals.sort(function(a, b) {{ return a - b; }});
+      return vals[Math.floor(vals.length * 0.96)];
+    }}
+    function rotTodayMax(extract) {{
+      var m = 0;
+      shown.forEach(function(d) {{ var p = d.tail && d.tail[lastK]; if (p) {{ var v = extract(p); if (v != null) m = Math.max(m, v); }} }});
+      return m;
+    }}
+    var absX = function(p) {{ return Math.abs(p[0]); }};
+    var xmax = Math.max(1.2, Math.max(rotPctMax(absX), rotTodayMax(absX)) * 1.08);
+    var ymax, ymin;
+    if (rotTopHalf) {{
+      // Only positive-momentum dots are shown, so size the top to THEM — not to
+      // the (clipped) negative-momentum dots — otherwise the half-frame is mostly
+      // empty. ymin pinned at 0.
+      var posY = function(p) {{ return p[1] > 0 ? p[1] : null; }};
+      ymax = Math.max(1.0, Math.max(rotPctMax(posY), rotTodayMax(posY)) * 1.10);
+      ymin = 0;
+    }} else {{
+      var absY = function(p) {{ return Math.abs(p[1]); }};
+      ymax = Math.max(1.2, Math.max(rotPctMax(absY), rotTodayMax(absY)) * 1.08);
+      ymin = -ymax;
+    }}
+    rotFitX = [-xmax, xmax]; rotFitY = [ymin, ymax];   // remembered for the zoom-reset (double-click)
+
+    // Dots + trails are painted on the canvas overlay (rotDrawFrame), allocation-
+    // free, so the scrub never churns objects and stalls on GC. Plotly draws ONLY
+    // the static chrome (axes / grid / quad shading / corner labels) from an empty
+    // data set and is never restyled per frame.
+    var traces = [];
+    var layout = {{
+      paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', margin: {{ l: 46, r: 12, t: 12, b: 38 }},
+      xaxis: {{ range: [-xmax, xmax], zeroline: false, gridcolor: '#161618', color: '#888',
+               title: {{ text: '← weaker      STRENGTH vs universe      stronger →', font: {{ size: 11, color: '#888' }} }} }},
+      yaxis: {{ range: [ymin, ymax], zeroline: false, gridcolor: '#161618', color: '#888',
+               title: {{ text: '← fading      MOMENTUM      rising →', font: {{ size: 11, color: '#888' }} }} }},
+      shapes: [
+        {{ type: 'rect', x0: 0, y0: 0, x1: xmax, y1: ymax, fillcolor: 'rgba(30,255,30,0.05)', line: {{ width: 0 }}, layer: 'below' }},
+        {{ type: 'rect', x0: 0, y0: -ymax, x1: xmax, y1: 0, fillcolor: 'rgba(255,204,0,0.05)', line: {{ width: 0 }}, layer: 'below' }},
+        {{ type: 'rect', x0: -xmax, y0: -ymax, x1: 0, y1: 0, fillcolor: 'rgba(255,48,48,0.05)', line: {{ width: 0 }}, layer: 'below' }},
+        {{ type: 'rect', x0: -xmax, y0: 0, x1: 0, y1: ymax, fillcolor: 'rgba(95,200,255,0.06)', line: {{ width: 0 }}, layer: 'below' }},
+        {{ type: 'line', x0: 0, y0: -ymax, x1: 0, y1: ymax, line: {{ color: '#333', width: 1 }} }},
+        {{ type: 'line', x0: -xmax, y0: 0, x1: xmax, y1: 0, line: {{ color: '#333', width: 1 }} }}
+      ],
+      annotations: [
+        {{ x: xmax, y: ymax, xanchor: 'right', yanchor: 'top', text: 'LEADING', showarrow: false, font: {{ color: 'rgba(30,255,30,0.45)', size: 12 }} }},
+        {{ x: xmax, y: -ymax, xanchor: 'right', yanchor: 'bottom', text: 'WEAKENING', showarrow: false, font: {{ color: 'rgba(255,204,0,0.45)', size: 12 }} }},
+        {{ x: -xmax, y: -ymax, xanchor: 'left', yanchor: 'bottom', text: 'LAGGING', showarrow: false, font: {{ color: 'rgba(255,48,48,0.45)', size: 12 }} }},
+        {{ x: -xmax, y: ymax, xanchor: 'left', yanchor: 'top', text: 'IMPROVING', showarrow: false, font: {{ color: 'rgba(95,200,255,0.55)', size: 12 }} }}
+      ],
+      hovermode: 'closest'
+    }};
+    Plotly.newPlot(div, traces, layout, {{ displayModeBar: false, responsive: true }});
+    // Paint the frame (dots + trails) on the canvas at "today", and repaint it
+    // whenever Plotly relayouts (e.g. a resize remaps axes→pixels). Dot clicks are
+    // handled by the hit-test bound once below.
+    rotCurDi = lastK; rotCurFrac = 0; rotCurK = lastK;
+    rotDrawFrame(lastK, 0, lastK);
+    if (div.removeAllListeners) {{ try {{ div.removeAllListeners('plotly_relayout'); }} catch(e) {{}} }}
+    if (div.on) div.on('plotly_relayout', function() {{ rotDrawFrame(rotCurDi, rotCurFrac, rotCurK); }});
+    // Hand the analogue scrubber what it needs and reset it to "today" (right end).
+    rotScrubState = {{ shown: shown }};
+    var _scrubIn = document.getElementById('rot-scrub-input');
+    if (_scrubIn) _scrubIn.value = _scrubIn.max;
+    var _scrubDt = document.getElementById('rot-scrub-date');
+    var _rdates = window.ROTATION_DATES || [];
+    if (_scrubDt && _rdates.length) _scrubDt.textContent = _rdates[_rdates.length - 1];
+    renderRotationSide();
+  }}
+  function renderRotationSide() {{
+    var listDiv = document.getElementById('rotation-side-list');
+    if (!listDiv || !window.ROTATION_DATA) return;
+    var arr = window.ROTATION_DATA.slice();
+    if (rotSide === 'turn') arr.sort(function(a, b) {{ return rotTurnScore(b) - rotTurnScore(a); }});
+    else arr.sort(function(a, b) {{ return b.mover - a.mover; }});
+    arr = arr.slice(0, 18);
+    var html = '';
+    arr.forEach(function(d) {{
+      var rv = (d.rvol != null) ? d.rvol.toFixed(1) + 'x' : '';
+      html += '<div class="rot-item" data-theme-id="' + d.id + '" title="relative volume (recent vs baseline)">'
+            + '<span class="rot-dot" style="background:' + ROT_QUAD_COLORS[d.quad] + '"></span>'
+            + '<span class="rot-name">' + d.label + '</span>'
+            + '<span class="rot-bd">' + rv + '</span>'
+            + '</div>';
+    }});
+    listDiv.innerHTML = html;
+  }}
+  document.querySelectorAll('.rot-btn').forEach(function(b) {{
+    if (b.dataset.ovf) return;   // ball-overlay toolbar buttons are wired separately below
+    b.addEventListener('click', function() {{
+      var kind = b.dataset.rot;
+      if (kind === 'tails') rotTails = !rotTails;
+      else if (kind === 'labels') rotLabels = !rotLabels;
+      else if (kind === 'tophalf') rotTopHalf = !rotTopHalf;
+      else if (kind === 'emph') rotEmph = b.dataset.val;
+      else if (kind === 'color') rotColor = b.dataset.val;
+      else if (kind === 'size') rotSize = b.dataset.val;
+      rotPersist();
+      renderRotation();
+    }});
+  }});
+  // Ball-overlay filter toolbar: toggle, persist, and re-apply to the open ball
+  // (no map re-render — these only affect what's inside the overlay).
+  document.querySelectorAll('.rot-btn[data-ovf]').forEach(function(b) {{
+    b.addEventListener('click', function() {{
+      var kind = b.dataset.ovf;
+      if (kind === 'synth') ovfSynth = !ovfSynth;
+      else if (kind === 'momo') ovfMomo = !ovfMomo;
+      else if (kind === 'tight') ovfTight = !ovfTight;
+      else if (kind === 'macd') ovfMacd = !ovfMacd;
+      else if (kind === 'ext') ovfExt = !ovfExt;
+      rotPersist();
+      rotOvfSyncButtons();
+      rotApplyOverlayFilters();
+    }});
+  }});
+  rotOvfSyncButtons();   // reflect persisted toolbar state on load
+  document.querySelectorAll('.rot-side-btn').forEach(function(b) {{
+    b.addEventListener('click', function() {{ rotSide = b.dataset.side; rotPersist(); renderRotation(); }});
+  }});
+  var rotSideList = document.getElementById('rotation-side-list');
+  if (rotSideList) {{
+    rotSideList.addEventListener('click', function(e) {{
+      var item = e.target && e.target.closest ? e.target.closest('.rot-item') : null;
+      if (!item || !item.dataset.themeId) return;
+      setThemesView('chart');
+      setActiveByRowId(item.dataset.themeId);
+    }});
+  }}
+
+  // ── Analogue time scrubber: interpolate positions live, push to the plot ──
+  var rotScrubInput = document.getElementById('rot-scrub-input');
+  if (rotScrubInput) {{
+    var _scrubRaf = false;
+    function rotScrubApply() {{
+      _scrubRaf = false;
+      if (!rotScrubState || !window.Plotly) return;
+      var dates = window.ROTATION_DATES || [];
+      var N = dates.length;
+      if (N < 2) return;
+      var t = (+rotScrubInput.value) / (+rotScrubInput.max || 1);  // 0..1
+      var fidx = t * (N - 1);
+      var di = Math.floor(fidx);
+      if (di >= N - 1) di = N - 2;
+      var frac = fidx - di;
+      var k = Math.round(fidx); if (k >= N) k = N - 1; if (k < 0) k = 0;  // day for emphasis/colour
+      // Repaint the whole frame (dots + trails) on the canvas at the continuous
+      // di+frac — no Plotly restyle, so no per-frame GC churn / boundary freeze.
+      rotCurDi = di; rotCurFrac = frac; rotCurK = k;
+      rotDrawFrame(di, frac, k);
+      var dd = document.getElementById('rot-scrub-date');
+      if (dd) dd.textContent = dates[k];
+    }}
+    rotScrubInput.addEventListener('input', function() {{
+      if (_scrubRaf) return;
+      _scrubRaf = true;
+      window.requestAnimationFrame(rotScrubApply);
+    }});
+  }}
+  // Keep the canvas aligned with the chart on window resize (Plotly's responsive
+  // resize changes the axis→pixel mapping a beat later).
+  window.addEventListener('resize', function() {{
+    if (activeView === 'themes' && themesView === 'rotation') {{
+      window.setTimeout(function() {{ rotDrawFrame(rotCurDi, rotCurFrac, rotCurK); }}, 80);
+    }}
+  }});
+  // Mouse interactions run on the canvas (it captures the events; the Plotly chart
+  // underneath is static). Hit-test the dots at the current scrub position:
+  // hover → tooltip with the theme's numbers, click → open the theme overlay.
+  var _rotCanvas = document.getElementById('rotation-trail-canvas');
+  var _rotChartEl = document.getElementById('rotation-chart');
+  function rotHitTest(mx, my) {{
+    var fl = _rotChartEl && _rotChartEl._fullLayout; if (!fl || !fl.xaxis || !fl.yaxis) return null;
+    var xa = fl.xaxis, ya = fl.yaxis, shown = window.ROTATION_DATA || [], best = null, bestD = 1e9;
+    for (var i = 0; i < shown.length; i++) {{
+      var d = shown[i]; if (!d.tail || !rotVisible(d)) continue;
+      var p = rotCRAt(d.tail, rotCurDi, rotCurFrac); if (!p) continue;
+      var dxp = mx - (xa._offset + xa.l2p(p[0])), dyp = my - (ya._offset + ya.l2p(p[1]));
+      var dist = dxp * dxp + dyp * dyp;
+      if (dist < bestD) {{ bestD = dist; best = d; }}
+    }}
+    return (best && bestD < 18 * 18) ? best : null;
+  }}
+  function rotHideTooltip() {{ var tt = document.getElementById('rot-tooltip'); if (tt) tt.style.display = 'none'; }}
+  if (_rotCanvas) {{
+    _rotCanvas.addEventListener('click', function(e) {{
+      var rect = _rotCanvas.getBoundingClientRect();
+      var d = rotHitTest(e.clientX - rect.left, e.clientY - rect.top);
+      if (d) rotOpenOverlay(d.id, d.label);
+    }});
+    _rotCanvas.addEventListener('mousemove', function(e) {{
+      var rect = _rotCanvas.getBoundingClientRect();
+      var d = rotHitTest(e.clientX - rect.left, e.clientY - rect.top);
+      var tt = document.getElementById('rot-tooltip');
+      if (!d || !tt) {{ rotHideTooltip(); _rotCanvas.style.cursor = 'default'; return; }}
+      _rotCanvas.style.cursor = 'pointer';
+      var p = rotCRAt(d.tail, rotCurDi, rotCurFrac);
+      var sx = p ? p[0] : null, sy = p ? p[1] : null;
+      var bd = rotInterpArr(d.breadthp, rotCurDi, rotCurFrac, d.breadth);
+      var rv = rotInterpArr(d.rvolp, rotCurDi, rotCurFrac, d.rvol);
+      tt.innerHTML = '<b>' + d.label + '</b><br>strength ' + (sx == null ? '–' : sx.toFixed(2)) + ' · momentum ' + (sy == null ? '–' : sy.toFixed(2))
+        + (bd != null ? ('<br>breadth ' + Math.round(bd * 100) + '%') : '') + (rv != null ? (' · rvol ' + rv.toFixed(2) + 'x') : '');
+      tt.style.display = 'block';
+      var bodyRect = _rotCanvas.parentNode.getBoundingClientRect();
+      var lx = e.clientX - bodyRect.left + 14, ty = e.clientY - bodyRect.top + 14;
+      if (lx + tt.offsetWidth > bodyRect.width) lx = e.clientX - bodyRect.left - tt.offsetWidth - 12;
+      if (ty + tt.offsetHeight > bodyRect.height) ty = e.clientY - bodyRect.top - tt.offsetHeight - 12;
+      tt.style.left = lx + 'px'; tt.style.top = ty + 'px';
+    }});
+    _rotCanvas.addEventListener('mouseleave', function() {{ rotHideTooltip(); _rotCanvas.style.cursor = 'default'; }});
+    // Scroll-wheel zoom, centered on the cursor. The canvas captures the wheel
+    // (it sits over the Plotly chart), so we drive the zoom by relayouting the
+    // chart's axis ranges; the bound plotly_relayout handler repaints the canvas.
+    _rotCanvas.addEventListener('wheel', function(e) {{
+      var fl = _rotChartEl && _rotChartEl._fullLayout;
+      if (!fl || !fl.xaxis || !fl.yaxis) return;
+      e.preventDefault();
+      var xa = fl.xaxis, ya = fl.yaxis;
+      var rect = _rotCanvas.getBoundingClientRect();
+      var cx = xa.p2l(e.clientX - rect.left - xa._offset);   // data coords under the cursor
+      var cy = ya.p2l(e.clientY - rect.top  - ya._offset);
+      var xr = xa.range, yr = ya.range;
+      var f = (e.deltaY < 0) ? 0.85 : (1 / 0.85);            // wheel up = zoom in, down = zoom out
+      var nx0 = cx - (cx - xr[0]) * f, nx1 = cx + (xr[1] - cx) * f;
+      var ny0 = cy - (cy - yr[0]) * f, ny1 = cy + (yr[1] - cy) * f;
+      var xspan = nx1 - nx0, yspan = ny1 - ny0;
+      if (f < 1 && (xspan < 0.08 || yspan < 0.08)) return;   // don't zoom in past a hair
+      // Zoom-out is capped at the auto-fit view (nothing lives beyond it); hitting
+      // the cap snaps back to the centered fit, which also re-centers any drift.
+      if (f > 1 && rotFitX && rotFitY && (xspan >= rotFitX[1] - rotFitX[0] || yspan >= rotFitY[1] - rotFitY[0])) {{
+        Plotly.relayout(_rotChartEl, {{ 'xaxis.range': rotFitX.slice(), 'yaxis.range': rotFitY.slice() }});
+        return;
+      }}
+      Plotly.relayout(_rotChartEl, {{ 'xaxis.range': [nx0, nx1], 'yaxis.range': [ny0, ny1] }});
+    }}, {{ passive: false }});
+    // Double-click empty space to snap back to the auto-fit view. (On a dot the
+    // first click opens its overlay, so reset is a clear-space gesture.)
+    _rotCanvas.addEventListener('dblclick', function(e) {{
+      if (!rotFitX || !rotFitY || !_rotChartEl) return;
+      Plotly.relayout(_rotChartEl, {{ 'xaxis.range': rotFitX.slice(), 'yaxis.range': rotFitY.slice() }});
+    }});
+  }}
+  // Thrust slider: hide the bottom % of themes by their up-and-right climb rank.
+  (function() {{
+    var sl = document.getElementById('rot-thrust-slider');
+    if (!sl) return;
+    sl.value = rotThrustMin;
+    rotUpdateThrustReadout();
+    sl.addEventListener('input', function() {{
+      rotThrustMin = +sl.value;
+      rotPersist();
+      rotUpdateThrustReadout();
+      rotDrawFrame(rotCurDi, rotCurFrac, rotCurK);
+    }});
+  }})();
+  // Rotation gear → open the shared sector/theme filter panel (same one the
+  // ticker page uses). stopPropagation so the document outside-click handler
+  // doesn't immediately re-close it.
+  (function() {{
+    var fb = document.getElementById('rot-filter-btn');
+    if (!fb) return;
+    fb.addEventListener('click', function(e) {{
+      e.stopPropagation();
+      if (filterPanel && filterPanel.style.display === 'none') openFilterPanel();
+      else closeFilterPanel();
+    }});
+  }})();
+
+  // Overlay close: click the backdrop (outside the panel), the ✕, or Escape.
+  var rotOverlayEl = document.getElementById('rot-overlay');
+  if (rotOverlayEl) rotOverlayEl.addEventListener('click', function(e) {{ if (e.target === rotOverlayEl) rotCloseOverlay(); }});
+  var rotOverlayCloseBtn = document.getElementById('rot-overlay-close');
+  if (rotOverlayCloseBtn) rotOverlayCloseBtn.addEventListener('click', rotCloseOverlay);
+  document.addEventListener('keydown', function(e) {{
+    if (e.key === 'Escape') {{
+      var ov = document.getElementById('rot-overlay');
+      if (ov && ov.style.display !== 'none') rotCloseOverlay();
+    }}
+  }});
 
   // ── Initial activate ───────────────────────────────────────
   applyFilter();
@@ -5090,6 +7672,139 @@ def build_dashboard(theme_keys, cache, n_bars, company_meta=None, source_meta=No
       }}
     }});
   }}
+
+  // ── Candidates ────────────────────────────────────────────
+  var candidatesInput  = document.getElementById('candidates-input');
+  var candidatesAddBtn = document.getElementById('candidates-add-btn');
+  var candidatesTbody  = document.getElementById('candidates-tbody');
+  var candidatesCount  = document.getElementById('candidates-count');
+  var candidatesActiveTicker = null;
+
+  var candidatesList = [];
+  try {{
+    var _saved = window.localStorage && window.localStorage.getItem('themeDashboard.candidates');
+    if (_saved) candidatesList = JSON.parse(_saved).filter(function(t) {{ return t && typeof t === 'string'; }});
+  }} catch(e) {{}}
+
+  function saveCandidates() {{
+    try {{ window.localStorage && window.localStorage.setItem('themeDashboard.candidates', JSON.stringify(candidatesList)); }} catch(e) {{}}
+  }}
+
+  function themeChipsHtml(ticker) {{
+    var themeIds = (window.FILTER_DATA && window.FILTER_DATA.themeIdsByTicker && window.FILTER_DATA.themeIdsByTicker[ticker]) || [];
+    if (!themeIds.length) return '<span class="cand-unknown">—</span>';
+    var rankOrder = window.THEME_RANK_ORDER || [];
+    var labels    = window.THEME_LABELS    || {{}};
+    var rs5map    = window.THEME_RS5       || {{}};
+    var n = rankOrder.length;
+    var chips = themeIds.map(function(tid) {{
+      var rank = rankOrder.indexOf(tid);  // 0-based; -1 if ungrouped
+      var label = labels[tid] || tid;
+      var rs5   = rs5map[tid];
+      var cls;
+      if (rank < 0 || rs5 === undefined) {{
+        cls = 'theme-chip-cold';
+      }} else if (rank < Math.ceil(n * 0.33)) {{
+        cls = 'theme-chip-hot';
+      }} else if (rank < Math.ceil(n * 0.66)) {{
+        cls = 'theme-chip-warm';
+      }} else {{
+        cls = 'theme-chip-cold';
+      }}
+      var rankStr = rank >= 0 ? (' #' + (rank + 1)) : '';
+      return '<span class="theme-chip ' + cls + '" title="' + label + rankStr + '">' + label + rankStr + '</span>';
+    }});
+    return chips.join('');
+  }}
+
+  function renderCandidatesTable() {{
+    if (!candidatesTbody) return;
+    candidatesTbody.innerHTML = '';
+    candidatesList.forEach(function(ticker, idx) {{
+      var d = window.TICKER_DATA && window.TICKER_DATA[ticker];
+      var tr = document.createElement('tr');
+      if (ticker === candidatesActiveTicker) tr.classList.add('cand-active');
+      if (d) {{
+        var chgPct  = d.day_chg_pct != null ? d.day_chg_pct : null;
+        var chgCls  = chgPct == null ? '' : (chgPct >= 0 ? 'cand-chg-pos' : 'cand-chg-neg');
+        var chgStr  = chgPct == null ? '—' : (chgPct >= 0 ? '+' : '') + chgPct.toFixed(2) + '%';
+        var lastStr = d.last_close != null ? '$' + d.last_close.toFixed(2) : '—';
+        var name    = (d.long_name || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        var sector  = (d.sector    || '').replace(/</g,'&lt;');
+        tr.innerHTML =
+          '<td><button class="cand-remove" data-idx="' + idx + '" title="Remove">×</button></td>' +
+          '<td><span class="cand-ticker">' + ticker + '</span></td>' +
+          '<td><div class="cand-name" title="' + name + '">' + name + '</div></td>' +
+          '<td>' + themeChipsHtml(ticker) + '</td>' +
+          '<td><span class="cand-sector">' + sector + '</span></td>' +
+          '<td style="text-align:right"><span class="cand-price">' + lastStr + '</span></td>' +
+          '<td style="text-align:right"><span class="' + chgCls + '">' + chgStr + '</span></td>';
+      }} else {{
+        tr.innerHTML =
+          '<td><button class="cand-remove" data-idx="' + idx + '" title="Remove">×</button></td>' +
+          '<td><span class="cand-ticker">' + ticker + '</span></td>' +
+          '<td colspan="5"><span class="cand-unknown">not in universe</span></td>';
+      }}
+      tr.addEventListener('click', function(e) {{
+        if (e.target.classList.contains('cand-remove')) return;
+        if (!d) return;
+        candidatesActiveTicker = ticker;
+        candidatesTbody.querySelectorAll('tr').forEach(function(r) {{ r.classList.remove('cand-active'); }});
+        tr.classList.add('cand-active');
+        showTickerSection(ticker);
+      }});
+      tr.querySelector('.cand-remove').addEventListener('click', function(e) {{
+        e.stopPropagation();
+        var i = parseInt(this.dataset.idx, 10);
+        candidatesList.splice(i, 1);
+        saveCandidates();
+        if (candidatesActiveTicker === ticker) candidatesActiveTicker = null;
+        renderCandidatesTable();
+        updateCandidatesCount();
+      }});
+      candidatesTbody.appendChild(tr);
+    }});
+  }}
+
+  function updateCandidatesCount() {{
+    if (candidatesCount) candidatesCount.textContent = candidatesList.length + ' ticker' + (candidatesList.length === 1 ? '' : 's');
+  }}
+
+  function addCandidatesBulk(raw) {{
+    // Split on any combination of newlines, commas, spaces, tabs
+    var tickers = raw.split(/[\\s,]+/)
+      .map(function(t) {{ return t.trim().toUpperCase().replace(/[^A-Z0-9.]/g, ''); }})
+      .filter(function(t) {{ return t.length > 0 && t.length <= 6; }})
+      .filter(function(t) {{ return candidatesList.indexOf(t) < 0; }});
+    if (!tickers.length) return;
+    tickers.forEach(function(t) {{ candidatesList.push(t); }});
+    saveCandidates();
+    renderCandidatesTable();
+    updateCandidatesCount();
+  }}
+
+  if (candidatesAddBtn) {{
+    candidatesAddBtn.addEventListener('click', function() {{
+      if (candidatesInput) {{ addCandidatesBulk(candidatesInput.value); candidatesInput.value = ''; candidatesInput.focus(); }}
+    }});
+  }}
+  if (candidatesInput) {{
+    candidatesInput.addEventListener('keydown', function(e) {{
+      if (e.key === 'Enter') {{ e.preventDefault(); addCandidatesBulk(this.value); this.value = ''; }}
+    }});
+    candidatesInput.addEventListener('paste', function(e) {{
+      e.preventDefault();
+      var text = (e.clipboardData || window.clipboardData).getData('text');
+      addCandidatesBulk(text);
+      this.value = '';
+    }});
+  }}
+
+  renderCandidatesTable();
+  updateCandidatesCount();
+
+  // Paint hot-theme confluence counts from any persisted flags.
+  applyHotCounts();
 
   // Resize handler: re-fit whatever Plotly chart is currently visible.
   window.addEventListener('resize', function() {{

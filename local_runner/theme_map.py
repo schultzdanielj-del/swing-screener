@@ -1148,6 +1148,73 @@ THEMES = {
         "SGML", # rationale: Sigma Lithium — Brazilian lithium miner,
         "AUGO",   # rationale: gold_silver_miners is the primary theme — direct peer to KGC (Kinross — gold producer with LatAm ops), EGO (Eldorado — mid-tier gold), BTG (B2Gold), PAAS (Pan American Silver), ...
     ],
+
+    # ═══════════════════════════════════════════════════
+    #  CHINA — ADRs + China-exposure (potential bottoming play)
+    #  Names that trade on Chinese-market sentiment, regardless of
+    #  GICS sector. Cross-listed freely — co-movement is the point.
+    # ═══════════════════════════════════════════════════
+    "china": [
+        # Internet / e-commerce
+        "BABA",   # rationale: Alibaba — China e-commerce + cloud bellwether
+        "PDD",    # rationale: Pinduoduo / Temu parent
+        "JD",     # rationale: JD.com — e-commerce + logistics
+        "BIDU",   # rationale: Baidu — search + AI + autonomous
+        "VIPS",   # rationale: Vipshop — discount e-commerce
+        "DADA",   # rationale: Dada Nexus — local delivery (not in cache yet)
+        # EV
+        "NIO",    # rationale: NIO — China EV
+        "XPEV",   # rationale: XPeng — China EV
+        "LI",     # rationale: Li Auto — China EV
+        "ZK",     # rationale: ZEEKR — Geely premium EV (not in cache yet)
+        # Media / entertainment / social
+        "BILI",   # rationale: Bilibili — video / gaming community
+        "TME",    # rationale: Tencent Music
+        "NTES",   # rationale: NetEase — gaming
+        "IQ",     # rationale: iQIYI — streaming video
+        "WB",     # rationale: Weibo — social
+        "DOYU",   # rationale: DouYu — game streaming
+        "HUYA",   # rationale: HUYA — game streaming
+        "MOMO",   # rationale: Hello Group — social
+        "ZH",     # rationale: Zhihu — Q&A / content platform
+        # Fintech / brokerage
+        "FUTU",   # rationale: Futu Holdings — online brokerage
+        "TIGR",   # rationale: UP Fintech (Tiger Brokers) — online brokerage
+        "QFIN",   # rationale: Qifu Technology — credit-tech
+        "LX",     # rationale: LexinFintech — consumer finance
+        "FINV",   # rationale: FinVolution — consumer finance
+        # Travel / hospitality / consumer services
+        "TCOM",   # rationale: Trip.com — China travel OTA
+        "YUMC",   # rationale: Yum China — KFC/Pizza Hut operator
+        "HTHT",   # rationale: H World (Huazhu) — hotels
+        "BEKE",   # rationale: KE Holdings (Beike) — housing transactions
+        "ATHM",   # rationale: Autohome — auto marketplace
+        # Education
+        "EDU",    # rationale: New Oriental Education
+        "TAL",    # rationale: TAL Education
+        "GOTU",   # rationale: Gaotu Techedu
+        # Logistics / data centers
+        "ZTO",    # rationale: ZTO Express — parcel delivery
+        "GDS",    # rationale: GDS Holdings — China data centers
+        "VNET",   # rationale: VNET Group — China data centers
+        # Solar / clean energy (China manufacturing base)
+        "JKS",    # rationale: JinkoSolar — China solar module maker
+        "DQ",     # rationale: Daqo New Energy — China polysilicon
+        "CSIQ",   # rationale: cross-listed from solar — Canadian Solar, China-heavy manufacturing/ops
+        # Biotech (China-based)
+        "ZLAB",   # rationale: Zai Lab — China biopharma
+        "LEGN",   # rationale: cross-listed from biotech — Legend Biotech, Nanjing-based CAR-T
+        # China-exposure ETFs (broad-market correlation anchors)
+        "FXI",    # rationale: iShares China Large-Cap ETF
+        "KWEB",   # rationale: KraneShares China Internet ETF
+        "MCHI",   # rationale: iShares MSCI China ETF
+        "ASHR",   # rationale: CSI 300 A-shares ETF
+        "CQQQ",   # rationale: Invesco China Technology ETF
+        "PGJ",    # rationale: Invesco Golden Dragon China ETF
+        "KTEC",   # rationale: KraneShares China tech ETF
+        "YINN",   # rationale: 3x leveraged China bull ETF (directional exposure)
+        "CWEB",   # rationale: 2x leveraged China internet bull ETF (directional exposure)
+    ],
 }
 
 
@@ -1225,6 +1292,7 @@ THEME_LABELS = {
     "biotech":                  "Biotech · therapeutics, gene editing, GLP-1",
     "latam_em":                 "LatAm · Latin America",
     "consumer_retail":          "Consumer Retail · department stores + specialty mall retail",
+    "china":                    "China · ADRs + China-exposure",
 }
 
 
@@ -1565,4 +1633,116 @@ UNIVERSE = [
     "GGLL",                                    # GOOGL proxy -> ad_tech_marketing
     "METU",                                    # META proxy -> social_media
     "MSFU",                                    # MSFT proxy -> cloud_infra
+]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  NARRATIVE MAP  (the "Map" Themes sub-view + the synthetic narrative themes)
+#
+#  Arranges every theme into its place in the AI-market story so leadership can
+#  be read in story-space. Four dicts, hand-edited like THEME_NARRATIVES, purely
+#  additive — no existing consumer touches these. See NARRATIVE_MAP.md.
+#
+#  Benchmark for the Map's strength + money-flow is SPY (the yardstick the
+#  2026-06-06 research validated), NOT the equal-weight universe the other
+#  sub-views use. That is deliberate — see NARRATIVE_MAP.md.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Top-level story bands (display order). "Crypto" is shown as its own band even
+# though it is conceptually under Adjacent — the miners-turned-datacenters left
+# it, so what remains (exchanges + treasuries) reads cleanest standalone.
+MACROTHEMES = {
+    "buildout": {"label": "BUILDOUT — the AI build",        "order": 1},
+    "output":   {"label": "OUTPUT — what AI enables",       "order": 2},
+    "adjacent": {"label": "ADJACENT — real, off-build",     "order": 3},
+    "crypto":   {"label": "CRYPTO — exchanges & treasuries","order": 4},
+    "noise":    {"label": "NOISE — off-narrative",          "order": 5},
+}
+
+# Story-zones (the regions drawn on the map). Buildout keeps its chain-walk
+# (Hub -> Infrastructure -> Power -> Materials, the order money walked the chain
+# 2023->2025). order = top-to-bottom paint order across the whole map.
+NARRATIVE_ZONES = {
+    "hub":            {"label": "Hub — AI compute & datacenters",                 "macro": "buildout", "order": 1},
+    "infrastructure": {"label": "AI Infrastructure — chips, optics, memory, net", "macro": "buildout", "order": 2},
+    "power":          {"label": "Power — nuclear, grid, storage, cooling",        "macro": "buildout", "order": 3},
+    "materials":      {"label": "Raw Materials — critical minerals",              "macro": "buildout", "order": 4},
+    "output":         {"label": "What AI Enables",                                "macro": "output",   "order": 5},
+    "adjacent":       {"label": "Adjacent — solar, EV supply, reshoring, metals", "macro": "adjacent", "order": 6},
+    "crypto":         {"label": "Crypto — exchanges & treasuries",                "macro": "crypto",   "order": 7},
+    "noise":          {"label": "Noise — off-narrative quarantine",              "macro": "noise",    "order": 8},
+}
+
+# Every theme in THEMES -> its zone. Author-assigned (Dan does not hand-classify).
+# Settled 2026-06-06 + co-movement-audited 2026-06-07:
+#  - crypto_miners -> hub  (the complex repurposed to AI datacenters; trades as
+#    infra, not Bitcoin — confirmed by co-movement while BTC sold off).
+#  - the four orphan-SaaS (data_analytics_terminals / productivity_saas /
+#    vertical_saas / ad_tech_marketing) -> noise  (near-zero-to-negative
+#    co-movement with the AI core + weak RS; the AI-disrupted SaaS the research
+#    calls noise).
+THEME_CHAIN_POSITION = {
+    # ── BUILDOUT / Hub ──
+    "mag7": "hub", "ai_compute": "hub", "datacenter_buildout": "hub",
+    "ai_compute_clouds": "hub", "crypto_miners": "hub",
+    # ── BUILDOUT / Infrastructure ──
+    "ai_optics": "infrastructure", "ai_networking": "infrastructure",
+    "ai_connectivity": "infrastructure", "semiconductor_ip": "infrastructure",
+    "memory_cycle": "infrastructure", "semi_equipment": "infrastructure",
+    "semiconductor_testing": "infrastructure", "electronic_components": "infrastructure",
+    # ── BUILDOUT / Power ──
+    "power_demand_for_ai": "power", "nuclear_renaissance": "power",
+    "uranium_pure_plays": "power", "energy_storage": "power",
+    "electrical_grid": "power", "hvac_cooling": "power", "fuel_cells_hydrogen": "power",
+    # ── BUILDOUT / Materials ──
+    "critical_minerals": "materials",
+    # ── OUTPUT (one group) ──
+    "quantum_computing": "output", "robotics_automation": "output",
+    "space_economy": "output", "drones": "output", "autonomous_mobility": "output",
+    "ai_apps_platforms": "output", "defense_tech": "output", "biotech": "output",
+    "diagnostics_tools": "output", "cybersecurity": "output", "cloud_infra": "output",
+    "data_devops_platforms": "output",
+    # ── ADJACENT ──
+    "solar": "adjacent", "ev_supply_chain": "adjacent", "reshoring_construction": "adjacent",
+    "building_products": "adjacent", "industrial_distribution": "adjacent",
+    "gold_silver_miners": "adjacent", "industrial_metals": "adjacent",
+    "industrial_materials": "adjacent",
+    # ── CRYPTO (what's left once the miners leave) ──
+    "crypto_platforms": "crypto", "bitcoin_treasury": "crypto",
+    # ── NOISE ──
+    "ev_makers": "noise", "fintech_disruptors": "noise",
+    "financial_services_specialty": "noise", "alt_asset_managers": "noise",
+    "managed_care": "noise", "medtech_devices_consumer_health": "noise",
+    "transports": "noise", "airlines": "noise", "oil_gas_ep": "noise",
+    "oil_gas_services": "noise", "energy_drinks_wellness": "noise",
+    "restaurants_fast_casual": "noise", "footwear_apparel": "noise", "beauty": "noise",
+    "discount_retail": "noise", "ecommerce": "noise", "travel_services": "noise",
+    "streaming_media": "noise", "gaming_betting": "noise", "social_media": "noise",
+    "real_estate_proptech": "noise", "auto_parts_tech": "noise", "consulting_govt": "noise",
+    "consumer_retail": "noise", "latam_em": "noise", "china": "noise",
+    # the four orphan-SaaS, moved out of Output by the co-movement audit:
+    "data_analytics_terminals": "noise", "productivity_saas": "noise",
+    "vertical_saas": "noise", "ad_tech_marketing": "noise",
+}
+
+# Per-ticker zone fixes for the map only (overrides the ticker's theme-derived
+# zone). A list = the ticker straddles those zones (cross-listed into each).
+# Drives the region money-flow composites + the Crypto<->Hub straddle bridge.
+TICKER_ZONE_OVERRIDE = {
+    "TSLA": ["output"],  # robotaxi / Optimus / FSD = AI application, not the compute build
+    # crypto miners that genuinely repurposed to AI datacenters straddle both:
+    # they still track Bitcoin day-to-day but rip as AI infra (co-movement, 2026-06-07).
+    "MARA": ["hub", "crypto"],
+    "CLSK": ["hub", "crypto"],
+    "HIVE": ["hub", "crypto"],
+    "GLXY": ["hub", "crypto"],  # Galaxy: trading/asset-mgmt + Helios CoreWeave AI datacenter
+    "BTBT": ["hub", "crypto"],  # Bit Digital: WhiteFiber AI cloud + ETH treasury
+}
+
+# Narrative priority for deduping a ticker into ONE primary zone where a single
+# placement is needed (lower index = higher priority). Buildout > Output >
+# Adjacent > Crypto > Noise (the research's connected-first ordering).
+NARRATIVE_ZONE_PRIORITY = [
+    "hub", "infrastructure", "power", "materials",  # buildout
+    "output", "adjacent", "crypto", "noise",
 ]
